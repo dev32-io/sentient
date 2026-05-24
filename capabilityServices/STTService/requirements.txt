@@ -1,0 +1,44 @@
+# STT Service — pinned dependencies for Docker layer caching.
+#
+# This file exists alongside pyproject.toml because Docker's layer
+# cache diffs requirements.txt byte-for-byte. If this file doesn't
+# change, the entire `pip install` layer reuses — saving ~3 minutes
+# per build. pyproject.toml changes more often (tool config, version
+# bumps) and would bust the cache unnecessarily.
+#
+# Keep both files in sync. If you add a dep to pyproject.toml, add it
+# here too.
+
+# Silero VAD streaming turn detector. Pulls torch + torchaudio transitively.
+silero-vad>=5.1,<7
+
+# ONNX runtime for Smart-Turn v3 (used directly by smart_turn.py).
+onnxruntime>=1.18
+
+# Smart-Turn v3 uses WhisperFeatureExtractor from transformers for mel feats.
+transformers>=4.48,<5
+
+# sherpa-onnx: SenseVoice-Small runtime. Ships aarch64 wheels on PyPI and
+# includes its own ONNX Runtime — coexists cleanly with the top-level
+# onnxruntime that smart_turn.py uses.
+sherpa-onnx>=1.10
+
+# WebSocket server (binary + text frames, async, minimal footprint).
+websockets>=13,<14
+
+# Numeric + audio I/O.
+numpy>=1.26,<2.2
+soundfile>=0.12
+
+# In-process CPU + RSS sampling.
+psutil>=7
+
+# YAML config file loader.
+pyyaml>=6
+
+# HuggingFace download helper used at build time by scripts/download_models.py.
+huggingface_hub>=0.24
+
+# Opus decoder for ESP32 cube uplink (pure-Python ctypes wrapper around
+# libopus; system libopus0 must be installed — see Dockerfile apt step).
+opuslib>=3.0.1

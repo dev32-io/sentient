@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>localVAD PoC — Silero + Smart-Turn v3</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+    }
+    body {
+      margin: 0;
+      padding: 24px;
+      background: #0d1117;
+      color: #e6edf3;
+      max-width: 920px;
+      margin-inline: auto;
+    }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    .subtitle { color: #8b949e; font-size: 13px; margin-bottom: 20px; }
+    fieldset {
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-bottom: 16px;
+    }
+    legend { color: #7d8590; padding: 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+    label { display: inline-flex; align-items: center; gap: 6px; margin-right: 12px; font-size: 13px; }
+    input[type="text"] {
+      background: #0d1117;
+      color: #e6edf3;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font: inherit;
+      width: 280px;
+    }
+    button {
+      background: #238636;
+      color: white;
+      border: 0;
+      border-radius: 6px;
+      padding: 8px 14px;
+      font: inherit;
+      cursor: pointer;
+      margin-right: 8px;
+    }
+    button:disabled { background: #30363d; color: #8b949e; cursor: not-allowed; }
+    button.secondary { background: #21262d; border: 1px solid #30363d; color: #e6edf3; }
+    .status {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      background: #30363d;
+      color: #c9d1d9;
+    }
+    .status.connected { background: #1f6feb; color: white; }
+    .status.capturing { background: #d29922; color: #0d1117; }
+    .status.error { background: #da3633; color: white; }
+    #log {
+      background: #010409;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.45;
+      height: 320px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+    .log-line { margin: 0; }
+    .log-vad_start  { color: #7ee787; }
+    .log-vad_end    { color: #d29922; }
+    .log-smart_turn_eval { color: #79c0ff; }
+    .log-turn_continuing { color: #a371f7; }
+    .log-turn_complete   { color: #39d353; font-weight: 600; }
+    .log-error { color: #ff7b72; }
+    .log-ready { color: #8b949e; }
+    #recordings { list-style: none; padding: 0; margin: 0; }
+    #recordings li {
+      padding: 8px 0;
+      border-bottom: 1px solid #21262d;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 13px;
+    }
+    #recordings audio { height: 28px; }
+    #recordings a {
+      color: #79c0ff;
+      text-decoration: none;
+      padding: 4px 10px;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+<body>
+  <h1>localVAD PoC</h1>
+  <p class="subtitle">Browser mic → Silero VAD + Smart-Turn v3 → Pi service → saved turn recording</p>
+
+  <fieldset>
+    <legend>Connection</legend>
+    <label>Service URL <input id="url" type="text" value="ws://raspberrypi.local:8765" /></label>
+    <button id="connect">Connect</button>
+    <button id="disconnect" class="secondary" disabled>Disconnect</button>
+    <span id="conn-status" class="status">disconnected</span>
+  </fieldset>
+
+  <fieldset>
+    <legend>Microphone</legend>
+    <button id="start-mic" disabled>Start mic</button>
+    <button id="stop-mic" class="secondary" disabled>Stop mic</button>
+    <span id="mic-status" class="status">idle</span>
+    <span id="bytes-sent" style="margin-left: 12px; color: #8b949e; font-size: 12px;">0 B sent</span>
+  </fieldset>
+
+  <fieldset>
+    <legend>Event stream</legend>
+    <div id="log"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Turn recordings</legend>
+    <ul id="recordings"></ul>
+  </fieldset>
+
+  <script src="./app.js" type="module"></script>
+</body>
+</html>

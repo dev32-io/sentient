@@ -1,0 +1,5 @@
+pytest>=8.0
+pyserial>=3.5
+# ui.snapshot helper — RGB565 → PNG conversion.
+Pillow>=10
+numpy>=1.24

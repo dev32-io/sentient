@@ -1,0 +1,69 @@
+# Dependencies
+node_modules/
+bun.lockb
+
+# Claude Code runtime lock files (per-session ephemeral, not source)
+.claude/scheduled_tasks.lock
+
+# Superpowers brainstorm mockups
+.superpowers/
+
+# Build
+dist/
+.vite/
+
+# Environment
+.env
+.env.local
+.env.*.local
+secrets.enc
+
+# Local-only e2e setup notes — contains live tokens + service IPs.
+# DO NOT commit. Hook-gated by secrets-content-scan as belt-and-suspenders.
+gateway/.e2e-testing
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test
+coverage/
+
+# Locally-minted self-signed certs (gateway dev runs)
+gateway/certs/
+
+# Python venv (from research PoCs)
+venv/
+__pycache__/
+*.pyc
+
+# Docker
+.docker/
+
+# Worktrees
+.worktrees/
+
+# Playwright MCP browser session artifacts
+.playwright-mcp/
+
+# Logs
+logs/
+*.log
+profiles/*/.env
+deploy/docker/run/
+
+# qa-session per-run artifacts (committed: bugs/, issues.md, index.json, charters/, config.yml, oracles.md, recon.sh)
+qa/*/sessions/
+qa/*/.playwright/
+
+# Playwright + smoke screenshots produced during dev sessions
+*.png
+!**/public/**/*.png
+!**/icons/*.png

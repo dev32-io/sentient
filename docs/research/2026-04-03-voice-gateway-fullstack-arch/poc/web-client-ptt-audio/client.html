@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>PTT Audio PoC</title>
+<style>
+  body { font-family: monospace; max-width: 800px; margin: 0 auto; padding: 20px; background: #1a1a2e; color: #e0e0e0; }
+  h1 { color: #00d4ff; }
+  .status { padding: 8px; margin: 8px 0; border-radius: 4px; }
+  .ok { background: #0a3d0a; border: 1px solid #0f0; }
+  .err { background: #3d0a0a; border: 1px solid #f00; }
+  .warn { background: #3d3d0a; border: 1px solid #ff0; }
+  #ptt { width: 200px; height: 60px; font-size: 18px; cursor: pointer; border: none; border-radius: 8px; background: #333; color: #fff; user-select: none; -webkit-user-select: none; }
+  #ptt.recording { background: #c00; }
+  #ptt:active { transform: scale(0.95); }
+  #metrics { white-space: pre; font-size: 13px; background: #111; padding: 12px; border-radius: 4px; margin-top: 12px; }
+  .section { margin: 16px 0; padding: 12px; border: 1px solid #333; border-radius: 4px; }
+  button { padding: 8px 16px; margin: 4px; background: #333; color: #fff; border: 1px solid #555; border-radius: 4px; cursor: pointer; }
+  button:hover { background: #444; }
+</style>
+</head>
+<body>
+<h1>Web Client PTT Audio PoC</h1>
+
+<div class="section">
+  <h3>1. COOP/COEP & SharedArrayBuffer</h3>
+  <div id="coop-status" class="status">Checking...</div>
+</div>
+
+<div class="section">
+  <h3>2. WebSocket Connection</h3>
+  <div id="ws-status" class="status">Disconnected</div>
+  <button onclick="connectWS()">Connect</button>
+  <button onclick="disconnectWS()">Disconnect</button>
+</div>
+
+<div class="section">
+  <h3>3. Push-to-Talk (MediaRecorder → WebSocket → Echo Playback)</h3>
+  <div id="audio-status" class="status">Not initialized</div>
+  <button id="ptt" onpointerdown="startPTT()" onpointerup="stopPTT()" onpointerleave="stopPTT()">
+    Hold to Talk
+  </button>
+  <br>
+  <button onclick="clearPlayback()">Clear Playback Buffer</button>
+  <button onclick="requestMetrics()">Get Metrics</button>
+</div>
+
+<div class="section">
+  <h3>4. MediaRecorder Capabilities</h3>
+  <div id="codec-status" class="status">Checking...</div>
+</div>
+
+<div class="section">
+  <h3>Metrics</h3>
+  <div id="metrics">No data yet</div>
+</div>
+
+<script>
+// --- State ---
+let ws = null;
+let audioCtx = null;
+let mediaStream = null;
+let mediaRecorder = null;
+let workletNode = null;
+let isRecording = false;
+
+const clientMetrics = {
+  chunksSent: 0,
+  bytesSent: 0,
+  chunksReceived: 0,
+  bytesReceived: 0,
+  recordingStartTime: 0,
+  recordingDurationMs: 0,
+  codecUsed: '',
+  timesliceMs: 100,
+};
+
+// --- 1. COOP/COEP Check ---
+function checkCoopCoep() {
+  const el = document.getElementById('coop-status');
+  const sabAvailable = typeof SharedArrayBuffer !== 'undefined';
+  const crossOriginIsolated = window.crossOriginIsolated;
+  
+  if (sabAvailable && crossOriginIsolated) {
+    el.textContent = `SharedArrayBuffer: AVAILABLE | crossOriginIsolated: ${crossOriginIsolated}`;
+    el.className = 'status ok';
+  } else if (sabAvailable) {
+    el.textContent = `SharedArrayBuffer: AVAILABLE (but crossOriginIsolated=${crossOriginIsolated}) — COOP/COEP may not be set`;
+    el.className = 'status warn';
+  } else {
+    el.textContent = `SharedArrayBuffer: UNAVAILABLE | crossOriginIsolated: ${crossOriginIsolated} — COOP/COEP headers required`;
+    el.className = 'status err';
+  }
+}
+checkCoopCoep();
+
+// --- 2. WebSocket ---
+function connectWS() {
+  const el = document.getElementById('ws-status');
+  if (ws && ws.readyState === WebSocket.OPEN) return;
+  
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.binaryType = 'arraybuffer';
+  
+  ws.onopen = () => {
+    el.textContent = 'Connected';
+    el.className = 'status ok';
+  };
+  
+  ws.onmessage = (event) => {
+    if (event.data instanceof ArrayBuffer) {
+      // Binary echo — feed to AudioWorklet for playback
+      clientMetrics.chunksReceived++;
+      clientMetrics.bytesReceived += event.data.byteLength;
+      
+      if (workletNode) {
+        // Convert to Float32 for AudioWorklet
+        // MediaRecorder WebM chunks can't be decoded sample-by-sample
+        // For echo test, just acknowledge receipt
+        // Real playback would decode WebM first
+        updateMetricsDisplay();
+      }
+    } else {
+      // JSON control message
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'metrics') {
+          document.getElementById('metrics').textContent = 
+            'SERVER METRICS:\n' + JSON.stringify(msg, null, 2) +
+            '\n\nCLIENT METRICS:\n' + JSON.stringify(clientMetrics, null, 2);
+        } else if (msg.type === 'session.ready') {
+          el.textContent = 'Connected — Session Ready';
+        }
+      } catch {}
+    }
+  };
+  
+  ws.onclose = () => {
+    el.textContent = 'Disconnected';
+    el.className = 'status err';
+  };
+  
+  ws.onerror = () => {
+    el.textContent = 'Connection Error';
+    el.className = 'status err';
+  };
+}
+
+function disconnectWS() {
+  if (ws) ws.close();
+}
+
+// --- 3. PTT Audio ---
+async function initAudio() {
+  const el = document.getElementById('audio-status');
+  try {
+    audioCtx = new AudioContext({ sampleRate: 48000 });
+    
+    // Load AudioWorklet
+    await audioCtx.audioWorklet.addModule('/ring-buffer-worklet.js');
+    workletNode = new AudioWorkletNode(audioCtx, 'ring-buffer-processor');
+    workletNode.connect(audioCtx.destination);
+    
+    // Listen for worklet metrics
+    workletNode.port.onmessage = (event) => {
+      if (event.data.type === 'metrics') {
+        const current = document.getElementById('metrics').textContent;
+        document.getElementById('metrics').textContent = current + 
+          '\n\nWORKLET METRICS:\n' + JSON.stringify(event.data, null, 2);
+      }
+    };
+    
+    // Get microphone
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true }
+    });
+    
+    el.textContent = 'Audio initialized — AudioWorklet loaded, mic ready';
+    el.className = 'status ok';
+    return true;
+  } catch (err) {
+    el.textContent = `Audio init failed: ${err.message}`;
+    el.className = 'status err';
+    return false;
+  }
+}
+
+async function startPTT() {
+  if (isRecording) return;
+  
+  if (!audioCtx) {
+    const ok = await initAudio();
+    if (!ok) return;
+  }
+  
+  if (audioCtx.state === 'suspended') {
+    await audioCtx.resume();
+  }
+  
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    document.getElementById('audio-status').textContent = 'WebSocket not connected';
+    document.getElementById('audio-status').className = 'status err';
+    return;
+  }
+  
+  const el = document.getElementById('ptt');
+  
+  // Determine best codec
+  const mimeTypes = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/ogg;codecs=opus',
+    'audio/mp4;codecs=opus',
+    'audio/mp4',
+  ];
+  
+  let selectedMime = '';
+  for (const mime of mimeTypes) {
+    if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mime)) {
+      selectedMime = mime;
+      break;
+    }
+  }
+  
+  if (!selectedMime) {
+    document.getElementById('audio-status').textContent = 'No supported audio MIME type found';
+    document.getElementById('audio-status').className = 'status err';
+    return;
+  }
+  
+  clientMetrics.codecUsed = selectedMime;
+  
+  // Create MediaRecorder
+  mediaRecorder = new MediaRecorder(mediaStream, {
+    mimeType: selectedMime,
+    audioBitsPerSecond: 24000,
+  });
+  
+  mediaRecorder.ondataavailable = async (event) => {
+    if (event.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) {
+      const buffer = await event.data.arrayBuffer();
+      ws.send(buffer);
+      clientMetrics.chunksSent++;
+      clientMetrics.bytesSent += buffer.byteLength;
+      updateMetricsDisplay();
+    }
+  };
+  
+  mediaRecorder.onstop = () => {
+    clientMetrics.recordingDurationMs = Date.now() - clientMetrics.recordingStartTime;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'audio.end' }));
+    }
+    updateMetricsDisplay();
+  };
+  
+  // Send audio.start control message
+  ws.send(JSON.stringify({ type: 'audio.start', encoding: selectedMime }));
+  
+  // Start recording with 100ms timeslice for streaming
+  clientMetrics.recordingStartTime = Date.now();
+  mediaRecorder.start(clientMetrics.timesliceMs);
+  isRecording = true;
+  el.classList.add('recording');
+  el.textContent = 'Recording...';
+  
+  document.getElementById('audio-status').textContent = `Recording (${selectedMime}, ${clientMetrics.timesliceMs}ms chunks)`;
+  document.getElementById('audio-status').className = 'status ok';
+}
+
+function stopPTT() {
+  if (!isRecording) return;
+  
+  const el = document.getElementById('ptt');
+  
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    mediaRecorder.stop();
+  }
+  
+  isRecording = false;
+  el.classList.remove('recording');
+  el.textContent = 'Hold to Talk';
+  
+  document.getElementById('audio-status').textContent = 
+    `Stopped. Sent ${clientMetrics.chunksSent} chunks (${clientMetrics.bytesSent} bytes) in ${clientMetrics.recordingDurationMs}ms`;
+  document.getElementById('audio-status').className = 'status ok';
+}
+
+function clearPlayback() {
+  if (workletNode) {
+    workletNode.port.postMessage({ type: 'clear' });
+  }
+}
+
+function requestMetrics() {
+  if (workletNode) {
+    workletNode.port.postMessage({ type: 'get_metrics' });
+  }
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'get_metrics' }));
+  }
+}
+
+function updateMetricsDisplay() {
+  document.getElementById('metrics').textContent = 
+    'CLIENT METRICS:\n' + JSON.stringify(clientMetrics, null, 2);
+}
+
+// --- 4. Codec Capabilities ---
+function checkCodecCapabilities() {
+  const el = document.getElementById('codec-status');
+  if (typeof MediaRecorder === 'undefined') {
+    el.textContent = 'MediaRecorder API not available';
+    el.className = 'status err';
+    return;
+  }
+  
+  const codecs = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/ogg;codecs=opus',
+    'audio/mp4;codecs=opus',
+    'audio/mp4',
+    'audio/wav',
+  ];
+  
+  const results = codecs.map(c => `${c}: ${MediaRecorder.isTypeSupported(c) ? 'YES' : 'no'}`);
+  el.textContent = results.join('\n');
+  el.className = 'status ok';
+}
+checkCodecCapabilities();
+</script>
+</body>
+</html>

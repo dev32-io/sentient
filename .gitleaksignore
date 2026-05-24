@@ -1,0 +1,64 @@
+# Gitleaks false-positive allowlist.
+#
+# Format: <file>:<rule>:<line>
+#
+# Each entry has been reviewed and confirmed to be either:
+#   - A documentation example / placeholder ("REPLACE", "your_key_here")
+#   - A canary token deliberately written into the prompt-injection
+#     defense design (designed to be leaked AND detected)
+#   - A test-fixture string in a unit test that exercises the secret-leak
+#     detector (the string LOOKS like a key on purpose, so the test can
+#     assert detection)
+#   - A "do-not-reuse-in-prod" example in a smoke / curl command
+#
+# Each entry below names a verified false positive. Inspect the file and
+# line before adding new entries here.
+
+# --- profiles/example/.env.example: explicit REPLACE placeholder for the
+# OpenRouter key environment variable. Pure template, no real secret.
+profiles/example/.env.example:generic-api-key:3
+
+# --- docs/superpowers/plans/2026-04-04-phase4-classifier-security.md
+# canary-token field with a deliberate fixture value (CANARY plus short
+# hex tag) used in the prompt-injection defense design + accompanying
+# unit tests. Designed to be public bait.
+docs/superpowers/plans/2026-04-04-phase4-classifier-security.md:generic-api-key:1924
+docs/superpowers/plans/2026-04-04-phase4-classifier-security.md:generic-api-key:1937
+docs/superpowers/plans/2026-04-04-phase4-classifier-security.md:generic-api-key:1951
+docs/superpowers/plans/2026-04-04-phase4-classifier-security.md:generic-api-key:1962
+docs/superpowers/plans/2026-04-04-phase4-classifier-security.md:generic-api-key:1973
+docs/superpowers/plans/2026-04-04-phase4-classifier-security.md:generic-api-key:1986
+docs/superpowers/plans/2026-04-04-phase4-classifier-security.md:generic-api-key:2169
+
+# --- docs/superpowers/plans/2026-04-21-hermes-phase1.0-empirical-gates.md
+# Bearer token strings in smoke curl commands; the placeholder value
+# itself reads as "do-not-reuse-in-prod".
+docs/superpowers/plans/2026-04-21-hermes-phase1.0-empirical-gates.md:curl-auth-header:218
+docs/superpowers/plans/2026-04-21-hermes-phase1.0-empirical-gates.md:curl-auth-header:261
+docs/superpowers/plans/2026-04-21-hermes-phase1.0-empirical-gates.md:curl-auth-header:333
+docs/superpowers/plans/2026-04-21-hermes-phase1.0-empirical-gates.md:curl-auth-header:386
+
+# --- docs/superpowers/plans/2026-04-21-hermes-phase1.1-scaffolding.md
+# Placeholder API key in an example .env block embedded in the plan doc.
+docs/superpowers/plans/2026-04-21-hermes-phase1.1-scaffolding.md:generic-api-key:1452
+
+# --- docs/superpowers/plans/2026-04-25-phase7.5-gateway-owned-hermes-pool.md
+# Token-shaped example in plan illustration.
+docs/superpowers/plans/2026-04-25-phase7.5-gateway-owned-hermes-pool.md:generic-api-key:529
+
+# --- docs/superpowers/plans/2026-04-26-sentient-hermes-platform-adapter.md
+# Bearer token example in plan curl illustration.
+docs/superpowers/plans/2026-04-26-sentient-hermes-platform-adapter.md:curl-auth-header:1075
+
+# --- docs/research/2026-04-03-voice-gateway-fullstack-arch/explorations/web-client.md
+# Auth state token example in research write-up.
+docs/research/2026-04-03-voice-gateway-fullstack-arch/explorations/web-client.md:generic-api-key:177
+
+# --- docs/research/2026-04-03-voice-gateway-fullstack-arch/poc/security-paseto-bun/*
+# PoC for the security canary + key-leak detector. The flagged lines are
+# test-fixture strings shaped like API keys, fed into the leak detector
+# to assert it catches them. The detector PoC is itself the leak target
+# of these strings, so the "leak" is the assertion's input.
+docs/research/2026-04-03-voice-gateway-fullstack-arch/poc/security-paseto-bun/poc.ts:generic-api-key:350
+docs/research/2026-04-03-voice-gateway-fullstack-arch/poc/security-paseto-bun/poc_backup.ts:generic-api-key:344
+docs/research/2026-04-03-voice-gateway-fullstack-arch/poc/security-paseto-bun/poc.mjs:generic-api-key:3134

@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <radialGradient id="nuc" cx="40%" cy="36%" r="70%">
+      <stop offset="0%" stop-color="#FFE1BD"/>
+      <stop offset="35%" stop-color="#FFB87A"/>
+      <stop offset="78%" stop-color="#F2A06A"/>
+      <stop offset="100%" stop-color="#B85530"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFB87A" stop-opacity="0.55"/>
+      <stop offset="55%" stop-color="#FFB87A" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#FFB87A" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="elec" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFF3DB"/>
+      <stop offset="55%" stop-color="#FFE1BD"/>
+      <stop offset="100%" stop-color="#FFB87A" stop-opacity="0.4"/>
+    </radialGradient>
+    <radialGradient id="plate" cx="42%" cy="38%" r="58%">
+      <stop offset="0%" stop-color="#FFB87A" stop-opacity="0.32"/>
+      <stop offset="30%" stop-color="#FFB87A" stop-opacity="0.20"/>
+      <stop offset="60%" stop-color="#F2A06A" stop-opacity="0.12"/>
+      <stop offset="88%" stop-color="#B85530" stop-opacity="0.05"/>
+      <stop offset="100%" stop-color="#B85530" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ring" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" stop-color="#FFF3DB" stop-opacity="0.95"/>
+      <stop offset="35%" stop-color="#FFF3DB" stop-opacity="0.65"/>
+      <stop offset="70%" stop-color="#FFF3DB" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#FFF3DB" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <circle cx="32" cy="32" r="32" fill="url(#plate)"/>
+  <circle cx="32" cy="32" r="30" fill="none" stroke="url(#ring)" stroke-width="1.4"/>
+  <circle cx="32" cy="32" r="14" fill="url(#glow)"/>
+
+  <g stroke="#FFF3DB" stroke-width="0.9" fill="none" opacity="0.5">
+    <ellipse cx="32" cy="32" rx="23" ry="9" transform="rotate(18 32 32)"/>
+    <ellipse cx="32" cy="32" rx="23" ry="9" transform="rotate(-28 32 32)"/>
+    <ellipse cx="32" cy="32" rx="23" ry="9" transform="rotate(78 32 32)"/>
+  </g>
+
+  <circle cx="32" cy="32" r="6" fill="url(#nuc)"/>
+  <ellipse cx="30.5" cy="30" rx="2" ry="1.4" fill="#FFFFFF" opacity="0.5"/>
+
+  <circle cx="38.80" cy="42.77" r="1.4" fill="url(#elec)"/>
+  <circle cx="14.30" cy="34.43" r="1.1" fill="url(#elec)"/>
+  <circle cx="22.96" cy="14.90" r="1.6" fill="url(#elec)"/>
+</svg>

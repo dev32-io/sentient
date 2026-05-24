@@ -1,0 +1,20 @@
+{
+  "name": "@sentient/config",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "test:unit": "vitest run",
+    "test:int": "echo 'No integration tests'",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "yaml": "^2.7.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "bun-types": "latest",
+    "vitest": "^3.1.0"
+  }
+}

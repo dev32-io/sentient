@@ -1,0 +1,561 @@
+# Gateway Configuration — tuning knobs and non-secret settings.
+# API keys come from environment variables (.env, .zshrc, export, Docker env_file).
+
+# ---------------------------------------------------------------------------
+# Schema version — bumped by deploy/setup.py migrations. Do not hand-edit.
+# ---------------------------------------------------------------------------
+schema_version: "0.1.0"
+
+# ---------------------------------------------------------------------------
+# Server
+# ---------------------------------------------------------------------------
+port: 8888
+host: 0.0.0.0
+max_sessions: 10
+auth_timeout_ms: 5000
+session_persist_ms: 120000           # how long a disconnected session stays alive
+
+# ---------------------------------------------------------------------------
+# Logging — verbosity, file rotation and retention
+# ---------------------------------------------------------------------------
+logging:
+  level: info                          # debug | info | warning | error — info for prod, debug for local dev
+  retention_days: 7                    # keep rotated .log files for this many days; 0 disables pruning
+  # Per-category level overrides keyed by colon-joined LogTape category. Anything
+  # not listed inherits `level`. Use to flip debug on for a specific path while
+  # chasing a stall, without bumping the whole gateway to debug. Requires restart.
+  level_overrides: {}
+    # Example:
+    #   sentient:cerebrum:hermes-event-translator: debug
+
+# ---------------------------------------------------------------------------
+# Log sink — receives UDP datagrams from cube firmware after WiFi connect
+# and writes to gateway/logs/cube-<deviceId>-<date>.log. Pre-WiFi cube logs
+# go USB-CDC only (~2-5s gap on boot). Disable to silence cube remote logging.
+# ---------------------------------------------------------------------------
+log_sink:
+  cube_udp:
+    enabled: true             # toggle to disable cube log shipping entirely
+    port: 5514                # UDP port; standard "syslog-relay" range
+    bind: 0.0.0.0             # bind address; LAN-reachable on Mac dev
+
+# ---------------------------------------------------------------------------
+# TLS — self-signed cert for HTTPS/WSS on the LAN.
+#
+# Browsers refuse `new WebSocket("ws://…")` from an HTTPS page (mixed
+# content), and the web client is HTTPS so the gateway must speak WSS too.
+#
+# The gateway OWNS cert generation. It writes cert.pem + key.pem into the
+# certs dir (mounted from ~/.sentient/certs in docker), and the web
+# container reads the same files. Sharing one cert across both services
+# means the user accepts ONE browser warning per device, not two.
+#
+# To add a new hostname later: edit `hostnames`, delete ~/.sentient/certs,
+# restart both containers.
+# ---------------------------------------------------------------------------
+tls:
+  enabled: true                      # only flip false for localhost-only debugging
+  hostnames:                         # every hostname/IP the browser uses; landed in cert SAN
+    - "localhost"
+    # - "192.168.0.240"              # add your Pi's LAN IP
+    # - "sentient.local"             # add the mDNS / DNS name if you use one
+
+# ---------------------------------------------------------------------------
+# Session — turn detection, barge-in, inactivity
+# ---------------------------------------------------------------------------
+session:
+  inactivity_timeout_ms: 300000      # 5 min — suspend STT/TTS after this idle period
+  inactivity_check_interval_ms: 30000
+
+  # Barge-in: user interrupts assistant mid-speech
+  barge_in:
+    no_interrupt_ms: 500             # ignore audio for this long after assistant starts speaking
+    min_speech_duration_ms: 50      # sustained audio required before confirming barge-in
+
+  # Grace window (ms) between server TTS completion and the point where the
+  # client's audio buffer is assumed drained. Mic-onset within this window
+  # still sends playback.stop so the user can interrupt tail audio. WebRTC
+  # loopback buffers 200–500ms depending on browser + network; 2000 is safe.
+  # Range: 0–5000. Default 2000.
+  tts_drain_grace_ms: 2000
+
+# ---------------------------------------------------------------------------
+# STT — local-stt service (Silero VAD + Smart-Turn v3 + SenseVoice-Small)
+# See capabilityServices/STTService/CONTRACT.md for the wire protocol.
+# ---------------------------------------------------------------------------
+stt:
+  provider: local-stt
+  # WS endpoint. In Pi docker-compose this resolves via service name;
+  # for local dev override to ws://localhost:8766.
+  url: ws://sentient-stt-service:8766
+
+  # Language drives the pause-renderer template and the system-prompt
+  # language hint file (gateway/system_prompts/language-prompt-<lang>.md).
+  language: en                         # "en" | "zh"
+
+  # Client capture rate. Adapter downsamples to 16 kHz before sending to STT.
+  input_sample_rate: 48000
+
+  # Echo-suppression cooldown (ms). On connector.audio.start, the mic is
+  # hard-muted for this long so the browser's WebRTC AEC can converge on the
+  # initial TTS burst before frames start reaching STT again. Residual echo
+  # past the cooldown is now handled by the webui-edge RNNoise neural
+  # denoiser + speech-prob gate; the gateway no longer runs a PCM-domain
+  # energy gate.
+  # Range: 0–5000. Default 2500.
+  tts_echo_cooldown_ms: 2500
+
+  connect_timeout_ms: 10000
+
+# ---------------------------------------------------------------------------
+# LLM — OpenRouter (language model)
+# ---------------------------------------------------------------------------
+llm:
+  # Gateway-side LLM client. ONLY used by the emotion-tagger today (Hermes
+  # owns chat). `provider` selects api-key env (OPENROUTER_API_KEY for
+  # openrouter, OLLAMA_API_KEY for ollama-cloud) and the default base_url.
+  # ollama-cloud needs a local ollama daemon sidecar (Task 82) — until
+  # then keep openrouter as the working default.
+  provider: openrouter
+  chat_model: google/gemini-2.5-flash
+  max_tokens: 1024
+  timeout_ms: 30000
+
+  use_tool_calling: true              # must be true for cerebrum arch
+  stream: true                        # switch from non-streaming to SSE streaming
+
+# ---------------------------------------------------------------------------
+# TTS — Fish Audio (text-to-speech)
+#
+# The speak effect is a mini-pipeline: LLM text deltas → UtteranceAggregator
+# → EmotionTagger → Fish Audio. The aggregator and tagger knobs live here
+# because they are internal stages of TTS rendering, not general LLM config.
+# ---------------------------------------------------------------------------
+tts:
+  provider: fish-audio
+  voice_id: default                  # Fish Audio reference_id — gateway-wide fallback. Per-user voice from profile.json#voice.id wins.
+  model_id: s2
+  format: opus                       # End-to-end opus pivot landed Phase 5.5. Fish opus → OGG-Opus container → ogg-opus-decoder WASM in webui.
+  bitrate: 32000                     # Fish opus_bitrate (BPS at the live WS endpoint despite kbps in HTTP docs). Accepted: -1000, 24000, 32000, 48000, 64000.
+  sample_rate: 48000                 # Opus standard rate. Fish silently rejects 44100 with format=opus.
+  latency: balanced
+  chunk_length_ms: 200               # Fish Audio text buffer segment size (100–300)
+  connect_timeout_ms: 10000
+  stop_timeout_ms: 10000             # wait for Fish Audio finish event on session reset
+  idle_timeout_ms: 10000             # TTS queue idle — settle turn if no audio arrives
+
+  # Block-boundary detection on the LLM text stream feeding TTS. Splits
+  # only on paragraph breaks (\n) — Fish Audio handles sentence-level
+  # prosody on its own, and splitting mid-paragraph fragments natural tone.
+  # max_block_chars is a safety valve for run-on paragraphs with no break.
+  utterance_aggregator:
+    max_block_chars: 600             # force-flush on run-on paragraphs
+
+  # Per-block emotion-tag pass that enriches text with [pause], [happy] etc.
+  # Runs in critical path of first-byte latency, so prefer fast models.
+  # Multi-turn message shape benefits from provider prompt caching.
+  emotion_tags:
+    enabled: true
+    model: google/gemini-2.5-flash
+    timeout_ms: 2000                 # fall through to raw text on timeout
+
+# ---------------------------------------------------------------------------
+# WebUI — client-side playback tuning sent to the browser via session.ready.
+# These values are hints; the browser falls back to its own defaults if absent.
+# ---------------------------------------------------------------------------
+webui:
+  playback:
+    # Minimum playback duration guaranteed to the current cycle before a
+    # newer cycle's audio is allowed to preempt. Covers short acks like
+    # "let me check that for you" (~2s). Set to 0 to disable preempt cap.
+    min_eager_end_ms: 3000
+    # Fade-out ramp when preempting to avoid clicks. Range: 0-100.
+    preempt_fadeout_ms: 30
+
+# ---------------------------------------------------------------------------
+# Cerebrum — cognitive cycle orchestration
+# ---------------------------------------------------------------------------
+cerebrum:
+  # Provider: only "hermes" since Phase 1.9 (in-process cerebrum removed).
+  provider: hermes
+
+  cycle:
+    debounce_window_ms: 80            # coalesce events within this window before waking
+    standard_threshold: 50            # per-effect salience to fire a cycle at window close
+    immediate_wake_threshold: 100     # per-effect salience to fire cycle before window close
+    max_per_hour: 120                 # cost-control safety net; rolling 1h window
+    max_iterations: 10                # ReAct loop cap: consecutive auto-triggered cycles between external stimuli
+    max_iter_warn_ahead: 3            # cycles before the cap to inject a silent ReAct-budget warning into ConversationHistory
+    history_max_tokens: 4096          # per-cycle token budget for the conversation-history transcript layer
+
+  # Sticky-note-in-pocket surface: running + recently completed tasks the
+  # model can cross-reference via taskId.
+  task_table:
+    window: 30                        # last N completed tasks visible alongside running tasks
+
+  # OOM guard for the in-memory ConversationHistory log. Per-cycle token
+  # fitting is separate (see cycle.history_max_tokens).
+  conversation_history:
+    max_entries: 10000                # FIFO cap; evicts oldest once exceeded
+
+  salience_map_path: /app/config/salience_map.yaml
+
+  # Bypass the family-friendly persona guardrails for local / uncensored-model
+  # testing. When true, loads system_prompts/system_prompt_unlimited.md (STT +
+  # TTS mechanics only) and skips persona.md. Keep false in production.
+  unlimited_mode: false
+
+# ---------------------------------------------------------------------------
+# Hermes Agent integration — spec §5, §7.
+# Feature-flagged: set cerebrum.provider to "hermes" to use.
+# ---------------------------------------------------------------------------
+hermes:
+  # Single Hermes worker template. Every user gets a supervisord-managed
+  # child inside the `sentient-hermes` overlay container. Port is allocated
+  # at user-create time (port_base + idx, monotonic, unbounded). The gateway
+  # dials url_template with {port} substituted from the user-port-store.
+  worker:
+    container_name: sentient-hermes
+    url_template: "http://sentient-hermes:{port}"
+    port_base: 8650
+
+  defaults:
+    max_output_tokens: 512                   # per-turn token cap
+    request_timeout_ms: 60000                # Hermes call deadline
+    idempotency_window_s: 300                # Hermes de-dup window
+
+  resource_management:
+    mode: always_on                          # or "on_demand" per spec §5.11
+    max_concurrent: 3
+    idle_pause_after_ms: 900000              # 15 min
+    idle_stop_after_ms: 3600000              # 60 min
+    ram_pressure_threshold_pct: 85
+    cold_start_filler_text: "one sec..."
+
+  web_tools:
+    provider: searxng
+    searxng:
+      enabled: true
+
+  home_assistant_observer:
+    enabled: true
+    url: "ws://homeassistant.local:8123/api/websocket"
+    token_env: HA_OBSERVE_TOKEN
+    watch_domains: [binary_sensor, climate, alarm_control_panel, light, lock, cover]
+
+  mcp_host:
+    transport: unix_socket
+    # Base directory for per-user sockets. Actual paths are /run/sentient/mcp-<userId>.sock
+    socket_path: "/run/sentient/mcp.sock"
+
+  # Satellite device → default user mapping. `default_user` is matched
+  # against UserStore.displayName (case-insensitive) at consumption time.
+  # No active consumers in v1 — populate when satellite hardware ships.
+  satellite_devices: []
+
+  ambient:
+    event_log:
+      enabled: true
+      retention_count: 10000
+      persist_path: "./data/ambient-events.db"
+    dispatch:
+      steward_enabled: false                # v1.5+
+
+  tts:
+    markdown_stripping_enabled: true
+    emoji_stripping_enabled: true
+
+# ---------------------------------------------------------------------------
+# Auth — user-facing login (PIN + PASETO token)
+# ---------------------------------------------------------------------------
+auth:
+  # Lifetime of issued PASETO tokens (seconds). Rolling-refreshed on each auth-check.
+  token_ttl_seconds: 604800       # 7 days
+  # How long the server waits for the WS client to send its auth message before closing.
+  ws_auth_timeout_ms: 5000
+  # argon2id tunables — raise if Pi-5 has CPU to spare.
+  argon2_memory_kb: 65536
+  argon2_iterations: 3
+  argon2_parallelism: 1
+
+# ---------------------------------------------------------------------------
+# Apply — settings-change orchestration (docker restart + health check)
+# ---------------------------------------------------------------------------
+apply:
+  docker_restart_timeout_ms: 30000   # max wait for `docker restart` to return
+  health_check_timeout_ms: 30000     # max wait for Hermes /health 200 after restart
+  health_poll_interval_ms: 1000      # poll cadence during health-checking state
+  # Phase D personality/SOUL restart orchestrator. Used after a SOUL.md or
+  # personality-structure edit triggers a per-user supervisord restart; the
+  # orchestrator waits up to this long for the WS adapter to come back online.
+  profile_restart_timeout_ms: 30000      # 5000–60000
+  profile_restart_poll_interval_ms: 250  # 50–1000
+  dispatch_ping_timeout_ms: 8000         # max wait for ping→pong after pool upsert (user creation); 1000–30000
+
+# ---------------------------------------------------------------------------
+# Providers — external catalog endpoints + cache TTLs
+# ---------------------------------------------------------------------------
+providers:
+  openrouter_cache_ttl_ms: 3600000
+  ollama_cloud_base_url: https://ollama.com/v1
+  ollama_cache_ttl_ms: 3600000
+  fish_cache_ttl_ms: 600000       # Fish rate limits undocumented — keep short.
+  external_fetch_timeout_ms: 5000
+
+# ---------------------------------------------------------------------------
+# Sessions — past-sessions feature: pagination caps, search bounds, title
+# length, override-store location, source tag, HTTP + switch-teardown
+# timeouts. All keys are operator-tunable; the webui reads search_debounce_ms
+# from session.ready and applies it to the search input.
+# ---------------------------------------------------------------------------
+sessions:
+  list_page_size: 20         # default page size for sessions.list (1-100)
+  search_max_results: 20     # cap on FTS results (1-50)
+  search_min_chars: 2        # debounce floor; queries shorter dropped (0-10)
+  search_debounce_ms: 300    # client-side debounce — surfaced for tuning (50-1000)
+  title_max_chars: 200       # rename input bound (10-500)
+  title_override_dir: ~/.sentient/gateway/session-titles  # legacy per-profile JSON store; migrator moves to user_data_root
+  user_data_root: ~/.sentient/gateway/users  # per-user, per-category data root: <user_data_root>/<userId>/<category>/<file>
+  source_tag: sentient-user  # adapter writes this on every new chain
+  hermes_http_timeout_ms: 5000           # per-request timeout for Hermes /api/sessions/* (1000-30000)
+  switch_teardown_timeout_ms: 3000       # max wait for cycle-cancel before switch proceeds (500-10000)
+
+# ---------------------------------------------------------------------------
+# Companions — on-demand version resolution for co-deployed services.
+#
+# The gateway fetches hermes and STT versions lazily (on first API call that
+# needs them) and caches the result for version_cache_ttl_ms. Each source
+# degrades to "unknown" independently on error; the other keeps resolving.
+# ---------------------------------------------------------------------------
+companions:
+  stt_health_url: http://sentient-stt-service:8767/health   # STT /health endpoint; returns {"version":"..."}
+  hermes_version_path: /data/supervisor/.versions/hermes    # file hermes writes on boot into the shared volume
+  version_cache_ttl_ms: 300000    # cache resolved versions for 5 min; 10000–3600000
+  version_fetch_timeout_ms: 3000  # per-source HTTP timeout for STT health fetch; 500–30000
+
+# ---------------------------------------------------------------------------
+# MCP catalog — inventory of available MCP servers, ops-managed.
+# Per-user profiles reference these by name in profile.tools.enabled[].
+# Add a new MCP by editing this section (no code change required).
+#
+# Variable substitution in command/args/url/env values:
+#   {{userId}}   real auth-derived user id (e.g. u_6ae26974); used as
+#                the basename for gateway-hosted MCP unix sockets and
+#                anywhere a per-user identifier must land in catalog values
+#
+# Transports:
+#   transport: http   → HTTP MCP (url required)
+#   transport: stdio  → STDIO MCP (command + args, optional env)
+# ---------------------------------------------------------------------------
+mcp_catalog:
+  home_assistant:
+    transport: http
+    url: http://sentient-ha-mcp:8086/mcp
+    timeout: 30
+    connect_timeout: 5
+    description: Home Assistant smart-home control via ha-mcp sidecar.
+    # Curated tool surface — essentials + calendar. ha-mcp ships ~84
+    # tools by default; loading all of them adds ~12k tokens of definitions
+    # to every cycle's prompt prefix and pushes the total tool count past
+    # the 128-tool cap that OpenAI/Anthropic enforce on tools[]. This list
+    # is the daily voice-assistant essentials. Add a second tier
+    # (automations/scripts/helpers/blueprints) when voice-driven authoring
+    # becomes a real workflow; admin tools (restart, backup, hacs, addon
+    # mgmt) stay off until needed.
+    tools:
+      include:
+        # query / state
+        - ha_get_overview
+        - ha_get_state
+        - ha_search_entities
+        - ha_get_history
+        - ha_eval_template
+        - ha_get_operation_status
+        # spatial
+        - ha_list_floors_areas
+        - ha_get_zone
+        - ha_get_camera_image
+        # action
+        - ha_call_service
+        - ha_bulk_control
+        # todos / shopping list
+        - ha_get_todo
+        - ha_set_todo_item
+        - ha_remove_todo_item
+        # calendar
+        - ha_config_get_calendar_events
+        - ha_config_set_calendar_event
+        - ha_config_remove_calendar_event
+
+  # Gateway-hosted MCP — exposes per-user tools (identify_user, channel
+  # control, audio control). One Unix socket per Hermes slot.
+  gateway:
+    transport: stdio
+    command: nc
+    args: ["-U", "/run/sentient/mcp-{{userId}}.sock"]
+    description: Sentient gateway tools (identify, audio, channel).
+    tools:
+      include:
+        - identify_user
+        - pause_audio
+        - resume_audio
+        - update_user_settings
+
+  # Music Assistant — dockerized HTTP MCP at gateway/mcp/ma-mcp/.
+  # Built from the davidpadbury/music-assistant-mcp fork (the upstream
+  # devjourney 0.3.0 wraps MA's WS in a one-shot lifespan with no
+  # reconnect; the fork adds a `with_reconnect` retry decorator + lazy
+  # client reconnect on every tool call). Connects to the MA server at
+  # MA_SERVER_URL (LAN host); container joins sentient-external because
+  # the upstream uses raw WS that tinyproxy CONNECT cannot proxy.
+  music_assistant:
+    transport: http
+    url: http://sentient-ma-mcp:8668/mcp
+    timeout: 30
+    connect_timeout: 5
+    description: Music Assistant playback control.
+
+  # fetch-mcp — dockerized HTTP MCP at gateway/mcp/fetch-mcp/.
+  # Outbound HTTP fetches route through egress-proxy.
+  fetch:
+    transport: http
+    url: http://sentient-fetch-mcp:8088/mcp
+    timeout: 30
+    connect_timeout: 5
+    description: Fetch URL contents as markdown.
+
+  # SearXNG metasearch — dockerized HTTP MCP at gateway/mcp/searxng-mcp/.
+  # Adapter forwards queries to the sibling searxng container which
+  # fans out across configured upstream engines via egress-proxy.
+  searxng:
+    transport: http
+    url: http://sentient-searxng-mcp:8087/mcp
+    timeout: 30
+    connect_timeout: 5
+    description: SearXNG metasearch web search.
+    # Curated tool surface — searxng-mcp-server ships 5 tools
+    # (search_web, search_images, search_videos, search_news, fetch_url).
+    # Only search_web matches our single-web-search-tool design.
+    # fetch_url is suppressed because our dedicated fetch-mcp container
+    # owns URL fetching (cleaner separation, smaller per-tool prompt).
+    tools:
+      include:
+        - search_web
+
+# ─────────────────────────────────────────────────────────────────────────
+# managed_services
+# ─────────────────────────────────────────────────────────────────────────
+# Policy layer for the system service orchestrator. Each entry binds a
+# baked template under gateway/templates/services/<name>.yaml to a strict
+# policy: image allowlist, networks, secret bindings, healthcheck. The
+# orchestrator refuses to operate on any container whose runtime spec
+# violates these constraints.
+managed_services:
+  egress-proxy:
+    template: egress-proxy.yaml
+    allowed_images: ["kalaksi/tinyproxy:latest"]
+    networks: ["sentient-internal", "sentient-external"]
+    healthcheck:
+      tcp: "sentient-egress-proxy:3128"
+      timeout_ms: 30000
+    depends_on: []
+    optional: false
+
+  sentient-hermes:
+    template: sentient-hermes.yaml
+    allowed_images: ["sentient/hermes:local"]
+    networks: ["sentient-internal", "sentient-external"]
+    # Hermes runs supervisord with no TCP-bound services until per-user
+    # programs are added at user-creation time. The container itself can
+    # only be probed via supervisord's unix socket, which is not exposed
+    # to the gateway. Use noop and rely on docker's restart policy +
+    # downstream cycle dispatch failures to detect crashes.
+    healthcheck:
+      noop: true
+    depends_on: ["egress-proxy"]
+    optional: false
+
+  stt-service:
+    template: stt-service.yaml
+    allowed_images: ["sentient/stt-service:local"]
+    networks: ["sentient-internal"]
+    healthcheck:
+      url: "http://sentient-stt-service:8767/health"
+      timeout_ms: 60000
+    depends_on: []
+    optional: false
+
+  ha-mcp:
+    template: ha-mcp.yaml
+    allowed_images: ["ghcr.io/homeassistant-ai/ha-mcp:stable"]
+    # sentient-external joins so the operator's HA URL (LAN hostname or
+    # LAN IP) is reachable; internal-only blocks the bridge to host/LAN.
+    # Mirrors ma-mcp's two-network shape.
+    networks: ["sentient-internal", "sentient-external"]
+    secrets:
+      HOMEASSISTANT_URL: home_assistant.url
+      HOMEASSISTANT_TOKEN: home_assistant.mcp_server_token
+      # HA_LOCAL_HOST is derived from home_assistant.url via the `:host`
+      # suffix — gateway parses the hostname out of the URL the operator
+      # entered. Together with HA_LOCAL_IP they render the container's
+      # extra_hosts line, so home.lan (or whatever hostname the operator
+      # chose) resolves inside the docker network.
+      HA_LOCAL_HOST: home_assistant.url:host
+      HA_LOCAL_IP: home_assistant.local_ip
+    healthcheck:
+      tcp: "sentient-ha-mcp:8086"
+      timeout_ms: 30000
+    depends_on: ["egress-proxy"]
+    optional: true
+
+  ma-mcp:
+    template: ma-mcp.yaml
+    allowed_images: ["sentient/ma-mcp:local"]
+    networks: ["sentient-internal", "sentient-external"]
+    secrets:
+      MUSIC_ASSISTANT_URL: music_assistant.url
+      MUSIC_ASSISTANT_TOKEN: music_assistant.token
+      # MASS_LOCAL_HOST is derived from music_assistant.url via the `:host`
+      # suffix — gateway parses the hostname out of the URL the operator
+      # entered. Together with MASS_LOCAL_IP they render the container's
+      # extra_hosts line, so mass.local (or whatever hostname the operator
+      # chose) resolves inside the docker network.
+      MASS_LOCAL_HOST: music_assistant.url:host
+      MASS_LOCAL_IP: music_assistant.local_ip
+    healthcheck:
+      tcp: "sentient-ma-mcp:8668"
+      timeout_ms: 30000
+    depends_on: []
+    optional: true
+
+  fetch-mcp:
+    template: fetch-mcp.yaml
+    allowed_images: ["sentient/fetch-mcp:local"]
+    networks: ["sentient-internal"]
+    healthcheck:
+      tcp: "sentient-fetch-mcp:8088"
+      timeout_ms: 30000
+    depends_on: ["egress-proxy"]
+    optional: false
+
+  searxng:
+    template: searxng.yaml
+    allowed_images: ["searxng/searxng:latest"]
+    networks: ["sentient-internal"]
+    secrets:
+      SEARXNG_SECRET: internal.searxng_secret
+    healthcheck:
+      tcp: "sentient-searxng:8080"
+      timeout_ms: 30000
+    depends_on: ["egress-proxy"]
+    optional: false
+
+  searxng-mcp:
+    template: searxng-mcp.yaml
+    allowed_images: ["sentient/searxng-mcp:local"]
+    networks: ["sentient-internal"]
+    healthcheck:
+      tcp: "sentient-searxng-mcp:8087"
+      timeout_ms: 30000
+    depends_on: ["searxng"]
+    optional: false

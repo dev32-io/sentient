@@ -1,0 +1,8 @@
+[tool.pytest.ini_options]
+addopts = "-v --tb=short"
+markers = [
+    "group_a: agent-only automated cases",
+    "group_b: agent-runs + human-confirms-physical",
+    "group_c: human-driven physical action",
+    "live: requires real cube tethered via USB",
+]

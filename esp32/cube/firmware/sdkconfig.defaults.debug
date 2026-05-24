@@ -1,0 +1,49 @@
+# Sentient cube — DEBUG profile.
+# Selected when SDKCONFIG_DEFAULTS includes this file (default for flash.sh
+# without --profile prod).
+#
+# Wide-surface verbosity + remote debug surface. NOT FOR PROD.
+
+# Devtool verbs: destructive (audio play/record/test_tone) + LVGL inspector.
+# Names preserved from the retired agent_console Kconfig; symbols now live in
+# main/Kconfig.projbuild after Task 27 deleted the agent_console component.
+CONFIG_AGENT_CONSOLE_DESTRUCTIVE=y
+CONFIG_AGENT_CONSOLE_LAYOUT_INSPECTOR=y
+
+# LVGL widget metadata for ui.dump_tree readability (agent introspection).
+CONFIG_LV_USE_OBJ_NAME=y
+CONFIG_LV_USE_OBJ_ID=y
+CONFIG_LV_USE_OBJ_ID_BUILTIN=y
+
+# Bake the 28pt Montserrat font for the toggle screen's hint + transcript
+# labels (Phase 6a smoke aid — 14pt is unreadable at arm's length).
+CONFIG_LV_FONT_MONTSERRAT_28=y
+
+# Log level: ESP-IDF defaults (INFO). DEBUG-level WiFi/lwIP internals at
+# boot overflowed lwIP's tiT stack (Phase 5b smoke incident, 2026-05-13).
+# To get DEBUG-level Sentient logs without compiling in ESP-IDF internals,
+# call esp_log_level_set("sentient.cube.*", ESP_LOG_DEBUG) in app_main.
+# Follow-up: track this in Phase 5+ as a per-tag dynamic-level helper.
+
+# Debug build flags — keep stack traces + symbols.
+CONFIG_COMPILER_OPTIMIZATION_DEBUG=y
+
+# Thermal mitigations for long dev sessions: lower AMOLED brightness + honor
+# 60s idle dim even while USB-tethered. See Kconfig help for CUBE_DEV_*.
+CONFIG_CUBE_DEV_AGGRESSIVE_POWER_SAVE=y
+CONFIG_CUBE_DEV_LOW_BRIGHTNESS_PERCENT=30
+
+# esp32-devtool companion: HTTP server on :8081 (debug only). UDP log relay
+# is explicitly OFF in dev — the vprintf hook allocated heap per log line and
+# starved lwIP's pbuf pool during chunked HTTP sends (T33), stalling
+# /screenshot + /audio/record. USB-CDC ring buffer covers diagnostics.
+# Operators re-enable with menuconfig when debugging gateway log ingestion.
+CONFIG_ESP32_DEVTOOL_COMPANION_ENABLE=y
+CONFIG_ESP32_DEVTOOL_LOG_RELAY_ENABLE=n
+
+# Bump esp_timer task stack: PowerSaveTimer's 60s-idle callback runs in the
+# esp_timer task and walks the LcdDisplay/backlight chain (set_brightness →
+# co5300 IO write). With the Phase-6a transcript-label render path + devtool
+# companion now present, default 3584 bytes overflows when the timer fires.
+# Bumping to 8192 leaves comfortable headroom for the next surface addition.
+CONFIG_ESP_TIMER_TASK_STACK_SIZE=8192

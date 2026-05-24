@@ -1,0 +1,7 @@
+image: sentient/searxng-mcp:local
+container_name: sentient-searxng-mcp
+networks: [sentient-internal]
+env:
+  SEARXNG_URL: http://sentient-searxng:8080
+mem_limit_bytes: 134217728    # 128 MiB — thin HTTP adapter
+cpus: 0.25

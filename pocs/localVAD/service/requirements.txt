@@ -1,0 +1,24 @@
+# Silero VAD streaming turn detector. Pulls torch + torchaudio transitively.
+silero-vad>=5.1,<7
+
+# ONNX runtime for Smart-Turn v3 (and optional Silero ONNX backend).
+onnxruntime>=1.18
+
+# Smart-Turn v3 uses WhisperFeatureExtractor from transformers for mel feats.
+# Pin to a version known to work with torch 2.x aarch64 wheels as of Apr 2026.
+transformers>=4.48,<5
+
+# WebSocket server (binary + text frames, async, minimal footprint).
+websockets>=13,<14
+
+# Numeric + audio I/O.
+numpy>=1.26,<2.2
+soundfile>=0.12
+
+# In-process CPU + RSS sampling.
+psutil>=7
+
+# HuggingFace download helper used at build time by scripts/download_model.py.
+# `transformers` already depends on huggingface_hub, but we list it explicitly
+# to make the build step self-documenting.
+huggingface_hub>=0.24

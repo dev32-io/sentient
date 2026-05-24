@@ -1,0 +1,27 @@
+pre-commit:
+  parallel: true
+  commands:
+    secrets-guard:
+      run: |
+        BLOCKED=$(git diff --cached --name-only \
+          | grep -iE '\.env($|\..*)$|\.env\.local$|(^|/)secrets?\.|credentials|\.pem$|\.key$|\.p12$|\.pfx$|\.jks$|(^|/)keys\.yaml$|(^|/)state\.yaml$' \
+          | grep -vE '\.env\.example$|\.(ts|tsx)$|gateway/templates/' \
+          || true)
+        if [ -n "$BLOCKED" ]; then
+          echo "🚨 BLOCKED: Secret files staged for commit:" >&2
+          echo "$BLOCKED" >&2
+          echo "Remove with: git reset HEAD <file>" >&2
+          exit 1
+        fi
+    secrets-content-scan:
+      run: scripts/secrets-content-scan.sh
+    lint:
+      glob: "*.{ts,tsx}"
+      run: scripts/quality-gate.sh lint
+    typecheck:
+      run: scripts/quality-gate.sh typecheck
+
+pre-push:
+  commands:
+    quality-gate:
+      run: scripts/quality-gate.sh all

@@ -1,0 +1,46 @@
+# SearXNG settings — operator-tunable.
+#
+# Loaded by the searxng container at /etc/searxng/settings.yml.
+# secret_key is resolved from gateway-managed internal secrets at apply time
+# (see gateway/templates/services/searxng.yaml — the ${SEARXNG_SECRET}
+# binding is populated from internal-secrets.json schema v2).
+use_default_settings: true
+
+server:
+  base_url: "http://searxng:8080/"
+  secret_key: "${SEARXNG_SECRET}"
+  limiter: false   # internal-only network, no inbound public surface
+
+search:
+  formats:
+    - html
+    - json    # required for the searxng-mcp adapter
+
+outgoing:
+  # Route all upstream engine traffic through the egress proxy so the searxng
+  # container (sentient-internal network only) can reach external hosts.
+  # SearXNG's httpx client ignores HTTP_PROXY / HTTPS_PROXY env vars; the
+  # proxy must be declared here.
+  request_timeout: 6.0
+  max_request_timeout: 15.0
+  pool_connections: 100
+  pool_maxsize: 20
+  enable_http2: false   # tinyproxy does not support HTTP/2 CONNECT tunnelling
+  proxies:
+    all://:
+      - http://sentient-egress-proxy:3128
+
+engines:
+  - name: duckduckgo
+  - name: bing
+  - name: startpage
+  - name: qwant
+  - name: wikipedia
+  - name: mojeek
+  - name: github
+  - name: arxiv
+  - name: reddit
+  - name: stackoverflow
+
+ui:
+  query_in_title: false

@@ -1,0 +1,8 @@
+image: kalaksi/tinyproxy:latest
+container_name: sentient-egress-proxy
+networks: [sentient-internal, sentient-external]
+volumes:
+  - ${HOST_CONFIG_DIR}/egress-proxy/tinyproxy.conf:/etc/tinyproxy/tinyproxy.conf:ro
+  - ${HOST_CONFIG_DIR}/egress-proxy/filter.txt:/etc/tinyproxy/filter.txt:ro
+mem_limit_bytes: 67108864
+cpus: 0.25

@@ -1,0 +1,213 @@
+/* ─── App Dialog (global modal primitive) ────────────────────────────── */
+
+.app-dialog__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-lg);
+  background: color-mix(in oklab, var(--color-ink) 35%, transparent);
+  backdrop-filter: saturate(1.1) blur(6px);
+  -webkit-backdrop-filter: saturate(1.1) blur(6px);
+  animation: app-dialog-scrim-in 160ms ease-out;
+}
+@keyframes app-dialog-scrim-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.app-dialog {
+  width: 100%;
+  background: var(--color-paper);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-xl);
+  box-shadow:
+    0 1px 0 rgba(0, 0, 0, 0.25),
+    0 24px 64px -16px rgba(0, 0, 0, 0.55),
+    0 8px 24px -10px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - var(--space-2xl));
+  overflow: hidden;
+  animation: app-dialog-in 220ms cubic-bezier(.2, .8, .2, 1);
+}
+@keyframes app-dialog-in {
+  from { opacity: 0; transform: translateY(8px) scale(.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.app-dialog__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-lg) var(--space-xl) var(--space-md);
+}
+.app-dialog__title {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: var(--font-size-lg);
+  letter-spacing: -0.01em;
+  color: var(--color-ink);
+  margin: 0;
+}
+.app-dialog__close {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  border: 0;
+  background: transparent;
+  color: var(--color-ink-3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background var(--motion-fast), color var(--motion-fast);
+}
+.app-dialog__close:hover {
+  background: var(--color-bg-elev);
+  color: var(--color-ink);
+}
+
+.app-dialog__body {
+  padding: 0 var(--space-xl) var(--space-md);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+.app-dialog__desc {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  color: var(--color-ink-2);
+}
+.app-dialog__hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-ink-3);
+}
+
+.app-dialog__foot {
+  padding: var(--space-md) var(--space-xl) var(--space-lg);
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  border-top: 1px solid var(--color-line-soft);
+  background: color-mix(in oklab, var(--color-bg-sunk) 35%, var(--color-paper));
+}
+
+/* ─── Dialog input field ─── */
+.app-dialog__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+.app-dialog__label {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.app-dialog__input {
+  width: 100%;
+  min-height: 44px;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-bg-elev);
+  border: 1px solid var(--color-line-soft);
+  border-radius: var(--radius-md);
+  color: var(--color-ink);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-base);
+  outline: none;
+  transition: border-color var(--motion-fast), box-shadow var(--motion-fast), background var(--motion-fast);
+  box-sizing: border-box;
+}
+.app-dialog__input:focus {
+  background: var(--color-paper);
+  border-color: color-mix(in oklab, var(--color-accent) 60%, var(--color-line));
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-accent) 18%, transparent);
+}
+
+/* ─── Dialog buttons ─── */
+.app-dialog__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 var(--space-lg);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--motion-fast), color var(--motion-fast), border-color var(--motion-fast);
+}
+.app-dialog__btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.app-dialog__btn--ghost {
+  background: transparent;
+  color: var(--color-ink-2);
+  border-color: var(--color-line);
+}
+.app-dialog__btn--ghost:hover:not(:disabled) {
+  background: var(--color-bg-elev);
+  color: var(--color-ink);
+}
+.app-dialog__btn--primary {
+  background: var(--color-accent);
+  color: var(--color-bg);
+}
+.app-dialog__btn--primary:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--color-accent) 88%, white);
+}
+.app-dialog__btn--danger {
+  background: var(--color-stop);
+  color: #fff;
+}
+.app-dialog__btn--danger:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--color-stop) 88%, white);
+}
+
+@media (max-width: 620px) {
+  .app-dialog {
+    max-height: calc(100dvh - var(--space-md));
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    width: 100%;
+  }
+  .app-dialog__scrim {
+    padding: 0;
+    align-items: flex-end;
+  }
+  .app-dialog__head {
+    padding: var(--space-md) var(--space-lg) var(--space-sm);
+  }
+  .app-dialog__body {
+    padding: 0 var(--space-lg) var(--space-md);
+  }
+  .app-dialog__foot {
+    padding: var(--space-md) var(--space-lg)
+      calc(var(--space-md) + env(safe-area-inset-bottom, 0px));
+    /* Stack buttons full-width — destructive/primary on top per iOS HIG. */
+    flex-direction: column-reverse;
+  }
+  .app-dialog__btn {
+    width: 100%;
+    min-height: 48px;
+  }
+  /* iOS-style sheet grabber. */
+  .app-dialog::before {
+    content: "";
+    display: block;
+    width: 36px;
+    height: 4px;
+    margin: 8px auto 0;
+    border-radius: 999px;
+    background: var(--color-line);
+  }
+}

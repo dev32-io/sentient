@@ -1,0 +1,21 @@
+# MCP tool-call policy rules — evaluated before every tools/call dispatch.
+# First matching rule wins. If no rule matches, the call is allowed.
+
+rules:
+  - name: no_identify_user_outside_voice
+    tool: identify_user
+    condition: 'session.channel != "voice"'
+    action: deny
+    reason: "Identity changes via voice phrase only"
+
+  - name: no_guest_identify
+    tool: identify_user
+    condition: 'role == "guest"'
+    action: deny
+    reason: "Guest sessions cannot rebind"
+
+  - name: child_cannot_pause_audio
+    tool: pause_audio
+    condition: 'role == "child"'
+    action: deny
+    reason: "Audio control restricted for child role"

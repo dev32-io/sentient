@@ -1,0 +1,343 @@
+/* account-wizard.css — scoped styles for AccountWizard and its steps */
+
+/* ─── Outer shell ─── */
+
+/* Nested variant — used inside WizardShell's boxed layout. Suppresses its
+   own background/full-height so it inherits the parent container's style. */
+.account-wizard--nested {
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+  width: 100%;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+}
+.account-wizard--nested .account-wizard__step {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Modal variant — rendered inside Modal's .modal-b; no own background or
+   full-page chrome. Modal IS the surrounding box. */
+.account-wizard--modal {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+.account-wizard--modal .account-wizard__step {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* When AccountWizard fills the modal body, let the body grow to fill the
+   modal's available height so the sticky footer binds correctly. */
+.modal-b:has(> .account-wizard--modal) {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0; /* footer carries its own bottom padding */
+}
+.modal-b > .account-wizard--modal {
+  flex: 1 1 auto;
+}
+
+/* Stepper-only bar — sits above step content in both modal + nested modes.
+   No h1 — the outer container (Modal title bar / WizardShell header) owns it. */
+.account-wizard__stepper-bar {
+  display: flex;
+  justify-content: center;
+  padding-bottom: var(--space-lg);
+  border-bottom: 1px solid var(--color-line-soft);
+  margin-bottom: var(--space-lg);
+}
+
+.account-wizard__step {
+  width: 100%;
+  max-width: 640px;
+}
+
+/* ─── Generic step container ─── */
+
+.aw-step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.aw-step__title {
+  font-family: var(--font-display);
+  font-size: var(--font-size-lg);
+  margin: 0;
+}
+
+.aw-step-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-md);
+}
+.aw-step__sub {
+  font-size: var(--font-size-sm);
+  color: var(--color-ink-3);
+  margin: 0;
+  line-height: var(--line-height-normal);
+}
+
+/* ─── Flush field container (replaces Card wrappers in steps) ─── */
+
+.aw-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* Optional section label above a field group (e.g. "Account summary") */
+.aw-fields__label {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-ink-2);
+  margin: 0 0 var(--space-md);
+}
+
+/* ─── Footer nav ─── */
+
+.aw-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-lg) 0 var(--space-2xl);
+  border-top: 1px solid var(--color-line-soft);
+  background: var(--color-paper);
+  margin-top: auto;
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+}
+
+/* Pushes primary actions to the right when a Cancel button is present on left */
+.aw-footer__spacer {
+  flex: 1 1 auto;
+}
+
+/* Override the unscoped .btn primitive for the wizard footer so the
+   Next/Back buttons match the setup-wizard pill style (settings .btn
+   styles are scoped to .settings-v2 and don't apply here). */
+.aw-footer .btn {
+  height: auto;
+  padding: var(--space-md) var(--space-xl);
+  border-radius: var(--radius-pill);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  border: 0;
+  cursor: pointer;
+  transition: opacity var(--motion-fast), transform var(--motion-fast), background var(--motion-fast);
+}
+.aw-footer .btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+.aw-footer .btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.aw-footer .btn.b-primary {
+  background: var(--color-ink);
+  color: var(--color-paper);
+}
+.aw-footer .btn.b-primary:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--color-ink) 85%, var(--color-accent));
+}
+.aw-footer .btn.b-secondary {
+  background: transparent;
+  color: var(--color-ink-2);
+  border: 1px solid var(--color-line);
+}
+.aw-footer .btn.b-secondary:hover:not(:disabled) {
+  background: var(--color-bg-elev);
+  color: var(--color-ink);
+}
+.aw-footer .btn.b-ghost {
+  background: transparent;
+  color: var(--color-ink-2);
+}
+.aw-footer .btn.b-ghost:hover:not(:disabled) {
+  color: var(--color-ink);
+}
+
+/* ─── Form primitives ─── */
+
+.aw-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-md);
+}
+
+.aw-field-group:last-child {
+  margin-bottom: 0;
+}
+
+.aw-label {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-ink-2);
+}
+
+.aw-label-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-ink-3);
+  margin-left: var(--space-xs);
+}
+
+.aw-input {
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elev);
+  color: var(--color-ink);
+  font-size: var(--font-size-base);
+  box-sizing: border-box;
+}
+
+.aw-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-accent) 20%, transparent);
+}
+
+.aw-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.aw-field-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-ink-3);
+}
+
+/* ─── Toggle row ─── */
+
+.aw-toggle-row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.aw-toggle-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ─── Radio group ─── */
+
+.aw-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.aw-radio-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.aw-radio-label input[type="radio"] {
+  accent-color: var(--color-accent);
+}
+
+/* ─── Review step ─── */
+
+.aw-review-dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-xs) var(--space-md);
+  margin: 0;
+}
+
+.aw-review-dl dt {
+  font-size: var(--font-size-sm);
+  color: var(--color-ink-3);
+  font-weight: 500;
+}
+
+.aw-review-dl dd {
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
+  margin: 0;
+}
+
+.aw-code {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.9em;
+  color: var(--color-amber);
+}
+
+.aw-muted {
+  color: var(--color-ink-4);
+}
+
+/* ─── Error banner ─── */
+
+.aw-error-banner {
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  background: color-mix(in oklab, var(--color-stop) 15%, transparent);
+  border: 1px solid color-mix(in oklab, var(--color-stop) 40%, transparent);
+  color: var(--color-ink);
+  font-size: var(--font-size-sm);
+}
+
+/* ─── Spinner row ─── */
+
+.aw-spinner-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--color-ink-3);
+  font-size: var(--font-size-sm);
+}
+
+.aw-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--color-line);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: aw-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes aw-spin {
+  to { transform: rotate(360deg); }
+}
+
+.aw-spinner-label {
+  color: var(--color-ink-2);
+}
+
+/* Cancel is now rendered as a ghost Btn inside .aw-footer on the left.
+   The old .aw-cancel-link stray-link pattern has been removed. */
+
+/* ─── Link ─── */
+
+.aw-link {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.aw-link:hover {
+  text-decoration: underline;
+}

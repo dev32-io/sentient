@@ -1,0 +1,24 @@
+# Cross-Cutting Risks & Mitigations
+
+## Identified Risks
+
+| # | Risk | Severity | Likelihood | Decision Areas | Mitigation | Status |
+|---|------|----------|------------|----------------|------------|--------|
+| 1 | RPi5 8GB RAM insufficient for 5 concurrent sessions | High | Very Low | pipeline-architecture | Measured: ~35-45 MB for 5 sessions. 7.8 GB headroom. Non-issue. | Mitigated |
+| 2 | Cloud API latency spikes degrade voice UX | High | Medium | provider-integration, pipeline-architecture | Streaming overlap (50-70% perceived latency reduction), config-ordered provider failover with circuit breakers, OpenRouter built-in failover | Open |
+| 3 | Prompt injection via STT-transcribed adversarial audio | High | Low | security-architecture, tool-routing | 6-layer defense: sanitization + heuristic filter + delimiter framing + privilege reduction (scoped tools + impact tiers) + canary token + output filtering. STT acts as partial natural sanitizer (hard to speak code). | Open |
+| 4 | Cross-user memory leakage through LLM context | Medium | Low | per-user-memory, security-architecture | Strict session isolation: path-validated memory loading (regex allowlist + resolve for symlink attacks), per-session context dicts, context assembly assertions, extraction prompt privacy guards | Open |
+| 5 | Single point of failure — one RPi5, no redundancy | Medium | Medium | pipeline-architecture | Graceful degradation per-component (STT down = text-only, TTS down = text response). Session state survives reconnect (5 min TTL). Memory files persist to disk. | Open |
+| 6 | Prompt injection via natural-language social engineering | Medium | Low-Medium | security-architecture, tool-routing | Layered defense: heuristic filter flags (doesn't hard-reject) + delimiter framing + privilege reduction (tools scoped, impact tiers enforced) + canary detection + output filtering | Open |
+| 7 | API key exposure on physically accessible Pi | Medium | Low | security-architecture | age-encrypted config, decrypted only to memory (never temp files), key file mode 0400 root-owned, SIGHUP rotation without restart | Open |
+| 8 | Child accessing admin-tier tools | Low-Medium | Medium | security-architecture, tool-routing | Role-based gating via PASETO `role` claim (adult/child), enforced at tool execution. Child blocked from `admin` tier entirely. | Open |
+| 9 | Tailscale free tier insufficient for 5 family members | Low | Medium | security-architecture | Use node sharing (each member on own free tailnet, Pi shared to all) or Personal Plus plan ($6/mo). Document trade-offs. | Open |
+| 10 | Audit log loss on sudden Pi power failure | Low | Low | security-architecture | JSONL append-only files (crash-safe per-line), RotatingFileHandler. Avoid SQLite WAL corruption risk. | Open |
+| 11 | Memory files grow unbounded over months | Medium | High | per-user-memory | Tiered memory with hard caps: Tier 1 (profile) <= 500 tok, Tier 2 (active) <= 500 tok, always in context. Tier 3 archive on disk. Weekly summarization job condenses + archives stale facts. | Mitigated |
+| 12 | Context window degradation (context rot) | Medium | Medium | per-user-memory, pipeline-architecture | Keep total utilization under 80% of context window. Budget: persona (500-1000) + memory (500-1500) + history (2000-6000) + response headroom (1000-2000). Voice turns are naturally shorter than text. | Open |
+| 13 | Fish Audio TTFB unknown (not officially published) | Medium | Medium | provider-integration | Need PoC to measure actual latency in `low` mode. Cartesia fallback (40ms TTFB) available if unacceptable. | Open |
+| 14 | Cartesia lacks Opus output format | Low | Certain | provider-integration | Requires Opus transcoding on RPi5 if used as fallback. Need PoC to measure transcoding CPU/latency. | Open |
+| 15 | LLM classifier hallucinating tool names | Low | Low-Medium | tool-routing | Agent loop validates tool names against registry before execution. Unknown tools return error to LLM. Max 5 iterations prevents infinite retry. | Open |
+| 16 | Barge-in during tool execution loses tool results | Medium | Medium | pipeline-architecture, tool-routing | Tool results marked as UninterruptibleFrame — survive queue drain on barge-in. Agent loop state saved for reference in next turn. | Open |
+| 17 | WebSocket connection silently dies (NAT timeout, WiFi roaming) | Low | Medium | client-gateway-protocol | Application-level ping/pong every 30s. 60s no-ping = close connection, keep session alive 5 min. Client reconnects with exponential backoff + jitter. | Open |
+| 18 | Memory extraction produces noise (trivial/transient facts) | Low-Medium | Medium | per-user-memory | Category-scoped extraction prompt, reconciliation dedup (ADD/UPDATE/DELETE/NONE), minimum information threshold, post-write validation. | Open |

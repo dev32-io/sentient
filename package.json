@@ -1,0 +1,25 @@
+{
+  "name": "sentient",
+  "version": "0.2.0",
+  "private": true,
+  "workspaces": [
+    "gateway",
+    "gateway/webui",
+    "shared/*"
+  ],
+  "scripts": {
+    "dev": "bun run --filter './gateway' dev & bun run --filter './web' dev",
+    "test": "bun run --filter '*' test",
+    "test:unit": "bun run --filter '*' test:unit",
+    "test:int": "bun run --filter '*' test:int",
+    "lint": "bunx biome check .",
+    "lint:fix": "bunx biome check --write .",
+    "typecheck": "bun run --filter '*' typecheck",
+    "ci": "bun run lint && bun run typecheck && bun run test:unit"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.0",
+    "lefthook": "^1.10.0",
+    "typescript": "^5.8.0"
+  }
+}

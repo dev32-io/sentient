@@ -1,0 +1,12 @@
+{
+  "name": "sdk-gateway-contract-state-table",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^3.1.1",
+    "typescript": "^5.8.3"
+  }
+}

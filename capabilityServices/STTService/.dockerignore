@@ -1,0 +1,14 @@
+# Keep the Docker build context small. Only the files explicitly
+# COPY'd in the Dockerfile need to be sent to the build daemon.
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.gitignore
+*.md
+logs/
+recordings/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/

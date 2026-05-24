@@ -1,0 +1,262 @@
+import type { Server, ServerWebSocket } from "bun";
+import type { AdminDeps } from "./api/handlers/admin.ts";
+import { createAdminHandler } from "./api/handlers/admin.ts";
+import { type ApplyHandlerDeps, createApplyHandler } from "./api/handlers/apply.ts";
+import { createAuthHandler } from "./api/handlers/auth.ts";
+import { createDevicesHandler } from "./api/handlers/devices.ts";
+import { createHealthHandler } from "./api/handlers/health.ts";
+import { createInstallStateHandler } from "./api/handlers/install-state.ts";
+import { createMcpCatalogHandler } from "./api/handlers/mcp-catalog.ts";
+import { createProfileEditHandler } from "./api/handlers/profile-edit.ts";
+import { createProfileHandler } from "./api/handlers/profile.ts";
+import { createProvidersHandler } from "./api/handlers/providers.ts";
+import { createReadyHandler } from "./api/handlers/ready.ts";
+import { createSecretsHandler } from "./api/handlers/secrets.ts";
+import { createServicesVersionsHandler } from "./api/handlers/services-versions.ts";
+import { createSystemStatusHandler } from "./api/handlers/system-status.ts";
+import { createWebuiHandler } from "./api/handlers/webui.ts";
+import { createWsUpgradeHandler } from "./api/handlers/ws.ts";
+import { createProvidersDeps } from "./api/providers-deps.ts";
+import { createApiRouter } from "./api/router.ts";
+import { createWizardHandler } from "./api/wizard/index.ts";
+import { runApply } from "./apply/orchestrator.ts";
+import type { RouterDeps } from "./apply/router.ts";
+import { testProviderImpl } from "./bootstrap/create-gateway-services.ts";
+import type { GatewayServices } from "./bootstrap/create-gateway-services.ts";
+import { getLog } from "./logging/logger.ts";
+import {
+  type ClientData,
+  cleanupSession,
+  handleWebSocketMessage,
+  openSession,
+} from "./session-handlers/ws-handlers.ts";
+import type { TokenService } from "./user-auth/token-service.ts";
+
+export type { ClientData };
+export type { GatewayTlsMaterial } from "./session-handlers/ws-handlers.ts";
+
+const log = getLog(["sentient", "ws"]);
+
+function makeThrowProxy(name: string): never {
+  return new Proxy(
+    {},
+    {
+      get: () => {
+        throw new Error(`${name} not available without hermes config`);
+      },
+    },
+  ) as never;
+}
+
+export interface GatewayServerOptions {
+  port: number;
+  host: string;
+  services: GatewayServices;
+}
+
+export function createGatewayServer(options: GatewayServerOptions): Server<ClientData> {
+  const { services } = options;
+  const adminToken = process.env.ADMIN_TOKEN;
+  let activeConnections = 0;
+
+  // Hoisted (request-stable) handler factories. Constructed once at server
+  // start instead of per-request inside fetch(). Only handleWsUpgrade depends
+  // on the Bun server instance (not stable until Bun.serve returns) and is
+  // built per-request below.
+  const handleHealth = createHealthHandler();
+  const handleReady = createReadyHandler({ getActiveConnections: () => activeConnections });
+  const handleInstallState = createInstallStateHandler({
+    installState: services.installState,
+    currentVersion: services.gatewayVersion,
+  });
+  const providersDeps = createProvidersDeps({
+    config: services.providersConfig,
+    env: (name) => process.env[name],
+    secretsStore: services.secretsStore ?? undefined,
+  });
+  const handleAdmin = createAdminHandler(buildAdminDeps(services, adminToken, services.auth.tokens));
+  const handleSecrets = createSecretsHandler({
+    installState: services.installState,
+    secretsStore: services.secretsStore ?? makeThrowProxy("SecretsStore"),
+    requireAdmin: buildRequireAdmin(services.auth.tokens, adminToken),
+  });
+  const handleAuth = createAuthHandler({
+    auth: services.auth,
+    ...(services.userProvisioner ? { userProvisioner: services.userProvisioner } : {}),
+    ...(services.secretsStore ? { secretsStore: services.secretsStore } : {}),
+    installState: services.installState,
+  });
+  const handleEdit = createProfileEditHandler({
+    tokens: services.auth.tokens,
+    buildPersonalityStore: services.buildPersonalityStore,
+    resolveProfileDir: services.resolveProfileDir,
+    restartOrchestrator: services.profileRestartOrchestrator,
+    templateLoader: services.templateLoader,
+  });
+  const handleProfile = createProfileHandler({
+    tokens: services.auth.tokens,
+    profileStore: services.profileStore,
+    runApply: (userId) => runApply(services.applyDeps, userId),
+    handleEdit,
+    refreshVoice: (userId) => services.personSessions.refreshVoice(userId),
+  });
+  const handleProviders = createProvidersHandler({
+    tokens: services.auth.tokens,
+    listModels: providersDeps.listModels,
+    listVoices: providersDeps.listVoices,
+    getVoice: providersDeps.getVoice,
+  });
+  const handleMcpCatalog = createMcpCatalogHandler({
+    tokens: services.auth.tokens,
+    catalog: services.mcpCatalog,
+    hermesBuiltinTools: services.hermesBuiltinTools,
+  });
+  const handleServicesVersions = createServicesVersionsHandler({
+    installState: services.installState,
+    systemOrchestrator: services.systemOrchestrator,
+    gatewayVersion: services.gatewayVersion,
+    hermesVersionPath: services.hermesVersionPath,
+    sttHealthUrl: services.sttHealthUrl,
+    tokens: services.auth.tokens,
+  });
+  const handleStatic = createWebuiHandler({ distDir: services.webDistDir });
+  const handleWizard = createWizardHandler({
+    installState: services.installState,
+    unlockCode: services.unlockCode,
+    secretsStore: services.secretsStore ?? makeThrowProxy("SecretsStore"),
+    testProvider: testProviderImpl,
+    listModels: providersDeps.listModels,
+    listVoices: providersDeps.listVoices,
+    systemOrchestrator: services.systemOrchestrator,
+  });
+  const handleSystemStatus = createSystemStatusHandler({
+    systemOrchestrator: services.systemOrchestrator,
+  });
+  const handleApply = buildApplyHandler(services, services.auth.tokens);
+  const handleDevices = services.devicesHandlerDeps
+    ? createDevicesHandler({ tokens: services.auth.tokens, ...services.devicesHandlerDeps })
+    : async (_req: Request) => new Response("Service Unavailable", { status: 503 });
+
+  return Bun.serve<ClientData>({
+    port: options.port,
+    hostname: options.host,
+    ...(services.tls ? { tls: services.tls } : {}),
+
+    async fetch(request, serverInstance) {
+      const router = createApiRouter({
+        handleHealth,
+        handleReady,
+        handleWsUpgrade: createWsUpgradeHandler(serverInstance),
+        handleAdmin,
+        handleSecrets,
+        handleAuth,
+        handleProfile,
+        handleProviders,
+        handleMcpCatalog,
+        handleInstallState,
+        handleServicesVersions,
+        handleWizard,
+        handleSystemStatus,
+        handleApply,
+        handleDevices,
+        handleStatic,
+      });
+      return router(request);
+    },
+
+    websocket: {
+      open(ws: ServerWebSocket<ClientData>) {
+        activeConnections++;
+        log.info("client-connected");
+        openSession(ws, services);
+      },
+      async message(ws: ServerWebSocket<ClientData>, message: string | Buffer) {
+        await handleWebSocketMessage(ws, message, services);
+      },
+      close(ws: ServerWebSocket<ClientData>) {
+        activeConnections--;
+        log.info("client-disconnected");
+        cleanupSession(ws, services);
+      },
+    },
+  });
+}
+
+/** Builds a requireAdmin function for the secrets handler from TokenService + static admin token. */
+function buildRequireAdmin(
+  tokenService: TokenService,
+  adminToken: string | undefined,
+): (req: Request) => Promise<{ ok: true; value: { isAdmin: boolean } } | { ok: false }> {
+  const BEARER_PREFIX = "Bearer ";
+  return async (req) => {
+    const header = req.headers.get("Authorization") ?? "";
+    if (!header.startsWith(BEARER_PREFIX)) return { ok: false };
+    const token = header.slice(BEARER_PREFIX.length);
+    if (adminToken && token === adminToken) return { ok: true, value: { isAdmin: true } };
+    const result = await tokenService.validate(token);
+    if (result.ok) return { ok: true, value: { isAdmin: result.value.isAdmin } };
+    return { ok: false };
+  };
+}
+
+/** Builds the unified POST /api/v1/apply handler, wiring RouterDeps from
+ *  GatewayServices and a PASETO bearer authenticate callback. */
+function buildApplyHandler(
+  services: GatewayServices,
+  tokenService: Pick<TokenService, "validate">,
+): (req: Request) => Promise<Response> {
+  const BEARER_PREFIX = "Bearer ";
+
+  const routerDeps: RouterDeps = {
+    isAdmin: async (uid) => {
+      const r = await services.auth.users.get(uid);
+      if (!r.ok || !r.value) return false;
+      return r.value.isAdmin;
+    },
+    diffSecrets: (s) => {
+      const store = services.secretsStore;
+      if (!store) return Promise.resolve([]);
+      return store.diffPaths(s);
+    },
+    perUserApply: async (userId, _profile) => {
+      // The profile is already on disk (profile-store is the source of truth).
+      // The per-user apply reads it fresh via profileStore.get().
+      return runApply(services.applyDeps, userId);
+    },
+    systemOrchestrator: services.systemOrchestrator ?? {
+      applySubset: async () => ({ state: "idle", services: [], startedAt: null, finishedAt: null }) as never,
+    },
+    registry: services.systemOrchestrator?.registry ?? new Map(),
+  };
+
+  const applyHandlerDeps: ApplyHandlerDeps = {
+    routerDeps,
+    authenticate: async (req) => {
+      const header = req.headers.get("Authorization") ?? "";
+      if (!header.startsWith(BEARER_PREFIX)) return { ok: false };
+      const token = header.slice(BEARER_PREFIX.length);
+      const result = await tokenService.validate(token);
+      if (!result.ok) return { ok: false };
+      return { ok: true, userId: result.value.userId };
+    },
+  };
+
+  return createApplyHandler(applyHandlerDeps);
+}
+
+/** Builds AdminDeps from GatewayServices. Nullable admin stores are stubbed
+ *  with throw-on-access proxies — unreached in deployments with hermes
+ *  configured (the only path where admin features are exposed). */
+function buildAdminDeps(
+  services: GatewayServices,
+  adminToken: string | undefined,
+  tokenService: TokenService,
+): AdminDeps {
+  return {
+    adminToken,
+    tokenService,
+    provisioner: services.userProvisioner ?? makeThrowProxy("UserProvisioner"),
+    userStore: services.auth.users,
+    userPortStore: services.userPortStore ?? makeThrowProxy("UserPortStore"),
+  };
+}

@@ -1,0 +1,157 @@
+# Sentient Pi compose — clone-and-build, no registry.
+#
+# Setup flow:
+#   1. python3 deploy/setup-prod.py    # checks docker, hermes user, .env
+#   2. docker compose -f deploy/pi/docker-compose.yml up -d
+#   3. https://<pi-ip>:8888              # wizard handles secrets, voice, MCPs
+#
+# All sibling images (sentient-hermes, stt-service, ma-mcp, searxng-mcp, fetch-mcp) live
+# under the `build-only` profile — they're built locally by `setup-prod.py`
+# and started on demand by the gateway's orchestrator (via /var/run/docker.sock).
+
+networks:
+  # Internal-only network — sibling containers (hermes, stt, MCPs) attach here.
+  # `internal: true` blocks egress; the egress-proxy is the single outbound
+  # hop for MCPs that need internet.
+  sentient-internal:
+    name: sentient-internal
+    driver: bridge
+    internal: true
+  # External network for the gateway itself + MCPs that need raw LAN egress
+  # (e.g. ma-mcp talking to mass.local).
+  sentient-external:
+    name: sentient-external
+    driver: bridge
+
+services:
+  gateway:
+    container_name: sentient-gateway
+    build:
+      context: ../..
+      dockerfile: gateway/Dockerfile
+      args:
+        # Release profile: bun --minify, no source maps. Set to "debug" for
+        # development diagnostics (sourcemap=inline, no minify).
+        BUILD_PROFILE: release
+    image: sentient/gateway:local
+    pull_policy: never
+    restart: unless-stopped
+
+    # The gateway calls the docker API over /var/run/docker.sock to spawn
+    # its sibling service containers. The host docker group's GID is passed
+    # in via group_add so the gateway process can write the socket.
+    group_add:
+      - "${HOST_DOCKER_GID:?HOST_DOCKER_GID required — see deploy/setup-prod.py}"
+
+    environment:
+      - TZ=${TZ:-America/Vancouver}
+      - SENTIENT_GATEWAY_ROOT=/app/gateway-data
+      - SENTIENT_HOST_GATEWAY_DATA_DIR=${HOME}/.sentient/gateway/data
+      - SENTIENT_HOST_MCP_SOCKET_DIR=${HOME}/.sentient/run/sentient
+      - SENTIENT_SUPERVISORD_SOCKET=/data/supervisor/supervisor.sock
+      - SENTIENT_HOME=/sentient
+      - HOST_HOME=${HOME}
+      - HOST_DOCKER_GID=${HOST_DOCKER_GID}
+      - HOST_CONFIG_DIR=${HOME}/.sentient/gateway/config
+      # Source for the hermes /data/supervisor mount. Bind path on Pi —
+      # ext4 hosts the supervisord unix socket. (macOS dev uses a named
+      # volume because virtiofs rejects AF_UNIX bind(); see deploy/macos/.)
+      - SUPERVISOR_DIR=${HOME}/.sentient/supervisor
+
+    ports:
+      - "8888:8888"
+
+    volumes:
+      - ~/.sentient/gateway/logs:/app/logs
+      - ~/.sentient/gateway/data:/app/gateway-data
+      - ${HOME}/.sentient/gateway/data:${HOME}/.sentient/gateway/data
+      - ~/.sentient/run/sentient:/run/sentient
+      - ~/.sentient/certs:/app/certs
+      # Optional cert-reuse: same-path bind so a symlink at
+      # ~/.sentient/certs/cert.pem → ${HOST_CERT_DIR}/fullchain.pem
+      # (created by `setup-prod.py` when the operator picks an existing
+      # cert) resolves inside the container. Defaults to ~/.sentient/certs
+      # (already mounted at /app/certs above) — harmless duplicate when
+      # the operator isn't reusing a cert.
+      - ${HOST_CERT_DIR:-${HOME}/.sentient/certs}:${HOST_CERT_DIR:-${HOME}/.sentient/certs}:ro
+      - ${HOME}/.sentient:/sentient
+      - ${HOME}/.sentient/supervisor:/data/supervisor
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    healthcheck:
+      test:
+        - CMD
+        - bun
+        - -e
+        - "fetch('https://localhost:8888/api/v1/health', { tls: { rejectUnauthorized: false } }).then(r => r.ok ? process.exit(0) : process.exit(1))"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+    networks: [sentient-internal, sentient-external]
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "7"
+
+  # ---------------------------------------------------------------------------
+  # Build-only siblings.
+  # The gateway's orchestrator manages these containers' lifecycle at runtime
+  # (create, start, stop, recreate) via the host docker socket. Compose only
+  # needs to build the images so they exist on the host daemon — never run
+  # them as compose-managed services. The `build-only` profile keeps them
+  # out of `docker compose up` while still included in `docker compose build`
+  # when the profile is enabled.
+  # ---------------------------------------------------------------------------
+
+  stt-service:
+    build:
+      context: ../../capabilityServices/STTService
+    image: sentient/stt-service:local
+    pull_policy: never
+    profiles: ["build-only"]
+
+  hermes:
+    build:
+      # Repo root so the image can COPY both deploy/hermes-overlay/* and
+      # hermes/plugins/sentient-plugin/ into a single build.
+      context: ../..
+      dockerfile: deploy/hermes-overlay/Dockerfile
+      args:
+        # Single source of truth: deploy/hermes-overlay/HERMES_VERSION.
+        HERMES_VERSION: "${HERMES_VERSION:-v2026.4.23}"
+    image: sentient/hermes:local
+    pull_policy: never
+    profiles: ["build-only"]
+
+  ma-mcp:
+    build:
+      context: ../../gateway/mcp/ma-mcp
+    image: sentient/ma-mcp:local
+    pull_policy: never
+    profiles: ["build-only"]
+
+  fetch-mcp:
+    build:
+      context: ../../gateway/mcp/fetch-mcp
+    image: sentient/fetch-mcp:local
+    pull_policy: never
+    profiles: ["build-only"]
+
+  searxng-mcp:
+    build:
+      context: ../../gateway/mcp/searxng-mcp
+    image: sentient/searxng-mcp:local
+    pull_policy: never
+    profiles: ["build-only"]
+
+  signal-cli:
+    build:
+      context: ../..
+      dockerfile: deploy/signal-cli/Dockerfile
+    image: sentient/signal-cli:local
+    pull_policy: never
+    profiles: ["build-only"]

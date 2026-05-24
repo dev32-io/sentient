@@ -1,0 +1,15 @@
+# Hermes egress blocklist (hostname-based)
+#
+# Semantics: tinyproxy is configured with FilterDefaultDeny=No, so this file
+# is a *denylist*. Any hostname listed here will be blocked for Hermes
+# containers; everything else is permitted. The blocklist is intentionally
+# empty in the POC — put known-bad hosts here as you discover them, or seed
+# from a public list (see README.md in this directory).
+#
+# Matching rules (FilterURLs Off + FilterExtended Off):
+#   - Plain hostnames only; no regex, no glob.
+#   - Works for both plain HTTP and HTTPS CONNECT.
+#   - Subdomains are NOT matched automatically — list each explicitly.
+#
+# Empty by default. Populate via StevenBlack/hosts, URLhaus, or your own
+# incident response notes. See README.md for operator guidance.

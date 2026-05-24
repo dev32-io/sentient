@@ -1,0 +1,43 @@
+{
+  "name": "@sentient/gateway",
+  "version": "1.9.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot src/main.ts",
+    "build": "bun build src/main.ts --outdir dist --target bun",
+    "start": "bun dist/main.js",
+    "test": "cd src && bun test",
+    "test:unit": "cd src && bun test",
+    "test:int": "vitest run --config vitest.config.int.ts",
+    "test:watch": "cd src && bun test --watch",
+    "typecheck": "tsc --noEmit",
+    "try": "bun scripts/try-chat.ts"
+  },
+  "dependencies": {
+    "@logtape/file": "^2.0.5",
+    "@logtape/logtape": "^2.0.5",
+    "@msgpack/msgpack": "^3.0.0",
+    "@sentient/audio-prefs": "workspace:*",
+    "@sentient/config": "workspace:*",
+    "@sentient/protocol": "workspace:*",
+    "@sentient/tls": "workspace:*",
+    "@sentient/wizard": "workspace:*",
+    "@types/dockerode": "^4.0.1",
+    "cockatiel": "^3.2.1",
+    "dockerode": "^5.0.0",
+    "emoji-regex": "^10.6.0",
+    "openai": "^6.33.0",
+    "paseto-ts": "^2.0.5",
+    "qrcode": "^1.5.4",
+    "streaming-markdown": "^0.2.15",
+    "yaml": "^2.7.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@sentient/testing": "workspace:*",
+    "@types/qrcode": "^1.5.6",
+    "bun-types": "latest",
+    "vitest": "^3.1.0"
+  }
+}

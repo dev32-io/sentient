@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>localSTT PoC — Silero + Smart-Turn v3 + SenseVoice-Small</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+    }
+    body {
+      margin: 0;
+      padding: 24px;
+      background: #0d1117;
+      color: #e6edf3;
+      max-width: 960px;
+      margin-inline: auto;
+    }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    .subtitle { color: #8b949e; font-size: 13px; margin-bottom: 20px; }
+    fieldset {
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-bottom: 16px;
+    }
+    legend { color: #7d8590; padding: 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+    label { display: inline-flex; align-items: center; gap: 6px; margin-right: 12px; font-size: 13px; }
+    input[type="text"] {
+      background: #0d1117;
+      color: #e6edf3;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font: inherit;
+      width: 280px;
+    }
+    button {
+      background: #238636;
+      color: white;
+      border: 0;
+      border-radius: 6px;
+      padding: 8px 14px;
+      font: inherit;
+      cursor: pointer;
+      margin-right: 8px;
+    }
+    button:disabled { background: #30363d; color: #8b949e; cursor: not-allowed; }
+    button.secondary { background: #21262d; border: 1px solid #30363d; color: #e6edf3; }
+    .status {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      background: #30363d;
+      color: #c9d1d9;
+    }
+    .status.connected { background: #1f6feb; color: white; }
+    .status.capturing { background: #d29922; color: #0d1117; }
+    .status.error { background: #da3633; color: white; }
+    #log {
+      background: #010409;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.45;
+      height: 280px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+    .log-line { margin: 0; }
+    .log-vad_start  { color: #7ee787; }
+    .log-vad_end    { color: #d29922; }
+    .log-smart_turn_eval { color: #79c0ff; }
+    .log-turn_continuing { color: #a371f7; }
+    .log-turn_complete   { color: #39d353; font-weight: 600; }
+    .log-turn_rejected   { color: #6e7681; font-style: italic; }
+    .log-transcript_ready { color: #f0b83d; font-weight: 600; }
+    .log-error { color: #ff7b72; }
+    .log-ready { color: #8b949e; }
+
+    #turns { list-style: none; padding: 0; margin: 0; }
+    #turns li {
+      padding: 14px;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      margin-bottom: 10px;
+      background: #0d1117;
+    }
+    .turn-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+      font-size: 12px;
+      color: #8b949e;
+    }
+    .turn-header .turn-idx {
+      font-weight: 700;
+      color: #f0f6fc;
+      font-size: 14px;
+    }
+    .turn-header .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      background: #21262d;
+      color: #c9d1d9;
+      border: 1px solid #30363d;
+    }
+    .turn-header .tag.emotion { background: #2e1a47; color: #d2a8ff; border-color: #8957e5; }
+    .turn-header .tag.event { background: #3a2410; color: #f0b83d; border-color: #9e6a03; }
+    /* "muted" variant for NEUTRAL emotion and Speech event — always rendered
+       but visually backgrounded so interesting tags stand out. */
+    .turn-header .tag.muted { background: #161b22; color: #6e7681; border-color: #21262d; }
+    .turn-transcript {
+      font-size: 18px;
+      line-height: 1.5;
+      color: #f0f6fc;
+      padding: 10px 14px;
+      background: #161b22;
+      border-left: 3px solid #f0b83d;
+      border-radius: 4px;
+      margin-bottom: 10px;
+      min-height: 24px;
+      font-family: -apple-system, system-ui, "Segoe UI", sans-serif;
+    }
+    .turn-transcript.pending {
+      color: #6e7681;
+      font-style: italic;
+    }
+    .turn-pauses {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 10px;
+      padding: 6px 10px;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 4px;
+      font-size: 11px;
+      color: #8b949e;
+    }
+    .turn-pauses-label { font-weight: 600; color: #c9d1d9; margin-right: 4px; }
+    .pause-chip {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 10px;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-weight: 600;
+    }
+    .pause-chip.pause-short  { background: #1b2d1f; color: #7ee787; border: 1px solid #2ea04326; }
+    .pause-chip.pause-medium { background: #3a2410; color: #f0b83d; border: 1px solid #9e6a0326; }
+    .pause-chip.pause-long   { background: #3a1518; color: #ff7b72; border: 1px solid #da363326; }
+    .turn-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .turn-actions audio { height: 28px; flex: 1; }
+    .turn-actions a {
+      color: #79c0ff;
+      text-decoration: none;
+      padding: 4px 10px;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <h1>localSTT PoC</h1>
+  <p class="subtitle">Browser mic → Silero VAD + Smart-Turn v3 + SenseVoice-Small → transcript &amp; audio</p>
+
+  <fieldset>
+    <legend>Connection</legend>
+    <label>Service URL <input id="url" type="text" value="ws://raspberrypi.local:8766" /></label>
+    <label>Bearer token <input id="token" type="text" placeholder="sak_… (leave blank for unauthed dev)" /></label>
+    <button id="connect">Connect</button>
+    <button id="disconnect" class="secondary" disabled>Disconnect</button>
+    <span id="conn-status" class="status">disconnected</span>
+  </fieldset>
+
+  <fieldset>
+    <legend>Microphone</legend>
+    <button id="start-mic" disabled>Start mic</button>
+    <button id="stop-mic" class="secondary" disabled>Stop mic</button>
+    <span id="mic-status" class="status">idle</span>
+    <span id="bytes-sent" style="margin-left: 12px; color: #8b949e; font-size: 12px;">0 B sent</span>
+  </fieldset>
+
+  <fieldset>
+    <legend>Event stream</legend>
+    <div id="log"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Turn transcripts</legend>
+    <ul id="turns"></ul>
+  </fieldset>
+
+  <script src="./app.js" type="module"></script>
+</body>
+</html>

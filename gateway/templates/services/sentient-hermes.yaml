@@ -1,0 +1,26 @@
+image: sentient/hermes:local
+container_name: sentient-hermes
+# sentient-external is required for host.docker.internal routing; the
+# sentient-internal network has `internal: true` (no host gateway), so
+# the OLLAMA daemon on the host (Ollama Cloud) is unreachable without
+# attaching to the externally-routable bridge as well.
+networks: [sentient-internal, sentient-external]
+extra_hosts:
+  - host.docker.internal:host-gateway
+env:
+  TZ: ${TZ}
+  HTTP_PROXY: http://sentient-egress-proxy:3128
+  HTTPS_PROXY: http://sentient-egress-proxy:3128
+  NO_PROXY: localhost,127.0.0.1,sentient-gateway,sentient-ha-mcp,sentient-ma-mcp,sentient-stt-service,sentient-searxng,sentient-searxng-mcp,sentient-fetch-mcp,sentient-signal-cli,host.docker.internal
+volumes:
+  # SUPERVISOR_DIR is set by the gateway compose file. Linux/Pi pass a host
+  # path (bind-mount, ext4 — supervisord can bind a unix socket there). macOS
+  # passes a named-volume name (e.g. `sentient-supervisor`) because Docker
+  # Desktop's virtiofs bind-mounts reject AF_UNIX bind() with EINVAL. The
+  # docker engine treats a source without a slash as a named volume.
+  - ${SUPERVISOR_DIR}:/data/supervisor
+  - ${HOST_HOME}/.sentient/gateway/data:${HOST_HOME}/.sentient/gateway/data
+  - /var/run/docker.sock:/var/run/docker.sock
+  - ${HOST_HOME}/.sentient/run/sentient:/run/sentient
+group_add:
+  - "${HOST_DOCKER_GID}"

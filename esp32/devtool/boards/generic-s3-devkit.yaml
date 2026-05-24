@@ -1,0 +1,32 @@
+name: generic-s3-devkit
+display_name: "Generic ESP32-S3 DevKit"
+chip: esp32-s3
+build_profiles: [debug]
+
+usb:
+  # No port_glob — generic devkit serves as a template + example manifest only.
+  # Users with a real generic devkit invoke `esp32-devtool --board generic-s3-devkit ...`
+  # explicitly. Without a glob, auto-detect skips this manifest entirely so it
+  # never ties with a more specific board (e.g. cube) on the same port pattern.
+  port_glob: null
+
+http:
+  enabled: false
+  port: 8081
+
+capabilities:
+  flash:        { transport: usb-cdc }
+  logs:         { transport: usb-cdc }
+  cmd:          { transport: usb-cdc }
+  audio_play:   { transport: usb-cdc }
+
+log_relay:
+  enabled: false
+  port: 9000
+
+verbs:
+  - state
+  - restart
+  - log_level
+
+extensions: []

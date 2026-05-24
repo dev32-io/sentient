@@ -1,0 +1,14 @@
+image: searxng/searxng:latest
+container_name: sentient-searxng
+networks: [sentient-internal]
+env:
+  HTTP_PROXY: http://sentient-egress-proxy:3128
+  HTTPS_PROXY: http://sentient-egress-proxy:3128
+  NO_PROXY: localhost,127.0.0.1
+  SEARXNG_SECRET: ${SEARXNG_SECRET}
+# settings.yml is seeded from gateway/templates/services/searxng/settings.yml
+# to HOST_CONFIG_DIR/searxng/ on first boot (same pattern as egress-proxy).
+volumes:
+  - ${HOST_CONFIG_DIR}/searxng/settings.yml:/etc/searxng/settings.yml:ro
+mem_limit_bytes: 536870912    # 512 MiB — searxng's resident set
+cpus: 0.5

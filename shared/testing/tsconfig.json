@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "paths": {
+      "@sentient/protocol": ["../protocol/src"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

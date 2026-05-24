@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Gateway Log Viewer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; color: #e0e0e0; font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; font-size: 13px; }
+
+  #controls {
+    position: sticky; top: 0; z-index: 10;
+    background: #16213e; padding: 10px 16px;
+    border-bottom: 1px solid #333;
+    display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  }
+  #controls label { color: #8899aa; font-size: 12px; }
+  #controls input[type="file"] { color: #ccc; font-size: 12px; }
+  #controls input[type="text"] {
+    background: #0f3460; border: 1px solid #444; color: #e0e0e0;
+    padding: 4px 8px; border-radius: 4px; font-size: 12px; width: 200px;
+    font-family: inherit;
+  }
+  #controls select {
+    background: #0f3460; border: 1px solid #444; color: #e0e0e0;
+    padding: 4px 8px; border-radius: 4px; font-size: 12px;
+    font-family: inherit;
+  }
+  #controls .count { color: #667; font-size: 11px; margin-left: auto; }
+
+  #log { padding: 8px 0; }
+
+  .line {
+    display: flex; padding: 1px 16px; line-height: 20px;
+    border-bottom: 1px solid #1e1e3a;
+  }
+  .line:hover { background: #1e2a4a; }
+
+  .ts { color: #5a6a7a; min-width: 200px; flex-shrink: 0; }
+  .level { min-width: 52px; flex-shrink: 0; font-weight: 600; text-transform: uppercase; }
+  .tag { min-width: 240px; flex-shrink: 0; }
+  .msg { flex: 1; white-space: pre-wrap; word-break: break-all; }
+
+  .level-debug { color: #565f89; }
+  .level-info  { color: #7dcfff; }
+  .level-warn  { color: #e0af68; }
+  .level-error { color: #f7768e; }
+
+  .line-warn  { background: #2a2200; }
+  .line-error { background: #2a0a0a; }
+
+  .tag-sentient          { color: #bb9af7; }
+  .tag-session           { color: #7aa2f7; }
+  .tag-session-history   { color: #7aa2f7; }
+  .tag-stt               { color: #2ac3de; }
+  .tag-stt-nova3         { color: #2ac3de; }
+  .tag-stt-factory       { color: #2ac3de; }
+  .tag-llm               { color: #9ece6a; }
+  .tag-tts               { color: #ff9e64; }
+  .tag-tts-fish-audio    { color: #ff9e64; }
+  .tag-tts-fish-audio-connection { color: #ff9e64; }
+  .tag-pipeline          { color: #e0af68; }
+  .tag-pipeline-turn     { color: #e0af68; }
+  .tag-pipeline-barge-in { color: #f7768e; }
+  .tag-pipeline-aggregator { color: #e0af68; }
+  .tag-pipeline-aggregator-transform { color: #e0af68; }
+  .tag-pipeline-tts-sender { color: #ff9e64; }
+  .tag-pipeline-emotion-tag { color: #bb9af7; }
+  .tag-ws                { color: #73daca; }
+  .tag-context-persona   { color: #bb9af7; }
+
+  .kv-key { color: #7aa2f7; }
+  .kv-val { color: #9ece6a; }
+
+  .empty { padding: 40px; text-align: center; color: #555; }
+</style>
+</head>
+<body>
+
+<div id="controls">
+  <label>File: <input type="file" id="fileInput" accept=".log,.txt"></label>
+  <label>Filter: <input type="text" id="filterInput" placeholder="text search..."></label>
+  <label>Level:
+    <select id="levelSelect">
+      <option value="all">All</option>
+      <option value="debug">DEBUG+</option>
+      <option value="info">INFO+</option>
+      <option value="warn">WARN+</option>
+      <option value="error">ERROR</option>
+    </select>
+  </label>
+  <label>Tag:
+    <select id="tagSelect">
+      <option value="all">All tags</option>
+    </select>
+  </label>
+  <span class="count" id="countDisplay"></span>
+</div>
+
+<div id="log">
+  <div class="empty">Drop a .log file or use the file picker above</div>
+</div>
+
+<script>
+/* Note: This is a local-only dev tool that reads local log files chosen by the
+   user via file picker or drag-and-drop. All data stays in the browser. The log
+   format is trusted internal output from our own gateway logger. */
+
+var LEVEL_ORDER = { debug: 0, info: 1, warn: 2, error: 3 };
+var LINE_RE = /^(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s+(DEBUG|INFO|WARN|ERROR)\s+\[([^\]]+)\]\s+(.*)$/;
+
+var allLines = [];
+var allTags = new Set();
+
+function parseLine(raw) {
+  var m = raw.match(LINE_RE);
+  if (!m) return null;
+  return { ts: m[1], level: m[2].toLowerCase(), tag: m[3], message: m[4], raw: raw };
+}
+
+function tagClass(tag) {
+  return 'tag-' + tag.replace(/:/g, '-').replace(/\s+/g, '-');
+}
+
+function createKvSpan(key, val) {
+  var span = document.createElement('span');
+  var k = document.createElement('span');
+  k.className = 'kv-key';
+  k.textContent = key;
+  var eq = document.createTextNode('=');
+  var v = document.createElement('span');
+  v.className = 'kv-val';
+  v.textContent = val;
+  span.appendChild(k);
+  span.appendChild(eq);
+  span.appendChild(v);
+  return span;
+}
+
+function buildMessageNode(msg) {
+  var container = document.createElement('span');
+  container.className = 'msg';
+
+  var kvRe = /(\w[\w.]*)\s*=\s*("[^"]*"|\S+)/g;
+  var lastIndex = 0;
+  var match;
+
+  while ((match = kvRe.exec(msg)) !== null) {
+    if (match.index > lastIndex) {
+      container.appendChild(document.createTextNode(msg.slice(lastIndex, match.index)));
+    }
+    container.appendChild(createKvSpan(match[1], match[2]));
+    lastIndex = kvRe.lastIndex;
+  }
+
+  if (lastIndex < msg.length) {
+    container.appendChild(document.createTextNode(msg.slice(lastIndex)));
+  }
+
+  return container;
+}
+
+function render() {
+  var filter = document.getElementById('filterInput').value.toLowerCase();
+  var minLevel = document.getElementById('levelSelect').value;
+  var tagFilter = document.getElementById('tagSelect').value;
+  var minLevelN = minLevel === 'all' ? -1 : LEVEL_ORDER[minLevel];
+
+  var container = document.getElementById('log');
+  var frag = document.createDocumentFragment();
+  var count = 0;
+
+  for (var i = 0; i < allLines.length; i++) {
+    var ln = allLines[i];
+    if (LEVEL_ORDER[ln.level] < minLevelN) continue;
+    if (tagFilter !== 'all' && ln.tag !== tagFilter) continue;
+    if (filter && ln.raw.toLowerCase().indexOf(filter) === -1) continue;
+
+    var div = document.createElement('div');
+    div.className = 'line' + (ln.level === 'warn' ? ' line-warn' : ln.level === 'error' ? ' line-error' : '');
+
+    var localTs = new Date(ln.ts).toLocaleTimeString('en-US', { hour12: false, fractionalSecondDigits: 3 });
+
+    var tsSpan = document.createElement('span');
+    tsSpan.className = 'ts';
+    tsSpan.textContent = localTs;
+
+    var levelSpan = document.createElement('span');
+    levelSpan.className = 'level level-' + ln.level;
+    levelSpan.textContent = ln.level;
+
+    var tagSpan = document.createElement('span');
+    tagSpan.className = 'tag ' + tagClass(ln.tag);
+    tagSpan.textContent = '[' + ln.tag + ']';
+
+    div.appendChild(tsSpan);
+    div.appendChild(levelSpan);
+    div.appendChild(tagSpan);
+    div.appendChild(buildMessageNode(ln.message));
+
+    frag.appendChild(div);
+    count++;
+  }
+
+  while (container.firstChild) container.removeChild(container.firstChild);
+
+  if (count === 0) {
+    var empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'No matching log lines';
+    container.appendChild(empty);
+  } else {
+    container.appendChild(frag);
+  }
+  document.getElementById('countDisplay').textContent = count + ' / ' + allLines.length + ' lines';
+}
+
+function loadText(text) {
+  allLines = [];
+  allTags = new Set();
+
+  var lines = text.split('\n');
+  for (var i = 0; i < lines.length; i++) {
+    var ln = parseLine(lines[i].trimEnd());
+    if (!ln) continue;
+    allLines.push(ln);
+    allTags.add(ln.tag);
+  }
+
+  var sel = document.getElementById('tagSelect');
+  while (sel.firstChild) sel.removeChild(sel.firstChild);
+  var allOpt = document.createElement('option');
+  allOpt.value = 'all';
+  allOpt.textContent = 'All tags';
+  sel.appendChild(allOpt);
+
+  var sorted = Array.from(allTags).sort();
+  for (var j = 0; j < sorted.length; j++) {
+    var opt = document.createElement('option');
+    opt.value = sorted[j];
+    opt.textContent = '[' + sorted[j] + ']';
+    sel.appendChild(opt);
+  }
+
+  render();
+}
+
+document.getElementById('fileInput').addEventListener('change', function(e) {
+  var file = e.target.files[0];
+  if (!file) return;
+  file.text().then(loadText);
+});
+
+document.getElementById('filterInput').addEventListener('input', render);
+document.getElementById('levelSelect').addEventListener('change', render);
+document.getElementById('tagSelect').addEventListener('change', render);
+
+document.body.addEventListener('dragover', function(e) { e.preventDefault(); });
+document.body.addEventListener('drop', function(e) {
+  e.preventDefault();
+  var file = e.dataTransfer.files[0];
+  if (file) file.text().then(loadText);
+});
+</script>
+</body>
+</html>

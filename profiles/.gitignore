@@ -1,0 +1,14 @@
+# Hermes per-profile runtime state — bind-mounted into the container at
+# /opt/data by deploy/docker/docker-compose.yml. Only the hand-written
+# config.yaml and SOUL.md are checked in; everything else is generated
+# by Hermes at runtime and is ephemeral to the dev machine.
+*
+!.gitignore
+!*/
+!*/config.yaml
+!*/SOUL.md
+!*/.env.example
+# Allow nested profiles (e.g. profiles/example/alice/config.yaml)
+!**/config.yaml
+!**/SOUL.md
+!**/.env.example

@@ -1,0 +1,48 @@
+/* gateway/webui/src/components/settings/settings-shell.css */
+
+.settings-v2 {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  min-height: calc(100vh - 56px); /* topbar height; adjust if it differs */
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-ui);
+}
+
+.settings-v2 .s-side {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--color-line-soft);
+}
+
+.settings-v2 .s-main {
+  padding: 32px 40px 140px;
+  overflow-y: auto;
+  min-width: 0;
+}
+
+.settings-v2 .s-pane {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  animation: pane-fade .18s ease-out;
+}
+
+@keyframes pane-fade {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 1100px) {
+  .settings-v2 .s-main { padding: 28px 32px 140px; }
+}
+
+@media (max-width: 880px) {
+  .settings-v2 { grid-template-columns: 1fr; }
+  .settings-v2 .s-side {
+    border-right: 0;
+    border-bottom: 1px solid var(--color-line-soft);
+  }
+  .settings-v2 .s-main { padding: 24px 20px 140px; }
+}

@@ -1,0 +1,31 @@
+{
+  "claudeMdExcludes": [
+    "**/android/CLAUDE.md",
+    ".claude/rules/android/**",
+    "**/ios/CLAUDE.md",
+    ".claude/rules/ios/**"
+  ],
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "scripts/quality-gate.sh typecheck 2>&1 | tail -5"
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "scripts/quality-gate.sh all 2>&1 | tail -20"
+          }
+        ]
+      }
+    ]
+  }
+}

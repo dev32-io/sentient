@@ -1,0 +1,59 @@
+name: cube
+display_name: "Sentient Cube (Waveshare ESP32-S3 AMOLED 2.16)"
+chip: esp32-s3
+firmware_path: esp32/cube/firmware
+build_profiles: [debug, prod]
+
+usb:
+  port_glob: "/dev/cu.usbmodem*"
+
+http:
+  enabled: true
+  port: 8081
+  discover_via: usb-info               # cube /info verb returns ip
+
+capabilities:
+  flash:        { transport: usb-cdc }
+  logs:         { transport: auto, sources: [usb, udp] }
+  cmd:          { transport: usb-cdc }
+  screenshot:   { transport: http }
+  touch:        { transport: http }
+  audio_record: { transport: http }
+  audio_inject: { transport: http }
+  audio_play:   { transport: usb-cdc }
+
+log_relay:
+  enabled: true
+  # Cube firmware ships ESP_LOGx via the esp32_devtool_companion UDP log
+  # relay (see CONFIG_ESP32_DEVTOOL_LOG_RELAY_PORT in the devtool Kconfig).
+  # Must match the firmware default. Was 5514 under the retired net_logger;
+  # moved to 9000 in Task 27 with the relay flip.
+  port: 9000
+
+verbs:
+  - sentient.status
+  - sentient.force_reconnect
+  - sentient.last_transcript
+  - button.toggle
+  - tts.cancel
+  - state
+  - restart
+  - log_level
+  - mark
+  - wifi.connect
+  - wifi.disconnect
+  - wifi.reconnect
+  - audio.dump_state
+  - audio.play_pcm
+  - audio.test_tone
+
+extensions:
+  - cmd: bake-creds
+    exec: ${REPO_ROOT}/esp32/cube/scripts/bake-creds.sh
+    args_passthrough: true
+    transient: true
+    help: |
+      [transient — pre-device-pairing dev hack]
+      Bake WiFi/PASETO/etc. from esp32/cube/.e2e-testing into
+      firmware/main/sentient_creds.h. Auto-resolves Mac LAN IP +
+      mints a fresh PASETO. Retires with proper device-pairing flow.

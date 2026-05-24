@@ -1,0 +1,97 @@
+; /data/supervisor/programs/{{userId}}.conf — rendered by gateway
+;
+; Two programs per profile (Phase 5 ACP pivot, F3):
+;
+;   hermes-{{userId}}-acp        — ACP-over-WebSocket bridge on {{port}}
+;                                  (acp_ws_server.py wraps `hermes -p X acp`)
+;   hermes-{{userId}}-dashboard  — Hermes dashboard REST + plugin endpoints on
+;                                  {{dashboardPort}} (dashboardPort = port+1000)
+;
+; Both share SENTIENT_HERMES_BEARER so the sentient-plugin auth gate
+; (plugin_api.py) accepts requests from the gateway side.
+
+[program:hermes-{{userId}}-acp]
+; Self-bootstrap the hermes profile dir if missing (idempotent — `profile
+; create` exits non-zero when the profile already exists, swallowed by
+; `|| true`). Lets first-admin and any apply-driven provisioning land
+; without a separate "hermes profile create" step on the gateway side.
+;
+; acp_ws_server.py spawns `hermes -p {{userId}} acp` as a child and proxies
+; framed JSON-RPC over WebSocket on path /acp. SENTIENT_HERMES_BEARER is
+; the bearer token the gateway sends as `Authorization: Bearer ...` when
+; dialing the bridge.
+command=sh -c "hermes profile create {{userId}} --no-alias >/dev/null 2>&1 || true; exec /opt/hermes/.venv/bin/python /opt/hermes-overlay/acp_ws_server.py --profile {{userId}} --port {{port}} --hermes-home {{hermesHome}}"
+autostart=true
+autorestart=true
+startretries=5
+stopwaitsecs=10
+stderr_logfile={{hermesHome}}/supervisord.err.log
+stdout_logfile={{hermesHome}}/supervisord.out.log
+; TERMINAL_* env vars drive the agent's terminal-tool sandbox. Upstream Hermes
+; reads `terminal:` config almost exclusively from these env vars (see
+; `_get_env_config` in tools/terminal_tool.py) — values in profile config.yaml
+; are silently dropped except the two keys explicitly synced to .env by
+; `hermes config set`. We set them here so per-task containers spawn under
+; sentient's security model:
+;
+;   TERMINAL_ENV=docker                — backend (alternative: local/ssh/modal)
+;   TERMINAL_DOCKER_NETWORK            — sentient overlay (0007-...patch);
+;                                        sentient-internal pins task containers
+;                                        off the LAN/internet route, forcing
+;                                        outbound through egress-proxy
+;   TERMINAL_DOCKER_FORWARD_ENV        — task containers inherit these parent
+;                                        env vars: TZ for clock correctness,
+;                                        HTTP(S)_PROXY/NO_PROXY so curl/pip etc.
+;                                        in the sandbox use egress-proxy
+;   TERMINAL_DOCKER_IMAGE              — operator-pinned base image
+;   TERMINAL_CWD/TIMEOUT/...           — task-shell ergonomics; numbers chosen
+;                                        to match the prior config.yaml render
+environment=
+  HERMES_HOME="{{hermesHome}}",
+  SENTIENT_HERMES_BEARER="{{token}}",
+  SENTIENT_GATEWAY_PORT="{{port}}",
+  SENTIENT_GATEWAY_ALLOW_ALL_USERS="true",
+  GATEWAY_ALLOW_ALL_USERS="true",
+  SENTIENT_GATEWAY_HOME_CHANNEL="{{userId}}",
+  TERMINAL_ENV="docker",
+  TERMINAL_DOCKER_IMAGE="nikolaik/python-nodejs:python3.11-nodejs20",
+  TERMINAL_DOCKER_NETWORK="sentient-internal",
+  TERMINAL_DOCKER_FORWARD_ENV='["TZ","HTTP_PROXY","HTTPS_PROXY","NO_PROXY"]',
+  TERMINAL_CWD="/workspace",
+  TERMINAL_TIMEOUT="180",
+  TERMINAL_LIFETIME_SECONDS="300",
+  TERMINAL_CONTAINER_PERSISTENT="true",
+  HTTP_PROXY="http://sentient-egress-proxy:3128",
+  HTTPS_PROXY="http://sentient-egress-proxy:3128",
+  NO_PROXY="localhost,127.0.0.1",
+  {{env_block}}
+  TZ="{{timezone}}"
+
+[program:hermes-{{userId}}-dashboard]
+; Per-profile Hermes dashboard sidecar — exposes the REST surface that ACP
+; doesn't cover (search / get session / get messages / delete) via the
+; bundled sentient-plugin (mounted at /api/plugins/sentient-plugin/).
+;
+; --insecure is required to bind a non-localhost host so the gateway
+; container can reach the dashboard over the docker network. Auth on the
+; sentient-plugin endpoints is layered separately via SENTIENT_HERMES_BEARER
+; (validated by plugin_api.py before request handlers run).
+;
+; --no-open keeps the dashboard from trying to spawn a browser; HERMES_HOME
+; mirrors the ACP program so the dashboard reads the same SessionDB.
+command=/opt/hermes/.venv/bin/hermes -p {{userId}} dashboard --port {{dashboardPort}} --host 0.0.0.0 --no-open --insecure
+autostart=true
+autorestart=true
+startretries=5
+stopwaitsecs=10
+stderr_logfile={{hermesHome}}/supervisord-dashboard.err.log
+stdout_logfile={{hermesHome}}/supervisord-dashboard.out.log
+environment=
+  HERMES_HOME="{{hermesHome}}",
+  SENTIENT_HERMES_BEARER="{{token}}",
+  HERMES_NONINTERACTIVE="1",
+  {{env_block}}
+  TZ="{{timezone}}"
+
+
+{{signal_block}}

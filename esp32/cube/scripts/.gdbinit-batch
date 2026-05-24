@@ -1,0 +1,8 @@
+target remote :3333
+set pagination off
+set confirm off
+info threads
+thread apply all bt full
+info locals
+info registers
+quit

@@ -1,0 +1,19 @@
+{
+  "name": "@sentient/audio-prefs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "schema.ts",
+  "scripts": {
+    "test": "echo 'No tests'",
+    "test:unit": "echo 'No tests'",
+    "test:int": "echo 'No integration tests'",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "bun-types": "latest"
+  }
+}

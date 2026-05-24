@@ -1,0 +1,14 @@
+# Logs and recordings produced by the PoC (mounted volumes)
+logs/
+recordings/
+
+# Downloaded model weights (pulled at build/boot time)
+service/models/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Node artifacts (none expected, but safe)
+node_modules/

@@ -1,0 +1,17 @@
+{
+  "name": "sdk-gateway-contract-test-harness",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2",
+    "zod": "^4.3.6"
+  }
+}

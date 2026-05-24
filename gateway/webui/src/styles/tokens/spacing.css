@@ -1,0 +1,15 @@
+/* gateway/webui/src/styles/tokens/spacing.css */
+:root {
+  --space-xs:   4px;
+  --space-sm:   8px;
+  --space-md:   12px;
+  --space-lg:   18px;
+  --space-xl:   26px;
+  --space-2xl:  32px;
+  --space-3xl:  40px;
+
+  /* Layout density (Comfortable — single locked combo) */
+  --pad-msg: 18px;
+  --gap-msg: 32px;
+  --msg-max: 720px;
+}

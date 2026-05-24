@@ -1,0 +1,3 @@
+FAKE_sk-or-PLAYWRIGHT-TEST-KEY
+some random-text not-a-secret
+sk-or-short  # too short

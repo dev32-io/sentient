@@ -1,0 +1,54 @@
+menu "ESP32 devtool companion"
+
+config ESP32_DEVTOOL_COMPANION_ENABLE
+    bool "Enable devtool HTTP server + verb hooks"
+    default n
+
+if ESP32_DEVTOOL_COMPANION_ENABLE
+
+config ESP32_DEVTOOL_HTTP_PORT
+    int "HTTP server port"
+    default 8081
+    range 1024 65535
+
+config ESP32_DEVTOOL_SCREENSHOT_ENABLE
+    bool "GET /screenshot"
+    default y
+
+config ESP32_DEVTOOL_TOUCH_ENABLE
+    bool "POST /touch"
+    default y
+
+config ESP32_DEVTOOL_AUDIO_RECORD_ENABLE
+    bool "GET /audio/record"
+    default y
+
+config ESP32_DEVTOOL_AUDIO_INJECT_ENABLE
+    bool "POST /audio/inject"
+    default y
+
+config ESP32_DEVTOOL_LOG_RELAY_ENABLE
+    bool "UDP log relay"
+    default n
+    help
+        Tee every ESP_LOGx line through a UDP NDJSON sink to the gateway
+        log ingest port. Enable only when actively debugging gateway-side
+        log ingestion. The vprintf hook allocates heap per log line and
+        starves lwIP's pbuf pool during chunked HTTP sends (T33),
+        stalling /screenshot and /audio/record on payloads >5 KB.
+        The USB-CDC ring buffer (esp32-devtool daemon ring) covers most
+        diagnostic needs without the heap pressure.
+
+config ESP32_DEVTOOL_LOG_RELAY_PORT
+    int "UDP log relay destination port"
+    default 9000
+    depends on ESP32_DEVTOOL_LOG_RELAY_ENABLE
+
+config ESP32_DEVTOOL_LOG_RELAY_HOST
+    string "UDP log relay destination host"
+    default "192.168.0.222"
+    depends on ESP32_DEVTOOL_LOG_RELAY_ENABLE
+
+endif
+
+endmenu

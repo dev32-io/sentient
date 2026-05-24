@@ -1,0 +1,9 @@
+image: sentient/fetch-mcp:local
+container_name: sentient-fetch-mcp
+networks: [sentient-internal]
+env:
+  HTTP_PROXY: http://sentient-egress-proxy:3128
+  HTTPS_PROXY: http://sentient-egress-proxy:3128
+  NO_PROXY: localhost,127.0.0.1
+mem_limit_bytes: 268435456    # 256 MiB — python + readabilipy fetch workload
+cpus: 0.5

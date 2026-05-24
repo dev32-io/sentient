@@ -1,0 +1,14 @@
+image: sentient/ma-mcp:local
+container_name: sentient-ma-mcp
+networks: [sentient-internal, sentient-external]
+# Hostname → LAN-IP mapping for the MA URL the operator entered. The
+# gateway derives MASS_LOCAL_HOST from the URL hostname (via the secret
+# binding `:host` suffix) and MASS_LOCAL_IP from the operator-entered
+# local_ip. Both bindings null → ma-mcp is skipped (optional service).
+extra_hosts:
+  - ${MASS_LOCAL_HOST}:${MASS_LOCAL_IP}
+env:
+  MUSIC_ASSISTANT_URL: ${MUSIC_ASSISTANT_URL}
+  MUSIC_ASSISTANT_TOKEN: ${MUSIC_ASSISTANT_TOKEN}
+mem_limit_bytes: 268435456
+cpus: 0.5

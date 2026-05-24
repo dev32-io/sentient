@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "paths": {
+      "@sentient/protocol": ["../shared/protocol/src"],
+      "@sentient/config": ["../shared/config/src"],
+      "@sentient/testing": ["../shared/testing/src"],
+      "@sentient/audio-prefs": ["../shared/audio-prefs/schema.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

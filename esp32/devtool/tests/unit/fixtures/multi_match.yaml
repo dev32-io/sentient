@@ -1,0 +1,14 @@
+name: ambiguous
+display_name: "Ambiguous Board"
+chip: esp32-s3
+build_profiles: [debug]
+usb:
+  port_glob: "/dev/cu.usbmodem*"
+http:
+  enabled: false
+  port: 8081
+capabilities:
+  cmd: { transport: usb-cdc }
+log_relay: { enabled: false, port: 9000 }
+verbs: []
+extensions: []

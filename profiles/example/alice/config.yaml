@@ -1,0 +1,94 @@
+# Example profile — copy to ~/.sentient/profiles/<username>/ and customise.
+# User: alice (example)
+
+model:
+  provider: openrouter
+  model: google/gemini-2.5-flash
+
+providers:
+  openrouter:
+    base_url: http://egress-proxy:3128/openrouter
+    api_key_env: OPENROUTER_API_KEY
+
+agent:
+  max_turns: 6
+  reasoning_effort: medium
+
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+  char_limits:
+    memory: 20000
+    user_profile: 8000
+
+compression:
+  enabled: true
+  flush_per_turn: true
+
+approvals:
+  mode: smart
+  timeout_seconds: 60
+  fail_closed: true
+
+terminal:
+  backend: local
+
+# Disable broad toolsets we don't want the agent to have
+disabled_toolsets:
+  - shell
+  - file_write
+  - file_edit
+  - code_execute
+  - web_extract     # install [browser] extra to enable
+  - skill_create    # user profiles don't auto-create skills in v1
+
+security:
+  redact_secrets: true
+  tirith:
+    enabled: true
+
+privacy:
+  redact_pii: false
+
+platforms:
+  homeassistant:
+    enabled: false   # we observe HA ourselves via gateway
+
+mcp_servers:
+  home_assistant:
+    # ha-mcp standalone server (homeassistant-ai/ha-mcp). Runs as a
+    # sibling container on sentient-internal — no host port, only
+    # reachable via docker DNS from other Sentient services. No bearer
+    # needed; network isolation is the access control. ha-mcp talks to
+    # the real HA via egress-proxy.
+    url: http://ha-mcp:8086/mcp
+    timeout: 30
+    connect_timeout: 5
+
+  duckduckgo:
+    command: duckduckgo-mcp-server
+    timeout: 30
+    connect_timeout: 10
+    # Hermes's safe-env filter strips HTTP(S)_PROXY from MCP subprocesses.
+    # Without these, httpx tries direct egress, hits the docker network
+    # deny, errors in ~100ms, and returns "no results found" to the model.
+    env:
+      HTTP_PROXY: "http://egress-proxy:3128"
+      HTTPS_PROXY: "http://egress-proxy:3128"
+      NO_PROXY: "localhost,127.0.0.1"
+
+  gateway:
+    command: nc
+    args: ["-U", "/run/sentient/mcp-alice.sock"]
+    tools:
+      include:
+        - identify_user
+        - pause_audio
+        - resume_audio
+        - set_channel
+
+display:
+  tool_progress: true
+  streaming: true
+  show_reasoning: false
+  personality: minimal

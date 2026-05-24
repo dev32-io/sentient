@@ -1,0 +1,14 @@
+{
+  "name": "sentient-plugin",
+  "label": "Sentient Plugin",
+  "description": "Backend bridge for sentient gateway — search/delete/get-messages REST endpoints backed by SessionDB. Headless: no nav tab.",
+  "icon": "Puzzle",
+  "version": "0.1.0",
+  "tab": {
+    "path": "/sentient-plugin",
+    "position": "end",
+    "hidden": true
+  },
+  "entry": "dist/index.js",
+  "api": "plugin_api.py"
+}

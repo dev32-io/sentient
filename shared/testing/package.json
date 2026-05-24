@@ -1,0 +1,16 @@
+{
+  "name": "@sentient/testing",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@sentient/protocol": "workspace:*",
+    "paseto-ts": "^2.0.5"
+  },
+  "devDependencies": {
+    "bun-types": "latest"
+  }
+}

@@ -1,0 +1,19 @@
+[project]
+name = "esp32-devtool-dev"
+version = "0.1.0"
+description = "Test environment for esp32-devtool. Runtime deps live in cli/main.py PEP-723 header; this file mirrors them so pytest can import cli/ + adds pytest itself."
+requires-python = ">=3.11"
+dependencies = [
+  "pyserial>=3.5",
+  "requests>=2.31",
+  "click>=8.1",
+  "pyyaml>=6.0",
+  "rich>=13",
+  "websockets>=12",
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

@@ -1,0 +1,18 @@
+import { render } from "preact";
+import "./styles/tokens/index.css";
+import "./components/settings/settings-shell.css";
+import "./components/settings/sidebar/sidebar.css";
+import "./components/settings/apply-bar/apply-bar.css";
+import "./components/settings/primitives/primitives.css";
+import "./components/settings/panes/panes.css";
+import "./components/common/dialog.css";
+import "./components/sessions/drawer.css";
+import { App } from "./app.tsx";
+
+function init(): void {
+  const appRoot = document.getElementById("app");
+  if (!appRoot) throw new Error("Root #app element not found");
+  render(<App />, appRoot);
+}
+
+init();

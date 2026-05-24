@@ -1,0 +1,122 @@
+--- a/acp_adapter/session.py
++++ b/acp_adapter/session.py
+@@ -96,6 +96,105 @@
+ 
+ 
+ 
++def _resolve_acp_toolsets(config: dict) -> list[str]:
++    """Sentient overlay: resolve enabled toolsets for an ACP-spawned agent.
++
++    Upstream Hermes hardcodes ``enabled_toolsets=["hermes-acp"]`` for every
++    ACP session, which silently hides every configured MCP server from the
++    agent's tool surface. Sentient ships an MCP-driven home assistant where
++    the MCPs (Home Assistant, Music Assistant, DuckDuckGo, gateway control
++    socket) ARE the feature -- the editor-tier ``hermes-acp`` toolset on its
++    own gives the agent no way to call them.
++
++    Resolution rules:
++      1. If ``agent.enabled_toolsets`` is a non-empty list in ``config.yaml``,
++         honor it verbatim. Operators get full override control.
++      2. Otherwise, return ``["hermes-acp"] + list(mcp_servers.keys())`` so
++         every configured MCP is auto-included as a toolset alias. The
++         alias ``<server>`` -> ``mcp-<server>`` is registered by
++         ``tools.mcp_tool`` at server registration time, so this matches the
++         names ACP needs.
++
++    Falls back to ``["hermes-acp"]`` if config is malformed.
++    """
++    if not isinstance(config, dict):
++        return ["hermes-acp"]
++    agent_cfg = config.get("agent") or {}
++    if isinstance(agent_cfg, dict):
++        explicit = agent_cfg.get("enabled_toolsets")
++        if isinstance(explicit, list) and explicit:
++            return [str(x) for x in explicit]
++    base = ["hermes-acp"]
++    mcp_servers = config.get("mcp_servers") or {}
++    if isinstance(mcp_servers, dict):
++        for name in mcp_servers.keys():
++            base.append(str(name))
++    return base
++
++
++def _open_acp_session_db():
++    """Sentient overlay: open the per-profile SessionDB so the agent's
++    ``session_search`` tool actually works under ACP.
++
++    Upstream Hermes wires ``session_db=`` into AIAgent on every other entry
++    point (``gateway/run.py``, ``gateway/platforms/api_server.py``,
++    ``cron/scheduler.py``, ``tools/delegate_tool.py``, ``tui_gateway/server.py``)
++    but the ACP adapter ``_make_agent`` doesn't. Result: ``session_search``
++    always returns ``"Session database not available."`` because
++    ``self._session_db`` is None.
++
++    SessionDB() takes no args; it reads ``HERMES_HOME`` from the env, which
++    ``hermes -p <profile> acp`` already pins to the profile dir. Failure to
++    open is non-fatal (returns None) -- session_search degrades to its
++    existing error message instead of crashing the agent.
++    """
++    try:
++        from hermes_state import SessionDB
++        return SessionDB()
++    except Exception:
++        return None
++
++
++def _resolve_acp_agent_identity(config: dict) -> dict:
++    """Sentient overlay: pass through fields ACP otherwise drops on the floor.
++
++    Other Hermes entry points (gateway/run.py, gateway/platforms/api_server.py,
++    cron/scheduler.py, tui_gateway/server.py) wire ``user_id`` and
++    ``fallback_model`` into AIAgent; the ACP adapter doesn't. Result: the
++    agent has no idea who it's talking to (memory scoping, HA tool
++    user-context, audit logging all fall back to anonymous defaults), and
++    LLM failures don't trigger automatic provider failover.
++
++    Resolution:
++      - ``user_id``: ``agent.user_id`` from config.yaml when set, otherwise
++        the basename of HERMES_HOME (which ``hermes -p <profile> acp`` pins
++        to the profile dir, so the basename is the profile name).
++      - ``fallback_model``: ``fallback_model`` from config.yaml verbatim
++        (Hermes accepts either a string model id or a {provider, model}
++        dict).
++
++    Returns kwargs ready to splat into AIAgent. Empty dict on malformed
++    config — AIAgent treats both as None.
++    """
++    import os
++    out: dict = {}
++    if not isinstance(config, dict):
++        return out
++    agent_cfg = config.get("agent") if isinstance(config.get("agent"), dict) else {}
++    user_id = agent_cfg.get("user_id") if isinstance(agent_cfg, dict) else None
++    if not (isinstance(user_id, str) and user_id):
++        hermes_home = os.environ.get("HERMES_HOME") or ""
++        basename = os.path.basename(hermes_home.rstrip("/"))
++        if basename:
++            user_id = basename
++    if isinstance(user_id, str) and user_id:
++        out["user_id"] = user_id
++    fb = config.get("fallback_model")
++    if isinstance(fb, (str, dict)) and fb:
++        out["fallback_model"] = fb
++    return out
++
++
+ def _register_task_cwd(task_id: str, cwd: str) -> None:
+     """Bind a task/session id to the editor's working directory for tools."""
+     if not task_id:
+@@ -540,10 +639,12 @@
+ 
+         kwargs = {
+             "platform": "acp",
+-            "enabled_toolsets": ["hermes-acp"],
++            "enabled_toolsets": _resolve_acp_toolsets(config),
+             "quiet_mode": True,
+             "session_id": session_id,
+             "model": model or default_model,
++            "session_db": _open_acp_session_db(),
++            **_resolve_acp_agent_identity(config),
+         }
+ 
+         try:
