@@ -91,11 +91,8 @@ web client never needs to know Hermes exists. The gateway↔Hermes link is
 ACP (Agent Client Protocol) — JSON-RPC 2.0 over WebSocket; per-user
 profiles each get their own ACP session via `gateway/src/hermes-adapter-client/`.
 
-External stimuli that arrive during an active cycle (a second user
-message, a sensor event) accumulate in `ShortTermContext`. The gate fires
-the next cycle at the natural end of the current one, with everything
-since `lastCycleEndSeq`. ReAct continuations run back-to-back, bounded by
-`maxIterations`.
+External stimuli that arrive during an active cycle (i.e. a sensor event) accumulate in gateway. The `AttentionGate` fires
+the next cycle at the natural end of the current one.
 
 Session-level cancellation is split into two controllers:
 - `bargeInController` — mic-onset → abort cycle + TTS, keep tool tasks alive
@@ -105,20 +102,19 @@ Session-level cancellation is split into two controllers:
 The full deep-dive lives in `ARCHITECTURE.md`.
 
 ## Latency
-
-Measured end-to-end latency numbers will land here after the measurement
+TBD
+<!-- Measured end-to-end latency numbers will land here after the measurement
 protocol runs. Until then, the rough working budget is:
 
 | Metric | Target |
 |---|---|
 | End-to-end (mic close → first TTS audio) | sub-second |
 | Barge-in (mic onset → TTS stops) | sub-200 ms |
-| TTS first-byte | sub-150 ms |
+| TTS first-byte | sub-150 ms | -->
 
 ## Demo
 
-A 30–60 second screen capture of a conversation including a barge-in
-will land here once recorded.
+TBD
 
 ## How this was built
 
@@ -130,12 +126,6 @@ Architecture decisions, public API shapes, and test scaffolding are
 human-written. The agent accelerates research, generates boilerplate,
 executes typed-mechanical refactors, and drafts test cases. Every commit
 is reviewed before merge.
-
-Audit trail:
-
-```bash
-git log --grep "Co-Authored-By: Claude"
-```
 
 ## License
 
