@@ -7,14 +7,17 @@ Sentient is composed of three runtimes:
 1. **Gateway** (this repository, Bun + TypeScript) — terminates client
    WebSocket connections, runs STT and TTS, hosts a small MCP server for
    gateway-side tools (`identify_user`, `pause_audio`, `resume_audio`,
-   `update_user_settings`), and dials Hermes for the agent loop.
+   `update_user_settings`), dials Hermes for the agent loop, **and owns
+   the docker-level lifecycle of every sibling container in the stack**
+   (see [Gateway as system orchestrator](#gateway-as-system-orchestrator)).
 2. **STT Service** (this repository, Python) — Silero VAD +
    Smart-Turn v3 turn detector + SenseVoice-Small ASR, all wrapped in a
    small WebSocket server. Local, on-device, no cloud STT call.
 3. **Hermes** — a separate runtime (not in this repo) that owns the LLM
    call, agent loop, tool dispatch, and per-user profile memory. One
-   `hermes -p <user>` worker per user, managed by supervisord inside a
-   single `sentient-hermes` container.
+   `hermes -p <user>` worker per user, managed by supervisord inside the
+   Sentient-built containment wrapper container `sentient-hermes` (see
+   [Hermes containment wrapper](#hermes-containment-wrapper)).
 
 Clients today: a Preact web app with a voice+text composer (voice mode
 toggleable via the mic button). In progress: an ESP32-S3 hardware cube
@@ -30,10 +33,8 @@ one active per session.
 
 `AttentionGate` (`gateway/src/cerebrum/attention-gate.ts`) is the only
 path that can dispatch a cycle. External stimuli that arrive during an
-active cycle accumulate in `ShortTermContext`. The gate fires the next
-cycle at the natural end of the current one with everything since
-`lastCycleEndSeq`. ReAct continuations run back-to-back, bounded by
-`maxIterations`.
+active cycle accumulate in `Gateway`. The gate fires the next
+cycle at the natural end of the current one.
 
 ## Gateway ↔ Hermes protocol
 
@@ -48,6 +49,100 @@ ACP defines the request/notification surface (`session/prompt`,
 `session/update`, `session/cancel`, etc.); the event translator maps
 inbound `session/update` notifications back to the SDK's wire protocol
 so the browser/cube/mobile clients never see ACP directly.
+
+## Gateway as system orchestrator
+
+`sentient-gateway` is not just a WS terminator — it owns the docker
+lifecycle of every sibling container: `sentient-hermes`, `stt-service`,
+`egress-proxy`, `ha-mcp`, `ma-mcp`, `searxng`, `searxng-mcp`,
+`fetch-mcp`, `signal-cli`. Implementation in
+`gateway/src/system-orchestrator/`.
+
+How it works:
+
+- **Dockerode over the bind-mounted socket.** The orchestrator uses
+  `dockerode` against `/var/run/docker.sock`. Socket access is granted
+  via `group_add: HOST_DOCKER_GID` in the gateway compose entry — no
+  host-root inside the gateway container, no `--privileged`.
+- **Template-driven service catalog.** Each managed service is declared
+  by a YAML template under `gateway/templates/services/*.yaml`. Templates
+  carry image, networks, env, volumes, resource limits. Placeholders are
+  resolved at apply time: `${SECRET}` from the secrets store,
+  `${HOST_HOME}` / `${HOST_DOCKER_GID}` / `${HOST_CONFIG_DIR}` from the
+  gateway-process env, and per-user dynamic values from a small set of
+  registry providers.
+- **Registry rebuild on every apply.** Before each `applyAll` /
+  `applySubset` call, the service registry is rebuilt from disk so
+  wizard / settings edits flow without a gateway restart.
+- **Boot reconciler.** `reconcileOnBoot` compares the declared registry
+  against actual docker state and converges (start missing,
+  stop-and-replace drifted, leave matching alone). Idempotent.
+- **Health probes.** Each service template carries a TCP or HTTP liveness
+  probe consumed by the orchestrator's `HealthIO`. `applyAll` blocks on
+  readiness up to `applyTimeoutMs`.
+
+The orchestrator is the single audit point for "what is running and
+why." Adding a new MCP, rotating an upstream image, or changing per-user
+config does not require editing the compose file — it lives in templates
+and per-user profile YAML.
+
+## Hermes containment wrapper
+
+Upstream Hermes is designed to run as a trusted host process. Its
+built-in docker-backend asks the daemon to bind-mount the worker's
+`HERMES_HOME` into per-task sandbox containers; on a single-user dev box
+that's fine, but in a family-facing voice assistant the trust model is
+wrong — a compromised tool call should not be able to write to `$HOME`.
+
+Sentient wraps the whole Hermes runtime in a `sentient-hermes` container
+built from `deploy/hermes-overlay/`. The wrap is built `FROM
+nousresearch/hermes-agent:<pinned>` + `supervisor` + an ACP-over-WS
+bridge (`acp_ws_server.py`) + one network-config patch. See
+`deploy/hermes-overlay/README.md`.
+
+Process model:
+
+```
+container: sentient-hermes
+  └─ supervisord (PID 1, uid 10000)
+       ├─ hermes-alice-acp        (port 8643 — acp_ws_server wraps `hermes -p alice acp`)
+       ├─ hermes-alice-dashboard  (port 9643 — `hermes -p alice dashboard`)
+       ├─ hermes-bob-acp          (port 8644)
+       ├─ hermes-bob-dashboard    (port 9644)
+       └─ ...
+```
+
+Per-user supervisord programs are rendered at user-add time by
+`gateway/src/admin/user-provisioner.ts` + `supervisord-control.ts`. The
+gateway then issues `supervisorctl reread && update` over a unix socket
+shared via volume mount.
+
+What the wrap actually contains:
+
+- **Worker filesystem writes.** Anything the worker writes outside the
+  explicit mount subtree (`~/.sentient/gateway/data` on host) dies with
+  the container. Bind mounts are the audit boundary, not "wherever the
+  worker happened to be running."
+- **Per-task sandbox blast radius.** Hermes' docker-backend
+  bind-mounts `<HERMES_HOME>/profiles/<userId>/workspace/<taskId>` into
+  each spawned sandbox. The wrapper enforces `HERMES_HOME` for every
+  user is a child of the gateway's data dir
+  (`gateway/src/admin/user-provisioner.ts:resolveHermesHome`). Lock the
+  parent, lock every sandbox.
+- **Outbound network.** `HTTP_PROXY` / `HTTPS_PROXY` env in the
+  container point at `egress-proxy:3128`; combined with
+  `sentient-internal: internal: true`, raw outbound is impossible
+  without going through tinyproxy.
+- **Resource ceiling.** Memory and CPU limits applied at the container
+  layer, not per-process honor system.
+- **Lifecycle control.** Adding/removing a family member is a
+  template-driven `supervisorctl` call from the gateway — no manual
+  container surgery.
+
+Per-user-process isolation inside the wrap (uid 10000 + supervisord +
+program-scoped env) is weaker than per-container isolation; splitting
+workers into per-user containers is on the hardening roadmap (see
+[Honest gaps](#honest-gaps)).
 
 ## Salience accumulation
 
@@ -82,23 +177,116 @@ browser's built-in echo cancellation treats it as remote audio and
 subtracts it from mic input. Without this, the assistant's own voice
 would trigger barge-in.
 
-## Authentication
+## Security model
 
-- **Browser users** sign in with a PIN issued at provisioning time (the
-  first PIN is set during the setup wizard; subsequent users are added
-  via the admin pane). The gateway exchanges the PIN for a PASETO
-  v4.local session token. The web client stores the token in
-  `localStorage` and sends it as `Bearer` on every subsequent request.
-  Token minting, validation, and rotation live in
-  `gateway/src/user-auth/`.
+The security model is layered. No single control is the boundary —
+network isolation + the containment wrap + the runtime defenses combine.
+
+### Network isolation
+
+Two docker bridges:
+
+- `sentient-external` — only `sentient-gateway` attaches. Has the host
+  route. The single externally reachable surface (one published port,
+  `8888/tcp`).
+- `sentient-internal` — `internal: true` on the bridge. No host gateway,
+  no published ports. `sentient-hermes`, `stt-service`, all MCPs, and
+  `egress-proxy` live only here. From the LAN, none of them are
+  reachable.
+
+The standard MCP posture (`agents/docs/gateway/mcp-deployment-details.md`)
+forbids adding `ports:` to any MCP container — that would punch a hole
+through LAN isolation.
+
+### Egress proxy
+
+All outbound Hermes traffic is forced through the `egress-proxy`
+(tinyproxy) container via `HTTP_PROXY` / `HTTPS_PROXY` env in
+`sentient-hermes`. The proxy applies a hostname denylist
+(`filter.txt`, currently seeded empty — populate via StevenBlack/hosts
+or incident-response notes). Allowed CONNECT ports: 443, 80, 8123 (HA),
+8095 (MA).
+
+### Hermes containment wrapper
+
+Covered above. The wrap is the single biggest control for
+agent-runtime-vs-host blast radius.
+
+### Auth surfaces
+
+- **Browser users** sign in with a PIN issued at provisioning time. The
+  gateway exchanges the PIN for a PASETO v4.local session token. The web
+  client stores the token in `localStorage` and sends it as `Bearer` on
+  every subsequent request. Token minting, validation, and rotation live
+  in `gateway/src/user-auth/`.
 - **Admin endpoints** (`/api/v1/admin/*`) require the admin token minted
   at first boot. The token is shown once in the wizard and persisted to
   `~/.sentient/secrets/keys.yaml`.
 - **Service-to-service** — there is no bearer-token layer between the
-  gateway and STTService. STT is reachable only on the internal Docker
-  network (`sentient-internal`, an internal bridge with no host port
-  publication). Network isolation is the security boundary; the gateway
-  is the only externally reachable service.
+  gateway and STTService / MCPs / Hermes. The internal docker bridge IS
+  the security boundary; the gateway is the only externally reachable
+  service.
+
+### Prompt-injection scanner
+
+`gateway/src/security/injection-scanner.ts` scans inbound text against
+six regex categories: `ignore_instructions`, `override_system`,
+`leak_prompt`, `disobey_role`, `jailbreak_phrases`,
+`inline_tool_invocation`. Findings are emitted as structured events for
+the risk accumulator. The scanner does NOT block output — silent
+blocking creates worse failure modes than logging and downstream policy
+decisions.
+
+### Policy engine
+
+`gateway/src/security/policy-engine.ts` evaluates declarative rules
+loaded from MCP-policy config. Each rule binds a tool match
+(`tool == "<name>"` or `tool == "*"`) to a boolean condition over
+`role` / `userId` / `session.channel` / `args.*` predicates, joined with
+` AND ` / ` OR `. The first matching rule's action wins:
+`allow` / `deny` / `confirm`. Predicates are parsed into a fixed AST —
+no dynamic eval.
+
+### Risk accumulator
+
+`gateway/src/security/risk-accumulator.ts` runs an exponential-decay
+score over weighted security events (`injection_pattern`,
+`repeated_offense`, `role_violation`, `ha_name_prompt_like`,
+`mutating_sensitive_domain`, `policy_rejection`). Half-life and per-event
+weights are config-driven. Score thresholds map to `none` / `warn` /
+`escalate` / `block` levels, consumed by the policy engine and surfaced
+in logs.
+
+### Log sanitizer
+
+`gateway/src/logging/log-sanitizer.ts` redacts sensitive material before
+any log entry is written:
+
+- Key-based: any property key matching `token|apikey|api_key|secret|password|authorization|pin|paseto`.
+- Pattern-based: PASETO v4.local tokens, `Bearer <token>`, hex-`Token <…>`,
+  and `sak_<key>` (sentient-auth keys).
+
+Every gateway log line goes through this — both file and console sinks.
+
+### Honest gaps
+
+The threat model isn't airtight. Tracked in `gateway/todo.md`:
+
+- The bind-mounted `/var/run/docker.sock` in `sentient-hermes` is
+  host-root-equivalent if a worker is compromised. A determined worker
+  can craft `docker run -v /:/host` directly to the socket, bypassing
+  Hermes' own code path. Mitigation: rootless docker / sysbox runtime.
+- Per-user workers share `sentient-hermes` — user-to-user isolation is
+  process-level (uid 10000 + supervisord), not container-level.
+  Splitting workers into per-user containers is on the roadmap.
+- `sentient-internal` allows raw-TCP between containers; a compromised
+  worker can lateral-move to sibling MCPs without going through
+  `egress-proxy`. Mitigation: dedicated `sentient-task` network for
+  sandbox containers, iptables egress allowlist.
+- The per-task sandbox image
+  (`nikolaik/python-nodejs:python3.11-nodejs20`) is upstream-built, not
+  Sentient-audited. Mitigation: pin a
+  `ghcr.io/sentient/agent-sandbox:<tag>`.
 
 ## State, secrets, and configuration
 
@@ -159,12 +347,9 @@ Containers mount the relevant subtrees read-write or read-only as needed.
 
 ## Where Sentient diverges from hosted real-time voice APIs
 
-- **Dual-Pi5 split** — production runs capture and compute on separate
-  boards so the mic-side stays deterministic when the LLM container is
-  busy. Hosted APIs run as a single cloud process.
 - **Local STT** — Silero VAD + Smart-Turn v3 + SenseVoice-Small all run
   on-device. Trade-off: client CPU + a one-time model-weights download
-  vs. cloud round-trip latency + per-call price.
+  vs. cloud round-trip latency + per-call price. Main advantage is privacy.
 - **Hermes-owned per-user memory** — conversation history, profile
   memory, and tool state live inside the per-user Hermes worker. The
   gateway has no durable conversation store. Trade-off: privacy +
@@ -173,3 +358,9 @@ Containers mount the relevant subtrees read-write or read-only as needed.
   MCP servers reached through the gateway or directly by Hermes. Tools
   can be local (filesystem, local services) or remote (web APIs). The
   set is operator-configured, not vendor-locked.
+- **Gateway-as-orchestrator + Hermes containment wrap** — see
+  [Gateway as system orchestrator](#gateway-as-system-orchestrator) and
+  [Hermes containment wrapper](#hermes-containment-wrapper). Hosted
+  real-time APIs run a single trusted process; we run a multi-user
+  family assistant where one compromised agent must not breach the
+  household.
