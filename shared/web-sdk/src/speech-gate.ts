@@ -77,6 +77,7 @@ export function createSpeechGate(config: SpeechGateConfig): SpeechGate {
       } else {
         gap += 1;
         if (gap > config.gapToleranceFrames) sustainedMs = 0;
+        // gap keeps counting after this; harmless since sustainedMs is already 0.
       }
 
       if (sustainedMs >= config.openDebounceMs) {
