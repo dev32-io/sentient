@@ -95,4 +95,14 @@ describe("AudioPreRollRing FSM", () => {
     expect(tags(ring.push(speech, true))).toEqual([tags([speech])[0]]);
     expect(ring.push(frame(), false)).toEqual([]);
   });
+
+  it("works with a non-ArrayBuffer frame type (Float32Array)", () => {
+    const ring = createAudioPreRollRing<Float32Array>({ preRollFrames: 2, hangoverFrames: 0 });
+    const a = new Float32Array([1]);
+    const b = new Float32Array([2]);
+    const c = new Float32Array([3]);
+    expect(ring.push(a, false)).toEqual([]); // buffered
+    expect(ring.push(b, false)).toEqual([]); // buffered (ring full: [a,b])
+    expect(ring.push(c, true)).toEqual([a, b, c]); // accept → flush pre-roll [a,b] + current c
+  });
 });
