@@ -163,3 +163,23 @@ export const RNNOISE_BASELINE_SPEECH_PROB = 0.6;
  * playback is intentionally dropped.
  */
 export const RNNOISE_PLAYBACK_SPEECH_PROB = 0.85;
+
+// SpeechGate latch (client mic gate). Opens only after speech is sustained
+// for SPEECH_GATE_OPEN_DEBOUNCE_MS, so short transients (coughs, keyboard
+// knocks) never open it. One-word commands ("no"/"yes"/"stop") survive
+// because the debounce-window frames are buffered in the composed
+// AudioPreRollRing and flushed on open. Research range 200–300ms; 200
+// catches fast one-word commands while rejecting sub-200ms noise.
+export const SPEECH_GATE_OPEN_DEBOUNCE_MS = 200;
+// RNNoise emits one frame per 10ms @ 48kHz (480 samples) — fixed by the model.
+export const SPEECH_GATE_FRAME_MS = 10;
+// Consecutive sub-threshold frames tolerated before the sustain counter
+// resets, so a brief RNNoise probability flicker doesn't drop a real utterance.
+export const SPEECH_GATE_GAP_TOLERANCE_FRAMES = 3;
+// Pre-roll frames the composed ring retains. MUST exceed the debounce window
+// (SPEECH_GATE_OPEN_DEBOUNCE_MS / SPEECH_GATE_FRAME_MS = 20) so the onset
+// buffered during the debounce is flushed intact on open. 24 ≈ 240ms.
+export const SPEECH_GATE_PREROLL_FRAMES = 24;
+// Failsafe: if connector.transcript.final never arrives (server hiccup),
+// force the latch closed after this long so it can't stream forever.
+export const SPEECH_GATE_MAX_OPEN_MS = 20_000;
