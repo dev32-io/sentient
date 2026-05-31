@@ -35,7 +35,7 @@ Replace the per-frame logic with a three-state latch.
 
 ### Component: `SpeechGate` (FSM)
 
-One file, pure and unit-testable. Lives in `shared/web-sdk/src/` (reusable) or `gateway/webui/src/audio/` — placement decided at plan time per import boundaries.
+One file, pure and unit-testable, in `shared/web-sdk/src/` (sibling to `echo-gate.ts`, `audio-pre-roll-ring.ts`). It is a **simple latch** that **composes the existing `AudioPreRollRing`** for onset buffering — no new buffer. `AudioPreRollRing` is made generic (`<T = ArrayBuffer>`, backward-compatible) so the gate can hold an `AudioPreRollRing<Float32Array>` of pre-encode frames. The latch only decides open/closed; the ring does the pre-roll flush. `preRollFrames` is sized to cover the debounce window (≥ `openDebounceMs / frameDurationMs` = 20 frames) so the onset captured during the debounce is not lost; `hangoverFrames` is 0 (close is server-driven, not local).
 
 ```
 CLOSED ──speechProb ≥ openThreshold sustained ≥ openDebounceMs──▶ OPEN
@@ -76,6 +76,8 @@ Named constants with inline comments. Client audio tunables stay in `gateway/web
 | `openThreshold` (baseline) | 0.6 | Reuse existing `RNNOISE_BASELINE_SPEECH_PROB`. |
 | `openThreshold` (playback) | 0.85 | Reuse existing `RNNOISE_PLAYBACK_SPEECH_PROB` — preserves echo rejection during TTS. |
 | `maxOpenMs` | 20000 | Failsafe: force-close if `transcript.final` never arrives (server hiccup), so the latch can't stick open streaming forever. |
+| `preRollFrames` (ring) | 24 | Frames the composed `AudioPreRollRing` retains while closed. Must exceed the debounce window (200ms / 10ms = 20 frames) so the onset buffered during debounce is flushed intact on open. |
+| `hangoverFrames` (ring) | 0 | Close is server-driven (`transcript.final`), not a local hangover. |
 | ~~`RNNOISE_POST_SPEECH_HOLD_MS`~~ | removed | Superseded by server-driven close. |
 
 ### Interaction notes
