@@ -651,6 +651,7 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       capture,
       playback,
       cycleQueue,
+      speechGate,
       audioInputConnector,
       textInputConnector,
       sessionsConnector,
@@ -786,6 +787,8 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       voiceMode.value = "off";
       resources.audioInputConnector.stopStreaming();
       resources.capture.stop();
+      // reset the mic latch so a mid-utterance toggle doesn't leak stale open-state into the next session
+      resources.speechGate.close();
       resources.playback.setAecEnabled(false);
       resources.refreshStatus();
     },
