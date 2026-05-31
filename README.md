@@ -263,7 +263,22 @@ protocol runs. Until then, the rough working budget is:
 
 ## Demo
 
-TBD
+Two unscripted exchanges against the local stack — real model
+(`deepseek-v4-flash` on Ollama Cloud), real tool calls, real per-user memory.
+
+**Everyday, across domains.** One ask spans web + Home Assistant; the
+orchestrator fans out the tool calls and answers both halves.
+
+<img src="docs/media/clip1.gif" width="640" alt="Sentient answers a weather + front-door-lock question with parallel Home Assistant tool calls">
+
+**It knows you, and grows for you.** Sentient recalls who you are, researches
+on the fly, writes itself a new skill, then uses that skill — and the memory —
+to hold the conversation.
+
+<img src="docs/media/clip2.gif" width="640" alt="Sentient researches active listening, authors a holding-space skill, then applies it and recalls the user across follow-up turns">
+
+> Tool-call latency is sped up; every response, memory recall, and
+> self-authored skill is genuine.
 
 ## How this was built
 
