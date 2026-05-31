@@ -20,6 +20,7 @@ import {
   UserTextInputConnector,
   createEchoGate,
   createLogger,
+  createSpeechGate,
 } from "@sentient/web-sdk";
 import type { ChatMessage, VoiceStatus } from "@sentient/web-sdk";
 import { useEffect, useMemo, useRef } from "preact/hooks";
@@ -43,6 +44,11 @@ import {
   OPUS_UPLINK_BITRATE_BPS,
   RNNOISE_BASELINE_SPEECH_PROB,
   RNNOISE_PLAYBACK_SPEECH_PROB,
+  SPEECH_GATE_FRAME_MS,
+  SPEECH_GATE_GAP_TOLERANCE_FRAMES,
+  SPEECH_GATE_MAX_OPEN_MS,
+  SPEECH_GATE_OPEN_DEBOUNCE_MS,
+  SPEECH_GATE_PREROLL_FRAMES,
 } from "../constants.ts";
 import { createAwaitingTracker } from "./awaiting-tracker.ts";
 import {
@@ -215,9 +221,19 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       messages.value = attachToolsToAssistantMessages(stamped, rawTasksRef.current);
     }
 
+    const speechGate = createSpeechGate({
+      openDebounceMs: SPEECH_GATE_OPEN_DEBOUNCE_MS,
+      frameDurationMs: SPEECH_GATE_FRAME_MS,
+      gapToleranceFrames: SPEECH_GATE_GAP_TOLERANCE_FRAMES,
+      preRollFrames: SPEECH_GATE_PREROLL_FRAMES,
+      maxOpenMs: SPEECH_GATE_MAX_OPEN_MS,
+    });
+
     const audioInputConnector = new UserAudioInputConnector({
       onTranscript: (text) => {
         transcript.value = text;
+        speechGate.close();
+        denoiser?.reset();
       },
     });
 
@@ -274,31 +290,28 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     const DENOISE_DROP_LOG_EVERY = 50;
     let denoiseDroppedFrames = 0;
     let denoiseTotalFrames = 0;
-    /**
-     * Post-speech hysteresis hold. After the most recent speech-positive
-     * frame, keep the gate open for this many ms so the trailing silence
-     * after an utterance reaches server-side Silero VAD — without that
-     * "speech→silence" transition Silero never fires vad.end and the turn
-     * never finalizes. 1500 ms is comfortably above Silero's default
-     * min_silence_ms (300-500) plus pre-roll, so end-of-turn fires reliably.
-     */
-    const RNNOISE_POST_SPEECH_HOLD_MS = 1500;
-    let lastSpeechMs = Number.NEGATIVE_INFINITY;
-
     function handleDenoisedFrame(cleanedSamples: Float32Array, speechProb: number): void {
       denoiseTotalFrames += 1;
       const gateState = echoGate.snapshot().state;
       const threshold = gateState === "baseline" ? RNNOISE_BASELINE_SPEECH_PROB : RNNOISE_PLAYBACK_SPEECH_PROB;
-      const now = Date.now();
       const isSpeech = speechProb >= threshold;
-      if (isSpeech) lastSpeechMs = now;
-      const inHold = now - lastSpeechMs < RNNOISE_POST_SPEECH_HOLD_MS;
-      if (!isSpeech && !inHold) {
+      // Copy before handing to the gate: the denoiser reuses ONE output buffer
+      // across calls, so frames the gate buffers during the debounce window
+      // would be overwritten before the flush. encode() copies synchronously.
+      const frameCopy = cleanedSamples.slice();
+      const { forward, opened } = speechGate.process(frameCopy, isSpeech, Date.now());
+      if (opened) {
+        log.debug("speech-gate.open", {
+          gateState,
+          speechProb: Number(speechProb.toFixed(3)),
+          flushedFrames: forward.length,
+        });
+      }
+      if (forward.length === 0) {
         denoiseDroppedFrames += 1;
         if (denoiseDroppedFrames % DENOISE_DROP_LOG_EVERY === 0) {
-          log.debug("denoise.drop", {
+          log.debug("speech-gate.buffering", {
             speechProb: Number(speechProb.toFixed(3)),
-            threshold,
             gateState,
             droppedFrames: denoiseDroppedFrames,
             totalFrames: denoiseTotalFrames,
@@ -306,11 +319,7 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
         }
         return;
       }
-      // Speech detected OR within post-speech hold window. Encode the
-      // CLEANED samples. The denoiser reuses its output buffer across frames;
-      // opus-encoder's encode() copies synchronously into its own WebCodecs
-      // queue, so passing the shared buffer here is safe (no async retention).
-      opusEncoder?.encode(cleanedSamples);
+      for (const f of forward) opusEncoder?.encode(f);
     }
 
     const denoiser = createRnNoiseDenoiser({
@@ -642,6 +651,7 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       capture,
       playback,
       cycleQueue,
+      speechGate,
       audioInputConnector,
       textInputConnector,
       sessionsConnector,
@@ -777,6 +787,8 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       voiceMode.value = "off";
       resources.audioInputConnector.stopStreaming();
       resources.capture.stop();
+      // reset the mic latch so a mid-utterance toggle doesn't leak stale open-state into the next session
+      resources.speechGate.close();
       resources.playback.setAecEnabled(false);
       resources.refreshStatus();
     },

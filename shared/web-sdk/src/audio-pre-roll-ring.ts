@@ -55,19 +55,19 @@ export interface AudioPreRollRingConfig {
   readonly hangoverFrames: number;
 }
 
-export interface AudioPreRollRing {
+export interface AudioPreRollRing<T = ArrayBuffer> {
   /**
    * Feed one captured frame with the EchoGate's accept/reject verdict.
    * Returns the frames that should be forwarded to STT in order — may be
    * empty (silence is being buffered) or contain multiple frames (the
    * pre-roll flush on a reject→accept transition).
    */
-  push(frame: ArrayBuffer, accepted: boolean): readonly ArrayBuffer[];
+  push(frame: T, accepted: boolean): readonly T[];
   /** Drop the ring and reset to idle. Use on session boundaries. */
   reset(): void;
 }
 
-export function createAudioPreRollRing(config: AudioPreRollRingConfig): AudioPreRollRing {
+export function createAudioPreRollRing<T = ArrayBuffer>(config: AudioPreRollRingConfig): AudioPreRollRing<T> {
   if (config.preRollFrames < 0) {
     throw new Error(`AudioPreRollRing: preRollFrames must be >= 0, got ${config.preRollFrames}`);
   }
@@ -75,7 +75,7 @@ export function createAudioPreRollRing(config: AudioPreRollRingConfig): AudioPre
     throw new Error(`AudioPreRollRing: hangoverFrames must be >= 0, got ${config.hangoverFrames}`);
   }
 
-  const ring: ArrayBuffer[] = [];
+  const ring: T[] = [];
   let active = false;
   let hangoverRemaining = 0;
 

@@ -107,6 +107,19 @@ export { createAudioPreRollRing } from "./audio-pre-roll-ring.ts";
 export type { AudioPreRollRing, AudioPreRollRingConfig } from "./audio-pre-roll-ring.ts";
 
 // ---------------------------------------------------------------------------
+// Speech gate — client-side mic latch that debounces sustained speech before
+// opening the stream, suppressing transient noise / cough / knock.
+// ---------------------------------------------------------------------------
+
+export { createSpeechGate } from "./speech-gate.ts";
+export type {
+  SpeechGate,
+  SpeechGateConfig,
+  SpeechGateResult,
+  SpeechGateState,
+} from "./speech-gate.ts";
+
+// ---------------------------------------------------------------------------
 // Voice UI types
 // ---------------------------------------------------------------------------
 
