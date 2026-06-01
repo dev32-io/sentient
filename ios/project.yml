@@ -1,0 +1,28 @@
+name: SentientApp
+options:
+  bundleIdPrefix: io.sentient
+  deploymentTarget:
+    iOS: "17.0"
+targets:
+  SentientApp:
+    type: application
+    platform: iOS
+    sources: [App]
+    info:
+      path: App/Info.plist
+      properties:
+        UILaunchScreen: {}
+        CFBundleDisplayName: Sentient
+        # Debug-scoped ATS exception for localhost (later WSS dev). No network call in P0.
+        NSAppTransportSecurity:
+          NSExceptionDomains:
+            localhost:
+              NSExceptionAllowsInsecureHTTPLoads: true
+              NSIncludesSubdomains: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.sentient.app
+        GENERATE_INFOPLIST_FILE: NO
+    dependencies:
+      - framework: ../shared/mobile-sdk/build/XCFrameworks/debug/MobileSdk.xcframework
+        embed: false

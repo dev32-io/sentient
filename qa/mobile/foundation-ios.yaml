@@ -1,0 +1,6 @@
+appId: io.sentient.app
+---
+- launchApp
+- assertVisible:
+    id: "foundation-greeting"
+- takeScreenshot: /tmp/foundation-ios
