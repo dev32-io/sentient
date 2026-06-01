@@ -93,10 +93,14 @@ barge-in: mic onset → interrupt() → clear playback queue + abort cycle
 - `GET /api/v1/auth/users` → avatar list → OS numpad PIN → `POST /api/v1/auth/login {userId,pin}` → `{token,user}` → token to Keychain/KeyStore → WS `{type:"auth",token}`.
 - Launch: `GET /api/v1/auth/me` refresh (7-day TTL). Logout (thin settings) clears token.
 
-**Push plumbing (one new gateway endpoint):**
-- Client registers APNs/FCM → device push token → `POST /api/v1/push/register {token, platform}` (NEW; today's `/devices/` is Signal-only) → gateway stores per-user.
-- Receive: payload carries deep-link (e.g. `sessionId`) → tap → open app → navigate to that chat.
-- Gateway-side: token storage + a manual "send test push" script. **No scheduler.**
+**Push plumbing — privacy-first, self-host where possible:**
+- **Transport (asymmetric):**
+  - **iOS = direct APNs** (we hold our own `.p8`; gateway → APNs). Apple is mandatory for instant background push; **no Firebase/Google**.
+  - **Android = self-hosted UnifiedPush via `ntfy` on the pi** (gateway → pi topic → device). **Zero Google.** Cost: family installs the ntfy distributor app. FCM = optional fallback / dropped.
+- **Dumb push (default, privacy):** push carries only an id (e.g. `sessionId`), **no content**. App wakes/taps → pulls real content over WS/HTTPS from gateway → renders local notification. APNs/ntfy see nothing meaningful.
+- **Gateway `PushSender` abstraction** (backends: APNs + UnifiedPush/ntfy) over a device→target registry. v1: `POST /api/v1/push/register {token|endpoint, platform}` (NEW; `/devices/` is Signal-only) + token storage + manual test-send. **No scheduler (v2).** This abstraction IS the future "push to the right client" job.
+- Client `PushTokenProvider` registers the platform-appropriate target (APNs token / ntfy endpoint). Receive → deep-link → navigate to chat.
+- **FCM not needed for dev** (iOS `simctl push`, Android `ntfy`/local broadcast). Send-side secrets (APNs `.p8`, ntfy creds) = prod config, added at P4.
 
 ## 6. Native UI (copy webui)
 - SwiftUI (iOS) + Compose (Android), both dumb reflections of the SDK voice FSM.
@@ -134,7 +138,7 @@ barge-in: mic onset → interrupt() → clear playback queue + abort cycle
 - Free personal team: build/run on **simulator** unlimited; `simctl push` to sim works (no APNs). Real-device install = **7-day expiry + 3-device cap**; **push on real device is BLOCKED** (entitlement needs paid program).
 - **$99/yr Apple Developer Program** → private family distribution (Ad-Hoc / development, 100 devices, ~1yr profiles, **no store**), push enabled, no expiry, TestFlight internal. Not store submission.
 - Self-distribution removes the **review gate** (private APIs run in Ad-Hoc builds) but NOT the **OS sandbox** (entitlement/TCC walls — e.g. always-on background mic — stay enforced regardless of pay/sideload). Agent-scheduler/background rides legit APIs (silent/VoIP push wake, BGTaskScheduler), no banned API needed.
-- **Plan impact**: iOS = simulator-only until enrollment; SDK push connector + gateway endpoint built regardless; iOS real-device push + device voice/AEC smoke gated behind the $99 decision. **Android is free end-to-end** (Firebase Spark + FCM, real devices, push).
+- **Plan impact**: iOS = simulator-only until enrollment; SDK push connector + gateway endpoint built regardless; iOS real-device push + device voice/AEC smoke gated behind the $99 decision. **Android is free end-to-end** (real devices + push via self-hosted `ntfy`/UnifiedPush on pi — no Google, no cost; see §5).
 
 ## 10. Testing (defensive-only, per testing.md)
 - **Shared SDK**: pin wire/protocol contract (mock *exact* gateway frames in/out — no convenient envelopes), FSM/invariants (status machine, speech/echo gate, reconnect/resume), security (token store, sanitizer, auth). NO factory/DI/type/constant tests.
@@ -148,7 +152,7 @@ barge-in: mic onset → interrupt() → clear playback queue + abort cycle
 - **P1 — Shared SDK core**: WS transport + auth + reconnect/resume + status FSM + logger + connectors (port web-sdk). Contract tests. Drive: text round-trip on local stack.
 - **P2 — Text chat UI** both platforms (login → chat → history → thin settings). Text e2e matrix. Design-in the in-app version-check hook (cheap family-store updates later, §12.2).
 - **P3 — Voice**: native capture/playback shims + audio FSM + gates + OS AEC. Sim e2e (UI/connect/transcript); device user-loop for AEC/barge-in.
-- **P4 — Push plumbing**: token connector + gateway `/push/register` + receive→deep-link. iOS sim (`simctl push`) + Android device e2e.
+- **P4 — Push plumbing**: client `PushTokenProvider` + gateway `/push/register` + `PushSender` abstraction (APNs backend; UnifiedPush/ntfy backend) + dumb-push (id-only → pull content) + receive→deep-link. iOS sim (`simctl push`) + Android device (pi `ntfy`) e2e. Provision APNs `.p8` + pi `ntfy` here.
 - **P5 — Polish + layout pass + deployment doc + handoff**: write the standalone iOS + Android deployment doc (build + install on family device, §12); finalize debug/release TLS config; layout matrix pass.
 
 ## 12. Deployment & family distribution
@@ -169,7 +173,7 @@ The pi is always-on family infra and already has a **valid TLS cert** — which 
 1. ~~TLS~~ RESOLVED — debug-build bypass scoped to dev host; release uses pi's valid cert (§8). Wire in P0c.
 2. Audio sample-rate match/resample (P3) — device mic vs `session.ready` rate.
 3. Apple paid enrollment — **assumed incoming**; personal team carries simulator-first dev now. Gates iOS real-device push + device voice smoke (§9).
-4. FCM Firebase project provisioning (P4) — free; needed for Android real-device push.
+4. Push transport (P4): iOS = direct APNs (`.p8`); Android = self-hosted `ntfy`/UnifiedPush on pi (no Google). FCM optional fallback. **FCM not needed for dev**; APNs/ntfy = prod secrets added at P4. Dumb-push default. Family installs ntfy distributor app (Android).
 5. KMP Swift-interop + Compose/CMP/AGP/Kotlin versions move fast — verify pins at scaffold time (per verify-pinned-versions).
 6. Verify `android screen resolve` tap on a real app target (validated capture+layout; resolve is same mechanism).
 7. Deployment doc (iOS + Android build+install on family device) — **P5 deliverable** (§12).
