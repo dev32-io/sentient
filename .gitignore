@@ -12,6 +12,14 @@ bun.lockb
 dist/
 .vite/
 
+# Gradle / KMP / Android
+.gradle/
+**/build/
+local.properties
+.kotlin/
+captures/
+*.iml
+
 # Environment
 .env
 .env.local
