@@ -1,10 +1,5 @@
 {
-  "claudeMdExcludes": [
-    "**/android/CLAUDE.md",
-    ".claude/rules/android/**",
-    "**/ios/CLAUDE.md",
-    ".claude/rules/ios/**"
-  ],
+  "claudeMdExcludes": [],
   "hooks": {
     "PostToolUse": [
       {
