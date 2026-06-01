@@ -66,7 +66,7 @@ ios/                        ← iOS app (SwiftUI), links mobile-sdk XCFramework 
 | AudioCaptureAdapter | AudioRecord (VOICE_COMMUNICATION) | AVAudioEngine (VPIO) |
 | AudioPlaybackAdapter | AudioTrack | AVAudioEngine / AVAudioPlayerNode |
 | SecureTokenStore | EncryptedSharedPrefs / KeyStore | Keychain |
-| PushTokenProvider | FCM | APNs |
+| PushTokenProvider | ntfy/UnifiedPush endpoint | APNs token |
 | LogSink | logcat | os_log (subsystem = bundle id, category = tag) |
 | WebSocket engine | Ktor OkHttp | Ktor Darwin |
 
@@ -96,11 +96,11 @@ barge-in: mic onset → interrupt() → clear playback queue + abort cycle
 **Push plumbing — privacy-first, self-host where possible:**
 - **Transport (asymmetric):**
   - **iOS = direct APNs** (we hold our own `.p8`; gateway → APNs). Apple is mandatory for instant background push; **no Firebase/Google**.
-  - **Android = self-hosted UnifiedPush via `ntfy` on the pi** (gateway → pi topic → device). **Zero Google.** Cost: family installs the ntfy distributor app. FCM = optional fallback / dropped.
+  - **Android = self-hosted UnifiedPush via `ntfy` on the pi** (gateway → pi topic → device). **Zero Google.** Cost: family installs the ntfy distributor app. **FCM dropped entirely** — no Firebase, no Google Play Services dependency.
 - **Dumb push (default, privacy):** push carries only an id (e.g. `sessionId`), **no content**. App wakes/taps → pulls real content over WS/HTTPS from gateway → renders local notification. APNs/ntfy see nothing meaningful.
 - **Gateway `PushSender` abstraction** (backends: APNs + UnifiedPush/ntfy) over a device→target registry. v1: `POST /api/v1/push/register {token|endpoint, platform}` (NEW; `/devices/` is Signal-only) + token storage + manual test-send. **No scheduler (v2).** This abstraction IS the future "push to the right client" job.
 - Client `PushTokenProvider` registers the platform-appropriate target (APNs token / ntfy endpoint). Receive → deep-link → navigate to chat.
-- **FCM not needed for dev** (iOS `simctl push`, Android `ntfy`/local broadcast). Send-side secrets (APNs `.p8`, ntfy creds) = prod config, added at P4.
+- **No third-party push service for dev** (iOS `simctl push`, Android `ntfy`/local broadcast). Send-side secrets (APNs `.p8`, ntfy creds) = prod config, added at P4.
 
 ## 6. Native UI (copy webui)
 - SwiftUI (iOS) + Compose (Android), both dumb reflections of the SDK voice FSM.
@@ -127,7 +127,7 @@ barge-in: mic onset → interrupt() → clear playback queue + abort cycle
 - Tail: `adb logcat` (Android) + `xcrun simctl spawn booted log stream --predicate 'subsystem=="<bundle>"'` (iOS). Correlate to gateway logs by id.
 
 ## 8. Dev-driving (agentic loop) — VALIDATED 2026-06-01
-- **Android**: `android` CLI — emulator start · `run --apks` · `screen capture --annotate` · `screen resolve` (semantic→tap) · `layout --diff` (UI tree JSON) — plus `adb logcat`. ✅ screen-capture + layout confirmed against booted Pixel_3a_API_34 (Play image → FCM-capable).
+- **Android**: `android` CLI — emulator start · `run --apks` · `screen capture --annotate` · `screen resolve` (semantic→tap) · `layout --diff` (UI tree JSON) — plus `adb logcat`. ✅ screen-capture + layout confirmed against booted Pixel_3a_API_34. (Push via self-hosted `ntfy` — no Play Services needed, runs on any image.)
 - **iOS**: `xcodebuild` · `simctl` (boot/install/launch/`io screenshot`/`push`/`privacy grant microphone`/`log stream`) · **Maestro** for tap/type. ✅ Maestro built WDA + drove **iPhone 14 Pro / iOS 26.5** on Xcode 26.5, exit 0. No idb.
 - **Local stack reach**: deploy/macos gateway `wss://localhost:8888`, health `{"status":"ok"}`. iOS sim → `localhost:8888` ✅ reached; Android emulator → `10.0.2.2:8888` ✅ reached. TLS handshake completed both sides (self-signed warning).
 - **TLS — RESOLVED via debug-build bypass scoped to dev host** (no cert install): the self-signed cert is a macOS-local-stack-only issue; **prod pi has a valid cert**. Android: `network_security_config.xml` `<debug-overrides>` (or a debug-only trust-all `X509TrustManager` on the Ktor OkHttp engine). iOS: `#if DEBUG` URLSession delegate accepting the dev host's self-signed cert (or a debug-only ATS exception). **Release builds ship no bypass** → pi cert validates via system trust. Wire in P0c.
@@ -173,7 +173,7 @@ The pi is always-on family infra and already has a **valid TLS cert** — which 
 1. ~~TLS~~ RESOLVED — debug-build bypass scoped to dev host; release uses pi's valid cert (§8). Wire in P0c.
 2. Audio sample-rate match/resample (P3) — device mic vs `session.ready` rate.
 3. Apple paid enrollment — **assumed incoming**; personal team carries simulator-first dev now. Gates iOS real-device push + device voice smoke (§9).
-4. Push transport (P4): iOS = direct APNs (`.p8`); Android = self-hosted `ntfy`/UnifiedPush on pi (no Google). FCM optional fallback. **FCM not needed for dev**; APNs/ntfy = prod secrets added at P4. Dumb-push default. Family installs ntfy distributor app (Android).
+4. Push transport (P4): iOS = direct APNs (`.p8`); Android = self-hosted `ntfy`/UnifiedPush on pi. **FCM dropped entirely** (no Firebase / no Play Services dep). APNs/ntfy = prod secrets added at P4; not needed for dev. Dumb-push default. Family installs ntfy distributor app (Android).
 5. KMP Swift-interop + Compose/CMP/AGP/Kotlin versions move fast — verify pins at scaffold time (per verify-pinned-versions).
 6. Verify `android screen resolve` tap on a real app target (validated capture+layout; resolve is same mechanism).
 7. Deployment doc (iOS + Android build+install on family device) — **P5 deliverable** (§12).
