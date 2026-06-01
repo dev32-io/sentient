@@ -1,0 +1,47 @@
+[versions]
+# Kotlin 2.3.20 (stable, March 2026) — latest stable in the 2.3.x series.
+# AGP 9.0+ requires Gradle 9.1+; since Gradle 8.13 is pinned for this project,
+# we use AGP 8.13.2 which is the last stable 8.x series and pairs with Gradle 8.13.
+# SKIE 0.10.11 explicitly supports Kotlin 2.3.20 (verified against changelog).
+# compose-compiler version must equal kotlin version (Kotlin 2.0+ compose-compiler plugin).
+kotlin = "2.3.20"
+agp = "8.13.2"
+skie = "0.10.11"
+ktor = "3.5.0"
+coroutines = "1.11.0"
+kotlinx-serialization = "1.11.0"
+# androidx.core:core-ktx 1.18.0 is latest stable (1.19.0-rc01 is RC-only as of 2026-06-01).
+androidx-core = "1.18.0"
+# androidx.activity:activity-compose 1.13.0 stable (March 2026).
+androidx-activity-compose = "1.13.0"
+# 2026.05.01 is the latest stable patch (bug-fix over 2026.05.00).
+compose-bom = "2026.05.01"
+# Compose compiler plugin version == kotlin version since Kotlin 2.0.
+compose-compiler = "2.3.20"
+compileSdk = "36"
+minSdk = "26"
+targetSdk = "36"
+
+[libraries]
+ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
+ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor" }
+ktor-client-darwin = { module = "io.ktor:ktor-client-darwin", version.ref = "ktor" }
+ktor-client-websockets = { module = "io.ktor:ktor-client-websockets", version.ref = "ktor" }
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx-core" }
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity-compose" }
+compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
+compose-material3 = { module = "androidx.compose.material3:material3" }
+compose-ui = { module = "androidx.compose.ui:ui" }
+compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
+
+[plugins]
+kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
+compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+skie = { id = "co.touchlab.skie", version.ref = "skie" }
