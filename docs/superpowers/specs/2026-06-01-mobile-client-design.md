@@ -125,10 +125,12 @@ barge-in: mic onset → interrupt() → clear playback queue + abort cycle
 ## 8. Dev-driving (agentic loop) — VALIDATED 2026-06-01
 - **Android**: `android` CLI — emulator start · `run --apks` · `screen capture --annotate` · `screen resolve` (semantic→tap) · `layout --diff` (UI tree JSON) — plus `adb logcat`. ✅ screen-capture + layout confirmed against booted Pixel_3a_API_34 (Play image → FCM-capable).
 - **iOS**: `xcodebuild` · `simctl` (boot/install/launch/`io screenshot`/`push`/`privacy grant microphone`/`log stream`) · **Maestro** for tap/type. ✅ Maestro built WDA + drove **iPhone 14 Pro / iOS 26.5** on Xcode 26.5, exit 0. No idb.
-- **Local stack reach**: deploy/macos gateway `wss://localhost:8888`, health `{"status":"ok"}`. iOS sim → `localhost:8888` ✅ reached; Android emulator → `10.0.2.2:8888` ✅ reached. **Known dev step**: self-signed TLS trust (install gateway cert to sim/emulator trust store, or debug allow-insecure + iOS ATS exception) — into P0c.
+- **Local stack reach**: deploy/macos gateway `wss://localhost:8888`, health `{"status":"ok"}`. iOS sim → `localhost:8888` ✅ reached; Android emulator → `10.0.2.2:8888` ✅ reached. TLS handshake completed both sides (self-signed warning).
+- **TLS — RESOLVED via debug-build bypass scoped to dev host** (no cert install): the self-signed cert is a macOS-local-stack-only issue; **prod pi has a valid cert**. Android: `network_security_config.xml` `<debug-overrides>` (or a debug-only trust-all `X509TrustManager` on the Ktor OkHttp engine). iOS: `#if DEBUG` URLSession delegate accepting the dev host's self-signed cert (or a debug-only ATS exception). **Release builds ship no bypass** → pi cert validates via system trust. Wire in P0c.
 - **E2E matrix is the contract** (harness model + our e2e-testing rule): rows × phone viewport × platform; happy + sad (reconnect, auth-fail, barge-in, background/foreground, push-receive→deep-link). **Device-only rows** flagged for user-loop: real voice/AEC + barge-in (fake sim mic), iOS real-device push.
 
 ## 9. Apple account constraint
+- **Current state: Xcode configured with personal team — sufficient for simulator-first dev** (and short sideloads). **Assume paid enrollment lands before family deploy.**
 - Free personal team: build/run on **simulator** unlimited; `simctl push` to sim works (no APNs). Real-device install = **7-day expiry + 3-device cap**; **push on real device is BLOCKED** (entitlement needs paid program).
 - **$99/yr Apple Developer Program** → private family distribution (Ad-Hoc / development, 100 devices, ~1yr profiles, **no store**), push enabled, no expiry, TestFlight internal. Not store submission.
 - Self-distribution removes the **review gate** (private APIs run in Ad-Hoc builds) but NOT the **OS sandbox** (entitlement/TCC walls — e.g. always-on background mic — stay enforced regardless of pay/sideload). Agent-scheduler/background rides legit APIs (silent/VoIP push wake, BGTaskScheduler), no banned API needed.
@@ -144,16 +146,32 @@ barge-in: mic onset → interrupt() → clear playback queue + abort cycle
 - **P0b — mobile-sdk (KMP) rules**: author new `.claude/rules/mobile-sdk/*.md` + details, `paths: shared/mobile-sdk/**`: commonMain-purity, expect-actual-contract, kmp-gradle (catalog + XCFramework/SKIE export), coroutines-flow-surface, web-sdk-mirror-contract.
 - **P0c — Scaffold**: KMP module + android + ios skeletons; Gradle wrapper + XCFramework + SKIE; **Maestro WDA smoke re-confirm on 26.5** (already green); self-signed cert trust into sim/emulator; sim/emulator ↔ host-gateway connectivity green.
 - **P1 — Shared SDK core**: WS transport + auth + reconnect/resume + status FSM + logger + connectors (port web-sdk). Contract tests. Drive: text round-trip on local stack.
-- **P2 — Text chat UI** both platforms (login → chat → history → thin settings). Text e2e matrix.
+- **P2 — Text chat UI** both platforms (login → chat → history → thin settings). Text e2e matrix. Design-in the in-app version-check hook (cheap family-store updates later, §12.2).
 - **P3 — Voice**: native capture/playback shims + audio FSM + gates + OS AEC. Sim e2e (UI/connect/transcript); device user-loop for AEC/barge-in.
 - **P4 — Push plumbing**: token connector + gateway `/push/register` + receive→deep-link. iOS sim (`simctl push`) + Android device e2e.
-- **P5 — Polish + layout pass + handoff**.
+- **P5 — Polish + layout pass + deployment doc + handoff**: write the standalone iOS + Android deployment doc (build + install on family device, §12); finalize debug/release TLS config; layout matrix pass.
 
-## 12. Open items / flags carried to plan
-1. Self-signed TLS trust on sim/emulator (P0c) — dev cert install vs debug allow-insecure + iOS ATS exception.
+## 12. Deployment & family distribution
+
+Polished standalone deployment doc is a **P5 deliverable** (written once real bundle ids + signing exist). Strategy captured here.
+
+### 12.1 Build + install on a family device (outline)
+- **Android**: `./gradlew :android:assembleRelease` (or debug for dev) → signed APK → install via `android run --apks=…` (dev) or sideload (`adb install` / browser download + "install unknown apps").
+- **iOS**: `xcodebuild -scheme … -configuration Release archive` → export signed `.ipa` (development / ad-hoc profile, family UDIDs registered) → install via Xcode Devices, Apple Configurator, or OTA (§12.2). Personal team = simulator + 7-day sideload only; paid program = proper family deploy.
+
+### 12.2 Family home-network "store" (explored — pi is the host)
+The pi is always-on family infra and already has a **valid TLS cert** — which iOS OTA install *requires*. Serve one landing page from the pi:
+- **Android (easy, true auto-update)**: host `app.apk` on the pi. In-app updater checks pi for latest `versionCode` → downloads → `PackageInstaller` self-update (needs `REQUEST_INSTALL_PACKAGES`). Alternative: host a small **F-Droid repo** on the pi → family installs F-Droid client → automatic updates. Real "family store."
+- **iOS (works, Apple-limited)**: OTA **ad-hoc** — host `app.ipa` + `manifest.plist`, install via `itms-services://?action=download-manifest&url=https://<pi>/manifest.plist`. Constraints: family device **UDIDs registered** in the ad-hoc profile (paid, 100/yr); **no silent auto-update** → in-app "update available" check deep-links the install URL for one-tap reinstall. New device = regen profile + rebuild.
+- **Unified landing page** on the pi: Android APK / F-Droid entry + iOS itms-services link + current version. Distribution rides existing pi infra; **out of v1 scope** (post-app), but the in-app version-check hook should be designed in P2 so updates are cheap later.
+
+## 13. Open items / flags carried to plan
+1. ~~TLS~~ RESOLVED — debug-build bypass scoped to dev host; release uses pi's valid cert (§8). Wire in P0c.
 2. Audio sample-rate match/resample (P3) — device mic vs `session.ready` rate.
-3. Apple $99 enrollment decision — gates iOS real-device push + device voice smoke (§9).
+3. Apple paid enrollment — **assumed incoming**; personal team carries simulator-first dev now. Gates iOS real-device push + device voice smoke (§9).
 4. FCM Firebase project provisioning (P4) — free; needed for Android real-device push.
 5. KMP Swift-interop + Compose/CMP/AGP/Kotlin versions move fast — verify pins at scaffold time (per verify-pinned-versions).
 6. Verify `android screen resolve` tap on a real app target (validated capture+layout; resolve is same mechanism).
+7. Deployment doc (iOS + Android build+install on family device) — **P5 deliverable** (§12).
+8. Family home-network store (pi-hosted) — explored (§12.2); post-v1, but design the in-app version-check hook in P2.
 ```
