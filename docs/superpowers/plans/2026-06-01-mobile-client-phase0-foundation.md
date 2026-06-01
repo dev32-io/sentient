@@ -728,11 +728,14 @@ struct SentientApp: App {
 `ios/App/ContentView.swift`:
 ```swift
 import SwiftUI
-import MobileSdk   // SKIE-processed KMP framework
+import MobileSdk   // SKIE-processed KMP framework (module name = MobileSdk)
 
 struct ContentView: View {
     var body: some View {
-        Text(MobileSdk.shared.greeting())
+        // NOTE (from Task 3): the Kotlin `object MobileSdk` collided with the framework
+        // name, so SKIE exposes it as `MobileSdkKit` via @ObjCName. Swift call site is
+        // MobileSdkKit.shared.greeting() — NOT MobileSdk.greeting().
+        Text(MobileSdkKit.shared.greeting())
             .accessibilityIdentifier("foundation-greeting")
             .padding()
     }
