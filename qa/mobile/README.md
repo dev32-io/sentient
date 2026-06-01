@@ -129,4 +129,6 @@ export MAESTRO_CLI_NO_ANALYTICS=1
 ## P2 Carry-Forwards (do not fix in P0)
 
 - **Android:** Manifest theme should move to `Theme.Material3.DayNight`; requires `com.google.android.material` entry in the version catalog.
+- **Android:** Release `buildType` needs `isMinifyEnabled = true` + `isShrinkResources = true` (R8) — P0 has only a debug buildType; an unminified release APK would ship otherwise.
 - **iOS:** Needs Swift 6 xcconfig (`SWIFT_VERSION=6.0`, `SWIFT_STRICT_CONCURRENCY=complete`); add `#Preview` to `ContentView` once it has real content.
+- **iOS:** `ios/project.yml` hardcodes the **debug** XCFramework path (`.../XCFrameworks/debug/MobileSdk.xcframework`). Make this config-conditional (debug vs release slice) before doing any release build, or release links a debug-configuration SDK.
