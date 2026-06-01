@@ -874,7 +874,7 @@ Expected: clean (mobile dirs are outside the TS workspace; confirm no breakage).
 ```bash
 git add qa/mobile/foundation-matrix.md biome.json 2>/dev/null; git add qa/
 git commit -m "test(mobile): foundation e2e matrix green (P0 complete)"
-git push -u origin worktree-mobile-client
+git push -u origin feature/mobile-client
 ```
 
 - [ ] **Step 5: Foundation handoff note**
