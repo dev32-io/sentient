@@ -74,10 +74,17 @@ class WsTransport(
     }
 
     private suspend fun pump() {
-        session.incoming.collect { frame -> route(frame) }
-        // Upstream completed without an explicit Closed/Failure frame — close the
-        // outbound channels so collectors terminate cleanly.
-        closeChannels()
+        try {
+            session.incoming.collect { frame -> route(frame) }
+        } finally {
+            // Always close the outbound channels — normal upstream completion,
+            // an explicit Closed/Failure frame, OR scope cancellation (the normal
+            // disconnect() path, where CancellationException propagates out of
+            // collect). Without finally a cancelled pump leaves the fan-out
+            // channels open and any consumer collecting them in a different scope
+            // hangs forever. closeChannels() is idempotent (Channel.close).
+            closeChannels()
+        }
     }
 
     private suspend fun route(frame: WsIncoming) {

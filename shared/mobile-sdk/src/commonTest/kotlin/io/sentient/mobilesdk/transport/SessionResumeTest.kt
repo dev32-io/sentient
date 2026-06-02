@@ -136,6 +136,27 @@ class SessionResumeTest {
     }
 
     @Test
+    fun switched_within_window_after_snapshot_disarms_and_keeps_id() {
+        // 404-fallback ordering: snapshot arms the stale timer, but a late
+        // session.switched lands WITHIN the window. setCurrentSessionId clears
+        // pendingResume + disarms, so the post-window checkStaleResume must NOT
+        // clear the stored id. Pins the snapshot→switched-in-window disarm path.
+        val clock = FixedClock(1_000L)
+        val (resume, store) = newResume(clock)
+        store.set("stale-id")
+        resume.buildConnectUrl(gateway) // arms pendingResume
+
+        resume.onSnapshot() // arms the stale timer
+        clock.advance(STALE_RESUME_CHECK_MS - 1) // switched arrives inside the window
+        resume.setCurrentSessionId("resumed-id") // disarms + stores the new id
+        clock.advance(2) // window now elapsed
+        resume.checkStaleResume()
+
+        assertEquals("resumed-id", store.get()) // NOT cleared — switch disarmed it
+        assertFalse(resume.hasPendingResume())
+    }
+
+    @Test
     fun checkStaleResume_is_noop_when_no_resume_pending() {
         val (resume, store) = newResume()
         store.set("fresh-id")

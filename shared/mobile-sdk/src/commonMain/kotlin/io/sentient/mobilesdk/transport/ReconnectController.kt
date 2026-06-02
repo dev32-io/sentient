@@ -18,6 +18,7 @@
 package io.sentient.mobilesdk.transport
 
 import io.sentient.mobilesdk.log.createLogger
+import kotlin.concurrent.Volatile
 
 /**
  * Drives the unexpected-close recovery loop with bounded exponential backoff.
@@ -42,6 +43,11 @@ class ReconnectController(
 ) {
     private val log = createLogger("transport", "reconnect")
 
+    // @Volatile: cancel() may be invoked from an Android lifecycle callback off
+    // the loop's dispatcher; guarantees the loop coroutine sees the write.
+    // kotlin.concurrent.Volatile is the multiplatform annotation (stable since
+    // Kotlin 1.9); on iosArm64 it is a no-op as expected.
+    @Volatile
     private var cancelled = false
 
     /**

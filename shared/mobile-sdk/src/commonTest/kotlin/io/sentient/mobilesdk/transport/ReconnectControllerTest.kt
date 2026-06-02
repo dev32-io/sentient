@@ -158,6 +158,34 @@ class ReconnectControllerTest {
     }
 
     @Test
+    fun none_failure_retries_like_network_not_aborts() = runTest {
+        // LastErrorKind.NONE (no classified error) must follow the RETRY path,
+        // not the AUTH abort path — only AUTH is terminal. Pins that the
+        // abort-vs-retry branch keys on AUTH alone.
+        val rec = DelayRecorder()
+        val sig = Signals()
+        var attempts = 0
+        val ctrl = ReconnectController(
+            config = cfg,
+            delayFn = rec::delay,
+            jitterFn = { 0.0 },
+            connect = {
+                attempts += 1
+                if (attempts < 2) ConnectResult.Failure(LastErrorKind.NONE) else ConnectResult.Success
+            },
+            onAuthExpired = { sig.authExpired += 1 },
+            onConnectionLost = { sig.connectionLost += 1 },
+        )
+
+        ctrl.runReconnectLoop()
+
+        assertEquals(2, attempts) // retried, did not abort
+        assertEquals(listOf(1_000L), rec.delays) // backoff before the retry
+        assertEquals(0, sig.authExpired) // NONE is not terminal
+        assertEquals(0, sig.connectionLost)
+    }
+
+    @Test
     fun cancel_stops_loop_and_suppresses_connectionLost() = runTest {
         val rec = DelayRecorder()
         val sig = Signals()
