@@ -118,14 +118,25 @@ private class KtorWebSocketSession(
     override val incoming: Flow<WsIncoming> = channelFlow {
         try {
             for (frame in session.incoming) {
+                if (frame is Frame.Close) {
+                    // Close frame received — log only; break and let closeReason.await()
+                    // emit the single terminal WsIncoming.Closed.
+                    val reason = frame.readReason()
+                    log.info(
+                        "close-frame",
+                        mapOf("code" to (reason?.code?.toInt() ?: WS_NORMAL_CLOSURE), "reason" to (reason?.message ?: "")),
+                    )
+                    break
+                }
                 val mapped = mapFrame(frame)
                 if (mapped != null) {
                     log.debug("frame-received", mapOf("type" to mapped::class.simpleName))
                     send(mapped)
-                    if (mapped is WsIncoming.Closed || mapped is WsIncoming.Failure) break
                 }
             }
-            // Server closed cleanly without a close frame — emit synthetic Closed.
+            // Single terminal emission for all clean-close paths (server Close frame OR
+            // loop exhaustion with no explicit frame).  closeReason is set by Ktor when a
+            // Close frame was exchanged; null means the channel ended without one.
             val closeReason = session.closeReason.await()
             if (closeReason != null) {
                 val code = closeReason.code.toInt()
@@ -174,15 +185,8 @@ private class KtorWebSocketSession(
     private fun mapFrame(frame: Frame): WsIncoming? = when (frame) {
         is Frame.Text -> WsIncoming.Text(frame.readText())
         is Frame.Binary -> WsIncoming.Binary(frame.readBytes())
-        is Frame.Close -> {
-            val reason = frame.readReason()
-            val code = reason?.code?.toInt() ?: WS_NORMAL_CLOSURE
-            val msg = reason?.message ?: ""
-            log.info("close-frame", mapOf("code" to code, "reason" to msg))
-            WsIncoming.Closed(code, msg)
-        }
         else -> {
-            // Ping/Pong handled automatically by Ktor; no action needed.
+            // Frame.Close is handled before mapFrame in the loop; Ping/Pong handled by Ktor.
             log.debug("frame-skip", mapOf("frameType" to frame.frameType.name))
             null
         }
