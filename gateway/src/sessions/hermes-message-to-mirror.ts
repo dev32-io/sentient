@@ -1,5 +1,8 @@
 import type { MirrorEntry } from "../cerebrum/conversation-mirror.ts";
 import type { HermesRawMessage } from "../hermes-adapter-client/sessions-client.ts";
+import { getLog } from "../logging/logger.js";
+
+const log = getLog(["sentient", "sessions", "hermes-message-to-mirror"]);
 
 // ---------------------------------------------------------------------------
 // HermesRawMessage → MirrorEntry — minimal role mapping for session resume.
@@ -21,7 +24,33 @@ import type { HermesRawMessage } from "../hermes-adapter-client/sessions-client.
 
 const TS_MS_THRESHOLD = 1e12;
 
-function tsToMs(ts: number): number {
+// Last-resort timestamp for a rehydrated entry whose Hermes row carried no
+// usable `ts` (missing, null, non-finite, or negative). MirrorEntry.ts feeds
+// the wire feed's `ts` (protocol: non-negative int — see
+// shared/protocol/src/conversation.ts) and the SDK's date-grouping/ordering.
+// 0 is chosen over Date.now() so a timestamp-less rehydrated entry sorts to
+// the START of history (before any live entry), never into the future. This
+// is a degraded path: it's logged at WARN so the condition is observable.
+const TS_FALLBACK_MS = 0;
+
+/**
+ * Coerce a raw Hermes message timestamp to a non-negative integer ms value.
+ *
+ * The plugin-sidecar response is untrusted external input (no zod gate on the
+ * messages array), so `ts` may be missing/null/NaN at runtime despite its
+ * `number` TS type. We backfill the real value when present and fall back to
+ * TS_FALLBACK_MS (with a WARN) when it isn't — never emit NaN, which would
+ * serialise to `null` on the wire and break strict SDK clients.
+ */
+function tsToMs(ts: unknown): number {
+  if (typeof ts !== "number" || !Number.isFinite(ts) || ts < 0) {
+    log.warn("ts-fallback", {
+      reason: "missing-or-invalid-ts",
+      rawTs: typeof ts === "number" ? ts : String(ts),
+      fallbackMs: TS_FALLBACK_MS,
+    });
+    return TS_FALLBACK_MS;
+  }
   // Hermes uses Unix seconds (float). MirrorEntry.ts is ms (int).
   return ts > TS_MS_THRESHOLD ? Math.round(ts) : Math.round(ts * 1000);
 }
