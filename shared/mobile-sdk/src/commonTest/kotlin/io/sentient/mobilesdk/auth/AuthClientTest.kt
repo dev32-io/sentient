@@ -98,7 +98,7 @@ class AuthClientTest {
         val result = buildClient(engine).listUsers()
 
         assertIs<AuthResult.Success<List<AuthUserLite>>>(result)
-        val users = (result as AuthResult.Success).value
+        val users = result.value
         assertEquals(1, users.size)
         assertEquals("u_abc123", users[0].userId)
         assertEquals("Alice", users[0].displayName)
@@ -114,7 +114,7 @@ class AuthClientTest {
         val result = buildClient(engine).listUsers()
 
         assertIs<AuthResult.Success<List<AuthUserLite>>>(result)
-        assertEquals(0, (result as AuthResult.Success).value.size)
+        assertEquals(0, result.value.size)
     }
 
     @Test
@@ -130,9 +130,9 @@ class AuthClientTest {
         val result = buildClient(engine).listUsers()
 
         assertIs<AuthResult.Failure>(result)
-        val error = (result as AuthResult.Failure).error
+        val error = result.error
         assertIs<AuthError.Server>(error)
-        assertEquals(500, (error as AuthError.Server).status)
+        assertEquals(500, error.status)
     }
 
     // ── login ─────────────────────────────────────────────────────────────────
@@ -171,7 +171,7 @@ class AuthClientTest {
         val result = buildClient(engine).login(userId = "u_abc123", pin = "1234")
 
         assertIs<AuthResult.Success<AuthResponse>>(result)
-        val auth = (result as AuthResult.Success).value
+        val auth = result.value
         assertEquals("tok_xyz", auth.token)
         assertEquals("u_abc123", auth.user.userId)
         assertEquals("Alice", auth.user.displayName)
@@ -193,7 +193,7 @@ class AuthClientTest {
         val result = buildClient(engine).login(userId = "u_abc123", pin = "0000")
 
         assertIs<AuthResult.Failure>(result)
-        assertIs<AuthError.InvalidCredentials>((result as AuthResult.Failure).error)
+        assertIs<AuthError.InvalidCredentials>(result.error)
     }
 
     @Test
@@ -209,7 +209,7 @@ class AuthClientTest {
         val result = buildClient(engine).login(userId = "u_abc123", pin = "1234")
 
         assertIs<AuthResult.Failure>(result)
-        assertIs<AuthError.Server>((result as AuthResult.Failure).error)
+        assertIs<AuthError.Server>(result.error)
     }
 
     // ── me ────────────────────────────────────────────────────────────────────
@@ -252,7 +252,7 @@ class AuthClientTest {
         val result = buildClient(engine).me(token = "tok_original")
 
         assertIs<AuthResult.Success<AuthResponse>>(result)
-        val auth = (result as AuthResult.Success).value
+        val auth = result.value
         assertEquals("tok_refreshed", auth.token)
         assertEquals("u_abc123", auth.user.userId)
         assertEquals(true, auth.user.isAdmin)
@@ -272,7 +272,7 @@ class AuthClientTest {
         val result = buildClient(engine).me(token = "expired_tok")
 
         assertIs<AuthResult.Failure>(result)
-        assertIs<AuthError.InvalidCredentials>((result as AuthResult.Failure).error)
+        assertIs<AuthError.InvalidCredentials>(result.error)
     }
 
     @Test
@@ -289,7 +289,7 @@ class AuthClientTest {
         val result = buildClient(engine).me(token = "expired_tok")
 
         assertIs<AuthResult.Failure>(result)
-        assertIs<AuthError.InvalidCredentials>((result as AuthResult.Failure).error)
+        assertIs<AuthError.InvalidCredentials>(result.error)
     }
 
     // ── base-URL derivation ───────────────────────────────────────────────────
