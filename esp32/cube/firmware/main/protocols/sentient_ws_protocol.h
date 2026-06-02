@@ -50,15 +50,12 @@ struct SentientWsProtocolConfig {
     // Playback lifecycle.
     std::function<void(int sample_rate)> on_playback_begin;
     std::function<void(bool aborted)> on_playback_end;
-    // TLS: when wss:// is used, pin the gateway cert by passing a null-
-    // terminated PEM string here (debug profile embeds the dev cert via
-    // EMBED_TXTFILES). Leave null to fall back to esp_websocket_client's
-    // global CA bundle.
-    const char* cert_pem = nullptr;
-    // When true, mbedtls skips Subject/SAN matching against the dial host.
-    // Use only with a pinned cert in debug profile — the dev cert's SAN is
-    // localhost+127.0.0.1 but cube dials the Mac's LAN IP.
-    bool skip_tls_cn_check = false;
+    // TLS verification strategy. Prod: verify the gateway's (Let's Encrypt)
+    // cert against the embedded mbedTLS certificate bundle. Debug: skip
+    // verification (local gateway serves a self-signed localhost cert).
+    // Exactly one of these is active per build profile.
+    bool use_crt_bundle = true;
+    bool insecure_skip_verify = false;
 };
 
 // Single-class in-firmware sentient WS client. Phase 6b extracts the internals

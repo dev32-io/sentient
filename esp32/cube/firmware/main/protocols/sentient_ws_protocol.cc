@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <esp_crt_bundle.h>
 #include <esp_log.h>
 #include <esp_random.h>
 #include <esp_timer.h>
@@ -97,11 +98,13 @@ esp_err_t SentientWsProtocol::connect() {
     // (vApplicationStackOverflowHook fired with canary 0xa5a5a5a5). 8 KB
     // leaves headroom for the worst-case logging chain.
     ws_cfg.task_stack = 8192;
-    if (cfg_.cert_pem != nullptr) {
-        ws_cfg.cert_pem = cfg_.cert_pem;
-    }
-    if (cfg_.skip_tls_cn_check) {
-        ws_cfg.skip_cert_common_name_check = true;
+    if (cfg_.insecure_skip_verify) {
+        // Debug: no CA attached → esp-tls performs no server-cert
+        // verification. LAN-dev only; never reaches a prod build.
+        ESP_LOGW(TAG, "tls: INSECURE — server cert verification disabled (debug)");
+    } else if (cfg_.use_crt_bundle) {
+        ws_cfg.crt_bundle_attach = esp_crt_bundle_attach;
+        ESP_LOGI(TAG, "tls: verifying via esp_crt_bundle");
     }
     client_ = esp_websocket_client_init(&ws_cfg);
     if (client_ == nullptr) {
