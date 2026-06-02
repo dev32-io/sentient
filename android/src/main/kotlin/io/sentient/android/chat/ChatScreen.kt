@@ -19,13 +19,17 @@
 // ---------------------------------------------------------------------------
 package io.sentient.android.chat
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
@@ -46,6 +50,7 @@ fun ChatScreen(
     onMicToggle: () -> Unit,
     onTtsToggle: () -> Unit,
     onInterrupt: () -> Unit,
+    onOpenHistory: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val canInterrupt = state.cognition != CognitionState.IDLE || state.isSpeaking
@@ -55,7 +60,7 @@ fun ChatScreen(
             .safeDrawingPadding()
             .testTag("chat-screen"),
     ) {
-        TitleBar()
+        TitleBar(onOpenHistory = onOpenHistory)
         MessageList(
             messages = state.messages,
             modifier = Modifier
@@ -76,15 +81,23 @@ fun ChatScreen(
 }
 
 @Composable
-private fun TitleBar() {
+private fun TitleBar(onOpenHistory: () -> Unit) {
     val tokens = LocalTokens.current
-    Text(
-        text = TITLE,
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = tokens.space.lg, vertical = tokens.space.md),
-        color = Color(Colors.ink),
-        fontSize = tokens.type.lg,
-        fontWeight = FontWeight.SemiBold,
-    )
+            .padding(horizontal = tokens.space.md, vertical = tokens.space.sm),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(tokens.space.xs),
+    ) {
+        TextButton(onClick = onOpenHistory, modifier = Modifier.testTag("history-open")) {
+            Text("☰", color = Color(Colors.ink2), fontSize = tokens.type.lg)
+        }
+        Text(
+            text = TITLE,
+            color = Color(Colors.ink),
+            fontSize = tokens.type.lg,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
 }

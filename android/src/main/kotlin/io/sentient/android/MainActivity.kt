@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
@@ -31,10 +32,14 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import io.sentient.android.auth.AuthViewModel
 import io.sentient.android.auth.LoginScreen
 import io.sentient.android.chat.ChatScreen
+import io.sentient.android.history.HistoryDrawer
+import io.sentient.android.history.HistoryViewModel
+import io.sentient.android.history.rememberHistoryDrawerState
 import io.sentient.android.sdk.SdkViewModel
 import io.sentient.android.theme.SentientTheme
 import io.sentient.mobilesdk.sdk.VoiceMode
 import io.sentient.mobilesdk.transport.SdkStatus
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val sdkViewModel: SdkViewModel by viewModels {
@@ -43,13 +48,20 @@ class MainActivity : ComponentActivity() {
     private val authViewModel: AuthViewModel by viewModels {
         viewModelFactory { initializer { AuthViewModel() } }
     }
+    private val historyViewModel: HistoryViewModel by viewModels {
+        viewModelFactory { initializer { HistoryViewModel() } }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
             SentientTheme {
-                AppRoot(sdkViewModel = sdkViewModel, authViewModel = authViewModel)
+                AppRoot(
+                    sdkViewModel = sdkViewModel,
+                    authViewModel = authViewModel,
+                    historyViewModel = historyViewModel,
+                )
             }
         }
     }
@@ -57,8 +69,14 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
-private fun AppRoot(sdkViewModel: SdkViewModel, authViewModel: AuthViewModel) {
+private fun AppRoot(
+    sdkViewModel: SdkViewModel,
+    authViewModel: AuthViewModel,
+    historyViewModel: HistoryViewModel,
+) {
     val sdkState by sdkViewModel.state.collectAsStateWithLifecycle()
+    val drawerState = rememberHistoryDrawerState()
+    val scope = rememberCoroutineScope()
     Surface(
         Modifier
             .fillMaxSize()
@@ -66,16 +84,23 @@ private fun AppRoot(sdkViewModel: SdkViewModel, authViewModel: AuthViewModel) {
     ) {
         Box(Modifier.fillMaxSize()) {
             if (sdkState.status == SdkStatus.READY) {
-                ChatScreen(
-                    state = sdkState,
-                    onSend = sdkViewModel::sendText,
-                    onMicToggle = {
-                        if (sdkState.voiceMode == VoiceMode.ACTIVE) sdkViewModel.stopMic()
-                        else sdkViewModel.startMic()
-                    },
-                    onTtsToggle = { sdkViewModel.setTtsEnabled(!sdkState.prefs.ttsEnabled) },
-                    onInterrupt = sdkViewModel::interrupt,
-                )
+                HistoryDrawer(
+                    viewModel = historyViewModel,
+                    drawerState = drawerState,
+                    nowMs = System.currentTimeMillis(),
+                ) {
+                    ChatScreen(
+                        state = sdkState,
+                        onSend = sdkViewModel::sendText,
+                        onMicToggle = {
+                            if (sdkState.voiceMode == VoiceMode.ACTIVE) sdkViewModel.stopMic()
+                            else sdkViewModel.startMic()
+                        },
+                        onTtsToggle = { sdkViewModel.setTtsEnabled(!sdkState.prefs.ttsEnabled) },
+                        onInterrupt = sdkViewModel::interrupt,
+                        onOpenHistory = { scope.launch { drawerState.open() } },
+                    )
+                }
             } else {
                 LoginScreen(viewModel = authViewModel)
             }
