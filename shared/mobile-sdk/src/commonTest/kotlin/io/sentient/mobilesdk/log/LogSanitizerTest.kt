@@ -47,6 +47,34 @@ class LogSanitizerTest {
     }
 
     @Test
+    fun redacts_paseto_with_base64url_chars() {
+        // PASETO payloads use base64url which contains '-' and '_'
+        val msg = "token v4.local.aB3-xY_zQ2w done"
+        val out = sanitizeLog(msg)
+        assertFalse(out.contains("aB3-xY_zQ2w"))
+        assertTrue(out.contains("[redacted]"))
+    }
+
+    @Test
+    fun redacts_paseto_with_footer_section() {
+        // A PASETO token with a footer: v4.local.PAYLOAD.FOOTER — footer must not leak
+        val msg = "auth v4.local.AAABBBCCC.FOOTERDATA end"
+        val out = sanitizeLog(msg)
+        assertFalse(out.contains("AAABBBCCC"))
+        assertFalse(out.contains("FOOTERDATA"), "footer section must be redacted, not leaked")
+        assertTrue(out.contains("[redacted]"))
+    }
+
+    @Test
+    fun redacts_bearer_token_uppercase() {
+        // BEARER uppercase must be caught by case-insensitive bearer regex
+        val msg = "header BEARER MY_SECRET_TOKEN"
+        val out = sanitizeLog(msg)
+        assertFalse(out.contains("MY_SECRET_TOKEN"))
+        assertTrue(out.contains("[redacted]"))
+    }
+
+    @Test
     fun passes_through_safe_messages() {
         val msg = "session started sessionId=abc123 cycleId=xyz"
         val out = sanitizeLog(msg)

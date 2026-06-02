@@ -11,7 +11,7 @@ package io.sentient.mobilesdk.log
  * Preview truncation caps at MAX_PREVIEW chars to avoid raw buffer dumps in logs.
  */
 
-private val PASETO = Regex("""v4\.(local|public)\.[A-Za-z0-9_\-]+""")
+private val PASETO = Regex("""v4\.(local|public)\.\S+""")
 private val BEARER = Regex("""(?i)bearer\s+[A-Za-z0-9._\-]+""")
 private val SENTIENT_AUTH_KEY = Regex("""sak_[A-Za-z0-9_\-]{10,}""")
 
