@@ -54,4 +54,9 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    // android.util.Log is a stub in JVM unit tests and throws "not mocked" on
+    // any call. The shared logger (LogSink.android.kt) routes to it, so any
+    // commonMain logic that logs would fail testDebugUnitTest. Return defaults
+    // (no-op) so commonMain logic runs under the Android JVM test target too.
+    testOptions { unitTests.isReturnDefaultValues = true }
 }

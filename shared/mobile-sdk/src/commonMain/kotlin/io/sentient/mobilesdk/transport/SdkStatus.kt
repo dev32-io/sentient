@@ -48,10 +48,21 @@ enum class LastErrorKind {
 /** Normal voluntary closure (e.g. user called disconnect()). */
 const val WS_NORMAL_CLOSURE: Int = 1000
 
-/** Gateway closed with this code when auth timed out. */
+/**
+ * Close code the SDK CLIENT sends when ITS OWN auth timeout fires
+ * (no `auth.ok` within [AUTH_TIMEOUT_MS]). Mirrors sentient-sdk.ts
+ * `this.ws?.close(WS_AUTH_TIMEOUT_CODE, "Auth timeout")`. The gateway does
+ * NOT send this code — it is a client-initiated close on a local timeout.
+ */
 const val WS_AUTH_TIMEOUT_CODE: Int = 4001
 
-/** Gateway closed with this code when session.ready timed out. */
+/**
+ * Close code the SDK CLIENT sends when ITS OWN session.ready timeout fires
+ * (no `session.ready` within [READY_TIMEOUT_MS]). Mirrors sentient-sdk.ts
+ * `this.ws?.close(WS_READY_TIMEOUT_CODE, "Session ready timeout")`. The
+ * gateway does NOT send this code — it is a client-initiated close on a
+ * local timeout.
+ */
 const val WS_READY_TIMEOUT_CODE: Int = 4002
 
 // ---------------------------------------------------------------------------
