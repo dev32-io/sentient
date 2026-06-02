@@ -1,49 +1,47 @@
 // ---------------------------------------------------------------------------
 // SecureTokenStore.ios.kt — iOS Keychain-backed token persistence.
 //
-// Uses the Security framework (kSecClassGenericPassword) directly via
-// Kotlin/Native cinterop. Query dicts are NSMutableDictionary; they are
-// toll-free bridged to CFDictionaryRef when passed to Security C APIs via
-// @Suppress("CAST_NEVER_SUCCEEDS") casts (NS ↔ CF toll-free bridge is valid
-// in K/N; the suppression silences the compiler's over-cautious warning).
+// Query dicts are built CF-natively (CFDictionaryCreateMutable +
+// CFDictionaryAddValue), NOT as NSMutableDictionary toll-free-bridged via
+// `as CFDictionaryRef`. Two failure modes that idiom hits: the toll-free cast
+// throws ClassCastException across the K/N ObjCExport boundary (SIGABRT), and
+// an NSMutableDictionary turns a Kotlin Boolean into an NSNumber instead of the
+// CFBooleanRef the Security framework requires for kSecReturnData — that type
+// mismatch is what produced errSecParam (-50) on SecItemCopyMatching. The fix:
+// kSecReturnData = kCFBooleanTrue (a CFBooleanRef), kSecMatchLimit =
+// kSecMatchLimitOne (a CFStringRef). kSec* constants are CFStringRef already, so
+// they are added directly; String/NSData values bridge via CFBridgingRetain
+// (owned +1, released after CFDictionaryAddValue takes its own retain).
 //
-// Security constant keys (CFStringRef) are also cast to NSString for use as
-// NSDictionary keys — same toll-free bridge applies.
-//
-// Keychain attributes:
-//   kSecClass             = kSecClassGenericPassword
-//   kSecAttrService       = KEYCHAIN_SERVICE  ("io.sentient.app")
-//   kSecAttrAccount       = KEYCHAIN_ACCOUNT  ("auth.token")
-//   kSecAttrAccessible    = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-//
-// save()  : SecItemUpdate; if errSecItemNotFound, falls back to SecItemAdd.
-// load()  : SecItemCopyMatching with kSecReturnData + kSecMatchLimitOne.
-// clear() : SecItemDelete (ignores errSecItemNotFound — idempotent).
-//
-// Thread safety: Keychain APIs are thread-safe per Apple documentation.
-// This class holds no mutable state.
+// Attrs: kSecClassGenericPassword, service "io.sentient.app", account
+// "auth.token", accessible kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly.
+// save(): SecItemAdd, fall back to SecItemUpdate on errSecDuplicateItem.
+// load(): SecItemCopyMatching → CFDataRef → NSData → UTF-8 String.
+// clear(): SecItemDelete (errSecItemNotFound is idempotent-ok).
+// Keychain APIs are thread-safe; this class holds no mutable state.
 // ---------------------------------------------------------------------------
-@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
-@file:Suppress("CAST_NEVER_SUCCEEDS")
+@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class, kotlinx.cinterop.BetaInteropApi::class)
 
 package io.sentient.mobilesdk.secure
 
 import io.sentient.mobilesdk.log.createLogger
-import kotlinx.cinterop.CPointer
+import kotlinx.cinterop.COpaquePointer
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.value
+import platform.CoreFoundation.CFDictionaryAddValue
+import platform.CoreFoundation.CFDictionaryCreateMutable
 import platform.CoreFoundation.CFDictionaryRef
+import platform.CoreFoundation.CFMutableDictionaryRef
 import platform.CoreFoundation.CFRelease
-import platform.CoreFoundation.CFRetain
-import platform.CoreFoundation.CFStringRef
 import platform.CoreFoundation.CFTypeRefVar
+import platform.CoreFoundation.kCFBooleanTrue
+import platform.CoreFoundation.kCFTypeDictionaryKeyCallBacks
+import platform.CoreFoundation.kCFTypeDictionaryValueCallBacks
 import platform.Foundation.CFBridgingRelease
 import platform.Foundation.CFBridgingRetain
 import platform.Foundation.NSData
-import platform.Foundation.NSDictionary
-import platform.Foundation.NSMutableDictionary
 import platform.Foundation.NSString
 import platform.Foundation.NSUTF8StringEncoding
 import platform.Foundation.create
@@ -75,36 +73,6 @@ private val log = createLogger("secure", "token-store", "ios")
 private const val KEYCHAIN_SERVICE = "io.sentient.app"
 private const val KEYCHAIN_ACCOUNT = "auth.token"
 
-// ---------------------------------------------------------------------------
-// CF → Foundation bridge helpers — Security CFStringRef constants as NSString.
-//
-// The Security `kSec*` constants are CFStringRef (Kotlin/Native type
-// `CPointer<__CFString>`). A direct Kotlin `as NSString` cast checks the static
-// Kotlin type and THROWS ClassCastException at runtime ("CPointer cannot be
-// cast to NSString") — the toll-free memory-layout equivalence is NOT a Kotlin
-// type relationship. The correct K/N idiom is to bridge through CoreFoundation:
-// CFBridgingRelease(CFRetain(constant)) hands ARC an owned reference (CFRetain
-// +1, CFBridgingRelease transfers that +1 to ARC) and returns a properly bridged
-// Foundation object. Net effect on the shared constant is neutral; ARC owns the
-// returned NSString. Used as NSDictionary keys/values below.
-// ---------------------------------------------------------------------------
-
-@Suppress("CAST_NEVER_SUCCEEDS")
-private fun cfString(constant: CFStringRef?): NSString =
-    CFBridgingRelease(CFRetain(constant as CPointer<*>?)) as NSString
-
-private val KEY_CLASS: NSString get() = cfString(kSecClass)
-private val KEY_ATTR_SERVICE: NSString get() = cfString(kSecAttrService)
-private val KEY_ATTR_ACCOUNT: NSString get() = cfString(kSecAttrAccount)
-private val KEY_ATTR_ACCESSIBLE: NSString get() = cfString(kSecAttrAccessible)
-private val KEY_VALUE_DATA: NSString get() = cfString(kSecValueData)
-private val KEY_RETURN_DATA: NSString get() = cfString(kSecReturnData)
-private val KEY_MATCH_LIMIT: NSString get() = cfString(kSecMatchLimit)
-private val VALUE_CLASS_GENERIC_PASSWORD: NSString get() = cfString(kSecClassGenericPassword)
-private val VALUE_ACCESSIBLE_AFTER_FIRST_UNLOCK: NSString
-    get() = cfString(kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly)
-private val VALUE_MATCH_LIMIT_ONE: NSString get() = cfString(kSecMatchLimitOne)
-
 /**
  * iOS [SecureTokenStore] backed by the system Keychain.
  *
@@ -117,9 +85,8 @@ class IosSecureTokenStore : SecureTokenStore {
         log.debug("save", mapOf("tokenLength" to token.length))
         // A token-save failure must degrade gracefully, never abort the process.
         // Kotlin/Native traps any exception that escapes an @ObjCExport boundary
-        // (SIGABRT via trapOnUndeclaredException) — e.g. a Foundation NSException
-        // from a Security/NSDictionary call surfacing as an unhandled Throwable.
-        // Catch here so a Keychain hiccup logs WARN and the SDK still connects.
+        // (SIGABRT via trapOnUndeclaredException). Catch here so a Keychain
+        // hiccup logs WARN and the SDK still connects.
         runCatching { saveToKeychain(token) }.onFailure { e ->
             log.warn("save-failed", mapOf("op" to "exception", "cause" to (e.message ?: "unknown")))
         }
@@ -131,34 +98,44 @@ class IosSecureTokenStore : SecureTokenStore {
             return
         }
 
-        // Try update first (item already exists).
-        val updateQuery = baseQuery()
-        val updateAttrs = NSMutableDictionary()
-        updateAttrs.setObject(nsData, KEY_VALUE_DATA)
-        val updateStatus = updateQuery.useAsCFDict { q ->
-            updateAttrs.useAsCFDict { a -> SecItemUpdate(q, a) }
-        }
+        // Add first; on duplicate, update the existing item's value.
+        val addStatus = withQuery(
+            includeAccessible = true,
+            valueData = nsData,
+        ) { query -> SecItemAdd(query, null) }
 
-        when (updateStatus) {
-            errSecSuccess -> {
-                log.info("save-ok", mapOf("op" to "update"))
+        when (addStatus) {
+            errSecSuccess -> log.info("save-ok", mapOf("op" to "add"))
+            errSecDuplicateItem -> updateExisting(nsData)
+            else -> log.warn("save-failed", mapOf("op" to "add", "status" to addStatus))
+        }
+    }
+
+    /** Updates the value of an already-present Keychain item. */
+    private fun updateExisting(nsData: NSData) {
+        // Match dict scopes to service+account; the attrs dict carries the new value.
+        val status = memScoped {
+            val matchDict = buildBaseQuery(includeAccessible = false, valueData = null)
+            val attrsDict = CFDictionaryCreateMutable(
+                null,
+                1,
+                kCFTypeDictionaryKeyCallBacks.ptr,
+                kCFTypeDictionaryValueCallBacks.ptr,
+            )
+            val dataRef = CFBridgingRetain(nsData)
+            try {
+                CFDictionaryAddValue(attrsDict, kSecValueData, dataRef)
+                SecItemUpdate(matchDict, attrsDict)
+            } finally {
+                if (dataRef != null) CFRelease(dataRef)
+                if (attrsDict != null) CFRelease(attrsDict)
+                if (matchDict != null) CFRelease(matchDict)
             }
-            errSecItemNotFound -> {
-                // Not yet in Keychain — add with accessibility attribute.
-                val addQuery = baseQuery().also { d ->
-                    d.setObject(nsData, KEY_VALUE_DATA)
-                    d.setObject(VALUE_ACCESSIBLE_AFTER_FIRST_UNLOCK, KEY_ATTR_ACCESSIBLE)
-                }
-                val addStatus = addQuery.useAsCFDict { q -> SecItemAdd(q, null) }
-                if (addStatus == errSecSuccess || addStatus == errSecDuplicateItem) {
-                    log.info("save-ok", mapOf("op" to "add"))
-                } else {
-                    log.warn("save-failed", mapOf("op" to "add", "status" to addStatus))
-                }
-            }
-            else -> {
-                log.warn("save-failed", mapOf("op" to "update", "status" to updateStatus))
-            }
+        }
+        if (status == errSecSuccess) {
+            log.info("save-ok", mapOf("op" to "update"))
+        } else {
+            log.warn("save-failed", mapOf("op" to "update", "status" to status))
         }
     }
 
@@ -172,49 +149,62 @@ class IosSecureTokenStore : SecureTokenStore {
         }
     }
 
-    private fun loadFromKeychain(): String? {
-        val query = baseQuery().also { d ->
-            d.setObject(true, KEY_RETURN_DATA)
-            d.setObject(VALUE_MATCH_LIMIT_ONE, KEY_MATCH_LIMIT)
+    private fun loadFromKeychain(): String? = memScoped {
+        // kSecReturnData MUST be a CFBooleanRef (kCFBooleanTrue); a Kotlin Bool /
+        // NSNumber here is what yields errSecParam (-50). kSecMatchLimitOne is a
+        // CFStringRef. Both are added CF-natively below.
+        val query = buildBaseQuery(includeAccessible = false, valueData = null)
+        CFDictionaryAddValue(query, kSecReturnData, kCFBooleanTrue)
+        CFDictionaryAddValue(query, kSecMatchLimit, kSecMatchLimitOne)
+
+        val result = alloc<CFTypeRefVar>()
+        val status = try {
+            SecItemCopyMatching(query, result.ptr)
+        } finally {
+            if (query != null) CFRelease(query)
         }
 
-        memScoped {
-            val result = alloc<CFTypeRefVar>()
-            val status = query.useAsCFDict { q -> SecItemCopyMatching(q, result.ptr) }
-            return when (status) {
-                errSecSuccess -> {
-                    // result.value is a retained CFDataRef — bridge to NSData via
-                    // CFBridgingRelease (transfers the +1 to ARC). A direct
-                    // `as? NSData` would throw (CPointer is not NSData in Kotlin).
-                    val data = CFBridgingRelease(result.value) as? NSData
-                    if (data == null) {
-                        log.warn("load-nil-data")
-                        return null
-                    }
-                    val token = NSString.create(data, NSUTF8StringEncoding)?.toString()
-                    if (token == null) {
-                        log.warn("load-decode-failed")
-                    } else {
-                        log.info("load-ok", mapOf("tokenLength" to token.length))
-                    }
-                    token
-                }
-                errSecItemNotFound -> {
-                    log.debug("load-not-found")
-                    null
-                }
-                else -> {
-                    log.warn("load-failed", mapOf("status" to status))
-                    null
-                }
+        when (status) {
+            errSecSuccess -> decodeResult(result.value)
+            errSecItemNotFound -> {
+                log.debug("load-not-found")
+                null
+            }
+            else -> {
+                log.warn("load-failed", mapOf("status" to status))
+                null
             }
         }
+    }
+
+    /**
+     * Converts the (owned, copy-rule) CFDataRef returned by SecItemCopyMatching
+     * into a UTF-8 [String]. CFBridgingRelease transfers the +1 to ARC.
+     */
+    private fun decodeResult(raw: COpaquePointer?): String? {
+        val data = CFBridgingRelease(raw) as? NSData
+        if (data == null) {
+            log.warn("load-nil-data")
+            return null
+        }
+        val token = NSString.create(data, NSUTF8StringEncoding)?.toString()
+        if (token == null) {
+            log.warn("load-decode-failed")
+        } else {
+            log.info("load-ok", mapOf("tokenLength" to token.length))
+        }
+        return token
     }
 
     override fun clear() {
         log.debug("clear")
         runCatching {
-            baseQuery().useAsCFDict { q -> SecItemDelete(q) }
+            val query = buildBaseQuery(includeAccessible = false, valueData = null)
+            try {
+                SecItemDelete(query)
+            } finally {
+                if (query != null) CFRelease(query)
+            }
         }.onSuccess { status ->
             when (status) {
                 errSecSuccess, errSecItemNotFound -> log.info("clear-ok")
@@ -230,41 +220,69 @@ class IosSecureTokenStore : SecureTokenStore {
     // -----------------------------------------------------------------------
 
     /**
-     * Builds a base Keychain query [NSMutableDictionary] scoped to this service + account.
+     * Runs [block] with a freshly built query dict (base attrs + optional value),
+     * releasing the dict afterward. Used by [saveToKeychain]'s add path.
      */
-    private fun baseQuery(): NSMutableDictionary {
-        val dict = NSMutableDictionary()
-        dict.setObject(VALUE_CLASS_GENERIC_PASSWORD, KEY_CLASS)
-        dict.setObject(KEYCHAIN_SERVICE, KEY_ATTR_SERVICE)
-        dict.setObject(KEYCHAIN_ACCOUNT, KEY_ATTR_ACCOUNT)
+    private inline fun withQuery(
+        includeAccessible: Boolean,
+        valueData: NSData?,
+        block: (CFDictionaryRef?) -> Int,
+    ): Int {
+        val query = buildBaseQuery(includeAccessible, valueData)
+        return try {
+            block(query)
+        } finally {
+            if (query != null) CFRelease(query)
+        }
+    }
+
+    /**
+     * Builds a CF-native Keychain query scoped to this service + account.
+     *
+     * Caller owns the returned [CFMutableDictionaryRef] and MUST [CFRelease] it.
+     * String values are bridged to CFStringRef via CFBridgingRetain (+1) and
+     * released here — CFDictionaryAddValue retains its own copy, so the dict
+     * keeps them alive after this returns.
+     */
+    private fun buildBaseQuery(
+        includeAccessible: Boolean,
+        valueData: NSData?,
+    ): CFMutableDictionaryRef? {
+        val dict = CFDictionaryCreateMutable(
+            null,
+            0,
+            kCFTypeDictionaryKeyCallBacks.ptr,
+            kCFTypeDictionaryValueCallBacks.ptr,
+        )
+        // kSecClassGenericPassword and the accessibility constant are CFStringRef
+        // already — add them directly. Service/account come in as Kotlin Strings
+        // and are bridged to owned CFStringRef refs, released after the add.
+        CFDictionaryAddValue(dict, kSecClass, kSecClassGenericPassword)
+        addBridged(dict, kSecAttrService, NSString.create(string = KEYCHAIN_SERVICE))
+        addBridged(dict, kSecAttrAccount, NSString.create(string = KEYCHAIN_ACCOUNT))
+        if (includeAccessible) {
+            CFDictionaryAddValue(dict, kSecAttrAccessible, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly)
+        }
+        if (valueData != null) {
+            addBridged(dict, kSecValueData, valueData)
+        }
         return dict
+    }
+
+    /**
+     * Bridges a Foundation [value] to an owned CF ref, adds it under [key]
+     * (CFDictionaryAddValue retains its own +1), then releases the temporary.
+     */
+    private fun addBridged(dict: CFMutableDictionaryRef?, key: COpaquePointer?, value: Any?) {
+        val ref = CFBridgingRetain(value)
+        try {
+            CFDictionaryAddValue(dict, key, ref)
+        } finally {
+            if (ref != null) CFRelease(ref)
+        }
     }
 
     /** Encodes [token] as UTF-8 [NSData]. Returns null on encoding failure. */
     private fun tokenToNSData(token: String): NSData? =
         NSString.create(string = token).dataUsingEncoding(NSUTF8StringEncoding)
-
-    /**
-     * Bridges this [NSDictionary] to a [CFDictionaryRef] for a single Security
-     * call, then releases it.
-     *
-     * A direct Kotlin `as CFDictionaryRef` cast THROWS at runtime
-     * ("NSDictionaryAsKMap cannot be cast to CPointer") — the NSDictionary ↔
-     * CFDictionary toll-free equivalence is not a Kotlin type relationship.
-     * CFBridgingRetain hands back an owned CF reference (CPointer); SecItem* do
-     * not consume the dictionary, so we balance the +1 with CFRelease after the
-     * call. The bridged ref is scoped to [block] only.
-     */
-    private inline fun <R> NSDictionary.useAsCFDict(block: (CFDictionaryRef?) -> R): R {
-        // CFBridgingRetain returns an owned CPointer (CFTypeRef); reinterpret it
-        // to CFDictionaryRef. Both are CPointer, so this cast is valid in K/N
-        // (unlike NSDictionary `as CFDictionaryRef`, which throws).
-        @Suppress("UNCHECKED_CAST")
-        val cf = CFBridgingRetain(this) as CFDictionaryRef?
-        try {
-            return block(cf)
-        } finally {
-            if (cf != null) CFRelease(cf)
-        }
-    }
 }
