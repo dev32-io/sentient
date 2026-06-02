@@ -35,21 +35,14 @@ constexpr int kPreNetworkSettleMs = 800;
 // (Phase 6a pivot — locked in Task 1).
 constexpr int kServerFrameDurationMs = 20;
 
-// Build the sentient gateway WS URI from the baked creds. Uses the dev TLS
-// pin when available, falling back to plain ws://.
+// Build the sentient gateway WS URI from the baked creds. Always wss:// —
+// TLS verify mode is controlled by cfg.use_crt_bundle / cfg.insecure_skip_verify.
 std::string build_gateway_uri() {
     char uri[160];
-#if SENTIENT_DEV_TLS_PIN
     std::snprintf(uri, sizeof(uri), "wss://%s:%d%s",
                   SENTIENT_GATEWAY_HOST,
                   SENTIENT_GATEWAY_WS_PORT,
                   SENTIENT_GATEWAY_WS_PATH);
-#else
-    std::snprintf(uri, sizeof(uri), "ws://%s:%d%s",
-                  SENTIENT_GATEWAY_HOST,
-                  SENTIENT_GATEWAY_WS_PORT,
-                  SENTIENT_GATEWAY_WS_PATH);
-#endif
     return std::string(uri);
 }
 
@@ -309,12 +302,12 @@ void Application::InitializeSentientWs() {
     SentientWsProtocolConfig cfg;
     cfg.gateway_url = build_gateway_uri();
     cfg.token = SENTIENT_PASETO_TOKEN;
-#if SENTIENT_DEV_TLS_PIN
-    extern const char dev_cert_pem_start[] asm("_binary_sentient_dev_gateway_crt_start");
-    cfg.cert_pem = dev_cert_pem_start;
-    // Dev cert SAN is localhost+127.0.0.1; cube dials the Mac's LAN IP, so
-    // SAN match will fail. Cert is still pinned — just skip the name check.
-    cfg.skip_tls_cn_check = true;
+#if CONFIG_CUBE_DEV_TLS_INSECURE
+    cfg.use_crt_bundle = false;
+    cfg.insecure_skip_verify = true;
+#else
+    cfg.use_crt_bundle = true;
+    cfg.insecure_skip_verify = false;
 #endif
     WireSentientWsCallbacks(cfg);
 
