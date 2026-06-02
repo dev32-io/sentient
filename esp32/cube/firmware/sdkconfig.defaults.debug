@@ -47,3 +47,6 @@ CONFIG_ESP32_DEVTOOL_LOG_RELAY_ENABLE=n
 # companion now present, default 3584 bytes overflows when the timer fires.
 # Bumping to 8192 leaves comfortable headroom for the next surface addition.
 CONFIG_ESP_TIMER_TASK_STACK_SIZE=8192
+
+# Debug dials the local macOS gateway (self-signed localhost cert).
+CONFIG_CUBE_DEV_TLS_INSECURE=y

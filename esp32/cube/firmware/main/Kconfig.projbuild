@@ -1001,6 +1001,16 @@ config CUBE_DEV_LOW_BRIGHTNESS_PERCENT
         Not written to NVS — survives only for the current boot, so
         unsetting the Kconfig restores the user's NVS-saved value.
 
+config CUBE_DEV_TLS_INSECURE
+    bool "Skip TLS server-cert verification (debug only)"
+    default n
+    help
+        Debug builds dial the local macOS gateway over WSS with a
+        self-signed localhost cert that is not in any public CA bundle.
+        Enabling this skips server-certificate verification entirely.
+        MUST stay off in prod — prod verifies the gateway's Let's Encrypt
+        cert via the esp_crt_bundle (CONFIG_MBEDTLS_CERTIFICATE_BUNDLE).
+
 # Devtool verb gating — moved here from components/agent_console/Kconfig in
 # Task 27 (which deleted the agent_console component wholesale). Names are
 # preserved so the migrated devtool_verbs/*.cc files keep their existing

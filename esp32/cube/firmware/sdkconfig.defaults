@@ -144,3 +144,9 @@ CONFIG_SPIRAM_SPEED_120M=y
 # relay, log level, compiler optimization) are in sdkconfig.defaults.debug
 # and sdkconfig.defaults.prod. Select via SDKCONFIG_DEFAULTS env var or
 # flash.sh --profile flag. Debug is the default for local dev.
+
+# TLS: verify the gateway cert against the Mozilla root bundle (includes
+# Let's Encrypt ISRG Root X1). Prod uses this; debug skips verification
+# via CONFIG_CUBE_DEV_TLS_INSECURE. Uniform across profiles for simpler logic.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
