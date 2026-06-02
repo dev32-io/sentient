@@ -6,4 +6,4 @@ Native iOS client for Sentient — a thin SwiftUI UI over the shared KMP SDK (`s
 
 Before modifying iOS source, load: cross-cutting `.claude/rules/*.md`, iOS UI `.claude/rules/ios/*.md`, shared-SDK `.claude/rules/mobile-sdk/*.md` (this app consumes it), and mobile-cross `.claude/rules/mobile/*.md`. Claude Code auto-loads them via `paths:` frontmatter. Details on demand: `agents/docs/{ios,mobile-sdk,mobile}/*-details.md`.
 
-The rules own the stack and conventions (Swift/SwiftUI, SKIE bridging, xcodegen+xcodebuild, Maestro) — don't restate them here. Dev-loop commands: `qa/mobile/README.md`.
+The rules own the stack and conventions (Swift/SwiftUI, SKIE bridging, xcodegen+xcodebuild, Maestro) — don't restate them here. 
