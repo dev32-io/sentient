@@ -16,12 +16,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import io.sentient.android.sdk.SdkViewModel
 import io.sentient.android.theme.SentientTheme
 import io.sentient.mobilesdk.sdk.SdkState
 
 class MainActivity : ComponentActivity() {
-    private val sdkViewModel: SdkViewModel by viewModels()
+    private val sdkViewModel: SdkViewModel by viewModels {
+        viewModelFactory { initializer { SdkViewModel() } }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
