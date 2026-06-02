@@ -99,8 +99,10 @@ esp_err_t SentientWsProtocol::connect() {
     // leaves headroom for the worst-case logging chain.
     ws_cfg.task_stack = 8192;
     if (cfg_.insecure_skip_verify) {
-        // Debug: no CA attached → esp-tls performs no server-cert
-        // verification. LAN-dev only; never reaches a prod build.
+        // Debug: attach no CA. esp-tls skips server-cert verification ONLY
+        // because the debug profile sets CONFIG_ESP_TLS_SKIP_SERVER_CERT_VERIFY
+        // (IDF 5.5.2 errors on a missing CA otherwise). LAN-dev only; the prod
+        // profile never enables that Kconfig and takes the crt_bundle branch.
         ESP_LOGW(TAG, "tls: INSECURE — server cert verification disabled (debug)");
     } else if (cfg_.use_crt_bundle) {
         ws_cfg.crt_bundle_attach = esp_crt_bundle_attach;

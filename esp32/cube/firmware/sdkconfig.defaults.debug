@@ -50,3 +50,11 @@ CONFIG_ESP_TIMER_TASK_STACK_SIZE=8192
 
 # Debug dials the local macOS gateway (self-signed localhost cert).
 CONFIG_CUBE_DEV_TLS_INSECURE=y
+
+# IDF 5.5.2 esp-tls does NOT skip server-cert verification just because no CA
+# is attached — it errors ("No server verification option set"). To make the
+# insecure WSS path (no crt_bundle) actually skip verification, esp-tls needs
+# this explicit opt-in. Debug profile ONLY — prod never enables it, so prod
+# always verifies the gateway's Let's Encrypt cert via esp_crt_bundle.
+CONFIG_ESP_TLS_INSECURE=y
+CONFIG_ESP_TLS_SKIP_SERVER_CERT_VERIFY=y
