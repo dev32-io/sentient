@@ -55,4 +55,24 @@ class WireSerializationTest {
         assertEquals("hello", item.content)
         assertEquals("interrupt", item.cutoff?.kind)
     }
+
+    // Graceful degradation: a malformed feed item with a bad/missing ts must NEVER crash
+    // WsTransport decode. coerceInputValues coerces explicit null to the UNKNOWN_TS default;
+    // a missing key falls back to the default natively.
+
+    @Test fun conversation_entry_with_null_ts_decodes_to_unknown_sentinel() {
+        val s = """{"type":"conversation.entry","item":{"ts":null,"kind":"user","channel":"speech","content":"hi"}}"""
+        val msg = WireJson.instance.decodeFromString(ServerMessage.serializer(), s) as ServerMessage.ConversationEntry
+        val item = msg.item as ConversationFeedItem.User
+        assertEquals(UNKNOWN_TS, item.ts)
+        assertEquals("hi", item.content)
+    }
+
+    @Test fun conversation_entry_with_missing_ts_decodes_to_unknown_sentinel() {
+        val s = """{"type":"conversation.entry","item":{"kind":"user","channel":"speech","content":"hi"}}"""
+        val msg = WireJson.instance.decodeFromString(ServerMessage.serializer(), s) as ServerMessage.ConversationEntry
+        val item = msg.item as ConversationFeedItem.User
+        assertEquals(UNKNOWN_TS, item.ts)
+        assertEquals("hi", item.content)
+    }
 }
