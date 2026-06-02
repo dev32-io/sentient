@@ -25,6 +25,8 @@ import MobileSdk
 struct ChatView: View {
     @EnvironmentObject private var store: SdkStore
 
+    @State private var historyPresented = false
+
     private static let title = "Sentient"
 
     private var canInterrupt: Bool {
@@ -51,6 +53,17 @@ struct ChatView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .duskTheme()
+        .sheet(isPresented: $historyPresented) {
+            // The sheet owns its HistoryModel built over the single app SdkStore
+            // (read here, where @EnvironmentObject is resolved). One store → one
+            // SDK; no second transport. nowMs is captured once per present so the
+            // date labels read a stable clock for the sheet's lifetime.
+            HistorySheet(
+                store: store,
+                nowMs: Int64(Date().timeIntervalSince1970 * 1000),
+                onDismiss: { historyPresented = false }
+            )
+        }
     }
 
     // ── Title bar ───────────────────────────────────────────────────────────
@@ -62,7 +75,15 @@ struct ChatView: View {
     // Keeping it on a leaf lets the controls keep their own identifiers.
 
     private var titleBar: some View {
-        HStack {
+        HStack(spacing: Space.sm) {
+            Button { historyPresented = true } label: {
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: TypeScale.lg))
+                    .foregroundStyle(DuskColors.ink2)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("History")
+            .accessibilityIdentifier("history-open")
             Text(Self.title)
                 .font(.system(size: TypeScale.lg, weight: .semibold))
                 .foregroundStyle(DuskColors.ink)
