@@ -56,3 +56,7 @@ log.debug("attempting reconnect", mapOf("attempt" to attempt, "delayMs" to delay
 - `session.ready` carries `inputSampleRate` and `outputSampleRate` as integers — do not rename these fields or the JSON deserializer silently reads 0 (Kotlin data class field name must match JSON key exactly, or add `@SerialName`).
 - When web-sdk adds a new message type (e.g., `cycle.done`), mobile-sdk must add it in the same PR — divergence causes silent drop of gateway frames.
 - SpeechGate and EchoGate unit tests in commonTest must assert the same transitions as the web-sdk vitest suite; if they diverge, it is a bug in the port, not a platform difference.
+
+## EchoGate clock deviation (deliberate)
+
+The TS `createEchoGate` uses an injected `EchoGateScheduler` (schedule/cancel callbacks) to fire the tail-hold timer. The KMP `EchoGate` replaces this with an injected monotonic timestamp: `onPlaybackDrain(cycleId, nowMs)` records `tailExpiresAtMs = nowMs + tailHoldMs`, and `state(nowMs)` / `acceptFrame(pcm, nowMs)` lazily check expiry against the passed `nowMs`. State-machine transitions, threshold semantics, and boundary conditions are identical to the TS implementation. The deviation eliminates scheduler wiring from commonMain (no platform clock dependency) and makes all tests deterministic with no fake-timer machinery.
