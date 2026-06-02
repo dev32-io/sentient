@@ -17,10 +17,12 @@ Before exploring or modifying code, read all root rules plus the subproject rule
 | Web UI | `gateway/webui/` | `.claude/rules/gateway/webui/*.md` | `agents/docs/gateway/webui/*-details.md` |
 | Android | `android/` | `.claude/rules/android/*.md` | `agents/docs/android/*-details.md` |
 | iOS | `ios/` | `.claude/rules/ios/*.md` | `agents/docs/ios/*-details.md` |
+| KMP Mobile SDK | `shared/mobile-sdk/` | `.claude/rules/mobile-sdk/*.md` | `agents/docs/mobile-sdk/*-details.md` |
+| Mobile cross-platform | `android/`, `ios/`, `shared/mobile-sdk/` | `.claude/rules/mobile/*.md` | `agents/docs/mobile/*-details.md` |
 | Shared | `shared/` | (covered by cross-cutting) | — |
 | Deploy | `deploy/` | (covered by cross-cutting) | — |
 
-> **Note:** Android and iOS rules are excluded via `claudeMdExcludes` in `.claude/settings.json` until Phase 6. Remove those exclusions when mobile development begins.
+> **Note:** Android, iOS, mobile-sdk, and mobile rules are **active**. Mobile development (Phase 0 foundation) is complete and ongoing.
 
 ## Shell Environment
 
@@ -58,7 +60,7 @@ Key patterns:
 - Per-user memory lives inside Hermes (chain-based, profile-scoped), not in the gateway.
 
 Providers: STT via local STTService (Python service wrapping Silero VAD + Smart-Turn v3 + SenseVoice-Small); TTS via Fish Audio; LLM via Hermes worker.
-Clients: Preact web (toggle-to-talk), Android (Kotlin, deferred), iOS (Swift, deferred).
+Clients: Preact web (toggle-to-talk), Android (Kotlin/Compose, Phase 0 complete), iOS (Swift/SwiftUI, Phase 0 complete); both consume the shared KMP SDK (`shared/mobile-sdk`).
 
 For PoC results and exploration details, see `docs/research/`. Anything in `docs/superpowers/` that references pre-cerebrum constructs (TurnController, ContinuousSession, InterruptionFrame, SentenceAggregator), pre-Hermes constructs (`cognitive-cycle.ts`, `effects/`, `effect-wrapper`, `EffectDispatchResult`, `SessionAudioController`, `TaskManager`, gateway-owned per-user memory), or the retired Hermes platform-adapter shape (`sentient_gateway.py`, custom-WS frames, `ConnectionPool`, `PerProfileConnection`, `WsHermesClient`) is **historical only** — those were retired in successive pivots.
 

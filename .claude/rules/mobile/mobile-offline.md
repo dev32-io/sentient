@@ -39,4 +39,6 @@ Connectivity is intermittent by default. Features that only work online ship bro
 - Expired token while offline is not fatal: queued writes wait, reads use cache, refresh on reconnect.
 - Sign-out works offline: clears local state immediately; queues server revocation.
 
-Platform mapping: Android → Room + DataStore + WorkManager. iOS → SwiftData / Core Data + Keychain + BGTaskScheduler. See `agents/docs/mobile/mobile-offline-details.md`.
+- Platform storage and sync APIs differ; the principle of local-first cache + idempotent outbox applies on both. See the details file for concrete Android and iOS stacks.
+
+> When a rule is unclear, read `agents/docs/mobile/mobile-offline-details.md`.

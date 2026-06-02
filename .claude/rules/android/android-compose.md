@@ -11,7 +11,7 @@ The Compose runtime relies on purity, identity, and stability to skip work.
 ## Compose Compiler plugin — mandatory with Kotlin 2.0+
 
 - Apply `org.jetbrains.kotlin.plugin.compose` Gradle plugin per Compose module; version **must equal** the Kotlin version.
-- Catalog entry: `compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }` in `[plugins]`; apply via `alias(libs.plugins.compose.compiler)`.
+- Declare the plugin in the version catalog `[plugins]` section and apply via `alias(libs.plugins.compose.compiler)`. Catalog entry shape is in the details file.
 - Remove any legacy `composeOptions { … }` block that sets the compiler extension version — that pre-Kotlin-2.0 mechanism is ignored/errors with the new plugin.
 
 ## Pure composables + state hoisting
@@ -36,4 +36,5 @@ The Compose runtime relies on purity, identity, and stability to skip work.
 - Read `WindowSizeClass`; branch on Compact/Medium/Expanded.
 - `NavigationSuiteScaffold` (Material3 adaptive) auto-switches nav bottom/rail/drawer.
 
-See `agents/docs/android/android-compose-details.md`.
+
+> When a rule is unclear, read `agents/docs/android/android-compose-details.md`.

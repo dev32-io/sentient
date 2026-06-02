@@ -396,3 +396,15 @@ gradlePlugin {
     }
 }
 ```
+
+## Pinned toolchain values (sentient repo, as of 2026-06-01)
+
+These live in `gradle/libs.versions.toml` — update the catalog entry, not the rule or source code.
+
+- `compileSdk` / `targetSdk` = **36**; `minSdk` = **26**
+- Kotlin = **2.3.10**
+- AGP = **8.13.x** (paired with Gradle 8.13). Do NOT bump to AGP 9.x — requires Gradle 9.1+.
+- `compileOptions` sourceCompatibility + targetCompatibility = `VERSION_17`; `jvmTarget = JvmTarget.JVM_17` (aligns with repo JDK 17)
+- Compose compiler plugin version must equal Kotlin version; catalog entry: `compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }` in `[plugins]`
+
+Verify all pins against upstream latest releases before any bump (per verify-pinned-versions feedback).

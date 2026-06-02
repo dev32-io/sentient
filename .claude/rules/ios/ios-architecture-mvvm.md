@@ -41,4 +41,5 @@ Single state-and-navigation owner per screen.
 - Theme / layout / formatting: View.
 - Navigation: ViewModel state; view binds.
 
-See `agents/docs/ios/ios-architecture-mvvm-details.md`.
+
+> When a rule is unclear, read `agents/docs/ios/ios-architecture-mvvm-details.md`.

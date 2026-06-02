@@ -43,4 +43,5 @@ Lifecycle-paused collection drops emissions.
 - Theme, layout, formatting: composable.
 - Navigation: trigger via state (pending route) or `Channel<Effect>`.
 
-See `agents/docs/android/android-architecture-mvi-details.md`.
+
+> When a rule is unclear, read `agents/docs/android/android-architecture-mvi-details.md`.

@@ -9,4 +9,5 @@ paths: ["shared/mobile-sdk/**"]
 - Mirror web-sdk's adapter shapes: AudioCaptureAdapter, AudioPlaybackAdapter, SecureTokenStore, PushTokenProvider, LogSink, WebSocket engine.
 - Every `actual` has a fake/in-memory commonTest double so commonMain logic tests run without a device.
 
-> Details: agents/docs/mobile-sdk/expect-actual-contract-details.md
+
+> When a rule is unclear, read `agents/docs/mobile-sdk/expect-actual-contract-details.md`.

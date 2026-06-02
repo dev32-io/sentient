@@ -38,4 +38,5 @@ Swift's type system pushes failure modes from runtime to compile time.
 - `enum SomeError: Error, Sendable` per layer; associated values carry diagnostic detail.
 - `LocalizedError` for user-facing messages.
 
-See `agents/docs/ios/swift-details.md`.
+
+> When a rule is unclear, read `agents/docs/ios/swift-details.md`.

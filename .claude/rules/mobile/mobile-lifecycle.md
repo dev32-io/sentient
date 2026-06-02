@@ -40,4 +40,6 @@ The OS suspends, kills, and resurrects mobile processes on its own schedule. Tre
 
 ## Observability
 - Log every transition (`foreground`, `background`, `will-terminate`, `restore`) as a structured event.
-- Android → `Lifecycle`+`WorkManager`+`ForegroundServiceType`; iOS → `scenePhase`+`BGTaskScheduler`+UIBackgroundModes. See `agents/docs/mobile/mobile-lifecycle-details.md`.
+- Platform APIs for lifecycle observation vary; see the details file for Android and iOS specifics.
+
+> When a rule is unclear, read `agents/docs/mobile/mobile-lifecycle-details.md`.

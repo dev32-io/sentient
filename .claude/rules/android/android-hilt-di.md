@@ -38,4 +38,5 @@ Hilt generates the wiring with compile-time graph validation. NEVER hand-roll a 
 - `@TestInstallIn(components = [...], replaces = [...])` swaps a production module for a test one.
 - ONLY supported swap mechanism. Do NOT subclass the VM in tests.
 
-See `agents/docs/android/android-hilt-di-details.md`.
+
+> When a rule is unclear, read `agents/docs/android/android-hilt-di-details.md`.

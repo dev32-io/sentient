@@ -39,4 +39,6 @@ Stringly-typed routes and undefined back behavior are mobile's two biggest sourc
 - Navigation by side effect (mutating a global + letting next render notice).
 - Back behavior conditional on caller. If the screen needs to know its caller, it's a flow with an explicit entry.
 
-Platform mapping: Android → Navigation Compose 2.8+ + `@Serializable` routes. iOS → `NavigationStack` + `Route` enum. See `agents/docs/mobile/mobile-navigation-details.md`.
+- Platform navigation APIs differ; the principle of typed destinations and defined back stacks applies on both. See the details file for concrete Android and iOS implementations.
+
+> When a rule is unclear, read `agents/docs/mobile/mobile-navigation-details.md`.

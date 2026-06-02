@@ -32,14 +32,15 @@ Build files are production code: typed, single-sourced, modular.
 
 ## Toolchain — version catalog is the source of truth
 
-- `compileSdk` / `targetSdk` = **36**; `minSdk` = **26** (version catalog: `gradle/libs.versions.toml`).
-- Kotlin = **2.3.10**; AGP = **current AGP 8.13.x (paired with Gradle 8.13)**. Do NOT bump to AGP 9.x — requires Gradle 9.1+.
-- `compileOptions` sourceCompatibility + targetCompatibility = `VERSION_17`; `jvmTarget = JvmTarget.JVM_17` (aligns with repo JDK 17).
+- All SDK levels (`compileSdk`, `targetSdk`, `minSdk`), Kotlin version, AGP version, and JVM target are pinned in `gradle/libs.versions.toml`. Concrete values live there and in the details file.
+- `compileOptions` sourceCompatibility + targetCompatibility must match the catalog JVM target entry.
 - Compose compiler plugin version **must equal** Kotlin version (see catalog `compose-compiler` entry).
+- Do NOT bump AGP to a major version that requires a newer Gradle major version than the repo pins — verify compatibility before any Kotlin/AGP bump.
 
 ## R8 + Baseline Profile (G2a)
 
 - Release: `isMinifyEnabled = true`, `isShrinkResources = true`.
 - Apply `androidx.baselineprofile` in `:app` + `:benchmark`; baseline profile rules ship with APK.
 
-See `agents/docs/android/android-gradle-details.md`.
+
+> When a rule is unclear, read `agents/docs/android/android-gradle-details.md`.

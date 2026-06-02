@@ -35,4 +35,5 @@ Flow is Kotlin's cold-stream primitive; `StateFlow`/`SharedFlow` are the hot var
 - Room DAOs return `Flow<T>`; DataStore exposes `data: Flow<Preferences>` / `data: Flow<T>`.
 - Observe both with `collectAsStateWithLifecycle`; ViewModel exposes via `stateIn(WhileSubscribed(5_000))`.
 
-See `agents/docs/android/android-coroutines-flow-details.md`.
+
+> When a rule is unclear, read `agents/docs/android/android-coroutines-flow-details.md`.

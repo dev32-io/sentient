@@ -10,4 +10,5 @@ paths: ["shared/mobile-sdk/**"]
 - Every coroutine is launched in a scope the consumer can cancel (tie to connect/disconnect). No `GlobalScope`.
 - Log every state transition (from→to + trigger) per the logging rule.
 
-> Details: agents/docs/mobile-sdk/coroutines-flow-surface-details.md
+
+> When a rule is unclear, read `agents/docs/mobile-sdk/coroutines-flow-surface-details.md`.

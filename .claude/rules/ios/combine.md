@@ -37,4 +37,5 @@ In new code prefer `async/await` + `AsyncSequence`. Combine is acceptable only w
 - Single-value, then complete: `await publisher.first().values`.
 - NEVER bridge async/await BACK to Combine unless a framework forces it.
 
-See `agents/docs/ios/combine-details.md`.
+
+> When a rule is unclear, read `agents/docs/ios/combine-details.md`.

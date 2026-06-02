@@ -37,4 +37,5 @@ Structured concurrency only buys safety if you don't routinely break it.
 - `actor` for any state shared across concurrent contexts; serializes access.
 - Avoid storing UI types inside non-`@MainActor` actors.
 
-See `agents/docs/ios/swift-concurrency-details.md`.
+
+> When a rule is unclear, read `agents/docs/ios/swift-concurrency-details.md`.

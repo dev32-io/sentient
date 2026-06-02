@@ -36,4 +36,5 @@ Kotlin's type system pushes failure modes from runtime to compile time. The idio
 - Public boundary signatures declare the failure shape.
 - Extensions: additive, stateless helpers in topical files (`StringExtensions.kt`). No fields — use a class if you need state.
 
-See `agents/docs/android/kotlin-details.md`.
+
+> When a rule is unclear, read `agents/docs/android/kotlin-details.md`.

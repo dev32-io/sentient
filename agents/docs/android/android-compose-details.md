@@ -4,6 +4,22 @@ This file expands `platforms/android/rules/android-compose.md`.
 The rule states the bar; this doc shows the patterns and the
 recomposition gotchas that catch agents off-guard.
 
+## Compose Compiler plugin — catalog entry
+
+Version catalog `gradle/libs.versions.toml` `[plugins]` entry:
+
+```toml
+compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+```
+
+Apply in each Compose module's `build.gradle.kts`:
+
+```kotlin
+alias(libs.plugins.compose.compiler)
+```
+
+Plugin version must equal Kotlin version — both reference `version.ref = "kotlin"` from the catalog.
+
 ## State hoisting -- the canonical shape
 
 The "hoisted" version separates the controller from the view.

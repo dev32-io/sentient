@@ -10,4 +10,5 @@ paths: ["shared/mobile-sdk/**", "settings.gradle.kts", "build.gradle.kts", "grad
 - commonTest uses kotlin-test + kotlinx-coroutines-test. No Robolectric/XCTest in the shared module.
 - Keep the module under the 300-line/40-line clean-code limits per file (split early).
 
-> Details: agents/docs/mobile-sdk/kmp-gradle-details.md
+
+> When a rule is unclear, read `agents/docs/mobile-sdk/kmp-gradle-details.md`.

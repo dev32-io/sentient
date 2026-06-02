@@ -36,4 +36,5 @@ The SwiftUI runtime relies on purity, state ownership, and identity to skip work
 - `ForEach` content is `Identifiable` or has explicit `id:`.
 - `.id(value)` only when you intentionally want full rebuild on value change (sparingly).
 
-See `agents/docs/ios/swiftui-details.md`.
+
+> When a rule is unclear, read `agents/docs/ios/swiftui-details.md`.

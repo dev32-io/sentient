@@ -37,4 +37,5 @@ Three layers: unit (Swift Testing / XCTest), UI regression (XCUITest), agent-dri
 - Production: `ContinuousClock()` / `SystemClock()`. Tests: `TestClock` that advances on command.
 - Eliminates `sleep`-based polling.
 
-See `agents/docs/ios/ios-testing-details.md`.
+
+> When a rule is unclear, read `agents/docs/ios/ios-testing-details.md`.

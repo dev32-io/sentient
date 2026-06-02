@@ -33,4 +33,5 @@ Pull settings out of the `.xcodeproj` blob so the build diffs cleanly and reprod
 - Lock `Package.resolved` (committed) for repeatable builds.
 - Vendored `.xcframework` in versioned `Frameworks/` subdirectory.
 
-See `agents/docs/ios/ios-xcodebuild-details.md`.
+
+> When a rule is unclear, read `agents/docs/ios/ios-xcodebuild-details.md`.

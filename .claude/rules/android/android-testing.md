@@ -38,4 +38,5 @@ Six layers, each with a clear cost / scope tier. Picking the wrong tier means sl
 - Fakes over mocks for repo-shaped deps; mocks only at adapter/SDK boundaries.
 - Test names: `` `returns NotFound when id is unknown`() ``. One assertion per claim. Arrange-Act-Assert.
 
-See `agents/docs/android/android-testing-details.md`.
+
+> When a rule is unclear, read `agents/docs/android/android-testing-details.md`.

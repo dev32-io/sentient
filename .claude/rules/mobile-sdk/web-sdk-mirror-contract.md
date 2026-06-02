@@ -9,4 +9,5 @@ paths: ["shared/mobile-sdk/**"]
 - Pure state machines are ported from web-sdk with identical transition tables; port the web-sdk unit tests as commonTest to pin parity.
 - Logger tag root is `["sentient", "mobile-sdk", ...]`, matching web-sdk's `createLogger` shape.
 
-> Details: agents/docs/mobile-sdk/web-sdk-mirror-contract-details.md
+
+> When a rule is unclear, read `agents/docs/mobile-sdk/web-sdk-mirror-contract-details.md`.
