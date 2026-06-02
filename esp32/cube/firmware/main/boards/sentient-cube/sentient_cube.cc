@@ -60,18 +60,6 @@
 #include <string>
 
 #include "sentient_creds.h"
-#include "esp/esp_ssl.h"
-
-#if SENTIENT_DEV_TLS_PIN
-// Symbols exposed by EMBED_TXTFILES on sentient_dev_gateway.crt
-// (esp32/cube/firmware/main/CMakeLists.txt). EMBED_TXTFILES null-terminates
-// the blob, so (_end - _start) includes the terminator byte; subtract 1 to
-// give esp_tls the cert length without the null. (esp_tls works either way,
-// but the bytecount-without-null matches the docs and stays compatible if
-// the upstream behavior changes.)
-extern const char _binary_sentient_dev_gateway_crt_start[] asm("_binary_sentient_dev_gateway_crt_start");
-extern const char _binary_sentient_dev_gateway_crt_end[]   asm("_binary_sentient_dev_gateway_crt_end");
-#endif
 
 #include "sentient_ui_controller.h"
 #include "test_screen.h"
@@ -1110,21 +1098,6 @@ private:
 public:
     SentientCubeBoard() : boot_button_(BOOT_BUTTON_GPIO) {
         ESP_LOGI(TAG, "ctor begin device_id=" SENTIENT_DEVICE_ID);
-
-#if SENTIENT_DEV_TLS_PIN
-        {
-            // mbedtls_x509_crt_parse requires PEM length INCLUDING the null
-            // terminator (mbedtls docs). EMBED_TXTFILES exposes the null at
-            // position end-1, so (end - start) is the full count including
-            // null — pass it as-is.
-            const size_t cert_len =
-                _binary_sentient_dev_gateway_crt_end - _binary_sentient_dev_gateway_crt_start;
-            if (cert_len > 0) {
-                ESP_LOGI(TAG, "Pinning dev gateway TLS cert (%u bytes, incl null)", (unsigned)cert_len);
-                EspSsl::SetCacert(_binary_sentient_dev_gateway_crt_start, cert_len);
-            }
-        }
-#endif
 
         // Hardware bring-up (verbatim from waveshare init order).
         InitializePowerSaveTimer();
