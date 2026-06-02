@@ -94,9 +94,28 @@ export const hermesAmbientSchema = z
   .default({});
 export type HermesAmbient = z.infer<typeof hermesAmbientSchema>;
 
+/**
+ * ACP wire resilience — auto-reconnect tunables for the gateway→Hermes ACP
+ * WebSocket. On an ABNORMAL close (e.g. 1006 after a gateway restart / resumed
+ * session flap) the wire re-opens + re-runs `initialize` on the next dispatch,
+ * bounded by these knobs. A clean teardown (1000 / session end) never
+ * reconnects. open_timeout_ms bounds each open handshake.
+ */
+export const hermesAcpWireSchema = z
+  .object({
+    open_timeout_ms: z.number().int().min(500).max(60_000).default(5_000),
+    reconnect_base_ms: z.number().int().min(50).max(10_000).default(500),
+    reconnect_max_ms: z.number().int().min(100).max(60_000).default(5_000),
+    reconnect_jitter_ms: z.number().int().min(0).max(10_000).default(250),
+    reconnect_max_attempts: z.number().int().min(1).max(20).default(5),
+  })
+  .default({});
+export type HermesAcpWire = z.infer<typeof hermesAcpWireSchema>;
+
 /** Full hermes: section of gateway config. */
 export const hermesConfigSchema = z.object({
   worker: hermesWorkerSchema,
+  acp_wire: hermesAcpWireSchema,
   defaults: z
     .object({
       max_output_tokens: z.number().int().default(512),

@@ -13,6 +13,13 @@ const CONFIG: HermesConfig = {
     url_template: "http://sentient-hermes:{port}",
     port_base: 8650,
   },
+  acp_wire: {
+    open_timeout_ms: 5000,
+    reconnect_base_ms: 500,
+    reconnect_max_ms: 5000,
+    reconnect_jitter_ms: 250,
+    reconnect_max_attempts: 5,
+  },
   defaults: { max_output_tokens: 512, request_timeout_ms: 60000, idempotency_window_s: 300 },
   resource_management: {
     mode: "always_on",

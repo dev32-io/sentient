@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import type { HermesAcpWire } from "@sentient/config";
 import type { ClientType } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import type { Adapter } from "../adapters/adapter-types.js";
@@ -356,6 +357,7 @@ export async function handleSessionConfigure(
     userId: initialBinding.userId,
     wsUrl: resolvedWsUrl,
     token: initialBinding.apiKey,
+    acpWire: services.hermes?.acp_wire,
     setDispose: (fn) => {
       ws.data.acpWireDispose = fn;
     },
@@ -869,6 +871,8 @@ interface BootstrapAcpWireOrFailInput {
   readonly wsUrl: string;
   /** Bearer token for the ACP WS handshake. */
   readonly token: string;
+  /** ACP wire resilience tunables (open timeout + reconnect backoff). */
+  readonly acpWire: HermesAcpWire | undefined;
   /** Stash the dispose fn on the WS so close-handler can tear it down. */
   readonly setDispose: (fn: () => void) => void;
 }
@@ -876,10 +880,27 @@ interface BootstrapAcpWireOrFailInput {
 /**
  * Open the ACP wire. On failure, log + return null so the caller can reject
  * the session cleanly. ACP is the only wire — there's no legacy fallback.
+ * Threads the reconnect config so the wire self-heals on abnormal close.
  */
 async function bootstrapAcpWireOrFail(input: BootstrapAcpWireOrFailInput): Promise<AcpPerProfileConnection | null> {
   try {
-    const result = await bootstrapAcpWire({ wsUrl: input.wsUrl, token: input.token });
+    const acpWire = input.acpWire;
+    const result = await bootstrapAcpWire({
+      wsUrl: input.wsUrl,
+      token: input.token,
+      sessionId: input.sessionId,
+      ...(acpWire
+        ? {
+            openTimeoutMs: acpWire.open_timeout_ms,
+            reconnect: {
+              baseMs: acpWire.reconnect_base_ms,
+              maxMs: acpWire.reconnect_max_ms,
+              jitterMs: acpWire.reconnect_jitter_ms,
+              maxAttempts: acpWire.reconnect_max_attempts,
+            },
+          }
+        : {}),
+    });
     input.setDispose(result.dispose);
     log.info("acp-wire-bootstrap-ok", { sessionId: input.sessionId, userId: input.userId });
     return result.acpConn;
