@@ -46,6 +46,25 @@ describe("session.configure", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it("accepts clientType mobile", () => {
+    const result = sessionConfigureSchema.safeParse({
+      type: "session.configure",
+      capabilities: { supports: ["audio", "text"] },
+      clientType: "mobile",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.clientType).toBe("mobile");
+  });
+
+  it("rejects unknown clientType", () => {
+    const result = sessionConfigureSchema.safeParse({
+      type: "session.configure",
+      capabilities: { supports: [] },
+      clientType: "tablet",
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe("session.ready", () => {
