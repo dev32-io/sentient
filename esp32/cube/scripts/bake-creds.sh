@@ -121,11 +121,6 @@ cat >"$TMP" <<'TEMPLATE_EOF'
 #define SENTIENT_GATEWAY_LOG_PORT @GATEWAY_LOG_PORT@
 #define SENTIENT_PASETO_TOKEN     "@PASETO_TOKEN@"
 #define SENTIENT_DEVICE_ID        "@DEVICE_ID@"
-// Set to 1 when bake-creds was run with --profile debug AND the gateway TLS
-// cert was successfully embedded as sentient_dev_gateway.crt. Used by the
-// board ctor to pin the dev cert; prod path falls back to the ESP-IDF
-// system CA bundle (esp_crt_bundle_attach).
-#define SENTIENT_DEV_TLS_PIN      @SENTIENT_DEV_TLS_PIN@
 TEMPLATE_EOF
 
 for k in $REQUIRED; do
@@ -135,40 +130,6 @@ for k in $REQUIRED; do
   sed -i.bak "s|@${k}@|${v_esc}|g" "$TMP"
   rm -f "$TMP.bak"
 done
-
-CERT_OUT="$CUBE_DIR/firmware/main/sentient_dev_gateway.crt"
-
-if [ "$PROFILE" = "debug" ]; then
-  HOST="$(effective_val GATEWAY_HOST)"
-  PORT="$(get_val GATEWAY_WS_PORT)"
-  echo "[bake-creds] extracting TLS cert from ${HOST}:${PORT}..."
-  CERT_TMP="$CERT_OUT.tmp"
-  if ! openssl s_client -servername "$HOST" -connect "${HOST}:${PORT}" \
-       </dev/null 2>/dev/null \
-       | openssl x509 -outform PEM > "$CERT_TMP"; then
-    echo "[bake-creds] ERROR: openssl pipeline failed reaching ${HOST}:${PORT}" >&2
-    rm -f "$CERT_TMP"
-    exit 1
-  fi
-  if [ ! -s "$CERT_TMP" ]; then
-    echo "[bake-creds] ERROR: extracted cert is empty (gateway TLS unreachable?)" >&2
-    rm -f "$CERT_TMP"
-    exit 1
-  fi
-  mv "$CERT_TMP" "$CERT_OUT"
-  chmod 0600 "$CERT_OUT"
-  echo "[bake-creds] baked $CERT_OUT"
-  PIN_VALUE=1
-else
-  echo "[bake-creds] PROD profile — no TLS cert embed; removing any stale dev cert."
-  rm -f "$CERT_OUT"
-  PIN_VALUE=0
-fi
-
-# Substitute the SENTIENT_DEV_TLS_PIN placeholder. Must happen AFTER the
-# REQUIRED loop's sed pass (so the @ marker survives that block).
-sed -i.bak "s|@SENTIENT_DEV_TLS_PIN@|${PIN_VALUE}|g" "$TMP"
-rm -f "$TMP.bak"
 
 mkdir -p "$(dirname "$OUT")"
 mv "$TMP" "$OUT"
