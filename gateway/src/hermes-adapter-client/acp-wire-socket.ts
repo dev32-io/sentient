@@ -64,6 +64,15 @@ export interface ManagedAcpSocketInput {
    * considered usable for dispatch sends.
    */
   readonly reinitialize: () => Promise<void>;
+  /**
+   * Fired when a LIVE socket closes ABNORMALLY (code !== 1000) — i.e. the wire
+   * flapped mid-flight (worker restart, transport drop). Lets the connection
+   * layer reject any in-flight `session/prompt` so the dispatcher's queue can't
+   * hang forever waiting on a response that will never arrive. Not fired on a
+   * clean (1000) close or on `dispose` — those reject pending via their own
+   * paths. Throwing handlers are caught and logged.
+   */
+  readonly onAbnormalClose?: () => void;
   /** Sleep injection — tests pass a fake. */
   readonly sleep?: (ms: number) => Promise<void>;
 }
@@ -77,8 +86,24 @@ export interface ManagedAcpSocket {
   open(): Promise<void>;
   /** Stable outbound transport. Lazily (re)opens + re-initializes on demand. */
   send(raw: string): Promise<void>;
+  /**
+   * Ensure the wire is open (lazily reconnecting + re-initializing on the same
+   * bounded-backoff path `send` uses), without sending anything. The connection
+   * layer awaits this BEFORE reading `epoch()` so the load-or-not decision sees
+   * the FINAL post-reconnect generation — otherwise a `send`-triggered reconnect
+   * would bump the epoch after the decision, landing a prompt on an unloaded
+   * fresh child.
+   */
+  ensureReady(): Promise<void>;
   /** Register the inbound pump. Survives socket swaps. */
   onIncoming(cb: (raw: string) => void): void;
+  /**
+   * Monotonic generation counter — bumps once per successful socket open.
+   * Lets the connection layer detect a fresh-since-reconnect child so it can
+   * re-attach (`session/load`) a captured conversation before the next prompt.
+   * Starts at 0 before the first open; the first open makes it 1.
+   */
+  epoch(): number;
   /** Tear down the current socket and block all future reconnects. Idempotent. */
   dispose(): void;
 }
@@ -97,9 +122,16 @@ export function createManagedAcpSocket(input: ManagedAcpSocketInput): ManagedAcp
   let onIncomingCb: ((raw: string) => void) | null = null;
   // In-flight (re)open promise — collapses concurrent sends into one handshake.
   let opening: Promise<void> | null = null;
+  // Bumps once per successful open. The connection layer reads this to detect a
+  // fresh-since-reconnect child (re-attach the captured session before prompt).
+  let epoch = 0;
 
   function attachListeners(socket: AcpWsLike): void {
     socket.addEventListener("message", (evt) => {
+      // Guard against cross-talk from a stale socket after a swap: only the
+      // live socket's frames are pumped. An old handle whose `close` lagged the
+      // swap could otherwise inject frames against the wrong epoch.
+      if (ws !== socket) return;
       if (typeof evt.data !== "string") return;
       if (onIncomingCb) onIncomingCb(evt.data);
     });
@@ -121,7 +153,21 @@ export function createManagedAcpSocket(input: ManagedAcpSocketInput): ManagedAcp
           code: e.code,
           reason: e.reason,
           willReconnectOnNextSend: true,
+          notifyAbnormal: wasLive,
         });
+        // Only the LIVE socket's abnormal close rejects in-flight requests: a
+        // request on a stale (already-swapped) socket has already been retried
+        // or rejected. A pre-open close is handled by waitForOpen, not here.
+        if (wasLive && input.onAbnormalClose) {
+          try {
+            input.onAbnormalClose();
+          } catch (err: unknown) {
+            log.warn("ws.close.abnormal.notify-threw", {
+              sessionId: input.sessionId,
+              reason: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
         return;
       }
       // Normal closure of the live socket → deliberate teardown; latch off
@@ -158,7 +204,12 @@ export function createManagedAcpSocket(input: ManagedAcpSocketInput): ManagedAcp
       safeClose(socket);
       throw err;
     }
-    log.info("open.done", { sessionId: input.sessionId });
+    // Mark the fresh child live ONLY after initialize succeeds. The bump tells
+    // the connection layer this is a new epoch with empty in-process session
+    // state, so it re-attaches (session/load) the captured conversation before
+    // the next prompt.
+    epoch += 1;
+    log.info("open.done", { sessionId: input.sessionId, epoch });
   }
 
   async function ensureOpenWithBackoff(): Promise<void> {
@@ -208,6 +259,9 @@ export function createManagedAcpSocket(input: ManagedAcpSocketInput): ManagedAcp
       // the post-healthy reconnect path (lazy ensure on send).
       return ensureOpen(openOnce);
     },
+    ensureReady(): Promise<void> {
+      return ensureOpen(ensureOpenWithBackoff);
+    },
     async send(raw: string): Promise<void> {
       await ensureOpen(ensureOpenWithBackoff);
       if (ws === null || ws.readyState !== READY_STATE_OPEN) {
@@ -217,6 +271,9 @@ export function createManagedAcpSocket(input: ManagedAcpSocketInput): ManagedAcp
     },
     onIncoming(cb: (raw: string) => void): void {
       onIncomingCb = cb;
+    },
+    epoch(): number {
+      return epoch;
     },
     dispose(): void {
       if (disposed) return;

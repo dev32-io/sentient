@@ -1,12 +1,16 @@
 import { getLog } from "../logging/logger.js";
 import { type AcpClient, createAcpClient } from "./client.js";
 import { type InternalEvent, translateSessionUpdate } from "./event-translator.js";
+import { sessionPromptResultSchema } from "./schemas.js";
+import { createSessionAttachmentLedger } from "./session-attachment-ledger.js";
 import {
-  initializeResultSchema,
-  sessionListResultSchema,
-  sessionNewResultSchema,
-  sessionPromptResultSchema,
-} from "./schemas.js";
+  type SessionRpcDeps,
+  failValidation,
+  initialize as rpcInitialize,
+  listSessions as rpcListSessions,
+  loadSession as rpcLoadSession,
+  newSession as rpcNewSession,
+} from "./session-rpc.js";
 
 // ---------------------------------------------------------------------------
 // AcpPerProfileConnection — one ACP client per Hermes profile.
@@ -25,8 +29,6 @@ import {
 
 const log = getLog(["sentient", "hermes-adapter-client", "acp", "per-profile-connection"]);
 
-const ACP_PROTOCOL_VERSION = 1;
-const DEFAULT_CWD = "/";
 const DISPOSED_REASON = "connection-disposed";
 
 export interface AcpPerProfileConnectionConfig {
@@ -34,6 +36,12 @@ export interface AcpPerProfileConnectionConfig {
   readonly send: (raw: string) => Promise<void>;
   /** Subscribe to incoming raw WS messages. Pumped into AcpClient.handleIncoming. */
   readonly onIncoming: (cb: (raw: string) => void) => void;
+  /** Socket generation; bumps per (re)open onto a fresh child. Drives re-attach (see SessionAttachmentLedger). Defaults to constant 0 in tests. */
+  readonly currentEpoch?: () => number;
+  /** Open the wire (lazy reconnect) WITHOUT sending; awaited before reading the epoch so the re-attach decision sees the final generation. */
+  readonly ensureReady?: () => Promise<void>;
+  /** Per-request deadline (ms) — backstop so a prompt can't hang if a close event is missed. Forwarded to AcpClient. */
+  readonly requestTimeoutMs?: number;
   /** Optional override — testing only. */
   readonly client?: AcpClient;
 }
@@ -69,6 +77,13 @@ export interface AcpPerProfileConnection {
   }): Promise<{ sessions: unknown[]; nextCursor: string | null }>;
   onEvent(cb: (e: InternalEvent) => void): () => void;
   onCycleDone(cb: (e: CycleDoneEvent) => void): () => void;
+  /**
+   * Reject every in-flight JSON-RPC request with `error`. The WS layer calls
+   * this on an ABNORMAL close so a `session/prompt` mid-flight rejects (→ the
+   * dispatch surfaces a terminal `error`) instead of hanging. Does NOT dispose
+   * — the wire may re-open and serve later prompts.
+   */
+  rejectInflight(error: Error): void;
   dispose(): void;
 }
 
@@ -81,6 +96,11 @@ export function createAcpPerProfileConnection(cfg: AcpPerProfileConnectionConfig
   let nextRequestId: number | string | null = null;
   let inflight: InflightPrompt | null = null;
   let disposed = false;
+  const currentEpoch = cfg.currentEpoch ?? ((): number => 0);
+  const ensureReady = cfg.ensureReady ?? ((): Promise<void> => Promise.resolve());
+  // Tracks which sessions are attached to the CURRENT child (by socket epoch).
+  // A reconnect bumps the epoch → stale entries → re-attach before the prompt.
+  const ledger = createSessionAttachmentLedger();
 
   const eventHandlers = new Set<(e: InternalEvent) => void>();
   const cycleDoneHandlers = new Set<(e: CycleDoneEvent) => void>();
@@ -92,6 +112,7 @@ export function createAcpPerProfileConnection(cfg: AcpPerProfileConnectionConfig
       onRequestSent: (id) => {
         nextRequestId = id;
       },
+      ...(cfg.requestTimeoutMs !== undefined ? { requestTimeoutMs: cfg.requestTimeoutMs } : {}),
     });
 
   cfg.onIncoming((raw) => client.handleIncoming(raw));
@@ -126,44 +147,21 @@ export function createAcpPerProfileConnection(cfg: AcpPerProfileConnectionConfig
     if (disposed) throw new Error(DISPOSED_REASON);
   }
 
-  function failValidation(method: string, issues: ReadonlyArray<unknown>): never {
-    const summary = issues.length === 0 ? "no-issues" : `${issues.length} issue(s)`;
-    throw new Error(`ACP ${method} response validation failed: ${summary}`);
-  }
+  const rpcDeps: SessionRpcDeps = { client, ledger, currentEpoch };
 
   async function initialize(): Promise<void> {
     ensureNotDisposed();
-    log.info("initialize.begin");
-    const raw = await client.request("initialize", {
-      protocolVersion: ACP_PROTOCOL_VERSION,
-      clientCapabilities: { sessionList: true },
-    });
-    const parsed = initializeResultSchema.safeParse(raw);
-    if (!parsed.success) failValidation("initialize", parsed.error.issues);
-    log.info("initialize.done");
+    await rpcInitialize(rpcDeps);
   }
 
   async function newSession(args: { mcpServers?: unknown[] }): Promise<{ sessionId: string }> {
     ensureNotDisposed();
-    const params = { cwd: DEFAULT_CWD, mcpServers: args.mcpServers ?? [] };
-    log.debug("session.new.send", { mcpServers: params.mcpServers.length });
-    const raw = await client.request("session/new", params);
-    const parsed = sessionNewResultSchema.safeParse(raw);
-    if (!parsed.success) failValidation("session/new", parsed.error.issues);
-    log.info("session.new.done", { sessionId: parsed.data.sessionId });
-    return { sessionId: parsed.data.sessionId };
+    return rpcNewSession(rpcDeps, args);
   }
 
   async function loadSession(args: { sessionId: string; mcpServers?: unknown[] }): Promise<void> {
     ensureNotDisposed();
-    const params = {
-      sessionId: args.sessionId,
-      cwd: DEFAULT_CWD,
-      mcpServers: args.mcpServers ?? [],
-    };
-    log.debug("session.load.send", { sessionId: args.sessionId });
-    await client.request("session/load", params);
-    log.info("session.load.done", { sessionId: args.sessionId });
+    await rpcLoadSession(rpcDeps, args);
   }
 
   async function listSessions(args: { cwd?: string; cursor?: string }): Promise<{
@@ -171,21 +169,28 @@ export function createAcpPerProfileConnection(cfg: AcpPerProfileConnectionConfig
     nextCursor: string | null;
   }> {
     ensureNotDisposed();
-    const params: Record<string, unknown> = {};
-    if (args.cwd !== undefined) params.cwd = args.cwd;
-    if (args.cursor !== undefined) params.cursor = args.cursor;
-    log.debug("session.list.send", { hasCursor: args.cursor !== undefined });
-    const raw = await client.request("session/list", params);
-    const parsed = sessionListResultSchema.safeParse(raw);
-    if (!parsed.success) failValidation("session/list", parsed.error.issues);
-    const sessions = [...parsed.data.sessions];
-    const nextCursor = parsed.data.nextCursor ?? null;
-    log.debug("session.list.done", { count: sessions.length, hasNext: nextCursor !== null });
-    return { sessions, nextCursor };
+    return rpcListSessions(rpcDeps, args);
+  }
+
+  /**
+   * Re-attach the target session to the CURRENT child before a prompt if a
+   * reconnect left it unattached — `session/load` restores the persisted Hermes
+   * session so the first post-reconnect prompt does not 404 "session not found".
+   * See SessionAttachmentLedger for the why.
+   */
+  async function ensureSessionAttached(sessionId: string): Promise<void> {
+    // Open the wire FIRST (may reconnect onto a fresh child + bump the epoch),
+    // THEN read the epoch — otherwise the load decision races the reconnect.
+    await ensureReady();
+    const epoch = currentEpoch();
+    if (ledger.isAttached(sessionId, epoch)) return;
+    log.info("session.reattach", { sessionId, currentEpoch: epoch });
+    await loadSession({ sessionId });
   }
 
   async function sendUserMessage(args: SendUserMessageArgs): Promise<SendUserMessageResult> {
     ensureNotDisposed();
+    await ensureSessionAttached(args.sessionId);
     const params: Record<string, unknown> = {
       sessionId: args.sessionId,
       prompt: [{ type: "text", text: args.text }],
@@ -252,6 +257,15 @@ export function createAcpPerProfileConnection(cfg: AcpPerProfileConnectionConfig
     };
   }
 
+  function rejectInflight(error: Error): void {
+    if (disposed) return;
+    // Clear the (no-longer-cancellable) inflight marker, then reject pending so
+    // the caller's send promise rejects instead of hanging. Connection survives.
+    log.warn("reject-inflight", { reason: error.message });
+    inflight = null;
+    client.rejectAllPending(error);
+  }
+
   function dispose(): void {
     if (disposed) return;
     disposed = true;
@@ -271,6 +285,7 @@ export function createAcpPerProfileConnection(cfg: AcpPerProfileConnectionConfig
     listSessions,
     onEvent,
     onCycleDone,
+    rejectInflight,
     dispose,
   };
 }

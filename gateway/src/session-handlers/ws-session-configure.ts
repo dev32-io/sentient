@@ -358,6 +358,7 @@ export async function handleSessionConfigure(
     wsUrl: resolvedWsUrl,
     token: initialBinding.apiKey,
     acpWire: services.hermes?.acp_wire,
+    requestTimeoutMs: services.hermes?.defaults.request_timeout_ms,
     setDispose: (fn) => {
       ws.data.acpWireDispose = fn;
     },
@@ -873,6 +874,8 @@ interface BootstrapAcpWireOrFailInput {
   readonly token: string;
   /** ACP wire resilience tunables (open timeout + reconnect backoff). */
   readonly acpWire: HermesAcpWire | undefined;
+  /** Per-request deadline backstop (ms) so an in-flight prompt can't hang. */
+  readonly requestTimeoutMs: number | undefined;
   /** Stash the dispose fn on the WS so close-handler can tear it down. */
   readonly setDispose: (fn: () => void) => void;
 }
@@ -889,6 +892,7 @@ async function bootstrapAcpWireOrFail(input: BootstrapAcpWireOrFailInput): Promi
       wsUrl: input.wsUrl,
       token: input.token,
       sessionId: input.sessionId,
+      ...(input.requestTimeoutMs !== undefined ? { requestTimeoutMs: input.requestTimeoutMs } : {}),
       ...(acpWire
         ? {
             openTimeoutMs: acpWire.open_timeout_ms,

@@ -51,6 +51,35 @@ function reply(bed: Bed, result: unknown): number {
   return id;
 }
 
+/**
+ * Mark a session as attached to the current child (mints the load round-trip)
+ * so a following sendUserMessage prompts directly. Mirrors steady state: the
+ * child already loaded the session this connection-epoch, so no re-attach fires.
+ * Tests that specifically exercise the reconnect re-attach do NOT call this.
+ */
+async function attach(bed: Bed, sessionId: string): Promise<void> {
+  const promise = bed.conn.loadSession({ sessionId });
+  reply(bed, {});
+  await promise;
+}
+
+/**
+ * Flush microtasks until a frame with `method` is the most-recent send. The
+ * prompt path now awaits ensureSessionAttached (one+ microtask) before sending,
+ * so a synchronous `lastFrame` read can still see the preceding load frame.
+ */
+async function flushUntil(bed: Bed, method: string): Promise<Record<string, unknown>> {
+  for (let i = 0; i < 20; i++) {
+    const last = bed.sent[bed.sent.length - 1];
+    if (last !== undefined) {
+      const frame = JSON.parse(last) as Record<string, unknown>;
+      if (frame.method === method) return frame;
+    }
+    await Promise.resolve();
+  }
+  throw new Error(`frame ${method} never landed`);
+}
+
 let bed: Bed;
 beforeEach(() => {
   bed = buildBed();
@@ -136,9 +165,9 @@ describe("AcpPerProfileConnection — listSessions", () => {
 
 describe("AcpPerProfileConnection — sendUserMessage", () => {
   it("issues session/prompt with one text content part and resolves with cycleId + stopReason", async () => {
+    await attach(bed, "sess_1");
     const promise = bed.conn.sendUserMessage({ sessionId: "sess_1", text: "hi" });
-    const sent = lastFrame(bed.sent);
-    expect(sent.method).toBe("session/prompt");
+    const sent = await flushUntil(bed, "session/prompt");
     expect(sent.params).toMatchObject({
       sessionId: "sess_1",
       prompt: [{ type: "text", text: "hi" }],
@@ -148,28 +177,121 @@ describe("AcpPerProfileConnection — sendUserMessage", () => {
   });
 
   it("forwards internal flag via _meta.internal pass-through", async () => {
+    await attach(bed, "sess_1");
     const promise = bed.conn.sendUserMessage({
       sessionId: "sess_1",
       text: "/clear",
       internal: true,
     });
-    const params = lastFrame(bed.sent).params as { _meta?: { internal?: boolean } };
+    const sent = await flushUntil(bed, "session/prompt");
+    const params = sent.params as { _meta?: { internal?: boolean } };
     expect(params._meta?.internal).toBe(true);
     reply(bed, { stopReason: "end_turn" });
     await promise;
   });
 
   it("rejects when prompt response has invalid stopReason", async () => {
+    await attach(bed, "sess_1");
     const promise = bed.conn.sendUserMessage({ sessionId: "sess_1", text: "hi" });
+    await flushUntil(bed, "session/prompt");
     reply(bed, { stopReason: "bogus" });
     await expect(promise).rejects.toThrow(/session\/prompt.*validation failed/i);
   });
 });
 
+describe("AcpPerProfileConnection — re-attach on epoch advance (reconnect)", () => {
+  interface EpochBed extends Bed {
+    setEpoch: (n: number) => void;
+  }
+  function buildEpochBed(): EpochBed {
+    const sent: string[] = [];
+    let pump: (raw: string) => void = () => {
+      throw new Error("pump not registered yet");
+    };
+    let epoch = 1;
+    const conn = createAcpPerProfileConnection({
+      send: (raw: string): Promise<void> => {
+        sent.push(raw);
+        return Promise.resolve();
+      },
+      onIncoming: (cb) => {
+        pump = (raw: string): void => cb(raw);
+      },
+      currentEpoch: () => epoch,
+    });
+    const setEpoch = (n: number): void => {
+      epoch = n;
+    };
+    return { sent, pump: (raw: string) => pump(raw), conn, setEpoch };
+  }
+
+  // Flush microtasks until a frame with `method` appears at or after `fromIndex`
+  // (so a stale same-method frame from a prior round-trip isn't matched).
+  async function flushTo(b: EpochBed, method: string, fromIndex = 0): Promise<Record<string, unknown>> {
+    for (let i = 0; i < 20; i++) {
+      for (let j = b.sent.length - 1; j >= fromIndex; j--) {
+        const frame = JSON.parse(b.sent[j] as string) as Record<string, unknown>;
+        if (frame.method === method) return frame;
+      }
+      await Promise.resolve();
+    }
+    throw new Error(`frame ${method} never landed`);
+  }
+
+  function replyTo(b: EpochBed, frame: Record<string, unknown>, result: unknown): void {
+    b.pump(JSON.stringify({ jsonrpc: "2.0", id: frame.id as number, result }));
+  }
+
+  it("issues session/load before session/prompt when the epoch advanced since the session was attached", async () => {
+    const b = buildEpochBed();
+    // Attach conv-1 at epoch 1 (mirrors a load/new on the original child).
+    const loadP = b.conn.loadSession({ sessionId: "conv-1" });
+    replyTo(b, await flushTo(b, "session/load"), {});
+    await loadP;
+
+    // Reconnect bumps the epoch — fresh child, empty session state.
+    b.setEpoch(2);
+    const fromHere = b.sent.length;
+
+    const promptP = b.conn.sendUserMessage({ sessionId: "conv-1", text: "continue" });
+    // First frame after the epoch bump is a re-attach session/load(conv-1).
+    const reload = await flushTo(b, "session/load", fromHere);
+    expect((reload.params as { sessionId: string }).sessionId).toBe("conv-1");
+    replyTo(b, reload, {});
+
+    // Then the prompt fires on the same conversationId and succeeds.
+    const prompt = await flushTo(b, "session/prompt", fromHere);
+    expect((prompt.params as { sessionId: string }).sessionId).toBe("conv-1");
+    replyTo(b, prompt, { stopReason: "end_turn" });
+    await expect(promptP).resolves.toMatchObject({ stopReason: "end_turn" });
+
+    // The captured conversation was re-attached then prompted: two loads total
+    // (epoch-1 initial attach + epoch-2 re-attach), one prompt.
+    const loadCount = b.sent.filter((r) => (JSON.parse(r) as { method?: string }).method === "session/load").length;
+    expect(loadCount).toBe(2);
+  });
+
+  it("does NOT re-load when the session is already attached at the current epoch", async () => {
+    const b = buildEpochBed();
+    const loadP = b.conn.loadSession({ sessionId: "conv-1" });
+    replyTo(b, await flushTo(b, "session/load"), {});
+    await loadP;
+
+    // Same epoch — a prompt must go straight out, no extra session/load.
+    const promptP = b.conn.sendUserMessage({ sessionId: "conv-1", text: "hi" });
+    const prompt = await flushTo(b, "session/prompt");
+    replyTo(b, prompt, { stopReason: "end_turn" });
+    await promptP;
+    const loadCount = b.sent.filter((r) => (JSON.parse(r) as { method?: string }).method === "session/load").length;
+    expect(loadCount).toBe(1);
+  });
+});
+
 describe("AcpPerProfileConnection — cancelInflight", () => {
   it("sends session/cancel notification with sessionId (NOT $/cancelRequest)", async () => {
+    await attach(bed, "sess_1");
     void bed.conn.sendUserMessage({ sessionId: "sess_1", text: "hi" });
-    expect(lastFrame(bed.sent).method).toBe("session/prompt");
+    await flushUntil(bed, "session/prompt");
 
     await bed.conn.cancelInflight();
     const cancel = findFrame(bed.sent, "session/cancel");
@@ -218,9 +340,11 @@ describe("AcpPerProfileConnection — onEvent / session/update fan-out", () => {
 
 describe("AcpPerProfileConnection — onCycleDone", () => {
   it("fires when session/prompt response lands, with synthesized cycleId + stopReason", async () => {
+    await attach(bed, "sess_1");
     const cycleDone = vi.fn();
     bed.conn.onCycleDone(cycleDone);
     const promise = bed.conn.sendUserMessage({ sessionId: "sess_1", text: "hi" });
+    await flushUntil(bed, "session/prompt");
     const id = reply(bed, { stopReason: "end_turn" });
     await promise;
     expect(cycleDone).toHaveBeenCalledTimes(1);
@@ -228,13 +352,32 @@ describe("AcpPerProfileConnection — onCycleDone", () => {
   });
 
   it("unsubscribe stops further dispatch", async () => {
+    await attach(bed, "sess_1");
     const cycleDone = vi.fn();
     const unsub = bed.conn.onCycleDone(cycleDone);
     unsub();
     const promise = bed.conn.sendUserMessage({ sessionId: "sess_1", text: "hi" });
+    await flushUntil(bed, "session/prompt");
     reply(bed, { stopReason: "end_turn" });
     await promise;
     expect(cycleDone).not.toHaveBeenCalled();
+  });
+});
+
+describe("AcpPerProfileConnection — rejectInflight", () => {
+  it("rejects an in-flight prompt without disposing the connection", async () => {
+    await attach(bed, "sess_1");
+    const promise = bed.conn.sendUserMessage({ sessionId: "sess_1", text: "hi" });
+    await flushUntil(bed, "session/prompt");
+    bed.conn.rejectInflight(new Error("acp-wire-flap: connection lost"));
+    await expect(promise).rejects.toThrow(/acp-wire-flap/);
+    // The connection survives — a subsequent prompt still works. Reply to the
+    // NEW prompt id (the first one is still in `sent` but has no pending entry).
+    const before = bed.sent.length;
+    const promise2 = bed.conn.sendUserMessage({ sessionId: "sess_1", text: "again" });
+    for (let i = 0; i < 20 && bed.sent.length === before; i++) await Promise.resolve();
+    const id = reply(bed, { stopReason: "end_turn" });
+    await expect(promise2).resolves.toEqual({ cycleId: String(id), stopReason: "end_turn" });
   });
 });
 

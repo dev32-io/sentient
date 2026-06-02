@@ -231,6 +231,107 @@ describe("bootstrapAcpWire — reconnect on abnormal close", () => {
     await expect(newSessionPromise).resolves.toEqual({ sessionId: "s-reconnected" });
   });
 
+  it("re-attaches a CAPTURED conversation via session/load before the first post-reconnect prompt", async () => {
+    // The overlay spawns a FRESH Hermes ACP child per WS connection — empty
+    // in-process session state. A captured conversationId the prior child knew
+    // is unknown to the new child, so the gateway must session/load it before
+    // session/prompt or the prompt 404s ("session not found"). This is the
+    // continuation case the single 1006 test missed (it did a fresh session/new).
+    const sockets: FakeWs[] = [];
+    const factory = (): AcpWsLike => {
+      const w = fakeWs();
+      sockets.push(w);
+      return w.base;
+    };
+    const promise = bootstrapAcpWire({
+      wsUrl: "ws://hermes:8765/ws",
+      token: "tok",
+      wsFactory: factory,
+      reconnect: { baseMs: 0, maxMs: 0, jitterMs: 0, maxAttempts: 3 },
+      sleep: () => Promise.resolve(),
+    });
+    await settleOpen(sockets[0] as FakeWs);
+    const { acpConn } = await promise;
+
+    // Mint the conversation on the FIRST child (epoch 1) so it is "known" there.
+    const first = sockets[0] as FakeWs;
+    const newPromise = acpConn.newSession({});
+    const newReq = await flushUntilMethod(first, "session/new");
+    first.fire("message", {
+      data: JSON.stringify({ jsonrpc: "2.0", id: newReq.id, result: { sessionId: "conv-1" } }),
+    });
+    await newPromise;
+
+    // Wire flaps — abnormal close. The captured conversationId survives in the
+    // dispatch layer (binding), but the next child will be brand-new.
+    first.fire("close", { code: 1006, reason: "worker restart" });
+
+    // Continuation: prompt on the SAME conversationId. The fresh child must
+    // first receive session/load(conv-1), THEN session/prompt.
+    const promptPromise = acpConn.sendUserMessage({ sessionId: "conv-1", text: "still there?" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(sockets).toHaveLength(2);
+    const fresh = sockets[1] as FakeWs;
+    await settleOpen(fresh);
+
+    // First wire op on the fresh child is session/load, not session/prompt.
+    const loadReq = await flushUntilMethod(fresh, "session/load");
+    expect(loadReq.method).toBe("session/load");
+    expect(
+      (JSON.parse(fresh.sent[fresh.sent.length - 1] as string) as { params: { sessionId: string } }).params.sessionId,
+    ).toBe("conv-1");
+    fresh.fire("message", { data: JSON.stringify({ jsonrpc: "2.0", id: loadReq.id, result: {} }) });
+
+    // Then the prompt lands and succeeds (no refusal / not-found).
+    const promptReq = await flushUntilMethod(fresh, "session/prompt");
+    expect(
+      (JSON.parse(fresh.sent[fresh.sent.length - 1] as string) as { params: { sessionId: string } }).params.sessionId,
+    ).toBe("conv-1");
+    fresh.fire("message", {
+      data: JSON.stringify({ jsonrpc: "2.0", id: promptReq.id, result: { stopReason: "end_turn" } }),
+    });
+    await expect(promptPromise).resolves.toMatchObject({ stopReason: "end_turn" });
+  });
+
+  it("rejects an in-flight prompt when the live socket closes ABNORMALLY (no hang)", async () => {
+    // A session/prompt already on the wire when the worker dies mid-cycle must
+    // REJECT — not hang forever. ManagedAcpSocket.onAbnormalClose →
+    // acpConn.rejectInflight rejects the pending request so the dispatcher can
+    // surface a terminal error instead of blocking on a response that will
+    // never arrive.
+    const sockets: FakeWs[] = [];
+    const factory = (): AcpWsLike => {
+      const w = fakeWs();
+      sockets.push(w);
+      return w.base;
+    };
+    const promise = bootstrapAcpWire({
+      wsUrl: "ws://hermes:8765/ws",
+      token: "tok",
+      wsFactory: factory,
+      reconnect: { baseMs: 0, maxMs: 0, jitterMs: 0, maxAttempts: 3 },
+      sleep: () => Promise.resolve(),
+    });
+    await settleOpen(sockets[0] as FakeWs);
+    const { acpConn } = await promise;
+    const live = sockets[0] as FakeWs;
+
+    // Attach the session on this child so the prompt goes straight out.
+    const loadPromise = acpConn.loadSession({ sessionId: "conv-x" });
+    const loadReq = await flushUntilMethod(live, "session/load");
+    live.fire("message", { data: JSON.stringify({ jsonrpc: "2.0", id: loadReq.id, result: {} }) });
+    await loadPromise;
+
+    // Prompt goes on the wire — but NO response comes; instead the socket dies.
+    const promptPromise = acpConn.sendUserMessage({ sessionId: "conv-x", text: "hello?" });
+    await flushUntilMethod(live, "session/prompt");
+
+    // Abnormal close while the prompt is in flight → reject, not hang.
+    live.fire("close", { code: 1006, reason: "worker died mid-cycle" });
+    await expect(promptPromise).rejects.toThrow(/acp-wire-flap|connection lost/);
+  });
+
   it("does NOT reconnect on a clean 1000 close (deliberate teardown)", async () => {
     const sockets: FakeWs[] = [];
     const factory = (): AcpWsLike => {

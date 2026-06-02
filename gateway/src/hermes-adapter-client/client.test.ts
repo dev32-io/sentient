@@ -190,6 +190,37 @@ describe("AcpClient — onRequestSent hook", () => {
   });
 });
 
+describe("AcpClient — requestTimeoutMs backstop", () => {
+  it("rejects a request whose response never lands within the deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const cap = captureSend();
+      const client = createAcpClient({ send: cap.send, requestTimeoutMs: 50 });
+      const promise = client.request("session/prompt", { sessionId: "s1" });
+      const expectation = expect(promise).rejects.toThrow(/timeout.*session\/prompt.*50ms/i);
+      await vi.advanceTimersByTimeAsync(60);
+      await expectation;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does NOT reject when the response arrives before the deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const cap = captureSend();
+      const client = createAcpClient({ send: cap.send, requestTimeoutMs: 50 });
+      const promise = client.request("session/new", {});
+      client.handleIncoming(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { sessionId: "s1" } }));
+      await expect(promise).resolves.toEqual({ sessionId: "s1" });
+      // Advancing past the deadline must not double-settle or throw.
+      await vi.advanceTimersByTimeAsync(100);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("AcpClient — rejectAllPending", () => {
   it("rejects every pending request with the given error and clears the registry", async () => {
     const cap = captureSend();

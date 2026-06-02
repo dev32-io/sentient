@@ -39,6 +39,12 @@ export interface AcpWireBootstrapInput {
   readonly reconnect?: AcpWireReconnectConfig;
   /** sessionId for trace correlation across reconnects. */
   readonly sessionId?: string;
+  /**
+   * Per-request deadline (ms) — backstop so an in-flight `session/prompt` can't
+   * hang the dispatcher if a close event is missed. Threads to AcpClient.
+   * Defaults to `hermes.defaults.request_timeout_ms` at the call site.
+   */
+  readonly requestTimeoutMs?: number;
   /** Sleep injection for reconnect backoff — tests pass a fake. */
   readonly sleep?: (ms: number) => Promise<void>;
 }
@@ -90,12 +96,26 @@ export async function bootstrapAcpWire(input: AcpWireBootstrapInput): Promise<Ac
       }
       await acpConn.initialize();
     },
+    // An abnormal close of the live socket strands any in-flight prompt — the
+    // dead child will never answer it. Reject pending so the dispatcher emits a
+    // terminal error instead of hanging. (Reconnect for the NEXT dispatch is
+    // still lazy-on-send; this only un-sticks the request that was mid-flight.)
+    onAbnormalClose: () => {
+      acpConn?.rejectInflight(new Error("acp-wire-flap: connection lost"));
+    },
     ...(input.sleep ? { sleep: input.sleep } : {}),
   });
 
   acpConn = createAcpPerProfileConnection({
     send: (raw: string) => socket.send(raw),
     onIncoming: (cb) => socket.onIncoming(cb),
+    // Feed the socket generation so the connection re-attaches a captured
+    // conversation (session/load) on the fresh child after a reconnect.
+    currentEpoch: () => socket.epoch(),
+    // Open the wire (lazy reconnect) before the epoch is read, so the re-attach
+    // decision sees the final post-reconnect generation.
+    ensureReady: () => socket.ensureReady(),
+    ...(input.requestTimeoutMs !== undefined ? { requestTimeoutMs: input.requestTimeoutMs } : {}),
   });
 
   try {
