@@ -21,9 +21,13 @@ dependencies:
   espressif/esp_lcd_panel_io_additions: ^1.0.1
   78/esp_lcd_nv3023: ~1.0.0
   78/esp-wifi-connect: ~3.1.2
+  # Supplies xiaozhi's network abstraction (NetworkInterface / Http /
+  # EspNetwork) used by board.h + wifi_board.cc + assets.cc. Used UNMODIFIED
+  # from the registry — the former esp_ssl SetCacert patch is gone, and the
+  # ML307 cellular modem boards are dropped (cube is WiFi-only).
+  78/esp-ml307: ~3.6.5
   espressif/esp_audio_effects: ~1.2.1
   espressif/esp_audio_codec: ~2.4.1
-  78/esp-ml307: ~3.6.5
   78/uart-eth-modem:
     version: ~0.3.4
     rules:
@@ -65,9 +69,8 @@ dependencies:
   espressif/adc_battery_estimation: ^0.2.1
   espressif/esp_new_jpeg: ^0.6.1
   # Phase 6a: SentientWsProtocol speaks the sentient gateway WS directly,
-  # bypassing the xiaozhi WebSocket wrapper. The component manager pulls
-  # esp_websocket_client transitively for esp-ml307 in some builds, but
-  # we need an explicit pin so the header lookup is stable.
+  # bypassing the xiaozhi WebSocket wrapper. Pinned explicitly (used
+  # directly, not pulled transitively) so the header lookup is stable.
   espressif/esp_websocket_client: ^1.5.0
 
   # SenseCAP Watcher Board

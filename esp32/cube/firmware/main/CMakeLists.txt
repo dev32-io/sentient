@@ -81,9 +81,7 @@ set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg"
 list(APPEND SOURCES
     "boards/common/board.cc"
     "boards/common/wifi_board.cc"
-    "boards/common/ml307_board.cc"
     "boards/common/nt26_board.cc"
-    "boards/common/dual_network_board.cc"
     "boards/common/adc_battery_monitor.cc"
     "boards/common/afsk_demod.cc"
     "boards/common/axp2101.cc"
@@ -984,8 +982,6 @@ if(CONFIG_IDF_TARGET_ESP32)
                              "display/lvgl_display/jpg/image_to_jpeg.cpp"
                              "display/lvgl_display/jpg/jpeg_to_image.c"
                              "boards/common/nt26_board.cc"
-                             "boards/common/ml307_board.cc"
-                             "boards/common/dual_network_board.cc"
                              )
 endif()
 
@@ -1007,25 +1003,8 @@ if(CONFIG_BOARD_TYPE_ESP_VOCAT)
     )
 endif()
 
-# Embed the dev gateway's TLS leaf certificate when present. bake-creds.sh
-# --profile debug emits sentient_dev_gateway.crt by running openssl s_client
-# against the gateway; prod profile removes the file. CMake configures off
-# the file's presence, so re-running idf.py reconfigure picks up the
-# profile flip automatically. EMBED_TXTFILES null-terminates the blob and
-# exposes:
-#   extern const char _binary_sentient_dev_gateway_crt_start[];
-#   extern const char _binary_sentient_dev_gateway_crt_end[];
-set(SENTIENT_EMBED_TXTFILES "")
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/sentient_dev_gateway.crt")
-    list(APPEND SENTIENT_EMBED_TXTFILES "sentient_dev_gateway.crt")
-    message(STATUS "sentient-cube: embedding dev gateway TLS cert (sentient_dev_gateway.crt)")
-else()
-    message(STATUS "sentient-cube: no dev gateway TLS cert found (prod or pre-bake state)")
-endif()
-
 idf_component_register(SRCS ${SOURCES}
                     EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS}
-                    EMBED_TXTFILES ${SENTIENT_EMBED_TXTFILES}
                     INCLUDE_DIRS ${INCLUDE_DIRS}
                     WHOLE_ARCHIVE
                     PRIV_REQUIRES
@@ -1049,20 +1028,22 @@ idf_component_register(SRCS ${SOURCES}
                         # Phase 6a: SentientWsProtocol speaks the sentient
                         # gateway WS directly via esp_websocket_client.
                         espressif__esp_websocket_client
-                        # 78__esp-ml307: sentient_cube.cc calls EspSsl::SetCacert
-                        # for dev-cert pinning. The component is already in the
-                        # link graph (via wifi_board → esp_network → esp_ssl),
-                        # but we need an explicit PRIV_REQUIRES so CMake makes
-                        # its PRIV_INCLUDE_DIRS ("." = component root) visible
-                        # to main via target_include_directories below.
+                        # 78__esp-ml307 supplies xiaozhi's network abstraction
+                        # layer (network_interface.h / http.h / web_socket.h +
+                        # the EspNetwork wifi impl in esp_network.h). board.h,
+                        # wifi_board.cc (GetNetwork → EspNetwork) and assets.cc
+                        # (network->CreateHttp) depend on it. The dead ML307
+                        # modem boards were dropped; the component is used
+                        # UNMODIFIED from the registry (no patch).
                         78__esp-ml307
                         ${MAIN_PRIV_REQUIRES_EXTRA}
                     )
 
-# Expose the esp-ml307 src/ subtree to main so sentient_cube.cc can
-# #include "esp/esp_ssl.h". esp_ssl.h lives at src/esp/esp_ssl.h inside
-# the component; PRIV_INCLUDE_DIRS "." in that component's CMakeLists
-# is private-only and not propagated to dependents.
+# Expose the esp-ml307 src/ subtree to main so board.h can resolve the
+# xiaozhi network-abstraction headers (<http.h>, <web_socket.h>, <mqtt.h>,
+# <udp.h>, <network_interface.h>). esp-ml307 declares src/ as PRIV_INCLUDE_DIRS
+# (private, not propagated to dependents), so the reach-in is required.
+# COMPONENT_DIR is resolved by the component manager — no absolute paths.
 idf_component_get_property(ML307_DIR 78__esp-ml307 COMPONENT_DIR)
 target_include_directories(${COMPONENT_LIB} PRIVATE "${ML307_DIR}/src")
 

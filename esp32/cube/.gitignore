@@ -4,24 +4,7 @@ logs/
 
 # Firmware build artifacts (ESP-IDF in esp32/cube/firmware/)
 firmware/build/
-# Ignore all managed_components contents except the two sentient-patched files
-# below. Note: git cannot un-ignore files inside an ignored directory using `!`
-# — the entire directory must not be ignored. We therefore ignore the directory's
-# CONTENTS (wildcard) rather than the directory itself, then explicitly un-ignore
-# the two files we own. This allows `git add` without -f.
-firmware/managed_components/*
-!firmware/managed_components/78__esp-ml307/
-firmware/managed_components/78__esp-ml307/*
-!firmware/managed_components/78__esp-ml307/src/
-firmware/managed_components/78__esp-ml307/src/*
-!firmware/managed_components/78__esp-ml307/src/esp/
-firmware/managed_components/78__esp-ml307/src/esp/*
-# Tracked-but-otherwise-ignored: sentient customizes EspSsl to support a
-# pinned CA cert (see Phase 5b TLS work). These two files are committed and
-# MUST NOT be wiped by idf.py update-dependencies. If the ml307 component is
-# bumped, re-apply the SetCacert override after the re-fetch.
-!firmware/managed_components/78__esp-ml307/src/esp/esp_ssl.h
-!firmware/managed_components/78__esp-ml307/src/esp/esp_ssl.cc
+firmware/managed_components/
 firmware/dependencies.lock
 firmware/sdkconfig
 firmware/sdkconfig.old
