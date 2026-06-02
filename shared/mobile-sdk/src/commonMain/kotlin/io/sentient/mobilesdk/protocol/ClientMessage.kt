@@ -47,8 +47,7 @@ sealed class ClientMessage {
 
     @Serializable @SerialName("user.preferences.patch")
     data class UserPreferencesPatch(
-        val ttsEnabled: Boolean? = null,
-        val channel: String? = null,
+        val payload: PreferencesPatchPayload,
     ) : ClientMessage()
 
     // ── Sessions management (mirrors sessions.ts) ──
@@ -92,3 +91,11 @@ sealed class ClientMessage {
 
 @Serializable
 data class Capabilities(val supports: List<String>)
+
+/** Payload body for [ClientMessage.UserPreferencesPatch]. Both fields are optional so callers
+ *  can patch only what changed. Null fields are omitted from JSON by [WireJson] (explicitNulls=false). */
+@Serializable
+data class PreferencesPatchPayload(
+    val ttsEnabled: Boolean? = null,
+    val channel: String? = null,
+)

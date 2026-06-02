@@ -32,6 +32,22 @@ class WireSerializationTest {
         assertTrue(msg is ServerMessage.Unknown)
     }
 
+    @Test fun user_preferences_patch_nests_fields_under_payload() {
+        val msg = ClientMessage.UserPreferencesPatch(
+            payload = PreferencesPatchPayload(ttsEnabled = false),
+        )
+        val json = WireJson.instance.encodeToString(ClientMessage.serializer(), msg)
+        // Must have a nested payload object
+        assertTrue(json.contains("\"payload\":{"), "expected nested payload object, got: $json")
+        // ttsEnabled must live inside payload, not at the top level
+        assertTrue(json.contains("\"ttsEnabled\":false"), "expected ttsEnabled in payload, got: $json")
+        // ttsEnabled must NOT appear as a top-level key (i.e., only inside the payload braces)
+        val payloadStart = json.indexOf("\"payload\":{")
+        assertTrue(payloadStart >= 0, "payload key not found")
+        val beforePayload = json.substring(0, payloadStart)
+        assertTrue(!beforePayload.contains("\"ttsEnabled\""), "ttsEnabled must not appear before payload: $json")
+    }
+
     @Test fun conversation_entry_assistant_with_cutoff() {
         val s = """{"type":"conversation.entry","item":{"ts":1,"kind":"assistant","content":"hello","cutoff":{"kind":"interrupt","cancelledTaskIds":["t1"]}}}"""
         val msg = WireJson.instance.decodeFromString(ServerMessage.serializer(), s) as ServerMessage.ConversationEntry
