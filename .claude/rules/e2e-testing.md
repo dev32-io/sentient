@@ -11,7 +11,8 @@ E2E smoke is part of feature development, not a follow-up step. A feature is not
 - Use the project's free credentials (HA, MA, Ollama, web search) for setup. Never burn paid services (Fish Audio, paid LLMs) in smoke unless the feature specifically depends on them.
 - Capture evidence: screenshots at decision points, console messages, network requests where contract matters. Save under `.playwright-mcp/` or the feature's screenshot dir.
 - A case is green only when the user-visible behavior AND the underlying log trail (no unexpected WARN / ERROR) match the spec.
-- Define the smoke matrix in the spec doc — one row per case. Running the matrix is part of done.
+- Every spec AND every implementation plan MUST contain a concrete e2e matrix INLINE — one row per feature/area touched. A doc with no matrix is a wish, not a spec/plan. Never scatter the matrix into separate files.
+- Matrix is a table, fixed columns: `Case | Viewport | Pre-state | Action | Expected user-visible | Expected log trail`. Reference reusable cases by short name from `agents/docs/testing-knowledge.md`; don't duplicate bodies.
 - Do NOT skip cases. If a case is unreachable in chromium (iOS-Safari-only behavior, real-device sensors, paid-service dependencies), flag it explicitly in handover for follow-up.
 - Pi / production smoke is out of agent scope. Verify rebuild + container health + log-level smoke (curl, `docker logs`) only. Playwright runs on the dev machine against the local stack, never against prod.
 - Reuse and extend the case library in `agents/docs/testing-knowledge.md`. New reusable cases go there, indexed by the surface they exercise.

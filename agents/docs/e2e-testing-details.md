@@ -32,9 +32,12 @@ mobile   → browser_resize(390, 844)   # iPhone 16 Pro physical width
 For features that need additional breakpoints (tablet, narrow desktop),
 add them to the matrix in the spec doc.
 
-## Smoke matrix shape (in the spec doc)
+## Smoke matrix shape (inline in the spec AND the plan)
 
-Every spec defines its smoke matrix as a table:
+Every spec and every implementation plan defines its matrix inline as a
+table (never a separate file). Native mobile e2e (Maestro / `android`
+CLI) uses the same column shape; write driver flows at run time and save
+evidence to the feature's screenshot dir.
 
 ```markdown
 | Case                              | Viewport      | Pre-state          | Action                        | Expected user-visible           | Expected log trail              |
