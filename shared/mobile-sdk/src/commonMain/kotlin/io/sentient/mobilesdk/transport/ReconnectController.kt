@@ -60,6 +60,18 @@ class ReconnectController(
     }
 
     /**
+     * Re-arm the controller for reuse across a connect/disconnect cycle. Clears
+     * the [cancel]-set [cancelled] latch so a later [runReconnectLoop] is not
+     * short-circuited by a prior disconnect. Called from SentientSdk.connect()
+     * (and forceReconnect()) so the process-singleton SdkHolder reuse across
+     * logout→login does not leave reconnect permanently disabled. Idempotent.
+     */
+    fun reset() {
+        cancelled = false
+        log.debug("reset")
+    }
+
+    /**
      * Run the reconnect attempt loop to a terminal outcome (success, auth-expired,
      * exhaustion, or cancel). Suspends across backoff delays via [delayFn].
      */

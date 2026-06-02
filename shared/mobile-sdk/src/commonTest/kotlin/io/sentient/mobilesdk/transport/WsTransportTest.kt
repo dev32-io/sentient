@@ -7,8 +7,8 @@
 // Closed/Failure surfaced as TransportSignal lifecycle events. These are
 // process-boundary wire contracts → keepers per .claude/rules/testing.md.
 //
-// FakeWebSocketEngine.open() returns `this` and installs a FRESH incoming
-// channel each call — subscribe to the session returned by the open() under
+// FakeWebSocketEngine.open() mints a FRESH WebSocketSession (its own incoming
+// channel) each call — subscribe to the session returned by the open() under
 // test, never a cached reference (see B1 review caveat).
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.transport

@@ -96,9 +96,23 @@ class SentientSdk(
 
     // ── Public surface ───────────────────────────────────────────────────────
 
-    /** Open the WS, authenticate, configure, reach READY. Suspends until settled. */
+    /**
+     * Open the WS, authenticate, configure, reach READY. Suspends until settled.
+     *
+     * Re-entrancy guard (web-sdk parity, sentient-sdk.ts connect()): a no-op
+     * unless the SDK is DISCONNECTED or RECONNECTING — connect() never tears down
+     * a live (CONNECTING/AUTHENTICATING/READY) session. Re-arms the reconnect
+     * controller (clears the cancel() latch set by a prior disconnect()) so the
+     * process-singleton SdkHolder is reusable across logout→login.
+     */
     suspend fun connect() {
+        val current = deriver.status
+        if (current != SdkStatus.DISCONNECTED && current != SdkStatus.RECONNECTING) {
+            log.info("connect.noop", mapOf("status" to current))
+            return
+        }
         consumerDisconnected = false
+        reconnectController.reset()
         when (val result = lifecycle.attemptConnect()) {
             is ConnectResult.Success -> log.info("connect.ready")
             is ConnectResult.Failure -> log.warn("connect.failed", mapOf("kind" to result.kind))
@@ -172,7 +186,29 @@ class SentientSdk(
 
     // ── Reconnect wiring ────────────────────────────────────────────────────────
 
+    /**
+     * Manual reconnect surface (web-sdk parity, sentient-sdk.ts forceReconnect()).
+     * Presence/foreground-driven retry the device contract relies on: re-arm the
+     * reconnect controller, clear the terminal connectionLost/authExpired flags,
+     * and drive a fresh recovery loop. Idempotent — a no-op while a loop is
+     * already in flight (status RECONNECTING).
+     */
+    fun forceReconnect() {
+        log.info("forceReconnect", mapOf("status" to deriver.status))
+        if (deriver.status == SdkStatus.RECONNECTING) return
+        consumerDisconnected = false
+        reconnectController.reset()
+        deriver.authExpired = false
+        onConnectionDrop()
+    }
+
     private fun onConnectionDrop() {
+        // Guard against a second loop: a non-clean signal may arrive while the
+        // loop launched by a prior drop is already recovering.
+        if (deriver.status == SdkStatus.RECONNECTING) {
+            deriver.connectionLost = true
+            return
+        }
         deriver.connectionLost = true
         setStatus(SdkStatus.RECONNECTING)
         scope.launch { reconnectController.runReconnectLoop() }

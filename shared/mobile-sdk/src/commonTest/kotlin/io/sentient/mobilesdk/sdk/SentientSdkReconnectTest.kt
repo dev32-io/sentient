@@ -15,9 +15,12 @@
 package io.sentient.mobilesdk.sdk
 
 import io.sentient.mobilesdk.fakes.FakeWebSocketEngine
+import io.sentient.mobilesdk.transport.AUTH_TIMEOUT_MS
 import io.sentient.mobilesdk.transport.SdkStatus
 import io.sentient.mobilesdk.transport.WsIncoming
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import kotlin.test.Test
@@ -76,6 +79,116 @@ class SentientSdkReconnectTest {
         // No second open(): a clean disconnect never re-dials.
         assertEquals(1, fake.openedUrls.size, "clean disconnect must not reconnect, opens=${fake.openedUrls.size}")
         assertTrue(!sdk.state.value.connectionLost, "clean disconnect leaves connectionLost false")
+    }
+
+    @Test
+    fun reconnect_controller_rearms_across_disconnect_reconnect_cycle() = runTest {
+        // BUG #1 regression — the SdkHolder is a process singleton reused across
+        // logout→login. disconnect() cancels the ReconnectController; a later
+        // connect() MUST re-arm it (reset the cancelled latch) so a subsequent
+        // unexpected drop STILL recovers instead of getting stuck RECONNECTING
+        // forever on an immediate cancelled-exit.
+        val fake = FakeWebSocketEngine()
+        val sdk = buildSdk(fake)
+
+        // Cycle 1: connect → READY → consumer disconnect (logout). This cancels
+        // the reconnect controller — the bug left it permanently cancelled.
+        connectToReady(sdk, fake)
+        sdk.disconnect()
+        yield()
+        assertEquals(SdkStatus.DISCONNECTED, sdk.state.value.status)
+
+        // Cycle 2: connect AGAIN on the SAME sdk instance → READY (login).
+        connectToReady(sdk, fake)
+        assertEquals(SdkStatus.READY, sdk.state.value.status)
+        val opensBeforeDrop = fake.openedUrls.size
+
+        // Now drop the reused-singleton's live session. With the controller
+        // re-armed, the signal watch must STILL drive RECONNECTING and the loop
+        // must STILL attempt a fresh open() — proving reset() cleared cancel().
+        fake.failIncoming("network drop")
+        sdk.state.first { it.status == SdkStatus.RECONNECTING }
+        assertTrue(sdk.state.value.connectionLost, "connectionLost set on post-relogin drop")
+
+        sdk.state.first { fake.openedUrls.size > opensBeforeDrop }
+        assertTrue(
+            fake.openedUrls.size > opensBeforeDrop,
+            "re-armed controller must re-open, opens=${fake.openedUrls.size} before=$opensBeforeDrop",
+        )
+
+        // And it recovers fully to READY on the fresh session.
+        fake.emit(WsIncoming.Text(AUTH_OK_FRAME))
+        fake.emit(WsIncoming.Text(READY_FRAME))
+        sdk.state.first { it.status == SdkStatus.READY }
+        assertEquals(SdkStatus.READY, sdk.state.value.status)
+    }
+
+    @Test
+    fun pre_ready_unexpected_close_fails_fast_into_recoverable_state() = runTest {
+        // BUG #2 regression — a non-clean close DURING the handshake
+        // (AUTHENTICATING) must NOT hang the full AUTH/READY timeout (10s) and
+        // must NOT leave status stuck CONNECTING/AUTHENTICATING. It mirrors
+        // web-sdk handleSocketClose `wasLive` (connecting|authenticating|ready):
+        // fail the in-flight handshake FAST + drive the recovery path.
+        val fake = FakeWebSocketEngine()
+        val sdk = buildSdk(fake)
+
+        val connectJob = launch { sdk.connect() }
+        sdk.state.first { it.status == SdkStatus.AUTHENTICATING }
+        val timeAtAuth = currentTime
+
+        // Drop the socket mid-handshake — BEFORE any auth.ok / session.ready.
+        fake.failIncoming("gateway down at login")
+
+        // Fast-fail: connect()'s handshake withTimeout must be unblocked by the
+        // transport-close → failPending, NOT burn the full AUTH_TIMEOUT_MS. The
+        // SDK must land in a RECOVERABLE state (RECONNECTING with an active loop),
+        // never stuck CONNECTING/AUTHENTICATING.
+        sdk.state.first { it.status == SdkStatus.RECONNECTING }
+        val elapsed = currentTime - timeAtAuth
+        assertTrue(
+            elapsed < AUTH_TIMEOUT_MS,
+            "pre-ready close must fail fast (well under ${AUTH_TIMEOUT_MS}ms), elapsed=$elapsed",
+        )
+        assertTrue(sdk.state.value.connectionLost, "connectionLost set on pre-ready drop")
+        connectJob.join()
+
+        // Recoverable: the recovery loop re-opens (fresh session) and drives to READY.
+        sdk.state.first { fake.openedUrls.size >= 2 }
+        fake.emit(WsIncoming.Text(AUTH_OK_FRAME))
+        fake.emit(WsIncoming.Text(READY_FRAME))
+        sdk.state.first { it.status == SdkStatus.READY }
+        assertEquals(SdkStatus.READY, sdk.state.value.status)
+    }
+
+    @Test
+    fun force_reconnect_drives_fresh_attempt_to_ready_from_error() = runTest {
+        // #3 — forceReconnect() is the presence/foreground manual-retry surface
+        // the device contract relies on (and resolves the SdkStatus ERROR-state
+        // doc that referenced it). From a terminal ERROR/connectionLost state it
+        // re-arms the controller, clears authExpired, and drives a fresh attempt.
+        val fake = FakeWebSocketEngine()
+        val sdk = buildSdk(fake)
+
+        // Land in terminal ERROR via an auth.error during the handshake.
+        val connectJob = launch { sdk.connect() }
+        sdk.state.first { it.status == SdkStatus.AUTHENTICATING }
+        fake.emit(WsIncoming.Text("{\"type\":\"auth.error\",\"code\":\"expired\",\"message\":\"x\"}"))
+        sdk.state.first { it.status == SdkStatus.ERROR }
+        connectJob.join()
+        assertTrue(sdk.state.value.authExpired, "authExpired set on terminal auth failure")
+        val opensBeforeRetry = fake.openedUrls.size
+
+        // Manual retry: forceReconnect → RECONNECTING + fresh open() → READY.
+        sdk.forceReconnect()
+        sdk.state.first { it.status == SdkStatus.RECONNECTING }
+        sdk.state.first { fake.openedUrls.size > opensBeforeRetry }
+        fake.emit(WsIncoming.Text(AUTH_OK_FRAME))
+        fake.emit(WsIncoming.Text(READY_FRAME))
+        sdk.state.first { it.status == SdkStatus.READY }
+
+        assertEquals(SdkStatus.READY, sdk.state.value.status)
+        assertTrue(!sdk.state.value.authExpired, "authExpired cleared by forceReconnect recovery")
     }
 
     @Test

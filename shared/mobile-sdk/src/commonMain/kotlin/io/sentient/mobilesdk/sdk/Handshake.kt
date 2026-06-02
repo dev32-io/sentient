@@ -117,6 +117,19 @@ class Handshake(
         return HandshakeResult.Ready(ready.sessionId)
     }
 
+    /**
+     * Fail any still-pending gate with the given [kind] so the in-flight
+     * [run] returns FAST instead of burning the full AUTH/READY timeout. Called
+     * by SdkLifecycle when a non-clean transport Closed/Failure arrives mid-
+     * handshake (mirrors web-sdk's onclose firing the connect Promise's `fail`
+     * before session.ready). No-op once both gates have settled.
+     */
+    fun failPending(kind: LastErrorKind) {
+        if (authGate.isCompleted && readyGate.isCompleted) return
+        log.warn("handshake.transport-closed", mapOf("kind" to kind))
+        failGates(kind)
+    }
+
     private fun failGates(kind: LastErrorKind) {
         failed = kind
         if (!authGate.isCompleted) authGate.completeExceptionally(GateFailed)

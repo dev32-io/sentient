@@ -162,16 +162,34 @@ class SdkLifecycle(
 
     // ── Transport signals → reconnect ──────────────────────────────────────────
 
+    /**
+     * Watch the transport's Closed/Failure signals. Mirrors web-sdk
+     * handleSocketClose: a non-clean close on a "live" session (READY) OR mid-
+     * handshake (CONNECTING/AUTHENTICATING) — web-sdk's `wasLive` — fails the in-
+     * flight handshake FAST (so connect() does not hang the full AUTH/READY
+     * timeout) and drives the same recovery path as the READY-drop case. A clean
+     * disconnect() (consumer flag) or a normal-closure code never triggers it.
+     */
     private fun startSignalWatch(tx: WsTransport) {
         scope.launch {
             tx.signals.collect { signal ->
                 if (hooks.isConsumerDisconnected()) return@collect
                 if (signal is TransportSignal.Closed && signal.code == WS_NORMAL_CLOSURE) return@collect
-                log.warn("transport.signal", mapOf("signal" to signal::class.simpleName))
-                if (hooks.status() == SdkStatus.READY) hooks.onConnectionDrop()
+                log.warn("transport.signal", mapOf("signal" to signal::class.simpleName, "status" to hooks.status()))
+                // Unblock the handshake's withTimeout immediately so a pre-ready
+                // close fails fast instead of waiting out AUTH_TIMEOUT_MS/READY_TIMEOUT_MS.
+                handshake?.failPending(LastErrorKind.NETWORK)
+                if (isLiveOrConnecting(hooks.status())) hooks.onConnectionDrop()
             }
         }
     }
+
+    /** web-sdk `wasLive`: status is not DISCONNECTED and not ERROR. */
+    private fun isLiveOrConnecting(status: SdkStatus): Boolean =
+        status == SdkStatus.READY ||
+            status == SdkStatus.CONNECTING ||
+            status == SdkStatus.AUTHENTICATING ||
+            status == SdkStatus.RECONNECTING
 
     // ── Idle loop: tick → disconnect on IDLE ────────────────────────────────────
 
