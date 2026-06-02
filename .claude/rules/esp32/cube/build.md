@@ -55,3 +55,27 @@ paths:
   Pass multiple `<a1> <a2> ...` to decode a list. Mandatory for
   `LoadProhibited` / `IllegalInstruction` / `StoreProhibited` panic
   backtraces — never guess the source frame from raw addresses.
+
+- `dependencies.lock` is gitignored by design. The cube has a local-path
+  dependency (`esp32_devtool_companion` via `path:`), and ESP-IDF guidance is
+  to NOT commit the lock for such projects — it embeds environment-specific
+  local paths. Reproducibility comes from version pins in `main/idf_component.yml`
+  + the immutable component registry, NOT the lock. Regenerate with
+  `idf.py reconfigure`. Never commit the lock or force-track any file inside
+  `managed_components/` (no `.gitignore` negation exceptions — that was the
+  v1→v2 migration break that pulled a broken half-component on fresh clone).
+
+- Manifest pin policy: the cube's hardware-relevant deps are bounded
+  (`^x.y.z` / `~` / `==`). The only unbounded `'*'` deps are `target in [esp32p4]`
+  gated, so they never enter the esp32-s3 cube build (the manager skips them).
+  Do not mass-tighten the vendored xiaozhi caret pins — high risk of transitive
+  resolve breakage, low value (the lock pins exact versions locally each build).
+
+- Build/flash the debug profile through the SDKCONFIG_DEFAULTS chain, never a
+  bare `idf.py build`. `esp32-devtool flash --profile debug` sets
+  `SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.debug"`. A bare
+  `idf.py build` generates `sdkconfig` from `sdkconfig.defaults` ONLY — debug-only
+  options (`CONFIG_CUBE_DEV_TLS_INSECURE`, `CONFIG_ESP_TLS_SKIP_SERVER_CERT_VERIFY`)
+  land as `# ... is not set`, and ESP-IDF will NOT let the `.debug` defaults
+  override an already-present value. If a debug-only Kconfig isn't taking effect,
+  `rm -f sdkconfig` and reconfigure with the full chain.
