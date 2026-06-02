@@ -26,14 +26,25 @@ final class SdkStore: ObservableObject {
     @Published private(set) var state: SdkState
 
     private let sdk: SentientSdk
+    /// The same Keychain-backed store login writes to (`createTokenStore()`).
+    /// Held here so `logout()` can clear the token the SDK reads on connect —
+    /// clearing it is what makes a relaunch land on login (no auto-resume).
+    private let tokenStore: SecureTokenStore
     private let log = AppLog("sdk", "store")
     private var collectTask: Task<Void, Never>?
 
     /// Build the store over the process SDK. The SDK is constructed via the
     /// iOS factory (createSentientSdk) which supplies the platform bundle +
-    /// coroutine scope internally — Swift only provides the SdkConfig.
-    init(sdk: SentientSdk = SdkStore.makeSdk()) {
+    /// coroutine scope internally — Swift only provides the SdkConfig. The
+    /// token store defaults to the same `createTokenStore()` Keychain item the
+    /// login flow saves to (AuthModel), so logout clears the credential the SDK
+    /// reads on connect.
+    init(
+        sdk: SentientSdk = SdkStore.makeSdk(),
+        tokenStore: SecureTokenStore = createTokenStore()
+    ) {
         self.sdk = sdk
+        self.tokenStore = tokenStore
         self.state = sdk.state.value
         log.info("init status=\(self.state.status.name)")
         startCollecting()
@@ -72,6 +83,21 @@ final class SdkStore: ObservableObject {
     func disconnect() {
         log.info("disconnect")
         sdk.disconnect()
+    }
+
+    /// Logs the user out: disconnect (WS teardown + cycle cancel) THEN clear the
+    /// persisted token. Inverse of login (`save(token:)` → `connect()`), so we
+    /// disconnect first — the SDK can't read a half-cleared store mid-teardown.
+    /// Clearing the token is what prevents auto-resume on relaunch. Navigation
+    /// back to login is NOT modelled here: RootView derives login-vs-chat from
+    /// the SDK's single state surface (status != .ready ⇒ login), and disconnect
+    /// drives status away from .ready. Mirrors Android SettingsViewModel.logout().
+    /// Idempotent — both calls are safe when already logged out.
+    func logout() {
+        log.info("logout.start")
+        sdk.disconnect()
+        tokenStore.clear()
+        log.info("logout.done")
     }
 
     func sendText(_ text: String) {

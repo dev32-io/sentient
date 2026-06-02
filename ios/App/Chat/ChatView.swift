@@ -26,6 +26,7 @@ struct ChatView: View {
     @EnvironmentObject private var store: SdkStore
 
     @State private var historyPresented = false
+    @State private var settingsPresented = false
 
     private static let title = "Sentient"
 
@@ -64,6 +65,18 @@ struct ChatView: View {
                 onDismiss: { historyPresented = false }
             )
         }
+        .sheet(isPresented: $settingsPresented) {
+            // Thin settings sheet (D-I5). logout() = disconnect + clear the
+            // Keychain token through the single app SdkStore — RootView reacts
+            // to status != .ready and swaps to login (no explicit nav here).
+            SettingsSheet(
+                onLogout: {
+                    store.logout()
+                    settingsPresented = false
+                },
+                onDismiss: { settingsPresented = false }
+            )
+        }
     }
 
     // ── Title bar ───────────────────────────────────────────────────────────
@@ -89,6 +102,14 @@ struct ChatView: View {
                 .foregroundStyle(DuskColors.ink)
                 .accessibilityIdentifier("chat-screen")
             Spacer()
+            Button { settingsPresented = true } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: TypeScale.lg))
+                    .foregroundStyle(DuskColors.ink2)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Settings")
+            .accessibilityIdentifier("settings-open")
         }
         .padding(.horizontal, Space.lg)
         .padding(.vertical, Space.sm)
