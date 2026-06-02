@@ -22,10 +22,13 @@ import io.sentient.mobilesdk.connectors.SessionsConnector
 import io.sentient.mobilesdk.connectors.TaskStatusConnector
 import io.sentient.mobilesdk.connectors.UserAudioInputConnector
 import io.sentient.mobilesdk.connectors.UserTextInputConnector
+import io.sentient.mobilesdk.auth.AuthClient
 import io.sentient.mobilesdk.log.createLogger
+import io.sentient.mobilesdk.sdk.PlatformBundle
 import io.sentient.mobilesdk.sdk.SdkConfig
 import io.sentient.mobilesdk.sdk.SentientSdk
 import io.sentient.mobilesdk.sdk.createPlatformBundle
+import io.sentient.mobilesdk.secure.SecureTokenStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -63,20 +66,51 @@ object SdkHolder {
     @Volatile
     private var instance: SentientSdk? = null
 
+    @Volatile
+    private var bundleInstance: PlatformBundle? = null
+
+    @Volatile
+    private var authClientInstance: AuthClient? = null
+
+    /** The platform bundle, built once and shared by the SDK + token-store accessor. */
+    private val bundle: PlatformBundle
+        get() = bundleInstance ?: synchronized(this) {
+            bundleInstance ?: createPlatformBundle().also { bundleInstance = it }
+        }
+
     /** Lazily-built singleton SDK. Requires MobileSdk.initAndroid() to have run. */
     val sdk: SentientSdk
         get() = instance ?: synchronized(this) {
             instance ?: build().also { instance = it }
         }
 
+    /**
+     * The same SecureTokenStore the SDK reads its handshake token from. The login
+     * flow saves the token here on success; [SentientSdk.connect] then reads it.
+     */
+    val tokenStore: SecureTokenStore
+        get() = bundle.tokenStore
+
+    /**
+     * REST AuthClient for listUsers/login. Built from the same gateway base URL as
+     * the SDK (deriveBaseUrl runs inside AuthClient) + an OkHttp HttpClient with the
+     * debug-only self-signed-dev-host TLS bypass, mirroring the WS engine's policy.
+     */
+    val authClient: AuthClient
+        get() = authClientInstance ?: synchronized(this) {
+            authClientInstance ?: buildAuthClient().also { authClientInstance = it }
+        }
+
+    private fun config(): SdkConfig = SdkConfig(
+        // 10.0.2.2 = host loopback from the emulator; see android/build.gradle.kts.
+        gatewayWsUrl = io.sentient.android.BuildConfig.GATEWAY_WS_URL,
+        // Self-signed dev cert is trusted only in debug builds.
+        allowSelfSignedDevHost = io.sentient.android.BuildConfig.DEBUG,
+        capabilities = capabilities,
+    )
+
     private fun build(): SentientSdk {
-        val config = SdkConfig(
-            // 10.0.2.2 = host loopback from the emulator; see android/build.gradle.kts.
-            gatewayWsUrl = io.sentient.android.BuildConfig.GATEWAY_WS_URL,
-            // Self-signed dev cert is trusted only in debug builds.
-            allowSelfSignedDevHost = io.sentient.android.BuildConfig.DEBUG,
-            capabilities = capabilities,
-        )
+        val config = config()
         log.info(
             "build",
             mapOf(
@@ -85,6 +119,15 @@ object SdkHolder {
                 "capabilities" to capabilities.size,
             ),
         )
-        return SentientSdk(config = config, bundle = createPlatformBundle(), scope = scope)
+        return SentientSdk(config = config, bundle = bundle, scope = scope)
+    }
+
+    private fun buildAuthClient(): AuthClient {
+        val config = config()
+        log.info("build-auth-client", mapOf("gatewayWsUrl" to config.gatewayWsUrl))
+        return AuthClient(
+            gatewayWsUrl = config.gatewayWsUrl,
+            httpClient = buildAuthHttpClient(config.allowSelfSignedDevHost),
+        )
     }
 }

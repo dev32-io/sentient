@@ -36,6 +36,12 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.kotlinx.coroutines.android)
+    // Auth REST client (D-A2): OkHttp-backed Ktor HttpClient + JSON ContentNegotiation.
+    // The AuthClient lives in commonMain (shared SDK) but takes an injected HttpClient;
+    // the app supplies the platform OkHttp engine + dev-TLS-bypass for the localhost cert.
+    implementation(libs.ktor.client.okhttp)
+    implementation(libs.ktor.client.content.negotiation)
+    implementation(libs.ktor.serialization.kotlinx.json)
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.material3)
     implementation(libs.compose.ui)
