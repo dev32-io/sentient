@@ -48,6 +48,12 @@ enum DuskColors {
     static let ok = color(Colors.shared.ok)
     static let warn = color(Colors.shared.warn)
     static let stop = color(Colors.shared.stop)
+
+    // Derived. User chat-bubble fill = sage mixed 16% into paper, approximating
+    // the webui color-mix(in oklab, sage 16%, paper) and matching the Android
+    // `lerp(paper, sage, 0.16)`. Lerped on the raw ARGB tokens so the iOS-17
+    // deployment target holds (Color.mix is iOS 18+).
+    static let userBubble = lerpColor(Colors.shared.paper, Colors.shared.sage, 0.16)
 }
 
 private let argbByteMask: Int64 = 0xFF
@@ -64,4 +70,23 @@ private func color(_ argb: Int64) -> Color {
     let green = Double((argb >> argbGreenShift) & argbByteMask) / argbMaxChannel
     let blue = Double(argb & argbByteMask) / argbMaxChannel
     return Color(.sRGB, red: red, green: green, blue: blue, opacity: alpha)
+}
+
+/// Linear-interpolate between two packed-ARGB tokens at fraction `t` (0 = `from`,
+/// 1 = `to`), per channel, returning a SwiftUI `Color`. Mirrors the Android
+/// `lerp(from, to, t)` used for the user-bubble fill.
+private func lerpColor(_ from: Int64, _ to: Int64, _ t: Double) -> Color {
+    func channel(_ argb: Int64, _ shift: Int64) -> Double {
+        Double((argb >> shift) & argbByteMask) / argbMaxChannel
+    }
+    func mix(_ shift: Int64) -> Double {
+        channel(from, shift) + (channel(to, shift) - channel(from, shift)) * t
+    }
+    return Color(
+        .sRGB,
+        red: mix(argbRedShift),
+        green: mix(argbGreenShift),
+        blue: mix(0),
+        opacity: mix(argbAlphaShift)
+    )
 }
