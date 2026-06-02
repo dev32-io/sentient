@@ -27,7 +27,7 @@ AMOLED touchscreen. All firmware sources are vendored into a flat owned
    WIFI_PSK=<network-password>
    GATEWAY_HOST=<Mac-LAN-IP>
    GATEWAY_WS_PORT=8888
-   GATEWAY_WS_PATH=/api/v1/ws/xiaozhi
+   GATEWAY_WS_PATH=/api/v1/ws
    GATEWAY_LOG_PORT=5514
    DEVICE_ID=cube-001
    PASETO_TOKEN=<token>
