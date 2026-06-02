@@ -21,7 +21,7 @@
 
 | # | Decision | Why / flag |
 |---|----------|-----------|
-| R1 | **`clientType: "webui"`** in `session.configure` (gateway enum is `["webui","cube"]`). | Zero gateway change. Mobile inherits webui playback config. A dedicated `"mobile"` clientType is a future gateway enhancement — flag, do not block. |
+| R1 | **`clientType: "mobile"`** in `session.configure` — extends the gateway enum `["webui","cube"]` → `["webui","cube","mobile"]` (Task A0). | Push routing must distinguish client platform; reusing `"webui"` would block targeted push later. v1 falls mobile back to webui playback config. |
 | R2 | **Uplink = PCM16 LE @ `inputSampleRate` (16000)**, downlink decoded per `connector.audio.start.encoding`/`sampleRate`. v1 asserts the local stack emits `encoding == "pcm16"`; **Opus downlink is deferred** (P-voice flags it if the stack returns opus). | webui uses Opus at its app layer (WebCodecs); the SDK contract is PCM16. Mobile v1 stays PCM16 end-to-end (no opus dependency). |
 | R3 | **Auth HTTP client lives in `shared/mobile-sdk` commonMain** (Ktor), unlike webui (app-layer `auth-api.ts`). | Native apps must not each reimplement auth HTTP. Keeps the app dumb. |
 | R4 | **Design tokens are commonMain Kotlin constants** (`io.sentient.mobilesdk.design`), exact values from webui `tokens/*.css`. Compose maps them into a `MaterialTheme`; SwiftUI reads the SKIE-exposed constants. | Single source of truth → visual parity without a shared renderer (spec §6). |
@@ -115,13 +115,33 @@ Settings/SettingsView.swift
 Nav/AppRoute.swift
 ```
 
-**E2E — `qa/mobile/`**: `text-matrix.md`, `voice-matrix.md`, `text-ios.yaml` (Maestro), `voice-ios.yaml`, android-CLI flows documented in `README.md`.
+**E2E:** matrices live INLINE in this plan (per-phase tables below — per the e2e-testing rule, never a separate file). Maestro / `android` CLI flows are written at run time; evidence screenshots save to `qa/mobile/screens/`.
 
 ---
 
 # PHASE 1 — SDK core + text round-trip
 
 > Produces a fully ported SDK validated by contract tests (mock exact gateway frames) plus an optional `@live` text round-trip against the local stack. No UI yet. **Tasks A1–A9 are mutually independent pure units → parallelizable.** Tasks B/C depend on A.
+
+## Task A0: Gateway — add `"mobile"` clientType (TS, gateway rules)
+
+> Gateway/protocol change so push routing can target mobile clients later (R1). Follows `.claude/rules/gateway/*.md` + cross-cutting TS rules — NOT the mobile rules. Must land before the `@live` round-trip (C8) since the gateway rejects unknown `clientType` values.
+
+**Files:**
+- Modify: `shared/protocol/src/messages.ts` (the `session.configure` `clientType` enum)
+- Modify: `gateway/src/api/handlers/ws-session-configure.ts` (the `clientType`→playback branch)
+- Test: the existing protocol/gateway test that pins the `clientType` enum (extend it)
+
+- [ ] **Step 1: Write the failing test** — `session.configure` with `clientType:"mobile"` validates and yields a `session.ready` carrying playback config (mobile reuses the webui playback block in v1).
+- [ ] **Step 2: Run, verify fail** (`"mobile"` rejected by the enum).
+- [ ] **Step 3: Implement** — extend the enum `["webui","cube"]` → `["webui","cube","mobile"]` in `shared/protocol/src/messages.ts`; in `ws-session-configure.ts` route `clientType === "mobile"` to the same playback block as `"webui"` (named fallback + comment). No new mobile-specific playback section in v1.
+- [ ] **Step 4: Gate** — `source scripts/env.sh && bun run test:unit` (protocol + gateway) green; `bun run typecheck` clean.
+- [ ] **Step 5: Commit**
+```bash
+git commit -am "feat(protocol,gateway): add \"mobile\" clientType (webui playback fallback)"
+```
+
+---
 
 ## Task A1: Wire message models + JSON discriminator
 
@@ -222,7 +242,7 @@ sealed class ClientMessage {
     data class SessionConfigure(
         val language: String = "en",
         val capabilities: Capabilities,
-        val clientType: String, // "webui" for mobile v1 (R1)
+        val clientType: String, // "mobile" (R1; gateway enum extended in Task A0)
     ) : ClientMessage()
 
     @Serializable @SerialName("audio.start")
@@ -1029,7 +1049,7 @@ interface AudioPlaybackAdapter {
 **Files:** `sdk/SentientSdk.kt`, `sdk/SdkConfig.kt`, `sdk/SdkState.kt` + `commonTest/.../sdk/SentientSdkTest.kt`
 
 - [ ] **Step 1: failing test (FSM/integration — keep)** using `FakeWebSocketEngine`:
-  - `connect()`: status `DISCONNECTED→CONNECTING→AUTHENTICATING`; engine emits `auth.ok` then `session.ready` → status `READY`; transport sent `auth` then `session.configure(clientType="webui")`.
+  - `connect()`: status `DISCONNECTED→CONNECTING→AUTHENTICATING`; engine emits `auth.ok` then `session.ready` → status `READY`; transport sent `auth` then `session.configure(clientType="mobile")`.
   - `sendText("hi")` while READY → transport `text.input`.
   - server `conversation.entry(assistant)` → `state.value.messages` contains it.
   - `message.delta`/`message.done` → inflight reflected in `state.value.messages` then committed.
@@ -1109,7 +1129,12 @@ Platform init: a top-level `expect fun createPlatformBundle(): PlatformBundle` p
 - [ ] **Step 3** Run `./gradlew :shared:mobile-sdk:allTests` (unit, no network) → all green. Then run the `@live` path manually, capture the log trail (gateway logs + `adb logcat`/`os_log`), confirm cycleId correlation.
 - [ ] **Step 4: commit** `git commit -m "test(mobile-sdk): @live text round-trip on local stack (P1 gate)"`
 
-**Phase-1 e2e rows** (in `qa/mobile/text-matrix.md`): S1 all unit/contract tests green; S2 `@live` text round-trip READY + assistant reply + clean log trail.
+**Phase-1 e2e matrix** (SDK; driver = unit + `@live`, no UI viewport):
+
+| Case | Viewport | Pre-state | Action | Expected user-visible | Expected log trail |
+|------|----------|-----------|--------|----------------------|--------------------|
+| S1 unit + contract suite | n/a (JVM/native) | clean tree | `./gradlew :shared:mobile-sdk:allTests` | all green | — |
+| S2 `@live` text round-trip | n/a | local stack up, valid token | `connect()` → `sendText("hello")` | status `READY`, assistant `ChatMessage` arrives | `auth.ok`→`session.ready`; cycleId correlated; no WARN/ERROR |
 
 ---
 
@@ -1206,7 +1231,7 @@ object Tints { // avatarTint key → bg color long
 
 ## Task D-A6: Android text e2e matrix pass
 
-- [ ] Run the full Android text matrix (login happy + bad-PIN sad; send/receive; reconnect by toggling gateway; history switch; settings logout) at 390-equivalent (Pixel_3a) viewport. Mark rows in `qa/mobile/text-matrix.md`. Capture screenshots under `.playwright-mcp/` equivalent `qa/mobile/screens/`. Commit.
+- [ ] Run every row of the **Phase-2 e2e matrix** (below) on the Android emulator (Pixel_3a, 390-equivalent). Confirm each row's user-visible + log trail. Save evidence screenshots to `qa/mobile/screens/`. Commit.
 
 ---
 
@@ -1224,7 +1249,7 @@ object Tints { // avatarTint key → bg color long
 **Files:** `Auth/LoginView.swift`, `Auth/AvatarTile.swift`, `Auth/PinPad.swift`. accessibilityIdentifiers mirror Android: `login-avatar-<userId>`, `pin-key-<n>`, `pin-delete`, `login-error`.
 
 - [ ] **Step 1** Mirror D-A2 logic against `SdkStore` + `AuthClient` (SKIE async). OS-numpad-style 3×4 grid (spec D7 — native feel). Auto-submit at 4 digits.
-- [ ] **Step 2** e2e (Maestro `qa/mobile/text-ios.yaml`): tap avatar id → tap pin keys → assertVisible chat. Run on iPhone 14 Pro (26.5).
+- [ ] **Step 2** e2e: write the Maestro flow at run time (e.g. `/tmp/login-ios.yaml`), run on iPhone 14 Pro (26.5): tap avatar id → tap pin keys → assertVisible chat.
 - [ ] **Step 3: commit.**
 
 ## Task D-I3: iOS Chat (list + composer, text)
@@ -1254,9 +1279,18 @@ object Tints { // avatarTint key → bg color long
 
 ## Task D-I6: iOS text e2e matrix pass
 
-- [ ] Run the iOS text matrix (mirror D-A6) on iPhone 14 Pro (26.5) via Maestro. Mark rows in `qa/mobile/text-matrix.md`. Screenshots. Commit.
+- [ ] Run every row of the **Phase-2 e2e matrix** (below) on iPhone 14 Pro (26.5) via Maestro. Evidence screenshots → `qa/mobile/screens/`. Commit.
 
-**Phase-2 e2e rows** (`qa/mobile/text-matrix.md`): per platform — T1 login happy, T2 login bad-PIN, T3 send/receive text, T4 reconnect (toggle gateway container), T5 history switch, T6 settings logout. Each × {Android emu, iOS 26.5 sim}.
+**Phase-2 e2e matrix** (text UI; run EVERY row on BOTH Android emulator + iOS 26.5 sim):
+
+| Case | Viewport | Pre-state | Action | Expected user-visible | Expected log trail |
+|------|----------|-----------|--------|----------------------|--------------------|
+| T1 login happy | A emu + iOS sim | users seeded, logged out | tap avatar → valid PIN | chat screen renders | `auth.ok`; `session.ready` |
+| T2 login bad PIN | both | logged out | enter wrong PIN | `login-error` shown, stays on login | one WARN `invalid-credentials`; no token saved |
+| T3 send/receive | both | logged in, `READY` | type "hello" → send | user bubble + assistant bubble | `text.input` out; `conversation.entry` in |
+| T4 reconnect | both | logged in, `READY` | `docker compose restart gateway` | reconnecting → `READY`, chat intact | backoff logs; resume (`session.switched`→snapshot) |
+| T5 history switch | both | ≥2 sessions | open history → tap older row | bubbles reload to that session | `session.switched` then `conversation.snapshot` |
+| T6 settings logout | both | logged in | settings → logout | login screen, token cleared | `disconnect`; token clear |
 
 ---
 
@@ -1309,10 +1343,20 @@ object Tints { // avatarTint key → bg color long
 
 ## Task E6: Voice device user-loop + matrix
 
-- [ ] **Step 1** Flag device-only rows in `qa/mobile/voice-matrix.md`: real-mic capture, OS AEC effectiveness, barge-in mid-TTS, background/foreground audio-session handling. These need a physical Android device (free) + iOS device (gated on $99 enrollment — spec §9). Provide the exact manual steps for the user loop.
+- [ ] **Step 1** Provide exact manual user-loop steps for the device-only rows of the Phase-3 matrix (V5–V7: real-mic barge-in, OS AEC effectiveness, background/foreground audio-session). These need a physical Android device (free) + iOS device (gated on $99 enrollment — spec §9). Put the steps in the handover note, not a separate file.
 - [ ] **Step 2** Run all sim-reachable voice rows green (UI states, connect, simulated transcript, interrupt button). Capture evidence. Commit.
 
-**Phase-3 e2e rows** (`qa/mobile/voice-matrix.md`): V1 enter/exit voice mode UI, V2 transcript preview renders, V3 TTS playback (assistant audio → speaker), V4 interrupt button stops playback, V5 *(device)* real barge-in, V6 *(device)* AEC suppresses echo, V7 background/foreground. V1–V4 sim; V5–V7 device user-loop.
+**Phase-3 e2e matrix** (voice; V1–V4 sim-reachable, V5–V7 device user-loop — never silently dropped):
+
+| Case | Viewport | Pre-state | Action | Expected user-visible | Expected log trail |
+|------|----------|-----------|--------|----------------------|--------------------|
+| V1 enter/exit voice | A emu + iOS sim | logged in | tap mic on, then off | mic-on styling + listening avatar; reverts on off | `voiceMode` ACTIVE/OFF; `audio.start`/`audio.end` |
+| V2 transcript preview | both sim | voice active | feed sim-mic speech | live transcript renders | `connector.transcript.final` |
+| V3 TTS playback | both sim | TTS-enabled reply | trigger an assistant reply | audio plays; speaking avatar + wave | `connector.audio.start`→`done`; `isSpeaking` |
+| V4 interrupt | both sim | TTS playing | tap interrupt | playback stops; avatar idle | `interrupt` out; `playback.stop` |
+| V5 real barge-in | device (user-loop) | TTS playing on device | speak over the TTS | playback stops on voice onset | `playback.stop reason=barge-in` |
+| V6 AEC echo | device (user-loop) | voice mode, loud speaker | assistant speaks, mic open | no self-retrigger from echo | EchoGate playback-threshold rejects echo frames |
+| V7 bg/foreground | device (user-loop) | voice active | background then foreground | audio session restores cleanly | session re-acquire; no orphaned capture |
 
 ---
 
@@ -1322,7 +1366,7 @@ object Tints { // avatarTint key → bg color long
 
 - [ ] **Step 1** `./gradlew :shared:mobile-sdk:allTests` green; `:android:assembleDebug` + iOS `xcodebuild` build green; SDK ktlint/detekt if configured (else skip — note).
 - [ ] **Step 2** TS monorepo unmodified: `source scripts/env.sh && bun run lint && bun run typecheck` → clean (mobile dirs excluded from Biome — verify P0's `biome.json` ignores still hold; the gateway push work is NOT in this plan so no TS changes expected).
-- [ ] **Step 3** All Phase-1/2/3 sim-reachable rows ✅ in `qa/mobile/{text,voice}-matrix.md`; device rows flagged for user-loop.
+- [ ] **Step 3** Every sim-reachable row of the Phase-1/2/3 matrices (above) confirmed green with evidence; device rows (V5–V7) flagged in the handover for user-loop.
 - [ ] **Step 4: commit + push** `git push origin feature/mobile-client`.
 
 ## Task F2: Final review + handoff
@@ -1341,11 +1385,11 @@ object Tints { // avatarTint key → bg color long
 - web-sdk mirror contract (verbatim transition tables, ported tests) → A5–A9, C4–C6 each port the web-sdk test ✓
 - Dev TLS bypass scoped debug+dev-host → B2 ✓
 - PCM16 path + opus-deferred flag (R2) → C6, E2 ✓
-- clientType="webui" (R1) → A1 SessionConfigure, C7 handshake ✓
+- clientType="mobile" (R1) → A0 gateway enum extension, A1 SessionConfigure, C7 handshake ✓
 - Auth client in SDK (R3) → C1 ✓
 - Design tokens as shared constants (R4) → D0 ✓
 - Logging coverage / sanitizer (security) → A3, threaded through transport/connectors/pipeline ✓
-- e2e matrices as the done-contract → text-matrix, voice-matrix; device rows flagged ✓
+- e2e matrices as the done-contract → inline Phase-1/2/3 matrices (this plan, fixed-column shape per e2e-testing rule); device rows flagged ✓
 
 **Out of scope (correctly deferred):** push plumbing (Plan 3 — new gateway `/push/register` + `PushSender`, confirmed nonexistent today), deployment doc + family store (Plan 4), rich settings panes, multi-account, opus codec, on-device STT.
 
