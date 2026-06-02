@@ -1,38 +1,13 @@
 # Android Client
 
-Native Android client for Sentient. Thin Jetpack Compose UI consumer of the shared KMP SDK (`shared/mobile-sdk`).
+Native Android client for Sentient — a thin Jetpack Compose UI over the shared KMP SDK (`shared/mobile-sdk`). Transport, session/audio state, reconnect, and logging live in the SDK, not here. STT/TTS are server-side; no on-device wake word in v1.
 
 ## MANDATORY — Read Rules First
 
-Rules live at the repo root. Load ALL of these before modifying Android source:
+Before modifying Android source, load: cross-cutting `.claude/rules/*.md`, Android UI `.claude/rules/android/*.md`, shared-SDK `.claude/rules/mobile-sdk/*.md` (this app consumes it), and mobile-cross `.claude/rules/mobile/*.md`. Claude Code auto-loads them via `paths:` frontmatter. Details on demand: `agents/docs/{android,mobile-sdk,mobile}/*-details.md`.
 
-- Cross-cutting: `.claude/rules/*.md`
-- Android UI app: `.claude/rules/android/*.md`
-- Shared KMP SDK (consumed by this app): `.claude/rules/mobile-sdk/*.md`
-- Mobile cross-platform: `.claude/rules/mobile/*.md`
-
-Details: `agents/docs/android/*-details.md`, `agents/docs/mobile-sdk/*-details.md`, `agents/docs/mobile/*-details.md`.
-
-## Stack
-
-- Language: Kotlin
-- UI: Jetpack Compose + Material3
-- DI: Hilt (NOT Koin — compile-time graph validation)
-- Transport + session/audio FSM: `shared/mobile-sdk` KMP module (Ktor OkHttp WS engine on Android). The Android app does NOT own WebSocket, reconnect, or session state — those live in the SDK.
-- Build: Gradle (Kotlin DSL + version catalog `gradle/libs.versions.toml`)
-- Push: UnifiedPush / ntfy (self-hosted on Pi; no Google / no Firebase) — Phase 4
-
-STT and TTS are server-side (gateway). No on-device wake word in v1.
+The rules own the stack and conventions (Kotlin/Compose, Hilt, Gradle catalog) — don't restate them here.
 
 ## Status
 
-**Phase 0 (Foundation) complete.** App builds, launches on emulator, and renders the SDK greeting via the shared KMP module. Agent dev-loop validated (`android` CLI + `adb logcat`). Reaches local gateway at `10.0.2.2:8888`.
-
-Later phases: P1 WS transport, P2 text chat UI, P3 voice, P4 push. See `STATUS.md` and `docs/superpowers/plans/`.
-
-## Commands
-
-    ./gradlew :android:assembleDebug   — Build debug APK
-    ./gradlew :android:assembleRelease — Build release APK
-    android run --apks=…               — Install + launch on emulator
-    adb logcat                         — Stream logs
+Phase 0 (Foundation) complete. State + roadmap: `android/STATUS.md` + `docs/superpowers/plans/`. Dev-loop commands: `qa/mobile/README.md`.
