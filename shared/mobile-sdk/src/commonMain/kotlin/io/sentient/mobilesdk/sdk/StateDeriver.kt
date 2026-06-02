@@ -5,11 +5,13 @@
 // slice here, then asks for derive() and emits the result on the single
 // StateFlow. Native UIs re-derive NOTHING — they read SdkState fields directly.
 //
-// messages: mirrors web-sdk deriveMessages — committed user/assistant/tool/
-// trigger feed items folded to ChatMessage, then the live in-flight buffer
-// appended as a streaming=true bubble when present. cutoffKind comes off the
-// assistant entry's cutoff. (The webui typewriter / cycleId-stamping is a UI
-// presentation concern, not an SDK contract — left to the native UI.)
+// messages: mirrors web-sdk deriveMessages — only committed user/assistant
+// feed items fold to ChatMessage (tool + trigger entries are DROPPED, matching
+// cycle-helpers.ts appendCommittedItems: tool calls surface via tasks, trigger
+// is Phase-2-ignored), then the live in-flight buffer is appended as a
+// streaming=true bubble when present. cutoffKind comes off the assistant
+// entry's cutoff. (The webui typewriter / cycleId-stamping is a UI presentation
+// concern, not an SDK contract — left to the native UI.)
 //
 // cognition: the cycle-driven CognitionState (THINKING/IDLE). ACTING is never
 // derived from tasks — it stays unreached, matching the C4 connector + the TS.
@@ -49,6 +51,24 @@ class StateDeriver(private val clock: Clock) {
     var connectionLost: Boolean = false
     var authExpired: Boolean = false
 
+    /**
+     * Set the committed feed, clearing the live STT [transcript] when a speech
+     * user entry whose content matches the current preview has committed.
+     *
+     * Mirrors web-sdk use-voice-client.ts: once the finalized speech entry lands
+     * in history, the live preview is stale (the utterance is now committed) and
+     * must not linger as a duplicate bubble. Channel-scoped to "speech" so a
+     * text.input commit never clears a voice preview.
+     */
+    fun applyFeed(items: List<ConversationFeedItem>) {
+        feed = items
+        if (transcript.isEmpty()) return
+        val lastSpeechUser = items.asReversed().firstOrNull {
+            it is ConversationFeedItem.User && it.channel == SPEECH_CHANNEL
+        } as ConversationFeedItem.User?
+        if (lastSpeechUser != null && lastSpeechUser.content == transcript) transcript = ""
+    }
+
     /** Build the immutable snapshot from the current slices. */
     fun derive(): SdkState = SdkState(
         status = status,
@@ -66,9 +86,12 @@ class StateDeriver(private val clock: Clock) {
 
 /**
  * Fold committed feed items + the live in-flight buffer into the chat list.
- * Mirrors web-sdk deriveMessages: committed entries first, the streaming bubble
- * last. Empty user / empty-non-cutoff assistant entries are dropped (barge-in
- * markers / pre-token placeholders that don't render), matching the TS.
+ * Mirrors web-sdk deriveMessages (cycle-helpers.ts appendCommittedItems):
+ * only User + Assistant entries render — Tool entries are dropped (surfaced via
+ * tasks / TaskStatusConnector) and Trigger entries are Phase-2-ignored. Empty
+ * user / empty-non-cutoff assistant entries are dropped too (barge-in markers /
+ * pre-token placeholders that don't render). Committed entries first, the
+ * streaming bubble last.
  */
 internal fun deriveMessages(
     feed: List<ConversationFeedItem>,
@@ -94,14 +117,13 @@ private fun committedMessage(item: ConversationFeedItem): ChatMessage? = when (i
         if (item.content.isEmpty() && item.cutoff == null) null
         else ChatMessage(ts = item.ts, role = ROLE_ASSISTANT, content = item.content, cutoffKind = item.cutoff?.kind)
 
-    is ConversationFeedItem.Tool ->
-        ChatMessage(ts = item.ts, role = ROLE_TOOL, content = item.summary)
-
-    is ConversationFeedItem.Trigger ->
-        ChatMessage(ts = item.ts, role = ROLE_TRIGGER, content = item.summary)
+    // Tool entries surface via tasks (TaskStatusConnector); trigger entries are
+    // Phase-2 sensor events. Both are DROPPED here to match cycle-helpers.ts and
+    // avoid double-surfacing tool calls in messages AND tasks.
+    is ConversationFeedItem.Tool -> null
+    is ConversationFeedItem.Trigger -> null
 }
 
+private const val SPEECH_CHANNEL = "speech"
 private const val ROLE_USER = "user"
 private const val ROLE_ASSISTANT = "assistant"
-private const val ROLE_TOOL = "tool"
-private const val ROLE_TRIGGER = "trigger"

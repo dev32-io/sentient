@@ -43,7 +43,9 @@ data class ChatMessage(
  *
  * @param status Connection FSM state (transport/SdkStatus).
  * @param messages Committed history + the live streaming bubble (deriveMessages mirror).
- * @param transcript Latest live STT preview (connector.transcript.final). Cleared on cycle end.
+ * @param transcript Latest live STT preview (connector.transcript.final). Cleared once the
+ *   matching finalized speech user entry commits to history (StateDeriver.applyFeed), mirroring
+ *   web-sdk use-voice-client.ts — the in-progress utterance is now committed so the preview is stale.
  * @param cognition Cycle-driven cognition state (THINKING/IDLE; ACTING unreached, per C4).
  * @param voiceMode OFF (text) / ACTIVE (mic). Flipped by startMic/stopMic.
  * @param prefs Current audio preferences (TTS on/off, channel).

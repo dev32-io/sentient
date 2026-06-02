@@ -1,20 +1,18 @@
 // ---------------------------------------------------------------------------
-// FakeWebSocketEngine — scriptable WebSocketEngine + WebSocketSession double.
+// FakeWebSocketEngine — scriptable WebSocketEngine that mints a fresh
+// WebSocketSession per open() (B1-faithful).
 //
-// Both interfaces are collapsed into a single class so tests configure the
-// fake once and share state between the "engine" side (what urls were opened)
-// and the "session" side (what frames were sent, what the server emitted).
+// Each open() returns a DISTINCT [Session] owning its own incoming channel, so
+// closing an OLD session (e.g. the deferred close in SdkLifecycle.teardown())
+// never clobbers the channel of a session a later open() created. This mirrors
+// a real engine where every open() yields an independent socket — the property
+// the B1 caveat depends on for the reconnect path.
 //
-// Incoming frame control:
-//   call fake.emit(WsIncoming.Text("...")) to push a server frame to the session.
-//   The flow delivers frames in emission order, buffered by a Channel.
+// Engine-side observation (openedUrls / openedAllowSelfSigned) accumulates
+// across opens. Session-side accessors (sentText / sentBinary / closed) and the
+// incoming-frame controls (emit / closeIncoming / failIncoming) delegate to the
+// CURRENT (most-recently-opened) session, so single-open tests read naturally:
 //
-// Send recording:
-//   fake.sentText   — all text frames sent by the SUT in order.
-//   fake.sentBinary — all binary frames sent by the SUT in order.
-//   fake.closed     — the (code, reason) pair if close() was called, else null.
-//
-// Usage in a test:
 //   val fake = FakeWebSocketEngine()
 //   val session = fake.open("ws://test", false)   // or let the SUT call open()
 //   fake.emit(WsIncoming.Text("{\"type\":\"auth.ok\"}"))
@@ -30,16 +28,14 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 
 /**
- * In-memory test double that implements both [WebSocketEngine] and
- * [WebSocketSession].
- *
- * The fake supports a single open session at a time. Calling [open] twice
- * resets the send records and incoming channel, emulating a fresh connection.
+ * In-memory [WebSocketEngine] test double that mints a fresh [Session] per
+ * [open]. A single session is "current" at a time; the engine-level helpers
+ * operate on it.
  */
-class FakeWebSocketEngine : WebSocketEngine, WebSocketSession {
+class FakeWebSocketEngine : WebSocketEngine {
 
     // -----------------------------------------------------------------------
-    // Engine-side observation
+    // Engine-side observation (accumulates across opens)
     // -----------------------------------------------------------------------
 
     /** All URLs passed to [open] in order, for assertion. */
@@ -48,93 +44,95 @@ class FakeWebSocketEngine : WebSocketEngine, WebSocketSession {
     /** All `allowSelfSignedDevHost` values passed to [open], in order. */
     val openedAllowSelfSigned: MutableList<Boolean> = mutableListOf()
 
-    // -----------------------------------------------------------------------
-    // Session-side observation
-    // -----------------------------------------------------------------------
-
-    /** All text frames sent by the system-under-test via [sendText]. */
-    val sentText: MutableList<String> = mutableListOf()
-
-    /** All binary frames sent by the system-under-test via [sendBinary]. */
-    val sentBinary: MutableList<ByteArray> = mutableListOf()
-
-    /**
-     * The (code, reason) pair from the most recent [close] call, or `null`
-     * if [close] has not been called on the current session.
-     */
-    var closed: Pair<Int, String>? = null
+    /** The session minted by the most recent [open], or `null` before the first. */
+    var current: Session? = null
         private set
 
     // -----------------------------------------------------------------------
-    // Incoming frame channel — test drives the server side
+    // Session-side accessors — delegate to the current session
     // -----------------------------------------------------------------------
 
-    private var _incomingChannel: Channel<WsIncoming> = Channel(Channel.UNLIMITED)
+    /** All text frames sent by the SUT on the current session. */
+    val sentText: MutableList<String> get() = current?.sentText ?: mutableListOf()
 
-    /**
-     * Pushes a frame from the "server" into the session's [incoming] flow.
-     * Suspends only if the channel buffer is full (which it won't be under
-     * [Channel.UNLIMITED]).
-     */
+    /** All binary frames sent by the SUT on the current session. */
+    val sentBinary: MutableList<ByteArray> get() = current?.sentBinary ?: mutableListOf()
+
+    /** The (code, reason) of the current session's [close], or `null`. */
+    val closed: Pair<Int, String>? get() = current?.closed
+
+    // -----------------------------------------------------------------------
+    // Incoming-frame control — drives the current session's "server" side
+    // -----------------------------------------------------------------------
+
+    /** Pushes a server frame into the current session's [incoming] flow. */
     suspend fun emit(frame: WsIncoming) {
-        _incomingChannel.send(frame)
+        current?.emit(frame)
     }
 
-    /**
-     * Signals the server closed the connection by emitting [WsIncoming.Closed]
-     * and completing the [incoming] flow.
-     */
+    /** Emits a clean [WsIncoming.Closed] on the current session and completes it. */
     suspend fun closeIncoming(code: Int = 1000, reason: String = "normal") {
-        _incomingChannel.send(WsIncoming.Closed(code, reason))
-        _incomingChannel.close()
+        current?.closeIncoming(code, reason)
     }
 
-    /**
-     * Signals a transport failure by emitting [WsIncoming.Failure] and
-     * completing the [incoming] flow.
-     */
+    /** Emits a [WsIncoming.Failure] on the current session and completes it. */
     suspend fun failIncoming(error: String) {
-        _incomingChannel.send(WsIncoming.Failure(error))
-        _incomingChannel.close()
+        current?.failIncoming(error)
     }
 
     // -----------------------------------------------------------------------
     // WebSocketEngine
     // -----------------------------------------------------------------------
 
-    /**
-     * Records the [url] and [allowSelfSignedDevHost] flag and returns `this`
-     * as the session. Resets send records and replaces the incoming channel so
-     * each open is a clean slate.
-     */
+    /** Mints + returns a fresh [Session]; records the open for assertion. */
     override suspend fun open(url: String, allowSelfSignedDevHost: Boolean): WebSocketSession {
         openedUrls += url
         openedAllowSelfSigned += allowSelfSignedDevHost
-        // Reset session state for the new connection
-        sentText.clear()
-        sentBinary.clear()
-        closed = null
-        _incomingChannel = Channel(Channel.UNLIMITED)
-        return this
+        val session = Session()
+        current = session
+        return session
     }
 
-    // -----------------------------------------------------------------------
-    // WebSocketSession
-    // -----------------------------------------------------------------------
+    /**
+     * One open WebSocket session. Owns its own incoming channel + send records,
+     * so [close] on this instance affects only this session's channel — never a
+     * later session minted by a subsequent [open].
+     */
+    class Session : WebSocketSession {
+        val sentText: MutableList<String> = mutableListOf()
+        val sentBinary: MutableList<ByteArray> = mutableListOf()
+        var closed: Pair<Int, String>? = null
+            private set
 
-    override val incoming: Flow<WsIncoming>
-        get() = _incomingChannel.receiveAsFlow()
+        private val channel: Channel<WsIncoming> = Channel(Channel.UNLIMITED)
 
-    override suspend fun sendText(text: String) {
-        sentText += text
-    }
+        suspend fun emit(frame: WsIncoming) {
+            channel.send(frame)
+        }
 
-    override suspend fun sendBinary(bytes: ByteArray) {
-        sentBinary += bytes
-    }
+        suspend fun closeIncoming(code: Int, reason: String) {
+            channel.send(WsIncoming.Closed(code, reason))
+            channel.close()
+        }
 
-    override suspend fun close(code: Int, reason: String) {
-        closed = Pair(code, reason)
-        _incomingChannel.close()
+        suspend fun failIncoming(error: String) {
+            channel.send(WsIncoming.Failure(error))
+            channel.close()
+        }
+
+        override val incoming: Flow<WsIncoming> get() = channel.receiveAsFlow()
+
+        override suspend fun sendText(text: String) {
+            sentText += text
+        }
+
+        override suspend fun sendBinary(bytes: ByteArray) {
+            sentBinary += bytes
+        }
+
+        override suspend fun close(code: Int, reason: String) {
+            closed = Pair(code, reason)
+            channel.close()
+        }
     }
 }

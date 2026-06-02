@@ -47,7 +47,7 @@ class SdkConnectors(
     val text = UserTextInputConnector(send = send)
 
     val history = ConversationHistoryConnector(
-        onUpdate = { items -> deriver.feed = items; emit() },
+        onUpdate = { items -> deriver.applyFeed(items); emit() },
     )
 
     val inflight = InFlightMessageConnector(
