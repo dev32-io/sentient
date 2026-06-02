@@ -33,6 +33,7 @@ import io.sentient.android.auth.LoginScreen
 import io.sentient.android.chat.ChatScreen
 import io.sentient.android.sdk.SdkViewModel
 import io.sentient.android.theme.SentientTheme
+import io.sentient.mobilesdk.sdk.VoiceMode
 import io.sentient.mobilesdk.transport.SdkStatus
 
 class MainActivity : ComponentActivity() {
@@ -65,7 +66,16 @@ private fun AppRoot(sdkViewModel: SdkViewModel, authViewModel: AuthViewModel) {
     ) {
         Box(Modifier.fillMaxSize()) {
             if (sdkState.status == SdkStatus.READY) {
-                ChatScreen(state = sdkState)
+                ChatScreen(
+                    state = sdkState,
+                    onSend = sdkViewModel::sendText,
+                    onMicToggle = {
+                        if (sdkState.voiceMode == VoiceMode.ACTIVE) sdkViewModel.stopMic()
+                        else sdkViewModel.startMic()
+                    },
+                    onTtsToggle = { sdkViewModel.setTtsEnabled(!sdkState.prefs.ttsEnabled) },
+                    onInterrupt = sdkViewModel::interrupt,
+                )
             } else {
                 LoginScreen(viewModel = authViewModel)
             }

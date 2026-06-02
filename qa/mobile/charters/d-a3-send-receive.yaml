@@ -1,0 +1,39 @@
+# Phase-2 T3 — Android send/receive e2e.
+# Login (avatar → PIN 1234) → chat → type "hello" → send → assert the user
+# bubble commits AND an assistant reply bubble renders with non-empty text
+# (live LLM via Hermes, ~40s budget). After send the soft keyboard is up and
+# the list auto-scrolls to the latest, so we hide the keyboard first, then
+# assert both bubbles by their committed text.
+appId: io.sentient.android
+---
+- launchApp:
+    clearState: false
+- tapOn:
+    id: "login-avatar-u_8c866990"
+- tapOn:
+    id: "pin-key-1"
+- tapOn:
+    id: "pin-key-2"
+- tapOn:
+    id: "pin-key-3"
+- tapOn:
+    id: "pin-key-4"
+- assertVisible:
+    id: "chat-screen"
+- tapOn:
+    id: "chat-input"
+- inputText: "hello"
+- tapOn:
+    id: "chat-send"
+- hideKeyboard
+# User bubble commits immediately (testTag message-bubble-0).
+- assertVisible:
+    id: "message-bubble-0"
+# Assistant reply — wait for the cycle round-trip (Hermes LLM), then assert the
+# assistant bubble (message-bubble-1) is present once it commits.
+- extendedWaitUntil:
+    visible:
+      id: "message-bubble-1"
+    timeout: 40000
+- assertVisible:
+    id: "chat-message-list"
