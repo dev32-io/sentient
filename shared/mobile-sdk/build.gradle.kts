@@ -43,6 +43,22 @@ kotlin {
         }
         androidMain.dependencies { implementation(libs.ktor.client.okhttp) }
         iosMain.dependencies { implementation(libs.ktor.client.darwin) }
+
+        // androidUnitTest is the JVM-host home for the @live round-trip harness
+        // (C8): the testDebugUnitTest JVM host can open real HTTP/WS to the local
+        // gateway via the OkHttp engine, which commonTest's MockEngine-only /
+        // network-less native targets cannot. It inherits commonTest (kotlin-test,
+        // coroutines-test, fakes) and androidMain (OkHttp engine); it adds the
+        // real OkHttp ktor engine + ContentNegotiation for the live AuthClient
+        // HttpClient. The @live tests are GATED on SENTIENT_LIVE=1 so a normal
+        // allTests / testDebugUnitTest run skips them (see LiveTextRoundTripTest).
+        val androidUnitTest by getting {
+            dependencies {
+                implementation(libs.ktor.client.okhttp)
+                implementation(libs.ktor.client.content.negotiation)
+                implementation(libs.ktor.serialization.kotlinx.json)
+            }
+        }
     }
 }
 
