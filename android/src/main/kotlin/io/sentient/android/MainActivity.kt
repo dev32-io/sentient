@@ -22,7 +22,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
@@ -36,6 +39,8 @@ import io.sentient.android.history.HistoryDrawer
 import io.sentient.android.history.HistoryViewModel
 import io.sentient.android.history.rememberHistoryDrawerState
 import io.sentient.android.sdk.SdkViewModel
+import io.sentient.android.settings.SettingsScreen
+import io.sentient.android.settings.SettingsViewModel
 import io.sentient.android.theme.SentientTheme
 import io.sentient.mobilesdk.sdk.VoiceMode
 import io.sentient.mobilesdk.transport.SdkStatus
@@ -51,6 +56,9 @@ class MainActivity : ComponentActivity() {
     private val historyViewModel: HistoryViewModel by viewModels {
         viewModelFactory { initializer { HistoryViewModel() } }
     }
+    private val settingsViewModel: SettingsViewModel by viewModels {
+        viewModelFactory { initializer { SettingsViewModel() } }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -61,6 +69,7 @@ class MainActivity : ComponentActivity() {
                     sdkViewModel = sdkViewModel,
                     authViewModel = authViewModel,
                     historyViewModel = historyViewModel,
+                    settingsViewModel = settingsViewModel,
                 )
             }
         }
@@ -73,10 +82,17 @@ private fun AppRoot(
     sdkViewModel: SdkViewModel,
     authViewModel: AuthViewModel,
     historyViewModel: HistoryViewModel,
+    settingsViewModel: SettingsViewModel,
 ) {
     val sdkState by sdkViewModel.state.collectAsStateWithLifecycle()
     val drawerState = rememberHistoryDrawerState()
     val scope = rememberCoroutineScope()
+    // Settings is an overlay within the READY state, not a separate top-level
+    // destination — login-vs-chat stays SDK-derived. rememberSaveable survives
+    // config change + process death (mobile-lifecycle rule). The READY guard
+    // ensures a logout (status leaves READY) implicitly drops the overlay, so a
+    // re-login lands on chat, not a stale settings screen.
+    var showSettings by rememberSaveable { mutableStateOf(false) }
     Surface(
         Modifier
             .fillMaxSize()
@@ -84,22 +100,33 @@ private fun AppRoot(
     ) {
         Box(Modifier.fillMaxSize()) {
             if (sdkState.status == SdkStatus.READY) {
-                HistoryDrawer(
-                    viewModel = historyViewModel,
-                    drawerState = drawerState,
-                    nowMs = System.currentTimeMillis(),
-                ) {
-                    ChatScreen(
-                        state = sdkState,
-                        onSend = sdkViewModel::sendText,
-                        onMicToggle = {
-                            if (sdkState.voiceMode == VoiceMode.ACTIVE) sdkViewModel.stopMic()
-                            else sdkViewModel.startMic()
+                if (showSettings) {
+                    SettingsScreen(
+                        onLogout = {
+                            settingsViewModel.logout()
+                            showSettings = false
                         },
-                        onTtsToggle = { sdkViewModel.setTtsEnabled(!sdkState.prefs.ttsEnabled) },
-                        onInterrupt = sdkViewModel::interrupt,
-                        onOpenHistory = { scope.launch { drawerState.open() } },
+                        onBack = { showSettings = false },
                     )
+                } else {
+                    HistoryDrawer(
+                        viewModel = historyViewModel,
+                        drawerState = drawerState,
+                        nowMs = System.currentTimeMillis(),
+                    ) {
+                        ChatScreen(
+                            state = sdkState,
+                            onSend = sdkViewModel::sendText,
+                            onMicToggle = {
+                                if (sdkState.voiceMode == VoiceMode.ACTIVE) sdkViewModel.stopMic()
+                                else sdkViewModel.startMic()
+                            },
+                            onTtsToggle = { sdkViewModel.setTtsEnabled(!sdkState.prefs.ttsEnabled) },
+                            onInterrupt = sdkViewModel::interrupt,
+                            onOpenHistory = { scope.launch { drawerState.open() } },
+                            onOpenSettings = { showSettings = true },
+                        )
+                    }
                 }
             } else {
                 LoginScreen(viewModel = authViewModel)

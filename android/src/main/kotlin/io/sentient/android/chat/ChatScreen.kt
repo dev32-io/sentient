@@ -51,6 +51,7 @@ fun ChatScreen(
     onTtsToggle: () -> Unit,
     onInterrupt: () -> Unit,
     onOpenHistory: () -> Unit,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val canInterrupt = state.cognition != CognitionState.IDLE || state.isSpeaking
@@ -60,7 +61,7 @@ fun ChatScreen(
             .safeDrawingPadding()
             .testTag("chat-screen"),
     ) {
-        TitleBar(onOpenHistory = onOpenHistory)
+        TitleBar(onOpenHistory = onOpenHistory, onOpenSettings = onOpenSettings)
         MessageList(
             messages = state.messages,
             modifier = Modifier
@@ -81,7 +82,7 @@ fun ChatScreen(
 }
 
 @Composable
-private fun TitleBar(onOpenHistory: () -> Unit) {
+private fun TitleBar(onOpenHistory: () -> Unit, onOpenSettings: () -> Unit) {
     val tokens = LocalTokens.current
     Row(
         modifier = Modifier
@@ -99,5 +100,9 @@ private fun TitleBar(onOpenHistory: () -> Unit) {
             fontSize = tokens.type.lg,
             fontWeight = FontWeight.SemiBold,
         )
+        Row(modifier = Modifier.weight(1f)) {}
+        TextButton(onClick = onOpenSettings, modifier = Modifier.testTag("settings-open")) {
+            Text("⚙", color = Color(Colors.ink2), fontSize = tokens.type.lg)
+        }
     }
 }

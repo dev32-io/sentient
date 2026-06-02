@@ -280,3 +280,17 @@ After upgrading across the v0.1.0 → v0.2.0 install-state schema bump:
 6. `assertVisible id: chat-message-list`.
 **Expected user-visible:** User bubble at index 0; assistant bubble at index 1 with non-empty text. **Expected log trail:** `text.input` frame out on transport; `conversation.entry` event received and rendered.
 **Platform notes:** Maestro YAML written to `/tmp/send-receive-android.yaml` (appId `io.sentient.android`) and `/tmp/send-receive-ios.yaml` (appId `io.sentient.ios`) at run time. Same step body; only `appId` differs. iOS simulator does not require `hideKeyboard` between send and assert.
+
+### T6 — Mobile settings logout (version + clear-token + disconnect → login)
+**Scenario:** From chat, open Settings, confirm the app-version string, tap Log out, and land back on the login screen — proving the token was cleared + the WS disconnected. Relaunch (without clearing app data) and confirm login again, proving the clear was persistent.
+**Why added:** D-A5 phase gate. Logout is the inverse of login (`tokenStore.save → sdk.connect`); logout = `sdk.disconnect()` then `tokenStore.clear()`. Regression guard: a future change that disconnects but forgets to clear the token would silently auto-resume on relaunch — only the relaunch leg catches it.
+**testTags used:** `settings-open` (chat top bar gear), `settings-screen`, `settings-version`, `settings-logout`, `settings-back`, plus `login-avatar-<userId>` for the return assertion.
+**Steps:**
+1. Pre-state: logged in, `SdkState = READY`, chat showing (complete T1 first).
+2. `tapOn id: settings-open` → `assertVisible id: settings-screen`.
+3. `assertVisible id: settings-version` AND assert its text is a non-empty version string (`<name> (<code>)`, e.g. `0.0.1 (1)`).
+4. `tapOn id: settings-logout`.
+5. `assertVisible id: login-avatar-<userId>` (avatar grid OR PIN pad — both are the login screen; see platform note) AND `assertNotVisible id: chat-input`.
+6. Relaunch: `am force-stop` then `am start` (NEVER `pm clear` — that clears the token artificially and voids the proof). `assertVisible id: login-avatar-<userId>`; gateway shows NO new `attach` / `session.ready` (no auto-resume).
+**Expected user-visible:** Settings shows version + Log out; after logout the login screen returns; relaunch returns to login. **Expected log trail (gateway):** on logout — `[ws] client-disconnected`, `[ws] session-cleanup`, `[hermes-adapter-client:wire-bootstrap] ws.close code=1000`, `[person-session] detach attachmentCount=0`, `[gateway:session-router] release remainingBindings=0`; on relaunch — silence (no attach).
+**Platform notes:** Drive method on this stack was the **`android` CLI + adb** (Maestro not installed): `android layout --device=<serial> --pretty` yields each element's `center` coord → `adb shell input tap <x> <y>`; assertions are `android layout | grep <resource-id>`; screenshots via `adb exec-out screencap -p`. Same flow body for iOS via `xcrun simctl` + `.accessibilityIdentifier`. **Logout return state:** after logout *within the same process* the login screen re-renders in the PIN phase (Android `AuthViewModel` retains `selectedUser`), so step 5's `login-avatar` assertion may need a preceding `settings-back`-style back tap OR is satisfied by the PIN pad (`pin-key-1`); the avatar grid reliably reappears on the *relaunch* leg (fresh ViewModel ⇒ PICK_USER). Gateway logs on the macOS deploy write to `~/.sentient/gateway/logs/YYYY-MM-DD.log` (UTC), NOT `docker logs` stdout.
