@@ -238,3 +238,45 @@ After upgrading across the v0.1.0 → v0.2.0 install-state schema bump:
 2. Restart gateway. Read the file again.
 3. Expect: `schema_version: "0.2.0"`, `wizard_cursor: "admin"`.
 4. Repeat with `bootstrap_complete: true`. Expect: `wizard_cursor: "finish"`.
+
+## Mobile (Android emulator + iOS simulator via Maestro)
+
+**Tool:** Maestro CLI against a running Android emulator (`avd`) or iOS simulator (`xcrun simctl`).
+**When:** After any change to `android/`, `ios/`, or `shared/mobile-sdk/` that touches auth, chat UI, or WS transport — before merging.
+**How:** Write the Maestro YAML to `/tmp/<flow>.yaml` at run time (never commit it). Execute with `maestro test /tmp/<flow>.yaml`. Evidence screenshots → `qa/mobile/screens/` (gitignored).
+**testTags used:** `login-avatar-<userId>`, `pin-key-<n>`, `chat-screen`, `chat-input`, `chat-send`, `message-bubble-<index>`, `chat-message-list`, `login-error`.
+
+### T1 — Mobile login happy path
+**Scenario:** Avatar tap + correct 4-digit PIN lands the user on the chat screen.
+**Why added:** D-A2 phase gate; regression guard for `AuthViewModel` → `SdkStore` → `SentientSdk.login()` path on both platforms.
+**Steps:**
+1. Pre-state: gateway running, users seeded, app at login screen (logged out).
+2. `tapOn id: login-avatar-<userId>` (the target user's avatar).
+3. `tapOn id: pin-key-1`, `pin-key-2`, `pin-key-3`, `pin-key-4` (valid PIN).
+4. `assertVisible id: chat-screen`.
+**Expected user-visible:** Chat screen renders. **Expected log trail:** `auth.ok`; `session.ready` in gateway logs.
+**Platform notes:** Same testTag IDs on both Android (Compose `Modifier.testTag`) and iOS (SwiftUI `.accessibilityIdentifier`). Write one `/tmp/login-happy.yaml` per platform, identical flow body.
+
+### T2 — Mobile login bad PIN
+**Scenario:** Wrong PIN is rejected; error indicator shown; user stays on login screen.
+**Why added:** D-A2 phase gate; validates that `login-error` testTag renders and no token is persisted on credential failure.
+**Steps:**
+1. Pre-state: logged out.
+2. `tapOn id: login-avatar-<userId>`.
+3. Enter four wrong digits via `pin-key-*`.
+4. `assertVisible id: login-error`.
+5. `assertNotVisible id: chat-screen`.
+**Expected user-visible:** Error state on the PIN pad; login screen stays. **Expected log trail:** one WARN `invalid-credentials` in gateway; no auth token written.
+
+### T3 — Mobile send/receive (login → chat → assistant reply)
+**Scenario:** After login, the user types a message, sends it, and receives an LLM reply — both committed to the message list.
+**Why added:** D-A3 phase gate; end-to-end contract across login → WS `READY` → `ClientMessage.TextInput` → Hermes round-trip → `ConversationEntry` rendering. Builds on T1.
+**Steps:**
+1. Pre-state: logged in, `SdkState = READY` (complete T1 first, or launch into a pre-authenticated session).
+2. `tapOn id: chat-input` → `inputText: "hello"` → `tapOn id: chat-send`.
+3. `hideKeyboard` (soft keyboard obscures list on Android).
+4. `assertVisible id: message-bubble-0` (user bubble commits immediately).
+5. `extendedWaitUntil id: message-bubble-1, timeout: 40000` (LLM round-trip via Hermes, ~40 s budget).
+6. `assertVisible id: chat-message-list`.
+**Expected user-visible:** User bubble at index 0; assistant bubble at index 1 with non-empty text. **Expected log trail:** `text.input` frame out on transport; `conversation.entry` event received and rendered.
+**Platform notes:** Maestro YAML written to `/tmp/send-receive-android.yaml` (appId `io.sentient.android`) and `/tmp/send-receive-ios.yaml` (appId `io.sentient.ios`) at run time. Same step body; only `appId` differs. iOS simulator does not require `hideKeyboard` between send and assert.
