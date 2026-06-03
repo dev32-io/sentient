@@ -57,6 +57,19 @@ class SentientSdk(
     private val resume = SessionResume(bundle.sessionIdStore, bundle.clock)
     private val idle = createIdleDetector(IdleDetectorConfig(idleThresholdMs = idleThresholdMs))
 
+    // Voice pipeline (E3). Built BEFORE connectors so the downlink hooks exist
+    // when the connector set reads them; the pipeline reaches connectors.audioInput
+    // via a lazy lambda to break the construction cycle. See SdkAudio.
+    private val audio: SdkAudio = SdkAudio(
+        audioConfig = config.audio,
+        capture = bundle.capture,
+        playback = bundle.playback,
+        audioInput = { connectors.audioInput },
+        clock = bundle.clock,
+        scope = scope,
+        onStateChanged = ::onAudioStateChanged,
+    )
+
     private val connectors = SdkConnectors(
         deriver = deriver,
         emit = ::emit,
@@ -64,9 +77,16 @@ class SentientSdk(
         sendBinary = ::sendBinary,
         newId = newId,
         sessionsTimeoutMs = sessionsTimeoutMs,
+        audioHooks = { audio.downlinkHooks },
     )
 
     private val router = MessageRouter(connectors.all, audioConnector = connectors.audioOutput)
+
+    private fun onAudioStateChanged(isSpeaking: Boolean, fsmState: AudioState) {
+        deriver.isSpeaking = isSpeaking
+        deriver.audioState = fsmState
+        emit()
+    }
 
     private val reconnectController = ReconnectController(
         config = config.reconnect,
@@ -125,6 +145,7 @@ class SentientSdk(
         consumerDisconnected = true
         reconnectController.cancel()
         connectors.sessions.reset()
+        audio.release()
         lifecycle.teardown()
         setStatus(SdkStatus.DISCONNECTED)
     }
@@ -142,20 +163,29 @@ class SentientSdk(
         sendControl(ClientMessage.Interrupt)
     }
 
-    /** P-text: flip voiceMode + send audio.start (full capture pipeline is E3). */
+    /**
+     * Start the voice uplink (E3): flip voiceMode ACTIVE, send audio.start, run the
+     * capture→EchoGate→pre-roll→uplink pipeline on the scope. Mirrors webui
+     * startVoiceMode — stream continuously, gate out echo, let the server VAD.
+     */
     fun startMic() {
         log.info("startMic", mapOf("captureWired" to (bundle.capture != null)))
         markInteraction()
         deriver.voiceMode = VoiceMode.ACTIVE
         connectors.audioInput.startStreaming()
+        audio.startUplink()
         emit()
     }
 
-    /** P-text: flip voiceMode + send audio.end. */
+    /**
+     * Stop the voice uplink (E3): send audio.end, stop the pipeline (cancel collect
+     * + capture.stop + reset onset; FSM → INACTIVE), flip voiceMode OFF.
+     */
     fun stopMic() {
         log.info("stopMic")
         deriver.voiceMode = VoiceMode.OFF
         connectors.audioInput.stopStreaming()
+        audio.stopUplink()
         emit()
     }
 

@@ -51,6 +51,11 @@ data class ChatMessage(
  * @param prefs Current audio preferences (TTS on/off, channel).
  * @param tasks Live task list (TaskStatusConnector.list(), startedAtMs ascending).
  * @param isSpeaking True between assistant audio start and done/playback-stop.
+ * @param audioState The voice-pipeline FSM state (E3) — the richer voice-status
+ *   surface both native UIs can render directly (listening / user-speaking /
+ *   processing / assistant-speaking / interrupting / inactive). Driven by the
+ *   AudioPipeline's AudioFsm; mirrors voice-status.ts's listening/processing/
+ *   speaking plus the local user-speaking/interrupting transients.
  * @param connectionLost True while the reconnect loop is recovering an unexpected drop.
  * @param authExpired True on terminal auth failure (token won't recover via retry).
  */
@@ -63,6 +68,7 @@ data class SdkState(
     val prefs: AudioPreferences = AudioPreferences.DEFAULT,
     val tasks: List<TaskSnapshotItem> = emptyList(),
     val isSpeaking: Boolean = false,
+    val audioState: AudioState = AudioState.INACTIVE,
     val connectionLost: Boolean = false,
     val authExpired: Boolean = false,
 )

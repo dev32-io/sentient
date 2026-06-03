@@ -27,6 +27,25 @@ import io.sentient.mobilesdk.connectors.UserTextInputConnector
 import io.sentient.mobilesdk.protocol.ClientMessage
 
 /**
+ * Audio downlink hooks the orchestrator routes to the AudioPipeline (E3). The
+ * AssistantAudioResponseConnector's wire FSM (receiving / cancel latch) stays
+ * here; these callbacks add the pipeline side effects (playback enqueue/clear +
+ * echoGate lifecycle + FSM). Defaults are no-ops so the text-only path (no
+ * pipeline) compiles unchanged.
+ *
+ * @param onAudioStart connector.audio.start → pipeline.onAudioStart.
+ * @param onAudioFrame binary downlink → pipeline.onAudioFrame.
+ * @param onAudioDone connector.audio.done → pipeline.onAudioDone.
+ * @param onPlaybackStop playback.stop → pipeline.onPlaybackStop.
+ */
+class AudioDownlinkHooks(
+    val onAudioStart: (cycleId: String) -> Unit = {},
+    val onAudioFrame: (frame: ByteArray, cycleId: String) -> Unit = { _, _ -> },
+    val onAudioDone: (cycleId: String) -> Unit = {},
+    val onPlaybackStop: (reason: String, cycleId: String) -> Unit = { _, _ -> },
+)
+
+/**
  * Constructs and owns the connector set, each wired to fold into [deriver].
  *
  * @param deriver The single state slice-holder; callbacks mutate it then [emit].
@@ -35,6 +54,9 @@ import io.sentient.mobilesdk.protocol.ClientMessage
  * @param sendBinary Send a raw binary frame (PCM uplink) over the transport.
  * @param newId Deterministic request-id generator for sessions requests.
  * @param sessionsTimeoutMs Sessions request/broadcast timeout (injected for tests).
+ * @param audioHooks Downlink side-effect hooks wired to the AudioPipeline (E3).
+ *   The orchestrator sets these AFTER it has built the pipeline; until then the
+ *   no-op defaults keep the connector's isSpeaking fold the only effect.
  */
 class SdkConnectors(
     private val deriver: StateDeriver,
@@ -43,6 +65,7 @@ class SdkConnectors(
     sendBinary: (ByteArray) -> Unit,
     newId: () -> String,
     sessionsTimeoutMs: Long,
+    private val audioHooks: () -> AudioDownlinkHooks = { AudioDownlinkHooks() },
 ) {
     val text = UserTextInputConnector(send = send)
 
@@ -80,9 +103,10 @@ class SdkConnectors(
     )
 
     val audioOutput = AssistantAudioResponseConnector(
-        onAudioStart = { _ -> deriver.isSpeaking = true; emit() },
-        onAudioDone = { _ -> deriver.isSpeaking = false; emit() },
-        onPlaybackStop = { _, _ -> deriver.isSpeaking = false; emit() },
+        onAudioStart = { cycleId -> audioHooks().onAudioStart(cycleId) },
+        onAudioFrame = { frame, cycleId -> audioHooks().onAudioFrame(frame, cycleId) },
+        onAudioDone = { cycleId -> audioHooks().onAudioDone(cycleId) },
+        onPlaybackStop = { reason, cycleId -> audioHooks().onPlaybackStop(reason, cycleId) },
     )
 
     /** All connectors, broadcast targets for the MessageRouter. */
