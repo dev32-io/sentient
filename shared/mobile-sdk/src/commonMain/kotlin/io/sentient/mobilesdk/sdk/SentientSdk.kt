@@ -1,16 +1,8 @@
 // ---------------------------------------------------------------------------
 // SentientSdk — THE orchestrator. Wires transport + connectors + handshake +
 // reconnect + idle into ONE observable StateFlow<SdkState> (R5).
-//
-// Mirrors web-sdk sentient-sdk.ts: owns the WS lifecycle (delegated to
-// SdkLifecycle), intercepts lifecycle/handshake frames before the MessageRouter
-// broadcast, drives the reconnect loop on unexpected close, and disconnects on
-// idle. Both native UIs (Phase 2) consume only [state] and re-derive nothing.
-//
-// Split for the clean-code budget: StateDeriver (the fold), Handshake (the
-// auth→ready FSM + frame interception), SdkConnectors (connector wiring),
-// SdkLifecycle (WS lifecycle + pump + signal + idle loops). This file owns the
-// public surface + the single-StateFlow state plumbing.
+// Mirrors web-sdk sentient-sdk.ts. Split across: StateDeriver, Handshake,
+// SdkConnectors, SdkLifecycle. This file owns the public surface + state plumbing.
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.sdk
 
