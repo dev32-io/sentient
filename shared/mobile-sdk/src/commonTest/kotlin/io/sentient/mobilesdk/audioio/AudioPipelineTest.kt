@@ -227,6 +227,67 @@ class AudioPipelineTest {
         assertEquals(AudioState.INTERRUPTING, states.last(), "FSM → interrupting on playback.stop")
     }
 
+    // ── BARGE-IN: passive (mic-onset over TTS) — distinct from UI-stop ────────────
+    //
+    // The gateway detects barge-in SERVER-SIDE: the client keeps streaming mic
+    // frames during TTS; a loud frame clears the EchoGate's elevated playback
+    // threshold and reaches the wire, where STT's turn_started fires the gateway
+    // bargeInController (cancel cycle + TTS, KEEP tasks). The client sends NO
+    // explicit barge-in frame — and crucially NOT the `interrupt` ClientMessage,
+    // which is the DISTINCT UI-stop path that routes task-cancel to Hermes.
+    // Evidence: gateway/src/adapters/user-audio-input-adapter.ts (onSpeechOnset →
+    // bargeInController.trigger) + ws-handlers.ts case "interrupt" →
+    // interruptController.trigger; webui use-voice-client.ts sends `interrupt`
+    // only from the Stop button, never on mic-onset.
+
+    @Test
+    fun bargeIn_loud_frame_over_tts_forwards_to_uplink_and_routes_to_interrupting() = runTest {
+        // Loud barge-in frame must (a) pass the EchoGate's elevated playback
+        // threshold so it reaches the uplink connector (the gateway detects it),
+        // and (b) drive the FSM ASSISTANT_SPEAKING → INTERRUPTING. amp 0.305
+        // (≈10000) clears playback threshold 0.2; a leading silent frame (0.0)
+        // is rejected so the loud frame is a reject→accept onset (which flushes
+        // the pre-roll head + the loud frame, the documented onset padding).
+        val states = mutableListOf<AudioState>()
+        val gate = EchoGate(echoCfg)
+        val capture = FakeCapture(listOf(frame(0.0f), frame(0.305f)))
+        // Voice-mode barge-in: mic uplink already active (FSM ASSISTANT_SPEAKING
+        // once TTS started). Seed the FSM there, mirroring the live sequence
+        // start()→Activate→…→onAudioStart→ASSISTANT_SPEAKING.
+        val (p, sink) = pipeline(
+            capture, FakePlayback(), this,
+            echoGate = gate, fsm = AudioFsm(AudioState.ASSISTANT_SPEAKING),
+            onStateChanged = { _, s -> states += s },
+        )
+        // TTS is playing: audio.start raises the echo threshold + isSpeaking true.
+        p.onAudioStart("cycle-7")
+        p.start()
+        advanceUntilIdle()
+        // Passive barge-in: the loud frame reached the uplink (server-detected).
+        // The onset flushes the pre-roll (leading silent frame) + the loud frame.
+        assertTrue(sink.binary.isNotEmpty(), "loud barge-in frame forwarded to uplink")
+        assertEquals(AudioState.INTERRUPTING, states.last(), "barge-in → FSM interrupting")
+    }
+
+    @Test
+    fun bargeIn_does_not_send_interrupt_control_message() = runTest {
+        // The DISTINCT-from-UI-stop invariant: barge-in is passive. The pipeline
+        // must NEVER emit the `interrupt` ClientMessage on the mic-onset path —
+        // that frame is reserved for the explicit UI-stop (sdk.interrupt()), which
+        // the gateway routes to task-cancel. Sending it on barge-in would wrongly
+        // cancel the user's running tasks.
+        val gate = EchoGate(echoCfg)
+        val capture = FakeCapture(listOf(frame(0.061f), frame(0.305f)))
+        val (p, sink) = pipeline(capture, FakePlayback(), this, echoGate = gate)
+        p.onAudioStart("cycle-7")
+        p.start()
+        advanceUntilIdle()
+        assertTrue(
+            sink.sent.none { it is ClientMessage.Interrupt },
+            "barge-in must NOT send the task-cancelling interrupt frame: ${sink.sent}",
+        )
+    }
+
     @Test
     fun text_path_audio_marks_speaking_even_with_fsm_inactive() = runTest {
         // TEXT path: voiceMode OFF → FSM stays INACTIVE, but TTS still plays so

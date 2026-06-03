@@ -110,6 +110,11 @@ class AudioPipeline(
     // mirroring webui's isAudioPlaying. The FSM drives the richer voice-mode display.
     private var isSpeaking = false
 
+    // cycleId of the TTS stream currently playing (set on audio.start, cleared on
+    // done / playback.stop). Carried into the barge-in log so a mic-onset-over-TTS
+    // is traceable to the cycle it cut. "" when no TTS is active.
+    private var activeCycleId = ""
+
     // ── Uplink ────────────────────────────────────────────────────────────────
 
     /**
@@ -161,7 +166,19 @@ class AudioPipeline(
         val forward = ring.push(frame, accepted)
         if (onset) {
             rejectCount = 0
-            transition(AudioInput.MicOnset)
+            // A mic-onset WHILE TTS plays is a barge-in: the loud frame cleared
+            // the EchoGate's elevated playback threshold. This is PASSIVE — the
+            // frame keeps streaming to the gateway, whose STT turn_started fires
+            // the server-side bargeInController (cancel cycle + TTS, KEEP tasks).
+            // The client sends NO `interrupt` frame here (that is the DISTINCT
+            // UI-stop path that routes task-cancel). Log it for traceability.
+            if (isSpeaking) {
+                log.info(
+                    "barge-in",
+                    mapOf("trigger" to "mic-onset-while-speaking", "cycleId" to activeCycleId),
+                )
+            }
+            transition(AudioInput.MicOnset, activeCycleId)
         }
         val connector = audioInput()
         for (out in forward) connector.sendAudioFrame(out)
@@ -194,6 +211,7 @@ class AudioPipeline(
             scope.launch { playback.start(outputSampleRate) }
         }
         isSpeaking = true
+        activeCycleId = cycleId
         transition(AudioInput.AudioStart, cycleId)
     }
 
@@ -208,6 +226,7 @@ class AudioPipeline(
         log.info("downlink-done", mapOf("cycleId" to cycleId))
         echoGate.onPlaybackDrain(cycleId, clock.nowMs())
         isSpeaking = false
+        activeCycleId = ""
         transition(AudioInput.AudioDone, cycleId)
     }
 
@@ -217,6 +236,7 @@ class AudioPipeline(
         echoGate.onPlaybackCancel(cycleId)
         playback?.clear()
         isSpeaking = false
+        activeCycleId = ""
         transition(AudioInput.Interrupt, cycleId)
     }
 
