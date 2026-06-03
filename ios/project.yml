@@ -13,6 +13,8 @@ targets:
       properties:
         UILaunchScreen: {}
         CFBundleDisplayName: Sentient
+        # Mic capture for voice conversations (E1 AVAudioEngine). Runtime prompt handled by the app (E5/E6).
+        NSMicrophoneUsageDescription: Sentient uses the microphone for voice conversations.
         # Debug-scoped ATS exception for localhost (later WSS dev). No network call in P0.
         NSAppTransportSecurity:
           NSExceptionDomains:
