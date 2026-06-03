@@ -14,10 +14,20 @@
 // owns only the draft text (local UI state); everything else is read from
 // SdkState and dispatched up through the callbacks.
 //
-// testTags: chat-input, chat-send, chat-interrupt, chat-tts-toggle.
+// Mic button (E5): tapping it gates on the RECORD_AUDIO runtime permission. If
+// already granted → toggle voice immediately; otherwise launch the system
+// prompt and toggle on grant; on denial show a one-shot inline notice and do
+// NOT start (audio rule: graceful mic-denial fallback). When voiceMode ACTIVE
+// the mic button wears the accent "mic-on" styling.
+//
+// testTags: chat-input, chat-send, chat-interrupt, chat-tts-toggle, chat-mic.
 // ---------------------------------------------------------------------------
 package io.sentient.android.chat
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -28,6 +38,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -44,15 +55,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import io.sentient.android.theme.LocalTokens
 import io.sentient.mobilesdk.design.Colors
+import io.sentient.mobilesdk.log.createLogger
 
 private val COMPOSER_RADIUS = 14.dp
 private val BUTTON_SIZE = 40.dp
+private const val MIC_DENIED_NOTICE = "Microphone permission is needed for voice."
+private val composerLog = createLogger("android", "composer")
 
 /**
  * Stateless composer. The single mutation entry is the [onSend] callback; mic /
@@ -76,14 +93,46 @@ fun Composer(
     modifier: Modifier = Modifier,
 ) {
     val tokens = LocalTokens.current
+    val context = LocalContext.current
     var draft by remember { mutableStateOf("") }
+    var micDenied by remember { mutableStateOf(false) }
     val sendEnabled = draft.trim().isNotEmpty() && canSend
+
+    // RECORD_AUDIO runtime gate. On grant → toggle; on denial → inline notice,
+    // do not start. Already-active mic stops without a permission check.
+    val micLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        composerLog.info("micPermissionResult", mapOf("granted" to granted))
+        if (granted) {
+            micDenied = false
+            onMicToggle()
+        } else {
+            micDenied = true
+        }
+    }
 
     fun submit() {
         val trimmed = draft.trim()
         if (trimmed.isEmpty() || !canSend) return
         onSend(trimmed)
         draft = ""
+    }
+
+    fun onMicTap() {
+        if (micActive) {
+            onMicToggle()
+            return
+        }
+        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        composerLog.info("micTap", mapOf("granted" to granted))
+        if (granted) {
+            micDenied = false
+            onMicToggle()
+        } else {
+            micLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
     }
 
     Column(
@@ -95,6 +144,14 @@ fun Composer(
             .padding(tokens.space.md),
         verticalArrangement = Arrangement.spacedBy(tokens.space.sm),
     ) {
+        if (micDenied) {
+            Text(
+                MIC_DENIED_NOTICE,
+                color = Color(Colors.stop),
+                fontSize = tokens.type.sm,
+                modifier = Modifier.testTag("mic-denied-notice"),
+            )
+        }
         DraftField(draft = draft, onChange = { draft = it }, onSubmit = { submit() })
         ButtonRow(
             sendEnabled = sendEnabled,
@@ -102,7 +159,7 @@ fun Composer(
             micActive = micActive,
             canInterrupt = canInterrupt,
             onSend = { submit() },
-            onMicToggle = onMicToggle,
+            onMicTap = { onMicTap() },
             onTtsToggle = onTtsToggle,
             onInterrupt = onInterrupt,
         )
@@ -147,7 +204,7 @@ private fun ButtonRow(
     micActive: Boolean,
     canInterrupt: Boolean,
     onSend: () -> Unit,
-    onMicToggle: () -> Unit,
+    onMicTap: () -> Unit,
     onTtsToggle: () -> Unit,
     onInterrupt: () -> Unit,
 ) {
@@ -157,7 +214,7 @@ private fun ButtonRow(
         horizontalArrangement = Arrangement.spacedBy(tokens.space.sm),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        GlyphButton(glyph = if (micActive) "●" else "🎙", onClick = onMicToggle)
+        MicButton(active = micActive, onClick = onMicTap)
         GlyphButton(
             glyph = if (ttsEnabled) "🔊" else "🔇",
             onClick = onTtsToggle,
@@ -173,6 +230,20 @@ private fun ButtonRow(
             )
         }
         SendButton(enabled = sendEnabled, onClick = onSend)
+    }
+}
+
+/** Mic toggle. [active] (voiceMode ACTIVE) wears the accent "mic-on" pill styling. */
+@Composable
+private fun MicButton(active: Boolean, onClick: () -> Unit) {
+    val base = Modifier.size(BUTTON_SIZE).testTag("chat-mic")
+    val styled = if (active) {
+        base.clip(CircleShape).background(Color(Colors.accent))
+    } else {
+        base
+    }
+    TextButton(onClick = onClick, modifier = styled) {
+        Text(if (active) "●" else "🎙", color = if (active) Color(Colors.bg) else Color(Colors.ink2))
     }
 }
 

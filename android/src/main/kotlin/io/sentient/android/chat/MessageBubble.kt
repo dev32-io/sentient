@@ -53,6 +53,7 @@ private const val BUBBLE_TAG_PREFIX = "message-bubble-"
 fun MessageBubble(
     message: ChatMessage,
     index: Int,
+    avatarMode: MarkMode = MarkMode.IDLE,
     modifier: Modifier = Modifier,
 ) {
     val isUser = message.role == "user"
@@ -64,17 +65,17 @@ fun MessageBubble(
     ) {
         if (isUser) {
             BubbleBody(message = message, isUser = true)
-            BubbleAvatar(message = message)
+            BubbleAvatar(message = message, avatarMode = avatarMode)
         } else {
-            BubbleAvatar(message = message)
+            BubbleAvatar(message = message, avatarMode = avatarMode)
             BubbleBody(message = message, isUser = false)
         }
     }
 }
 
-/** Assistant → SentientMark; user → tinted initial circle. */
+/** Assistant → SentientMark (animated for the live bubble); user → tinted initial circle. */
 @Composable
-private fun BubbleAvatar(message: ChatMessage) {
+private fun BubbleAvatar(message: ChatMessage, avatarMode: MarkMode) {
     val tokens = LocalTokens.current
     val gap = tokens.space.md
     if (message.role == "user") {
@@ -86,7 +87,7 @@ private fun BubbleAvatar(message: ChatMessage) {
                 .background(Color(Colors.sageSoft)),
         )
     } else {
-        SentientMark(modifier = Modifier.padding(end = gap), size = AVATAR_SIZE)
+        SentientMark(modifier = Modifier.padding(end = gap), size = AVATAR_SIZE, mode = avatarMode)
     }
 }
 

@@ -38,6 +38,7 @@ private const val PLACEHOLDER = "Start a conversation…"
 @Composable
 fun MessageList(
     messages: List<ChatMessage>,
+    activeMarkMode: MarkMode = MarkMode.IDLE,
     modifier: Modifier = Modifier,
 ) {
     if (messages.isEmpty()) {
@@ -66,7 +67,16 @@ fun MessageList(
         verticalArrangement = Arrangement.spacedBy(tokens.space.gapMsg),
     ) {
         itemsIndexed(messages, key = { i, m -> "${m.ts}-$i" }) { i, m ->
-            MessageBubble(message = m, index = i, modifier = Modifier.fillMaxWidth())
+            // The live (streaming) assistant bubble's avatar animates with the
+            // voice/cognition state; committed bubbles are static (IDLE). Mirrors
+            // the webui activeCycleMode binding (only the in-flight cycle's mark).
+            val avatarMode = if (m.streaming && m.role == "assistant") activeMarkMode else MarkMode.IDLE
+            MessageBubble(
+                message = m,
+                index = i,
+                avatarMode = avatarMode,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 }
