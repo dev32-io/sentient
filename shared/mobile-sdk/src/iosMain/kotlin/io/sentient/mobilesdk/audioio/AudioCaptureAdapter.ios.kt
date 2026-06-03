@@ -1,13 +1,15 @@
 // ---------------------------------------------------------------------------
 // AudioCaptureAdapter.ios.kt — AVAudioEngine-backed mic capture (iOS).
 //
-// Uses the AVAudioEngine input node with voice-processing IO enabled
-// (setVoiceProcessingEnabled(true)) for platform AEC + noise suppression — the
-// iOS analogue of Android's VOICE_COMMUNICATION source. The AVAudioSession is
-// configured .playAndRecord / .voiceChat (the AEC-friendly mode). An input tap
-// hands float buffers at the hardware rate (often 48k); Pcm16Converter resamples
-// each to 16k mono PCM16 LE, which is pushed into a buffered Channel that
-// frames() exposes as a cold Flow.
+// Uses the SHARED AVAudioEngine ([SharedAudioEngine]) input node with
+// voice-processing IO enabled (setVoiceProcessingEnabled(true)) for platform AEC
+// + noise suppression — the iOS analogue of Android's VOICE_COMMUNICATION
+// source. The shared engine + .playAndRecord/.voiceChat session are ALSO used by
+// the E2 playback player node so the VP unit gets the speaker render reference
+// (full-duplex AEC — see SharedAudioEngine.ios.kt). An input tap hands float
+// buffers at the hardware rate (often 48k); Pcm16Converter resamples each to 16k
+// mono PCM16 LE, which is pushed into a buffered Channel that frames() exposes as
+// a cold Flow.
 //
 // NO-CRASH CONTRACT (error-handling rule): start() catches every failure
 // (mic-permission denied, session activation refused, engine start error) and
@@ -39,11 +41,6 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import platform.AVFAudio.AVAudioEngine
 import platform.AVFAudio.AVAudioInputNode
 import platform.AVFAudio.AVAudioPCMBuffer
-import platform.AVFAudio.AVAudioSession
-import platform.AVFAudio.AVAudioSessionCategoryOptionDefaultToSpeaker
-import platform.AVFAudio.AVAudioSessionCategoryPlayAndRecord
-import platform.AVFAudio.AVAudioSessionModeVoiceChat
-import platform.AVFAudio.setActive
 import platform.Foundation.NSError
 import kotlin.concurrent.Volatile
 
@@ -54,12 +51,15 @@ private const val TAP_BUFFER_FRAMES = 1024u
 private const val FRAME_CHANNEL_CAPACITY = 64
 
 /**
- * iOS [AudioCaptureAdapter] backed by [AVAudioEngine].
+ * iOS [AudioCaptureAdapter] backed by the shared [AVAudioEngine].
  *
- * One [AVAudioEngine] + input tap per capture run. The tap callback runs on the
- * audio render thread; it does non-blocking [Channel.trySend] only.
+ * Obtains the running engine from [SharedAudioEngine] (also used by E2 playback)
+ * and installs an input tap. The tap callback runs on the audio render thread;
+ * it does non-blocking [Channel.trySend] only.
  */
 class IosAudioCaptureAdapter : AudioCaptureAdapter {
+
+    private val shared = SharedAudioEngine.instance
 
     @Volatile
     private var engine: AVAudioEngine? = null
@@ -104,11 +104,9 @@ class IosAudioCaptureAdapter : AudioCaptureAdapter {
         }
         engine = null
         log.info("stop")
-        runCatching {
-            active.inputNode.removeTapOnBus(INPUT_BUS)
-            active.stop()
-            AVAudioSession.sharedInstance().setActive(false, null)
-        }.onFailure { log.warn("stop-teardown-failed", mapOf("cause" to (it.message ?: "unknown"))) }
+        runCatching { active.inputNode.removeTapOnBus(INPUT_BUS) }
+            .onFailure { log.warn("stop-teardown-failed", mapOf("cause" to (it.message ?: "unknown"))) }
+        shared.release()
         frameChannel?.close()
         frameChannel = null
     }
@@ -117,11 +115,9 @@ class IosAudioCaptureAdapter : AudioCaptureAdapter {
     // Engine setup
     // -----------------------------------------------------------------------
 
-    /** Configures the session + engine + tap; returns false on any failure (no throw). */
+    /** Acquires the shared engine + installs the tap; returns false on any failure (no throw). */
     private fun startEngine(sampleRate: Int, channel: Channel<ByteArray>): Boolean {
-        if (!configureSession()) return false
-
-        val avEngine = AVAudioEngine()
+        val avEngine = shared.retain() ?: return false
         val input: AVAudioInputNode = avEngine.inputNode
         enableVoiceProcessing(input)
 
@@ -129,6 +125,7 @@ class IosAudioCaptureAdapter : AudioCaptureAdapter {
         val converter = Pcm16Converter(inputFormat, sampleRate)
         if (!converter.isReady) {
             log.error("start-failed", mapOf("reason" to "converter init", "inputRate" to inputFormat.sampleRate))
+            shared.release()
             return false
         }
 
@@ -136,15 +133,10 @@ class IosAudioCaptureAdapter : AudioCaptureAdapter {
             forwardBuffer(buffer, converter, channel)
         }
 
-        avEngine.prepare()
-        val ok = memScoped {
-            val errVar = alloc<kotlinx.cinterop.ObjCObjectVar<NSError?>>()
-            val success = avEngine.startAndReturnError(errVar.ptr)
-            if (!success) log.error("engine-start-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
-            success
-        }
-        if (!ok) {
+        // Installing a tap can restart the engine graph; ensure it is running.
+        if (!shared.ensureRunning()) {
             input.removeTapOnBus(INPUT_BUS)
+            shared.release()
             return false
         }
         engine = avEngine
@@ -157,29 +149,6 @@ class IosAudioCaptureAdapter : AudioCaptureAdapter {
         if (buffer == null) return
         val pcm = converter.convert(buffer) ?: return
         channel.trySend(pcm)
-    }
-
-    /** Configures AVAudioSession for AEC voice capture. Returns false on failure. */
-    private fun configureSession(): Boolean = memScoped {
-        val session = AVAudioSession.sharedInstance()
-        val errVar = alloc<kotlinx.cinterop.ObjCObjectVar<NSError?>>()
-        val categorySet = session.setCategory(
-            AVAudioSessionCategoryPlayAndRecord,
-            mode = AVAudioSessionModeVoiceChat,
-            options = AVAudioSessionCategoryOptionDefaultToSpeaker,
-            error = errVar.ptr,
-        )
-        if (!categorySet) {
-            log.error("session-category-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
-            return@memScoped false
-        }
-        val activated = session.setActive(true, errVar.ptr)
-        if (!activated) {
-            log.error("session-activate-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
-            return@memScoped false
-        }
-        log.debug("session-configured", mapOf("category" to "playAndRecord", "mode" to "voiceChat"))
-        true
     }
 
     /** Enables voice-processing IO (platform AEC) on the input node; logs availability. */

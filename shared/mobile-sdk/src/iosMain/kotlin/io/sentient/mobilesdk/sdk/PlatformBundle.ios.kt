@@ -3,12 +3,14 @@
 //
 // Constructs the Darwin-backed WS engine + Keychain token store +
 // NSUserDefaults session-id store directly (no Context needed on iOS). The
-// capture adapter is the AVAudioEngine-backed E1 actual; playback is null until
-// E2. The Clock uses NSDate epoch ms.
+// capture adapter is the AVAudioEngine-backed E1 actual; playback is the
+// AVAudioPlayerNode-backed E2 actual (both on the shared engine). The Clock uses
+// NSDate epoch ms.
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.sdk
 
 import io.sentient.mobilesdk.audioio.IosAudioCaptureAdapter
+import io.sentient.mobilesdk.audioio.IosAudioPlaybackAdapter
 import io.sentient.mobilesdk.secure.IosSecureTokenStore
 import io.sentient.mobilesdk.secure.IosSessionIdStore
 import io.sentient.mobilesdk.transport.IosWebSocketEngine
@@ -24,5 +26,5 @@ actual fun createPlatformBundle(): PlatformBundle = PlatformBundle(
     sessionIdStore = IosSessionIdStore(),
     clock = Clock { (NSDate().timeIntervalSince1970 * MS_PER_SECOND).toLong() },
     capture = IosAudioCaptureAdapter(), // E1: AVAudioEngine voice-processing capture
-    playback = null, // E2 supplies the AVAudioEngine-backed playback adapter
+    playback = IosAudioPlaybackAdapter(), // E2: AVAudioPlayerNode on the shared engine
 )

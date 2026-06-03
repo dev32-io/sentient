@@ -3,11 +3,13 @@
 //
 // Resolves the application Context from AndroidContextHolder (populated by
 // `MobileSdk.initAndroid(context)` in Application.onCreate()). The capture
-// adapter is the AudioRecord-backed E1 actual; playback is null until E2.
+// adapter is the AudioRecord-backed E1 actual; playback is the AudioTrack-backed
+// E2 actual.
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.sdk
 
 import io.sentient.mobilesdk.audioio.AndroidAudioCaptureAdapter
+import io.sentient.mobilesdk.audioio.AndroidAudioPlaybackAdapter
 import io.sentient.mobilesdk.secure.AndroidSecureTokenStore
 import io.sentient.mobilesdk.secure.AndroidSessionIdStore
 import io.sentient.mobilesdk.transport.AndroidWebSocketEngine
@@ -19,5 +21,5 @@ actual fun createPlatformBundle(): PlatformBundle = PlatformBundle(
     sessionIdStore = AndroidSessionIdStore(),
     clock = Clock { System.currentTimeMillis() },
     capture = AndroidAudioCaptureAdapter(), // E1: AudioRecord VOICE_COMMUNICATION + AEC
-    playback = null, // E2 supplies the AudioTrack-backed playback adapter
+    playback = AndroidAudioPlaybackAdapter(), // E2: AudioTrack VOICE_COMMUNICATION streaming
 )

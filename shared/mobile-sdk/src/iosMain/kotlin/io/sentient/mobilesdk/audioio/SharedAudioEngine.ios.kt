@@ -1,0 +1,136 @@
+// ---------------------------------------------------------------------------
+// SharedAudioEngine.ios.kt — one AVAudioEngine + playAndRecord session shared by
+// capture (E1 input tap) and playback (E2 player node) for full-duplex AEC.
+//
+// WHY SHARED (full-duplex decision): iOS voice-processing IO
+// (setVoiceProcessingEnabled on the input node) only cancels the speaker echo
+// when the playback path runs through the SAME engine's IO unit — that's how the
+// VP unit gets the render reference. Capture and playback on separate engines
+// would mean the assistant's own voice leaks into the uplink (no AEC), breaking
+// barge-in. So both adapters obtain THIS shared engine + the shared
+// playAndRecord/voiceChat AVAudioSession. E1's capture was refactored from its
+// own private AVAudioEngine() to this holder.
+//
+// Lifecycle: capture and playback are independent users of the engine. The
+// engine starts on first use and stays running while EITHER side is active;
+// stop() from one side does NOT tear the engine down while the other holds it.
+// retain()/release() reference-count the two users; the engine + session are
+// stopped only when the count reaches zero.
+//
+// NO-CRASH CONTRACT: configuration / start failures return false (never throw
+// across @ObjCExport). NSError** out-params handled CF-natively via memScoped.
+// ---------------------------------------------------------------------------
+@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class, kotlinx.cinterop.BetaInteropApi::class)
+
+package io.sentient.mobilesdk.audioio
+
+import io.sentient.mobilesdk.log.createLogger
+import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.alloc
+import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.ptr
+import kotlinx.cinterop.value
+import platform.AVFAudio.AVAudioEngine
+import platform.AVFAudio.AVAudioSession
+import platform.AVFAudio.AVAudioSessionCategoryOptionDefaultToSpeaker
+import platform.AVFAudio.AVAudioSessionCategoryPlayAndRecord
+import platform.AVFAudio.AVAudioSessionModeVoiceChat
+import platform.AVFAudio.setActive
+import platform.Foundation.NSError
+
+private val log = createLogger("audioio", "engine", "ios")
+
+/**
+ * Process-wide holder for the shared [AVAudioEngine] + playAndRecord session.
+ *
+ * Single instance ([SharedAudioEngine.instance]); capture and playback both call
+ * [retain] to obtain the running engine and [release] when they tear down. Not
+ * intended for concurrent calls — the SDK drives start/stop serially on the
+ * orchestrator coroutine.
+ */
+internal class SharedAudioEngine private constructor() {
+
+    val engine: AVAudioEngine = AVAudioEngine()
+    private var users = 0
+    private var sessionConfigured = false
+
+    /**
+     * Ensures the session is configured + the engine is running, then returns the
+     * engine. Returns null on any configuration / start failure (no throw).
+     */
+    fun retain(): AVAudioEngine? {
+        if (!ensureSession()) return null
+        if (!engine.running) {
+            engine.prepare()
+            if (!startEngine()) return null
+        }
+        users += 1
+        log.debug("retain", mapOf("users" to users, "running" to engine.running))
+        return engine
+    }
+
+    /** Releases one user; stops the engine + deactivates the session at zero. */
+    fun release() {
+        if (users == 0) {
+            log.debug("release-noop")
+            return
+        }
+        users -= 1
+        log.debug("release", mapOf("users" to users))
+        if (users > 0) return
+        runCatching {
+            if (engine.running) engine.stop()
+            AVAudioSession.sharedInstance().setActive(false, null)
+        }.onFailure { log.warn("teardown-failed", mapOf("cause" to (it.message ?: "unknown"))) }
+        sessionConfigured = false
+        log.info("engine-stopped")
+    }
+
+    /** Restarts the engine if a render-graph change (attach/connect) stopped it. */
+    fun ensureRunning(): Boolean {
+        if (engine.running) return true
+        engine.prepare()
+        return startEngine()
+    }
+
+    private fun ensureSession(): Boolean {
+        if (sessionConfigured) return true
+        val ok = configureSession()
+        if (ok) sessionConfigured = true
+        return ok
+    }
+
+    private fun startEngine(): Boolean = memScoped {
+        val errVar = alloc<kotlinx.cinterop.ObjCObjectVar<NSError?>>()
+        val ok = engine.startAndReturnError(errVar.ptr)
+        if (!ok) log.error("engine-start-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
+        ok
+    }
+
+    private fun configureSession(): Boolean = memScoped {
+        val session = AVAudioSession.sharedInstance()
+        val errVar = alloc<kotlinx.cinterop.ObjCObjectVar<NSError?>>()
+        val categorySet = session.setCategory(
+            AVAudioSessionCategoryPlayAndRecord,
+            mode = AVAudioSessionModeVoiceChat,
+            options = AVAudioSessionCategoryOptionDefaultToSpeaker,
+            error = errVar.ptr,
+        )
+        if (!categorySet) {
+            log.error("session-category-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
+            return@memScoped false
+        }
+        val activated = session.setActive(true, errVar.ptr)
+        if (!activated) {
+            log.error("session-activate-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
+            return@memScoped false
+        }
+        log.debug("session-configured", mapOf("category" to "playAndRecord", "mode" to "voiceChat"))
+        true
+    }
+
+    companion object {
+        /** Process-wide shared engine — capture + playback attach to this one. */
+        val instance: SharedAudioEngine by lazy { SharedAudioEngine() }
+    }
+}
