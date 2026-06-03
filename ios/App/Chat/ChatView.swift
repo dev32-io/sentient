@@ -34,11 +34,24 @@ struct ChatView: View {
         store.state.cognition != .idle || store.state.isSpeaking
     }
 
+    /// Single source of the avatar animation mode for this frame — bound at the
+    /// title-bar mark AND the live streaming assistant bubble (mirrors Android).
+    private var currentMarkMode: MarkMode { markMode(of: store.state) }
+
+    private var voiceActive: Bool { store.state.voiceMode == .active }
+
+    private var transcriptVisible: Bool {
+        voiceActive && !store.state.transcript.isEmpty
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             titleBar
-            MessageList(messages: store.state.messages)
+            MessageList(messages: store.state.messages, activeMarkMode: currentMarkMode)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if transcriptVisible {
+                TranscriptPreview(text: store.state.transcript)
+            }
         }
         .safeAreaInset(edge: .bottom) {
             Composer(
@@ -97,6 +110,7 @@ struct ChatView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("History")
             .accessibilityIdentifier("history-open")
+            SentientMark(size: ChatLayout.markSize, mode: currentMarkMode)
             Text(Self.title)
                 .font(.system(size: TypeScale.lg, weight: .semibold))
                 .foregroundStyle(DuskColors.ink)
@@ -117,8 +131,9 @@ struct ChatView: View {
 
     // ── Actions ─────────────────────────────────────────────────────────────
 
-    /// Mic toggle is present for D-I3; the full capture pipeline is Phase-3 (E3).
-    /// It flips the voice-mode latch via the store passthroughs.
+    /// Mic toggle flips the voice pipeline on/off via the store passthroughs
+    /// (startMic/stopMic). The Composer gates the start path on the record
+    /// permission; here we only mirror the voiceMode latch.
     private func toggleMic() {
         if store.state.voiceMode == .active {
             store.stopMic()
@@ -126,4 +141,31 @@ struct ChatView: View {
             store.startMic()
         }
     }
+}
+
+/// Live STT preview while voiceMode is .active — mirrors the webui
+/// .chat-view__transcript and the Android TranscriptPreview: an accent left-rule
+/// + italic, muted text. Hidden when empty (the host gates on `transcriptVisible`).
+private struct TranscriptPreview: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .center, spacing: Space.sm) {
+            RoundedRectangle(cornerRadius: 1)
+                .fill(DuskColors.accent)
+                .frame(width: ChatLayout.transcriptRule, height: TypeScale.base)
+            Text(text)
+                .font(.system(size: TypeScale.base).italic())
+                .foregroundStyle(DuskColors.ink3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, Space.lg)
+        .padding(.vertical, Space.sm)
+        .accessibilityIdentifier("voice-transcript")
+    }
+}
+
+private enum ChatLayout {
+    static let markSize: CGFloat = 26
+    static let transcriptRule: CGFloat = 2
 }

@@ -24,6 +24,9 @@ import MobileSdk
 struct MessageBubble: View {
     let message: ChatMessage
     let index: Int
+    /// Avatar animation mode — only the live streaming assistant bubble animates;
+    /// committed bubbles pass `.idle` (static), mirroring the Android avatarMode.
+    var avatarMode: MarkMode = .idle
 
     private var isUser: Bool { message.role == "user" }
 
@@ -34,7 +37,7 @@ struct MessageBubble: View {
                 bubbleBody
                 userAvatar
             } else {
-                SentientMark(size: BubbleLayout.avatarSize)
+                SentientMark(size: BubbleLayout.avatarSize, mode: avatarMode)
                     .padding(.trailing, Space.md)
                 bubbleBody
                 Spacer(minLength: BubbleLayout.edgeMin)

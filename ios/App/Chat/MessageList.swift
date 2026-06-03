@@ -17,6 +17,10 @@ import MobileSdk
 
 struct MessageList: View {
     let messages: [ChatMessage]
+    /// Animation mode for the live (streaming) assistant bubble's avatar.
+    /// Committed bubbles stay `.idle` — only the in-flight cycle's mark animates,
+    /// mirroring the webui activeCycleMode binding + the Android activeMarkMode.
+    var activeMarkMode: MarkMode = .idle
 
     private static let placeholder = "Start a conversation…"
     private static let bottomAnchor = "chat-bottom-anchor"
@@ -34,7 +38,7 @@ struct MessageList: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: Space.gapMsg) {
                     ForEach(Array(messages.enumerated()), id: \.offset) { index, message in
-                        MessageBubble(message: message, index: index)
+                        MessageBubble(message: message, index: index, avatarMode: avatarMode(for: message))
                     }
                     Color.clear
                         .frame(height: 1)
@@ -47,6 +51,12 @@ struct MessageList: View {
             .onChange(of: messages.last?.content) { scrollToBottom(proxy) }
             .onAppear { scrollToBottom(proxy, animated: false) }
         }
+    }
+
+    /// The live (streaming) assistant bubble's avatar animates with the
+    /// voice/cognition state; committed bubbles are static (`.idle`).
+    private func avatarMode(for message: ChatMessage) -> MarkMode {
+        message.streaming && message.role == "assistant" ? activeMarkMode : .idle
     }
 
     /// Follow-latest: pin the bottom anchor into view on growth or streaming
