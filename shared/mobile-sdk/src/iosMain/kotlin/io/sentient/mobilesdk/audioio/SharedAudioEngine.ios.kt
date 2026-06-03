@@ -57,12 +57,18 @@ internal class SharedAudioEngine private constructor() {
     /**
      * Ensures the session is configured + the engine is running, then returns the
      * engine. Returns null on any configuration / start failure (no throw).
+     *
+     * `prepare()` / `startAndReturnError` raise an uncatchable ObjC NSException on a
+     * simulator with no audio I/O route ("inputNode != nullptr || outputNode !=
+     * nullptr") — guarded via [enginePrepareGuarded] / [engineStartGuarded] so they
+     * degrade to a null return instead of SIGABRT. `users` is bumped ONLY after a
+     * clean start, so a soft-fail before the increment leaves the refcount consistent
+     * (no leaked retain to release).
      */
     fun retain(): AVAudioEngine? {
         if (!ensureSession()) return null
         if (!engine.running) {
-            engine.prepare()
-            if (!startEngine()) return null
+            if (!enginePrepareGuarded(engine) || !startEngine()) return null
         }
         users += 1
         log.debug("retain", mapOf("users" to users, "running" to engine.running))
@@ -89,8 +95,7 @@ internal class SharedAudioEngine private constructor() {
     /** Restarts the engine if a render-graph change (attach/connect) stopped it. */
     fun ensureRunning(): Boolean {
         if (engine.running) return true
-        engine.prepare()
-        return startEngine()
+        return enginePrepareGuarded(engine) && startEngine()
     }
 
     private fun ensureSession(): Boolean {
@@ -100,12 +105,12 @@ internal class SharedAudioEngine private constructor() {
         return ok
     }
 
-    private fun startEngine(): Boolean = memScoped {
-        val errVar = alloc<kotlinx.cinterop.ObjCObjectVar<NSError?>>()
-        val ok = engine.startAndReturnError(errVar.ptr)
-        if (!ok) log.error("engine-start-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
-        ok
-    }
+    // startAndReturnError reports an init failure via its NSError out-param, but on a
+    // simulator with no audio I/O route it instead raises an uncatchable ObjC
+    // NSException ("inputNode != nullptr || outputNode != nullptr"). engineStartGuarded
+    // wraps the call in an ObjC @try/@catch so that path degrades to a soft false
+    // (logged) instead of SIGABRT.
+    private fun startEngine(): Boolean = engineStartGuarded(engine)
 
     private fun configureSession(): Boolean = memScoped {
         val session = AVAudioSession.sharedInstance()

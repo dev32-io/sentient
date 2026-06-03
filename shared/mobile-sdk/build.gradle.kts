@@ -25,6 +25,16 @@ kotlin {
             isStatic = true
             xcf.add(this)
         }
+        // ObjC NSException → Kotlin-failure boundary shim. K/N runCatching cannot
+        // catch AVFoundation NSExceptions (AVAudioEngine prepare/start on a sim with
+        // no audio route raises 'inputNode != nullptr || outputNode != nullptr' →
+        // terminate → SIGABRT). SharedAudioEngine wraps engine.prepare/start in this
+        // @try/@catch shim so the audioio no-crash contract holds. See
+        // src/nativeInterop/cinterop/objcexception.{def,h}.
+        it.compilations.getByName("main").cinterops.create("objcexception") {
+            definitionFile.set(project.file("src/nativeInterop/cinterop/objcexception.def"))
+            includeDirs(project.file("src/nativeInterop/cinterop"))
+        }
     }
 
     sourceSets {

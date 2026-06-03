@@ -18,6 +18,20 @@
 // Flow as a failed start. NSMicrophoneUsageDescription is declared in
 // ios/project.yml; the runtime prompt is the app's responsibility (E5/E6).
 //
+// INVALID-MIC GUARD (E5 sim crash fix): Kotlin/Native `runCatching` only catches
+// Kotlin `Throwable`, NOT the ObjC `NSException`s that AVAudioEngine raises. On a
+// simulator with no real mic the engine has no audio I/O route, so
+// SharedAudioEngine.retain()'s engine.prepare()/start() raises "inputNode != nullptr
+// || outputNode != nullptr" — caught by an ObjC @try/@catch shim in SharedAudioEngine
+// (the primary fix; see ObjCExceptionGuard.ios.kt). retain() then returns null and
+// start() fails soft here BEFORE any capture-side AV call. As a second line of
+// defense (engine starts but the mic route is still invalid), this adapter reads +
+// validates inputFormatForBus(0) BEFORE setVoiceProcessingEnabled / installTapOnBus
+// (which raise an NSException on a zero format): an invalid format short-circuits to
+// a soft fail (WARN + release the shared-engine retain so the refcount stays
+// consistent + false return). A REAL device reports a valid format → capture
+// proceeds normally.
+//
 // K/N AVFoundation cinterop: ObjC interop is cleaner than the Security CF layer
 // — direct member calls, no toll-free dict casts. The two foreign-pointer spots
 // are the converter int16ChannelData read (in Pcm16Converter) and the NSError**
@@ -39,6 +53,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import platform.AVFAudio.AVAudioEngine
+import platform.AVFAudio.AVAudioFormat
 import platform.AVFAudio.AVAudioInputNode
 import platform.AVFAudio.AVAudioPCMBuffer
 import platform.Foundation.NSError
@@ -115,13 +130,37 @@ class IosAudioCaptureAdapter : AudioCaptureAdapter {
     // Engine setup
     // -----------------------------------------------------------------------
 
-    /** Acquires the shared engine + installs the tap; returns false on any failure (no throw). */
+    /**
+     * Acquires the shared engine + installs the tap; returns false on any failure
+     * (no throw). The shared engine's prepare/start (the sim crash origin) is already
+     * guarded by an ObjC @try/@catch in [SharedAudioEngine] — on the sim with no
+     * audio route retain() returns null here, so the throwing capture-side AV calls
+     * (inputFormatForBus / setVoiceProcessingEnabled / installTapOnBus) are never
+     * reached. The format-validation guard below is the second line of defense: if
+     * the engine DOES start but the mic route is invalid, we short-circuit BEFORE the
+     * AV calls that would raise an NSException. On any failure the shared-engine
+     * retain is released so the refcount stays consistent.
+     */
     private fun startEngine(sampleRate: Int, channel: Channel<ByteArray>): Boolean {
         val avEngine = shared.retain() ?: return false
         val input: AVAudioInputNode = avEngine.inputNode
-        enableVoiceProcessing(input)
 
+        // Validate the input format BEFORE setVoiceProcessing / installTap (those
+        // raise an NSException on a zero format — sim with no mic / no input route).
         val inputFormat = input.inputFormatForBus(INPUT_BUS)
+        if (!isValidInputFormat(inputFormat)) {
+            log.warn(
+                "mic-unavailable",
+                mapOf(
+                    "reason" to "invalid input format, capture not started",
+                    "inputRate" to inputFormat.sampleRate,
+                    "channels" to inputFormat.channelCount.toLong(),
+                ),
+            )
+            shared.release()
+            return false
+        }
+
         val converter = Pcm16Converter(inputFormat, sampleRate)
         if (!converter.isReady) {
             log.error("start-failed", mapOf("reason" to "converter init", "inputRate" to inputFormat.sampleRate))
@@ -129,6 +168,8 @@ class IosAudioCaptureAdapter : AudioCaptureAdapter {
             return false
         }
 
+        // Format is valid → safe to enable VP + install the tap.
+        enableVoiceProcessing(input)
         input.installTapOnBus(INPUT_BUS, bufferSize = TAP_BUFFER_FRAMES, format = inputFormat) { buffer, _ ->
             forwardBuffer(buffer, converter, channel)
         }
@@ -143,6 +184,15 @@ class IosAudioCaptureAdapter : AudioCaptureAdapter {
         log.info("session-open", mapOf("inputRate" to inputFormat.sampleRate, "targetRate" to sampleRate))
         return true
     }
+
+    /**
+     * True when [format] describes a usable mic route. A simulator with no real
+     * mic (or a device with no input route) reports a zero format (0 sampleRate /
+     * 0 channels); feeding that to setVoiceProcessingEnabled / installTapOnBus
+     * raises an ObjC NSException that runCatching cannot catch (→ SIGABRT).
+     */
+    private fun isValidInputFormat(format: AVAudioFormat): Boolean =
+        format.sampleRate > 0.0 && format.channelCount > 0u
 
     /** Pushes one converted PCM16 LE frame into [channel] (audio-thread safe). */
     private fun forwardBuffer(buffer: AVAudioPCMBuffer?, converter: Pcm16Converter, channel: Channel<ByteArray>) {
