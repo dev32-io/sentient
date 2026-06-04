@@ -123,6 +123,34 @@ object Motion {
 }
 
 // ---------------------------------------------------------------------------
+// Fonts — registered family names (source: typography.css)
+// ---------------------------------------------------------------------------
+
+/** Font family NAMES (registered per-platform). Mirrors webui tokens/typography.css. */
+object Fonts {
+    const val display: String = "Fraunces"        // brand wordmark, section titles
+    const val ui: String = "DM Sans"              // body / UI
+    const val mono: String = "JetBrains Mono"     // tool argsPreview / code
+}
+
+// ---------------------------------------------------------------------------
+// Typewriter — reveal cadence (source: config/typewriter.ts)
+// ---------------------------------------------------------------------------
+
+/**
+ * Typewriter reveal cadence — transcribed from webui config/typewriter.ts.
+ * rate is chars/sec; pauses are ms held after a boundary.
+ */
+object Typewriter {
+    const val baseRate: Int = 30          // chars/sec nominal reveal speed
+    const val minRate: Int = 15           // floor; below this a stream feels stalled
+    const val maxRate: Int = 150          // ceiling; also the drain rate once complete
+    const val gapGain: Double = 0.02      // per-char speed-up when behind the buffer
+    const val sentencePauseMs: Int = 80   // hold after . ! ?
+    const val paragraphPauseMs: Int = 220 // hold after a blank line (\n\n)
+}
+
+// ---------------------------------------------------------------------------
 // Tints — avatar tint map (plan: avatar persona tints)
 // ---------------------------------------------------------------------------
 
