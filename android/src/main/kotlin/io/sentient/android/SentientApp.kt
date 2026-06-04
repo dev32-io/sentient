@@ -20,6 +20,7 @@ class SentientApp : Application() {
     override fun onCreate() {
         super.onCreate()
         MobileSdk.initAndroid(applicationContext)
+        io.sentient.android.backend.BackendConfigHolder.init(applicationContext)
         log.info("onCreate", mapOf("sdkInit" to true))
     }
 }
