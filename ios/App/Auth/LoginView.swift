@@ -16,11 +16,14 @@ import MobileSdk
 struct LoginView: View {
     /// Called to start the SDK connection after a successful login + token save.
     let onConnect: () -> Void
+    /// Called when the user taps the gear to open backend setup.
+    var onOpenBackendSetup: () -> Void
 
     @StateObject private var model: AuthModel
 
-    init(onConnect: @escaping () -> Void) {
+    init(onConnect: @escaping () -> Void, onOpenBackendSetup: @escaping () -> Void = {}) {
         self.onConnect = onConnect
+        self.onOpenBackendSetup = onOpenBackendSetup
         _model = StateObject(wrappedValue: AuthModel(connect: onConnect))
     }
 
@@ -29,6 +32,14 @@ struct LoginView: View {
             .padding(Space.xl)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .topLeading) { backBar }
+            .overlay(alignment: .topTrailing) {
+                Button { onOpenBackendSetup() } label: {
+                    Image(systemName: "gearshape")
+                        .foregroundStyle(DuskColors.ink3)
+                }
+                .padding()
+                .accessibilityIdentifier("login-backend-setup")
+            }
             .duskTheme()
             .task { await model.loadUsers() }
     }
