@@ -161,14 +161,22 @@ final class AuthModel: ObservableObject {
 
     // ── AuthClient construction ───────────────────────────────────────────────
 
-    /// Build the REST AuthClient via the iOS factory (Darwin engine + debug-only
-    /// self-signed TLS bypass), against the same gateway endpoint as the SDK.
-    /// `nonisolated` so it can serve as a default-argument expression (mirrors
-    /// SdkStore.makeSdk()).
+    /// Build the REST AuthClient via the iOS factory. Resolves the backend from
+    /// BackendConfigStore → build-time default → localhost fallback, matching the
+    /// resolution order SdkStore uses. `nonisolated` so it can serve as a
+    /// default-argument expression.
     nonisolated static func makeAuthClient() -> AuthClient {
-        createAuthClient(
-            gatewayWsUrl: GatewayConfig.wsUrl,
-            allowSelfSignedDevHost: GatewayConfig.allowSelfSignedDevHost
+        let resolved = resolveBackend(
+            override: BackendConfigStore().load(),
+            buildTimeDefaultURL: GatewayConfig.buildTimeDefaultWsURL,
+            buildTimeAllowSelfSigned: GatewayConfig.buildTimeAllowSelfSigned
         )
+        guard case let .configured(url, trust) = resolved else {
+            return createAuthClient(
+                gatewayWsUrl: GatewayConfig.buildTimeDefaultWsURL,
+                allowSelfSignedDevHost: false
+            )
+        }
+        return createAuthClient(gatewayWsUrl: url, allowSelfSignedDevHost: trust)
     }
 }
