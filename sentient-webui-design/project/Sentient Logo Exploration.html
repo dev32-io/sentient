@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sentient — Logo / Mark exploration</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+
+<style>
+  :root{
+    --bg:#F6EFE6; --paper:#FFFBF3; --line:#E4D8C4; --line-soft:#EBE1D0;
+    --ink:#2A221C; --ink-2:#5A4D42; --ink-3:#8A7C6E; --ink-4:#B6A894;
+    --terra:#C8623A; --terra-soft:#F2D7C5; --terra-deep:#7B2F1B;
+    --ember:#E08A4E; --ember-glow:#FFC591;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { background: var(--bg); color: var(--ink); font-family: Inter, system-ui; margin:0; }
+  .meta-bar {
+    padding: 28px 40px 22px; border-bottom: 1px solid var(--line-soft);
+    display:flex; flex-direction:column; gap: 6px;
+  }
+  .meta-bar h1 { font-size: 28px; margin:0; font-weight:600; letter-spacing:-.4px; font-family: Fraunces, serif; }
+  .meta-bar p { font-size: 14px; color: var(--ink-3); margin:0; max-width: 720px; }
+  .section-h { padding: 40px 40px 18px; font-family: Fraunces, serif; font-size: 22px; font-weight:600; letter-spacing:-.2px; }
+  .section-sub { padding: 0 40px 24px; color: var(--ink-3); font-size: 13.5px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 18px;
+    padding: 0 40px 40px;
+  }
+</style>
+</head>
+<body>
+  <div class="meta-bar">
+    <h1>Sentient · Mark exploration</h1>
+    <p>Eight directions for the Sentient mark — warm domestic ↔ precise sci-fi. Each shown at production sizes (16/20/26/36/56 px), in a topbar mockup, on warm paper and dark ink surfaces.</p>
+  </div>
+  <div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="logo-marks.jsx"></script>
+<script type="text/babel">
+  // Surface tile wrapper — reused in both light and dark
+  const Tile = ({ dark, children }) => (
+    <div style={{
+      background: dark ? "#1E1A16" : "var(--paper)",
+      border: `1px solid ${dark ? "#3A332D" : "var(--line-soft)"}`,
+      borderRadius: 14,
+      padding: "22px 22px 18px",
+      display:"flex", flexDirection:"column", gap: 14,
+      boxShadow: dark ? "0 1px 0 rgba(255,255,255,.04) inset" : "0 1px 0 #fff inset, 0 1px 2px rgba(60,40,20,.04)",
+      color: dark ? "#F3EADB" : "var(--ink)",
+    }}>
+      {children}
+    </div>
+  );
+
+  const Hero = ({ dark, Mark }) => (
+    <div style={{
+      height: 150,
+      display:"flex", alignItems:"center", justifyContent:"center",
+      background: dark
+        ? "radial-gradient(140% 100% at 50% 0%, #2C2723, #16120F)"
+        : "radial-gradient(140% 100% at 50% 0%, #FFFBF3, #F1E7D6)",
+      borderRadius: 10,
+      border: `1px solid ${dark ? "#2F2925" : "var(--line-soft)"}`,
+    }}>
+      <Mark size={88} dark={dark} />
+    </div>
+  );
+
+  const Topbar = ({ dark, Mark }) => (
+    <div style={{
+      display:"flex", alignItems:"center", gap: 10,
+      padding:"10px 14px",
+      background: dark ? "#262220" : "var(--bg)",
+      borderRadius: 10,
+      border: `1px solid ${dark ? "#3A332D" : "var(--line-soft)"}`,
+    }}>
+      <Mark size={26} dark={dark} />
+      <span style={{ fontFamily:"Fraunces, serif", fontSize: 18, fontWeight: 600 }}>Sentient</span>
+      <span style={{ flex:1 }}/>
+      <span style={{ fontSize:11, color: dark ? "#8C8072" : "var(--ink-3)", fontFamily:"JetBrains Mono, monospace" }}>26px</span>
+    </div>
+  );
+
+  const SizesRow = ({ dark, Mark }) => (
+    <div style={{
+      display:"flex", alignItems:"center", justifyContent:"space-between", gap: 18,
+      padding: "12px 14px",
+      background: dark ? "#1A1714" : "var(--bg)",
+      borderRadius: 10,
+      border: `1px dashed ${dark ? "#3A332D" : "var(--line-soft)"}`,
+    }}>
+      {[16, 20, 26, 36, 56].map(s => (
+        <div key={s} style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:6 }}>
+          <Mark size={s} dark={dark} />
+          <span style={{ fontSize:10, color: dark ? "#706456" : "var(--ink-4)", fontFamily:"JetBrains Mono, monospace" }}>{s}</span>
+        </div>
+      ))}
+    </div>
+  );
+
+  const Card = ({ id, label, sub, Mark }) => (
+    <div data-screen-label={label} style={{
+      background:"var(--paper)",
+      border:"1px solid var(--line-soft)",
+      borderRadius: 16,
+      overflow:"hidden",
+      display:"flex", flexDirection:"column",
+    }}>
+      <div style={{ padding: "16px 18px", display:"flex", alignItems:"baseline", gap:10, borderBottom:"1px solid var(--line-soft)" }}>
+        <span style={{ fontFamily:"Fraunces, serif", fontSize:17, fontWeight:600 }}>{label}</span>
+        <span style={{ fontSize:12, color:"var(--ink-3)", flex:1 }}>{sub}</span>
+      </div>
+      <div style={{ padding: 14, display:"grid", gridTemplateColumns:"1fr 1fr", gap: 14 }}>
+        <Tile dark={false}>
+          <Hero Mark={Mark} dark={false}/>
+          <Topbar Mark={Mark} dark={false}/>
+          <SizesRow Mark={Mark} dark={false}/>
+        </Tile>
+        <Tile dark={true}>
+          <Hero Mark={Mark} dark={true}/>
+          <Topbar Mark={Mark} dark={true}/>
+          <SizesRow Mark={Mark} dark={true}/>
+        </Tile>
+      </div>
+    </div>
+  );
+
+  const SectionHeader = ({ title, sub }) => (
+    <>
+      <div className="section-h">{title}</div>
+      <div className="section-sub">{sub}</div>
+    </>
+  );
+
+  const App = () => {
+    const marks = [
+      { id:"aperture",  label:"01 · Aperture",          sub:"Concentric arcs around a warm core. Camera-iris geometry, hearth heart.",      Mark: window.MarkAperture  },
+      { id:"hearth",    label:"02 · Hearth Pebble",     sub:"Soft, weighted bean form with a warm gradient and a precision tick.",          Mark: window.MarkHearth    },
+      { id:"listening", label:"03 · Listening Ring",    sub:"Open ring with a single ember at the top. Reads as attention and voice.",      Mark: window.MarkListening },
+      { id:"lantern",   label:"04 · Lantern",           sub:"Hexagonal glass body around a warm vertical filament. Object-like.",            Mark: window.MarkLantern   },
+      { id:"crescent",  label:"05 · Crescent Aperture", sub:"Aperture cut to a crescent — softer, more conversational.",                    Mark: window.MarkCrescent  },
+      { id:"iris",      label:"06 · Iris Petals",       sub:"Three folded petals around a core — closing-camera-iris geometry.",            Mark: window.MarkIris      },
+      { id:"filament",  label:"07 · Filament",          sub:"Single curved neon filament inside a soft disc. Editorial, calm.",             Mark: window.MarkFilament  },
+      { id:"sunstone",  label:"08 · Sun Stone",         sub:"Type-driven monogram: an 'S' carved as a warm channel through stone.",         Mark: window.MarkSunStone  },
+    ];
+    return (
+      <>
+        <SectionHeader title="Primary directions" sub="The four most product-ready candidates — each balances warmth and precision."/>
+        <div className="grid">
+          {marks.slice(0,4).map(m => <Card key={m.id} {...m}/>)}
+        </div>
+        <SectionHeader title="More expressive" sub="Pushes further on style — useful as a tiebreaker or for app-icon variants."/>
+        <div className="grid">
+          {marks.slice(4).map(m => <Card key={m.id} {...m}/>)}
+        </div>
+      </>
+    );
+  };
+
+  ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

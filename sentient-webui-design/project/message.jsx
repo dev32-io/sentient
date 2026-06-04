@@ -81,7 +81,9 @@ const ToolsBlock = ({ tools }) => {
 const Message = ({ role, name, time, avatarChar, voice, children }) => (
   <div className={`msg ${role} ${voice ? `voice-${voice.state}` : ""}`}>
     <div className="who">
-      {avatarChar}
+      {role === "assistant"
+        ? <SentientMark size={26} listening={voice?.state === "speaking"} />
+        : avatarChar}
       {voice?.state === "speaking" && (
         <>
           <span className="who-ripple"/>

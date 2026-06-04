@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sentient — Smart Home Assistant</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous"/>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="styles.css?v=23"/>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" src="sentient-mark.jsx"></script>
+<script type="text/babel" src="icons.jsx"></script>
+<script type="text/babel" src="message.jsx"></script>
+<script type="text/babel" src="chat_view.jsx"></script>
+<script type="text/babel" src="settings_view.jsx"></script>
+<script type="text/babel" src="workspace_view.jsx"></script>
+<script type="text/babel" src="history_view.jsx"></script>
+
+<script type="text/babel">
+const App = () => {
+  const [route, setRoute] = React.useState(() => {
+    return localStorage.getItem("sentient:route") || "chat";
+  });
+  const [tts, setTts] = React.useState(() => {
+    const v = localStorage.getItem("sentient:tts");
+    return v === null ? true : v === "1";
+  });
+  const [wsOpen, setWsOpen] = React.useState(false);
+  const [hxOpen, setHxOpen] = React.useState(false);
+
+  React.useEffect(() => { localStorage.setItem("sentient:route", route); }, [route]);
+  React.useEffect(() => { localStorage.setItem("sentient:tts", tts ? "1" : "0"); }, [tts]);
+
+  // Expose for the LLM tool call — `set_voice_response(true|false)` on the agent
+  // side calls into this so the UI mirrors what the model just toggled.
+  React.useEffect(() => {
+    window.sentient = window.sentient || {};
+    window.sentient.setTTS = (on) => setTts(!!on);
+    window.sentient.getTTS = () => tts;
+  }, [tts]);
+
+  return (
+    <div className="app" data-screen-label={route === "chat" ? "01 Chat" : "02 Settings"}>
+      <header className="topbar">
+        <button
+          className={`icon-btn hamburger-btn ${hxOpen ? "active" : ""}`}
+          onClick={() => setHxOpen(o => !o)}
+          title="Past chats"
+          aria-label="Open past chats">
+          <Icon name="menu" size={18}/>
+        </button>
+        <div className="brand">
+          <SentientMark size={26} />
+          <span className="brand-word">Sentient</span>
+        </div>
+        <div className="crumbs">
+          <span>The Chen House</span>
+          <span className="dot"/>
+          <span>{route === "chat" ? "Conversation" : "Household"}</span>
+        </div>
+
+        <div className="spacer"/>
+
+        <div className="status-chip">
+          <span className="dot-live"/> 14 devices online
+        </div>
+
+        <button
+          className={`icon-btn ${wsOpen ? "active" : ""}`}
+          onClick={() => setWsOpen(o => !o)}
+          title="Workspace">
+          <Icon name="folder" size={18}/>
+        </button>
+
+        <button className={`icon-btn ${route === "chat" ? "active" : ""}`}
+                onClick={() => setRoute("chat")} title="Chat">
+          <Icon name="chat" size={18}/>
+        </button>
+        <button className="icon-btn" title="Notifications">
+          <Icon name="bell" size={18}/>
+        </button>
+        <button className={`icon-btn ${route === "settings" ? "active" : ""}`}
+                onClick={() => setRoute("settings")} title="Settings">
+          <Icon name="settings" size={18}/>
+        </button>
+      </header>
+
+      {route === "chat" ? <ChatView/> : <SettingsView/>}
+
+      {route === "chat" && <Dock tts={tts} setTts={setTts}/>}
+
+      <WorkspaceDrawer open={wsOpen} onClose={() => setWsOpen(false)}/>
+      <HistoryDrawer open={hxOpen} onClose={() => setHxOpen(false)}/>
+    </div>
+  );
+};
+
+// Composer with integrated interrupt & task tray
+const Dock = ({ tts, setTts }) => {
+  const [text, setText] = React.useState("");
+  const [micOn, setMicOn] = React.useState(true);
+  const [streaming, setStreaming] = React.useState(true);
+
+  return (
+    <div className="dock">
+      <div className="dock-inner">
+
+        <div className={`composer ${micOn ? "listening" : ""} ${streaming ? "streaming" : ""}`}>
+          <textarea
+            className="composer-textarea"
+            rows={3}
+            value={text}
+            onChange={e => setText(e.target.value)}
+            placeholder={
+              streaming ? "Type or speak — Sentient will listen"
+                        : (micOn ? "Listening — just speak, or type here"
+                                 : "Message Sentient…")
+            }
+          />
+
+          <div className="composer-bottom-row">
+            <button
+              className={`icon-btn mic-btn ${micOn ? "on" : "off"}`}
+              title={micOn ? "Mute microphone" : "Turn on microphone"}
+              onClick={() => setMicOn(m => !m)}>
+              <Icon name={micOn ? "mic" : "mic-off"} size={16}/>
+            </button>
+            <button
+              className="icon-btn"
+              title="Attach a file for Sentient to read"
+              onClick={() => window.dispatchEvent(new CustomEvent("sentient:open-workspace"))}>
+              <Icon name="attach" size={16}/>
+            </button>
+            <button
+              className={`icon-btn tts-btn ${tts ? "tts-on" : "tts-off"}`}
+              onClick={() => setTts(t => !t)}
+              title={tts ? "Voice replies on — click to mute" : "Voice replies muted — click to enable"}
+              aria-pressed={tts}
+              aria-label={tts ? "Mute voice replies" : "Enable voice replies"}>
+              <Icon name={tts ? "speaker" : "speaker-off"} size={16}/>
+            </button>
+            <span className="spacer"/>
+            <button className="send-btn square" disabled={!text}>
+              <Icon name="send" size={16}/>
+            </button>
+            {streaming && (
+              <button
+                className="icon-btn interrupt-icon-btn"
+                title="Interrupt Sentient"
+                onClick={() => setStreaming(false)}>
+                <span className="sq"/>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* suggest */}
+        <div className="suggest">
+          <span className="s">Good night routine</span>
+          <span className="s">Who was at the door at 3pm?</span>
+          <span className="s">Lower the kitchen lights 30%</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
