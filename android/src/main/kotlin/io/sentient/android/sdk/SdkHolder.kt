@@ -1,11 +1,14 @@
 // ---------------------------------------------------------------------------
 // SdkHolder — process singleton that owns the one SentientSdk instance.
 //
-// The SDK is a black box: this holder builds it ONCE (lazily, on first access)
-// from the platform bundle + an app-lifetime coroutine scope, and hands the
-// same instance to every SdkViewModel. The SDK's connect()/disconnect() are
-// re-entrant and re-arm the reconnect controller, so a single instance survives
-// logout→login without a rebuild.
+// The SDK is built lazily (or eagerly via ensureBuilt) from the resolved
+// backend config. applyResolvedConfig() tears down the current instance and
+// rebuilds from the freshly-resolved config — the rebuilt SDK starts
+// DISCONNECTED, landing the host on the new backend's login.
+//
+// sdkFlow is the reactive surface: SdkViewModel observes it so a backend
+// change re-points the retained ViewModel at the rebuilt instance without
+// recreating the Activity/VM.
 //
 // MobileSdk.initAndroid(applicationContext) MUST run (SentientApp.onCreate)
 // before the first [sdk] access — createPlatformBundle() resolves the Android
@@ -29,13 +32,20 @@ import io.sentient.mobilesdk.sdk.SdkConfig
 import io.sentient.mobilesdk.sdk.SentientSdk
 import io.sentient.mobilesdk.sdk.createPlatformBundle
 import io.sentient.mobilesdk.secure.SecureTokenStore
+import io.sentient.android.backend.BackendConfigHolder
+import io.sentient.android.backend.ResolvedBackend
+import io.sentient.android.backend.resolveBackend
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Holds the single process-wide [SentientSdk]. Build is lazy + thread-safe; the
- * first caller (the first SdkViewModel) triggers construction.
+ * first caller (the first SdkViewModel) triggers construction via [ensureBuilt] or
+ * direct [sdk] access. A backend change is applied via [applyResolvedConfig].
  */
 object SdkHolder {
     private val log = createLogger("android", "sdk-holder")
@@ -78,10 +88,66 @@ object SdkHolder {
             bundleInstance ?: createPlatformBundle().also { bundleInstance = it }
         }
 
-    /** Lazily-built singleton SDK. Requires MobileSdk.initAndroid() to have run. */
+    // Reactive SDK surface: null until configured. SdkViewModel observes this so a
+    // backend change (applyResolvedConfig) re-points the retained ViewModel at the
+    // rebuilt instance without recreating the Activity/VM.
+    private val _sdkFlow = MutableStateFlow<SentientSdk?>(null)
+    val sdkFlow: StateFlow<SentientSdk?> = _sdkFlow.asStateFlow()
+
+    /** Resolve the active backend from the persisted override + the build-time default. */
+    private fun resolved(): ResolvedBackend = resolveBackend(
+        override = BackendConfigHolder.store.config.value,
+        buildTimeDefaultUrl = io.sentient.android.BuildConfig.GATEWAY_WS_URL,
+        buildTimeAllowSelfSigned = io.sentient.android.BuildConfig.DEBUG,
+    )
+
+    /** True when a usable backend exists (override or non-empty build default). */
+    fun isConfigured(): Boolean = resolved() is ResolvedBackend.Configured
+
+    /** Build the SDK if configured + not yet built. No-op if unconfigured. */
+    fun ensureBuilt() {
+        if (instance != null) return
+        val r = resolved()
+        if (r is ResolvedBackend.Configured) synchronized(this) {
+            if (instance == null) buildFrom(r)
+        }
+    }
+
+    /**
+     * Apply a newly-saved backend: tear down the current SDK + auth client and
+     * rebuild from the freshly-resolved config. The rebuilt SDK starts
+     * DISCONNECTED, so the host lands on the new backend's login. Idempotent.
+     */
+    fun applyResolvedConfig() = synchronized(this) {
+        instance?.disconnect()
+        authClientInstance = null
+        val r = resolved()
+        if (r is ResolvedBackend.Configured) buildFrom(r) else { instance = null; _sdkFlow.value = null }
+    }
+
+    private fun buildFrom(r: ResolvedBackend.Configured): SentientSdk {
+        val config = SdkConfig(
+            gatewayWsUrl = r.gatewayWsUrl,
+            allowSelfSignedDevHost = r.allowSelfSignedDevHost,
+            capabilities = capabilities,
+        )
+        log.info("build", mapOf(
+            "gatewayWsUrl" to config.gatewayWsUrl,
+            "allowSelfSignedDevHost" to config.allowSelfSignedDevHost,
+            "capabilities" to capabilities.size,
+        ))
+        return SentientSdk(config = config, bundle = bundle, scope = scope)
+            .also { instance = it; _sdkFlow.value = it }
+    }
+
+    /** The current SDK. Requires a configured backend + ensureBuilt() first. */
     val sdk: SentientSdk
         get() = instance ?: synchronized(this) {
-            instance ?: build().also { instance = it }
+            instance ?: run {
+                val r = resolved()
+                require(r is ResolvedBackend.Configured) { "SDK accessed while backend unconfigured" }
+                buildFrom(r)
+            }
         }
 
     /**
@@ -101,33 +167,13 @@ object SdkHolder {
             authClientInstance ?: buildAuthClient().also { authClientInstance = it }
         }
 
-    private fun config(): SdkConfig = SdkConfig(
-        // 10.0.2.2 = host loopback from the emulator; see android/build.gradle.kts.
-        gatewayWsUrl = io.sentient.android.BuildConfig.GATEWAY_WS_URL,
-        // Self-signed dev cert is trusted only in debug builds.
-        allowSelfSignedDevHost = io.sentient.android.BuildConfig.DEBUG,
-        capabilities = capabilities,
-    )
-
-    private fun build(): SentientSdk {
-        val config = config()
-        log.info(
-            "build",
-            mapOf(
-                "gatewayWsUrl" to config.gatewayWsUrl,
-                "allowSelfSignedDevHost" to config.allowSelfSignedDevHost,
-                "capabilities" to capabilities.size,
-            ),
-        )
-        return SentientSdk(config = config, bundle = bundle, scope = scope)
-    }
-
     private fun buildAuthClient(): AuthClient {
-        val config = config()
-        log.info("build-auth-client", mapOf("gatewayWsUrl" to config.gatewayWsUrl))
+        val r = resolved()
+        require(r is ResolvedBackend.Configured) { "AuthClient accessed while backend unconfigured" }
+        log.info("build-auth-client", mapOf("gatewayWsUrl" to r.gatewayWsUrl))
         return AuthClient(
-            gatewayWsUrl = config.gatewayWsUrl,
-            httpClient = buildAuthHttpClient(config.allowSelfSignedDevHost),
+            gatewayWsUrl = r.gatewayWsUrl,
+            httpClient = buildAuthHttpClient(r.allowSelfSignedDevHost),
         )
     }
 }
