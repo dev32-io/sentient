@@ -47,7 +47,11 @@ class BackendConfigStore(context: Context) {
 /** Process singleton. [init] runs once in SentientApp.onCreate (has app context). */
 object BackendConfigHolder {
     @Volatile private var instance: BackendConfigStore? = null
-    fun init(context: Context) { if (instance == null) instance = BackendConfigStore(context) }
+    fun init(context: Context) {
+        if (instance == null) synchronized(this) {
+            if (instance == null) instance = BackendConfigStore(context)
+        }
+    }
     val store: BackendConfigStore
         get() = instance ?: error("BackendConfigHolder.init not called (SentientApp.onCreate)")
 }

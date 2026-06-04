@@ -46,7 +46,7 @@ class SdkViewModel : ViewModel() {
     val state: StateFlow<SdkState> =
         SdkHolder.sdkFlow.filterNotNull()
             .flatMapLatest { it.state }
-            .stateIn(viewModelScope, SharingStarted.Eagerly, SdkHolder.sdk.state.value)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, SdkHolder.sdkFlow.value?.state?.value ?: SdkState())
 
     private val sdk: SentientSdk? get() = SdkHolder.sdkFlow.value
 
