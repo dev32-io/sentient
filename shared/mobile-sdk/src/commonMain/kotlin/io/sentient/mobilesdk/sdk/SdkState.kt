@@ -28,6 +28,8 @@ enum class VoiceMode { OFF, ACTIVE }
  * @param content Rendered text.
  * @param streaming True for the live in-flight bubble (pre-commit). False once committed.
  * @param cutoffKind "interrupt" | "barge-in" when an assistant reply was cut short.
+ * @param cycleId Cycle that produced this assistant message (UI join key for tools). Null when unknown.
+ * @param tools Tasks grouped onto this message by shared cycleId (mirrors web-sdk ChatMessage.tools).
  */
 data class ChatMessage(
     val ts: Long,
@@ -35,6 +37,8 @@ data class ChatMessage(
     val content: String,
     val streaming: Boolean = false,
     val cutoffKind: String? = null,
+    val cycleId: String? = null,
+    val tools: List<TaskSnapshotItem> = emptyList(),
 )
 
 /**
