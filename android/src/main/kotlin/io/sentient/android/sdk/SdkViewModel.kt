@@ -10,6 +10,10 @@
 // The composable collects [state] via collectAsStateWithLifecycle(); this VM
 // does not convert the flow to a snapshot itself, keeping the lifecycle-aware
 // collection at the UI boundary where the rules place it.
+//
+// Re-points on backend change: flatMapLatest cancels the old SDK's state
+// collection and starts collecting the rebuilt instance. The VM is only ever
+// constructed in AppRoot's configured branch, so sdkFlow is non-null here.
 // ---------------------------------------------------------------------------
 package io.sentient.android.sdk
 
@@ -18,64 +22,76 @@ import androidx.lifecycle.viewModelScope
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.sdk.SdkState
 import io.sentient.mobilesdk.sdk.SentientSdk
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
- * Bridges the process-singleton [SentientSdk] to Compose. Default constructor
- * pulls the singleton from [SdkHolder]; the [sdk] parameter is injectable for
- * tests/previews.
+ * Bridges the process-singleton [SentientSdk] to Compose. Observes
+ * [SdkHolder.sdkFlow] reactively so a backend change (applyResolvedConfig)
+ * re-points the retained ViewModel at the rebuilt instance without recreating
+ * the Activity/VM.
  */
-class SdkViewModel(
-    private val sdk: SentientSdk = SdkHolder.sdk,
-) : ViewModel() {
+@OptIn(ExperimentalCoroutinesApi::class)
+class SdkViewModel : ViewModel() {
     private val log = createLogger("android", "sdk-viewmodel")
 
-    /** THE single observable surface, re-exposed verbatim for the UI to collect. */
-    val state: StateFlow<SdkState> = sdk.state
+    // Re-point on backend change: flatMapLatest cancels the old SDK's state
+    // collection and collects the rebuilt instance. sdkFlow is non-null here
+    // because the VM is only constructed in AppRoot's configured branch.
+    val state: StateFlow<SdkState> =
+        SdkHolder.sdkFlow.filterNotNull()
+            .flatMapLatest { it.state }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, SdkHolder.sdk.state.value)
+
+    private val sdk: SentientSdk? get() = SdkHolder.sdkFlow.value
 
     fun connect() {
         log.info("connect")
-        viewModelScope.launch { sdk.connect() }
+        viewModelScope.launch { sdk?.connect() }
     }
 
     fun disconnect() {
         log.info("disconnect")
-        sdk.disconnect()
+        sdk?.disconnect()
     }
 
     fun sendText(text: String) {
         log.info("sendText", mapOf("len" to text.length))
-        sdk.sendText(text)
+        sdk?.sendText(text)
     }
 
     fun interrupt() {
         log.info("interrupt")
-        sdk.interrupt()
+        sdk?.interrupt()
     }
 
     fun startMic() {
         log.info("startMic")
-        sdk.startMic()
+        sdk?.startMic()
     }
 
     fun stopMic() {
         log.info("stopMic")
-        sdk.stopMic()
+        sdk?.stopMic()
     }
 
     fun setTtsEnabled(enabled: Boolean) {
         log.info("setTtsEnabled", mapOf("enabled" to enabled))
-        viewModelScope.launch { sdk.setTtsEnabled(enabled) }
+        viewModelScope.launch { sdk?.setTtsEnabled(enabled) }
     }
 
     fun switchSession(sessionId: String) {
         log.info("switchSession", mapOf("sessionId" to sessionId))
-        viewModelScope.launch { sdk.switchSession(sessionId) }
+        viewModelScope.launch { sdk?.switchSession(sessionId) }
     }
 
     fun newChat() {
         log.info("newChat")
-        viewModelScope.launch { sdk.newChat() }
+        viewModelScope.launch { sdk?.newChat() }
     }
 }

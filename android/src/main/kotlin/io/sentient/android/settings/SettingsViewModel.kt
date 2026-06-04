@@ -24,14 +24,15 @@ import io.sentient.mobilesdk.secure.SecureTokenStore
 import io.sentient.mobilesdk.sdk.SentientSdk
 
 /**
- * Drives the Settings screen's only command: [logout]. Default constructor pulls
- * the process singletons from [SdkHolder]; both params are injectable for tests.
+ * Drives the Settings screen's only command: [logout]. Default constructor reads
+ * the current SDK from [SdkHolder.sdkFlow] at call time so a backend rebuild is
+ * reflected without recreating this ViewModel; both params are injectable for tests.
  *
- * @param sdk The process-singleton SDK (disconnect tears down WS + cancels).
+ * @param sdkProvider Returns the current SDK (disconnect tears down WS + cancels).
  * @param tokenStore The same store login wrote to; clearing it prevents auto-resume.
  */
 class SettingsViewModel(
-    private val sdk: SentientSdk = SdkHolder.sdk,
+    private val sdkProvider: () -> SentientSdk? = { SdkHolder.sdkFlow.value },
     private val tokenStore: SecureTokenStore = SdkHolder.tokenStore,
 ) : ViewModel() {
     private val log = createLogger("android", "settings-viewmodel")
@@ -44,7 +45,7 @@ class SettingsViewModel(
      */
     fun logout() {
         log.info("logout.start")
-        sdk.disconnect()
+        sdkProvider()?.disconnect()
         tokenStore.clear()
         log.info("logout.done")
     }

@@ -21,7 +21,6 @@ import io.sentient.mobilesdk.auth.AuthResult
 import io.sentient.mobilesdk.auth.AuthUserLite
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.secure.SecureTokenStore
-import io.sentient.mobilesdk.sdk.SentientSdk
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -66,9 +65,9 @@ sealed interface AuthIntent {
 }
 
 class AuthViewModel(
-    private val authClient: AuthClient = SdkHolder.authClient,
+    private val authClientProvider: () -> AuthClient = { SdkHolder.authClient },
     private val tokenStore: SecureTokenStore = SdkHolder.tokenStore,
-    private val sdk: SentientSdk = SdkHolder.sdk,
+    private val sdkConnect: suspend () -> Unit = { SdkHolder.sdk.connect() },
 ) : ViewModel() {
     private val log = createLogger("android", "auth-viewmodel")
 
@@ -102,7 +101,7 @@ class AuthViewModel(
         log.info("loadUsers.start")
         _state.update { it.copy(loadingUsers = true, error = null) }
         viewModelScope.launch {
-            when (val result = authClient.listUsers()) {
+            when (val result = authClientProvider().listUsers()) {
                 is AuthResult.Success -> {
                     log.info("loadUsers.ok", mapOf("count" to result.value.size))
                     _state.update { it.copy(users = result.value, loadingUsers = false) }
@@ -128,11 +127,11 @@ class AuthViewModel(
         log.info("login.start", mapOf("userId" to user.userId)) // PIN intentionally omitted
         _state.update { it.copy(submitting = true, error = null) }
         viewModelScope.launch {
-            when (val result = authClient.login(user.userId, pin)) {
+            when (val result = authClientProvider().login(user.userId, pin)) {
                 is AuthResult.Success -> {
                     log.info("login.ok", mapOf("userId" to user.userId))
                     tokenStore.save(result.value.token)
-                    sdk.connect()
+                    sdkConnect()
                 }
                 is AuthResult.Failure -> {
                     log.warn("login.failed", mapOf("error" to result.error::class.simpleName))
