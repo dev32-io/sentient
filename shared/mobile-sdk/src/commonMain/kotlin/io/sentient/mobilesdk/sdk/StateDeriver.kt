@@ -41,7 +41,32 @@ import io.sentient.mobilesdk.util.Clock
 class StateDeriver(private val clock: Clock) {
     var status: SdkStatus = SdkStatus.DISCONNECTED
     var feed: List<ConversationFeedItem> = emptyList()
+
+    /**
+     * Live in-flight buffer. The setter captures cycleId + text so that
+     * [applyFeed] can later stamp the matching committed Assistant entry.
+     */
     var inflight: InFlightMessage? = null
+        set(value) {
+            field = value
+            // Intentionally NOT cleared on null: lastInflightCycleId/lastInflightText
+            // must survive past `inflight = null` so applyFeed can stamp the matching
+            // committed entry (the commit lands after the inflight slot clears).
+            if (value != null) {
+                lastInflightCycleId = value.cycleId
+                lastInflightText = value.text
+            }
+        }
+
+    /** Last non-null cycleId seen from the inflight setter. */
+    private var lastInflightCycleId: String? = null
+
+    /** Last non-null text seen from the inflight setter (used to match the committed entry). */
+    private var lastInflightText: String = ""
+
+    /** ts → cycleId: populated in applyFeed when a committed entry matches the last inflight text. */
+    private val cycleByTs = HashMap<Long, String>()
+
     var transcript: String = ""
     var cognition: CognitionState = CognitionState.IDLE
     var voiceMode: VoiceMode = VoiceMode.OFF
@@ -60,9 +85,13 @@ class StateDeriver(private val clock: Clock) {
      * in history, the live preview is stale (the utterance is now committed) and
      * must not linger as a duplicate bubble. Channel-scoped to "speech" so a
      * text.input commit never clears a voice preview.
+     *
+     * Also stamps any Assistant entry whose content matches the last inflight
+     * buffer, recording the cycleId so [derive] can attach tools to that message.
      */
     fun applyFeed(items: List<ConversationFeedItem>) {
         feed = items
+        stampCycleIds(items)
         if (transcript.isEmpty()) return
         val lastSpeechUser = items.asReversed().firstOrNull {
             it is ConversationFeedItem.User && it.channel == SPEECH_CHANNEL
@@ -73,7 +102,7 @@ class StateDeriver(private val clock: Clock) {
     /** Build the immutable snapshot from the current slices. */
     fun derive(): SdkState = SdkState(
         status = status,
-        messages = deriveMessages(feed, inflight, clock.nowMs()),
+        messages = deriveMessages(feed, inflight, clock.nowMs(), tasks, cycleByTs),
         transcript = transcript,
         cognition = cognition,
         voiceMode = voiceMode,
@@ -84,6 +113,23 @@ class StateDeriver(private val clock: Clock) {
         connectionLost = connectionLost,
         authExpired = authExpired,
     )
+
+    /**
+     * Match the last-seen inflight text against new feed entries, recording
+     * ts → cycleId for any Assistant entry that commits that exact text.
+     */
+    private fun stampCycleIds(items: List<ConversationFeedItem>) {
+        val cycle = lastInflightCycleId ?: return
+        if (lastInflightText.isEmpty()) return
+        for (item in items) {
+            if (item is ConversationFeedItem.Assistant &&
+                item.content == lastInflightText &&
+                item.ts !in cycleByTs
+            ) {
+                cycleByTs[item.ts] = cycle
+            }
+        }
+    }
 }
 
 /**
@@ -94,30 +140,59 @@ class StateDeriver(private val clock: Clock) {
  * user / empty-non-cutoff assistant entries are dropped too (barge-in markers /
  * pre-token placeholders that don't render). Committed entries first, the
  * streaming bubble last.
+ *
+ * @param tasks Current task list used to attach tools to messages by cycleId.
+ * @param cycleByTs Map of feed-item ts → cycleId, populated by StateDeriver.applyFeed.
  */
 internal fun deriveMessages(
     feed: List<ConversationFeedItem>,
     inflight: InFlightMessage?,
     nowMs: Long,
+    tasks: List<TaskSnapshotItem> = emptyList(),
+    cycleByTs: Map<Long, String> = emptyMap(),
 ): List<ChatMessage> {
     val out = ArrayList<ChatMessage>(feed.size + 1)
     for (item in feed) {
-        committedMessage(item)?.let(out::add)
+        committedMessage(item, tasks, cycleByTs)?.let(out::add)
     }
     if (inflight != null) {
-        out.add(ChatMessage(ts = nowMs, role = ROLE_ASSISTANT, content = inflight.text, streaming = true))
+        out.add(
+            ChatMessage(
+                ts = nowMs,
+                role = ROLE_ASSISTANT,
+                content = inflight.text,
+                streaming = true,
+                cycleId = inflight.cycleId,
+                tools = toolsFor(inflight.cycleId, tasks),
+            ),
+        )
     }
     return out
 }
 
-private fun committedMessage(item: ConversationFeedItem): ChatMessage? = when (item) {
+private fun committedMessage(
+    item: ConversationFeedItem,
+    tasks: List<TaskSnapshotItem>,
+    cycleByTs: Map<Long, String>,
+): ChatMessage? = when (item) {
     is ConversationFeedItem.User ->
         if (item.content.isEmpty()) null
         else ChatMessage(ts = item.ts, role = ROLE_USER, content = item.content)
 
-    is ConversationFeedItem.Assistant ->
+    is ConversationFeedItem.Assistant -> {
         if (item.content.isEmpty() && item.cutoff == null) null
-        else ChatMessage(ts = item.ts, role = ROLE_ASSISTANT, content = item.content, cutoffKind = item.cutoff?.kind)
+        else {
+            val cycleId = cycleByTs[item.ts]
+            ChatMessage(
+                ts = item.ts,
+                role = ROLE_ASSISTANT,
+                content = item.content,
+                cutoffKind = item.cutoff?.kind,
+                cycleId = cycleId,
+                tools = toolsFor(cycleId, tasks),
+            )
+        }
+    }
 
     // Tool entries surface via tasks (TaskStatusConnector); trigger entries are
     // Phase-2 sensor events. Both are DROPPED here to match cycle-helpers.ts and
@@ -125,6 +200,10 @@ private fun committedMessage(item: ConversationFeedItem): ChatMessage? = when (i
     is ConversationFeedItem.Tool -> null
     is ConversationFeedItem.Trigger -> null
 }
+
+/** Filter [tasks] to only those belonging to [cycleId]. Returns empty list when cycleId is null. */
+private fun toolsFor(cycleId: String?, tasks: List<TaskSnapshotItem>): List<TaskSnapshotItem> =
+    if (cycleId == null) emptyList() else tasks.filter { it.cycleId == cycleId }
 
 private const val SPEECH_CHANNEL = "speech"
 private const val ROLE_USER = "user"
