@@ -1,5 +1,7 @@
 package io.sentient.mobilesdk.log
 
+import kotlin.concurrent.Volatile
+
 /**
  * Tagged structured logger — mirrors web-sdk createLogger shape.
  *
@@ -21,6 +23,18 @@ interface Log {
 }
 
 /**
+ * Global log-verbosity gate. Messages below [minLevel] are dropped before they
+ * reach the platform sink. The app sets this once at startup from the build
+ * variant — DEBUG for dev builds (full per-chunk tracing), INFO for prod (drops
+ * the high-volume DEBUG noise, keeps lifecycle + WARN/ERROR). Default DEBUG so
+ * tests and un-configured hosts see everything.
+ */
+object LogConfig {
+    @Volatile
+    var minLevel: LogLevel = LogLevel.DEBUG
+}
+
+/**
  * Builds the dot-separated tag string with the required root prefix.
  * Example: loggerTag("transport", "ws") → "sentient.mobile-sdk.transport.ws"
  */
@@ -35,6 +49,7 @@ fun createLogger(vararg tags: String): Log {
     val tag = loggerTag(*tags)
     return object : Log {
         private fun emit(level: LogLevel, message: String, props: Map<String, Any?>) {
+            if (level.ordinal < LogConfig.minLevel.ordinal) return
             val propsStr = if (props.isEmpty()) {
                 ""
             } else {

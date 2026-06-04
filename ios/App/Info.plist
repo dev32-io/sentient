@@ -16,14 +16,16 @@
 	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Sentient uses the microphone for voice conversations.</string>
 	<key>CFBundleShortVersionString</key>
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>GatewayWSURL</key>
+	<string>$(GATEWAY_WS_URL)</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
 		<key>NSExceptionDomains</key>
 		<dict>
 			<key>localhost</key>
@@ -35,6 +37,8 @@
 			</dict>
 		</dict>
 	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Sentient uses the microphone for voice conversations.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 </dict>

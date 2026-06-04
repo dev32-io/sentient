@@ -13,13 +13,11 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.foundation.layout.wrapContentSize
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -40,7 +38,13 @@ fun LoginScreen(
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) { viewModel.dispatch(AuthIntent.LoadUsers) }
+    // Reset stale per-login state on every (re)entry — the Activity-scoped VM
+    // survives logout, so without this a re-shown login lands on a stale PIN
+    // screen. Then (re)load the user list.
+    LaunchedEffect(Unit) {
+        viewModel.dispatch(AuthIntent.Reset)
+        viewModel.dispatch(AuthIntent.LoadUsers)
+    }
     LoginScreenBody(state = state, dispatch = viewModel::dispatch, modifier = modifier)
 }
 
@@ -84,13 +88,16 @@ private fun UserGrid(state: AuthUiState, dispatch: (AuthIntent) -> Unit) {
             style = MaterialTheme.typography.headlineSmall,
             color = MaterialTheme.colorScheme.onBackground,
         )
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 96.dp),
-            horizontalArrangement = Arrangement.spacedBy(tokens.space.lg),
+        // FlowRow centers each wrapped row (mirrors webui flex-wrap + justify-
+        // content:center and the iOS CenteredFlowLayout). A LazyVerticalGrid with
+        // Adaptive columns fills the width and left-packs the tiles — wrapContentSize
+        // does NOT shrink a lazy grid, so a small family hugs the left edge.
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(tokens.space.lg, Alignment.CenterHorizontally),
             verticalArrangement = Arrangement.spacedBy(tokens.space.lg),
-            modifier = Modifier.wrapContentSize(),
         ) {
-            items(state.users, key = { it.userId }) { user ->
+            state.users.forEach { user ->
                 AvatarTile(user = user, onClick = { dispatch(AuthIntent.SelectUser(user)) })
             }
         }

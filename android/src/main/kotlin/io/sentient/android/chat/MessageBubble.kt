@@ -11,9 +11,10 @@
 // Both: 1dp lineSoft border, padMsg (18dp) text padding, ink text, capped at
 // msgMax width. A streaming assistant message with no text yet shows the
 // three-dot pulse (mirrors BubbleText PlaceholderPulse); once text arrives it
-// renders the text plus a trailing block cursor while still streaming.
+// renders GFM markdown plus a trailing block cursor while still streaming.
 //
-// Markdown is a v1 FOLLOW-UP — D-A3 renders PLAIN TEXT only.
+// Markdown: GFM via mikepenz multiplatform-markdown-renderer (m3), themed to
+// Dusk (ink text, accent links, bgElev code) — mirrors the webui `marked` path.
 // ---------------------------------------------------------------------------
 package io.sentient.android.chat
 
@@ -21,6 +22,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -35,7 +37,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import com.mikepenz.markdown.m3.Markdown
+import com.mikepenz.markdown.m3.markdownColor
+import com.mikepenz.markdown.m3.markdownTypography
 import io.sentient.android.theme.LocalTokens
 import io.sentient.mobilesdk.design.Colors
 import io.sentient.mobilesdk.sdk.ChatMessage
@@ -125,23 +135,52 @@ private fun BubbleBody(message: ChatMessage, isUser: Boolean) {
 @Composable
 private fun BubbleText(text: String, streaming: Boolean, cutoffKind: String?) {
     val tokens = LocalTokens.current
-    Text(
-        text = buildBubbleText(text, streaming, cutoffKind),
+    // GFM rendered to Compose (mikepenz). Streaming appends a block cursor into the
+    // source (parity with the plain-text typewriter); the cutoff marker renders as a
+    // separate row below so it stays outside the markdown block flow.
+    val cursor = if (streaming) " ▍" else ""
+    val body = TextStyle(
         color = Color(Colors.ink),
         fontSize = tokens.type.base,
         lineHeight = tokens.type.base * tokens.type.lineRelaxed,
     )
+    Column(verticalArrangement = Arrangement.spacedBy(tokens.space.xs)) {
+        Markdown(
+            content = text + cursor,
+            colors = markdownColor(
+                text = Color(Colors.ink),
+                codeBackground = Color(Colors.bgElev),
+                inlineCodeBackground = Color(Colors.bgElev),
+            ),
+            typography = markdownTypography(
+                // Right-size headings for chat bubbles — Material display* defaults
+                // are oversized in a message bubble (parity with the iOS bubble).
+                h1 = body.copy(fontSize = tokens.type.xl, fontWeight = FontWeight.Bold),
+                h2 = body.copy(fontSize = tokens.type.lg, fontWeight = FontWeight.Bold),
+                h3 = body.copy(fontSize = tokens.type.base, fontWeight = FontWeight.Bold),
+                text = body,
+                paragraph = body,
+                ordered = body,
+                bullet = body,
+                list = body,
+                textLink = TextLinkStyles(
+                    style = SpanStyle(
+                        color = Color(Colors.accent),
+                        textDecoration = TextDecoration.Underline,
+                    ),
+                ),
+            ),
+        )
+        if (cutoffLabel(cutoffKind) != null) {
+            Text(text = "⏹ interrupted", color = Color(Colors.ink3), fontSize = tokens.type.sm)
+        }
+    }
 }
 
-/** Append a block-cursor while streaming, and a cutoff marker when cut short. */
-private fun buildBubbleText(text: String, streaming: Boolean, cutoffKind: String?): String {
-    val cursor = if (streaming) " ▍" else ""
-    val cutoff = when (cutoffKind) {
-        "interrupt" -> "  ⏹ interrupted"
-        "barge-in" -> "  ⏹ interrupted"
-        else -> ""
-    }
-    return text + cursor + cutoff
+/** Interrupt / barge-in both surface as "interrupted"; null when not cut short. */
+private fun cutoffLabel(cutoffKind: String?): String? = when (cutoffKind) {
+    "interrupt", "barge-in" -> "interrupted"
+    else -> null
 }
 
 /** Three-dot thinking pulse — mirrors webui BubbleText PlaceholderPulse. */

@@ -62,8 +62,10 @@ struct Composer: View {
         .padding(Space.md)
         .background(DuskColors.paper, in: RoundedRectangle(cornerRadius: ComposerLayout.radius))
         .overlay(
+            // Listening glow: the whole composer card borders accent while the mic
+            // is active (mirrors webui .composer--listening).
             RoundedRectangle(cornerRadius: ComposerLayout.radius)
-                .stroke(DuskColors.line, lineWidth: 1)
+                .stroke(micActive ? DuskColors.accent : DuskColors.line, lineWidth: 1)
         )
         .padding(.horizontal, Space.lg)
         .padding(.vertical, Space.md)
@@ -98,35 +100,34 @@ struct Composer: View {
 
     private var buttonRow: some View {
         HStack(spacing: Space.sm) {
-            MicButton(active: micActive, action: onMicTap)
-            GlyphButton(
-                systemName: ttsEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill",
-                tint: DuskColors.ink2,
+            // mic + TTS are toggles: rounded-square, slashed glyph + sunk bg when
+            // off, accent glyph + accent-tint bg + accent border when on (webui
+            // icon-btn--mic-on/off, tts-on/off).
+            ComposerToggle(systemName: micActive ? "mic" : "mic.slash", on: micActive, action: onMicTap)
+                .accessibilityLabel("Microphone")
+                .accessibilityIdentifier("chat-mic")
+            ComposerToggle(
+                systemName: ttsEnabled ? "speaker.wave.2" : "speaker.slash",
+                on: ttsEnabled,
                 action: onTtsToggle
             )
             .accessibilityLabel("Toggle speech")
             .accessibilityIdentifier("chat-tts-toggle")
             Spacer()
             if canInterrupt {
-                GlyphButton(systemName: "stop.fill", tint: DuskColors.stop, action: onInterrupt)
+                ComposerAction(systemName: "stop.fill", tint: DuskColors.stop, action: onInterrupt)
                     .accessibilityLabel("Stop")
                     .accessibilityIdentifier("chat-interrupt")
             }
-            sendButton
+            ComposerAction(
+                systemName: "paperplane.fill",
+                tint: sendEnabled ? DuskColors.accent : DuskColors.ink4,
+                action: submit
+            )
+            .disabled(!sendEnabled)
+            .accessibilityLabel("Send")
+            .accessibilityIdentifier("chat-send")
         }
-    }
-
-    private var sendButton: some View {
-        Button(action: submit) {
-            Image(systemName: "arrow.up.circle.fill")
-                .font(.system(size: ComposerLayout.buttonGlyph, weight: .semibold))
-                .foregroundStyle(sendEnabled ? DuskColors.accent : DuskColors.ink4)
-                .frame(width: ComposerLayout.buttonSize, height: ComposerLayout.buttonSize)
-        }
-        .buttonStyle(.plain)
-        .disabled(!sendEnabled)
-        .accessibilityLabel("Send")
-        .accessibilityIdentifier("chat-send")
     }
 
     // ── Submit ──────────────────────────────────────────────────────────────
@@ -194,30 +195,38 @@ private enum MicPermission {
     }
 }
 
-/// Mic toggle. When `active` (voiceMode .active) it wears the accent "mic-on"
-/// pill: a filled accent circle with a contrast glyph, mirroring the Android
-/// MicButton + the webui composer mic-on state.
-private struct MicButton: View {
-    let active: Bool
+/// A composer on/off toggle (mic, TTS) — a rounded-square icon button. Off:
+/// slashed glyph in ink-3 on the sunk surface with a line border. On: the glyph
+/// + border in accent over an accent-tinted fill. Mirrors the webui
+/// icon-btn--mic-on/off + tts-on/off variants.
+private struct ComposerToggle: View {
+    let systemName: String
+    let on: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: active ? "mic.fill" : "mic")
-                .font(.system(size: ComposerLayout.glyph, weight: active ? .semibold : .regular))
-                .foregroundStyle(active ? DuskColors.bg : DuskColors.ink2)
+            Image(systemName: systemName)
+                .font(.system(size: ComposerLayout.glyph))
+                .foregroundStyle(on ? DuskColors.accent : DuskColors.ink3)
                 .frame(width: ComposerLayout.buttonSize, height: ComposerLayout.buttonSize)
-                .background(active ? AnyShapeStyle(DuskColors.accent) : AnyShapeStyle(Color.clear), in: Circle())
+                .background(
+                    on ? DuskColors.accent.opacity(ComposerLayout.onTint) : DuskColors.bgSunk,
+                    in: RoundedRectangle(cornerRadius: Radii.sm)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Radii.sm)
+                        .stroke(on ? DuskColors.accent.opacity(ComposerLayout.onBorder) : DuskColors.line, lineWidth: 1)
+                )
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Microphone")
-        .accessibilityAddTraits(active ? [.isSelected] : [])
-        .accessibilityIdentifier("chat-mic")
+        .accessibilityAddTraits(on ? [.isSelected] : [])
     }
 }
 
-/// One icon-only toggle in the composer button row.
-private struct GlyphButton: View {
+/// A composer action button (interrupt, send) — icon-only, no toggle box; the
+/// tint carries its meaning (stop = stop color, send = accent / ink-4 disabled).
+private struct ComposerAction: View {
     let systemName: String
     let tint: Color
     let action: () -> Void
@@ -225,7 +234,7 @@ private struct GlyphButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: ComposerLayout.glyph))
+                .font(.system(size: ComposerLayout.glyph, weight: .semibold))
                 .foregroundStyle(tint)
                 .frame(width: ComposerLayout.buttonSize, height: ComposerLayout.buttonSize)
         }
@@ -235,9 +244,12 @@ private struct GlyphButton: View {
 
 private enum ComposerLayout {
     static let radius: CGFloat = 14
-    static let buttonSize: CGFloat = 40
+    static let buttonSize: CGFloat = 38
     static let glyph: CGFloat = 18
-    static let buttonGlyph: CGFloat = 28
+    /// Accent-tint fill / border opacities for the "on" state (≈ webui
+    /// color-mix(accent 14% / 35%)).
+    static let onTint: CGFloat = 0.14
+    static let onBorder: CGFloat = 0.4
 }
 
 #Preview {

@@ -235,6 +235,21 @@ export async function handleSessionConfigure(
   });
   ws.data.preferenceAudioUnsub = preferenceAudioUnsub;
 
+  // Seed the client with the current audio preferences. The onChange listener
+  // above only fires on FUTURE changes, and session.ready carries no prefs — so
+  // without this initial emit the client keeps its schema default
+  // (ttsEnabled: true). When the saved profile differs, the toggle computes
+  // !current from the wrong value and sends a patch the server already matches →
+  // update() is a no-op → no echo → the button appears stuck. Both webui and the
+  // mobile SDK rely on this seed to reflect the real state and toggle reliably.
+  wsSend({
+    type: "session.preferences.changed",
+    preferences: {
+      ttsEnabled: preferenceManager.get().ttsEnabled,
+      channel: preferenceManager.get().channel,
+    },
+  });
+
   // Register MCP control surface. MCP tools (update_user_settings, ...)
   // look up this session's controls by sessionId and mutate per-session
   // state directly — no global broadcasts, no cross-session reach.

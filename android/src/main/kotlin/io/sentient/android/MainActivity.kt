@@ -42,6 +42,8 @@ import io.sentient.android.sdk.SdkViewModel
 import io.sentient.android.settings.SettingsScreen
 import io.sentient.android.settings.SettingsViewModel
 import io.sentient.android.theme.SentientTheme
+import io.sentient.mobilesdk.log.LogConfig
+import io.sentient.mobilesdk.log.LogLevel
 import io.sentient.mobilesdk.sdk.VoiceMode
 import io.sentient.mobilesdk.transport.SdkStatus
 import kotlinx.coroutines.launch
@@ -62,6 +64,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Drop high-volume DEBUG tracing in prod (release); keep it in dev.
+        LogConfig.minLevel = if (BuildConfig.DEBUG) LogLevel.DEBUG else LogLevel.INFO
         enableEdgeToEdge()
         setContent {
             SentientTheme {

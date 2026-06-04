@@ -1,10 +1,20 @@
 import SwiftUI
+import MobileSdk
 
 @main
 struct SentientApp: App {
     // The app owns the one SdkStore for its lifetime (@StateObject) and injects
     // it into the view tree. The store builds the process SDK on first init.
     @StateObject private var store = SdkStore()
+
+    init() {
+        // Drop high-volume DEBUG tracing in prod (Release); keep it in dev.
+        #if DEBUG
+        MobileSdk.LogConfig.shared.minLevel = .debug
+        #else
+        MobileSdk.LogConfig.shared.minLevel = .info
+        #endif
+    }
 
     var body: some Scene {
         WindowGroup {

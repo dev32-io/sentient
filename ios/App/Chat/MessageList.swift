@@ -13,6 +13,7 @@
 // accessibilityIdentifier `chat-message-list` scopes the e2e bubble assertions.
 // ---------------------------------------------------------------------------
 import SwiftUI
+import UIKit
 import MobileSdk
 
 struct MessageList: View {
@@ -26,11 +27,30 @@ struct MessageList: View {
     private static let bottomAnchor = "chat-bottom-anchor"
 
     var body: some View {
-        if messages.isEmpty {
-            emptyState
-        } else {
-            list
+        Group {
+            if messages.isEmpty {
+                emptyState
+            } else {
+                list
+            }
         }
+        // Tap anywhere on the conversation dismisses the keyboard (ChatGPT/Claude
+        // style); contentShape makes the empty-state whitespace tappable too.
+        // simultaneousGesture (not onTapGesture) so a tap on a markdown link still
+        // opens the link AND dismisses the keyboard — a container onTapGesture would
+        // swallow the link's own tap. Swipe-down dismissal is handled by
+        // .scrollDismissesKeyboard on the list.
+        .contentShape(Rectangle())
+        .simultaneousGesture(TapGesture().onEnded { dismissKeyboard() })
+    }
+
+    /// Resign the first responder so the soft keyboard retracts. iOS has no
+    /// system "hide keyboard" affordance (Android's IME bar does); we broadcast
+    /// resignFirstResponder rather than thread @FocusState out of the Composer.
+    private func dismissKeyboard() {
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil
+        )
     }
 
     private var list: some View {
@@ -46,6 +66,7 @@ struct MessageList: View {
                 }
                 .padding(Space.lg)
             }
+            .scrollDismissesKeyboard(.interactively)
             .accessibilityIdentifier("chat-message-list")
             .onChange(of: messages.count) { scrollToBottom(proxy) }
             .onChange(of: messages.last?.content) { scrollToBottom(proxy) }

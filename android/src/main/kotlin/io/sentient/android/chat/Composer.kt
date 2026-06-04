@@ -30,7 +30,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -38,14 +40,12 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
@@ -59,15 +59,22 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import io.sentient.android.R
 import io.sentient.android.theme.LocalTokens
 import io.sentient.mobilesdk.design.Colors
 import io.sentient.mobilesdk.log.createLogger
 
 private val COMPOSER_RADIUS = 14.dp
-private val BUTTON_SIZE = 40.dp
+private val BUTTON_SIZE = 38.dp
+private val BUTTON_RADIUS = 8.dp
+private val ICON_SIZE = 20.dp
+/** Accent-tint fill / border alpha for the "on" state (≈ webui color-mix 14% / 35%). */
+private const val ON_TINT_ALPHA = 0.14f
+private const val ON_BORDER_ALPHA = 0.4f
 private const val MIC_DENIED_NOTICE = "Microphone permission is needed for voice."
 private val composerLog = createLogger("android", "composer")
 
@@ -140,7 +147,7 @@ fun Composer(
             .fillMaxWidth()
             .imePadding()
             .padding(horizontal = tokens.space.lg, vertical = tokens.space.md)
-            .clipCard()
+            .clipCard(listening = micActive)
             .padding(tokens.space.md),
         verticalArrangement = Arrangement.spacedBy(tokens.space.sm),
     ) {
@@ -166,10 +173,17 @@ fun Composer(
     }
 }
 
-/** Paper card with the composer's rounded border. */
-private fun Modifier.clipCard(): Modifier = this
+/**
+ * Paper card with the composer's rounded border. While [listening] (mic active)
+ * the border glows accent — mirrors the webui .composer--listening state.
+ */
+private fun Modifier.clipCard(listening: Boolean): Modifier = this
     .background(Color(Colors.paper), RoundedCornerShape(COMPOSER_RADIUS))
-    .border(1.dp, Color(Colors.line), RoundedCornerShape(COMPOSER_RADIUS))
+    .border(
+        1.dp,
+        if (listening) Color(Colors.accent) else Color(Colors.line),
+        RoundedCornerShape(COMPOSER_RADIUS),
+    )
 
 @Composable
 private fun DraftField(draft: String, onChange: (String) -> Unit, onSubmit: () -> Unit) {
@@ -214,65 +228,104 @@ private fun ButtonRow(
         horizontalArrangement = Arrangement.spacedBy(tokens.space.sm),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        MicButton(active = micActive, onClick = onMicTap)
-        GlyphButton(
-            glyph = if (ttsEnabled) "🔊" else "🔇",
+        // mic + TTS are toggles: slashed glyph + sunk bg when off, accent glyph +
+        // accent-tint bg + accent border when on (webui icon-btn--mic-on/off, tts).
+        ComposerToggle(
+            iconRes = if (micActive) R.drawable.ic_mic else R.drawable.ic_mic_off,
+            on = micActive,
+            contentDescription = "Microphone",
+            testTag = "chat-mic",
+            onClick = onMicTap,
+        )
+        ComposerToggle(
+            iconRes = if (ttsEnabled) R.drawable.ic_volume_2 else R.drawable.ic_volume_x,
+            on = ttsEnabled,
+            contentDescription = "Toggle speech",
+            testTag = "chat-tts-toggle",
             onClick = onTtsToggle,
-            modifier = Modifier.testTag("chat-tts-toggle"),
         )
         Row(modifier = Modifier.weight(1f)) {}
         if (canInterrupt) {
-            GlyphButton(
-                glyph = "⏹",
-                onClick = onInterrupt,
+            ComposerAction(
+                iconRes = R.drawable.ic_stop,
                 tint = Color(Colors.stop),
-                modifier = Modifier.testTag("chat-interrupt"),
+                contentDescription = "Stop",
+                testTag = "chat-interrupt",
+                onClick = onInterrupt,
             )
         }
-        SendButton(enabled = sendEnabled, onClick = onSend)
+        ComposerAction(
+            iconRes = R.drawable.ic_send,
+            tint = if (sendEnabled) Color(Colors.accent) else Color(Colors.ink4),
+            contentDescription = "Send",
+            testTag = "chat-send",
+            enabled = sendEnabled,
+            onClick = onSend,
+        )
     }
 }
 
-/** Mic toggle. [active] (voiceMode ACTIVE) wears the accent "mic-on" pill styling. */
+/**
+ * A composer on/off toggle (mic, TTS) — a rounded-square icon button. Off: ink-3
+ * glyph on the sunk surface with a line border. On: accent glyph + border over an
+ * accent-tinted fill. Mirrors the webui icon-btn--mic-on/off + tts variants.
+ */
 @Composable
-private fun MicButton(active: Boolean, onClick: () -> Unit) {
-    val base = Modifier.size(BUTTON_SIZE).testTag("chat-mic")
-    val styled = if (active) {
-        base.clip(CircleShape).background(Color(Colors.accent))
-    } else {
-        base
-    }
-    TextButton(onClick = onClick, modifier = styled) {
-        Text(if (active) "●" else "🎙", color = if (active) Color(Colors.bg) else Color(Colors.ink2))
-    }
-}
-
-@Composable
-private fun GlyphButton(
-    glyph: String,
+private fun ComposerToggle(
+    iconRes: Int,
+    on: Boolean,
+    contentDescription: String,
+    testTag: String,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    tint: Color = Color(Colors.ink2),
 ) {
-    TextButton(onClick = onClick, modifier = modifier.size(BUTTON_SIZE)) {
-        Text(glyph, color = tint)
-    }
-}
-
-@Composable
-private fun SendButton(enabled: Boolean, onClick: () -> Unit) {
-    val tint = if (enabled) Color(Colors.accent) else Color(Colors.ink4)
-    TextButton(
-        onClick = onClick,
-        enabled = enabled,
+    val bg = if (on) Color(Colors.accent).copy(alpha = ON_TINT_ALPHA) else Color(Colors.bgSunk)
+    val borderColor = if (on) Color(Colors.accent).copy(alpha = ON_BORDER_ALPHA) else Color(Colors.line)
+    val tint = if (on) Color(Colors.accent) else Color(Colors.ink3)
+    Box(
         modifier = Modifier
             .size(BUTTON_SIZE)
-            .testTag("chat-send"),
-        colors = ButtonDefaults.textButtonColors(
-            contentColor = tint,
-            disabledContentColor = Color(Colors.ink4),
-        ),
+            .clip(RoundedCornerShape(BUTTON_RADIUS))
+            .background(bg)
+            .border(1.dp, borderColor, RoundedCornerShape(BUTTON_RADIUS))
+            .clickable(onClick = onClick)
+            .testTag(testTag),
+        contentAlignment = Alignment.Center,
     ) {
-        Text("➤")
+        Icon(
+            painter = painterResource(iconRes),
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(ICON_SIZE),
+        )
+    }
+}
+
+/**
+ * A composer action button (interrupt, send) — icon-only, no toggle box; the tint
+ * carries meaning (stop = stop color, send = accent / ink-4 when disabled).
+ */
+@Composable
+private fun ComposerAction(
+    iconRes: Int,
+    tint: Color,
+    contentDescription: String,
+    testTag: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+) {
+    Box(
+        modifier = Modifier
+            .size(BUTTON_SIZE)
+            .clip(RoundedCornerShape(BUTTON_RADIUS))
+            .clickable(enabled = enabled, onClick = onClick)
+            .testTag(testTag),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            painter = painterResource(iconRes),
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(ICON_SIZE),
+        )
     }
 }

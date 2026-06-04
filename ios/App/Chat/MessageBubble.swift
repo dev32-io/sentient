@@ -14,11 +14,13 @@
 // three-dot pulse; once text arrives it renders the text plus a trailing block
 // cursor while still streaming; a cut-short reply shows an interrupted marker.
 //
-// Markdown is a v1 FOLLOW-UP — D-I3 renders PLAIN TEXT only.
+// Markdown: GFM via MarkdownUI (swift-markdown-ui), themed to Dusk
+// (Theme.dusk) — mirrors the webui `marked` render path.
 //
 // accessibilityIdentifier `message-bubble-<index>` mirrors the Android testTag.
 // ---------------------------------------------------------------------------
 import SwiftUI
+import MarkdownUI
 import MobileSdk
 
 struct MessageBubble: View {
@@ -80,10 +82,11 @@ struct MessageBubble: View {
 
     private var bubbleText: some View {
         VStack(alignment: .leading, spacing: Space.xs) {
-            Text(message.content + cursorSuffix)
-                .font(.system(size: TypeScale.base))
-                .lineSpacing(TypeScale.base * (TypeScale.lineRelaxed - 1))
-                .foregroundStyle(DuskColors.ink)
+            // GFM rendered via MarkdownUI, themed to Dusk. The streaming block
+            // cursor is appended into the source (parity with the plain-text
+            // typewriter); the cutoff marker stays a separate view below.
+            Markdown(message.content + cursorSuffix)
+                .markdownTheme(.dusk)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if cutoffLabel != nil {
                 interruptedMarker

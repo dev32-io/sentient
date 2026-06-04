@@ -178,22 +178,9 @@ final class SdkStore: ObservableObject {
     /// parity).
     nonisolated static func makeSdk() -> SentientSdk {
         createSentientSdk(
-            gatewayWsUrl: gatewayWsUrl,
-            allowSelfSignedDevHost: allowSelfSignedDevHost,
+            gatewayWsUrl: GatewayConfig.wsUrl,
+            allowSelfSignedDevHost: GatewayConfig.allowSelfSignedDevHost,
             capabilities: []
         )
-    }
-
-    /// Gateway WS endpoint. iOS simulator shares the host loopback, so localhost
-    /// reaches the dev gateway directly.
-    nonisolated private static let gatewayWsUrl = "wss://localhost:8888/api/v1/ws"
-
-    /// Trust the self-signed dev cert only in debug builds; release must verify.
-    nonisolated private static var allowSelfSignedDevHost: Bool {
-        #if DEBUG
-        return true
-        #else
-        return false
-        #endif
     }
 }

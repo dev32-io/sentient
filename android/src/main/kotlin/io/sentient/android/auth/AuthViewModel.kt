@@ -58,6 +58,7 @@ data class AuthUiState(
 /** User actions + external events. Closed sum for an exhaustive reducer. */
 sealed interface AuthIntent {
     data object LoadUsers : AuthIntent
+    data object Reset : AuthIntent
     data class SelectUser(val user: AuthUserLite) : AuthIntent
     data object Back : AuthIntent
     data class AppendDigit(val digit: Char) : AuthIntent
@@ -77,6 +78,13 @@ class AuthViewModel(
     fun dispatch(intent: AuthIntent) {
         when (intent) {
             AuthIntent.LoadUsers -> loadUsers()
+            // Clear stale per-login navigation state (selectedUser/pin/submitting/
+            // error) without dropping the loaded user list. The Activity-scoped VM
+            // survives login→chat→logout, so the login screen must reset on entry —
+            // otherwise logout lands on a stale, submitting (inert) PIN screen.
+            AuthIntent.Reset -> _state.update {
+                it.copy(selectedUser = null, pin = "", submitting = false, error = null)
+            }
             is AuthIntent.SelectUser -> _state.update {
                 it.copy(selectedUser = intent.user, pin = "", error = null)
             }

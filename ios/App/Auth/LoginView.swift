@@ -25,16 +25,20 @@ struct LoginView: View {
     }
 
     var body: some View {
-        ZStack {
-            switch model.phase {
-            case .pickUser: userGrid
-            case .enterPin: pinEntry
-            }
+        phaseContent
+            .padding(Space.xl)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(alignment: .topLeading) { backBar }
+            .duskTheme()
+            .task { await model.loadUsers() }
+    }
+
+    @ViewBuilder
+    private var phaseContent: some View {
+        switch model.phase {
+        case .pickUser: userGrid
+        case .enterPin: pinEntry
         }
-        .padding(Space.xl)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .duskTheme()
-        .task { await model.loadUsers() }
     }
 
     // ── Avatar grid ───────────────────────────────────────────────────────────
@@ -48,7 +52,7 @@ struct LoginView: View {
                 Text("Who's here?")
                     .font(.system(size: TypeScale.xl, weight: .semibold))
                     .foregroundStyle(DuskColors.ink)
-                LazyVGrid(columns: gridColumns, spacing: Space.lg) {
+                CenteredFlowLayout(spacing: Space.lg) {
                     ForEach(model.users, id: \.userId) { user in
                         AvatarTile(user: user, onTap: { model.select(user) })
                     }
@@ -58,15 +62,10 @@ struct LoginView: View {
         }
     }
 
-    private var gridColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: 96), spacing: Space.lg)]
-    }
-
     // ── PIN entry ───────────────────────────────────────────────────────────────
 
     private var pinEntry: some View {
         VStack(spacing: Space.xl) {
-            backButton
             Text(model.selectedUser?.displayName ?? "")
                 .font(.system(size: TypeScale.xl, weight: .semibold))
                 .foregroundStyle(DuskColors.ink)
@@ -82,16 +81,24 @@ struct LoginView: View {
         }
     }
 
-    private var backButton: some View {
-        HStack {
-            Button(action: { model.back() }) {
-                Label("Back", systemImage: "chevron.left")
-                    .font(.system(size: TypeScale.base))
-                    .foregroundStyle(DuskColors.ink3)
+    /// Top-leading nav bar — only in the PIN phase. Lives at the top of the
+    /// screen (overlay), not inside the vertically-centered PIN stack, so it
+    /// reads as a nav bar rather than floating mid-screen.
+    @ViewBuilder
+    private var backBar: some View {
+        if model.phase == .enterPin {
+            HStack {
+                Button(action: { model.back() }) {
+                    Label("Back", systemImage: "chevron.left")
+                        .font(.system(size: TypeScale.base))
+                        .foregroundStyle(DuskColors.ink3)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("login-back")
+                Spacer()
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("login-back")
-            Spacer()
+            .padding(.horizontal, Space.lg)
+            .padding(.vertical, Space.sm)
         }
     }
 
