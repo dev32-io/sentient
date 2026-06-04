@@ -51,11 +51,16 @@ data class HistoryUiState(
 }
 
 /**
- * Holds the session list for the History drawer. Default constructor pulls the
- * process-singleton [SentientSdk]; [sdk] is injectable for tests/previews.
+ * Holds the session list for the History drawer. Default constructor reads the
+ * current SDK from [SdkHolder.sdkFlow] at call time so a backend rebuild is
+ * reflected without recreating this ViewModel; [sdkProvider] is injectable for
+ * tests/previews. Constructing while unconfigured is safe — [SdkHolder.sdkFlow]
+ * returns null until a backend is configured.
+ *
+ * @param sdkProvider Returns the current SDK, or null when not yet configured.
  */
 class HistoryViewModel(
-    private val sdk: SentientSdk = SdkHolder.sdk,
+    private val sdkProvider: () -> SentientSdk? = { SdkHolder.sdkFlow.value },
 ) : ViewModel() {
     private val log = createLogger("android", "history-viewmodel")
 
@@ -75,7 +80,7 @@ class HistoryViewModel(
     fun switchSession(sessionId: String) {
         log.info("switchSession", mapOf("sessionId" to sessionId))
         viewModelScope.launch {
-            runCatching { sdk.switchSession(sessionId) }
+            runCatching { sdkProvider()?.switchSession(sessionId) }
                 .onFailure { warn("switch-failed", it, mapOf("sessionId" to sessionId)) }
             loadSessions()
         }
@@ -84,7 +89,7 @@ class HistoryViewModel(
     fun newChat() {
         log.info("newChat")
         viewModelScope.launch {
-            runCatching { sdk.newChat() }
+            runCatching { sdkProvider()?.newChat() }
                 .onFailure { warn("new-failed", it) }
             loadSessions()
         }
@@ -93,7 +98,7 @@ class HistoryViewModel(
     fun renameSession(sessionId: String, title: String) {
         log.info("renameSession", mapOf("sessionId" to sessionId))
         viewModelScope.launch {
-            runCatching { sdk.renameSession(sessionId, title) }
+            runCatching { sdkProvider()?.renameSession(sessionId, title) }
                 .onFailure { warn("rename-failed", it, mapOf("sessionId" to sessionId)) }
             loadSessions()
         }
@@ -102,13 +107,14 @@ class HistoryViewModel(
     fun deleteSession(sessionId: String) {
         log.info("deleteSession", mapOf("sessionId" to sessionId))
         viewModelScope.launch {
-            runCatching { sdk.deleteSession(sessionId) }
+            runCatching { sdkProvider()?.deleteSession(sessionId) }
                 .onFailure { warn("delete-failed", it, mapOf("sessionId" to sessionId)) }
             loadSessions()
         }
     }
 
     private suspend fun loadSessions() {
+        val sdk = sdkProvider() ?: return
         _state.value = _state.value.copy(loading = true, error = null)
         val result = runCatching { sdk.listSessions(limit = LIST_PAGE_LIMIT, offset = 0) }
         result
