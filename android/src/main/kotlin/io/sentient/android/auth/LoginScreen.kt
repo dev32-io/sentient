@@ -35,6 +35,7 @@ import io.sentient.android.theme.LocalTokens
 @Composable
 fun LoginScreen(
     viewModel: AuthViewModel,
+    onOpenBackendSetup: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -45,13 +46,19 @@ fun LoginScreen(
         viewModel.dispatch(AuthIntent.Reset)
         viewModel.dispatch(AuthIntent.LoadUsers)
     }
-    LoginScreenBody(state = state, dispatch = viewModel::dispatch, modifier = modifier)
+    LoginScreenBody(
+        state = state,
+        dispatch = viewModel::dispatch,
+        onOpenBackendSetup = onOpenBackendSetup,
+        modifier = modifier,
+    )
 }
 
 @Composable
 private fun LoginScreenBody(
     state: AuthUiState,
     dispatch: (AuthIntent) -> Unit,
+    onOpenBackendSetup: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val tokens = LocalTokens.current
@@ -69,6 +76,10 @@ private fun LoginScreenBody(
                 PinEntry(state = state, dispatch = dispatch)
             }
         }
+        androidx.compose.material3.TextButton(
+            onClick = onOpenBackendSetup,
+            modifier = Modifier.align(Alignment.TopEnd).testTag("login-backend-setup"),
+        ) { androidx.compose.material3.Text("⚙", color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
 }
 

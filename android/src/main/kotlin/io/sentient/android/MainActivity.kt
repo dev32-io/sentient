@@ -1,10 +1,13 @@
 // ---------------------------------------------------------------------------
-// MainActivity — the single Activity host. v1 navigation is a state-based swap
-// between the Login screen and the (placeholder) Chat screen, derived from the
-// SDK's single state surface: status == READY ⇒ chat, otherwise ⇒ login. This
-// matches the codebase's event-driven UX inference — login saves the token +
-// calls sdk.connect(); the SDK reaches READY and the UI swaps. No nav library
-// for v1 (one decision, two destinations).
+// MainActivity — the single Activity host. Navigation is a state-based swap:
+//
+//  1. Backend gate (AppRoot): if no backend is configured (no persisted override
+//     and no build-time default URL), force BackendSetupScreen. Once configured,
+//     ensureBuilt() is called exactly once and the SDK-status-derived swap runs.
+//
+//  2. SDK gate (AppConfiguredRoot): status == READY ⇒ chat, otherwise ⇒ login.
+//     The gear on the login screen lets the user reopen setup from an already-
+//     configured state (e.g. to point at a different server).
 //
 // testTagsAsResourceId is enabled at the composition root so Compose testTags
 // surface as Android resource-ids — that's what uiautomator / Maestro / the
@@ -61,6 +64,9 @@ class MainActivity : ComponentActivity() {
     private val settingsViewModel: SettingsViewModel by viewModels {
         viewModelFactory { initializer { SettingsViewModel() } }
     }
+    private val backendSetupViewModel: io.sentient.android.backend.BackendSetupViewModel by viewModels {
+        viewModelFactory { initializer { io.sentient.android.backend.BackendSetupViewModel() } }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -74,6 +80,7 @@ class MainActivity : ComponentActivity() {
                     authViewModel = authViewModel,
                     historyViewModel = historyViewModel,
                     settingsViewModel = settingsViewModel,
+                    backendSetupViewModel = backendSetupViewModel,
                 )
             }
         }
@@ -87,6 +94,38 @@ private fun AppRoot(
     authViewModel: AuthViewModel,
     historyViewModel: HistoryViewModel,
     settingsViewModel: SettingsViewModel,
+    backendSetupViewModel: io.sentient.android.backend.BackendSetupViewModel,
+) {
+    val backendConfig by io.sentient.android.backend.BackendConfigHolder.store.config.collectAsStateWithLifecycle()
+    // Forced setup: no override AND no build-time default ⇒ unconfigured. Derived
+    // from the collected flow so a save (config flips non-null) recomposes the gate.
+    var showSetupOverride by rememberSaveable { mutableStateOf(false) }
+    val configured = backendConfig != null || io.sentient.android.BuildConfig.GATEWAY_WS_URL.isNotEmpty()
+    Surface(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
+        Box(Modifier.fillMaxSize()) {
+            if (!configured || showSetupOverride) {
+                io.sentient.android.backend.BackendSetupScreen(
+                    viewModel = backendSetupViewModel,
+                    onSaved = { showSetupOverride = false },
+                )
+            } else {
+                io.sentient.android.sdk.SdkHolder.ensureBuilt()
+                AppConfiguredRoot(
+                    sdkViewModel, authViewModel, historyViewModel, settingsViewModel,
+                    onOpenBackendSetup = { showSetupOverride = true },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AppConfiguredRoot(
+    sdkViewModel: SdkViewModel,
+    authViewModel: AuthViewModel,
+    historyViewModel: HistoryViewModel,
+    settingsViewModel: SettingsViewModel,
+    onOpenBackendSetup: () -> Unit,
 ) {
     val sdkState by sdkViewModel.state.collectAsStateWithLifecycle()
     val drawerState = rememberHistoryDrawerState()
@@ -97,44 +136,36 @@ private fun AppRoot(
     // ensures a logout (status leaves READY) implicitly drops the overlay, so a
     // re-login lands on chat, not a stale settings screen.
     var showSettings by rememberSaveable { mutableStateOf(false) }
-    Surface(
-        Modifier
-            .fillMaxSize()
-            .semantics { testTagsAsResourceId = true },
-    ) {
-        Box(Modifier.fillMaxSize()) {
-            if (sdkState.status == SdkStatus.READY) {
-                if (showSettings) {
-                    SettingsScreen(
-                        onLogout = {
-                            settingsViewModel.logout()
-                            showSettings = false
-                        },
-                        onBack = { showSettings = false },
-                    )
-                } else {
-                    HistoryDrawer(
-                        viewModel = historyViewModel,
-                        drawerState = drawerState,
-                        nowMs = System.currentTimeMillis(),
-                    ) {
-                        ChatScreen(
-                            state = sdkState,
-                            onSend = sdkViewModel::sendText,
-                            onMicToggle = {
-                                if (sdkState.voiceMode == VoiceMode.ACTIVE) sdkViewModel.stopMic()
-                                else sdkViewModel.startMic()
-                            },
-                            onTtsToggle = { sdkViewModel.setTtsEnabled(!sdkState.prefs.ttsEnabled) },
-                            onInterrupt = sdkViewModel::interrupt,
-                            onOpenHistory = { scope.launch { drawerState.open() } },
-                            onOpenSettings = { showSettings = true },
-                        )
-                    }
-                }
-            } else {
-                LoginScreen(viewModel = authViewModel)
+    if (sdkState.status == SdkStatus.READY) {
+        if (showSettings) {
+            SettingsScreen(
+                onLogout = {
+                    settingsViewModel.logout()
+                    showSettings = false
+                },
+                onBack = { showSettings = false },
+            )
+        } else {
+            HistoryDrawer(
+                viewModel = historyViewModel,
+                drawerState = drawerState,
+                nowMs = System.currentTimeMillis(),
+            ) {
+                ChatScreen(
+                    state = sdkState,
+                    onSend = sdkViewModel::sendText,
+                    onMicToggle = {
+                        if (sdkState.voiceMode == VoiceMode.ACTIVE) sdkViewModel.stopMic()
+                        else sdkViewModel.startMic()
+                    },
+                    onTtsToggle = { sdkViewModel.setTtsEnabled(!sdkState.prefs.ttsEnabled) },
+                    onInterrupt = sdkViewModel::interrupt,
+                    onOpenHistory = { scope.launch { drawerState.open() } },
+                    onOpenSettings = { showSettings = true },
+                )
             }
         }
+    } else {
+        LoginScreen(viewModel = authViewModel, onOpenBackendSetup = onOpenBackendSetup)
     }
 }
