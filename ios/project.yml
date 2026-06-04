@@ -1,8 +1,13 @@
 name: SentientApp
 options:
-  bundleIdPrefix: io.sentient
+  bundleIdPrefix: io.dev32
   deploymentTarget:
     iOS: "17.0"
+packages:
+  # GFM markdown rendering for chat bubbles (SwiftUI-native), themed to Dusk.
+  MarkdownUI:
+    url: https://github.com/gonzalezreal/swift-markdown-ui
+    from: "2.4.1"
 targets:
   SentientApp:
     type: application
@@ -13,18 +18,29 @@ targets:
       properties:
         UILaunchScreen: {}
         CFBundleDisplayName: Sentient
-        # Mic capture for voice conversations (E1 AVAudioEngine). Runtime prompt handled by the app (E5/E6).
         NSMicrophoneUsageDescription: Sentient uses the microphone for voice conversations.
-        # Debug-scoped ATS exception for localhost (later WSS dev). No network call in P0.
+        # Build-time default gateway URL. Debug reads Local.xcconfig (gitignored);
+        # Release leaves it unset → "" → app forces the in-app backend-setup page.
+        GatewayWSURL: $(GATEWAY_WS_URL)
+        # Prod hosts must serve a CA-trusted cert (strict ATS). NSAllowsLocalNetworking exempts LAN/private-IP hosts for the self-signed dev/self-host case.
         NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
           NSExceptionDomains:
             localhost:
               NSExceptionAllowsInsecureHTTPLoads: true
               NSIncludesSubdomains: true
+    configFiles:
+      Debug: App/Local.xcconfig
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: io.sentient.app
+        # Prod bundle id; Debug overrides to the .debug id so both install side by side.
+        PRODUCT_BUNDLE_IDENTIFIER: io.dev32.sentient
         GENERATE_INFOPLIST_FILE: NO
+      configs:
+        Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: io.dev32.sentient.debug
     dependencies:
       - framework: ../shared/mobile-sdk/build/XCFrameworks/debug/MobileSdk.xcframework
         embed: false
+      - package: MarkdownUI
+        product: MarkdownUI

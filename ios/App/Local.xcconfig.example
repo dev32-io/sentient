@@ -1,0 +1,5 @@
+// Copy to ios/App/Local.xcconfig (gitignored). Sets the DEBUG gateway URL.
+// xcconfig GOTCHA: an unescaped `//` starts a comment, so a URL's `wss://`
+// truncates. The `$()` between `:` and `//` expands to empty at build time and
+// prevents that — the resolved value is wss://host:8888/api/v1/ws.
+GATEWAY_WS_URL = wss:$()//localhost:8888/api/v1/ws

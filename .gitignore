@@ -75,3 +75,6 @@ qa/*/.playwright/
 *.png
 !**/public/**/*.png
 !**/icons/*.png
+
+# iOS per-machine debug backend (see ios/App/Local.xcconfig.example)
+ios/App/Local.xcconfig

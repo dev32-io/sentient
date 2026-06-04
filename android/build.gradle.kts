@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -6,8 +8,20 @@ plugins {
 android {
     namespace = "io.sentient.android"
     compileSdk = libs.versions.compileSdk.get().toInt()
+    // Debug gateway URL is sourced from local.properties (gitignored) so no private
+    // host is ever committed. Key: sentient.gatewayUrl. Absent → 10.0.2.2 emulator
+    // loopback fallback. See android/local.properties.example. Release bakes NO
+    // default ("") → the app forces the in-app backend-setup page on first launch.
+    val debugGatewayUrl: String = run {
+        val props = Properties()
+        val f = rootProject.file("local.properties")
+        if (f.exists()) f.inputStream().use { props.load(it) }
+        props.getProperty("sentient.gatewayUrl") ?: "wss://10.0.2.2:8888/api/v1/ws"
+    }
     defaultConfig {
-        applicationId = "io.sentient.android"
+        // Prod application id. The debug build type appends ".debug" so both
+        // variants install side by side (io.dev32.sentient.debug + io.dev32.sentient).
+        applicationId = "io.dev32.sentient"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
         versionCode = 1; versionName = "0.0.1"
@@ -18,14 +32,19 @@ android {
     buildTypes {
         getByName("debug") {
             isDebuggable = true
-            // 10.0.2.2 = the host loopback as seen from the Android emulator (NOT localhost,
-            // which the emulator resolves to its own guest). The local gateway serves WSS with a
-            // self-signed cert — SdkHolder pairs this with allowSelfSignedDevHost = BuildConfig.DEBUG.
-            buildConfigField("String", "GATEWAY_WS_URL", "\"wss://10.0.2.2:8888/api/v1/ws\"")
+            applicationIdSuffix = ".debug"
+            // Sourced from local.properties (gitignored) — see debugGatewayUrl above.
+            buildConfigField("String", "GATEWAY_WS_URL", "\"$debugGatewayUrl\"")
         }
         getByName("release") {
-            // Release URL is supplied by an operator build override; no self-signed host in release.
-            buildConfigField("String", "GATEWAY_WS_URL", "\"wss://gateway.invalid/api/v1/ws\"")
+            // No baked default: empty ⇒ resolver returns Unconfigured ⇒ setup page.
+            buildConfigField("String", "GATEWAY_WS_URL", "\"\"")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 }
@@ -46,4 +65,6 @@ dependencies {
     implementation(libs.compose.material3)
     implementation(libs.compose.ui)
     implementation(libs.compose.ui.tooling.preview)
+    // Markdown rendering for assistant chat bubbles (GFM, pure Compose).
+    implementation(libs.markdown.renderer.m3)
 }
