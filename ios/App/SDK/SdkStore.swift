@@ -48,13 +48,16 @@ final class SdkStore: ObservableObject {
     /// RootView's .task(id:) observes this to re-show the splash on every build.
     @Published private(set) var configGeneration: Int = 0
 
-    private var sdk: SentientSdk?
+    // internal: used by SdkStore+Sessions.swift and SdkStore+Commands.swift extensions
+    var sdk: SentientSdk?
     private let configStore = BackendConfigStore()
     /// The same Keychain-backed store login writes to (`createTokenStore()`).
     /// Held here so `logout()` can clear the token the SDK reads on connect —
     /// clearing it is what makes a relaunch land on login (no auto-resume).
-    private let tokenStore: SecureTokenStore
-    private let log = AppLog("sdk", "store")
+    // internal: used by SdkStore+Commands.swift extension (logout)
+    let tokenStore: SecureTokenStore
+    // internal: used by SdkStore+Sessions.swift and SdkStore+Commands.swift extensions
+    let log = AppLog("sdk", "store")
     private var collectTask: Task<Void, Never>?
     /// Outbound-text queue: messages sent before READY are held here and
     /// flushed in order on the first rising edge to READY (web-sdk parity).
@@ -165,50 +168,8 @@ final class SdkStore: ObservableObject {
         }
     }
 
-    // ── User commands ──────────────────────────────────────────────────────────
-
-    func connect() {
-        guard let sdk else { return }
-        log.info("connect")
-        Task { [weak self] in
-            do { try await sdk.connect() } catch { self?.log.error("connect failed: \(error)") }
-        }
-    }
-
-    func disconnect() {
-        guard let sdk else { return }
-        log.info("disconnect")
-        // Consumer-initiated teardown clears the session (gate → login). SKIE does
-        // not bridge the Kotlin default arg, so clearSession is passed explicitly.
-        sdk.disconnect(clearSession: true)
-    }
-
-    /// Manual reconnect (web-sdk parity, sentient-sdk.ts forceReconnect()). Re-arms
-    /// the reconnect controller, clears the terminal connectionLost/authExpired
-    /// flags, and drives a fresh recovery loop. Wired to the connection-lost
-    /// banner's tap-to-reconnect CTA. Idempotent — a no-op while a loop is already
-    /// in flight (status RECONNECTING).
-    func forceReconnect() {
-        guard let sdk else { return }
-        log.info("forceReconnect status=\(state.status.name)")
-        sdk.forceReconnect()
-    }
-
-    /// Logs the user out: disconnect (WS teardown + cycle cancel) THEN clear the
-    /// persisted token. Inverse of login (`save(token:)` → `connect()`), so we
-    /// disconnect first — the SDK can't read a half-cleared store mid-teardown.
-    /// Clearing the token is what prevents auto-resume on relaunch. Navigation
-    /// back to login is NOT modelled here: RootView derives login-vs-chat from
-    /// the SDK's single state surface (hasSession == false ⇒ login), and the
-    /// default disconnect() (logout teardown) clears hasSession. Mirrors Android
-    /// SettingsViewModel.logout().
-    /// Idempotent — both calls are safe when already logged out.
-    func logout() {
-        log.info("logout.start")
-        sdk?.disconnect(clearSession: true)
-        tokenStore.clear()
-        log.info("logout.done")
-    }
+    // ── Send-queue commands ───────────────────────────────────────────────────
+    // Connection, reconnect, mic, TTS, and logout commands live in SdkStore+Commands.swift.
 
     func sendText(_ text: String) {
         let ready = state.status == .ready
@@ -225,75 +186,4 @@ final class SdkStore: ObservableObject {
 
     /// True when there are outbound messages queued, awaiting a READY transition.
     var hasPendingSends: Bool { !sendQueue.pending.isEmpty }
-
-    func interrupt() {
-        guard let sdk else { return }
-        log.info("interrupt")
-        sdk.interrupt()
-    }
-
-    func startMic() {
-        guard let sdk else { return }
-        log.info("startMic")
-        sdk.startMic()
-    }
-
-    func stopMic() {
-        guard let sdk else { return }
-        log.info("stopMic")
-        sdk.stopMic()
-    }
-
-    func setTtsEnabled(_ enabled: Bool) {
-        guard let sdk else { return }
-        log.info("setTtsEnabled enabled=\(enabled)")
-        Task { [weak self] in
-            do {
-                try await sdk.setTtsEnabled(enabled: enabled)
-            } catch {
-                self?.log.error("setTtsEnabled failed: \(error)")
-            }
-        }
-    }
-
-    // ── Session ops ──────────────────────────────────────────────────────────────
-    //
-    // Async passthroughs to the SDK's SessionsConnector surface (SKIE bridges the
-    // Kotlin `suspend` funcs to Swift `async throws`; `newChat` is exposed as
-    // `doNewChat`). The HistoryModel awaits these and re-queries `listSessions`
-    // after each mutation — the SDK does NOT surface onSessionsChanged through
-    // SentientSdk, so the open + post-mutation re-query is the refresh path.
-
-    /// Page the session list. Returns a SessionsListPage (items + total + hasMore).
-    func listSessions(limit: Int32, offset: Int32) async throws -> SessionsListPage {
-        guard let sdk else { throw SdkStoreError.notConfigured }
-        log.info("listSessions limit=\(limit) offset=\(offset)")
-        return try await sdk.listSessions(limit: limit, offset: offset)
-    }
-
-    /// Switch to a session; awaits the session.switched broadcast inside the SDK.
-    func switchSession(_ sessionId: String) async throws {
-        guard let sdk else { throw SdkStoreError.notConfigured }
-        log.info("switchSession sessionId=\(sessionId)")
-        try await sdk.switchSession(sessionId: sessionId)
-    }
-
-    /// Start a fresh chat; awaits the session.created broadcast inside the SDK.
-    func newChat() async throws {
-        guard let sdk else { throw SdkStoreError.notConfigured }
-        log.info("newChat")
-        try await sdk.doNewChat()
-    }
-
-    func deleteSession(_ id: String) async throws {
-        guard let sdk else { throw SdkStoreError.notConfigured }
-        log.info("deleteSession id=\(id)")
-        try await sdk.deleteSession(id: id)
-    }
-
-    func renameSession(_ id: String, title: String) async throws {
-        guard let sdk else { throw SdkStoreError.notConfigured }
-        log.info("renameSession id=\(id)")
-        try await sdk.renameSession(id: id, title: title)
-    }
 }
