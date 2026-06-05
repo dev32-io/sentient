@@ -61,7 +61,6 @@ import io.sentient.mobilesdk.design.Colors
 import kotlinx.coroutines.launch
 
 private const val EMPTY_DEFAULT = "No past chats yet."
-private const val EMPTY_LOAD_FAIL = "Couldn't load sessions — try again."
 
 private data class PendingTarget(val id: String, val title: String)
 
@@ -104,6 +103,7 @@ fun HistoryDrawer(
                     household = household,
                     onOpenSettings = onOpenSettings,
                     onQuery = viewModel::setQuery,
+                    onRetry = viewModel::refresh,
                     onSwitch = { id ->
                         viewModel.switchSession(id)
                         scope.launch { drawerState.close() }
@@ -129,6 +129,7 @@ private fun HistoryContent(
     household: String,
     onOpenSettings: () -> Unit,
     onQuery: (String) -> Unit,
+    onRetry: () -> Unit,
     onSwitch: (String) -> Unit,
     onRename: (String, String) -> Unit,
     onDelete: (String) -> Unit,
@@ -162,10 +163,17 @@ private fun HistoryContent(
                 fontWeight = FontWeight.SemiBold,
                 fontFamily = Fraunces,
             )
+            // Stale-failure banner sits above the still-rendered (stale) rows; a
+            // total failure with no rows is handled inside SessionListBody, which
+            // swaps the empty text for the SessionsErrorEmpty retry affordance.
+            if (state.showsStaleBanner) {
+                SessionsStaleBanner(onRetry = onRetry)
+            }
             Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 SessionListBody(
                     state = state,
                     nowMs = nowMs,
+                    onRetry = onRetry,
                     onSwitch = onSwitch,
                     onAskRename = { id, title -> renaming = PendingTarget(id, title) },
                     onAskDelete = { id, title -> deleting = PendingTarget(id, title) },
@@ -205,6 +213,7 @@ private fun HistoryContent(
 private fun SessionListBody(
     state: HistoryUiState,
     nowMs: Long,
+    onRetry: () -> Unit,
     onSwitch: (String) -> Unit,
     onAskRename: (String, String) -> Unit,
     onAskDelete: (String, String) -> Unit,
@@ -212,9 +221,13 @@ private fun SessionListBody(
     val tokens = LocalTokens.current
     val rows = state.visible
     if (rows.isEmpty()) {
+        // Total load failure with no rows → the retry affordance, not dead text.
+        if (state.showsErrorEmpty) {
+            SessionsErrorEmpty(onRetry = onRetry)
+            return
+        }
         val msg = when {
             state.loading -> "Loading…"
-            state.error != null -> EMPTY_LOAD_FAIL
             state.isSearching -> "No matches for \"${state.query.trim()}\""
             else -> EMPTY_DEFAULT
         }

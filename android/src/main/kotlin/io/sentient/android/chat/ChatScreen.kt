@@ -33,6 +33,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -61,6 +66,7 @@ fun ChatScreen(
     onInterrupt: () -> Unit,
     onOpenHistory: () -> Unit,
     onNewChat: () -> Unit,
+    onReconnect: () -> Unit,
     // TODO: supply the logged-in display name from the backend profile once the
     // Android SdkViewModel/store exposes it (mirrors the iOS caveat — follow-up).
     userName: String = "You",
@@ -69,38 +75,74 @@ fun ChatScreen(
     val canInterrupt = state.cognition != CognitionState.IDLE || state.isSpeaking
     val markMode = markModeOf(state)
     val voiceActive = state.voiceMode == VoiceMode.ACTIVE
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .safeDrawingPadding()
-            .testTag("chat-screen"),
-    ) {
-        TitleBar(
-            markMode = markMode,
-            onOpenHistory = onOpenHistory,
-            onNewChat = onNewChat,
-        )
-        MessageList(
-            messages = state.messages,
-            activeMarkMode = markMode,
-            userName = userName,
+    // Connection banner derived from the single SDK surface via the pure
+    // ConnectionBannerState.derive (STATUS, not connectionLost, discriminates
+    // reconnecting vs lost). null ⇒ no banner.
+    val banner = ConnectionBannerState.derive(state.status, state.connectionLost)
+    // Cycle-error recovery: derive the last user turn to resend (pure), and own
+    // the UI-only local-dismiss latch. Reset the dismiss on the false→true error
+    // edge so a FRESH error re-shows a previously-dismissed row (parity: iOS
+    // CycleErrorRecoveryModifier).
+    val lastUserText = CycleErrorRecovery.lastUserText(state.messages)
+    var cycleErrorDismissed by remember { mutableStateOf(false) }
+    LaunchedEffect(state.lastCycleError) {
+        if (state.lastCycleError) cycleErrorDismissed = false
+    }
+    val showCycleError = state.lastCycleError && !cycleErrorDismissed
+
+    Box(modifier = modifier.fillMaxSize()) {
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-        )
-        if (voiceActive && state.transcript.isNotEmpty()) {
-            TranscriptPreview(text = state.transcript)
+                .fillMaxSize()
+                .safeDrawingPadding()
+                .testTag("chat-screen"),
+        ) {
+            TitleBar(
+                markMode = markMode,
+                onOpenHistory = onOpenHistory,
+                onNewChat = onNewChat,
+            )
+            MessageList(
+                messages = state.messages,
+                activeMarkMode = markMode,
+                userName = userName,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+            )
+            if (voiceActive && state.transcript.isNotEmpty()) {
+                TranscriptPreview(text = state.transcript)
+            }
+            if (showCycleError) {
+                CycleErrorBanner(
+                    lastUserText = lastUserText,
+                    onRetry = { lastUserText?.let(onSend) },
+                    onNewChat = onNewChat,
+                    onDismiss = { cycleErrorDismissed = true },
+                )
+            }
+            Composer(
+                // Send is gated on a live session — disabled while not READY.
+                canSend = state.status == SdkStatus.READY,
+                ttsEnabled = state.prefs.ttsEnabled,
+                micActive = voiceActive,
+                canInterrupt = canInterrupt,
+                onSend = onSend,
+                onMicToggle = onMicToggle,
+                onTtsToggle = onTtsToggle,
+                onInterrupt = onInterrupt,
+            )
         }
-        Composer(
-            canSend = state.status == SdkStatus.READY,
-            ttsEnabled = state.prefs.ttsEnabled,
-            micActive = voiceActive,
-            canInterrupt = canInterrupt,
-            onSend = onSend,
-            onMicToggle = onMicToggle,
-            onTtsToggle = onTtsToggle,
-            onInterrupt = onInterrupt,
-        )
+        if (banner != null) {
+            ConnectionBanner(
+                state = banner,
+                onReconnect = onReconnect,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .safeDrawingPadding()
+                    .padding(top = MARK_SIZE),
+            )
+        }
     }
 }
 

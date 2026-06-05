@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
@@ -130,6 +131,14 @@ private fun AppConfiguredRoot(
     val sdkState by sdkViewModel.state.collectAsStateWithLifecycle()
     val drawerState = rememberHistoryDrawerState()
     val scope = rememberCoroutineScope()
+    // authExpired → logout (route to login). Lifecycle-safe one-shot: a guarded
+    // LaunchedEffect keyed on the flag fires logout() exactly once on the
+    // false→true edge (NOT a SharedFlow that drops under lifecycle pause, per the
+    // android-architecture-mvi rule). logout() drives status off READY, so the
+    // SDK-derived gate below swaps to login. Parity: iOS onAuthExpired → logout().
+    LaunchedEffect(sdkState.authExpired) {
+        if (sdkState.authExpired) settingsViewModel.logout()
+    }
     // Settings is an overlay within the READY state, not a separate top-level
     // destination — login-vs-chat stays SDK-derived. rememberSaveable survives
     // config change + process death (mobile-lifecycle rule). The READY guard
@@ -163,6 +172,7 @@ private fun AppConfiguredRoot(
                     onInterrupt = sdkViewModel::interrupt,
                     onOpenHistory = { scope.launch { drawerState.open() } },
                     onNewChat = { sdkViewModel.newChat() },
+                    onReconnect = { sdkViewModel.forceReconnect() },
                 )
             }
         }

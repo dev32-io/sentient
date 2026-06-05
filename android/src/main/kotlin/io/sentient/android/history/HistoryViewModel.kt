@@ -48,6 +48,21 @@ data class HistoryUiState(
         }
 
     val isSearching: Boolean get() = query.trim().isNotEmpty()
+
+    /**
+     * True when the load failed and there are NO rows to fall back on — the list
+     * area is replaced by the SessionsErrorEmpty affordance. Guarded on `!loading`
+     * so the in-flight spinner case isn't pre-empted by a stale error. Mirrors the
+     * iOS HistorySidePanel.showsErrorEmpty.
+     */
+    val showsErrorEmpty: Boolean get() = error != null && visible.isEmpty() && !loading
+
+    /**
+     * True when a re-fetch failed but rows are still loaded — a thin stale banner
+     * sits above the (stale) list, rows still shown. Mirrors the iOS
+     * HistorySidePanel.showsStaleBanner.
+     */
+    val showsStaleBanner: Boolean get() = error != null && visible.isNotEmpty()
 }
 
 /**

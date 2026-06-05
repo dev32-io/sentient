@@ -50,9 +50,17 @@ class SdkViewModel : ViewModel() {
 
     private val sdk: SentientSdk? get() = SdkHolder.sdkFlow.value
 
+    // connect/newChat/setTtsEnabled call SDK suspend ops that can throw at the
+    // session boundary (SessionsTimeoutException / SessionsRequestException, Task
+    // 3 @Throws). A bare viewModelScope.launch would let that escape as an
+    // uncaught coroutine exception → app crash, so each is wrapped in runCatching
+    // and degraded to a logged WARN. The UI recovers via the connection banner /
+    // cycle-error row (Task 8 B/D); a transient failure must never SIGABRT.
     fun connect() {
         log.info("connect")
-        viewModelScope.launch { sdk?.connect() }
+        viewModelScope.launch {
+            runCatching { sdk?.connect() }.onFailure { warn("connect-failed", it) }
+        }
     }
 
     fun disconnect() {
@@ -82,16 +90,30 @@ class SdkViewModel : ViewModel() {
 
     fun setTtsEnabled(enabled: Boolean) {
         log.info("setTtsEnabled", mapOf("enabled" to enabled))
-        viewModelScope.launch { sdk?.setTtsEnabled(enabled) }
-    }
-
-    fun switchSession(sessionId: String) {
-        log.info("switchSession", mapOf("sessionId" to sessionId))
-        viewModelScope.launch { sdk?.switchSession(sessionId) }
+        viewModelScope.launch {
+            runCatching { sdk?.setTtsEnabled(enabled) }
+                .onFailure { warn("tts-failed", it, mapOf("enabled" to enabled)) }
+        }
     }
 
     fun newChat() {
         log.info("newChat")
-        viewModelScope.launch { sdk?.newChat() }
+        viewModelScope.launch {
+            runCatching { sdk?.newChat() }.onFailure { warn("new-failed", it) }
+        }
+    }
+
+    /**
+     * Manual reconnect — passthrough to [SentientSdk.forceReconnect]. Drives the
+     * connection-lost banner CTA (Task 8 B). Fire-and-forget: the SDK re-arms the
+     * reconnect controller and runs the recovery loop on its own scope.
+     */
+    fun forceReconnect() {
+        log.info("forceReconnect")
+        sdk?.forceReconnect()
+    }
+
+    private fun warn(event: String, e: Throwable, extra: Map<String, Any?> = emptyMap()) {
+        log.warn(event, extra + mapOf("reason" to (e.message ?: e::class.simpleName)))
     }
 }
