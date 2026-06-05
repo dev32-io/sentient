@@ -2,9 +2,9 @@
 // MessageList — the scrolling chat history, mirroring the webui MessageList +
 // ChatView (gateway/webui/src/components/chat/message-list.tsx, chat-view.tsx).
 //
-// A LazyColumn of MessageBubbles with gapMsg (32dp) between messages. Auto-
-// scrolls to the latest message whenever the list grows OR the last bubble's
-// content changes (streaming tokens), mirroring the webui useFollowLatest hook.
+// A LazyColumn of MessageBubbles with gapMsg (32dp) between messages. Pin-to-
+// bottom follow-latest: while pinned (default), scrolls on growth or streaming-
+// token change. User scroll-up unpins; re-entering the bottom zone re-pins.
 // Empty state shows the "Start a conversation…" placeholder. The list owns no
 // state beyond its scroll position — it reads SdkState.messages, passed down.
 //
@@ -25,6 +25,11 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -32,6 +37,7 @@ import androidx.compose.ui.platform.testTag
 import io.sentient.android.theme.LocalTokens
 import io.sentient.mobilesdk.design.Colors
 import io.sentient.mobilesdk.sdk.ChatMessage
+import androidx.compose.runtime.snapshotFlow
 
 private const val PLACEHOLDER = "Start a conversation…"
 
@@ -48,11 +54,30 @@ fun MessageList(
     val tokens = LocalTokens.current
     val listState = rememberLazyListState()
 
-    // Follow-latest: scroll to the last message when the count grows or the
-    // tail content changes (streaming). Keyed on both so each token nudges it.
-    val lastIndex = messages.lastIndex
+    // Pin-to-bottom follow-latest: mirrors iOS Task 4.1/4.2 semantics.
+    // While pinned (default), the list scrolls to the tail on growth or token
+    // change. A real user scroll-up unpins and holds position. Re-entering the
+    // bottom zone re-pins automatically.
+    val atBottom by remember { derivedStateOf { !listState.canScrollForward } }
+    var pinned by remember { mutableStateOf(true) }
+    var prevFirst by remember { mutableStateOf(0) }
+    var prevOffset by remember { mutableStateOf(0) }
+
+    // Unpin on a real user scroll-up; re-pin when back in the bottom zone.
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
+            .collect { (idx, off) ->
+                val movedUp = idx < prevFirst || (idx == prevFirst && off < prevOffset - 1)
+                prevFirst = idx
+                prevOffset = off
+                if (pinned && movedUp && !atBottom) pinned = false
+            }
+    }
+    LaunchedEffect(atBottom) { if (atBottom) pinned = true }
+
+    // Follow latest while pinned (growth or streaming-token change).
     LaunchedEffect(messages.size, messages.lastOrNull()?.content) {
-        if (lastIndex >= 0) listState.animateScrollToItem(lastIndex)
+        if (pinned && messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
     }
 
     LazyColumn(
