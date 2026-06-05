@@ -67,6 +67,8 @@ dependencies {
     implementation(libs.compose.ui.tooling.preview)
     // Markdown rendering for assistant chat bubbles (GFM, pure Compose).
     implementation(libs.markdown.renderer.m3)
+    // System splash screen handoff.
+    implementation(libs.androidx.core.splashscreen)
     // JVM unit tests (Layer 1): pure use-cases, mappers, pure models.
     testImplementation(libs.kotlin.test)
 }

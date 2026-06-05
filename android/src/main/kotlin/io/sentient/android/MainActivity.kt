@@ -33,19 +33,26 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.sentient.android.auth.AuthViewModel
 import io.sentient.android.auth.LoginScreen
+import io.sentient.android.chat.AppSplashOverlay
 import io.sentient.android.chat.ChatScreen
+import io.sentient.android.chat.SPLASH_MIN_MS
+import io.sentient.android.chat.splashVisible
 import io.sentient.android.history.HistoryDrawer
 import io.sentient.android.history.HistoryViewModel
 import io.sentient.android.history.rememberHistoryDrawerState
@@ -55,6 +62,7 @@ import io.sentient.android.settings.SettingsViewModel
 import io.sentient.android.theme.SentientTheme
 import io.sentient.mobilesdk.log.LogConfig
 import io.sentient.mobilesdk.log.LogLevel
+import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.sdk.VoiceMode
 import kotlinx.coroutines.launch
 
@@ -76,6 +84,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         // Drop high-volume DEBUG tracing in prod (release); keep it in dev.
         LogConfig.minLevel = if (BuildConfig.DEBUG) LogLevel.DEBUG else LogLevel.INFO
@@ -94,6 +103,8 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private val splashLog = createLogger("android", "splash")
+
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 private fun AppRoot(
@@ -108,6 +119,23 @@ private fun AppRoot(
     // from the collected flow so a save (config flips non-null) recomposes the gate.
     var showSetupOverride by rememberSaveable { mutableStateOf(false) }
     val configured = backendConfig != null || io.sentient.android.BuildConfig.GATEWAY_WS_URL.isNotEmpty()
+
+    // Splash clock: reset whenever the SDK identity changes (null→fresh on rebuild).
+    // shownAtMs starts 0 so (0-0)<2000 → visible=true on the very first frame.
+    val sdk by io.sentient.android.sdk.SdkHolder.sdkFlow.collectAsStateWithLifecycle()
+    var shownAtMs by remember { mutableLongStateOf(0L) }
+    var nowMs by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(sdk) {
+        shownAtMs = System.currentTimeMillis()
+        splashLog.info("splash.show", mapOf("trigger" to "rebuild"))
+    }
+    LaunchedEffect(shownAtMs) {
+        while (System.currentTimeMillis() - shownAtMs < SPLASH_MIN_MS) {
+            withFrameMillis { nowMs = System.currentTimeMillis() }
+        }
+        nowMs = System.currentTimeMillis()
+    }
+
     Surface(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
         Box(Modifier.fillMaxSize()) {
             if (!configured || showSetupOverride) {
@@ -122,6 +150,8 @@ private fun AppRoot(
                     onOpenBackendSetup = { showSetupOverride = true },
                 )
             }
+            // Overlay sits ABOVE all gate content; fades out once min time + configured.
+            AppSplashOverlay(visible = splashVisible(shownAtMs, nowMs, ready = configured))
         }
     }
 }

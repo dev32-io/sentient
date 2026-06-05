@@ -29,6 +29,8 @@ targetSdk = "36"
 # chat bubble. 0.41.0 is built against Kotlin 2.3.20 / Compose 1.10.3; metadata is
 # forward-compatible within 2.3.x so it consumes from our pinned Kotlin 2.3.10.
 markdown-renderer = "0.41.0"
+# androidx.core:core-splashscreen 1.0.1 stable — system splash handoff.
+androidx-core-splashscreen = "1.0.1"
 
 [libraries]
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
@@ -52,6 +54,7 @@ compose-ui = { module = "androidx.compose.ui:ui" }
 compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
 markdown-renderer-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "markdown-renderer" }
 kotlin-test = { group = "org.jetbrains.kotlin", name = "kotlin-test", version.ref = "kotlin" }
+androidx-core-splashscreen = { module = "androidx.core:core-splashscreen", version.ref = "androidx-core-splashscreen" }
 
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
