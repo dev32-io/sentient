@@ -71,12 +71,21 @@ struct Composer: View {
         .padding(.vertical, Space.md)
     }
 
+    // ── Derived state ───────────────────────────────────────────────────────
+
+    private var showWave: Bool { micActive && draft.isEmpty }
+
     // ── Draft field ─────────────────────────────────────────────────────────
 
     private var draftField: some View {
-        TextField("Message Sentient", text: $draft, axis: .vertical)
+        ZStack(alignment: .leading) {
+            TextField(
+                showWave ? "" : (canInterrupt ? "Type to interrupt…" : "Message Sentient"),
+                text: $draft,
+                axis: .vertical
+            )
             .lineLimit(1...6)
-            .font(.system(size: TypeScale.base))
+            .font(Typo.ui(TypeScale.base))
             .foregroundStyle(DuskColors.ink)
             .tint(DuskColors.accent)
             .focused($inputFocused)
@@ -84,6 +93,8 @@ struct Composer: View {
             .onSubmit(submit)
             .padding(.vertical, Space.xs)
             .accessibilityIdentifier("chat-input")
+            if showWave { ListeningWaveform() }
+        }
     }
 
     // ── Mic-denied notice ─────────────────────────────────────────────────────
@@ -113,11 +124,21 @@ struct Composer: View {
             )
             .accessibilityLabel("Toggle speech")
             .accessibilityIdentifier("chat-tts-toggle")
+            ComposerToggle(systemName: "paperclip", on: false, action: {})
+                .accessibilityLabel("Attach")
+                .accessibilityIdentifier("chat-attach")
             Spacer()
             if canInterrupt {
-                ComposerAction(systemName: "stop.fill", tint: DuskColors.stop, action: onInterrupt)
-                    .accessibilityLabel("Stop")
-                    .accessibilityIdentifier("chat-interrupt")
+                Button(action: onInterrupt) {
+                    RoundedRectangle(cornerRadius: ComposerLayout.stopGlyphRadius).fill(DuskColors.stop)
+                        .frame(width: ComposerLayout.stopIconSize, height: ComposerLayout.stopIconSize)
+                        .frame(width: ComposerLayout.buttonSize, height: ComposerLayout.buttonSize)
+                        .background(DuskColors.stop.opacity(0.16), in: RoundedRectangle(cornerRadius: Radii.sm))
+                        .overlay(RoundedRectangle(cornerRadius: Radii.sm).stroke(DuskColors.stop.opacity(0.35), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Stop")
+                .accessibilityIdentifier("chat-interrupt")
             }
             ComposerAction(
                 systemName: "paperplane.fill",
@@ -195,64 +216,41 @@ private enum MicPermission {
     }
 }
 
-/// A composer on/off toggle (mic, TTS) — a rounded-square icon button. Off:
-/// slashed glyph in ink-3 on the sunk surface with a line border. On: the glyph
-/// + border in accent over an accent-tinted fill. Mirrors the webui
-/// icon-btn--mic-on/off + tts-on/off variants.
-private struct ComposerToggle: View {
-    let systemName: String
-    let on: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: ComposerLayout.glyph))
-                .foregroundStyle(on ? DuskColors.accent : DuskColors.ink3)
-                .frame(width: ComposerLayout.buttonSize, height: ComposerLayout.buttonSize)
-                .background(
-                    on ? DuskColors.accent.opacity(ComposerLayout.onTint) : DuskColors.bgSunk,
-                    in: RoundedRectangle(cornerRadius: Radii.sm)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: Radii.sm)
-                        .stroke(on ? DuskColors.accent.opacity(ComposerLayout.onBorder) : DuskColors.line, lineWidth: 1)
-                )
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(on ? [.isSelected] : [])
+#Preview("Default") {
+    VStack {
+        Spacer()
+        Composer(
+            canSend: true,
+            ttsEnabled: true,
+            micActive: false,
+            canInterrupt: false,
+            onSend: { _ in },
+            onMicToggle: {},
+            onTtsToggle: {},
+            onInterrupt: {}
+        )
     }
+    .background(DuskColors.bg)
 }
 
-/// A composer action button (interrupt, send) — icon-only, no toggle box; the
-/// tint carries its meaning (stop = stop color, send = accent / ink-4 disabled).
-private struct ComposerAction: View {
-    let systemName: String
-    let tint: Color
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: ComposerLayout.glyph, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(width: ComposerLayout.buttonSize, height: ComposerLayout.buttonSize)
-        }
-        .buttonStyle(.plain)
+#Preview("Mic on (waveform + Listening…)") {
+    VStack {
+        Spacer()
+        Composer(
+            canSend: true,
+            ttsEnabled: true,
+            micActive: true,
+            canInterrupt: false,
+            onSend: { _ in },
+            onMicToggle: {},
+            onTtsToggle: {},
+            onInterrupt: {}
+        )
     }
+    .background(DuskColors.bg)
 }
 
-private enum ComposerLayout {
-    static let radius: CGFloat = 14
-    static let buttonSize: CGFloat = 38
-    static let glyph: CGFloat = 18
-    /// Accent-tint fill / border opacities for the "on" state (≈ webui
-    /// color-mix(accent 14% / 35%)).
-    static let onTint: CGFloat = 0.14
-    static let onBorder: CGFloat = 0.4
-}
-
-#Preview {
+#Preview("Streaming (Type to interrupt… + tinted stop)") {
     VStack {
         Spacer()
         Composer(
