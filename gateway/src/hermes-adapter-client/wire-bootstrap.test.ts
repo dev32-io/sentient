@@ -153,9 +153,10 @@ describe("bootstrapAcpWire", () => {
 
 // ---------------------------------------------------------------------------
 // Reconnect / re-bootstrap resilience — the FSM invariant this fix pins:
-// a resumed session whose ACP wire flaps (abnormal close) must re-open + re-run
-// `initialize` on the next dispatch send and keep dispatching. A clean close
-// (1000 / teardown) must NOT reconnect. Reconnect is bounded.
+// a resumed session whose ACP wire drops REMOTELY — abnormal close OR a remote
+// 1000 (overlay restart) — must re-open + re-run `initialize` on the next
+// dispatch send and keep dispatching. Only a local `dispose()` is terminal.
+// Reconnect is bounded.
 // ---------------------------------------------------------------------------
 
 /** Reply to the most recent request on a socket with a valid result. */
@@ -296,7 +297,7 @@ describe("bootstrapAcpWire — reconnect on abnormal close", () => {
 
   it("rejects an in-flight prompt when the live socket closes ABNORMALLY (no hang)", async () => {
     // A session/prompt already on the wire when the worker dies mid-cycle must
-    // REJECT — not hang forever. ManagedAcpSocket.onAbnormalClose →
+    // REJECT — not hang forever. ManagedAcpSocket.onRemoteClose →
     // acpConn.rejectInflight rejects the pending request so the dispatcher can
     // surface a terminal error instead of blocking on a response that will
     // never arrive.
@@ -332,7 +333,10 @@ describe("bootstrapAcpWire — reconnect on abnormal close", () => {
     await expect(promptPromise).rejects.toThrow(/acp-wire-flap|connection lost/);
   });
 
-  it("does NOT reconnect on a clean 1000 close (deliberate teardown)", async () => {
+  it("RECONNECTS on a REMOTE 1000 close (overlay restart) so the next dispatch succeeds", async () => {
+    // A genuine remote 1000 (overlay restart / transient) must NOT permanently
+    // strand an active client. Only a local dispose() is terminal — a remote
+    // 1000 flows through the same lazy-reconnect path as an abnormal close.
     const sockets: FakeWs[] = [];
     const factory = (): AcpWsLike => {
       const w = fakeWs();
@@ -348,12 +352,59 @@ describe("bootstrapAcpWire — reconnect on abnormal close", () => {
     });
     await settleOpen(sockets[0] as FakeWs);
     const { acpConn } = await promise;
-
-    // Normal closure — must not reconnect. The next send rejects instead of
-    // re-opening (no new socket handed out).
-    (sockets[0] as FakeWs).fire("close", { code: 1000, reason: "session end" });
-    await expect(acpConn.newSession({})).rejects.toThrow(/closed cleanly|reconnect blocked/);
     expect(sockets).toHaveLength(1);
+
+    // Remote normal-closure — wire goes dead, no eager reconnect yet.
+    (sockets[0] as FakeWs).fire("close", { code: 1000, reason: "overlay restart" });
+
+    // Next dispatch send (newSession) triggers re-open + re-initialize.
+    const newSessionPromise = acpConn.newSession({});
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(sockets).toHaveLength(2);
+    const fresh = sockets[1] as FakeWs;
+    await settleOpen(fresh);
+    const sessionNewReq = await flushUntilMethod(fresh, "session/new");
+    expect(sessionNewReq.method).toBe("session/new");
+    fresh.fire("message", {
+      data: JSON.stringify({ jsonrpc: "2.0", id: sessionNewReq.id, result: { sessionId: "s-after-1000" } }),
+    });
+
+    await expect(newSessionPromise).resolves.toEqual({ sessionId: "s-after-1000" });
+  });
+
+  it("rejects an in-flight prompt when the live socket closes with a REMOTE 1000 (no hang)", async () => {
+    // A remote 1000 mid-prompt is just as fatal to the in-flight request as an
+    // abnormal close — the dead child will never answer it. onRemoteClose must
+    // reject pending so the dispatcher surfaces a terminal error, not a hang.
+    const sockets: FakeWs[] = [];
+    const factory = (): AcpWsLike => {
+      const w = fakeWs();
+      sockets.push(w);
+      return w.base;
+    };
+    const promise = bootstrapAcpWire({
+      wsUrl: "ws://hermes:8765/ws",
+      token: "tok",
+      wsFactory: factory,
+      reconnect: { baseMs: 0, maxMs: 0, jitterMs: 0, maxAttempts: 3 },
+      sleep: () => Promise.resolve(),
+    });
+    await settleOpen(sockets[0] as FakeWs);
+    const { acpConn } = await promise;
+    const live = sockets[0] as FakeWs;
+
+    const loadPromise = acpConn.loadSession({ sessionId: "conv-y" });
+    const loadReq = await flushUntilMethod(live, "session/load");
+    live.fire("message", { data: JSON.stringify({ jsonrpc: "2.0", id: loadReq.id, result: {} }) });
+    await loadPromise;
+
+    const promptPromise = acpConn.sendUserMessage({ sessionId: "conv-y", text: "hello?" });
+    await flushUntilMethod(live, "session/prompt");
+
+    // Remote 1000 while the prompt is in flight → reject, not hang.
+    live.fire("close", { code: 1000, reason: "overlay restart mid-cycle" });
+    await expect(promptPromise).rejects.toThrow(/acp-wire-flap|connection lost/);
   });
 
   it("does NOT reconnect after dispose() (consumer disconnect)", async () => {

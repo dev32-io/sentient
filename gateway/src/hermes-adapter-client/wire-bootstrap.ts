@@ -16,10 +16,11 @@ const log = getLog(["sentient", "hermes-adapter-client", "wire-bootstrap"]);
 //
 // Resilience: the socket is owned by a ManagedAcpSocket (acp-wire-socket.ts)
 // that swaps a dead WS for a fresh one — re-running `initialize` — on the next
-// dispatch send after an ABNORMAL close (e.g. 1006 after a gateway restart /
-// resumed-session flap). A resumed session therefore stays able to dispatch
-// cycles across a wire flap. A clean teardown (`dispose`) or a normal-closure
-// (1000) close never reconnects. The per-conversation Hermes sessionId is owned
+// dispatch send after ANY remote close: abnormal (e.g. 1006 after a gateway
+// restart / resumed-session flap) OR a remote normal-closure (1000, e.g. an
+// overlay restart). A resumed session therefore stays able to dispatch cycles
+// across a wire flap. Only a local teardown (`dispose`) is terminal — we don't
+// fight an intentional shutdown. The per-conversation Hermes sessionId is owned
 // by the dispatch layer (acp-hermes-client.ts re-targets it per prompt), so a
 // re-bootstrap fully restores dispatch capability — no Hermes resume call.
 // ---------------------------------------------------------------------------
@@ -63,9 +64,10 @@ export { deriveAcpUrl } from "./acp-ws.js";
  * `initialize` handshake has completed. On any failure (open timeout,
  * initialize rejection) the WS is closed and the returned promise rejects.
  *
- * After the first successful open the wire self-heals: an abnormal close drops
- * the socket and the next dispatch send re-opens + re-initializes it (bounded
- * by `reconnect.maxAttempts`). A failed re-bootstrap surfaces as a rejected
+ * After the first successful open the wire self-heals: any remote close
+ * (abnormal OR a remote 1000) drops the socket and the next dispatch send
+ * re-opens + re-initializes it (bounded by `reconnect.maxAttempts`). Only a
+ * local `dispose()` is terminal. A failed re-bootstrap surfaces as a rejected
  * send → the dispatcher emits a terminal `error` so the client is never left
  * silently dead.
  */
@@ -96,11 +98,12 @@ export async function bootstrapAcpWire(input: AcpWireBootstrapInput): Promise<Ac
       }
       await acpConn.initialize();
     },
-    // An abnormal close of the live socket strands any in-flight prompt — the
-    // dead child will never answer it. Reject pending so the dispatcher emits a
-    // terminal error instead of hanging. (Reconnect for the NEXT dispatch is
-    // still lazy-on-send; this only un-sticks the request that was mid-flight.)
-    onAbnormalClose: () => {
+    // A remote close of the live socket (abnormal OR a remote 1000, e.g. overlay
+    // restart) strands any in-flight prompt — the dead child will never answer
+    // it. Reject pending so the dispatcher emits a terminal error instead of
+    // hanging. (Reconnect for the NEXT dispatch is still lazy-on-send; this only
+    // un-sticks the request that was mid-flight.)
+    onRemoteClose: () => {
       acpConn?.rejectInflight(new Error("acp-wire-flap: connection lost"));
     },
     ...(input.sleep ? { sleep: input.sleep } : {}),

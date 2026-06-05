@@ -8,15 +8,19 @@ const log = getLog(["sentient", "hermes-adapter-client", "acp-wire-socket"]);
 // ManagedAcpSocket — a swappable raw WS behind a STABLE send/onIncoming pair.
 //
 // The per-profile connection (and the dispatcher referencing it) is built once,
-// against the closures this module exposes. When the underlying WS dies on an
-// ABNORMAL close (e.g. 1006 after a gateway restart / resume), the next `send`
+// against the closures this module exposes. When the underlying WS dies on a
+// REMOTE close — abnormal (e.g. 1006 after a gateway restart / resume) OR a
+// remote normal-closure (1000, e.g. an overlay restart) — the next `send`
 // lazily re-opens a fresh socket and re-runs the ACP `initialize` handshake
 // (the `reinitialize` callback) BEFORE the queued send proceeds. The stable
 // `acpConn` reference never changes — only the socket underneath is replaced —
 // so the cerebrum dispatcher keeps dispatching cycles transparently.
 //
-// Clean teardown (dispose) and a normal-closure (1000) close NEVER reconnect:
-// we don't fight an intentional shutdown.
+// The ONLY genuinely-terminal path is local `dispose()` (consumer disconnect):
+// it sets `disposed` BEFORE closing, so the close listener can tell its own
+// teardown apart from a remote close. A remote 1000 is NOT terminal — the
+// overlay closing the wire must not permanently strand an active client; it
+// flows through the same lazy-reconnect path as an abnormal close.
 //
 // Strategy is lazy-ensure (reconnect on the next send) rather than eager
 // reconnect-on-close: it keeps the acpConn reference stable, avoids reconnect
@@ -65,14 +69,14 @@ export interface ManagedAcpSocketInput {
    */
   readonly reinitialize: () => Promise<void>;
   /**
-   * Fired when a LIVE socket closes ABNORMALLY (code !== 1000) — i.e. the wire
-   * flapped mid-flight (worker restart, transport drop). Lets the connection
-   * layer reject any in-flight `session/prompt` so the dispatcher's queue can't
-   * hang forever waiting on a response that will never arrive. Not fired on a
-   * clean (1000) close or on `dispose` — those reject pending via their own
-   * paths. Throwing handlers are caught and logged.
+   * Fired when a LIVE socket closes REMOTELY — abnormal (code !== 1000) OR a
+   * remote normal-closure (1000, e.g. overlay restart). Either way the wire is
+   * gone and any in-flight `session/prompt` will never be answered, so the
+   * connection layer rejects pending requests and the dispatcher's queue can't
+   * hang forever. NOT fired on local `dispose` (that rejects pending via its own
+   * path). Throwing handlers are caught and logged.
    */
-  readonly onAbnormalClose?: () => void;
+  readonly onRemoteClose?: () => void;
   /** Sleep injection — tests pass a fake. */
   readonly sleep?: (ms: number) => Promise<void>;
 }
@@ -109,16 +113,15 @@ export interface ManagedAcpSocket {
 }
 
 const DISPOSED_ERROR = "acp-wire-socket: disposed";
-const CLEAN_CLOSED_ERROR = "acp-wire-socket: wire closed cleanly (1000) — reconnect blocked";
 
 export function createManagedAcpSocket(input: ManagedAcpSocketInput): ManagedAcpSocket {
   const sleep = input.sleep ?? defaultSleep;
   let ws: AcpWsLike | null = null;
+  // The ONLY terminal local-intent flag. `dispose()` sets this BEFORE closing
+  // the socket, so the close listener can tell its own teardown apart from a
+  // remote close. A remote close (any code, including 1000) is NOT terminal —
+  // it flows through the lazy-reconnect path.
   let disposed = false;
-  // A normal-closure (1000) of the LIVE socket is a deliberate teardown
-  // (server-side session end). Block reconnect — don't fight an intentional
-  // shutdown. Distinct from `disposed` (consumer-driven local teardown).
-  let cleanClosed = false;
   let onIncomingCb: ((raw: string) => void) | null = null;
   // In-flight (re)open promise — collapses concurrent sends into one handshake.
   let opening: Promise<void> | null = null;
@@ -137,49 +140,47 @@ export function createManagedAcpSocket(input: ManagedAcpSocketInput): ManagedAcp
     });
     socket.addEventListener("close", (e) => {
       const wasLive = ws === socket;
-      const abnormal = e.code !== NORMAL_CLOSURE_CODE;
-      // Drop the dead handle so the NEXT send triggers a re-open (abnormal) or
-      // surfaces a clean-closed error (normal / deliberate). We never eagerly
+      // Drop the dead handle so the NEXT send lazily re-opens. We never eagerly
       // reconnect here — lazy-ensure on send keeps the acpConn reference stable
       // and avoids storms when no cycle is in flight.
       if (wasLive) ws = null;
+      // Local `dispose()` is the ONLY terminal path: it sets `disposed` BEFORE
+      // closing, so this close is our own teardown. Don't reconnect, don't
+      // reject in-flight (dispose handles that via acpConn.dispose).
       if (disposed) {
-        log.info("ws.close.clean", { sessionId: input.sessionId, code: e.code, reason: e.reason, cause: "disposed" });
-        return;
-      }
-      if (abnormal) {
-        log.warn("ws.close.abnormal", {
+        log.info("ws.close.terminal", {
           sessionId: input.sessionId,
           code: e.code,
           reason: e.reason,
-          willReconnectOnNextSend: true,
-          notifyAbnormal: wasLive,
+          cause: "disposed",
         });
-        // Only the LIVE socket's abnormal close rejects in-flight requests: a
-        // request on a stale (already-swapped) socket has already been retried
-        // or rejected. A pre-open close is handled by waitForOpen, not here.
-        if (wasLive && input.onAbnormalClose) {
-          try {
-            input.onAbnormalClose();
-          } catch (err: unknown) {
-            log.warn("ws.close.abnormal.notify-threw", {
-              sessionId: input.sessionId,
-              reason: err instanceof Error ? err.message : String(err),
-            });
-          }
-        }
         return;
       }
-      // Normal closure of the live socket → deliberate teardown; latch off
-      // reconnect. (A 1000 mid-handshake is handled by waitForOpen's reject and
-      // must NOT latch — only a close of the established live socket counts.)
-      if (wasLive) cleanClosed = true;
-      log.info("ws.close.clean", {
+      // Any REMOTE close — abnormal (code !== 1000) or a remote normal-closure
+      // (1000, e.g. overlay restart) — is reconnectable. The wire is gone but
+      // the client is still active, so the next send must re-dial. Distinguish
+      // only in logging: a remote 1000 is an expected clean drop, abnormal is a
+      // flap. Both will reconnect on the next send.
+      log.info(e.code === NORMAL_CLOSURE_CODE ? "ws.close.remote-clean" : "ws.close.abnormal", {
         sessionId: input.sessionId,
         code: e.code,
         reason: e.reason,
-        reconnectBlocked: wasLive,
+        willReconnectOnNextSend: true,
+        notifyRemoteClose: wasLive,
       });
+      // Only the LIVE socket's remote close rejects in-flight requests: a request
+      // on a stale (already-swapped) socket has already been retried or rejected.
+      // A pre-open close is handled by waitForOpen, not here.
+      if (wasLive && input.onRemoteClose) {
+        try {
+          input.onRemoteClose();
+        } catch (err: unknown) {
+          log.warn("ws.close.remote.notify-threw", {
+            sessionId: input.sessionId,
+            reason: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
     });
     socket.addEventListener("error", () => {
       log.warn("ws.error", { sessionId: input.sessionId });
@@ -242,7 +243,6 @@ export function createManagedAcpSocket(input: ManagedAcpSocketInput): ManagedAcp
 
   function ensureOpen(opener: () => Promise<void>): Promise<void> {
     if (disposed) return Promise.reject(new Error(DISPOSED_ERROR));
-    if (cleanClosed) return Promise.reject(new Error(CLEAN_CLOSED_ERROR));
     if (ws !== null && ws.readyState === READY_STATE_OPEN) return Promise.resolve();
     if (opening !== null) return opening;
     opening = opener().finally(() => {
