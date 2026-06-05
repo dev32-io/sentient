@@ -156,7 +156,7 @@ struct ChatView: View {
         }
         .safeAreaInset(edge: .bottom) {
             Composer(
-                canSend: store.state.status == .ready,
+                canSend: true,
                 ttsEnabled: store.state.prefs.ttsEnabled,
                 micActive: store.state.voiceMode == .active,
                 canInterrupt: canInterrupt,
