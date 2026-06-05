@@ -69,6 +69,20 @@ data class MotionTokens(
     val cursorMs: Int = Motion.cursorMs,
 )
 
+/**
+ * Composer outer-glow tunables — transcribed from the webui `.composer` /
+ * `.composer--listening` box-shadow (+ `--shadow-2` terra halo). Alpha is applied
+ * to the brand accent so the glow stays in lockstep with the accent token.
+ */
+@Immutable
+data class ShadowTokens(
+    val composerGlowRadius: Dp = 26.dp,
+    val composerGlowRadiusListening: Dp = 48.dp,
+    val composerGlowYOffset: Dp = 8.dp,
+    val composerGlowAlpha: Float = 0.22f,
+    val composerGlowAlphaListening: Float = 0.40f,
+)
+
 /** The non-Material token bundle carried on [LocalTokens]. */
 @Immutable
 data class SentientTokens(
@@ -76,6 +90,7 @@ data class SentientTokens(
     val radii: RadiiTokens = RadiiTokens(),
     val type: TypeTokens = TypeTokens(),
     val motion: MotionTokens = MotionTokens(),
+    val shadow: ShadowTokens = ShadowTokens(),
 )
 
 /**

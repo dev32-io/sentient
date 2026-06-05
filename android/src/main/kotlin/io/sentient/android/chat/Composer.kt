@@ -33,6 +33,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -51,17 +52,27 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import io.sentient.android.R
 import io.sentient.android.theme.LocalTokens
+import io.sentient.android.theme.SentientTokens
 import io.sentient.mobilesdk.design.Colors
 import io.sentient.mobilesdk.log.createLogger
 
 private val COMPOSER_RADIUS = 24.dp
+private val SWIPE_DISMISS_DP = 24.dp
 private const val MIC_DENIED_NOTICE = "Microphone permission is needed for voice."
 private val composerLog = createLogger("android", "composer")
 
@@ -91,6 +102,9 @@ fun Composer(
     var draft by remember { mutableStateOf("") }
     var micDenied by remember { mutableStateOf(false) }
     val sendEnabled = draft.trim().isNotEmpty()
+    val focusManager = LocalFocusManager.current
+    val density = LocalDensity.current
+    val swipeThresholdPx = with(density) { SWIPE_DISMISS_DP.toPx() }
 
     // RECORD_AUDIO runtime gate. On grant → toggle; on denial → inline notice,
     // do not start. Already-active mic stops without a permission check.
@@ -134,7 +148,22 @@ fun Composer(
             .fillMaxWidth()
             .imePadding()
             .padding(horizontal = tokens.space.lg, vertical = tokens.space.md)
+            .composerGlow(listening = micActive, tokens = tokens)
             .clipCard(listening = micActive)
+            .pointerInput(Unit) {
+                var dragDown = 0f
+                detectVerticalDragGestures(
+                    onDragEnd = { dragDown = 0f },
+                    onVerticalDrag = { _, dy ->
+                        dragDown += dy
+                        if (dragDown > swipeThresholdPx) {
+                            focusManager.clearFocus()
+                            composerLog.info("keyboardDismiss", mapOf("gesture" to "swipeDown"))
+                            dragDown = 0f
+                        }
+                    },
+                )
+            }
             .padding(tokens.space.md),
         verticalArrangement = Arrangement.spacedBy(tokens.space.sm),
     ) {
@@ -151,7 +180,6 @@ fun Composer(
             micActive = micActive,
             streaming = canInterrupt,
             onChange = { draft = it },
-            onSubmit = { submit() },
         )
         ButtonRow(
             sendEnabled = sendEnabled,
@@ -178,6 +206,32 @@ private fun Modifier.clipCard(listening: Boolean): Modifier = this
         if (listening) Color(Colors.accent) else Color(Colors.line),
         RoundedCornerShape(COMPOSER_RADIUS),
     )
+
+/**
+ * Soft amber outer glow behind the composer card (webui .composer halo). Drawn
+ * BEHIND the card fill; intensifies (radius + alpha) while [listening]. Tunables
+ * from [ShadowTokens]; color is the brand accent so it tracks the palette.
+ */
+private fun Modifier.composerGlow(listening: Boolean, tokens: SentientTokens): Modifier {
+    val alpha = if (listening) tokens.shadow.composerGlowAlphaListening else tokens.shadow.composerGlowAlpha
+    val radius = if (listening) tokens.shadow.composerGlowRadiusListening else tokens.shadow.composerGlowRadius
+    val glow = Color(Colors.accent).copy(alpha = alpha)
+    return this.drawBehind {
+        val r = radius.toPx()
+        val yOff = tokens.shadow.composerGlowYOffset.toPx()
+        drawRoundRect(
+            brush = Brush.verticalGradient(
+                0f to glow.copy(alpha = 0f),
+                1f to glow,
+                startY = size.height * 0.4f,
+                endY = size.height + r,
+            ),
+            topLeft = Offset(-r * 0.3f, yOff),
+            size = Size(size.width + r * 0.6f, size.height + r),
+            cornerRadius = CornerRadius((COMPOSER_RADIUS + radius).toPx()),
+        )
+    }
+}
 
 @Composable
 private fun ButtonRow(

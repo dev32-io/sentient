@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
@@ -32,7 +31,6 @@ internal fun DraftField(
     micActive: Boolean,
     streaming: Boolean,
     onChange: (String) -> Unit,
-    onSubmit: () -> Unit,
 ) {
     val tokens = LocalTokens.current
     val showWave = micActive && draft.isEmpty()
@@ -54,8 +52,7 @@ internal fun DraftField(
             },
             textStyle = LocalTextStyle.current.copy(color = Color(Colors.ink), fontSize = tokens.type.base),
             maxLines = 6,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-            keyboardActions = KeyboardActions(onSend = { onSubmit() }),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
             colors = TextFieldDefaults.colors(
                 focusedContainerColor = Color.Transparent,
                 unfocusedContainerColor = Color.Transparent,
