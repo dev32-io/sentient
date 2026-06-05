@@ -30,6 +30,8 @@ struct MessageBubble: View {
     /// Avatar animation mode — only the live streaming assistant bubble animates;
     /// committed bubbles pass `.idle` (static), mirroring the Android avatarMode.
     var avatarMode: MarkMode = .idle
+    /// Display name shown in the meta row above the bubble.
+    var userName: String = "You"
 
     private var isUser: Bool { message.role == "user" }
     private var isSpeaking: Bool { !isUser && avatarMode == .speaking }
@@ -38,13 +40,19 @@ struct MessageBubble: View {
         HStack(alignment: .top, spacing: 0) {
             if isUser {
                 Spacer(minLength: BubbleLayout.edgeMin)
-                bubbleBody
+                VStack(alignment: .trailing, spacing: Space.xs) {
+                    MessageMeta(message: message, userName: userName)
+                    bubbleBody
+                }
                 userAvatar
             } else {
                 SentientMark(size: BubbleLayout.avatarSize, mode: avatarMode)
                     .overlay(AvatarRipple(active: avatarMode == .speaking || avatarMode == .listening))
                     .padding(.trailing, Space.md)
-                bubbleBody
+                VStack(alignment: .leading, spacing: Space.xs) {
+                    MessageMeta(message: message, userName: userName)
+                    bubbleBody
+                }
                 Spacer(minLength: BubbleLayout.edgeMin)
             }
         }
@@ -213,25 +221,30 @@ private enum BubbleLayout {
         VStack(spacing: Space.gapMsg) {
             MessageBubble(
                 message: ChatMessage(ts: now, role: "user", content: "hello", streaming: false, cutoffKind: nil, cycleId: nil, tools: []),
-                index: 0
+                index: 0,
+                userName: "Alice"
             )
             MessageBubble(
                 message: ChatMessage(ts: now + 1, role: "assistant", content: "Hi there! How can I help?", streaming: false, cutoffKind: nil, cycleId: nil, tools: []),
-                index: 1
+                index: 1,
+                userName: "Alice"
             )
             MessageBubble(
                 message: ChatMessage(ts: now + 2, role: "assistant", content: "", streaming: true, cutoffKind: nil, cycleId: nil, tools: []),
-                index: 2
+                index: 2,
+                userName: "Alice"
             )
             // streaming + content → typewriter reveal, no cursor
             MessageBubble(
                 message: ChatMessage(ts: now + 3, role: "assistant", content: "Streaming text reveals progressively...", streaming: true, cutoffKind: nil, cycleId: nil, tools: []),
                 index: 3,
-                avatarMode: .thinking
+                avatarMode: .thinking,
+                userName: "Alice"
             )
             MessageBubble(
                 message: ChatMessage(ts: now + 4, role: "assistant", content: "Cut off here", streaming: false, cutoffKind: "interrupt", cycleId: nil, tools: []),
-                index: 4
+                index: 4,
+                userName: "Alice"
             )
         }
         .padding(Space.lg)

@@ -47,7 +47,8 @@ struct ChatView: View {
     var body: some View {
         VStack(spacing: 0) {
             titleBar
-            MessageList(messages: store.state.messages, activeMarkMode: currentMarkMode)
+            // TODO(userName): surface real display name from auth profile
+            MessageList(messages: store.state.messages, activeMarkMode: currentMarkMode, userName: "You")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             if transcriptVisible {
                 TranscriptPreview(text: store.state.transcript)

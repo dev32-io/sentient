@@ -32,6 +32,8 @@ struct MessageList: View {
     /// Committed bubbles stay `.idle` — only the in-flight cycle's mark animates,
     /// mirroring the webui activeCycleMode binding + the Android activeMarkMode.
     var activeMarkMode: MarkMode = .idle
+    /// Display name shown in the meta row above user bubbles.
+    var userName: String = "You"
 
     /// Pin-to-bottom FSM state. iOS 18+ only; ignored on iOS 17 (always-follow).
     @State private var follow = FollowLatestState()
@@ -124,14 +126,18 @@ struct MessageList: View {
 
     private func messageRows() -> some View {
         LazyVStack(alignment: .leading, spacing: Space.gapMsg) {
-            // Row identity by array index. The history is append-only, so indices
-            // are stable for existing rows; the live streaming bubble is always the
-            // last index. NOTE: do NOT key on message.ts — the streaming bubble's ts
-            // is stamped `clock.nowMs()` fresh on every derive, so a ts-based id
+            // ChatRow is Identifiable; divider ids are day-keyed, message ids are
+            // index-keyed. NOTE: do NOT key on message.ts — the streaming bubble's
+            // ts is stamped `clock.nowMs()` fresh on every derive, so a ts-based id
             // would churn the bubble's identity each token and reset the typewriter
-            // @State (re-revealing from zero every frame).
-            ForEach(Array(messages.enumerated()), id: \.offset) { index, message in
-                MessageBubble(message: message, index: index, avatarMode: avatarMode(for: message))
+            // @State (re-revealing from zero every frame). chatRows() preserves
+            // index-only identity for .message rows, keeping this invariant safe.
+            ForEach(chatRows(messages)) { row in
+                switch row {
+                case let .divider(label, _): DayDivider(label: label)
+                case let .message(m, i):
+                    MessageBubble(message: m, index: i, avatarMode: avatarMode(for: m), userName: userName)
+                }
             }
             Color.clear
                 .frame(height: 1)
@@ -172,9 +178,12 @@ struct MessageList: View {
 
 #Preview {
     let now = Int64(Date().timeIntervalSince1970 * 1000)
+    // Yesterday messages trigger a day divider before today's messages.
+    let yesterday = now - 86_400_000
     MessageList(messages: [
+        ChatMessage(ts: yesterday, role: "user", content: "message from yesterday", streaming: false, cutoffKind: nil, cycleId: nil, tools: []),
         ChatMessage(ts: now, role: "user", content: "hello", streaming: false, cutoffKind: nil, cycleId: nil, tools: []),
         ChatMessage(ts: now + 1, role: "assistant", content: "Hi! How can I help today?", streaming: false, cutoffKind: nil, cycleId: nil, tools: []),
-    ])
+    ], userName: "Alice")
     .background(DuskColors.bg)
 }
