@@ -56,3 +56,26 @@ targets:
         embed: false
       - package: MarkdownUI
         product: MarkdownUI
+
+  SentientAppTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.dev32.sentient.tests
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: SentientApp
+      - framework: ../shared/mobile-sdk/build/XCFrameworks/debug/MobileSdk.xcframework
+        embed: false
+
+schemes:
+  SentientApp:
+    build:
+      targets:
+        SentientApp: all
+        SentientAppTests: [test]
+    test:
+      targets:
+        - SentientAppTests
