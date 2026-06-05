@@ -75,16 +75,16 @@ struct ChatView: View {
 
     private var panelVisible: Bool { panelX > -panelWidth }
 
-    /// Connection affordance derived from the single SDK state surface, per
-    /// web-sdk semantics: connectionLost (reconnect EXHAUSTED) wins and shows the
-    /// tap-to-reconnect banner; otherwise status reconnecting/connecting shows the
-    /// subtle "Reconnecting…" indicator. nil ⇒ healthy (ready/idle) ⇒ no banner.
+    /// Connection affordance derived from the single SDK state surface via the
+    /// pure `ConnectionBannerState.derive`. In the mobile-sdk `connectionLost`
+    /// stays true through the WHOLE recovery (and at exhaustion), so STATUS — not
+    /// connectionLost — discriminates "Reconnecting…" (mid-backoff) from
+    /// "Tap to reconnect" (disconnected/error). See ConnectionBanner.swift.
     private var connectionBanner: ConnectionBannerState? {
-        if store.state.connectionLost { return .lost }
-        switch store.state.status {
-        case .reconnecting, .connecting: return .reconnecting
-        default: return nil
-        }
+        ConnectionBannerState.derive(
+            status: store.state.status,
+            connectionLost: store.state.connectionLost
+        )
     }
 
     // ── Root body ─────────────────────────────────────────────────────────────
