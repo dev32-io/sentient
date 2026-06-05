@@ -96,10 +96,13 @@ fun ChatScreen(
     var pending by remember { mutableStateOf<PendingSend?>(null) }
     val handleSend: (String) -> Unit = { text ->
         if (state.status == SdkStatus.READY) onSend(text)
-        else pending = pending?.enqueue(text) ?: PendingSend(text)
+        else pending = pending?.enqueue(text) ?: PendingSend(listOf(text))
     }
     LaunchedEffect(state.status) {
-        pending?.flushIfReady(state.status)?.let { queued -> onSend(queued); pending = null }
+        pending?.flushIfReady(state.status)?.let { queued ->
+            queued.forEach { onSend(it) }
+            pending = null
+        }
     }
 
     Box(modifier = modifier.fillMaxSize()) {

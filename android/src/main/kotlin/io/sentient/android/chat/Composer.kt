@@ -4,8 +4,10 @@
 //
 // A paper-surface rounded card holding a multi-line text field over a button
 // row: mic toggle, TTS toggle, a spacer, send, and (conditionally) interrupt.
-// Send is disabled when the field is empty OR the SDK is not READY. Interrupt
-// is shown only when cognition != IDLE || isSpeaking (a cycle is in flight or
+// Send is enabled whenever the field is non-empty; a send issued before READY is
+// queued by ChatScreen and flushed on the READY edge (always-typeable, web-sdk
+// parity). canSend only tints the send glyph (accent=READY, muted=will queue).
+// Interrupt is shown only when cognition != IDLE || isSpeaking (a cycle is in flight or
 // audio is playing). Mic toggle flips startMic/stopMic — the full mic pipeline
 // is Phase-3 (E3), so it just latches voiceMode for now. TTS toggle flips the
 // server-of-record preference via setTtsEnabled.

@@ -6,23 +6,30 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 /**
- * Pins the one-slot outbox contract: a send issued before READY is not lost —
- * it is queued and flushed on the READY transition (web-sdk parity).
+ * Pins the outbox contract: sends issued before READY are NOT lost — they are queued
+ * in order and flushed in order on the READY transition (web-sdk parity, matching the
+ * iOS SendQueue). Two sends in the not-ready window both survive.
  */
 class PendingSendTest {
 
     @Test fun `flushesWhenReady`() {
-        val pending = PendingSend("hi")
-        assertEquals("hi", pending.flushIfReady(SdkStatus.READY))
+        val pending = PendingSend(listOf("hi"))
+        assertEquals(listOf("hi"), pending.flushIfReady(SdkStatus.READY))
     }
 
     @Test fun `holdsWhileNotReady`() {
-        val pending = PendingSend("waiting")
+        val pending = PendingSend(listOf("waiting"))
         assertNull(pending.flushIfReady(SdkStatus.CONNECTING))
         assertNull(pending.flushIfReady(SdkStatus.RECONNECTING))
     }
 
-    @Test fun `coalescesToLatest`() {
-        assertEquals("new", PendingSend("old").enqueue("new").text)
+    @Test fun `enqueuePreservesOrder`() {
+        val pending = PendingSend(listOf("a")).enqueue("b")
+        assertEquals(listOf("a", "b"), pending.items)
+    }
+
+    @Test fun `drainsAllInOrderOnReady`() {
+        val pending = PendingSend(listOf("a")).enqueue("b")
+        assertEquals(listOf("a", "b"), pending.flushIfReady(SdkStatus.READY))
     }
 }

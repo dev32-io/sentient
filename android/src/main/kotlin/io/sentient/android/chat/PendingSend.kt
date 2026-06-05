@@ -3,15 +3,16 @@ package io.sentient.android.chat
 import io.sentient.mobilesdk.transport.SdkStatus
 
 /**
- * One-slot outbox for a send issued before READY (web-sdk parity: queue, flush on ready).
- * Latest-wins — a second queued send replaces the first.
+ * Outbox for sends issued before READY (web-sdk parity: queue, flush on ready).
+ * Ordered FIFO — every queued send is preserved and drained in order, matching the
+ * iOS SendQueue, so a not-ready window (new-chat / reconnect) never silently drops a
+ * message even if the user submits twice before the socket reaches READY.
  */
-data class PendingSend(val text: String) {
-    /** Replace this slot with the next queued text. Latest-wins. */
-    fun enqueue(next: String): PendingSend = copy(text = next)
+data class PendingSend(val items: List<String>) {
+    /** Append the next queued text (FIFO). */
+    fun enqueue(next: String): PendingSend = copy(items = items + next)
 
-    /**
-     * Returns the queued text when [status] is READY (flush), otherwise null (still queued).
-     */
-    fun flushIfReady(status: SdkStatus): String? = if (status == SdkStatus.READY) text else null
+    /** Returns ALL queued texts in order when [status] is READY (flush), else null. */
+    fun flushIfReady(status: SdkStatus): List<String>? =
+        if (status == SdkStatus.READY) items else null
 }
