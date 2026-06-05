@@ -18,6 +18,18 @@ targets:
       properties:
         UILaunchScreen: {}
         CFBundleDisplayName: Sentient
+        # Register bundled custom fonts so UIKit can load them by family name.
+        # Filenames MUST match the .ttf files in App/Resources/Fonts/ exactly.
+        UIAppFonts:
+          - Fraunces-Regular.ttf
+          - Fraunces-Medium.ttf
+          - Fraunces-SemiBold.ttf
+          - DMSans-Regular.ttf
+          - DMSans-Medium.ttf
+          - DMSans-SemiBold.ttf
+          - DMSans-Bold.ttf
+          - JetBrainsMono-Regular.ttf
+          - JetBrainsMono-Medium.ttf
         NSMicrophoneUsageDescription: Sentient uses the microphone for voice conversations.
         # Build-time default gateway URL. Debug reads Local.xcconfig (gitignored);
         # Release leaves it unset → "" → app forces the in-app backend-setup page.

@@ -39,6 +39,18 @@
 	</dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Sentient uses the microphone for voice conversations.</string>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Fraunces-Regular.ttf</string>
+		<string>Fraunces-Medium.ttf</string>
+		<string>Fraunces-SemiBold.ttf</string>
+		<string>DMSans-Regular.ttf</string>
+		<string>DMSans-Medium.ttf</string>
+		<string>DMSans-SemiBold.ttf</string>
+		<string>DMSans-Bold.ttf</string>
+		<string>JetBrainsMono-Regular.ttf</string>
+		<string>JetBrainsMono-Medium.ttf</string>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
 </dict>

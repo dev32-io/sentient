@@ -106,9 +106,9 @@ struct MessageList: View {
 
 #Preview {
     let now = Int64(Date().timeIntervalSince1970 * 1000)
-    return MessageList(messages: [
-        ChatMessage(ts: now, role: "user", content: "hello", streaming: false, cutoffKind: nil),
-        ChatMessage(ts: now + 1, role: "assistant", content: "Hi! How can I help today?", streaming: false, cutoffKind: nil),
+    MessageList(messages: [
+        ChatMessage(ts: now, role: "user", content: "hello", streaming: false, cutoffKind: nil, cycleId: nil, tools: []),
+        ChatMessage(ts: now + 1, role: "assistant", content: "Hi! How can I help today?", streaming: false, cutoffKind: nil, cycleId: nil, tools: []),
     ])
     .background(DuskColors.bg)
 }

@@ -169,22 +169,22 @@ private enum BubbleLayout {
 
 #Preview {
     let now = Int64(Date().timeIntervalSince1970 * 1000)
-    return ScrollView {
+    ScrollView {
         VStack(spacing: Space.gapMsg) {
             MessageBubble(
-                message: ChatMessage(ts: now, role: "user", content: "hello", streaming: false, cutoffKind: nil),
+                message: ChatMessage(ts: now, role: "user", content: "hello", streaming: false, cutoffKind: nil, cycleId: nil, tools: []),
                 index: 0
             )
             MessageBubble(
-                message: ChatMessage(ts: now + 1, role: "assistant", content: "Hi there! How can I help?", streaming: false, cutoffKind: nil),
+                message: ChatMessage(ts: now + 1, role: "assistant", content: "Hi there! How can I help?", streaming: false, cutoffKind: nil, cycleId: nil, tools: []),
                 index: 1
             )
             MessageBubble(
-                message: ChatMessage(ts: now + 2, role: "assistant", content: "", streaming: true, cutoffKind: nil),
+                message: ChatMessage(ts: now + 2, role: "assistant", content: "", streaming: true, cutoffKind: nil, cycleId: nil, tools: []),
                 index: 2
             )
             MessageBubble(
-                message: ChatMessage(ts: now + 3, role: "assistant", content: "Cut off here", streaming: false, cutoffKind: "interrupt"),
+                message: ChatMessage(ts: now + 3, role: "assistant", content: "Cut off here", streaming: false, cutoffKind: "interrupt", cycleId: nil, tools: []),
                 index: 3
             )
         }
