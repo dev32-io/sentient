@@ -89,8 +89,6 @@ struct Composer: View {
             .foregroundStyle(DuskColors.ink)
             .tint(DuskColors.accent)
             .focused($inputFocused)
-            .submitLabel(.send)
-            .onSubmit(submit)
             .padding(.vertical, Space.xs)
             .accessibilityIdentifier("chat-input")
             if showWave { ListeningWaveform() }
