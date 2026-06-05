@@ -162,7 +162,7 @@ private fun AppConfiguredRoot(
                     onTtsToggle = { sdkViewModel.setTtsEnabled(!sdkState.prefs.ttsEnabled) },
                     onInterrupt = sdkViewModel::interrupt,
                     onOpenHistory = { scope.launch { drawerState.open() } },
-                    onOpenSettings = { showSettings = true },
+                    onNewChat = { sdkViewModel.newChat() },
                 )
             }
         }

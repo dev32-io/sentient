@@ -40,6 +40,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import io.sentient.android.theme.Fraunces
 import io.sentient.android.theme.LocalTokens
 import io.sentient.mobilesdk.connectors.CognitionState
 import io.sentient.mobilesdk.design.Colors
@@ -59,7 +60,7 @@ fun ChatScreen(
     onTtsToggle: () -> Unit,
     onInterrupt: () -> Unit,
     onOpenHistory: () -> Unit,
-    onOpenSettings: () -> Unit,
+    onNewChat: () -> Unit,
     // TODO: supply the logged-in display name from the backend profile once the
     // Android SdkViewModel/store exposes it (mirrors the iOS caveat — follow-up).
     userName: String = "You",
@@ -77,7 +78,7 @@ fun ChatScreen(
         TitleBar(
             markMode = markMode,
             onOpenHistory = onOpenHistory,
-            onOpenSettings = onOpenSettings,
+            onNewChat = onNewChat,
         )
         MessageList(
             messages = state.messages,
@@ -135,7 +136,7 @@ private fun TranscriptPreview(text: String) {
 private fun TitleBar(
     markMode: MarkMode,
     onOpenHistory: () -> Unit,
-    onOpenSettings: () -> Unit,
+    onNewChat: () -> Unit,
 ) {
     val tokens = LocalTokens.current
     Row(
@@ -143,25 +144,30 @@ private fun TitleBar(
             .fillMaxWidth()
             .padding(horizontal = tokens.space.md, vertical = tokens.space.sm),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(tokens.space.xs),
     ) {
         TextButton(onClick = onOpenHistory, modifier = Modifier.testTag("history-open")) {
             Text("☰", color = Color(Colors.ink2), fontSize = tokens.type.lg)
         }
-        SentientMark(
-            size = MARK_SIZE,
-            mode = markMode,
-            modifier = Modifier.testTag("chat-mark").padding(end = tokens.space.xs),
-        )
-        Text(
-            text = TITLE,
-            color = Color(Colors.ink),
-            fontSize = tokens.type.lg,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Row(modifier = Modifier.weight(1f)) {}
-        TextButton(onClick = onOpenSettings, modifier = Modifier.testTag("settings-open")) {
-            Text("⚙", color = Color(Colors.ink2), fontSize = tokens.type.lg)
+        Row(
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SentientMark(
+                size = MARK_SIZE,
+                mode = markMode,
+                modifier = Modifier.testTag("chat-mark").padding(end = tokens.space.xs),
+            )
+            Text(
+                text = TITLE,
+                color = Color(Colors.ink),
+                fontSize = tokens.type.lg,
+                fontWeight = FontWeight.SemiBold,
+                fontFamily = Fraunces,
+            )
+        }
+        TextButton(onClick = onNewChat, modifier = Modifier.testTag("new-chat")) {
+            Text("+", color = Color(Colors.ink2), fontSize = tokens.type.xl)
         }
     }
 }
