@@ -61,6 +61,14 @@ struct Composer: View {
         }
         .padding(Space.md)
         .background(DuskColors.paper, in: RoundedRectangle(cornerRadius: ComposerLayout.radius))
+        .shadow(
+            // Soft amber halo — mirrors the webui composer glow; intensifies while
+            // the mic is active (listening state). Color from DuskColors.amber token.
+            color: DuskColors.amber.opacity(
+                micActive ? ComposerLayout.glowListeningOpacity : ComposerLayout.glowOpacity
+            ),
+            radius: ComposerLayout.glowRadius
+        )
         .overlay(
             // Listening glow: the whole composer card borders accent while the mic
             // is active (mirrors webui .composer--listening).
@@ -69,6 +77,17 @@ struct Composer: View {
         )
         .padding(.horizontal, Space.lg)
         .padding(.vertical, Space.md)
+        .simultaneousGesture(
+            // Swipe-down to dismiss keyboard; simultaneousGesture preserves TextField
+            // touch handling (text selection / caret placement).
+            DragGesture(minimumDistance: ComposerLayout.dismissDragThreshold)
+                .onEnded { value in
+                    if value.translation.height > ComposerLayout.dismissDragThreshold {
+                        inputFocused = false
+                        log.info("keyboard.dismiss reason=swipe-down")
+                    }
+                }
+        )
     }
 
     // ── Derived state ───────────────────────────────────────────────────────

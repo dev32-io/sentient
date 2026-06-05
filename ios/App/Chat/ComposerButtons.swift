@@ -63,4 +63,12 @@ enum ComposerLayout {
     /// Inner stop-square dimensions for the restyled interrupt button (webui .m-stop).
     static let stopIconSize: CGFloat = 11
     static let stopGlyphRadius: CGFloat = 2
+    /// Minimum downward drag distance (pt) before the keyboard is dismissed.
+    static let dismissDragThreshold: CGFloat = 24
+    /// Soft amber outer glow radius (pt) — mirrors the webui composer halo.
+    static let glowRadius: CGFloat = 22
+    /// Resting amber glow opacity.
+    static let glowOpacity: Double = 0.28
+    /// Amber glow opacity while the mic is active (listening state).
+    static let glowListeningOpacity: Double = 0.45
 }
