@@ -47,6 +47,7 @@ import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
 import io.sentient.android.theme.LocalTokens
+import io.sentient.mobilesdk.connectors.TaskSnapshotItem
 import io.sentient.mobilesdk.design.Colors
 import io.sentient.mobilesdk.sdk.ChatMessage
 
@@ -149,13 +150,19 @@ private fun BubbleBody(message: ChatMessage, isUser: Boolean, avatarMode: MarkMo
                 text = message.content,
                 streaming = message.streaming,
                 cutoffKind = message.cutoffKind,
+                tools = message.tools,
             )
         }
     }
 }
 
 @Composable
-private fun BubbleText(text: String, streaming: Boolean, cutoffKind: String?) {
+private fun BubbleText(
+    text: String,
+    streaming: Boolean,
+    cutoffKind: String?,
+    tools: List<TaskSnapshotItem> = emptyList(),
+) {
     val tokens = LocalTokens.current
     // GFM rendered to Compose (mikepenz). Streaming reveals text via typewriter; the
     // cutoff marker renders as a separate row below so it stays outside the markdown block flow.
@@ -195,6 +202,7 @@ private fun BubbleText(text: String, streaming: Boolean, cutoffKind: String?) {
         if (cutoffLabel(cutoffKind) != null) {
             Text(text = "⏹ interrupted", color = Color(Colors.ink3), fontSize = tokens.type.sm)
         }
+        if (tools.isNotEmpty()) ToolPillStrip(tools)
     }
 }
 
