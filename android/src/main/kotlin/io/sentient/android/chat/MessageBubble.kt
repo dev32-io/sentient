@@ -114,7 +114,9 @@ private fun BubbleAvatar(message: ChatMessage, avatarMode: MarkMode, userName: S
         ) {
             SentientMark(size = AVATAR_SIZE, mode = avatarMode)
             AvatarRipple(
-                active = avatarMode == MarkMode.SPEAKING || avatarMode == MarkMode.LISTENING,
+                active = avatarMode == MarkMode.SPEAKING ||
+                    avatarMode == MarkMode.LISTENING ||
+                    avatarMode == MarkMode.THINKING,
                 modifier = Modifier.size(AVATAR_SIZE),
             )
         }

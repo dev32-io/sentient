@@ -29,7 +29,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -56,6 +58,10 @@ import io.sentient.mobilesdk.transport.SdkStatus
 private const val TITLE = "Sentient"
 private val TRANSCRIPT_RULE_WIDTH = 2.dp
 private val MARK_SIZE = 26.dp
+private val LOADING_PILL_SPINNER_SIZE = 14.dp
+private val LOADING_PILL_SPINNER_STROKE = 2.dp
+private const val LOADING_LABEL_CONNECTING = "Connecting…"
+private const val LOADING_LABEL_SENDING = "Sending…"
 
 @Composable
 fun ChatScreen(
@@ -105,6 +111,15 @@ fun ChatScreen(
         }
     }
 
+    // Inline loading affordance: SENDING when a queued send exists; CONNECTING on
+    // first connect (before READY, connectionLost=false). Reconnect loops are
+    // owned by ConnectionBanner — loadingAffordance returns NONE in that case.
+    val affordance = loadingAffordance(
+        status = state.status,
+        connectionLost = state.connectionLost,
+        hasPending = pending != null,
+    )
+
     Box(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -136,6 +151,9 @@ fun ChatScreen(
                     onDismiss = { cycleErrorDismissed = true },
                 )
             }
+            if (affordance != LoadingAffordance.NONE) {
+                LoadingPill(affordance = affordance)
+            }
             Composer(
                 // canSend tints the send glyph: accent = READY (sends now),
                 // muted = not READY (tap queues, not drops — see handleSend).
@@ -159,6 +177,36 @@ fun ChatScreen(
                     .padding(top = MARK_SIZE),
             )
         }
+    }
+}
+
+/**
+ * Inline loading pill shown between the transcript / cycle-error slot and the Composer.
+ * Reuses the ConnectionBanner visual language: spinner (14dp) + label, ink3/ink2 tinting.
+ * testTag: `loading-connecting` or `loading-sending`.
+ */
+@Composable
+private fun LoadingPill(affordance: LoadingAffordance) {
+    val tokens = LocalTokens.current
+    val label = when (affordance) {
+        LoadingAffordance.CONNECTING -> LOADING_LABEL_CONNECTING
+        LoadingAffordance.SENDING -> LOADING_LABEL_SENDING
+        LoadingAffordance.NONE -> return
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = tokens.space.lg, vertical = tokens.space.xs)
+            .testTag("loading-${affordance.name.lowercase()}"),
+        horizontalArrangement = Arrangement.spacedBy(tokens.space.sm),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(LOADING_PILL_SPINNER_SIZE),
+            color = Color(Colors.ink3),
+            strokeWidth = LOADING_PILL_SPINNER_STROKE,
+        )
+        Text(text = label, color = Color(Colors.ink2), fontSize = tokens.type.sm)
     }
 }
 

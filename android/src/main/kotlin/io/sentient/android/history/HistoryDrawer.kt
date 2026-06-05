@@ -30,9 +30,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.FloatingActionButton
@@ -54,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.sentient.android.theme.Fraunces
 import io.sentient.android.theme.LocalTokens
@@ -61,6 +64,8 @@ import io.sentient.mobilesdk.design.Colors
 import kotlinx.coroutines.launch
 
 private const val EMPTY_DEFAULT = "No past chats yet."
+private val HISTORY_SPINNER_SIZE = 24.dp
+private val HISTORY_SPINNER_STROKE = 2.dp
 
 private data class PendingTarget(val id: String, val title: String)
 
@@ -226,10 +231,21 @@ private fun SessionListBody(
             SessionsErrorEmpty(onRetry = onRetry)
             return
         }
-        val msg = when {
-            state.loading -> "Loading…"
-            state.isSearching -> "No matches for \"${state.query.trim()}\""
-            else -> EMPTY_DEFAULT
+        // First-load spinner: visible spinner instead of static text while fetching.
+        if (state.loading) {
+            CircularProgressIndicator(
+                modifier = Modifier
+                    .size(HISTORY_SPINNER_SIZE)
+                    .testTag("history-loading"),
+                color = Color(Colors.ink3),
+                strokeWidth = HISTORY_SPINNER_STROKE,
+            )
+            return
+        }
+        val msg = if (state.isSearching) {
+            "No matches for \"${state.query.trim()}\""
+        } else {
+            EMPTY_DEFAULT
         }
         Text(text = msg, color = Color(Colors.ink3), fontSize = tokens.type.sm)
         return
