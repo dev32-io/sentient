@@ -108,5 +108,13 @@ extension HistoryModel {
     func seedForPreview(_ rows: [SessionRow]) {
         sessions = rows
     }
+
+    /// Seed an error state (and optional rows) for SwiftUI previews so the
+    /// sessions-error / stale-banner affordances can be rendered without I/O.
+    func seedErrorForPreview(_ message: String, rows: [SessionRow] = []) {
+        sessions = rows
+        error = message
+        loading = false
+    }
 }
 #endif

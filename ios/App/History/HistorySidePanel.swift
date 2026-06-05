@@ -38,6 +38,19 @@ struct HistorySidePanel: View {
     let onAskRename: (SessionRow) -> Void
     let onAskDelete: (SessionRow) -> Void
 
+    /// True when the load failed and there are NO rows to fall back on — the
+    /// list area is replaced by the SessionsErrorEmpty affordance. Guarded on
+    /// `!loading` so the in-flight spinner case isn't pre-empted by a stale error.
+    private var showsErrorEmpty: Bool {
+        model.error != nil && model.visible.isEmpty && !model.loading
+    }
+
+    /// True when a re-fetch failed but rows are still loaded — a thin stale
+    /// banner sits above the (stale) list. Mirrors drawer.tsx showStaleErrorBanner.
+    private var showsStaleBanner: Bool {
+        model.error != nil && !model.visible.isEmpty
+    }
+
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             VStack(spacing: 0) {
@@ -48,7 +61,15 @@ struct HistorySidePanel: View {
                 )
                 searchField
                 pastChatsTitle
-                sessionList
+                if showsStaleBanner {
+                    SessionsStaleBanner(onRetry: { Task { await model.refresh() } })
+                }
+                if showsErrorEmpty {
+                    SessionsErrorEmpty(onRetry: { Task { await model.refresh() } })
+                    Spacer(minLength: 0)
+                } else {
+                    sessionList
+                }
             }
             fab
         }
@@ -156,10 +177,12 @@ private func makePreviewRows() -> [SessionRow] {
 }
 private let previewRows = makePreviewRows()
 
-/// Holds @StateObject lifetime; seeds sessions; renders the panel.
+/// Holds @StateObject lifetime; seeds sessions (or an error state); renders the
+/// panel. `errorMessage != nil` drives the sessions-error / stale-banner states.
 private struct PanelPreviewHost: View {
     @StateObject private var model = HistoryModel(store: SdkStore())
     let seed: [SessionRow]
+    var errorMessage: String? = nil
 
     var body: some View {
         HistorySidePanel(
@@ -173,7 +196,13 @@ private struct PanelPreviewHost: View {
             onAskRename: { _ in },
             onAskDelete: { _ in }
         )
-        .onAppear { model.seedForPreview(seed) }
+        .onAppear {
+            if let errorMessage {
+                model.seedErrorForPreview(errorMessage, rows: seed)
+            } else {
+                model.seedForPreview(seed)
+            }
+        }
     }
 }
 
@@ -185,6 +214,18 @@ private struct PanelPreviewHost: View {
 
 #Preview("Side panel — empty") {
     PanelPreviewHost(seed: [])
+        .frame(width: 320)
+        .preferredColorScheme(.dark)
+}
+
+#Preview("Side panel — load error (empty)") {
+    PanelPreviewHost(seed: [], errorMessage: "network unreachable")
+        .frame(width: 320)
+        .preferredColorScheme(.dark)
+}
+
+#Preview("Side panel — stale banner (rows + error)") {
+    PanelPreviewHost(seed: previewRows, errorMessage: "network unreachable")
         .frame(width: 320)
         .preferredColorScheme(.dark)
 }

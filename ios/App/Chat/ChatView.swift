@@ -76,15 +76,19 @@ struct ChatView: View {
     private var panelVisible: Bool { panelX > -panelWidth }
 
     /// Connection affordance derived from the single SDK state surface via the
-    /// pure `ConnectionBannerState.derive`. In the mobile-sdk `connectionLost`
-    /// stays true through the WHOLE recovery (and at exhaustion), so STATUS — not
-    /// connectionLost — discriminates "Reconnecting…" (mid-backoff) from
-    /// "Tap to reconnect" (disconnected/error). See ConnectionBanner.swift.
+    /// pure `ConnectionBannerState.derive` (STATUS, not connectionLost,
+    /// discriminates reconnecting vs lost). See ConnectionBanner.swift.
     private var connectionBanner: ConnectionBannerState? {
         ConnectionBannerState.derive(
             status: store.state.status,
             connectionLost: store.state.connectionLost
         )
+    }
+
+    /// Last user turn to resend on cycle-error Retry (pure derivation; nil ⇒
+    /// Retry omitted). See CycleErrorBanner.swift.
+    private var lastUserText: String? {
+        CycleErrorRecovery.lastUserText(in: store.state.messages)
     }
 
     // ── Root body ─────────────────────────────────────────────────────────────
@@ -114,8 +118,7 @@ struct ChatView: View {
                     .gesture(panelDrag)
             }
         }
-        // Floating connection-state pill + auth-expired→logout (web-sdk parity).
-        // Both live in the extracted modifier; side effects stay out of body.
+        // Floating connection-state pill + auth-expired→logout (extracted modifier).
         .connectionState(
             banner: connectionBanner,
             onReconnect: { store.forceReconnect() },
@@ -161,6 +164,12 @@ struct ChatView: View {
                 onMicToggle: toggleMic,
                 onTtsToggle: { store.setTtsEnabled(!store.state.prefs.ttsEnabled) },
                 onInterrupt: { store.interrupt() }
+            )
+            .cycleErrorRecovery(
+                hasError: store.state.lastCycleError,
+                lastUserText: lastUserText,
+                onRetry: { if let text = lastUserText { store.sendText(text) } },
+                onNewChat: { Task { await historyModel.newChat() } }
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -237,11 +246,8 @@ struct ChatView: View {
     }
 
     // ── Title bar ─────────────────────────────────────────────────────────────
-    //
-    // `chat-screen` identifier on the title text leaf (NOT the container) so
-    // it does not shadow inner control identifiers (chat-input, chat-send …).
-    //
-    // Layout: [hamburger]  ···  [mark · title]  ···  [new-chat "+"]
+    // Layout: [hamburger] ··· [mark · title] ··· [new-chat "+"]. `chat-screen`
+    // sits on the title leaf (not the container) so it doesn't shadow inner ids.
 
     private var titleBar: some View {
         HStack(spacing: Space.sm) {
