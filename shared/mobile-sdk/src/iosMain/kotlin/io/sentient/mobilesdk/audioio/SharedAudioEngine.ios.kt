@@ -17,6 +17,15 @@
 // retain()/release() reference-count the two users; the engine + session are
 // stopped only when the count reaches zero.
 //
+// CAPTURE vs PLAYBACK USERS: callers tag their retain as CAPTURE
+// (retainForCapture/releaseForCapture) or PLAYBACK (retain/release). Both feed
+// the SAME total-user refcount that gates engine teardown, but capture retains
+// ALSO bump a separate captureUsers counter exposed via [isCaptureActive]. The
+// E2 playback adapter reads that flag at start() to decide its engine: capture
+// active → attach the player HERE (shared playAndRecord, full-duplex AEC);
+// capture inactive (text chat / voice off) → play on a STANDALONE .playback
+// engine that needs no mic permission (see StandalonePlaybackEngine.ios.kt).
+//
 // NO-CRASH CONTRACT: configuration / start failures return false (never throw
 // across @ObjCExport). NSError** out-params handled CF-natively via memScoped.
 // ---------------------------------------------------------------------------
@@ -52,7 +61,17 @@ internal class SharedAudioEngine private constructor() {
 
     val engine: AVAudioEngine = AVAudioEngine()
     private var users = 0
+    private var captureUsers = 0
     private var sessionConfigured = false
+
+    /**
+     * True while at least one CAPTURE user holds the shared engine (mic capture is
+     * active). The E2 playback adapter reads this at start() to choose its engine:
+     * true → attach the player to THIS shared playAndRecord engine (full-duplex
+     * AEC); false → play on the standalone .playback engine (no mic permission).
+     * Queried + mutated only on the single orchestrator coroutine, like the refcount.
+     */
+    val isCaptureActive: Boolean get() = captureUsers > 0
 
     /**
      * Ensures the session is configured + the engine is running, then returns the
@@ -65,24 +84,44 @@ internal class SharedAudioEngine private constructor() {
      * clean start, so a soft-fail before the increment leaves the refcount consistent
      * (no leaked retain to release).
      */
-    fun retain(): AVAudioEngine? {
+    fun retain(): AVAudioEngine? = retainInternal(isCapture = false)
+
+    /**
+     * CAPTURE-side retain: same engine acquisition as [retain] but also bumps the
+     * capture counter so [isCaptureActive] reads true while the mic holds the engine.
+     * The capture counter is bumped ONLY after a clean start (with the total count),
+     * so a soft-fail leaves BOTH counters consistent.
+     */
+    fun retainForCapture(): AVAudioEngine? = retainInternal(isCapture = true)
+
+    private fun retainInternal(isCapture: Boolean): AVAudioEngine? {
         if (!ensureSession()) return null
         if (!engine.running) {
             if (!enginePrepareGuarded(engine) || !startEngine()) return null
         }
         users += 1
-        log.debug("retain", mapOf("users" to users, "running" to engine.running))
+        if (isCapture) captureUsers += 1
+        log.debug(
+            "retain",
+            mapOf("users" to users, "captureUsers" to captureUsers, "capture" to isCapture, "running" to engine.running),
+        )
         return engine
     }
 
-    /** Releases one user; stops the engine + deactivates the session at zero. */
-    fun release() {
+    /** Releases one PLAYBACK user; stops the engine + deactivates the session at zero. */
+    fun release() = releaseInternal(isCapture = false)
+
+    /** Releases one CAPTURE user; also decrements the capture counter. */
+    fun releaseForCapture() = releaseInternal(isCapture = true)
+
+    private fun releaseInternal(isCapture: Boolean) {
         if (users == 0) {
             log.debug("release-noop")
             return
         }
         users -= 1
-        log.debug("release", mapOf("users" to users))
+        if (isCapture && captureUsers > 0) captureUsers -= 1
+        log.debug("release", mapOf("users" to users, "captureUsers" to captureUsers, "capture" to isCapture))
         if (users > 0) return
         runCatching {
             if (engine.running) engine.stop()

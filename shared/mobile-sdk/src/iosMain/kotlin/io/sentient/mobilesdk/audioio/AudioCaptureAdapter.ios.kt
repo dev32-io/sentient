@@ -4,9 +4,13 @@
 // Uses the SHARED AVAudioEngine ([SharedAudioEngine]) input node with
 // voice-processing IO enabled (setVoiceProcessingEnabled(true)) for platform AEC
 // + noise suppression — the iOS analogue of Android's VOICE_COMMUNICATION
-// source. The shared engine + .playAndRecord/.voiceChat session are ALSO used by
-// the E2 playback player node so the VP unit gets the speaker render reference
-// (full-duplex AEC — see SharedAudioEngine.ios.kt). An input tap hands float
+// source. Capture acquires the engine via retainForCapture()/releaseForCapture()
+// so SharedAudioEngine.isCaptureActive reads true while the mic holds it — that
+// flag is how E2 playback decides between the shared playAndRecord engine (this
+// path, full-duplex AEC) and a standalone .playback engine (text chat, no mic).
+// In VOICE MODE the shared engine + .playAndRecord/.voiceChat session are ALSO
+// used by the E2 playback player node so the VP unit gets the speaker render
+// reference (full-duplex AEC — see SharedAudioEngine.ios.kt). An input tap hands float
 // buffers at the hardware rate (often 48k); Pcm16Converter resamples each to 16k
 // mono PCM16 LE, which is pushed into a buffered Channel that frames() exposes as
 // a cold Flow.
@@ -121,7 +125,7 @@ class IosAudioCaptureAdapter : AudioCaptureAdapter {
         log.info("stop")
         runCatching { active.inputNode.removeTapOnBus(INPUT_BUS) }
             .onFailure { log.warn("stop-teardown-failed", mapOf("cause" to (it.message ?: "unknown"))) }
-        shared.release()
+        shared.releaseForCapture()
         frameChannel?.close()
         frameChannel = null
     }
@@ -142,7 +146,7 @@ class IosAudioCaptureAdapter : AudioCaptureAdapter {
      * retain is released so the refcount stays consistent.
      */
     private fun startEngine(sampleRate: Int, channel: Channel<ByteArray>): Boolean {
-        val avEngine = shared.retain() ?: return false
+        val avEngine = shared.retainForCapture() ?: return false
         val input: AVAudioInputNode = avEngine.inputNode
 
         // Validate the input format BEFORE setVoiceProcessing / installTap (those
@@ -157,14 +161,14 @@ class IosAudioCaptureAdapter : AudioCaptureAdapter {
                     "channels" to inputFormat.channelCount.toLong(),
                 ),
             )
-            shared.release()
+            shared.releaseForCapture()
             return false
         }
 
         val converter = Pcm16Converter(inputFormat, sampleRate)
         if (!converter.isReady) {
             log.error("start-failed", mapOf("reason" to "converter init", "inputRate" to inputFormat.sampleRate))
-            shared.release()
+            shared.releaseForCapture()
             return false
         }
 
@@ -177,7 +181,7 @@ class IosAudioCaptureAdapter : AudioCaptureAdapter {
         // Installing a tap can restart the engine graph; ensure it is running.
         if (!shared.ensureRunning()) {
             input.removeTapOnBus(INPUT_BUS)
-            shared.release()
+            shared.releaseForCapture()
             return false
         }
         engine = avEngine
