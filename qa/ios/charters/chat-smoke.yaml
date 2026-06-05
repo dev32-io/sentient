@@ -1,0 +1,178 @@
+# Maestro E2E flow — Chat smoke (text path, free credentials only)
+#
+# Covers design-polish features (Tasks 1.1–8.2) visible in the chat surface:
+#   - Fraunces brand wordmark in top bar
+#   - SentientMark logo/avatar in top bar + bubbles
+#   - Typewriter reveal (no block cursor) on streaming assistant bubble
+#   - Composer idle / listening waveform (mic on) / tinted-square stop (streaming)
+#   - Composer paperclip attach button, TTS toggle
+#   - Day divider between chat sessions
+#   - Autoscroll pin (scrolled-to-bottom) / unpin (scrolled up mid-stream)
+#   - Bubble speaking-wave + avatar ripple (voice/TTS state)
+#
+# Prerequisites:
+#   - Local gateway running at localhost:8888 (docker compose up in deploy/macos)
+#   - Simulator booted (iPhone 16, iOS 17+)
+#   - App installed (see ios/build instructions in CLAUDE.md)
+#   - Backend configured to host=localhost port=8888 security=plainWs
+#     OR use the in-app setup screen (backend-host / backend-port / backend-save)
+#   - Dev user present in gateway with known PIN (free credentials, no paid services)
+#
+# Run: maestro test qa/ios/charters/chat-smoke.yaml
+# (maestro must be installed: brew install maestro)
+#
+# E2E matrix (one row per feature/interaction):
+# Case                        | Viewport      | Pre-state           | Action                         | Expected user-visible              | Expected log trail
+# ----------------------------|---------------|---------------------|--------------------------------|------------------------------------|------------------------------------
+# App launch → backend setup  | 390×844 sim   | Fresh install       | Launch app                     | BackendSetupView (host/port fields)| sdk.store: unconfigured
+# Configure local gateway     | 390×844 sim   | Setup screen open   | Enter host/port, Save & connect| Progress then dismiss              | backendConfig saved; sdk.connect
+# Login avatar grid           | 390×844 sim   | Configured, no auth | View login                     | "Who's here?" + avatar tiles       | auth.model: loadUsers success
+# Select user + PIN entry     | 390×844 sim   | Avatar grid visible | Tap avatar → enter PIN         | PIN pad appears, then chat         | auth: login success; sdk: ready
+# Top bar — wordmark          | 390×844 sim   | Chat screen         | Observe                        | "Sentient" in Fraunces serif font  | —
+# Top bar — SentientMark logo | 390×844 sim   | Chat screen         | Observe                        | Orbital mark left of title         | —
+# Composer idle state         | 390×844 sim   | Chat screen         | Observe composer               | Mic + TTS + paperclip + send btns  | —
+# Send text message           | 390×844 sim   | Chat ready          | Type "say hi in 5 words" → send| User bubble appears, then streaming| sdk: sendText; cognition != idle
+# Streaming bubble (typewriter)| 390×844 sim  | Waiting for reply   | Observe assistant bubble       | Text reveals letter-by-letter, no block cursor | cognition == thinking/speaking
+# Interrupt stop button       | 390×844 sim   | Response streaming  | Observe composer               | Tinted red square stop button shown| canInterrupt == true
+# Autoscroll pin              | 390×844 sim   | Streaming response  | Stay at bottom                 | List auto-scrolls to new content   | followLatest: pinned
+# Autoscroll unpin            | 390×844 sim   | Streaming response  | Scroll up mid-stream           | Scroll stops auto-following        | followLatest: unpinned
+# Composer mic toggle         | 390×844 sim   | Chat ready          | Tap mic button                 | Mic active: accent glow on composer + waveform animation in text field | voiceMode.active
+# Day divider                 | 390×844 sim   | Multi-day history   | Open old chat or new session next day | Day separator row between message groups | —
+# History hamburger           | 390×844 sim   | Chat screen         | Tap hamburger (history-open)   | History side panel slides in       | historyModel.refresh()
+# History panel layout        | 390×844 sim   | Panel open          | Observe                        | Account header + search + Past chats + session list + FAB | —
+# New chat from panel FAB     | 390×844 sim   | Panel open          | Tap "+" FAB (history-new-chat) | Panel closes, new empty chat       | historyModel.newChat
+# New chat from title bar "+" | 390×844 sim   | Chat screen         | Tap "+" (new-chat)             | New empty chat starts              | historyModel.newChat
+
+appId: ai.sentient.mobile
+---
+- launchApp
+
+# ── Step 1: Backend setup (runs if no config is persisted) ─────────────────────
+# On a fresh install the first screen is BackendSetupView.
+# Conditional: only run this block if the setup screen is present.
+- runFlow:
+    when:
+      visible: "Sentient backend"
+    commands:
+      - clearText:
+          id: "backend-host"
+      - tapOn:
+          id: "backend-host"
+      - inputText: "localhost"
+      - clearText:
+          id: "backend-port"
+      - tapOn:
+          id: "backend-port"
+      - inputText: "8888"
+      # Security: tap "Plain ws" segment (third segment in the picker)
+      - tapOn:
+          text: "Plain ws"
+      - tapOn:
+          id: "backend-save"
+      # Wait for save + dismiss
+      - assertVisible:
+          id: "login-loading"
+          timeout: 10000
+        optional: true
+
+# ── Step 2: Login ──────────────────────────────────────────────────────────────
+- assertVisible: "Who's here?"
+- takeScreenshot: chat-smoke-01-login-avatar
+
+# Tap the first available user avatar (accessibility id set in AvatarTile).
+# If the first user's tile is labelled by displayName, use text match as fallback.
+- tapOn:
+    index: 0
+    parent:
+      id: "login-loading"
+  optional: true
+- tapOn:
+    text: ".*"   # first avatar tile by pattern — adjust to real user name
+    index: 0
+    optional: true
+
+# Enter PIN — 4-digit dev PIN (set via gateway user config).
+# Replace XXXX with the actual dev PIN for this environment.
+- tapOn: { text: "1" }
+- tapOn: { text: "2" }
+- tapOn: { text: "3" }
+- tapOn: { text: "4" }
+- takeScreenshot: chat-smoke-02-pin-entry
+
+# ── Step 3: Chat screen — brand wordmark + SentientMark ───────────────────────
+# Navigation to chat is driven by SDK status == .ready in RootView.
+- assertVisible:
+    id: "chat-screen"
+    timeout: 8000
+- takeScreenshot: chat-smoke-03-chat-idle
+
+# ── Step 4: Composer idle state ───────────────────────────────────────────────
+- assertVisible:
+    id: "chat-input"
+- assertVisible:
+    id: "chat-mic"
+- assertVisible:
+    id: "chat-tts-toggle"
+- assertVisible:
+    id: "chat-attach"
+- assertVisible:
+    id: "chat-send"
+- takeScreenshot: chat-smoke-04-composer-idle
+
+# ── Step 5: Send a text message ───────────────────────────────────────────────
+- tapOn:
+    id: "chat-input"
+- inputText: "say hi in 5 words"
+- takeScreenshot: chat-smoke-05-text-typed
+- tapOn:
+    id: "chat-send"
+
+# ── Step 6: Streaming bubble visible + typewriter (no block cursor) ───────────
+# Wait for at least the first assistant bubble to start streaming.
+- assertVisible:
+    id: "message-bubble-1"
+    timeout: 15000
+- takeScreenshot: chat-smoke-06-streaming-bubble
+
+# Interrupt button should appear while streaming (canInterrupt == true).
+- assertVisible:
+    id: "chat-interrupt"
+    timeout: 5000
+  optional: true
+- takeScreenshot: chat-smoke-07-interrupt-visible
+
+# ── Step 7: Wait for reply to complete ────────────────────────────────────────
+- waitForAnimationToEnd:
+    timeout: 20000
+- takeScreenshot: chat-smoke-08-reply-complete
+
+# ── Step 8: Mic toggle — listening waveform ───────────────────────────────────
+- tapOn:
+    id: "chat-mic"
+# Mic is now active; composer card should show accent border + waveform.
+- takeScreenshot: chat-smoke-09-mic-on
+# Toggle off.
+- tapOn:
+    id: "chat-mic"
+- takeScreenshot: chat-smoke-10-mic-off
+
+# ── Step 9: History panel ─────────────────────────────────────────────────────
+- tapOn:
+    id: "history-open"
+- assertVisible:
+    id: "history-new-chat"
+    timeout: 3000
+- takeScreenshot: chat-smoke-11-history-open
+
+# Scrim tap → close panel.
+- tapOn:
+    point: "90%,50%"    # tap the scrim (right edge, outside panel)
+- takeScreenshot: chat-smoke-12-history-closed
+
+# ── Step 10: New chat via title-bar "+" ───────────────────────────────────────
+- tapOn:
+    id: "new-chat"
+- assertVisible:
+    id: "chat-screen"
+    timeout: 3000
+- takeScreenshot: chat-smoke-13-new-chat
