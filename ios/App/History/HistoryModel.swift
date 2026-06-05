@@ -97,3 +97,16 @@ final class HistoryModel: ObservableObject {
         log.warn("\(event) reason=\(error.localizedDescription)")
     }
 }
+
+// ---------------------------------------------------------------------------
+// Preview support — exposes a setter so #Preview blocks can seed sessions
+// without performing real listSessions I/O.
+// ---------------------------------------------------------------------------
+#if DEBUG
+extension HistoryModel {
+    /// Overwrite the session list for SwiftUI previews (never call in production).
+    func seedForPreview(_ rows: [SessionRow]) {
+        sessions = rows
+    }
+}
+#endif
