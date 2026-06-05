@@ -156,18 +156,18 @@ export function createManagedAcpSocket(input: ManagedAcpSocketInput): ManagedAcp
         });
         return;
       }
-      // Any REMOTE close — abnormal (code !== 1000) or a remote normal-closure
-      // (1000, e.g. overlay restart) — is reconnectable. The wire is gone but
-      // the client is still active, so the next send must re-dial. Distinguish
-      // only in logging: a remote 1000 is an expected clean drop, abnormal is a
-      // flap. Both will reconnect on the next send.
-      log.info(e.code === NORMAL_CLOSURE_CODE ? "ws.close.remote-clean" : "ws.close.abnormal", {
+      // Any REMOTE close is reconnectable (the next send re-dials); paths differ
+      // only in log LEVEL — a remote 1000 (overlay restart) is an expected clean
+      // drop (INFO), anything else is a degraded flap (WARN).
+      const closeFields = {
         sessionId: input.sessionId,
         code: e.code,
         reason: e.reason,
         willReconnectOnNextSend: true,
         notifyRemoteClose: wasLive,
-      });
+      };
+      if (e.code === NORMAL_CLOSURE_CODE) log.info("ws.close.remote-clean", closeFields);
+      else log.warn("ws.close.abnormal", closeFields);
       // Only the LIVE socket's remote close rejects in-flight requests: a request
       // on a stale (already-swapped) socket has already been retried or rejected.
       // A pre-open close is handled by waitForOpen, not here.

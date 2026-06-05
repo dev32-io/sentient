@@ -429,6 +429,42 @@ describe("bootstrapAcpWire — reconnect on abnormal close", () => {
     expect(sockets).toHaveLength(1);
   });
 
+  it("remote 1000 then dispose(): reconnectable until dispose, then terminal with no new socket", async () => {
+    // Interleaving the 2d8f6c4 rework reopened: a remote 1000 leaves the wire
+    // DEAD-but-reconnectable (ws=null, not disposed). If the consumer then
+    // dispose()s before any reconnect, dispose() must flip the wire terminal —
+    // the next op rejects (connection-disposed) and dispose() opens NO new
+    // socket (the dead handle is already gone, so there is nothing to close and
+    // nothing to re-dial).
+    const sockets: FakeWs[] = [];
+    const factory = (): AcpWsLike => {
+      const w = fakeWs();
+      sockets.push(w);
+      return w.base;
+    };
+    const promise = bootstrapAcpWire({
+      wsUrl: "ws://hermes:8765/ws",
+      token: "tok",
+      wsFactory: factory,
+      reconnect: { baseMs: 0, maxMs: 0, jitterMs: 0, maxAttempts: 3 },
+      sleep: () => Promise.resolve(),
+    });
+    await settleOpen(sockets[0] as FakeWs);
+    const { acpConn, dispose } = await promise;
+    expect(sockets).toHaveLength(1);
+
+    // Remote normal-closure — wire dead but reconnectable, NOT disposed.
+    (sockets[0] as FakeWs).fire("close", { code: 1000, reason: "overlay restart" });
+    // No reconnect happens until the next send/dispose — still one socket.
+    expect(sockets).toHaveLength(1);
+
+    // Now the consumer disconnects BEFORE any reconnect send. This is terminal.
+    dispose();
+    await expect(acpConn.newSession({})).rejects.toThrow(/connection-disposed/);
+    // dispose() over an already-dead wire opens no fresh socket.
+    expect(sockets).toHaveLength(1);
+  });
+
   it("bounds reconnect: surfaces an error after exhausting attempts on persistent failure", async () => {
     const sockets: FakeWs[] = [];
     const factory = (): AcpWsLike => {
