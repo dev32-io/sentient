@@ -45,7 +45,7 @@ struct MessageBubble: View {
                 userAvatar
             } else {
                 SentientMark(size: BubbleLayout.avatarSize, mode: avatarMode)
-                    .overlay(AvatarRipple(active: avatarMode == .speaking || avatarMode == .listening))
+                    .overlay(AvatarRipple(active: avatarMode != .idle))
                     .padding(.trailing, Space.md)
                 VStack(alignment: .leading, spacing: Space.xs) {
                     MessageMeta(message: message, userName: userName)
@@ -60,11 +60,9 @@ struct MessageBubble: View {
 
     // ── Avatar ────────────────────────────────────────────────────────────────
 
-    /// User → tinted initial circle (matches the Android sageSoft placeholder).
+    /// User → initial on terra/amber accent circle (webui parity).
     private var userAvatar: some View {
-        Circle()
-            .fill(DuskColors.sageSoft)
-            .frame(width: BubbleLayout.avatarSize, height: BubbleLayout.avatarSize)
+        UserAvatar(name: userName, size: BubbleLayout.avatarSize)
             .padding(.leading, Space.md)
     }
 
