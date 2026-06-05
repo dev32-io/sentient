@@ -130,7 +130,7 @@ struct CycleErrorBanner: View {
             Image(systemName: "xmark")
                 .font(.system(size: TypeScale.xs, weight: .semibold))
                 .foregroundStyle(DuskColors.ink3)
-                .frame(width: 28, height: 28)
+                .frame(width: CycleErrorStyle.dismissHit, height: CycleErrorStyle.dismissHit)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Dismiss")
@@ -141,6 +141,9 @@ struct CycleErrorBanner: View {
 private enum CycleErrorStyle {
     /// Warn-color tint over the elevated surface (webui color-mix warn 18%).
     static let warnTint: Double = 0.16
+    /// Dismiss ("×") button frame side. The visible tap area is enlarged beyond
+    /// the glyph by the button's surrounding padding.
+    static let dismissHit: CGFloat = 28
 }
 
 // ── Host modifier ───────────────────────────────────────────────────────────

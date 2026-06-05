@@ -41,6 +41,18 @@ struct CycleErrorRecoveryTests {
         #expect(CycleErrorRecovery.lastUserText(in: [msg("user", "   ")]) == nil)
     }
 
+    @Test func blankMostRecentUserTurnYieldsNilWithoutFallingThrough() {
+        // The MOST RECENT user turn wins even when it's blank-after-trim: the
+        // derivation returns on the first user hit in reverse and blank-trims to
+        // nil. It must NOT skip past the blank turn to an earlier non-blank one.
+        let messages = [
+            msg("user", "real question"),
+            msg("assistant", "..."),
+            msg("user", "   "),
+        ]
+        #expect(CycleErrorRecovery.lastUserText(in: messages) == nil)
+    }
+
     @Test func noUserTurnYieldsNil() {
         // Only assistant turns (or empty history) ⇒ no Retry.
         #expect(CycleErrorRecovery.lastUserText(in: [msg("assistant", "hi there")]) == nil)
