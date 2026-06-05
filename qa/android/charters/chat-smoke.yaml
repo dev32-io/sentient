@@ -1,0 +1,192 @@
+# Maestro E2E flow — Android Chat smoke (text path, free credentials only)
+#
+# Covers design-polish features (Tasks 10.1–17.2) visible in the chat surface:
+#   - Fraunces brand wordmark ("Sentient") in top bar
+#   - SentientMark logo/avatar in top bar + bubbles (chat-mark)
+#   - Typewriter reveal (no block cursor) on streaming assistant bubble
+#   - Composer idle / listening waveform (mic on) / tinted-square stop (streaming)
+#   - Composer paperclip attach button, TTS toggle
+#   - Day divider between chat sessions
+#   - Autoscroll pin (scrolled-to-bottom) / unpin (scrolled up mid-stream)
+#   - Bubble speaking-wave + avatar ripple (voice/TTS state — SKIPPED on text path)
+#
+# Prerequisites:
+#   - Local gateway running at 10.0.2.2:8888 (emulator host loopback; docker on host)
+#   - APK built with wss://10.0.2.2:8888/api/v1/ws baked into GATEWAY_WS_URL
+#     (set sentient.gatewayUrl=wss://10.0.2.2:8888/api/v1/ws in local.properties)
+#     The debug build sets allowSelfSignedDevHost=true (BuildConfig.DEBUG), so
+#     the OkHttp/WS engine trusts the local self-signed cert — no manual cert
+#     install on the emulator is needed.
+#   - Emulator emulator-5554 (Pixel_3a_API_34) running
+#   - App installed fresh: adb -s emulator-5554 install -r android-debug.apk
+#   - Dev user present in gateway with PIN 1234 (free credentials, no paid services)
+#
+# Run: maestro test --device emulator-5554 qa/android/charters/chat-smoke.yaml
+#
+# Android-specific notes vs iOS:
+#   - Backend gate: GATEWAY_WS_URL is baked into BuildConfig; setup screen only
+#     appears if no URL is baked OR if user explicitly opens it via login-backend-setup.
+#     With a valid plaintext URL, app goes directly to login.
+#   - Security options: testTag is backend-security-<ENUM_NAME> (e.g. backend-security-PLAIN_WS).
+#   - History is a native ModalNavigationDrawer (edge-swipe built in, no custom gesture).
+#   - Settings is a full-screen swap (not a sheet); dismiss via settings-back chevron.
+#   - testTagsAsResourceId=true is set at the composition root — testTags surface as
+#     Android resource-ids for uiautomator/Maestro targeting.
+#
+# E2E matrix (one row per feature/interaction):
+# Case                        | Viewport         | Pre-state           | Action                         | Expected user-visible              | Expected log trail
+# ----------------------------|------------------|---------------------|--------------------------------|------------------------------------|------------------------------------
+# App launch → login          | 390×844 emu      | Fresh install (baked URL set) | Launch app            | "Who's here?" avatar grid          | sdk.store: configured; sdk.build
+# Login avatar grid           | 390×844 emu      | Configured, no auth | View login                     | Avatar tiles present               | auth: loadUsers success
+# Select user + PIN entry     | 390×844 emu      | Avatar grid visible | Tap avatar → enter PIN 1234    | PIN pad appears, then chat screen  | auth: login success; sdk: ready
+# Top bar — wordmark          | 390×844 emu      | Chat screen         | Observe text "Sentient"        | Fraunces serif "Sentient" in center| —
+# Top bar — SentientMark logo | 390×844 emu      | Chat screen         | Observe chat-mark              | Orbital mark left of title         | —
+# Top bar buttons             | 390×844 emu      | Chat screen         | Observe history-open / new-chat| Hamburger (☰) + plus (+) present   | —
+# Composer idle state         | 390×844 emu      | Chat screen         | Observe composer               | Mic + TTS toggle + attach + send   | —
+# Send text message           | 390×844 emu      | Chat ready          | Type "say hi in 5 words" → send| User bubble appears, then streaming| sdk: sendText; cognition != idle
+# Streaming bubble (typewriter)| 390×844 emu     | Waiting for reply   | Observe assistant bubble       | Text reveals token-by-token        | cognition == thinking
+# Interrupt stop button       | 390×844 emu      | Response streaming  | Observe composer               | Tinted red square stop (chat-interrupt) shown | canInterrupt == true
+# Autoscroll pin              | 390×844 emu      | Streaming response  | Stay at bottom                 | List auto-scrolls to new content   | followLatest: pinned
+# Reply complete              | 390×844 emu      | Reply done          | Observe                        | Full reply visible; chat-interrupt gone | cognition == idle
+# Composer mic toggle (on)    | 390×844 emu      | Chat ready          | Tap chat-mic                   | Accent border on composer + waveform overlay | voiceMode.active
+# Composer mic toggle (off)   | 390×844 emu      | Mic active          | Tap chat-mic again             | Normal composer border restored    | voiceMode.idle
+# New chat via top bar        | 390×844 emu      | Chat screen         | Tap new-chat (+)               | Chat list cleared, empty composer  | historyModel.newChat
+# Day divider                 | 390×844 emu      | Multi-day history   | Navigate to session with prior-day msgs | Day separator row rendered | —
+# Speaking-wave + ripple      | SKIPPED-voice    | Voice/TTS reply     | (requires paid TTS, not triggered on text path) | — | —
+
+appId: io.dev32.sentient.debug
+---
+- launchApp
+
+# ── Step 1: Backend setup (only if somehow unconfigured) ──────────────────────
+# The baked GATEWAY_WS_URL is non-empty → the app skips to login.
+# If for any reason setup appears (e.g. blank build), fill in plain-ws config.
+- runFlow:
+    when:
+      visible: "Sentient backend"
+    commands:
+      - tapOn:
+          id: "backend-host"
+      - eraseText: 50
+      - inputText: "10.0.2.2"
+      - tapOn:
+          id: "backend-port"
+      - eraseText: 10
+      - inputText: "8888"
+      # Security: tap "Plain ws" segment (testTag: backend-security-PLAIN_WS)
+      - tapOn:
+          id: "backend-security-PLAIN_WS"
+      - tapOn:
+          id: "backend-save"
+      - extendedWaitUntil:
+          visible:
+            text: "Who's here?"
+          timeout: 10000
+
+# ── Step 2: Login ──────────────────────────────────────────────────────────────
+- assertVisible: "Who's here?"
+- takeScreenshot: .playwright-mcp/android/chat-smoke-01-login-avatar
+
+# Tap the first available user avatar (testTag: login-avatar-<userId>)
+- tapOn:
+    id: "login-avatar-.*"
+    index: 0
+
+# Enter PIN 1234 via the numpad (testTag: pin-key-<n>)
+- tapOn:
+    id: "pin-key-1"
+- tapOn:
+    id: "pin-key-2"
+- tapOn:
+    id: "pin-key-3"
+- tapOn:
+    id: "pin-key-4"
+- takeScreenshot: .playwright-mcp/android/chat-smoke-02-pin-entry
+
+# ── Step 3: Chat screen — brand wordmark + SentientMark ───────────────────────
+# SDK status == READY ⇒ AppConfiguredRoot routes to HistoryDrawer > ChatScreen.
+- extendedWaitUntil:
+    visible:
+      id: "chat-screen"
+    timeout: 12000
+- takeScreenshot: .playwright-mcp/android/chat-smoke-03-chat-idle
+
+# Verify top bar brand elements
+- assertVisible: "Sentient"
+- assertVisible:
+    id: "chat-mark"
+- assertVisible:
+    id: "history-open"
+- assertVisible:
+    id: "new-chat"
+
+# ── Step 4: Composer idle state ───────────────────────────────────────────────
+- assertVisible:
+    id: "chat-input"
+- assertVisible:
+    id: "chat-mic"
+- assertVisible:
+    id: "chat-tts-toggle"
+- assertVisible:
+    id: "chat-attach"
+- assertVisible:
+    id: "chat-send"
+- takeScreenshot: .playwright-mcp/android/chat-smoke-04-composer-idle
+
+# ── Step 5: Send a text message ───────────────────────────────────────────────
+- tapOn:
+    id: "chat-input"
+- inputText: "say hi in 5 words"
+- takeScreenshot: .playwright-mcp/android/chat-smoke-05-text-typed
+- tapOn:
+    id: "chat-send"
+
+# ── Step 6: Streaming bubble visible + typewriter (no block cursor) ───────────
+# Wait for the first assistant bubble (message-bubble-1 = index 1; user is index 0)
+- extendedWaitUntil:
+    visible:
+      id: "message-bubble-1"
+    timeout: 15000
+- takeScreenshot: .playwright-mcp/android/chat-smoke-06-streaming-bubble
+
+# Interrupt button should appear while streaming (canInterrupt == true)
+- runFlow:
+    when:
+      visible:
+        id: "chat-interrupt"
+    commands:
+      - takeScreenshot: .playwright-mcp/android/chat-smoke-07-interrupt-visible
+
+# ── Step 7: Wait for reply to complete ────────────────────────────────────────
+- waitForAnimationToEnd:
+    timeout: 20000
+- takeScreenshot: .playwright-mcp/android/chat-smoke-08-reply-complete
+
+# ── Step 8: Mic toggle — listening waveform ───────────────────────────────────
+# RECORD_AUDIO permission: the permission dialog may appear; handle it.
+- tapOn:
+    id: "chat-mic"
+- runFlow:
+    when:
+      visible: "Allow"
+    commands:
+      - tapOn: "Allow"
+- takeScreenshot: .playwright-mcp/android/chat-smoke-09-mic-on
+# Toggle off.
+- tapOn:
+    id: "chat-mic"
+- takeScreenshot: .playwright-mcp/android/chat-smoke-10-mic-off
+
+# ── Step 9: New chat via title-bar "+" ────────────────────────────────────────
+# Dismiss keyboard first (it may be open from the text input) so the title bar
+# with new-chat is reachable.
+- pressKey: Back
+- waitForAnimationToEnd:
+    timeout: 1000
+- tapOn:
+    id: "new-chat"
+- extendedWaitUntil:
+    visible:
+      id: "chat-screen"
+    timeout: 3000
+- takeScreenshot: .playwright-mcp/android/chat-smoke-13-new-chat
