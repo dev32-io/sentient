@@ -1,0 +1,25 @@
+# R3 assert — run AFTER `docker stop sentient-gateway`, app foregrounded on chat.
+# Asserts: app STAYS on chat (chat-input present, "Who's here?" NOT visible) and
+# the connection-lost banner appears after backoff. Regression check: must NOT
+# fall to the login/avatar screen.
+appId: io.dev32.sentient.debug
+---
+# Do NOT relaunch — keep the live (now-disconnected) chat session as-is.
+# Regression check: still on chat, NOT login.
+- assertVisible:
+    id: "chat-input"
+- assertNotVisible: "Who's here?"
+- takeScreenshot: R3-ios-still-on-chat-after-drop
+
+# Banner appears: first reconnecting (mid-backoff), then connection-lost (exhaust).
+# Allow up to 60s for the ~5-attempt backoff to exhaust into the terminal banner.
+- extendedWaitUntil:
+    visible:
+      id: "connection-lost-banner"
+    timeout: 60000
+- assertVisible:
+    id: "connection-reconnect"
+- assertVisible:
+    id: "chat-input"
+- assertNotVisible: "Who's here?"
+- takeScreenshot: R3-ios-lost-banner

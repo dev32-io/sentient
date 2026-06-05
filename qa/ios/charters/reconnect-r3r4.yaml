@@ -1,0 +1,67 @@
+# Maestro E2E — iOS R3/R4 connection-lost banner re-verification (Task 10 fix)
+#
+# Phase A (setup-login): reach chat (READY). Run with gateway UP.
+# Phase B (assert-lost): after `docker stop sentient-gateway`, assert the app
+#   STAYS on chat and shows the reconnecting → connection-lost banner (NOT login).
+# Phase C (assert-recover): after `docker start sentient-gateway` (healthy),
+#   tap connection-reconnect, assert READY recovery + send a message.
+#
+# Split into discrete flows the agent runs around docker stop/start.
+#
+# E2E matrix:
+# Case | Viewport | Pre-state | Action | Expected user-visible | Expected log trail
+# -----|----------|-----------|--------|-----------------------|-------------------
+# R3   | 390x844 sim | chat READY | docker stop gateway | stays on chat; reconnecting then connection-lost banner; NOT login | sdk: drop, reconnect attempts, exhaust; hasSession preserved
+# R4   | 390x844 sim | connection-lost banner | docker start + tap reconnect | READY, banner clears, reply on send | sdk: reconnect, ready
+appId: io.dev32.sentient.debug
+---
+- launchApp:
+    clearState: true
+
+# ── Phase A: backend setup (TLS self-signed, localhost:8888) ──────────────────
+- runFlow:
+    when:
+      visible: "Sentient backend"
+    commands:
+      - tapOn:
+          id: "backend-host"
+      - eraseText: 50
+      - inputText: "localhost"
+      - tapOn:
+          id: "backend-port"
+      - eraseText: 10
+      - inputText: "8888"
+      - tapOn:
+          text: "TLS · self-signed"
+      - tapOn:
+          id: "backend-save"
+      - extendedWaitUntil:
+          visible:
+            text: "Who's here?"
+          timeout: 15000
+
+# ── Login (PIN 1234) ──────────────────────────────────────────────────────────
+- runFlow:
+    when:
+      visible: "Who's here?"
+    commands:
+      - tapOn:
+          id: "login-avatar-.*"
+          index: 0
+      - tapOn:
+          id: "pin-key-1"
+      - tapOn:
+          id: "pin-key-2"
+      - tapOn:
+          id: "pin-key-3"
+      - tapOn:
+          id: "pin-key-4"
+
+# ── Confirm we reached chat (READY) ───────────────────────────────────────────
+- extendedWaitUntil:
+    visible:
+      id: "chat-screen"
+    timeout: 20000
+- assertVisible:
+    id: "chat-input"
+- takeScreenshot: R3-ios-chat-ready

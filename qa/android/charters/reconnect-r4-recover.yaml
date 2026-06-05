@@ -1,0 +1,27 @@
+# R4 recover — run AFTER `docker start sentient-gateway` (healthy), on chat with
+# the connection-lost banner. Tap reconnect, assert banner clears + reply.
+appId: io.dev32.sentient.debug
+---
+- assertVisible:
+    id: "connection-reconnect"
+- tapOn:
+    id: "connection-reconnect"
+
+- extendedWaitUntil:
+    notVisible:
+      id: "connection-lost-banner"
+    timeout: 30000
+- assertVisible:
+    id: "chat-input"
+- takeScreenshot: R4-android-recovered
+
+- tapOn:
+    id: "chat-input"
+- inputText: "say hi in 5 words"
+- tapOn:
+    id: "chat-send"
+- extendedWaitUntil:
+    visible:
+      id: "message-bubble-.*"
+    timeout: 30000
+- takeScreenshot: R4-android-reply-after-recover

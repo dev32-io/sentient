@@ -1,0 +1,22 @@
+# R3 assert — run AFTER `docker stop sentient-gateway`, app on chat.
+# Asserts: STAYS on chat (chat-input present, login-avatar NOT visible), banner
+# appears. Regression check: must NOT fall to login.
+appId: io.dev32.sentient.debug
+---
+- assertVisible:
+    id: "chat-input"
+- assertNotVisible:
+    id: "login-avatar-.*"
+- takeScreenshot: R3-android-still-on-chat-after-drop
+
+- extendedWaitUntil:
+    visible:
+      id: "connection-lost-banner"
+    timeout: 60000
+- assertVisible:
+    id: "connection-reconnect"
+- assertVisible:
+    id: "chat-input"
+- assertNotVisible:
+    id: "login-avatar-.*"
+- takeScreenshot: R3-android-lost-banner
