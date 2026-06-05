@@ -30,9 +30,12 @@ private fun dayKey(ts: Long): String {
 }
 
 private fun dividerLabel(ts: Long, nowMs: Long): String {
+    // Calendar-based yesterday (DST-aware) — a raw `nowMs - 86_400_000L` mislabels
+    // the boundary on 23h/25h DST-transition days. Mirrors iOS isDateInYesterday.
+    val yesterdayMs = Calendar.getInstance().apply { timeInMillis = nowMs; add(Calendar.DATE, -1) }.timeInMillis
     val day = when (dayKey(ts)) {
         dayKey(nowMs) -> "Today"
-        dayKey(nowMs - 86_400_000L) -> "Yesterday"
+        dayKey(yesterdayMs) -> "Yesterday"
         else -> SimpleDateFormat("EEEE", Locale.getDefault()).format(Date(ts))
     }
     val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(ts))
