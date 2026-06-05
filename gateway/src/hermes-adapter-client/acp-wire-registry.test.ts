@@ -105,6 +105,39 @@ describe("AcpWireRegistry — ref-counted per-user pooling", () => {
     expect(reg.refCount("alice")).toBe(2);
   });
 
+  it("drops the entry when the shared dial of a concurrent acquire rejects", async () => {
+    const reg = createAcpWireRegistry();
+    let rejectDial: ((e: Error) => void) | null = null;
+    const dial = vi.fn(
+      () =>
+        new Promise<AcpWireHandle>((_resolve, reject) => {
+          rejectDial = reject;
+        }),
+    );
+
+    // Two acquires share one in-flight dial; the second is on the reuse branch
+    // with refCount already bumped to 2 — then the shared dial REJECTS.
+    const p1 = reg.acquire("alice", dial);
+    const p2 = reg.acquire("alice", dial);
+    expect(dial).toHaveBeenCalledTimes(1);
+    expect(reg.refCount("alice")).toBe(2);
+
+    (rejectDial as unknown as (e: Error) => void)(new Error("overlay unreachable"));
+
+    // BOTH acquirers reject — neither sees a phantom live wire.
+    await expect(p1).rejects.toThrow(/overlay unreachable/);
+    await expect(p2).rejects.toThrow(/overlay unreachable/);
+    // No leaked ref: the poisoned entry is gone, not stuck at 2.
+    expect(reg.refCount("alice")).toBe(0);
+
+    // A later acquire RE-DIALS and succeeds — entry was dropped, not poisoned.
+    const d = immediateDial();
+    const conn = await reg.acquire("alice", d.dial);
+    expect(d.calls()).toBe(1);
+    expect(reg.refCount("alice")).toBe(1);
+    expect(conn).toBeDefined();
+  });
+
   it("drops the entry on a failed dial so a later acquire retries", async () => {
     const reg = createAcpWireRegistry();
     const failing = vi.fn(() => Promise.reject(new Error("overlay unreachable")));
