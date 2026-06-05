@@ -56,6 +56,9 @@ final class SdkStore: ObservableObject {
     private let tokenStore: SecureTokenStore
     private let log = AppLog("sdk", "store")
     private var collectTask: Task<Void, Never>?
+    /// Outbound-text queue: messages sent before READY are held here and
+    /// flushed in order on the first rising edge to READY (web-sdk parity).
+    private var sendQueue = SendQueueState()
 
     /// Build the store. Resolves the backend from BackendConfigStore → build-time
     /// default → unconfigured. On .configured, the SDK is built immediately and
@@ -152,7 +155,14 @@ final class SdkStore: ObservableObject {
         if next.status != state.status {
             log.info("status \(state.status.name) -> \(next.status.name)")
         }
+        let wasReady = state.status == .ready
         state = next
+        let (drained, toFlush) = sendQueueOnStatus(sendQueue, ready: next.status == .ready, wasReady: wasReady)
+        sendQueue = drained
+        if !toFlush.isEmpty {
+            log.info("sendQueue.flush count=\(toFlush.count)")
+            toFlush.forEach { sdk?.sendText(text: $0) }
+        }
     }
 
     // ── User commands ──────────────────────────────────────────────────────────
@@ -201,10 +211,20 @@ final class SdkStore: ObservableObject {
     }
 
     func sendText(_ text: String) {
-        guard let sdk else { return }
-        log.info("sendText len=\(text.count)")
-        sdk.sendText(text: text)
+        let ready = state.status == .ready
+        let (next, toSend) = sendQueueOnSend(sendQueue, text: text, ready: ready)
+        sendQueue = next
+        if toSend.isEmpty {
+            log.info("sendText.queued len=\(text.count) pendingCount=\(sendQueue.pending.count)")
+        } else {
+            guard let sdk else { return }
+            log.info("sendText.sent len=\(text.count)")
+            toSend.forEach { sdk.sendText(text: $0) }
+        }
     }
+
+    /// True when there are outbound messages queued, awaiting a READY transition.
+    var hasPendingSends: Bool { !sendQueue.pending.isEmpty }
 
     func interrupt() {
         guard let sdk else { return }
