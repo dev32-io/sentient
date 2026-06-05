@@ -22,6 +22,7 @@ import androidx.lifecycle.viewModelScope
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.sdk.SdkState
 import io.sentient.mobilesdk.sdk.SentientSdk
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -59,7 +60,7 @@ class SdkViewModel : ViewModel() {
     fun connect() {
         log.info("connect")
         viewModelScope.launch {
-            runCatching { sdk?.connect() }.onFailure { warn("connect-failed", it) }
+            runCatching { sdk?.connect() }.onFailureNonCancellation { warn("connect-failed", it) }
         }
     }
 
@@ -92,14 +93,14 @@ class SdkViewModel : ViewModel() {
         log.info("setTtsEnabled", mapOf("enabled" to enabled))
         viewModelScope.launch {
             runCatching { sdk?.setTtsEnabled(enabled) }
-                .onFailure { warn("tts-failed", it, mapOf("enabled" to enabled)) }
+                .onFailureNonCancellation { warn("tts-failed", it, mapOf("enabled" to enabled)) }
         }
     }
 
     fun newChat() {
         log.info("newChat")
         viewModelScope.launch {
-            runCatching { sdk?.newChat() }.onFailure { warn("new-failed", it) }
+            runCatching { sdk?.newChat() }.onFailureNonCancellation { warn("new-failed", it) }
         }
     }
 
@@ -117,3 +118,11 @@ class SdkViewModel : ViewModel() {
         log.warn(event, extra + mapOf("reason" to (e.message ?: e::class.simpleName)))
     }
 }
+
+/**
+ * Like [Result.onFailure] but rethrows [CancellationException] so a cancelled
+ * viewModelScope (ViewModel cleared / Activity finishing) propagates instead of
+ * being swallowed + logged as a spurious failure.
+ */
+private inline fun <T> Result<T>.onFailureNonCancellation(action: (Throwable) -> Unit): Result<T> =
+    onFailure { if (it is CancellationException) throw it else action(it) }

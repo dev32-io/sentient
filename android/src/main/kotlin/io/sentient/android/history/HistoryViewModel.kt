@@ -24,6 +24,7 @@ import io.sentient.android.sdk.SdkHolder
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.SessionRow
 import io.sentient.mobilesdk.sdk.SentientSdk
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -96,7 +97,7 @@ class HistoryViewModel(
         log.info("switchSession", mapOf("sessionId" to sessionId))
         viewModelScope.launch {
             runCatching { sdkProvider()?.switchSession(sessionId) }
-                .onFailure { warn("switch-failed", it, mapOf("sessionId" to sessionId)) }
+                .onFailureNonCancellation { warn("switch-failed", it, mapOf("sessionId" to sessionId)) }
             loadSessions()
         }
     }
@@ -105,7 +106,7 @@ class HistoryViewModel(
         log.info("newChat")
         viewModelScope.launch {
             runCatching { sdkProvider()?.newChat() }
-                .onFailure { warn("new-failed", it) }
+                .onFailureNonCancellation { warn("new-failed", it) }
             loadSessions()
         }
     }
@@ -114,7 +115,7 @@ class HistoryViewModel(
         log.info("renameSession", mapOf("sessionId" to sessionId))
         viewModelScope.launch {
             runCatching { sdkProvider()?.renameSession(sessionId, title) }
-                .onFailure { warn("rename-failed", it, mapOf("sessionId" to sessionId)) }
+                .onFailureNonCancellation { warn("rename-failed", it, mapOf("sessionId" to sessionId)) }
             loadSessions()
         }
     }
@@ -123,7 +124,7 @@ class HistoryViewModel(
         log.info("deleteSession", mapOf("sessionId" to sessionId))
         viewModelScope.launch {
             runCatching { sdkProvider()?.deleteSession(sessionId) }
-                .onFailure { warn("delete-failed", it, mapOf("sessionId" to sessionId)) }
+                .onFailureNonCancellation { warn("delete-failed", it, mapOf("sessionId" to sessionId)) }
             loadSessions()
         }
     }
@@ -138,6 +139,7 @@ class HistoryViewModel(
                 _state.value = _state.value.copy(sessions = page.items, loading = false, error = null)
             }
             .onFailure { e ->
+                if (e is CancellationException) throw e
                 warn("load-failed", e)
                 _state.value = _state.value.copy(loading = false, error = e.message ?: "load failed")
             }
@@ -147,3 +149,11 @@ class HistoryViewModel(
         log.warn(event, extra + mapOf("reason" to (e.message ?: e::class.simpleName)))
     }
 }
+
+/**
+ * Like [Result.onFailure] but rethrows [CancellationException] so a cancelled
+ * viewModelScope (ViewModel cleared / drawer dismissed) propagates instead of
+ * being swallowed + logged as a spurious failure.
+ */
+private inline fun <T> Result<T>.onFailureNonCancellation(action: (Throwable) -> Unit): Result<T> =
+    onFailure { if (it is CancellationException) throw it else action(it) }
