@@ -1,4 +1,3 @@
-// ---------------------------------------------------------------------------
 // MessageBubble — one rendered chat message, mirroring the Android MessageBubble
 // (android/.../chat/MessageBubble.kt) and the webui MessageBubble
 // (gateway/webui/src/components/chat/message-bubble.tsx + components.css).
@@ -19,7 +18,6 @@
 // (Theme.dusk) — mirrors the webui `marked` render path.
 //
 // accessibilityIdentifier `message-bubble-<index>` mirrors the Android testTag.
-// ---------------------------------------------------------------------------
 import SwiftUI
 import MarkdownUI
 import MobileSdk
@@ -90,15 +88,20 @@ struct MessageBubble: View {
             .fixedSize(horizontal: false, vertical: true)
     }
 
-    // Tool pills (message.tools) are wired into both branches in a later task (6.1).
     @ViewBuilder
     private var bubbleContent: some View {
         if message.streaming && message.content.isEmpty {
             PulseDots()
         } else if message.streaming {
-            StreamingText(content: message.content)
+            VStack(alignment: .leading, spacing: 0) {
+                StreamingText(content: message.content)
+                if !message.tools.isEmpty { ToolPillStrip(tools: message.tools) }
+            }
         } else {
-            committedText
+            VStack(alignment: .leading, spacing: 0) {
+                committedText
+                if !message.tools.isEmpty { ToolPillStrip(tools: message.tools) }
+            }
         }
     }
 
@@ -143,69 +146,14 @@ struct MessageBubble: View {
     }
 }
 
-/// Three-dot thinking pulse — mirrors the Android PulseDots / webui PlaceholderPulse.
-private struct PulseDots: View {
-    @State private var pulsing = false
-
-    var body: some View {
-        HStack(spacing: BubbleLayout.pulseGap) {
-            ForEach(0..<3, id: \.self) { i in
-                Circle()
-                    .fill(DuskColors.accent.opacity(0.4))
-                    .frame(width: BubbleLayout.pulseDot, height: BubbleLayout.pulseDot)
-                    .scaleEffect(pulsing ? 1.0 : 0.6)
-                    .animation(
-                        .easeInOut(duration: Motion.wave)
-                            .repeatForever()
-                            .delay(Double(i) * BubbleLayout.pulseStagger),
-                        value: pulsing
-                    )
-            }
-        }
-        .onAppear { pulsing = true }
-        .accessibilityLabel("Assistant is thinking")
-    }
-}
-
-/// Reveals streamed assistant text via the typewriter engine.
-/// No block cursor (webui parity); the growing text IS the streaming affordance.
-/// Reduced-motion: renders the full content immediately.
-private struct StreamingText: View {
-    let content: String
-    @State private var twState = TypewriterState()
-    @State private var lastDate: Date? = nil
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        let chars = Array(content)
-        Group {
-            if reduceMotion {
-                Markdown(content).markdownTheme(.dusk)
-            } else {
-                TimelineView(.animation) { tl in
-                    Markdown(String(chars.prefix(twState.visibleCount)))
-                        .markdownTheme(.dusk)
-                        .onChange(of: tl.date) { _, newDate in
-                            let dt = lastDate.map { newDate.timeIntervalSince($0) } ?? 0
-                            let now = newDate.timeIntervalSinceReferenceDate
-                            twState = typewriterTick(
-                                twState, target: chars,
-                                streamComplete: false, dt: dt, now: now
-                            )
-                            lastDate = newDate
-                        }
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
+// PulseDots + StreamingText live in BubbleAnimations.swift (kept out of this file
+// for the clean-code size limit).
 
 /// Bubble layout constants. `userBg` approximates the webui
 /// color-mix(in oklab, sage 16%, paper) via sRGB interpolation, matching the
 /// Android `lerp(paper, sage, 0.16)`. (Color.mix is iOS 18+, so the token wrapper
 /// does the lerp on the raw ARGB values, keeping the iOS-17 deployment target.)
-private enum BubbleLayout {
+enum BubbleLayout {
     static let flushCorner: CGFloat = 6
     static let avatarSize: CGFloat = 28
     static let edgeMin: CGFloat = 12
@@ -217,6 +165,26 @@ private enum BubbleLayout {
 
 #Preview {
     let now = Int64(Date().timeIntervalSince1970 * 1000)
+    let sampleTools: [TaskSnapshotItem] = [
+        TaskSnapshotItem(
+            taskId: "t1", toolName: "web_search",
+            cycleId: "c1", status: "finished",
+            argsPreview: #"{"query":"current weather in Tokyo"}"#,
+            startedAtMs: now, endedAtMs: KotlinLong(value: now + 1200)
+        ),
+        TaskSnapshotItem(
+            taskId: "t2", toolName: "calendar_read",
+            cycleId: "c1", status: "running",
+            argsPreview: #"{"date":"2026-06-04"}"#,
+            startedAtMs: now + 1200, endedAtMs: nil
+        ),
+        TaskSnapshotItem(
+            taskId: "t3", toolName: "send_message",
+            cycleId: "c1", status: "failed",
+            argsPreview: "",
+            startedAtMs: now + 500, endedAtMs: KotlinLong(value: now + 800)
+        ),
+    ]
     ScrollView {
         VStack(spacing: Space.gapMsg) {
             MessageBubble(
@@ -244,6 +212,29 @@ private enum BubbleLayout {
             MessageBubble(
                 message: ChatMessage(ts: now + 4, role: "assistant", content: "Cut off here", streaming: false, cutoffKind: "interrupt", cycleId: nil, tools: []),
                 index: 4,
+                userName: "Alice"
+            )
+            // Tool pill strip — committed message with three tools (finished/running/failed).
+            MessageBubble(
+                message: ChatMessage(
+                    ts: now + 5, role: "assistant",
+                    content: "I checked the weather and your calendar.",
+                    streaming: false, cutoffKind: nil, cycleId: "c1",
+                    tools: sampleTools
+                ),
+                index: 5,
+                userName: "Alice"
+            )
+            // Tool pill strip — streaming message with tools still running.
+            MessageBubble(
+                message: ChatMessage(
+                    ts: now + 6, role: "assistant",
+                    content: "Working on it...",
+                    streaming: true, cutoffKind: nil, cycleId: "c1",
+                    tools: [sampleTools[1]]
+                ),
+                index: 6,
+                avatarMode: .thinking,
                 userName: "Alice"
             )
         }
