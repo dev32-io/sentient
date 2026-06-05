@@ -12,13 +12,22 @@
 // AEC is irrelevant on the text path (no uplink), so a separate engine is correct.
 //
 // Lifecycle: one [acquire] per playback run returns the running engine; [release]
-// stops it + deactivates the .playback session. Single-user (only E2 playback uses
-// it) — no refcount needed. Driven serially on the orchestrator coroutine.
+// stops it + (when no shared capture holds the session) deactivates the .playback
+// session. Single-user (only E2 playback uses it) — no refcount needed. Driven
+// serially on the orchestrator coroutine.
+//
+// PROCESS-WIDE SESSION (straddle): AVAudioSession.sharedInstance() is ONE singleton
+// shared with [SharedAudioEngine]. If text-chat TTS runs here and the user then
+// opens the mic, the shared playAndRecord engine owns capture on that same session.
+// [release] then STOPS this engine but DEFERS setActive(false) to the shared engine
+// (skip while [SharedAudioEngine.isCaptureActive]). The category is set once but
+// setActive(true) is RE-ASSERTED on every [acquire], so an external deactivation can
+// never permanently short-circuit the next playback run.
 //
 // NO-CRASH CONTRACT: prepare()/start() go through the SAME ObjC @try/@catch shims
 // as the shared engine ([enginePrepareGuarded]/[engineStartGuarded]) so a missing
 // audio route (e.g. a sim with no output) degrades to a logged null/false instead
-// of an NSException → SIGABRT. configureSession's NSError** is handled via memScoped.
+// of an NSException → SIGABRT. ensureSession's NSError** is handled via memScoped.
 // ---------------------------------------------------------------------------
 @file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class, kotlinx.cinterop.BetaInteropApi::class)
 
@@ -52,7 +61,12 @@ private const val NO_CATEGORY_OPTIONS: ULong = 0uL
 internal class StandalonePlaybackEngine private constructor() {
 
     val engine: AVAudioEngine = AVAudioEngine()
-    private var sessionConfigured = false
+
+    // Category is set once; SESSION-ACTIVE is re-asserted on every acquire. Splitting
+    // the two means an external setActive(false) (e.g. the shared capture engine's
+    // release, or any straddle teardown) can never permanently short-circuit us — the
+    // next acquire idempotently re-activates the session via [ensureSession].
+    private var categoryConfigured = false
     private var active = false
 
     /**
@@ -71,19 +85,38 @@ internal class StandalonePlaybackEngine private constructor() {
         return engine
     }
 
-    /** Stops the engine + deactivates the .playback session. Idempotent. */
+    /**
+     * Stops the engine + (when no shared capture holds the process-wide session)
+     * deactivates the .playback session. Idempotent.
+     *
+     * STRADDLE GUARD: [AVAudioSession.sharedInstance] is ONE process-wide singleton.
+     * If text-chat TTS started on this standalone engine and the user then opened the
+     * mic, the shared playAndRecord engine now owns capture on that same session. A
+     * `setActive(false)` here would deactivate the session out from under the active
+     * shared engine. So when [SharedAudioEngine.isCaptureActive] is true, we STOP this
+     * engine but DEFER session deactivation to the shared engine's own release.
+     */
     fun release() {
         if (!active) {
             log.debug("release-noop")
             return
         }
         active = false
+        val captureActive = SharedAudioEngine.instance.isCaptureActive
         runCatching {
             if (engine.running) engine.stop()
-            AVAudioSession.sharedInstance().setActive(false, null)
+            if (captureActive) {
+                log.info(
+                    "session-deactivate-skipped",
+                    mapOf("reason" to "shared capture owns process-wide session", "captureActive" to true),
+                )
+            } else {
+                AVAudioSession.sharedInstance().setActive(false, null)
+            }
         }.onFailure { log.warn("teardown-failed", mapOf("cause" to (it.message ?: "unknown"))) }
-        sessionConfigured = false
-        log.info("engine-stopped")
+        // Category stays configured; the next acquire re-asserts setActive(true) so an
+        // external deactivation never permanently short-circuits us.
+        log.info("engine-stopped", mapOf("sessionDeactivated" to !captureActive))
     }
 
     /** Restarts the engine if a render-graph change (attach/connect) stopped it. */
@@ -92,32 +125,34 @@ internal class StandalonePlaybackEngine private constructor() {
         return enginePrepareGuarded(engine) && engineStartGuarded(engine)
     }
 
-    private fun ensureSession(): Boolean {
-        if (sessionConfigured) return true
-        val ok = configureSession()
-        if (ok) sessionConfigured = true
-        return ok
-    }
-
-    private fun configureSession(): Boolean = memScoped {
+    /**
+     * Sets the .playback category once, then ALWAYS re-asserts setActive(true).
+     * Re-activation is idempotent on iOS and recovers from an external deactivation
+     * (the straddle case) without crashing — a failed re-activate degrades to false.
+     */
+    private fun ensureSession(): Boolean = memScoped {
         val session = AVAudioSession.sharedInstance()
         val errVar = alloc<kotlinx.cinterop.ObjCObjectVar<NSError?>>()
-        val categorySet = session.setCategory(
-            AVAudioSessionCategoryPlayback,
-            mode = AVAudioSessionModeDefault,
-            options = NO_CATEGORY_OPTIONS,
-            error = errVar.ptr,
-        )
-        if (!categorySet) {
-            log.error("session-category-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
-            return@memScoped false
+        if (!categoryConfigured) {
+            val categorySet = session.setCategory(
+                AVAudioSessionCategoryPlayback,
+                mode = AVAudioSessionModeDefault,
+                options = NO_CATEGORY_OPTIONS,
+                error = errVar.ptr,
+            )
+            if (!categorySet) {
+                log.error("session-category-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
+                return@memScoped false
+            }
+            categoryConfigured = true
+            log.debug("session-category-set", mapOf("category" to "playback", "mode" to "default"))
         }
         val activated = session.setActive(true, errVar.ptr)
         if (!activated) {
-            log.error("session-activate-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
+            log.warn("session-activate-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
             return@memScoped false
         }
-        log.debug("session-configured", mapOf("category" to "playback", "mode" to "default"))
+        log.debug("session-active", mapOf("category" to "playback", "reasserted" to true))
         true
     }
 

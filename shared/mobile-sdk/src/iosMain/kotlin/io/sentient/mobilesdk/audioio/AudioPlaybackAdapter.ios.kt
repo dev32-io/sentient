@@ -26,13 +26,17 @@
 //                  again so the next stream resumes — barge-in drop-guard.
 //   stop()       = stop + detach the player, release the chosen engine.
 //
-// MID-TTS MIC EDGE: the backend is latched at start() and NEVER migrated
-// mid-stream. If text-chat TTS is playing on the standalone engine and the user
-// then starts the mic, the in-flight TTS stays on the standalone engine (no
-// migration) — the standalone .playback session yields/coexists with the shared
-// playAndRecord session at the OS level; the NEXT downlink cycle re-decides and
-// (with capture now active) takes the shared AEC path. Simple + no crash; brief
-// AEC absence only on the tail of the one straddling utterance.
+// MID-TTS MIC EDGE (straddle): the backend is latched at start() and NEVER migrated
+// mid-stream. If text-chat TTS is playing on the standalone engine and the user then
+// starts the mic, the in-flight TTS stays on the standalone engine (no migration).
+// AVAudioSession.sharedInstance() is ONE process-wide singleton, NOT two coexisting
+// sessions — so when the standalone TTS later release()s, it DEFERS setActive(false)
+// to the shared engine while capture is active (skips deactivation when
+// SharedAudioEngine.isCaptureActive). The shared engine, in turn, re-asserts
+// setActive(true) on every retain, so the needing path always re-activates the
+// session even after an external deactivation. The NEXT downlink cycle re-decides and
+// (with capture now active) takes the shared AEC path. Simple + no crash; brief AEC
+// absence only on the tail of the one straddling utterance.
 //
 // R2 (downlink encoding): this adapter ONLY plays PCM16 LE. The encoding gate
 // (assert encoding == "pcm16", WARN+flag on opus) is wired in the E3 pipeline,
@@ -137,6 +141,12 @@ class IosAudioPlaybackAdapter : AudioPlaybackAdapter {
     override fun clear() {
         val node = player ?: run {
             log.debug("clear-noop")
+            return
+        }
+        // backend nulled by a concurrent/prior stop() means teardown is in flight —
+        // bail before ensureRunning() can prepare()/start() the engine back to life.
+        if (backend == null) {
+            log.debug("clear-noop", mapOf("reason" to "backend already released (teardown in flight)"))
             return
         }
         runCatching {

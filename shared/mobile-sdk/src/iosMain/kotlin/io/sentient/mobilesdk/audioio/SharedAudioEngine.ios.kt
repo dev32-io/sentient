@@ -15,7 +15,10 @@
 // engine starts on first use and stays running while EITHER side is active;
 // stop() from one side does NOT tear the engine down while the other holds it.
 // retain()/release() reference-count the two users; the engine + session are
-// stopped only when the count reaches zero.
+// stopped only when the count reaches zero. The .playAndRecord category is set
+// once, but setActive(true) is RE-ASSERTED on every retain so an external
+// deactivation (e.g. an in-flight standalone playback engine releasing during the
+// straddle) can never permanently short-circuit the shared engine's activation.
 //
 // CAPTURE vs PLAYBACK USERS: callers tag their retain as CAPTURE
 // (retainForCapture/releaseForCapture) or PLAYBACK (retain/release). Both feed
@@ -62,7 +65,12 @@ internal class SharedAudioEngine private constructor() {
     val engine: AVAudioEngine = AVAudioEngine()
     private var users = 0
     private var captureUsers = 0
-    private var sessionConfigured = false
+
+    // Category is set once; SESSION-ACTIVE is re-asserted on every retain. Splitting
+    // the two means an external setActive(false) — e.g. an in-flight standalone
+    // playback engine releasing during the straddle — can never permanently short-
+    // circuit the shared engine: the next retain idempotently re-activates the session.
+    private var categoryConfigured = false
 
     /**
      * True while at least one CAPTURE user holds the shared engine (mic capture is
@@ -127,7 +135,7 @@ internal class SharedAudioEngine private constructor() {
             if (engine.running) engine.stop()
             AVAudioSession.sharedInstance().setActive(false, null)
         }.onFailure { log.warn("teardown-failed", mapOf("cause" to (it.message ?: "unknown"))) }
-        sessionConfigured = false
+        // Category stays configured; the next retain re-asserts setActive(true).
         log.info("engine-stopped")
     }
 
@@ -137,12 +145,13 @@ internal class SharedAudioEngine private constructor() {
         return enginePrepareGuarded(engine) && startEngine()
     }
 
-    private fun ensureSession(): Boolean {
-        if (sessionConfigured) return true
-        val ok = configureSession()
-        if (ok) sessionConfigured = true
-        return ok
-    }
+    /**
+     * Sets the playAndRecord category once, then ALWAYS re-asserts setActive(true).
+     * Re-activation is idempotent on iOS and recovers the session after an external
+     * deactivation (e.g. a straddling standalone-playback release) — a failed
+     * re-activate degrades to false (logged warn), never a throw.
+     */
+    private fun ensureSession(): Boolean = configureSession()
 
     // startAndReturnError reports an init failure via its NSError out-param, but on a
     // simulator with no audio I/O route it instead raises an uncatchable ObjC
@@ -154,22 +163,26 @@ internal class SharedAudioEngine private constructor() {
     private fun configureSession(): Boolean = memScoped {
         val session = AVAudioSession.sharedInstance()
         val errVar = alloc<kotlinx.cinterop.ObjCObjectVar<NSError?>>()
-        val categorySet = session.setCategory(
-            AVAudioSessionCategoryPlayAndRecord,
-            mode = AVAudioSessionModeVoiceChat,
-            options = AVAudioSessionCategoryOptionDefaultToSpeaker,
-            error = errVar.ptr,
-        )
-        if (!categorySet) {
-            log.error("session-category-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
-            return@memScoped false
+        if (!categoryConfigured) {
+            val categorySet = session.setCategory(
+                AVAudioSessionCategoryPlayAndRecord,
+                mode = AVAudioSessionModeVoiceChat,
+                options = AVAudioSessionCategoryOptionDefaultToSpeaker,
+                error = errVar.ptr,
+            )
+            if (!categorySet) {
+                log.error("session-category-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
+                return@memScoped false
+            }
+            categoryConfigured = true
+            log.debug("session-category-set", mapOf("category" to "playAndRecord", "mode" to "voiceChat"))
         }
         val activated = session.setActive(true, errVar.ptr)
         if (!activated) {
-            log.error("session-activate-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
+            log.warn("session-activate-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
             return@memScoped false
         }
-        log.debug("session-configured", mapOf("category" to "playAndRecord", "mode" to "voiceChat"))
+        log.debug("session-active", mapOf("category" to "playAndRecord", "reasserted" to true))
         true
     }
 
