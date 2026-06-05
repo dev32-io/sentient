@@ -8,7 +8,7 @@
 // wires those to SdkViewModel. Bindings:
 //  - MessageList ← state.messages (user + assistant; the streaming in-flight
 //    assistant bubble carries streaming=true → pulse dots / block cursor).
-//  - Composer send gated on status == READY (canSend) + non-empty draft.
+//  - Composer send always enabled on non-empty draft; queued if not READY, flushed on READY.
 //  - Composer interrupt shown only when cognition != IDLE || isSpeaking.
 //  - TTS toggle reflects state.prefs.ttsEnabled; mic toggle reflects voiceMode.
 //
@@ -90,6 +90,18 @@ fun ChatScreen(
     }
     val showCycleError = state.lastCycleError && !cycleErrorDismissed
 
+    // Queued-send outbox: a send issued before READY is held here and flushed on
+    // the READY transition (web-sdk parity). `pending` is hoisted at this level
+    // so Phase 13 can read it for "Sending…" affordance without a refactor.
+    var pending by remember { mutableStateOf<PendingSend?>(null) }
+    val handleSend: (String) -> Unit = { text ->
+        if (state.status == SdkStatus.READY) onSend(text)
+        else pending = pending?.enqueue(text) ?: PendingSend(text)
+    }
+    LaunchedEffect(state.status) {
+        pending?.flushIfReady(state.status)?.let { queued -> onSend(queued); pending = null }
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -122,12 +134,13 @@ fun ChatScreen(
                 )
             }
             Composer(
-                // Send is gated on a live session — disabled while not READY.
+                // canSend tints the send glyph: accent = READY (sends now),
+                // muted = not READY (tap queues, not drops — see handleSend).
                 canSend = state.status == SdkStatus.READY,
                 ttsEnabled = state.prefs.ttsEnabled,
                 micActive = voiceActive,
                 canInterrupt = canInterrupt,
-                onSend = onSend,
+                onSend = handleSend,
                 onMicToggle = onMicToggle,
                 onTtsToggle = onTtsToggle,
                 onInterrupt = onInterrupt,

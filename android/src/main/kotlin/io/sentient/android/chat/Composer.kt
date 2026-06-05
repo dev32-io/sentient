@@ -88,7 +88,7 @@ fun Composer(
     val context = LocalContext.current
     var draft by remember { mutableStateOf("") }
     var micDenied by remember { mutableStateOf(false) }
-    val sendEnabled = draft.trim().isNotEmpty() && canSend
+    val sendEnabled = draft.trim().isNotEmpty()
 
     // RECORD_AUDIO runtime gate. On grant → toggle; on denial → inline notice,
     // do not start. Already-active mic stops without a permission check.
@@ -106,7 +106,7 @@ fun Composer(
 
     fun submit() {
         val trimmed = draft.trim()
-        if (trimmed.isEmpty() || !canSend) return
+        if (trimmed.isEmpty()) return
         onSend(trimmed)
         draft = ""
     }
@@ -153,6 +153,7 @@ fun Composer(
         )
         ButtonRow(
             sendEnabled = sendEnabled,
+            canSend = canSend,
             ttsEnabled = ttsEnabled,
             micActive = micActive,
             canInterrupt = canInterrupt,
@@ -179,6 +180,7 @@ private fun Modifier.clipCard(listening: Boolean): Modifier = this
 @Composable
 private fun ButtonRow(
     sendEnabled: Boolean,
+    canSend: Boolean,
     ttsEnabled: Boolean,
     micActive: Boolean,
     canInterrupt: Boolean,
@@ -236,9 +238,11 @@ private fun ButtonRow(
                 )
             }
         }
+        // Tint is accent when the field is non-empty AND the SDK is READY (send goes now).
+        // Muted when the field is non-empty but not READY — the tap will queue, not drop.
         ComposerAction(
             iconRes = R.drawable.ic_send,
-            tint = if (sendEnabled) Color(Colors.accent) else Color(Colors.ink4),
+            tint = if (sendEnabled && canSend) Color(Colors.accent) else Color(Colors.ink4),
             contentDescription = "Send",
             testTag = "chat-send",
             enabled = sendEnabled,
