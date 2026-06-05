@@ -71,6 +71,7 @@ fun SentientTheme(content: @Composable () -> Unit) {
     CompositionLocalProvider(LocalTokens provides SentientTokens()) {
         MaterialTheme(
             colorScheme = DuskColorScheme,
+            typography = DuskTypography,
             content = content,
         )
     }
