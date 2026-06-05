@@ -9,20 +9,22 @@
 // cognition != .idle || isSpeaking (a cycle is in flight or audio is playing).
 // TTS toggle flips the server-of-record preference via setTtsEnabled.
 //
-// Mic button (E5): tapping it gates on the AVAudio record permission. If already
-// granted → toggle voice immediately; otherwise request it (iOS 17+
-// AVAudioApplication.requestRecordPermission, AVAudioSession fallback) and toggle
-// on grant; on denial show a one-shot inline notice and do NOT start (audio rule:
-// graceful mic-denial fallback). When voiceMode .active the mic button wears the
-// accent "mic-on" styling. An already-active mic stops without a permission check.
+// Mic button (E5): permission gate lives in Composer+Mic.swift (onMicTap +
+// MicPermission). When voiceMode .active the mic button wears the accent
+// "mic-on" styling.
+//
+// In-flight send: when sendInFlight == true the send button is replaced by a
+// small ProgressView (a11y id chat-send-spinner), signalling the pending queue.
 //
 // The composer owns only the draft text + the mic-denied flag (local @State);
-// everything else is read from SdkState and dispatched up through callbacks. The
-// host docks it via .safeAreaInset(edge:.bottom); SwiftUI lifts it above the
-// keyboard.
+// everything else is read from SdkState and dispatched up through callbacks.
+// The host docks it via .safeAreaInset(edge:.bottom); SwiftUI lifts it above
+// the keyboard.
 //
-// accessibilityIdentifiers: chat-input, chat-send, chat-interrupt,
-// chat-tts-toggle, chat-mic, mic-denied-notice.
+// Mic/preview extracted to Composer+Mic.swift (line-limit compliance).
+//
+// accessibilityIdentifiers: chat-input, chat-send, chat-send-spinner,
+// chat-interrupt, chat-tts-toggle, chat-mic, mic-denied-notice.
 // ---------------------------------------------------------------------------
 import AVFoundation
 import SwiftUI
@@ -37,16 +39,18 @@ struct Composer: View {
     let micActive: Bool
     /// True when a cycle is in flight or audio is playing.
     let canInterrupt: Bool
+    /// True while a user message is pending in the send queue (hasPendingSends).
+    let sendInFlight: Bool
     let onSend: (String) -> Void
     let onMicToggle: () -> Void
     let onTtsToggle: () -> Void
     let onInterrupt: () -> Void
 
-    @State private var draft = ""
-    @State private var micDenied = false
+    @State var draft = ""
+    @State var micDenied = false
     @FocusState private var inputFocused: Bool
 
-    private let log = AppLog("composer")
+    let log = AppLog("composer")
     private static let micDeniedNotice = "Microphone access is needed for voice. Enable it in Settings."
 
     private var sendEnabled: Bool {
@@ -157,6 +161,21 @@ struct Composer: View {
                 .accessibilityLabel("Stop")
                 .accessibilityIdentifier("chat-interrupt")
             }
+            sendButton
+        }
+    }
+
+    // ── Send button / in-flight spinner ──────────────────────────────────────
+
+    @ViewBuilder
+    private var sendButton: some View {
+        if sendInFlight {
+            ProgressView()
+                .controlSize(.small)
+                .tint(DuskColors.accent)
+                .frame(width: ComposerLayout.buttonSize, height: ComposerLayout.buttonSize)
+                .accessibilityIdentifier("chat-send-spinner")
+        } else {
             ComposerAction(
                 systemName: "paperplane.fill",
                 tint: sendEnabled ? DuskColors.accent : DuskColors.ink4,
@@ -170,116 +189,10 @@ struct Composer: View {
 
     // ── Submit ──────────────────────────────────────────────────────────────
 
-    private func submit() {
+    func submit() {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, canSend else { return }
         onSend(trimmed)
         draft = ""
     }
-
-    // ── Mic permission gate ───────────────────────────────────────────────────
-    //
-    // Active mic → stop without a permission check. Inactive → gate on the
-    // AVAudio record permission: granted toggles immediately; undetermined
-    // requests it and toggles on grant; denied shows the inline notice and does
-    // NOT start. The request hop lands back on the main actor before mutating UI.
-
-    private func onMicTap() {
-        if micActive {
-            onMicToggle()
-            return
-        }
-        switch MicPermission.status() {
-        case .granted:
-            micDenied = false
-            onMicToggle()
-        case .denied:
-            log.warn("micTap denied")
-            micDenied = true
-        case .undetermined:
-            log.info("micTap requesting permission")
-            MicPermission.request { granted in
-                Task { @MainActor in
-                    log.info("micPermissionResult granted=\(granted)")
-                    if granted {
-                        micDenied = false
-                        onMicToggle()
-                    } else {
-                        micDenied = true
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Record-permission gate over AVAudio. The app's deployment target is iOS 17,
-/// so this routes through `AVAudioApplication` (the iOS 17+ replacement for the
-/// deprecated `AVAudioSession` permission API). Three states mirror the Android
-/// RECORD_AUDIO gate (granted / denied / undetermined).
-private enum MicPermission {
-    enum Status { case granted, denied, undetermined }
-
-    static func status() -> Status {
-        switch AVAudioApplication.shared.recordPermission {
-        case .granted: return .granted
-        case .denied: return .denied
-        default: return .undetermined
-        }
-    }
-
-    static func request(_ completion: @escaping (Bool) -> Void) {
-        AVAudioApplication.requestRecordPermission(completionHandler: completion)
-    }
-}
-
-#Preview("Default") {
-    VStack {
-        Spacer()
-        Composer(
-            canSend: true,
-            ttsEnabled: true,
-            micActive: false,
-            canInterrupt: false,
-            onSend: { _ in },
-            onMicToggle: {},
-            onTtsToggle: {},
-            onInterrupt: {}
-        )
-    }
-    .background(DuskColors.bg)
-}
-
-#Preview("Mic on (waveform + Listening…)") {
-    VStack {
-        Spacer()
-        Composer(
-            canSend: true,
-            ttsEnabled: true,
-            micActive: true,
-            canInterrupt: false,
-            onSend: { _ in },
-            onMicToggle: {},
-            onTtsToggle: {},
-            onInterrupt: {}
-        )
-    }
-    .background(DuskColors.bg)
-}
-
-#Preview("Streaming (Type to interrupt… + tinted stop)") {
-    VStack {
-        Spacer()
-        Composer(
-            canSend: true,
-            ttsEnabled: true,
-            micActive: false,
-            canInterrupt: true,
-            onSend: { _ in },
-            onMicToggle: {},
-            onTtsToggle: {},
-            onInterrupt: {}
-        )
-    }
-    .background(DuskColors.bg)
 }
