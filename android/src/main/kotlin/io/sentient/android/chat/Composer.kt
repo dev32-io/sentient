@@ -20,7 +20,7 @@
 // NOT start (audio rule: graceful mic-denial fallback). When voiceMode ACTIVE
 // the mic button wears the accent "mic-on" styling.
 //
-// testTags: chat-input, chat-send, chat-interrupt, chat-tts-toggle, chat-mic.
+// testTags: chat-input, chat-send, chat-interrupt, chat-tts-toggle, chat-mic, chat-attach.
 // ---------------------------------------------------------------------------
 package io.sentient.android.chat
 
@@ -36,18 +36,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Icon
-import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,8 +52,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import io.sentient.android.R
@@ -68,13 +59,7 @@ import io.sentient.android.theme.LocalTokens
 import io.sentient.mobilesdk.design.Colors
 import io.sentient.mobilesdk.log.createLogger
 
-private val COMPOSER_RADIUS = 14.dp
-private val BUTTON_SIZE = 38.dp
-private val BUTTON_RADIUS = 8.dp
-private val ICON_SIZE = 20.dp
-/** Accent-tint fill / border alpha for the "on" state (≈ webui color-mix 14% / 35%). */
-private const val ON_TINT_ALPHA = 0.14f
-private const val ON_BORDER_ALPHA = 0.4f
+private val COMPOSER_RADIUS = 24.dp
 private const val MIC_DENIED_NOTICE = "Microphone permission is needed for voice."
 private val composerLog = createLogger("android", "composer")
 
@@ -159,7 +144,13 @@ fun Composer(
                 modifier = Modifier.testTag("mic-denied-notice"),
             )
         }
-        DraftField(draft = draft, onChange = { draft = it }, onSubmit = { submit() })
+        DraftField(
+            draft = draft,
+            micActive = micActive,
+            streaming = canInterrupt,
+            onChange = { draft = it },
+            onSubmit = { submit() },
+        )
         ButtonRow(
             sendEnabled = sendEnabled,
             ttsEnabled = ttsEnabled,
@@ -184,32 +175,6 @@ private fun Modifier.clipCard(listening: Boolean): Modifier = this
         if (listening) Color(Colors.accent) else Color(Colors.line),
         RoundedCornerShape(COMPOSER_RADIUS),
     )
-
-@Composable
-private fun DraftField(draft: String, onChange: (String) -> Unit, onSubmit: () -> Unit) {
-    val tokens = LocalTokens.current
-    TextField(
-        value = draft,
-        onValueChange = onChange,
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .testTag("chat-input"),
-        placeholder = { Text("Message Sentient", color = Color(Colors.ink3)) },
-        textStyle = LocalTextStyle.current.copy(color = Color(Colors.ink), fontSize = tokens.type.base),
-        maxLines = 6,
-        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-        keyboardActions = KeyboardActions(onSend = { onSubmit() }),
-        colors = TextFieldDefaults.colors(
-            focusedContainerColor = Color.Transparent,
-            unfocusedContainerColor = Color.Transparent,
-            disabledContainerColor = Color.Transparent,
-            focusedIndicatorColor = Color.Transparent,
-            unfocusedIndicatorColor = Color.Transparent,
-            cursorColor = Color(Colors.accent),
-        ),
-    )
-}
 
 @Composable
 private fun ButtonRow(
@@ -244,15 +209,32 @@ private fun ButtonRow(
             testTag = "chat-tts-toggle",
             onClick = onTtsToggle,
         )
+        ComposerToggle(
+            iconRes = R.drawable.ic_attach,
+            on = false,
+            contentDescription = "Attach",
+            testTag = "chat-attach",
+            onClick = {},
+        )
         Row(modifier = Modifier.weight(1f)) {}
         if (canInterrupt) {
-            ComposerAction(
-                iconRes = R.drawable.ic_stop,
-                tint = Color(Colors.stop),
-                contentDescription = "Stop",
-                testTag = "chat-interrupt",
-                onClick = onInterrupt,
-            )
+            Box(
+                modifier = Modifier
+                    .size(BUTTON_SIZE)
+                    .clip(RoundedCornerShape(BUTTON_RADIUS))
+                    .background(Color(Colors.stop).copy(alpha = 0.16f))
+                    .border(1.dp, Color(Colors.stop).copy(alpha = 0.35f), RoundedCornerShape(BUTTON_RADIUS))
+                    .clickable(onClick = onInterrupt)
+                    .testTag("chat-interrupt"),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    Modifier
+                        .size(11.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(Color(Colors.stop)),
+                )
+            }
         }
         ComposerAction(
             iconRes = R.drawable.ic_send,
@@ -265,67 +247,3 @@ private fun ButtonRow(
     }
 }
 
-/**
- * A composer on/off toggle (mic, TTS) — a rounded-square icon button. Off: ink-3
- * glyph on the sunk surface with a line border. On: accent glyph + border over an
- * accent-tinted fill. Mirrors the webui icon-btn--mic-on/off + tts variants.
- */
-@Composable
-private fun ComposerToggle(
-    iconRes: Int,
-    on: Boolean,
-    contentDescription: String,
-    testTag: String,
-    onClick: () -> Unit,
-) {
-    val bg = if (on) Color(Colors.accent).copy(alpha = ON_TINT_ALPHA) else Color(Colors.bgSunk)
-    val borderColor = if (on) Color(Colors.accent).copy(alpha = ON_BORDER_ALPHA) else Color(Colors.line)
-    val tint = if (on) Color(Colors.accent) else Color(Colors.ink3)
-    Box(
-        modifier = Modifier
-            .size(BUTTON_SIZE)
-            .clip(RoundedCornerShape(BUTTON_RADIUS))
-            .background(bg)
-            .border(1.dp, borderColor, RoundedCornerShape(BUTTON_RADIUS))
-            .clickable(onClick = onClick)
-            .testTag(testTag),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            painter = painterResource(iconRes),
-            contentDescription = contentDescription,
-            tint = tint,
-            modifier = Modifier.size(ICON_SIZE),
-        )
-    }
-}
-
-/**
- * A composer action button (interrupt, send) — icon-only, no toggle box; the tint
- * carries meaning (stop = stop color, send = accent / ink-4 when disabled).
- */
-@Composable
-private fun ComposerAction(
-    iconRes: Int,
-    tint: Color,
-    contentDescription: String,
-    testTag: String,
-    onClick: () -> Unit,
-    enabled: Boolean = true,
-) {
-    Box(
-        modifier = Modifier
-            .size(BUTTON_SIZE)
-            .clip(RoundedCornerShape(BUTTON_RADIUS))
-            .clickable(enabled = enabled, onClick = onClick)
-            .testTag(testTag),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            painter = painterResource(iconRes),
-            contentDescription = contentDescription,
-            tint = tint,
-            modifier = Modifier.size(ICON_SIZE),
-        )
-    }
-}
