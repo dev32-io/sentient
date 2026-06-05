@@ -32,6 +32,7 @@ struct MessageBubble: View {
     var avatarMode: MarkMode = .idle
 
     private var isUser: Bool { message.role == "user" }
+    private var isSpeaking: Bool { !isUser && avatarMode == .speaking }
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -41,6 +42,7 @@ struct MessageBubble: View {
                 userAvatar
             } else {
                 SentientMark(size: BubbleLayout.avatarSize, mode: avatarMode)
+                    .overlay(AvatarRipple(active: avatarMode == .speaking || avatarMode == .listening))
                     .padding(.trailing, Space.md)
                 bubbleBody
                 Spacer(minLength: BubbleLayout.edgeMin)
@@ -66,7 +68,15 @@ struct MessageBubble: View {
         bubbleContent
             .padding(Space.padMsg)
             .frame(maxWidth: Space.msgMax, alignment: .leading)
-            .background(isUser ? BubbleLayout.userBg : DuskColors.paper)
+            .background {
+                ZStack {
+                    isUser ? BubbleLayout.userBg : DuskColors.paper
+                    // Terra sweep composited ON TOP of the opaque fill but under the
+                    // text; a plain second `.background` would sit behind the fill and
+                    // be occluded (paper is opaque).
+                    if isSpeaking { BubbleSpeakingWave() }
+                }
+            }
             .clipShape(bubbleShape)
             .overlay(bubbleShape.stroke(DuskColors.lineSoft, lineWidth: 1))
             .fixedSize(horizontal: false, vertical: true)

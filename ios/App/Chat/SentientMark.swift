@@ -52,7 +52,6 @@ struct SentientMark: View {
             drawRing(in: context, center: center, scale: scale, anim: anim)
             drawOrbits(in: context, center: center, scale: scale, anim: anim)
             drawNucleus(in: context, center: center, scale: scale, anim: anim)
-            if anim.wavePos >= 0 { drawWave(in: context, size: canvasSize, pos: anim.wavePos) }
         }
     }
 
@@ -138,26 +137,6 @@ struct SentientMark: View {
         context.fill(
             Path(ellipseIn: rect),
             with: .radialGradient(gradient, center: lightCenter, startRadius: 0, endRadius: r * 1.3)
-        )
-    }
-
-    /// Accent sweep across the mark while the assistant is speaking (speaking-wave).
-    private func drawWave(in context: GraphicsContext, size canvasSize: CGSize, pos: Double) {
-        let w = canvasSize.width
-        let x = CGFloat(pos) * w * 2 - w * 0.5
-        let gradient = Gradient(stops: [
-            .init(color: .clear, location: 0),
-            .init(color: SentientMarkColors.terra.opacity(0.35), location: 0.5),
-            .init(color: .clear, location: 1),
-        ])
-        let rect = CGRect(x: 0, y: 0, width: w, height: canvasSize.height)
-        context.fill(
-            Path(rect),
-            with: .linearGradient(
-                gradient,
-                startPoint: CGPoint(x: x - w * 0.5, y: 0),
-                endPoint: CGPoint(x: x + w * 0.5, y: 0)
-            )
         )
     }
 }

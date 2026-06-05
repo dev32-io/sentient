@@ -13,22 +13,20 @@
 // webui parity (durations transcribed from components.css / the Android port):
 //   listening → halo-breathe 2.4s, nucleus 1.8s, ring 2.4s, orbits 3.8/5.2/4.4s
 //   thinking  → halo 6.5s, nucleus 4.5s (the shared "running" engagement pulse)
-//   speaking  → speaking-wave Motion.wave (3.4s) sweep across the mark
+//   speaking  → running pulse (halo/nucleus); wave sweep lives on BubbleSpeakingWave
 // ---------------------------------------------------------------------------
 import CoreGraphics
 import Foundation
 
 /// The animated draw parameters the SentientMark Canvas reads each frame. All
 /// default to the static idle resting values; only the active mode's animator
-/// drives a subset away from rest. `orbitSpin` is per-orbit rotation in degrees;
-/// `wavePos` < 0 means no speaking wave.
+/// drives a subset away from rest. `orbitSpin` is per-orbit rotation in degrees.
 struct MarkAnim {
     var haloScale: CGFloat = 1
     var haloAlpha: Double = 0.45
     var nucleusScale: CGFloat = 1
     var ringAlpha: Double = 0.4
     var orbitSpin: [Double] = [0, 0, 0]
-    var wavePos: Double = -1
 }
 
 /// Listening durations (seconds), transcribed from .sentient-mark--listening.
@@ -53,7 +51,7 @@ func markAnim(mode: MarkMode, time: TimeInterval) -> MarkAnim {
     switch mode {
     case .idle: return MarkAnim()
     case .listening: return listeningAnim(time)
-    case .thinking, .speaking: return runningAnim(mode, time)
+    case .thinking, .speaking: return runningAnim(time)
     }
 }
 
@@ -67,12 +65,13 @@ private func listeningAnim(_ t: TimeInterval) -> MarkAnim {
     )
 }
 
-private func runningAnim(_ mode: MarkMode, _ t: TimeInterval) -> MarkAnim {
+// Shared by .thinking and .speaking — both render the engagement pulse; the
+// speaking-specific sweep is now drawn on the bubble (BubbleSpeakingWave).
+private func runningAnim(_ t: TimeInterval) -> MarkAnim {
     MarkAnim(
         haloScale: pulse(t, Run.halo, 1, 1.08),
         haloAlpha: Double(pulse(t, Run.halo, 0.45, 0.6)),
-        nucleusScale: pulse(t, Run.nucleus, 1, 1.06),
-        wavePos: mode == .speaking ? sweep(t, Motion.wave) : -1
+        nucleusScale: pulse(t, Run.nucleus, 1, 1.06)
     )
 }
 
@@ -88,9 +87,4 @@ private func pulse(_ t: TimeInterval, _ period: Double, _ from: CGFloat, _ to: C
 private func spin(_ t: TimeInterval, _ period: Double, clockwise: Bool) -> Double {
     let frac = (t.truncatingRemainder(dividingBy: period)) / period
     return (clockwise ? 360 : -360) * frac
-}
-
-/// 0→1 left-to-right sweep, like speaking-wave background-position.
-private func sweep(_ t: TimeInterval, _ period: Double) -> Double {
-    (t.truncatingRemainder(dividingBy: period)) / period
 }
