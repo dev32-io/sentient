@@ -7,36 +7,24 @@
 // stopMic/disconnect.
 //
 // UPLINK (continuous-minus-echo — MIRRORS webui):
-//   capture.frames(inputSampleRate) → for each PCM16 LE frame:
-//     1. EchoGate.acceptFrame(pcm, nowMs) — RMS vs the gate's CURRENT threshold
-//        (baseline when no TTS; raised to playbackThreshold during playback +
-//        tail so acoustic echo fails the gate, while a loud barge-in passes).
-//     2. AudioPreRollRing.push(frame, accepted) — buffers the last N rejected
-//        frames so a reject→accept onset flushes the quiet utterance head intact.
-//     3. forward every ring-emitted frame → UserAudioInputConnector.sendAudioFrame.
-//   Net: every frame is streamed to the connector WHILE voiceMode == ACTIVE
-//   EXCEPT the frames the EchoGate rejects (echo during playback). The server
-//   owns VAD / Smart-Turn end-pointing; the client only suppresses echo + pads
-//   the onset. The reject→accept transition feeds the FSM a MicOnset.
+//   Each captured frame: EchoGate.acceptFrame → AudioPreRollRing.push → connector.sendAudioFrame.
+//   Echo is dropped in real time; the reject→accept onset flushes the pre-roll ring intact.
+//   The server owns VAD / Smart-Turn end-pointing; the client only suppresses echo + pads onset.
 //
 // DOWNLINK (connector → playback + echoGate lifecycle + isSpeaking):
-//   onAudioStart(cycleId)  → playback.start(outputRate) once · echoGate.onPlaybackStart
-//                            · isSpeaking=true · FSM AudioStart
-//   onAudioFrame(bytes)    → playback.enqueue(bytes)
-//   onAudioDone(cycleId)   → echoGate.onPlaybackDrain(cycleId, nowMs)
-//                            · isSpeaking=false · FSM AudioDone
-//   onPlaybackStop(reason) → echoGate.onPlaybackCancel · playback.clear()
+//   onAudioStart(cycleId)  → playback.start(outputRate) once (async) · echoGate.onPlaybackStart
+//                            · isSpeaking=true · FSM AudioStart; frames arriving before
+//                            start() resolves are buffered in pendingFrames and flushed in order.
+//   onAudioFrame(bytes)    → playback.enqueue(bytes) if ready; else buffer in pendingFrames.
+//   onAudioDone(cycleId)   → echoGate.onPlaybackDrain(cycleId, nowMs) · isSpeaking=false · FSM AudioDone
+//   onPlaybackStop(reason) → echoGate.onPlaybackCancel · playback.clear() · pendingFrames.clear()
 //                            · isSpeaking=false · FSM Interrupt (→ LISTENING)
 //
-// CANCELLATION (decorator rule): start() launches the capture-collect coroutine
-// on the orchestrator scope; stop() cancels that job AND calls capture.stop()
-// (E1 note: the flow-cancel exits the read loop; stop() releases AudioRecord) +
-// resets the gates' onset buffers. All start/stop run on the single orchestrator
-// coroutine (E2 refcount is non-atomic) so playback start/clear never races.
-//
-// LOGGING: this pipeline logs the pure gates' decisions (the gates do not
-// self-log) — every accept/reject with rms + threshold + state, every FSM
-// transition prev→new+input, with cycleId where available (.claude/rules/logging.md).
+// CANCELLATION: start() launches the capture-collect coroutine on the orchestrator scope;
+// stop() cancels that job AND calls capture.stop() + resets onset buffers. All downlink
+// callbacks run on the single orchestrator coroutine so no synchronization is needed.
+// LOGGING: gates do not self-log; the pipeline logs every gate decision, FSM transition,
+// and per-frame buffering event (.claude/rules/logging.md).
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.audioio
 
@@ -65,22 +53,16 @@ private const val UPLINK_HANGOVER_FRAMES = 0
  *
  * @param capture Mic capture adapter (E1). null on the text-only path → uplink no-ops.
  * @param playback Assistant playback adapter (E2). null → downlink frames are dropped.
- * @param audioInput Lazy accessor for the control-path connector owning the
- *   audio.start/end latch + binary uplink. Lazy so the orchestrator can build the
- *   pipeline before the connector set (breaks the construction cycle).
- * @param echoGate Client echo suppressor (A5). Tuned config injected by the orchestrator.
- * @param fsm Voice-status FSM (drives the SdkState display). Mutated on each event.
- * @param clock Injected wall-clock for the gate's RMS/tail timing (no real timers here).
- * @param scope Orchestrator coroutine scope — the capture-collect job lives here.
- * @param inputSampleRate Mic / STT uplink rate (Hz).
+ * @param audioInput Lazy connector accessor (breaks the construction cycle).
+ * @param echoGate Client echo suppressor (A5).
+ * @param fsm Voice-status FSM (drives SdkState display).
+ * @param clock Injected wall-clock for gate RMS/tail timing.
+ * @param scope Orchestrator coroutine scope.
+ * @param inputSampleRate Mic/STT uplink rate (Hz).
  * @param outputSampleRate Assistant playback rate (Hz).
- * @param preRollFrames Pre-roll frames buffered for the uplink onset flush.
- * @param onStateChanged Pushes isSpeaking + the FSM state into the orchestrator's
- *   StateDeriver and re-emits the single StateFlow (the C7 derivation contract).
- * @param onBargeIn Signals a mic-onset-while-speaking barge-in for the given cycleId.
- *   The orchestrator routes it to CycleErrorConnector so a same-cycle abort that
- *   races the barge-in is classified self-initiated (never a false "chat broke").
- *   Default no-op so the text-only test path compiles unchanged.
+ * @param preRollFrames Pre-roll frames for the uplink onset flush.
+ * @param onStateChanged Pushes isSpeaking + FSM state into the orchestrator's StateDeriver.
+ * @param onBargeIn Mic-onset-while-speaking barge-in signal (default no-op).
  */
 class AudioPipeline(
     private val capture: AudioCaptureAdapter?,
@@ -106,6 +88,9 @@ class AudioPipeline(
 
     private var captureJob: Job? = null
     private var playbackStarted = false
+    // true once playback.start() has resolved — frames buffer in pendingFrames until then.
+    private var playbackReady = false
+    private val pendingFrames = mutableListOf<ByteArray>()
     private var ringActive = false
     private var rejectCount = 0
 
@@ -122,11 +107,7 @@ class AudioPipeline(
 
     // ── Uplink ────────────────────────────────────────────────────────────────
 
-    /**
-     * Start the uplink: launch capture-collect on the scope and feed the FSM an
-     * Activate. Idempotent — a second call while running is a no-op. The caller
-     * (orchestrator.startMic) has already flipped voiceMode + sent audio.start.
-     */
+    /** Start the uplink capture-collect job; idempotent. */
     fun start() {
         if (captureJob?.isActive == true) {
             log.debug("start-noop", mapOf("reason" to "already-running"))
@@ -145,11 +126,7 @@ class AudioPipeline(
         }
     }
 
-    /**
-     * Stop the uplink: cancel the capture-collect job (exits the read loop), then
-     * release the mic and reset the onset buffer. Feeds the FSM a Deactivate.
-     * Pairs the flow-cancel with capture.stop() per the E1 coordination note.
-     */
+    /** Stop the uplink: cancel capture job, release mic, reset onset buffer. */
     fun stop() {
         log.info("uplink-stop")
         captureJob?.cancel()
@@ -214,17 +191,37 @@ class AudioPipeline(
         echoGate.onPlaybackStart(cycleId)
         if (!playbackStarted && playback != null) {
             playbackStarted = true
-            scope.launch { playback.start(outputSampleRate) }
+            playbackReady = false
+            pendingFrames.clear()
+            scope.launch {
+                playback.start(outputSampleRate)
+                // Guard: if a barge-in/stop reset playbackStarted while start() was
+                // suspended, do NOT flush — those frames were discarded on purpose.
+                if (playbackStarted) {
+                    playbackReady = true
+                    for (f in pendingFrames) playback.enqueue(f)
+                    pendingFrames.clear()
+                }
+            }
         }
         isSpeaking = true
         activeCycleId = cycleId
         transition(AudioInput.AudioStart, cycleId)
     }
 
-    /** Binary downlink frame: append to the playback buffer. */
+    /** Binary downlink frame: buffer until the player is ready, then enqueue directly. */
     fun onAudioFrame(frame: ByteArray, cycleId: String) {
-        log.debug("downlink-frame", mapOf("bytes" to frame.size, "cycleId" to cycleId))
-        playback?.enqueue(frame)
+        val pb = playback ?: return
+        if (playbackReady) {
+            log.debug("downlink-frame", mapOf("bytes" to frame.size, "cycleId" to cycleId))
+            pb.enqueue(frame)
+        } else {
+            pendingFrames.add(frame)
+            log.debug(
+                "downlink-frame-buffered",
+                mapOf("bytes" to frame.size, "depth" to pendingFrames.size, "cycleId" to cycleId),
+            )
+        }
     }
 
     /** connector.audio.done: drain the echo tail, clear speaking. */
@@ -241,6 +238,10 @@ class AudioPipeline(
         log.info("downlink-stop", mapOf("reason" to reason, "cycleId" to cycleId))
         echoGate.onPlaybackCancel(cycleId)
         playback?.clear()
+        // Discard any frames buffered before the player was ready — barge-in drops pending audio.
+        playbackStarted = false
+        playbackReady = false
+        pendingFrames.clear()
         isSpeaking = false
         activeCycleId = ""
         transition(AudioInput.Interrupt, cycleId)
@@ -251,6 +252,8 @@ class AudioPipeline(
         log.info("release")
         captureJob?.cancel()
         captureJob = null
+        playbackReady = false
+        pendingFrames.clear()
         if (playbackStarted) {
             playbackStarted = false
             scope.launch { playback?.stop() }

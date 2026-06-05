@@ -190,7 +190,10 @@ class AudioPipelineTest {
         val playback = FakePlayback()
         val (p, _) = pipeline(null, playback, this)
         p.onAudioStart("c1")
+        // The frame may arrive before start() resolves — allow the coroutine to run
+        // so playbackReady flips true and the buffered frame is flushed.
         p.onAudioFrame(byteArrayOf(1, 2, 3, 4), "c1")
+        advanceUntilIdle()
         assertEquals(1, playback.enqueued.size)
     }
 
