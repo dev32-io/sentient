@@ -67,6 +67,9 @@ struct HistorySidePanel: View {
                 if showsErrorEmpty {
                     SessionsErrorEmpty(onRetry: { Task { await model.refresh() } })
                     Spacer(minLength: 0)
+                } else if model.loading && model.visible.isEmpty {
+                    historyLoadingSpinner
+                    Spacer(minLength: 0)
                 } else {
                     sessionList
                 }
@@ -127,6 +130,16 @@ struct HistorySidePanel: View {
             // Bottom padding ensures content is not occluded by the FAB.
             .padding(.bottom, fabSize + Space.lg * 2)
         }
+    }
+
+    // ── History loading spinner ───────────────────────────────────────────────
+
+    private var historyLoadingSpinner: some View {
+        ProgressView()
+            .tint(DuskColors.accent)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.top, Space.xl)
+            .accessibilityIdentifier("history-loading")
     }
 
     // ── New-chat FAB ─────────────────────────────────────────────────────────

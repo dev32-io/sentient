@@ -65,6 +65,15 @@ struct ChatView: View {
         store.state.cognition != .idle || store.state.isSpeaking
     }
 
+    /// Loading affordance derived from the pure chatLoading() policy function.
+    private var chatLoadingState: LoadingAffordance {
+        chatLoading(
+            status: store.state.status,
+            cognition: store.state.cognition,
+            hasMessages: !store.state.messages.isEmpty
+        )
+    }
+
     private var currentMarkMode: MarkMode { markMode(of: store.state) }
 
     private var voiceActive: Bool { store.state.voiceMode == .active }
@@ -150,6 +159,11 @@ struct ChatView: View {
             // TODO(userName): surface real display name from auth profile
             MessageList(messages: store.state.messages, activeMarkMode: currentMarkMode, userName: "You")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay {
+                    if store.state.messages.isEmpty, chatLoadingState != .none {
+                        ChatLoadingView(state: chatLoadingState)
+                    }
+                }
             if transcriptVisible {
                 TranscriptPreview(text: store.state.transcript)
             }
@@ -160,6 +174,7 @@ struct ChatView: View {
                 ttsEnabled: store.state.prefs.ttsEnabled,
                 micActive: store.state.voiceMode == .active,
                 canInterrupt: canInterrupt,
+                sendInFlight: store.hasPendingSends,
                 onSend: { store.sendText($0) },
                 onMicToggle: toggleMic,
                 onTtsToggle: { store.setTtsEnabled(!store.state.prefs.ttsEnabled) },
@@ -245,42 +260,12 @@ struct ChatView: View {
         }
     }
 
-    // ── Title bar ─────────────────────────────────────────────────────────────
-    // Layout: [hamburger] ··· [mark · title] ··· [new-chat "+"]. `chat-screen`
-    // sits on the title leaf (not the container) so it doesn't shadow inner ids.
-
     private var titleBar: some View {
-        HStack(spacing: Space.sm) {
-            Button { openPanel() } label: {
-                Image(systemName: "line.3.horizontal")
-                    .font(.system(size: TypeScale.lg))
-                    .foregroundStyle(DuskColors.ink2)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("History")
-            .accessibilityIdentifier("history-open")
-            Spacer()
-            HStack(spacing: Space.sm) {
-                SentientMark(size: ChatLayout.markSize, mode: currentMarkMode)
-                Text(Self.title)
-                    .font(Typo.display(TypeScale.lg, .semibold))
-                    .foregroundStyle(DuskColors.ink)
-                    .accessibilityIdentifier("chat-screen")
-            }
-            Spacer()
-            Button {
-                Task { await historyModel.newChat() }   // routes through the model → logs failures + refreshes
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: TypeScale.lg))
-                    .foregroundStyle(DuskColors.ink2)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("New chat")
-            .accessibilityIdentifier("new-chat")
-        }
-        .padding(.horizontal, Space.lg)
-        .padding(.vertical, Space.sm)
+        ChatTitleBar(
+            markMode: currentMarkMode,
+            onOpenPanel: openPanel,
+            onNewChat: { Task { await historyModel.newChat() } }
+        )
     }
 
     // ── Actions ───────────────────────────────────────────────────────────────
@@ -292,8 +277,4 @@ struct ChatView: View {
             store.startMic()
         }
     }
-}
-
-private enum ChatLayout {
-    static let markSize: CGFloat = 26
 }
