@@ -64,8 +64,10 @@ fun MessageBubble(
     message: ChatMessage,
     index: Int,
     avatarMode: MarkMode = MarkMode.IDLE,
+    userName: String = "You",
     modifier: Modifier = Modifier,
 ) {
+    val tokens = LocalTokens.current
     val isUser = message.role == "user"
     val arrangement = if (isUser) Arrangement.End else Arrangement.Start
     Row(
@@ -74,11 +76,20 @@ fun MessageBubble(
         verticalAlignment = Alignment.Top,
     ) {
         if (isUser) {
-            BubbleBody(message = message, isUser = true, avatarMode = avatarMode)
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(tokens.space.xs),
+            ) {
+                MessageMeta(message, userName)
+                BubbleBody(message = message, isUser = true, avatarMode = avatarMode)
+            }
             BubbleAvatar(message = message, avatarMode = avatarMode)
         } else {
             BubbleAvatar(message = message, avatarMode = avatarMode)
-            BubbleBody(message = message, isUser = false, avatarMode = avatarMode)
+            Column(verticalArrangement = Arrangement.spacedBy(tokens.space.xs)) {
+                MessageMeta(message, userName)
+                BubbleBody(message = message, isUser = false, avatarMode = avatarMode)
+            }
         }
     }
 }

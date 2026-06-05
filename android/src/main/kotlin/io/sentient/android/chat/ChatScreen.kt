@@ -60,6 +60,9 @@ fun ChatScreen(
     onInterrupt: () -> Unit,
     onOpenHistory: () -> Unit,
     onOpenSettings: () -> Unit,
+    // TODO: supply the logged-in display name from the backend profile once the
+    // Android SdkViewModel/store exposes it (mirrors the iOS caveat — follow-up).
+    userName: String = "You",
     modifier: Modifier = Modifier,
 ) {
     val canInterrupt = state.cognition != CognitionState.IDLE || state.isSpeaking
@@ -79,6 +82,7 @@ fun ChatScreen(
         MessageList(
             messages = state.messages,
             activeMarkMode = markMode,
+            userName = userName,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f),
