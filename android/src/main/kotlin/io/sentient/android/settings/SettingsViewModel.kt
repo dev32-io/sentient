@@ -12,8 +12,10 @@
 // what makes a relaunch land on login (the orchestrator reads the token on
 // connect; no token ⇒ no auto-resume). Navigation back to login is NOT modelled
 // here — MainActivity derives login-vs-chat from the SDK's single state surface
-// (status != READY ⇒ login), matching the codebase's event-driven UX inference.
-// disconnect() drives status away from READY, so AppRoot swaps to login.
+// (hasSession ⇒ chat, else login), matching the codebase's event-driven UX
+// inference. disconnect() defaults to clearSession=true, which clears hasSession,
+// so AppRoot swaps to login. (A clean idle-disconnect uses clearSession=false to
+// KEEP hasSession, so it stays on chat and auto-reconnects — logout is distinct.)
 // ---------------------------------------------------------------------------
 package io.sentient.android.settings
 
@@ -40,8 +42,9 @@ class SettingsViewModel(
     /**
      * Logs the user out: disconnect (WS teardown + cycle cancel) then clear the
      * persisted token. Idempotent — [SentientSdk.disconnect] and
-     * [SecureTokenStore.clear] are both safe to call when already logged out. The
-     * resulting status != READY makes [MainActivity]'s AppRoot swap to login.
+     * [SecureTokenStore.clear] are both safe to call when already logged out.
+     * disconnect()'s default clearSession=true clears hasSession, so
+     * [MainActivity]'s AppRoot swaps to login.
      */
     fun logout() {
         log.info("logout.start")
