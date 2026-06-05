@@ -11,6 +11,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import io.sentient.android.theme.LocalTokens
 import io.sentient.mobilesdk.design.Colors
 
@@ -23,7 +24,15 @@ fun DayDivider(label: String) {
         horizontalArrangement = Arrangement.spacedBy(tokens.space.md),
     ) {
         HorizontalDivider(modifier = Modifier.weight(1f), color = Color(Colors.lineSoft))
-        Text(label.uppercase(), color = Color(Colors.ink3), fontSize = tokens.type.xs, fontWeight = FontWeight.Medium)
+        Text(
+            text = label.uppercase(),
+            color = Color(Colors.ink3),
+            fontSize = tokens.type.xs,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Visible,
+        )
         HorizontalDivider(modifier = Modifier.weight(1f), color = Color(Colors.lineSoft))
     }
 }

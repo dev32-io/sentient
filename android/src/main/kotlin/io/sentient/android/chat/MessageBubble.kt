@@ -84,9 +84,9 @@ fun MessageBubble(
                 MessageMeta(message, userName)
                 BubbleBody(message = message, isUser = true, avatarMode = avatarMode)
             }
-            BubbleAvatar(message = message, avatarMode = avatarMode)
+            BubbleAvatar(message = message, avatarMode = avatarMode, userName = userName)
         } else {
-            BubbleAvatar(message = message, avatarMode = avatarMode)
+            BubbleAvatar(message = message, avatarMode = avatarMode, userName = userName)
             Column(verticalArrangement = Arrangement.spacedBy(tokens.space.xs)) {
                 MessageMeta(message, userName)
                 BubbleBody(message = message, isUser = false, avatarMode = avatarMode)
@@ -97,16 +97,15 @@ fun MessageBubble(
 
 /** Assistant → SentientMark (animated for the live bubble); user → tinted initial circle. */
 @Composable
-private fun BubbleAvatar(message: ChatMessage, avatarMode: MarkMode) {
+private fun BubbleAvatar(message: ChatMessage, avatarMode: MarkMode, userName: String) {
     val tokens = LocalTokens.current
     val gap = tokens.space.md
     if (message.role == "user") {
-        Box(
-            modifier = Modifier
-                .padding(start = gap)
-                .size(AVATAR_SIZE)
-                .clip(CircleShape)
-                .background(Color(Colors.sageSoft)),
+        InitialAvatar(
+            name = userName,
+            size = AVATAR_SIZE,
+            modifier = Modifier.padding(start = gap),
+            background = Color(Colors.accent50),
         )
     } else {
         Box(
