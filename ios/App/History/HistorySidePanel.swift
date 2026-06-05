@@ -34,6 +34,9 @@ struct HistorySidePanel: View {
     let onSelect: (String) -> Void
     let onNewChat: () -> Void
     let onSettings: () -> Void
+    /// Context-menu handlers wired by the host so Rename/Delete are functional.
+    let onAskRename: (SessionRow) -> Void
+    let onAskDelete: (SessionRow) -> Void
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -94,10 +97,8 @@ struct HistorySidePanel: View {
                         row: row,
                         nowMs: nowMs,
                         onSwitch: { onSelect(row.sessionId) },
-                        // Rename/delete are not surfaced in the panel —
-                        // context-menu actions remain in HistorySheet.
-                        onAskRename: {},
-                        onAskDelete: {}
+                        onAskRename: { onAskRename(row) },
+                        onAskDelete: { onAskDelete(row) }
                     )
                 }
             }
@@ -168,7 +169,9 @@ private struct PanelPreviewHost: View {
             household: "Ye Family",
             onSelect: { _ in },
             onNewChat: {},
-            onSettings: {}
+            onSettings: {},
+            onAskRename: { _ in },
+            onAskDelete: { _ in }
         )
         .onAppear { model.seedForPreview(seed) }
     }

@@ -4,18 +4,17 @@
 // the Android ChatScreen (android/.../chat/ChatScreen.kt) and the webui chat
 // shell, dropping the breadcrumb top bar for a title-only nav bar.
 //
-// Reads the ONE SDK surface from the app-level @EnvironmentObject SdkStore (no
-// per-screen store — collect-loop retention) and dispatches user actions
-// through the store's command passthroughs. Bindings:
-//  - MessageList ← store.state.messages (user + assistant; the in-flight
-//    assistant bubble carries streaming=true → pulse dots / block cursor).
-//  - Composer send gated on status == .ready (canSend) + non-empty draft.
-//  - Composer interrupt shown only when cognition != .idle || isSpeaking.
-//  - TTS toggle reflects state.prefs.ttsEnabled; mic toggle reflects voiceMode.
+// Reads the single SDK surface from the app-level SdkStore (explicit param —
+// allows @StateObject historyModel to be created at init time, same pattern
+// as HistorySheet). Dispatches user actions through the store's command
+// passthroughs. Bindings:
+//  - MessageList ← store.state.messages
+//  - Composer send gated on status == .ready + non-empty draft
+//  - Composer interrupt shown only when cognition != .idle || isSpeaking
+//  - TTS/mic toggles reflect state.prefs.ttsEnabled / voiceMode
 //
-// The Composer is docked via .safeAreaInset(edge:.bottom) so it stays above the
-// home indicator and rides up over the keyboard (SwiftUI keyboard avoidance).
-// Dark status-bar content comes from the Dusk dark color scheme.
+// History surface: left side panel (D-I4.2), draggable-snapping overlay.
+// Hamburger opens it; "+" starts a new chat; settings moved to panel header.
 //
 // accessibilityIdentifier `chat-screen` is retained for the host routing assert.
 // ---------------------------------------------------------------------------
@@ -23,10 +22,42 @@ import SwiftUI
 import MobileSdk
 
 struct ChatView: View {
-    @EnvironmentObject private var store: SdkStore
+    /// Explicit store param — HistoryModel is created here at init time.
+    /// RootView passes the single app SdkStore (mirrors HistorySheet pattern).
+    let store: SdkStore
 
-    @State private var historyPresented = false
+    /// Stably held history state. @StateObject ensures one lifetime per ChatView.
+    @StateObject private var historyModel: HistoryModel
+
+    init(store: SdkStore) {
+        self.store = store
+        _historyModel = StateObject(wrappedValue: HistoryModel(store: store))
+    }
+
+    // ── Panel geometry ────────────────────────────────────────────────────────
+
+    /// 86 % of screen width. UIScreen.main is deprecated in iOS 16 + but
+    /// acceptable here; a GeometryReader alternative requires restructuring.
+    private let panelWidth: CGFloat = UIScreen.main.bounds.width * 0.86
+
+    /// Panel offset: -panelWidth = closed, 0 = open. Initialized CLOSED at the
+    /// declaration (not in .onAppear) so the panel never renders open on frame zero.
+    @State private var panelX: CGFloat = -UIScreen.main.bounds.width * 0.86
+
+    /// panelX captured at the start of each drag (reset to nil on end).
+    @GestureState private var dragOriginX: CGFloat? = nil
+
+    /// Clock captured once per openPanel() so relative dates don't drift.
+    @State private var panelNowMs: Int64 = 0
+
+    // ── Sheet + alert state ───────────────────────────────────────────────────
+
     @State private var settingsPresented = false
+    @State private var panelRenaming: PanelTarget?
+    @State private var panelDeleting: PanelTarget?
+    @State private var panelRenameText = ""
+
+    // ── Derived ───────────────────────────────────────────────────────────────
 
     private static let title = "Sentient"
 
@@ -34,8 +65,6 @@ struct ChatView: View {
         store.state.cognition != .idle || store.state.isSpeaking
     }
 
-    /// Single source of the avatar animation mode for this frame — bound at the
-    /// title-bar mark AND the live streaming assistant bubble (mirrors Android).
     private var currentMarkMode: MarkMode { markMode(of: store.state) }
 
     private var voiceActive: Bool { store.state.voiceMode == .active }
@@ -44,7 +73,55 @@ struct ChatView: View {
         voiceActive && !store.state.transcript.isEmpty
     }
 
+    private var panelVisible: Bool { panelX > -panelWidth }
+
+    // ── Root body ─────────────────────────────────────────────────────────────
+
     var body: some View {
+        ZStack(alignment: .leading) {
+            mainColumn
+                // 20 pt leading strip: edge-swipe to open. The narrow strip +
+                // minimumDistance:8 lets vertical chat scroll pass through.
+                .overlay(alignment: .leading) {
+                    Color.clear
+                        .frame(width: 20)
+                        .contentShape(Rectangle())
+                        .gesture(panelDrag)
+                }
+
+            if panelVisible {
+                let progress = Double((panelX + panelWidth) / panelWidth)
+                Color.black
+                    .opacity(0.5 * progress)
+                    .ignoresSafeArea()
+                    .onTapGesture { closePanel() }
+
+                historySidePanel
+                    .frame(width: panelWidth)
+                    .offset(x: panelX)
+                    .gesture(panelDrag)
+            }
+        }
+        .sheet(isPresented: $settingsPresented) {
+            SettingsSheet(
+                onLogout: {
+                    store.logout()
+                    settingsPresented = false
+                },
+                onDismiss: { settingsPresented = false }
+            )
+        }
+        .panelRenamePrompt($panelRenaming, text: $panelRenameText) { id, title in
+            Task { await historyModel.renameSession(id, title: title) }
+        }
+        .panelDeletePrompt($panelDeleting) { id in
+            Task { await historyModel.deleteSession(id) }
+        }
+    }
+
+    // ── Main content column ───────────────────────────────────────────────────
+
+    private var mainColumn: some View {
         VStack(spacing: 0) {
             titleBar
             // TODO(userName): surface real display name from auth profile
@@ -68,42 +145,87 @@ struct ChatView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .duskTheme()
-        .sheet(isPresented: $historyPresented) {
-            // The sheet owns its HistoryModel built over the single app SdkStore
-            // (read here, where @EnvironmentObject is resolved). One store → one
-            // SDK; no second transport. nowMs is captured once per present so the
-            // date labels read a stable clock for the sheet's lifetime.
-            HistorySheet(
-                store: store,
-                nowMs: Int64(Date().timeIntervalSince1970 * 1000),
-                onDismiss: { historyPresented = false }
-            )
-        }
-        .sheet(isPresented: $settingsPresented) {
-            // Thin settings sheet (D-I5). logout() = disconnect + clear the
-            // Keychain token through the single app SdkStore — RootView reacts
-            // to status != .ready and swaps to login (no explicit nav here).
-            SettingsSheet(
-                onLogout: {
-                    store.logout()
-                    settingsPresented = false
-                },
-                onDismiss: { settingsPresented = false }
-            )
+    }
+
+    // ── History side panel ────────────────────────────────────────────────────
+
+    private var historySidePanel: some View {
+        HistorySidePanel(
+            model: historyModel,
+            nowMs: panelNowMs,
+            // SdkStore does not expose a display-name surface (8.1 finding).
+            userName: "You",
+            household: "",
+            onSelect: { sessionId in
+                Task {
+                    await historyModel.switchSession(sessionId)
+                    closePanel()
+                }
+            },
+            onNewChat: {
+                Task {
+                    await historyModel.newChat()
+                    closePanel()
+                }
+            },
+            onSettings: {
+                settingsPresented = true
+                closePanel()
+            },
+            onAskRename: { row in
+                panelRenameText = row.title
+                panelRenaming = PanelTarget(id: row.sessionId, title: row.title)
+            },
+            onAskDelete: { row in
+                panelDeleting = PanelTarget(id: row.sessionId, title: row.title)
+            }
+        )
+    }
+
+    // ── Drag gesture + snap ───────────────────────────────────────────────────
+
+    private var panelDrag: some Gesture {
+        DragGesture(minimumDistance: 8)
+            .updating($dragOriginX) { _, state, _ in
+                if state == nil { state = panelX }
+            }
+            .onChanged { value in
+                let base = dragOriginX ?? panelX
+                panelX = max(-panelWidth, min(0, base + value.translation.width))
+            }
+            .onEnded { value in
+                let extra = value.predictedEndTranslation.width - value.translation.width
+                let shouldOpen = (panelX + extra) > -panelWidth / 2
+                withAnimation(.interactiveSpring(response: 0.3, dampingFraction: 0.86)) {
+                    panelX = shouldOpen ? 0 : -panelWidth
+                }
+            }
+    }
+
+    private func openPanel() {
+        panelNowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        Task { await historyModel.refresh() }
+        withAnimation(.interactiveSpring(response: 0.3, dampingFraction: 0.86)) {
+            panelX = 0
         }
     }
 
-    // ── Title bar ───────────────────────────────────────────────────────────
+    private func closePanel() {
+        withAnimation(.interactiveSpring(response: 0.3, dampingFraction: 0.86)) {
+            panelX = -panelWidth
+        }
+    }
+
+    // ── Title bar ─────────────────────────────────────────────────────────────
     //
-    // The `chat-screen` identifier sits on the title text (a leaf), NOT the
-    // screen root: a container-level accessibilityIdentifier in SwiftUI
-    // propagates down to descendant leaves and overrides the inner control
-    // identifiers (chat-input/chat-send/...), which breaks the e2e contract.
-    // Keeping it on a leaf lets the controls keep their own identifiers.
+    // `chat-screen` identifier on the title text leaf (NOT the container) so
+    // it does not shadow inner control identifiers (chat-input, chat-send …).
+    //
+    // Layout: [hamburger]  ···  [mark · title]  ···  [new-chat "+"]
 
     private var titleBar: some View {
         HStack(spacing: Space.sm) {
-            Button { historyPresented = true } label: {
+            Button { openPanel() } label: {
                 Image(systemName: "line.3.horizontal")
                     .font(.system(size: TypeScale.lg))
                     .foregroundStyle(DuskColors.ink2)
@@ -111,30 +233,32 @@ struct ChatView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("History")
             .accessibilityIdentifier("history-open")
-            SentientMark(size: ChatLayout.markSize, mode: currentMarkMode)
-            Text(Self.title)
-                .font(.system(size: TypeScale.lg, weight: .semibold))
-                .foregroundStyle(DuskColors.ink)
-                .accessibilityIdentifier("chat-screen")
             Spacer()
-            Button { settingsPresented = true } label: {
-                Image(systemName: "gearshape")
+            HStack(spacing: Space.sm) {
+                SentientMark(size: ChatLayout.markSize, mode: currentMarkMode)
+                Text(Self.title)
+                    .font(Typo.display(TypeScale.lg, .semibold))
+                    .foregroundStyle(DuskColors.ink)
+                    .accessibilityIdentifier("chat-screen")
+            }
+            Spacer()
+            Button {
+                Task { await historyModel.newChat() }   // routes through the model → logs failures + refreshes
+            } label: {
+                Image(systemName: "plus")
                     .font(.system(size: TypeScale.lg))
                     .foregroundStyle(DuskColors.ink2)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Settings")
-            .accessibilityIdentifier("settings-open")
+            .accessibilityLabel("New chat")
+            .accessibilityIdentifier("new-chat")
         }
         .padding(.horizontal, Space.lg)
         .padding(.vertical, Space.sm)
     }
 
-    // ── Actions ─────────────────────────────────────────────────────────────
+    // ── Actions ───────────────────────────────────────────────────────────────
 
-    /// Mic toggle flips the voice pipeline on/off via the store passthroughs
-    /// (startMic/stopMic). The Composer gates the start path on the record
-    /// permission; here we only mirror the voiceMode latch.
     private func toggleMic() {
         if store.state.voiceMode == .active {
             store.stopMic()
@@ -144,29 +268,6 @@ struct ChatView: View {
     }
 }
 
-/// Live STT preview while voiceMode is .active — mirrors the webui
-/// .chat-view__transcript and the Android TranscriptPreview: an accent left-rule
-/// + italic, muted text. Hidden when empty (the host gates on `transcriptVisible`).
-private struct TranscriptPreview: View {
-    let text: String
-
-    var body: some View {
-        HStack(alignment: .center, spacing: Space.sm) {
-            RoundedRectangle(cornerRadius: 1)
-                .fill(DuskColors.accent)
-                .frame(width: ChatLayout.transcriptRule, height: TypeScale.base)
-            Text(text)
-                .font(.system(size: TypeScale.base).italic())
-                .foregroundStyle(DuskColors.ink3)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(.horizontal, Space.lg)
-        .padding(.vertical, Space.sm)
-        .accessibilityIdentifier("voice-transcript")
-    }
-}
-
 private enum ChatLayout {
     static let markSize: CGFloat = 26
-    static let transcriptRule: CGFloat = 2
 }

@@ -29,7 +29,7 @@ struct RootView: View {
                     onSaved: { showSetupOverride = false }
                 )
             } else if store.state.status == .ready {
-                ChatView()
+                ChatView(store: store)
             } else {
                 LoginView(
                     onConnect: { store.connect() },
