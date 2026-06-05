@@ -260,6 +260,13 @@ export function cleanupSession(ws: ServerWebSocket<ClientData>, services: Gatewa
   ws.data.interruptController = null;
   ws.data.snapshotUnsub?.();
   ws.data.snapshotUnsub = null;
+  // Stop this WS's out-of-band SDK-frame listener on the (pooled) acpConn
+  // BEFORE releasing the wire ref — the closed socket must not keep receiving
+  // frames if the wire stays alive for another attachment.
+  ws.data.acpSdkFrameUnsub?.();
+  ws.data.acpSdkFrameUnsub = null;
+  // Release this attachment's ref on the pooled wire. Disposes the underlying
+  // WS only when the last attachment for this user detaches.
   ws.data.acpWireDispose?.();
   ws.data.acpWireDispose = null;
   ws.data.sessionsHandlers = null;

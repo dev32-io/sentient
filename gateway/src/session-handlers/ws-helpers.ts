@@ -68,10 +68,19 @@ export interface CerebrumSessionData {
   /** Cleanup for the mirror.onSnapshot subscription created in session.configure. */
   snapshotUnsub: (() => void) | null;
   /**
-   * Tear-down for the per-WS-session ACP wire. Closes the WS to
-   * `acp_ws_server.py` and rejects pending JSON-RPC requests.
+   * Release this attachment's reference on the user's pooled ACP wire. The
+   * registry tears the underlying WS down only when the last reference is
+   * released (last attachment detaches) — a second client for the same user
+   * reuses the wire instead of re-dialing (which the overlay would evict for).
    */
   acpWireDispose: (() => void) | null;
+  /**
+   * Unsubscribe for this WS's out-of-band SDK-frame listener
+   * (sessions.renamed / commands.available) on the pooled acpConn. Must run on
+   * cleanup so a detached client's closed socket stops receiving frames for the
+   * shared wire's lifetime.
+   */
+  acpSdkFrameUnsub: (() => void) | null;
 }
 
 /** Alias for compatibility with server.ts and ws-handlers.ts */
@@ -107,6 +116,7 @@ export function createEmptySessionData(): CerebrumSessionData {
     sessionsHandlers: null,
     snapshotUnsub: null,
     acpWireDispose: null,
+    acpSdkFrameUnsub: null,
   };
 }
 

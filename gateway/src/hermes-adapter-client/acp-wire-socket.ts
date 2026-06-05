@@ -254,7 +254,7 @@ export function createManagedAcpSocket(input: ManagedAcpSocketInput): ManagedAcp
   return {
     open(): Promise<void> {
       // First open is a SINGLE attempt — a failed initial connect rejects the
-      // session.configure (bootstrapAcpWireOrFail → null); the SDK's own
+      // session.configure (acquireAcpWireOrFail → null); the SDK's own
       // reconnect retries the whole handshake. Bounded backoff is reserved for
       // the post-healthy reconnect path (lazy ensure on send).
       return ensureOpen(openOnce);

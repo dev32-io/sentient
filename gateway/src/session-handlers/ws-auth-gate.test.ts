@@ -53,6 +53,7 @@ function fakeWs(): FakeWs {
     sessionsHandlers: null,
     snapshotUnsub: null,
     acpWireDispose: null,
+    acpSdkFrameUnsub: null,
   };
   const ws: FakeWs = {
     data,

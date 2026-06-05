@@ -24,6 +24,7 @@ import { createPreferenceManager } from "../cerebrum/preferences.js";
 import { createShortTermContext } from "../cerebrum/short-term-context.js";
 import { createTaskMirror } from "../cerebrum/task-mirror.js";
 import { createAcpHermesClient } from "../hermes-adapter-client/acp-hermes-client.js";
+import type { AcpWireHandle, AcpWireRegistry } from "../hermes-adapter-client/acp-wire-registry.js";
 import type { AcpPerProfileConnection } from "../hermes-adapter-client/per-profile-connection.js";
 import type { SentientPluginClient } from "../hermes-adapter-client/plugin-client.js";
 import { buildPluginBaseUrl, createSentientPluginClient } from "../hermes-adapter-client/plugin-client.js";
@@ -367,9 +368,10 @@ export async function handleSessionConfigure(
     sendError(ws, "protocol_error", "Cannot resolve Hermes WS URL");
     return;
   }
-  const acpConn = await bootstrapAcpWireOrFail({
+  const acpConn = await acquireAcpWireOrFail({
     sessionId,
     userId: initialBinding.userId,
+    registry: services.acpWireRegistry,
     wsUrl: resolvedWsUrl,
     token: initialBinding.apiKey,
     acpWire: services.hermes?.acp_wire,
@@ -387,7 +389,11 @@ export async function handleSessionConfigure(
   // (sessions.renamed, commands.available) directly to the client. The cycle
   // stream consumes the same notifications inside AcpHermesClient — multiple
   // subscribers per acpConn.onEvent is supported.
-  acpConn.onEvent((evt) => {
+  //
+  // The acpConn is now POOLED across attachments, so this per-WS handler must
+  // be unsubscribed on cleanup — otherwise a detached client's closed socket
+  // keeps receiving frames for the lifetime of the shared wire.
+  const sdkFrameUnsub = acpConn.onEvent((evt) => {
     if (evt.type === "sessions.renamed") {
       wsSend({
         type: "sessions.renamed",
@@ -399,6 +405,7 @@ export async function handleSessionConfigure(
       wsSend({ type: "commands.available", commands: evt.commands });
     }
   });
+  ws.data.acpSdkFrameUnsub = sdkFrameUnsub;
 
   const hermesDeps: HermesDispatcherDeps = {
     clientFor: () => createAcpHermesClient({ acpConn }),
@@ -877,12 +884,14 @@ function registerAdapters(
 }
 
 // ---------------------------------------------------------------------------
-// ACP wire bootstrap
+// ACP wire acquire (pooled per userId)
 // ---------------------------------------------------------------------------
 
-interface BootstrapAcpWireOrFailInput {
+interface AcquireAcpWireOrFailInput {
   readonly sessionId: string;
   readonly userId: string;
+  /** Per-userId pool — reuses a live wire across attachments instead of re-dialing. */
+  readonly registry: AcpWireRegistry;
   /** Per-profile WS URL ending in `/ws` — `bootstrapAcpWire` rewrites the suffix to `/acp`. */
   readonly wsUrl: string;
   /** Bearer token for the ACP WS handshake. */
@@ -891,19 +900,23 @@ interface BootstrapAcpWireOrFailInput {
   readonly acpWire: HermesAcpWire | undefined;
   /** Per-request deadline backstop (ms) so an in-flight prompt can't hang. */
   readonly requestTimeoutMs: number | undefined;
-  /** Stash the dispose fn on the WS so close-handler can tear it down. */
+  /** Stash the release fn on the WS so the close-handler can drop this attachment's ref. */
   readonly setDispose: (fn: () => void) => void;
 }
 
 /**
- * Open the ACP wire. On failure, log + return null so the caller can reject
- * the session cleanly. ACP is the only wire — there's no legacy fallback.
- * Threads the reconnect config so the wire self-heals on abnormal close.
+ * Acquire the user's pooled ACP wire — dials on the first attachment, reuses
+ * the live wire (refCount++) for every subsequent same-user attachment so the
+ * overlay never evicts the first connection. On failure, log + return null so
+ * the caller can reject the session cleanly. ACP is the only wire — no legacy
+ * fallback. The dial threads the reconnect config so the wire self-heals on
+ * abnormal close. The stashed dispose releases ONE reference; the registry
+ * tears the wire down only when the last attachment detaches.
  */
-async function bootstrapAcpWireOrFail(input: BootstrapAcpWireOrFailInput): Promise<AcpPerProfileConnection | null> {
-  try {
+async function acquireAcpWireOrFail(input: AcquireAcpWireOrFailInput): Promise<AcpPerProfileConnection | null> {
+  const dial = (): Promise<AcpWireHandle> => {
     const acpWire = input.acpWire;
-    const result = await bootstrapAcpWire({
+    return bootstrapAcpWire({
       wsUrl: input.wsUrl,
       token: input.token,
       sessionId: input.sessionId,
@@ -920,11 +933,19 @@ async function bootstrapAcpWireOrFail(input: BootstrapAcpWireOrFailInput): Promi
           }
         : {}),
     });
-    input.setDispose(result.dispose);
-    log.info("acp-wire-bootstrap-ok", { sessionId: input.sessionId, userId: input.userId });
-    return result.acpConn;
+  };
+  try {
+    const acpConn = await input.registry.acquire(input.userId, dial);
+    let released = false;
+    input.setDispose(() => {
+      if (released) return;
+      released = true;
+      input.registry.release(input.userId);
+    });
+    log.info("acp-wire-acquire-ok", { sessionId: input.sessionId, userId: input.userId });
+    return acpConn;
   } catch (err: unknown) {
-    log.warn("acp-wire-bootstrap-failed", {
+    log.warn("acp-wire-acquire-failed", {
       sessionId: input.sessionId,
       userId: input.userId,
       reason: errorMessage(err, "unknown"),
