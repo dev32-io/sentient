@@ -77,6 +77,10 @@ private const val UPLINK_HANGOVER_FRAMES = 0
  * @param preRollFrames Pre-roll frames buffered for the uplink onset flush.
  * @param onStateChanged Pushes isSpeaking + the FSM state into the orchestrator's
  *   StateDeriver and re-emits the single StateFlow (the C7 derivation contract).
+ * @param onBargeIn Signals a mic-onset-while-speaking barge-in for the given cycleId.
+ *   The orchestrator routes it to CycleErrorConnector so a same-cycle abort that
+ *   races the barge-in is classified self-initiated (never a false "chat broke").
+ *   Default no-op so the text-only test path compiles unchanged.
  */
 class AudioPipeline(
     private val capture: AudioCaptureAdapter?,
@@ -90,6 +94,7 @@ class AudioPipeline(
     private val outputSampleRate: Int,
     private val preRollFrames: Int,
     private val onStateChanged: (isSpeaking: Boolean, fsmState: AudioState) -> Unit,
+    private val onBargeIn: (cycleId: String) -> Unit = {},
 ) {
     private val log = createLogger("audio", "pipeline")
 
@@ -177,6 +182,7 @@ class AudioPipeline(
                     "barge-in",
                     mapOf("trigger" to "mic-onset-while-speaking", "cycleId" to activeCycleId),
                 )
+                onBargeIn(activeCycleId)
             }
             transition(AudioInput.MicOnset, activeCycleId)
         }

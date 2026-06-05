@@ -18,6 +18,7 @@ import io.sentient.mobilesdk.connectors.AssistantAudioResponseConnector
 import io.sentient.mobilesdk.connectors.CognitionStatusConnector
 import io.sentient.mobilesdk.connectors.Connector
 import io.sentient.mobilesdk.connectors.ConversationHistoryConnector
+import io.sentient.mobilesdk.connectors.CycleErrorConnector
 import io.sentient.mobilesdk.connectors.InFlightMessageConnector
 import io.sentient.mobilesdk.connectors.PreferencesConnector
 import io.sentient.mobilesdk.connectors.SessionsConnector
@@ -81,6 +82,10 @@ class SdkConnectors(
         onStateChange = { state -> deriver.cognition = state; emit() },
     )
 
+    val cycleError = CycleErrorConnector(
+        onErrorChange = { hasError -> deriver.lastCycleError = hasError; emit() },
+    )
+
     val preferences = PreferencesConnector(
         send = send,
         onChange = { prefs -> deriver.prefs = prefs; emit() },
@@ -111,7 +116,7 @@ class SdkConnectors(
 
     /** All connectors, broadcast targets for the MessageRouter. */
     val all: List<Connector> = listOf(
-        text, history, inflight, cognition, preferences, tasks, sessions, audioInput, audioOutput,
+        text, history, inflight, cognition, cycleError, preferences, tasks, sessions, audioInput, audioOutput,
     )
 
     /** Capability strings every connector advertises (merged into session.configure). */

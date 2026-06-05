@@ -62,6 +62,7 @@ class SentientSdk(
         clock = bundle.clock,
         scope = scope,
         onStateChanged = ::onAudioStateChanged,
+        onBargeIn = { cycleId -> connectors.cycleError.noteBargeIn(cycleId) },
     )
 
     private val connectors = SdkConnectors(
@@ -154,6 +155,9 @@ class SentientSdk(
     fun interrupt() {
         log.info("interrupt")
         markInteraction()
+        // Mark the active cycle's abort as self-initiated BEFORE the wire interrupt
+        // so the resulting cycle.aborted is never misread as an unsolicited error.
+        connectors.cycleError.noteInterrupt(null)
         sendControl(ClientMessage.Interrupt)
     }
 
@@ -206,6 +210,7 @@ class SentientSdk(
     )
     suspend fun switchSession(sessionId: String) {
         markInteraction()
+        connectors.cycleError.reset()
         connectors.sessions.switchTo(sessionId)
     }
 
@@ -217,6 +222,7 @@ class SentientSdk(
     )
     suspend fun newChat() {
         markInteraction()
+        connectors.cycleError.reset()
         connectors.sessions.newChat()
     }
 

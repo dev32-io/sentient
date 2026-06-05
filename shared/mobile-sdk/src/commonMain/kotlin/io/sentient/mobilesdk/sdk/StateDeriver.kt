@@ -76,6 +76,7 @@ class StateDeriver(private val clock: Clock) {
     var audioState: AudioState = AudioState.INACTIVE
     var connectionLost: Boolean = false
     var authExpired: Boolean = false
+    var lastCycleError: Boolean = false
 
     /**
      * Set the committed feed, clearing the live STT [transcript] when a speech
@@ -112,6 +113,7 @@ class StateDeriver(private val clock: Clock) {
         audioState = audioState,
         connectionLost = connectionLost,
         authExpired = authExpired,
+        lastCycleError = lastCycleError,
     )
 
     /**

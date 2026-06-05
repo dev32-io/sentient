@@ -31,6 +31,8 @@ import kotlinx.coroutines.CoroutineScope
  * @param clock Injected wall-clock for the gate timing.
  * @param scope Orchestrator scope the capture-collect job runs on.
  * @param onStateChanged Pushes isSpeaking + FSM state into the StateDeriver.
+ * @param onBargeIn Signals a mic-onset barge-in for a cycleId — routed to the
+ *   CycleErrorConnector so a racing same-cycle abort stays classified self-initiated.
  */
 class SdkAudio(
     audioConfig: AudioPipelineConfig,
@@ -40,6 +42,7 @@ class SdkAudio(
     clock: Clock,
     scope: CoroutineScope,
     private val onStateChanged: (isSpeaking: Boolean, fsmState: AudioState) -> Unit,
+    onBargeIn: (cycleId: String) -> Unit = {},
 ) {
     private val fsm = AudioFsm()
     private val echoGate = EchoGate(audioConfig.echoGate)
@@ -57,6 +60,7 @@ class SdkAudio(
         outputSampleRate = audioConfig.outputSampleRate,
         preRollFrames = audioConfig.speechGate.preRollFrames,
         onStateChanged = onStateChanged,
+        onBargeIn = onBargeIn,
     )
 
     /** Downlink side-effect hooks the connector set routes audio frames into. */

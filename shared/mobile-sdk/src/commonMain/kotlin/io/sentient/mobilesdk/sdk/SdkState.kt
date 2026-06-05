@@ -62,6 +62,10 @@ data class ChatMessage(
  *   speaking plus the local user-speaking/interrupting transients.
  * @param connectionLost True while the reconnect loop is recovering an unexpected drop.
  * @param authExpired True on terminal auth failure (token won't recover via retry).
+ * @param lastCycleError True after an UNSOLICITED cycle.aborted — a wire-death /
+ *   server error mid-cycle that yields no answer. NOT set by a client-initiated
+ *   abort (UI Stop / barge-in). Recoverable: cleared on the next cycle.started,
+ *   a successful cycle, newChat, or switchSession. Driven by CycleErrorConnector.
  */
 data class SdkState(
     val status: SdkStatus = SdkStatus.DISCONNECTED,
@@ -75,4 +79,5 @@ data class SdkState(
     val audioState: AudioState = AudioState.INACTIVE,
     val connectionLost: Boolean = false,
     val authExpired: Boolean = false,
+    val lastCycleError: Boolean = false,
 )
