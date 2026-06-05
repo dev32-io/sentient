@@ -150,8 +150,11 @@ private fun AppRoot(
                     onOpenBackendSetup = { showSetupOverride = true },
                 )
             }
-            // Overlay sits ABOVE all gate content; fades out once min time + configured.
-            AppSplashOverlay(visible = splashVisible(shownAtMs, nowMs, ready = configured))
+            // Overlay sits ABOVE all gate content; fades out once the min-time floor
+            // elapses. ready=true: the floor alone gates the fade — the gate content
+            // (setup screen OR chat/login) is always renderable, so gating on
+            // `configured` would deadlock an unconfigured first launch (splash never hides).
+            AppSplashOverlay(visible = splashVisible(shownAtMs, nowMs, ready = true))
         }
     }
 }
