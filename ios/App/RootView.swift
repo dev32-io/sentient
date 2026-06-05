@@ -25,6 +25,8 @@ import MobileSdk
 struct RootView: View {
     @EnvironmentObject private var store: SdkStore
     @State private var showSetupOverride = false
+    @State private var showSplash = true
+    private let log = AppLog("root")
 
     var body: some View {
         Group {
@@ -44,6 +46,19 @@ struct RootView: View {
                     onOpenBackendSetup: { showSetupOverride = true }
                 )
             }
+        }
+        .overlay {
+            if showSplash {
+                SplashOverlay()
+                    .transition(.opacity)
+            }
+        }
+        .task(id: store.configGeneration) {
+            showSplash = true
+            log.info("splash.show generation=\(store.configGeneration)")
+            try? await Task.sleep(for: .seconds(SplashLayout.minDisplay))
+            withAnimation(.easeOut(duration: SplashLayout.fadeOut)) { showSplash = false }
+            log.info("splash.hide")
         }
     }
 }

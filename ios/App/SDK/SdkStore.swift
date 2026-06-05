@@ -44,6 +44,10 @@ final class SdkStore: ObservableObject {
     /// when false.
     @Published private(set) var isConfigured: Bool
 
+    /// Monotonically increasing counter bumped each time the SDK is (re)built.
+    /// RootView's .task(id:) observes this to re-show the splash on every build.
+    @Published private(set) var configGeneration: Int = 0
+
     private var sdk: SentientSdk?
     private let configStore = BackendConfigStore()
     /// The same Keychain-backed store login writes to (`createTokenStore()`).
@@ -89,7 +93,11 @@ final class SdkStore: ObservableObject {
             self.isConfigured = false
             log.info("init unconfigured — awaiting setup")
         }
-        if isConfigured { startCollecting() }
+        if isConfigured {
+            startCollecting()
+            configGeneration += 1
+            log.info("init build complete generation=\(configGeneration)")
+        }
     }
 
     deinit { collectTask?.cancel() }
@@ -123,7 +131,8 @@ final class SdkStore: ObservableObject {
         state = s.state.value
         isConfigured = true
         startCollecting()
-        log.info("reconfigure done status=\(s.state.value.status.name)")
+        configGeneration += 1
+        log.info("reconfigure done status=\(s.state.value.status.name) generation=\(configGeneration)")
     }
 
     // ── State collection ──────────────────────────────────────────────────────

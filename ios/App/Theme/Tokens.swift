@@ -56,6 +56,16 @@ enum Motion {
     static let cursor = seconds(MobileSdk.Motion.shared.cursorMs)
 }
 
+/// Layout constants for the in-app animated splash overlay.
+enum SplashLayout {
+    /// Diameter of the SentientMark on the splash screen, in points.
+    static let markSize: CGFloat = 96
+    /// Minimum time (seconds) the splash is visible on each show.
+    static let minDisplay: Double = 2.0
+    /// Fade-out duration (seconds); mirrors Motion.normal.
+    static let fadeOut: Double = Motion.normal
+}
+
 private let msPerSecond = 1000.0
 
 /// SKIE bridges the SDK's Kotlin `Int` constants to Swift `Int32`; widen to CGFloat.
