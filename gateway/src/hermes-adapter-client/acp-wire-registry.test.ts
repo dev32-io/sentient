@@ -122,11 +122,21 @@ describe("AcpWireRegistry — ref-counted per-user pooling", () => {
     expect(dial).toHaveBeenCalledTimes(1);
     expect(reg.refCount("alice")).toBe(2);
 
+    // Attach a real rejection handler to BOTH derived acquire promises BEFORE
+    // firing reject(), capturing each error. This leaves NO transient
+    // unhandled-rejection window for the Bun-native runner to flag, and the
+    // raw mock dial promise's sole consumers are the registry's own awaits.
+    const caught1 = p1.then(() => undefined).catch((e: unknown) => e);
+    const caught2 = p2.then(() => undefined).catch((e: unknown) => e);
+
     (rejectDial as unknown as (e: Error) => void)(new Error("overlay unreachable"));
 
     // BOTH acquirers reject — neither sees a phantom live wire.
-    await expect(p1).rejects.toThrow(/overlay unreachable/);
-    await expect(p2).rejects.toThrow(/overlay unreachable/);
+    const [err1, err2] = await Promise.all([caught1, caught2]);
+    expect(err1).toBeInstanceOf(Error);
+    expect((err1 as Error).message).toMatch(/overlay unreachable/);
+    expect(err2).toBeInstanceOf(Error);
+    expect((err2 as Error).message).toMatch(/overlay unreachable/);
     // No leaked ref: the poisoned entry is gone, not stuck at 2.
     expect(reg.refCount("alice")).toBe(0);
 
