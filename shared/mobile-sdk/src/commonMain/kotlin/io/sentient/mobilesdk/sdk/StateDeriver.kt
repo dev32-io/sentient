@@ -74,6 +74,7 @@ class StateDeriver(private val clock: Clock) {
     var tasks: List<TaskSnapshotItem> = emptyList()
     var isSpeaking: Boolean = false
     var audioState: AudioState = AudioState.INACTIVE
+    var hasSession: Boolean = false
     var connectionLost: Boolean = false
     var authExpired: Boolean = false
     var lastCycleError: Boolean = false
@@ -111,6 +112,7 @@ class StateDeriver(private val clock: Clock) {
         tasks = tasks,
         isSpeaking = isSpeaking,
         audioState = audioState,
+        hasSession = hasSession,
         connectionLost = connectionLost,
         authExpired = authExpired,
         lastCycleError = lastCycleError,

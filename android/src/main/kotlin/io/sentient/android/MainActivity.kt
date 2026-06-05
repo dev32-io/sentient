@@ -5,9 +5,16 @@
 //     and no build-time default URL), force BackendSetupScreen. Once configured,
 //     ensureBuilt() is called exactly once and the SDK-status-derived swap runs.
 //
-//  2. SDK gate (AppConfiguredRoot): status == READY ⇒ chat, otherwise ⇒ login.
-//     The gear on the login screen lets the user reopen setup from an already-
-//     configured state (e.g. to point at a different server).
+//  2. Session gate (AppConfiguredRoot): hasSession ⇒ chat, otherwise ⇒ login.
+//     hasSession (the SDK's auth/session signal) — NOT transport status — gates
+//     the screen. Gating on status==READY unmounted ChatScreen on every WS drop
+//     (status leaves READY) and fell back to login, hiding the in-chat
+//     connection-lost banner. hasSession is set on first READY and PRESERVED
+//     across drops / idle-disconnect / reconnect, cleared only on logout /
+//     authExpired — so a drop keeps the user on chat WITH the banner (ChatScreen
+//     self-gates the composer on status). Mirrors web-sdk: AUTH gates the screen,
+//     status drives the banner. The gear on the login screen lets the user reopen
+//     setup from an already-configured state (e.g. to point at a different server).
 //
 // testTagsAsResourceId is enabled at the composition root so Compose testTags
 // surface as Android resource-ids — that's what uiautomator / Maestro / the
@@ -49,7 +56,6 @@ import io.sentient.android.theme.SentientTheme
 import io.sentient.mobilesdk.log.LogConfig
 import io.sentient.mobilesdk.log.LogLevel
 import io.sentient.mobilesdk.sdk.VoiceMode
-import io.sentient.mobilesdk.transport.SdkStatus
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -139,13 +145,13 @@ private fun AppConfiguredRoot(
     LaunchedEffect(sdkState.authExpired) {
         if (sdkState.authExpired) settingsViewModel.logout()
     }
-    // Settings is an overlay within the READY state, not a separate top-level
+    // Settings is an overlay within the in-session state, not a separate top-level
     // destination — login-vs-chat stays SDK-derived. rememberSaveable survives
-    // config change + process death (mobile-lifecycle rule). The READY guard
-    // ensures a logout (status leaves READY) implicitly drops the overlay, so a
+    // config change + process death (mobile-lifecycle rule). The hasSession guard
+    // ensures a logout (hasSession → false) implicitly drops the overlay, so a
     // re-login lands on chat, not a stale settings screen.
     var showSettings by rememberSaveable { mutableStateOf(false) }
-    if (sdkState.status == SdkStatus.READY) {
+    if (sdkState.hasSession) {
         if (showSettings) {
             SettingsScreen(
                 onLogout = {

@@ -81,6 +81,7 @@ final class SdkStore: ObservableObject {
                 tasks: [],
                 isSpeaking: false,
                 audioState: .inactive,
+                hasSession: false,
                 connectionLost: false,
                 authExpired: false,
                 lastCycleError: false
@@ -111,7 +112,8 @@ final class SdkStore: ObservableObject {
         configStore.save(config)
         tokenStore.clear()
         collectTask?.cancel()
-        sdk?.disconnect()
+        // Backend swap is a full teardown → land on the new backend's login.
+        sdk?.disconnect(clearSession: true)
         let s = createSentientSdk(
             gatewayWsUrl: config.gatewayWsURL,
             allowSelfSignedDevHost: config.allowSelfSigned,
@@ -157,7 +159,9 @@ final class SdkStore: ObservableObject {
     func disconnect() {
         guard let sdk else { return }
         log.info("disconnect")
-        sdk.disconnect()
+        // Consumer-initiated teardown clears the session (gate → login). SKIE does
+        // not bridge the Kotlin default arg, so clearSession is passed explicitly.
+        sdk.disconnect(clearSession: true)
     }
 
     /// Manual reconnect (web-sdk parity, sentient-sdk.ts forceReconnect()). Re-arms
@@ -176,12 +180,13 @@ final class SdkStore: ObservableObject {
     /// disconnect first — the SDK can't read a half-cleared store mid-teardown.
     /// Clearing the token is what prevents auto-resume on relaunch. Navigation
     /// back to login is NOT modelled here: RootView derives login-vs-chat from
-    /// the SDK's single state surface (status != .ready ⇒ login), and disconnect
-    /// drives status away from .ready. Mirrors Android SettingsViewModel.logout().
+    /// the SDK's single state surface (hasSession == false ⇒ login), and the
+    /// default disconnect() (logout teardown) clears hasSession. Mirrors Android
+    /// SettingsViewModel.logout().
     /// Idempotent — both calls are safe when already logged out.
     func logout() {
         log.info("logout.start")
-        sdk?.disconnect()
+        sdk?.disconnect(clearSession: true)
         tokenStore.clear()
         log.info("logout.done")
     }

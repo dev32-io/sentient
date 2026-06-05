@@ -15,6 +15,7 @@ import io.sentient.mobilesdk.fakes.FixedClock
 import io.sentient.mobilesdk.fakes.InMemorySessionIdStore
 import io.sentient.mobilesdk.fakes.InMemoryTokenStore
 import io.sentient.mobilesdk.transport.SdkStatus
+import io.sentient.mobilesdk.transport.WebSocketEngine
 import io.sentient.mobilesdk.transport.WsIncoming
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -29,13 +30,17 @@ internal const val READY_FRAME =
 internal const val AUTH_OK_FRAME =
     "{\"type\":\"auth.ok\",\"user\":{\"userId\":\"u1\",\"displayName\":\"U\"}}"
 
-/** Build a SentientSdk wired to [fake] over the test's [backgroundScope]. */
+/**
+ * Build a SentientSdk wired to [engine] over the test's [backgroundScope].
+ * Accepts the [WebSocketEngine] interface so tests can pass a FakeWebSocketEngine
+ * or a wrapper (e.g. one that fails re-opens to drive reconnect exhaustion).
+ */
 internal fun TestScope.buildSdk(
-    fake: FakeWebSocketEngine,
+    engine: WebSocketEngine,
     tokenStore: InMemoryTokenStore = InMemoryTokenStore().apply { save("tok-abc") },
 ): SentientSdk {
     val bundle = PlatformBundle(
-        engine = fake,
+        engine = engine,
         tokenStore = tokenStore,
         sessionIdStore = InMemorySessionIdStore(),
         clock = FixedClock(0L),

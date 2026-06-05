@@ -60,6 +60,13 @@ data class ChatMessage(
  *   processing / assistant-speaking / interrupting / inactive). Driven by the
  *   AudioPipeline's AudioFsm; mirrors voice-status.ts's listening/processing/
  *   speaking plus the local user-speaking/interrupting transients.
+ * @param hasSession True once the user has reached an authenticated session and
+ *   has not logged out. Gates login↔chat navigation on both native UIs (the
+ *   web-sdk parity: AUTH gates the screen, transport status drives an in-chat
+ *   banner). Set true on the first transition to READY; PRESERVED across idle-
+ *   disconnect, transport drops, and reconnect attempts (the user stays "in
+ *   session" and auto-reconnects on presence); cleared only on explicit LOGOUT
+ *   (consumer disconnect) or terminal authExpired.
  * @param connectionLost True while the reconnect loop is recovering an unexpected drop.
  * @param authExpired True on terminal auth failure (token won't recover via retry).
  * @param lastCycleError True after an UNSOLICITED cycle.aborted — a wire-death /
@@ -77,6 +84,7 @@ data class SdkState(
     val tasks: List<TaskSnapshotItem> = emptyList(),
     val isSpeaking: Boolean = false,
     val audioState: AudioState = AudioState.INACTIVE,
+    val hasSession: Boolean = false,
     val connectionLost: Boolean = false,
     val authExpired: Boolean = false,
     val lastCycleError: Boolean = false,

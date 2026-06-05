@@ -134,14 +134,25 @@ class SentientSdk(
         }
     }
 
-    /** Tear down the WS + all loops. Idempotent. Status → DISCONNECTED. */
-    fun disconnect() {
-        log.info("disconnect")
+    /**
+     * Tear down the WS + all loops. Idempotent. Status → DISCONNECTED.
+     *
+     * @param clearSession true (default — logout/consumer teardown) clears
+     *   [SdkState.hasSession] so the gate falls back to login. false (idle-
+     *   disconnect via [Hooks.disconnectForIdle]) keeps the user "in session"
+     *   (gate stays on chat; SDK auto-reconnects on the next presence signal).
+     */
+    fun disconnect(clearSession: Boolean = true) {
+        log.info("disconnect", mapOf("clearSession" to clearSession))
         consumerDisconnected = true
         reconnectController.cancel()
         connectors.sessions.reset()
         audio.release()
         lifecycle.teardown()
+        if (clearSession && deriver.hasSession) {
+            log.info("hasSession.clear", mapOf("trigger" to "logout"))
+            deriver.hasSession = false
+        }
         setStatus(SdkStatus.DISCONNECTED)
     }
 
@@ -285,12 +296,26 @@ class SentientSdk(
         if (deriver.status == next) return
         log.info("status", mapOf("from" to deriver.status, "to" to next))
         deriver.status = next
-        if (next == SdkStatus.READY) deriver.connectionLost = false
+        if (next == SdkStatus.READY) {
+            deriver.connectionLost = false
+            // First READY marks the user "in session" → gate stays on chat.
+            // PRESERVED across idle/drop/reconnect; cleared only on logout/authExpired.
+            if (!deriver.hasSession) {
+                log.info("hasSession.set", mapOf("trigger" to "ready"))
+                deriver.hasSession = true
+            }
+        }
         emit()
     }
 
     private fun setError(authExpired: Boolean) {
         deriver.authExpired = authExpired
+        // Terminal auth failure ends the session → gate falls back to login.
+        // Idle/drop never route here, so hasSession survives those by construction.
+        if (authExpired && deriver.hasSession) {
+            log.info("hasSession.clear", mapOf("trigger" to "authExpired"))
+            deriver.hasSession = false
+        }
         setStatus(SdkStatus.ERROR)
     }
 
@@ -321,6 +346,9 @@ class SentientSdk(
         override fun nowMs(): Long = bundle.clock.nowMs()
         override fun isConsumerDisconnected(): Boolean = consumerDisconnected
         override fun status(): SdkStatus = deriver.status
-        override fun disconnectForIdle() = disconnect()
+        // Idle-disconnect keeps hasSession=true: the user stays "in session" and
+        // the SDK auto-reconnects on the next presence signal. Only explicit
+        // logout (the default disconnect()) clears the session.
+        override fun disconnectForIdle() = disconnect(clearSession = false)
     }
 }
