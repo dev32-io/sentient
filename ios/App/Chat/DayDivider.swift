@@ -9,6 +9,9 @@ struct DayDivider: View {
             Text(label.uppercased())
                 .font(Typo.ui(TypeScale.xs, .medium)).tracking(1)
                 .foregroundStyle(DuskColors.ink3)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .minimumScaleFactor(0.8)
             line
         }
         .padding(.vertical, Space.xs)
