@@ -2,10 +2,12 @@
 // WsTransportTest — wire-contract tests for the WS transport boundary.
 //
 // Pins: ClientMessage → WireJson text frame on send; ByteArray → binary frame
-// on sendBinary; incoming TEXT WsIncoming → ServerMessage decode; incoming
-// BINARY frames routed to the separate audio stream (NOT the JSON stream);
-// Closed/Failure surfaced as TransportSignal lifecycle events. These are
-// process-boundary wire contracts → keepers per .claude/rules/testing.md.
+// on sendBinary; incoming TEXT WsIncoming → ServerMessage decode (WsEvent.Control);
+// incoming BINARY frames → WsEvent.Audio on the SAME ordered event stream; the
+// control/audio interleave is preserved in EXACT arrival order (audio.done never
+// overtakes the trailing audio frames it terminates); Closed/Failure surfaced as
+// TransportSignal lifecycle events. These are process-boundary wire contracts →
+// keepers per .claude/rules/testing.md.
 //
 // FakeWebSocketEngine.open() mints a FRESH WebSocketSession (its own incoming
 // channel) each call — subscribe to the session returned by the open() under
@@ -82,8 +84,8 @@ class WsTransportTest {
         val fake = FakeWebSocketEngine()
         val transport = openTransport(fake)
 
-        val collected = mutableListOf<ServerMessage>()
-        val job = launch { transport.incoming.toList(collected) }
+        val collected = mutableListOf<WsEvent>()
+        val job = launch { transport.events.toList(collected) }
 
         fake.emit(WsIncoming.Text("{\"type\":\"pong\"}"))
         fake.emit(
@@ -95,9 +97,10 @@ class WsTransportTest {
         fake.closeIncoming()
         job.join()
 
-        assertEquals(2, collected.size)
-        assertTrue(collected[0] is ServerMessage.Pong)
-        val ready = collected[1] as ServerMessage.SessionReady
+        val controls = collected.filterIsInstance<WsEvent.Control>()
+        assertEquals(2, controls.size)
+        assertTrue(controls[0].message is ServerMessage.Pong)
+        val ready = controls[1].message as ServerMessage.SessionReady
         assertEquals("s1", ready.sessionId)
     }
 
@@ -106,38 +109,68 @@ class WsTransportTest {
         val fake = FakeWebSocketEngine()
         val transport = openTransport(fake)
 
-        val collected = mutableListOf<ServerMessage>()
-        val job = launch { transport.incoming.toList(collected) }
+        val collected = mutableListOf<WsEvent>()
+        val job = launch { transport.events.toList(collected) }
 
         fake.emit(WsIncoming.Text("{\"type\":\"some.future.frame\",\"x\":1}"))
         fake.closeIncoming()
         job.join()
 
-        assertEquals(1, collected.size)
-        assertTrue(collected[0] is ServerMessage.Unknown)
+        val controls = collected.filterIsInstance<WsEvent.Control>()
+        assertEquals(1, controls.size)
+        assertTrue(controls[0].message is ServerMessage.Unknown)
     }
 
     @Test
-    fun binary_frames_route_to_audio_stream_not_json_stream() = runTest {
+    fun binary_frames_surface_as_audio_events_on_the_event_stream() = runTest {
         val fake = FakeWebSocketEngine()
         val transport = openTransport(fake)
 
-        val json = mutableListOf<ServerMessage>()
-        val audio = mutableListOf<ByteArray>()
-        val jsonJob = launch { transport.incoming.toList(json) }
-        val audioJob = launch { transport.audioFrames.toList(audio) }
+        val collected = mutableListOf<WsEvent>()
+        val job = launch { transport.events.toList(collected) }
 
         val pcm = byteArrayOf(9, 8, 7)
         fake.emit(WsIncoming.Binary(pcm))
         fake.emit(WsIncoming.Text("{\"type\":\"pong\"}"))
         fake.closeIncoming()
-        jsonJob.join()
-        audioJob.join()
+        job.join()
 
-        assertEquals(1, json.size)
-        assertTrue(json[0] is ServerMessage.Pong)
+        val audio = collected.filterIsInstance<WsEvent.Audio>()
+        val controls = collected.filterIsInstance<WsEvent.Control>()
         assertEquals(1, audio.size)
-        assertTrue(audio[0].contentEquals(pcm))
+        assertTrue(audio[0].bytes.contentEquals(pcm))
+        assertEquals(1, controls.size)
+        assertTrue(controls[0].message is ServerMessage.Pong)
+    }
+
+    @Test
+    fun events_preserve_exact_control_audio_interleave_order() = runTest {
+        // The wire contract: trailing audio frames arrive BEFORE the control
+        // frame that terminates them (connector.audio.done). One ordered event
+        // stream must surface them in EXACT arrival order so audio.done can never
+        // overtake/lag the audio — this is the bug this fix pins.
+        val fake = FakeWebSocketEngine()
+        val transport = openTransport(fake)
+
+        val collected = mutableListOf<WsEvent>()
+        val job = launch { transport.events.toList(collected) }
+
+        val b1 = byteArrayOf(1, 1, 1)
+        val b2 = byteArrayOf(2, 2, 2)
+        fake.emit(WsIncoming.Text("{\"type\":\"connector.audio.start\"}"))
+        fake.emit(WsIncoming.Binary(b1))
+        fake.emit(WsIncoming.Binary(b2))
+        fake.emit(WsIncoming.Text("{\"type\":\"connector.audio.done\"}"))
+        fake.closeIncoming()
+        job.join()
+
+        assertEquals(4, collected.size, "events=$collected")
+        val start = collected[0] as WsEvent.Control
+        assertTrue(start.message is ServerMessage.ConnectorAudioStart, "first=$start")
+        assertTrue((collected[1] as WsEvent.Audio).bytes.contentEquals(b1))
+        assertTrue((collected[2] as WsEvent.Audio).bytes.contentEquals(b2))
+        val done = collected[3] as WsEvent.Control
+        assertTrue(done.message is ServerMessage.ConnectorAudioDone, "last=$done")
     }
 
     @Test

@@ -2,15 +2,20 @@
 // WsTransport — the WS send/receive boundary over a WebSocketSession.
 //
 // Wraps one open [WebSocketSession] (B1) and demultiplexes its single
-// [WsIncoming] stream into three typed outbound flows, mirroring how
-// sentient-sdk.ts splits binary (audio) from JSON (control) on `onmessage`:
-//   - [incoming]    — TEXT frames decoded to [ServerMessage] via WireJson.
-//   - [audioFrames] — BINARY frames passed through as raw ByteArray (audio path).
-//   - [signals]     — Closed / Failure surfaced as [TransportSignal] for the
-//                     reconnect layer (web-sdk's onclose / onerror split).
+// [WsIncoming] stream into typed outbound flows:
+//   - [events]   — ONE ordered stream of [WsEvent]: TEXT frames decoded to
+//                  [ServerMessage] (WsEvent.Control) and BINARY frames passed
+//                  through as raw ByteArray (WsEvent.Audio), interleaved in
+//                  EXACT arrival order. Cross-stream order is part of the wire
+//                  contract (trailing audio precedes `connector.audio.done`), so
+//                  control and audio MUST share one channel from one pump — two
+//                  channels drained by two collectors would race and let
+//                  `audio.done` overtake the audio it terminates.
+//   - [signals]  — Closed / Failure surfaced as [TransportSignal] for the
+//                  reconnect layer (web-sdk's onclose / onerror split).
 //
 // A single pump coroutine drains session.incoming once (the underlying channel
-// is single-consumer) and fans out to three completing channels, so each public
+// is single-consumer) and routes onto the completing channels, so each public
 // flow terminates when the socket closes — `toList` does not hang.
 //
 // Per logging.md: raw incoming TEXT is logged at DEBUG (truncated by the logger)
@@ -43,15 +48,14 @@ class WsTransport(
 ) {
     private val log = createLogger("transport", "ws")
 
-    private val messageChannel = Channel<ServerMessage>(Channel.UNLIMITED)
-    private val audioChannel = Channel<ByteArray>(Channel.UNLIMITED)
+    private val eventChannel = Channel<WsEvent>(Channel.UNLIMITED)
     private val signalChannel = Channel<TransportSignal>(Channel.UNLIMITED)
 
-    /** Decoded control frames. Completes when the socket closes or fails. */
-    val incoming: Flow<ServerMessage> = messageChannel.receiveAsFlow()
-
-    /** Raw binary audio frames. Completes when the socket closes or fails. */
-    val audioFrames: Flow<ByteArray> = audioChannel.receiveAsFlow()
+    /**
+     * One ordered stream of control + audio events in EXACT arrival order.
+     * Completes when the socket closes or fails.
+     */
+    val events: Flow<WsEvent> = eventChannel.receiveAsFlow()
 
     /** Lifecycle signals (Closed / Failure) for the reconnect layer. */
     val signals: Flow<TransportSignal> = signalChannel.receiveAsFlow()
@@ -80,7 +84,7 @@ class WsTransport(
             // Always close the outbound channels — normal upstream completion,
             // an explicit Closed/Failure frame, OR scope cancellation (the normal
             // disconnect() path, where CancellationException propagates out of
-            // collect). Without finally a cancelled pump leaves the fan-out
+            // collect). Without finally a cancelled pump leaves the event/signal
             // channels open and any consumer collecting them in a different scope
             // hangs forever. closeChannels() is idempotent (Channel.close).
             closeChannels()
@@ -92,7 +96,7 @@ class WsTransport(
             is WsIncoming.Text -> routeText(frame.data)
             is WsIncoming.Binary -> {
                 log.debug("recv-binary", mapOf("bytes" to frame.data.size))
-                audioChannel.send(frame.data)
+                eventChannel.send(WsEvent.Audio(frame.data))
             }
             is WsIncoming.Closed -> {
                 log.info("recv-closed", mapOf("code" to frame.code, "reason" to frame.reason))
@@ -112,12 +116,11 @@ class WsTransport(
         // traceable (logger truncates the preview).
         log.debug("recv-text", mapOf("raw" to raw))
         val msg = WireJson.instance.decodeFromString(ServerMessage.serializer(), raw)
-        messageChannel.send(msg)
+        eventChannel.send(WsEvent.Control(msg))
     }
 
     private fun closeChannels() {
-        messageChannel.close()
-        audioChannel.close()
+        eventChannel.close()
         signalChannel.close()
     }
 }

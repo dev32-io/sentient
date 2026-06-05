@@ -26,6 +26,7 @@ import io.sentient.mobilesdk.transport.SessionResume
 import io.sentient.mobilesdk.transport.TransportSignal
 import io.sentient.mobilesdk.transport.WS_NORMAL_CLOSURE
 import io.sentient.mobilesdk.transport.WebSocketSession
+import io.sentient.mobilesdk.transport.WsEvent
 import io.sentient.mobilesdk.transport.WsTransport
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -133,8 +134,15 @@ class SdkLifecycle(
 
     private fun startPump(tx: WsTransport) {
         pumpJob = scope.launch {
-            launch { tx.audioFrames.collect { router.routeBinary(it) } }
-            tx.incoming.collect { onFrame(it) }
+            // ONE in-order consumer: control + audio interleave is preserved by
+            // the transport's single event stream, so `connector.audio.done`
+            // (control) never overtakes the trailing audio frames it terminates.
+            tx.events.collect { event ->
+                when (event) {
+                    is WsEvent.Control -> onFrame(event.message)
+                    is WsEvent.Audio -> router.routeBinary(event.bytes)
+                }
+            }
         }
     }
 
