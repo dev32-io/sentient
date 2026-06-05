@@ -4,8 +4,10 @@
 // (gateway/webui/src/components/dock/composer.tsx).
 //
 // A paper-surface rounded card holding a text field over a button row: mic
-// toggle, TTS toggle, a spacer, optional interrupt, and send. Send is disabled
-// when the field is empty OR the SDK is not READY. Interrupt is shown only when
+// toggle, TTS toggle, a spacer, optional interrupt, and send. Send is enabled
+// whenever the draft is non-empty; a send issued before READY is queued by
+// SdkStore and flushed on the READY edge (web-sdk parity, always-typeable).
+// Interrupt is shown only when
 // cognition != .idle || isSpeaking (a cycle is in flight or audio is playing).
 // TTS toggle flips the server-of-record preference via setTtsEnabled.
 //
@@ -31,7 +33,8 @@ import SwiftUI
 import MobileSdk
 
 struct Composer: View {
-    /// True when the SDK is READY (text submission flows).
+    /// Tints the send glyph as ready. Passed `true` now (SdkStore queues any
+    /// send issued before READY), so it no longer gates submission.
     let canSend: Bool
     /// Server-of-record TTS preference (mirrored, not owned).
     let ttsEnabled: Bool
