@@ -24,10 +24,13 @@
 // setActive(true) is RE-ASSERTED on every [acquire], so an external deactivation can
 // never permanently short-circuit the next playback run.
 //
-// NO-CRASH CONTRACT: prepare()/start() go through the SAME ObjC @try/@catch shims
-// as the shared engine ([enginePrepareGuarded]/[engineStartGuarded]) so a missing
-// audio route (e.g. a sim with no output) degrades to a logged null/false instead
-// of an NSException → SIGABRT. ensureSession's NSError** is handled via memScoped.
+// NO-CRASH CONTRACT: prepare()/start() are DEFERRED to [ensureRunning] AFTER the
+// adapter connects the player to mainMixerNode; the same ObjC @try/@catch shims
+// ([enginePrepareGuarded]/[engineStartGuarded]) guard them there, so a missing route
+// on a non-empty graph degrades to a logged false instead of SIGABRT. Calling
+// prepare()/start() on an empty graph (no nodes) trips the AVAudioEngine precondition
+// on a real device → NSException (swallowed) → silent TTS, so we do NOT do it in
+// [acquire]. ensureSession's NSError** is handled via memScoped.
 // ---------------------------------------------------------------------------
 @file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class, kotlinx.cinterop.BetaInteropApi::class)
 
@@ -70,18 +73,23 @@ internal class StandalonePlaybackEngine private constructor() {
     private var active = false
 
     /**
-     * Configures the .playback session + starts the engine, then returns it.
-     * Returns null on any configuration / start failure (no throw). prepare()/start()
-     * are guarded against the AVAudioEngine "no audio I/O route" NSException exactly
-     * like the shared engine, degrading to a null return instead of SIGABRT.
+     * Configures the .playback session and returns the engine WITHOUT preparing or
+     * starting it. Calling prepare()/start() on an empty graph (no nodes attached)
+     * trips the AVAudioEngine precondition on a real device — the resulting NSException
+     * is swallowed by the ObjC @try/@catch shim but the engine is left in a broken
+     * state, causing every TTS frame to be silently dropped.
+     *
+     * The adapter connects the player node to mainMixerNode AFTER this call, then
+     * invokes [ensureRunning] to prepare+start the non-empty graph. [ensureRunning] is
+     * the single prepare/start path — its ObjC shims guard against a missing route on
+     * a real device, degrading to a logged false instead of SIGABRT.
+     *
+     * Returns null only on session-config failure (category set or setActive failed).
      */
     fun acquire(): AVAudioEngine? {
         if (!ensureSession()) return null
-        if (!engine.running) {
-            if (!enginePrepareGuarded(engine) || !engineStartGuarded(engine)) return null
-        }
         active = true
-        log.debug("acquire", mapOf("running" to engine.running))
+        log.debug("acquire", mapOf("running" to engine.running, "deferredStart" to true))
         return engine
     }
 
