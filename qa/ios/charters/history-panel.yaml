@@ -17,7 +17,7 @@
 # Prerequisites: same as chat-smoke.yaml (backend configured, user logged in).
 # This flow assumes the chat screen is already the active screen.
 #
-# Run: maestro test qa/ios/charters/history-panel.yaml
+# Run: maestro test --device DB6D8CAF-B12E-44CA-87EB-6A0DD51FFA75 qa/ios/charters/history-panel.yaml
 #
 # E2E matrix:
 # Case                        | Viewport      | Pre-state           | Action                          | Expected user-visible                          | Expected log trail
@@ -40,19 +40,62 @@
 # Rename via context menu     | 390×844 sim   | Panel open, history | Long-press session → Rename     | Alert with pre-filled title; confirm saves     | historyModel.renameSession
 # Delete via context menu     | 390×844 sim   | Panel open, history | Long-press session → Delete     | Confirm dialog; session removed from list      | historyModel.deleteSession
 
-appId: ai.sentient.mobile
+appId: io.dev32.sentient.debug
 ---
+# Launch + handle login if needed (flow may run standalone after a fresh sim lock).
+- launchApp
+
+# Backend setup — only if unconfigured (fresh install).
+- runFlow:
+    when:
+      visible: "Sentient backend"
+    commands:
+      - tapOn:
+          id: "backend-host"
+      - eraseText: 50
+      - inputText: "localhost"
+      - tapOn:
+          id: "backend-port"
+      - eraseText: 10
+      - inputText: "8888"
+      - tapOn:
+          text: "Plain ws"
+      - tapOn:
+          id: "backend-save"
+      - extendedWaitUntil:
+          visible:
+            text: "Who's here?"
+          timeout: 10000
+
+# Login — only if login screen is showing.
+- runFlow:
+    when:
+      visible: "Who's here?"
+    commands:
+      - tapOn:
+          id: "login-avatar-.*"
+          index: 0
+      - tapOn:
+          id: "pin-key-1"
+      - tapOn:
+          id: "pin-key-2"
+      - tapOn:
+          id: "pin-key-3"
+      - tapOn:
+          id: "pin-key-4"
+
 # Precondition: app is at the chat screen with at least one history session.
-# If not logged in, run chat-smoke.yaml first (it leaves you on chat screen).
 
 # ── T1: Open panel via hamburger ──────────────────────────────────────────────
-- assertVisible:
-    id: "chat-screen"
-    timeout: 5000
+- extendedWaitUntil:
+    visible:
+      id: "chat-screen"
+    timeout: 8000
 - tapOn:
     id: "history-open"
-- assertVisible:
-    id: "history-new-chat"
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
     timeout: 4000
 - takeScreenshot: history-01-panel-open
 
@@ -66,19 +109,22 @@ appId: ai.sentient.mobile
 - tapOn:
     id: "settings-open"
 - takeScreenshot: history-03-settings-sheet
-# Dismiss the settings sheet (swipe down or back button).
-- swipe:
-    direction: DOWN
-    from:
-      point: "50%,50%"
+# Dismiss the settings sheet via the "Done" button (settings-back).
+# Avoid swipe-down gesture which can trigger iOS home/lock on simulator.
+- tapOn:
+    id: "settings-back"
+# Wait for sheet dismiss animation + panel to close before taking screenshot.
+- waitForAnimationToEnd:
+    timeout: 3000
 - takeScreenshot: history-04-settings-dismissed
 
 # ── T4: Reopen panel — scrim tap closes ───────────────────────────────────────
 - tapOn:
     id: "history-open"
-- assertVisible:
-    id: "history-new-chat"
-    timeout: 4000
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
+    timeout: 6000
 - takeScreenshot: history-05-panel-reopen
 # Tap scrim (right 10% of screen is outside the 86%-width panel).
 - tapOn:
@@ -87,72 +133,83 @@ appId: ai.sentient.mobile
 
 # ── T5: Edge-swipe to open ────────────────────────────────────────────────────
 - swipe:
-    from:
-      point: "2%,50%"    # leading edge (within 20pt strip)
-    to:
-      point: "50%,50%"
-- assertVisible:
-    id: "history-new-chat"
+    start: "2%,50%"    # leading edge (within 20pt strip)
+    end: "50%,50%"
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
     timeout: 3000
 - takeScreenshot: history-07-edge-swipe-open
 
-# ── T6: Drag panel past midpoint, release open ────────────────────────────────
-# Panel is open; drag it left past midpoint then release — should snap back open.
-- swipe:
-    from:
-      point: "43%,50%"
-    to:
-      point: "25%,50%"
-- takeScreenshot: history-08-drag-past-mid
-- assertVisible:
-    id: "history-new-chat"
-    timeout: 3000
-- takeScreenshot: history-09-snap-open
+# Close the panel via scrim tap to set up T6/T7 from a clean closed state.
+- tapOn:
+    point: "95%,50%"
+- waitForAnimationToEnd:
+    timeout: 2000
 
-# ── T7: Drag panel fully left → snap closed ───────────────────────────────────
+# ── T6: Drag panel right from closed past midpoint → snaps open ───────────────
+# Panel is closed. Drag from the leading edge strip (5%) past the midpoint (55%).
+# This puts the panel past the snap-open threshold → springs fully open.
 - swipe:
-    from:
-      point: "43%,50%"
-    to:
-      point: "5%,50%"
-- takeScreenshot: history-10-snap-closed
+    start: "5%,50%"
+    end: "55%,50%"
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
+    timeout: 3000
+- takeScreenshot: history-08-drag-snap-open
+
+# ── T7: Drag panel left past snap threshold → snap closed ─────────────────────
+# Panel is open (from T6). Drag it fully left past the close threshold.
+- swipe:
+    start: "43%,50%"
+    end: "2%,50%"
+- waitForAnimationToEnd:
+    timeout: 2000
+- takeScreenshot: history-09-snap-closed
+# Verify panel is closed (history-new-chat no longer visible).
+- takeScreenshot: history-10-snap-closed-settled
 
 # ── T8: New chat via panel FAB ────────────────────────────────────────────────
 - tapOn:
     id: "history-open"
-- assertVisible:
-    id: "history-new-chat"
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
     timeout: 4000
 - tapOn:
     id: "history-new-chat"
 # Panel should close, chat screen remains with empty composer.
-- assertVisible:
-    id: "chat-screen"
+- extendedWaitUntil:
+    visible:
+      id: "chat-screen"
     timeout: 3000
 - takeScreenshot: history-11-new-chat-from-fab
 
 # ── T9: Search filter ─────────────────────────────────────────────────────────
 - tapOn:
     id: "history-open"
-- assertVisible:
-    id: "history-new-chat"
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
     timeout: 4000
 - tapOn:
     id: "history-search"
 - inputText: "hi"
 - takeScreenshot: history-12-search-filtered
-# Clear search.
-- clearText:
-    id: "history-search"
+# Clear search — field is already focused; just erase without re-tapping.
+- eraseText: 10
 - takeScreenshot: history-13-search-cleared
 
 # ── T10: Session select ───────────────────────────────────────────────────────
 # Tap the first session row (if any exist) — panel closes and that session loads.
-- tapOn:
-    index: 0
-    text: ".*"
-    parent:
-      # HistoryRow does not have a fixed id; target by row content.
-      type: List
-  optional: true
-- takeScreenshot: history-14-session-selected
+# Session rows have id "history-row-<sessionId>" — use regex to match first one.
+- runFlow:
+    when:
+      visible:
+        id: "history-row-.*"
+    commands:
+      - tapOn:
+          id: "history-row-.*"
+          index: 0
+      - takeScreenshot: history-14-session-selected

@@ -18,7 +18,7 @@
 #     OR use the in-app setup screen (backend-host / backend-port / backend-save)
 #   - Dev user present in gateway with known PIN (free credentials, no paid services)
 #
-# Run: maestro test qa/ios/charters/chat-smoke.yaml
+# Run: maestro test --device DB6D8CAF-B12E-44CA-87EB-6A0DD51FFA75 qa/ios/charters/chat-smoke.yaml
 # (maestro must be installed: brew install maestro)
 #
 # E2E matrix (one row per feature/interaction):
@@ -43,7 +43,7 @@
 # New chat from panel FAB     | 390×844 sim   | Panel open          | Tap "+" FAB (history-new-chat) | Panel closes, new empty chat       | historyModel.newChat
 # New chat from title bar "+" | 390×844 sim   | Chat screen         | Tap "+" (new-chat)             | New empty chat starts              | historyModel.newChat
 
-appId: ai.sentient.mobile
+appId: io.dev32.sentient.debug
 ---
 - launchApp
 
@@ -54,15 +54,13 @@ appId: ai.sentient.mobile
     when:
       visible: "Sentient backend"
     commands:
-      - clearText:
-          id: "backend-host"
       - tapOn:
           id: "backend-host"
+      - eraseText: 50
       - inputText: "localhost"
-      - clearText:
-          id: "backend-port"
       - tapOn:
           id: "backend-port"
+      - eraseText: 10
       - inputText: "8888"
       # Security: tap "Plain ws" segment (third segment in the picker)
       - tapOn:
@@ -70,39 +68,37 @@ appId: ai.sentient.mobile
       - tapOn:
           id: "backend-save"
       # Wait for save + dismiss
-      - assertVisible:
-          id: "login-loading"
+      - extendedWaitUntil:
+          visible:
+            id: "login-loading"
           timeout: 10000
-        optional: true
 
 # ── Step 2: Login ──────────────────────────────────────────────────────────────
 - assertVisible: "Who's here?"
 - takeScreenshot: chat-smoke-01-login-avatar
 
-# Tap the first available user avatar (accessibility id set in AvatarTile).
-# If the first user's tile is labelled by displayName, use text match as fallback.
+# Tap the first available user avatar by accessibility id pattern.
 - tapOn:
+    id: "login-avatar-.*"
     index: 0
-    parent:
-      id: "login-loading"
-  optional: true
-- tapOn:
-    text: ".*"   # first avatar tile by pattern — adjust to real user name
-    index: 0
-    optional: true
 
-# Enter PIN — 4-digit dev PIN (set via gateway user config).
-# Replace XXXX with the actual dev PIN for this environment.
-- tapOn: { text: "1" }
-- tapOn: { text: "2" }
-- tapOn: { text: "3" }
-- tapOn: { text: "4" }
+# Enter PIN — 4-digit dev PIN (1234 for this environment).
+# Use pin-key-<n> accessibility identifiers from PinPad.swift
+- tapOn:
+    id: "pin-key-1"
+- tapOn:
+    id: "pin-key-2"
+- tapOn:
+    id: "pin-key-3"
+- tapOn:
+    id: "pin-key-4"
 - takeScreenshot: chat-smoke-02-pin-entry
 
 # ── Step 3: Chat screen — brand wordmark + SentientMark ───────────────────────
 # Navigation to chat is driven by SDK status == .ready in RootView.
-- assertVisible:
-    id: "chat-screen"
+- extendedWaitUntil:
+    visible:
+      id: "chat-screen"
     timeout: 8000
 - takeScreenshot: chat-smoke-03-chat-idle
 
@@ -129,17 +125,19 @@ appId: ai.sentient.mobile
 
 # ── Step 6: Streaming bubble visible + typewriter (no block cursor) ───────────
 # Wait for at least the first assistant bubble to start streaming.
-- assertVisible:
-    id: "message-bubble-1"
+- extendedWaitUntil:
+    visible:
+      id: "message-bubble-1"
     timeout: 15000
 - takeScreenshot: chat-smoke-06-streaming-bubble
 
 # Interrupt button should appear while streaming (canInterrupt == true).
-- assertVisible:
-    id: "chat-interrupt"
-    timeout: 5000
-  optional: true
-- takeScreenshot: chat-smoke-07-interrupt-visible
+- runFlow:
+    when:
+      visible:
+        id: "chat-interrupt"
+    commands:
+      - takeScreenshot: chat-smoke-07-interrupt-visible
 
 # ── Step 7: Wait for reply to complete ────────────────────────────────────────
 - waitForAnimationToEnd:
@@ -159,8 +157,9 @@ appId: ai.sentient.mobile
 # ── Step 9: History panel ─────────────────────────────────────────────────────
 - tapOn:
     id: "history-open"
-- assertVisible:
-    id: "history-new-chat"
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
     timeout: 3000
 - takeScreenshot: chat-smoke-11-history-open
 
@@ -172,7 +171,8 @@ appId: ai.sentient.mobile
 # ── Step 10: New chat via title-bar "+" ───────────────────────────────────────
 - tapOn:
     id: "new-chat"
-- assertVisible:
-    id: "chat-screen"
+- extendedWaitUntil:
+    visible:
+      id: "chat-screen"
     timeout: 3000
 - takeScreenshot: chat-smoke-13-new-chat
