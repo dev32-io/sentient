@@ -3,6 +3,14 @@
 // (rememberTypewriterText) calls typewriterTick per frame; this stays pure/testable.
 package io.sentient.android.chat
 
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import io.sentient.mobilesdk.design.Typewriter as Cfg
 
 data class TypewriterState(val visibleCount: Int = 0, val pauseUntil: Double = 0.0)
@@ -50,4 +58,25 @@ private fun boundaryPause(t: List<Char>, upto: Int): Double? {
     if (last == '\n' && upto >= 2 && t[upto - 2] == '\n') return paragraphPause
     if (last == '.' || last == '!' || last == '?') return sentencePause
     return null
+}
+
+/** Revealed text for a streaming bubble; full text when not streaming. No cursor. */
+@Composable
+fun rememberTypewriterText(content: String, streaming: Boolean): String {
+    if (!streaming) return content
+    val latest by rememberUpdatedState(content)
+    var state by remember { mutableStateOf(TypewriterState()) }
+    LaunchedEffect(Unit) {
+        var last = 0.0
+        while (true) {
+            withFrameNanos { nanos ->
+                val now = nanos / 1_000_000_000.0
+                val dt = if (last == 0.0) 0.0 else now - last
+                last = now
+                state = typewriterTick(state, latest.toList(), streamComplete = false, dt = dt, now = now)
+            }
+        }
+    }
+    val chars = latest.toList()
+    return chars.subList(0, state.visibleCount.coerceAtMost(chars.size)).joinToString("")
 }

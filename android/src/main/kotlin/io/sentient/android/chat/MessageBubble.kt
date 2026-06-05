@@ -11,7 +11,7 @@
 // Both: 1dp lineSoft border, padMsg (18dp) text padding, ink text, capped at
 // msgMax width. A streaming assistant message with no text yet shows the
 // three-dot pulse (mirrors BubbleText PlaceholderPulse); once text arrives it
-// renders GFM markdown plus a trailing block cursor while still streaming.
+// renders GFM markdown via typewriter reveal while still streaming.
 //
 // Markdown: GFM via mikepenz multiplatform-markdown-renderer (m3), themed to
 // Dusk (ink text, accent links, bgElev code) — mirrors the webui `marked` path.
@@ -135,10 +135,9 @@ private fun BubbleBody(message: ChatMessage, isUser: Boolean) {
 @Composable
 private fun BubbleText(text: String, streaming: Boolean, cutoffKind: String?) {
     val tokens = LocalTokens.current
-    // GFM rendered to Compose (mikepenz). Streaming appends a block cursor into the
-    // source (parity with the plain-text typewriter); the cutoff marker renders as a
-    // separate row below so it stays outside the markdown block flow.
-    val cursor = if (streaming) " ▍" else ""
+    // GFM rendered to Compose (mikepenz). Streaming reveals text via typewriter; the
+    // cutoff marker renders as a separate row below so it stays outside the markdown block flow.
+    val shown = rememberTypewriterText(text, streaming)
     val body = TextStyle(
         color = Color(Colors.ink),
         fontSize = tokens.type.base,
@@ -146,7 +145,7 @@ private fun BubbleText(text: String, streaming: Boolean, cutoffKind: String?) {
     )
     Column(verticalArrangement = Arrangement.spacedBy(tokens.space.xs)) {
         Markdown(
-            content = text + cursor,
+            content = shown,
             colors = markdownColor(
                 text = Color(Colors.ink),
                 codeBackground = Color(Colors.bgElev),
