@@ -7,6 +7,8 @@
 package io.sentient.mobilesdk.sdk
 
 import io.sentient.mobilesdk.connectors.SessionsListPage
+import io.sentient.mobilesdk.connectors.SessionsRequestException
+import io.sentient.mobilesdk.connectors.SessionsTimeoutException
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.presence.IdleDetectorConfig
 import io.sentient.mobilesdk.presence.IdleDetectorEvent
@@ -188,22 +190,48 @@ class SentientSdk(
     }
 
     /** Page the session list (requestId-correlated). */
+    @Throws(
+        SessionsRequestException::class,
+        SessionsTimeoutException::class,
+        kotlin.coroutines.cancellation.CancellationException::class,
+    )
     suspend fun listSessions(limit: Int, offset: Int): SessionsListPage =
         connectors.sessions.list(limit, offset)
 
     /** Switch to a session; awaits the session.switched broadcast. */
+    @Throws(
+        SessionsRequestException::class,
+        SessionsTimeoutException::class,
+        kotlin.coroutines.cancellation.CancellationException::class,
+    )
     suspend fun switchSession(sessionId: String) {
         markInteraction()
         connectors.sessions.switchTo(sessionId)
     }
 
     /** Start a fresh chat; awaits the session.created broadcast. */
+    @Throws(
+        SessionsRequestException::class,
+        SessionsTimeoutException::class,
+        kotlin.coroutines.cancellation.CancellationException::class,
+    )
     suspend fun newChat() {
         markInteraction()
         connectors.sessions.newChat()
     }
 
+    @Throws(
+        SessionsRequestException::class,
+        SessionsTimeoutException::class,
+        kotlin.coroutines.cancellation.CancellationException::class,
+    )
     suspend fun deleteSession(id: String) = connectors.sessions.delete(id)
+
+    @Throws(
+        SessionsRequestException::class,
+        SessionsTimeoutException::class,
+        kotlin.coroutines.cancellation.CancellationException::class,
+    )
     suspend fun renameSession(id: String, title: String) = connectors.sessions.rename(id, title)
 
     // ── Reconnect wiring ────────────────────────────────────────────────────────
