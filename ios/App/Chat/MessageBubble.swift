@@ -11,8 +11,9 @@
 //    color-mix(sage 16%, paper), approximated by interpolation).
 // Both: 1pt lineSoft border, padMsg (18pt) text padding, ink text, capped at
 // msgMax width. A streaming assistant message with no text yet shows the
-// three-dot pulse; once text arrives it renders the text plus a trailing block
-// cursor while still streaming; a cut-short reply shows an interrupted marker.
+// three-dot pulse; once text arrives it reveals text via the typewriter engine
+// (no block cursor — growing text is the streaming affordance, webui parity);
+// a cut-short reply shows an interrupted marker.
 //
 // Markdown: GFM via MarkdownUI (swift-markdown-ui), themed to Dusk
 // (Theme.dusk) — mirrors the webui `marked` render path.
@@ -71,26 +72,24 @@ struct MessageBubble: View {
             .fixedSize(horizontal: false, vertical: true)
     }
 
+    // Tool pills (message.tools) are wired into both branches in a later task (6.1).
     @ViewBuilder
     private var bubbleContent: some View {
         if message.streaming && message.content.isEmpty {
             PulseDots()
+        } else if message.streaming {
+            StreamingText(content: message.content)
         } else {
-            bubbleText
+            committedText
         }
     }
 
-    private var bubbleText: some View {
+    private var committedText: some View {
         VStack(alignment: .leading, spacing: Space.xs) {
-            // GFM rendered via MarkdownUI, themed to Dusk. The streaming block
-            // cursor is appended into the source (parity with the plain-text
-            // typewriter); the cutoff marker stays a separate view below.
-            Markdown(message.content + cursorSuffix)
+            Markdown(message.content)
                 .markdownTheme(.dusk)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if cutoffLabel != nil {
-                interruptedMarker
-            }
+            if cutoffLabel != nil { interruptedMarker }
         }
     }
 
@@ -100,9 +99,6 @@ struct MessageBubble: View {
             .foregroundStyle(DuskColors.ink3)
             .accessibilityIdentifier("message-cutoff-\(index)")
     }
-
-    /// Trailing block cursor while the bubble is still streaming text.
-    private var cursorSuffix: String { message.streaming ? " ▍" : "" }
 
     /// Interrupt / barge-in cut-short marker copy (nil when not cut short).
     private var cutoffLabel: String? {
@@ -153,6 +149,40 @@ private struct PulseDots: View {
     }
 }
 
+/// Reveals streamed assistant text via the typewriter engine.
+/// No block cursor (webui parity); the growing text IS the streaming affordance.
+/// Reduced-motion: renders the full content immediately.
+private struct StreamingText: View {
+    let content: String
+    @State private var twState = TypewriterState()
+    @State private var lastDate: Date? = nil
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let chars = Array(content)
+        Group {
+            if reduceMotion {
+                Markdown(content).markdownTheme(.dusk)
+            } else {
+                TimelineView(.animation) { tl in
+                    Markdown(String(chars.prefix(twState.visibleCount)))
+                        .markdownTheme(.dusk)
+                        .onChange(of: tl.date) { _, newDate in
+                            let dt = lastDate.map { newDate.timeIntervalSince($0) } ?? 0
+                            let now = newDate.timeIntervalSinceReferenceDate
+                            twState = typewriterTick(
+                                twState, target: chars,
+                                streamComplete: false, dt: dt, now: now
+                            )
+                            lastDate = newDate
+                        }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 /// Bubble layout constants. `userBg` approximates the webui
 /// color-mix(in oklab, sage 16%, paper) via sRGB interpolation, matching the
 /// Android `lerp(paper, sage, 0.16)`. (Color.mix is iOS 18+, so the token wrapper
@@ -183,9 +213,15 @@ private enum BubbleLayout {
                 message: ChatMessage(ts: now + 2, role: "assistant", content: "", streaming: true, cutoffKind: nil, cycleId: nil, tools: []),
                 index: 2
             )
+            // streaming + content → typewriter reveal, no cursor
             MessageBubble(
-                message: ChatMessage(ts: now + 3, role: "assistant", content: "Cut off here", streaming: false, cutoffKind: "interrupt", cycleId: nil, tools: []),
-                index: 3
+                message: ChatMessage(ts: now + 3, role: "assistant", content: "Streaming text reveals progressively...", streaming: true, cutoffKind: nil, cycleId: nil, tools: []),
+                index: 3,
+                avatarMode: .thinking
+            )
+            MessageBubble(
+                message: ChatMessage(ts: now + 4, role: "assistant", content: "Cut off here", streaming: false, cutoffKind: "interrupt", cycleId: nil, tools: []),
+                index: 4
             )
         }
         .padding(Space.lg)
