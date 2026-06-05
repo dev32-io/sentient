@@ -69,9 +69,15 @@ object SdkHolder {
     )
 
     // App-lifetime scope: a SupervisorJob so one failing child loop never cancels
-    // the SDK's other coroutines. Default dispatcher — the SDK picks IO/Main at its
-    // own boundaries. Never cancelled (process singleton, lives until process death).
-    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // the SDK's other coroutines. Dispatchers.Default is CONFINED to
+    // limitedParallelism(1) so at most one SDK coroutine runs at a time — the
+    // connectors + AudioPipeline assume single-threaded access (the router drives
+    // handle/handleBinary; the pipeline's async start()/frame-buffer share state
+    // without locks). A multi-threaded Default raced the downlink first frame
+    // against the playback-start coroutine (enqueue-no-track, ~0.33s clip);
+    // confinement removes the race while keeping suspension non-blocking. Mirrors
+    // web-sdk's single thread + the iOS factory. Never cancelled (process singleton).
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1))
 
     @Volatile
     private var instance: SentientSdk? = null

@@ -9,10 +9,16 @@
 // — mirroring the existing createPlatformBundle() iOS helper — so the iOS app
 // builds the SDK with a single typed call and supplies only its SdkConfig.
 //
-// The scope is an app-lifetime SupervisorJob on the default dispatcher (one
-// failing child loop never cancels the SDK's other coroutines), matching the
-// Android SdkHolder scope. The process owns the one SDK instance for its
-// lifetime, so the scope is intentionally never cancelled here.
+// The scope is an app-lifetime SupervisorJob on Dispatchers.Default CONFINED to
+// limitedParallelism(1) — at most one SDK coroutine runs at a time, mirroring
+// web-sdk's single-threaded model. The connectors + AudioPipeline document a
+// single-threaded contract (the router drives handle/handleBinary, and the
+// pipeline's async start()/frame-buffer share state without locks); a
+// multi-threaded Default let the downlink first-frame race the playback-start
+// coroutine across threads (enqueue-no-track). Confinement removes the race
+// while preserving non-blocking suspension. Matches the Android SdkHolder scope.
+// The process owns the one SDK instance for its lifetime, so the scope is
+// intentionally never cancelled here.
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.sdk
 
@@ -49,5 +55,5 @@ fun createSentientSdk(
         capabilities = capabilities,
     ),
     bundle = createPlatformBundle(),
-    scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    scope = CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1)),
 )
