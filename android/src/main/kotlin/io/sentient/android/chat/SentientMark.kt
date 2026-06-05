@@ -7,8 +7,9 @@
 // ry=9 at rotations 18/-28/78°). We scale that 64-unit space to [size] dp.
 //
 // E5 adds the animated voice states, porting the webui mark animations
-// (components.css .sentient-mark--listening / --running / .bubble-speaking-wave)
-// via [MarkMode]. The [mode] is derived from the single SDK surface upstream
+// (components.css .sentient-mark--listening / --running) via [MarkMode].
+// The speaking-wave lives on the bubble (BubbleSpeakingWave), not the mark.
+// The [mode] is derived from the single SDK surface upstream
 // (markModeOf) — listening / thinking / speaking / idle. CRITICAL: each mode's
 // animation runs ONLY in that mode (see SentientMarkAnim — event-driven; the
 // infinite transition is composed only in the active branch). [MarkMode.IDLE]
@@ -52,7 +53,6 @@ private val MARK_TERRA = Color(Colors.accent)
 private val MARK_EMBER = Color(0xFFFFB87AL)
 private val MARK_HI = Color(0xFFFFE1BDL)
 private val MARK_RIM = Color(0xFFFFF3DBL)
-private val MARK_WAVE = Color(Colors.accent)
 
 /**
  * Renders the Sentient mark. [size] sets the diameter; the 64-unit webui
@@ -72,7 +72,6 @@ fun SentientMark(
         drawRing(center, scale, anim)
         drawOrbits(center, scale, anim)
         drawNucleus(center, scale, anim)
-        if (anim.wavePos >= 0f) drawWave(anim.wavePos)
     }
 }
 
@@ -153,15 +152,3 @@ private fun DrawScope.drawNucleus(center: Offset, scale: Float, anim: MarkAnim) 
     )
 }
 
-/** Accent sweep across the mark while the assistant is speaking (speaking-wave). */
-private fun DrawScope.drawWave(pos: Float) {
-    val w = this.size.width
-    val x = pos * w * 2f - w * 0.5f
-    drawRect(
-        brush = Brush.horizontalGradient(
-            colors = listOf(Color.Transparent, MARK_WAVE.copy(alpha = 0.35f), Color.Transparent),
-            startX = x - w * 0.5f,
-            endX = x + w * 0.5f,
-        ),
-    )
-}

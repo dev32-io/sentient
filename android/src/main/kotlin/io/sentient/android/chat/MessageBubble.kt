@@ -74,11 +74,11 @@ fun MessageBubble(
         verticalAlignment = Alignment.Top,
     ) {
         if (isUser) {
-            BubbleBody(message = message, isUser = true)
+            BubbleBody(message = message, isUser = true, avatarMode = avatarMode)
             BubbleAvatar(message = message, avatarMode = avatarMode)
         } else {
             BubbleAvatar(message = message, avatarMode = avatarMode)
-            BubbleBody(message = message, isUser = false)
+            BubbleBody(message = message, isUser = false, avatarMode = avatarMode)
         }
     }
 }
@@ -97,12 +97,21 @@ private fun BubbleAvatar(message: ChatMessage, avatarMode: MarkMode) {
                 .background(Color(Colors.sageSoft)),
         )
     } else {
-        SentientMark(modifier = Modifier.padding(end = gap), size = AVATAR_SIZE, mode = avatarMode)
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.padding(end = gap),
+        ) {
+            SentientMark(size = AVATAR_SIZE, mode = avatarMode)
+            AvatarRipple(
+                active = avatarMode == MarkMode.SPEAKING || avatarMode == MarkMode.LISTENING,
+                modifier = Modifier.size(AVATAR_SIZE),
+            )
+        }
     }
 }
 
 @Composable
-private fun BubbleBody(message: ChatMessage, isUser: Boolean) {
+private fun BubbleBody(message: ChatMessage, isUser: Boolean, avatarMode: MarkMode) {
     val tokens = LocalTokens.current
     val r = tokens.radii.lg
     val shape = if (isUser) {
@@ -111,11 +120,13 @@ private fun BubbleBody(message: ChatMessage, isUser: Boolean) {
         RoundedCornerShape(topStart = FLUSH_CORNER, topEnd = r, bottomEnd = r, bottomStart = r)
     }
     val bg = if (isUser) USER_BUBBLE_BG else Color(Colors.paper)
+    val isSpeaking = !isUser && avatarMode == MarkMode.SPEAKING
     Box(
         modifier = Modifier
             .widthIn(max = tokens.space.msgMax)
             .clip(shape)
             .background(bg)
+            .bubbleSpeakingWave(active = isSpeaking)
             .border(1.dp, Color(Colors.lineSoft), shape)
             .padding(tokens.space.padMsg),
     ) {

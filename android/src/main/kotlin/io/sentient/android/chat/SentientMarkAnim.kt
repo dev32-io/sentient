@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // SentientMarkAnim — the animated parameters for the SentientMark avatar,
 // porting the webui mark animations (gateway/webui/src/styles/components.css
-// .sentient-mark--running / --listening + .bubble-speaking-wave) to Compose.
+// .sentient-mark--running / --listening) to Compose.
 //
 // CRITICAL (event-driven-UX rule): each rememberInfiniteTransition is composed
 // ONLY inside its mode's branch and keyed on the mode label, so the animation
@@ -12,7 +12,7 @@
 // webui parity (durations transcribed from components.css):
 //   listening → halo-breathe 2.4s, nucleus 1.8s, ring 2.4s, orbits 3.8/5.2/4.4s
 //   thinking  → halo 6.5s, nucleus 4.5s (the shared "running" engagement pulse)
-//   speaking  → speaking-wave Motion.waveMs (3.4s) sweep across the mark
+//   speaking  → pulse only (wave now lives on the bubble via BubbleSpeakingWave)
 // ---------------------------------------------------------------------------
 package io.sentient.android.chat
 
@@ -23,7 +23,6 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
-import io.sentient.mobilesdk.design.Motion
 
 /**
  * The animated draw parameters the SentientMark Canvas reads each frame. All
@@ -35,7 +34,6 @@ import io.sentient.mobilesdk.design.Motion
  * @param nucleusScale Nucleus core scale (pulse).
  * @param ringAlpha Outer rim ring opacity (listening only).
  * @param orbitSpin Per-orbit rotation offset in degrees (listening only).
- * @param wavePos Speaking-wave sweep position 0..1 (speaking only); <0 = no wave.
  */
 data class MarkAnim(
     val haloScale: Float = 1f,
@@ -43,7 +41,6 @@ data class MarkAnim(
     val nucleusScale: Float = 1f,
     val ringAlpha: Float = 0.4f,
     val orbitSpin: FloatArray = FloatArray(3),
-    val wavePos: Float = -1f,
 )
 
 /** Listening durations (ms), transcribed from .sentient-mark--listening. */
@@ -66,8 +63,9 @@ private const val RUN_NUC_MS = 4500
 fun rememberMarkAnim(mode: MarkMode): MarkAnim = when (mode) {
     MarkMode.IDLE -> MarkAnim()
     MarkMode.LISTENING -> listeningAnim()
-    MarkMode.THINKING -> runningAnim()
-    MarkMode.SPEAKING -> speakingAnim()
+    // .thinking and .speaking share the engagement pulse; the speaking-specific
+    // sweep now lives on the bubble (BubbleSpeakingWave).
+    MarkMode.THINKING, MarkMode.SPEAKING -> runningAnim()
 }
 
 @Composable
@@ -99,17 +97,6 @@ private fun runningAnim(): MarkAnim {
     )
 }
 
-@Composable
-private fun speakingAnim(): MarkAnim {
-    val t = rememberInfiniteTransition(label = "mark-speaking")
-    return MarkAnim(
-        haloScale = t.pulse(RUN_HALO_MS, 1f, 1.08f, "halo"),
-        haloAlpha = t.pulse(RUN_HALO_MS, 0.45f, 0.6f, "haloA"),
-        nucleusScale = t.pulse(RUN_NUC_MS, 1f, 1.06f, "nuc"),
-        wavePos = t.sweep(Motion.waveMs, "wave"),
-    )
-}
-
 /** Ping-pong scale/alpha pulse (ease-in-out, like the CSS 0%/50%/100% pulses). */
 @Composable
 private fun androidx.compose.animation.core.InfiniteTransition.pulse(
@@ -137,12 +124,3 @@ private fun androidx.compose.animation.core.InfiniteTransition.spin(
     label = label,
 ).value
 
-/** 0→1 left-to-right sweep, like speaking-wave background-position. */
-@Composable
-private fun androidx.compose.animation.core.InfiniteTransition.sweep(ms: Int, label: String): Float =
-    animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(ms, easing = LinearEasing), RepeatMode.Restart),
-        label = label,
-    ).value
