@@ -3,18 +3,28 @@
 // (android/.../chat/MessageList.kt) and the webui MessageList + ChatView
 // (gateway/webui/src/components/chat/message-list.tsx, chat-view.tsx).
 //
-// A ScrollView of MessageBubbles with gapMsg (32pt) between messages. Auto-
-// scrolls to the latest message whenever the list grows OR the last bubble's
-// content changes (streaming tokens) — ScrollViewReader.scrollTo keyed on
-// count + tail content, mirroring the webui useFollowLatest hook. Empty state
-// shows the "Start a conversation…" placeholder. The list owns no state beyond
-// its scroll position — it reads SdkState.messages, passed down.
+// A ScrollView of MessageBubbles with gapMsg (32pt) between messages.
+// Pin-to-bottom autoscroll: while pinned (default, at bottom), the list follows
+// new tokens/messages; scrolling up unpins and holds position; re-entering the
+// snap zone re-pins. Powered by FollowLatestState + followLatestOnScroll.
+//
+// iOS 18+: onScrollGeometryChange drives the pin FSM precisely.
+// iOS 17:  always-follow fallback (prior behavior) — no geometry API available.
 //
 // accessibilityIdentifier `chat-message-list` scopes the e2e bubble assertions.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import UIKit
 import MobileSdk
+
+/// The scroll dimensions the pin FSM consumes. Projecting the iOS 18
+/// `onScrollGeometryChange` to this (rather than the full ScrollGeometry) lets
+/// SwiftUI skip frames where none of the three changed.
+private struct ScrollProbe: Equatable {
+    let top: Double
+    let height: Double
+    let clientHeight: Double
+}
 
 struct MessageList: View {
     let messages: [ChatMessage]
@@ -23,7 +33,10 @@ struct MessageList: View {
     /// mirroring the webui activeCycleMode binding + the Android activeMarkMode.
     var activeMarkMode: MarkMode = .idle
 
-    private static let placeholder = "Start a conversation…"
+    /// Pin-to-bottom FSM state. iOS 18+ only; ignored on iOS 17 (always-follow).
+    @State private var follow = FollowLatestState()
+
+    private static let placeholder = "Start a conversation\u{2026}"
     private static let bottomAnchor = "chat-bottom-anchor"
 
     var body: some View {
@@ -55,23 +68,76 @@ struct MessageList: View {
 
     private var list: some View {
         ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: Space.gapMsg) {
-                    ForEach(Array(messages.enumerated()), id: \.offset) { index, message in
-                        MessageBubble(message: message, index: index, avatarMode: avatarMode(for: message))
-                    }
-                    Color.clear
-                        .frame(height: 1)
-                        .id(Self.bottomAnchor)
-                }
-                .padding(Space.lg)
-            }
-            .scrollDismissesKeyboard(.interactively)
-            .accessibilityIdentifier("chat-message-list")
-            .onChange(of: messages.count) { scrollToBottom(proxy) }
-            .onChange(of: messages.last?.content) { scrollToBottom(proxy) }
-            .onAppear { scrollToBottom(proxy, animated: false) }
+            scrollContent(proxy: proxy)
+                .scrollDismissesKeyboard(.interactively)
+                .accessibilityIdentifier("chat-message-list")
+                .onAppear { scrollToBottom(proxy, animated: false) }
         }
+    }
+
+    @ViewBuilder
+    private func scrollContent(proxy: ScrollViewProxy) -> some View {
+        if #available(iOS 18, *) {
+            ios18ScrollView(proxy: proxy)
+        } else {
+            ios17ScrollView(proxy: proxy)
+        }
+    }
+
+    /// iOS 18+: geometry-driven pin FSM. Scrolling up unpins; re-entering the
+    /// snap zone re-pins. Auto-scroll fires only while pinned.
+    @available(iOS 18, *)
+    private func ios18ScrollView(proxy: ScrollViewProxy) -> some View {
+        ScrollView {
+            messageRows()
+        }
+        // Project to just the dimensions the pin FSM reads, so SwiftUI dedupes
+        // frames where these three are unchanged (a bare `{ $0 }` fires the action
+        // on every scroll geometry change, churning @State every frame).
+        .onScrollGeometryChange(for: ScrollProbe.self, of: { geo in
+            ScrollProbe(
+                top: geo.contentOffset.y + geo.contentInsets.top,
+                height: geo.contentSize.height,
+                clientHeight: geo.containerSize.height
+            )
+        }) { _, probe in
+            follow = followLatestOnScroll(
+                follow, top: probe.top, height: probe.height, clientHeight: probe.clientHeight
+            )
+        }
+        .onChange(of: messages.count) { _, _ in
+            if follow.pinned { scrollToBottom(proxy) }
+        }
+        .onChange(of: messages.last?.content) { _, _ in
+            if follow.pinned { scrollToBottom(proxy) }
+        }
+    }
+
+    /// iOS 17 fallback: always-follow (original behavior, no geometry API).
+    private func ios17ScrollView(proxy: ScrollViewProxy) -> some View {
+        ScrollView {
+            messageRows()
+        }
+        .onChange(of: messages.count) { _, _ in scrollToBottom(proxy) }
+        .onChange(of: messages.last?.content) { _, _ in scrollToBottom(proxy) }
+    }
+
+    private func messageRows() -> some View {
+        LazyVStack(alignment: .leading, spacing: Space.gapMsg) {
+            // Row identity by array index. The history is append-only, so indices
+            // are stable for existing rows; the live streaming bubble is always the
+            // last index. NOTE: do NOT key on message.ts — the streaming bubble's ts
+            // is stamped `clock.nowMs()` fresh on every derive, so a ts-based id
+            // would churn the bubble's identity each token and reset the typewriter
+            // @State (re-revealing from zero every frame).
+            ForEach(Array(messages.enumerated()), id: \.offset) { index, message in
+                MessageBubble(message: message, index: index, avatarMode: avatarMode(for: message))
+            }
+            Color.clear
+                .frame(height: 1)
+                .id(Self.bottomAnchor)
+        }
+        .padding(Space.lg)
     }
 
     /// The live (streaming) assistant bubble's avatar animates with the
