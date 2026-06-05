@@ -82,7 +82,8 @@ final class SdkStore: ObservableObject {
                 isSpeaking: false,
                 audioState: .inactive,
                 connectionLost: false,
-                authExpired: false
+                authExpired: false,
+                lastCycleError: false
             )
             self.isConfigured = false
             log.info("init unconfigured — awaiting setup")
@@ -157,6 +158,17 @@ final class SdkStore: ObservableObject {
         guard let sdk else { return }
         log.info("disconnect")
         sdk.disconnect()
+    }
+
+    /// Manual reconnect (web-sdk parity, sentient-sdk.ts forceReconnect()). Re-arms
+    /// the reconnect controller, clears the terminal connectionLost/authExpired
+    /// flags, and drives a fresh recovery loop. Wired to the connection-lost
+    /// banner's tap-to-reconnect CTA. Idempotent — a no-op while a loop is already
+    /// in flight (status RECONNECTING).
+    func forceReconnect() {
+        guard let sdk else { return }
+        log.info("forceReconnect status=\(state.status.name)")
+        sdk.forceReconnect()
     }
 
     /// Logs the user out: disconnect (WS teardown + cycle cancel) THEN clear the

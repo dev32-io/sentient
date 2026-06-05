@@ -75,6 +75,18 @@ struct ChatView: View {
 
     private var panelVisible: Bool { panelX > -panelWidth }
 
+    /// Connection affordance derived from the single SDK state surface, per
+    /// web-sdk semantics: connectionLost (reconnect EXHAUSTED) wins and shows the
+    /// tap-to-reconnect banner; otherwise status reconnecting/connecting shows the
+    /// subtle "Reconnecting…" indicator. nil ⇒ healthy (ready/idle) ⇒ no banner.
+    private var connectionBanner: ConnectionBannerState? {
+        if store.state.connectionLost { return .lost }
+        switch store.state.status {
+        case .reconnecting, .connecting: return .reconnecting
+        default: return nil
+        }
+    }
+
     // ── Root body ─────────────────────────────────────────────────────────────
 
     var body: some View {
@@ -102,6 +114,14 @@ struct ChatView: View {
                     .gesture(panelDrag)
             }
         }
+        // Floating connection-state pill + auth-expired→logout (web-sdk parity).
+        // Both live in the extracted modifier; side effects stay out of body.
+        .connectionState(
+            banner: connectionBanner,
+            onReconnect: { store.forceReconnect() },
+            authExpired: store.state.authExpired,
+            onAuthExpired: { store.logout() }
+        )
         .sheet(isPresented: $settingsPresented) {
             SettingsSheet(
                 onLogout: {
