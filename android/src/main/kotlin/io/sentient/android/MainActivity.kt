@@ -150,6 +150,7 @@ private fun AppConfiguredRoot(
                 viewModel = historyViewModel,
                 drawerState = drawerState,
                 nowMs = System.currentTimeMillis(),
+                onOpenSettings = { showSettings = true },
             ) {
                 ChatScreen(
                     state = sdkState,

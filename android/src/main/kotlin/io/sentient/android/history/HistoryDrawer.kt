@@ -2,23 +2,27 @@
 // HistoryDrawer — the Android History drawer (D-A4). A Material3
 // ModalNavigationDrawer (native; replaces the webui 360px CSS drawer) wrapping
 // the chat content. Drawer content mirrors the webui sessions drawer:
-//   - a search field (history-search) that filters the list client-side
+//   - account header (avatar, name, household, gear → settings)
+//   - a search pill (history-search) that filters the list client-side
+//   - "Past chats" title in Fraunces
 //   - the session list from sdk.listSessions (title + relative time + message
 //     count; active session highlighted via SessionRow.isActive), grouped by
 //     date bucket (Today / Yesterday / Last 7 days / Older)
 //   - tap a row → sdk.switchSession + close; long-press → rename/delete menu
-//   - a New Chat button (history-new-chat) → sdk.newChat + close
+//   - a floating "+" FAB (history-new-chat) → sdk.newChat + close
 //
 // Reconnect-safe refresh: the list re-queries on every drawer-open AND after
 // every mutation (HistoryViewModel re-calls listSessions in each op). The SDK
 // does not surface SessionsConnector.onSessionsChanged through SentientSdk, so
 // the open + post-mutation re-query is the refresh path (D-A4 plan fallback).
 //
-// testTags: history-search, history-row-<sessionId>, history-new-chat. The
-// history-open trigger lives in the ChatScreen top bar (see ChatScreen.kt).
+// testTags: history-search, history-row-<sessionId>, history-new-chat,
+//           settings-open (in HistoryAccountHeader). The history-open trigger
+//           lives in the ChatScreen top bar (see ChatScreen.kt).
 // ---------------------------------------------------------------------------
 package io.sentient.android.history
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,13 +32,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
@@ -44,11 +49,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.sentient.android.theme.Fraunces
 import io.sentient.android.theme.LocalTokens
 import io.sentient.mobilesdk.design.Colors
 import kotlinx.coroutines.launch
@@ -63,12 +70,19 @@ private data class PendingTarget(val id: String, val title: String)
  * history. [drawerState] + [nowMs] are hoisted by the host (MainActivity) so the
  * chat top bar's history-open trigger can open the drawer and the date labels
  * read one stable clock per composition pass.
+ *
+ * [onOpenSettings] is called when the user taps the gear in the account header.
+ * [userName] / [household] are display-only; default "You" / "" until the gateway
+ * exposes per-profile metadata through the SDK. TODO: wire from SDK profile.
  */
 @Composable
 fun HistoryDrawer(
     viewModel: HistoryViewModel,
     drawerState: DrawerState,
     nowMs: Long,
+    onOpenSettings: () -> Unit = {},
+    userName: String = "You",
+    household: String = "",
     content: @Composable () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -86,6 +100,9 @@ fun HistoryDrawer(
                 HistoryContent(
                     state = state,
                     nowMs = nowMs,
+                    userName = userName,
+                    household = household,
+                    onOpenSettings = onOpenSettings,
                     onQuery = viewModel::setQuery,
                     onSwitch = { id ->
                         viewModel.switchSession(id)
@@ -108,6 +125,9 @@ fun HistoryDrawer(
 private fun HistoryContent(
     state: HistoryUiState,
     nowMs: Long,
+    userName: String,
+    household: String,
+    onOpenSettings: () -> Unit,
     onQuery: (String) -> Unit,
     onSwitch: (String) -> Unit,
     onRename: (String, String) -> Unit,
@@ -118,37 +138,51 @@ private fun HistoryContent(
     var renaming by remember { mutableStateOf<PendingTarget?>(null) }
     var deleting by remember { mutableStateOf<PendingTarget?>(null) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .safeDrawingPadding()
-            .padding(horizontal = tokens.space.md),
-        verticalArrangement = Arrangement.spacedBy(tokens.space.sm),
-    ) {
-        Text(
-            text = "Past chats",
-            modifier = Modifier.padding(vertical = tokens.space.md),
-            color = Color(Colors.ink),
-            fontSize = tokens.type.lg,
-            fontWeight = FontWeight.SemiBold,
-        )
-        OutlinedTextField(
-            value = state.query,
-            onValueChange = onQuery,
-            modifier = Modifier.fillMaxWidth().testTag("history-search"),
-            singleLine = true,
-            placeholder = { Text("Search past chats", color = Color(Colors.ink3)) },
-        )
-        Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
-            SessionListBody(
-                state = state,
-                nowMs = nowMs,
-                onSwitch = onSwitch,
-                onAskRename = { id, title -> renaming = PendingTarget(id, title) },
-                onAskDelete = { id, title -> deleting = PendingTarget(id, title) },
+    Box(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = tokens.space.md),
+            verticalArrangement = Arrangement.spacedBy(tokens.space.sm),
+        ) {
+            HistoryAccountHeader(
+                name = userName,
+                household = household,
+                onSettings = onOpenSettings,
             )
+            SearchPill(
+                query = state.query,
+                onQuery = onQuery,
+            )
+            Text(
+                text = "Past chats",
+                modifier = Modifier.padding(vertical = tokens.space.sm),
+                color = Color(Colors.ink),
+                fontSize = tokens.type.lg,
+                fontWeight = FontWeight.SemiBold,
+                fontFamily = Fraunces,
+            )
+            Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                SessionListBody(
+                    state = state,
+                    nowMs = nowMs,
+                    onSwitch = onSwitch,
+                    onAskRename = { id, title -> renaming = PendingTarget(id, title) },
+                    onAskDelete = { id, title -> deleting = PendingTarget(id, title) },
+                )
+            }
         }
-        NewChatButton(onClick = onNewChat)
+        FloatingActionButton(
+            onClick = onNewChat,
+            containerColor = Color(Colors.accent),
+            contentColor = HistoryOnAccent,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(tokens.space.lg)
+                .testTag("history-new-chat"),
+        ) {
+            Text("+", fontSize = tokens.type.xl)
+        }
     }
 
     renaming?.let { target ->
@@ -218,44 +252,30 @@ private fun SessionListBody(
     }
 }
 
-private data class DateGroup(val label: String, val rows: List<io.sentient.mobilesdk.protocol.SessionRow>)
-
-private fun groupByDate(
-    rows: List<io.sentient.mobilesdk.protocol.SessionRow>,
-    nowMs: Long,
-): List<DateGroup> {
-    val out = mutableListOf<DateGroup>()
-    var current: MutableList<io.sentient.mobilesdk.protocol.SessionRow>? = null
-    var label = ""
-    for (row in rows) {
-        val l = dateGroupLabel(nowMs, row.lastActiveAt)
-        if (current == null || l != label) {
-            current = mutableListOf(row)
-            label = l
-            out.add(DateGroup(l, current))
-        } else {
-            current.add(row)
-        }
-    }
-    return out
-}
-
+/** Search field styled as a pill: rounded corners, bgElev fill, lineSoft border. */
 @Composable
-private fun NewChatButton(onClick: () -> Unit) {
+private fun SearchPill(query: String, onQuery: (String) -> Unit) {
     val tokens = LocalTokens.current
-    Button(
-        onClick = onClick,
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQuery,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = tokens.space.sm)
-            .testTag("history-new-chat"),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = Color(Colors.accent),
-            contentColor = Color(Colors.bg),
+            .background(Color(Colors.bgElev), RoundedCornerShape(tokens.radii.pill))
+            .testTag("history-search"),
+        singleLine = true,
+        shape = RoundedCornerShape(tokens.radii.pill),
+        placeholder = { Text("Search past chats", color = Color(Colors.ink3)) },
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = Color(Colors.lineSoft),
+            unfocusedBorderColor = Color(Colors.lineSoft),
+            focusedTextColor = Color(Colors.ink),
+            unfocusedTextColor = Color(Colors.ink),
+            cursorColor = Color(Colors.accent),
+            focusedContainerColor = Color.Transparent,
+            unfocusedContainerColor = Color.Transparent,
         ),
-    ) {
-        Text("New Chat")
-    }
+    )
 }
 
 /** Convenience: a remembered drawer state, closed by default. */
