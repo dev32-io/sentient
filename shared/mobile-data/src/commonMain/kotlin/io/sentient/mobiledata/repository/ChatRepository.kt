@@ -1,10 +1,12 @@
 package io.sentient.mobiledata.repository
 
 import io.sentient.mobiledata.model.ChatModel
+import io.sentient.mobiledata.outbox.MessageStatus
 import io.sentient.mobiledata.outbox.Outbox
 import io.sentient.mobiledata.outbox.PendingMessage
 import io.sentient.mobiledata.result.SentientResult
 import io.sentient.mobilesdk.connectors.TaskSnapshotItem
+import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.sdk.ChatMessage
 import kotlinx.coroutines.CoroutineScope
@@ -57,6 +59,7 @@ class ChatRepository(
     private val send: (text: String, pendingId: String) -> Unit,
     private val newId: () -> String,
 ) {
+    private val log = createLogger("data", "chat")
     private val liveState = MutableStateFlow(LiveState())
     private val outbox = Outbox(send = { send(it.text, it.id) })
     private val outboxState = MutableStateFlow<List<PendingMessage>>(emptyList())
@@ -78,6 +81,7 @@ class ChatRepository(
         val id = newId()
         outbox.enqueue(PendingMessage(id, text))
         outboxState.value = outbox.snapshot()
+        log.info("send.optimistic", mapOf("pendingId" to id, "len" to text.length))
         return id
     }
 
@@ -86,8 +90,10 @@ class ChatRepository(
      * underlying [send] callback for each. Call when the connection reaches READY.
      */
     fun onReady() {
+        val queued = outbox.snapshot().count { it.status == MessageStatus.QUEUED }
         outbox.onReady()
         outboxState.value = outbox.snapshot()
+        log.info("outbox.flush", mapOf("pending" to queued))
     }
 
     /**
@@ -95,8 +101,10 @@ class ChatRepository(
      * for the user to retry or dismiss.
      */
     fun failOutbox(reason: String) {
+        val pending = outbox.snapshot().size
         outbox.failAll(reason)
         outboxState.value = outbox.snapshot()
+        log.warn("outbox.fail", mapOf("reason" to reason, "pending" to pending))
     }
 
     /**
