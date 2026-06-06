@@ -49,8 +49,22 @@ class ChatSession(
 ) {
     suspend fun open() { sdk.connect() }
 
+    /**
+     * Background-entry disconnect: drops the WS to save battery/radio but keeps
+     * the coroutine scope + session alive so [resume] can reconnect via session-resume
+     * on foreground. Does NOT cancel the scope — only [close] does that.
+     */
+    fun pause() { sdk.disconnect(clearSession = false) }
+
+    /**
+     * Foreground-entry reconnect: re-arms the reconnect controller and drives a
+     * fresh recovery loop via [SentientSdk.forceReconnect]. Idempotent — a no-op
+     * while a reconnect loop is already in flight.
+     */
+    suspend fun resume() { sdk.forceReconnect() }
+
     fun close() {
-        // idle/screen-exit disconnect — preserve the session for resume on next open()
+        // Screen-exit teardown: disconnect + cancel scope. Full lifecycle end.
         sdk.disconnect(clearSession = false)
         scope.cancel()
     }
