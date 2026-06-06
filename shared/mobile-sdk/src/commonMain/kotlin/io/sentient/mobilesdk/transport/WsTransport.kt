@@ -124,7 +124,7 @@ class WsTransport(
         result.fold(
             onSuccess = { msg -> eventChannel.send(WsEvent.Control(msg)) },
             onFailure = { err ->
-                log.warn("decode-failed", mapOf("reason" to (err.message ?: "parse error")))
+                log.warn("decode-failed", mapOf("reason" to (err.message ?: "parse error"), "frame" to raw))
                 onProtocolError?.invoke(SentientError.Protocol("decode failed", cause = err))
                 // Skip the malformed frame; pump continues.
             },
