@@ -1014,7 +1014,28 @@ class ConnectionRepository(private val connection: StateFlow<ConnectionState>) {
 - [ ] **Step 4: Run — expect PASS.**
 - [ ] **Step 5: Commit** — `feat(mobile-data): ConnectionRepository maps connection → Result`.
 
-### Task 2.6: ChatRepository — fold events + outbox
+## ADDENDUM (2026-06-06): client `pendingId` round-trip
+
+**Decision (supersedes the FIFO text-match idea):** exact optimistic-send reconciliation via a client-generated `pendingId` that round-trips on the wire. Enables per-message retry later. `pendingId` is **optional everywhere** (`pendingId?: string` / `String? = null`) → backward-compatible; web keeps working untouched. The user feed entry is gateway-constructed (confirmed) so **no Hermes change** is needed. This inserts a protocol prelude before Task 2.6.
+
+### Task 2.5c: Protocol — optional pendingId on text.input + user feed item
+**Files:** `shared/protocol/src/messages.ts` (textInputSchema +`pendingId: z.string().optional()`), `shared/protocol/src/conversation.ts` (conversationFeedUserItemSchema +`pendingId: z.string().optional()`), tests `shared/protocol/src/messages.test.ts`.
+- TDD: add a parse test that `text.input` with/without pendingId validates, and the user feed item carries pendingId. Implement the two optional fields. Run `bun run --filter @sentient/protocol test` (or the repo's protocol test cmd). Commit `feat(protocol): optional pendingId on text.input + user feed item`.
+
+### Task 2.5d: Gateway — thread pendingId ingress→mirror→feed DTO; verify web builds
+**Files:** `gateway/src/session-handlers/ws-handlers.ts` (pass `msg.pendingId` to handleTextInput), `gateway/src/adapters/user-text-input-adapter.ts` (accept + forward pendingId), `gateway/src/cerebrum/conversation-mirror.ts` (MirrorEntry user variant +pendingId), `gateway/src/cerebrum/conversation-feed.ts` (toFeedItem user case +pendingId), test `gateway/src/adapters/user-text-input-adapter.test.ts`.
+- TDD: assert a text.input with pendingId appends a mirror user entry carrying it, and `toFeedItem` emits it on `conversation.entry`. Implement the thread-through.
+- **Web compat:** run `bun run typecheck` + `bun run build` (or `bun run ci`) — confirm `gateway/webui` + `shared/web-sdk` still build against the changed protocol (optional field → should be clean). Apply only the minimal type fix if a strict constructor breaks; do NOT migrate web's optimistic-dedup to pendingId (deferred follow-up). 
+- Verify: rebuild local stack (`deploy/macos`), web smoke "hi" still commits + renders (no regression). Commit `feat(gateway): thread client pendingId onto user conversation feed echo`.
+
+### Task 2.5e: mobile-sdk — pendingId on TextInput + ConversationFeedItem.User + sendText
+**Files:** `protocol/ClientMessage.kt` (TextInput +`pendingId: String? = null`), `protocol/ConversationFeedItem.kt` (User +`pendingId: String? = null`), `connectors/UserTextInputConnector.kt` (`sendText(text, pendingId)`), `sdk/SentientSdk.kt` (`sendText(text: String, pendingId: String? = null)`), tests `WireSerializationTest.kt` + `UserTextInputConnectorTest.kt`.
+- TDD: assert TextInput serializes pendingId when present/omits when null; sendText forwards it; User feed item deserializes pendingId. Implement. Run `:shared:mobile-sdk:allTests`. Commit `feat(mobile-sdk): carry pendingId on text.input + user feed item`.
+
+### Task 2.6 (REVISED): ChatRepository — fold events + outbox + pendingId reconciliation
+Supersedes the original 2.6 below. ChatRepository holds: `live` (from MessageDelta reduce), `tasks`, and `pending: List<ChatMessage>` (optimistic user messages keyed by pendingId, status QUEUED/SENT/FAILED). `chatStream = combine(timeline, model)` MERGES (does NOT overwrite): `messagesForUi = timeline + pending-whose-pendingId-not-yet-in-timeline + live(tasks)`. When a timeline `User` entry arrives whose `pendingId` matches a pending, drop that pending (exact dedup, no FIFO guessing). `send(text)` generates a pendingId, optimistically adds a QUEUED pending bubble, enqueues outbox; `onReady` flushes via `sdk.sendText(text, pendingId)`. **No-loss is tested at the pure `reduce` level** (ordered deltas accumulate to full content) — NOT via fragile intermediate-StateFlow-emission assertions (the model StateFlow conflates, which is fine: content is cumulative, UI renders latest + typewriter). The original combine below is buggy (it clobbers `committed` with timeline) — use the merge approach instead.
+
+### Task 2.6 (original — DO NOT IMPLEMENT AS-IS; see REVISED above): ChatRepository — fold events + outbox
 
 **Files:**
 - Create: `shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/repository/ChatRepository.kt`
