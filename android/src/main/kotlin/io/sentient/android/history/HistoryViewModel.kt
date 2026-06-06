@@ -1,12 +1,15 @@
 // ---------------------------------------------------------------------------
 // HistoryViewModel — drives the History drawer's session list + search state.
 //
-// The SDK does NOT expose a sessions StateFlow or surface SessionsConnector's
-// onSessionsChanged through the public SentientSdk API, so per the D-A4 plan
-// the drawer re-queries listSessions() on open + after every mutation (switch /
-// rename / delete / new). That keeps the list reconnect-safe and never stale:
-// each refresh re-reads the gateway truth, including the freshly-recomputed
-// isActive flag that drives the active-row highlight.
+// Loads the session list from HistoryRepository (cache-then-refresh via
+// HistoryRepository.load() — emits Loading(cached) immediately, then
+// Success/Failure from the live fetch). Mutations (switch/rename/delete/new)
+// route through the injected SDK provider so they share the chat-scoped session.
+//
+// Cache-then-refresh policy:
+//   - On drawer open, load() emits the cached list instantly (no spinner flash),
+//     then fires the live fetch. The stale banner appears if refresh fails but the
+//     cache is non-empty; SessionsErrorEmpty if cache is also empty.
 //
 // Search mirrors the webui semantics but filters CLIENT-SIDE (SentientSdk does
 // not expose sessions.search) — a substring match over the loaded title list.
@@ -20,29 +23,17 @@ package io.sentient.android.history
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import io.sentient.android.sdk.SdkHolder
+import io.sentient.mobiledata.repository.HistoryRepository
+import io.sentient.mobiledata.repository.SessionRowData
+import io.sentient.mobiledata.result.SentientResult
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.SessionRow
 import io.sentient.mobilesdk.sdk.SentientSdk
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeout
-
-/** Page size for the session list fetch. Mirrors webui's LIST_PAGE_LIMIT (50). */
-private const val LIST_PAGE_LIMIT = 50
-
-/**
- * Deadline for the session-list fetch (ms). The dashboard sidecar can be slow or
- * unreachable; without a bound the drawer spinner would spin forever. On timeout
- * the fetch surfaces the SessionsErrorEmpty / stale-banner affordance instead of
- * an indefinite spinner (error-handling rule: timeout every external call).
- * Mirrors the iOS listSessionsTimeoutSeconds (12s).
- */
-private const val LIST_SESSIONS_TIMEOUT_MS = 12_000L
 
 /** Everything the History drawer renders. Immutable; replaced wholesale on change. */
 data class HistoryUiState(
@@ -77,17 +68,28 @@ data class HistoryUiState(
     val showsStaleBanner: Boolean get() = error != null && visible.isNotEmpty()
 }
 
+/** Maps a [SessionRowData] to the [SessionRow] shape used by the drawer. */
+private fun SessionRowData.toSessionRow(): SessionRow = SessionRow(
+    sessionId = id,
+    title = title,
+    startedAt = 0L,
+    lastActiveAt = updatedAtMs,
+    messageCount = 0,
+    isActive = false,
+)
+
 /**
- * Holds the session list for the History drawer. Default constructor reads the
- * current SDK from [SdkHolder.sdkFlow] at call time so a backend rebuild is
- * reflected without recreating this ViewModel; [sdkProvider] is injectable for
- * tests/previews. Constructing while unconfigured is safe — [SdkHolder.sdkFlow]
- * returns null until a backend is configured.
+ * Holds the session list for the History drawer. Consumes a [HistoryRepository]
+ * for cache-then-refresh loading; mutations route through [sdkProvider] so they
+ * share the chat-scoped session. Both are injectable for tests/previews.
  *
- * @param sdkProvider Returns the current SDK, or null when not yet configured.
+ * @param historyRepo  Cache-first session list source.
+ * @param sdkProvider  Returns the current SDK for switch/rename/delete/new mutations,
+ *                     or null when not yet connected (mutations are no-ops while null).
  */
 class HistoryViewModel(
-    private val sdkProvider: () -> SentientSdk? = { SdkHolder.sdkFlow.value },
+    private val historyRepo: HistoryRepository,
+    private val sdkProvider: () -> SentientSdk?,
 ) : ViewModel() {
     private val log = createLogger("android", "history-viewmodel")
 
@@ -141,31 +143,27 @@ class HistoryViewModel(
     }
 
     private suspend fun loadSessions() {
-        val sdk = sdkProvider() ?: return
-        _state.value = _state.value.copy(loading = true, error = null)
-        // Bound the fetch: an unreachable dashboard sidecar must surface the error
-        // affordance, not hang the spinner. withTimeout throws a
-        // TimeoutCancellationException on deadline — caught BEFORE the
-        // CancellationException rethrow so the timeout becomes a load-failed state
-        // (a real scope cancellation still propagates). Parity: iOS SdkStore+Sessions.
-        val result = runCatching {
-            withTimeout(LIST_SESSIONS_TIMEOUT_MS) { sdk.listSessions(limit = LIST_PAGE_LIMIT, offset = 0) }
-        }
-        result
-            .onSuccess { page ->
-                log.info("loaded", mapOf("count" to page.items.size, "total" to page.total))
-                _state.value = _state.value.copy(sessions = page.items, loading = false, error = null)
-            }
-            .onFailure { e ->
-                if (e is TimeoutCancellationException) {
-                    warn("load-timed-out", e)
-                    _state.value = _state.value.copy(loading = false, error = "Couldn't load chats. Tap to retry.")
-                    return
+        // cache-then-refresh: load() emits Loading(cached) then Success/Failure.
+        historyRepo.load().collect { result ->
+            when (result) {
+                is SentientResult.Loading -> {
+                    val rows = (result.partial ?: emptyList()).map { it.toSessionRow() }
+                    _state.value = _state.value.copy(sessions = rows, loading = true, error = null)
                 }
-                if (e is CancellationException) throw e
-                warn("load-failed", e)
-                _state.value = _state.value.copy(loading = false, error = e.message ?: "load failed")
+                is SentientResult.Success -> {
+                    val rows = result.data.map { it.toSessionRow() }
+                    log.info("loaded", mapOf("count" to rows.size))
+                    _state.value = _state.value.copy(sessions = rows, loading = false, error = null)
+                }
+                is SentientResult.Failure -> {
+                    warn("load-failed", Exception(result.error.userMessage))
+                    _state.value = _state.value.copy(
+                        loading = false,
+                        error = result.error.userMessage,
+                    )
+                }
             }
+        }
     }
 
     private fun warn(event: String, e: Throwable, extra: Map<String, Any?> = emptyMap()) {
