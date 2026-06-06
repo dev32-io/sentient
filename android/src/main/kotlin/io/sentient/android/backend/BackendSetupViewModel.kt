@@ -1,16 +1,18 @@
 // ---------------------------------------------------------------------------
 // BackendSetupViewModel — drives the "Sentient backend setup" screen. Save folds
 // in a reachability probe: build a throwaway AuthClient from the candidate config
-// and call listUsers(); on success persist + applyResolvedConfig() (rebuild SDK)
-// and signal success (UI shows a checkmark, then dismisses); on failure stay with
-// an error. The token is cleared so a backend change never auto-resumes a stale
-// session on a different backend.
+// and call listUsers(); on success persist + invalidate AppDependencies.authClient
+// (so the next login call picks up the new backend) and signal success (UI shows
+// a checkmark, then dismisses); on failure stay with an error. The token is
+// cleared so a backend change never auto-resumes a stale session on a different
+// backend. The SDK singleton is gone — SdkSessionFactory picks up the new config
+// on the next chat entry without an explicit rebuild.
 // ---------------------------------------------------------------------------
 package io.sentient.android.backend
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import io.sentient.android.sdk.SdkHolder
+import io.sentient.android.sdk.AppDependencies
 import io.sentient.android.sdk.buildAuthHttpClient
 import io.sentient.mobilesdk.auth.AuthClient
 import io.sentient.mobilesdk.auth.AuthError
@@ -43,11 +45,11 @@ sealed interface BackendSetupIntent {
 
 class BackendSetupViewModel(
     private val store: BackendConfigStore = BackendConfigHolder.store,
-    private val tokenStore: SecureTokenStore = SdkHolder.tokenStore,
+    private val tokenStore: SecureTokenStore = AppDependencies.tokenStore,
     private val probe: suspend (BackendConfig) -> AuthResult<*> = { c ->
         AuthClient(c.toGatewayWsUrl(), buildAuthHttpClient(c.allowSelfSigned())).listUsers()
     },
-    private val onApplied: () -> Unit = { SdkHolder.applyResolvedConfig() },
+    private val onApplied: () -> Unit = { AppDependencies.invalidateAuthClient() },
 ) : ViewModel() {
     private val log = createLogger("android", "backend-setup-vm")
     private val _state = MutableStateFlow(prefill())

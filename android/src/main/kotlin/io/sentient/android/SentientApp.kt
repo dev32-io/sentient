@@ -3,8 +3,8 @@
 //
 // Calls MobileSdk.initAndroid(applicationContext) BEFORE any SDK access so the
 // secure stores (SecureTokenStore / SessionIdStore) and the platform bundle can
-// resolve the Android Context. SdkHolder builds the SentientSdk lazily on first
-// ViewModel access — which always happens after onCreate — so the Context is
+// resolve the Android Context. SdkSessionFactory builds the SentientSdk lazily
+// when ChatRoot mounts — which always happens after onCreate — so the Context is
 // guaranteed present.
 // ---------------------------------------------------------------------------
 package io.sentient.android

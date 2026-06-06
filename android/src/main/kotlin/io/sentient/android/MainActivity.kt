@@ -3,7 +3,7 @@
 //
 //  1. Backend gate (AppRoot): if no backend is configured (no persisted override
 //     and no build-time default URL), force BackendSetupScreen. Once configured,
-//     ensureBuilt() is called exactly once and the auth-token-derived swap runs.
+//     the auth-token-derived swap runs.
 //
 //  2. Auth gate (AppConfiguredRoot): token present ⇒ chat, otherwise ⇒ login.
 //     Token presence (DisplayNameStore.name != null) gates the screen. Gating on
@@ -142,7 +142,6 @@ private fun AppRoot(
                     onSaved = { showSetupOverride = false },
                 )
             } else {
-                io.sentient.android.sdk.SdkHolder.ensureBuilt()
                 AppConfiguredRoot(
                     authViewModel = authViewModel,
                     settingsViewModel = settingsViewModel,

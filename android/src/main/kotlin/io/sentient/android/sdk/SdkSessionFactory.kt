@@ -5,8 +5,9 @@
 // wires outbox flush on READY, and exposes open()/close(). Each chat screen
 // gets its own ChatSession; close() disconnects and cancels the scope.
 //
-// Config + bundle construction lifted from SdkHolder.buildFrom/bundle.
-// SdkHolder remains in parallel until Task 3.6 completes its deletion.
+// The SDK instance exists ONLY here — there is no process-wide SDK singleton.
+// App-lifetime non-SDK deps (tokenStore, authClient, capabilities) live in
+// AppDependencies.
 // ---------------------------------------------------------------------------
 package io.sentient.android.sdk
 
@@ -77,15 +78,14 @@ class ChatSession(
  * Requirements:
  *  - [MobileSdk.initAndroid] MUST have been called (Application.onCreate) before
  *    the first [create] — createPlatformBundle() reads the Android Context from
- *    AndroidContextHolder (same requirement as SdkHolder).
+ *    AndroidContextHolder.
  *  - A configured backend MUST be available (resolve returns [ResolvedBackend.Configured]).
- *    Callers should check [SdkHolder.isConfigured] before navigating to the chat screen.
  */
 object SdkSessionFactory {
     fun create(): ChatSession {
         // Per-session scope: SupervisorJob so one failing child loop never cancels
-        // the SDK's other coroutines. limitedParallelism(1) matches SdkHolder's
-        // confinement policy — connectors + AudioPipeline assume single-threaded access.
+        // the SDK's other coroutines. limitedParallelism(1) — connectors + AudioPipeline
+        // assume single-threaded access.
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1))
 
         val r = resolveBackend(
@@ -100,7 +100,7 @@ object SdkSessionFactory {
         val config = SdkConfig(
             gatewayWsUrl = r.gatewayWsUrl,
             allowSelfSignedDevHost = r.allowSelfSignedDevHost,
-            capabilities = SdkHolder.capabilities,
+            capabilities = AppDependencies.capabilities,
             devFaultsEnabled = io.sentient.android.BuildConfig.DEBUG,
         )
 

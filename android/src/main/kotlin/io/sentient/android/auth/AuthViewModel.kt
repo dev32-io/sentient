@@ -2,11 +2,11 @@
 // AuthViewModel — MVI ViewModel for the Login screen (avatar grid → PIN pad).
 //
 // Single source of truth: state: StateFlow<AuthUiState>. Single mutation entry:
-// dispatch(AuthIntent). Side work (REST listUsers/login, token save, sdk.connect)
-// runs in viewModelScope. Navigation to chat is NOT modelled here — MainActivity
-// derives login-vs-chat from the SDK's single state surface (status == READY),
-// matching the codebase's event-driven UX inference. On a successful login we
-// save the token + call sdk.connect(); the SDK reaches READY and the UI swaps.
+// dispatch(AuthIntent). Side work (REST listUsers/login, token save) runs in
+// viewModelScope. Navigation to chat is NOT modelled here — MainActivity derives
+// login-vs-chat from DisplayNameStore.name != null. On a successful login we
+// save the token + displayName; the nav gate reacts and mounts ChatRoot, which
+// builds the ChatSession + connects the SDK.
 //
 // PIN is NEVER logged. Auto-submit fires once 4 digits are entered.
 // ---------------------------------------------------------------------------
@@ -14,9 +14,9 @@ package io.sentient.android.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import io.sentient.android.sdk.AppDependencies
 import io.sentient.android.sdk.DisplayNameHolder
 import io.sentient.android.sdk.DisplayNameStore
-import io.sentient.android.sdk.SdkHolder
 import io.sentient.mobilesdk.auth.AuthClient
 import io.sentient.mobilesdk.auth.AuthError
 import io.sentient.mobilesdk.auth.AuthResult
@@ -67,10 +67,9 @@ sealed interface AuthIntent {
 }
 
 class AuthViewModel(
-    private val authClientProvider: () -> AuthClient = { SdkHolder.authClient },
-    private val tokenStore: SecureTokenStore = SdkHolder.tokenStore,
+    private val authClientProvider: () -> AuthClient = { AppDependencies.authClient },
+    private val tokenStore: SecureTokenStore = AppDependencies.tokenStore,
     private val displayNameStore: DisplayNameStore = DisplayNameHolder.store,
-    private val sdkConnect: suspend () -> Unit = { SdkHolder.sdk.connect() },
 ) : ViewModel() {
     private val log = createLogger("android", "auth-viewmodel")
 
@@ -137,9 +136,10 @@ class AuthViewModel(
                     // Persist the display name for the post-login chat / history
                     // headers (this VM's selectedUser is reset after login). Display
                     // name, not a secret — kept out of the token path. Mirrors iOS
-                    // AuthModel.performLogin → displayNameStore.save.
+                    // AuthModel.performLogin → displayNameStore.save. The nav gate
+                    // (displayName != null) reacts and mounts ChatRoot, which builds
+                    // the ChatSession and connects the SDK.
                     displayNameStore.save(user.displayName)
-                    sdkConnect()
                 }
                 is AuthResult.Failure -> {
                     log.warn("login.failed", mapOf("error" to result.error::class.simpleName))
