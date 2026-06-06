@@ -11,7 +11,11 @@ data class PendingMessage(
 class Outbox(private val send: (PendingMessage) -> Unit) {
     private val queue = LinkedHashMap<String, PendingMessage>()
 
-    fun enqueue(msg: PendingMessage) { queue[msg.id] = msg }
+    fun enqueue(msg: PendingMessage) {
+        val existing = queue[msg.id]
+        if (existing != null && existing.status != MessageStatus.QUEUED) return  // never resurrect a SENT/FAILED id
+        queue[msg.id] = msg
+    }
 
     fun onReady() {
         for (m in queue.values.toList()) {
@@ -22,6 +26,7 @@ class Outbox(private val send: (PendingMessage) -> Unit) {
         }
     }
 
+    // reason: surfaced by callers/logging; body marks all still-QUEUED messages terminal.
     fun failAll(@Suppress("UNUSED_PARAMETER") reason: String) {
         for (m in queue.values.toList()) {
             if (m.status == MessageStatus.QUEUED) queue[m.id] = m.copy(status = MessageStatus.FAILED)
