@@ -92,6 +92,7 @@ class SentientSdk(
     private val connectors = SdkConnectors(
         deriver = deriver,
         emit = ::emit,
+        emitEvent = ::emitEvent,
         send = ::sendControl,
         sendBinary = ::sendBinary,
         newId = newId,

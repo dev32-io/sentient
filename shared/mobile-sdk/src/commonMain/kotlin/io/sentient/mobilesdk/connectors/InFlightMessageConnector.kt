@@ -23,7 +23,9 @@
 package io.sentient.mobilesdk.connectors
 
 import io.sentient.mobilesdk.log.createLogger
+import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.protocol.ServerMessage
+import io.sentient.mobilesdk.sdk.ChatMessage
 
 /** The streaming buffer for one in-flight cycle. */
 data class InFlightMessage(
@@ -33,6 +35,7 @@ data class InFlightMessage(
 
 class InFlightMessageConnector(
     private val onUpdate: ((InFlightMessage?) -> Unit)? = null,
+    private val onEvent: ((SdkEvent) -> Unit)? = null,
 ) : Connector {
     override val capability: String = CAPABILITY
 
@@ -58,6 +61,7 @@ class InFlightMessageConnector(
         log.info("seed", mapOf("cycleId" to msg.cycleId))
         current = next
         onUpdate?.invoke(next)
+        onEvent?.invoke(SdkEvent.MessageStarted(msg.cycleId))
     }
 
     private fun onDelta(msg: ServerMessage.MessageDelta) {
@@ -69,6 +73,7 @@ class InFlightMessageConnector(
         log.debug("delta", mapOf("cycleId" to cycleId, "deltaLen" to delta.length, "totalLen" to next.text.length))
         current = next
         onUpdate?.invoke(next)
+        onEvent?.invoke(SdkEvent.MessageDelta(cycleId, delta)) // one event per chunk — never batched
     }
 
     private fun onDone(cycleId: String?) {
@@ -76,8 +81,15 @@ class InFlightMessageConnector(
         val cur = current
         if (cur != null && cur.cycleId != cycleId) return // done for a different cycle
         log.info("done", mapOf("cycleId" to cycleId))
+        val accumulatedText = cur?.text ?: ""
         current = null
         onUpdate?.invoke(null)
+        // ts=0: clear-signal; committed text is authoritative via feed/timeline
+        onEvent?.invoke(
+            SdkEvent.MessageCommitted(
+                ChatMessage(ts = 0, role = "assistant", content = accumulatedText, streaming = false, cycleId = cycleId),
+            ),
+        )
     }
 
     private fun onAborted(cycleId: String?) {

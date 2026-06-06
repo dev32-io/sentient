@@ -26,6 +26,7 @@ import io.sentient.mobilesdk.connectors.TaskStatusConnector
 import io.sentient.mobilesdk.connectors.UserAudioInputConnector
 import io.sentient.mobilesdk.connectors.UserTextInputConnector
 import io.sentient.mobilesdk.protocol.ClientMessage
+import io.sentient.mobilesdk.protocol.SdkEvent
 
 /**
  * Audio downlink hooks the orchestrator routes to the AudioPipeline (E3). The
@@ -62,6 +63,7 @@ class AudioDownlinkHooks(
 class SdkConnectors(
     private val deriver: StateDeriver,
     private val emit: () -> Unit,
+    private val emitEvent: (SdkEvent) -> Unit,
     private val send: (ClientMessage) -> Unit,
     sendBinary: (ByteArray) -> Unit,
     newId: () -> String,
@@ -76,6 +78,7 @@ class SdkConnectors(
 
     val inflight = InFlightMessageConnector(
         onUpdate = { msg -> deriver.inflight = msg; emit() },
+        onEvent = emitEvent,
     )
 
     val cognition = CognitionStatusConnector(
