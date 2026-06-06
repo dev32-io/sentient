@@ -23,6 +23,7 @@ import io.sentient.mobilesdk.audio.EchoGateConfig
 import io.sentient.mobilesdk.audio.float32ToPcm16
 import io.sentient.mobilesdk.connectors.UserAudioInputConnector
 import io.sentient.mobilesdk.fakes.FakeOpusDecoderPort
+import io.sentient.mobilesdk.fakes.FakeOpusEncoderPort
 import io.sentient.mobilesdk.fakes.FixedClock
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.sdk.AudioFsm
@@ -78,6 +79,7 @@ class AudioPipelineTest {
         clock: FixedClock = FixedClock(0L),
         echoGate: EchoGate = EchoGate(echoCfg),
         fsm: AudioFsm = AudioFsm(),
+        encoder: FakeOpusEncoderPort = FakeOpusEncoderPort(),
         onStateChanged: (Boolean, AudioState) -> Unit = { _, _ -> },
     ): Pair<AudioPipeline, Sink> {
         val sink = Sink()
@@ -90,6 +92,7 @@ class AudioPipelineTest {
             capture = capture,
             playback = playback,
             opusDecoder = FakeOpusDecoderPort(),
+            opusEncoder = encoder,
             audioInput = { connector },
             echoGate = echoGate,
             fsm = fsm,
@@ -158,6 +161,80 @@ class AudioPipelineTest {
         // stop() launches capture.stop() on the scope; let it run.
         advanceUntilIdle()
         assertTrue(capture.stopped, "capture.stop() paired with flow cancel")
+    }
+
+    // ── UPLINK ENCODE: gate → opus re-chunk → send (A5) ───────────────────────────
+    //
+    // The mic uplink ships RAW opus packets, NOT PCM16 (gateway STT is
+    // ?audioFormat=opus). Encode sits AFTER the gate/ring (the gate's RMS check
+    // stays in the PCM domain, mirroring the web client) and BEFORE sendBinary.
+    // These pin the encode/send wiring with a FakeOpusEncoderPort (no kopus) — the
+    // re-chunk math itself is proven in iosTest where kopus actually links.
+
+    @Test
+    fun uplink_encodes_each_forwarded_frame_and_sends_every_packet_in_order() = runTest {
+        // The encoder fake returns ONE packet per accepted frame, tagged with the
+        // frame's PCM length, so we can assert (a) each accepted/forwarded frame's
+        // PCM is fed to the encoder and (b) every returned packet is sent once, in
+        // the order the frames were forwarded. Three loud frames → 3 encode calls
+        // → 3 packets sent, none dropped, none reordered.
+        var seq = 0
+        val encoder = FakeOpusEncoderPort { listOf(byteArrayOf(seq++.toByte())) }
+        val capture = FakeCapture(listOf(frame(0.122f, samples = 320), frame(0.122f, samples = 320), frame(0.122f, samples = 320)))
+        val (p, sink) = pipeline(capture, FakePlayback(), this, encoder = encoder)
+        p.start()
+        advanceUntilIdle()
+        assertEquals(3, encoder.encoded.size, "every forwarded frame is fed to the encoder")
+        assertEquals(listOf(0, 1, 2), sink.binary.map { it[0].toInt() }, "every packet sent once, in order")
+    }
+
+    @Test
+    fun uplink_rejected_frame_sends_nothing() = runTest {
+        // A gated-out (echo) frame must never reach the encoder OR the wire. amp
+        // 0.061 (≈2000) clears baseline but fails the raised playback threshold.
+        val encoder = FakeOpusEncoderPort()
+        val gate = EchoGate(echoCfg)
+        val capture = FakeCapture(listOf(frame(0.061f), frame(0.061f)))
+        val (p, sink) = pipeline(capture, FakePlayback(), this, echoGate = gate, encoder = encoder)
+        gate.onPlaybackStart("c1") // raise the threshold so the frames read as echo.
+        p.start()
+        advanceUntilIdle()
+        assertEquals(0, encoder.encoded.size, "rejected frame never reaches the encoder")
+        assertEquals(0, sink.binary.size, "rejected frame sends nothing")
+    }
+
+    @Test
+    fun uplink_preroll_flush_encodes_each_buffered_frame_and_sends_after_onset() = runTest {
+        // Pre-roll flush on onset: the QUIET frame is buffered in the ring, then the
+        // next LOUD onset flushes [QUIET, LOUD2]. Each flushed frame must be encoded
+        // and every packet sent — AFTER the barge-in/FSM onset handling. The fake
+        // returns one length-tagged packet per call; we assert 3 encode calls total
+        // (LOUD1, then QUIET+LOUD2 on the onset flush) and 3 packets sent, in order,
+        // with USER_SPEAKING reached (onset handling ran) before/with the sends.
+        val states = mutableListOf<AudioState>()
+        val encoder = FakeOpusEncoderPort()
+        val capture = FakeCapture(listOf(frame(0.122f, samples = 320), frame(0.015f, samples = 320), frame(0.122f, samples = 320)))
+        val (p, sink) = pipeline(capture, FakePlayback(), this, encoder = encoder, onStateChanged = { _, s -> states += s })
+        p.start()
+        advanceUntilIdle()
+        assertEquals(3, encoder.encoded.size, "LOUD1 + pre-roll-flushed [QUIET, LOUD2] all encoded")
+        assertEquals(3, sink.binary.size, "every flushed frame's packet sent")
+        assertTrue(states.contains(AudioState.USER_SPEAKING), "onset FSM handling ran before the send: $states")
+    }
+
+    @Test
+    fun uplink_resets_encoder_on_mic_start_and_stop() = runTest {
+        // The encoder accumulator is per-mic-session: reset on start (drop any prior
+        // sub-frame tail) and on stop (so a remainder never leaks into the next
+        // utterance). Two reset calls per start+stop cycle.
+        val encoder = FakeOpusEncoderPort()
+        val capture = FakeCapture(emptyList())
+        val (p, _) = pipeline(capture, FakePlayback(), this, encoder = encoder)
+        p.start()
+        assertEquals(1, encoder.resetCount, "encoder.reset() on mic start")
+        p.stop()
+        advanceUntilIdle()
+        assertEquals(2, encoder.resetCount, "encoder.reset() on mic stop")
     }
 
     // ── DOWNLINK: playback + echoGate lifecycle + isSpeaking ──────────────────────

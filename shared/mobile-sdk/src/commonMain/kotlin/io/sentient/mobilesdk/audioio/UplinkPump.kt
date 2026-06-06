@@ -17,6 +17,7 @@ package io.sentient.mobilesdk.audioio
 import io.sentient.mobilesdk.audio.AudioPreRollRing
 import io.sentient.mobilesdk.audio.EchoGate
 import io.sentient.mobilesdk.audio.computeRms
+import io.sentient.mobilesdk.audio.opus.OpusEncoderPort
 import io.sentient.mobilesdk.audio.pcm16LeToShorts
 import io.sentient.mobilesdk.connectors.UserAudioInputConnector
 import io.sentient.mobilesdk.log.createLogger
@@ -38,6 +39,9 @@ private const val UPLINK_HANGOVER_FRAMES = 0
  * @param capture Mic capture adapter (E1). null on the text-only path → start no-ops.
  * @param audioInput Lazy connector accessor (breaks the construction cycle).
  * @param echoGate Client echo suppressor (A5).
+ * @param encoder Opus uplink encoder (A5). Re-chunks the forwarded PCM into 20 ms
+ *   raw opus packets AFTER the gate/ring (gate RMS stays in the PCM domain); each
+ *   packet is sent one-per-WS-binary-frame. Lazy/native-deferred — see the port.
  * @param clock Injected wall-clock for gate RMS/tail timing.
  * @param scope Orchestrator coroutine scope the capture-collect job runs on.
  * @param inputSampleRate Mic/STT uplink rate (Hz).
@@ -49,6 +53,7 @@ class UplinkPump(
     private val capture: AudioCaptureAdapter?,
     private val audioInput: () -> UserAudioInputConnector,
     private val echoGate: EchoGate,
+    private val encoder: OpusEncoderPort,
     private val clock: Clock,
     private val scope: CoroutineScope,
     private val inputSampleRate: Int,
@@ -78,6 +83,9 @@ class UplinkPump(
             return
         }
         log.info("uplink-start", mapOf("inputSampleRate" to inputSampleRate))
+        // Mic-session begin: drop any sub-frame remainder from a prior session so
+        // the new utterance starts at a 20 ms frame boundary.
+        encoder.reset()
         captureJob = scope.launch {
             cap.start(inputSampleRate)
             cap.frames(inputSampleRate).collect { frame -> onCaptureFrame(frame) }
@@ -92,6 +100,9 @@ class UplinkPump(
         ring.reset()
         ringActive = false
         rejectCount = 0
+        // Mic-session end: drop the sub-frame remainder so it never leaks into the
+        // next utterance (which reset()s again on start, this is the symmetric guard).
+        encoder.reset()
         scope.launch { capture?.stop() }
     }
 
@@ -117,8 +128,22 @@ class UplinkPump(
             // whose STT turn_started fires the server-side bargeInController).
             onMicOnset()
         }
+        // Encode AFTER the gate/ring (the gate's RMS check stays in the PCM domain,
+        // mirroring the web client). The encoder re-chunks across forwarded frames:
+        // its internal 320-sample accumulator spans the whole forward list, so each
+        // forwarded PCM frame may yield 0+ raw opus packets. Send each one-per-WS
+        // -binary-frame, in order. Onset/barge-in/FSM handling above is unchanged.
+        encodeAndSend(forward)
+    }
+
+    /** Re-chunk each forwarded PCM frame to opus packets and send them in order. */
+    private fun encodeAndSend(forward: List<ByteArray>) {
+        if (forward.isEmpty()) return
         val connector = audioInput()
-        for (out in forward) connector.sendAudioFrame(out)
+        for (frame in forward) {
+            val packets = encoder.encode(pcm16LeToShorts(frame))
+            for (packet in packets) connector.sendAudioFrame(packet)
+        }
     }
 
     private fun logGateDecision(pcm: ShortArray, nowMs: Long, accepted: Boolean) {

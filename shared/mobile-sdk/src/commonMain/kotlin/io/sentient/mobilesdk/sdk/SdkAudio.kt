@@ -17,7 +17,9 @@ package io.sentient.mobilesdk.sdk
 
 import io.sentient.mobilesdk.audio.EchoGate
 import io.sentient.mobilesdk.audio.opus.LazyOpusDecoderPort
+import io.sentient.mobilesdk.audio.opus.LazyOpusEncoderPort
 import io.sentient.mobilesdk.audio.opus.OpusDownlinkDecoder
+import io.sentient.mobilesdk.audio.opus.OpusUplinkEncoder
 import io.sentient.mobilesdk.audioio.AudioPipeline
 import io.sentient.mobilesdk.connectors.UserAudioInputConnector
 import io.sentient.mobilesdk.util.Clock
@@ -55,11 +57,19 @@ class SdkAudio(
     // construction would crash host-JVM full-SDK tests on the libopus native load.
     private val opusDecoder = LazyOpusDecoderPort { OpusDownlinkDecoder() }
 
-    /** The voice flow manager — uplink (capture→gate→connector) + downlink (connector→decode→playback). */
+    // Long-lived PCM16 → raw-opus uplink encoder (A5); re-chunks the gated mic
+    // frames into 20 ms packets and is reset per mic session by the pump. Wrapped
+    // in LazyOpusEncoderPort so the native kopus encoder is only allocated once mic
+    // capture forwards a frame (on a real device) — eager construction would crash
+    // host-JVM full-SDK tests on the libopus native load.
+    private val opusEncoder = LazyOpusEncoderPort { OpusUplinkEncoder() }
+
+    /** The voice flow manager — uplink (capture→gate→encode→connector) + downlink (connector→decode→playback). */
     val pipeline: AudioPipeline = AudioPipeline(
         capture = capture,
         playback = playback,
         opusDecoder = opusDecoder,
+        opusEncoder = opusEncoder,
         audioInput = audioInput,
         echoGate = echoGate,
         fsm = fsm,

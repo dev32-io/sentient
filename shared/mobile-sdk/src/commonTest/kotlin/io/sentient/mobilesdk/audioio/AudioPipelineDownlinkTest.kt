@@ -18,6 +18,7 @@ import io.sentient.mobilesdk.audio.EchoGate
 import io.sentient.mobilesdk.audio.EchoGateConfig
 import io.sentient.mobilesdk.connectors.UserAudioInputConnector
 import io.sentient.mobilesdk.fakes.FakeOpusDecoderPort
+import io.sentient.mobilesdk.fakes.FakeOpusEncoderPort
 import io.sentient.mobilesdk.fakes.FixedClock
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.sdk.AudioFsm
@@ -76,6 +77,7 @@ class AudioPipelineDownlinkTest {
             capture = FakeCapture(),
             playback = playback,
             opusDecoder = opusDecoder,
+            opusEncoder = FakeOpusEncoderPort(),
             audioInput = { connector },
             echoGate = EchoGate(echoCfg),
             fsm = AudioFsm(),

@@ -31,6 +31,7 @@ package io.sentient.mobilesdk.audioio
 
 import io.sentient.mobilesdk.audio.EchoGate
 import io.sentient.mobilesdk.audio.opus.OpusDecoderPort
+import io.sentient.mobilesdk.audio.opus.OpusEncoderPort
 import io.sentient.mobilesdk.connectors.UserAudioInputConnector
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.sdk.AudioFsm
@@ -57,6 +58,8 @@ private const val ENCODING_OPUS = "opus"
  * @param playback Assistant playback adapter (E2). null → downlink frames are dropped.
  * @param opusDecoder Long-lived OGG-Opus → PCM16-LE decoder (A4). One instance,
  *   reset between cycles. Only invoked in opus mode; pcm16 passes through untouched.
+ * @param opusEncoder Long-lived PCM16 → raw-opus uplink encoder (A5). Re-chunks
+ *   the gated mic frames into 20 ms packets; reset per mic session by the pump.
  * @param audioInput Lazy connector accessor (breaks the construction cycle).
  * @param echoGate Client echo suppressor (A5).
  * @param fsm Voice-status FSM (drives SdkState display).
@@ -72,6 +75,7 @@ class AudioPipeline(
     capture: AudioCaptureAdapter?,
     private val playback: AudioPlaybackAdapter?,
     private val opusDecoder: OpusDecoderPort,
+    private val opusEncoder: OpusEncoderPort,
     audioInput: () -> UserAudioInputConnector,
     private val echoGate: EchoGate,
     private val fsm: AudioFsm,
@@ -90,6 +94,7 @@ class AudioPipeline(
         capture = capture,
         audioInput = audioInput,
         echoGate = echoGate,
+        encoder = opusEncoder,
         clock = clock,
         scope = scope,
         inputSampleRate = inputSampleRate,
@@ -257,6 +262,7 @@ class AudioPipeline(
         playbackReady = false
         pendingFrames.clear()
         opusDecoder.close()
+        opusEncoder.close()
         if (playbackStarted) {
             playbackStarted = false
             scope.launch { playback?.stop() }
