@@ -16,6 +16,8 @@
 package io.sentient.mobilesdk.sdk
 
 import io.sentient.mobilesdk.audio.EchoGate
+import io.sentient.mobilesdk.audio.opus.LazyOpusDecoderPort
+import io.sentient.mobilesdk.audio.opus.OpusDownlinkDecoder
 import io.sentient.mobilesdk.audioio.AudioPipeline
 import io.sentient.mobilesdk.connectors.UserAudioInputConnector
 import io.sentient.mobilesdk.util.Clock
@@ -47,10 +49,17 @@ class SdkAudio(
     private val fsm = AudioFsm()
     private val echoGate = EchoGate(audioConfig.echoGate)
 
-    /** The voice flow manager — uplink (capture→gate→connector) + downlink (connector→playback). */
+    // Long-lived OGG-Opus → PCM16-LE downlink decoder (A4); reset between TTS cycles
+    // by the pipeline. Wrapped in LazyOpusDecoderPort so the native kopus decoder is
+    // only allocated when opus actually streams (on a real device) — eager
+    // construction would crash host-JVM full-SDK tests on the libopus native load.
+    private val opusDecoder = LazyOpusDecoderPort { OpusDownlinkDecoder() }
+
+    /** The voice flow manager — uplink (capture→gate→connector) + downlink (connector→decode→playback). */
     val pipeline: AudioPipeline = AudioPipeline(
         capture = capture,
         playback = playback,
+        opusDecoder = opusDecoder,
         audioInput = audioInput,
         echoGate = echoGate,
         fsm = fsm,

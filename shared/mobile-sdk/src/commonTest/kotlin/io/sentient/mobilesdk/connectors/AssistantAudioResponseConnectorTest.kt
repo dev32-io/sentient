@@ -27,13 +27,17 @@ class AssistantAudioResponseConnectorTest {
     private class Sink {
         val frames = mutableListOf<Pair<ByteArray, String>>()
         val started = mutableListOf<String>()
+        val startMeta = mutableListOf<Pair<String?, Int?>>()
         val done = mutableListOf<String>()
         val stopped = mutableListOf<Pair<String, String>>()
     }
 
     private fun connector(sink: Sink = Sink()): Pair<AssistantAudioResponseConnector, Sink> =
         AssistantAudioResponseConnector(
-            onAudioStart = { sink.started += it },
+            onAudioStart = { cycleId, encoding, sampleRate ->
+                sink.started += cycleId
+                sink.startMeta += encoding to sampleRate
+            },
             onAudioFrame = { bytes, cycleId -> sink.frames += bytes to cycleId },
             onAudioDone = { sink.done += it },
             onPlaybackStop = { reason, cycleId -> sink.stopped += reason to cycleId },
@@ -50,6 +54,15 @@ class AssistantAudioResponseConnectorTest {
         c.handle(ServerMessage.ConnectorAudioStart(cycleId = "cycle-xyz"))
         assertEquals(listOf("cycle-xyz"), sink.started)
         assertTrue(c.isReceiving())
+    }
+
+    @Test
+    fun audio_start_forwards_encoding_and_sampleRate_to_onAudioStart() {
+        // JUSTIFIED DIVERGENCE from web-sdk: mobile SDK owns opus decode, so the
+        // connector must forward connector.audio.start's encoding + sampleRate.
+        val (c, sink) = connector()
+        c.handle(ServerMessage.ConnectorAudioStart(cycleId = "c1", encoding = "opus", sampleRate = 48000))
+        assertEquals(listOf<Pair<String?, Int?>>("opus" to 48000), sink.startMeta)
     }
 
     @Test

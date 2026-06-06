@@ -22,6 +22,7 @@ import io.sentient.mobilesdk.audio.EchoGate
 import io.sentient.mobilesdk.audio.EchoGateConfig
 import io.sentient.mobilesdk.audio.float32ToPcm16
 import io.sentient.mobilesdk.connectors.UserAudioInputConnector
+import io.sentient.mobilesdk.fakes.FakeOpusDecoderPort
 import io.sentient.mobilesdk.fakes.FixedClock
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.sdk.AudioFsm
@@ -88,6 +89,7 @@ class AudioPipelineTest {
         val p = AudioPipeline(
             capture = capture,
             playback = playback,
+            opusDecoder = FakeOpusDecoderPort(),
             audioInput = { connector },
             echoGate = echoGate,
             fsm = fsm,

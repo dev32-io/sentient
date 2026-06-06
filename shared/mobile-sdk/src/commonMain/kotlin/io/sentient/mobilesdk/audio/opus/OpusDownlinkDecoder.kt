@@ -33,7 +33,7 @@ private const val CHANNELS = 1
 /** Max opus frame duration is 120 ms; 48000 * 0.12 = 5760 samples per channel. */
 private const val MAX_FRAME_SAMPLES = 5_760
 
-class OpusDownlinkDecoder {
+class OpusDownlinkDecoder : OpusDecoderPort {
 
     private val log = createLogger("audio", "opus", "decoder")
 
@@ -49,7 +49,7 @@ class OpusDownlinkDecoder {
      * Push one OGG-Opus chunk; return every decoded PCM16-LE byte frame it
      * produced (one per opus audio packet that survived pre-skip), in order.
      */
-    fun decode(oggChunk: ByteArray): List<ByteArray> {
+    override fun decode(oggChunk: ByteArray): List<ByteArray> {
         if (closed || oggChunk.isEmpty()) return emptyList()
         val packets = demuxer.push(oggChunk)
         if (packets.isEmpty()) return emptyList()
@@ -70,7 +70,7 @@ class OpusDownlinkDecoder {
     }
 
     /** Reset demuxer + decoder + pre-skip counter — call between TTS cycles. */
-    fun reset() {
+    override fun reset() {
         demuxer.reset()
         decoder.ctl(OPUS_RESET_STATE, 0)
         samplesToSkip = -1
@@ -78,7 +78,7 @@ class OpusDownlinkDecoder {
     }
 
     /** Release the underlying libopus decoder. Idempotent. */
-    fun close() {
+    override fun close() {
         if (closed) return
         closed = true
         decoder.close()

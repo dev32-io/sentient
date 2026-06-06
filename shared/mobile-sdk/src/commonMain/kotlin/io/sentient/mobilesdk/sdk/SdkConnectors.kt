@@ -40,7 +40,7 @@ import io.sentient.mobilesdk.protocol.ClientMessage
  * @param onPlaybackStop playback.stop → pipeline.onPlaybackStop.
  */
 class AudioDownlinkHooks(
-    val onAudioStart: (cycleId: String) -> Unit = {},
+    val onAudioStart: (cycleId: String, encoding: String?, sampleRate: Int?) -> Unit = { _, _, _ -> },
     val onAudioFrame: (frame: ByteArray, cycleId: String) -> Unit = { _, _ -> },
     val onAudioDone: (cycleId: String) -> Unit = {},
     val onPlaybackStop: (reason: String, cycleId: String) -> Unit = { _, _ -> },
@@ -108,7 +108,7 @@ class SdkConnectors(
     )
 
     val audioOutput = AssistantAudioResponseConnector(
-        onAudioStart = { cycleId -> audioHooks().onAudioStart(cycleId) },
+        onAudioStart = { cycleId, encoding, sampleRate -> audioHooks().onAudioStart(cycleId, encoding, sampleRate) },
         onAudioFrame = { frame, cycleId -> audioHooks().onAudioFrame(frame, cycleId) },
         onAudioDone = { cycleId -> audioHooks().onAudioDone(cycleId) },
         onPlaybackStop = { reason, cycleId -> audioHooks().onPlaybackStop(reason, cycleId) },

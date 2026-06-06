@@ -37,8 +37,13 @@ package io.sentient.mobilesdk.connectors
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.ServerMessage
 
+// JUSTIFIED DIVERGENCE from web-sdk's assistant-audio-response-connector.ts:
+// onAudioStart carries encoding + sampleRate. On web, opus→PCM decode lives in
+// webui (not web-sdk), so the web connector never sees the encoding. On mobile
+// the SDK OWNS decode (AudioPipeline → OpusDecoderPort), so the connector must
+// forward connector.audio.start's encoding/sampleRate down to the pipeline.
 class AssistantAudioResponseConnector(
-    private val onAudioStart: ((cycleId: String) -> Unit)? = null,
+    private val onAudioStart: ((cycleId: String, encoding: String?, sampleRate: Int?) -> Unit)? = null,
     private val onAudioFrame: ((frame: ByteArray, cycleId: String) -> Unit)? = null,
     private val onAudioDone: ((cycleId: String) -> Unit)? = null,
     private val onPlaybackStop: ((reason: String, cycleId: String) -> Unit)? = null,
@@ -64,7 +69,7 @@ class AssistantAudioResponseConnector(
 
     override fun handle(msg: ServerMessage) {
         when (msg) {
-            is ServerMessage.ConnectorAudioStart -> onStart(msg.cycleId ?: "")
+            is ServerMessage.ConnectorAudioStart -> onStart(msg.cycleId ?: "", msg.encoding, msg.sampleRate)
             is ServerMessage.ConnectorAudioDone -> onDone(msg.cycleId)
             is ServerMessage.PlaybackStop -> onStop(msg.reason, msg.cycleId)
             else -> Unit // not owned by this connector
@@ -84,15 +89,21 @@ class AssistantAudioResponseConnector(
         onAudioFrame?.invoke(bytes, activeCycleId)
     }
 
-    private fun onStart(cycleId: String) {
+    private fun onStart(cycleId: String, encoding: String?, sampleRate: Int?) {
         activeCycleId = cycleId
         isReceiving = true
         isCancelled = false
         log.info(
             "transition",
-            mapOf("to" to "receiving", "trigger" to "connector.audio.start", "cycleId" to cycleId),
+            mapOf(
+                "to" to "receiving",
+                "trigger" to "connector.audio.start",
+                "cycleId" to cycleId,
+                "encoding" to (encoding ?: ""),
+                "sampleRate" to (sampleRate ?: 0),
+            ),
         )
-        onAudioStart?.invoke(cycleId)
+        onAudioStart?.invoke(cycleId, encoding, sampleRate)
     }
 
     private fun onDone(cycleId: String?) {
