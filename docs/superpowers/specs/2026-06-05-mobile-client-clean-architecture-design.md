@@ -201,10 +201,13 @@ No hard dependency on connection. No blocking. Kills the 12 s-timeout-then-dead 
 ## 8. Result envelope + error taxonomy
 
 ```kotlin
-sealed interface SentientResult<out T> {
-  data class Loading<out T>(val partial: T? = null) : SentientResult<T>  // stale-while-loading
-  data class Success<out T>(val data: T)            : SentientResult<T>
-  data class Failure(val error: SentientError)      : SentientResult<Nothing>
+// sealed CLASS + `out T : Any` upper bound — required for clean SKIE→Swift bridging
+// (proven by Touchlab's own ApiResult<out T : Any> generic-sealed example). Do NOT
+// use kotlin.Result<T> (inline value class, bridges poorly).
+sealed class SentientResult<out T : Any> {
+  data class Loading<out T : Any>(val partial: T? = null) : SentientResult<T>()  // stale-while-loading
+  data class Success<out T : Any>(val data: T)            : SentientResult<T>()
+  data class Failure(val error: SentientError)            : SentientResult<Nothing>()
 }
 
 sealed class SentientError(
@@ -341,7 +344,7 @@ Each phase: build → defensive unit tests → Maestro subset → phase gate. Ph
 ## 14. Risks / Open Questions
 
 - **Phase 0 outcome may widen scope.** If the gateway batches deltas at `cycle.done`, streaming needs gateway-side pacing in addition to the SDK surface split. Resolve before Phase 1 freezes the event contract.
-- **SKIE export of generics.** `SentientResult<T>` and the `SdkEvent` sealed hierarchy must bridge cleanly to Swift enums with associated values. Verify SKIE handles the variance (`Loading<out T>` / `Failure : Nothing`) early in Phase 1; fall back to a non-generic per-domain result if needed.
+- **SKIE export of generics — LOW risk (verified 2026-06-05).** Our exact pattern (`sealed class SentientResult<out T : Any>` with `Failure : SentientResult<Nothing>`, consumed as `Flow<SentientResult<T>>`) is a documented, supported SKIE case — see Touchlab's "Sealed Generics and SKIE" `ApiResult<out T : Any>` example. Constraints baked into §8: (a) `out T : Any` upper bound; (b) `sealed class` not `interface` (Hashable + proven form); (c) avoid `kotlin.Result` (inline value class, bridges poorly); (d) Swift uses generated `onEnum(of:)` for exhaustive `switch`. The "SKIE can't replace enums in generics" limit applies only to Kotlin `enum` types used as generic *arguments* — `ErrorKind` is a field, not a type arg, so no impact. No fallback needed; still smoke the Swift exhaustive switch in Phase 1.
 - **Emulator audio injection.** The fixture-audio hook must feed the `AudioCaptureAdapter` deterministically in debug builds; confirm the hook path on both Android (`AudioRecord` shim) and iOS (`AVAudioEngine` shim).
 - **Paid-credential burn in E2E.** Voice-loop cases burn Fish Audio + real LLM each run. Keep the voice subset runnable on demand, not on every micro-iteration.
 - **Chat re-entry handshake cost.** Chat-scoped SDK means re-handshake on every chat open; relies on session-resume staying cheap. Validate latency in Phase 3.
