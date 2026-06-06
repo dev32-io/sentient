@@ -55,6 +55,14 @@ kotlin {
         androidMain.dependencies { implementation(libs.ktor.client.okhttp) }
         iosMain.dependencies { implementation(libs.ktor.client.darwin) }
 
+        // iosTest is the home for tests that call into kopus' libopus native code
+        // (A3 Opus wrapper round-trip). That native lib is built into the iOS
+        // framework targets and loads on the simulator, but NOT under the host
+        // JVM testDebugUnitTest target (no Android .so on the host) — so any
+        // kopus-calling test MUST live here, never in commonTest. It inherits
+        // commonTest via the default hierarchy template; it only needs kotlin-test.
+        iosTest.dependencies { implementation(kotlin("test")) }
+
         // androidUnitTest is the JVM-host home for the @live round-trip harness
         // (C8): the testDebugUnitTest JVM host can open real HTTP/WS to the local
         // gateway via the OkHttp engine, which commonTest's MockEngine-only /
