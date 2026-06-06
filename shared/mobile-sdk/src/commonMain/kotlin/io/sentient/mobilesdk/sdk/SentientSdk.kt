@@ -9,6 +9,7 @@ package io.sentient.mobilesdk.sdk
 import io.sentient.mobilesdk.connectors.SessionsListPage
 import io.sentient.mobilesdk.connectors.SessionsRequestException
 import io.sentient.mobilesdk.connectors.SessionsTimeoutException
+import io.sentient.mobilesdk.dev.FaultHooks
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.presence.IdleDetectorConfig
 import io.sentient.mobilesdk.presence.IdleDetectorEvent
@@ -135,7 +136,12 @@ class SentientSdk(
         onProtocolError = { err -> emitEvent(SdkEvent.ProtocolError(err)) },
     )
 
+    private val faultHooks = FaultHooks()
+
     // ── Public surface ───────────────────────────────────────────────────────
+
+    /** Debug-only fault hooks; null unless config.devFaultsEnabled. Consulted at boundaries in Phase 5. */
+    fun devFaults(): FaultHooks? = if (config.devFaultsEnabled) faultHooks else null
 
     /**
      * Open the WS, authenticate, configure, reach READY. Suspends until settled.

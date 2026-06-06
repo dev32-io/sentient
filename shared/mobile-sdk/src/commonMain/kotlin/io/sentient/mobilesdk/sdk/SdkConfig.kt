@@ -92,4 +92,6 @@ data class SdkConfig(
     val capabilities: List<String>,
     val reconnect: ReconnectConfig = ReconnectConfig(),
     val audio: AudioPipelineConfig = AudioPipelineConfig(),
+    // Debug-only: enables FaultHooks injection for E2E. MUST be false in release.
+    val devFaultsEnabled: Boolean = false,
 )
