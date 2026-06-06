@@ -6,4 +6,5 @@ dependencyResolutionManagement {
 }
 rootProject.name = "sentient-mobile"
 include(":shared:mobile-sdk")
+include(":shared:mobile-data")
 include(":android")
