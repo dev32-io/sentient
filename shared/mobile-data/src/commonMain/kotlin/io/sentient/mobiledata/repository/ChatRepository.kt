@@ -1,6 +1,8 @@
 package io.sentient.mobiledata.repository
 
 import io.sentient.mobiledata.model.ChatModel
+import io.sentient.mobiledata.outbox.Outbox
+import io.sentient.mobiledata.outbox.PendingMessage
 import io.sentient.mobiledata.result.SentientResult
 import io.sentient.mobilesdk.connectors.TaskSnapshotItem
 import io.sentient.mobilesdk.protocol.SdkEvent
@@ -26,7 +28,16 @@ data class LiveState(
 /**
  * ChatRepository — folds the SDK's no-loss [events] SharedFlow into a live
  * [LiveState] via the pure [reduce] function, and exposes [chatStream] combining
- * the committed [timeline] with that live state.
+ * the committed [timeline] with that live state and the optimistic [outbox].
+ *
+ * Outbox lifecycle:
+ * - [send] enqueues an optimistic QUEUED bubble with a client-generated [newId]; the
+ *   bubble is visible immediately in [chatStream].
+ * - [onReady] flushes QUEUED messages — marks them SENT and invokes the [send] callback
+ *   with (text, pendingId) so the SDK can carry the id on the wire.
+ * - When the gateway echoes the committed user entry (carrying the same pendingId), the
+ *   3-way combine reconciles it away by exact id match — no text comparison needed.
+ * - [failOutbox] marks all QUEUED messages FAILED; they remain visible for retry/dismiss.
  *
  * No-loss guarantee: every SdkEvent is consumed from the no-loss SharedFlow and
  * accumulated in [reduce]; the [liveState] StateFlow may conflate intermediate
@@ -36,13 +47,19 @@ data class LiveState(
  * @param events   SDK's no-loss SharedFlow of [SdkEvent] (replay=0, SUSPEND overflow).
  * @param timeline SDK's committed history StateFlow.
  * @param scope    Coroutine scope for the collector; should be the component's lifecycle scope.
+ * @param send     Invoked by the outbox when flushing a QUEUED message; wired to sdk.sendText(text, pendingId) by the session factory.
+ * @param newId    Generates a unique pending message id; injected for testability.
  */
 class ChatRepository(
     private val events: SharedFlow<SdkEvent>,
     private val timeline: StateFlow<List<ChatMessage>>,
     scope: CoroutineScope,
+    private val send: (text: String, pendingId: String) -> Unit,
+    private val newId: () -> String,
 ) {
     private val liveState = MutableStateFlow(LiveState())
+    private val outbox = Outbox(send = { send(it.text, it.id) })
+    private val outboxState = MutableStateFlow<List<PendingMessage>>(emptyList())
 
     init {
         scope.launch {
@@ -53,17 +70,50 @@ class ChatRepository(
     }
 
     /**
-     * Combines the committed [timeline] with the accumulated [liveState] into a
-     * [Flow] of [SentientResult.Success<ChatModel>].
+     * Enqueues an optimistic QUEUED message and returns its pending id.
+     * The bubble is visible immediately in [chatStream]. The outbox will flush
+     * it (transition to SENT + invoke [send]) when [onReady] is called.
+     */
+    fun send(text: String): String {
+        val id = newId()
+        outbox.enqueue(PendingMessage(id, text))
+        outboxState.value = outbox.snapshot()
+        return id
+    }
+
+    /**
+     * Flushes all QUEUED outbox messages — marks them SENT and invokes the
+     * underlying [send] callback for each. Call when the connection reaches READY.
+     */
+    fun onReady() {
+        outbox.onReady()
+        outboxState.value = outbox.snapshot()
+    }
+
+    /**
+     * Marks all QUEUED outbox messages as FAILED. They remain visible in [chatStream]
+     * for the user to retry or dismiss.
+     */
+    fun failOutbox(reason: String) {
+        outbox.failAll(reason)
+        outboxState.value = outbox.snapshot()
+    }
+
+    /**
+     * 3-way combine of committed [timeline], [liveState], and [outboxState].
      *
-     * Pending field is included (empty until Task 2.6b — Outbox integration).
+     * Reconciliation rule: a pending message is visible until a committed user message
+     * with the same pendingId appears in the timeline. Exact id match — no text comparison.
+     * FAILED messages are not in committed, so they remain visible until retry/dismiss.
      */
     val chatStream: Flow<SentientResult<ChatModel>> =
-        combine(timeline, liveState) { committed, ls ->
+        combine(timeline, liveState, outboxState) { committed, ls, pending ->
+            val committedPendingIds = committed.mapNotNull { it.pendingId }.toSet()
+            val visiblePending = pending.filter { it.id !in committedPendingIds }
             SentientResult.Success(
                 ChatModel(
                     committed = committed,
-                    pending = emptyList(),
+                    pending = visiblePending,
                     live = ls.live,
                     tasks = ls.tasks,
                 ),
