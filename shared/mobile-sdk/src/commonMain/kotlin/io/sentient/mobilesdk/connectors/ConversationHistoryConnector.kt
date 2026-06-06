@@ -23,12 +23,14 @@ package io.sentient.mobilesdk.connectors
 
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.ConversationFeedItem
+import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.protocol.ServerMessage
 
 class ConversationHistoryConnector(
     private val onSnapshot: ((List<ConversationFeedItem>) -> Unit)? = null,
     private val onEntry: ((ConversationFeedItem) -> Unit)? = null,
     private val onUpdate: ((List<ConversationFeedItem>) -> Unit)? = null,
+    private val onEvent: ((SdkEvent) -> Unit)? = null,
 ) : Connector {
     override val capability: String = CAPABILITY
 
@@ -77,6 +79,7 @@ class ConversationHistoryConnector(
     private fun onSessionSwitched(msg: ServerMessage.SessionSwitched) {
         log.info("gate-set", mapOf("trigger" to "session.switched", "sessionId" to msg.sessionId))
         awaitingSnapshot = true
+        onEvent?.invoke(SdkEvent.SessionSwitched(sessionId = msg.sessionId))
     }
 
     companion object {

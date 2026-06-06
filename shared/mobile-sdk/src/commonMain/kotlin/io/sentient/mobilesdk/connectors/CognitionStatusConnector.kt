@@ -23,6 +23,7 @@
 package io.sentient.mobilesdk.connectors
 
 import io.sentient.mobilesdk.log.createLogger
+import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.protocol.ServerMessage
 
 /** Simplified client-side cognition state. Mirrors web-sdk CognitionState. */
@@ -34,6 +35,7 @@ enum class CognitionState {
 
 class CognitionStatusConnector(
     private val onStateChange: ((CognitionState) -> Unit)? = null,
+    private val onEvent: ((SdkEvent) -> Unit)? = null,
 ) : Connector {
     override val capability: String = CAPABILITY
 
@@ -47,7 +49,10 @@ class CognitionStatusConnector(
     override fun handle(msg: ServerMessage) {
         when (msg) {
             is ServerMessage.CycleStarted -> setState(CognitionState.THINKING, "cycle.started", msg.cycleId)
-            is ServerMessage.CycleCompleted -> setState(CognitionState.IDLE, "cycle.completed", msg.cycleId)
+            is ServerMessage.CycleCompleted -> {
+                setState(CognitionState.IDLE, "cycle.completed", msg.cycleId)
+                onEvent?.invoke(SdkEvent.CycleDone(cycleId = msg.cycleId))
+            }
             is ServerMessage.CycleAborted -> setState(CognitionState.IDLE, "cycle.aborted", msg.cycleId)
             else -> Unit // not owned by this connector
         }

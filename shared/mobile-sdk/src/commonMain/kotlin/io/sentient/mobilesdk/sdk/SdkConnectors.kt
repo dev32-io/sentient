@@ -74,6 +74,7 @@ class SdkConnectors(
 
     val history = ConversationHistoryConnector(
         onUpdate = { items -> deriver.applyFeed(items); emit() },
+        onEvent = emitEvent,
     )
 
     val inflight = InFlightMessageConnector(
@@ -83,10 +84,12 @@ class SdkConnectors(
 
     val cognition = CognitionStatusConnector(
         onStateChange = { state -> deriver.cognition = state; emit() },
+        onEvent = emitEvent,
     )
 
     val cycleError = CycleErrorConnector(
         onErrorChange = { hasError -> deriver.lastCycleError = hasError; emit() },
+        onEvent = emitEvent,
     )
 
     val preferences = PreferencesConnector(
@@ -108,7 +111,7 @@ class SdkConnectors(
     val audioInput = UserAudioInputConnector(
         send = send,
         sendBinary = sendBinary,
-        onTranscript = { text -> deriver.transcript = text; emit() },
+        onTranscript = { text -> deriver.transcript = text; emit(); emitEvent(SdkEvent.TranscriptUpdated(text)) },
     )
 
     val audioOutput = AssistantAudioResponseConnector(

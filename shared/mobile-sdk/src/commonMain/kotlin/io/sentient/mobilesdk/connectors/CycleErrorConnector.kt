@@ -46,10 +46,12 @@
 package io.sentient.mobilesdk.connectors
 
 import io.sentient.mobilesdk.log.createLogger
+import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.protocol.ServerMessage
 
 class CycleErrorConnector(
     private val onErrorChange: ((Boolean) -> Unit)? = null,
+    private val onEvent: ((SdkEvent) -> Unit)? = null,
 ) : Connector {
     override val capability: String = CAPABILITY
 
@@ -120,16 +122,20 @@ class CycleErrorConnector(
     private fun onAborted(cycleId: String?, reason: String?) {
         if (cycleId != null && activeCycleId != null && cycleId != activeCycleId) return
         val unsolicited = !selfInitiated && !sawDone
+        val resolvedCycleId = cycleId ?: activeCycleId
         log.info(
             "classify",
             mapOf(
-                "cycleId" to (cycleId ?: activeCycleId),
+                "cycleId" to resolvedCycleId,
                 "reason" to reason,
                 "selfInitiated" to selfInitiated,
                 "sawDone" to sawDone,
                 "verdict" to if (unsolicited) "unsolicited(error)" else "self-initiated",
             ),
         )
+        if (resolvedCycleId != null) {
+            onEvent?.invoke(SdkEvent.CycleAborted(cycleId = resolvedCycleId, kind = reason))
+        }
         activeCycleId = null
         if (unsolicited) setError() else clearError("self-initiated-abort")
     }
