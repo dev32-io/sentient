@@ -201,7 +201,7 @@ private fun committedMessage(
 ): ChatMessage? = when (item) {
     is ConversationFeedItem.User ->
         if (item.content.isEmpty()) null
-        else ChatMessage(ts = item.ts, role = ROLE_USER, content = item.content)
+        else ChatMessage(ts = item.ts, role = ROLE_USER, content = item.content, pendingId = item.pendingId)
 
     is ConversationFeedItem.Assistant -> {
         if (item.content.isEmpty() && item.cutoff == null) null

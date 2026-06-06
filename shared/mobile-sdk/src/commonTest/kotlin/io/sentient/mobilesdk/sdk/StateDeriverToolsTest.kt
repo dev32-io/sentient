@@ -54,4 +54,15 @@ class StateDeriverToolsTest {
         assertEquals(null, committed.cycleId)
         assertEquals(emptyList(), committed.tools)
     }
+
+    @Test
+    fun deriveMessages_propagates_pendingId_on_user_entries() {
+        val d = StateDeriver(io.sentient.mobilesdk.fakes.FixedClock(1000L))
+        d.applyFeed(listOf(
+            ConversationFeedItem.User(ts = 1L, channel = "text", content = "hi", pendingId = "p1"),
+        ))
+        val msgs = d.deriveTimeline()
+        val user = msgs.first { it.role == "user" }
+        assertEquals("p1", user.pendingId)
+    }
 }
