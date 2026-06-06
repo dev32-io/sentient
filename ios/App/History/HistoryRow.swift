@@ -12,7 +12,7 @@
 // session.
 // ---------------------------------------------------------------------------
 import SwiftUI
-import MobileSdk
+import MobileData
 
 private let rowTagPrefix = "history-row-"
 

@@ -3,7 +3,7 @@
 // Mirrors the webui tool-pill-strip.tsx. Tap a pill → expand its argsPreview.
 // ---------------------------------------------------------------------------
 import SwiftUI
-import MobileSdk
+import MobileData
 
 struct ToolPillStrip: View {
     let tools: [TaskSnapshotItem]

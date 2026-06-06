@@ -4,7 +4,7 @@
 // and signals dismiss; failure shows an error and stays.
 // ---------------------------------------------------------------------------
 import Foundation
-import MobileSdk
+import MobileData
 
 // Delay before the single probe retry. The first probe may be the connection
 // that raised the iOS Local Network prompt; this window lets the user tap

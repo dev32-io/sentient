@@ -1,5 +1,5 @@
 import Testing
-import MobileSdk
+import MobileData
 @testable import SentientApp
 
 // Pins the FSM mapping ConnectionBannerState.derive(status:connectionLost:).

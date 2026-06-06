@@ -1,13 +1,13 @@
 import Testing
 import Foundation
-import MobileSdk
+import MobileData
 @testable import SentientApp
 
 struct ChatRowsTests {
     // Full init required — SKIE does not propagate Kotlin default args to Swift.
     private func msg(_ ts: Int64) -> ChatMessage {
         ChatMessage(ts: ts, role: "user", content: "x",
-                    streaming: false, cutoffKind: nil, cycleId: nil, tools: [])
+                    streaming: false, cutoffKind: nil, cycleId: nil, pendingId: nil, tools: [])
     }
     private let cal = Calendar(identifier: .gregorian)
 

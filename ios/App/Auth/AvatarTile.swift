@@ -7,7 +7,7 @@
 // so Maestro/XCUITest target it directly.
 // ---------------------------------------------------------------------------
 import SwiftUI
-import MobileSdk
+import MobileData
 
 struct AvatarTile: View {
     let user: AuthUserLite

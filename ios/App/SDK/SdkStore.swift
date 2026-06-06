@@ -26,7 +26,7 @@
 // loop hops back to main before assigning.
 // ---------------------------------------------------------------------------
 import Foundation
-import MobileSdk
+import MobileData
 
 enum SdkStoreError: Error {
     case notConfigured
@@ -181,7 +181,7 @@ final class SdkStore: ObservableObject {
         sendQueue = drained
         if !toFlush.isEmpty {
             log.info("sendQueue.flush count=\(toFlush.count)")
-            toFlush.forEach { sdk?.sendText(text: $0) }
+            toFlush.forEach { sdk?.sendText(text: $0, pendingId: nil) }
         }
     }
 
@@ -197,7 +197,7 @@ final class SdkStore: ObservableObject {
         } else {
             guard let sdk else { return }
             log.info("sendText.sent len=\(text.count)")
-            toSend.forEach { sdk.sendText(text: $0) }
+            toSend.forEach { sdk.sendText(text: $0, pendingId: nil) }
         }
     }
 

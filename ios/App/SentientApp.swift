@@ -1,5 +1,5 @@
 import SwiftUI
-import MobileSdk
+import MobileData
 
 @main
 struct SentientApp: App {
@@ -10,9 +10,9 @@ struct SentientApp: App {
     init() {
         // Drop high-volume DEBUG tracing in prod (Release); keep it in dev.
         #if DEBUG
-        MobileSdk.LogConfig.shared.minLevel = .debug
+        MobileData.LogConfig.shared.minLevel = .debug
         #else
-        MobileSdk.LogConfig.shared.minLevel = .info
+        MobileData.LogConfig.shared.minLevel = .info
         #endif
     }
 

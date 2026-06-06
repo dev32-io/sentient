@@ -30,7 +30,7 @@
 // connection-reconnecting (host routing + smoke asserts).
 // ---------------------------------------------------------------------------
 import SwiftUI
-import MobileSdk
+import MobileData
 
 /// Which connection affordance to show, or none. Derived from the SDK's single
 /// state surface (`status` + `connectionLost`) via ``derive(status:connectionLost:)``.

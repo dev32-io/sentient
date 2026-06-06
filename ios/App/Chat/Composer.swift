@@ -30,7 +30,7 @@
 // ---------------------------------------------------------------------------
 import AVFoundation
 import SwiftUI
-import MobileSdk
+import MobileData
 
 struct Composer: View {
     /// Tints the send glyph as ready. Passed `true` now (SdkStore queues any

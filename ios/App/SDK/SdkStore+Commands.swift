@@ -6,7 +6,7 @@
 // setTtsEnabled) are wrapped in Task and errors are logged, not propagated,
 // because callers are SwiftUI views with no error-recovery path.
 // ---------------------------------------------------------------------------
-import MobileSdk
+import MobileData
 
 extension SdkStore {
     func connect() {

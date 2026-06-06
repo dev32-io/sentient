@@ -10,7 +10,7 @@
 // is no light variant.
 // ---------------------------------------------------------------------------
 import SwiftUI
-import MobileSdk
+import MobileData
 
 /// The Dusk palette as SwiftUI `Color`s, mapped from the SDK's `Colors` tokens.
 ///

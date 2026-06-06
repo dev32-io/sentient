@@ -18,7 +18,7 @@
 // the login view's lifetime.
 // ---------------------------------------------------------------------------
 import Foundation
-import MobileSdk
+import MobileData
 
 /// PIN length the gateway expects (auth.ts: 4-digit numeric PIN).
 let pinLength = 4

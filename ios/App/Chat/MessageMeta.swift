@@ -1,6 +1,6 @@
 // MessageMeta — "name · time" row above a bubble (webui .message-bubble__meta).
 import SwiftUI
-import MobileSdk
+import MobileData
 
 struct MessageMeta: View {
     let message: ChatMessage

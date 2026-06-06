@@ -12,7 +12,7 @@
 // history-search, history-new-chat (FAB).
 // ---------------------------------------------------------------------------
 import SwiftUI
-import MobileSdk
+import MobileData
 
 /// Dark-terra text used on the terra-50/accent background surfaces (avatar
 /// initial + FAB icon). Sourced from HistoryAccountHeader.swift where the

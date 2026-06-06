@@ -24,7 +24,7 @@
 // cycle-error-newchat, cycle-error-dismiss.
 // ---------------------------------------------------------------------------
 import SwiftUI
-import MobileSdk
+import MobileData
 
 /// Pure derivation helpers for the cycle-error recovery affordance. Kept
 /// separate from the view so the "last user message" logic is unit-testable the

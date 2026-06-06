@@ -19,7 +19,7 @@
 // fetched on demand.
 // ---------------------------------------------------------------------------
 import Foundation
-import MobileSdk
+import MobileData
 
 /// Page size for the session list fetch. Mirrors Android's LIST_PAGE_LIMIT (50).
 private let listPageLimit: Int32 = 50

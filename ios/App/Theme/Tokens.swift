@@ -10,50 +10,50 @@
 // mirroring the Android `SentientTokens` bundle (theme/Tokens.kt).
 // ---------------------------------------------------------------------------
 import CoreGraphics
-import MobileSdk
+import MobileData
 
 /// Spacing scale in points, mapped from the SDK's `Space` (px → pt 1:1).
 enum Space {
-    static let xs = cg(MobileSdk.Space.shared.xs)
-    static let sm = cg(MobileSdk.Space.shared.sm)
-    static let md = cg(MobileSdk.Space.shared.md)
-    static let lg = cg(MobileSdk.Space.shared.lg)
-    static let xl = cg(MobileSdk.Space.shared.xl)
-    static let xxl = cg(MobileSdk.Space.shared.xxl)
-    static let xxxl = cg(MobileSdk.Space.shared.xxxl)
-    static let padMsg = cg(MobileSdk.Space.shared.padMsg)
-    static let gapMsg = cg(MobileSdk.Space.shared.gapMsg)
-    static let msgMax = cg(MobileSdk.Space.shared.msgMax)
+    static let xs = cg(MobileData.Space.shared.xs)
+    static let sm = cg(MobileData.Space.shared.sm)
+    static let md = cg(MobileData.Space.shared.md)
+    static let lg = cg(MobileData.Space.shared.lg)
+    static let xl = cg(MobileData.Space.shared.xl)
+    static let xxl = cg(MobileData.Space.shared.xxl)
+    static let xxxl = cg(MobileData.Space.shared.xxxl)
+    static let padMsg = cg(MobileData.Space.shared.padMsg)
+    static let gapMsg = cg(MobileData.Space.shared.gapMsg)
+    static let msgMax = cg(MobileData.Space.shared.msgMax)
 }
 
 /// Corner-radius scale in points, mapped from the SDK's `Radii`.
 enum Radii {
-    static let sm = cg(MobileSdk.Radii.shared.sm)
-    static let md = cg(MobileSdk.Radii.shared.md)
-    static let lg = cg(MobileSdk.Radii.shared.lg)
-    static let xl = cg(MobileSdk.Radii.shared.xl)
-    static let pill = cg(MobileSdk.Radii.shared.pill)
+    static let sm = cg(MobileData.Radii.shared.sm)
+    static let md = cg(MobileData.Radii.shared.md)
+    static let lg = cg(MobileData.Radii.shared.lg)
+    static let xl = cg(MobileData.Radii.shared.xl)
+    static let pill = cg(MobileData.Radii.shared.pill)
 }
 
 /// Font sizes (points) + unitless line-height multipliers, from `TypeScale`.
 enum TypeScale {
-    static let xs = CGFloat(MobileSdk.TypeScale.shared.xs)
-    static let sm = CGFloat(MobileSdk.TypeScale.shared.sm)
-    static let base = CGFloat(MobileSdk.TypeScale.shared.base)
-    static let lg = CGFloat(MobileSdk.TypeScale.shared.lg)
-    static let xl = CGFloat(MobileSdk.TypeScale.shared.xl)
-    static let display = CGFloat(MobileSdk.TypeScale.shared.display)
-    static let lineTight = CGFloat(MobileSdk.TypeScale.shared.lineTight)
-    static let lineNormal = CGFloat(MobileSdk.TypeScale.shared.lineNormal)
-    static let lineRelaxed = CGFloat(MobileSdk.TypeScale.shared.lineRelaxed)
+    static let xs = CGFloat(MobileData.TypeScale.shared.xs)
+    static let sm = CGFloat(MobileData.TypeScale.shared.sm)
+    static let base = CGFloat(MobileData.TypeScale.shared.base)
+    static let lg = CGFloat(MobileData.TypeScale.shared.lg)
+    static let xl = CGFloat(MobileData.TypeScale.shared.xl)
+    static let display = CGFloat(MobileData.TypeScale.shared.display)
+    static let lineTight = CGFloat(MobileData.TypeScale.shared.lineTight)
+    static let lineNormal = CGFloat(MobileData.TypeScale.shared.lineNormal)
+    static let lineRelaxed = CGFloat(MobileData.TypeScale.shared.lineRelaxed)
 }
 
 /// Motion durations in seconds, converted from the SDK's millisecond `Motion`.
 enum Motion {
-    static let fast = seconds(MobileSdk.Motion.shared.fastMs)
-    static let normal = seconds(MobileSdk.Motion.shared.normalMs)
-    static let wave = seconds(MobileSdk.Motion.shared.waveMs)
-    static let cursor = seconds(MobileSdk.Motion.shared.cursorMs)
+    static let fast = seconds(MobileData.Motion.shared.fastMs)
+    static let normal = seconds(MobileData.Motion.shared.normalMs)
+    static let wave = seconds(MobileData.Motion.shared.waveMs)
+    static let cursor = seconds(MobileData.Motion.shared.cursorMs)
 }
 
 /// Layout constants for the in-app animated splash overlay.

@@ -20,7 +20,7 @@
 // SDK store as the only transport owner.
 // ---------------------------------------------------------------------------
 import SwiftUI
-import MobileSdk
+import MobileData
 
 struct RootView: View {
     @EnvironmentObject private var store: SdkStore

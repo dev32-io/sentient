@@ -15,7 +15,7 @@
 // ---------------------------------------------------------------------------
 import SwiftUI
 import UIKit
-import MobileSdk
+import MobileData
 
 /// The scroll dimensions the pin FSM consumes. Projecting the iOS 18
 /// `onScrollGeometryChange` to this (rather than the full ScrollGeometry) lets
@@ -181,9 +181,9 @@ struct MessageList: View {
     // Yesterday messages trigger a day divider before today's messages.
     let yesterday = now - 86_400_000
     MessageList(messages: [
-        ChatMessage(ts: yesterday, role: "user", content: "message from yesterday", streaming: false, cutoffKind: nil, cycleId: nil, tools: []),
-        ChatMessage(ts: now, role: "user", content: "hello", streaming: false, cutoffKind: nil, cycleId: nil, tools: []),
-        ChatMessage(ts: now + 1, role: "assistant", content: "Hi! How can I help today?", streaming: false, cutoffKind: nil, cycleId: nil, tools: []),
+        ChatMessage(ts: yesterday, role: "user", content: "message from yesterday", streaming: false, cutoffKind: nil, cycleId: nil, pendingId: nil, tools: []),
+        ChatMessage(ts: now, role: "user", content: "hello", streaming: false, cutoffKind: nil, cycleId: nil, pendingId: nil, tools: []),
+        ChatMessage(ts: now + 1, role: "assistant", content: "Hi! How can I help today?", streaming: false, cutoffKind: nil, cycleId: nil, pendingId: nil, tools: []),
     ], userName: "Alice")
     .background(DuskColors.bg)
 }

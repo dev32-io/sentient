@@ -1,19 +1,19 @@
 // Typewriter — pure time→reveal engine porting webui use-typewriter-buffer.ts.
-// Rates from the shared SDK tokens (MobileSdk.Typewriter). Pure + testable; a
+// Rates from the shared SDK tokens (MobileData.Typewriter). Pure + testable; a
 // TimelineView driver in the streaming bubble calls `typewriterTick` per frame.
 import Foundation
-import MobileSdk
+import MobileData
 
 struct TypewriterConfig {
     let baseRate: Double, minRate: Double, maxRate: Double, gapGain: Double
     let sentencePause: Double, paragraphPause: Double  // seconds
     static let `default` = TypewriterConfig(
-        baseRate: Double(MobileSdk.Typewriter.shared.baseRate),
-        minRate: Double(MobileSdk.Typewriter.shared.minRate),
-        maxRate: Double(MobileSdk.Typewriter.shared.maxRate),
-        gapGain: MobileSdk.Typewriter.shared.gapGain,
-        sentencePause: Double(MobileSdk.Typewriter.shared.sentencePauseMs) / 1000.0,
-        paragraphPause: Double(MobileSdk.Typewriter.shared.paragraphPauseMs) / 1000.0
+        baseRate: Double(MobileData.Typewriter.shared.baseRate),
+        minRate: Double(MobileData.Typewriter.shared.minRate),
+        maxRate: Double(MobileData.Typewriter.shared.maxRate),
+        gapGain: MobileData.Typewriter.shared.gapGain,
+        sentencePause: Double(MobileData.Typewriter.shared.sentencePauseMs) / 1000.0,
+        paragraphPause: Double(MobileData.Typewriter.shared.paragraphPauseMs) / 1000.0
     )
 }
 

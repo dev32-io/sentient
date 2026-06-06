@@ -11,7 +11,7 @@
 // in the PIN phase returns to the grid (one back target per the nav rule).
 // ---------------------------------------------------------------------------
 import SwiftUI
-import MobileSdk
+import MobileData
 
 struct LoginView: View {
     /// Called to start the SDK connection after a successful login + token save.

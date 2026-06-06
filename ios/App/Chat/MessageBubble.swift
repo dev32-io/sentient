@@ -20,7 +20,7 @@
 // accessibilityIdentifier `message-bubble-<index>` mirrors the Android testTag.
 import SwiftUI
 import MarkdownUI
-import MobileSdk
+import MobileData
 
 struct MessageBubble: View {
     let message: ChatMessage
@@ -186,29 +186,29 @@ enum BubbleLayout {
     ScrollView {
         VStack(spacing: Space.gapMsg) {
             MessageBubble(
-                message: ChatMessage(ts: now, role: "user", content: "hello", streaming: false, cutoffKind: nil, cycleId: nil, tools: []),
+                message: ChatMessage(ts: now, role: "user", content: "hello", streaming: false, cutoffKind: nil, cycleId: nil, pendingId: nil, tools: []),
                 index: 0,
                 userName: "Alice"
             )
             MessageBubble(
-                message: ChatMessage(ts: now + 1, role: "assistant", content: "Hi there! How can I help?", streaming: false, cutoffKind: nil, cycleId: nil, tools: []),
+                message: ChatMessage(ts: now + 1, role: "assistant", content: "Hi there! How can I help?", streaming: false, cutoffKind: nil, cycleId: nil, pendingId: nil, tools: []),
                 index: 1,
                 userName: "Alice"
             )
             MessageBubble(
-                message: ChatMessage(ts: now + 2, role: "assistant", content: "", streaming: true, cutoffKind: nil, cycleId: nil, tools: []),
+                message: ChatMessage(ts: now + 2, role: "assistant", content: "", streaming: true, cutoffKind: nil, cycleId: nil, pendingId: nil, tools: []),
                 index: 2,
                 userName: "Alice"
             )
             // streaming + content → typewriter reveal, no cursor
             MessageBubble(
-                message: ChatMessage(ts: now + 3, role: "assistant", content: "Streaming text reveals progressively...", streaming: true, cutoffKind: nil, cycleId: nil, tools: []),
+                message: ChatMessage(ts: now + 3, role: "assistant", content: "Streaming text reveals progressively...", streaming: true, cutoffKind: nil, cycleId: nil, pendingId: nil, tools: []),
                 index: 3,
                 avatarMode: .thinking,
                 userName: "Alice"
             )
             MessageBubble(
-                message: ChatMessage(ts: now + 4, role: "assistant", content: "Cut off here", streaming: false, cutoffKind: "interrupt", cycleId: nil, tools: []),
+                message: ChatMessage(ts: now + 4, role: "assistant", content: "Cut off here", streaming: false, cutoffKind: "interrupt", cycleId: nil, pendingId: nil, tools: []),
                 index: 4,
                 userName: "Alice"
             )
@@ -218,7 +218,7 @@ enum BubbleLayout {
                     ts: now + 5, role: "assistant",
                     content: "I checked the weather and your calendar.",
                     streaming: false, cutoffKind: nil, cycleId: "c1",
-                    tools: sampleTools
+                    pendingId: nil, tools: sampleTools
                 ),
                 index: 5,
                 userName: "Alice"
@@ -229,7 +229,7 @@ enum BubbleLayout {
                     ts: now + 6, role: "assistant",
                     content: "Working on it...",
                     streaming: true, cutoffKind: nil, cycleId: "c1",
-                    tools: [sampleTools[1]]
+                    pendingId: nil, tools: [sampleTools[1]]
                 ),
                 index: 6,
                 avatarMode: .thinking,

@@ -22,7 +22,7 @@
 // accessibilityIdentifier `chat-screen` is retained for the host routing assert.
 // ---------------------------------------------------------------------------
 import SwiftUI
-import MobileSdk
+import MobileData
 
 struct ChatView: View {
     /// Explicit store param — HistoryModel is created here at init time.

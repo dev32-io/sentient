@@ -19,7 +19,7 @@
 // history-new-chat. The history-open trigger lives in the ChatView title bar.
 // ---------------------------------------------------------------------------
 import SwiftUI
-import MobileSdk
+import MobileData
 
 private let emptyDefault = "No past chats yet."
 private let emptyLoadFail = "Couldn't load sessions — try again."

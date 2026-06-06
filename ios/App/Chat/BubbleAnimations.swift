@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MarkdownUI
-import MobileSdk
+import MobileData
 
 /// Three-dot thinking pulse — mirrors the Android PulseDots / webui PlaceholderPulse.
 struct PulseDots: View {

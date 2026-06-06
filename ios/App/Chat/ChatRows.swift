@@ -1,7 +1,7 @@
 // ChatRows — fold messages into a render list with day dividers (webui .day-divider).
 // A divider precedes the first message of each calendar day; label = day name + first ts.
 import Foundation
-import MobileSdk
+import MobileData
 
 enum ChatRow: Identifiable {
     case divider(label: String, id: String)

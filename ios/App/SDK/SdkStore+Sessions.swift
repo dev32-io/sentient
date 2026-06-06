@@ -7,7 +7,7 @@
 // after each mutation — the SDK does NOT surface onSessionsChanged through
 // SentientSdk, so the open + post-mutation re-query is the refresh path.
 // ---------------------------------------------------------------------------
-import MobileSdk
+import MobileData
 
 /// Deadline for the session-list fetch. The dashboard sidecar can be slow or
 /// unreachable; without a bound the drawer spinner would spin forever. On

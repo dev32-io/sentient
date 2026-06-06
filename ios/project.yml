@@ -57,7 +57,7 @@ targets:
         Debug:
           PRODUCT_BUNDLE_IDENTIFIER: io.dev32.sentient.debug
     dependencies:
-      - framework: ../shared/mobile-sdk/build/XCFrameworks/debug/MobileSdk.xcframework
+      - framework: ../shared/mobile-data/build/XCFrameworks/debug/MobileData.xcframework
         embed: false
       - package: MarkdownUI
         product: MarkdownUI
@@ -72,7 +72,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
     dependencies:
       - target: SentientApp
-      - framework: ../shared/mobile-sdk/build/XCFrameworks/debug/MobileSdk.xcframework
+      - framework: ../shared/mobile-data/build/XCFrameworks/debug/MobileData.xcframework
         embed: false
 
 schemes:

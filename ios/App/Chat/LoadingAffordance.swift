@@ -12,7 +12,7 @@
 // otherwise spin forever on every empty chat. disconnected / reconnecting / error
 // map to .none here too; ConnectionBanner owns those affordances.
 // ---------------------------------------------------------------------------
-import MobileSdk
+import MobileData
 
 enum LoadingAffordance: Equatable {
     case none

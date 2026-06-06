@@ -1,5 +1,5 @@
 import Testing
-import MobileSdk
+import MobileData
 @testable import SentientApp
 
 // Pins CycleErrorRecovery.lastUserText(in:) — the derivation that decides which
@@ -10,7 +10,7 @@ import MobileSdk
 struct CycleErrorRecoveryTests {
     private func msg(_ role: String, _ content: String, ts: Int64 = 0) -> ChatMessage {
         ChatMessage(ts: ts, role: role, content: content, streaming: false,
-                    cutoffKind: nil, cycleId: nil, tools: [])
+                    cutoffKind: nil, cycleId: nil, pendingId: nil, tools: [])
     }
 
     @Test func returnsLastUserText() {

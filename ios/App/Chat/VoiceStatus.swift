@@ -10,7 +10,7 @@
 // animation state is decided, and .idle maps to NO animation (the
 // event-driven-UX rule: "constant by default is a bug").
 // ---------------------------------------------------------------------------
-import MobileSdk
+import MobileData
 
 /// The four avatar animation modes, mirroring the webui SentientMarkMode union
 /// and the Android MarkMode enum. Each maps to exactly one animation (or none,

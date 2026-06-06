@@ -1,4 +1,4 @@
-import MobileSdk
+import MobileData
 
 // Compile-only SKIE smoke: SdkEvent must bridge to an exhaustive Swift enum
 // (no `default:` needed). Wired into the iOS app target in Phase 4.
