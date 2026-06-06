@@ -189,9 +189,9 @@ class SentientSdk(
     }
 
     /** Send user text (text.input). Mirrors web-sdk sendText. */
-    fun sendText(text: String) {
+    fun sendText(text: String, pendingId: String? = null) {
         markInteraction()
-        connectors.text.sendText(text)
+        connectors.text.sendText(text, pendingId)
     }
 
     /** UI Stop / Escape — idempotent hard interrupt. */

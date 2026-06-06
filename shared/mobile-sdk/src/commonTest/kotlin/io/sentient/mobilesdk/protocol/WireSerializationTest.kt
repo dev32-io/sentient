@@ -75,4 +75,38 @@ class WireSerializationTest {
         assertEquals(UNKNOWN_TS, item.ts)
         assertEquals("hi", item.content)
     }
+
+    // ── pendingId on text.input ─────────────────────────────────────────────
+
+    @Test fun text_input_with_pending_id_round_trips() {
+        val msg: ClientMessage = ClientMessage.TextInput("hi", pendingId = "p1")
+        val s = WireJson.instance.encodeToString(ClientMessage.serializer(), msg)
+        val back = WireJson.instance.decodeFromString(ClientMessage.serializer(), s) as ClientMessage.TextInput
+        assertEquals("p1", back.pendingId)
+        assertEquals("hi", back.text)
+    }
+
+    @Test fun text_input_without_pending_id_round_trips_null() {
+        val msg: ClientMessage = ClientMessage.TextInput("hello")
+        val s = WireJson.instance.encodeToString(ClientMessage.serializer(), msg)
+        val back = WireJson.instance.decodeFromString(ClientMessage.serializer(), s) as ClientMessage.TextInput
+        assertEquals(null, back.pendingId)
+        assertEquals("hello", back.text)
+    }
+
+    @Test fun conversation_entry_user_with_pending_id_decodes() {
+        val s = """{"type":"conversation.entry","item":{"kind":"user","ts":1,"channel":"text","content":"hello","pendingId":"p1"}}"""
+        val msg = WireJson.instance.decodeFromString(ServerMessage.serializer(), s) as ServerMessage.ConversationEntry
+        val item = msg.item as ConversationFeedItem.User
+        assertEquals("p1", item.pendingId)
+        assertEquals("hello", item.content)
+    }
+
+    @Test fun conversation_entry_user_without_pending_id_decodes_null() {
+        val s = """{"type":"conversation.entry","item":{"kind":"user","ts":1,"channel":"text","content":"hello"}}"""
+        val msg = WireJson.instance.decodeFromString(ServerMessage.serializer(), s) as ServerMessage.ConversationEntry
+        val item = msg.item as ConversationFeedItem.User
+        assertEquals(null, item.pendingId)
+        assertEquals("hello", item.content)
+    }
 }

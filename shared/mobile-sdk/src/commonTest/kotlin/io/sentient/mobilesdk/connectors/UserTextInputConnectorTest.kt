@@ -48,4 +48,30 @@ class UserTextInputConnectorTest {
 
         assertEquals(emptyList<ClientMessage>(), sent)
     }
+
+    // ── pendingId forwarding ─────────────────────────────────────────────────
+
+    @Test
+    fun sendText_with_pending_id_forwards_it_on_frame() {
+        val (sent, send) = recorder()
+        val connector = UserTextInputConnector(send)
+
+        connector.sendText("hi", "p1")
+
+        val frame = sent.single() as ClientMessage.TextInput
+        assertEquals("p1", frame.pendingId)
+        assertEquals("hi", frame.text)
+    }
+
+    @Test
+    fun sendText_without_pending_id_sends_null_pending_id() {
+        val (sent, send) = recorder()
+        val connector = UserTextInputConnector(send)
+
+        connector.sendText("hi")
+
+        val frame = sent.single() as ClientMessage.TextInput
+        assertEquals(null, frame.pendingId)
+        assertEquals("hi", frame.text)
+    }
 }

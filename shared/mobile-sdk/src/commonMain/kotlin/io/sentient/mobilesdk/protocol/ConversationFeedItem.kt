@@ -37,6 +37,7 @@ sealed class ConversationFeedItem {
         override val ts: Long = UNKNOWN_TS,
         val channel: String,
         val content: String,
+        val pendingId: String? = null,
     ) : ConversationFeedItem()
 
     /** kind="trigger" — ambient trigger (sensor, timer, etc.). */

@@ -30,7 +30,7 @@ sealed class ClientMessage {
     data object AudioEnd : ClientMessage()
 
     @Serializable @SerialName("text.input")
-    data class TextInput(val text: String) : ClientMessage()
+    data class TextInput(val text: String, val pendingId: String? = null) : ClientMessage()
 
     @Serializable @SerialName("tool.confirm")
     data class ToolConfirm(val toolCallId: String, val approved: Boolean) : ClientMessage()
