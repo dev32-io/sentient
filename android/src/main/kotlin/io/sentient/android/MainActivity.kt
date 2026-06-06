@@ -58,6 +58,7 @@ import io.sentient.android.history.HistoryViewModel
 import io.sentient.android.history.rememberHistoryDrawerState
 import io.sentient.android.presence.PresenceCoordinator
 import io.sentient.android.sdk.SdkSessionFactory
+import io.sentient.mobiledata.session.MobileSession
 import io.sentient.android.settings.SettingsScreen
 import io.sentient.android.settings.SettingsViewModel
 import io.sentient.android.theme.SentientTheme
@@ -115,7 +116,7 @@ private fun AppRoot(
     val configured = backendConfig != null || io.sentient.android.BuildConfig.GATEWAY_WS_URL.isNotEmpty()
 
     // App-scoped presence coordinator: registered once, forwarded to whatever
-    // ChatSession is currently bound via ChatViewModel.presence.
+    // MobileSession is currently bound via ChatViewModel.presence.
     val appPresence = remember { PresenceCoordinator() }
     LaunchedEffect(Unit) { appPresence.start() }
 
