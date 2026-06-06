@@ -132,6 +132,7 @@ class SentientSdk(
         hooks = Hooks(),
         log = createLogger("sdk", "lifecycle"),
         handshakeLog = createLogger("sdk", "handshake"),
+        onProtocolError = { err -> emitEvent(SdkEvent.ProtocolError(err)) },
     )
 
     // ── Public surface ───────────────────────────────────────────────────────

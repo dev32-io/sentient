@@ -26,4 +26,15 @@ object WireJson {
             polymorphicDefaultDeserializer(ServerMessage::class) { ServerMessage.Unknown.serializer() }
         }
     }
+
+    /**
+     * Strict, Result-returning decode for the pump boundary. Returns
+     * [Result.failure] on hard JSON parse errors (malformed syntax). A
+     * syntactically-valid-but-unknown frame still decodes to
+     * [ServerMessage.Unknown] via the lenient [instance] config — only genuine
+     * parse failures become failures here. Does NOT change the existing lenient
+     * decode path used elsewhere.
+     */
+    fun decodeServerMessageResult(raw: String): Result<ServerMessage> =
+        runCatching { instance.decodeFromString(ServerMessage.serializer(), raw) }
 }

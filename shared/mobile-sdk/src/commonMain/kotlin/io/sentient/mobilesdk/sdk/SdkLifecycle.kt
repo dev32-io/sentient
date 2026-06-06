@@ -17,6 +17,7 @@ import io.sentient.mobilesdk.presence.IdleDetectorState
 import io.sentient.mobilesdk.protocol.Capabilities
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.protocol.ServerMessage
+import io.sentient.mobilesdk.result.SentientError
 import io.sentient.mobilesdk.transport.ConnectResult
 import io.sentient.mobilesdk.transport.LastErrorKind
 import io.sentient.mobilesdk.transport.MessageRouter
@@ -66,6 +67,8 @@ class SdkLifecycle(
     private val hooks: LifecycleHooks,
     private val log: Log,
     private val handshakeLog: Log,
+    /** Called with a typed [SentientError.Protocol] when a control frame fails decode. */
+    private val onProtocolError: ((SentientError) -> Unit)? = null,
 ) {
     private var transport: WsTransport? = null
     private var session: WebSocketSession? = null
@@ -87,7 +90,7 @@ class SdkLifecycle(
             return ConnectResult.Failure(LastErrorKind.NETWORK)
         }
         session = open
-        val tx = WsTransport(open, scope)
+        val tx = WsTransport(open, scope, onProtocolError)
         transport = tx
         hooks.setStatus(SdkStatus.AUTHENTICATING)
         startSignalWatch(tx)

@@ -29,6 +29,7 @@ import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.protocol.ServerMessage
 import io.sentient.mobilesdk.protocol.WireJson
+import io.sentient.mobilesdk.result.SentientError
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -41,10 +42,14 @@ import kotlinx.coroutines.launch
  * @param session The open session from [WebSocketEngine.open].
  * @param scope Scope the demux pump runs in; tie it to the connect lifecycle so
  *   disconnect cancels the pump (coroutines-flow-surface: no GlobalScope).
+ * @param onProtocolError Called with a [SentientError.Protocol] when a text
+ *   frame fails JSON decoding. The pump skips the frame and continues — never
+ *   throws. Null means no-op (default, for callers that don't need the hook).
  */
 class WsTransport(
     private val session: WebSocketSession,
     scope: CoroutineScope,
+    private val onProtocolError: ((SentientError) -> Unit)? = null,
 ) {
     private val log = createLogger("transport", "ws")
 
@@ -115,8 +120,15 @@ class WsTransport(
         // Log the raw frame BEFORE decoding so Unknown-decoding frames stay
         // traceable (logger truncates the preview).
         log.debug("recv-text", mapOf("raw" to raw))
-        val msg = WireJson.instance.decodeFromString(ServerMessage.serializer(), raw)
-        eventChannel.send(WsEvent.Control(msg))
+        val result = WireJson.decodeServerMessageResult(raw)
+        result.fold(
+            onSuccess = { msg -> eventChannel.send(WsEvent.Control(msg)) },
+            onFailure = { err ->
+                log.warn("decode-failed", mapOf("reason" to (err.message ?: "parse error")))
+                onProtocolError?.invoke(SentientError.Protocol("decode failed", cause = err))
+                // Skip the malformed frame; pump continues.
+            },
+        )
     }
 
     private fun closeChannels() {
