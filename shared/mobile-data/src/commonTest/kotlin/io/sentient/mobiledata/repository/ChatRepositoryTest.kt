@@ -101,7 +101,7 @@ class ChatRepositoryTest {
         )
 
         repo.send("hi")
-        repo.onReady()
+        repo.setConnected(true)
 
         // send callback invoked exactly once with correct args
         assertEquals(1, sendCalls.size)
@@ -113,6 +113,58 @@ class ChatRepositoryTest {
         val m = (r as SentientResult.Success).data
         assertEquals(1, m.pending.size)
         assertEquals(MessageStatus.SENT, m.pending[0].status)
+    }
+
+    @Test
+    fun send_while_connected_flushes_immediately() = runTest(UnconfinedTestDispatcher()) {
+        val sendCalls = mutableListOf<Pair<String, String>>()
+        val events = MutableSharedFlow<SdkEvent>(extraBufferCapacity = 64)
+        val timeline = MutableStateFlow<List<ChatMessage>>(emptyList())
+        val repo = ChatRepository(
+            events = events,
+            timeline = timeline,
+            scope = backgroundScope,
+            send = { text, id -> sendCalls.add(text to id) },
+            newId = { "p1" },
+        )
+
+        repo.setConnected(true)
+        repo.send("hi")
+
+        // send callback invoked immediately — no extra setConnected call needed
+        assertEquals(1, sendCalls.size)
+        assertEquals("hi", sendCalls[0].first)
+        assertEquals("p1", sendCalls[0].second)
+
+        val r = repo.chatStream.first()
+        assertTrue(r is SentientResult.Success)
+        val m = (r as SentientResult.Success).data
+        assertEquals(1, m.pending.size)
+        assertEquals(MessageStatus.SENT, m.pending[0].status)
+    }
+
+    @Test
+    fun send_while_disconnected_stays_queued_until_connected() = runTest(UnconfinedTestDispatcher()) {
+        val sendCalls = mutableListOf<Pair<String, String>>()
+        val events = MutableSharedFlow<SdkEvent>(extraBufferCapacity = 64)
+        val timeline = MutableStateFlow<List<ChatMessage>>(emptyList())
+        val repo = ChatRepository(
+            events = events,
+            timeline = timeline,
+            scope = backgroundScope,
+            send = { text, id -> sendCalls.add(text to id) },
+            newId = { "p1" },
+        )
+
+        repo.send("hi")
+        // connected=false by default — callback must NOT have been invoked yet
+        assertTrue(sendCalls.isEmpty(), "Expected no send callback while disconnected, but got: $sendCalls")
+
+        repo.setConnected(true)
+        // now it must flush
+        assertEquals(1, sendCalls.size)
+        assertEquals("hi", sendCalls[0].first)
+        assertEquals("p1", sendCalls[0].second)
     }
 
     @Test
@@ -128,7 +180,7 @@ class ChatRepositoryTest {
         )
 
         repo.send("hi")
-        repo.onReady()
+        repo.setConnected(true)
 
         // gateway echoes back a committed user message carrying the same pendingId
         timeline.value = listOf(ChatMessage(ts = 1, role = "user", content = "hi", pendingId = "p1"))

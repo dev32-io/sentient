@@ -35,8 +35,9 @@ data class LiveState(
  * Outbox lifecycle:
  * - [send] enqueues an optimistic QUEUED bubble with a client-generated [newId]; the
  *   bubble is visible immediately in [chatStream].
- * - [onReady] flushes QUEUED messages — marks them SENT and invokes the [send] callback
- *   with (text, pendingId) so the SDK can carry the id on the wire.
+ * - [setConnected] tracks connection readiness. When true, flushes all QUEUED outbox
+ *   messages immediately. [send] while connected also flushes immediately so messages
+ *   sent on an already-READY connection are never stuck as QUEUED.
  * - When the gateway echoes the committed user entry (carrying the same pendingId), the
  *   3-way combine reconciles it away by exact id match — no text comparison needed.
  * - [failOutbox] marks all QUEUED messages FAILED; they remain visible for retry/dismiss.
@@ -63,6 +64,7 @@ class ChatRepository(
     private val liveState = MutableStateFlow(LiveState())
     private val outbox = Outbox(send = { send(it.text, it.id) })
     private val outboxState = MutableStateFlow<List<PendingMessage>>(emptyList())
+    private var connected = false
 
     init {
         scope.launch {
@@ -72,28 +74,36 @@ class ChatRepository(
         }
     }
 
-    /**
-     * Enqueues an optimistic QUEUED message and returns its pending id.
-     * The bubble is visible immediately in [chatStream]. The outbox will flush
-     * it (transition to SENT + invoke [send]) when [onReady] is called.
-     */
-    fun send(text: String): String {
-        val id = newId()
-        outbox.enqueue(PendingMessage(id, text))
-        outboxState.value = outbox.snapshot()
-        log.info("send.optimistic", mapOf("pendingId" to id, "len" to text.length))
-        return id
-    }
-
-    /**
-     * Flushes all QUEUED outbox messages — marks them SENT and invokes the
-     * underlying [send] callback for each. Call when the connection reaches READY.
-     */
-    fun onReady() {
+    private fun flush() {
         val queued = outbox.snapshot().count { it.status == MessageStatus.QUEUED }
         outbox.onReady()
         outboxState.value = outbox.snapshot()
         log.info("outbox.flush", mapOf("pending" to queued))
+    }
+
+    /**
+     * Enqueues an optimistic QUEUED message and returns its pending id.
+     * The bubble is visible immediately in [chatStream]. If the connection is
+     * already READY ([connected] == true), the message is flushed immediately
+     * (SENT + [send] callback invoked). Otherwise it waits for [setConnected].
+     */
+    fun send(text: String): String {
+        val id = newId()
+        log.info("send.optimistic", mapOf("pendingId" to id, "len" to text.length))
+        outbox.enqueue(PendingMessage(id, text))
+        outboxState.value = outbox.snapshot()
+        if (connected) flush()
+        return id
+    }
+
+    /**
+     * Called by the session factory on every connection status change.
+     * When [isConnected] becomes true, flushes all QUEUED outbox messages —
+     * marks them SENT and invokes the underlying [send] callback for each.
+     */
+    fun setConnected(isConnected: Boolean) {
+        connected = isConnected
+        if (isConnected) flush()
     }
 
     /**
