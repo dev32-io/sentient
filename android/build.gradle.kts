@@ -50,6 +50,7 @@ android {
 }
 dependencies {
     implementation(project(":shared:mobile-sdk"))
+    implementation(project(":shared:mobile-data"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
