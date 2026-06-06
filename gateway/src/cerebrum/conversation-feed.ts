@@ -43,6 +43,7 @@ export function toFeedItem(entry: MirrorEntry): ConversationFeedItem {
         kind: "user",
         channel: entry.channel,
         content: entry.content,
+        ...(entry.pendingId !== undefined ? { pendingId: entry.pendingId } : {}),
       };
     case "trigger":
       return {

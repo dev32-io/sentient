@@ -20,6 +20,31 @@ describe("toFeedItem", () => {
     expect(item).toEqual({ ts: 123, kind: "user", channel: "text", content: "hello" });
   });
 
+  it("threads pendingId onto the wire user item when set on the mirror entry", () => {
+    const entry: MirrorEntry = {
+      ts: 123,
+      kind: "user",
+      channel: "text",
+      content: "hello",
+      pendingId: "p1",
+    };
+    const item = toFeedItem(entry);
+    expect((item as { pendingId?: string }).pendingId).toBe("p1");
+    expect(conversationFeedItemSchema.safeParse(item).success).toBe(true);
+  });
+
+  it("omits pendingId from the wire user item when absent on the mirror entry", () => {
+    const entry: MirrorEntry = {
+      ts: 123,
+      kind: "user",
+      channel: "text",
+      content: "hello",
+    };
+    const item = toFeedItem(entry);
+    expect((item as { pendingId?: string }).pendingId).toBeUndefined();
+    expect(conversationFeedItemSchema.safeParse(item).success).toBe(true);
+  });
+
   it("maps a trigger entry to the wire shape", () => {
     const entry: MirrorEntry = {
       ts: 456,

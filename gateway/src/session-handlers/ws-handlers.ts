@@ -102,7 +102,7 @@ export async function handleWebSocketMessage(
       return;
 
     case "text.input":
-      handleTextInput(ws, msg.text);
+      handleTextInput(ws, msg.text, msg.pendingId);
       return;
 
     case "audio.start":
@@ -198,13 +198,13 @@ async function dispatchPreferencesPatch(
 // Text input -> adapter injection
 // ---------------------------------------------------------------------------
 
-function handleTextInput(ws: ServerWebSocket<ClientData>, text: string): void {
+function handleTextInput(ws: ServerWebSocket<ClientData>, text: string, pendingId?: string): void {
   const textAdapter = ws.data.textAdapter;
   if (!textAdapter) {
     sendError(ws, "protocol_error", "Text input not configured for this session");
     return;
   }
-  textAdapter.handleTextInput(text);
+  textAdapter.handleTextInput(text, pendingId);
 }
 
 // ---------------------------------------------------------------------------
