@@ -53,6 +53,7 @@ export const audioEndSchema = z.object({
 export const textInputSchema = z.object({
   type: z.literal("text.input"),
   text: z.string().min(1).max(10000),
+  pendingId: z.string().optional(),
 });
 
 export const toolConfirmSchema = z.object({
