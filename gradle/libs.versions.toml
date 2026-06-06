@@ -31,6 +31,10 @@ targetSdk = "36"
 markdown-renderer = "0.41.0"
 # androidx.core:core-splashscreen 1.0.1 stable — system splash handoff.
 androidx-core-splashscreen = "1.0.1"
+# eu.buney.kopus:kopus 1.6.1.2 — KMP wrapper over libopus (MIT). Publishes
+# androidJvm, iosArm64, iosSimulatorArm64, iosX64, and jvm variants on Maven Central.
+# Used in commonMain for Opus encode/decode in the audio pipeline.
+kopus = "1.6.1.2"
 
 [libraries]
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
@@ -55,6 +59,7 @@ compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview"
 markdown-renderer-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "markdown-renderer" }
 kotlin-test = { group = "org.jetbrains.kotlin", name = "kotlin-test", version.ref = "kotlin" }
 androidx-core-splashscreen = { module = "androidx.core:core-splashscreen", version.ref = "androidx-core-splashscreen" }
+kopus = { module = "eu.buney.kopus:kopus", version.ref = "kopus" }
 
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
