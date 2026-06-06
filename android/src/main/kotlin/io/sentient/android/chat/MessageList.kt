@@ -15,6 +15,7 @@ package io.sentient.android.chat
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -61,6 +62,8 @@ fun MessageList(
     // Optimistic pending rows appended AFTER committed history. Rendered with
     // status chips (QUEUED / SENT / FAILED) until reconciled by ChatRepository.
     pending: List<PendingMessage> = emptyList(),
+    // Invoked when the user taps the FAILED chip on a specific pending message.
+    onRetry: (String) -> Unit = {},
 ) {
     if (messages.isEmpty() && pending.isEmpty()) {
         EmptyState(modifier = modifier)
@@ -156,6 +159,7 @@ fun MessageList(
                 is ChatRow.Pending -> PendingBubble(
                     msg = row.msg,
                     userName = userName,
+                    onRetry = onRetry,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -199,6 +203,7 @@ private val USER_BUBBLE_BG_PENDING: Color
 internal fun PendingBubble(
     msg: PendingMessage,
     userName: String = "You",
+    onRetry: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val tokens = LocalTokens.current
@@ -238,8 +243,8 @@ internal fun PendingBubble(
                     lineHeight = tokens.type.base * tokens.type.lineRelaxed,
                 )
             }
-            // Status chip — QUEUED / SENT / FAILED.
-            PendingStatusChip(status = msg.status)
+            // Status chip — QUEUED / SENT / FAILED (FAILED is tappable → retry).
+            PendingStatusChip(status = msg.status, onRetry = { onRetry(msg.id) })
         }
         InitialAvatar(
             name = userName,
@@ -251,12 +256,17 @@ internal fun PendingBubble(
 }
 
 @Composable
-private fun PendingStatusChip(status: MessageStatus) {
+private fun PendingStatusChip(status: MessageStatus, onRetry: () -> Unit = {}) {
     val tokens = LocalTokens.current
     val (label, tagName, chipColor) = when (status) {
         MessageStatus.QUEUED -> Triple("queued", "msg-status-queued", Color(Colors.ink3))
         MessageStatus.SENT -> Triple("✓ sent", "msg-status-sent", Color(Colors.ok))
-        MessageStatus.FAILED -> Triple("⚠ failed", "msg-status-failed", Color(Colors.stop))
+        MessageStatus.FAILED -> Triple("↺ Retry", "msg-status-failed", Color(Colors.stop))
+    }
+    val clickModifier = if (status == MessageStatus.FAILED) {
+        Modifier.clickable(onClick = onRetry)
+    } else {
+        Modifier
     }
     Text(
         text = label,
@@ -264,6 +274,7 @@ private fun PendingStatusChip(status: MessageStatus) {
         fontSize = tokens.type.sm,
         modifier = Modifier
             .background(chipColor.copy(alpha = 0.10f), RoundedCornerShape(STATUS_CHIP_RADIUS))
+            .then(clickModifier)
             .padding(horizontal = tokens.space.sm, vertical = 2.dp)
             .testTag(tagName),
     )

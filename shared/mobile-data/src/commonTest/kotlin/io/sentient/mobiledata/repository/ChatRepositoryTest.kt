@@ -217,4 +217,38 @@ class ChatRepositoryTest {
         assertEquals(1, m.pending.size)
         assertEquals(MessageStatus.FAILED, m.pending[0].status)
     }
+
+    @Test
+    fun retry_requeues_failed_and_sends_when_connected() = runTest(UnconfinedTestDispatcher()) {
+        val sendCalls = mutableListOf<Pair<String, String>>()
+        val events = MutableSharedFlow<SdkEvent>(extraBufferCapacity = 64)
+        val timeline = MutableStateFlow<List<ChatMessage>>(emptyList())
+        val repo = ChatRepository(
+            events = events,
+            timeline = timeline,
+            scope = backgroundScope,
+            send = { text, id -> sendCalls.add(text to id) },
+            newId = { "p1" },
+        )
+
+        // Send while disconnected → QUEUED; fail it
+        repo.send("hi")
+        repo.failOutbox("auth dead")
+
+        // Verify: connecting does NOT resend a FAILED message
+        repo.setConnected(true)
+        assertTrue(sendCalls.isEmpty(), "FAILED message must not be sent on reconnect, but got: $sendCalls")
+
+        val afterFail = (repo.chatStream.first() as SentientResult.Success).data
+        assertEquals(MessageStatus.FAILED, afterFail.pending[0].status)
+
+        // Now retry: should re-queue and flush immediately (already connected)
+        repo.retry("p1")
+        assertEquals(1, sendCalls.size)
+        assertEquals("hi", sendCalls[0].first)
+        assertEquals("p1", sendCalls[0].second)
+
+        val afterRetry = (repo.chatStream.first() as SentientResult.Success).data
+        assertEquals(MessageStatus.SENT, afterRetry.pending[0].status)
+    }
 }

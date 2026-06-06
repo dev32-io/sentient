@@ -107,6 +107,18 @@ class ChatRepository(
     }
 
     /**
+     * Re-queues a FAILED message so the next flush re-sends it. No-op if the message is not
+     * in FAILED state (QUEUED and SENT messages are left untouched). Flushes immediately when
+     * the connection is already READY.
+     */
+    fun retry(pendingId: String) {
+        log.info("retry", mapOf("pendingId" to pendingId))
+        outbox.retry(pendingId)
+        outboxState.value = outbox.snapshot()
+        if (connected) flush()
+    }
+
+    /**
      * Marks all QUEUED outbox messages as FAILED. They remain visible in [chatStream]
      * for the user to retry or dismiss.
      */

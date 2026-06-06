@@ -289,6 +289,7 @@ private fun ChatRoot(
                 connection = connection,
                 userName = userName,
                 onSend = chatVm::send,
+                onRetry = chatVm::retry,
                 onMicToggle = {
                     if (connection.voiceMode == VoiceMode.ACTIVE) chatSession.sdk.stopMic()
                     else chatSession.sdk.startMic()

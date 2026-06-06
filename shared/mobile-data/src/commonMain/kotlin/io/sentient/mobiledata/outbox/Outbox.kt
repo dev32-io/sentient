@@ -33,5 +33,11 @@ class Outbox(private val send: (PendingMessage) -> Unit) {
         }
     }
 
+    /** Reset a FAILED message back to QUEUED so the next flush re-sends it. No-op if not FAILED. */
+    fun retry(id: String) {
+        val m = queue[id] ?: return
+        if (m.status == MessageStatus.FAILED) queue[id] = m.copy(status = MessageStatus.QUEUED)
+    }
+
     fun snapshot(): List<PendingMessage> = queue.values.toList()
 }

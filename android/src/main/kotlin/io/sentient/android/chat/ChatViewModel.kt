@@ -26,7 +26,20 @@ class ChatViewModel(
         log.info("init")
         viewModelScope.launch { onOpen() }                      // background; UI usable immediately
         viewModelScope.launch {
-            repo.chatStream.collect { _state.value = reduceChatUi(_state.value, it) }
+            repo.chatStream.collect { result ->
+                val next = reduceChatUi(_state.value, result)
+                log.debug(
+                    "uiState",
+                    mapOf(
+                        "messages" to next.model.committed.size,
+                        "pending" to next.model.pending.size,
+                        "live" to (next.model.live != null),
+                        "loading" to next.isLoading,
+                        "banner" to (next.banner != null),
+                    ),
+                )
+                _state.value = next
+            }
         }
         presence?.bind(
             onForeground = { viewModelScope.launch { onForeground() } },
@@ -37,6 +50,11 @@ class ChatViewModel(
     fun send(text: String) {
         log.info("send", mapOf("len" to text.length))
         repo.send(text)
+    }
+
+    fun retry(pendingId: String) {
+        log.info("retry", mapOf("pendingId" to pendingId))
+        repo.retry(pendingId)
     }
 
     override fun onCleared() {
