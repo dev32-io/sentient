@@ -73,7 +73,7 @@ class InFlightMessageConnector(
         log.debug("delta", mapOf("cycleId" to cycleId, "deltaLen" to delta.length, "totalLen" to next.text.length))
         current = next
         onUpdate?.invoke(next)
-        onEvent?.invoke(SdkEvent.MessageDelta(cycleId, delta)) // one event per chunk — never batched
+        onEvent?.invoke(SdkEvent.MessageDelta(cycleId = cycleId, chunk = delta)) // one event per chunk — never batched
     }
 
     private fun onDone(cycleId: String?) {
@@ -99,6 +99,7 @@ class InFlightMessageConnector(
         log.info("aborted", mapOf("cycleId" to cycleId))
         current = null
         onUpdate?.invoke(null)
+        // No MessageCommitted on abort; cycle aborts surface as a separate CycleAborted event (emitted by CycleErrorConnector in a later task).
     }
 
     companion object {

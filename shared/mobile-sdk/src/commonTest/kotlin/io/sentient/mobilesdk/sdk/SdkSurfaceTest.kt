@@ -21,7 +21,7 @@ class SdkSurfaceTest {
 
     @Test
     fun deriveTimeline_excludes_live_inflight() {
-        val d = StateDeriver(io.sentient.mobilesdk.fakes.FixedClock(1000L))
+        val d = StateDeriver(FixedClock(1000L))
         d.inflight = InFlightMessage(cycleId = "c9", text = "streaming...")
         // timeline is committed-only: the live bubble text must not appear
         val timeline = d.deriveTimeline()

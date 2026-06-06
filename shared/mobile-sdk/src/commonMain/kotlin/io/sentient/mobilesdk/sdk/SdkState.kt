@@ -23,7 +23,7 @@ enum class VoiceMode { OFF, ACTIVE }
  * One rendered chat message. Folds a committed [ConversationFeedItem] OR the
  * live in-flight streaming buffer into a flat, SKIE-friendly shape.
  *
- * @param ts Wall-clock ms of the entry (feed item ts, or now for the streaming bubble).
+ * @param ts Wall-clock ms of the entry (feed item ts, or now for the streaming bubble). May be 0 for a clear-signal event payload (e.g. MessageCommitted), whose authoritative timestamp arrives via the conversation feed — consumers rendering a date from a raw event must guard ts <= 0.
  * @param role "user" | "assistant" | "tool" | "trigger".
  * @param content Rendered text.
  * @param streaming True for the live in-flight bubble (pre-commit). False once committed.
