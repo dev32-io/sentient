@@ -2,6 +2,7 @@ package io.sentient.mobilesdk.protocol
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class WireSerializationTest {
@@ -92,6 +93,24 @@ class WireSerializationTest {
         val back = WireJson.instance.decodeFromString(ClientMessage.serializer(), s) as ClientMessage.TextInput
         assertEquals(null, back.pendingId)
         assertEquals("hello", back.text)
+    }
+
+    @Test fun text_input_null_pending_id_omits_key_in_json() {
+        // Wire contract: null pendingId MUST be omitted from the JSON (not encoded as "pendingId":null)
+        // because the gateway validates with z.string().optional(), which accepts ABSENT key but
+        // would REJECT explicit null. explicitNulls=false should enforce this.
+        val json = WireJson.instance.encodeToString(ClientMessage.serializer(), ClientMessage.TextInput(text = "hi"))
+        assertFalse(
+            json.contains("pendingId"),
+            "null pendingId must be omitted from the wire frame (gateway zod is .optional(), not .nullable()); got: $json"
+        )
+
+        // Positive assertion: pendingId IS included when non-null
+        val jsonWithId = WireJson.instance.encodeToString(ClientMessage.serializer(), ClientMessage.TextInput(text = "hi", pendingId = "p1"))
+        assertTrue(
+            jsonWithId.contains("\"pendingId\":\"p1\""),
+            "non-null pendingId must be present in the wire frame; got: $jsonWithId"
+        )
     }
 
     @Test fun conversation_entry_user_with_pending_id_decodes() {
