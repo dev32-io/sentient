@@ -129,12 +129,10 @@ object SdkSessionFactory {
             }
         })
 
-        // Flush the outbox whenever the connection reaches READY so messages
-        // queued while connecting are sent as soon as the session is live.
+        // Forward every connection-state emission to the repo so setConnected
+        // flushes the outbox on READY and clears it on disconnect.
         scope.launch {
-            sdk.connection.collect { state ->
-                if (state.status == SdkStatus.READY) chatRepo.onReady()
-            }
+            sdk.connection.collect { chatRepo.setConnected(it.status == SdkStatus.READY) }
         }
 
         return ChatSession(sdk, chatRepo, connectionRepo, historyRepo, scope)

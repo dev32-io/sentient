@@ -41,7 +41,7 @@ internal fun DraftField(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 48.dp)
-                .testTag("chat-input"),
+                .testTag("composer-input"),
             placeholder = {
                 if (!showWave) {
                     Text(
