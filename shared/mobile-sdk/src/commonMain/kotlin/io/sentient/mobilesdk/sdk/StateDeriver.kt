@@ -118,6 +118,26 @@ class StateDeriver(private val clock: Clock) {
         lastCycleError = lastCycleError,
     )
 
+    /** Project the connection-axis slice (status, session, voice, audio). */
+    fun deriveConnection(): ConnectionState = ConnectionState(
+        status = status,
+        hasSession = hasSession,
+        connectionLost = connectionLost,
+        authExpired = authExpired,
+        prefs = prefs,
+        voiceMode = voiceMode,
+        isSpeaking = isSpeaking,
+        audioState = audioState,
+    )
+
+    /**
+     * Project committed-only messages (no live in-flight bubble).
+     * Used by the timeline StateFlow — consumers that want a stable list of
+     * committed entries without the streaming noise.
+     */
+    fun deriveTimeline(): List<ChatMessage> =
+        deriveMessages(feed, inflight = null, clock.nowMs(), tasks, cycleByTs)
+
     /**
      * Match the last-seen inflight text against new feed entries, recording
      * ts → cycleId for any Assistant entry that commits that exact text.

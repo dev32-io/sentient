@@ -15,15 +15,20 @@ import io.sentient.mobilesdk.presence.IdleDetectorEvent
 import io.sentient.mobilesdk.presence.createIdleDetector
 import io.sentient.mobilesdk.protocol.AudioPreferencesPatch
 import io.sentient.mobilesdk.protocol.ClientMessage
+import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.transport.ConnectResult
 import io.sentient.mobilesdk.transport.MessageRouter
 import io.sentient.mobilesdk.transport.ReconnectController
 import io.sentient.mobilesdk.transport.SdkStatus
 import io.sentient.mobilesdk.transport.SessionResume
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlin.random.Random
@@ -46,6 +51,25 @@ class SentientSdk(
 
     private val _state = MutableStateFlow(SdkState())
     val state: StateFlow<SdkState> = _state.asStateFlow()
+
+    private val _connection = MutableStateFlow(ConnectionState())
+    val connection: StateFlow<ConnectionState> = _connection.asStateFlow()
+
+    private val _timeline = MutableStateFlow<List<ChatMessage>>(emptyList())
+    val timeline: StateFlow<List<ChatMessage>> = _timeline.asStateFlow()
+
+    private val _events = MutableSharedFlow<SdkEvent>(
+        replay = 0,
+        extraBufferCapacity = EVENTS_BUFFER_CAPACITY,
+        onBufferOverflow = BufferOverflow.SUSPEND,
+    )
+    val events: SharedFlow<SdkEvent> = _events.asSharedFlow()
+
+    private fun emitEvent(event: SdkEvent) {
+        if (!_events.tryEmit(event)) {
+            scope.launch { _events.emit(event) }
+        }
+    }
 
     private val deriver = StateDeriver(bundle.clock)
     private val resume = SessionResume(bundle.sessionIdStore, bundle.clock)
@@ -290,6 +314,8 @@ class SentientSdk(
 
     private fun emit() {
         _state.value = deriver.derive()
+        _connection.value = deriver.deriveConnection()
+        _timeline.value = deriver.deriveTimeline()
     }
 
     private fun setStatus(next: SdkStatus) {
@@ -350,5 +376,10 @@ class SentientSdk(
         // the SDK auto-reconnects on the next presence signal. Only explicit
         // logout (the default disconnect()) clears the session.
         override fun disconnectForIdle() = disconnect(clearSession = false)
+    }
+
+    companion object {
+        /** Back-pressure buffer depth for the events SharedFlow. */
+        const val EVENTS_BUFFER_CAPACITY = 256
     }
 }
