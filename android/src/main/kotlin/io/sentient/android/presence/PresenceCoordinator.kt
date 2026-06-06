@@ -38,12 +38,20 @@ class PresenceCoordinator {
         if (started) return
         started = true
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
+            private var backgrounded = false
+
             override fun onStart(owner: LifecycleOwner) {
+                if (!backgrounded) {
+                    log.info("foreground.cold-start-skip") // initial connect is owned by ChatViewModel.init
+                    return
+                }
+                backgrounded = false
                 log.info("foreground")
                 onForeground?.invoke()
             }
 
             override fun onStop(owner: LifecycleOwner) {
+                backgrounded = true
                 log.info("background")
                 onBackground?.invoke()
             }
