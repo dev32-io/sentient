@@ -21,6 +21,7 @@ class SentientApp : Application() {
         super.onCreate()
         MobileSdk.initAndroid(applicationContext)
         io.sentient.android.backend.BackendConfigHolder.init(applicationContext)
+        io.sentient.android.sdk.DisplayNameHolder.init(applicationContext)
         log.info("onCreate", mapOf("sdkInit" to true))
     }
 }

@@ -25,13 +25,24 @@ import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.SessionRow
 import io.sentient.mobilesdk.sdk.SentientSdk
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 
 /** Page size for the session list fetch. Mirrors webui's LIST_PAGE_LIMIT (50). */
 private const val LIST_PAGE_LIMIT = 50
+
+/**
+ * Deadline for the session-list fetch (ms). The dashboard sidecar can be slow or
+ * unreachable; without a bound the drawer spinner would spin forever. On timeout
+ * the fetch surfaces the SessionsErrorEmpty / stale-banner affordance instead of
+ * an indefinite spinner (error-handling rule: timeout every external call).
+ * Mirrors the iOS listSessionsTimeoutSeconds (12s).
+ */
+private const val LIST_SESSIONS_TIMEOUT_MS = 12_000L
 
 /** Everything the History drawer renders. Immutable; replaced wholesale on change. */
 data class HistoryUiState(
@@ -132,13 +143,25 @@ class HistoryViewModel(
     private suspend fun loadSessions() {
         val sdk = sdkProvider() ?: return
         _state.value = _state.value.copy(loading = true, error = null)
-        val result = runCatching { sdk.listSessions(limit = LIST_PAGE_LIMIT, offset = 0) }
+        // Bound the fetch: an unreachable dashboard sidecar must surface the error
+        // affordance, not hang the spinner. withTimeout throws a
+        // TimeoutCancellationException on deadline — caught BEFORE the
+        // CancellationException rethrow so the timeout becomes a load-failed state
+        // (a real scope cancellation still propagates). Parity: iOS SdkStore+Sessions.
+        val result = runCatching {
+            withTimeout(LIST_SESSIONS_TIMEOUT_MS) { sdk.listSessions(limit = LIST_PAGE_LIMIT, offset = 0) }
+        }
         result
             .onSuccess { page ->
                 log.info("loaded", mapOf("count" to page.items.size, "total" to page.total))
                 _state.value = _state.value.copy(sessions = page.items, loading = false, error = null)
             }
             .onFailure { e ->
+                if (e is TimeoutCancellationException) {
+                    warn("load-timed-out", e)
+                    _state.value = _state.value.copy(loading = false, error = "Couldn't load chats. Tap to retry.")
+                    return
+                }
                 if (e is CancellationException) throw e
                 warn("load-failed", e)
                 _state.value = _state.value.copy(loading = false, error = e.message ?: "load failed")

@@ -76,8 +76,10 @@ private data class PendingTarget(val id: String, val title: String)
  * read one stable clock per composition pass.
  *
  * [onOpenSettings] is called when the user taps the gear in the account header.
- * [userName] / [household] are display-only; default "You" / "" until the gateway
- * exposes per-profile metadata through the SDK. TODO: wire from SDK profile.
+ * [userName] is the logged-in display name supplied by the host from
+ * DisplayNameStore (set at login, cleared on logout), defaulting to "You" only as
+ * a fallback. [household] stays "" until the gateway exposes per-profile metadata
+ * through the SDK — HistoryAccountHeader omits the subtitle line while it is empty.
  */
 @Composable
 fun HistoryDrawer(

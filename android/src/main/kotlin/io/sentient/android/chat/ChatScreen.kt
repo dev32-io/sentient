@@ -73,8 +73,8 @@ fun ChatScreen(
     onOpenHistory: () -> Unit,
     onNewChat: () -> Unit,
     onReconnect: () -> Unit,
-    // TODO: supply the logged-in display name from the backend profile once the
-    // Android SdkViewModel/store exposes it (mirrors the iOS caveat — follow-up).
+    // Logged-in user's display name, supplied by the host from DisplayNameStore
+    // (set at login, cleared on logout). Defaults to "You" only as a fallback.
     userName: String = "You",
     modifier: Modifier = Modifier,
 ) {

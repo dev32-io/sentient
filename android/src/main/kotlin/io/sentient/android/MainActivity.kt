@@ -159,6 +159,9 @@ private fun AppRoot(
     }
 }
 
+/** Neutral display-name fallback shown before login persists a real name. */
+private const val DEFAULT_DISPLAY_NAME = "You"
+
 @Composable
 private fun AppConfiguredRoot(
     sdkViewModel: SdkViewModel,
@@ -168,6 +171,12 @@ private fun AppConfiguredRoot(
     onOpenBackendSetup: () -> Unit,
 ) {
     val sdkState by sdkViewModel.state.collectAsStateWithLifecycle()
+    // Logged-in user's display name, read from the same store login wrote to.
+    // Falls back to the neutral default pre-login / post-logout (parity: iOS
+    // SdkStore.displayName). Reactive: login's save flips the flow → headers update.
+    val displayName by io.sentient.android.sdk.DisplayNameHolder.store.name
+        .collectAsStateWithLifecycle()
+    val userName = displayName ?: DEFAULT_DISPLAY_NAME
     val drawerState = rememberHistoryDrawerState()
     val scope = rememberCoroutineScope()
     // authExpired → logout (route to login). Lifecycle-safe one-shot: a guarded
@@ -199,9 +208,11 @@ private fun AppConfiguredRoot(
                 drawerState = drawerState,
                 nowMs = System.currentTimeMillis(),
                 onOpenSettings = { showSettings = true },
+                userName = userName,
             ) {
                 ChatScreen(
                     state = sdkState,
+                    userName = userName,
                     onSend = sdkViewModel::sendText,
                     onMicToggle = {
                         if (sdkState.voiceMode == VoiceMode.ACTIVE) sdkViewModel.stopMic()

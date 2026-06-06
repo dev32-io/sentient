@@ -1,11 +1,16 @@
 // ---------------------------------------------------------------------------
-// AvatarTile — one avatar in the login grid: a 56dp tinted circle with the
-// displayName's initial centered in ink, plus the name below it. Stateless:
-// takes the user + an onClick, dispatches nothing itself (the screen wires it).
+// AvatarTile — one avatar in the login grid: a 56dp terra/accent-filled circle
+// with the displayName's initial centered in ink, plus the name below it.
+// Stateless: takes the user + an onClick, dispatches nothing itself (the screen
+// wires it).
+//
+// The circle uses the terra accent fill (Colors.accent) so it matches the iOS
+// login avatar (UserAvatar) and the in-chat / history-header avatars — NOT the
+// per-user persona tint, which fell back to a dark elevated-surface circle for
+// the common blank/unknown tint (the Android-only avatar bug this fixes).
 //
 // testTag `login-avatar-<userId>` is on the clickable circle so the e2e driver
-// targets it directly. Tint resolves from the SDK's Tints.map (persona slug →
-// ARGB); an unknown/blank tint falls back to the elevated surface.
+// targets it directly.
 // ---------------------------------------------------------------------------
 package io.sentient.android.auth
 
@@ -26,14 +31,9 @@ import io.sentient.android.chat.InitialAvatar
 import io.sentient.android.theme.LocalTokens
 import io.sentient.mobilesdk.auth.AuthUserLite
 import io.sentient.mobilesdk.design.Colors
-import io.sentient.mobilesdk.design.Tints
 
 private val AVATAR_SIZE = 56.dp
 private val LABEL_WIDTH = 72.dp
-
-/** Resolve an avatar tint slug → Compose Color, falling back to the elevated surface. */
-private fun tintColor(slug: String): Color =
-    Color(Tints.map[slug] ?: Colors.bgElev)
 
 @Composable
 fun AvatarTile(
@@ -53,7 +53,7 @@ fun AvatarTile(
             modifier = Modifier
                 .clickable(onClick = onClick)
                 .testTag("login-avatar-${user.userId}"),
-            background = tintColor(user.avatarTint),
+            background = Color(Colors.accent),
         )
         Text(
             text = user.displayName,

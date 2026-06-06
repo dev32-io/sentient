@@ -20,6 +20,8 @@
 package io.sentient.android.settings
 
 import androidx.lifecycle.ViewModel
+import io.sentient.android.sdk.DisplayNameHolder
+import io.sentient.android.sdk.DisplayNameStore
 import io.sentient.android.sdk.SdkHolder
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.secure.SecureTokenStore
@@ -36,6 +38,7 @@ import io.sentient.mobilesdk.sdk.SentientSdk
 class SettingsViewModel(
     private val sdkProvider: () -> SentientSdk? = { SdkHolder.sdkFlow.value },
     private val tokenStore: SecureTokenStore = SdkHolder.tokenStore,
+    private val displayNameStore: DisplayNameStore = DisplayNameHolder.store,
 ) : ViewModel() {
     private val log = createLogger("android", "settings-viewmodel")
 
@@ -50,6 +53,10 @@ class SettingsViewModel(
         log.info("logout.start")
         sdkProvider()?.disconnect()
         tokenStore.clear()
+        // Clear the persisted display name alongside the token so a logged-out
+        // relaunch never shows a stale name (parity: iOS SdkStore.logout). The
+        // store's flow flips to null → headers fall back to the neutral default.
+        displayNameStore.clear()
         log.info("logout.done")
     }
 }

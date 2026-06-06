@@ -14,6 +14,8 @@ package io.sentient.android.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import io.sentient.android.sdk.DisplayNameHolder
+import io.sentient.android.sdk.DisplayNameStore
 import io.sentient.android.sdk.SdkHolder
 import io.sentient.mobilesdk.auth.AuthClient
 import io.sentient.mobilesdk.auth.AuthError
@@ -67,6 +69,7 @@ sealed interface AuthIntent {
 class AuthViewModel(
     private val authClientProvider: () -> AuthClient = { SdkHolder.authClient },
     private val tokenStore: SecureTokenStore = SdkHolder.tokenStore,
+    private val displayNameStore: DisplayNameStore = DisplayNameHolder.store,
     private val sdkConnect: suspend () -> Unit = { SdkHolder.sdk.connect() },
 ) : ViewModel() {
     private val log = createLogger("android", "auth-viewmodel")
@@ -131,6 +134,11 @@ class AuthViewModel(
                 is AuthResult.Success -> {
                     log.info("login.ok", mapOf("userId" to user.userId))
                     tokenStore.save(result.value.token)
+                    // Persist the display name for the post-login chat / history
+                    // headers (this VM's selectedUser is reset after login). Display
+                    // name, not a secret — kept out of the token path. Mirrors iOS
+                    // AuthModel.performLogin → displayNameStore.save.
+                    displayNameStore.save(user.displayName)
                     sdkConnect()
                 }
                 is AuthResult.Failure -> {
