@@ -6,6 +6,12 @@
 import Foundation
 import MobileSdk
 
+// Delay before the single probe retry. The first probe may be the connection
+// that raised the iOS Local Network prompt; this window lets the user tap
+// "Allow" before we retry, so a just-granted permission isn't shown as failure.
+private let probeRetryDelaySeconds: UInt64 = 1
+private let probeRetryDelayNanosExtra: UInt64 = 500_000_000 // 1.5s total
+
 @MainActor
 final class BackendSetupModel: ObservableObject {
     @Published var host: String
@@ -46,6 +52,24 @@ final class BackendSetupModel: ObservableObject {
     }
 
     private func probeThenApply(_ candidate: BackendConfig) async {
+        // First probe may be the connection that raised the Local Network prompt.
+        // If it fails, wait briefly (for the user to tap "Allow") and retry ONCE
+        // before surfacing an error — but never more than once, so a genuinely
+        // wrong host still fails fast.
+        if await probeOnce(candidate) { return }
+        log.info("save.retry waiting before single retry")
+        let delay = probeRetryDelaySeconds * 1_000_000_000 + probeRetryDelayNanosExtra
+        try? await Task.sleep(nanoseconds: delay)
+        if await probeOnce(candidate) { return }
+        log.warn("save.failed after retry")
+        isSaving = false
+        error = "Couldn't verify the server. Check the host, port, and TLS option."
+    }
+
+    /// Runs one probe attempt. On success: persists + reconfigures + signals
+    /// dismiss and returns `true`. On any failure: returns `false` WITHOUT
+    /// touching the error/isSaving UX (the caller decides retry vs. surface).
+    private func probeOnce(_ candidate: BackendConfig) async -> Bool {
         let client = createAuthClient(
             gatewayWsUrl: candidate.gatewayWsURL,
             allowSelfSignedDevHost: candidate.allowSelfSigned
@@ -58,15 +82,14 @@ final class BackendSetupModel: ObservableObject {
                 reconfigure(candidate)
                 isSaving = false
                 didSave = true
+                return true
             case .failure:
-                log.warn("save.failed")
-                isSaving = false
-                error = "Couldn't verify the server. Check the host, port, and TLS option."
+                log.warn("save.probe.failed")
+                return false
             }
         } catch {
-            log.warn("save.threw: \(error)")
-            isSaving = false
-            self.error = "Can't reach that server. Check the host, port, and TLS option."
+            log.warn("save.probe.threw: \(error)")
+            return false
         }
     }
 }

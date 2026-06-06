@@ -13,8 +13,11 @@
 //  - Composer interrupt shown only when cognition != .idle || isSpeaking
 //  - TTS/mic toggles reflect state.prefs.ttsEnabled / voiceMode
 //
-// History surface: left side panel (D-I4.2), draggable-snapping overlay.
-// Hamburger opens it; "+" starts a new chat; settings moved to panel header.
+// History surface: native UIKit interactive left-edge drawer (SideDrawer →
+// SideDrawerController) hosting HistorySidePanel. Edge-swipe opens, drag/tap-scrim
+// closes, finger tracks both directions with velocity snap. The hamburger sets
+// `drawerOpen = true`; the controller clears it on dismiss; onOpen refreshes the
+// session list on EVERY open. "+" starts a new chat; settings moved to panel header.
 //
 // accessibilityIdentifier `chat-screen` is retained for the host routing assert.
 // ---------------------------------------------------------------------------
@@ -34,20 +37,14 @@ struct ChatView: View {
         _historyModel = StateObject(wrappedValue: HistoryModel(store: store))
     }
 
-    // ── Panel geometry ────────────────────────────────────────────────────────
+    // ── Drawer state ────────────────────────────────────────────────────────
 
-    /// 86 % of screen width. UIScreen.main is deprecated in iOS 16 + but
-    /// acceptable here; a GeometryReader alternative requires restructuring.
-    private let panelWidth: CGFloat = UIScreen.main.bounds.width * 0.86
+    /// SwiftUI's command surface over the native UIKit drawer (SideDrawer). The
+    /// hamburger sets it true; the controller clears it to false on any
+    /// interactive dismiss. The interactive open/close drag itself lives in UIKit.
+    @State private var drawerOpen = false
 
-    /// Panel offset: -panelWidth = closed, 0 = open. Initialized CLOSED at the
-    /// declaration (not in .onAppear) so the panel never renders open on frame zero.
-    @State private var panelX: CGFloat = -UIScreen.main.bounds.width * 0.86
-
-    /// panelX captured at the start of each drag (reset to nil on end).
-    @GestureState private var dragOriginX: CGFloat? = nil
-
-    /// Clock captured once per openPanel() so relative dates don't drift.
+    /// Clock captured once per drawer-open so relative dates don't drift.
     @State private var panelNowMs: Int64 = 0
 
     // ── Sheet + alert state ───────────────────────────────────────────────────
@@ -67,11 +64,7 @@ struct ChatView: View {
 
     /// Loading affordance derived from the pure chatLoading() policy function.
     private var chatLoadingState: LoadingAffordance {
-        chatLoading(
-            status: store.state.status,
-            cognition: store.state.cognition,
-            hasMessages: !store.state.messages.isEmpty
-        )
+        chatLoading(status: store.state.status)
     }
 
     private var currentMarkMode: MarkMode { markMode(of: store.state) }
@@ -81,8 +74,6 @@ struct ChatView: View {
     private var transcriptVisible: Bool {
         voiceActive && !store.state.transcript.isEmpty
     }
-
-    private var panelVisible: Bool { panelX > -panelWidth }
 
     /// Connection affordance derived from the single SDK state surface via the
     /// pure `ConnectionBannerState.derive` (STATUS, not connectionLost,
@@ -103,30 +94,24 @@ struct ChatView: View {
     // ── Root body ─────────────────────────────────────────────────────────────
 
     var body: some View {
-        ZStack(alignment: .leading) {
-            mainColumn
-                // 20 pt leading strip: edge-swipe to open. The narrow strip +
-                // minimumDistance:8 lets vertical chat scroll pass through.
-                .overlay(alignment: .leading) {
-                    Color.clear
-                        .frame(width: 20)
-                        .contentShape(Rectangle())
-                        .gesture(panelDrag)
-                }
-
-            if panelVisible {
-                let progress = Double((panelX + panelWidth) / panelWidth)
-                Color.black
-                    .opacity(0.5 * progress)
-                    .ignoresSafeArea()
-                    .onTapGesture { closePanel() }
-
-                historySidePanel
-                    .frame(width: panelWidth)
-                    .offset(x: panelX)
-                    .gesture(panelDrag)
+        SideDrawer(
+            isOpen: $drawerOpen,
+            // Fires on EVERY fully-open (edge-swipe AND programmatic) — fixes the
+            // old gap where a drag-open never refreshed the session list.
+            onOpen: {
+                panelNowMs = Int64(Date().timeIntervalSince1970 * 1000)
+                Task { await historyModel.refresh() }
             }
+        ) {
+            mainColumn
+        } drawer: {
+            // The drawer host view spans full height (ignores safe area); extend
+            // the dusk background behind the status bar / home indicator so no
+            // gap shows the dimmed content through. Panel content keeps its insets.
+            historySidePanel
+                .background(DuskColors.bg.ignoresSafeArea())
         }
+        .ignoresSafeArea()
         // Floating connection-state pill + auth-expired→logout (extracted modifier).
         .connectionState(
             banner: connectionBanner,
@@ -156,8 +141,7 @@ struct ChatView: View {
     private var mainColumn: some View {
         VStack(spacing: 0) {
             titleBar
-            // TODO(userName): surface real display name from auth profile
-            MessageList(messages: store.state.messages, activeMarkMode: currentMarkMode, userName: "You")
+            MessageList(messages: store.state.messages, activeMarkMode: currentMarkMode, userName: store.displayName)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay {
                     if store.state.messages.isEmpty, chatLoadingState != .none {
@@ -197,24 +181,23 @@ struct ChatView: View {
         HistorySidePanel(
             model: historyModel,
             nowMs: panelNowMs,
-            // SdkStore does not expose a display-name surface (8.1 finding).
-            userName: "You",
+            userName: store.displayName,
             household: "",
             onSelect: { sessionId in
                 Task {
                     await historyModel.switchSession(sessionId)
-                    closePanel()
+                    drawerOpen = false
                 }
             },
             onNewChat: {
                 Task {
                     await historyModel.newChat()
-                    closePanel()
+                    drawerOpen = false
                 }
             },
             onSettings: {
                 settingsPresented = true
-                closePanel()
+                drawerOpen = false
             },
             onAskRename: { row in
                 panelRenameText = row.title
@@ -226,44 +209,14 @@ struct ChatView: View {
         )
     }
 
-    // ── Drag gesture + snap ───────────────────────────────────────────────────
-
-    private var panelDrag: some Gesture {
-        DragGesture(minimumDistance: 8)
-            .updating($dragOriginX) { _, state, _ in
-                if state == nil { state = panelX }
-            }
-            .onChanged { value in
-                let base = dragOriginX ?? panelX
-                panelX = max(-panelWidth, min(0, base + value.translation.width))
-            }
-            .onEnded { value in
-                let extra = value.predictedEndTranslation.width - value.translation.width
-                let shouldOpen = (panelX + extra) > -panelWidth / 2
-                withAnimation(.interactiveSpring(response: 0.3, dampingFraction: 0.86)) {
-                    panelX = shouldOpen ? 0 : -panelWidth
-                }
-            }
-    }
-
-    private func openPanel() {
-        panelNowMs = Int64(Date().timeIntervalSince1970 * 1000)
-        Task { await historyModel.refresh() }
-        withAnimation(.interactiveSpring(response: 0.3, dampingFraction: 0.86)) {
-            panelX = 0
-        }
-    }
-
-    private func closePanel() {
-        withAnimation(.interactiveSpring(response: 0.3, dampingFraction: 0.86)) {
-            panelX = -panelWidth
-        }
-    }
+    // ── Title bar ─────────────────────────────────────────────────────────────
 
     private var titleBar: some View {
         ChatTitleBar(
             markMode: currentMarkMode,
-            onOpenPanel: openPanel,
+            // Hamburger commands the native drawer open; the controller fires
+            // onOpen (refresh + clock) when it settles fully open.
+            onOpenPanel: { drawerOpen = true },
             onNewChat: { Task { await historyModel.newChat() } }
         )
     }

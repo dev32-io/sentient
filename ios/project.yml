@@ -31,6 +31,10 @@ targets:
           - JetBrainsMono-Regular.ttf
           - JetBrainsMono-Medium.ttf
         NSMicrophoneUsageDescription: Sentient uses the microphone for voice conversations.
+        # Required for iOS Local Network access (LAN gateway). The system shows this
+        # string in the Local Network permission prompt; without the key the prompt
+        # (and all local-network connections) are blocked.
+        NSLocalNetworkUsageDescription: Sentient connects to your home gateway on the local network.
         # Build-time default gateway URL. Debug reads Local.xcconfig (gitignored);
         # Release leaves it unset → "" → app forces the in-app backend-setup page.
         GatewayWSURL: $(GATEWAY_WS_URL)

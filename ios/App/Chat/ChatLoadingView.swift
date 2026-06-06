@@ -16,7 +16,6 @@ struct ChatLoadingView: View {
     private var label: String {
         switch state {
         case .connecting: return "Connecting…"
-        case .sessionStarting: return "Starting a new chat…"
         case .none: return ""
         }
     }
@@ -42,9 +41,3 @@ struct ChatLoadingView: View {
     }
 }
 
-#Preview("Session starting") {
-    ZStack {
-        DuskColors.bg.ignoresSafeArea()
-        ChatLoadingView(state: .sessionStarting)
-    }
-}

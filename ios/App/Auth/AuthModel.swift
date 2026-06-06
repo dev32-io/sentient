@@ -48,6 +48,7 @@ final class AuthModel: ObservableObject {
 
     private let authClient: AuthClient
     private let tokenStore: SecureTokenStore
+    private let displayNameStore: DisplayNameStore
     private let connect: () -> Void
     private let log = AppLog("auth", "model")
 
@@ -57,14 +58,19 @@ final class AuthModel: ObservableObject {
     ///     transport owner.
     ///   - authClient: REST client built via the iOS createAuthClient factory.
     ///   - tokenStore: the same Keychain store the SDK reads on connect.
+    ///   - displayNameStore: persists the selected user's display name so the
+    ///     chat / history headers can read it after this login-scoped model is
+    ///     torn down. NOT a secret — never touches the token path.
     init(
         connect: @escaping () -> Void,
         authClient: AuthClient = AuthModel.makeAuthClient(),
-        tokenStore: SecureTokenStore = createTokenStore()
+        tokenStore: SecureTokenStore = createTokenStore(),
+        displayNameStore: DisplayNameStore = DisplayNameStore()
     ) {
         self.connect = connect
         self.authClient = authClient
         self.tokenStore = tokenStore
+        self.displayNameStore = displayNameStore
     }
 
     // ── User actions ────────────────────────────────────────────────────────
@@ -134,6 +140,10 @@ final class AuthModel: ObservableObject {
             case .success(let success):
                 log.info("login.ok userId=\(user.userId)")
                 if let token = success.value?.token { tokenStore.save(token: token) }
+                // Persist the display name for the post-login chat / history
+                // headers (this model is torn down after login). Display name,
+                // not a secret — kept out of the token path.
+                displayNameStore.save(user.displayName)
                 isSubmitting = false
                 connect()
             case .failure(let failure):

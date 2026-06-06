@@ -49,6 +49,9 @@ extension SdkStore {
         log.info("logout.start")
         sdk?.disconnect(clearSession: true)
         tokenStore.clear()
+        // Clear the persisted display name too, so a logged-out relaunch never
+        // shows a stale name (display data, not a secret — mirrors token clear).
+        displayNameStore.clear()
         log.info("logout.done")
     }
 

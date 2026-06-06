@@ -37,6 +37,8 @@
 			</dict>
 		</dict>
 	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Sentient connects to your home gateway on the local network.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Sentient uses the microphone for voice conversations.</string>
 	<key>UIAppFonts</key>

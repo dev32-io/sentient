@@ -30,7 +30,15 @@ import MobileSdk
 
 enum SdkStoreError: Error {
     case notConfigured
+    /// A bounded external call (e.g. listSessions against the dashboard sidecar)
+    /// exceeded its deadline — surfaced to the UI as an error affordance instead
+    /// of an indefinite spinner (error-handling rule: timeout every external call).
+    case timedOut
 }
+
+/// Shown as the user's name before login persists one, and as the absolute
+/// fallback if the stored name is ever missing.
+private let defaultDisplayName = "You"
 
 @MainActor
 final class SdkStore: ObservableObject {
@@ -56,6 +64,11 @@ final class SdkStore: ObservableObject {
     /// clearing it is what makes a relaunch land on login (no auto-resume).
     // internal: used by SdkStore+Commands.swift extension (logout)
     let tokenStore: SecureTokenStore
+    /// The same UserDefaults store login writes the display name to. Held here so
+    /// the chat / history headers can read the real name and `logout()` can clear
+    /// it (no stale name on a logged-out relaunch).
+    // internal: used by SdkStore+Commands.swift extension (logout)
+    let displayNameStore: DisplayNameStore
     // internal: used by SdkStore+Sessions.swift and SdkStore+Commands.swift extensions
     let log = AppLog("sdk", "store")
     private var collectTask: Task<Void, Never>?
@@ -67,8 +80,12 @@ final class SdkStore: ObservableObject {
     /// default → unconfigured. On .configured, the SDK is built immediately and
     /// collection starts. On .unconfigured, `isConfigured = false`; call
     /// `reconfigure(_:)` from the setup flow.
-    init(tokenStore: SecureTokenStore = createTokenStore()) {
+    init(
+        tokenStore: SecureTokenStore = createTokenStore(),
+        displayNameStore: DisplayNameStore = DisplayNameStore()
+    ) {
         self.tokenStore = tokenStore
+        self.displayNameStore = displayNameStore
         switch Self.resolve(configStore) {
         case .configured(let url, let trust):
             let s = createSentientSdk(gatewayWsUrl: url, allowSelfSignedDevHost: trust, capabilities: [])
@@ -186,4 +203,9 @@ final class SdkStore: ObservableObject {
 
     /// True when there are outbound messages queued, awaiting a READY transition.
     var hasPendingSends: Bool { !sendQueue.pending.isEmpty }
+
+    /// The logged-in user's display name for chat / history headers, read from
+    /// the same UserDefaults store login wrote at sign-in. Falls back to the
+    /// neutral default only when nothing is stored (pre-login or post-logout).
+    var displayName: String { displayNameStore.load() ?? defaultDisplayName }
 }

@@ -10,6 +10,10 @@ struct BackendSetupView: View {
     @StateObject var model: BackendSetupModel
     var onSaved: () -> Void
 
+    // Surfaces the iOS Local Network permission prompt on appear, so it's
+    // resolved BEFORE the user taps Save & connect (the first LAN connection).
+    @State private var lanPrimer = LocalNetworkPrimer()
+
     var body: some View {
         VStack(alignment: .leading, spacing: Space.lg) {
             Text("Sentient backend")
@@ -71,6 +75,8 @@ struct BackendSetupView: View {
         .background(DuskColors.bg)
         .duskTheme()
         .onChange(of: model.didSave) { _, saved in if saved { onSaved() } }
+        .task { lanPrimer.start() }
+        .onDisappear { lanPrimer.cancel() }
     }
 }
 

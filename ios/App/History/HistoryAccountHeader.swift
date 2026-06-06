@@ -43,13 +43,18 @@ struct HistoryAccountHeader: View {
     }
 
     private var identity: some View {
+        // Only render the household line when present — an empty Text would push
+        // the name above the avatar's vertical center. With it omitted, the lone
+        // name line centers against the avatar via the HStack's default .center.
         VStack(alignment: .leading, spacing: 1) {
             Text(name)
                 .font(Typo.ui(14, .semibold))
                 .foregroundStyle(DuskColors.ink)
-            Text(household)
-                .font(Typo.ui(12))
-                .foregroundStyle(DuskColors.ink3)
+            if !household.isEmpty {
+                Text(household)
+                    .font(Typo.ui(12))
+                    .foregroundStyle(DuskColors.ink3)
+            }
         }
     }
 

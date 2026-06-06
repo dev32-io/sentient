@@ -9,12 +9,28 @@
 // ---------------------------------------------------------------------------
 import MobileSdk
 
+/// Deadline for the session-list fetch. The dashboard sidecar can be slow or
+/// unreachable; without a bound the drawer spinner would spin forever. On
+/// timeout the fetch throws → HistoryModel shows the sessions-error affordance.
+private let listSessionsTimeoutSeconds: Double = 12
+
 extension SdkStore {
     /// Page the session list. Returns a SessionsListPage (items + total + hasMore).
+    /// Bounded by [listSessionsTimeoutSeconds] — races the SDK call against a
+    /// sleep so an unreachable sidecar can never hang the history drawer.
     func listSessions(limit: Int32, offset: Int32) async throws -> SessionsListPage {
         guard let sdk else { throw SdkStoreError.notConfigured }
         log.info("listSessions limit=\(limit) offset=\(offset)")
-        return try await sdk.listSessions(limit: limit, offset: offset)
+        return try await withThrowingTaskGroup(of: SessionsListPage.self) { group in
+            group.addTask { try await sdk.listSessions(limit: limit, offset: offset) }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(listSessionsTimeoutSeconds * 1_000_000_000))
+                throw SdkStoreError.timedOut
+            }
+            guard let result = try await group.next() else { throw SdkStoreError.timedOut }
+            group.cancelAll()
+            return result
+        }
     }
 
     /// Switch to a session; awaits the session.switched broadcast inside the SDK.
