@@ -70,9 +70,15 @@ fun MessageBubble(
 ) {
     val tokens = LocalTokens.current
     val isUser = message.role == "user"
+    val isAssistant = message.role == "assistant"
     val arrangement = if (isUser) Arrangement.End else Arrangement.Start
+    // assistant-bubble testTag on the outermost row — used by Maestro to assert
+    // that an assistant message (streaming or committed) is visible.
+    val assistantTag = if (isAssistant) Modifier.testTag("assistant-bubble") else Modifier
     Row(
-        modifier = modifier.testTag("$BUBBLE_TAG_PREFIX$index"),
+        modifier = modifier
+            .testTag("$BUBBLE_TAG_PREFIX$index")
+            .then(assistantTag),
         horizontalArrangement = arrangement,
         verticalAlignment = Alignment.Top,
     ) {
@@ -216,7 +222,10 @@ private fun cutoffLabel(cutoffKind: String?): String? = when (cutoffKind) {
 /** Three-dot thinking pulse — mirrors webui BubbleText PlaceholderPulse. */
 @Composable
 private fun PulseDots() {
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier.testTag("pulse-dots"),
+    ) {
         repeat(3) {
             Box(
                 modifier = Modifier

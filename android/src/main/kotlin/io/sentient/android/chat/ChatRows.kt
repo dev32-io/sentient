@@ -2,6 +2,7 @@
 // A divider precedes the first message of each calendar day; label = day + first ts.
 package io.sentient.android.chat
 
+import io.sentient.mobiledata.outbox.PendingMessage
 import io.sentient.mobilesdk.sdk.ChatMessage
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -11,6 +12,13 @@ import java.util.Locale
 sealed interface ChatRow {
     data class Divider(val label: String, val key: String) : ChatRow
     data class Msg(val message: ChatMessage, val index: Int) : ChatRow
+
+    /**
+     * An optimistic pending user message from the outbox — shown with a status chip
+     * (QUEUED / SENT / FAILED) until the gateway echoes the committed entry back and
+     * ChatRepository reconciles it away by pendingId.
+     */
+    data class Pending(val msg: PendingMessage) : ChatRow
 }
 
 fun chatRows(messages: List<ChatMessage>, nowMs: Long): List<ChatRow> {

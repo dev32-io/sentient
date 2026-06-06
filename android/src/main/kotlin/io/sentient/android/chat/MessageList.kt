@@ -13,15 +13,21 @@
 // ---------------------------------------------------------------------------
 package io.sentient.android.chat
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -33,9 +39,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import io.sentient.android.theme.LocalTokens
+import io.sentient.mobiledata.outbox.MessageStatus
+import io.sentient.mobiledata.outbox.PendingMessage
 import io.sentient.mobilesdk.design.Colors
 import io.sentient.mobilesdk.sdk.ChatMessage
 
@@ -47,8 +58,11 @@ fun MessageList(
     activeMarkMode: MarkMode = MarkMode.IDLE,
     userName: String = "You",
     modifier: Modifier = Modifier,
+    // Optimistic pending rows appended AFTER committed history. Rendered with
+    // status chips (QUEUED / SENT / FAILED) until reconciled by ChatRepository.
+    pending: List<PendingMessage> = emptyList(),
 ) {
-    if (messages.isEmpty()) {
+    if (messages.isEmpty() && pending.isEmpty()) {
         EmptyState(modifier = modifier)
         return
     }
@@ -57,7 +71,12 @@ fun MessageList(
 
     // Compute rows once — shared by the LazyColumn items() and the scroll effect
     // so both reference the same list and rows.lastIndex is the correct tail index.
-    val rows = chatRows(messages, nowMs = System.currentTimeMillis())
+    // Pending rows are appended after committed history (no day-dividers for
+    // pending — they are optimistic and transient, not yet part of the timeline).
+    val rows: List<ChatRow> = buildList {
+        addAll(chatRows(messages, nowMs = System.currentTimeMillis()))
+        pending.forEach { add(ChatRow.Pending(it)) }
+    }
 
     // Pin-to-bottom follow-latest: mirrors iOS Task 4.1/4.2 semantics.
     // While pinned (default), the list scrolls to the tail on growth or token
@@ -105,10 +124,13 @@ fun MessageList(
             // reset the typewriter rememberTypewriterText @State (re-revealing from zero
             // every frame). History is append-only so the index is stable; the streaming
             // bubble is always the last Msg. Matches the iOS Task 5.1/4.2 fix.
+            // Pending rows use a stable "pending-<id>" key so they survive recomposition
+            // without resetting any local state.
             key = { row ->
                 when (row) {
                     is ChatRow.Divider -> "div-${row.key}"
                     is ChatRow.Msg -> "msg-${row.index}"
+                    is ChatRow.Pending -> "pending-${row.msg.id}"
                 }
             },
         ) { row ->
@@ -131,6 +153,11 @@ fun MessageList(
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
+                is ChatRow.Pending -> PendingBubble(
+                    msg = row.msg,
+                    userName = userName,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         }
     }
@@ -151,4 +178,93 @@ private fun EmptyState(modifier: Modifier = Modifier) {
             fontSize = tokens.type.base,
         )
     }
+}
+
+// ---------------------------------------------------------------------------
+// PendingBubble — optimistic user-side bubble while the outbox entry is in
+// QUEUED, SENT, or FAILED state. Mirrors MessageBubble's user-aligned layout
+// (right-side avatar + user bubble shape) with an inline status chip below the
+// bubble body. Reconciled away by ChatRepository once the gateway echoes back
+// the committed feed entry carrying the matching pendingId.
+//
+// testTags: msg-status-queued / msg-status-sent / msg-status-failed on the chip.
+// ---------------------------------------------------------------------------
+
+private val FLUSH_CORNER_PENDING = 6.dp
+private val STATUS_CHIP_RADIUS = 8.dp
+private val USER_BUBBLE_BG_PENDING: Color
+    @Composable get() = lerp(Color(Colors.paper), Color(Colors.sage), 0.16f)
+
+@Composable
+internal fun PendingBubble(
+    msg: PendingMessage,
+    userName: String = "You",
+    modifier: Modifier = Modifier,
+) {
+    val tokens = LocalTokens.current
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.Top,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(tokens.space.xs),
+        ) {
+            // Sender label — mirrors MessageMeta for the user role.
+            Text(
+                text = userName,
+                color = Color(Colors.ink3),
+                fontSize = tokens.type.sm,
+            )
+            // Bubble body — user shape (flush top-right corner).
+            val r = tokens.radii.lg
+            val shape = RoundedCornerShape(
+                topStart = r, topEnd = FLUSH_CORNER_PENDING,
+                bottomEnd = r, bottomStart = r,
+            )
+            Box(
+                modifier = Modifier
+                    .widthIn(max = tokens.space.msgMax)
+                    .clip(shape)
+                    .background(USER_BUBBLE_BG_PENDING)
+                    .border(1.dp, Color(Colors.lineSoft), shape)
+                    .padding(tokens.space.padMsg),
+            ) {
+                Text(
+                    text = msg.text,
+                    color = Color(Colors.ink),
+                    fontSize = tokens.type.base,
+                    lineHeight = tokens.type.base * tokens.type.lineRelaxed,
+                )
+            }
+            // Status chip — QUEUED / SENT / FAILED.
+            PendingStatusChip(status = msg.status)
+        }
+        InitialAvatar(
+            name = userName,
+            size = 28.dp,
+            modifier = Modifier.padding(start = tokens.space.md),
+            background = Color(Colors.accent50),
+        )
+    }
+}
+
+@Composable
+private fun PendingStatusChip(status: MessageStatus) {
+    val tokens = LocalTokens.current
+    val (label, tagName, chipColor) = when (status) {
+        MessageStatus.QUEUED -> Triple("queued", "msg-status-queued", Color(Colors.ink3))
+        MessageStatus.SENT -> Triple("✓ sent", "msg-status-sent", Color(Colors.ok))
+        MessageStatus.FAILED -> Triple("⚠ failed", "msg-status-failed", Color(Colors.stop))
+    }
+    Text(
+        text = label,
+        color = chipColor,
+        fontSize = tokens.type.sm,
+        modifier = Modifier
+            .background(chipColor.copy(alpha = 0.10f), RoundedCornerShape(STATUS_CHIP_RADIUS))
+            .padding(horizontal = tokens.space.sm, vertical = 2.dp)
+            .testTag(tagName),
+    )
 }
