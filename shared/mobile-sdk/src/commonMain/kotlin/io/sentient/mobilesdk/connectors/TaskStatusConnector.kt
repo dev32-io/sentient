@@ -22,6 +22,7 @@
 package io.sentient.mobilesdk.connectors
 
 import io.sentient.mobilesdk.log.createLogger
+import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.protocol.ServerMessage
 
 /**
@@ -46,6 +47,7 @@ data class TaskSnapshotItem(
 class TaskStatusConnector(
     private val onUpdate: ((TaskSnapshotItem) -> Unit)? = null,
     private val onList: ((List<TaskSnapshotItem>) -> Unit)? = null,
+    private val onEvent: ((SdkEvent) -> Unit)? = null,
 ) : Connector {
     override val capability: String = CAPABILITY
 
@@ -83,6 +85,7 @@ class TaskStatusConnector(
             ),
         )
         tasks[item.taskId] = item
+        onEvent?.invoke(SdkEvent.TaskUpserted(item))
         onUpdate?.invoke(item)
         onList?.invoke(list())
     }

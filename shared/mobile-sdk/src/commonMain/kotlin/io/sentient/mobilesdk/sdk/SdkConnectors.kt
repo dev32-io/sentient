@@ -96,6 +96,7 @@ class SdkConnectors(
 
     val tasks = TaskStatusConnector(
         onList = { list -> deriver.tasks = list; emit() },
+        onEvent = emitEvent,
     )
 
     val sessions = SessionsConnector(
