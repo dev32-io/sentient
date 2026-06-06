@@ -34,3 +34,17 @@ func markMode(of state: SdkState) -> MarkMode {
     if listening { return .listening }
     return .idle
 }
+
+/// Derives the avatar animation mode from a ConnectionState (chat-scoped session
+/// path). Analogous to `markModeOfConnection` in Android ChatContentBanners.
+/// ConnectionState carries audioState + isSpeaking but NOT cognition, so the
+/// thinking path maps to audioState.processing only (mirrors Android).
+func markModeOfConnection(_ connection: ConnectionState) -> MarkMode {
+    let speaking = connection.isSpeaking || connection.audioState == .assistantSpeaking
+    if speaking { return .speaking }
+    let thinking = connection.audioState == .processing
+    if thinking { return .thinking }
+    let listening = connection.audioState == .listening || connection.audioState == .userSpeaking
+    if listening { return .listening }
+    return .idle
+}

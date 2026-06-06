@@ -23,3 +23,18 @@ struct ChatUiState {
     /// Non-nil when the latest result was a failure; nil on success or loading.
     var banner: ErrorBanner? = nil
 }
+
+/// Build a DISCONNECTED placeholder ConnectionState for use before the first
+/// emission from ConnectionRepository.status. All fields are their SDK defaults.
+func makeDisconnectedConnection() -> ConnectionState {
+    ConnectionState(
+        status: .disconnected,
+        hasSession: false,
+        connectionLost: false,
+        authExpired: false,
+        prefs: AudioPreferences.companion.DEFAULT,
+        voiceMode: .off,
+        isSpeaking: false,
+        audioState: .inactive
+    )
+}

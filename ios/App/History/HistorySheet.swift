@@ -31,9 +31,9 @@ private struct PendingTarget: Identifiable {
 }
 
 struct HistorySheet: View {
-    /// The sheet owns its list/search state holder, built over the single app
-    /// SdkStore passed by the host. @StateObject keeps it alive across the sheet's
-    /// recompositions; the model re-queries listSessions on present + each mutation.
+    /// The sheet owns its list/search state holder, built over the chat-scoped
+    /// MobileSession passed by the host. @StateObject keeps it alive across the
+    /// sheet's recompositions; the model re-queries listSessions on present + mutation.
     @StateObject private var model: HistoryModel
     /// One stable clock per present pass so the date labels don't drift mid-scroll.
     let nowMs: Int64
@@ -43,8 +43,8 @@ struct HistorySheet: View {
     @State private var deleting: PendingTarget?
     @State private var renameText = ""
 
-    init(store: SdkStore, nowMs: Int64, onDismiss: @escaping () -> Void) {
-        _model = StateObject(wrappedValue: HistoryModel(store: store))
+    init(session: MobileSession, nowMs: Int64, onDismiss: @escaping () -> Void) {
+        _model = StateObject(wrappedValue: HistoryModel(session: session))
         self.nowMs = nowMs
         self.onDismiss = onDismiss
     }

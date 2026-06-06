@@ -3,9 +3,9 @@ import MobileData
 
 @main
 struct SentientApp: App {
-    // The app owns the one SdkStore for its lifetime (@StateObject) and injects
-    // it into the view tree. The store builds the process SDK on first init.
-    @StateObject private var store = SdkStore()
+    // AppConfig owns backend configuration + auth stores for the app lifetime.
+    // NO SDK/MobileSession here — the session is chat-scoped and lives in ChatViewModel.
+    @StateObject private var appConfig = AppConfig()
 
     init() {
         // Drop high-volume DEBUG tracing in prod (Release); keep it in dev.
@@ -19,7 +19,7 @@ struct SentientApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
-                .environmentObject(store)
+                .environmentObject(appConfig)
         }
     }
 }

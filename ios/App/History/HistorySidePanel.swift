@@ -193,7 +193,11 @@ private let previewRows = makePreviewRows()
 /// Holds @StateObject lifetime; seeds sessions (or an error state); renders the
 /// panel. `errorMessage != nil` drives the sessions-error / stale-banner states.
 private struct PanelPreviewHost: View {
-    @StateObject private var model = HistoryModel(store: SdkStore())
+    // Preview uses a stub session (never connects — seeding happens in onAppear).
+    @StateObject private var model = HistoryModel(
+        session: createMobileSession(gatewayWsUrl: "ws://localhost:8888/api/v1/ws",
+                                     allowSelfSignedDevHost: true, capabilities: [])
+    )
     let seed: [SessionRow]
     var errorMessage: String? = nil
 

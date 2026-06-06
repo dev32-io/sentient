@@ -1,103 +1,107 @@
 // ---------------------------------------------------------------------------
-// ChatView — the real chat surface (D-I3): a title bar, the scrolling
-// MessageList, and the docked Composer. Replaces the D-I2 placeholder. Mirrors
-// the Android ChatScreen (android/.../chat/ChatScreen.kt) and the webui chat
-// shell, dropping the breadcrumb top bar for a title-only nav bar.
+// ChatView — the chat surface, driven by ChatUiState + ConnectionState.
 //
-// Reads the single SDK surface from the app-level SdkStore (explicit param —
-// allows @StateObject historyModel to be created at init time, same pattern
-// as HistorySheet). Dispatches user actions through the store's command
-// passthroughs. Bindings:
-//  - MessageList ← store.state.messages
-//  - Composer send gated on status == .ready + non-empty draft
-//  - Composer interrupt shown only when cognition != .idle || isSpeaking
-//  - TTS/mic toggles reflect state.prefs.ttsEnabled / voiceMode
+// Mirrors the Android ChatContent + ChatRoot pattern: the ViewModel is the
+// only place that holds SDK or repo references. Consumes the KMP-layer data
+// model (committed history + optimistic pending outbox + live streaming bubble
+// + task pills) and the separate ConnectionState, rendering them on screen.
 //
-// History surface: native UIKit interactive left-edge drawer (SideDrawer →
-// SideDrawerController) hosting HistorySidePanel. Edge-swipe opens, drag/tap-scrim
-// closes, finger tracks both directions with velocity snap. The hamburger sets
-// `drawerOpen = true`; the controller clears it on dismiss; onOpen refreshes the
-// session list on EVERY open. "+" starts a new chat; settings moved to panel header.
+// Session lifecycle: one MobileSession per chat entry. The session is built by
+// the parent (RootView.ChatRoot), passed in as a @StateObject ChatViewModel so
+// it is created once per chat entry and torn down on exit. ChatViewModel.deinit
+// is the SINGLE session-close path (session.close() called there); do NOT add
+// a second .onDisappear close path.
 //
-// accessibilityIdentifier `chat-screen` is retained for the host routing assert.
+// scenePhase presence: .active → vm.onForeground(); .background → vm.onBackground().
+// Cold-start-skip is inside ChatViewModel (tracks hasBackgrounded).
+//
+// Row ordering in MessageList:
+//   1. committed messages (with day-dividers via chatRows())
+//   2. pending outbox entries (QUEUED→SENT→FAILED status chips; FAILED = tappable Retry)
+//   3. live streaming assistant bubble (appended when ChatModel.live != nil)
+//
+// Banners (highest priority first):
+//   1. chat-side ErrorBanner from ChatUiState (ChatRepository failure)
+//   2. connection banner from ConnectionState (lost / reconnecting)
+//
+// accessibilityIdentifier `chat-screen` retained for host routing assert.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
 
 struct ChatView: View {
-    /// Explicit store param — HistoryModel is created here at init time.
-    /// RootView passes the single app SdkStore (mirrors HistorySheet pattern).
-    let store: SdkStore
+    /// The ViewModel is the sole SDK reference. @ObservedObject — the VM is
+    /// owned by ChatRoot (@StateObject there); ChatView is a consumer.
+    @ObservedObject var vm: ChatViewModel
 
-    /// Stably held history state. @StateObject ensures one lifetime per ChatView.
+    /// User's display name for bubble avatars and drawer header.
+    let userName: String
+    /// Called on logout — clears the token via AppConfig so RootView re-routes to login.
+    let onLogout: () -> Void
+
+    // ── scenePhase ─────────────────────────────────────────────────────────────
+
+    @Environment(\.scenePhase) private var scenePhase
+
+    // ── Drawer state ────────────────────────────────────────────────────────────
+
     @StateObject private var historyModel: HistoryModel
-
-    init(store: SdkStore) {
-        self.store = store
-        _historyModel = StateObject(wrappedValue: HistoryModel(store: store))
-    }
-
-    // ── Drawer state ────────────────────────────────────────────────────────
-
-    /// SwiftUI's command surface over the native UIKit drawer (SideDrawer). The
-    /// hamburger sets it true; the controller clears it to false on any
-    /// interactive dismiss. The interactive open/close drag itself lives in UIKit.
     @State private var drawerOpen = false
-
-    /// Clock captured once per drawer-open so relative dates don't drift.
     @State private var panelNowMs: Int64 = 0
 
-    // ── Sheet + alert state ───────────────────────────────────────────────────
+    // ── Sheet + alert state ───────────────────────────────────────────────────────
 
     @State private var settingsPresented = false
     @State private var panelRenaming: PanelTarget?
     @State private var panelDeleting: PanelTarget?
     @State private var panelRenameText = ""
 
-    // ── Derived ───────────────────────────────────────────────────────────────
+    // ── Init ──────────────────────────────────────────────────────────────────────
 
-    private static let title = "Sentient"
+    init(vm: ChatViewModel, userName: String, onLogout: @escaping () -> Void) {
+        self.vm = vm
+        self.userName = userName
+        self.onLogout = onLogout
+        _historyModel = StateObject(wrappedValue: HistoryModel(session: vm.session))
+    }
+
+    // ── Derived ───────────────────────────────────────────────────────────────────
+
+    private var connection: ConnectionState { vm.connection }
 
     private var canInterrupt: Bool {
-        store.state.cognition != .idle || store.state.isSpeaking
+        connection.isSpeaking
+            || connection.audioState == .processing
+            || connection.audioState == .assistantSpeaking
+            || connection.audioState == .interrupting
     }
 
-    /// Loading affordance derived from the pure chatLoading() policy function.
+    private var currentMarkMode: MarkMode { markModeOfConnection(connection) }
+
+    private var voiceActive: Bool { connection.voiceMode == .active }
+
     private var chatLoadingState: LoadingAffordance {
-        chatLoading(status: store.state.status)
+        chatLoading(status: connection.status)
     }
 
-    private var currentMarkMode: MarkMode { markMode(of: store.state) }
-
-    private var voiceActive: Bool { store.state.voiceMode == .active }
-
-    private var transcriptVisible: Bool {
-        voiceActive && !store.state.transcript.isEmpty
-    }
-
-    /// Connection affordance derived from the single SDK state surface via the
-    /// pure `ConnectionBannerState.derive` (STATUS, not connectionLost,
-    /// discriminates reconnecting vs lost). See ConnectionBanner.swift.
     private var connectionBanner: ConnectionBannerState? {
-        ConnectionBannerState.derive(
-            status: store.state.status,
-            connectionLost: store.state.connectionLost
-        )
+        ConnectionBannerState.derive(status: connection.status, connectionLost: connection.connectionLost)
     }
 
-    /// Last user turn to resend on cycle-error Retry (pure derivation; nil ⇒
-    /// Retry omitted). See CycleErrorBanner.swift.
-    private var lastUserText: String? {
-        CycleErrorRecovery.lastUserText(in: store.state.messages)
+    // Build the display message list: committed + live bubble (with tasks injected).
+    // Uses ChatModel.messagesForUi() which mirrors the KMP-side derivation.
+    // Pending rows are passed separately via MessageList `pending` param.
+    private var displayMessages: [ChatMessage] {
+        vm.state.model.messagesForUi()
     }
 
-    // ── Root body ─────────────────────────────────────────────────────────────
+    private var pending: [PendingMessage] { vm.state.model.pending }
+
+    // ── Root body ─────────────────────────────────────────────────────────────────
 
     var body: some View {
         SideDrawer(
             isOpen: $drawerOpen,
-            // Fires on EVERY fully-open (edge-swipe AND programmatic) — fixes the
-            // old gap where a drag-open never refreshed the session list.
             onOpen: {
                 panelNowMs = Int64(Date().timeIntervalSince1970 * 1000)
                 Task { await historyModel.refresh() }
@@ -105,24 +109,20 @@ struct ChatView: View {
         ) {
             mainColumn
         } drawer: {
-            // The drawer host view spans full height (ignores safe area); extend
-            // the dusk background behind the status bar / home indicator so no
-            // gap shows the dimmed content through. Panel content keeps its insets.
             historySidePanel
                 .background(DuskColors.bg.ignoresSafeArea())
         }
         .ignoresSafeArea()
-        // Floating connection-state pill + auth-expired→logout (extracted modifier).
         .connectionState(
             banner: connectionBanner,
-            onReconnect: { store.forceReconnect() },
-            authExpired: store.state.authExpired,
-            onAuthExpired: { store.logout() }
+            onReconnect: { vm.session.sdk.forceReconnect() },
+            authExpired: connection.authExpired,
+            onAuthExpired: { onLogout() }
         )
         .sheet(isPresented: $settingsPresented) {
             SettingsSheet(
                 onLogout: {
-                    store.logout()
+                    onLogout()
                     settingsPresented = false
                 },
                 onDismiss: { settingsPresented = false }
@@ -134,54 +134,69 @@ struct ChatView: View {
         .panelDeletePrompt($panelDeleting) { id in
             Task { await historyModel.deleteSession(id) }
         }
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .background: vm.onBackground()
+            case .active: vm.onForeground()
+            default: break
+            }
+        }
+        .accessibilityIdentifier("chat-screen")
     }
 
-    // ── Main content column ───────────────────────────────────────────────────
+    // ── Main content column ───────────────────────────────────────────────────────
 
     private var mainColumn: some View {
         VStack(spacing: 0) {
             titleBar
-            MessageList(messages: store.state.messages, activeMarkMode: currentMarkMode, userName: store.displayName)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .overlay {
-                    if store.state.messages.isEmpty, chatLoadingState != .none {
-                        ChatLoadingView(state: chatLoadingState)
-                    }
+            MessageList(
+                messages: displayMessages,
+                activeMarkMode: currentMarkMode,
+                userName: userName,
+                pending: pending,
+                onRetry: { vm.retry($0) }
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay {
+                if displayMessages.isEmpty && pending.isEmpty, chatLoadingState != .none {
+                    ChatLoadingView(state: chatLoadingState)
                 }
-            if transcriptVisible {
-                TranscriptPreview(text: store.state.transcript)
+            }
+            // Chat-side error banner (repository / model failure).
+            if let banner = vm.state.banner {
+                ContentErrorBanner(
+                    text: banner.text,
+                    canRetry: banner.canRetry,
+                    onRetry: banner.canRetry ? { vm.session.sdk.forceReconnect() } : nil
+                )
             }
         }
         .safeAreaInset(edge: .bottom) {
             Composer(
                 canSend: true,
-                ttsEnabled: store.state.prefs.ttsEnabled,
-                micActive: store.state.voiceMode == .active,
+                ttsEnabled: connection.prefs.ttsEnabled,
+                micActive: voiceActive,
                 canInterrupt: canInterrupt,
-                sendInFlight: store.hasPendingSends,
-                onSend: { store.sendText($0) },
+                sendInFlight: !pending.isEmpty,
+                onSend: { vm.send($0) },
                 onMicToggle: toggleMic,
-                onTtsToggle: { store.setTtsEnabled(!store.state.prefs.ttsEnabled) },
-                onInterrupt: { store.interrupt() }
-            )
-            .cycleErrorRecovery(
-                hasError: store.state.lastCycleError,
-                lastUserText: lastUserText,
-                onRetry: { if let text = lastUserText { store.sendText(text) } },
-                onNewChat: { Task { await historyModel.newChat() } }
+                onTtsToggle: {
+                    Task { try? await vm.session.sdk.setTtsEnabled(enabled: !connection.prefs.ttsEnabled) }
+                },
+                onInterrupt: { vm.session.sdk.interrupt() }
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .duskTheme()
     }
 
-    // ── History side panel ────────────────────────────────────────────────────
+    // ── History side panel ────────────────────────────────────────────────────────
 
     private var historySidePanel: some View {
         HistorySidePanel(
             model: historyModel,
             nowMs: panelNowMs,
-            userName: store.displayName,
+            userName: userName,
             household: "",
             onSelect: { sessionId in
                 Task {
@@ -209,25 +224,67 @@ struct ChatView: View {
         )
     }
 
-    // ── Title bar ─────────────────────────────────────────────────────────────
+    // ── Title bar ─────────────────────────────────────────────────────────────────
 
     private var titleBar: some View {
         ChatTitleBar(
             markMode: currentMarkMode,
-            // Hamburger commands the native drawer open; the controller fires
-            // onOpen (refresh + clock) when it settles fully open.
             onOpenPanel: { drawerOpen = true },
             onNewChat: { Task { await historyModel.newChat() } }
         )
     }
 
-    // ── Actions ───────────────────────────────────────────────────────────────
+    // ── Actions ───────────────────────────────────────────────────────────────────
 
     private func toggleMic() {
-        if store.state.voiceMode == .active {
-            store.stopMic()
+        if connection.voiceMode == .active {
+            vm.session.sdk.stopMic()
         } else {
-            store.startMic()
+            vm.session.sdk.startMic()
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ContentErrorBanner — inline chat-side error pill shown when ChatUiState.banner
+// is non-nil (ChatRepository failure). Mirrors Android ContentErrorBanner.
+// ---------------------------------------------------------------------------
+
+private struct ContentErrorBanner: View {
+    let text: String
+    let canRetry: Bool
+    let onRetry: (() -> Void)?
+
+    var body: some View {
+        HStack(spacing: Space.md) {
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.system(size: TypeScale.sm))
+                .foregroundStyle(DuskColors.warn)
+            Text(text)
+                .font(Typo.ui(TypeScale.sm, .medium))
+                .foregroundStyle(DuskColors.ink)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if canRetry, let onRetry {
+                Button(action: onRetry) {
+                    Text("Retry")
+                        .font(Typo.ui(TypeScale.sm, .semibold))
+                        .foregroundStyle(DuskColors.bg)
+                        .padding(.horizontal, Space.sm)
+                        .padding(.vertical, Space.xs)
+                        .background(DuskColors.ink, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("banner-chat-retry")
+            }
+        }
+        .padding(.horizontal, Space.lg)
+        .padding(.vertical, Space.sm)
+        .background {
+            ZStack {
+                Rectangle().fill(DuskColors.bgElev)
+                Rectangle().fill(DuskColors.warn.opacity(0.12))
+            }
+        }
+        .accessibilityIdentifier("banner-chat")
     }
 }

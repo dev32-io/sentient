@@ -8,6 +8,10 @@
 // new tokens/messages; scrolling up unpins and holds position; re-entering the
 // snap zone re-pins. Powered by FollowLatestState + followLatestOnScroll.
 //
+// Pending rows: optimistic outbox entries appended AFTER committed history.
+// Each pending message shows a status chip (QUEUED / SENT / FAILED); FAILED
+// is tappable → onRetry(pendingId). Mirrors Android MessageList pending param.
+//
 // iOS 18+: onScrollGeometryChange drives the pin FSM precisely.
 // iOS 17:  always-follow fallback (prior behavior) — no geometry API available.
 //
@@ -34,6 +38,11 @@ struct MessageList: View {
     var activeMarkMode: MarkMode = .idle
     /// Display name shown in the meta row above user bubbles.
     var userName: String = "You"
+    /// Optimistic pending outbox entries appended after committed history.
+    /// Each row shows a status chip (QUEUED/SENT/FAILED). FAILED is tappable.
+    var pending: [PendingMessage] = []
+    /// Called when the user taps the FAILED chip — re-queues by pendingId.
+    var onRetry: (String) -> Void = { _ in }
 
     /// Pin-to-bottom FSM state. iOS 18+ only; ignored on iOS 17 (always-follow).
     @State private var follow = FollowLatestState()
@@ -43,7 +52,7 @@ struct MessageList: View {
 
     var body: some View {
         Group {
-            if messages.isEmpty {
+            if messages.isEmpty && pending.isEmpty {
                 emptyState
             } else {
                 list
@@ -113,6 +122,9 @@ struct MessageList: View {
         .onChange(of: messages.last?.content) { _, _ in
             if follow.pinned { scrollToBottom(proxy) }
         }
+        .onChange(of: pending.count) { _, _ in
+            if follow.pinned { scrollToBottom(proxy) }
+        }
     }
 
     /// iOS 17 fallback: always-follow (original behavior, no geometry API).
@@ -122,6 +134,7 @@ struct MessageList: View {
         }
         .onChange(of: messages.count) { _, _ in scrollToBottom(proxy) }
         .onChange(of: messages.last?.content) { _, _ in scrollToBottom(proxy) }
+        .onChange(of: pending.count) { _, _ in scrollToBottom(proxy) }
     }
 
     private func messageRows() -> some View {
@@ -138,6 +151,12 @@ struct MessageList: View {
                 case let .message(m, i):
                     MessageBubble(message: m, index: i, avatarMode: avatarMode(for: m), userName: userName)
                 }
+            }
+            // Pending outbox entries: appended AFTER committed history, no day-dividers
+            // (they are optimistic/transient). Stable "pending-<id>" identity so
+            // SwiftUI doesn't reset local @State on recomposition. Mirrors Android.
+            ForEach(pending, id: \.id) { msg in
+                PendingBubble(msg: msg, userName: userName, onRetry: { onRetry(msg.id) })
             }
             Color.clear
                 .frame(height: 1)

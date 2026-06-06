@@ -1,15 +1,20 @@
 // ---------------------------------------------------------------------------
-// ChatViewModel — @MainActor bridge from the shared ChatRepository to SwiftUI.
+// ChatViewModel — @MainActor bridge from the shared repositories to SwiftUI.
 //
-// Mirrors the Android ChatViewModel role: collects the shared ChatRepository
-// chatStream (Flow<SentientResult<ChatModel>>) via SKIE's Flow→AsyncSequence
-// bridge, folds SentientResult into @Published ChatUiState (graceful
-// degradation: last-good model + error banner on Failure), and exposes
-// send + per-message retry.
+// Mirrors the Android ChatViewModel role: collects the ChatRepository chatStream
+// (Flow<SentientResult<ChatModel>>) and ConnectionRepository status flow, folds
+// SentientResult into @Published ChatUiState and @Published ConnectionState.
 //
 // Session lifecycle:
-//   - init: starts background open() + begins collecting chatStream.
-//   - deinit: cancels collection task (session close is owned by the caller).
+//   - init: starts background open() + begins collecting chatStream + connection.
+//   - deinit: cancels collection + calls session.close() — the SINGLE close path.
+//
+// scenePhase presence (mirrors Android PresenceCoordinator cold-start-skip):
+//   - onBackground(): session.pause() — drops WS, keeps scope.
+//   - onForeground(): session.resume() — re-arms reconnect.
+//   - Cold-start skip: the FIRST active transition is skipped because init already
+//     called open(). hasBackgrounded tracks whether we have ever actually gone to
+//     background — only then do we resume on the next foreground edge.
 //
 // @MainActor: all @Published mutation on the main actor; SKIE async iteration
 // is already actor-safe — the for-await resumes on the calling actor.
@@ -19,12 +24,22 @@ import MobileData
 
 @MainActor
 final class ChatViewModel: ObservableObject {
-    /// Single UI state snapshot; SwiftUI renders this directly.
+    /// Single chat UI state snapshot (committed + pending + live + banner).
     @Published private(set) var state = ChatUiState()
 
-    private let session: MobileSession
+    /// Connection state folded from ConnectionRepository.status. Defaults to
+    /// DISCONNECTED before the first emission; updated as results arrive.
+    @Published private(set) var connection: ConnectionState = makeDisconnectedConnection()
+
+    let session: MobileSession
     private var collectTask: Task<Void, Never>?
+    private var connectionTask: Task<Void, Never>?
     private let log = AppLog("chat", "viewmodel")
+
+    /// Cold-start-skip: true after the first onBackground(). Only once we have
+    /// actually backgrounded do we resume on the next foreground edge (mirrors
+    /// Android PresenceCoordinator.backgrounded guard).
+    private var hasBackgrounded = false
 
     init(session: MobileSession) {
         self.session = session
@@ -32,6 +47,7 @@ final class ChatViewModel: ObservableObject {
         // Background connect: UI is usable while open() works toward READY.
         Task { try? await session.open() }
         startCollecting()
+        startConnectionCollecting()
     }
 
     // ── Public actions ────────────────────────────────────────────────────────
@@ -48,24 +64,39 @@ final class ChatViewModel: ObservableObject {
         session.chatRepo.retry(pendingId: pendingId)
     }
 
-    // ── Collection ────────────────────────────────────────────────────────────
+    // ── scenePhase presence ───────────────────────────────────────────────────
+
+    /// Called when the scene enters background. Drops the WS, keeps scope alive.
+    func onBackground() {
+        hasBackgrounded = true
+        log.info("background — pause")
+        session.pause()
+    }
+
+    /// Called when the scene enters foreground. Skips on cold start (init already
+    /// connected); only resumes after a real background transition.
+    func onForeground() {
+        guard hasBackgrounded else {
+            log.info("foreground.cold-start-skip")
+            return
+        }
+        log.info("foreground — resume")
+        session.resume()
+    }
+
+    // ── Chat stream collection ────────────────────────────────────────────────
 
     private func startCollecting() {
-        // chatStream is a raw Kotlinx_coroutines_coreFlow on the ObjC boundary.
-        // SKIE cannot fully bridge it because ChatRepository's constructor takes
-        // lambda args, so we cast to SkieKotlinFlow and wrap in SkieSwiftFlow
-        // (the same bridge pattern SKIE uses internally for StateFlow/SharedFlow).
-        let kotlinFlow = session.chatRepo.chatStream as! SkieKotlinFlow<SentientResult<ChatModel>>
-        let swiftFlow = SkieSwiftFlow<SentientResult<ChatModel>>(kotlinFlow)
+        // chatStream is exposed by SKIE as SkieSwiftFlow<SentientResult<ChatModel>>
+        // (SKIE wraps the underlying Kotlin Flow at the property boundary).
+        // Iterate directly — no manual cast needed.
         collectTask = Task { [weak self] in
             guard let self else { return }
-            for await result in swiftFlow {
+            for await result in session.chatRepo.chatStream {
                 self.apply(result)
             }
         }
     }
-
-    // ── State folding ─────────────────────────────────────────────────────────
 
     private func apply(_ result: SentientResult<ChatModel>) {
         switch onEnum(of: result) {
@@ -91,5 +122,40 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
-    deinit { collectTask?.cancel() }
+    // ── Connection stream collection ──────────────────────────────────────────
+
+    private func startConnectionCollecting() {
+        // connectionRepo.status is exposed by SKIE as a SkieSwiftFlow.
+        // Iterate directly — same pattern as chatStream.
+        connectionTask = Task { [weak self] in
+            guard let self else { return }
+            for await result in session.connectionRepo.status {
+                self.applyConnection(result)
+            }
+        }
+    }
+
+    private func applyConnection(_ result: SentientResult<ConnectionState>) {
+        // Fold Success/Loading→partial to get the current ConnectionState.
+        // Failure: keep the last-good connection value (or default) for the banner
+        // derivation — ConnectionBannerState.derive reads status + connectionLost.
+        switch onEnum(of: result) {
+        case .success(let s):
+            connection = s.data
+            log.debug("connection success status=\(s.data.status.name)")
+        case .loading(let l):
+            if let partial = l.partial { connection = partial }
+            log.debug("connection loading hasPartial=\(l.partial != nil)")
+        case .failure:
+            // Keep last-good connection; the banner derives from connectionLost/status.
+            log.debug("connection failure — keeping last-good")
+        }
+    }
+
+    /// Single teardown path: cancel collection tasks + close session.
+    deinit {
+        collectTask?.cancel()
+        connectionTask?.cancel()
+        session.close()
+    }
 }
