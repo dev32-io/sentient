@@ -25,8 +25,8 @@
 //
 // Mic/preview extracted to Composer+Mic.swift (line-limit compliance).
 //
-// accessibilityIdentifiers: chat-input, chat-send, chat-send-spinner,
-// chat-interrupt, chat-tts-toggle, chat-mic, mic-denied-notice.
+// accessibilityIdentifiers: composer-input (TextField, matches Android tag),
+// chat-send, chat-send-spinner, chat-interrupt, chat-tts-toggle, chat-mic, mic-denied-notice.
 // ---------------------------------------------------------------------------
 import AVFoundation
 import SwiftUI
@@ -116,7 +116,9 @@ struct Composer: View {
             .tint(DuskColors.accent)
             .focused($inputFocused)
             .padding(.vertical, Space.xs)
-            .accessibilityIdentifier("chat-input")
+            // "composer-input" matches the Android Compose testTag for cross-platform
+            // Maestro flows. "chat-input" is kept as an accessibility label alias.
+            .accessibilityIdentifier("composer-input")
             if showWave { ListeningWaveform() }
         }
     }

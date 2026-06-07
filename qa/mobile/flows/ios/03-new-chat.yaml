@@ -1,0 +1,12 @@
+appId: io.dev32.sentient.debug
+---
+# 03-new-chat — tap new-chat and verify the composer appears with an empty state.
+# new-chat is the "+" button in the top-right of the ChatTitleBar.
+# After tap the message list resets; composer-input should be visible and empty.
+- launchApp
+- tapOn:
+    id: "new-chat"
+- extendedWaitUntil:
+    visible:
+      id: "composer-input"
+    timeout: 5000

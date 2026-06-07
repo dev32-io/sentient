@@ -1,0 +1,14 @@
+appId: io.dev32.sentient.debug
+---
+# 02-drawer — open the history side drawer and verify the session list renders.
+# history-open (hamburger) is in the top-left of the ChatTitleBar.
+# history-new-chat and history-search are always present in the side panel.
+- launchApp
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
+    timeout: 5000
+- assertVisible:
+    id: "history-search"

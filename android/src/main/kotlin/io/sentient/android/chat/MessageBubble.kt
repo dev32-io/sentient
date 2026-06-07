@@ -72,13 +72,13 @@ fun MessageBubble(
     val isUser = message.role == "user"
     val isAssistant = message.role == "assistant"
     val arrangement = if (isUser) Arrangement.End else Arrangement.Start
-    // assistant-bubble testTag on the outermost row — used by Maestro to assert
-    // that an assistant message (streaming or committed) is visible.
-    val assistantTag = if (isAssistant) Modifier.testTag("assistant-bubble") else Modifier
+    // Single testTag per node — Compose semantics resolves conflicts by outer-wins,
+    // so stacking two .testTag() calls produces only one resource-id (the outer).
+    // Assistant bubbles use "assistant-bubble" so Maestro can assert any assistant
+    // reply appeared; user bubbles use "message-bubble-<index>" for index-based queries.
+    val bubbleTag = if (isAssistant) "assistant-bubble" else "$BUBBLE_TAG_PREFIX$index"
     Row(
-        modifier = modifier
-            .testTag("$BUBBLE_TAG_PREFIX$index")
-            .then(assistantTag),
+        modifier = modifier.testTag(bubbleTag),
         horizontalArrangement = arrangement,
         verticalAlignment = Alignment.Top,
     ) {

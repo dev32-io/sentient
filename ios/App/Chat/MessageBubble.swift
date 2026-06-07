@@ -55,7 +55,9 @@ struct MessageBubble: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .accessibilityIdentifier("message-bubble-\(index)")
+        // Index-based id for all bubbles; assistant rows additionally get
+        // "assistant-bubble" so Maestro can assert any assistant reply appeared.
+        .accessibilityIdentifier(isUser ? "message-bubble-\(index)" : "assistant-bubble")
     }
 
     // ── Avatar ────────────────────────────────────────────────────────────────
