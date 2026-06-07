@@ -1,9 +1,81 @@
 # MVVM Architecture -- Details & Worked Example
 
-This file expands `platforms/ios/rules/ios-architecture-mvvm.md`.
-The example below shows the full flow end-to-end for a Login
-screen: `LoginState`, `LoginRoute`, `LoginViewModel`, the
-`LoginUseCase` abstraction, and the consuming view.
+This file expands `.claude/rules/ios/ios-architecture-mvvm.md`.
+
+## Shipped architecture (this app)
+
+The app standardizes on `@MainActor final class … : ObservableObject` + `@Published`, held as `@StateObject` / `@EnvironmentObject`. The SDK is the `MobileData` XCFramework; the VM reaches it only through `MobileSession` repositories.
+
+```swift
+// RootView — boolean Group gate (NOT a Route enum / NavigationStack)
+struct RootView: View {
+    @EnvironmentObject private var appConfig: AppConfig          // app-scoped, non-SDK
+    var body: some View {
+        Group {
+            if !appConfig.isConfigured || showSetupOverride { BackendSetupView(...) }
+            else if appConfig.hasToken                       { ChatRoot(appConfig: appConfig) }
+            else                                             { LoginView(...) }
+        }
+    }
+}
+
+// ChatRoot — builds the chat-scoped MobileSession once, holds it via @StateObject
+@StateObject private var vm: ChatViewModel
+init(appConfig: AppConfig) {
+    _vm = StateObject(wrappedValue: ChatViewModel(
+        session: createMobileSession(gatewayWsUrl: …, allowSelfSignedDevHost: …, capabilities: [], devFaultsEnabled: …)
+    ))
+}
+```
+
+```swift
+// ChatViewModel — ObservableObject; collects repo flows via SKIE for-await, folds SentientResult
+@MainActor
+final class ChatViewModel: ObservableObject {
+    @Published private(set) var state = ChatUiState()
+    @Published private(set) var connection: ConnectionState = makeDisconnectedConnection()
+    let session: MobileSession
+
+    init(session: MobileSession) {
+        self.session = session
+        Task { try? await session.open() }                       // background connect; UI usable meanwhile
+        startCollecting(); startConnectionCollecting()
+    }
+    func send(_ text: String) { _ = session.chatRepo.send(text: text) }   // optimistic
+    func retry(_ pendingId: String) { session.chatRepo.retry(pendingId: pendingId) }
+    func onBackground() { hasBackgrounded = true; session.pause() }       // scenePhase presence
+    func onForeground() { guard hasBackgrounded else { return }; session.resume() }  // cold-start-skip
+    deinit { collectTask?.cancel(); connectionTask?.cancel(); session.close() }       // SINGLE teardown
+}
+```
+
+## SKIE interop idioms (load-bearing)
+
+- **Flow → AsyncSequence:** SKIE exposes Kotlin `Flow` as `SkieSwiftFlow`; iterate directly, no cast:
+  ```swift
+  for await result in session.chatRepo.chatStream { apply(result) }
+  ```
+- **Sealed class → exhaustive Swift enum** via `onEnum(of:)` — fold `SentientResult` and nested sealed types:
+  ```swift
+  switch onEnum(of: result) {
+  case .loading(let l): state.isLoading = true; if let p = l.partial { state.model = p }
+  case .success(let s): state = ChatUiState(model: s.data, isLoading: false, banner: nil)
+  case .failure(let f):
+      let canRetry: Bool
+      switch onEnum(of: f.error.retry) { case .userPrompt: canRetry = true; default: canRetry = false }
+      state.banner = ErrorBanner(text: f.error.userMessage, canRetry: canRetry)
+  }
+  ```
+- **`Protocol_` rename:** a Kotlin type named `Protocol` collides with Swift's keyword and is bridged as `Protocol_`. Expect SKIE name mangling on keyword collisions.
+- The VM never imports `Sentient`/mobile-sdk directly — `import MobileData` re-exports the SDK types it needs.
+
+---
+
+> The generic Login / Profile examples below illustrate the MVVM **patterns** (state/derivation/testing). NOTE: this app uses `ObservableObject` (not `@Observable`) as the default, and does NOT use a `UseCase` layer or a `Route`-enum `NavigationStack` — those are shown only as general iOS technique, not the shipped shape.
+
+The example below shows a generic Login screen: `LoginState`,
+`LoginRoute`, `LoginViewModel`, the `LoginUseCase` abstraction,
+and the consuming view.
 
 ## LoginState
 

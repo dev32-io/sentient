@@ -1,6 +1,6 @@
 # Kotlin -- Details & Examples
 
-This file expands `platforms/android/rules/kotlin.md`. The rule
+This file expands `.claude/rules/android/kotlin.md`. The rule
 states the bar; this doc shows the patterns and the anti-patterns
 the agent reaches for when uncertain.
 

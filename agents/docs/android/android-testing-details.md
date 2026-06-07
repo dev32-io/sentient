@@ -1,6 +1,6 @@
 # Android Testing -- Details & Examples
 
-This file expands `platforms/android/rules/android-testing.md`.
+This file expands `.claude/rules/android/android-testing.md`.
 Code skeletons for each test layer plus the fake-vs-mock decision
 example.
 
@@ -86,26 +86,21 @@ class NameFieldTest {
 
 No Activity, no Hilt -- just the composable.
 
-## Compose UI test -- Hilt-injected screen
+## Compose UI test -- screen with a fake (no Hilt)
+
+VMs are constructed directly from fakes — the same constructors production uses. No `@HiltAndroidTest`/`HiltTestActivity`/`@TestInstallIn`.
 
 ```kotlin
-@HiltAndroidTest
-@UninstallModules(RepositoryModule::class)
+@RunWith(AndroidJUnit4::class)
 class LoginScreenTest {
-
-    @get:Rule(order = 0) val hiltRule = HiltAndroidRule(this)
-    @get:Rule(order = 1)
-    val composeRule = createAndroidComposeRule<HiltTestActivity>()
-
-    @Inject lateinit var auth: AuthRepository
-
-    @Before fun setUp() { hiltRule.inject() }
+    @get:Rule val composeRule = createComposeRule()
 
     @Test
     fun submitFailureShowsSnackbar() {
-        (auth as FakeAuthRepository).nextOutcome = LoginOutcome.NetworkFailure
+        val fakeAuth = FakeAuthRepository().apply { nextOutcome = LoginOutcome.NetworkFailure }
+        val vm = LoginViewModel(fakeAuth)                 // plain constructor with the fake
 
-        composeRule.setContent { AppTheme { LoginScreen({}, {}) } }
+        composeRule.setContent { AppTheme { LoginScreen(onLoggedIn = {}, onForgotPassword = {}, viewModel = vm) } }
         composeRule.onNodeWithText("Email").performTextInput("a@b.c")
         composeRule.onNodeWithText("Password").performTextInput("hunter2")
         composeRule.onNodeWithText("Submit").performClick()
@@ -113,72 +108,34 @@ class LoginScreenTest {
         composeRule.onNodeWithText("Network unavailable").assertIsDisplayed()
     }
 }
-
-@AndroidEntryPoint
-class HiltTestActivity : ComponentActivity()
 ```
 
-The Hilt-injected fake (registered via `@TestInstallIn`) lets
-the test set up "what happens next" before driving the UI.
+The fake sets up "what happens next" before driving the UI — no DI framework, no module swap.
 
-## Instrumented test -- Room migration
+## Instrumented test -- Room migration (Future — not used)
 
-```kotlin
-@RunWith(AndroidJUnit4::class)
-class UserDatabaseMigrationTest {
+There is no Room/DataStore in the app today, so there are currently no migration tests. If a local store is added, migrations are the canonical case for the instrumented (`androidTest`) layer — `MigrationTestHelper.createDatabase(db, 1)` then `runMigrationsAndValidate(db, 2, true, MIGRATION_1_2)` against real SQLite, which fakes can't simulate.
 
-    @get:Rule
-    val helper = MigrationTestHelper(
-        InstrumentationRegistry.getInstrumentation(),
-        UserDatabase::class.java,
-    )
-
-    @Test
-    fun migrate1To2() {
-        helper.createDatabase(TEST_DB, 1).use { db ->
-            db.execSQL("INSERT INTO user(id, name) VALUES('u-1', 'Ada')")
-        }
-
-        helper.runMigrationsAndValidate(TEST_DB, 2, true, MIGRATION_1_2).use { db ->
-            val cursor = db.query("SELECT id, name, created_at FROM user")
-            check(cursor.moveToFirst())
-            assertEquals("u-1", cursor.getString(0))
-            assertEquals("Ada", cursor.getString(1))
-            // Migration added created_at with a default.
-            assertNotNull(cursor.getString(2))
-        }
-    }
-
-    private companion object { const val TEST_DB = "migration-test" }
-}
-```
-
-Migrations are exactly the kind of thing fakes can't simulate --
-you need real SQLite behavior. That justifies the slower
-instrumented layer.
-
-## Maestro E2E flow -- `login.yaml`
+## Maestro E2E flow (real sentient shape)
 
 ```yaml
-# qa/android/charters/login/login-happy-path.yaml
-appId: com.example.app
+# qa/mobile/flows/android/01-send-stream.yaml (driven by qa/mobile/run-e2e.sh)
+appId: io.dev32.sentient.debug
 ---
-- launchApp:
-    clearState: true
-- tapOn: "Get Started"
+- launchApp
+- runFlow: login.yaml            # avatar tap + PIN 1234 (conditional; no-op if already authed)
+- assertVisible:
+    id: "composer-input"
 - tapOn:
-    id: "email"
-- inputText: "a@b.c"
+    id: "composer-input"
+- inputText: "what is 2 plus 2"
 - tapOn:
-    id: "password"
-- inputText: "hunter2"
-- tapOn: "Submit"
-- assertVisible: "Home"
+    id: "chat-send"
+- assertVisible:
+    id: "assistant-bubble"       # appears once the gateway streams the first token
 ```
 
-This is the smallest viable happy-path E2E. Run from the QA
-session; promote to a row in the feature's e2e matrix when the
-charter finds a regression worth gating on.
+Elements are targeted by resource-id (Compose `testTag` surfaced via `testTagsAsResourceId`). Reusable charters live in `qa/android/charters/`; the numbered drive flows in `qa/mobile/flows/android/`. Faults are armed with `adb shell am broadcast -a io.sentient.debug.FAULT --es kind <fault>` (debug build only).
 
 ## Fake vs mock -- the decision
 

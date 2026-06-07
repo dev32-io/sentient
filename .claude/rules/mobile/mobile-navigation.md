@@ -1,44 +1,28 @@
 ---
-description: Mobile navigation -- typed routes, state-aware deep links, defined back behavior.
+description: Mobile navigation -- state-gate at the root, overlays not stack destinations, typed routes only when a stack appears.
 paths:
   - "android/**"
   - "ios/**"
-  - "shared/mobile-sdk/**"
+  - "shared/mobile-data/**"
 ---
 
 # Mobile Navigation
 
-Stringly-typed routes and undefined back behavior are mobile's two biggest sources of state-management debt.
+The app navigates by STATE, not a router. The top-level is a gate over a small set of mutually-exclusive screens.
 
-## Routes — typed, not stringly
+## Root — a state gate, one screen at a time
 
-- Destinations are values of a closed sum (sealed class / enum / @Serializable).
-- Router accepts only typed values; raw `String` paths cross the boundary at URL parse/format only.
-- Adding a destination forces every dispatch site to acknowledge it (exhaustive `when`).
+- The composition root swaps between screens on derived booleans/enum: unconfigured → setup, no-token → login, token present → chat. Both platforms share this 3-way gate.
+- Gate on auth (token presence), NOT transport status — a drop must keep the user on the in-session screen with a banner, never bounce to login.
+- Settings and the history drawer/sheet are OVERLAYS within the in-session state, not stack destinations.
 
-## Deep links — land at the right STATE
+## What's shipped vs NOT
 
-- Pre-populate the state the user expects: right tab, right item, right filter.
-- Define per linkable destination: synchronous from URL, async, and loading-state UI.
-- Round-trip MUST be lossless: state → URL → parse → state equals original.
+- There is NO route graph / navigation stack, no tabs, no deep links. Do not add a navigation library or coordinator stack for the current screen set.
+- A logout→login transition is driven by clearing the auth gate (the session tears down as a consequence) — navigation follows state, not an imperative navigate call.
 
-## Back — defined per screen
+## When a real stack appears (typed-route discipline — Future)
 
-- Every screen has one back target. System gesture, in-screen back button, and navbar chevron MUST agree.
-- After multi-step flows (e.g. checkout), back from confirmation does NOT re-enter the flow.
-- Modal dismiss restores underlying screen as-was; modal back-stack is local.
-
-## Tabs — roots, not pushable
-
-- Tabs are roots with their own back stacks. Switching tabs does NOT push onto a global stack.
-- Deep link into tabbed app selects the right tab AND drives that tab's stack; other tabs keep state.
-
-## Forbidden
-
-- Passing large objects through routes. Pass the ID; refetch.
-- Navigation by side effect (mutating a global + letting next render notice).
-- Back behavior conditional on caller. If the screen needs to know its caller, it's a flow with an explicit entry.
-
-- Platform navigation APIs differ; the principle of typed destinations and defined back stacks applies on both. See the details file for concrete Android and iOS implementations.
+- If a multi-destination back stack is ever introduced, apply typed-route discipline then: destinations are a closed sum, the router takes only typed values, deep links round-trip losslessly, tabs are roots with their own back stacks, and routes pass ids (refetch), never large objects. Don't pre-build this.
 
 > When a rule is unclear, read `agents/docs/mobile/mobile-navigation-details.md`.

@@ -1,5 +1,5 @@
 ---
-paths: ["shared/mobile-sdk/src/commonMain/**"]
+paths: ["shared/mobile-sdk/src/commonMain/**", "shared/mobile-data/src/commonMain/**"]
 ---
 # commonMain Purity
 

@@ -1,410 +1,116 @@
-# Gradle Conventions -- Details & Templates
+# Gradle Conventions — Details & Templates
 
-This file expands `platforms/android/rules/android-gradle.md`.
-Templates for the version catalog, a convention plugin, and the
-ProGuard rules every Android app ships with.
+This file expands `.claude/rules/android/android-gradle.md`. The mobile build is three modules — `:shared:mobile-sdk`, `:shared:mobile-data`, `:android` — with the app as a single module. No `build-logic/`, no annotation processors, no `:feature:*`/`:core:*` split.
 
-## `gradle/libs.versions.toml`
+## `settings.gradle.kts` (real)
 
-The whole point: one file holds every version number. Bumping
-Kotlin is one edit; the build graph re-resolves.
+```kotlin
+pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+dependencyResolutionManagement { repositories { google(); mavenCentral() } }
+rootProject.name = "sentient-mobile"
+include(":shared:mobile-sdk")
+include(":shared:mobile-data")
+include(":android")
+```
+
+## `gradle/libs.versions.toml` (shape — keep aligned with the real catalog)
 
 ```toml
 [versions]
-agp = "8.5.0"
-kotlin = "2.0.0"
-ksp = "2.0.0-1.0.21"
-hilt = "2.51.1"
-hilt-navigation-compose = "1.2.0"
-compose-bom = "2024.06.00"
-coroutines = "1.8.1"
-lifecycle = "2.8.2"
-junit4 = "4.13.2"
-mockk = "1.13.10"
-
-[libraries]
-# Compose BoM aligns versioned-by-bom modules.
-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "compose-bom" }
-compose-ui = { group = "androidx.compose.ui", name = "ui" }
-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
-compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
-compose-runtime = { group = "androidx.compose.runtime", name = "runtime" }
-
-# Lifecycle + Compose integration.
-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycle" }
-lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycle" }
-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycle" }
-
-# Coroutines.
-kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
-kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
-kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
-
-# Hilt.
-hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref = "hilt" }
-hilt-compiler = { group = "com.google.dagger", name = "hilt-compiler", version.ref = "hilt" }
-hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-compose", version.ref = "hilt-navigation-compose" }
-
-# Test.
-junit = { group = "junit", name = "junit", version.ref = "junit4" }
-mockk = { group = "io.mockk", name = "mockk", version.ref = "mockk" }
+kotlin = "2.3.10"
+agp = "8.13.2"
+skie = "0.10.11"
+coroutines = "1.11.0"
+ktor = "3.5.0"
+androidx-lifecycle = "2.10.0"
+compileSdk = "36"
+minSdk = "26"
+targetSdk = "36"
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
-android-library = { id = "com.android.library", version.ref = "agp" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
-kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
-ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
-hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
+android-library     = { id = "com.android.library",     version.ref = "agp" }
+kotlin-android      = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+compose-compiler    = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+skie                = { id = "co.touchlab.skie", version.ref = "skie" }
 ```
 
-Usage in a module's `build.gradle.kts`:
+There is NO `hilt`, `ksp`, `mockk`, or `junit4` entry — the app has no DI framework and tests use `kotlin-test` only.
 
-```kotlin
-dependencies {
-    implementation(platform(libs.compose.bom))
-    implementation(libs.compose.ui)
-    implementation(libs.compose.material3)
-    implementation(libs.lifecycle.runtime.compose)
-    implementation(libs.kotlinx.coroutines.android)
-    implementation(libs.hilt.android)
-    ksp(libs.hilt.compiler)
-
-    testImplementation(libs.junit)
-    testImplementation(libs.kotlinx.coroutines.test)
-}
-```
-
-No version strings appear in the module script.
-
-## Convention plugin -- Android application
-
-`buildLogic/convention/build.gradle.kts`:
+## `android/build.gradle.kts` (real, single module)
 
 ```kotlin
 plugins {
-    `kotlin-dsl`
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.compose.compiler)
 }
-
-dependencies {
-    compileOnly(libs.android.gradle.plugin)
-    compileOnly(libs.kotlin.gradle.plugin)
-}
-
-gradlePlugin {
-    plugins {
-        register("androidApplication") {
-            id = "com.example.android.application"
-            implementationClass =
-                "com.example.buildLogic.AndroidApplicationConventionPlugin"
-        }
-        register("androidLibrary") {
-            id = "com.example.android.library"
-            implementationClass =
-                "com.example.buildLogic.AndroidLibraryConventionPlugin"
-        }
-    }
-}
-```
-
-`AndroidApplicationConventionPlugin.kt`:
-
-```kotlin
-class AndroidApplicationConventionPlugin : Plugin<Project> {
-    override fun apply(target: Project) = with(target) {
-        with(pluginManager) {
-            apply("com.android.application")
-            apply("org.jetbrains.kotlin.android")
-        }
-        extensions.configure<ApplicationExtension> {
-            compileSdk = 34
-            defaultConfig {
-                minSdk = 24
-                targetSdk = 34
-            }
-            compileOptions {
-                sourceCompatibility = JavaVersion.VERSION_21
-                targetCompatibility = JavaVersion.VERSION_21
-            }
-            buildTypes {
-                getByName("release") {
-                    isMinifyEnabled = true
-                    isShrinkResources = true
-                    proguardFiles(
-                        getDefaultProguardFile("proguard-android-optimize.txt"),
-                        "proguard-rules.pro",
-                    )
-                }
-            }
-        }
-        extensions.configure<KotlinAndroidProjectExtension> {
-            compilerOptions {
-                jvmTarget.set(JvmTarget.JVM_21)
-            }
-        }
-    }
-}
-```
-
-App-module usage:
-
-```kotlin
-// app/build.gradle.kts
-plugins {
-    id("com.example.android.application")
-    alias(libs.plugins.kotlin.compose)
-    alias(libs.plugins.hilt)
-    alias(libs.plugins.ksp)
-}
-
 android {
-    namespace = "com.example.app"
+    namespace = "io.sentient.android"
+    compileSdk = libs.versions.compileSdk.get().toInt()
     defaultConfig {
-        applicationId = "com.example.app"
-        versionCode = 1
-        versionName = "0.1"
+        applicationId = "io.dev32.sentient"
+        minSdk = libs.versions.minSdk.get().toInt()
+        targetSdk = libs.versions.targetSdk.get().toInt()
+    }
+    buildFeatures { compose = true; buildConfig = true }
+    compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+    kotlin { compilerOptions { jvmTarget.set(JvmTarget.JVM_17) } }
+    buildTypes {
+        getByName("debug")   { applicationIdSuffix = ".debug"; buildConfigField("String", "GATEWAY_WS_URL", "\"$debugGatewayUrl\"") }
+        getByName("release") {
+            buildConfigField("String", "GATEWAY_WS_URL", "\"\"")    // empty → in-app setup page
+            isMinifyEnabled = true; isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
     }
 }
-
 dependencies {
+    implementation(project(":shared:mobile-sdk"))
+    implementation(project(":shared:mobile-data"))
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.process)          // ProcessLifecycleOwner → PresenceCoordinator
+    implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.ktor.client.okhttp)                  // AuthClient REST engine
     implementation(platform(libs.compose.bom))
-    // ... feature modules and libs ...
+    implementation(libs.compose.material3); implementation(libs.compose.ui)
+    implementation(libs.markdown.renderer.m3)                // assistant-bubble GFM
+    implementation(libs.androidx.core.splashscreen)
+    testImplementation(libs.kotlin.test)                     // Layer 1 JVM unit tests only
 }
 ```
 
-The module script is short. The convention plugin owns the
-boring repetition.
+The debug gateway URL is read from gitignored `local.properties` (`sentient.gatewayUrl`, default `wss://10.0.2.2:8888/...` emulator loopback). Debug suffix `.debug` lets both variants co-install.
 
-## `proguard-rules.pro` reference snippets
-
-App-module rules tend to focus on serialization libs and
-reflection-using frameworks.
+## `proguard-rules.pro` reference
 
 ```proguard
-# kotlinx.serialization -- keep generated serializers.
+# kotlinx.serialization — keep generated serializers (wire protocol DTOs).
 -keepattributes *Annotation*, InnerClasses
--dontnote kotlinx.serialization.SerializationKt
 -keep,includedescriptorclasses class **$$serializer { *; }
--keepclassmembers class * {
-    *** Companion;
-}
--keepclasseswithmembers class * {
-    kotlinx.serialization.KSerializer serializer(...);
-}
-
-# Moshi (if used) -- keep adapters.
--keep class com.squareup.moshi.JsonAdapter
--keepclasseswithmembers class * {
-    @com.squareup.moshi.* <methods>;
-}
-
-# Hilt-generated classes -- safe by default; rules here ensure
-# reflection-based introspection (if any) still works.
--keep class dagger.hilt.** { *; }
--keep class * extends dagger.hilt.android.internal.managers.ViewComponentManager$* { *; }
-
-# Coroutines -- keep nothing-by-default works; uncomment if R8
-# strips a flow operator you reflect on.
-# -keep class kotlinx.coroutines.** { *; }
+-keepclassmembers class * { *** Companion; }
+-keepclasseswithmembers class * { kotlinx.serialization.KSerializer serializer(...); }
 ```
 
-For library modules, ship rules to consumers via
-`consumerProguardFiles("consumer-rules.pro")` in the library
-convention plugin. Consumer rules ride along with the AAR.
+## Pinned toolchain values (sentient repo)
 
-## Settings file pattern
-
-`settings.gradle.kts`:
-
-```kotlin
-pluginManagement {
-    includeBuild("buildLogic")
-    repositories {
-        google()
-        mavenCentral()
-        gradlePluginPortal()
-    }
-}
-
-dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-    repositories {
-        google()
-        mavenCentral()
-    }
-}
-
-rootProject.name = "ExampleApp"
-include(":app")
-include(":feature:login")
-include(":feature:home")
-include(":core:data")
-include(":core:designsystem")
-```
-
-`includeBuild("buildLogic")` is what makes the convention
-plugins available to the rest of the build.
-
-## Module-shape catalog (audit G1)
-
-Mirrors Google's "Now in Android" pattern:
-
-```
-:app                        — wires DI, single Application class, Activity entry
-:feature:home               — composables + VM + nav for home flow
-:feature:profile            — same for profile
-:core:designsystem          — MaterialTheme, color/typography tokens
-:core:ui                    — reusable composables (loading states, scaffolds)
-:core:data                  — Room + DataStore + Retrofit repository impls
-:core:domain                — pure-Kotlin use-cases + models
-:core:network               — Retrofit + OkHttp setup, interceptors
-:core:testing               — Fakes, MainDispatcherRule, HiltTestActivity
-:benchmark                  — Baseline Profile + Macrobenchmark suite
-```
-
-Convention plugins (under `build-logic/convention/`):
-- `com.example.android.application` — applies Android + Kotlin + Compose plugins, sets compileSdk/minSdk, configures release R8.
-- `com.example.android.library` — Android library equivalent.
-- `com.example.android.feature` — library + Hilt plugin + Compose plugin.
-- `com.example.android.hilt` — applies Hilt + KSP plugin and depends on `:core:domain`.
-
-## KSP migration (audit A8)
-
-Old (KAPT):
-
-```kotlin
-plugins {
-    id("kotlin-kapt")
-}
-dependencies {
-    kapt(libs.hilt.compiler)
-}
-```
-
-New (KSP):
-
-```kotlin
-plugins {
-    alias(libs.plugins.ksp)
-}
-dependencies {
-    ksp(libs.hilt.compiler)
-}
-```
-
-Catalog adds:
-
-```toml
-[versions]
-ksp = "2.1.20-1.0.31"
-[plugins]
-ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
-```
-
-Generated source paths shift slightly (`build/generated/ksp/...` vs `build/generated/source/kapt/...`); IDE indexing picks them up automatically.
-
-## Baseline Profile + Macrobenchmark (audit G2)
-
-Apply `androidx.baselineprofile` plugin in `:app/build.gradle.kts`:
-
-```kotlin
-plugins {
-    alias(libs.plugins.baselineprofile)
-}
-baselineProfile {
-    saveInSrc = true
-}
-dependencies {
-    baselineProfile(project(":benchmark"))
-}
-```
-
-`:benchmark/build.gradle.kts`:
-
-```kotlin
-plugins {
-    alias(libs.plugins.android.test)
-    alias(libs.plugins.baselineprofile)
-}
-android {
-    targetProjectPath = ":app"
-    experimentalProperties["android.experimental.self-instrumenting"] = true
-}
-dependencies {
-    implementation(libs.androidx.benchmark.macro.junit4)
-}
-```
-
-`:benchmark/src/main/java/.../BaselineProfileGenerator.kt`:
-
-```kotlin
-@RunWith(AndroidJUnit4::class)
-class BaselineProfileGenerator {
-    @get:Rule val rule = BaselineProfileRule()
-
-    @Test
-    fun generate() = rule.collect(packageName = "io.dev32.sample") {
-        pressHome()
-        startActivityAndWait()
-        // exercise critical user flows here
-    }
-}
-```
-
-Run on a real device (rooted or `-PuseConnectedDeviceForBaselineProfile=true`); the plugin generates `baseline-prof.txt` in `:app/src/main/`. R8 reads it on release builds and pre-compiles those paths.
-
-## Module-shape convention plugin example
-
-`build-logic/convention/src/main/kotlin/AndroidApplicationConventionPlugin.kt`:
-
-```kotlin
-class AndroidApplicationConventionPlugin : Plugin<Project> {
-    override fun apply(target: Project) = with(target) {
-        with(pluginManager) {
-            apply("com.android.application")
-            apply("org.jetbrains.kotlin.android")
-            apply("org.jetbrains.kotlin.plugin.compose")
-        }
-        extensions.configure<ApplicationExtension> {
-            compileSdk = 36
-            defaultConfig {
-                minSdk = 24
-                targetSdk = 36
-            }
-            compileOptions {
-                sourceCompatibility = JavaVersion.VERSION_21
-                targetCompatibility = JavaVersion.VERSION_21
-            }
-        }
-    }
-}
-```
-
-Module declares:
-
-```kotlin
-plugins {
-    `kotlin-dsl`
-}
-gradlePlugin {
-    plugins {
-        register("androidApplication") {
-            id = "com.example.android.application"
-            implementationClass = "AndroidApplicationConventionPlugin"
-        }
-    }
-}
-```
-
-## Pinned toolchain values (sentient repo, as of 2026-06-01)
-
-These live in `gradle/libs.versions.toml` — update the catalog entry, not the rule or source code.
+These live in `gradle/libs.versions.toml` — update the catalog entry, not the rule or source.
 
 - `compileSdk` / `targetSdk` = **36**; `minSdk` = **26**
-- Kotlin = **2.3.10**
-- AGP = **8.13.x** (paired with Gradle 8.13). Do NOT bump to AGP 9.x — requires Gradle 9.1+.
-- `compileOptions` sourceCompatibility + targetCompatibility = `VERSION_17`; `jvmTarget = JvmTarget.JVM_17` (aligns with repo JDK 17)
-- Compose compiler plugin version must equal Kotlin version; catalog entry: `compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }` in `[plugins]`
+- Kotlin = **2.3.10**; SKIE = **0.10.11** (must match Kotlin)
+- AGP = **8.13.2** (paired with Gradle 8.13). Do NOT bump to AGP 9.x — needs Gradle 9.1+.
+- `sourceCompatibility`/`targetCompatibility` = `VERSION_17`; `jvmTarget = JVM_17`
+- Compose compiler = `org.jetbrains.kotlin.plugin.compose`, version pinned WITH Kotlin
 
-Verify all pins against upstream latest releases before any bump (per verify-pinned-versions feedback).
+Verify all pins against upstream latest before any bump (per verify-pinned-versions feedback).
+
+## Future — NOT adopted (do not add preemptively)
+
+These are migration TARGETS if the app outgrows a single module — none are wired today:
+
+- **Convention plugins + multi-module**: a `build-logic/` included build hosting `androidApplication`/`androidLibrary`/`androidFeature` convention plugins, with a `:app` + `:feature:*` + `:core:*` graph (the "Now in Android" shape). Only worthwhile past a handful of screens.
+- **Hilt + KSP**: add `com.google.dagger.hilt.android` + `com.google.devtools.ksp` plugins and `ksp(libs.hilt.compiler)` (KSP, never KAPT). Until adopted, DI is hand-wired (`android-di`).
+- **Baseline Profile + Macrobenchmark**: `androidx.baselineprofile` in `:android` + a `:benchmark` module + JankStats. A release-perf step for later.

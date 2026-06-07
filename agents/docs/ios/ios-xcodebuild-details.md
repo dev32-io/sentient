@@ -1,97 +1,48 @@
 # Xcode Build Conventions -- Details & Examples
 
-This file expands `platforms/ios/rules/ios-xcodebuild.md`. The
-templates below show the xcconfig layout, the shared-scheme
-checklist, and the `xcodebuild` invocations used in CI.
+This file expands `.claude/rules/ios/ios-xcodebuild.md`. The project is generated from `ios/project.yml` (XcodeGen); the templates below show the project.yml settings, the generated scheme, and the `xcodebuild` invocations used in CI.
 
-## xcconfig layered template
+## project.yml — the source of truth
 
-The project uses three layers. Each layer #includes the one
-below it.
+`SentientApp.xcodeproj/` is gitignored and regenerated with `xcodegen generate`. Settings live in `project.yml`, NOT a checked-in `Config/*.xcconfig` tree:
 
-`Config/Common.xcconfig` -- settings every target shares:
-
-```
-// Common.xcconfig
-// Settings shared by every target + configuration.
-
-SWIFT_VERSION = 6.0
-IPHONEOS_DEPLOYMENT_TARGET = 17.0
-ENABLE_MODULE_VERIFIER = YES
-SWIFT_TREAT_WARNINGS_AS_ERRORS = YES
-GCC_TREAT_WARNINGS_AS_ERRORS = YES
-SWIFT_STRICT_CONCURRENCY = complete
-CLANG_ANALYZER_NONNULL = YES
-
-// Enable warnings the team has agreed are errors.
-CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE
-CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES
-```
-
-`Config/App.xcconfig` -- target-level settings for the App
-target:
-
-```
-// App.xcconfig
-#include "Common.xcconfig"
-
-PRODUCT_NAME = App
-PRODUCT_BUNDLE_IDENTIFIER = com.example.app
-DEVELOPMENT_TEAM = ABCD1234EF
-INFOPLIST_FILE = App/Info.plist
-
-ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
-TARGETED_DEVICE_FAMILY = 1,2  // iPhone + iPad
+```yaml
+options:
+  bundleIdPrefix: io.dev32
+  deploymentTarget: { iOS: "17.0" }
+targets:
+  SentientApp:
+    type: application
+    sources: [App]
+    configFiles:
+      Debug: App/Local.xcconfig            # gitignored; dev gateway URL + local signing
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.dev32.sentient
+        GENERATE_INFOPLIST_FILE: NO
+      configs:
+        Debug: { PRODUCT_BUNDLE_IDENTIFIER: io.dev32.sentient.debug }   # .debug → side-by-side install
+    dependencies:
+      - framework: ../shared/mobile-data/build/XCFrameworks/debug/MobileData.xcframework
+        embed: false
+      - package: MarkdownUI
+        product: MarkdownUI
 ```
 
-`Config/App.Debug.xcconfig` -- per-configuration overrides:
+The only xcconfig is `App/Local.xcconfig` (gitignored), with `App/Local.xcconfig.example` tracked as the template. Swift strict-concurrency / Swift version are set via project.yml settings (or the per-target defaults), not a layered Common/App/App.Debug stack.
 
-```
-// App.Debug.xcconfig
-#include "App.xcconfig"
+## Schemes — declared in project.yml, generated
 
-SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG
-SWIFT_OPTIMIZATION_LEVEL = -Onone
-GCC_PREPROCESSOR_DEFINITIONS = DEBUG=1
-CODE_SIGN_STYLE = Automatic
-```
-
-`Config/App.Release.xcconfig`:
-
-```
-// App.Release.xcconfig
-#include "App.xcconfig"
-
-SWIFT_OPTIMIZATION_LEVEL = -O
-SWIFT_COMPILATION_MODE = wholemodule
-GCC_PREPROCESSOR_DEFINITIONS =
-CODE_SIGN_STYLE = Manual
-PROVISIONING_PROFILE_SPECIFIER = AppStore-Distribution
-CODE_SIGN_IDENTITY = iPhone Distribution
+```yaml
+schemes:
+  SentientApp:
+    build:
+      targets: { SentientApp: all, SentientAppTests: [test] }
+    test:
+      targets: [SentientAppTests]
 ```
 
-In the project file: Project -> Info -> Configurations ->
-Debug = `App.Debug`, Release = `App.Release`. Target build
-settings are LEFT BLANK -- they all come from the xcconfig.
-
-## Shared scheme checklist
-
-When you add a scheme, check ALL of the following before
-committing:
-
-- [ ] Scheme is marked Shared in Xcode (Manage Schemes... ->
-  Shared column checked).
-- [ ] `.xcscheme` file appears at
-  `*.xcodeproj/xcshareddata/xcschemes/*.xcscheme`.
-- [ ] Scheme builds with `xcodebuild -scheme <name> -showBuildSettings`
-  with no errors from the command line.
-- [ ] Scheme's Run / Test / Profile / Analyze / Archive
-  configurations all point at the right build configuration
-  (Debug for Run/Test, Release for Archive).
-- [ ] Test action references the test target(s) (if any).
-- [ ] No "user-only" pre-actions or post-actions that depend on
-  local paths.
-- [ ] `xcuserdata/` is gitignored at the project file level.
+XcodeGen emits the shared `.xcscheme` on generate — do NOT hand-author or commit one. `xcuserdata/` stays gitignored. After editing `project.yml`, run `xcodegen generate` before building so the project matches.
 
 ## `xcodebuild` invocations
 
@@ -99,7 +50,7 @@ Build, debug configuration, simulator:
 
 ```sh
 xcodebuild build \
-  -scheme App \
+  -scheme SentientApp \
   -configuration Debug \
   -destination "platform=iOS Simulator,name=iPhone 15" \
   -derivedDataPath build/ \
@@ -110,7 +61,7 @@ Test, with result bundle for CI parsing:
 
 ```sh
 xcodebuild test \
-  -scheme App \
+  -scheme SentientApp \
   -destination "platform=iOS Simulator,name=iPhone 15" \
   -resultBundlePath build/TestResults.xcresult \
   -derivedDataPath build/ \
@@ -121,7 +72,7 @@ Archive for release (CI):
 
 ```sh
 xcodebuild archive \
-  -scheme App \
+  -scheme SentientApp \
   -configuration Release \
   -destination "generic/platform=iOS" \
   -archivePath build/App.xcarchive \
@@ -162,23 +113,16 @@ let package = Package(
 repeatable CI. `git diff Package.resolved` after a dependency
 bump is the change you review when upgrading.
 
-## CI quality gate -- the wrapper script
+## CI quality gate
 
-The platform-level hook
-`platforms/ios/hooks/quality-gate-ios.sh` calls into this
-matrix:
+The gate is: `xcodegen generate` → `xcodebuild build` → `xcodebuild test` (+ `swiftlint` if present), against a simulator destination. There is no `platforms/ios/hooks/quality-gate-ios.sh` — that path does not exist. Native-mobile E2E is driven separately by `qa/mobile/run-e2e.sh` (Maestro + `xcrun simctl`); see `ios-testing`.
 
-| Scope         | Command                              |
-| ------------- | ------------------------------------ |
-| `lint`        | `swiftlint` (or skip if not present) |
-| `typecheck`   | `xcodebuild build`                   |
-| `test`        | `xcodebuild test`                    |
-| `all`         | lint -> build -> test, in order      |
-
-Driving these from a single shell script keeps the local and CI
-contract identical: `sh platforms/ios/hooks/quality-gate-ios.sh all`
-produces the same result on a developer laptop and on the CI
-runner.
+| Scope       | Command                                  |
+| ----------- | ---------------------------------------- |
+| `lint`      | `swiftlint` (skip if not installed)      |
+| `typecheck` | `xcodegen generate` → `xcodebuild build` |
+| `test`      | `xcodebuild test`                        |
+| `e2e`       | `qa/mobile/run-e2e.sh` (Maestro/simctl)  |
 
 ## What NOT to commit
 

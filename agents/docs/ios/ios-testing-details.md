@@ -1,6 +1,6 @@
 # iOS Testing -- Details & Examples
 
-This file expands `platforms/ios/rules/ios-testing.md`. The
+This file expands `.claude/rules/ios/ios-testing.md`. The
 patterns below show concrete examples for each layer.
 
 ## Unit test -- Swift Testing (iOS 17+ / Xcode 16+)
@@ -132,33 +132,43 @@ The `-uiTestMode 1` argument tells the app to swap real
 services for fakes / in-memory stores. This is what makes UI
 tests deterministic.
 
-## Maestro flow
+## Maestro flow (real sentient shape)
 
-`.maestro/login_smoke.yaml`:
+Flows live in `qa/mobile/flows/ios/`, driven by `qa/mobile/run-e2e.sh` against a simulator. Login is a reusable conditional subflow; elements are targeted by `accessibilityIdentifier`.
 
 ```yaml
-appId: com.example.app
+# qa/mobile/flows/ios/login.yaml — conditional; no-op when already on chat
+appId: io.dev32.sentient.debug
 ---
-- launchApp:
-    clearState: true
-    arguments:
-      - -uiTestMode
-      - "1"
-- tapOn:
-    id: "login.email"
-- inputText: "a@b.c"
-- tapOn:
-    id: "login.password"
-- inputText: "hunter2_strong"
-- tapOn:
-    id: "login.submit"
-- assertVisible:
-    id: "home.title"
+- launchApp
+- runFlow:
+    when: { visible: "Who's here?" }
+    commands:
+      - tapOn: { point: "50%, 53%" }        # Kevin avatar
+      - tapOn: "1"
+      - tapOn: "2"
+      - tapOn: "3"
+      - tapOn: "4"                          # PIN 1234
+      - extendedWaitUntil: { visible: { id: "composer-input" }, timeout: 20000 }
 ```
 
-The flow runs on simulator (`maestro test login_smoke.yaml`) or
-on a real device. The same YAML is what an agent drives during
-a QA charter -- the smoke flow IS the agent's regression suite.
+```yaml
+# qa/mobile/flows/ios/01-send-stream.yaml
+appId: io.dev32.sentient.debug
+---
+- runFlow: login.yaml
+- tapOn: { id: "composer-input" }
+- inputText: "what is 2 plus 2"
+- tapOn: { id: "chat-send" }
+- extendedWaitUntil: { visible: { id: "assistant-bubble" }, timeout: 40000 }
+```
+
+The same YAML is what an agent drives during a QA charter.
+
+### Known iOS E2E gaps (flagged)
+
+- **No fault-arming channel.** iOS has no `adb`-broadcast equivalent, so the fault flows (auth-expired, malformed-frame) are Android-only until a debug-arming UI exists. `devFaultsEnabled` is wired in `ChatRoot`, but nothing can arm a fault from the E2E driver.
+- **Swipe rename/delete needs XCUITest.** A Maestro swipe dismisses the history sheet; the swipe-action rename/delete case must move to XCUITest. Flag both in handover rather than skipping silently.
 
 ## Clock injection
 

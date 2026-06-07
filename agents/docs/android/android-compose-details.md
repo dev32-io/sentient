@@ -1,6 +1,6 @@
 # Jetpack Compose -- Details & Examples
 
-This file expands `platforms/android/rules/android-compose.md`.
+This file expands `.claude/rules/android/android-compose.md`.
 The rule states the bar; this doc shows the patterns and the
 recomposition gotchas that catch agents off-guard.
 
@@ -43,7 +43,7 @@ fun NameField(
 
 // Stateful screen -- owns state via VM, threads state down.
 @Composable
-fun NameScreen(viewModel: NameViewModel = hiltViewModel()) {
+fun NameScreen(viewModel: NameViewModel) {   // passed from host; built via viewModelFactory, not hiltViewModel()
     val state by viewModel.state.collectAsStateWithLifecycle()
     NameField(
         name = state.name,

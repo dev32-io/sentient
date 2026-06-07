@@ -23,9 +23,11 @@ Three layers: unit (Swift Testing / XCTest), UI regression (XCUITest), agent-dri
 - Disable animations in test setup (`UIView.setAnimationsEnabled(false)`).
 - Use for: code-owned regression flows on simulator/device.
 
-## E2E — Maestro
-- `.yaml` flows in `.maestro/` (in-repo, checked in).
+## E2E — Maestro + simctl
+- Checked-in `.yaml` flows, driven by the mobile e2e script against a simulator (`xcrun simctl`). NOT `.maestro/`, NOT Playwright.
+- Target elements by `accessibilityIdentifier`. Login is a reusable conditional subflow.
 - Use for: smoke (cold launch + login + key screen), agent regression, post-deploy verification.
+- Known iOS E2E gaps (flagged, not yet covered): no fault-arming channel (no `adb`-broadcast equivalent — fault flows stay Android-only until a debug-arming UI exists); swipe rename/delete needs XCUITest. Do not silently skip these; flag in handover. Flow paths + login PIN live in the details / testing-knowledge.
 
 ## Fakes over mocks at boundaries
 - Define protocol at each boundary; provide `FakeFoo` conforming type for tests.

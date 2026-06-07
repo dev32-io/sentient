@@ -18,7 +18,7 @@ The Compose runtime relies on purity, identity, and stability to skip work.
 
 - `@Composable` body has NO side effects; use `LaunchedEffect` / `DisposableEffect` / `SideEffect`.
 - `remember { }` survives recomposition; `rememberSaveable { }` survives process death.
-- Stateless components take `state: T` + `onEvent: (Event) -> Unit`. Screen-level composables read VM via `hiltViewModel()`. NEVER reference a ViewModel in a leaf composable.
+- Stateless components take `state: T` + `onEvent: (Event) -> Unit`. Screen-level composables receive their ViewModel from the host (built via the platform ViewModel factory), NOT `hiltViewModel()`. NEVER reference a ViewModel in a leaf composable.
 
 ## Effects, stability, previews
 

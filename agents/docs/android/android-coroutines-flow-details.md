@@ -1,6 +1,6 @@
 # Coroutines and Flow -- Details & Examples
 
-This file expands `platforms/android/rules/android-coroutines-flow.md`.
+This file expands `.claude/rules/android/android-coroutines-flow.md`.
 Worked examples for the patterns the rule names.
 
 ## StateFlow vs SharedFlow -- the comparison
@@ -60,7 +60,7 @@ It pauses when the screen is below STARTED.
 
 ```kotlin
 @Composable
-fun ScreenA(vm: AViewModel = hiltViewModel()) {
+fun ScreenA(vm: AViewModel) {   // VM passed in from the host; built via viewModelFactory, not hiltViewModel()
     val state by vm.state.collectAsStateWithLifecycle()
     // `state` is the latest UiState; collection pauses on background.
     Body(state)
@@ -71,7 +71,7 @@ For one-shot events, collect inside a `LaunchedEffect`:
 
 ```kotlin
 @Composable
-fun ScreenA(vm: AViewModel = hiltViewModel()) {
+fun ScreenA(vm: AViewModel) {   // VM passed in from the host; built via viewModelFactory, not hiltViewModel()
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(Unit) {
         vm.events.collect { event ->
@@ -113,8 +113,8 @@ whose results we want. Older in-flight queries are wasted work
 -- they should be cancelled.
 
 ```kotlin
-class SearchViewModel @Inject constructor(
-    private val repo: SearchRepository,
+class SearchViewModel(
+    private val repo: SearchRepository,   // plain constructor; no DI framework
 ) : ViewModel() {
 
     private val query = MutableStateFlow("")
@@ -200,7 +200,7 @@ Right: dispatcher pushed down into the repository; ViewModel
 runs on Main.
 
 ```kotlin
-class UserRepository @Inject constructor(private val api: Api) {
+class UserRepository(private val api: Api) {   // plain constructor; no DI framework
     suspend fun fetch(): List<User> = withContext(Dispatchers.IO) {
         api.fetchUsers()
     }
@@ -217,9 +217,11 @@ class Good : ViewModel() {
 The boundary owns the dispatcher choice. Callers don't repeat
 themselves; collectors are always on Main.
 
-## Data sources as Flow (audit G5)
+## Data sources as Flow
 
-### Room
+The shipped data sources are the `shared/mobile-data` repositories exposing `Flow<SentientResult<T>>`; the ViewModel collects and folds into one `StateFlow<UiState>`. Room/DataStore below are illustrative of the SAME Flow-from-source pattern for a local store — **none is wired today**; add only if persistence is introduced.
+
+### Room (Future — not used)
 
 ```kotlin
 @Dao

@@ -1,9 +1,13 @@
 # MVI Architecture -- Details & Worked Example
 
-This file expands `platforms/android/rules/android-architecture-mvi.md`.
-The example below shows the full flow end-to-end for a Login
-screen: `LoginUiState`, `LoginIntent`, `LoginEffect`,
-`LoginViewModel`, and the consuming composable.
+This file expands `.claude/rules/android/android-architecture-mvi.md`.
+The Login example below shows the full **form-screen MVI triple**
+(`UiState` + `Intent` + `dispatch`) — the pattern `AuthViewModel`
+and `BackendSetupViewModel` actually use. Simple command screens
+(`ChatViewModel`, `HistoryViewModel`, `SettingsViewModel`) expose
+plain methods instead; see "Shipped chat architecture" at the end.
+
+All VMs are hand-wired (no Hilt) — see `android-di-details.md`.
 
 ## LoginUiState
 
@@ -69,9 +73,8 @@ The reducer is a `when` over the sealed Intent type. Side work
 inside the reducer arm.
 
 ```kotlin
-@HiltViewModel
-class LoginViewModel @Inject constructor(
-    private val authRepository: AuthRepository,
+class LoginViewModel(
+    private val authRepository: AuthRepository,   // plain constructor; built via viewModelFactory
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(LoginUiState())
@@ -155,7 +158,7 @@ effects, threads state down, sends Intents up.
 fun LoginScreen(
     onLoggedIn: (UserId) -> Unit,
     onForgotPassword: () -> Unit,
-    viewModel: LoginViewModel = hiltViewModel(),
+    viewModel: LoginViewModel,   // passed in from the host; built via viewModelFactory, not hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -226,32 +229,50 @@ fun `submit with valid form navigates to home`() = runTest {
 This is why we keep state in state and effects in effects: the
 test asserts on both shapes independently.
 
-## Type-safe Navigation (audit A11 / G7)
+## Navigation — state-gate (shipped), NOT NavHost
+
+Top-level navigation is a state-based composable swap in `MainActivity`, gated on booleans. There is no `NavHost`, no route graph, no `navigation-compose` dependency.
 
 ```kotlin
-@Serializable object LoginRoute
-@Serializable data class HomeRoute(val userId: String)
+// AppRoot → AppConfiguredRoot → ChatRoot (state gate, not a router)
+if (!configured || showSetupOverride) BackendSetupScreen(...)
+else if (hasToken)                     ChatRoot(...)      // token present (displayName != null)
+else                                   LoginScreen(...)
+```
 
-NavHost(navController = nav, startDestination = LoginRoute) {
-    composable<LoginRoute> {
-        LoginScreen(
-            onLoggedIn = { uid -> nav.navigate(HomeRoute(uid)) { popUpTo(LoginRoute) { inclusive = true } } },
-        )
+Why gate on `hasToken`, not `status == READY`: a WS drop must NOT unmount chat. Token presence is set at login, cleared at logout, and survives a drop — so a dropped connection keeps the user on chat with the connection-lost banner. Settings + the history drawer are overlays inside the in-session state (`rememberSaveable { showSettings }`, `DrawerState`), not stack destinations.
+
+### Future — typed NavHost (NOT adopted)
+
+If a real multi-destination back stack ever appears, the target is Navigation-Compose 2.8+ with `@Serializable` routes (`NavHost(startDestination = …) { composable<Route> { entry.toRoute<Route>() } }`, deep links via `navDeepLink<Route>(…)`, artifacts `navigation-compose` + `kotlinx-serialization-json`, plugin `org.jetbrains.kotlin.plugin.serialization`). Do not add it preemptively — the current screen set does not need a stack.
+
+## Shipped chat architecture (command-method VMs)
+
+`ChatViewModel` is NOT a `dispatch(Intent)` reducer — it collects `chatStream` from the repo and exposes plain command methods:
+
+```kotlin
+class ChatViewModel(
+    private val repo: ChatRepository,
+    private val onOpen: suspend () -> Unit, private val onClose: () -> Unit,
+    private val onForeground: () -> Unit, private val onBackground: () -> Unit,
+    private val presence: PresenceCoordinator,
+) : ViewModel() {
+    private val _state = MutableStateFlow(ChatUiState())
+    val state: StateFlow<ChatUiState> = _state.asStateFlow()
+
+    init {
+        presence.bind(onForeground = onForeground, onBackground = onBackground)
+        viewModelScope.launch { onOpen() }                       // connect in the background
+        viewModelScope.launch {                                   // fold the repo's SentientResult
+            repo.chatStream.collect { result -> _state.update { it.foldChat(result) } }
+        }
     }
-    composable<HomeRoute> { entry ->
-        val route = entry.toRoute<HomeRoute>()
-        HomeScreen(userId = route.userId)
-    }
+
+    fun send(text: String) { repo.send(text) }                   // optimistic; returns immediately
+    fun retry(pendingId: String) { repo.retry(pendingId) }
+
+    override fun onCleared() { presence.unbind(); onClose() }     // single teardown path
 }
 ```
 
-Deep links via `navDeepLink<HomeRoute>(basePath = "https://example.com/user/{userId}")`.
-
-Required artifacts (catalog):
-
-```toml
-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigation" }
-kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
-```
-
-Plugin: `org.jetbrains.kotlin.plugin.serialization`.
+The SDK is reached only through `repo` (a `MobileSession` repository). Commands that are one-shot SDK calls (`newChat`, `interrupt`, mic toggle) are invoked on `session.sdk` from the composition scope in `ChatRoot` — see `MainActivity.kt`.

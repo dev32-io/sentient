@@ -1,37 +1,38 @@
 ---
-description: Xcode build -- .xcconfig settings, shared schemes, xcodebuild for CI, SPM preferred.
+description: Xcode build -- XcodeGen spec is source of truth, settings + local xcconfig, xcodebuild for CI.
 paths:
-  - "ios/**"
+  - "ios/project.yml"
+  - "ios/**/*.xcconfig"
+  - "ios/**/*.xcconfig.example"
 ---
 
 # Xcode Build Conventions
 
-Pull settings out of the `.xcodeproj` blob so the build diffs cleanly and reproduces on CI.
+The project is GENERATED, not hand-edited: an XcodeGen spec is the single source of truth; the `.xcodeproj` is gitignored and regenerated. Never edit the project blob by hand — the change is lost on the next generate.
 
-## Build settings in `.xcconfig`
-- ALL build settings (deployment target, Swift version, defines, signing defaults) in `.xcconfig` files.
-- Layered: `Common.xcconfig` → `App.xcconfig` → `App.Debug.xcconfig`.
-- The `.xcodeproj` references xcconfigs at Project + Target build-config; no inline settings.
+## Build settings — spec + a single local xcconfig
 
-## Shared schemes — checked in
-- Every CI-built scheme MUST be Shared (`xcshareddata/xcschemes/*.xcscheme` in git).
-- A scheme not in git can't be built by CI.
-- Personal schemes go in `xcuserdata/` (gitignored).
+- Target/build settings live in the XcodeGen spec, NOT a checked-in layered xcconfig tree.
+- The only xcconfig is a gitignored local override (dev gateway URL + local signing), with a tracked example template.
+- Info.plist values + capabilities are declared in the spec.
 
-## `xcodebuild` is the build, not Xcode GUI
-- CI runs `xcodebuild build` / `xcodebuild test`.
-- Invocation: `-scheme`, `-destination`, `-configuration`, `-derivedDataPath`, `-resultBundlePath`.
-- Do NOT depend on Xcode's implicit dependency graph; declare deps explicitly.
+## Schemes — declared in the spec, generated
+
+- Schemes are declared in the spec and emitted on generate; do NOT hand-author or commit a scheme file. Personal state stays gitignored.
+
+## `xcodebuild` is the build, not the GUI
+
+- CI/local gates run `xcodebuild build` / `xcodebuild test` against a simulator destination.
+- Regenerate the project before building so it matches the spec.
+
+## Dependencies — vendored XCFramework + SPM
+
+- The shared KMP code is a vendored, SKIE-bridged XCFramework referenced by the spec; the app imports it and the SDK types re-export through it.
+- SPM packages are declared in the spec; commit the resolved lockfile.
+- Rebuild the XCFramework when shared code changes; a stale one link-fails or runs old code.
 
 ## Code signing
-- Dev: Xcode automatic signing; Team ID in xcconfig (`DEVELOPMENT_TEAM = ABCD1234EF`).
-- Release: Manual signing; profile NAME in xcconfig (`PROVISIONING_PROFILE_SPECIFIER = AppStore-Distribution`).
-- Profiles + certificates NEVER in git; fetch from secret storage (App Store Connect API, fastlane match).
 
-## Dependencies — SPM preferred
-- SPM in `Package.swift` (packages) or project's `XCPackageReference` (apps).
-- Lock `Package.resolved` (committed) for repeatable builds.
-- Vendored `.xcframework` in versioned `Frameworks/` subdirectory.
-
+- Dev: automatic signing; team id in the local xcconfig, never committed. Profiles + certificates never in git.
 
 > When a rule is unclear, read `agents/docs/ios/ios-xcodebuild-details.md`.

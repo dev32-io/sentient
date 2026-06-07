@@ -1,9 +1,33 @@
 # Mobile Navigation -- Details & Examples
 
-This file expands `platforms/mobile/rules/mobile-navigation.md`.
-Examples are written in pseudocode that translates directly to
-Swift (NavigationStack + path values) and Kotlin (Navigation
-Compose + typed destinations).
+This file expands `.claude/rules/mobile/mobile-navigation.md`.
+
+## Shipped reality — state gate (no router)
+
+The app does NOT use a router. The composition root swaps between a small set of mutually-exclusive screens on derived state:
+
+```kotlin
+// Android — MainActivity (state gate)
+if (!configured || showSetupOverride) BackendSetupScreen(...)
+else if (hasToken)                     ChatRoot(...)
+else                                   LoginScreen(...)
+// Settings + history drawer are overlays WITHIN the in-session state, not stack destinations.
+```
+
+```swift
+// iOS — RootView (the same 3-way Group gate)
+Group {
+    if !appConfig.isConfigured || showSetupOverride { BackendSetupView(...) }
+    else if appConfig.hasToken                       { ChatRoot(appConfig: appConfig) }
+    else                                             { LoginView(...) }
+}
+```
+
+Gate on auth (token presence), never transport status — a WS drop keeps the user on chat with the banner. Logout clears the token gate, which re-derives the root to the login screen (and tears down the session). There is no `NavHost`, no `NavigationStack(path:)`, no `navigation-compose` dependency, no tabs, no deep links.
+
+---
+
+> Everything below is the **typed-route discipline for a FUTURE multi-destination stack** — pseudocode for Swift (`NavigationStack` + path values) and Kotlin (Navigation Compose + typed destinations). Apply it only when a real back stack is introduced; it is NOT the shipped shape.
 
 ## Typed destinations -- the canonical shape
 

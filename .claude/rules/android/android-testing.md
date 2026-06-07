@@ -19,14 +19,13 @@ Six layers, each with a clear cost / scope tier. Picking the wrong tier means sl
 
 ## Layer 2 — Compose UI tests (on-device)
 
-- `createComposeRule()` stateless; `createAndroidComposeRule<HiltTestActivity>()` for DI-injected screens.
+- `createComposeRule()` with the screen's VM constructed directly from fakes (no DI framework — pass fakes through the same constructors production uses).
 - Drive with `onNodeWithText` / `onNodeWithTag` / `performClick` / `assertIsDisplayed`. NEVER `Thread.sleep`.
-- Hilt swaps via `@TestInstallIn`.
 
 ## Layers 3-4 — instrumented + E2E
 
-- Layer 3 (`androidTest`): real Android runtime for Room migrations, DataStore I/O, deep links, permissions.
-- Layer 4 (Maestro): `.yaml` flows in `qa/android/charters/`; happy path + critical regressions only.
+- Layer 3 (`androidTest`): real Android runtime — for deep links, permissions, and (if/when adopted) Room migrations / DataStore I/O. No local store is wired today, so this layer is currently thin.
+- Layer 4 (Maestro): agent-driven `.yaml` flows against an emulator; happy path + critical regressions. Elements are targeted by resource-id (Compose `testTag` surfaced as a resource-id); faults are armed via an `adb` broadcast in debug builds. Flow paths + the broadcast command live in the testing-knowledge mobile section.
 
 ## Layer 5 — Macrobenchmark + JankStats (G2b)
 

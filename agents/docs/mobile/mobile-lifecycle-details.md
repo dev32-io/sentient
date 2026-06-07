@@ -1,11 +1,33 @@
 # Mobile Lifecycle -- Details & Examples
 
-This file expands `platforms/mobile/rules/mobile-lifecycle.md`.
+This file expands `.claude/rules/mobile/mobile-lifecycle.md`.
 The rule states the bar; this doc shows the patterns and the
-anti-patterns the agent reaches for when uncertain. Examples are
-written in pseudocode so they transfer across iOS (SwiftUI /
-UIKit / scene phases) and Android (Activity / Fragment / Compose
-lifecycle / `ProcessLifecycleOwner`).
+anti-patterns the agent reaches for when uncertain.
+
+## Shipped reality — MobileSession + presence relay
+
+The chat session is a chat-scoped `MobileSession`; a tiny app-scoped relay drives its pause/resume:
+
+```kotlin
+// MobileSession lifecycle ops (shared/mobile-data)
+suspend fun open()  { sdk.connect() }                        // background connect → READY
+fun pause()         { sdk.disconnect(clearSession = false) } // background: drop WS, keep scope + in-memory outbox
+fun resume()        { sdk.forceReconnect() }                 // foreground: re-arm reconnect (idempotent)
+fun close()         { sdk.disconnect(clearSession = false); scope.cancel() }  // screen exit
+```
+
+```kotlin
+// Android PresenceCoordinator — ProcessLifecycleOwner observer with cold-start-skip
+override fun onStart(owner: LifecycleOwner) {
+    if (!backgrounded) { log.info("foreground.cold-start-skip"); return }  // init already called open()
+    backgrounded = false; onForeground?.invoke()                          // → session.resume()
+}
+override fun onStop(owner: LifecycleOwner) { backgrounded = true; onBackground?.invoke() }  // → session.pause()
+```
+
+iOS mirrors this with a `scenePhase` observer in `ChatViewModel` guarding on `hasBackgrounded`. The cold-start-skip is mandatory: without it, init-connect and presence-resume race into a double WS open. The chat `MobileSession` is REBUILT fresh on entry — it is not restored from a serializable snapshot, and the in-memory outbox does NOT survive process death.
+
+The rest of this doc is general lifecycle pattern guidance (pseudocode), applicable across iOS scene phases and Android `ProcessLifecycleOwner`.
 
 ## The four lifecycle moments worth naming
 
@@ -41,7 +63,7 @@ themselves explicitly.
 
 ## Saving state for restore
 
-Every screen owns a small, serializable snapshot:
+A screen that carries restorable VIEW state (scroll offset, selected tab, route arg) owns a small serializable snapshot. NOTE: the chat screen does NOT do this — its `MobileSession` is rebuilt fresh on entry and re-derived from the persisted token/backend gate, not from a saved bundle. The pattern below applies to screens that genuinely have view state to restore:
 
 ```pseudocode
 struct ProductScreenSavedState:
@@ -95,12 +117,14 @@ it; do not try to extend it.
 
 ```pseudocode
 onWillResignActive():
-    # Synchronously flush small, urgent state.
+    # Synchronously flush small, urgent state, then drop the socket.
     draftStore.flush()
-    outbox.persist()
+    session.pause()              # MobileSession: sdk.disconnect(clearSession=false) — WS drop, scope kept
     analytics.flushBatch()
     # Do NOT start a fresh network upload here.
 ```
+
+> NOTE (shipped): `session.pause()` only drops the WS; the in-memory outbox is RETAINED while the scope lives but is NOT written to disk. There is no `outbox.persist()` today — durable flush-to-storage is part of the offline-first roadmap (see `mobile-offline-details`).
 
 Anti-patterns:
 
@@ -166,7 +190,9 @@ Allowed types as of Android 16: `dataSync`, `mediaPlayback`, `phoneCall`, `locat
 
 Post-mortem visibility: `ApplicationExitInfo` (API 30+) records why the process was killed. Read on next launch for telemetry.
 
-## WorkManager + BGTaskScheduler (audit G6)
+## WorkManager + BGTaskScheduler (Future — no scheduled background work today)
+
+The app schedules no deferred/background work currently; the below is the target IF it is added.
 
 Android: WorkManager for deferred work (`OneTimeWorkRequest`, `PeriodicWorkRequest`, `ExpeditedWorkRequest` for high-priority). Constraints: `setRequiresCharging`, `setRequiredNetworkType`. Unique work with `enqueueUniqueWork` to deduplicate.
 

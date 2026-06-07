@@ -1,46 +1,41 @@
 ---
-description: Gradle conventions -- version catalog, Kotlin DSL, convention plugins, KSP, R8 + Baseline Profile on release, module-shape catalog.
+description: Gradle conventions -- version catalog, Kotlin DSL, single app module, R8 on release.
 paths:
-  - "android/**"
+  - "android/build.gradle.kts"
+  - "settings.gradle.kts"
+  - "gradle/**"
 ---
 
 # Gradle Build Conventions
 
-Build files are production code: typed, single-sourced, modular.
+Build files are production code: typed, single-sourced. The app is a SINGLE module — no `build-logic/`, no feature/core module split, no annotation processors.
 
 ## Version catalog — single source
 
-- ALL versions/libraries/plugins in `gradle/libs.versions.toml`. NO version literals elsewhere.
-- Module scripts reference `libs.kotlinx.coroutines`, `alias(libs.plugins.compose.compiler)`, etc.
+- ALL versions/libraries/plugins live in the version catalog. NO version literals in any build script.
+- Module scripts reference catalog aliases only.
 
-## Kotlin DSL + convention plugins
+## Kotlin DSL
 
-- All build scripts `.kts`. NO Groovy `.gradle` for new modules.
-- `build-logic/` included build hosts custom Gradle plugins. One convention per module shape.
-- Module scripts reduce to "apply convention + declare deps."
+- All build scripts are `.kts`. NO Groovy.
+- Keep the app module's applied plugins minimal; add one only for a real need.
 
-## KSP, not KAPT
+## Toolchain — catalog is the source of truth
 
-- Apply `com.google.devtools.ksp` plugin; replace every `kapt(...)` with `ksp(...)`.
-- KAPT is on deprecation path; KSP is ~2x faster on incremental.
+- SDK levels, Kotlin/AGP versions, and JVM target are pinned in the catalog and read from it; never hardcoded in a script.
+- Compile-options JVM target matches the catalog JVM entry.
+- The Compose compiler plugin is versioned with Kotlin.
+- Don't bump AGP to a major requiring a newer Gradle major than pinned — verify first.
 
-## Module-shape catalog (G1)
+## Release — R8
 
-- `:app` — wires DI root. `:feature:<name>` — depends on `:core:*` only; no feature→feature deps.
-- `:core:designsystem` theme/tokens, `:core:ui` shared composables, `:core:data` repos+sources.
-- `:core:domain` use-cases+models, `:core:testing` fakes+rules. Bottom-up deps only.
+- Release enables minify + resource shrink with the optimize + project ProGuard files.
+- Debug appends an application-id suffix so both variants install side by side; the gateway URL is a build-config field.
 
-## Toolchain — version catalog is the source of truth
+## Future — NOT adopted (don't add preemptively)
 
-- All SDK levels (`compileSdk`, `targetSdk`, `minSdk`), Kotlin version, AGP version, and JVM target are pinned in `gradle/libs.versions.toml`. Concrete values live there and in the details file.
-- `compileOptions` sourceCompatibility + targetCompatibility must match the catalog JVM target entry.
-- Compose compiler plugin version **must equal** Kotlin version (see catalog `compose-compiler` entry).
-- Do NOT bump AGP to a major version that requires a newer Gradle major version than the repo pins — verify compatibility before any Kotlin/AGP bump.
-
-## R8 + Baseline Profile (G2a)
-
-- Release: `isMinifyEnabled = true`, `isShrinkResources = true`.
-- Apply `androidx.baselineprofile` in `:app` + `:benchmark`; baseline profile rules ship with APK.
-
+- Convention plugins + a multi-module graph: only past a single screen-set.
+- KSP: only when a KSP-based library is adopted — KSP, never KAPT.
+- Baseline Profile + a benchmark module: a later perf step.
 
 > When a rule is unclear, read `agents/docs/android/android-gradle-details.md`.

@@ -1,8 +1,6 @@
 # E2E Smoke — Details & Examples
 
-Playwright MCP is the agent-driven smoke driver. The rule file
-(`.claude/rules/e2e-testing.md`) defines the bar; this doc shows how
-to execute it well.
+The driver depends on the surface: **web** (webui) → Playwright MCP; **native mobile** (Android + iOS apps) → Maestro + `adb`/`xcrun simctl`. The rule file (`.claude/rules/e2e-testing.md`) defines the bar; this doc shows how to execute it well. Both surfaces smoke against the same `deploy/macos/` gateway stack.
 
 ## Bringup
 
@@ -18,6 +16,24 @@ until curl -sk -o /dev/null -w "%{http_code}" https://localhost:8888/ | grep -q 
 Open `https://localhost:8888` via Playwright MCP `browser_navigate`. The
 self-signed cert is already trusted in the chromium profile that ships
 with the MCP — no clickthrough needed.
+
+## Native mobile bringup (Maestro)
+
+Same gateway stack; the apps point at it (Android emulator loopback `wss://10.0.2.2:8888`, iOS sim via the LAN host). Drive with Maestro:
+
+```bash
+# Android: build+install debug, then run a flow (resource-id selectors)
+adb install -r android/build/outputs/apk/debug/android-debug.apk
+maestro test qa/mobile/flows/android/01-send-stream.yaml      # or: qa/mobile/run-e2e.sh
+adb logcat -d | grep -i sentient                              # log trail (not browser console)
+# Faults (debug build only): adb shell am broadcast -a io.sentient.debug.FAULT --es kind malformed-frame
+
+# iOS: boot a sim, build via xcodebuild, run the flow (accessibilityIdentifier selectors)
+xcrun simctl boot "iPhone 16 Pro"; maestro test qa/mobile/flows/ios/01-send-stream.yaml
+# Login subflow: qa/mobile/flows/ios/login.yaml (avatar + PIN 1234). iOS has no fault-arming channel yet.
+```
+
+PIN for local test logins is `1234`. Known native gaps (iOS fault-arming, swipe rename/delete, physical-device reconnect) are flagged in the mobile-testing rules.
 
 ## Viewport matrix
 

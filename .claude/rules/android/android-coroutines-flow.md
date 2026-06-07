@@ -12,7 +12,7 @@ Flow is Kotlin's cold-stream primitive; `StateFlow`/`SharedFlow` are the hot var
 
 - `Flow<T>` — cold; producer runs per collector.
 - `StateFlow<T>` — hot, holds one value, replays to new collectors. Use for UI state.
-- `SharedFlow<T>` — hot, configurable replay/buffer. Avoid for one-shot events — drops under lifecycle-paused collection. Use Channel or events-in-state instead.
+- `SharedFlow<T>` — hot, configurable replay/buffer. In the UI layer, avoid it for one-shot events — drops under lifecycle-paused collection; use Channel or events-in-state instead. (A no-loss event tap collected on a non-UI scope with suspend-on-overflow is a different, valid use — that lives in the data layer, not the UI.)
 
 ## Lifecycle-aware collection
 
@@ -30,10 +30,11 @@ Flow is Kotlin's cold-stream primitive; `StateFlow`/`SharedFlow` are the hot var
 - `buffer(n)` decouples; `conflate()` drops intermediates; `debounce(t)` / `sample(t)` for search/scroll.
 - `combine(a, b)` emits on either change; `flatMapLatest` cancels in-flight on new upstream.
 
-## Data sources expose Flow (G5)
+## Data sources expose Flow
 
-- Room DAOs return `Flow<T>`; DataStore exposes `data: Flow<Preferences>` / `data: Flow<T>`.
-- Observe both with `collectAsStateWithLifecycle`; ViewModel exposes via `stateIn(WhileSubscribed(5_000))`.
+- Repositories expose result-envelope flows; the ViewModel collects and folds into one `StateFlow` of UI state.
+- Observe with `collectAsStateWithLifecycle`; for derived state expose via `stateIn(WhileSubscribed(5_000))`.
+- (Future) If a local store is added, Room DAOs / DataStore return `Flow<T>` the same way — none is wired today.
 
 
 > When a rule is unclear, read `agents/docs/android/android-coroutines-flow-details.md`.

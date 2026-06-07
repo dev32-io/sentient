@@ -1,6 +1,6 @@
 # Swift Concurrency -- Details & Examples
 
-This file expands `platforms/ios/rules/swift-concurrency.md`.
+This file expands `.claude/rules/ios/swift-concurrency.md`.
 The patterns below show structured-vs-unstructured tasks,
 `@MainActor` propagation, and common Sendable warnings + fixes.
 
@@ -217,6 +217,19 @@ extension LegacyClient {
 
 Wrap exactly once, at the boundary. Above the boundary, the rest
 of the code sees only `async` -- no completion handlers leak in.
+
+## Consuming SDK Kotlin Flows (SKIE)
+
+The shared SDK exposes Kotlin `Flow`s; SKIE bridges each as a `SkieSwiftFlow` you iterate with `for await` — no manual cast, no Combine bridge:
+
+```swift
+collectTask = Task { [weak self] in
+    for await result in session.chatRepo.chatStream { self?.apply(result) }   // SkieSwiftFlow<SentientResult<ChatModel>>
+}
+// fold the sealed result with onEnum(of:); store the Task and cancel it in deinit
+```
+
+This is the app's stream-consumption idiom — see `ios-architecture-mvvm-details.md` ("SKIE interop idioms") for the full `onEnum` / `SentientResult` / `Protocol_` patterns. Prefer this over bridging Kotlin flows to Combine.
 
 ## Swift 6 strict mode (audit I2)
 

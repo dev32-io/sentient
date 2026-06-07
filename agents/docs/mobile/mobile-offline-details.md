@@ -1,9 +1,22 @@
 # Mobile Offline-First -- Details & Examples
 
-This file expands `platforms/mobile/rules/mobile-offline.md`.
-Examples are pseudocode that translates to iOS (Combine /
-async-streams + Core Data / SQLite / SwiftData) and Android
-(Flow + Room / SQLDelight / DataStore).
+This file expands `.claude/rules/mobile/mobile-offline.md`.
+
+## Shipped reality (today)
+
+What actually exists is a thin, in-memory slice of the full doctrine below:
+
+- **Connection** — `ConnectionRepository.status` maps the SDK `connection` StateFlow to `SentientResult<ConnectionState>` (Loading/Success/Failure). The UI subscribes; it changes mid-screen.
+- **Writes** — `ChatRepository.send` → an in-memory `Outbox` (`QUEUED → SENT → FAILED`, `LinkedHashMap`), flushed on connection `READY` (`setConnected(true)`). NOT persistent; dies with the process. Per-message `retry(pendingId)` on FAILED.
+- **Reconciliation** — `pendingId` is a client-generated key the gateway ECHOES onto the committed user entry; `chatStream` drops the optimistic bubble on exact id match. There is NO server-side idempotency/replay contract — see the correction under "Idempotency" below.
+- **Reads** — `HistoryRepository` is cache-then-refresh with an IN-MEMORY cache (`seedCache`), not a durable store.
+- **Conflicts / ordering / multi-resource sync** — not applicable yet (single chat-send stream).
+
+See `mobile-data/outbox-optimistic-send` and `mobile-data/repositories` for the concrete shipped code.
+
+---
+
+> Everything below is the **offline-first roadmap** — the durable-store target if persistence is adopted. It is pseudocode, NOT the current implementation. Translates to iOS (async-streams + SwiftData/Core Data) and Android (Flow + Room/SQLDelight/DataStore).
 
 ## Observable network state
 
@@ -103,10 +116,12 @@ async drainEntry(entry):
         notifyUser(p)
 ```
 
-## Idempotency is non-negotiable
+## Idempotency (roadmap — NOT how the shipped client works)
 
-The server endpoint MUST accept an `operationId` (or
-`Idempotency-Key` header) and treat replays as no-ops. The client
+> CORRECTION vs shipped: the current client does NOT use a server idempotency key. `pendingId` is reconciliation-only — the gateway echoes it on the committed user entry and the optimistic bubble is dropped by id match. The outbox never re-sends a `SENT` id, so there is no replay path to deduplicate. The pattern below applies only IF a durable, replay-on-restart outbox is later adopted.
+
+For a durable outbox, the server endpoint MUST accept an `operationId` (or
+`Idempotency-Key` header) and treat replays as no-ops. A durable client
 WILL retry -- on reconnect, on app restart, on partial network
 failures where the request was sent but the response was lost.
 
@@ -176,7 +191,9 @@ A feature with no matrix coverage of these rows has an undefined
 offline behavior. The undefined behavior will be defined, in
 the worst possible way, by your first user on a flaky train.
 
-## Platform mapping (audit M2)
+## Platform mapping — durable-store roadmap (Future, NOT yet implemented)
+
+> The shipped outbox + history cache are in-memory. The stacks below are the target IF persistence is adopted; none is wired today.
 
 ### Android stack
 

@@ -21,7 +21,7 @@ and why those tools were chosen. One `###` subsection per surface.
 **Why this tool:** WebRTC AEC, AudioWorklet timing, jitter-buffer behaviour, and cycle-audio-queue state can only be exercised end-to-end in a real browser. Mocked playback misses these failure modes; they show up only as user-visible regressions.
 **How:**
 1. `source scripts/env.sh`
-2. `docker compose -f deploy/docker/docker-compose.yml build gateway && docker compose up -d gateway`
+2. `docker compose -f deploy/macos/docker-compose.yml build gateway && docker compose -f deploy/macos/docker-compose.yml up -d gateway`
 3. `until curl -sk -o /dev/null -w "%{http_code}" https://localhost:8888/ | grep -q 200; do sleep 1; done`
 4. Open `https://localhost:8888` in Chrome. Self-signed cert → click Advanced → Proceed.
 
@@ -220,7 +220,7 @@ the wizard handler. Wizard rejections look like `wizard.unlock.failed`,
 Run after any change touching `gateway/src/api/wizard/`, `gateway/src/admin/install-state.ts`, `gateway/templates/wizard/`, or the webui wizard components.
 
 1. `rm -rf ~/.sentient/`
-2. Bring up the stack: `cd deploy/docker && docker compose up -d`
+2. Bring up the stack: `cd deploy/macos && docker compose up -d`
 3. Read the unlock code: `cat ~/.sentient/gateway/data/unlock-code` (or read from gateway log banner).
 4. Open `https://localhost:8888`, enter the unlock code.
 5. Walk fresh: `provider → voice → secrets → bringup → admin → finish`.
@@ -248,7 +248,7 @@ After upgrading across the v0.1.0 → v0.2.0 install-state schema bump:
 
 ### T1 — Mobile login happy path
 **Scenario:** Avatar tap + correct 4-digit PIN lands the user on the chat screen.
-**Why added:** D-A2 phase gate; regression guard for `AuthViewModel` → `SdkStore` → `SentientSdk.login()` path on both platforms.
+**Why added:** D-A2 phase gate; regression guard for the login path on both platforms: the auth screen writes the token, then chat entry builds a chat-scoped `MobileSession` whose `open()` drives the SDK to READY. (No SDK singleton — the deleted `SdkStore` path is gone.)
 **Steps:**
 1. Pre-state: gateway running, users seeded, app at login screen (logged out).
 2. `tapOn id: login-avatar-<userId>` (the target user's avatar).
@@ -272,7 +272,7 @@ After upgrading across the v0.1.0 → v0.2.0 install-state schema bump:
 **Scenario:** After login, the user types a message, sends it, and receives an LLM reply — both committed to the message list.
 **Why added:** D-A3 phase gate; end-to-end contract across login → WS `READY` → `ClientMessage.TextInput` → Hermes round-trip → `ConversationEntry` rendering. Builds on T1.
 **Steps:**
-1. Pre-state: logged in, `SdkState = READY` (complete T1 first, or launch into a pre-authenticated session).
+1. Pre-state: logged in, connection READY (`ConnectionState.status == READY`) (complete T1 first, or launch into a pre-authenticated session).
 2. `tapOn id: chat-input` → `inputText: "hello"` → `tapOn id: chat-send`.
 3. `hideKeyboard` (soft keyboard obscures list on Android).
 4. `assertVisible id: message-bubble-0` (user bubble commits immediately).
@@ -283,10 +283,10 @@ After upgrading across the v0.1.0 → v0.2.0 install-state schema bump:
 
 ### T6 — Mobile settings logout (version + clear-token + disconnect → login)
 **Scenario:** From chat, open Settings, confirm the app-version string, tap Log out, and land back on the login screen — proving the token was cleared + the WS disconnected. Relaunch (without clearing app data) and confirm login again, proving the clear was persistent.
-**Why added:** D-A5 phase gate. Logout is the inverse of login (`tokenStore.save → sdk.connect`); logout = `sdk.disconnect()` then `tokenStore.clear()`. Regression guard: a future change that disconnects but forgets to clear the token would silently auto-resume on relaunch — only the relaunch leg catches it.
+**Why added:** D-A5 phase gate. Logout clears the token + display name; the chat view's teardown (VM clear / `deinit` → `MobileSession.close`) disconnects the WS. Regression guard: a future change that disconnects but forgets to clear the token would silently auto-resume on relaunch — only the relaunch leg catches it.
 **testTags used:** `settings-open` (chat top bar gear), `settings-screen`, `settings-version`, `settings-logout`, `settings-back`, plus `login-avatar-<userId>` for the return assertion.
 **Steps:**
-1. Pre-state: logged in, `SdkState = READY`, chat showing (complete T1 first).
+1. Pre-state: logged in, connection READY (`ConnectionState.status == READY`), chat showing (complete T1 first).
 2. `tapOn id: settings-open` → `assertVisible id: settings-screen`.
 3. `assertVisible id: settings-version` AND assert its text is a non-empty version string (`<name> (<code>)`, e.g. `0.0.1 (1)`).
 4. `tapOn id: settings-logout`.

@@ -1,6 +1,6 @@
 # Swift -- Details & Examples
 
-This file expands `platforms/ios/rules/swift.md`. The rule states
+This file expands `.claude/rules/ios/swift.md`. The rule states
 the bar; this doc shows the patterns and the anti-patterns the
 agent reaches for when uncertain.
 
