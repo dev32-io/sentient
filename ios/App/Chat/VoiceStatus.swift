@@ -1,14 +1,13 @@
 // ---------------------------------------------------------------------------
-// VoiceStatus — pure mapping from the SDK's voice fields to a SentientMark
-// animation mode, mirroring the Android markModeOf (android/.../chat/
-// VoiceStatus.kt) and gateway/webui/src/hooks/voice-status.ts (buildVoiceStatus)
-// + app.tsx's activeCycleMode/topbarMarkMode derivation.
+// VoiceStatus — avatar animation mode enum + live derivation from ConnectionState.
+// The legacy markMode(of: SdkState) overload was removed with the SdkState
+// aggregate (dead code cleanup). The live path is markModeOfConnection(_:).
 //
-// Precedence (identical to buildVoiceStatus): assistant audio playing wins,
-// then server cognition (thinking/acting → processing), then mic-open
-// (listening), else idle. CRITICAL — this is the only place the avatar's
-// animation state is decided, and .idle maps to NO animation (the
-// event-driven-UX rule: "constant by default is a bug").
+// Precedence: assistant audio playing wins, then server cognition
+// (thinking/acting → processing), then mic-open (listening), else idle.
+// CRITICAL — this is the only place the avatar's animation state is decided,
+// and .idle maps to NO animation (event-driven-UX rule: "constant by default
+// is a bug").
 // ---------------------------------------------------------------------------
 import MobileData
 
@@ -20,19 +19,6 @@ enum MarkMode {
     case listening
     case thinking
     case speaking
-}
-
-/// Derives the avatar animation mode from the single SDK surface. Pure — every
-/// mode traces to an SDK-emitted field, so the animation is event-driven and
-/// stops the instant its driving state leaves. `.idle` ⇒ no animation.
-func markMode(of state: SdkState) -> MarkMode {
-    let speaking = state.isSpeaking || state.audioState == .assistantSpeaking
-    if speaking { return .speaking }
-    let thinking = state.cognition != .idle || state.audioState == .processing
-    if thinking { return .thinking }
-    let listening = state.audioState == .listening || state.audioState == .userSpeaking
-    if listening { return .listening }
-    return .idle
 }
 
 /// Derives the avatar animation mode from a ConnectionState (chat-scoped session

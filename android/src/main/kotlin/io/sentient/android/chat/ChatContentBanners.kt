@@ -41,7 +41,7 @@ private val BANNER_BORDER = 1.dp
 internal val CONTENT_SPINNER_SIZE = 14.dp
 internal val CONTENT_SPINNER_STROKE = 2.dp
 
-/** Derives MarkMode from ConnectionState fields — analogous to markModeOf(SdkState). */
+/** Derives MarkMode from ConnectionState fields. */
 internal fun markModeOfConnection(connection: ConnectionState): MarkMode {
     val speaking = connection.isSpeaking ||
         connection.audioState == AudioState.ASSISTANT_SPEAKING

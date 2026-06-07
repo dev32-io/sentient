@@ -62,7 +62,7 @@ private const val ENCODING_OPUS = "opus"
  *   the gated mic frames into 20 ms packets; reset per mic session by the pump.
  * @param audioInput Lazy connector accessor (breaks the construction cycle).
  * @param echoGate Client echo suppressor (A5).
- * @param fsm Voice-status FSM (drives SdkState display).
+ * @param fsm Voice-status FSM (drives ConnectionState.audioState display).
  * @param clock Injected wall-clock for gate RMS/tail timing.
  * @param scope Orchestrator coroutine scope.
  * @param inputSampleRate Mic/STT uplink rate (Hz).

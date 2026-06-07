@@ -30,7 +30,7 @@ import io.sentient.mobilesdk.protocol.ServerMessage
  *
  * Defined here (not in protocol) because it is a connector-derived view, not a
  * raw wire frame — it is built from [ServerMessage.TaskUpdate] with argsPreview
- * defaulted. C7's SdkState.tasks consumes this type.
+ * defaulted. Used by ChatMessage.tools and exposed on ConnectionState.
  */
 data class TaskSnapshotItem(
     val taskId: String,

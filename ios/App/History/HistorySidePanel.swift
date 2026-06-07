@@ -196,7 +196,8 @@ private struct PanelPreviewHost: View {
     // Preview uses a stub session (never connects — seeding happens in onAppear).
     @StateObject private var model = HistoryModel(
         session: createMobileSession(gatewayWsUrl: "ws://localhost:8888/api/v1/ws",
-                                     allowSelfSignedDevHost: true, capabilities: [])
+                                     allowSelfSignedDevHost: true, capabilities: [],
+                                     devFaultsEnabled: true)
     )
     let seed: [SessionRow]
     var errorMessage: String? = nil

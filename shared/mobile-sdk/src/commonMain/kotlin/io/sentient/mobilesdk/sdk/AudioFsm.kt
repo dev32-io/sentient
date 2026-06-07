@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // AudioFsm — the pure voice-status state machine (R5).
 //
-// Drives the SdkState voice-status display (listening / processing / speaking)
+// Drives the ConnectionState.audioState display (listening / processing / speaking)
 // consumed by BOTH native UIs. Mirrors gateway/webui/src/hooks/voice-status.ts
 // buildVoiceStatus (listening / processing / assistant-speaking) plus the E3
 // plan's full state list:
@@ -12,8 +12,8 @@
 // Driven by TYPED inputs (no hardware, no clock): Activate / Deactivate /
 // MicOnset / TranscriptFinal / CycleStart / CycleDone / AudioStart / AudioDone /
 // Interrupt. The AudioPipeline feeds these from the capture/gate/connector
-// events; the orchestrator maps the resulting AudioState onto SdkState via
-// StateDeriver. Pure typed transitions — no logging here (the pipeline logs
+// events; the orchestrator maps the resulting AudioState onto ConnectionState.
+// Pure typed transitions — no logging here (the pipeline logs
 // every transition with prev→new+input, per .claude/rules/logging.md).
 //
 // Transition table (every row pinned in AudioFsmTest):
@@ -44,7 +44,7 @@ package io.sentient.mobilesdk.sdk
  * Voice-status FSM states. The four "display" states map onto voice-status.ts:
  * [LISTENING] → "listening", [PROCESSING] → "processing",
  * [ASSISTANT_SPEAKING] → "assistant-speaking". [USER_SPEAKING] and
- * [INTERRUPTING] are local transients the SdkState derivation collapses for
+ * [INTERRUPTING] are local transients collapsed for
  * display (user-speaking still reads as listening-active; interrupting reads as
  * speaking until playback.stop settles) — kept distinct here so the pipeline can
  * drive gate/connector side effects precisely.

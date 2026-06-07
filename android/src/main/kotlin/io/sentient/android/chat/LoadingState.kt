@@ -23,7 +23,7 @@ enum class LoadingAffordance { NONE, CONNECTING, SENDING }
  * Pure mapping from the single SDK state surface + pending-send flag to a
  * [LoadingAffordance].
  *
- * @param status The current [SdkStatus] from [io.sentient.mobilesdk.sdk.SdkState].
+ * @param status The current [SdkStatus] from [io.sentient.mobilesdk.sdk.ConnectionState].
  * @param connectionLost True when a previous healthy connection was lost and recovery
  *   is in progress or exhausted. When true with CONNECTING/AUTHENTICATING, the
  *   [io.sentient.android.chat.ConnectionBannerState.RECONNECTING] banner owns the UI;
