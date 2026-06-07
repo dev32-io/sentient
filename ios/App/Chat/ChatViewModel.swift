@@ -38,8 +38,9 @@ final class ChatViewModel: ObservableObject {
 
     /// Cold-start-skip: true after the first onBackground(). Only once we have
     /// actually backgrounded do we resume on the next foreground edge (mirrors
-    /// Android PresenceCoordinator.backgrounded guard).
-    private var hasBackgrounded = false
+    /// Android PresenceCoordinator.backgrounded guard). Readable by ChatView for
+    /// lifecycle logging (distinguishes cold-start-skip from genuine foreground).
+    private(set) var hasBackgrounded = false
 
     init(session: MobileSession) {
         self.session = session
@@ -120,6 +121,7 @@ final class ChatViewModel: ObservableObject {
             state.banner = ErrorBanner(text: f.error.userMessage, canRetry: canRetry)
             log.warn("apply failure msg=\(f.error.userMessage) canRetry=\(canRetry)")
         }
+        log.debug("uiState messages=\(state.model.committed.count) pending=\(state.model.pending.count) live=\(state.model.live != nil) loading=\(state.isLoading) banner=\(state.banner != nil)")
     }
 
     // ── Connection stream collection ──────────────────────────────────────────
@@ -154,6 +156,7 @@ final class ChatViewModel: ObservableObject {
 
     /// Single teardown path: cancel collection tasks + close session.
     deinit {
+        log.info("deinit")
         collectTask?.cancel()
         connectionTask?.cancel()
         session.close()

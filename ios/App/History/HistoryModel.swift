@@ -1,26 +1,23 @@
 // ---------------------------------------------------------------------------
 // HistoryModel — drives the history side panel's session list + search state.
 //
-// Consumes session.sdk.listSessions() directly (the same SDK surface the old
-// SdkStore.listSessions used) — avoids the HistoryRepository.load() flow's
-// SKIE generic bridging complexity (List<SessionRowData> → [SessionRowData]
-// cast is not guaranteed safe across SKIE boundaries). This is semantically
-// equivalent: request-then-cache, refresh on open + after each mutation.
+// Consumes session.historyRepo.load() (Flow<SentientResult<List<SessionRowData>>>)
+// via the same SKIE SkieSwiftFlow iteration pattern as ChatViewModel uses for
+// chatStream. Each call to load() emits Loading(cached) immediately (instant
+// drawer render from cache), then Success or Failure from the live fetch —
+// giving cache-then-refresh UX that matches Android HistoryViewModel.
 //
-// The HistoryRepository's load() flow is still used internally by the session
-// (connection/outbox flush collector) — this file consumes the SDK's direct
-// session-list method, which returns SessionsListPage ([SessionRow]) directly.
+// SessionRowData{id, title, updatedAtMs} → SessionRow mapping mirrors Android's
+// toSessionRow(): startedAt=0, lastActiveAt=updatedAtMs, messageCount=0,
+// isActive=false.
 //
-// Search is client-side substring over title (gateway does not expose sessions.search).
+// refresh() re-collects load() (cold Flow — each collection re-runs fetch).
+// Mutations (switchSession/newChat/rename/delete) still route through session.sdk.
+//
+// Search is client-side substring over title.
 // ---------------------------------------------------------------------------
 import Foundation
 import MobileData
-
-/// Deadline for the session-list fetch. Mirror the old SdkStore timeout.
-private let listSessionsTimeoutSeconds: Double = 12
-
-/// Page size for the session list fetch. Mirrors Android's LIST_PAGE_LIMIT (50).
-private let listPageLimit: Int32 = 50
 
 @MainActor
 final class HistoryModel: ObservableObject {
@@ -32,11 +29,14 @@ final class HistoryModel: ObservableObject {
     private let session: MobileSession
     private let log = AppLog("history", "model")
 
+    /// In-flight load task; cancelled and replaced each time refresh() is called.
+    private var loadTask: Task<Void, Never>?
+
     init(session: MobileSession) {
         self.session = session
     }
 
-    // ── Rows after client-side search filter ────────────────────────────────────
+    // ── Rows after client-side search filter ─────────────────────────────────
 
     var visible: [SessionRow] {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
@@ -46,22 +46,30 @@ final class HistoryModel: ObservableObject {
 
     var isSearching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
 
-    // ── Refresh ─────────────────────────────────────────────────────────────────
+    // ── Refresh ──────────────────────────────────────────────────────────────
 
-    /// Re-fetch the session list. Call on panel open + after each mutation.
-    func refresh() async {
+    /// Re-collect load(). Cancels any in-flight collection; load() is cold so
+    /// each collection re-runs the cache-then-refresh pair.
+    func refresh() {
         log.info("refresh")
-        await loadSessions()
+        loadTask?.cancel()
+        loadTask = Task { [weak self] in
+            guard let self else { return }
+            for await result in session.historyRepo.load() {
+                guard !Task.isCancelled else { break }
+                apply(result)
+            }
+        }
     }
 
-    // ── Mutations ───────────────────────────────────────────────────────────────
+    // ── Mutations ─────────────────────────────────────────────────────────────
 
     func switchSession(_ sessionId: String) async {
         log.info("switchSession sessionId=\(sessionId)")
         do { try await session.sdk.switchSession(sessionId: sessionId) } catch {
             log.warn("switchSession failed reason=\(error.localizedDescription)")
         }
-        await loadSessions()
+        refresh()
     }
 
     func newChat() async {
@@ -69,7 +77,7 @@ final class HistoryModel: ObservableObject {
         do { try await session.sdk.doNewChat() } catch {
             log.warn("newChat failed reason=\(error.localizedDescription)")
         }
-        await loadSessions()
+        refresh()
     }
 
     func renameSession(_ sessionId: String, title: String) async {
@@ -77,7 +85,7 @@ final class HistoryModel: ObservableObject {
         do { try await session.sdk.renameSession(id: sessionId, title: title) } catch {
             log.warn("renameSession failed reason=\(error.localizedDescription)")
         }
-        await loadSessions()
+        refresh()
     }
 
     func deleteSession(_ sessionId: String) async {
@@ -85,39 +93,51 @@ final class HistoryModel: ObservableObject {
         do { try await session.sdk.deleteSession(id: sessionId) } catch {
             log.warn("deleteSession failed reason=\(error.localizedDescription)")
         }
-        await loadSessions()
+        refresh()
     }
 
-    // ── Load via sdk.listSessions ───────────────────────────────────────────────
+    // ── Result folding ────────────────────────────────────────────────────────
 
-    private func loadSessions() async {
-        loading = true
-        error = nil
-        do {
-            let page = try await withThrowingTaskGroup(of: SessionsListPage.self) { group in
-                group.addTask { try await self.session.sdk.listSessions(limit: listPageLimit, offset: 0) }
-                group.addTask {
-                    try await Task.sleep(nanoseconds: UInt64(listSessionsTimeoutSeconds * 1_000_000_000))
-                    throw HistoryModelError.timedOut
-                }
-                guard let result = try await group.next() else { throw HistoryModelError.timedOut }
-                group.cancelAll()
-                return result
+    private func apply(_ result: SentientResult<NSArray>) {
+        switch onEnum(of: result) {
+        case .loading(let l):
+            loading = true
+            if let rows = l.partial as? [SessionRowData] {
+                sessions = rows.map { $0.toSessionRow() }
+                log.debug("load.cache count=\(sessions.count)")
             }
-            log.info("loaded count=\(page.items.count) total=\(page.total)")
-            sessions = page.items
+        case .success(let s):
+            if let rows = s.data as? [SessionRowData] {
+                sessions = rows.map { $0.toSessionRow() }
+                log.info("loaded count=\(sessions.count)")
+            }
             loading = false
             error = nil
-        } catch {
-            log.warn("load-failed reason=\(error.localizedDescription)")
+        case .failure(let f):
+            log.warn("load-failed reason=\(f.error.userMessage)")
             loading = false
-            self.error = error.localizedDescription
+            error = f.error.userMessage
         }
     }
 }
 
-private enum HistoryModelError: Error {
-    case timedOut
+// ── SessionRowData → SessionRow mapping ──────────────────────────────────────
+
+private extension SessionRowData {
+    /// Maps the repository row to the SDK's SessionRow shape.
+    /// Mirrors Android HistoryViewModel.toSessionRow():
+    ///   startedAt=0, lastActiveAt=updatedAtMs, messageCount=0, isActive=false.
+    func toSessionRow() -> SessionRow {
+        SessionRow(
+            sessionId: id,
+            rootId: nil,
+            title: title,
+            startedAt: 0,
+            lastActiveAt: updatedAtMs,
+            messageCount: 0,
+            isActive: false
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -56,6 +56,8 @@ struct ChatView: View {
     @State private var panelDeleting: PanelTarget?
     @State private var panelRenameText = ""
 
+    private let sceneLog = AppLog("chat", "scene")
+
     // ── Init ──────────────────────────────────────────────────────────────────────
 
     init(vm: ChatViewModel, userName: String, onLogout: @escaping () -> Void) {
@@ -136,8 +138,16 @@ struct ChatView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
-            case .background: vm.onBackground()
-            case .active: vm.onForeground()
+            case .background:
+                sceneLog.info("background")
+                vm.onBackground()
+            case .active:
+                if vm.hasBackgrounded {
+                    sceneLog.info("foreground")
+                } else {
+                    sceneLog.info("cold-start-skip")
+                }
+                vm.onForeground()
             default: break
             }
         }
