@@ -1,20 +1,16 @@
 // ---------------------------------------------------------------------------
-// StateDeriver — folds the connector slices into one immutable SdkState (R5).
+// StateDeriver — folds the connector slices into the split observable surfaces:
+//   deriveConnection() → ConnectionState (transport + voice axis)
+//   deriveTimeline()   → List<ChatMessage> (committed history, no streaming bubble)
 //
 // The orchestrator holds ONE StateDeriver. Each connector callback updates a
-// slice here, then asks for derive() and emits the result on the single
-// StateFlow. Native UIs re-derive NOTHING — they read SdkState fields directly.
+// slice here, then calls deriveConnection()/deriveTimeline() and emits on the
+// respective StateFlow. Native UIs read ConnectionState or the timeline directly.
 //
 // messages: mirrors web-sdk deriveMessages — only committed user/assistant
 // feed items fold to ChatMessage (tool + trigger entries are DROPPED, matching
 // cycle-helpers.ts appendCommittedItems: tool calls surface via tasks, trigger
-// is Phase-2-ignored), then the live in-flight buffer is appended as a
-// streaming=true bubble when present. cutoffKind comes off the assistant
-// entry's cutoff. (The webui typewriter / cycleId-stamping is a UI presentation
-// concern, not an SDK contract — left to the native UI.)
-//
-// cognition: the cycle-driven CognitionState (THINKING/IDLE). ACTING is never
-// derived from tasks — it stays unreached, matching the C4 connector + the TS.
+// is Phase-2-ignored). cutoffKind comes off the assistant entry's cutoff.
 //
 // Pure + synchronous: no coroutines, no platform types, no logging (the
 // orchestrator logs the integration trail; this is a value transform).
@@ -30,10 +26,10 @@ import io.sentient.mobilesdk.transport.SdkStatus
 import io.sentient.mobilesdk.util.Clock
 
 /**
- * Holds the connector-owned slices and folds them into [SdkState].
+ * Holds the connector-owned slices and projects them onto the split surfaces.
  *
- * Single-threaded: the orchestrator mutates slices and calls [derive] from one
- * dispatcher. Each setter returns Unit; [derive] builds the immutable snapshot.
+ * Single-threaded: the orchestrator mutates slices and calls [deriveConnection]/
+ * [deriveTimeline] from one dispatcher. Each setter returns Unit.
  *
  * @param clock Injected wall-clock used to stamp the live streaming bubble's ts
  *   so it sorts after committed entries (mirrors web-sdk's Date.now()).
@@ -100,23 +96,6 @@ class StateDeriver(private val clock: Clock) {
         } as ConversationFeedItem.User?
         if (lastSpeechUser != null && lastSpeechUser.content == transcript) transcript = ""
     }
-
-    /** Build the immutable snapshot from the current slices. */
-    fun derive(): SdkState = SdkState(
-        status = status,
-        messages = deriveMessages(feed, inflight, clock.nowMs(), tasks, cycleByTs),
-        transcript = transcript,
-        cognition = cognition,
-        voiceMode = voiceMode,
-        prefs = prefs,
-        tasks = tasks,
-        isSpeaking = isSpeaking,
-        audioState = audioState,
-        hasSession = hasSession,
-        connectionLost = connectionLost,
-        authExpired = authExpired,
-        lastCycleError = lastCycleError,
-    )
 
     /** Project the connection-axis slice (status, session, voice, audio). */
     fun deriveConnection(): ConnectionState = ConnectionState(

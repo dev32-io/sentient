@@ -1,11 +1,12 @@
 // ---------------------------------------------------------------------------
-// SdkState — THE single observable surface (R5).
+// SdkState — legacy aggregate (kept for app dead-code that still compiles
+// against it). Both native UIs now consume the split surfaces:
+//   connection: StateFlow<ConnectionState>  — transport + voice axis
+//   timeline:   StateFlow<List<ChatMessage>> — committed message history
 //
-// Both native UIs (Phase 2) subscribe to exactly one StateFlow<SdkState> and
-// re-derive NOTHING. Every connector slice folds into this one immutable value
-// via StateDeriver. Mirrors web-sdk's single state machine: the webui's
-// buildVoiceStatus / deriveMessages derivations are collapsed here so the SDK
-// owns the derivation, not the UI.
+// SdkState is no longer emitted by SentientSdk. StateDeriver.derive() has been
+// removed. This file is kept because ChatScreen.kt (Android dead-code) and
+// VoiceStatus.swift (iOS dead-code) still import the type.
 //
 // CognitionState (C4) and TaskSnapshotItem (C5) are imported, never redefined.
 // ---------------------------------------------------------------------------

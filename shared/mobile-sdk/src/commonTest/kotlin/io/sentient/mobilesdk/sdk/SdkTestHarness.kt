@@ -69,9 +69,9 @@ internal fun TestScope.buildSdk(
 internal suspend fun TestScope.connectToReady(sdk: SentientSdk, fake: FakeWebSocketEngine) {
     val job = launch { sdk.connect() }
     // Let connect open the socket + send auth, then drive the server side.
-    sdk.state.first { it.status == SdkStatus.AUTHENTICATING }
+    sdk.connection.first { it.status == SdkStatus.AUTHENTICATING }
     fake.emit(WsIncoming.Text(AUTH_OK_FRAME))
     fake.emit(WsIncoming.Text(READY_FRAME))
-    sdk.state.first { it.status == SdkStatus.READY }
+    sdk.connection.first { it.status == SdkStatus.READY }
     job.join()
 }

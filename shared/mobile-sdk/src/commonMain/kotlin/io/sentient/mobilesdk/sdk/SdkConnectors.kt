@@ -3,8 +3,8 @@
 //
 // Extracted from SentientSdk.kt to keep the orchestrator under the 300-line
 // clean-code budget. Each connector callback updates a StateDeriver slice and
-// triggers a re-emit via the injected [emit] lambda — the single-StateFlow
-// fan-in (R5). Connectors are constructed ONCE (their mirrors survive across
+// triggers a re-emit via the injected [emit] lambda (connection/timeline fan-in).
+// Connectors are constructed ONCE (their mirrors survive across
 // reconnects); the router broadcasts every frame to all of them.
 //
 // The audio connector is double-wired by the orchestrator: it appears in
@@ -51,7 +51,7 @@ class AudioDownlinkHooks(
  * Constructs and owns the connector set, each wired to fold into [deriver].
  *
  * @param deriver The single state slice-holder; callbacks mutate it then [emit].
- * @param emit Recompute + publish the SdkState. Called after every slice change.
+ * @param emit Recompute + publish connection/timeline. Called after every slice change.
  * @param send Send a control [ClientMessage] over the transport.
  * @param sendBinary Send a raw binary frame (PCM uplink) over the transport.
  * @param newId Deterministic request-id generator for sessions requests.

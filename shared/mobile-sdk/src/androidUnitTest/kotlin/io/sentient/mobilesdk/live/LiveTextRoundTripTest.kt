@@ -174,7 +174,7 @@ class LiveTextRoundTripTest {
 
     /**
      * @live — login → save token → connect → READY → sendText("hello") → assert an
-     * assistant reply lands in sdk.state within [ROUND_TRIP_TIMEOUT_MS].
+     * assistant reply lands in sdk.timeline within [ROUND_TRIP_TIMEOUT_MS].
      *
      * OPERATOR ONLY: gated behind SENTIENT_PIN (a valid PIN is the operator's).
      * Without it this early-returns. Running it makes Hermes call its configured
@@ -224,28 +224,28 @@ class LiveTextRoundTripTest {
             // 3. connect → READY.
             sdk.connect()
             val ready = withTimeoutOrNull(READY_TIMEOUT_MS) {
-                sdk.state.first { it.status == SdkStatus.READY }
+                sdk.connection.first { it.status == SdkStatus.READY }
             }
             assertTrue(ready != null, "SDK should reach READY within ${READY_TIMEOUT_MS}ms")
             println("[live] connected → READY")
 
-            // 4. sendText → wait for a committed assistant message.
+            // 4. sendText → wait for a committed assistant message in the timeline.
             sdk.sendText("hello")
             val withReply = withTimeoutOrNull(ROUND_TRIP_TIMEOUT_MS) {
-                sdk.state.first { state ->
-                    state.messages.any { it.role == ROLE_ASSISTANT && !it.streaming && it.content.isNotBlank() }
+                sdk.timeline.first { msgs ->
+                    msgs.any { it.role == ROLE_ASSISTANT && !it.streaming && it.content.isNotBlank() }
                 }
             }
             assertTrue(
                 withReply != null,
                 "an assistant reply should arrive within ${ROUND_TRIP_TIMEOUT_MS}ms",
             )
-            val reply = withReply.messages.last { it.role == ROLE_ASSISTANT && !it.streaming }
+            val reply = withReply.last { it.role == ROLE_ASSISTANT && !it.streaming }
             // cycleId correlation: the gateway stamps each cycle; the reply commit
             // is the cycle.done terminal. Log a short preview (≤120 chars) only.
             println(
                 "[live] round_trip OK — assistant reply: \"" +
-                    reply.content.take(120) + "\" (msgs=${withReply.messages.size})",
+                    reply.content.take(120) + "\" (timeline=${withReply.size})",
             )
         } finally {
             sdk.disconnect()

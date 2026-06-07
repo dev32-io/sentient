@@ -6,9 +6,9 @@
 // .claude/rules/testing.md.
 //
 // Feeds the real connector typed frames + the two client-side notes
-// (noteInterrupt / noteBargeIn) — no mocks of internals. The deriver fold is
-// covered separately by asserting onErrorChange drives the flag the orchestrator
-// writes into SdkState.lastCycleError.
+// (noteInterrupt / noteBargeIn) — no mocks of internals. The connector exposes
+// onErrorChange; the orchestrator wires that to deriver.lastCycleError (an
+// events-emitted SdkEvent.CycleAborted is the app-facing signal).
 //
 //   cycle.started → interrupt() → cycle.aborted ⇒ lastCycleError false
 //   cycle.started → barge-in    → cycle.aborted ⇒ false
@@ -17,9 +17,7 @@
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.connectors
 
-import io.sentient.mobilesdk.fakes.FixedClock
 import io.sentient.mobilesdk.protocol.ServerMessage
-import io.sentient.mobilesdk.sdk.StateDeriver
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -148,16 +146,4 @@ class CycleErrorConnectorTest {
         assertFalse(c.hasError())
     }
 
-    @Test
-    fun folds_into_sdk_state_via_deriver() {
-        // The orchestrator wires onErrorChange → deriver.lastCycleError → derive().
-        // Pin that the flag actually reaches the single SdkState surface.
-        val deriver = StateDeriver(FixedClock())
-        val c = CycleErrorConnector(onErrorChange = { deriver.lastCycleError = it })
-        c.handle(started("c1"))
-        c.handle(aborted("c1"))
-        assertTrue(deriver.derive().lastCycleError)
-        c.handle(started("c2"))
-        assertFalse(deriver.derive().lastCycleError)
-    }
 }

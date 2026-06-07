@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
-// SentientSdkSessionTest — pins the SdkState.hasSession FSM, the auth/session
-// signal that gates login↔chat on both native UIs.
+// SentientSdkSessionTest — pins the ConnectionState.hasSession FSM, the
+// auth/session signal that gates login↔chat on both native UIs.
 //
 // KEEPER (per .claude/rules/testing.md): hasSession is an FSM invariant the
 // gate divergence depends on (transport-status-gated screens unmounted chat on
@@ -13,15 +13,15 @@
 //   terminal authExpired       ⇒ hasSession FALSE
 //
 // Drives the real orchestrator over a FakeWebSocketEngine under runTest virtual
-// time (mirrors SentientSdkReconnectTest); the idle path is asserted via the
-// exact branch disconnectForIdle() delegates to (disconnect(clearSession=false))
-// plus a direct StateDeriver fold check, since the harness clock is fixed and
-// the idle tick loop can't advance it.
+// time (mirrors SentientSdkReconnectTest).
+//
+// NOTE: deriver_folds_hasSession_into_state called deriver.derive() which is
+// removed with the legacy SdkState aggregate. That direct-deriver assertion is
+// covered end-to-end by reaching_ready_sets_hasSession_true above.
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.sdk
 
 import io.sentient.mobilesdk.fakes.FakeWebSocketEngine
-import io.sentient.mobilesdk.fakes.FixedClock
 import io.sentient.mobilesdk.transport.SdkStatus
 import io.sentient.mobilesdk.transport.WebSocketEngine
 import io.sentient.mobilesdk.transport.WebSocketSession
@@ -42,11 +42,11 @@ class SentientSdkSessionTest {
     fun reaching_ready_sets_hasSession_true() = runTest {
         val fake = FakeWebSocketEngine()
         val sdk = buildSdk(fake)
-        assertFalse(sdk.state.value.hasSession, "hasSession starts false (pre-login)")
+        assertFalse(sdk.connection.value.hasSession, "hasSession starts false (pre-login)")
 
         connectToReady(sdk, fake)
 
-        assertTrue(sdk.state.value.hasSession, "hasSession set on first READY")
+        assertTrue(sdk.connection.value.hasSession, "hasSession set on first READY")
     }
 
     @Test
@@ -54,15 +54,15 @@ class SentientSdkSessionTest {
         val fake = FakeWebSocketEngine()
         val sdk = buildSdk(fake)
         connectToReady(sdk, fake)
-        assertTrue(sdk.state.value.hasSession)
+        assertTrue(sdk.connection.value.hasSession)
 
         // Non-clean drop on the READY session → RECONNECTING. The gate must keep
         // showing chat (with the connection-lost banner), so hasSession STAYS true.
         fake.failIncoming("network drop")
-        sdk.state.first { it.status == SdkStatus.RECONNECTING }
+        sdk.connection.first { it.status == SdkStatus.RECONNECTING }
 
-        assertTrue(sdk.state.value.connectionLost, "connectionLost set on drop")
-        assertTrue(sdk.state.value.hasSession, "drop must NOT clear hasSession")
+        assertTrue(sdk.connection.value.connectionLost, "connectionLost set on drop")
+        assertTrue(sdk.connection.value.hasSession, "drop must NOT clear hasSession")
     }
 
     @Test
@@ -74,15 +74,15 @@ class SentientSdkSessionTest {
         val fake = ReopenFailingEngine()
         val sdk = buildSdk(fake)
         connectToReadyVia(sdk) { fake.emit(it) }
-        assertTrue(sdk.state.value.hasSession)
+        assertTrue(sdk.connection.value.hasSession)
 
         fake.failNextOpens = true
         fake.failIncoming("network drop")
 
         // runTest auto-advances the backoff; the loop surrenders to DISCONNECTED
         // with connectionLost still set (exhausted, not a clean disconnect).
-        sdk.state.first { it.status == SdkStatus.DISCONNECTED && it.connectionLost }
-        assertTrue(sdk.state.value.hasSession, "exhausted reconnect must NOT clear hasSession")
+        sdk.connection.first { it.status == SdkStatus.DISCONNECTED && it.connectionLost }
+        assertTrue(sdk.connection.value.hasSession, "exhausted reconnect must NOT clear hasSession")
     }
 
     @Test
@@ -93,13 +93,13 @@ class SentientSdkSessionTest {
         val fake = FakeWebSocketEngine()
         val sdk = buildSdk(fake)
         connectToReady(sdk, fake)
-        assertTrue(sdk.state.value.hasSession)
+        assertTrue(sdk.connection.value.hasSession)
 
         sdk.disconnect(clearSession = false)
         yield()
 
-        assertEquals(SdkStatus.DISCONNECTED, sdk.state.value.status)
-        assertTrue(sdk.state.value.hasSession, "idle-disconnect must NOT clear hasSession")
+        assertEquals(SdkStatus.DISCONNECTED, sdk.connection.value.status)
+        assertTrue(sdk.connection.value.hasSession, "idle-disconnect must NOT clear hasSession")
     }
 
     @Test
@@ -107,14 +107,14 @@ class SentientSdkSessionTest {
         val fake = FakeWebSocketEngine()
         val sdk = buildSdk(fake)
         connectToReady(sdk, fake)
-        assertTrue(sdk.state.value.hasSession)
+        assertTrue(sdk.connection.value.hasSession)
 
         // The default disconnect() is the consumer/logout teardown path.
         sdk.disconnect()
         yield()
 
-        assertEquals(SdkStatus.DISCONNECTED, sdk.state.value.status)
-        assertFalse(sdk.state.value.hasSession, "logout must clear hasSession → gate falls to login")
+        assertEquals(SdkStatus.DISCONNECTED, sdk.connection.value.status)
+        assertFalse(sdk.connection.value.hasSession, "logout must clear hasSession → gate falls to login")
     }
 
     @Test
@@ -124,25 +124,16 @@ class SentientSdkSessionTest {
         // Reach READY once so hasSession is set, then force a terminal auth failure
         // on a fresh attempt (force a drop → reconnect, then auth.error on retry).
         connectToReady(sdk, fake)
-        assertTrue(sdk.state.value.hasSession)
+        assertTrue(sdk.connection.value.hasSession)
 
         fake.failIncoming("network drop")
-        sdk.state.first { it.status == SdkStatus.RECONNECTING }
-        sdk.state.first { fake.openedUrls.size >= 2 }
+        sdk.connection.first { it.status == SdkStatus.RECONNECTING }
+        sdk.connection.first { fake.openedUrls.size >= 2 }
         fake.emit(WsIncoming.Text("{\"type\":\"auth.error\",\"code\":\"expired\",\"message\":\"x\"}"))
-        sdk.state.first { it.status == SdkStatus.ERROR }
+        sdk.connection.first { it.status == SdkStatus.ERROR }
 
-        assertTrue(sdk.state.value.authExpired, "authExpired set on terminal auth failure")
-        assertFalse(sdk.state.value.hasSession, "authExpired must clear hasSession → gate falls to login")
-    }
-
-    @Test
-    fun deriver_folds_hasSession_into_state() {
-        // Pure fold contract: the StateDeriver slice surfaces on SdkState.hasSession.
-        val deriver = StateDeriver(FixedClock(0L))
-        assertFalse(deriver.derive().hasSession, "default false")
-        deriver.hasSession = true
-        assertTrue(deriver.derive().hasSession, "slice folds through to SdkState")
+        assertTrue(sdk.connection.value.authExpired, "authExpired set on terminal auth failure")
+        assertFalse(sdk.connection.value.hasSession, "authExpired must clear hasSession → gate falls to login")
     }
 }
 
@@ -173,9 +164,9 @@ private class ReopenFailingEngine : WebSocketEngine {
  */
 private suspend fun TestScope.connectToReadyVia(sdk: SentientSdk, emit: suspend (WsIncoming) -> Unit) {
     val job = launch { sdk.connect() }
-    sdk.state.first { it.status == SdkStatus.AUTHENTICATING }
+    sdk.connection.first { it.status == SdkStatus.AUTHENTICATING }
     emit(WsIncoming.Text(AUTH_OK_FRAME))
     emit(WsIncoming.Text(READY_FRAME))
-    sdk.state.first { it.status == SdkStatus.READY }
+    sdk.connection.first { it.status == SdkStatus.READY }
     job.join()
 }

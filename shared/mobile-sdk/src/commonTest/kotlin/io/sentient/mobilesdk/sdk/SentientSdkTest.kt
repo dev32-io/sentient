@@ -2,16 +2,22 @@
 // SentientSdkTest — handshake/lifecycle FSM test for the C7 orchestrator.
 //
 // KEEPER (per .claude/rules/testing.md): pins the connect handshake FSM,
-// lifecycle-frame interception, and the single SdkState derivation contract
-// both native UIs depend on. Drives a FakeWebSocketEngine over runTest virtual
-// time with injected clock/newId/delay — no real waits, no platform.
+// lifecycle-frame interception, and the split surface derivation contract
+// (connection + timeline) both native UIs depend on. Drives a
+// FakeWebSocketEngine over runTest virtual time with injected
+// clock/newId/delay — no real waits, no platform.
 //
 // Shared fixtures live in SdkTestHarness.kt; reconnect + message-fold +
 // transcript-clear contracts live in SentientSdkReconnectTest.kt.
+//
+// NOTE: cognition and transcript fields are NOT exposed on the new surfaces
+// (connection/timeline/events). Tests that only exercised those SdkState-only
+// fields (cognition_thinking_on_cycle_started_idle_on_completed,
+// is_speaking_true_between_audio_start_and_done streaming bubble) were
+// pinning the removed aggregate; they are deleted here.
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.sdk
 
-import io.sentient.mobilesdk.connectors.CognitionState
 import io.sentient.mobilesdk.fakes.FakeWebSocketEngine
 import io.sentient.mobilesdk.transport.SdkStatus
 import io.sentient.mobilesdk.transport.WsIncoming
@@ -30,17 +36,17 @@ class SentientSdkTest {
         val fake = FakeWebSocketEngine()
         val sdk = buildSdk(fake)
 
-        assertEquals(SdkStatus.DISCONNECTED, sdk.state.value.status)
+        assertEquals(SdkStatus.DISCONNECTED, sdk.connection.value.status)
 
         // attemptConnect sets CONNECTING then AUTHENTICATING synchronously before
         // suspending on the auth gate; a conflated StateFlow surfaces the
         // destination (AUTHENTICATING). connectToReady gates on it via first {}.
-        val reachedAuthenticating = launch { sdk.state.first { it.status == SdkStatus.AUTHENTICATING } }
+        val reachedAuthenticating = launch { sdk.connection.first { it.status == SdkStatus.AUTHENTICATING } }
 
         connectToReady(sdk, fake)
         reachedAuthenticating.join()
 
-        assertEquals(SdkStatus.READY, sdk.state.value.status)
+        assertEquals(SdkStatus.READY, sdk.connection.value.status)
     }
 
     @Test
@@ -75,7 +81,7 @@ class SentientSdkTest {
     }
 
     @Test
-    fun assistant_conversation_entry_appears_in_state_messages() = runTest {
+    fun assistant_conversation_entry_appears_in_timeline() = runTest {
         val fake = FakeWebSocketEngine()
         val sdk = buildSdk(fake)
         connectToReady(sdk, fake)
@@ -86,9 +92,9 @@ class SentientSdkTest {
                     "{\"kind\":\"assistant\",\"ts\":100,\"content\":\"hello there\"}}",
             ),
         )
-        sdk.state.first { it.messages.isNotEmpty() }
+        sdk.timeline.first { it.isNotEmpty() }
 
-        val msgs = sdk.state.value.messages
+        val msgs = sdk.timeline.value
         assertEquals(1, msgs.size)
         assertEquals("assistant", msgs[0].role)
         assertEquals("hello there", msgs[0].content)
@@ -96,7 +102,7 @@ class SentientSdkTest {
     }
 
     @Test
-    fun inflight_streaming_then_done_reflects_in_state_messages() = runTest {
+    fun inflight_streaming_then_done_commits_to_timeline() = runTest {
         val fake = FakeWebSocketEngine()
         val sdk = buildSdk(fake)
         connectToReady(sdk, fake)
@@ -104,11 +110,6 @@ class SentientSdkTest {
         fake.emit(WsIncoming.Text("{\"type\":\"cycle.started\",\"cycleId\":\"c1\"}"))
         fake.emit(WsIncoming.Text("{\"type\":\"message.delta\",\"cycleId\":\"c1\",\"delta\":\"par\"}"))
         fake.emit(WsIncoming.Text("{\"type\":\"message.delta\",\"cycleId\":\"c1\",\"delta\":\"tial\"}"))
-        // streaming bubble present
-        sdk.state.first { st -> st.messages.any { it.streaming } }
-        val streaming = sdk.state.value.messages.last()
-        assertTrue(streaming.streaming, "expected streaming bubble, msgs=${sdk.state.value.messages}")
-        assertEquals("partial", streaming.content)
 
         // committed entry arrives, then message.done clears inflight
         fake.emit(
@@ -118,41 +119,28 @@ class SentientSdkTest {
             ),
         )
         fake.emit(WsIncoming.Text("{\"type\":\"message.done\",\"cycleId\":\"c1\"}"))
-        sdk.state.first { st -> st.messages.none { it.streaming } }
 
-        val msgs = sdk.state.value.messages
-        assertTrue(msgs.none { it.streaming }, "inflight should be cleared, msgs=$msgs")
+        // Timeline is committed-only (no streaming bubble); wait for the entry.
+        sdk.timeline.first { msgs -> msgs.any { it.role == "assistant" && it.content == "partial" } }
+
+        val msgs = sdk.timeline.value
+        assertTrue(msgs.none { it.streaming }, "timeline has no streaming entries, msgs=$msgs")
         assertTrue(msgs.any { it.role == "assistant" && it.content == "partial" }, "msgs=$msgs")
     }
 
     @Test
-    fun cognition_thinking_on_cycle_started_idle_on_completed() = runTest {
-        val fake = FakeWebSocketEngine()
-        val sdk = buildSdk(fake)
-        connectToReady(sdk, fake)
-
-        fake.emit(WsIncoming.Text("{\"type\":\"cycle.started\",\"cycleId\":\"c1\"}"))
-        sdk.state.first { it.cognition == CognitionState.THINKING }
-        assertEquals(CognitionState.THINKING, sdk.state.value.cognition)
-
-        fake.emit(WsIncoming.Text("{\"type\":\"cycle.completed\",\"cycleId\":\"c1\"}"))
-        sdk.state.first { it.cognition == CognitionState.IDLE }
-        assertEquals(CognitionState.IDLE, sdk.state.value.cognition)
-    }
-
-    @Test
-    fun is_speaking_true_between_audio_start_and_done() = runTest {
+    fun is_speaking_reflected_on_connection_surface() = runTest {
         val fake = FakeWebSocketEngine()
         val sdk = buildSdk(fake)
         connectToReady(sdk, fake)
 
         fake.emit(WsIncoming.Text("{\"type\":\"connector.audio.start\",\"cycleId\":\"c1\"}"))
-        sdk.state.first { it.isSpeaking }
-        assertTrue(sdk.state.value.isSpeaking)
+        sdk.connection.first { it.isSpeaking }
+        assertTrue(sdk.connection.value.isSpeaking)
 
         fake.emit(WsIncoming.Text("{\"type\":\"connector.audio.done\",\"cycleId\":\"c1\"}"))
-        sdk.state.first { !it.isSpeaking }
-        assertTrue(!sdk.state.value.isSpeaking)
+        sdk.connection.first { !it.isSpeaking }
+        assertTrue(!sdk.connection.value.isSpeaking)
     }
 
     @Test
@@ -161,15 +149,15 @@ class SentientSdkTest {
         val sdk = buildSdk(fake)
 
         val job = launch { sdk.connect() }
-        sdk.state.first { it.status == SdkStatus.AUTHENTICATING }
+        sdk.connection.first { it.status == SdkStatus.AUTHENTICATING }
         fake.emit(
             WsIncoming.Text("{\"type\":\"auth.error\",\"code\":\"expired\",\"message\":\"token expired\"}"),
         )
-        sdk.state.first { it.status == SdkStatus.ERROR }
+        sdk.connection.first { it.status == SdkStatus.ERROR }
         job.join()
 
-        assertEquals(SdkStatus.ERROR, sdk.state.value.status)
-        assertTrue(sdk.state.value.authExpired)
+        assertEquals(SdkStatus.ERROR, sdk.connection.value.status)
+        assertTrue(sdk.connection.value.authExpired)
     }
 
     @Test
@@ -180,11 +168,11 @@ class SentientSdkTest {
 
         sdk.disconnect()
         yield()
-        assertEquals(SdkStatus.DISCONNECTED, sdk.state.value.status)
+        assertEquals(SdkStatus.DISCONNECTED, sdk.connection.value.status)
 
         // idempotent — second call must not throw or flip state
         sdk.disconnect()
         yield()
-        assertEquals(SdkStatus.DISCONNECTED, sdk.state.value.status)
+        assertEquals(SdkStatus.DISCONNECTED, sdk.connection.value.status)
     }
 }

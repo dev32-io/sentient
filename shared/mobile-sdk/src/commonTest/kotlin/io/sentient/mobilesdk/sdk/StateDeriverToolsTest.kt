@@ -5,6 +5,11 @@
 //   1. Live inflight bubble gets its cycleId + tools filtered by that cycleId.
 //   2. Committed message retains cycleId + tools after inflight clears + feed commits.
 //   3. Reloaded history (no inflight seen) has cycleId=null + empty tools.
+//
+// NOTE: previously used deriver.derive() to access messages. Now uses the
+// direct deriveMessages() helper (internal, callable from commonTest) for the
+// inflight case, and deriveTimeline() for the committed case. derive() was
+// removed with the legacy SdkState aggregate.
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.sdk
 
@@ -27,8 +32,11 @@ class StateDeriverToolsTest {
     fun inflightBubbleGetsItsCycleTools() {
         val d = StateDeriver(FixedClockLocal(100))
         d.tasks = listOf(task("t1", "c1"), task("t2", "other"))
-        d.inflight = InFlightMessage(cycleId = "c1", text = "hi")
-        val last = d.derive().messages.last()
+        val inflight = InFlightMessage(cycleId = "c1", text = "hi")
+        // Use deriveMessages directly (internal, visible from commonTest) to
+        // exercise the inflight path — deriveTimeline() commits-only, no bubble.
+        val msgs = deriveMessages(feed = emptyList(), inflight = inflight, nowMs = 100, tasks = d.tasks)
+        val last = msgs.last()
         assertEquals("c1", last.cycleId)
         assertEquals(listOf("t1"), last.tools.map { it.taskId })
     }
@@ -40,7 +48,8 @@ class StateDeriverToolsTest {
         d.inflight = InFlightMessage(cycleId = "c1", text = "answer")
         d.inflight = null
         d.applyFeed(listOf(ConversationFeedItem.Assistant(ts = 50, content = "answer")))
-        val committed = d.derive().messages.single()
+        // deriveTimeline() returns committed-only (no inflight bubble).
+        val committed = d.deriveTimeline().single()
         assertEquals("c1", committed.cycleId)
         assertEquals(listOf("t1"), committed.tools.map { it.taskId })
     }
@@ -50,7 +59,7 @@ class StateDeriverToolsTest {
         val d = StateDeriver(FixedClockLocal(100))
         d.tasks = listOf(task("t1", "c1"))
         d.applyFeed(listOf(ConversationFeedItem.Assistant(ts = 50, content = "old reply")))
-        val committed = d.derive().messages.single()
+        val committed = d.deriveTimeline().single()
         assertEquals(null, committed.cycleId)
         assertEquals(emptyList(), committed.tools)
     }

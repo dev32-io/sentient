@@ -3,11 +3,16 @@
 // contracts for the C7 orchestrator.
 //
 // KEEPER (per .claude/rules/testing.md): pins the WsTransport-signal →
-// ReconnectController wiring (the flagged critical path) and the two
-// deriveMessages / transcript-clear parity contracts the native UIs depend on.
+// ReconnectController wiring (the flagged critical path) and the
+// deriveMessages parity contract the native UIs depend on (tool+trigger drop).
 // Drives a FakeWebSocketEngine over runTest virtual time; the default delayFn
-// (kotlinx delay) is auto-advanced by runTest so the backoff is never waited on
-// for real.
+// (kotlinx delay) is auto-advanced by runTest so the backoff is never waited
+// on for real.
+//
+// NOTE: transcript_clears_when_matching_speech_user_entry_commits was deleted
+// because `transcript` is only exposed on the removed SdkState aggregate
+// (not on connection or timeline). The applyFeed/stampCycleIds logic is still
+// exercised indirectly via tool_and_trigger_feed_entries_are_dropped_from_messages.
 //
 // B1 caveat: FakeWebSocketEngine mints a FRESH session per open(); the reconnect
 // re-opens a new session and the harness helpers drive THAT (current) session.
@@ -42,13 +47,13 @@ class SentientSdkReconnectTest {
         // status==READY and fires onConnectionDrop → status flips to RECONNECTING
         // and the reconnect loop launches attemptConnect() (a fresh engine.open()).
         fake.failIncoming("network drop")
-        sdk.state.first { it.status == SdkStatus.RECONNECTING }
-        assertTrue(sdk.state.value.connectionLost, "connectionLost set on drop")
+        sdk.connection.first { it.status == SdkStatus.RECONNECTING }
+        assertTrue(sdk.connection.value.connectionLost, "connectionLost set on drop")
 
         // The reconnect loop's first attempt re-opens the socket. runTest virtual
         // time auto-advances past the backoff delay (default delayFn = delay()),
         // so no real wait is needed; gate on the second open() landing.
-        sdk.state.first { fake.openedUrls.size >= 2 }
+        sdk.connection.first { fake.openedUrls.size >= 2 }
         assertTrue(fake.openedUrls.size >= 2, "reconnect re-opened the socket, opens=${fake.openedUrls.size}")
         // B1: the reconnect opened a FRESH session (its own channel + send record).
         // Auth was re-sent on it; the harness drives that current session.
@@ -57,9 +62,9 @@ class SentientSdkReconnectTest {
         // Finish the reconnect handshake to READY on the fresh session.
         fake.emit(WsIncoming.Text(AUTH_OK_FRAME))
         fake.emit(WsIncoming.Text(READY_FRAME))
-        sdk.state.first { it.status == SdkStatus.READY }
-        assertEquals(SdkStatus.READY, sdk.state.value.status)
-        assertTrue(!sdk.state.value.connectionLost, "connectionLost cleared on READY")
+        sdk.connection.first { it.status == SdkStatus.READY }
+        assertEquals(SdkStatus.READY, sdk.connection.value.status)
+        assertTrue(!sdk.connection.value.connectionLost, "connectionLost cleared on READY")
     }
 
     @Test
@@ -74,11 +79,11 @@ class SentientSdkReconnectTest {
         // suppress reconnect; a normal-closure signal is ignored regardless.
         sdk.disconnect()
         yield()
-        assertEquals(SdkStatus.DISCONNECTED, sdk.state.value.status)
+        assertEquals(SdkStatus.DISCONNECTED, sdk.connection.value.status)
 
         // No second open(): a clean disconnect never re-dials.
         assertEquals(1, fake.openedUrls.size, "clean disconnect must not reconnect, opens=${fake.openedUrls.size}")
-        assertTrue(!sdk.state.value.connectionLost, "clean disconnect leaves connectionLost false")
+        assertTrue(!sdk.connection.value.connectionLost, "clean disconnect leaves connectionLost false")
     }
 
     @Test
@@ -96,21 +101,21 @@ class SentientSdkReconnectTest {
         connectToReady(sdk, fake)
         sdk.disconnect()
         yield()
-        assertEquals(SdkStatus.DISCONNECTED, sdk.state.value.status)
+        assertEquals(SdkStatus.DISCONNECTED, sdk.connection.value.status)
 
         // Cycle 2: connect AGAIN on the SAME sdk instance → READY (login).
         connectToReady(sdk, fake)
-        assertEquals(SdkStatus.READY, sdk.state.value.status)
+        assertEquals(SdkStatus.READY, sdk.connection.value.status)
         val opensBeforeDrop = fake.openedUrls.size
 
         // Now drop the reused-singleton's live session. With the controller
         // re-armed, the signal watch must STILL drive RECONNECTING and the loop
         // must STILL attempt a fresh open() — proving reset() cleared cancel().
         fake.failIncoming("network drop")
-        sdk.state.first { it.status == SdkStatus.RECONNECTING }
-        assertTrue(sdk.state.value.connectionLost, "connectionLost set on post-relogin drop")
+        sdk.connection.first { it.status == SdkStatus.RECONNECTING }
+        assertTrue(sdk.connection.value.connectionLost, "connectionLost set on post-relogin drop")
 
-        sdk.state.first { fake.openedUrls.size > opensBeforeDrop }
+        sdk.connection.first { fake.openedUrls.size > opensBeforeDrop }
         assertTrue(
             fake.openedUrls.size > opensBeforeDrop,
             "re-armed controller must re-open, opens=${fake.openedUrls.size} before=$opensBeforeDrop",
@@ -119,8 +124,8 @@ class SentientSdkReconnectTest {
         // And it recovers fully to READY on the fresh session.
         fake.emit(WsIncoming.Text(AUTH_OK_FRAME))
         fake.emit(WsIncoming.Text(READY_FRAME))
-        sdk.state.first { it.status == SdkStatus.READY }
-        assertEquals(SdkStatus.READY, sdk.state.value.status)
+        sdk.connection.first { it.status == SdkStatus.READY }
+        assertEquals(SdkStatus.READY, sdk.connection.value.status)
     }
 
     @Test
@@ -134,7 +139,7 @@ class SentientSdkReconnectTest {
         val sdk = buildSdk(fake)
 
         val connectJob = launch { sdk.connect() }
-        sdk.state.first { it.status == SdkStatus.AUTHENTICATING }
+        sdk.connection.first { it.status == SdkStatus.AUTHENTICATING }
         val timeAtAuth = currentTime
 
         // Drop the socket mid-handshake — BEFORE any auth.ok / session.ready.
@@ -144,21 +149,21 @@ class SentientSdkReconnectTest {
         // transport-close → failPending, NOT burn the full AUTH_TIMEOUT_MS. The
         // SDK must land in a RECOVERABLE state (RECONNECTING with an active loop),
         // never stuck CONNECTING/AUTHENTICATING.
-        sdk.state.first { it.status == SdkStatus.RECONNECTING }
+        sdk.connection.first { it.status == SdkStatus.RECONNECTING }
         val elapsed = currentTime - timeAtAuth
         assertTrue(
             elapsed < AUTH_TIMEOUT_MS,
             "pre-ready close must fail fast (well under ${AUTH_TIMEOUT_MS}ms), elapsed=$elapsed",
         )
-        assertTrue(sdk.state.value.connectionLost, "connectionLost set on pre-ready drop")
+        assertTrue(sdk.connection.value.connectionLost, "connectionLost set on pre-ready drop")
         connectJob.join()
 
         // Recoverable: the recovery loop re-opens (fresh session) and drives to READY.
-        sdk.state.first { fake.openedUrls.size >= 2 }
+        sdk.connection.first { fake.openedUrls.size >= 2 }
         fake.emit(WsIncoming.Text(AUTH_OK_FRAME))
         fake.emit(WsIncoming.Text(READY_FRAME))
-        sdk.state.first { it.status == SdkStatus.READY }
-        assertEquals(SdkStatus.READY, sdk.state.value.status)
+        sdk.connection.first { it.status == SdkStatus.READY }
+        assertEquals(SdkStatus.READY, sdk.connection.value.status)
     }
 
     @Test
@@ -172,27 +177,27 @@ class SentientSdkReconnectTest {
 
         // Land in terminal ERROR via an auth.error during the handshake.
         val connectJob = launch { sdk.connect() }
-        sdk.state.first { it.status == SdkStatus.AUTHENTICATING }
+        sdk.connection.first { it.status == SdkStatus.AUTHENTICATING }
         fake.emit(WsIncoming.Text("{\"type\":\"auth.error\",\"code\":\"expired\",\"message\":\"x\"}"))
-        sdk.state.first { it.status == SdkStatus.ERROR }
+        sdk.connection.first { it.status == SdkStatus.ERROR }
         connectJob.join()
-        assertTrue(sdk.state.value.authExpired, "authExpired set on terminal auth failure")
+        assertTrue(sdk.connection.value.authExpired, "authExpired set on terminal auth failure")
         val opensBeforeRetry = fake.openedUrls.size
 
         // Manual retry: forceReconnect → RECONNECTING + fresh open() → READY.
         sdk.forceReconnect()
-        sdk.state.first { it.status == SdkStatus.RECONNECTING }
-        sdk.state.first { fake.openedUrls.size > opensBeforeRetry }
+        sdk.connection.first { it.status == SdkStatus.RECONNECTING }
+        sdk.connection.first { fake.openedUrls.size > opensBeforeRetry }
         fake.emit(WsIncoming.Text(AUTH_OK_FRAME))
         fake.emit(WsIncoming.Text(READY_FRAME))
-        sdk.state.first { it.status == SdkStatus.READY }
+        sdk.connection.first { it.status == SdkStatus.READY }
 
-        assertEquals(SdkStatus.READY, sdk.state.value.status)
-        assertTrue(!sdk.state.value.authExpired, "authExpired cleared by forceReconnect recovery")
+        assertEquals(SdkStatus.READY, sdk.connection.value.status)
+        assertTrue(!sdk.connection.value.authExpired, "authExpired cleared by forceReconnect recovery")
     }
 
     @Test
-    fun tool_and_trigger_feed_entries_are_dropped_from_messages() = runTest {
+    fun tool_and_trigger_feed_entries_are_dropped_from_timeline() = runTest {
         val fake = FakeWebSocketEngine()
         val sdk = buildSdk(fake)
         connectToReady(sdk, fake)
@@ -209,31 +214,9 @@ class SentientSdkReconnectTest {
                     "{\"kind\":\"assistant\",\"ts\":40,\"content\":\"hello\"}]}",
             ),
         )
-        sdk.state.first { it.messages.isNotEmpty() }
+        sdk.timeline.first { it.isNotEmpty() }
 
-        val roles = sdk.state.value.messages.map { it.role }
-        assertEquals(listOf("user", "assistant"), roles, "tool+trigger must be dropped, msgs=${sdk.state.value.messages}")
-    }
-
-    @Test
-    fun transcript_clears_when_matching_speech_user_entry_commits() = runTest {
-        val fake = FakeWebSocketEngine()
-        val sdk = buildSdk(fake)
-        connectToReady(sdk, fake)
-
-        // Live STT preview lands first.
-        fake.emit(WsIncoming.Text("{\"type\":\"connector.transcript.final\",\"text\":\"turn on the lights\"}"))
-        sdk.state.first { it.transcript == "turn on the lights" }
-
-        // The finalized speech user entry commits with matching content → the live
-        // preview is now stale and must clear (web-sdk use-voice-client parity).
-        fake.emit(
-            WsIncoming.Text(
-                "{\"type\":\"conversation.entry\",\"item\":" +
-                    "{\"kind\":\"user\",\"ts\":100,\"channel\":\"speech\",\"content\":\"turn on the lights\"}}",
-            ),
-        )
-        sdk.state.first { it.transcript.isEmpty() }
-        assertEquals("", sdk.state.value.transcript)
+        val roles = sdk.timeline.value.map { it.role }
+        assertEquals(listOf("user", "assistant"), roles, "tool+trigger must be dropped, msgs=${sdk.timeline.value}")
     }
 }

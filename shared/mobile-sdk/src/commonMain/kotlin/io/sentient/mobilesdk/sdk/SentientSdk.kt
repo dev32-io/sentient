@@ -1,6 +1,9 @@
 // ---------------------------------------------------------------------------
 // SentientSdk — THE orchestrator. Wires transport + connectors + handshake +
-// reconnect + idle into ONE observable StateFlow<SdkState> (R5).
+// reconnect + idle into the split observable surfaces:
+//   connection: StateFlow<ConnectionState>  — transport + voice axis
+//   timeline:   StateFlow<List<ChatMessage>> — committed message history
+//   events:     SharedFlow<SdkEvent>         — one-shot notifications
 // Mirrors web-sdk sentient-sdk.ts. Split across: StateDeriver, Handshake,
 // SdkConnectors, SdkLifecycle. This file owns the public surface + state plumbing.
 // ---------------------------------------------------------------------------
@@ -49,9 +52,6 @@ class SentientSdk(
     idleTickMs: Long = DEFAULT_IDLE_TICK_MS,
 ) {
     private val log = createLogger("sdk", "orchestrator")
-
-    private val _state = MutableStateFlow(SdkState())
-    val state: StateFlow<SdkState> = _state.asStateFlow()
 
     private val _connection = MutableStateFlow(ConnectionState())
     val connection: StateFlow<ConnectionState> = _connection.asStateFlow()
@@ -170,7 +170,7 @@ class SentientSdk(
      * Tear down the WS + all loops. Idempotent. Status → DISCONNECTED.
      *
      * @param clearSession true (default — logout/consumer teardown) clears
-     *   [SdkState.hasSession] so the gate falls back to login. false (idle-
+     *   the hasSession slice so the gate falls back to login. false (idle-
      *   disconnect via [Hooks.disconnectForIdle]) keeps the user "in session"
      *   (gate stays on chat; SDK auto-reconnects on the next presence signal).
      */
@@ -318,10 +318,9 @@ class SentientSdk(
         setStatus(SdkStatus.DISCONNECTED)
     }
 
-    // ── State plumbing — the single StateFlow fan-in ──────────────────────────────
+    // ── State plumbing — fan-in to connection + timeline ─────────────────────────
 
     private fun emit() {
-        _state.value = deriver.derive()
         _connection.value = deriver.deriveConnection()
         _timeline.value = deriver.deriveTimeline()
     }
