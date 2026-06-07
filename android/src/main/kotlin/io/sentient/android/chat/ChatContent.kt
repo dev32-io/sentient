@@ -1,10 +1,10 @@
 // ---------------------------------------------------------------------------
 // ChatContent — the NEW chat surface driven by ChatUiState + ConnectionState.
 //
-// Drop-in replacement for ChatScreen (Task 3.4, rendering half). Consumes the
+// The chat surface (Task 3.4, rendering half). Consumes the
 // KMP-layer data model (committed history + optimistic pending outbox + live
 // streaming bubble + task pills) and the separate ConnectionState, so the VM
-// is the only place that holds references to SDK or repo. The old ChatScreen
+// is the only place that holds references to SDK or repo. The old chat surface
 // (SdkState path) is left UNTOUCHED until MainActivity is rewired (next task).
 //
 // Row ordering in the MessageList:
@@ -149,7 +149,7 @@ fun ChatContent(
             )
         }
 
-        // Connection banner floats over the top — same overlay pattern as ChatScreen.
+        // Connection banner floats over the top — same overlay pattern as ChatContent.
         if (connectionBanner != null) {
             ConnectionBanner(
                 state = connectionBanner,

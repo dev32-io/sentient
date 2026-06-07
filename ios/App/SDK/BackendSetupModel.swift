@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // BackendSetupModel — drives the iOS backend setup view. Save folds in a probe
-// (createAuthClient → listUsers); success persists + reconfigures the SdkStore
+// (createAuthClient → listUsers); success persists + reconfigures the AppConfig
 // and signals dismiss; failure shows an error and stays.
 // ---------------------------------------------------------------------------
 import Foundation

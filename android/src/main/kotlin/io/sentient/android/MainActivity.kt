@@ -7,7 +7,7 @@
 //
 //  2. Auth gate (AppConfiguredRoot): token present ⇒ chat, otherwise ⇒ login.
 //     Token presence (DisplayNameStore.name != null) gates the screen. Gating on
-//     status==READY unmounted ChatScreen on every WS drop and fell back to login,
+//     status==READY unmounted ChatContent on every WS drop and fell back to login,
 //     hiding the in-chat connection-lost banner. Token is set on login and cleared
 //     on logout — so a WS drop keeps the user on chat WITH the banner. Mirrors
 //     web-sdk: AUTH gates the screen, status drives the banner.
@@ -313,7 +313,7 @@ private fun ChatRoot(
                 onInterrupt = { chatSession.sdk.interrupt() },
                 onOpenHistory = onOpenDrawer,
                 onNewChat = {
-                    // newChat is suspend; fire-and-forget, mirrors SdkViewModel.newChat.
+                    // newChat is suspend; fire-and-forget newChat on the session.
                     scope.launch { chatSession.sdk.newChat() }
                 },
                 onReconnect = { chatSession.sdk.forceReconnect() },

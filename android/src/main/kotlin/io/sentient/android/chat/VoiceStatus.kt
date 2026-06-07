@@ -2,7 +2,7 @@
 // VoiceStatus — avatar animation mode enum. The live derivation path uses
 // markModeOfConnection (ChatContentBanners.kt), which maps ConnectionState →
 // MarkMode. The legacy markModeOf(SdkState) overload was removed with
-// ChatScreen (dead code cleanup).
+// the old chat surface (dead code cleanup).
 // ---------------------------------------------------------------------------
 package io.sentient.android.chat
 

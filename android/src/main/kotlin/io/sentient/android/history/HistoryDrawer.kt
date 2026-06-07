@@ -18,7 +18,7 @@
 //
 // testTags: history-search, history-row-<sessionId>, history-new-chat,
 //           settings-open (in HistoryAccountHeader). The history-open trigger
-//           lives in the ChatScreen top bar (see ChatScreen.kt).
+//           lives in the chat top bar (see ChatContent).
 // ---------------------------------------------------------------------------
 package io.sentient.android.history
 

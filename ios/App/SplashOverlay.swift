@@ -3,7 +3,7 @@
 // every backend reconfigure. Covers all three RootView gate states (setup /
 // chat / login) with a minimum visible duration of SplashLayout.minDisplay.
 //
-// Re-show is driven by SdkStore.configGeneration: RootView's .task(id:) resets
+// Re-show is driven by AppConfig.configGeneration: RootView's .task(id:) resets
 // showSplash = true on each bump, enforces the min-duration floor, then fades out.
 // ---------------------------------------------------------------------------
 import SwiftUI

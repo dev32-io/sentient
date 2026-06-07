@@ -53,7 +53,7 @@ struct SideDrawer<Content: View, Drawer: View>: UIViewControllerRepresentable {
 
     func updateUIViewController(_ controller: SideDrawerController, context: Context) {
         // Reassign rootViews so observed-state changes in the hosted SwiftUI
-        // subtrees propagate (HistorySidePanel ← HistoryModel, chat ← SdkStore).
+        // subtrees propagate (HistorySidePanel ← HistoryModel, chat ← ChatViewModel).
         context.coordinator.contentHost?.rootView = content()
         context.coordinator.drawerHost?.rootView = drawer()
 

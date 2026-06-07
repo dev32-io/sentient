@@ -4,15 +4,15 @@
 // Mirrors the Android AuthViewModel role: one observable state struct, one
 // action surface. This owns UI state ONLY (users / selected user / pin / error)
 // — NOT the SDK state surface. Navigation to chat is NOT modelled here:
-// RootView derives login-vs-chat from the injected SdkStore's single state
-// surface (status == .ready), matching the codebase's event-driven UX
+// RootView derives login-vs-chat from AppConfig; the chat-scoped session owns
+// connect() and reaches status == .ready, matching the codebase's event-driven UX
 // inference. On a successful login we save the token to the same Keychain store
-// the SDK reads, then call sdkStore.connect(); the SDK reaches .ready and
+// the SDK reads, then call connect(); the SDK reaches .ready and
 // RootView swaps to chat.
 //
 // PIN is NEVER logged. Auto-submit fires once 4 digits are entered.
 //
-// Legacy ObservableObject (not @Observable): the app's SdkStore is also an
+// Legacy ObservableObject (not @Observable): the app's AppConfig is also an
 // ObservableObject injected via .environmentObject, and the login state is
 // short-lived UI state owned by the screen — @StateObject keeps it scoped to
 // the login view's lifetime.
@@ -54,7 +54,7 @@ final class AuthModel: ObservableObject {
 
     /// - Parameters:
     ///   - connect: called after a successful login + token save; wires to the
-    ///     app-level SdkStore.connect() so the single SDK store stays the only
+    ///     chat-scoped session's connect() so the session stays the only
     ///     transport owner.
     ///   - authClient: REST client built via the iOS createAuthClient factory.
     ///   - tokenStore: the same Keychain store the SDK reads on connect.
@@ -173,7 +173,7 @@ final class AuthModel: ObservableObject {
 
     /// Build the REST AuthClient via the iOS factory. Resolves the backend from
     /// BackendConfigStore → build-time default → localhost fallback, matching the
-    /// resolution order SdkStore uses. `nonisolated` so it can serve as a
+    /// resolution order AppConfig uses. `nonisolated` so it can serve as a
     /// default-argument expression.
     nonisolated static func makeAuthClient() -> AuthClient {
         let resolved = resolveBackend(

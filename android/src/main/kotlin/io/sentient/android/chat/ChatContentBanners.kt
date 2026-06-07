@@ -139,7 +139,7 @@ internal fun ContentErrorBanner(
 }
 
 /**
- * Inline loading pill (connecting / sending) — mirrors ChatScreen's LoadingPill.
+ * Inline loading pill (connecting / sending) — mirrors ChatContent's LoadingPill.
  * testTag: `loading-connecting` or `loading-sending`.
  */
 @Composable

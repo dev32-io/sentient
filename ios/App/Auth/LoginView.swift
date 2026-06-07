@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
 // LoginView — the avatar-grid → PIN-pad login flow.
 //
-// Owns a login-scoped @StateObject AuthModel (UI state only). The app-level
-// SdkStore stays the single SDK store; LoginView passes its connect() into the
-// model so a successful login → token save → sdkStore.connect(). Navigation to
+// Owns a login-scoped @StateObject AuthModel (UI state only). AppConfig drives
+// login-vs-chat; LoginView passes the chat-scoped session's connect() into the
+// model so a successful login → token save → connect(). Navigation to
 // chat is event-driven in RootView off the SDK status, not modelled here.
 //
 // pickUser shows the avatar grid; enterPin shows the selected name + PinPad +

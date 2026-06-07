@@ -12,7 +12,7 @@
 // is a STUB only — spec §12.2 P2 carry — no networking in v1.
 //
 // testTags: settings-screen, settings-version, settings-logout, settings-back.
-// The settings-open entry point lives in the ChatScreen top bar (ChatScreen.kt).
+// The settings-open entry point lives in the chat top bar (ChatContent).
 // ---------------------------------------------------------------------------
 package io.sentient.android.settings
 

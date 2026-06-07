@@ -13,7 +13,7 @@
 // ChatView title bar (settings-open), matching the iOS HistorySheet pattern
 // (NavigationStack + a `Done` cancellation toolbar action for dismiss/back).
 //
-// The view is stateless beyond what it reads: the app-level SdkStore drives the
+// The view is stateless beyond what it reads: the app-level AppConfig drives the
 // only command (logout). RootView owns the login-vs-chat swap; this sheet does
 // NOT model navigation — logout flips the SDK status and the host reacts.
 //
@@ -50,8 +50,8 @@ private func checkForUpdatesStub() {
 }
 
 /// Thin Settings sheet. `onLogout` clears the token + disconnects (see
-/// `SdkStore.logout()`); `onDismiss` returns to chat. Both are plain closures —
-/// the host owns the SdkStore and the sheet presentation.
+/// `AppConfig.logout()`); `onDismiss` returns to chat. Both are plain closures —
+/// the host owns the AppConfig and the sheet presentation.
 struct SettingsSheet: View {
     let onLogout: () -> Void
     let onDismiss: () -> Void

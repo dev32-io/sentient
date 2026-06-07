@@ -3,7 +3,7 @@
 //
 // AuthUserLite (and AuthModel) are login-scoped and torn down after a successful
 // login, so the selected user's display name is persisted here at login time and
-// read back by SdkStore for the chat / history-drawer headers. Synchronous read
+// read back by AppConfig for the chat / history-drawer headers. Synchronous read
 // so the first frame can show the real name.
 //
 // This is a DISPLAY name, not a secret — it never travels through the token /
