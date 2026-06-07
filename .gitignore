@@ -70,6 +70,11 @@ deploy/docker/run/
 # qa-session per-run artifacts (committed: bugs/, issues.md, index.json, charters/, config.yml, oracles.md, recon.sh)
 qa/*/sessions/
 qa/*/.playwright/
+# qa e2e run artifacts across subdirs — screenshots/recordings/log-dumps/result-bundles.
+# (*.png and *.log are already ignored repo-wide; flows/, fixtures/, charters/ stay committed.)
+qa/*/screens/
+qa/*/logs/
+qa/*/results/
 
 # Playwright + smoke screenshots produced during dev sessions
 *.png

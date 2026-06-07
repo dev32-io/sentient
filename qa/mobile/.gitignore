@@ -1,1 +1,11 @@
+# E2E run artifacts — never commit. Committed under qa/mobile/: flows/, fixtures/, run-e2e.sh.
+# (*.png screenshots and *.log device-log dumps are already ignored repo-wide.)
 screens/
+logs/
+results/
+output/
+*.jpg
+*.jpeg
+*.mp4
+*.mov
+*.xcresult/
