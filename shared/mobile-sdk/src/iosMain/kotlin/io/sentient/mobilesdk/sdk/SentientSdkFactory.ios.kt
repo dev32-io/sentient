@@ -44,15 +44,22 @@ import kotlinx.coroutines.SupervisorJob
  * @param allowSelfSignedDevHost Debug-only TLS bypass. MUST be false in release.
  * @param capabilities Extra capability strings; merged with the connector set.
  */
+/**
+ * @param devFaultsEnabled True in debug builds to enable [FaultHooks] injection.
+ *   Pass `#if DEBUG true #else false #endif` from Swift so release never enables it.
+ *   Maps to [SdkConfig.devFaultsEnabled]. Defaults false for backward compat.
+ */
 fun createSentientSdk(
     gatewayWsUrl: String,
     allowSelfSignedDevHost: Boolean,
     capabilities: List<String> = emptyList(),
+    devFaultsEnabled: Boolean = false,
 ): SentientSdk = SentientSdk(
     config = SdkConfig(
         gatewayWsUrl = gatewayWsUrl,
         allowSelfSignedDevHost = allowSelfSignedDevHost,
         capabilities = capabilities,
+        devFaultsEnabled = devFaultsEnabled,
     ),
     bundle = createPlatformBundle(),
     scope = CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1)),

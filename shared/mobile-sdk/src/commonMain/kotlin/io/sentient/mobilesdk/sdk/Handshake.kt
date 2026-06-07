@@ -20,6 +20,7 @@
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.sdk
 
+import io.sentient.mobilesdk.dev.FaultHooks
 import io.sentient.mobilesdk.log.Log
 import io.sentient.mobilesdk.protocol.ServerMessage
 import io.sentient.mobilesdk.transport.AUTH_TIMEOUT_MS
@@ -62,6 +63,8 @@ class Handshake(
     private val onReady: (ServerMessage.SessionReady) -> Unit,
     private val delayFn: suspend (Long) -> Unit,
     private val log: Log,
+    /** Debug-only fault hooks; null unless devFaultsEnabled. Consulted on auth.ok. */
+    private val faultHooks: FaultHooks? = null,
 ) {
     private val authGate = CompletableDeferred<Unit>()
     private val readyGate = CompletableDeferred<ServerMessage.SessionReady>()
@@ -76,7 +79,15 @@ class Handshake(
     fun intercept(msg: ServerMessage): Boolean = when (msg) {
         is ServerMessage.AuthOk -> {
             log.info("auth.ok", mapOf("userId" to msg.user.userId))
-            authGate.complete(Unit)
+            // DEBUG fault: if expired-token is armed, simulate an auth failure instead of
+            // completing the auth gate. Arm via:
+            //   adb shell am broadcast -a io.sentient.debug.FAULT --es kind expired
+            if (faultHooks?.consumeExpiredToken() == true) {
+                log.warn("fault.expired-token", mapOf("reason" to "injected by FaultHooks"))
+                failGates(LastErrorKind.AUTH)
+            } else {
+                authGate.complete(Unit)
+            }
             true
         }
         is ServerMessage.AuthError -> {

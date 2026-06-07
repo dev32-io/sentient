@@ -25,6 +25,7 @@
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.transport
 
+import io.sentient.mobilesdk.dev.FaultHooks
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.protocol.ServerMessage
@@ -50,6 +51,8 @@ class WsTransport(
     private val session: WebSocketSession,
     scope: CoroutineScope,
     private val onProtocolError: ((SentientError) -> Unit)? = null,
+    /** Debug-only fault hooks; null unless devFaultsEnabled. Consulted in routeText. */
+    private val faultHooks: FaultHooks? = null,
 ) {
     private val log = createLogger("transport", "ws")
 
@@ -120,11 +123,20 @@ class WsTransport(
         // Log the raw frame BEFORE decoding so Unknown-decoding frames stay
         // traceable (logger truncates the preview).
         log.debug("recv-text", mapOf("raw" to raw))
-        val result = WireJson.decodeServerMessageResult(raw)
+        // DEBUG fault injection: if malformed-frame is armed, corrupt the payload so
+        // decoding fails and the existing ProtocolError path fires. Arm via:
+        //   adb shell am broadcast -a io.sentient.debug.FAULT --es kind malformed
+        val effectiveRaw = if (faultHooks?.consumeMalformedFrame() == true) {
+            log.warn("fault.malformed-frame", mapOf("reason" to "injected by FaultHooks"))
+            "{__fault_injected_malformed__}"
+        } else {
+            raw
+        }
+        val result = WireJson.decodeServerMessageResult(effectiveRaw)
         result.fold(
             onSuccess = { msg -> eventChannel.send(WsEvent.Control(msg)) },
             onFailure = { err ->
-                log.warn("decode-failed", mapOf("reason" to (err.message ?: "parse error"), "frame" to raw))
+                log.warn("decode-failed", mapOf("reason" to (err.message ?: "parse error"), "frame" to effectiveRaw))
                 onProtocolError?.invoke(SentientError.Protocol("decode failed", cause = err))
                 // Skip the malformed frame; pump continues.
             },

@@ -57,6 +57,7 @@ import io.sentient.android.history.HistoryDrawer
 import io.sentient.android.history.HistoryViewModel
 import io.sentient.android.history.rememberHistoryDrawerState
 import io.sentient.android.presence.PresenceCoordinator
+import io.sentient.android.sdk.SdkFaultHolder
 import io.sentient.android.sdk.SdkSessionFactory
 import io.sentient.mobiledata.session.MobileSession
 import io.sentient.android.settings.SettingsScreen
@@ -226,6 +227,16 @@ private fun ChatRoot(
     // One session per chat entry. remember is composition-scoped: a logout→login
     // transition exits + re-enters this composable, producing a fresh session.
     val chatSession = remember { SdkSessionFactory.create() }
+
+    // DEBUG-only: expose the active SDK to DebugFaultReceiver so Maestro flows can
+    // arm faults via `adb shell am broadcast -a io.sentient.debug.FAULT --es kind ...`.
+    // SdkFaultHolder holds a WeakReference so logout/GC is not prevented.
+    if (BuildConfig.DEBUG) {
+        androidx.compose.runtime.DisposableEffect(chatSession) {
+            SdkFaultHolder.set(chatSession.sdk)
+            onDispose { SdkFaultHolder.clear() }
+        }
+    }
 
     // ViewModels keyed to chatSession identity so each session entry gets a fresh VM.
     // The old VM is cleared (onCleared → onClose → chatSession.close) when the key

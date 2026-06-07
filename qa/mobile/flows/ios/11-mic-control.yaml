@@ -1,0 +1,31 @@
+appId: io.dev32.sentient.debug
+---
+# 11-mic-control — tap chat-mic to start voice mode, then stop.
+#
+# iOS: RECORD_AUDIO permission grant is required before the mic toggles.
+# On the simulator the permission alert may pop; Maestro cannot interact with
+# system alerts, so the harness must pre-grant the permission via simctl before
+# running this flow (or grant via first-run UI). The flow asserts the mic button
+# exists before and after the tap (control-plane only).
+#
+# tags: [ios, simulator-ok, requires-mic-permission]
+- launchApp
+- assertVisible:
+    id: "composer-input"
+# Tap mic to activate voice mode
+- tapOn:
+    id: "chat-mic"
+# The button is still visible; we have no way to assert the accent state via
+# Maestro without a distinguishable id change. Simply confirm no crash.
+- assertVisible:
+    id: "chat-mic"
+# Brief settle
+- extendedWaitUntil:
+    visible:
+      id: "chat-mic"
+    timeout: 2000
+# Tap mic again to deactivate
+- tapOn:
+    id: "chat-mic"
+- assertVisible:
+    id: "chat-mic"

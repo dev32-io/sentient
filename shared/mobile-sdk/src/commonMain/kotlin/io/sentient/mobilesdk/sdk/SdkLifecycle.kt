@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.sdk
 
+import io.sentient.mobilesdk.dev.FaultHooks
 import io.sentient.mobilesdk.log.Log
 import io.sentient.mobilesdk.presence.IdleDetector
 import io.sentient.mobilesdk.presence.IdleDetectorEvent
@@ -69,6 +70,8 @@ class SdkLifecycle(
     private val handshakeLog: Log,
     /** Called with a typed [SentientError.Protocol] when a control frame fails decode. */
     private val onProtocolError: ((SentientError) -> Unit)? = null,
+    /** Debug-only fault hooks; null unless devFaultsEnabled. Threaded into WsTransport + Handshake. */
+    private val faultHooks: FaultHooks? = null,
 ) {
     private var transport: WsTransport? = null
     private var session: WebSocketSession? = null
@@ -90,7 +93,7 @@ class SdkLifecycle(
             return ConnectResult.Failure(LastErrorKind.NETWORK)
         }
         session = open
-        val tx = WsTransport(open, scope, onProtocolError)
+        val tx = WsTransport(open, scope, onProtocolError, faultHooks)
         transport = tx
         hooks.setStatus(SdkStatus.AUTHENTICATING)
         startSignalWatch(tx)
@@ -120,6 +123,7 @@ class SdkLifecycle(
     private fun buildHandshake(open: WebSocketSession): Handshake = Handshake(
         session = open,
         sendAuth = { transport?.send(ClientMessage.Auth(token = hooks.token())) },
+        faultHooks = faultHooks,
         sendConfigure = {
             transport?.send(
                 ClientMessage.SessionConfigure(

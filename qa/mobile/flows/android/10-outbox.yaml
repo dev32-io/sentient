@@ -1,0 +1,40 @@
+appId: io.dev32.sentient.debug
+---
+# 10-outbox — send a message immediately after cold-launch before READY.
+#
+# Strategy: stop the app and relaunch it WITHOUT clearing state (token preserved).
+# The SDK begins connecting; we type + send IMMEDIATELY, before READY. The Composer
+# allows this (handleSend in ChatScreen queues the send when status != READY and
+# flushes on the READY edge). The loading-connecting pill appears while connecting.
+#
+# Pre-condition: the app has a valid auth token stored (i.e. the user was logged in
+# before this flow runs). Run after login and before logout (09-logout). If this
+# flow runs after logout, it will see the login screen — that's expected, the flow
+# will fail gracefully.
+#
+# Note: launchApp without clearState forces a fresh Activity launch but keeps
+# app storage (DataStore, token) intact — that's what we need for the outbox.
+#
+# Log trail: adb logcat grep for "pendingSend" or "flush" confirms outbox flushed.
+#
+# tags: [android, emulator-ok, requires-prior-login, order-sensitive-run-before-09-logout]
+- launchApp
+# The app is in cold-connect state; we type + send BEFORE ready
+- assertVisible:
+    id: "composer-input"
+- tapOn:
+    id: "composer-input"
+- inputText: "what is 2 plus 2"
+- tapOn:
+    id: "chat-send"
+- hideKeyboard
+# User message appears immediately (accepted into local state / outbox)
+- extendedWaitUntil:
+    visible:
+      id: "message-bubble-0"
+    timeout: 15000
+# Assistant reply arrives after READY + flush
+- extendedWaitUntil:
+    visible:
+      id: "assistant-bubble"
+    timeout: 60000

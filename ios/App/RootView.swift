@@ -104,7 +104,18 @@ private struct ChatRoot: View {
             session: createMobileSession(
                 gatewayWsUrl: appConfig.gatewayWsUrl,
                 allowSelfSignedDevHost: appConfig.allowSelfSignedDevHost,
-                capabilities: []
+                capabilities: [],
+                // Enable FaultHooks in debug builds for E2E fault-injection flows.
+                // NOTE: iOS has no broadcast-receiver arming channel; arm faults
+                // from the app code or via a future debug UI. FLAG: iOS fault
+                // injection is a follow-up (no adb-equivalent simple arming channel).
+                devFaultsEnabled: { () -> Bool in
+                    #if DEBUG
+                    return true
+                    #else
+                    return false
+                    #endif
+                }()
             )
         ))
     }

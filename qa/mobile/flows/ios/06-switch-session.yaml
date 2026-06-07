@@ -1,0 +1,26 @@
+appId: io.dev32.sentient.debug
+---
+# 06-switch-session — open the history sheet, tap a session row, assert chat reloads.
+#
+# iOS: HistorySheet is a bottom sheet; history-open triggers it.
+# history-row-<sessionId> on each row; history-new-chat at the bottom.
+#
+# tags: [ios, simulator-ok, requires-prior-session]
+- launchApp
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
+    timeout: 5000
+- assertVisible:
+    id: "history-search"
+# Tap first session row
+- tapOn:
+    id: ".*history-row-.*"
+    optional: false
+# Sheet dismisses after switch; composer appears
+- extendedWaitUntil:
+    visible:
+      id: "composer-input"
+    timeout: 8000

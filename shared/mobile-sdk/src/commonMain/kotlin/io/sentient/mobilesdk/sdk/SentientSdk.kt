@@ -9,6 +9,7 @@
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.sdk
 
+import io.sentient.mobilesdk.audioio.FaultAwareCaptureAdapter
 import io.sentient.mobilesdk.connectors.SessionsListPage
 import io.sentient.mobilesdk.connectors.SessionsRequestException
 import io.sentient.mobilesdk.connectors.SessionsTimeoutException
@@ -76,12 +77,25 @@ class SentientSdk(
     private val resume = SessionResume(bundle.sessionIdStore, bundle.clock)
     private val idle = createIdleDetector(IdleDetectorConfig(idleThresholdMs = idleThresholdMs))
 
+    // FaultHooks declared early so effectiveCapture + lifecycle can both reference it.
+    private val faultHooks = FaultHooks()
+
     // Voice pipeline (E3). Built BEFORE connectors so the downlink hooks exist
     // when the connector set reads them; the pipeline reaches connectors.audioInput
     // via a lazy lambda to break the construction cycle. See SdkAudio.
+    //
+    // In debug builds, wrap the real capture adapter with FaultAwareCaptureAdapter
+    // so loadFixtureUtterance() can inject a pre-recorded PCM utterance instead of
+    // live mic audio. Null capture passes through unchanged (text-only path).
+    private val effectiveCapture = if (config.devFaultsEnabled && bundle.capture != null) {
+        FaultAwareCaptureAdapter(real = bundle.capture, faultHooks = faultHooks)
+    } else {
+        bundle.capture
+    }
+
     private val audio: SdkAudio = SdkAudio(
         audioConfig = config.audio,
-        capture = bundle.capture,
+        capture = effectiveCapture,
         playback = bundle.playback,
         audioInput = { connectors.audioInput },
         clock = bundle.clock,
@@ -134,9 +148,8 @@ class SentientSdk(
         log = createLogger("sdk", "lifecycle"),
         handshakeLog = createLogger("sdk", "handshake"),
         onProtocolError = { err -> emitEvent(SdkEvent.ProtocolError(err)) },
+        faultHooks = if (config.devFaultsEnabled) faultHooks else null,
     )
-
-    private val faultHooks = FaultHooks()
 
     // ── Public surface ───────────────────────────────────────────────────────
 
