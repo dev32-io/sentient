@@ -7,7 +7,7 @@ appId: io.dev32.sentient.debug
 # assistant-bubble appears once the gateway streams the first token.
 # After send, tap the message list to dismiss the keyboard (iOS hideKeyboard
 # is unreliable with custom composer; tapping the scroll area is more reliable).
-- launchApp
+- runFlow: login.yaml
 - assertVisible:
     id: "composer-input"
 - tapOn:

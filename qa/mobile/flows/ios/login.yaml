@@ -1,0 +1,20 @@
+appId: io.dev32.sentient.debug
+---
+# Reusable conditional login. No-op when already on chat (persisted token);
+# logs in via the Kevin avatar + PIN 1234 when on the "Who's here?" login screen.
+# Use as the first step of any flow that needs an authenticated session:  - runFlow: login.yaml
+- launchApp
+- runFlow:
+    when:
+      visible: "Who's here?"
+    commands:
+      - tapOn:
+          point: "50%, 53%"        # Kevin avatar circle
+      - tapOn: "1"
+      - tapOn: "2"
+      - tapOn: "3"
+      - tapOn: "4"                  # PIN 1234
+      - extendedWaitUntil:
+          visible:
+            id: "composer-input"
+          timeout: 20000
