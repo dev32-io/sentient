@@ -27,6 +27,7 @@ import io.sentient.mobilesdk.connectors.UserAudioInputConnector
 import io.sentient.mobilesdk.connectors.UserTextInputConnector
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.protocol.SdkEvent
+import io.sentient.mobilesdk.util.Clock
 
 /**
  * Audio downlink hooks the orchestrator routes to the AudioPipeline (E3). The
@@ -56,6 +57,8 @@ class AudioDownlinkHooks(
  * @param sendBinary Send a raw binary frame (PCM uplink) over the transport.
  * @param newId Deterministic request-id generator for sessions requests.
  * @param sessionsTimeoutMs Sessions request/broadcast timeout (injected for tests).
+ * @param clock Injected wall-clock for the SessionsConnector mint debounce (A2).
+ * @param mintDebounceMs Window (ms) collapsing rapid new-chat taps into one mint (A2).
  * @param audioHooks Downlink side-effect hooks wired to the AudioPipeline (E3).
  *   The orchestrator sets these AFTER it has built the pipeline; until then the
  *   no-op defaults keep the connector's isSpeaking fold the only effect.
@@ -68,6 +71,8 @@ class SdkConnectors(
     sendBinary: (ByteArray) -> Unit,
     newId: () -> String,
     sessionsTimeoutMs: Long,
+    clock: Clock,
+    mintDebounceMs: Long,
     private val audioHooks: () -> AudioDownlinkHooks = { AudioDownlinkHooks() },
 ) {
     val text = UserTextInputConnector(send = send)
@@ -107,6 +112,8 @@ class SdkConnectors(
         send = send,
         newId = newId,
         timeoutMs = sessionsTimeoutMs,
+        clock = clock,
+        mintDebounceMs = mintDebounceMs,
     )
 
     val audioInput = UserAudioInputConnector(

@@ -39,6 +39,7 @@ import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.protocol.ServerMessage
 import io.sentient.mobilesdk.protocol.SessionRow
+import io.sentient.mobilesdk.util.Clock
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
@@ -68,14 +69,24 @@ class SessionsRequestException(val code: String, override val message: String) :
 
 private const val DEFAULT_TIMEOUT_MS = 5_000L
 
+/** Fallback mint-debounce window when none is injected (matches SdkConfig default). */
+private const val DEFAULT_MINT_DEBOUNCE_MS = 3_000L
+
 class SessionsConnector(
     private val send: (ClientMessage) -> Unit,
     private val newId: () -> String,
     private val timeoutMs: Long = DEFAULT_TIMEOUT_MS,
+    private val clock: Clock = Clock { 0L },
+    private val mintDebounceMs: Long = DEFAULT_MINT_DEBOUNCE_MS,
 ) : Connector {
     override val capability: String = CAPABILITY
 
     private val log = createLogger("connector", "sessions")
+
+    // Wall-clock ms of the last fire-and-forget mint, or null when no mint is in
+    // flight. Connection-scoped: cleared on session.created (mint done) and on
+    // reset() (disconnect → fresh connection → fresh mint allowed).
+    private var lastMintAtMs: Long? = null
 
     // requestId → deferred result payload. Resolved by the matching *.result
     // frame, failed by sessions.error with the same requestId.
@@ -125,6 +136,8 @@ class SessionsConnector(
     }
 
     private fun onCreated(msg: ServerMessage.SessionCreated) {
+        // Mint complete → clear the debounce so the next explicit new-chat mints.
+        lastMintAtMs = null
         // Resolve any newChat() waiter first (broadcast-correlated), then fan out.
         val waiters = createdWaiters.toList()
         createdWaiters.clear()
@@ -204,6 +217,37 @@ class SessionsConnector(
         }
     }
 
+    // ── fire-and-forget ops (A2) ──
+    //
+    // Send the frame and return. The gateway broadcasts (session.created /
+    // session.switched) still flow back to listeners + the SDK anchor; the caller
+    // NEVER awaits, NEVER times out, NEVER throws. The UI must not block on a
+    // session round-trip (webui does `void newChat()`).
+
+    /**
+     * Fire-and-forget new chat. Debounced: if a mint is still in flight within
+     * [mintDebounceMs], log and return so rapid taps collapse to a single ACP mint.
+     */
+    fun sendNew() {
+        val now = clock.nowMs()
+        val inFlight = lastMintAtMs
+        if (inFlight != null && now - inFlight < mintDebounceMs) {
+            log.info("sendNew.debounced", mapOf("sinceMs" to (now - inFlight)))
+            return
+        }
+        lastMintAtMs = now
+        val id = newId()
+        log.info("sendNew", mapOf("requestId" to id))
+        send(ClientMessage.SessionNew(requestId = id))
+    }
+
+    /** Fire-and-forget switch. Always sends — no debounce (switch is idempotent). */
+    fun sendSwitch(sessionId: String) {
+        val id = newId()
+        log.info("sendSwitch", mapOf("sessionId" to sessionId, "requestId" to id))
+        send(ClientMessage.SessionSwitch(requestId = id, sessionId = sessionId))
+    }
+
     /**
      * Register a sessions-change listener. Returns an unsubscribe fn. Listeners
      * survive detach()/reconnect — only the SDK unregisters them explicitly.
@@ -220,6 +264,8 @@ class SessionsConnector(
      */
     fun reset() {
         log.info("reset", mapOf("pending" to pending.size))
+        // Disconnect → new connection → a fresh mint is allowed; clear the debounce.
+        lastMintAtMs = null
         val err = SessionsTimeoutException("connector reset")
         for (d in pending.values) d.completeExceptionally(err)
         pending.clear()

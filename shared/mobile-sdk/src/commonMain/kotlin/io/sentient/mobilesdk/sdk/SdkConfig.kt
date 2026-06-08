@@ -37,6 +37,15 @@ private const val SPEECH_PREROLL_FRAMES = 24
 /** Failsafe: force-close the latch after this long if transcript.final never lands. */
 private const val SPEECH_MAX_OPEN_MS = 20_000L
 
+/**
+ * Default window (ms) collapsing rapid new-chat taps into a single ACP mint.
+ * The gateway's session.new pre-warm is deliberately slow; without a client-side
+ * debounce a double-tap mints two phantom sessions. Valid range ~1000–5000ms:
+ * below 1s a fast double-tap can still double-mint; above 5s a genuine "new chat
+ * right after the last one" is swallowed.
+ */
+private const val DEFAULT_MINT_DEBOUNCE_MS = 3_000L
+
 /** Gateway-negotiated STT input rate (Hz). Capture emits PCM16 LE at this rate. */
 private const val DEFAULT_INPUT_SAMPLE_RATE = 16_000
 /** Default assistant playback rate (Hz) until session.ready overrides it. */
@@ -77,14 +86,17 @@ data class AudioPipelineConfig(
 /**
  * Configuration for [SentientSdk].
  *
- * @param gatewayWsUrl Full WS URL, e.g. `wss://host/api/v1/ws`. SessionResume
- *   appends `?session_id=` to this on connect when a stored pointer exists.
+ * @param gatewayWsUrl Full WS URL, e.g. `wss://host/api/v1/ws`. The SDK connects
+ *   with this BASE url directly — no connect-URL session resume (A1); session
+ *   continuity is re-established via a fire-and-forget session.switch on reconnect.
  * @param allowSelfSignedDevHost Debug-only TLS bypass. MUST be false in release.
  * @param capabilities Capability strings advertised in `session.configure`.
  *   Mirror the webui set; the orchestrator merges these with each connector's
  *   own `capability` so the gateway activates the right connectors.
  * @param reconnect Reconnect / backoff tunables (defaults mirror web-sdk).
  * @param audio Voice-pipeline tunables (E3): gate thresholds + sample rates.
+ * @param mintDebounceMs Window (ms) collapsing rapid new-chat taps into a single
+ *   ACP mint (A2). Default [DEFAULT_MINT_DEBOUNCE_MS]; valid range ~1000–5000ms.
  */
 data class SdkConfig(
     val gatewayWsUrl: String,
@@ -92,6 +104,7 @@ data class SdkConfig(
     val capabilities: List<String>,
     val reconnect: ReconnectConfig = ReconnectConfig(),
     val audio: AudioPipelineConfig = AudioPipelineConfig(),
+    val mintDebounceMs: Long = DEFAULT_MINT_DEBOUNCE_MS,
     // Debug-only: enables FaultHooks injection for E2E. MUST be false in release.
     val devFaultsEnabled: Boolean = false,
 )
