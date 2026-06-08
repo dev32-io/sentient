@@ -4,8 +4,8 @@
 // Holds the small set of app-lived dependencies that legitimately outlive a
 // chat screen: token store, auth client, and the capability list.
 //
-// The SDK instance itself lives ONLY inside the chat-scoped [ChatSession]
-// produced by [SdkSessionFactory]. Nothing here creates or holds a SentientSdk.
+// The SDK instance itself lives ONLY inside the User/Connection scope owned by
+// [UserSessionManager]. Nothing here creates or holds a SentientSdk.
 //
 // createPlatformBundle() / MobileSdk.initAndroid(applicationContext) MUST run
 // (SentientApp.onCreate) before the first access so the Android Context is
@@ -51,8 +51,8 @@ object AppDependencies {
 
     /**
      * The SecureTokenStore the SDK reads its handshake token from. The login
-     * flow saves the token here on success; [ChatSession.open] / [SentientSdk.connect]
-     * reads it. Built from the platform bundle (same instance as SdkSessionFactory uses).
+     * flow saves the token here on success; [SentientSdk.connect] reads it. Built
+     * from the platform bundle (same instance UserSessionManager's SDK uses).
      */
     val tokenStore: SecureTokenStore by lazy {
         createPlatformBundle().tokenStore

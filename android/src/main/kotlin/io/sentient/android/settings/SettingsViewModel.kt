@@ -7,11 +7,10 @@
 //   login:  tokenStore.save(token) + displayNameStore.save(name)
 //   logout: tokenStore.clear() + displayNameStore.clear()
 //
-// Clearing displayName flips the nav gate (displayName == null) in
-// AppConfiguredRoot → login screen. Unmounting ChatRoot calls
-// ChatViewModel.onCleared → chatSession.close() → sdk.disconnect(). So logout
-// does NOT need a direct SDK disconnect call — unmounting the chat composable
-// is the teardown path. Mirrors iOS: clearing the store flips the nav gate.
+// Clearing displayName flips the auth gate (displayName == null). The actual SDK
+// teardown on logout is owned by AppNavHost: it calls UserSessionManager.shutdown()
+// (disconnect + cancel scope) alongside this logout(). So this VM only clears the
+// persisted auth state. Mirrors iOS: clearing the store flips the nav gate.
 // ---------------------------------------------------------------------------
 package io.sentient.android.settings
 
@@ -38,9 +37,8 @@ class SettingsViewModel(
     /**
      * Logs the user out: clears the persisted token + display name. Idempotent —
      * [SecureTokenStore.clear] and [DisplayNameStore.clear] are both safe to call
-     * when already logged out. Clearing displayName flips [AppConfiguredRoot]'s nav
-     * gate → login, which unmounts ChatRoot → ChatViewModel.onCleared → session.close()
-     * (SDK disconnect). No direct SDK call is needed here.
+     * when already logged out. AppNavHost pairs this with UserSessionManager.shutdown()
+     * for the SDK disconnect + scope cancel, then routes to login.
      */
     fun logout() {
         log.info("logout.start")

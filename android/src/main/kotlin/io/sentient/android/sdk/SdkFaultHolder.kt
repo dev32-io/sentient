@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // SdkFaultHolder — DEBUG-only weak reference to the active SentientSdk.
 //
-// Updated whenever ChatRoot creates a new session (via MobileSession.sdk).
+// Updated whenever UserSessionManager builds a new SDK (component()).
 // DebugFaultReceiver reads it to arm faults via sdk.devFaults(). Guarded by
 // BuildConfig.DEBUG so no reference leaks into release builds.
 //

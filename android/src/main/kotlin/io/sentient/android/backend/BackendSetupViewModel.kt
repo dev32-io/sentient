@@ -5,8 +5,8 @@
 // (so the next login call picks up the new backend) and signal success (UI shows
 // a checkmark, then dismisses); on failure stay with an error. The token is
 // cleared so a backend change never auto-resumes a stale session on a different
-// backend. The SDK singleton is gone — SdkSessionFactory picks up the new config
-// on the next chat entry without an explicit rebuild.
+// backend. The SDK is owned by UserSessionManager and built lazily on the next
+// chat entry, so it picks up the new config without an explicit rebuild.
 // ---------------------------------------------------------------------------
 package io.sentient.android.backend
 

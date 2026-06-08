@@ -3,10 +3,10 @@
 //
 // Single source of truth: state: StateFlow<AuthUiState>. Single mutation entry:
 // dispatch(AuthIntent). Side work (REST listUsers/login, token save) runs in
-// viewModelScope. Navigation to chat is NOT modelled here — MainActivity derives
-// login-vs-chat from DisplayNameStore.name != null. On a successful login we
-// save the token + displayName; the nav gate reacts and mounts ChatRoot, which
-// builds the ChatSession + connects the SDK.
+// viewModelScope. Navigation to chat is NOT modelled here — AppNavHost's login
+// destination watches DisplayNameStore.name and navigates to chat when it appears.
+// On a successful login we save the token + displayName; the nav layer reacts and
+// enters the chat route, which resolves the ChatComponent + connects the SDK.
 //
 // PIN is NEVER logged. Auto-submit fires once 4 digits are entered.
 // ---------------------------------------------------------------------------
@@ -136,9 +136,9 @@ class AuthViewModel(
                     // Persist the display name for the post-login chat / history
                     // headers (this VM's selectedUser is reset after login). Display
                     // name, not a secret — kept out of the token path. Mirrors iOS
-                    // AuthModel.performLogin → displayNameStore.save. The nav gate
-                    // (displayName != null) reacts and mounts ChatRoot, which builds
-                    // the ChatSession and connects the SDK.
+                    // AuthModel.performLogin → displayNameStore.save. AppNavHost's
+                    // login destination watches the name and navigates to chat, which
+                    // resolves the ChatComponent and connects the SDK.
                     displayNameStore.save(user.displayName)
                 }
                 is AuthResult.Failure -> {

@@ -86,6 +86,8 @@ fun HistoryDrawer(
     viewModel: HistoryViewModel,
     drawerState: DrawerState,
     nowMs: Long,
+    onSelectSession: (String) -> Unit,
+    onNewChat: () -> Unit,
     onOpenSettings: () -> Unit = {},
     userName: String = "You",
     household: String = "",
@@ -111,15 +113,17 @@ fun HistoryDrawer(
                     onOpenSettings = onOpenSettings,
                     onQuery = viewModel::setQuery,
                     onRetry = viewModel::refresh,
+                    // Select / new-chat are NAVIGATIONS owned by the host: close the
+                    // drawer, then navigate to chat(sessionId) which recreates the VM.
                     onSwitch = { id ->
-                        viewModel.switchSession(id)
                         scope.launch { drawerState.close() }
+                        onSelectSession(id)
                     },
                     onRename = viewModel::renameSession,
                     onDelete = viewModel::deleteSession,
                     onNewChat = {
-                        viewModel.newChat()
                         scope.launch { drawerState.close() }
+                        onNewChat()
                     },
                 )
             }
