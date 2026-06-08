@@ -139,8 +139,9 @@ final class ChatViewModel: ObservableObject {
 
     private func applyConnection(_ result: SentientResult<ConnectionState>) {
         // Fold Success/Loading→partial to get the current ConnectionState.
-        // Failure: keep the last-good connection value (or default) for the banner
-        // derivation — ConnectionBannerState.derive reads status + connectionLost.
+        // Failure: for a terminal auth error, set authExpired=true so ChatView's
+        // onAuthExpired fires and routes to login. All other failures keep the
+        // last-good connection value so the banner path (connectionLost/status) works.
         switch onEnum(of: result) {
         case .success(let s):
             connection = s.data
@@ -148,9 +149,15 @@ final class ChatViewModel: ObservableObject {
         case .loading(let l):
             if let partial = l.partial { connection = partial }
             log.debug("connection loading hasPartial=\(l.partial != nil)")
-        case .failure:
-            // Keep last-good connection; the banner derives from connectionLost/status.
-            log.debug("connection failure — keeping last-good")
+        case .failure(let f):
+            let isTerminalAuth = f.error.kind == .auth && !f.error.recoverable
+            if isTerminalAuth {
+                connection = makeAuthExpiredConnection()
+                log.warn("connection auth-expired — routing to login")
+            } else {
+                // Keep last-good connection; the banner derives from connectionLost/status.
+                log.debug("connection failure — keeping last-good")
+            }
         }
     }
 

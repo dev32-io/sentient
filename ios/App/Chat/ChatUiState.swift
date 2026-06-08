@@ -39,3 +39,19 @@ func makeDisconnectedConnection() -> ConnectionState {
         cognition: .idle
     )
 }
+
+/// Build a terminal-auth-expired ConnectionState. authExpired=true routes ChatView
+/// to call onAuthExpired → onLogout, clearing the token and swapping to login.
+func makeAuthExpiredConnection() -> ConnectionState {
+    ConnectionState(
+        status: .disconnected,
+        hasSession: false,
+        connectionLost: false,
+        authExpired: true,
+        prefs: AudioPreferences.companion.DEFAULT,
+        voiceMode: .off,
+        isSpeaking: false,
+        audioState: .inactive,
+        cognition: .idle
+    )
+}

@@ -19,6 +19,7 @@ import io.sentient.android.sdk.SdkSessionFactory
 import io.sentient.android.settings.SettingsScreen
 import io.sentient.android.settings.SettingsViewModel
 import io.sentient.mobiledata.result.SentientResult
+import io.sentient.mobilesdk.result.ErrorKind
 import io.sentient.mobilesdk.sdk.ConnectionState
 import io.sentient.mobilesdk.sdk.VoiceMode
 import kotlinx.coroutines.flow.map
@@ -90,7 +91,11 @@ internal fun ChatRoot(
             when (result) {
                 is SentientResult.Success -> result.data
                 is SentientResult.Loading -> result.partial ?: ConnectionState()
-                is SentientResult.Failure -> ConnectionState()
+                is SentientResult.Failure -> {
+                    val isTerminalAuth =
+                        result.error.kind == ErrorKind.AUTH && !result.error.recoverable
+                    if (isTerminalAuth) ConnectionState(authExpired = true) else ConnectionState()
+                }
             }
         }
         .collectAsStateWithLifecycle(initialValue = ConnectionState())
