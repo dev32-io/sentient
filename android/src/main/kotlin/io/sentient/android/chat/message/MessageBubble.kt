@@ -11,7 +11,8 @@
 // Both: 1dp lineSoft border, padMsg (18dp) text padding, ink text, capped at
 // msgMax width. A streaming assistant message with no text yet shows the
 // three-dot pulse (mirrors BubbleText PlaceholderPulse); once text arrives it
-// renders GFM markdown via typewriter reveal while still streaming.
+// renders the already-revealed substring from the data layer directly (no
+// view-side typewriter — mobile-data Reveal ticker drives content growth).
 //
 // Markdown: GFM via mikepenz multiplatform-markdown-renderer (m3), themed to
 // Dusk (ink text, accent links, bgElev code) — mirrors the webui `marked` path.
@@ -177,9 +178,12 @@ private fun BubbleText(
     tools: List<TaskSnapshotItem> = emptyList(),
 ) {
     val tokens = LocalTokens.current
-    // GFM rendered to Compose (mikepenz). Streaming reveals text via typewriter; the
-    // cutoff marker renders as a separate row below so it stays outside the markdown block flow.
-    val shown = rememberTypewriterText(text, streaming)
+    // GFM rendered to Compose (mikepenz). The data layer (mobile-data Reveal ticker)
+    // already drives content as the revealed substring — render it directly. No
+    // view-side typewriter: double-revealing would produce lag/stall. Mirrors iOS
+    // MessageBubble.swift StreamingText which renders message.content directly.
+    // The cutoff marker renders as a separate row below outside the markdown block flow.
+    val shown = text
     val body = TextStyle(
         color = Color(Colors.ink),
         fontSize = tokens.type.base,

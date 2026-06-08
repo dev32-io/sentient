@@ -34,6 +34,7 @@ import io.sentient.android.chat.message.LoadingAffordance
 import io.sentient.android.chat.voice.MarkMode
 import io.sentient.android.theme.Fraunces
 import io.sentient.android.theme.LocalTokens
+import io.sentient.mobilesdk.connectors.CognitionState
 import io.sentient.mobilesdk.design.Colors
 import io.sentient.mobilesdk.sdk.AudioState
 import io.sentient.mobilesdk.sdk.ConnectionState
@@ -45,12 +46,23 @@ private val BANNER_BORDER = 1.dp
 internal val CONTENT_SPINNER_SIZE = 14.dp
 internal val CONTENT_SPINNER_STROKE = 2.dp
 
-/** Derives MarkMode from ConnectionState fields. */
+/**
+ * Derives MarkMode from ConnectionState fields.
+ *
+ * Precedence: speaking wins, then cognition axis (THINKING/ACTING or
+ * audioState.PROCESSING — covers both voice and text-only cycles), then listening.
+ * Mirrors iOS VoiceStatus.swift markModeOfConnection(_:).
+ */
 internal fun markModeOfConnection(connection: ConnectionState): MarkMode {
     val speaking = connection.isSpeaking ||
         connection.audioState == AudioState.ASSISTANT_SPEAKING
     if (speaking) return MarkMode.SPEAKING
-    val thinking = connection.audioState == AudioState.PROCESSING
+    // Cognition axis: THINKING/ACTING fires the avatar ring on text responses that
+    // carry no voice signal (audioState stays INACTIVE). audioState.PROCESSING
+    // covers voice-path cycles. Either path → THINKING ring.
+    val thinking = connection.cognition == CognitionState.THINKING
+        || connection.cognition == CognitionState.ACTING
+        || connection.audioState == AudioState.PROCESSING
     if (thinking) return MarkMode.THINKING
     val listening = connection.audioState == AudioState.LISTENING ||
         connection.audioState == AudioState.USER_SPEAKING

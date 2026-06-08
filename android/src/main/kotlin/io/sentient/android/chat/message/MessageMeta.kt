@@ -22,7 +22,11 @@ fun MessageMeta(message: ChatMessage, userName: String) {
     val time = remember(message.ts) { SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(message.ts)) }
     Row(horizontalArrangement = Arrangement.spacedBy(tokens.space.sm), verticalAlignment = Alignment.CenterVertically) {
         Text(name, color = Color(Colors.ink), fontSize = tokens.type.sm, fontWeight = FontWeight.SemiBold)
-        Text("·", color = Color(Colors.ink4))
-        Text(time, color = Color(Colors.ink3), fontSize = tokens.type.xs)
+        // Hide separator + timestamp while streaming — ts=0 is not a real timestamp.
+        // The committed entry carries the real ts and shows time normally.
+        if (!message.streaming) {
+            Text("·", color = Color(Colors.ink4))
+            Text(time, color = Color(Colors.ink3), fontSize = tokens.type.xs)
+        }
     }
 }

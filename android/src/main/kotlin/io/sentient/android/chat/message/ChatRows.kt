@@ -25,8 +25,14 @@ fun chatRows(messages: List<ChatMessage>, nowMs: Long): List<ChatRow> {
     val out = ArrayList<ChatRow>(messages.size + 4)
     var lastKey: String? = null
     for ((i, m) in messages.withIndex()) {
-        val key = dayKey(m.ts)
-        if (key != lastKey) { out.add(ChatRow.Divider(dividerLabel(m.ts, nowMs), key)); lastKey = key }
+        // Streaming messages have ts=0 (no real timestamp while in flight).
+        // Never bucket them into a day-divider — ts=0/epoch would produce a
+        // bogus "Thursday, Jan 1 1970" separator. The committed entry that
+        // follows carries the real ts and its own divider. Mirrors iOS ChatRows.swift.
+        if (!m.streaming) {
+            val key = dayKey(m.ts)
+            if (key != lastKey) { out.add(ChatRow.Divider(dividerLabel(m.ts, nowMs), key)); lastKey = key }
+        }
         out.add(ChatRow.Msg(m, i))
     }
     return out
