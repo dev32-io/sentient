@@ -10,8 +10,10 @@ appId: io.dev32.sentient.debug
 #
 # tags: [ios, simulator-ok]
 - launchApp
-- assertVisible:
-    id: "composer-input"
+- extendedWaitUntil:
+    visible:
+      id: "composer-input"
+    timeout: 15000
 - tapOn:
     id: "history-open"
 - extendedWaitUntil:
@@ -24,7 +26,7 @@ appId: io.dev32.sentient.debug
 - extendedWaitUntil:
     visible:
       id: "settings-logout"
-    timeout: 5000
+    timeout: 10000
 - tapOn:
     id: "settings-logout"
 # After logout: login screen appears

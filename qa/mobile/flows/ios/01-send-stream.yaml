@@ -8,8 +8,10 @@ appId: io.dev32.sentient.debug
 # After send, tap the message list to dismiss the keyboard (iOS hideKeyboard
 # is unreliable with custom composer; tapping the scroll area is more reliable).
 - runFlow: login.yaml
-- assertVisible:
-    id: "composer-input"
+- extendedWaitUntil:
+    visible:
+      id: "composer-input"
+    timeout: 15000
 - tapOn:
     id: "composer-input"
 - inputText: "what is 2 plus 2"

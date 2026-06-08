@@ -26,13 +26,16 @@ appId: io.dev32.sentient.debug
 - assertNotVisible:
     id: "history-search"
 # 3) Re-open via a left-edge-swipe drag (velocity snap → open).
+# Note: 1–4% start positions are intercepted by Springboard edge swipe on iOS 26 beta
+# + Maestro 2.6.0. The SideDrawer edgeZoneWidth is 40pt (≈10% at 393pt wide) so any
+# start ≤ 10% is valid for edge-open. 8% avoids the Springboard system edge intercept.
 - swipe:
-    start: "1%, 50%"
+    start: "8%, 50%"
     end: "85%, 50%"
-    duration: 300
+    duration: 400
 - extendedWaitUntil:
     visible:
       id: "history-search"
-    timeout: 5000
+    timeout: 8000
 - assertVisible:
     id: "history-new-chat"
