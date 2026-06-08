@@ -3,15 +3,18 @@ package io.sentient.mobiledata.usecase
 import io.sentient.mobiledata.data.ConversationRepository
 import io.sentient.mobiledata.model.ChatModel
 import io.sentient.mobiledata.outbox.PendingMessage
+import io.sentient.mobilesdk.log.createLogger
+import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.sdk.ChatMessage
 import io.sentient.mobilesdk.util.Clock
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.scan
 
 /** Reveal ticker cadence — ~60fps feel without burning battery. */
 private const val REVEAL_TICK_MS = 16L
@@ -30,6 +33,7 @@ class ObserveChatUseCase(
     private val conversation: ConversationRepository,
     private val clock: Clock,
 ) {
+    private val log = createLogger("data", "observe-chat")
     operator fun invoke(pending: Flow<List<PendingMessage>>): Flow<ChatModel> =
         combine(conversation.timeline, revealFlow(), pending) { committed, rs, pendingMsgs ->
             val committedPendingIds = committed.mapNotNull { it.pendingId }.toSet()
@@ -50,16 +54,19 @@ class ObserveChatUseCase(
             ChatModel(committed = visibleCommitted, pending = visiblePending, live = liveBubble, tasks = rs.tasks)
         }
 
-    /** Reveal stream: folds events into RevealState and self-ticks while a bubble exists. */
-    private fun revealFlow(): Flow<RevealState> = channelFlow {
-        val state = MutableStateFlow(RevealState())
-        launch { conversation.liveEvents.collect { state.value = RevealReducer.reduce(state.value, it) } }
-        launch {
-            while (isActive) {
-                if (state.value.bubble != null) state.value = RevealReducer.reduce(state.value, RevealTick(clock.nowMs()))
+    /** Reveal stream: a single-coroutine fold of liveEvents + a 16ms ticker. The scan's
+     *  accumulator is the only state, updated serially by merge → no shared mutable cell,
+     *  correct on any dispatcher. distinctUntilChanged drops idle no-op ticks downstream. */
+    private fun revealFlow(): Flow<RevealState> {
+        val ticks = flow {
+            while (true) {
                 delay(REVEAL_TICK_MS)
+                emit(RevealTick(clock.nowMs()))
             }
         }
-        state.collect { send(it) }
+        return merge(conversation.liveEvents, ticks)
+            .onEach { if (it is SdkEvent.SessionSwitched) log.info("conversation switch — reveal reset") }
+            .scan(RevealState()) { state, event -> RevealReducer.reduce(state, event) }
+            .distinctUntilChanged()
     }
 }

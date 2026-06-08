@@ -38,6 +38,14 @@ class RevealReducerTest {
         assertNull(s.bubble)
     }
 
+    @Test fun multiple_deltas_accumulate_without_loss() {
+        var s = RevealReducer.reduce(RevealState(), SdkEvent.MessageStarted(C))
+        s = RevealReducer.reduce(s, SdkEvent.MessageDelta(C, "He"))
+        s = RevealReducer.reduce(s, SdkEvent.MessageDelta(C, "llo "))
+        s = RevealReducer.reduce(s, SdkEvent.MessageDelta(C, "world"))
+        assertEquals("Hello world", s.bubble?.fullContent)
+    }
+
     @Test fun tasks_survive_into_drain_cleared_after() {
         var s = RevealReducer.reduce(RevealState(), SdkEvent.MessageStarted(C))
         s = RevealReducer.reduce(s, SdkEvent.TaskUpserted(TaskSnapshotItem("t1", "search", C, "running", "", 1L)))
