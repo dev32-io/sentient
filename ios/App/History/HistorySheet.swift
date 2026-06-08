@@ -11,7 +11,7 @@
 //   - a New Chat button (history-new-chat) → store.newChat + dismiss
 //
 // Reconnect-safe refresh: the list re-queries on every present AND after every
-// mutation (HistoryModel re-calls listSessions in each op). The SDK does not
+// mutation (HistoryViewModel re-calls listSessions in each op). The SDK does not
 // surface onSessionsChanged through SentientSdk, so present + post-mutation
 // re-query is the refresh path (D-A4/D-I4 plan fallback).
 //
@@ -34,7 +34,7 @@ struct HistorySheet: View {
     /// The sheet owns its list/search state holder, built over the chat-scoped
     /// MobileSession passed by the host. @StateObject keeps it alive across the
     /// sheet's recompositions; the model re-queries listSessions on present + mutation.
-    @StateObject private var model: HistoryModel
+    @StateObject private var model: HistoryViewModel
     /// One stable clock per present pass so the date labels don't drift mid-scroll.
     let nowMs: Int64
     let onDismiss: () -> Void
@@ -44,7 +44,7 @@ struct HistorySheet: View {
     @State private var renameText = ""
 
     init(session: MobileSession, nowMs: Int64, onDismiss: @escaping () -> Void) {
-        _model = StateObject(wrappedValue: HistoryModel(session: session))
+        _model = StateObject(wrappedValue: HistoryViewModel(session: session))
         self.nowMs = nowMs
         self.onDismiss = onDismiss
     }

@@ -7,7 +7,7 @@
 import SwiftUI
 
 struct BackendSetupView: View {
-    @StateObject var model: BackendSetupModel
+    @StateObject var model: BackendSetupViewModel
     var onSaved: () -> Void
 
     // Surfaces the iOS Local Network permission prompt on appear, so it's
@@ -82,14 +82,14 @@ struct BackendSetupView: View {
 
 #Preview("Empty") {
     BackendSetupView(
-        model: BackendSetupModel(existing: nil, reconfigure: { _ in }),
+        model: BackendSetupViewModel(existing: nil, reconfigure: { _ in }),
         onSaved: {}
     )
 }
 
 #Preview("Pre-filled") {
     BackendSetupView(
-        model: BackendSetupModel(
+        model: BackendSetupViewModel(
             existing: BackendConfig(host: "192.168.1.42", port: 8888, security: .tlsTrustSelfSigned),
             reconfigure: { _ in }
         ),

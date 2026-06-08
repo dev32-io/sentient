@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // DisplayNameStore — persists the logged-in user's display name in UserDefaults.
 //
-// AuthUserLite (and AuthModel) are login-scoped and torn down after a successful
+// AuthUserLite (and AuthViewModel) are login-scoped and torn down after a successful
 // login, so the selected user's display name is persisted here at login time and
 // read back by AppConfig for the chat / history-drawer headers. Synchronous read
 // so the first frame can show the real name.

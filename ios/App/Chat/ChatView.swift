@@ -45,7 +45,7 @@ struct ChatView: View {
 
     // ── Drawer state ────────────────────────────────────────────────────────────
 
-    @StateObject private var historyModel: HistoryModel
+    @StateObject private var historyModel: HistoryViewModel
     @State private var drawerOpen = false
     @State private var panelNowMs: Int64 = 0
 
@@ -64,7 +64,7 @@ struct ChatView: View {
         self.vm = vm
         self.userName = userName
         self.onLogout = onLogout
-        _historyModel = StateObject(wrappedValue: HistoryModel(session: vm.session))
+        _historyModel = StateObject(wrappedValue: HistoryViewModel(session: vm.session))
     }
 
     // ── Derived ───────────────────────────────────────────────────────────────────

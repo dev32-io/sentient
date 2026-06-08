@@ -9,7 +9,7 @@
 //     be stale." banner + Retry, shown ABOVE the still-rendered (stale) rows.
 //
 // Both are stateless leaves: the host (HistorySidePanel) decides which to show
-// from HistoryModel.error + whether rows exist, and passes `onRetry`. State
+// from HistoryViewModel.error + whether rows exist, and passes `onRetry`. State
 // hoisting per the swiftui rule; no ViewModel reference.
 //
 // accessibilityIdentifiers: sessions-error-retry (empty), sessions-stale-retry

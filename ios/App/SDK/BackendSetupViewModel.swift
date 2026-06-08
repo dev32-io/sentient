@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// BackendSetupModel — drives the iOS backend setup view. Save folds in a probe
+// BackendSetupViewModel — drives the iOS backend setup view. Save folds in a probe
 // (createAuthClient → listUsers); success persists + reconfigures the AppConfig
 // and signals dismiss; failure shows an error and stays.
 // ---------------------------------------------------------------------------
@@ -13,7 +13,7 @@ private let probeRetryDelaySeconds: UInt64 = 1
 private let probeRetryDelayNanosExtra: UInt64 = 500_000_000 // 1.5s total
 
 @MainActor
-final class BackendSetupModel: ObservableObject {
+final class BackendSetupViewModel: ObservableObject {
     @Published var host: String
     @Published var port: String
     @Published var security: ConnectionSecurity

@@ -7,7 +7,7 @@
 // interactive dismiss (drag/tap), and calls `onOpen` whenever the drawer settles
 // fully open (edge-swipe OR programmatic) so the host can refresh on every open.
 //
-// Stateful-content note: HistorySidePanel observes HistoryModel via @ObservedObject.
+// Stateful-content note: HistorySidePanel observes HistoryViewModel via @ObservedObject.
 // SwiftUI re-evaluates the @ViewBuilder closures whenever the host re-renders;
 // updateUIViewController reassigns each hosting controller's rootView so those
 // fresh subtrees (with up-to-date observed state) propagate into UIKit. Without
@@ -53,7 +53,7 @@ struct SideDrawer<Content: View, Drawer: View>: UIViewControllerRepresentable {
 
     func updateUIViewController(_ controller: SideDrawerController, context: Context) {
         // Reassign rootViews so observed-state changes in the hosted SwiftUI
-        // subtrees propagate (HistorySidePanel ← HistoryModel, chat ← ChatViewModel).
+        // subtrees propagate (HistorySidePanel ← HistoryViewModel, chat ← ChatViewModel).
         context.coordinator.contentHost?.rootView = content()
         context.coordinator.drawerHost?.rootView = drawer()
 

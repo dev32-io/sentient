@@ -108,7 +108,7 @@ final class AppConfig: ObservableObject {
     // ── Auth ──────────────────────────────────────────────────────────────────
 
     /// Mark a successful login: update the reactive hasToken gate so RootView
-    /// transitions to the chat screen. The token itself is written by AuthModel
+    /// transitions to the chat screen. The token itself is written by AuthViewModel
     /// directly to tokenStore before calling this; we just need to flip the gate.
     func didLogin() {
         hasToken = displayNameStore.load() != nil

@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// HistoryModel — drives the history side panel's session list + search state.
+// HistoryViewModel — drives the history side panel's session list + search state.
 //
 // Consumes session.historyRepo.load() (Flow<SentientResult<List<SessionRowData>>>)
 // via the same SKIE SkieSwiftFlow iteration pattern as ChatViewModel uses for
@@ -20,7 +20,7 @@ import Foundation
 import MobileData
 
 @MainActor
-final class HistoryModel: ObservableObject {
+final class HistoryViewModel: ObservableObject {
     @Published private(set) var sessions: [SessionRow] = []
     @Published var query: String = ""
     @Published private(set) var loading = false
@@ -145,7 +145,7 @@ private extension SessionRowData {
 // without performing real I/O.
 // ---------------------------------------------------------------------------
 #if DEBUG
-extension HistoryModel {
+extension HistoryViewModel {
     /// Overwrite the session list for SwiftUI previews (never call in production).
     func seedForPreview(_ rows: [SessionRow]) {
         sessions = rows

@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// AuthModel — login-scoped state owner for the avatar-grid → PIN-pad flow.
+// AuthViewModel — login-scoped state owner for the avatar-grid → PIN-pad flow.
 //
 // Mirrors the Android AuthViewModel role: one observable state struct, one
 // action surface. This owns UI state ONLY (users / selected user / pin / error)
@@ -30,7 +30,7 @@ enum AuthPhase {
 }
 
 @MainActor
-final class AuthModel: ObservableObject {
+final class AuthViewModel: ObservableObject {
     /// Avatar-grid entries from GET /auth/users.
     @Published private(set) var users: [AuthUserLite] = []
     /// True while the initial list is in flight.
@@ -63,7 +63,7 @@ final class AuthModel: ObservableObject {
     ///     torn down. NOT a secret — never touches the token path.
     init(
         connect: @escaping () -> Void,
-        authClient: AuthClient = AuthModel.makeAuthClient(),
+        authClient: AuthClient = AuthViewModel.makeAuthClient(),
         tokenStore: SecureTokenStore = createTokenStore(),
         displayNameStore: DisplayNameStore = DisplayNameStore()
     ) {

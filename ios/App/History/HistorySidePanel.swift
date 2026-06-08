@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // HistorySidePanel — left panel content (design .m-hx). Owns no transport;
-// reads HistoryModel passed in by the host (the host holds it via @StateObject,
+// reads HistoryViewModel passed in by the host (the host holds it via @StateObject,
 // same as HistorySheet). Presentation and gesture wiring (Task 8.2) are
 // separate; this file is content only.
 //
@@ -26,7 +26,7 @@ struct HistorySidePanel: View {
     /// The host (Task 8.2 parent view) owns the model via @StateObject and
     /// passes it here. @ObservedObject is correct: the panel is a consumer, not
     /// the lifecycle owner.
-    @ObservedObject var model: HistoryModel
+    @ObservedObject var model: HistoryViewModel
     /// One stable clock per panel presentation so relative dates don't drift.
     let nowMs: Int64
     let userName: String
@@ -194,7 +194,7 @@ private let previewRows = makePreviewRows()
 /// panel. `errorMessage != nil` drives the sessions-error / stale-banner states.
 private struct PanelPreviewHost: View {
     // Preview uses a stub session (never connects — seeding happens in onAppear).
-    @StateObject private var model = HistoryModel(
+    @StateObject private var model = HistoryViewModel(
         session: createMobileSession(gatewayWsUrl: "ws://localhost:8888/api/v1/ws",
                                      allowSelfSignedDevHost: true, capabilities: [],
                                      devFaultsEnabled: true)

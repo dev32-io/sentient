@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // LoginView — the avatar-grid → PIN-pad login flow.
 //
-// Owns a login-scoped @StateObject AuthModel (UI state only). AppConfig drives
+// Owns a login-scoped @StateObject AuthViewModel (UI state only). AppConfig drives
 // login-vs-chat; LoginView passes the chat-scoped session's connect() into the
 // model so a successful login → token save → connect(). Navigation to
 // chat is event-driven in RootView off the SDK status, not modelled here.
@@ -19,12 +19,12 @@ struct LoginView: View {
     /// Called when the user taps the gear to open backend setup.
     var onOpenBackendSetup: () -> Void
 
-    @StateObject private var model: AuthModel
+    @StateObject private var model: AuthViewModel
 
     init(onConnect: @escaping () -> Void, onOpenBackendSetup: @escaping () -> Void = {}) {
         self.onConnect = onConnect
         self.onOpenBackendSetup = onOpenBackendSetup
-        _model = StateObject(wrappedValue: AuthModel(connect: onConnect))
+        _model = StateObject(wrappedValue: AuthViewModel(connect: onConnect))
     }
 
     var body: some View {
