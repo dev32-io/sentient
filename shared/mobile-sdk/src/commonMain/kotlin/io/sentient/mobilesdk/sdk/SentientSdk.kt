@@ -276,10 +276,10 @@ class SentientSdk(
         SessionsTimeoutException::class,
         kotlin.coroutines.cancellation.CancellationException::class,
     )
-    suspend fun newChat() {
+    suspend fun newChat(): String {
         markInteraction()
         connectors.cycleError.reset()
-        connectors.sessions.newChat()
+        return connectors.sessions.newChat()
     }
 
     @Throws(
