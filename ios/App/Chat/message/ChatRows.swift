@@ -23,15 +23,21 @@ func chatRows(_ messages: [ChatMessage], calendar: Calendar = .current,
     var rows: [ChatRow] = []
     var lastDay: DateComponents?
     for (i, m) in messages.enumerated() {
-        let date = Date(timeIntervalSince1970: Double(m.ts) / 1000)
-        let day = calendar.dateComponents([.year, .month, .day], from: date)
-        if day != lastDay {
-            // Day-component key (not the first-message index) so divider identity is
-            // stable even if history is ever prepended (load-earlier paging).
-            let dayKey = "\(day.year ?? 0)-\(day.month ?? 0)-\(day.day ?? 0)"
-            rows.append(.divider(label: dividerLabel(date, calendar: calendar, now: now),
-                                 id: dayKey))
-            lastDay = day
+        // Streaming messages have ts=0 (no real timestamp while in flight).
+        // Never bucket them into a day-divider — ts=0/epoch would produce a
+        // bogus "WEDNESDAY · 4:00 PM" separator. Skip the divider entirely;
+        // the committed entry that follows will carry the real ts and divider.
+        if !m.streaming {
+            let date = Date(timeIntervalSince1970: Double(m.ts) / 1000)
+            let day = calendar.dateComponents([.year, .month, .day], from: date)
+            if day != lastDay {
+                // Day-component key (not the first-message index) so divider identity is
+                // stable even if history is ever prepended (load-earlier paging).
+                let dayKey = "\(day.year ?? 0)-\(day.month ?? 0)-\(day.day ?? 0)"
+                rows.append(.divider(label: dividerLabel(date, calendar: calendar, now: now),
+                                     id: dayKey))
+                lastDay = day
+            }
         }
         rows.append(.message(m, index: i))
     }

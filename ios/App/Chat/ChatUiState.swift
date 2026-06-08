@@ -35,6 +35,7 @@ func makeDisconnectedConnection() -> ConnectionState {
         prefs: AudioPreferences.companion.DEFAULT,
         voiceMode: .off,
         isSpeaking: false,
-        audioState: .inactive
+        audioState: .inactive,
+        cognition: .idle
     )
 }

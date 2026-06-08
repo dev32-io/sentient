@@ -10,8 +10,9 @@
 //    color-mix(sage 16%, paper), approximated by interpolation).
 // Both: 1pt lineSoft border, padMsg (18pt) text padding, ink text, capped at
 // msgMax width. A streaming assistant message with no text yet shows the
-// three-dot pulse; once text arrives it reveals text via the typewriter engine
-// (no block cursor — growing text is the streaming affordance, webui parity);
+// three-dot pulse; once text arrives it renders the already-revealed substring
+// from the data layer (no view-side typewriter — mobile-data Reveal ticker drives
+// content growth; growing text is the streaming affordance, webui parity);
 // a cut-short reply shows an interrupted marker.
 //
 // Markdown: GFM via MarkdownUI (swift-markdown-ui), themed to Dusk
@@ -202,7 +203,7 @@ enum BubbleLayout {
                 index: 2,
                 userName: "Alice"
             )
-            // streaming + content → typewriter reveal, no cursor
+            // streaming + content → data-layer substring rendered directly, no cursor
             MessageBubble(
                 message: ChatMessage(ts: now + 3, role: "assistant", content: "Streaming text reveals progressively...", streaming: true, cutoffKind: nil, cycleId: nil, pendingId: nil, tools: []),
                 index: 3,

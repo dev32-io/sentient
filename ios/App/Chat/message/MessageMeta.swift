@@ -22,8 +22,12 @@ struct MessageMeta: View {
     var body: some View {
         HStack(spacing: Space.sm) {
             Text(name).font(Typo.ui(TypeScale.sm, .semibold)).foregroundStyle(DuskColors.ink)
-            Text("·").foregroundStyle(DuskColors.ink4)
-            Text(time).font(Typo.ui(TypeScale.xs)).foregroundStyle(DuskColors.ink3)
+            // Hide the separator + timestamp while the message is still streaming
+            // (ts=0 is not a real timestamp). The committed entry carries the real ts.
+            if !message.streaming {
+                Text("·").foregroundStyle(DuskColors.ink4)
+                Text(time).font(Typo.ui(TypeScale.xs)).foregroundStyle(DuskColors.ink3)
+            }
         }
     }
 }
