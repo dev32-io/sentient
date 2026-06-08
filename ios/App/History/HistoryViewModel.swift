@@ -1,23 +1,22 @@
 // ---------------------------------------------------------------------------
-// HistoryViewModel — drives the history side panel's session list + search state.
+// HistoryViewModel — drives the history side panel's session list + search.
 //
-// Consumes session.historyRepo.load() (Flow<SentientResult<List<SessionRowData>>>)
-// via the same SKIE SkieSwiftFlow iteration pattern as ChatViewModel uses for
-// chatStream. Each call to load() emits Loading(cached) immediately (instant
-// drawer render from cache), then Success or Failure from the live fetch —
-// giving cache-then-refresh UX that matches Android HistoryViewModel.
+// Swift mirror of Android's HistoryViewModel over the User/Connection-scoped
+// ChatComponent: reads the session list via observeSessions (suspend list fetch)
+// and routes rename/delete through the same component. It NO LONGER switches
+// conversation or starts a new chat — those are NAVIGATIONS owned by the host
+// (the drawer's onSelect/onNewChat callbacks flip the host's activeSessionId).
+// So this VM is read + mutate (rename/delete) only.
 //
-// SessionRowData{id, title, updatedAtMs} → SessionRow mapping mirrors Android's
-// toSessionRow(): startedAt=0, lastActiveAt=updatedAtMs, messageCount=0,
-// isActive=false.
-//
-// refresh() re-collects load() (cold Flow — each collection re-runs fetch).
-// Mutations (switchSession/newChat/rename/delete) still route through session.sdk.
-//
-// Search is client-side substring over title.
+// Search is client-side substring over the loaded title list (the SDK does not
+// expose a session search). The published surface (visible/loading/hasLoaded/
+// error/query/refresh) is unchanged so HistorySidePanel renders identically.
 // ---------------------------------------------------------------------------
 import Foundation
 import MobileData
+
+/// Page size for the session-list fetch — the drawer shows the most-recent chats.
+private let sessionsPageLimit: Int32 = 100
 
 @MainActor
 final class HistoryViewModel: ObservableObject {
@@ -25,20 +24,18 @@ final class HistoryViewModel: ObservableObject {
     @Published var query: String = ""
     @Published private(set) var loading = false
     @Published private(set) var error: String?
-    /// False until the first terminal load result (success/failure) lands. Drives
-    /// the panel's "still loading" spinner during the open slide + initial fetch,
-    /// so an empty list never paints mid-animation. Distinct from `loading`, which
-    /// toggles per refresh; `hasLoaded` latches once and stays true.
+    /// False until the first terminal load result. Drives the panel's open-slide
+    /// spinner so an empty list never paints mid-animation. Latches once true.
     @Published private(set) var hasLoaded = false
 
-    private let session: MobileSession
+    private let component: ChatComponent
     private let log = AppLog("history", "model")
 
-    /// In-flight load task; cancelled and replaced each time refresh() is called.
+    /// In-flight load task; cancelled and replaced on each refresh().
     private var loadTask: Task<Void, Never>?
 
-    init(session: MobileSession) {
-        self.session = session
+    init(component: ChatComponent) {
+        self.component = component
     }
 
     // ── Rows after client-side search filter ─────────────────────────────────
@@ -53,85 +50,62 @@ final class HistoryViewModel: ObservableObject {
 
     // ── Refresh ──────────────────────────────────────────────────────────────
 
-    /// Re-collect load(). Cancels any in-flight collection; load() is cold so
-    /// each collection re-runs the cache-then-refresh pair.
-    func refresh() {
+    /// Re-query the session list. Call on drawer-open + after any mutation.
+    func refresh() async {
         log.info("refresh")
         loadTask?.cancel()
-        loadTask = Task { [weak self] in
+        let task = Task { [weak self] in
             guard let self else { return }
-            for await result in session.historyRepo.load() {
-                guard !Task.isCancelled else { break }
-                apply(result)
-            }
+            await self.loadSessions()
+        }
+        loadTask = task
+        await task.value
+    }
+
+    private func loadSessions() async {
+        loading = true
+        error = nil
+        do {
+            let summaries = try await component.observeSessions.invoke(limit: sessionsPageLimit, offset: 0)
+            guard !Task.isCancelled else { return }
+            sessions = summaries.map { $0.toSessionRow() }
+            loading = false
+            hasLoaded = true
+            error = nil
+            log.info("loaded count=\(sessions.count)")
+        } catch is CancellationError {
+            // Drawer dismissed / replaced — not a real failure.
+        } catch {
+            guard !Task.isCancelled else { return }
+            loading = false
+            hasLoaded = true
+            self.error = error.localizedDescription
+            log.warn("load-failed reason=\(error.localizedDescription)")
         }
     }
 
     // ── Mutations ─────────────────────────────────────────────────────────────
 
-    func switchSession(_ sessionId: String) async {
-        log.info("switchSession sessionId=\(sessionId)")
-        do { try await session.sdk.switchSession(sessionId: sessionId) } catch {
-            log.warn("switchSession failed reason=\(error.localizedDescription)")
-        }
-        refresh()
-    }
-
-    func newChat() async {
-        log.info("newChat")
-        do { try await session.sdk.doNewChat() } catch {
-            log.warn("newChat failed reason=\(error.localizedDescription)")
-        }
-        refresh()
-    }
-
     func renameSession(_ sessionId: String, title: String) async {
         log.info("renameSession sessionId=\(sessionId)")
-        do { try await session.sdk.renameSession(id: sessionId, title: title) } catch {
+        do { try await component.renameSession.invoke(sessionId: sessionId, title: title) } catch {
             log.warn("renameSession failed reason=\(error.localizedDescription)")
         }
-        refresh()
+        await refresh()
     }
 
     func deleteSession(_ sessionId: String) async {
         log.info("deleteSession sessionId=\(sessionId)")
-        do { try await session.sdk.deleteSession(id: sessionId) } catch {
+        do { try await component.deleteSession.invoke(sessionId: sessionId) } catch {
             log.warn("deleteSession failed reason=\(error.localizedDescription)")
         }
-        refresh()
-    }
-
-    // ── Result folding ────────────────────────────────────────────────────────
-
-    private func apply(_ result: SentientResult<NSArray>) {
-        switch onEnum(of: result) {
-        case .loading(let l):
-            loading = true
-            if let rows = l.partial as? [SessionRowData] {
-                sessions = rows.map { $0.toSessionRow() }
-                log.debug("load.cache count=\(sessions.count)")
-            }
-        case .success(let s):
-            if let rows = s.data as? [SessionRowData] {
-                sessions = rows.map { $0.toSessionRow() }
-                log.info("loaded count=\(sessions.count)")
-            }
-            loading = false
-            hasLoaded = true
-            error = nil
-        case .failure(let f):
-            log.warn("load-failed reason=\(f.error.userMessage)")
-            loading = false
-            hasLoaded = true
-            error = f.error.userMessage
-        }
+        await refresh()
     }
 }
 
-// ── SessionRowData → SessionRow mapping ──────────────────────────────────────
+// ── SessionSummary → SessionRow mapping ──────────────────────────────────────
 
-private extension SessionRowData {
-    /// Maps the repository row to the SDK's SessionRow shape.
+private extension SessionSummary {
     /// Mirrors Android HistoryViewModel.toSessionRow():
     ///   startedAt=0, lastActiveAt=updatedAtMs, messageCount=0, isActive=false.
     func toSessionRow() -> SessionRow {
@@ -148,8 +122,7 @@ private extension SessionRowData {
 }
 
 // ---------------------------------------------------------------------------
-// Preview support — exposes a setter so #Preview blocks can seed sessions
-// without performing real I/O.
+// Preview support — seed sessions without real I/O.
 // ---------------------------------------------------------------------------
 #if DEBUG
 extension HistoryViewModel {
