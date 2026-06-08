@@ -9,6 +9,10 @@ class SdkSessionsRepository(private val sdk: SentientSdk) : SessionsRepository {
             SessionSummary(id = it.sessionId, title = it.title, updatedAtMs = it.lastActiveAt)
         }
 
+    override fun newChatFireAndForget() = sdk.sendNewChat()
+
+    override fun switchToFireAndForget(sessionId: String) = sdk.sendSwitchSession(sessionId)
+
     override suspend fun switchTo(sessionId: String) { sdk.switchSession(sessionId) }
 
     override suspend fun newChat(): String = sdk.newChat()

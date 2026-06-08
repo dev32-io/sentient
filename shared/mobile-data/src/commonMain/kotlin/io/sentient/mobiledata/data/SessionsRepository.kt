@@ -10,6 +10,13 @@ data class SessionSummary(
 /** Stateless session-management surface. Pure delegation to the SDK. */
 interface SessionsRepository {
     suspend fun list(limit: Int, offset: Int): List<SessionSummary>
+
+    /** Fire-and-forget new chat — sends session.new, never awaits the mint. */
+    fun newChatFireAndForget()
+
+    /** Fire-and-forget switch — sends session.switch, never awaits the snapshot. */
+    fun switchToFireAndForget(sessionId: String)
+
     suspend fun switchTo(sessionId: String)
     suspend fun newChat(): String
     suspend fun rename(sessionId: String, title: String)
