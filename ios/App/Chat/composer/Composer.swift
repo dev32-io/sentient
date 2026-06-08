@@ -199,5 +199,10 @@ struct Composer: View {
         guard !trimmed.isEmpty, canSend else { return }
         onSend(trimmed)
         draft = ""
+        // Resign focus on send so the multiline TextField reliably redraws empty.
+        // Clearing `draft` while the field stays first-responder can leave stale text
+        // until a focus change (SwiftUI `axis: .vertical` / IME redraw race) — the bug
+        // where the sent message lingered in the composer until the user tapped away.
+        inputFocused = false
     }
 }
