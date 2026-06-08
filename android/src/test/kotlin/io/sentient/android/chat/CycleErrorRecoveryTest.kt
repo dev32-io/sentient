@@ -1,5 +1,6 @@
 package io.sentient.android.chat
 
+import io.sentient.android.chat.banner.CycleErrorRecovery
 import io.sentient.mobilesdk.sdk.ChatMessage
 import kotlin.test.Test
 import kotlin.test.assertEquals

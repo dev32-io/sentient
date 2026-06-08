@@ -27,7 +27,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import io.sentient.android.chat.InitialAvatar
+import io.sentient.android.chat.brand.InitialAvatar
 import io.sentient.android.theme.LocalTokens
 import io.sentient.mobilesdk.auth.AuthUserLite
 import io.sentient.mobilesdk.design.Colors
