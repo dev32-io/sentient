@@ -107,6 +107,7 @@ class StateDeriver(private val clock: Clock) {
         voiceMode = voiceMode,
         isSpeaking = isSpeaking,
         audioState = audioState,
+        cognition = cognition,
     )
 
     /**
