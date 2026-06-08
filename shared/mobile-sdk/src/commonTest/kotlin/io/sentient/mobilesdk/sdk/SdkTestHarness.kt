@@ -12,7 +12,6 @@ package io.sentient.mobilesdk.sdk
 
 import io.sentient.mobilesdk.fakes.FakeWebSocketEngine
 import io.sentient.mobilesdk.fakes.FixedClock
-import io.sentient.mobilesdk.fakes.InMemorySessionIdStore
 import io.sentient.mobilesdk.fakes.InMemoryTokenStore
 import io.sentient.mobilesdk.transport.SdkStatus
 import io.sentient.mobilesdk.transport.WebSocketEngine
@@ -42,7 +41,6 @@ internal fun TestScope.buildSdk(
     val bundle = PlatformBundle(
         engine = engine,
         tokenStore = tokenStore,
-        sessionIdStore = InMemorySessionIdStore(),
         clock = FixedClock(0L),
         capture = null,
         playback = null,

@@ -2,11 +2,12 @@
 // Handshake — the connect/auth/session.ready FSM + lifecycle-frame routing.
 //
 // Mirrors web-sdk sentient-sdk.ts connect() + sdk-message-router routeByType:
-//   1. DISCONNECTED → CONNECTING: open WS (SessionResume URL appends ?session_id).
+//   1. DISCONNECTED → CONNECTING: open WS with the BASE url (no connect-URL resume).
 //   2. CONNECTING → AUTHENTICATING: send ClientMessage.Auth(token); arm auth timeout.
 //   3. auth.ok → send ClientMessage.SessionConfigure(clientType="mobile",
 //      capabilities = config ∪ every connector capability); arm ready timeout.
-//   4. session.ready → READY; SessionResume.setCurrentSessionId(sessionId).
+//   4. session.ready → READY. The ACP session uuid is anchored separately from
+//      session.switched / session.created (see SentientSdk.onSessionAnchored).
 //   On AUTH_TIMEOUT_MS / READY_TIMEOUT_MS → close WS with the client-sent
 //   WS_AUTH_TIMEOUT_CODE / WS_READY_TIMEOUT_CODE and fail the attempt.
 //   auth.error → terminal AUTH failure (token won't recover via retry).

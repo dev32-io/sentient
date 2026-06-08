@@ -4,7 +4,7 @@
 // Usage: call MobileSdk.initAndroid(applicationContext) from Application.onCreate().
 // Task C7 (platform bundle) will wire this into the full SDK init sequence.
 //
-// Only the Android actuals (SecureTokenStore, SessionIdStore, etc.) read from
+// Only the Android actuals (SecureTokenStore, audio adapters, etc.) read from
 // this holder — they call requireContext() which throws a clear error at
 // construction time if initAndroid was never called.
 // ---------------------------------------------------------------------------
@@ -40,6 +40,6 @@ internal object AndroidContextHolder {
         appContext
             ?: error(
                 "MobileSdk.initAndroid(context) must be called from Application.onCreate() " +
-                    "before using SecureTokenStore or SessionIdStore.",
+                    "before using SecureTokenStore or the audio adapters.",
             )
 }

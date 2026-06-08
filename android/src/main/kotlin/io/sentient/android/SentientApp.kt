@@ -2,8 +2,8 @@
 // SentientApp — the Application entry point.
 //
 // Calls MobileSdk.initAndroid(applicationContext) BEFORE any SDK access so the
-// secure stores (SecureTokenStore / SessionIdStore) and the platform bundle can
-// resolve the Android Context, then starts the Koin DI graph. UserSessionManager
+// secure token store (SecureTokenStore) and the platform bundle can resolve the
+// Android Context, then starts the Koin DI graph. UserSessionManager
 // builds the SentientSdk lazily on first chat entry — always after onCreate — so
 // the Context is guaranteed present.
 // ---------------------------------------------------------------------------

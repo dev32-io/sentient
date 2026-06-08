@@ -25,7 +25,6 @@ import io.sentient.mobilesdk.transport.ConnectResult
 import io.sentient.mobilesdk.transport.MessageRouter
 import io.sentient.mobilesdk.transport.ReconnectController
 import io.sentient.mobilesdk.transport.SdkStatus
-import io.sentient.mobilesdk.transport.SessionResume
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
@@ -74,8 +73,21 @@ class SentientSdk(
     }
 
     private val deriver = StateDeriver(bundle.clock)
-    private val resume = SessionResume(bundle.sessionIdStore, bundle.clock)
     private val idle = createIdleDetector(IdleDetectorConfig(idleThresholdMs = idleThresholdMs))
+
+    // The active ACP session uuid, anchored ONLY from session.switched /
+    // session.created broadcasts (non-empty ids). Drives the reconnect re-
+    // establish (fire session.switch on a reconnect READY to restore server
+    // context) and is cleared on consumer disconnect(clearSession = true).
+    // NOT a persistent connect-URL resume — see Task A1.
+    private val _currentSessionId = MutableStateFlow<String?>(null)
+    val currentSessionId: StateFlow<String?> = _currentSessionId.asStateFlow()
+
+    // True once the SDK has reached READY at least once on this orchestrator.
+    // Distinguishes a RECONNECT-READY (re-establish the anchored session) from
+    // the FIRST connect-READY (nothing to restore). Never reset — survives
+    // idle/drop/reconnect, matching hasSession.
+    private var hasReachedReadyOnce = false
 
     // FaultHooks declared early so effectiveCapture + lifecycle can both reference it.
     private val faultHooks = FaultHooks()
@@ -112,6 +124,8 @@ class SentientSdk(
         sendBinary = ::sendBinary,
         newId = newId,
         sessionsTimeoutMs = sessionsTimeoutMs,
+        clock = bundle.clock,
+        mintDebounceMs = config.mintDebounceMs,
         audioHooks = { audio.downlinkHooks },
     )
 
@@ -140,7 +154,6 @@ class SentientSdk(
         allowSelfSignedDevHost = config.allowSelfSignedDevHost,
         gatewayWsUrl = config.gatewayWsUrl,
         router = router,
-        resume = resume,
         idle = idle,
         idleTickMs = idleTickMs,
         delayFn = delayFn,
@@ -197,6 +210,10 @@ class SentientSdk(
         if (clearSession && deriver.hasSession) {
             log.info("hasSession.clear", mapOf("trigger" to "logout"))
             deriver.hasSession = false
+        }
+        if (clearSession) {
+            log.info("session.anchor.clear", mapOf("trigger" to "logout"))
+            _currentSessionId.value = null
         }
         setStatus(SdkStatus.DISCONNECTED)
     }
@@ -282,6 +299,29 @@ class SentientSdk(
         return connectors.sessions.newChat()
     }
 
+    /**
+     * Fire-and-forget new chat (A2). Sends session.new and returns immediately —
+     * the gateway emits session.switched + empty snapshot now, then session.created
+     * after the slow ACP mint. NEVER awaits, NEVER throws. The UI must not block on
+     * a session round-trip. Debounced in the connector so rapid taps mint once.
+     */
+    fun sendNewChat() {
+        markInteraction()
+        connectors.cycleError.reset()
+        connectors.sessions.sendNew()
+    }
+
+    /**
+     * Fire-and-forget switch (A2). Sends session.switch and returns immediately —
+     * the gateway emits session.switched + the session's snapshot. NEVER awaits,
+     * NEVER throws. Used both by the UI and by the reconnect re-establish (A1).
+     */
+    fun sendSwitchSession(id: String) {
+        markInteraction()
+        connectors.cycleError.reset()
+        connectors.sessions.sendSwitch(id)
+    }
+
     @Throws(
         SessionsRequestException::class,
         SessionsTimeoutException::class,
@@ -350,8 +390,47 @@ class SentientSdk(
                 log.info("hasSession.set", mapOf("trigger" to "ready"))
                 deriver.hasSession = true
             }
+            onReadyReached()
         }
         emit()
+    }
+
+    /**
+     * READY rising edge. The FIRST READY (first connect) has nothing to restore.
+     * Every SUBSEQUENT READY is a reconnect: if a session is anchored, fire a
+     * fire-and-forget session.switch to restore the server context (the gateway
+     * re-emits switched + snapshot; the WS preserves frame order so the next
+     * user.message routes to the restored session).
+     */
+    private fun onReadyReached() {
+        val wasReconnect = hasReachedReadyOnce
+        hasReachedReadyOnce = true
+        val anchored = _currentSessionId.value
+        if (!wasReconnect) {
+            log.info("ready.first-connect", mapOf("anchored" to anchored))
+            return
+        }
+        if (anchored == null) {
+            log.info("ready.reconnect.no-anchor")
+            return
+        }
+        log.info("ready.reconnect.re-establish", mapOf("sessionId" to anchored))
+        sendSwitchSession(anchored)
+    }
+
+    /**
+     * Anchor the active ACP session uuid from a session.switched / session.created
+     * broadcast. Non-empty ids only — the gateway's switchTo("") for a new chat
+     * can emit an empty/placeholder switched id which must NOT overwrite the anchor.
+     */
+    private fun onSessionAnchored(sessionId: String) {
+        if (sessionId.isEmpty()) {
+            log.debug("session.anchor.ignored-empty")
+            return
+        }
+        if (_currentSessionId.value == sessionId) return
+        log.info("session.anchor", mapOf("sessionId" to sessionId))
+        _currentSessionId.value = sessionId
     }
 
     private fun setError(authExpired: Boolean) {
@@ -385,6 +464,7 @@ class SentientSdk(
     private inner class Hooks : LifecycleHooks {
         override fun setStatus(next: SdkStatus) = this@SentientSdk.setStatus(next)
         override fun onReady(sessionId: String) { /* tunables folded in lifecycle */ }
+        override fun onSessionAnchored(sessionId: String) = this@SentientSdk.onSessionAnchored(sessionId)
         override fun onAuthFailed() = setError(authExpired = true)
         override fun onConnectionDrop() = this@SentientSdk.onConnectionDrop()
         override fun mergedCapabilities(): List<String> = this@SentientSdk.mergedCapabilities()

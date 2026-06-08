@@ -3,7 +3,7 @@
 //
 // Call MobileSdk.initAndroid(applicationContext) from Application.onCreate()
 // BEFORE constructing any SDK object that requires a Context
-// (SecureTokenStore, SessionIdStore, etc.) OR uses the opus codec.
+// (SecureTokenStore, the audio adapters, etc.) OR uses the opus codec.
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk
 

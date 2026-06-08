@@ -22,9 +22,7 @@ import io.sentient.mobilesdk.result.SentientError
 import io.sentient.mobilesdk.transport.ConnectResult
 import io.sentient.mobilesdk.transport.LastErrorKind
 import io.sentient.mobilesdk.transport.MessageRouter
-import io.sentient.mobilesdk.transport.STALE_RESUME_CHECK_MS
 import io.sentient.mobilesdk.transport.SdkStatus
-import io.sentient.mobilesdk.transport.SessionResume
 import io.sentient.mobilesdk.transport.TransportSignal
 import io.sentient.mobilesdk.transport.WS_NORMAL_CLOSURE
 import io.sentient.mobilesdk.transport.WebSocketSession
@@ -36,12 +34,13 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 private const val CLIENT_TYPE_MOBILE = "mobile"
-private const val FORBIDDEN_CODE = "forbidden"
 
 /** Callbacks the lifecycle drives back into the orchestrator. */
 interface LifecycleHooks {
     fun setStatus(next: SdkStatus)
     fun onReady(sessionId: String)
+    /** Anchor the active ACP session uuid from a session.switched / session.created frame. */
+    fun onSessionAnchored(sessionId: String)
     fun onAuthFailed()
     fun onConnectionDrop()
     fun mergedCapabilities(): List<String>
@@ -61,7 +60,6 @@ class SdkLifecycle(
     private val allowSelfSignedDevHost: Boolean,
     private val gatewayWsUrl: String,
     private val router: MessageRouter,
-    private val resume: SessionResume,
     private val idle: IdleDetector,
     private val idleTickMs: Long,
     private val delayFn: suspend (Long) -> Unit,
@@ -85,9 +83,11 @@ class SdkLifecycle(
     suspend fun attemptConnect(): ConnectResult {
         teardown()
         hooks.setStatus(SdkStatus.CONNECTING)
-        val url = resume.buildConnectUrl(gatewayWsUrl)
+        // Connect with the BASE url — no `?session_id=` connect-URL resume (A1).
+        // Session continuity is re-established via a fire-and-forget session.switch
+        // on reconnect READY (orchestrator), not via the WS-upgrade query param.
         val open = try {
-            bundleEngine.open(url, allowSelfSignedDevHost)
+            bundleEngine.open(gatewayWsUrl, allowSelfSignedDevHost)
         } catch (e: Exception) {
             log.warn("connect.open-failed", mapOf("error" to (e.message ?: "unknown")))
             return ConnectResult.Failure(LastErrorKind.NETWORK)
@@ -107,7 +107,10 @@ class SdkLifecycle(
     }
 
     private fun finishReady(sessionId: String): ConnectResult {
-        resume.setCurrentSessionId(sessionId)
+        // Do NOT anchor sessionId here — it is the gateway CONNECTION id (format
+        // `s-…`), not the ACP session uuid. Anchoring + replaying it caused the
+        // gateway to reject `forbidden "session not owned by current"`. The real
+        // ACP uuid is anchored from session.switched / session.created (onFrame).
         hooks.onReady(sessionId)
         hooks.setStatus(SdkStatus.READY)
         idle.handle(IdleDetectorEvent.Interaction(hooks.nowMs()))
@@ -156,23 +159,13 @@ class SdkLifecycle(
     private fun onFrame(msg: ServerMessage) {
         val intercepted = handshake?.intercept(msg) ?: false
         when (msg) {
-            // These drive BOTH the resume pointer (here) AND the connectors (broadcast).
-            is ServerMessage.SessionSwitched -> resume.setCurrentSessionId(msg.sessionId)
-            is ServerMessage.SessionCreated -> resume.setCurrentSessionId(msg.sessionId)
-            is ServerMessage.ConversationSnapshot -> armStaleResume()
-            is ServerMessage.SessionsError -> if (msg.code == FORBIDDEN_CODE) resume.checkStaleResume()
+            // Anchor the active ACP session uuid AND fan out to the connectors
+            // (broadcast). The orchestrator ignores empty/placeholder ids.
+            is ServerMessage.SessionSwitched -> hooks.onSessionAnchored(msg.sessionId)
+            is ServerMessage.SessionCreated -> hooks.onSessionAnchored(msg.sessionId)
             else -> Unit
         }
         if (!intercepted) router.route(msg)
-    }
-
-    private fun armStaleResume() {
-        if (!resume.hasPendingResume()) return
-        resume.onSnapshot()
-        scope.launch {
-            delayFn(STALE_RESUME_CHECK_MS)
-            resume.checkStaleResume()
-        }
     }
 
     // ── Transport signals → reconnect ──────────────────────────────────────────

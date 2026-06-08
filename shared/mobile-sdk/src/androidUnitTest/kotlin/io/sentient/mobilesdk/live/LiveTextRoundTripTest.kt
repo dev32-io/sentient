@@ -41,7 +41,6 @@ import io.sentient.mobilesdk.auth.AuthError
 import io.sentient.mobilesdk.auth.AuthResponse
 import io.sentient.mobilesdk.auth.AuthResult
 import io.sentient.mobilesdk.auth.AuthUserLite
-import io.sentient.mobilesdk.fakes.InMemorySessionIdStore
 import io.sentient.mobilesdk.fakes.InMemoryTokenStore
 import io.sentient.mobilesdk.sdk.PlatformBundle
 import io.sentient.mobilesdk.sdk.SdkConfig
@@ -213,7 +212,6 @@ class LiveTextRoundTripTest {
             bundle = PlatformBundle(
                 engine = AndroidWebSocketEngine(),
                 tokenStore = tokenStore,
-                sessionIdStore = InMemorySessionIdStore(),
                 clock = Clock { System.currentTimeMillis() },
             ),
             scope = scope,

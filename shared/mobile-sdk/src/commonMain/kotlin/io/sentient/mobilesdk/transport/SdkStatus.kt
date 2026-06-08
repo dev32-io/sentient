@@ -70,12 +70,6 @@ const val WS_READY_TIMEOUT_CODE: Int = 4002
 // ---------------------------------------------------------------------------
 
 /**
- * Window (ms) for the snapshot-without-switched stale-resume fallback.
- * Mirrors STALE_RESUME_CHECK_MS in sentient-sdk.ts.
- */
-const val STALE_RESUME_CHECK_MS: Long = 200L
-
-/**
  * Timeout (ms) waiting for auth.ok after sending the auth frame.
  * Mirrors AUTH_TIMEOUT_MS in sdk-timers.ts.
  */
