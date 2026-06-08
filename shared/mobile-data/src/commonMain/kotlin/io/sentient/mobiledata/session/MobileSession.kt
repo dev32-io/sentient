@@ -16,6 +16,8 @@ package io.sentient.mobiledata.session
 import io.sentient.mobiledata.repository.ChatRepository
 import io.sentient.mobiledata.repository.ConnectionRepository
 import io.sentient.mobiledata.repository.HistoryRepository
+import io.sentient.mobiledata.repository.OutboxRepository
+import io.sentient.mobiledata.repository.ReplyStreamRepository
 import io.sentient.mobiledata.repository.SessionRowData
 import io.sentient.mobilesdk.sdk.SentientSdk
 import io.sentient.mobilesdk.transport.SdkStatus
@@ -49,13 +51,27 @@ class MobileSession(
     private val historyPageLimit: Int = DEFAULT_HISTORY_PAGE_LIMIT,
     clock: Clock = Clock { KtClock.System.now().toEpochMilliseconds() },
 ) {
-    val chatRepo: ChatRepository = ChatRepository(
-        events = sdk.events,
-        timeline = sdk.timeline,
-        scope = scope,
+    // Optimistic-send queue for the current conversation. Cleared on switch.
+    val outboxRepo: OutboxRepository = OutboxRepository(
         send = { text, pendingId -> sdk.sendText(text, pendingId) },
         newId = { Random.nextLong().toString(16) },
+    )
+
+    // Live in-flight reply (reveal bubble + tasks). On a conversation switch it
+    // resets its own live state and clears the sibling outbox in lockstep so no
+    // prior-conversation state leaks into the next.
+    val replyRepo: ReplyStreamRepository = ReplyStreamRepository(
+        events = sdk.events,
+        scope = scope,
         clock = clock,
+        onSessionSwitched = { outboxRepo.reset() },
+    )
+
+    // Thin projection: combines committed timeline + live reveal + pending outbox.
+    val chatRepo: ChatRepository = ChatRepository(
+        timeline = sdk.timeline,
+        live = replyRepo.live,
+        pending = outboxRepo.pending,
     )
 
     val connectionRepo: ConnectionRepository = ConnectionRepository(connection = sdk.connection)
@@ -72,10 +88,10 @@ class MobileSession(
     })
 
     init {
-        // Forward every connection-state emission to chatRepo so setConnected
-        // flushes the outbox on READY and clears it on disconnect.
+        // Forward every connection-state emission to the outbox so setConnected
+        // flushes QUEUED messages on READY.
         scope.launch {
-            sdk.connection.collect { chatRepo.setConnected(it.status == SdkStatus.READY) }
+            sdk.connection.collect { outboxRepo.setConnected(it.status == SdkStatus.READY) }
         }
     }
 

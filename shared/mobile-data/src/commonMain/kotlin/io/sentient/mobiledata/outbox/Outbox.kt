@@ -39,5 +39,10 @@ class Outbox(private val send: (PendingMessage) -> Unit) {
         if (m.status == MessageStatus.FAILED) queue[id] = m.copy(status = MessageStatus.QUEUED)
     }
 
+    /** Drop every entry. Used to reset the outbox when the conversation switches. */
+    fun clear() {
+        queue.clear()
+    }
+
     fun snapshot(): List<PendingMessage> = queue.values.toList()
 }

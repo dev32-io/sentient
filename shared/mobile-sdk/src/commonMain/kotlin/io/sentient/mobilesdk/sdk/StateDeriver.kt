@@ -119,6 +119,20 @@ class StateDeriver(private val clock: Clock) {
         deriveMessages(feed, inflight = null, clock.nowMs(), tasks, cycleByTs)
 
     /**
+     * Drop cross-conversation stamping state on a session switch. The ts → cycleId
+     * map and the last-inflight buffer belong to the previous conversation; clearing
+     * them prevents an old cycleId from being attached to the next conversation's
+     * feed (which would mis-route tool pills or, paired with the live-bubble suppress
+     * filter, drop a freshly-committed message). The snapshot that follows the switch
+     * re-stamps from scratch.
+     */
+    fun resetForSessionSwitch() {
+        cycleByTs.clear()
+        lastInflightCycleId = null
+        lastInflightText = ""
+    }
+
+    /**
      * Match the last-seen inflight text against new feed entries, recording
      * ts → cycleId for any Assistant entry that commits that exact text.
      */

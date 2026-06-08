@@ -31,6 +31,9 @@ class ConversationHistoryConnector(
     private val onEntry: ((ConversationFeedItem) -> Unit)? = null,
     private val onUpdate: ((List<ConversationFeedItem>) -> Unit)? = null,
     private val onEvent: ((SdkEvent) -> Unit)? = null,
+    // Fired on session.switched so the orchestrator can drop cross-conversation
+    // derivation state (the ts → cycleId stamp map) before the next snapshot.
+    private val onSwitch: (() -> Unit)? = null,
 ) : Connector {
     override val capability: String = CAPABILITY
 
@@ -79,6 +82,9 @@ class ConversationHistoryConnector(
     private fun onSessionSwitched(msg: ServerMessage.SessionSwitched) {
         log.info("gate-set", mapOf("trigger" to "session.switched", "sessionId" to msg.sessionId))
         awaitingSnapshot = true
+        // Drop cross-conversation derivation state BEFORE the following snapshot
+        // re-stamps; otherwise an old cycleId could attach to the new feed.
+        onSwitch?.invoke()
         onEvent?.invoke(SdkEvent.SessionSwitched(sessionId = msg.sessionId))
     }
 

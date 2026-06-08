@@ -91,18 +91,20 @@ struct MessageBubble: View {
 
     @ViewBuilder
     private var bubbleContent: some View {
-        if message.streaming && message.content.isEmpty {
-            PulseDots()
-        } else if message.streaming {
-            VStack(alignment: .leading, spacing: 0) {
+        // One layout for all phases: the body (pulse while still thinking →
+        // revealed text → committed markdown) with the tool-pill strip below.
+        // Pills render even in the empty-text think window so a running tool
+        // surfaces live, before any answer text arrives (webui parity — show
+        // info as early as possible).
+        VStack(alignment: .leading, spacing: Space.xs) {
+            if message.streaming && message.content.isEmpty {
+                PulseDots()
+            } else if message.streaming {
                 StreamingText(content: message.content)
-                if !message.tools.isEmpty { ToolPillStrip(tools: message.tools) }
-            }
-        } else {
-            VStack(alignment: .leading, spacing: 0) {
+            } else {
                 committedText
-                if !message.tools.isEmpty { ToolPillStrip(tools: message.tools) }
             }
+            if !message.tools.isEmpty { ToolPillStrip(tools: message.tools) }
         }
     }
 

@@ -85,13 +85,33 @@ struct DrawerPanGesture: UIGestureRecognizerRepresentable {
             return true
         }
 
-        /// Ride alongside the inner scroll's recognizers; the begin gate keeps
-        /// both from claiming the same drag.
+        /// Recognize SIMULTANEOUSLY (true) so this pan begins and tracks the finger
+        /// on the SAME touch sequence as the inner scroll — without this, mutual
+        /// exclusion lets the scroll win arbitration and our pan never emits
+        /// `.changed`, so the drawer stops following the finger. The bleed-through
+        /// is handled by the failure requirement below, not by blocking begin.
         func gestureRecognizer(
             _ gestureRecognizer: UIGestureRecognizer,
             shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
         ) -> Bool {
             true
+        }
+
+        /// Directional lock (the canonical `scroll.require(toFail: ourPan)` pattern,
+        /// expressed from our delegate). A scroll/pan recognizer must wait for THIS
+        /// pan to fail before it can recognize. Our begin gate only lets this pan
+        /// start on a horizontally-dominant drag, so:
+        ///  - horizontal drag → this pan recognizes → the inner vertical scroll is
+        ///    suppressed (the drawer follows the finger, the list does not move);
+        ///  - vertical drag → our begin gate returns false → this pan fails → the
+        ///    scroll is freed and the list scrolls.
+        /// `simultaneous = true` keeps our pan tracking live; the failure
+        /// requirement (not mutual exclusion) is what stops the scroll bleed.
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldBeRequiredToFailBy other: UIGestureRecognizer
+        ) -> Bool {
+            other is UIPanGestureRecognizer
         }
     }
 }

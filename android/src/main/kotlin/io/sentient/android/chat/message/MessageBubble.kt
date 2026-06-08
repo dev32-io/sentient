@@ -158,7 +158,13 @@ private fun BubbleBody(message: ChatMessage, isUser: Boolean, avatarMode: MarkMo
     ) {
         val showPulse = message.streaming && message.content.isEmpty()
         if (showPulse) {
-            PulseDots()
+            // Still thinking, no answer text yet — show the pulse plus any tool
+            // pills already running so they surface live, before any text arrives
+            // (webui parity — show info as early as possible).
+            Column(verticalArrangement = Arrangement.spacedBy(tokens.space.xs)) {
+                PulseDots()
+                if (message.tools.isNotEmpty()) ToolPillStrip(message.tools)
+            }
         } else {
             BubbleText(
                 text = message.content,

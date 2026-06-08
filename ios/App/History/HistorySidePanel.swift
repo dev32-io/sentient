@@ -51,6 +51,14 @@ struct HistorySidePanel: View {
         model.error != nil && !model.visible.isEmpty
     }
 
+    /// Spinner while the first load is still pending (the open slide + initial
+    /// fetch, before `hasLoaded` latches) OR a refresh is in flight with nothing
+    /// cached. Once loaded, a genuinely empty history or a filtered-empty search
+    /// shows the (empty) list, never a perpetual spinner.
+    private var showsLoadingSpinner: Bool {
+        (model.loading || !model.hasLoaded) && model.visible.isEmpty && !showsErrorEmpty
+    }
+
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             VStack(spacing: 0) {
@@ -67,7 +75,7 @@ struct HistorySidePanel: View {
                 if showsErrorEmpty {
                     SessionsErrorEmpty(onRetry: { Task { await model.refresh() } })
                     Spacer(minLength: 0)
-                } else if model.loading && model.visible.isEmpty {
+                } else if showsLoadingSpinner {
                     historyLoadingSpinner
                     Spacer(minLength: 0)
                 } else {

@@ -56,13 +56,13 @@ final class ChatViewModel: ObservableObject {
     /// Enqueue an optimistic send; the outbox shows the bubble immediately.
     func send(_ text: String) {
         log.info("send len=\(text.count)")
-        _ = session.chatRepo.send(text: text)
+        _ = session.outboxRepo.send(text: text)
     }
 
     /// Re-queue a FAILED pending message for retry on next flush.
     func retry(_ pendingId: String) {
         log.info("retry pendingId=\(pendingId)")
-        session.chatRepo.retry(pendingId: pendingId)
+        session.outboxRepo.retry(pendingId: pendingId)
     }
 
     // ── scenePhase presence ───────────────────────────────────────────────────

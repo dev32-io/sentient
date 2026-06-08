@@ -98,9 +98,8 @@ struct SideDrawer<Content: View, Drawer: View>: View {
             let target: CGFloat = nowOpen ? 1 : 0
             guard openFraction != target else { return }
             log.info("programmatic isOpen=\(nowOpen)")
-            withAnimation(.snappy) { openFraction = target }
             dragX = 0
-            if nowOpen { onOpen() }
+            animateSettle(open: nowOpen)
         }
     }
 
@@ -155,25 +154,38 @@ struct SideDrawer<Content: View, Drawer: View>: View {
             shouldOpen = fraction > DrawerMetrics.snapThreshold
         }
         log.info("snap dx=\(Int(translationX)) vx=\(Int(velocityX)) frac=\(String(format: "%.2f", fraction)) → open=\(shouldOpen)")
-        withAnimation(.snappy) { openFraction = shouldOpen ? 1 : 0 }
         dragX = 0
-        settle(open: shouldOpen)
+        animateSettle(open: shouldOpen)
+        reconcileBinding(open: shouldOpen)
     }
 
     /// Drive the binding to a close via tap on the scrim.
     private func close() {
         log.info("scrim tap close")
-        withAnimation(.snappy) { openFraction = 0 }
         dragX = 0
-        settle(open: false)
+        animateSettle(open: false)
+        reconcileBinding(open: false)
     }
 
-    /// Reconcile `isOpen` with the settled visual state and fire `onOpen` on a
-    /// drag-open (the binding was false → set it true so the host refreshes).
-    private func settle(open: Bool) {
+    /// Animate to the settled position. The fetch (via `onOpen`) is deferred to
+    /// the animation's COMPLETION so the history list never lays out while the
+    /// panel is still sliding — that mid-slide layout was the left-to-right paint
+    /// churn on a fast first open. Closing has nothing to fetch.
+    private func animateSettle(open: Bool) {
+        withAnimation(.snappy) {
+            openFraction = open ? 1 : 0
+        } completion: {
+            if open { onOpen() }
+        }
+    }
+
+    /// Reconcile `isOpen` with the settled visual state (state only — the fetch is
+    /// owned by `animateSettle`'s completion). Set BEFORE the binding so the
+    /// programmatic `onChange` path sees `openFraction` already at target and
+    /// no-ops instead of re-animating.
+    private func reconcileBinding(open: Bool) {
         if open {
             if !isOpen { isOpen = true }
-            onOpen()
         } else {
             if isOpen { isOpen = false }
         }

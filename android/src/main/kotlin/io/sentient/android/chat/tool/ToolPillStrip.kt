@@ -37,6 +37,7 @@ import io.sentient.android.theme.JetBrainsMono
 import io.sentient.android.theme.LocalTokens
 import io.sentient.mobilesdk.connectors.TaskSnapshotItem
 import io.sentient.mobilesdk.design.Colors
+import io.sentient.mobilesdk.util.formatToolName
 
 private val DOT_SIZE = 6.dp
 private val SPINNER_SIZE = 10.dp
@@ -88,7 +89,9 @@ private fun Pill(t: TaskSnapshotItem, isOpen: Boolean, modifier: Modifier, onCli
     ) {
         StatusDot(t.status)
         Text(
-            text = t.toolName,
+            // Strip MCP/adapter routing prefixes for display (webui parity);
+            // the raw name stays available via the expandable argsPreview.
+            text = formatToolName(t.toolName),
             fontFamily = JetBrainsMono,
             fontSize = tokens.type.sm,
             color = Color(Colors.ink),

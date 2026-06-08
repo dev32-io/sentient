@@ -66,7 +66,8 @@ internal fun ChatRoot(
     // changes, providing the single teardown path. No DisposableEffect needed.
     val chatVm = viewModel(key = "chat-${System.identityHashCode(chatSession)}") {
         ChatViewModel(
-            repo = chatSession.chatRepo,
+            chatRepo = chatSession.chatRepo,
+            outboxRepo = chatSession.outboxRepo,
             onOpen = { chatSession.open() },
             onClose = { chatSession.close() },
             onForeground = { chatSession.resume() },

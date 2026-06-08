@@ -3,7 +3,7 @@ package io.sentient.mobiledata.repository
 import io.sentient.mobilesdk.connectors.TaskSnapshotItem
 import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.sdk.ChatMessage
-import io.sentient.mobiledata.repository.ChatRepository.Companion.reduce
+import io.sentient.mobiledata.repository.ReplyStreamRepository.Companion.reduce
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull

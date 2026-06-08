@@ -29,7 +29,9 @@ struct ToolPillStrip: View {
         } label: {
             HStack(spacing: Space.sm) {
                 StatusDot(status: t.status)
-                Text(t.toolName)
+                // Strip MCP/adapter routing prefixes for display (webui parity);
+                // the raw name stays available via the expandable argsPreview.
+                Text(formatToolName(rawName: t.toolName))
                     .font(Typo.mono(TypeScale.sm))
                     .lineLimit(1)
                     .foregroundStyle(DuskColors.ink)

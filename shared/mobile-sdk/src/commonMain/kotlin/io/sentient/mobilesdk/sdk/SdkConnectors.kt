@@ -75,6 +75,7 @@ class SdkConnectors(
     val history = ConversationHistoryConnector(
         onUpdate = { items -> deriver.applyFeed(items); emit() },
         onEvent = emitEvent,
+        onSwitch = { deriver.resetForSessionSwitch() },
     )
 
     val inflight = InFlightMessageConnector(

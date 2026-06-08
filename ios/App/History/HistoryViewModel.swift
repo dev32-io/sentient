@@ -25,6 +25,11 @@ final class HistoryViewModel: ObservableObject {
     @Published var query: String = ""
     @Published private(set) var loading = false
     @Published private(set) var error: String?
+    /// False until the first terminal load result (success/failure) lands. Drives
+    /// the panel's "still loading" spinner during the open slide + initial fetch,
+    /// so an empty list never paints mid-animation. Distinct from `loading`, which
+    /// toggles per refresh; `hasLoaded` latches once and stays true.
+    @Published private(set) var hasLoaded = false
 
     private let session: MobileSession
     private let log = AppLog("history", "model")
@@ -112,10 +117,12 @@ final class HistoryViewModel: ObservableObject {
                 log.info("loaded count=\(sessions.count)")
             }
             loading = false
+            hasLoaded = true
             error = nil
         case .failure(let f):
             log.warn("load-failed reason=\(f.error.userMessage)")
             loading = false
+            hasLoaded = true
             error = f.error.userMessage
         }
     }
@@ -149,6 +156,7 @@ extension HistoryViewModel {
     /// Overwrite the session list for SwiftUI previews (never call in production).
     func seedForPreview(_ rows: [SessionRow]) {
         sessions = rows
+        hasLoaded = true
     }
 
     /// Seed an error state for SwiftUI previews.
@@ -156,6 +164,7 @@ extension HistoryViewModel {
         sessions = rows
         error = message
         loading = false
+        hasLoaded = true
     }
 }
 #endif
