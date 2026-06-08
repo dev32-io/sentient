@@ -35,6 +35,13 @@ androidx-core-splashscreen = "1.0.1"
 # androidJvm, iosArm64, iosSimulatorArm64, iosX64, and jvm variants on Maven Central.
 # Used in commonMain for Opus encode/decode in the audio pipeline.
 kopus = "1.6.1.2"
+# Koin — pure-runtime DI for the Android UI layer ONLY (no KSP/annotation processor,
+# so it is Kotlin-version-agnostic and safe on Kotlin 2.3.10 where Hilt's KSP2 path is
+# unsupported). The shared KMP layer stays framework-free (manual ChatComponent factory).
+koin = "4.1.0"
+# androidx.navigation:navigation-compose — route-based navigation (chat as a sessionId
+# route; history/settings as destinations). Not in the Compose BOM, pinned here.
+androidx-navigation-compose = "2.9.5"
 
 [libraries]
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
@@ -61,6 +68,11 @@ markdown-renderer-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-
 kotlin-test = { group = "org.jetbrains.kotlin", name = "kotlin-test", version.ref = "kotlin" }
 androidx-core-splashscreen = { module = "androidx.core:core-splashscreen", version.ref = "androidx-core-splashscreen" }
 kopus = { module = "eu.buney.kopus:kopus", version.ref = "kopus" }
+koin-bom = { module = "io.insert-koin:koin-bom", version.ref = "koin" }
+koin-android = { module = "io.insert-koin:koin-android" }
+koin-androidx-compose = { module = "io.insert-koin:koin-androidx-compose" }
+koin-androidx-compose-navigation = { module = "io.insert-koin:koin-androidx-compose-navigation" }
+androidx-navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "androidx-navigation-compose" }
 
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }

@@ -51,6 +51,14 @@ android {
 dependencies {
     implementation(project(":shared:mobile-sdk"))
     implementation(project(":shared:mobile-data"))
+    // Koin — runtime DI for the Android UI layer (no KSP). koin-bom aligns the module
+    // versions; compose + nav integration give koinViewModel() / koinNavViewModel().
+    implementation(platform(libs.koin.bom))
+    implementation(libs.koin.android)
+    implementation(libs.koin.androidx.compose)
+    implementation(libs.koin.androidx.compose.navigation)
+    // Route-based navigation.
+    implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
