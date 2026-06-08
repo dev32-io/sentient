@@ -19,7 +19,7 @@ import kotlin.time.Clock as KtClock
  * the chat VM resolves usecases from here, never the SDK directly.
  */
 class ChatComponent(
-    sdk: SentientSdk,
+    private val sdk: SentientSdk,
     clock: Clock = Clock { KtClock.System.now().toEpochMilliseconds() },
 ) {
     private val conversation = SdkConversationRepository(sdk)
@@ -32,4 +32,33 @@ class ChatComponent(
     val observeSessions = ObserveSessionsUseCase(sessions)
     val renameSession = RenameSessionUseCase(sessions)
     val deleteSession = DeleteSessionUseCase(sessions)
+
+    // ── SDK UI-command passthroughs ───────────────────────────────────────────
+    // The chat VM drives voice / TTS / interrupt / reconnect + lifecycle through
+    // these thin delegates so it never holds an SDK reference. Mirrors the surface
+    // the old ChatRoot/ChatContent called on `sdk` directly.
+
+    /** Start the voice uplink (mic ON). */
+    fun startMic() = sdk.startMic()
+
+    /** Stop the voice uplink (mic OFF). */
+    fun stopMic() = sdk.stopMic()
+
+    /** Patch TTS on/off; the gateway echoes the change via session preferences. */
+    suspend fun setTtsEnabled(enabled: Boolean) = sdk.setTtsEnabled(enabled)
+
+    /** UI Stop — idempotent hard interrupt of the active cycle + audio. */
+    fun interrupt() = sdk.interrupt()
+
+    /** Manual reconnect — re-arm the reconnect controller and drive recovery. */
+    fun forceReconnect() = sdk.forceReconnect()
+
+    /** Open the WS, authenticate, reach READY. Suspends until settled. */
+    suspend fun connect() = sdk.connect()
+
+    /**
+     * Tear down the WS + loops. [clearSession] true clears the in-session slice
+     * (logout); false keeps the user in session (idle/pause).
+     */
+    fun disconnect(clearSession: Boolean = true) = sdk.disconnect(clearSession)
 }
