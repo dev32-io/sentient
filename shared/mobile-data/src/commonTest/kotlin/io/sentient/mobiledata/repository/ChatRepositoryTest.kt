@@ -26,13 +26,19 @@ class ChatRepositoryTest {
         s = ChatRepository.reduce(s, SdkEvent.MessageStarted("c1"))
         s = ChatRepository.reduce(s, SdkEvent.MessageDelta("c1", "He"))
         s = ChatRepository.reduce(s, SdkEvent.MessageDelta("c1", "llo"))
-        assertEquals("Hello", s.live?.content)
-        assertEquals(true, s.live?.streaming)
+        // fullContent accumulates without loss; revealed lags (no ticks yet)
+        assertEquals("Hello", s.live?.fullContent)
+        assertTrue(s.live != null)
         s = ChatRepository.reduce(s, SdkEvent.TaskUpserted(TaskSnapshotItem("t1", "search", "c1", "running", "{}", 1L)))
         assertEquals(1, s.tasks.size)
         s = ChatRepository.reduce(s, SdkEvent.MessageCommitted(ChatMessage(ts = 0, role = "assistant", content = "Hello", cycleId = "c1")))
-        assertEquals(null, s.live)        // commit clears the live bubble
-        assertEquals(0, s.tasks.size)    // and the cycle's tasks
+        // commit transitions to DRAINING (not immediately null); tasks survive drain
+        assertEquals(LivePhase.DRAINING, s.live?.phase)
+        // drive two ticks far apart to flush drain completely
+        s = ChatRepository.reduce(s, io.sentient.mobiledata.repository.RevealEvent.Tick(1_000))
+        s = ChatRepository.reduce(s, io.sentient.mobiledata.repository.RevealEvent.Tick(5_000))
+        assertEquals(null, s.live)        // drain complete
+        assertEquals(0, s.tasks.size)    // tasks cleared after drain
     }
 
     // ── Flow integration — final-state, conflation-robust ────────────────────
@@ -55,8 +61,10 @@ class ChatRepositoryTest {
         val r = repo.chatStream.first()
         assertTrue(r is SentientResult.Success)
         val m = (r as SentientResult.Success).data
-        assertEquals(1, m.committed.size)       // from timeline
-        assertEquals("Hello", m.live?.content)  // accumulated, no loss
+        assertEquals(1, m.committed.size)   // from timeline
+        // live bubble exists (streaming=true); content is the revealed slice (lags without ticks)
+        assertTrue(m.live != null)
+        assertEquals(true, m.live?.streaming)
     }
 
     // ── Outbox — optimistic pending + reconciliation ─────────────────────────

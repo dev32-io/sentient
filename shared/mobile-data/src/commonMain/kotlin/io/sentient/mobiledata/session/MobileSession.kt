@@ -19,11 +19,13 @@ import io.sentient.mobiledata.repository.HistoryRepository
 import io.sentient.mobiledata.repository.SessionRowData
 import io.sentient.mobilesdk.sdk.SentientSdk
 import io.sentient.mobilesdk.transport.SdkStatus
+import io.sentient.mobilesdk.util.Clock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlin.random.Random
+import kotlin.time.Clock as KtClock
 
 /** Page size for the session list fetch. Matches Android's HISTORY_PAGE_LIMIT (50). */
 private const val DEFAULT_HISTORY_PAGE_LIMIT = 50
@@ -45,6 +47,7 @@ class MobileSession(
     val sdk: SentientSdk,
     private val scope: CoroutineScope,
     private val historyPageLimit: Int = DEFAULT_HISTORY_PAGE_LIMIT,
+    clock: Clock = Clock { KtClock.System.now().toEpochMilliseconds() },
 ) {
     val chatRepo: ChatRepository = ChatRepository(
         events = sdk.events,
@@ -52,6 +55,7 @@ class MobileSession(
         scope = scope,
         send = { text, pendingId -> sdk.sendText(text, pendingId) },
         newId = { Random.nextLong().toString(16) },
+        clock = clock,
     )
 
     val connectionRepo: ConnectionRepository = ConnectionRepository(connection = sdk.connection)

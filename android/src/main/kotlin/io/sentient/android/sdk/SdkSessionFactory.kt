@@ -18,6 +18,7 @@ import io.sentient.mobiledata.session.MobileSession
 import io.sentient.mobilesdk.sdk.SdkConfig
 import io.sentient.mobilesdk.sdk.SentientSdk
 import io.sentient.mobilesdk.sdk.createPlatformBundle
+import io.sentient.mobilesdk.util.Clock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -61,6 +62,10 @@ object SdkSessionFactory {
 
         val sdk = SentientSdk(config = config, bundle = bundle, scope = scope)
 
-        return MobileSession(sdk = sdk, scope = scope)
+        return MobileSession(
+            sdk = sdk,
+            scope = scope,
+            clock = Clock { System.currentTimeMillis() },
+        )
     }
 }
