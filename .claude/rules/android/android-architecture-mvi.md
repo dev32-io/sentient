@@ -1,22 +1,22 @@
 ---
-description: Architecture -- blackbox SDK -> repos -> per-screen ViewModel (one UI state), state-gate nav.
+description: Architecture -- blackbox SDK -> stateless repos -> usecases -> thin per-route ViewModel -> Compose.
 paths:
   - "android/**"
 ---
 
 > SCOPE: governs the UI app only. Transport, session/audio FSM, reconnect, logging, and the
-> data/repository layer live in the shared modules — do NOT re-implement them here.
+> data/usecase layer live in the shared modules — do NOT re-implement them here.
 
 # Architecture
 
-Layering: blackbox SDK → repositories → one ViewModel per screen → Compose. Every screen owns ONE state-holder; the SDK is never touched from a composable or ViewModel directly — only through repositories on the chat session.
+Layering: blackbox SDK → stateless repositories → usecases → one thin ViewModel per screen → Compose. The ViewModel never touches the SDK or a repository directly — only usecases.
 
 ## The shape
 
-- A screen's ViewModel collects repository flows (the result envelope) and folds them into a single UI state, exposed as a read-only hot state-holder.
-- Chat/history VMs are built from the chat-scoped session and keyed by session identity; clearing the VM tears the session down.
-- The app-scoped presence relay drives the session's foreground/background ops. Nothing chat-related is app-scoped.
-- Reads flow in through repositories; commands go out through the session/SDK.
+- A screen's ViewModel is THIN: it holds per-screen + view-local state, invokes usecases, and exposes one read-only hot state-holder. Business logic that combines or transforms multiple sources lives in a usecase, not the VM.
+- The VM is scoped to its route destination and is rebuilt when the route argument changes — that recreation is how per-screen state is cleaned, not an in-place reset.
+- Usecases are resolved from the connection scope (which outlives the screen). Per-screen caches (e.g. an optimistic outbox) are VM-local state.
+- Reads flow in through usecases; commands go out through usecases.
 
 ## Command surface — plain methods OR dispatch(Intent)
 
@@ -29,16 +29,16 @@ Lifecycle-paused collection drops emissions.
 - Primary: model the event in UI state; the composable acknowledges after showing.
 - Secondary: a buffered Channel exposed as a receive-flow — guarantees delivery.
 
-## Navigation — state-gate, not a router
+## Navigation — typed routes
 
-- Top-level navigation is a state-based composable swap gated on derived booleans, NOT a route graph. Overlays (settings, drawer) live within the in-session state, not as stack destinations.
-- Gate on auth, not connection status — a transport drop must not change the screen.
-- A typed route graph is future work; don't add a navigation library until a real multi-destination stack exists.
+- Top-level navigation is a typed route graph (see the navigation rule), NOT a state-gate swap. A transient overlay may stay in-screen; promote to a route only when it needs a back-stack entry.
+- Gate the entry on auth, not connection status — a transport drop must not change the screen.
 
 ## What goes where
 
-- Business logic / validation: reducer or VM suspend functions.
-- I/O + SDK access: repositories, behind the result envelope.
-- Theme, layout, formatting: composable.
+- Multi-source combine / transform / event-fold: a usecase (shared).
+- Per-screen + view-local state, action dispatch: the ViewModel.
+- Datasource mapping (data in, data out): a stateless repository.
+- Theme, layout, formatting: the composable.
 
 > When a rule is unclear, read `agents/docs/android/android-architecture-mvi-details.md`.

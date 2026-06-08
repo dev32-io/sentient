@@ -1,20 +1,18 @@
 ---
-description: Repository layer over the blackbox SDK -- one per concern, pure event-fold, no-loss, result envelope out.
+description: Repositories are stateless mappers over the blackbox datasource; combine/transform lives in usecases.
 paths:
-  - "shared/mobile-data/**/repository/**"
+  - "shared/mobile-data/**/data/**"
   - "shared/mobile-data/**/model/**"
 ---
 
 # Repositories
 
-The SDK is a blackbox datasource. Repositories are the ONLY consumers of the SDK's observable surfaces; ViewModels go through repositories, never the SDK directly.
+The platform SDK / datasource is a blackbox. Repositories are STATELESS mappers over its surfaces — data in, data out. They hold no accumulated state, do no cross-source combine, and do no connection gating.
 
-- One repository per domain concern; each maps its SDK surface to the result envelope.
-- Fold the SDK's no-loss event stream through a PURE reducer into live UI state. The no-loss guarantee lives in the reducer, not in any conflating hot state-holder downstream.
-- Combine committed history + live reduced state + the optimistic outbox into the single stream a screen collects.
-- Map connection state to the result envelope: terminal auth/connection loss → failure, ready → success, otherwise loading.
-- Reads are cache-then-refresh: emit a cached partial first, then the refreshed result.
-- Repositories are constructed and scoped by the chat session — never singletons, never app-scoped.
-- Keep them free of platform and UI types: data in, result envelope out. Pure, unit-tested without a device.
+- One repository per data concern; define each behind an interface so usecases test against fakes.
+- A repository exposes the datasource's streams + commands mapped to domain types. It does NOT fold, accumulate, or merge — multi-source combine + transform (and any event-fold / no-loss reducer) belongs in a usecase, not here.
+- Reads are cache-then-refresh where a cache exists: emit a cached partial first, then the refreshed result.
+- A stateful per-screen cache (e.g. an optimistic outbox) belongs to the screen's state-holder, NOT a shared repository.
+- Keep repositories free of platform and UI types. A pure passthrough mapper needs no test of its own; reserve tests for logic.
 
 > When a rule is unclear, read `agents/docs/mobile-data/repositories-details.md`.

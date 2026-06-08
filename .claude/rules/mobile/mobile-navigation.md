@@ -1,5 +1,5 @@
 ---
-description: Mobile navigation -- state-gate at the root, overlays not stack destinations, typed routes only when a stack appears.
+description: Mobile navigation -- typed route graph, one screen per destination, screen re-inits on route-arg change.
 paths:
   - "android/**"
   - "ios/**"
@@ -8,21 +8,22 @@ paths:
 
 # Mobile Navigation
 
-The app navigates by STATE, not a router. The top-level is a gate over a small set of mutually-exclusive screens.
+Navigate by typed routes. The top-level is a route graph over a small closed set of destinations.
 
-## Root — a state gate, one screen at a time
+## Routes — typed, one screen per destination
 
-- The composition root swaps between screens on derived booleans/enum: unconfigured → setup, no-token → login, token present → chat. Both platforms share this 3-way gate.
-- Gate on auth (token presence), NOT transport status — a drop must keep the user on the in-session screen with a banner, never bounce to login.
-- Settings and the history drawer/sheet are OVERLAYS within the in-session state, not stack destinations.
+- Destinations are a closed sum; the router takes only typed values. Pass ids as route args and refetch — never large objects.
+- A screen RE-INITIALISES when its route argument changes: a new arg = a fresh state-holder = clean per-screen state. This route boundary IS the cleanup boundary for per-screen state — never reset state in place.
+- Gate the entry route on auth (token presence), NOT transport status — a drop keeps the user on the in-session screen with a banner, never bounces to login.
+- A long-lived connection is scoped ABOVE the route graph, so navigating between destinations never tears it down.
+- Logout clears the auth gate and shuts the connection scope → the graph routes to login. Navigation follows state, not an imperative call buried in a handler.
 
-## What's shipped vs NOT
+## Overlays
 
-- There is NO route graph / navigation stack, no tabs, no deep links. Do not add a navigation library or coordinator stack for the current screen set.
-- A logout→login transition is driven by clearing the auth gate (the session tears down as a consequence) — navigation follows state, not an imperative navigate call.
+- A transient surface (settings sheet, history drawer) MAY stay an in-screen overlay rather than a stack destination when that fits the UX; promote it to a route only when it needs its own back-stack entry.
 
-## When a real stack appears (typed-route discipline — Future)
+## Deep links (when added)
 
-- If a multi-destination back stack is ever introduced, apply typed-route discipline then: destinations are a closed sum, the router takes only typed values, deep links round-trip losslessly, tabs are roots with their own back stacks, and routes pass ids (refetch), never large objects. Don't pre-build this.
+- Typed routes round-trip losslessly; a route arg fully reconstructs its destination. Don't pre-build link handling before a real need.
 
 > When a rule is unclear, read `agents/docs/mobile/mobile-navigation-details.md`.

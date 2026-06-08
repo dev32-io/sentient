@@ -1,43 +1,41 @@
 ---
-description: iOS MVVM -- ObservableObject+@StateObject VM, VM->repo via session, boolean Group-gate nav.
+description: iOS MVVM -- blackbox SDK -> stateless repos -> usecases -> thin per-route observable VM -> SwiftUI.
 paths:
   - "ios/**"
 ---
 
 > SCOPE: governs the UI app only. Transport, session/audio FSM, reconnect, logging, and the
-> data/repository layer live in the shared modules (a SKIE-bridged XCFramework) — do NOT
-> re-implement them here.
+> data/usecase layer live in the shared modules (a bridged framework) — do NOT re-implement them here.
 
 # MVVM Architecture
 
-Single state-and-navigation owner per screen. Layering: blackbox SDK → repositories on the chat session → one ViewModel per screen → SwiftUI. Views reach the SDK only through repositories.
+Single state-and-navigation owner per screen. Layering: blackbox SDK → stateless repositories → usecases → one thin ViewModel per screen → SwiftUI. The ViewModel reaches data only through usecases, never the SDK or a repository directly.
 
 ## Three roles
 
-- Model — `struct`/`enum` domain; no SwiftUI, no I/O, `Sendable`.
+- Model — value-type domain; no UI, no I/O, `Sendable`.
 - View — SwiftUI; reads VM state, dispatches actions as method calls; no business logic.
-- ViewModel — `@MainActor final class`; owns one published state + the session lifecycle.
+- ViewModel — `@MainActor`, THIN: per-screen + view-local state, invokes usecases, exposes one published state. No combine/transform logic (that's a usecase).
 
-## ViewModel shape (shipped)
+## ViewModel shape
 
-- Standardize on `ObservableObject` + `@Published`, held as `@StateObject` and propagated via `@EnvironmentObject` (composes across `@StateObject` boundaries). `@Observable` is fine for a self-contained leaf VM but is not the app-wide default.
-- One state property the view reads; `@MainActor` at class level.
-- Async work via `Task { }` from `init` or view-facing methods.
+- A per-screen observable state-holder (`@Observable` or `ObservableObject` + `@Published`), owned by its view and SCOPED TO THE NAVIGATION DESTINATION — a new route argument rebuilds the view's identity, giving a fresh VM and clean per-screen state. That recreation is the cleanup boundary; never reset state in place.
+- One state property the view reads; `@MainActor` at class level. Async work via tasks from `init` or view-facing methods, cancelled on teardown.
 
-## Consumption — repositories via SKIE
+## Consumption — usecases
 
-- A screen VM collects the session's repository flows with `for await`; SKIE exposes a Kotlin `Flow` as an AsyncSequence — iterate directly, no cast.
-- Fold the result envelope exhaustively (`onEnum(of:)`) into the published state. No `default` that swallows failure.
-- VMs talk to repositories through the session; there is NO UseCase layer. A view reaching past its VM into a repository breaks the model.
+- The VM collects usecase flows (bridged Kotlin `Flow` as an `AsyncSequence` — iterate with `for await`, no cast) and folds them into its published state. Fold result envelopes exhaustively; no `default` that swallows failure.
+- Business logic lives in usecases. A view reaching past its VM, or a VM reaching past its usecases into the datasource, breaks the model.
 
-## Navigation — boolean gate (shipped), not a router
+## Navigation — typed routes
 
-- Top-level nav is a SwiftUI `Group` gate on app-config booleans (configured → setup, authed → chat, else login). No `Route` enum / `NavigationStack(path:)` at the root. Settings + history are sheets/overlays within the in-session state.
-- Gate on auth, not transport status. A typed-route stack is only for a future multi-destination need.
+- Top-level navigation is a typed route graph (see the navigation rule). The connection scope lives ABOVE the graph so navigation never drops the socket. A transient surface (settings sheet, history drawer) may stay an in-screen overlay; promote to a route when it needs its own back-stack entry.
+- Gate the entry on auth, not transport status.
 
-## App-scope vs session-scope
+## Scopes
 
-- An app-scoped config object (an `@EnvironmentObject`) holds app-lived NON-SDK state: backend resolution, token store, display name, the nav gates.
-- The SDK + repositories live ONLY inside the chat-scoped session, held by the chat VM's `@StateObject`; the VM's `deinit` closing the session is the SINGLE teardown path.
+- App scope: app-lived non-connection state (backend resolution, token store, display name, nav gates).
+- Connection scope: the transport + usecase graph, held above the route graph, alive while authenticated, surviving navigation.
+- Screen scope: the per-route VM + view-local state.
 
 > When a rule is unclear, read `agents/docs/ios/ios-architecture-mvvm-details.md`.
