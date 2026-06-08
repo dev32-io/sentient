@@ -129,7 +129,7 @@ class SentientSdkSessionTest {
         fake.failIncoming("network drop")
         sdk.connection.first { it.status == SdkStatus.RECONNECTING }
         sdk.connection.first { fake.openedUrls.size >= 2 }
-        fake.emit(WsIncoming.Text("{\"type\":\"auth.error\",\"code\":\"expired\",\"message\":\"x\"}"))
+        fake.emit(WsIncoming.Text("{\"type\":\"auth.error\",\"code\":\"token-validation-failed\",\"message\":\"x\"}"))
         sdk.connection.first { it.status == SdkStatus.ERROR }
 
         assertTrue(sdk.connection.value.authExpired, "authExpired set on terminal auth failure")

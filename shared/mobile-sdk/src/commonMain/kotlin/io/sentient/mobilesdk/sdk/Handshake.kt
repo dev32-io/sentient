@@ -91,8 +91,12 @@ class Handshake(
             true
         }
         is ServerMessage.AuthError -> {
-            log.warn("auth.error", mapOf("code" to msg.code))
-            failGates(LastErrorKind.AUTH)
+            val terminal = isTerminalAuthError(msg.code)
+            log.warn(
+                "auth.error",
+                mapOf("code" to msg.code, "terminal" to terminal),
+            )
+            failGates(if (terminal) LastErrorKind.AUTH else LastErrorKind.NETWORK)
             true
         }
         is ServerMessage.SessionReady -> {

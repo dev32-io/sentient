@@ -151,7 +151,7 @@ class SentientSdkTest {
         val job = launch { sdk.connect() }
         sdk.connection.first { it.status == SdkStatus.AUTHENTICATING }
         fake.emit(
-            WsIncoming.Text("{\"type\":\"auth.error\",\"code\":\"expired\",\"message\":\"token expired\"}"),
+            WsIncoming.Text("{\"type\":\"auth.error\",\"code\":\"token-validation-failed\",\"message\":\"token expired\"}"),
         )
         sdk.connection.first { it.status == SdkStatus.ERROR }
         job.join()

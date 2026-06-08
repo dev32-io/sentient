@@ -178,7 +178,7 @@ class SentientSdkReconnectTest {
         // Land in terminal ERROR via an auth.error during the handshake.
         val connectJob = launch { sdk.connect() }
         sdk.connection.first { it.status == SdkStatus.AUTHENTICATING }
-        fake.emit(WsIncoming.Text("{\"type\":\"auth.error\",\"code\":\"expired\",\"message\":\"x\"}"))
+        fake.emit(WsIncoming.Text("{\"type\":\"auth.error\",\"code\":\"token-validation-failed\",\"message\":\"x\"}"))
         sdk.connection.first { it.status == SdkStatus.ERROR }
         connectJob.join()
         assertTrue(sdk.connection.value.authExpired, "authExpired set on terminal auth failure")
