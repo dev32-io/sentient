@@ -1,21 +1,44 @@
 // ---------------------------------------------------------------------------
-// SideDrawer — SwiftUI bridge over the native UIKit SideDrawerController.
+// SideDrawer — pure-SwiftUI left-edge interactive drawer.
 //
-// Wraps `content` (the chat column) and `drawer` (the History side panel) in
-// UIHostingControllers and drives the interactive native drawer. SwiftUI commands
-// open/close through `isOpen`; the controller clears `isOpen` to false on any
-// interactive dismiss (drag/tap), and calls `onOpen` whenever the drawer settles
-// fully open (edge-swipe OR programmatic) so the host can refresh on every open.
+// Renders content + a dimming scrim + the drawer panel in a single ZStack. The
+// drawer's horizontal offset is SwiftUI @State, so it can NEVER be clobbered by a
+// UIKit layout pass (the old UIViewController reset its leading constraint on
+// every viewDidLayoutSubviews → open-drag jumped + close-drag never worked).
 //
-// Stateful-content note: HistorySidePanel observes HistoryViewModel via @ObservedObject.
-// SwiftUI re-evaluates the @ViewBuilder closures whenever the host re-renders;
-// updateUIViewController reassigns each hosting controller's rootView so those
-// fresh subtrees (with up-to-date observed state) propagate into UIKit. Without
-// the reassignment the hosted trees would freeze at make-time state.
+// Gestures come from DrawerPanGesture (an iOS-18 UIGestureRecognizerRepresentable):
+//  - content() carries the .edgeOpen pan (OPEN), armed only when the touch begins
+//    within the left-edge zone, so it never swallows taps on the chat column.
+//  - the drawer + dim carry the .closeDrag pan (CLOSE). Both delegates gate on
+//    horizontal dominance so the panel's inner ScrollView keeps scrolling.
+//
+// `isOpen` is the SwiftUI source of truth, kept in sync both ways:
+//  - programmatic open/close (title-bar button) flows in via .onChange(of:).
+//  - a drag/tap settle writes back to `isOpen` and (on open) fires `onOpen`.
+//
+// Same public API as the previous UIViewControllerRepresentable so ChatView is
+// unchanged. HistorySidePanel content is untouched.
 // ---------------------------------------------------------------------------
 import SwiftUI
 
-struct SideDrawer<Content: View, Drawer: View>: UIViewControllerRepresentable {
+/// Layout / motion constants for the drawer. No magic numbers in the body.
+private enum DrawerMetrics {
+    /// Drawer width: 86 % of screen, capped so it never spans a wide device.
+    static let widthFraction: CGFloat = 0.86
+    static let maxWidth: CGFloat = 320
+    /// Scrim opacity at fully-open.
+    static let dimMaxAlpha: Double = 0.5
+    /// Past this open-fraction (0…1) at gesture end, a no-velocity drag snaps open.
+    static let snapThreshold: CGFloat = 0.5
+    /// Horizontal velocity (pt/s) that forces a directional snap regardless of position.
+    static let velocitySnap: CGFloat = 350
+
+    static func width(for screenWidth: CGFloat) -> CGFloat {
+        min(maxWidth, screenWidth * widthFraction)
+    }
+}
+
+struct SideDrawer<Content: View, Drawer: View>: View {
     @Binding var isOpen: Bool
     let onOpen: () -> Void
     @ViewBuilder let content: () -> Content
@@ -33,62 +56,125 @@ struct SideDrawer<Content: View, Drawer: View>: UIViewControllerRepresentable {
         self.drawer = drawer
     }
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(isOpen: $isOpen, onOpen: onOpen)
+    /// 0 = closed, 1 = open. The settled position; `dragX` is the live finger delta.
+    @State private var openFraction: CGFloat = 0
+    /// Live horizontal translation during a drag (pt). 0 when no drag is active.
+    @State private var dragX: CGFloat = 0
+
+    private let log = AppLog("chat", "drawer")
+
+    var body: some View {
+        GeometryReader { geo in
+            // Full bounds INCLUDING the safe area — the drawer panel + scrim must
+            // cover the status bar / home indicator. `content()` keeps its normal
+            // safe-area insets (it owns the title bar + composer), so we read the
+            // full screen width for the drawer geometry from `geo.size` + insets.
+            let screenWidth = geo.size.width + geo.safeAreaInsets.leading + geo.safeAreaInsets.trailing
+            let drawerWidth = DrawerMetrics.width(for: screenWidth)
+            let fraction = currentFraction(drawerWidth: drawerWidth)
+            let drawerX = -drawerWidth + fraction * drawerWidth
+
+            ZStack(alignment: .topLeading) {
+                // Chat column — respects safe area (title bar sits BELOW the
+                // status bar). The edge-open pan only arms when a drag begins in
+                // the left-edge zone, so it never swallows taps on the column.
+                content()
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .gesture(edgeOpenDrag(drawerWidth: drawerWidth))
+
+                dimScrim(fraction: fraction, drawerWidth: drawerWidth)
+
+                drawer()
+                    .frame(width: drawerWidth)
+                    .frame(maxHeight: .infinity)
+                    .offset(x: drawerX)
+                    .gesture(closeDrag(drawerWidth: drawerWidth))
+                    .ignoresSafeArea()
+            }
+        }
+        // Keep SwiftUI's source of truth (`isOpen`) and the visual fraction in
+        // sync for PROGRAMMATIC open/close (e.g. the title-bar button).
+        .onChange(of: isOpen) { _, nowOpen in
+            let target: CGFloat = nowOpen ? 1 : 0
+            guard openFraction != target else { return }
+            log.info("programmatic isOpen=\(nowOpen)")
+            withAnimation(.snappy) { openFraction = target }
+            dragX = 0
+            if nowOpen { onOpen() }
+        }
     }
 
-    func makeUIViewController(context: Context) -> SideDrawerController {
-        let contentHost = UIHostingController(rootView: content())
-        let drawerHost = UIHostingController(rootView: drawer())
-        contentHost.view.backgroundColor = .clear
-        drawerHost.view.backgroundColor = .clear
-        context.coordinator.contentHost = contentHost
-        context.coordinator.drawerHost = drawerHost
+    // ── Offset mapping ────────────────────────────────────────────────────────
 
-        let controller = SideDrawerController(content: contentHost, drawer: drawerHost)
-        controller.onOpen = { context.coordinator.handleOpened() }
-        controller.onDismiss = { context.coordinator.handleDismissed() }
-        return controller
+    /// Clamped 0…1 position including the live drag delta.
+    private func currentFraction(drawerWidth: CGFloat) -> CGFloat {
+        guard drawerWidth > 0 else { return openFraction }
+        return min(1, max(0, openFraction + dragX / drawerWidth))
     }
 
-    func updateUIViewController(_ controller: SideDrawerController, context: Context) {
-        // Reassign rootViews so observed-state changes in the hosted SwiftUI
-        // subtrees propagate (HistorySidePanel ← HistoryViewModel, chat ← ChatViewModel).
-        context.coordinator.contentHost?.rootView = content()
-        context.coordinator.drawerHost?.rootView = drawer()
+    // ── Dim scrim ─────────────────────────────────────────────────────────────
 
-        // Sync the binding → controller. notify=false on close avoids the
-        // controller calling back into the binding mid-sync (re-entrancy loop).
-        guard isOpen != controller.isOpen else { return }
-        if isOpen {
-            controller.open(animated: true)
+    private func dimScrim(fraction: CGFloat, drawerWidth: CGFloat) -> some View {
+        Color.black
+            .opacity(Double(fraction) * DrawerMetrics.dimMaxAlpha)
+            .ignoresSafeArea()
+            .allowsHitTesting(fraction > 0)
+            .onTapGesture { close() }
+            .gesture(closeDrag(drawerWidth: drawerWidth))
+            .accessibilityHidden(true)
+    }
+
+    // ── Gestures ──────────────────────────────────────────────────────────────
+
+    private func edgeOpenDrag(drawerWidth: CGFloat) -> DrawerPanGesture {
+        DrawerPanGesture(
+            kind: .edgeOpen,
+            onChange: { dragX = max(0, $0) },
+            onEnd: { snap(translationX: $0, velocityX: $1, drawerWidth: drawerWidth) }
+        )
+    }
+
+    private func closeDrag(drawerWidth: CGFloat) -> DrawerPanGesture {
+        DrawerPanGesture(
+            kind: .closeDrag,
+            onChange: { dragX = $0 },
+            onEnd: { snap(translationX: $0, velocityX: $1, drawerWidth: drawerWidth) }
+        )
+    }
+
+    // ── Snap / settle ─────────────────────────────────────────────────────────
+
+    /// Snap open or closed from final position + fling velocity, then reconcile
+    /// the binding. Velocity wins past the fling threshold; otherwise position.
+    private func snap(translationX: CGFloat, velocityX: CGFloat, drawerWidth: CGFloat) {
+        let fraction = currentFraction(drawerWidth: drawerWidth)
+        let shouldOpen: Bool
+        if abs(velocityX) > DrawerMetrics.velocitySnap {
+            shouldOpen = velocityX > 0
         } else {
-            controller.close(animated: true, notify: false)
+            shouldOpen = fraction > DrawerMetrics.snapThreshold
         }
+        log.info("snap dx=\(Int(translationX)) vx=\(Int(velocityX)) frac=\(String(format: "%.2f", fraction)) → open=\(shouldOpen)")
+        withAnimation(.snappy) { openFraction = shouldOpen ? 1 : 0 }
+        dragX = 0
+        settle(open: shouldOpen)
     }
 
-    @MainActor
-    final class Coordinator {
-        @Binding var isOpen: Bool
-        let onOpen: () -> Void
-        var contentHost: UIHostingController<Content>?
-        var drawerHost: UIHostingController<Drawer>?
+    /// Drive the binding to a close via tap on the scrim.
+    private func close() {
+        log.info("scrim tap close")
+        withAnimation(.snappy) { openFraction = 0 }
+        dragX = 0
+        settle(open: false)
+    }
 
-        init(isOpen: Binding<Bool>, onOpen: @escaping () -> Void) {
-            self._isOpen = isOpen
-            self.onOpen = onOpen
-        }
-
-        /// Drawer settled fully open (any path). Keep the binding in sync (a
-        /// drag-open without a binding toggle) and fire the host's refresh hook.
-        func handleOpened() {
+    /// Reconcile `isOpen` with the settled visual state and fire `onOpen` on a
+    /// drag-open (the binding was false → set it true so the host refreshes).
+    private func settle(open: Bool) {
+        if open {
             if !isOpen { isOpen = true }
             onOpen()
-        }
-
-        /// Drawer dismissed interactively (drag/tap). Clear the binding so the
-        /// SwiftUI source of truth tracks the UIKit state.
-        func handleDismissed() {
+        } else {
             if isOpen { isOpen = false }
         }
     }

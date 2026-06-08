@@ -24,7 +24,11 @@
 //   1. chat-side ErrorBanner from ChatUiState (ChatRepository failure)
 //   2. connection banner from ConnectionState (lost / reconnecting)
 //
-// accessibilityIdentifier `chat-screen` retained for host routing assert.
+// accessibilityIdentifier `chat-screen` lives on the title leaf in ChatTitleBar
+// (host routing assert). It is NOT applied to the SideDrawer container: now that
+// SideDrawer is a pure-SwiftUI View (not a UIViewControllerRepresentable), a
+// container-level id flattens every child accessibility element into one merged
+// `chat-screen` node, hiding history-open / composer-input from the a11y tree.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
@@ -114,7 +118,6 @@ struct ChatView: View {
             historySidePanel
                 .background(DuskColors.bg.ignoresSafeArea())
         }
-        .ignoresSafeArea()
         .connectionState(
             banner: connectionBanner,
             onReconnect: { vm.session.sdk.forceReconnect() },
@@ -151,7 +154,6 @@ struct ChatView: View {
             default: break
             }
         }
-        .accessibilityIdentifier("chat-screen")
     }
 
     // ── Main content column ───────────────────────────────────────────────────────

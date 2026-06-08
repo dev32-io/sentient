@@ -1,9 +1,11 @@
 appId: io.dev32.sentient.debug
 ---
-# 02-drawer — open the history side drawer and verify the session list renders.
-# history-open (hamburger) is in the top-left of the ChatTitleBar.
-# history-new-chat and history-search are always present in the side panel.
+# 02-drawer — history side drawer: button-open, then interactive edge-open +
+# left-swipe close (the close-drag was the bug the SwiftUI rebuild fixed).
+# history-open (hamburger) is top-left of the ChatTitleBar; history-new-chat and
+# history-search are always present in the side panel.
 - launchApp
+# 1) Open via the title-bar hamburger button.
 - tapOn:
     id: "history-open"
 - extendedWaitUntil:
@@ -12,3 +14,25 @@ appId: io.dev32.sentient.debug
     timeout: 5000
 - assertVisible:
     id: "history-search"
+# 2) Close via a left-swipe drag on the open drawer (velocity snap → closed).
+- swipe:
+    start: "80%, 50%"
+    end: "1%, 50%"
+    duration: 300
+- extendedWaitUntil:
+    visible:
+      id: "composer-input"
+    timeout: 5000
+- assertNotVisible:
+    id: "history-search"
+# 3) Re-open via a left-edge-swipe drag (velocity snap → open).
+- swipe:
+    start: "1%, 50%"
+    end: "85%, 50%"
+    duration: 300
+- extendedWaitUntil:
+    visible:
+      id: "history-search"
+    timeout: 5000
+- assertVisible:
+    id: "history-new-chat"
