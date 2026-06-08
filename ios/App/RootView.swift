@@ -15,10 +15,10 @@
 // or authExpired — so a drop keeps the user on chat WITH the banner.
 // Mirrors web-sdk: AUTH gates the screen, status drives the banner.
 //
-// ChatRoot builds a chat-scoped MobileSession + ChatViewModel once per entry.
-// ChatViewModel.deinit is the single session-close path — do NOT add a second
-// .onDisappear close path. The session is torn down when ChatView disappears
-// (logout → hasToken=false → ChatRoot exits → StateObject deinit fires).
+// UserSessionHost owns the User/Connection-scoped UserSession (@StateObject) once
+// per authed entry: ONE ChatComponent + SDK that survives navigation. Logout
+// (UserSessionHost.logout → appConfig.logout → hasToken=false) exits the authed
+// branch → the UserSession @StateObject deinits → its KMP session is shut down.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
@@ -40,7 +40,7 @@ struct RootView: View {
                     onSaved: { showSetupOverride = false }
                 )
             } else if appConfig.hasToken {
-                ChatRoot(appConfig: appConfig)
+                UserSessionHost(appConfig: appConfig)
             } else {
                 LoginView(
                     onConnect: { appConfig.didLogin() },

@@ -4,7 +4,8 @@ import MobileData
 @main
 struct SentientApp: App {
     // AppConfig owns backend configuration + auth stores for the app lifetime.
-    // NO SDK/MobileSession here — the session is chat-scoped and lives in ChatViewModel.
+    // NO SDK here — the SDK is User/Connection-scoped and lives in UserSession
+    // (built once at the authed root, above the NavigationStack).
     @StateObject private var appConfig = AppConfig()
 
     init() {

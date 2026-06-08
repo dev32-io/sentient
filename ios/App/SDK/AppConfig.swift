@@ -4,26 +4,24 @@
 // display-name store, and the isConfigured/configGeneration gates that drive
 // RootView routing and splash animation.
 //
-// NO SentientSdk / MobileSession here — the session is chat-scoped and lives
-// inside ChatViewModel (one per chat entry, torn down on exit). AppConfig
+// NO SentientSdk here — the SDK is User/Connection-scoped and lives inside
+// UserSession (built once at the authed root, torn down on logout). AppConfig
 // survives the process lifetime; the SDK does not.
 //
 // Backend resolution (override → build-time default → unconfigured) is
 // evaluated once at init and again in reconfigure(). reconfigure() saves the
 // new config, clears the token, and bumps configGeneration (the splash
-// trigger). The session that was running is torn down by ChatView's disappear
-// path (ChatViewModel.deinit → session.close).
+// trigger). The User session that was running is torn down when the authed
+// branch exits (hasToken=false → UserSessionHost leaves the tree).
 //
 // hasToken — the reactive nav gate for RootView (mirrors Android's displayName
 // != null guard). The display name is saved at login and cleared at logout,
 // acting as a reactive proxy for token presence. A WS drop does NOT clear it,
 // so a drop keeps the user on chat WITH the connection-lost banner.
 //
-// logout() clears only the token and display name — it does NOT touch the
-// session (the chat view observes authExpired from ConnectionState and tears
-// down itself). Nav back to login is NOT modelled here: RootView derives
-// login-vs-chat from hasToken (cleared by logout) — the display-name/token
-// clear is what makes RootView recompose to the login screen.
+// logout() clears only the token and display name. The UserSession teardown is
+// driven separately by UserSessionHost.logout() (userSession.shutdown()); the
+// hasToken=false flip is what makes RootView recompose to the login screen.
 // ---------------------------------------------------------------------------
 import Foundation
 import MobileData

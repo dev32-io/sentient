@@ -1,55 +1,56 @@
 // ---------------------------------------------------------------------------
 // ChatView — the chat surface, driven by ChatUiState + ConnectionState.
 //
-// Mirrors the Android ChatContent + ChatRoot pattern: the ViewModel is the
-// only place that holds SDK or repo references. Consumes the KMP-layer data
-// model (committed history + optimistic pending outbox + live streaming bubble
-// + task pills) and the separate ConnectionState, rendering them on screen.
+// The thin per-conversation ChatViewModel + the HistoryViewModel are owned HERE
+// as @StateObjects, built from factory closures the host (UserSessionHost) passes
+// in. Because the host keys this view `.id(activeSessionId)`, a new active
+// conversation rebuilds ChatView → fresh @StateObject VMs (route-recreates-VM).
+// The SDK + socket live in UserSession ABOVE this view, so switching conversation
+// / opening history never drops the connection.
 //
-// Session lifecycle: one MobileSession per chat entry. The session is built by
-// the parent (RootView.ChatRoot), passed in as a @StateObject ChatViewModel so
-// it is created once per chat entry and torn down on exit. ChatViewModel.deinit
-// is the SINGLE session-close path (session.close() called there); do NOT add
-// a second .onDisappear close path.
+// History select / new-chat are NAVIGATIONS bubbled to the host (onSelectSession /
+// onNewChat) — they flip the host's activeSessionId, NOT a switchConversation call
+// on this VM. Settings is a keeper sheet; logout bubbles to the host (onLogout).
 //
-// scenePhase presence: .active → vm.onForeground(); .background → vm.onBackground().
-// Cold-start-skip is inside ChatViewModel (tracks hasBackgrounded).
+// Presence (scenePhase) is owned by the host, NOT here — a conversation switch
+// must never pause/resume the SDK.
 //
 // Row ordering in MessageList:
 //   1. committed messages (with day-dividers via chatRows())
-//   2. pending outbox entries (QUEUED→SENT→FAILED status chips; FAILED = tappable Retry)
+//   2. pending outbox entries (QUEUED→SENT→FAILED chips; FAILED = tappable Retry)
 //   3. live streaming assistant bubble (appended when ChatModel.live != nil)
 //
 // Banners (highest priority first):
-//   1. chat-side ErrorBanner from ChatUiState (ChatRepository failure)
+//   1. chat-side ErrorBanner from ChatUiState
 //   2. connection banner from ConnectionState (lost / reconnecting)
 //
-// accessibilityIdentifier `chat-screen` lives on the title leaf in ChatTitleBar
-// (host routing assert). It is NOT applied to the SideDrawer container: now that
-// SideDrawer is a pure-SwiftUI View (not a UIViewControllerRepresentable), a
-// container-level id flattens every child accessibility element into one merged
-// `chat-screen` node, hiding history-open / composer-input from the a11y tree.
+// accessibilityIdentifier `chat-screen` lives on the title leaf in ChatTitleBar;
+// it is NOT applied to the SideDrawer container (that would flatten the a11y tree).
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
 
 struct ChatView: View {
-    /// The ViewModel is the sole SDK reference. @ObservedObject — the VM is
-    /// owned by ChatRoot (@StateObject there); ChatView is a consumer.
-    @ObservedObject var vm: ChatViewModel
+    /// The thin per-conversation VM — sole SDK-command surface for this screen.
+    @StateObject private var vm: ChatViewModel
+    /// History reads + rename/delete (selection/new-chat are host navigations).
+    @StateObject private var historyModel: HistoryViewModel
 
     /// User's display name for bubble avatars and drawer header.
     let userName: String
-    /// Called on logout — clears the token via AppConfig so RootView re-routes to login.
+
+    /// History select → host flips activeSessionId (rebuilds the VM).
+    let onSelectSession: (String) -> Void
+    /// New chat → host sets activeSessionId = nil (a fresh conversation).
+    let onNewChat: () -> Void
+    /// Open settings (host pushes the settings route). Unused by the keeper sheet
+    /// path but kept so the host owns the settings entry point.
+    let onOpenSettings: () -> Void
+    /// Logout → host shuts the UserSession down + clears the token.
     let onLogout: () -> Void
-
-    // ── scenePhase ─────────────────────────────────────────────────────────────
-
-    @Environment(\.scenePhase) private var scenePhase
 
     // ── Drawer state ────────────────────────────────────────────────────────────
 
-    @StateObject private var historyModel: HistoryViewModel
     @State private var drawerOpen = false
     @State private var panelNowMs: Int64 = 0
 
@@ -60,15 +61,24 @@ struct ChatView: View {
     @State private var panelDeleting: PanelTarget?
     @State private var panelRenameText = ""
 
-    private let sceneLog = AppLog("chat", "scene")
-
     // ── Init ──────────────────────────────────────────────────────────────────────
 
-    init(vm: ChatViewModel, userName: String, onLogout: @escaping () -> Void) {
-        self.vm = vm
+    init(
+        makeVM: @escaping () -> ChatViewModel,
+        makeHistoryVM: @escaping () -> HistoryViewModel,
+        userName: String,
+        onSelectSession: @escaping (String) -> Void,
+        onNewChat: @escaping () -> Void,
+        onOpenSettings: @escaping () -> Void,
+        onLogout: @escaping () -> Void
+    ) {
+        _vm = StateObject(wrappedValue: makeVM())
+        _historyModel = StateObject(wrappedValue: makeHistoryVM())
         self.userName = userName
+        self.onSelectSession = onSelectSession
+        self.onNewChat = onNewChat
+        self.onOpenSettings = onOpenSettings
         self.onLogout = onLogout
-        _historyModel = StateObject(wrappedValue: HistoryViewModel(session: vm.session))
     }
 
     // ── Derived ───────────────────────────────────────────────────────────────────
@@ -95,8 +105,6 @@ struct ChatView: View {
     }
 
     // Build the display message list: committed + live bubble (with tasks injected).
-    // Uses ChatModel.messagesForUi() which mirrors the KMP-side derivation.
-    // Pending rows are passed separately via MessageList `pending` param.
     private var displayMessages: [ChatMessage] {
         vm.state.model.messagesForUi()
     }
@@ -120,7 +128,7 @@ struct ChatView: View {
         }
         .connectionState(
             banner: connectionBanner,
-            onReconnect: { vm.session.sdk.forceReconnect() },
+            onReconnect: { vm.reconnect() },
             authExpired: connection.authExpired,
             onAuthExpired: { onLogout() }
         )
@@ -138,21 +146,6 @@ struct ChatView: View {
         }
         .panelDeletePrompt($panelDeleting) { id in
             Task { await historyModel.deleteSession(id) }
-        }
-        .onChange(of: scenePhase) { _, phase in
-            switch phase {
-            case .background:
-                sceneLog.info("background")
-                vm.onBackground()
-            case .active:
-                if vm.hasBackgrounded {
-                    sceneLog.info("foreground")
-                } else {
-                    sceneLog.info("cold-start-skip")
-                }
-                vm.onForeground()
-            default: break
-            }
         }
     }
 
@@ -174,12 +167,12 @@ struct ChatView: View {
                     ChatLoadingView(state: chatLoadingState)
                 }
             }
-            // Chat-side error banner (repository / model failure).
+            // Chat-side error banner (model failure).
             if let banner = vm.state.banner {
                 ContentErrorBanner(
                     text: banner.text,
                     canRetry: banner.canRetry,
-                    onRetry: banner.canRetry ? { vm.session.sdk.forceReconnect() } : nil
+                    onRetry: banner.canRetry ? { vm.reconnect() } : nil
                 )
             }
         }
@@ -191,11 +184,9 @@ struct ChatView: View {
                 canInterrupt: canInterrupt,
                 sendInFlight: !pending.isEmpty,
                 onSend: { vm.send($0) },
-                onMicToggle: toggleMic,
-                onTtsToggle: {
-                    Task { try? await vm.session.sdk.setTtsEnabled(enabled: !connection.prefs.ttsEnabled) }
-                },
-                onInterrupt: { vm.session.sdk.interrupt() }
+                onMicToggle: { vm.toggleMic() },
+                onTtsToggle: { vm.toggleTts() },
+                onInterrupt: { vm.interrupt() }
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -211,16 +202,12 @@ struct ChatView: View {
             userName: userName,
             household: "",
             onSelect: { sessionId in
-                Task {
-                    await historyModel.switchSession(sessionId)
-                    drawerOpen = false
-                }
+                drawerOpen = false
+                onSelectSession(sessionId)
             },
             onNewChat: {
-                Task {
-                    await historyModel.newChat()
-                    drawerOpen = false
-                }
+                drawerOpen = false
+                onNewChat()
             },
             onSettings: {
                 settingsPresented = true
@@ -242,24 +229,14 @@ struct ChatView: View {
         ChatTitleBar(
             markMode: currentMarkMode,
             onOpenPanel: { drawerOpen = true },
-            onNewChat: { Task { await historyModel.newChat() } }
+            onNewChat: { onNewChat() }
         )
-    }
-
-    // ── Actions ───────────────────────────────────────────────────────────────────
-
-    private func toggleMic() {
-        if connection.voiceMode == .active {
-            vm.session.sdk.stopMic()
-        } else {
-            vm.session.sdk.startMic()
-        }
     }
 }
 
 // ---------------------------------------------------------------------------
 // ContentErrorBanner — inline chat-side error pill shown when ChatUiState.banner
-// is non-nil (ChatRepository failure). Mirrors Android ContentErrorBanner.
+// is non-nil. Mirrors Android ContentErrorBanner.
 // ---------------------------------------------------------------------------
 
 private struct ContentErrorBanner: View {
