@@ -80,4 +80,38 @@ class ObserveChatUseCaseTest {
         assertNull(models.last().live, "live bubble dropped on session switch")
         job.cancel()
     }
+
+    @Test
+    fun existing_switch_sets_history_loading_until_snapshot() = runTest(UnconfinedTestDispatcher()) {
+        val repo = FakeConversationRepository()
+        val models = mutableListOf<ChatModel>()
+        val job = launch { useCase(repo).invoke(MutableStateFlow(emptyList())).collect { models.add(it) } }
+        runCurrent()
+        assertTrue(!models.last().historyLoading, "no loading before any switch")
+
+        repo.events.emit(SdkEvent.SessionSwitched("s2")) // non-empty id ⇒ existing-session switch
+        runCurrent()
+        assertTrue(models.last().historyLoading, "switch starts loading, awaiting snapshot")
+
+        // conversation.snapshot REPLACES the timeline ⇒ a timeline emission.
+        repo.timelineState.value = listOf(ChatMessage(ts = 1, role = "user", content = "old"))
+        runCurrent()
+        assertTrue(!models.last().historyLoading, "snapshot clears loading")
+        job.cancel()
+    }
+
+    @Test
+    fun new_chat_never_shows_history_loading() = runTest(UnconfinedTestDispatcher()) {
+        val repo = FakeConversationRepository()
+        val models = mutableListOf<ChatModel>()
+        val job = launch { useCase(repo).invoke(MutableStateFlow(emptyList())).collect { models.add(it) } }
+        runCurrent()
+
+        // session.new → gateway emits session.switched("") + empty immediate snapshot.
+        repo.events.emit(SdkEvent.SessionSwitched(""))
+        repo.timelineState.value = emptyList()
+        runCurrent()
+        assertTrue(models.none { it.historyLoading }, "empty-id switch never raises the spinner")
+        job.cancel()
+    }
 }
