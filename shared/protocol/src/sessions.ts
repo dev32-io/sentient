@@ -125,11 +125,20 @@ export const sessionCreatedEventSchema = z.object({
 });
 
 // Client → gateway: switch the active chain.
+// @deprecated superseded by conversationActivateSchema — kept for backwards compat only.
 export const sessionSwitchSchema = z.object({
   type: z.literal("session.switch"),
   requestId: z.string().min(1),
   sessionId: z.string().min(1),
 });
+
+// Client → gateway: activate a conversation (lightweight replacement for session.switch).
+// Does not require a requestId — fire-and-forget; gateway emits session.switched + conversation.snapshot.
+export const conversationActivateSchema = z.object({
+  type: z.literal("conversation.activate"),
+  sessionId: z.string().min(1),
+});
+export type ConversationActivate = z.infer<typeof conversationActivateSchema>;
 
 // Gateway → client: confirms a switch — followed by a conversation.snapshot.
 export const sessionSwitchedEventSchema = z.object({

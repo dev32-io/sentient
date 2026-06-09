@@ -2,21 +2,13 @@ import { z } from "zod";
 import { conversationFeedItemSchema } from "./conversation.ts";
 import { userRoleSchema } from "./roles.ts";
 import {
+  conversationActivateSchema,
   sessionCreatedEventSchema,
   sessionNewSchema,
-  sessionSwitchSchema,
   sessionSwitchedEventSchema,
-  sessionsDeleteResultSchema,
-  sessionsDeleteSchema,
   sessionsDeletedEventSchema,
   sessionsErrorSchema,
-  sessionsListResultSchema,
-  sessionsListSchema,
-  sessionsRenameResultSchema,
-  sessionsRenameSchema,
   sessionsRenamedEventSchema,
-  sessionsSearchResultSchema,
-  sessionsSearchSchema,
 } from "./sessions.ts";
 
 // ─── Client → Gateway Messages ───
@@ -87,12 +79,8 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   sessionEndSchema,
   pingSchema,
   interruptSchema,
-  sessionsListSchema,
-  sessionsSearchSchema,
-  sessionsDeleteSchema,
-  sessionsRenameSchema,
   sessionNewSchema,
-  sessionSwitchSchema,
+  conversationActivateSchema,
 ]);
 
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
@@ -293,11 +281,7 @@ export const gatewayMessageSchema = z.discriminatedUnion("type", [
   pongSchema,
   sessionExpiredSchema,
   playbackStopSchema,
-  sessionsListResultSchema,
-  sessionsSearchResultSchema,
-  sessionsDeleteResultSchema,
   sessionsDeletedEventSchema,
-  sessionsRenameResultSchema,
   sessionsRenamedEventSchema,
   sessionCreatedEventSchema,
   sessionSwitchedEventSchema,

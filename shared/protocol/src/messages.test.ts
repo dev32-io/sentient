@@ -441,3 +441,29 @@ describe("conversationFeedUserItem pendingId", () => {
     if (result.success) expect(result.data.pendingId).toBeUndefined();
   });
 });
+
+describe("transport boundary — query RPCs removed from WS", () => {
+  it("rejects sessions.list on the WS client schema", () => {
+    expect(clientMessageSchema.safeParse({ type: "sessions.list", limit: 100, offset: 0 }).success).toBe(false);
+  });
+  it("rejects sessions.search/delete/rename on the WS client schema", () => {
+    for (const type of ["sessions.search", "sessions.delete", "sessions.rename"]) {
+      expect(clientMessageSchema.safeParse({ type, requestId: "x" }).success).toBe(false);
+    }
+  });
+  it("accepts conversation.activate", () => {
+    expect(clientMessageSchema.safeParse({ type: "conversation.activate", sessionId: "s-1" }).success).toBe(true);
+  });
+  it("drops sessions.*.result from the gateway schema but keeps broadcasts", () => {
+    expect(
+      gatewayMessageSchema.safeParse({
+        type: "sessions.list.result",
+        requestId: "r-1",
+        items: [],
+        total: 0,
+        hasMore: false,
+      }).success,
+    ).toBe(false);
+    expect(gatewayMessageSchema.safeParse({ type: "sessions.deleted", sessionId: "s-1" }).success).toBe(true);
+  });
+});
