@@ -53,8 +53,10 @@ describe("sessions REST handler — auth + scoping", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.items[0].sessionId).toBe("s-1");
+    expect(body.total).toBe(1);
+    expect(body.hasMore).toBe(false);
   });
-  it("returns paginated history for a session", async () => {
+  it("returns paginated history for a session as ConversationFeedItem[]", async () => {
     const h = createSessionsHttpHandler(deps());
     const res = await h(
       new Request("http://x/api/v1/sessions/s-1/messages?limit=50", {
@@ -64,6 +66,15 @@ describe("sessions REST handler — auth + scoping", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(Array.isArray(body.items)).toBe(true);
+    // Verify the items are feed-shaped (server-side mapped), not raw Hermes rows.
+    const item = body.items[0];
+    expect(item).toHaveProperty("kind", "assistant");
+    expect(item).toHaveProperty("content", "hi");
+    expect(item).toHaveProperty("ts");
+    expect(typeof item.ts).toBe("number");
+    expect(body).toHaveProperty("total");
+    expect(body).toHaveProperty("offset");
+    expect(body).toHaveProperty("limit");
   });
 
   // --- ownership ---

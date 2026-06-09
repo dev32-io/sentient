@@ -411,30 +411,45 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       },
     });
 
+    // SessionsRest is created early so both ConversationHistoryConnector and
+    // SessionsConnector can share the same REST client instance. The REST client
+    // only needs the gateway base URL + token, both available at this point.
+    const restBaseUrl = deriveRestBaseUrl(gatewayUrl);
+    const sessionsRest = createSessionsRest({
+      baseUrl: restBaseUrl,
+      token: () => options.token,
+    });
+
     // Committed conversation + live streaming bubble come from two connectors.
     // `message.done` clears inflight just before the committed entry arrives —
     // UI swaps cleanly without a visible double-render.
-    const conversationConnector = new ConversationHistoryConnector({
-      onUpdate: (items) => {
-        // Empty-history-after-reconnect detection — runs once per reconnect.
-        // The first snapshot after a session.ready is the authoritative
-        // server-of-record state; if it's empty but we had entries before
-        // the disconnect, the gateway archived our PersonSession.
-        if (awaitingHistoryAfterReconnectRef.current) {
-          awaitingHistoryAfterReconnectRef.current = false;
-          if (items.length === 0 && priorCommittedCountRef.current > 0) {
-            log.warn("history-archived", { priorCount: priorCommittedCountRef.current });
-            options.onHistoryArchived?.();
+    // `sessionsRest` is passed as the 2nd arg so that after `session.switched`
+    // the connector can fetch the new session's history via REST (instead of
+    // clearing awaitingSnapshot with an empty mirror).
+    const conversationConnector = new ConversationHistoryConnector(
+      {
+        onUpdate: (items) => {
+          // Empty-history-after-reconnect detection — runs once per reconnect.
+          // The first snapshot after a session.ready is the authoritative
+          // server-of-record state; if it's empty but we had entries before
+          // the disconnect, the gateway archived our PersonSession.
+          if (awaitingHistoryAfterReconnectRef.current) {
+            awaitingHistoryAfterReconnectRef.current = false;
+            if (items.length === 0 && priorCommittedCountRef.current > 0) {
+              log.warn("history-archived", { priorCount: priorCommittedCountRef.current });
+              options.onHistoryArchived?.();
+            }
+            priorCommittedCountRef.current = 0;
           }
-          priorCommittedCountRef.current = 0;
-        }
-        committedRef.current = items;
-        refreshMessages();
-        // Clear live STT preview once finalized user/speech entry lands.
-        const last = items.findLast((i) => i.kind === "user" && i.channel === "speech");
-        if (last && (last as { content: string }).content === transcript.value) transcript.value = "";
+          committedRef.current = items;
+          refreshMessages();
+          // Clear live STT preview once finalized user/speech entry lands.
+          const last = items.findLast((i) => i.kind === "user" && i.channel === "speech");
+          if (last && (last as { content: string }).content === transcript.value) transcript.value = "";
+        },
       },
-    });
+      sessionsRest,
+    );
 
     const inflightMessageConnector = new InFlightMessageConnector({
       onUpdate: (inflight) => {
@@ -538,11 +553,6 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
         log.warn("auth-expired (gateway rejected token on reconnect)");
         authExpired.value = true;
       },
-    });
-    const restBaseUrl = deriveRestBaseUrl(gatewayUrl);
-    const sessionsRest = createSessionsRest({
-      baseUrl: restBaseUrl,
-      token: () => options.token,
     });
     const sessionsConnector = new SessionsConnector({ rest: sessionsRest });
 

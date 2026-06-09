@@ -1,6 +1,9 @@
 import type { SessionRow } from "@sentient/protocol";
 import type { Connector, SentientSDKInternal } from "../connector-types.ts";
+import { createLogger } from "../logger.ts";
 import type { SessionsListResult, SessionsRest } from "../sessions-rest.ts";
+
+const log = createLogger(["sentient", "sdk", "connectors", "sessions"]);
 
 const DEFAULT_TIMEOUT_MS = 5000;
 
@@ -104,6 +107,7 @@ export class SessionsConnector implements Connector {
       this.listeners.add(onSwitched);
       const timer = setTimeout(() => {
         cleanup();
+        log.warn("switchTo.timeout", { reason: "timeout waiting for session.switched", sessionId });
         reject(new Error("timeout waiting for session.switched"));
       }, this.timeoutMs);
       const cleanup = (): void => {
@@ -125,6 +129,7 @@ export class SessionsConnector implements Connector {
       this.listeners.add(onCreated);
       const timer = setTimeout(() => {
         cleanup();
+        log.warn("newChat.timeout", { reason: "timeout waiting for session.created" });
         reject(new Error("timeout waiting for session.created"));
       }, this.timeoutMs);
       const cleanup = (): void => {

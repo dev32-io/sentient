@@ -41,6 +41,7 @@ const makeRow = (id: string) => ({
 const makeRest = (overrides: Partial<SessionsRest> = {}): SessionsRest => ({
   list: vi.fn(async () => ({ items: [], total: 0, hasMore: false }) as SessionsListResult),
   search: vi.fn(async () => []),
+  getMessages: vi.fn(async () => []),
   rename: vi.fn(async () => {}),
   delete: vi.fn(async () => {}),
   ...overrides,

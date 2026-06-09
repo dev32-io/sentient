@@ -1,4 +1,4 @@
-import type { SessionRow } from "@sentient/protocol";
+import type { ConversationFeedItem, SessionRow } from "@sentient/protocol";
 import { createLogger } from "./logger.ts";
 
 const log = createLogger(["sentient", "sdk", "sessions", "rest"]);
@@ -40,6 +40,7 @@ export interface SessionsListResult {
 export interface SessionsRest {
   list(opts?: { limit?: number; offset?: number }): Promise<SessionsListResult>;
   search(q: string, limit?: number): Promise<SessionRow[]>;
+  getMessages(sessionId: string, opts?: { limit?: number; offset?: number }): Promise<ConversationFeedItem[]>;
   rename(sessionId: string, title: string): Promise<void>;
   delete(sessionId: string): Promise<void>;
 }
@@ -139,6 +140,18 @@ export function createSessionsRest(config: SessionsRestConfig): SessionsRest {
       return result.items;
     },
 
+    async getMessages(sessionId, opts = {}) {
+      const limit = opts.limit ?? DEFAULT_LIST_LIMIT;
+      const offset = opts.offset ?? 0;
+      const url = `${baseUrl}/sessions/${encodeURIComponent(sessionId)}/messages?limit=${limit}&offset=${offset}`;
+      log.debug("getMessages", { sessionId, limit, offset });
+      const result = await doFetch<{ items: ConversationFeedItem[] }>(url, {
+        method: "GET",
+        headers: bearerHeaders(token()),
+      });
+      return result.items;
+    },
+
     async rename(sessionId, title) {
       const url = `${baseUrl}/sessions/${encodeURIComponent(sessionId)}`;
       log.debug("rename", { sessionId });
@@ -165,7 +178,10 @@ export function createSessionsRest(config: SessionsRestConfig): SessionsRest {
 // ---------------------------------------------------------------------------
 
 export function deriveRestBaseUrl(gatewayWsUrl: string): string {
-  const httpUrl = gatewayWsUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
-  // Strip trailing /ws path segment
-  return httpUrl.replace(/\/ws$/, "");
+  const parsed = new URL(gatewayWsUrl);
+  // Swap ws→http / wss→https
+  const scheme = parsed.protocol === "wss:" ? "https:" : "http:";
+  // Drop query and fragment; strip trailing /ws path segment
+  const pathname = parsed.pathname.replace(/\/ws$/, "");
+  return `${scheme}//${parsed.host}${pathname}`;
 }

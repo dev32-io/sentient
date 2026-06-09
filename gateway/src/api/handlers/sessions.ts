@@ -1,4 +1,8 @@
+import type { ConversationFeedItem } from "@sentient/protocol";
+import { toFeedItem } from "../../cerebrum/conversation-feed.js";
+import type { HermesRawMessage } from "../../hermes-adapter-client/sessions-client.js";
 import { getLog } from "../../logging/logger.js";
+import { hermesMessageToMirrorEntry } from "../../sessions/hermes-message-to-mirror.js";
 import type { TokenPayload, TokenResult } from "../../user-auth/types.js";
 
 const log = getLog(["sentient", "api", "sessions"]);
@@ -114,7 +118,7 @@ async function handleList(deps: SessionsHttpDeps, userId: string): Promise<Respo
       title: titleOverrides[s.sessionId] ?? s.title,
     }));
     log.debug("sessions.list.ok", { userId, count: items.length });
-    return Response.json({ items }, { status: HTTP_OK });
+    return Response.json({ items, total: items.length, hasMore: false }, { status: HTTP_OK });
   } catch (e: unknown) {
     log.warn("sessions.list.error", { userId, reason: errorMessage(e) });
     return jsonError(HTTP_INTERNAL, "list-failed", "Failed to list sessions");
@@ -158,9 +162,9 @@ async function handleGetMessages(
     const all = await client.getMessages(sessionId);
     const safeLimit = Number.isFinite(limit) ? limit : DEFAULT_MESSAGES_LIMIT;
     const safeOffset = Number.isFinite(offset) ? offset : 0;
-    const items = all.slice(safeOffset, safeOffset + safeLimit);
-    log.debug("sessions.getMessages.ok", { userId, sessionId, total: all.length, returned: items.length });
-    return Response.json({ items, total: all.length, offset: safeOffset, limit: safeLimit }, { status: HTTP_OK });
+    const { items, total } = mapMessagesToFeed(all, safeOffset, safeLimit);
+    log.debug("sessions.getMessages.ok", { userId, sessionId, total, returned: items.length });
+    return Response.json({ items, total, offset: safeOffset, limit: safeLimit }, { status: HTTP_OK });
   } catch (e: unknown) {
     log.warn("sessions.getMessages.error", { userId, sessionId, reason: errorMessage(e) });
     return jsonError(HTTP_INTERNAL, "getMessages-failed", "Failed to fetch messages");
@@ -236,6 +240,25 @@ async function checkOwnership(deps: SessionsHttpDeps, userId: string, sessionId:
     log.warn("sessions.ownership-check.error", { userId, sessionId, reason: errorMessage(e) });
     return false;
   }
+}
+
+// --- Feed mapper -------------------------------------------------------------
+
+/**
+ * Map raw Hermes message rows to ConversationFeedItem[].
+ * Non-mappable roles (tool/system) are filtered out — same policy as
+ * SwitchFlow.fetchHistory.  Returns only the paginated slice.
+ */
+function mapMessagesToFeed(
+  rows: unknown[],
+  offset: number,
+  limit: number,
+): { items: ConversationFeedItem[]; total: number } {
+  const mapped = (rows as HermesRawMessage[])
+    .map(hermesMessageToMirrorEntry)
+    .filter((e) => e !== null)
+    .map(toFeedItem);
+  return { items: mapped.slice(offset, offset + limit), total: mapped.length };
 }
 
 // --- Helpers -----------------------------------------------------------------

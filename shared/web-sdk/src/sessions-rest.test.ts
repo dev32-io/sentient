@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createSessionsRest } from "./sessions-rest.js";
+import { createSessionsRest, deriveRestBaseUrl } from "./sessions-rest.js";
 
 // Helper to build a minimal fetch-compatible mock. vi.fn() returns a Mock
 // which does not carry `preconnect` (a non-standard property on the global
@@ -95,6 +95,37 @@ describe("sessions REST client", () => {
     expect((init?.headers as Record<string, string>)?.authorization).toBe("Bearer t");
   });
 
+  it("GET /sessions/:id/messages returns items and sends bearer", async () => {
+    const calls: Array<[string, RequestInit | undefined]> = [];
+    const feedItem = { kind: "assistant" as const, ts: 1000, content: "hello" };
+    const fetchFn = mockFetch(async (url, init) => {
+      calls.push([url, init]);
+      return new Response(JSON.stringify({ items: [feedItem], total: 1, offset: 0, limit: 100 }), { status: 200 });
+    });
+    const rest = createSessionsRest({ baseUrl: "https://h/api/v1", token: () => "tok", fetchFn });
+    const items = await rest.getMessages("s-1");
+    expect(items).toHaveLength(1);
+    const item = items[0];
+    expect(item?.kind).toBe("assistant");
+    if (item?.kind === "assistant") expect(item.content).toBe("hello");
+    const [url, init] = calls[0] ?? [];
+    expect(url).toContain("/sessions/s-1/messages");
+    expect((init?.headers as Record<string, string>)?.authorization).toBe("Bearer tok");
+  });
+
+  it("GET /sessions/:id/messages passes limit and offset as query params", async () => {
+    const calls: Array<[string, RequestInit | undefined]> = [];
+    const fetchFn = mockFetch(async (url, init) => {
+      calls.push([url, init]);
+      return new Response(JSON.stringify({ items: [], total: 0, offset: 10, limit: 5 }), { status: 200 });
+    });
+    const rest = createSessionsRest({ baseUrl: "https://h/api/v1", token: () => "t", fetchFn });
+    await rest.getMessages("s-1", { limit: 5, offset: 10 });
+    const url = calls[0]?.[0] ?? "";
+    expect(url).toContain("limit=5");
+    expect(url).toContain("offset=10");
+  });
+
   it("throws SessionsRestError with status on HTTP error", async () => {
     const fetchFn = mockFetch(async () => new Response(JSON.stringify({ error: "not_found" }), { status: 404 }));
     const rest = createSessionsRest({ baseUrl: "https://h/api/v1", token: () => "t", fetchFn });
@@ -107,5 +138,23 @@ describe("sessions REST client", () => {
     });
     const rest = createSessionsRest({ baseUrl: "https://h/api/v1", token: () => "t", fetchFn });
     await expect(rest.list()).rejects.toMatchObject({ status: 0 });
+  });
+});
+
+describe("deriveRestBaseUrl", () => {
+  it("converts wss URL to https and strips /ws", () => {
+    expect(deriveRestBaseUrl("wss://h/api/v1/ws")).toBe("https://h/api/v1");
+  });
+
+  it("converts ws URL to http and strips /ws", () => {
+    expect(deriveRestBaseUrl("ws://localhost:8080/api/v1/ws")).toBe("http://localhost:8080/api/v1");
+  });
+
+  it("strips query string and converts wss→https", () => {
+    expect(deriveRestBaseUrl("wss://h/api/v1/ws?token=abc")).toBe("https://h/api/v1");
+  });
+
+  it("handles wss URL without a /ws suffix", () => {
+    expect(deriveRestBaseUrl("wss://h/api/v1")).toBe("https://h/api/v1");
   });
 });
