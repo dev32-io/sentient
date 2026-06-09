@@ -46,6 +46,16 @@ private const val SPEECH_MAX_OPEN_MS = 20_000L
  */
 private const val DEFAULT_MINT_DEBOUNCE_MS = 3_000L
 
+/**
+ * Foreground liveness-probe timeout (ms). On returning to the foreground the SDK
+ * sends ONE ping and waits this long for a pong before treating the (possibly
+ * OS-frozen / half-open) socket as dead and reconnecting. One-shot per foreground
+ * — there is no periodic heartbeat — so the battery cost is negligible. Valid
+ * range ~1000–10000ms: too low false-reconnects on a slow network; too high
+ * delays recovery after a genuine drop.
+ */
+private const val DEFAULT_FOREGROUND_PROBE_TIMEOUT_MS = 3_000L
+
 /** Gateway-negotiated STT input rate (Hz). Capture emits PCM16 LE at this rate. */
 private const val DEFAULT_INPUT_SAMPLE_RATE = 16_000
 /** Default assistant playback rate (Hz) until session.ready overrides it. */
@@ -97,6 +107,8 @@ data class AudioPipelineConfig(
  * @param audio Voice-pipeline tunables (E3): gate thresholds + sample rates.
  * @param mintDebounceMs Window (ms) collapsing rapid new-chat taps into a single
  *   ACP mint (A2). Default [DEFAULT_MINT_DEBOUNCE_MS]; valid range ~1000–5000ms.
+ * @param foregroundProbeTimeoutMs Ms to await a pong after the one-shot foreground
+ *   liveness ping before reconnecting. Default [DEFAULT_FOREGROUND_PROBE_TIMEOUT_MS].
  */
 data class SdkConfig(
     val gatewayWsUrl: String,
@@ -105,6 +117,7 @@ data class SdkConfig(
     val reconnect: ReconnectConfig = ReconnectConfig(),
     val audio: AudioPipelineConfig = AudioPipelineConfig(),
     val mintDebounceMs: Long = DEFAULT_MINT_DEBOUNCE_MS,
+    val foregroundProbeTimeoutMs: Long = DEFAULT_FOREGROUND_PROBE_TIMEOUT_MS,
     // Debug-only: enables FaultHooks injection for E2E. MUST be false in release.
     val devFaultsEnabled: Boolean = false,
 )

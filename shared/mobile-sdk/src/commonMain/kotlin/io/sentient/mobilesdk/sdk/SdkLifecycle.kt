@@ -44,6 +44,8 @@ interface LifecycleHooks {
     fun onSessionAnchored(sessionId: String)
     /** A `sessions.error forbidden` arrived — drop the anchor if a re-establish is in flight. */
     fun onSessionForbidden()
+    /** A `pong` arrived — resolve an in-flight foreground liveness probe, if any. */
+    fun onPong()
     fun onAuthFailed()
     fun onConnectionDrop()
     fun mergedCapabilities(): List<String>
@@ -170,6 +172,9 @@ class SdkLifecycle(
             // elsewhere — the orchestrator drops the anchor so reconnects stop
             // re-firing a switch to a dead session.
             is ServerMessage.SessionsError -> if (msg.code == FORBIDDEN_CODE) hooks.onSessionForbidden()
+            // Pong resolves an in-flight foreground liveness probe (proves the socket
+            // survived a backgrounding); harmless if no probe is pending.
+            is ServerMessage.Pong -> hooks.onPong()
             else -> Unit
         }
         if (!intercepted) router.route(msg)

@@ -9,33 +9,40 @@ package io.sentient.mobilesdk.audio.opus
 // the host-JVM testDebugUnitTest target, so eagerly building the decoder at SDK
 // construction time crashes every full-SDK host test. The pipeline only touches
 // the decoder in opus mode (decode/reset), and opus mode only runs on a real
-// device — so wrapping the factory in `lazy {}` keeps the native code untouched
-// on the JVM while staying transparent to the pipeline. Only decode() forces
-// construction; reset()/close() before the first decode are true no-ops (the
-// pipeline always reset()s a fresh decoder on the next opus audio.start anyway).
+// device — so deferring construction keeps the native code untouched on the JVM
+// while staying transparent to the pipeline. Only decode() forces construction;
+// reset()/close() before the first decode are true no-ops.
+//
+// RECREATE-AFTER-CLOSE: close() frees the native decoder AND drops the reference,
+// so a later decode() builds a FRESH decoder. Without this, a transient teardown
+// (reconnect) would leave a permanently-closed decoder: decode() would silently
+// return empty (TTS goes dead) and reset() would abort on the freed native
+// decoder. The decoder must survive a reconnect — see DecoderLifecycleTest.
 // ---------------------------------------------------------------------------
 
 class LazyOpusDecoderPort(
     private val factory: () -> OpusDecoderPort,
 ) : OpusDecoderPort {
 
-    private val delegate: OpusDecoderPort by lazy(factory)
+    /** The live decoder, or null before the first decode / after a close(). */
+    private var delegate: OpusDecoderPort? = null
 
-    /** True once the underlying decoder has been instantiated (first decode). */
-    private var instantiated = false
+    private fun live(): OpusDecoderPort = delegate ?: factory().also { delegate = it }
 
-    override fun decode(oggChunk: ByteArray): List<ByteArray> {
-        instantiated = true
-        return delegate.decode(oggChunk)
-    }
+    override fun decode(oggChunk: ByteArray): List<ByteArray> = live().decode(oggChunk)
 
-    /** No-op before the first decode — resetting a not-yet-built decoder is meaningless. */
+    /** Reset the live decoder if one exists; no-op before the first decode / after close. */
     override fun reset() {
-        if (instantiated) delegate.reset()
+        delegate?.reset()
     }
 
-    /** Only forward to the native decoder if it was ever built — else nothing to release. */
+    /**
+     * Free the native decoder AND drop the reference, so the next decode() rebuilds
+     * a fresh one. A transient disconnect that closes the decoder must not leave it
+     * permanently dead — the rebuild restores TTS on the next reconnect.
+     */
     override fun close() {
-        if (instantiated) delegate.close()
+        delegate?.close()
+        delegate = null
     }
 }

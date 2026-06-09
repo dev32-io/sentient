@@ -96,6 +96,15 @@ class SdkAudio(
     /** Stop the uplink (cancel collect + capture.stop + reset). Mirrors stopMic. */
     fun stopUplink() = pipeline.stop()
 
-    /** Release playback + cancel any running uplink. Mirrors disconnect. */
-    fun release() = pipeline.release()
+    // ── Audio lifecycle ─────────────────────────────────────────────────────────
+    // Audio teardown has exactly TWO flavors. A transient disconnect (reconnect /
+    // idle / background) must KEEP the native codecs so TTS survives the next
+    // reconnect — only a terminal teardown (logout / SDK close) frees them. Mixing
+    // the two was the freeze + silent-TTS bug (close-on-every-disconnect).
+
+    /** Transient: the connection dropped for a reconnect/idle. Keep native codecs. */
+    fun suspendForReconnect() = pipeline.suspendPlayback()
+
+    /** Terminal: logout / SDK close. Free the native codecs. */
+    fun dispose() = pipeline.dispose()
 }

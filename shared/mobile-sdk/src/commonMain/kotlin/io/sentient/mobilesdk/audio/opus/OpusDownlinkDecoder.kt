@@ -71,6 +71,10 @@ class OpusDownlinkDecoder : OpusDecoderPort {
 
     /** Reset demuxer + decoder + pre-skip counter — call between TTS cycles. */
     override fun reset() {
+        // Mirror decode()'s closed-guard: ctl(OPUS_RESET_STATE) on a freed native
+        // decoder aborts in OpusDecoder#ctl (SIGABRT). A reset() racing a close()
+        // during a reconnect must degrade to a no-op, never crash.
+        if (closed) return
         demuxer.reset()
         decoder.ctl(OPUS_RESET_STATE, 0)
         samplesToSkip = -1

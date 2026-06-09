@@ -255,18 +255,31 @@ class AudioPipeline(
         transition(AudioInput.Interrupt, cycleId)
     }
 
-    /** Release playback + opus-decoder resources. Called on disconnect/teardown. */
-    fun release() {
-        log.info("release")
+    /**
+     * Transient teardown for a reconnect / idle disconnect: cancel the uplink, stop
+     * playback, and RESET the opus decoder — but KEEP the native codecs allocated so
+     * the next reconnect can decode again. Closing the decoder here would free the
+     * native libopus decoder; the next cycle's reset()/decode() would then abort
+     * (OpusDecoder#ctl) or silently drop all TTS. Use [dispose] for terminal teardown.
+     */
+    fun suspendPlayback() {
+        log.info("suspend")
         uplink.cancel()
         playbackReady = false
         pendingFrames.clear()
-        opusDecoder.close()
-        opusEncoder.close()
+        opusDecoder.reset()
         if (playbackStarted) {
             playbackStarted = false
             scope.launch { playback?.stop() }
         }
+    }
+
+    /** Terminal teardown (logout / SDK close): suspend, then free the native codecs. */
+    fun dispose() {
+        log.info("dispose")
+        suspendPlayback()
+        opusDecoder.close()
+        opusEncoder.close()
     }
 
     // ── Shared helpers ──────────────────────────────────────────────────────────

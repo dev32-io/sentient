@@ -25,6 +25,7 @@ import io.sentient.mobilesdk.transport.ConnectResult
 import io.sentient.mobilesdk.transport.MessageRouter
 import io.sentient.mobilesdk.transport.ReconnectController
 import io.sentient.mobilesdk.transport.SdkStatus
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
@@ -35,6 +36,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.random.Random
 
 private const val DEFAULT_SESSIONS_TIMEOUT_MS = 5_000L
@@ -88,6 +90,11 @@ class SentientSdk(
     // the FIRST connect-READY (nothing to restore). Never reset — survives
     // idle/drop/reconnect, matching hasSession.
     private var hasReachedReadyOnce = false
+
+    // In-flight foreground liveness probe: completed by onPong() when the pong
+    // for our ping arrives. Null when no probe is pending. A new probe supersedes
+    // (cancels) any prior one.
+    private var pendingProbe: CompletableDeferred<Unit>? = null
 
     // The session id a reconnect re-establish switch is currently awaiting
     // confirmation for. Set when the re-establish switch fires; cleared when its
@@ -224,7 +231,9 @@ class SentientSdk(
         consumerDisconnected = true
         reconnectController.cancel()
         connectors.sessions.reset()
-        audio.release()
+        // Terminal teardown (logout) frees the native codecs; a transient disconnect
+        // (idle, reconnect) keeps them so TTS survives the next reconnect.
+        if (clearSession) audio.dispose() else audio.suspendForReconnect()
         lifecycle.teardown()
         if (clearSession && deriver.hasSession) {
             log.info("hasSession.clear", mapOf("trigger" to "logout"))
@@ -374,6 +383,47 @@ class SentientSdk(
         onConnectionDrop()
     }
 
+    /**
+     * Foreground presence signal — the app returned to the foreground.
+     *
+     * We do NOT proactively drop the socket on background (the gateway keeps the
+     * per-user session + ACP wire alive and has no server ping/timeout, so a brief
+     * backgrounding survives with the SAME socket — no reload, no reconnect). On
+     * foreground we send ONE liveness ping: if a pong returns within the configured
+     * window the live socket is confirmed and we do nothing; if it times out (the
+     * OS froze/killed the socket while suspended, or it is half-open) we reconnect,
+     * which re-establishes the anchored session via session.switch. One-shot per
+     * foreground — no periodic heartbeat — so the battery cost is one ping.
+     */
+    fun onForeground() {
+        val st = deriver.status
+        if (st != SdkStatus.READY) {
+            log.info("foreground.not-ready → reconnect", mapOf("status" to st))
+            forceReconnect()
+            return
+        }
+        val probe = CompletableDeferred<Unit>()
+        pendingProbe = probe // supersede any prior probe — its coroutine no-ops on the identity check below
+        sendControl(ClientMessage.Ping)
+        scope.launch {
+            val ponged = withTimeoutOrNull(config.foregroundProbeTimeoutMs) { probe.await() } != null
+            // A newer foreground replaced this probe while it was in flight → do nothing.
+            if (probe !== pendingProbe) return@launch
+            pendingProbe = null
+            if (ponged) {
+                log.info("foreground.probe-pong (socket alive)")
+            } else {
+                log.warn("foreground.probe-timeout → reconnect", mapOf("timeoutMs" to config.foregroundProbeTimeoutMs))
+                forceReconnect()
+            }
+        }
+    }
+
+    /** A pong arrived — resolve the in-flight foreground probe, if any. */
+    private fun onPong() {
+        pendingProbe?.complete(Unit)
+    }
+
     private fun onConnectionDrop() {
         // Guard against a second loop: a non-clean signal may arrive while the
         // loop launched by a prior drop is already recovering.
@@ -503,6 +553,7 @@ class SentientSdk(
         override fun onReady(sessionId: String) { /* tunables folded in lifecycle */ }
         override fun onSessionAnchored(sessionId: String) = this@SentientSdk.onSessionAnchored(sessionId)
         override fun onSessionForbidden() = this@SentientSdk.onSessionForbidden()
+        override fun onPong() = this@SentientSdk.onPong()
         override fun onAuthFailed() = setError(authExpired = true)
         override fun onConnectionDrop() = this@SentientSdk.onConnectionDrop()
         override fun mergedCapabilities(): List<String> = this@SentientSdk.mergedCapabilities()
