@@ -176,6 +176,19 @@ class SentientSdk(
     fun devFaults(): FaultHooks? = if (config.devFaultsEnabled) faultHooks else null
 
     /**
+     * Flip [ConnectionState.authExpired] = true via the existing terminal-auth path
+     * ([setError]) — the SAME path [Hooks.onAuthFailed] uses, so there is one source
+     * of auth-state truth. Public, NON-suspend, and NEVER throws (no `@Throws`) so a
+     * platform connection-scope CoroutineExceptionHandler can route a classified auth
+     * failure to login without crossing a suspend/throwing boundary. SKIE exposes it
+     * to Swift as a plain method.
+     */
+    fun signalAuthExpired() {
+        log.warn("signalAuthExpired")
+        setError(authExpired = true)
+    }
+
+    /**
      * Open the WS, authenticate, configure, reach READY. Suspends until settled.
      *
      * Re-entrancy guard (web-sdk parity, sentient-sdk.ts connect()): a no-op

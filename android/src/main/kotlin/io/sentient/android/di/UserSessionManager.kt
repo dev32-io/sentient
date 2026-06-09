@@ -28,6 +28,9 @@ import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.sdk.SdkConfig
 import io.sentient.mobilesdk.sdk.SentientSdk
 import io.sentient.mobilesdk.sdk.createPlatformBundle
+import io.sentient.mobilesdk.sdk.isTerminalAuthError
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -59,8 +62,25 @@ class UserSessionManager(
         chatComponent?.let { return it }
         log.info("build")
 
-        val sessionScope = CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1))
-        val newSdk = buildSdk(sessionScope)
+        // SDK is built first so the scope's CoroutineExceptionHandler can route an
+        // uncaught throw to it. A SupervisorJob does NOT install a handler — without
+        // this, an uncaught throw hits the global handler and crashes the process.
+        // Classify + route, NEVER rethrow: CancellationException → normal teardown;
+        // terminal auth → signalAuthExpired() (ConnectionState.authExpired → login
+        // route); transient → log + recover (the reconnect supervisor retries).
+        lateinit var newSdk: SentientSdk
+        val handler = CoroutineExceptionHandler { _, e ->
+            if (e is CancellationException) return@CoroutineExceptionHandler
+            if (isTerminalAuthError(e)) {
+                log.warn("scope.auth-failure → login", mapOf("error" to (e.message ?: "")))
+                newSdk.signalAuthExpired()
+            } else {
+                log.warn("scope.transient-caught (recovered)", mapOf("error" to (e.message ?: "")))
+            }
+        }
+        val sessionScope =
+            CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1) + handler)
+        newSdk = buildSdk(sessionScope)
         val component = ChatComponent(newSdk)
 
         scope = sessionScope
@@ -71,7 +91,22 @@ class UserSessionManager(
         if (io.sentient.android.BuildConfig.DEBUG) SdkFaultHolder.set(newSdk)
 
         // Background connect: UI is usable immediately; reconnect is owned by the SDK.
-        sessionScope.launch { component.connect() }
+        // Belt-and-braces guard for a SYNCHRONOUS throw before the first suspension
+        // (the handler covers throws after suspension). Same classify + route.
+        sessionScope.launch {
+            try {
+                component.connect()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (isTerminalAuthError(e)) {
+                    log.warn("connect.auth-failure → login", mapOf("error" to (e.message ?: "")))
+                    newSdk.signalAuthExpired()
+                } else {
+                    log.warn("connect.transient-caught (recovered)", mapOf("error" to (e.message ?: "")))
+                }
+            }
+        }
         return component
     }
 

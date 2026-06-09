@@ -20,9 +20,13 @@
 // ---------------------------------------------------------------------------
 package io.sentient.mobiledata.di
 
+import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.sdk.SdkConfig
 import io.sentient.mobilesdk.sdk.SentientSdk
 import io.sentient.mobilesdk.sdk.createPlatformBundle
+import io.sentient.mobilesdk.sdk.isTerminalAuthError
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -45,8 +49,30 @@ class IosUserSession(
     capabilities: List<String> = emptyList(),
     devFaultsEnabled: Boolean = false,
 ) {
+    private val log = createLogger("data", "ios-user-session")
+
+    // Last-resort guard for an uncaught throw on a connection-scope coroutine.
+    // A SupervisorJob does NOT install a handler — without this, an uncaught throw
+    // hits Kotlin/Native's global handler and abort()s the process (the iOS SIGABRT
+    // this fixes). Classify + route, NEVER rethrow:
+    //   - CancellationException → normal teardown, ignore.
+    //   - terminal auth         → signalAuthExpired() → ConnectionState.authExpired
+    //                             flips → the nav gate routes to login.
+    //   - transient             → log + recover; the reconnect supervisor retries.
+    // The lambda captures `sdk` but reads it only at throw time (long after `sdk` is
+    // constructed), so declaring it BEFORE `scope`/`sdk` is sound — see field order.
+    private val exceptionHandler = CoroutineExceptionHandler { _, e ->
+        if (e is CancellationException) return@CoroutineExceptionHandler
+        if (isTerminalAuthError(e)) {
+            log.warn("scope.auth-failure → login", mapOf("error" to (e.message ?: "")))
+            sdk.signalAuthExpired()
+        } else {
+            log.warn("scope.transient-caught (recovered)", mapOf("error" to (e.message ?: "")))
+        }
+    }
+
     private val scope: CoroutineScope =
-        CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1))
+        CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1) + exceptionHandler)
 
     private val sdk: SentientSdk = SentientSdk(
         config = SdkConfig(
@@ -64,7 +90,23 @@ class IosUserSession(
 
     /** Background connect: UI is usable immediately; reconnect is owned by the SDK. */
     fun open() {
-        scope.launch { sdk.connect() }
+        // Belt-and-braces: catch a SYNCHRONOUS throw before the first suspension
+        // (the exceptionHandler covers throws after suspension). Same classify +
+        // route; rethrow CancellationException to honour structured cancellation.
+        scope.launch {
+            try {
+                sdk.connect()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (isTerminalAuthError(e)) {
+                    log.warn("open.auth-failure → login", mapOf("error" to (e.message ?: "")))
+                    sdk.signalAuthExpired()
+                } else {
+                    log.warn("open.transient-caught (recovered)", mapOf("error" to (e.message ?: "")))
+                }
+            }
+        }
     }
 
     /** App background → drop the socket but stay in session (clearSession=false). */
