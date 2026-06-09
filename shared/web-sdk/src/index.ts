@@ -64,6 +64,9 @@ export type {
   SessionsConnectorConfig,
 } from "./connectors/sessions-connector.ts";
 
+export { createSessionsRest, deriveRestBaseUrl, SessionsRestError } from "./sessions-rest.ts";
+export type { SessionsRest, SessionsRestConfig, SessionsListResult } from "./sessions-rest.ts";
+
 export { createCrossTabSync } from "./cross-tab-sync.ts";
 export type { CrossTabSync, CrossTabSyncConfig } from "./cross-tab-sync.ts";
 

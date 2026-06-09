@@ -20,7 +20,9 @@ import {
   UserTextInputConnector,
   createEchoGate,
   createLogger,
+  createSessionsRest,
   createSpeechGate,
+  deriveRestBaseUrl,
 } from "@sentient/web-sdk";
 import type { ChatMessage, VoiceStatus } from "@sentient/web-sdk";
 import { useEffect, useMemo, useRef } from "preact/hooks";
@@ -537,7 +539,12 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
         authExpired.value = true;
       },
     });
-    const sessionsConnector = new SessionsConnector();
+    const restBaseUrl = deriveRestBaseUrl(gatewayUrl);
+    const sessionsRest = createSessionsRest({
+      baseUrl: restBaseUrl,
+      token: () => options.token,
+    });
+    const sessionsConnector = new SessionsConnector({ rest: sessionsRest });
 
     // Audio preferences mirror. Server pushes `session.preferences.changed`
     // when the model calls `update_user_settings`; the connector calls back
