@@ -218,14 +218,24 @@ unchanged. Update `repositories.md` to document the exception.
 
 ## 8. Component 5 — Client unstuck safety (#5)
 
-- **Fire-and-forget Stop:** `interrupt()` clears local UI state immediately
-  (`cognition→idle`, `isSpeaking→false`, stop audio playback) **and** best-effort fires
-  the interrupt frame. Never gates on server ack (`SentientSdk.kt:257-264`,
-  `538-540`). Reconcile a late `cycle.aborted` for an already-cleared cycle by ignoring it.
-- **Stuck-state timeout:** if `cognition`/`isSpeaking` are active but no frames arrive
-  within a configurable window, reset to idle client-side. Covers silent socket death
-  during thinking/speaking (`AudioPipeline.suspendPlayback :341-353` currently never
-  clears `isSpeaking`).
+- **Fire-and-forget Stop:** `interrupt()` clears local UI state immediately (cognition→idle
+  via the connector, `isSpeaking→false`, stop audio playback) **and** best-effort fires the
+  interrupt frame. Never gates on server ack. `noteInterrupt` pre-classifies a late
+  `cycle.aborted` as self-initiated so it is ignored.
+- **Connection-driven stuck recovery (A1 — chosen 2026-06-09):** the recovery trigger is
+  **transport liveness, NOT content-frame silence.** A healthy slow cycle can legitimately
+  produce 30s+ gaps between frames (tool calls — confirmed in the prod logs: `cycle-gap`
+  WARNs to 38s during a single `memory` tool call), so a content-frame timer would
+  false-reset live cycles. Instead a watchdog arms **only when a cycle is active
+  (`cognition != IDLE || isSpeaking`) AND the connection is not READY** (socket dropped →
+  RECONNECTING/DISCONNECTED); on timeout (grace = `stuckStateTimeoutMs`) it resets to idle.
+  Additionally, a reconnect-after-drop resets the orphaned cycle indicator in
+  `onReadyReached` (pre-resume the prior cycle did not survive; **Slice 3 makes this
+  resume-aware** — only reset on `recovered:false`). All resets go through a shared
+  `clearActiveToIdle()` that also calls `CognitionStatusConnector.reset()`, so the
+  connector's internal `currentState` never drifts from the deriver (otherwise the next
+  `cycle.started` short-circuits on the stale THINKING value and the cycle shows no
+  thinking indicator + no watchdog).
 - Independent of the resume/mirror work — can ship first.
 
 ## 9. Risks & footguns
@@ -251,7 +261,7 @@ session:
   retention_ttl_ms: 1800000         # 30 min — session + replay buffer survive disconnect this long
   replay_buffer_max_bytes: 16777216 # 16 MB per device-session ring cap (evict-oldest)
   replay_audio_coalesce_ms: 1000    # coalesce audio into ~1s segments before buffering
-client_stuck_state_timeout_ms: 8000 # (SDK config) reset cognition/isSpeaking to idle if no frames
+client_stuck_state_timeout_ms: 8000 # (SDK config) grace before resetting cognition/isSpeaking→idle when a cycle is active AND the connection is not READY (socket dropped/reconnecting/lost). NOT a content-frame timer.
 ```
 
 ## 11. Open items to verify during implementation
@@ -286,7 +296,8 @@ to be added to `agents/docs/testing-knowledge.md`.
 | background-mid-response-text | Maestro Android | assistant mid-cycle (text) | background during cycle, foreground after done | full response present, no loss | cycle ran to completion; frames journaled; replayed on resume |
 | background-mid-speech-audio | Maestro iOS (voice) | assistant speaking | background mid-audio, foreground | missed audio replayed (client may skip if superseded) | audio frames buffered + replayed by seq |
 | fire-forget-stop-dead-socket | Maestro iOS | stuck "speaking"/"thinking" after silent socket death | tap Stop | UI clears to idle immediately, no hang | local stop; no server-ack gate; late `cycle.aborted` ignored |
-| stuck-state-timeout | Maestro Android | thinking/speaking, socket silently dies, user idle | wait `client_stuck_state_timeout_ms` | state auto-returns to idle | client-side stuck-state reset logged |
+| stuck-state-conn-reset | Maestro Android | thinking/speaking, socket dropped (status ≠ READY), no reconnect | wait `client_stuck_state_timeout_ms` | state auto-returns to idle | watchdog armed on conn≠READY; `stuck-state.reset` logged |
+| slow-cycle-no-false-reset | Maestro iOS | healthy long cycle (status READY) with a 30s+ tool gap | observe through the gap | thinking persists; NO reset; response arrives | no `stuck-state.reset`; watchdog never armed while READY |
 | instant-paint-past-chat | Maestro iOS | conversation previously cached | open it from drawer | transcript paints instantly, then reconciles | local read; then REST history reconcile |
 | query-not-buffered | Maestro iOS | active live chat (cycle running) | fetch session list / open settings | list/settings load over REST; live stream untouched | REST request; no `seq` stamped; replay buffer size unchanged |
 | history-rest-live-ws | Maestro Android | conversation open, reply streaming | scroll to load older history mid-reply | older history loads (REST), live reply continues (WS), no dup | REST `getMessages` paginated; WS `message.delta`; upsert by `entryId` |

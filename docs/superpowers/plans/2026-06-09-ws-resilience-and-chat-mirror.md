@@ -385,10 +385,85 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 - [ ] **Step 1:** Confirm Android `ChatViewModel.interrupt()` (`android/src/main/kotlin/io/sentient/android/chat/ChatViewModel.kt:94`) = `component.interrupt()` and iOS `ChatViewModel.swift:102-104` = `component.interrupt()`, and `ChatComponent.interrupt()` (`shared/mobile-data/.../di/ChatComponent.kt:51`) = `sdk.interrupt()`. No change needed — the SDK now does the clearing. Note in the PR description that the Stop button's behavior changed (instant local clear) for the QA/e2e pass.
 
+### Task 1.6: Rework stuck-recovery to connection-driven (A1) + fix connector drift
+
+> **Supersedes the trigger logic of Task 1.4 / the clear-block of Task 1.3.** The holistic
+> review found (a) the cognition-transition trigger false-fires on healthy slow cycles
+> (prod tool gaps to 38s), and (b) `interrupt`/`onStuckTimeout` reset `deriver.cognition`
+> but not `CognitionStatusConnector.currentState` → drift → next `cycle.started`
+> short-circuits. A1 = reset on **transport liveness**, not content silence. See spec §8.
+
+**Files:**
+- Modify: `shared/mobile-sdk/.../connectors/CognitionStatusConnector.kt` (add `reset()`)
+- Modify: `shared/mobile-sdk/.../sdk/SentientSdk.kt`
+- Create/Modify test: `shared/mobile-sdk/src/commonTest/.../sdk/StuckWatchPredicateTest.kt` + extend `CognitionStatusConnectorTest`
+
+- [ ] **Step 1: `CognitionStatusConnector.reset()`** — keeps `currentState` in sync on optimistic clear:
+```kotlin
+    /** Force-reset to IDLE (optimistic local clear). Fires onStateChange via setState so the
+     *  orchestrator's deriver stays in sync; prevents the next cycle.started short-circuiting. */
+    fun reset() = setState(CognitionState.IDLE, "reset", null)
+```
+(`setState` already short-circuits if already IDLE and fires `onStateChange` otherwise.)
+
+- [ ] **Step 2: Extract a pure, testable arming predicate** (top-level in SentientSdk.kt or a small file):
+```kotlin
+/** A1: "stuck" only when a cycle is active AND the socket is not healthy. A slow healthy
+ *  cycle stays READY and never arms — no content-frame false-positives. */
+internal fun shouldWatchStuck(cognition: CognitionState, isSpeaking: Boolean, status: SdkStatus): Boolean =
+    (cognition != CognitionState.IDLE || isSpeaking) && status != SdkStatus.READY
+```
+
+- [ ] **Step 3: `clearActiveToIdle()` helper** (shared by interrupt / onStuckTimeout / reconnect):
+```kotlin
+    private fun clearActiveToIdle() {
+        connectors.cognition.reset()  // currentState→IDLE + onCognitionChanged → deriver IDLE + refreshStuckWatch + emit
+        audio.stopLocal()             // isSpeaking→false (if speaking) via onAudioStateChanged
+        stuckWatchdog.disarm()
+        emit()
+    }
+```
+
+- [ ] **Step 4: `refreshStuckWatch()` uses the predicate; call it from the status writer too.**
+```kotlin
+    private fun refreshStuckWatch() {
+        if (shouldWatchStuck(deriver.cognition, deriver.isSpeaking, deriver.status)) stuckWatchdog.arm()
+        else stuckWatchdog.disarm()
+    }
+```
+Add `refreshStuckWatch()` inside `setStatus(next)` after `deriver.status = next` (so a drop→RECONNECTING arms it, and a reconnect→READY disarms it). It's already called from `onCognitionChanged` + `onAudioStateChanged`.
+
+- [ ] **Step 5: `onStuckTimeout()` → `clearActiveToIdle()`** (connection stayed un-READY for the grace → give up):
+```kotlin
+    private fun onStuckTimeout() {
+        log.warn("stuck-state.reset", mapOf("status" to deriver.status, "cognition" to deriver.cognition, "isSpeaking" to deriver.isSpeaking))
+        clearActiveToIdle()
+    }
+```
+
+- [ ] **Step 6: Reconnect reset.** In `onReadyReached()`'s reconnect branch (`wasReconnect == true`), before re-establishing, if a cycle is active call `clearActiveToIdle()`. Add a comment: `// Slice 3 TODO: make resume-aware — only clear on stream.resumed{recovered:false}.`
+
+- [ ] **Step 7: `interrupt()` uses the helper** (replaces the inline clear block from Task 1.3):
+```kotlin
+    fun interrupt() {
+        log.info("interrupt")
+        markInteraction()
+        connectors.cycleError.noteInterrupt(null)
+        clearActiveToIdle()
+        sendControl(ClientMessage.Interrupt)
+    }
+```
+
+- [ ] **Step 8: Tests (FSM invariants).**
+  - `StuckWatchPredicateTest`: `shouldWatchStuck` is false for (THINKING, false, READY) and (false-speaking, READY); true for (THINKING, false, RECONNECTING) and (idle, speaking, DISCONNECTED); false for (IDLE, false, RECONNECTING). Pure-function table test.
+  - Extend `CognitionStatusConnectorTest`: after `reset()` forces IDLE, a subsequent `CycleStarted` STILL fires `onStateChange(THINKING)` (no drift short-circuit).
+- [ ] **Step 9: Compile + full suite** → green (existing `StuckStateWatchdogTest` unchanged). Import `SdkStatus` where needed.
+- [ ] **Step 10: Commit.** `fix(mobile-sdk): connection-driven stuck recovery (A1) + reset CognitionStatusConnector on clear`
+
 ### Slice 1 — local quality gate
 
 - [ ] Run `source scripts/env.sh && ./gradlew :shared:mobile-sdk:testDebugUnitTest` → all green.
-- [ ] Manual smoke note for handoff: e2e cases `fire-forget-stop-dead-socket` and `stuck-state-timeout` (spec §13) — drive via Maestro against the local stack with the fault hooks (`io.sentient.debug.FAULT`).
+- [ ] Manual smoke note for handoff: e2e cases `fire-forget-stop-dead-socket`, `stuck-state-conn-reset`, and `slow-cycle-no-false-reset` (spec §13) — drive via Maestro against the local stack with the fault hooks (`io.sentient.debug.FAULT`).
 
 ---
 
