@@ -133,14 +133,15 @@ export const sessionSwitchSchema = z.object({
 });
 
 // Client → gateway: activate a conversation (lightweight replacement for session.switch).
-// Does not require a requestId — fire-and-forget; gateway emits session.switched + conversation.snapshot.
+// Does not require a requestId — fire-and-forget; focuses the live stream.
+// Gateway replies session.switched only — the client loads history via REST (no snapshot).
 export const conversationActivateSchema = z.object({
   type: z.literal("conversation.activate"),
   sessionId: z.string().min(1),
 });
 export type ConversationActivate = z.infer<typeof conversationActivateSchema>;
 
-// Gateway → client: confirms a switch — followed by a conversation.snapshot.
+// Gateway → client: confirms the active conversation; the client fetches history via REST (no snapshot follows).
 export const sessionSwitchedEventSchema = z.object({
   type: z.literal("session.switched"),
   sessionId: z.string().min(1),
@@ -149,9 +150,10 @@ export const sessionSwitchedEventSchema = z.object({
 });
 
 // Gateway → client: failure on any sessions.* request.
+// requestId is optional — conversation.activate errors have no requestId.
 export const sessionsErrorSchema = z.object({
   type: z.literal("sessions.error"),
-  requestId: z.string().min(1),
+  requestId: z.string().min(1).optional(),
   code: z.enum(["forbidden", "not_found", "switching", "internal", "validation"]),
   message: z.string().max(ERROR_MESSAGE_MAX),
 });

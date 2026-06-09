@@ -14,7 +14,7 @@ import { createAttentionGate } from "../cerebrum/attention-gate.js";
 import type { AttentionGateConfig } from "../cerebrum/attention-gate.js";
 import { toFeed, toFeedItem } from "../cerebrum/conversation-feed.js";
 import { createConversationMirror } from "../cerebrum/conversation-mirror.js";
-import type { ConversationMirror, MirrorEntry } from "../cerebrum/conversation-mirror.js";
+import type { ConversationMirror } from "../cerebrum/conversation-mirror.js";
 import type { HermesProfileBinding } from "../cerebrum/hermes-client.js";
 import type { HermesDispatcherDeps } from "../cerebrum/hermes-dispatcher.js";
 import { dispatchHermesCycle } from "../cerebrum/hermes-dispatcher.js";
@@ -756,24 +756,23 @@ export async function handleSessionConfigure(
     teardownTimeoutMs: sessionsConfig.switch_teardown_timeout_ms,
   });
 
-  // SDK contract: `session.switched` MUST precede `conversation.snapshot`
-  // — ConversationHistoryConnector raises an awaitingSnapshot gate on
-  // switched and only clears it on the next snapshot. Reverse order leaves
-  // the gate stuck up and drops live conversation.entry frames.
-  const emitSnapshotPair = (switchedTo: string | null, entries: readonly MirrorEntry[]): void => {
-    if (switchedTo !== null) {
-      ws.send(JSON.stringify({ type: "session.switched", sessionId: switchedTo, ts: Date.now() }));
-      log.info("session.switched.emitted", { sessionId, switchedTo });
-    }
-    ws.send(JSON.stringify({ type: "conversation.snapshot", items: toFeed(entries) }));
+  // On conversation.activate the gateway emits session.switched only —
+  // history is now REST (no conversation.snapshot on activate).
+  const emitActivateSwitched = (switchedTo: string): void => {
+    ws.send(JSON.stringify({ type: "session.switched", sessionId: switchedTo, ts: Date.now() }));
+    log.info("session.switched.emitted", { sessionId, switchedTo });
   };
 
   // switchFlow drives mirror.replaceAll, which fires onSnapshot.
-  // pendingSwitchId latch correlates the snapshot with the originating switch.
-  snapshotUnsub = conversationMirror.onSnapshot((entries) => {
+  // pendingSwitchId latch correlates the snapshot with the originating activate.
+  // On conversation.activate: emit session.switched only (history is REST).
+  // On session.new: pendingSwitchId is null — nothing to emit here.
+  snapshotUnsub = conversationMirror.onSnapshot((_entries) => {
     const switchedTo = pendingSwitchId;
     pendingSwitchId = null;
-    emitSnapshotPair(switchedTo, entries);
+    if (switchedTo !== null) {
+      emitActivateSwitched(switchedTo);
+    }
   });
   ws.data.snapshotUnsub = snapshotUnsub;
 
@@ -792,16 +791,15 @@ export async function handleSessionConfigure(
       pendingNewSessionPromise = promise;
     },
     acpConn,
-    pluginClient,
   });
 
   // Latch pendingSwitchId before delegating, so the upcoming mirror
-  // snapshot fan-out is correlated with this switch. session.new clears
+  // snapshot fan-out is correlated with this activate. session.new clears
   // the latch — its empty-snapshot has nothing to pair against; Hermes
   // emits session.created on the first user.message of the new chain.
   ws.data.sessionsHandlers = {
     handle: async (frame) => {
-      if (frame.type === "session.switch") pendingSwitchId = frame.sessionId;
+      if (frame.type === "conversation.activate") pendingSwitchId = frame.sessionId;
       else if (frame.type === "session.new") pendingSwitchId = null;
       await sessionsHandlers.handle(frame);
     },
@@ -824,17 +822,16 @@ export async function handleSessionConfigure(
     }),
   );
 
-  // Resume on connect: if `?session_id=` was at WS upgrade, run the switch
-  // flow now. The mirror.onSnapshot listener emits the paired
-  // session.switched + conversation.snapshot. On failure (404, network),
-  // fall through to the empty-snapshot path below.
+  // Resume on connect: if `?session_id=` was at WS upgrade, run the activate
+  // flow now. The mirror.onSnapshot listener emits session.switched only
+  // (history is REST). On failure (404, network), fall through to the
+  // empty-snapshot path below.
   const resumeSessionId = ws.data.resumeSessionId;
   let resumeHandled = false;
   if (resumeSessionId !== null && ws.data.sessionsHandlers !== null) {
     try {
       await ws.data.sessionsHandlers.handle({
-        type: "session.switch",
-        requestId: `resume-${sessionId}`,
+        type: "conversation.activate",
         sessionId: resumeSessionId,
       });
       gate.clearConversationSalience();

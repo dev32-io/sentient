@@ -63,7 +63,7 @@ export interface CerebrumSessionData {
    * to resume a specific chain.
    */
   resumeSessionId: string | null;
-  /** Sessions wire-frame handler: dispatches sessions.* / session.new / session.switch. */
+  /** Sessions wire-frame handler: dispatches sessions.* / session.new / conversation.activate. */
   sessionsHandlers: SessionsHandlers | null;
   /** Cleanup for the mirror.onSnapshot subscription created in session.configure. */
   snapshotUnsub: (() => void) | null;

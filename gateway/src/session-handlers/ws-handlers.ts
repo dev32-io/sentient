@@ -125,12 +125,8 @@ export async function handleWebSocketMessage(
       ws.data.interruptController?.trigger();
       return;
 
-    case "sessions.list":
-    case "sessions.search":
-    case "sessions.delete":
-    case "sessions.rename":
     case "session.new":
-    case "session.switch": {
+    case "conversation.activate": {
       const handlers = ws.data.sessionsHandlers;
       if (!handlers) {
         sendError(ws, "protocol_error", "sessions handlers not configured for this session");

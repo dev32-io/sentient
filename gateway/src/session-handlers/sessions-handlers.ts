@@ -1,7 +1,4 @@
-import type { SessionRow } from "@sentient/protocol";
 import type { AcpPerProfileConnection } from "../hermes-adapter-client/per-profile-connection.ts";
-import type { SentientPluginClient } from "../hermes-adapter-client/plugin-client.ts";
-import { type HermesSessionRow, listSessionsViaAcp } from "../hermes-adapter-client/sessions-client.ts";
 import { getLog } from "../logging/logger.js";
 import type { SwitchFlow } from "../sessions/switch-flow.ts";
 import type { TitleStore } from "../sessions/title-store.ts";
@@ -32,49 +29,28 @@ export interface SessionsHandlersConfig {
    * Long-lived ACP per-profile connection — required under the ACP-only
    * wire. `session.new` calls `acpConn.newSession({})` to obtain the
    * server-minted session id (per ACP spec the agent owns id allocation).
-   * `sessions.list` reads through `listSessionsViaAcp`.
    */
   readonly acpConn: AcpPerProfileConnection;
-  /**
-   * Sentient-plugin REST client for surfaces ACP doesn't cover: search,
-   * get, getMessages, delete. Mounted on the per-profile dashboard sidecar
-   * (see plugin-client.ts).
-   */
-  readonly pluginClient: SentientPluginClient;
 }
 
-type Inbound =
-  | { type: "sessions.list"; requestId: string; limit: number; offset: number }
-  | { type: "sessions.search"; requestId: string; q: string; limit: number }
-  | { type: "sessions.delete"; requestId: string; sessionId: string }
-  | { type: "sessions.rename"; requestId: string; sessionId: string; title: string }
-  | { type: "session.new"; requestId: string }
-  | { type: "session.switch"; requestId: string; sessionId: string };
+type Inbound = { type: "session.new"; requestId: string } | { type: "conversation.activate"; sessionId: string };
 
 export interface SessionsHandlers {
   handle(frame: Inbound): Promise<void>;
 }
 
-const toSessionRow = (raw: HermesSessionRow, override: string | undefined): SessionRow => ({
-  sessionId: raw.id,
-  rootId: raw.parent_session_id ?? raw.id,
-  title: override ?? raw.title ?? "New chat",
-  startedAt: Math.round(raw.started_at * 1000),
-  lastActiveAt: Math.round((raw.last_active ?? raw.started_at) * 1000),
-  messageCount: raw.message_count,
-  isActive: raw.is_active,
-});
-
 export function createSessionsHandlers(cfg: SessionsHandlersConfig): SessionsHandlers {
   const sendError = (
-    requestId: string,
+    requestId: string | undefined,
     code: "forbidden" | "not_found" | "internal" | "validation",
     message: string,
   ): void => {
-    cfg.send({ type: "sessions.error", requestId, code, message });
+    const frame: Record<string, unknown> = { type: "sessions.error", code, message };
+    if (requestId !== undefined) frame.requestId = requestId;
+    cfg.send(frame);
   };
 
-  const enforceOwnership = async (sessionId: string, requestId: string): Promise<boolean> => {
+  const enforceOwnership = async (sessionId: string, requestId: string | undefined): Promise<boolean> => {
     const owned = await cfg.profileSessionsLookup();
     if (!owned.has(sessionId)) {
       log.warn("ownership-reject", { userId: cfg.userId, sessionId });
@@ -88,85 +64,6 @@ export function createSessionsHandlers(cfg: SessionsHandlersConfig): SessionsHan
     async handle(frame) {
       try {
         switch (frame.type) {
-          case "sessions.list": {
-            // ACP `session/list` is the only list source under the ACP-only
-            // wire. The per-profile port scopes naturally to one Hermes
-            // profile, so no source filter is applied here.
-            const result = await listSessionsViaAcp(cfg.acpConn);
-            const ids = result.sessions.map((r) => r.sessionId);
-            const overrides = await cfg.titleStore.getTitlesFor(ids);
-            const items = result.sessions.map((r) => ({
-              ...r,
-              title: overrides[r.sessionId] ?? r.title,
-            }));
-            cfg.send({
-              type: "sessions.list.result",
-              requestId: frame.requestId,
-              items,
-              total: items.length,
-              hasMore: result.nextCursor !== null,
-            });
-            log.info("list:done", { count: items.length, requestId: frame.requestId });
-            return;
-          }
-          case "sessions.search": {
-            const hits = await cfg.pluginClient.search(frame.q, frame.limit);
-            const owned = await cfg.profileSessionsLookup();
-            const visible = hits.filter((h) => owned.has(h.session_id));
-            const overrides = await cfg.titleStore.getTitlesFor(visible.map((h) => h.session_id));
-            const rows = await Promise.all(visible.map((h) => cfg.pluginClient.get(h.session_id).catch(() => null)));
-            // Under the ACP-only wire every session in the per-profile DB
-            // belongs to the active profile by construction; no source
-            // filter needed.
-            const items: SessionRow[] = [];
-            for (let i = 0; i < rows.length; i++) {
-              const row = rows[i];
-              const hit = visible[i];
-              if (row && hit) {
-                items.push(toSessionRow(row, overrides[hit.session_id]));
-              }
-            }
-            cfg.send({ type: "sessions.search.result", requestId: frame.requestId, items });
-            log.info("search:done", {
-              hits: hits.length,
-              returned: items.length,
-              requestId: frame.requestId,
-            });
-            return;
-          }
-          // Mutating handlers emit a *.result frame (resolves the SDK request
-          // Promise) AND a broadcast frame (drives live UI updates across tabs).
-          case "sessions.delete": {
-            if (!(await enforceOwnership(frame.sessionId, frame.requestId))) return;
-            try {
-              await cfg.pluginClient.delete(frame.sessionId);
-              await cfg.titleStore.delete(frame.sessionId);
-              cfg.send({ type: "sessions.delete.result", requestId: frame.requestId, sessionId: frame.sessionId });
-              cfg.send({ type: "sessions.deleted", sessionId: frame.sessionId });
-              log.info("delete:done", { sessionId: frame.sessionId });
-            } catch (err: unknown) {
-              const status = (err as { status?: number }).status;
-              if (status === 404) {
-                sendError(frame.requestId, "not_found", "session not found");
-                return;
-              }
-              throw err;
-            }
-            return;
-          }
-          case "sessions.rename": {
-            if (!(await enforceOwnership(frame.sessionId, frame.requestId))) return;
-            await cfg.titleStore.setTitle(frame.sessionId, frame.title);
-            cfg.send({
-              type: "sessions.rename.result",
-              requestId: frame.requestId,
-              sessionId: frame.sessionId,
-              title: frame.title,
-            });
-            cfg.send({ type: "sessions.renamed", sessionId: frame.sessionId, title: frame.title });
-            log.info("rename:done", { sessionId: frame.sessionId });
-            return;
-          }
           case "session.new": {
             // Pre-warm: clear the chat pane synchronously so the webui sees
             // an empty conversation immediately, then kick `acpConn.newSession`
@@ -213,8 +110,11 @@ export function createSessionsHandlers(cfg: SessionsHandlersConfig): SessionsHan
             });
             return;
           }
-          case "session.switch": {
-            if (!(await enforceOwnership(frame.sessionId, frame.requestId))) return;
+          case "conversation.activate": {
+            // Lightweight activation: enforce ownership then switch the live
+            // stream to the target session. Gateway emits session.switched
+            // only — history is REST now, no conversation.snapshot on activate.
+            if (!(await enforceOwnership(frame.sessionId, undefined))) return;
             await cfg.switchFlow.switchTo(frame.sessionId);
             // Force the resumed id onto the next user.message — symmetric to
             // session.new. Without this, follow-up messages land on Hermes'
@@ -228,7 +128,9 @@ export function createSessionsHandlers(cfg: SessionsHandlersConfig): SessionsHan
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         log.warn("handler:error", { type: (frame as { type: string }).type, message });
-        sendError((frame as { requestId: string }).requestId ?? "", "internal", message);
+        // conversation.activate has no requestId — omit it from the error frame.
+        const requestId = (frame as { requestId?: string }).requestId;
+        sendError(requestId, "internal", message);
       }
     },
   };
