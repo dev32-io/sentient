@@ -45,12 +45,10 @@ class ChatViewModel(
 
     init {
         log.info("init", mapOf("sessionId" to (sessionId ?: "<new>")))
-        // Make the route's conversation active (null = new chat). The flush gate +
-        // observeChat collect below pick up whatever conversation this resolves to.
-        viewModelScope.launch {
-            runCatching { component.switchConversation(sessionId) }
-                .onFailure { log.warn("switch-failed", mapOf("reason" to (it.message ?: it::class.simpleName))) }
-        }
+        // Make the route's conversation active (null = new chat). Fire-and-forget:
+        // the usecase no longer suspends or throws — no launch, no runCatching. The
+        // gateway buffers user.message behind the pending mint, so the UI never blocks.
+        component.switchConversation(sessionId)
         viewModelScope.launch {
             component.observeChat(cache.pending).collect { model ->
                 // Reconcile: drop optimistic entries whose committed echo arrived.
@@ -58,11 +56,12 @@ class ChatViewModel(
                 _state.value = ChatUiState(model = model)
             }
         }
-        // Flush queued sends when the connection reaches READY (and mark prior FAILED
-        // back to QUEUED is the user's retry, not auto). On non-READY, fail queued.
+        // Drain the outbox on every READY emission (rising edge): flushIfReady is a
+        // no-op when not READY and when nothing's queued, so calling it on each
+        // emission is safe and idempotent.
         viewModelScope.launch {
             component.connection.state.collect { conn ->
-                if (conn.status == SdkStatus.READY) flush()
+                component.sendMessage.flushIfReady(cache, conn.status)
             }
         }
     }
@@ -73,13 +72,15 @@ class ChatViewModel(
         val id = UUID.randomUUID().toString()
         log.info("send", mapOf("len" to text.length, "pendingId" to id))
         cache.enqueue(id, text)
-        if (isReady) flush()
+        if (isReady) component.sendMessage.flushIfReady(cache, connection.value.status)
     }
 
     fun retry(pendingId: String) {
         log.info("retry", mapOf("pendingId" to pendingId))
         cache.retry(pendingId)
-        if (isReady) flush()
+        // A stuck queued message: reconnect first (user-driven recovery), then drain.
+        if (!isReady) component.forceReconnect()
+        component.sendMessage.flushIfReady(cache, connection.value.status)
     }
 
     fun toggleMic() {
@@ -93,14 +94,6 @@ class ChatViewModel(
     fun interrupt() = component.interrupt()
 
     fun reconnect() = component.forceReconnect()
-
-    /** Drain still-QUEUED entries: send each, mark SENT (echo reconciles by id later). */
-    private fun flush() {
-        for (m in cache.queued()) {
-            component.sendMessage(m.text, m.id)
-            cache.markSent(m.id)
-        }
-    }
 
     companion object {
         /** Keep the connection StateFlow warm briefly across config changes. */
