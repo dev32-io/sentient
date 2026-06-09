@@ -86,10 +86,11 @@ struct ChatView: View {
     private var connection: ConnectionState { vm.connection }
 
     private var canInterrupt: Bool {
-        connection.isSpeaking
-            || connection.audioState == .processing
-            || connection.audioState == .assistantSpeaking
-            || connection.audioState == .interrupting
+        // Mirror webui (canInterrupt = cycleStatus != idle): show the Stop affordance
+        // while THINKING (cognition != idle — covers the text path with no voice FSM)
+        // OR SPEAKING (isSpeaking, which the SDK now holds until the speaker tail
+        // physically drains, not merely until the frame queue empties).
+        connection.cognition != .idle || connection.isSpeaking
     }
 
     private var currentMarkMode: MarkMode { markModeOfConnection(connection) }

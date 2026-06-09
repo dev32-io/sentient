@@ -82,6 +82,11 @@ fun MessageList(
         pending.forEach { add(ChatRow.Pending(it)) }
     }
 
+    // The latest assistant bubble carries the live mark animation even after it
+    // commits, so the avatar ring persists through the whole thinking+speaking
+    // window (the post-commit TTS tail has no streaming bubble). -1 when none.
+    val lastAssistant = messages.indexOfLast { it.role == "assistant" }
+
     // Pin-to-bottom follow-latest: mirrors iOS Task 4.1/4.2 semantics.
     // While pinned (default), the list scrolls to the tail on growth or token
     // change. A real user scroll-up unpins and holds position. Re-entering the
@@ -141,13 +146,17 @@ fun MessageList(
             when (row) {
                 is ChatRow.Divider -> DayDivider(row.label)
                 is ChatRow.Msg -> {
-                    // The live (streaming) assistant bubble's avatar animates with the
-                    // voice/cognition state; committed bubbles are static (IDLE). Mirrors
-                    // the webui activeCycleMode binding (only the in-flight cycle's mark).
-                    val mode = if (row.message.streaming && row.message.role == "assistant") {
-                        activeMarkMode
-                    } else {
-                        MarkMode.IDLE
+                    // The assistant avatar animates while streaming AND — so the ring
+                    // covers the whole thinking+speaking window — while it is the LATEST
+                    // assistant bubble and the active mode is thinking/speaking (the
+                    // post-commit TTS tail has no streaming bubble). Mirrors canInterrupt
+                    // (cognition != IDLE || isSpeaking). Other committed bubbles stay IDLE.
+                    val mode = when {
+                        row.message.role != "assistant" -> MarkMode.IDLE
+                        row.message.streaming -> activeMarkMode
+                        row.index == lastAssistant &&
+                            (activeMarkMode == MarkMode.THINKING || activeMarkMode == MarkMode.SPEAKING) -> activeMarkMode
+                        else -> MarkMode.IDLE
                     }
                     MessageBubble(
                         message = row.message,

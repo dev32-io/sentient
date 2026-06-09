@@ -57,7 +57,7 @@ import io.sentient.android.chat.message.HistoryLoadingSpinner
 import io.sentient.android.chat.message.LoadingAffordance
 import io.sentient.android.chat.message.MessageList
 import io.sentient.android.chat.message.loadingAffordance
-import io.sentient.mobilesdk.sdk.AudioState
+import io.sentient.mobilesdk.connectors.CognitionState
 import io.sentient.mobilesdk.sdk.ConnectionState
 import io.sentient.mobilesdk.sdk.VoiceMode
 import io.sentient.mobilesdk.transport.SdkStatus
@@ -94,10 +94,11 @@ fun ChatContent(
 ) {
     val markMode = markModeOfConnection(connection)
     val voiceActive = connection.voiceMode == VoiceMode.ACTIVE
-    val canInterrupt = connection.isSpeaking ||
-        connection.audioState == AudioState.PROCESSING ||
-        connection.audioState == AudioState.ASSISTANT_SPEAKING ||
-        connection.audioState == AudioState.INTERRUPTING
+    // Mirror webui (canInterrupt = cycleStatus != idle): show the Stop affordance
+    // while THINKING (cognition != IDLE — covers the text path with no voice FSM) OR
+    // SPEAKING (isSpeaking, which the SDK now holds until the speaker tail physically
+    // drains, not merely until the frame queue empties).
+    val canInterrupt = connection.cognition != CognitionState.IDLE || connection.isSpeaking
 
     // Build the display message list:
     //   committed (with day-dividers) ++ pending (status chips) ++ live bubble.

@@ -161,7 +161,11 @@ struct MessageList: View {
     }
 
     private func messageRows() -> some View {
-        LazyVStack(alignment: .leading, spacing: Space.gapMsg) {
+        // The latest assistant bubble carries the live mark animation even after it
+        // commits, so the avatar ring persists through the whole thinking+speaking
+        // window (the post-commit TTS tail has no streaming bubble).
+        let lastAssistant = messages.lastIndex(where: { $0.role == "assistant" })
+        return LazyVStack(alignment: .leading, spacing: Space.gapMsg) {
             // ChatRow is Identifiable; divider ids are day-keyed, message ids are
             // index-keyed. NOTE: do NOT key on message.ts — the streaming bubble's
             // ts is stamped `clock.nowMs()` fresh on every derive, so a ts-based id
@@ -172,7 +176,7 @@ struct MessageList: View {
                 switch row {
                 case let .divider(label, _): DayDivider(label: label)
                 case let .message(m, i):
-                    MessageBubble(message: m, index: i, avatarMode: avatarMode(for: m), userName: userName)
+                    MessageBubble(message: m, index: i, avatarMode: avatarMode(for: m, at: i, lastAssistant: lastAssistant), userName: userName)
                 }
             }
             // Pending outbox entries: appended AFTER committed history, no day-dividers
@@ -188,10 +192,19 @@ struct MessageList: View {
         .padding(Space.lg)
     }
 
-    /// The live (streaming) assistant bubble's avatar animates with the
-    /// voice/cognition state; committed bubbles are static (`.idle`).
-    private func avatarMode(for message: ChatMessage) -> MarkMode {
-        message.streaming && message.role == "assistant" ? activeMarkMode : .idle
+    /// The assistant avatar animates with the live voice/cognition state while the
+    /// bubble is streaming AND — so the ring covers the whole thinking+speaking
+    /// window — while it is the LATEST assistant bubble and the active mode is
+    /// thinking/speaking (the post-commit TTS tail, which has no streaming bubble).
+    /// Mirrors canInterrupt (cognition != idle || isSpeaking). Other committed
+    /// bubbles stay static (`.idle`).
+    private func avatarMode(for message: ChatMessage, at index: Int, lastAssistant: Int?) -> MarkMode {
+        guard message.role == "assistant" else { return .idle }
+        if message.streaming { return activeMarkMode }
+        if index == lastAssistant, activeMarkMode == .thinking || activeMarkMode == .speaking {
+            return activeMarkMode
+        }
+        return .idle
     }
 
     /// Follow-latest: pin the bottom anchor into view on growth or streaming
