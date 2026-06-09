@@ -75,8 +75,8 @@ private const val DEFAULT_MINT_DEBOUNCE_MS = 3_000L
 class SessionsConnector(
     private val send: (ClientMessage) -> Unit,
     private val newId: () -> String,
+    private val clock: Clock,
     private val timeoutMs: Long = DEFAULT_TIMEOUT_MS,
-    private val clock: Clock = Clock { 0L },
     private val mintDebounceMs: Long = DEFAULT_MINT_DEBOUNCE_MS,
 ) : Connector {
     override val capability: String = CAPABILITY

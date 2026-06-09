@@ -89,6 +89,12 @@ class SentientSdk(
     // idle/drop/reconnect, matching hasSession.
     private var hasReachedReadyOnce = false
 
+    // The session id a reconnect re-establish switch is currently awaiting
+    // confirmation for. Set when the re-establish switch fires; cleared when its
+    // session.switched lands. A `forbidden` while this is non-null means the
+    // anchored session was revoked → drop the anchor (see onSessionForbidden).
+    private var reestablishingSessionId: String? = null
+
     // FaultHooks declared early so effectiveCapture + lifecycle can both reference it.
     private val faultHooks = FaultHooks()
 
@@ -214,6 +220,7 @@ class SentientSdk(
         if (clearSession) {
             log.info("session.anchor.clear", mapOf("trigger" to "logout"))
             _currentSessionId.value = null
+            reestablishingSessionId = null
         }
         setStatus(SdkStatus.DISCONNECTED)
     }
@@ -415,22 +422,39 @@ class SentientSdk(
             return
         }
         log.info("ready.reconnect.re-establish", mapOf("sessionId" to anchored))
+        reestablishingSessionId = anchored
         sendSwitchSession(anchored)
     }
 
     /**
      * Anchor the active ACP session uuid from a session.switched / session.created
-     * broadcast. Non-empty ids only — the gateway's switchTo("") for a new chat
-     * can emit an empty/placeholder switched id which must NOT overwrite the anchor.
+     * broadcast. Defensive empty-id guard: the gateway only emits session.switched
+     * with a real uuid (session.new emits conversation.snapshot WITHOUT a switched
+     * frame), so an empty id should never arrive — but never anchor one if it does.
      */
     private fun onSessionAnchored(sessionId: String) {
         if (sessionId.isEmpty()) {
             log.debug("session.anchor.ignored-empty")
             return
         }
+        // A re-establish switch we were awaiting just confirmed.
+        if (sessionId == reestablishingSessionId) reestablishingSessionId = null
         if (_currentSessionId.value == sessionId) return
         log.info("session.anchor", mapOf("sessionId" to sessionId))
         _currentSessionId.value = sessionId
+    }
+
+    /**
+     * `sessions.error forbidden` arrived. If a reconnect re-establish switch is in
+     * flight, the anchored session was revoked elsewhere — drop the anchor so the
+     * next reconnect does not re-fire a switch to a dead session. A forbidden with
+     * no re-establish in flight is unrelated (e.g. an explicit op) and left alone.
+     */
+    private fun onSessionForbidden() {
+        val pending = reestablishingSessionId ?: return
+        log.info("session.anchor.cleared-forbidden", mapOf("sessionId" to pending))
+        reestablishingSessionId = null
+        _currentSessionId.value = null
     }
 
     private fun setError(authExpired: Boolean) {
@@ -465,6 +489,7 @@ class SentientSdk(
         override fun setStatus(next: SdkStatus) = this@SentientSdk.setStatus(next)
         override fun onReady(sessionId: String) { /* tunables folded in lifecycle */ }
         override fun onSessionAnchored(sessionId: String) = this@SentientSdk.onSessionAnchored(sessionId)
+        override fun onSessionForbidden() = this@SentientSdk.onSessionForbidden()
         override fun onAuthFailed() = setError(authExpired = true)
         override fun onConnectionDrop() = this@SentientSdk.onConnectionDrop()
         override fun mergedCapabilities(): List<String> = this@SentientSdk.mergedCapabilities()

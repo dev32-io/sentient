@@ -24,6 +24,7 @@ import io.sentient.mobilesdk.fakes.FakeWebSocketEngine
 import io.sentient.mobilesdk.transport.SdkStatus
 import io.sentient.mobilesdk.transport.WsIncoming
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -111,5 +112,43 @@ class SdkReconnectResumeTest {
         for (url in fake.openedUrls) {
             assertFalse(url.contains("session_id"), "connect URL must not carry session_id: $url")
         }
+    }
+
+    /** sessions.error forbidden — models the gateway rejecting a re-establish switch. */
+    private fun forbiddenFrame() =
+        "{\"type\":\"sessions.error\",\"requestId\":\"r1\",\"code\":\"forbidden\"," +
+            "\"message\":\"session not owned by current user\"}"
+
+    @Test
+    fun forbidden_during_reestablish_clears_anchor_so_next_reconnect_does_not_refire() = runTest {
+        val fake = FakeWebSocketEngine()
+        val sdk = buildSdk(fake)
+        connectToReady(sdk, fake)
+        fake.emit(WsIncoming.Text(createdFrame(anchoredUuid)))
+        sdk.currentSessionId.first { it == anchoredUuid }
+
+        // Reconnect #1 → fires the re-establish switch(uuid) on the fresh session.
+        fake.failIncoming("drop 1")
+        sdk.connection.first { fake.openedUrls.size >= 2 }
+        fake.emit(WsIncoming.Text(AUTH_OK_FRAME))
+        fake.emit(WsIncoming.Text(READY_FRAME))
+        sdk.connection.first { it.status == SdkStatus.READY }
+        assertEquals(1, switchFrames(fake.sentText).size, "reconnect #1 re-establishes")
+
+        // The gateway rejects it — the anchored session was revoked elsewhere.
+        fake.emit(WsIncoming.Text(forbiddenFrame()))
+        sdk.currentSessionId.first { it == null }
+
+        // Reconnect #2 → the fresh session must NOT re-fire a switch (anchor gone).
+        fake.failIncoming("drop 2")
+        sdk.connection.first { fake.openedUrls.size >= 3 }
+        fake.emit(WsIncoming.Text(AUTH_OK_FRAME))
+        fake.emit(WsIncoming.Text(READY_FRAME))
+        sdk.connection.first { it.status == SdkStatus.READY }
+        runCurrent()
+        assertTrue(
+            switchFrames(fake.sentText).isEmpty(),
+            "after a forbidden cleared the anchor, reconnect must not re-fire, sent=${fake.sentText}",
+        )
     }
 }

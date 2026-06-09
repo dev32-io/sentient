@@ -20,6 +20,7 @@ package io.sentient.mobilesdk.connectors
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.protocol.ServerMessage
 import io.sentient.mobilesdk.protocol.SessionRow
+import io.sentient.mobilesdk.util.Clock
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -50,7 +51,7 @@ class SessionsConnectorTest {
         sent: MutableList<ClientMessage>,
         timeoutMs: Long = 5_000L,
     ): SessionsConnector =
-        SessionsConnector(send = { sent += it }, newId = counterIds(), timeoutMs = timeoutMs)
+        SessionsConnector(send = { sent += it }, newId = counterIds(), clock = Clock { 0L }, timeoutMs = timeoutMs)
 
     @Test
     fun has_capability_sessions() {

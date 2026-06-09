@@ -34,6 +34,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 private const val CLIENT_TYPE_MOBILE = "mobile"
+private const val FORBIDDEN_CODE = "forbidden"
 
 /** Callbacks the lifecycle drives back into the orchestrator. */
 interface LifecycleHooks {
@@ -41,6 +42,8 @@ interface LifecycleHooks {
     fun onReady(sessionId: String)
     /** Anchor the active ACP session uuid from a session.switched / session.created frame. */
     fun onSessionAnchored(sessionId: String)
+    /** A `sessions.error forbidden` arrived — drop the anchor if a re-establish is in flight. */
+    fun onSessionForbidden()
     fun onAuthFailed()
     fun onConnectionDrop()
     fun mergedCapabilities(): List<String>
@@ -160,9 +163,13 @@ class SdkLifecycle(
         val intercepted = handshake?.intercept(msg) ?: false
         when (msg) {
             // Anchor the active ACP session uuid AND fan out to the connectors
-            // (broadcast). The orchestrator ignores empty/placeholder ids.
+            // (broadcast). The orchestrator ignores empty ids defensively.
             is ServerMessage.SessionSwitched -> hooks.onSessionAnchored(msg.sessionId)
             is ServerMessage.SessionCreated -> hooks.onSessionAnchored(msg.sessionId)
+            // A forbidden mid re-establish means the anchored session was revoked
+            // elsewhere — the orchestrator drops the anchor so reconnects stop
+            // re-firing a switch to a dead session.
+            is ServerMessage.SessionsError -> if (msg.code == FORBIDDEN_CODE) hooks.onSessionForbidden()
             else -> Unit
         }
         if (!intercepted) router.route(msg)
