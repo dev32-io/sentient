@@ -47,6 +47,7 @@ import platform.AVFAudio.AVAudioSession
 import platform.AVFAudio.AVAudioSessionCategoryOptionDefaultToSpeaker
 import platform.AVFAudio.AVAudioSessionCategoryPlayAndRecord
 import platform.AVFAudio.AVAudioSessionModeVoiceChat
+import platform.AVFAudio.AVAudioSessionPortOverrideSpeaker
 import platform.AVFAudio.setActive
 import platform.Foundation.NSError
 
@@ -182,7 +183,16 @@ internal class SharedAudioEngine private constructor() {
             log.warn("session-activate-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
             return@memScoped false
         }
-        log.debug("session-active", mapOf("category" to "playAndRecord", "reasserted" to true))
+        // Force the LOUD bottom speaker. The .voiceChat mode otherwise routes to the
+        // earpiece/receiver (and overrides the defaultToSpeaker option) — this is the
+        // canonical speakerphone toggle and keeps the voice-processing AEC intact, so
+        // barge-in still works. Re-asserted on every retain so a route change after an
+        // interruption re-forces the speaker. Non-fatal if it fails (stays on receiver).
+        val routed = session.overrideOutputAudioPort(AVAudioSessionPortOverrideSpeaker, errVar.ptr)
+        if (!routed) {
+            log.warn("session-speaker-override-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
+        }
+        log.debug("session-active", mapOf("category" to "playAndRecord", "override" to "speaker", "reasserted" to true))
         true
     }
 
