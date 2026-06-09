@@ -44,6 +44,11 @@ private const val DEFAULT_SESSIONS_TIMEOUT_MS = 5_000L
 private const val DEFAULT_IDLE_THRESHOLD_MS = 3_600_000L
 private const val DEFAULT_IDLE_TICK_MS = 30_000L
 
+/** A1: "stuck" only when a cycle is active AND the socket is not healthy. A slow healthy
+ *  cycle stays READY and never arms — no content-frame false-positives. */
+internal fun shouldWatchStuck(cognition: CognitionState, isSpeaking: Boolean, status: SdkStatus): Boolean =
+    (cognition != CognitionState.IDLE || isSpeaking) && status != SdkStatus.READY
+
 class SentientSdk(
     private val config: SdkConfig,
     private val bundle: PlatformBundle,
@@ -165,17 +170,21 @@ class SentientSdk(
         emit()
     }
 
+    private fun clearActiveToIdle() {
+        connectors.cognition.reset()  // currentState→IDLE + onCognitionChanged → deriver IDLE + refreshStuckWatch + emit
+        audio.stopLocal()             // isSpeaking→false (if speaking) via onAudioStateChanged
+        stuckWatchdog.disarm()
+        emit()
+    }
+
     private fun onStuckTimeout() {
-        log.warn("stuck-state.reset", mapOf("cognition" to deriver.cognition, "isSpeaking" to deriver.isSpeaking))
-        if (deriver.cognition != CognitionState.IDLE) deriver.cognition = CognitionState.IDLE
-        audio.stopLocal()       // clears isSpeaking + emits via onAudioStateChanged (if it was speaking)
-        stuckWatchdog.disarm()  // cancel the just-fired timer + any re-arm from stopLocal's refreshStuckWatch
-        emit()                  // publish the cognition reset even when audio was not speaking
+        log.warn("stuck-state.reset", mapOf("status" to deriver.status, "cognition" to deriver.cognition, "isSpeaking" to deriver.isSpeaking))
+        clearActiveToIdle()
     }
 
     private fun refreshStuckWatch() {
-        val active = deriver.cognition != CognitionState.IDLE || deriver.isSpeaking
-        if (active) stuckWatchdog.arm() else stuckWatchdog.disarm()
+        if (shouldWatchStuck(deriver.cognition, deriver.isSpeaking, deriver.status)) stuckWatchdog.arm()
+        else stuckWatchdog.disarm()
     }
 
     private val reconnectController = ReconnectController(
@@ -258,7 +267,6 @@ class SentientSdk(
         log.info("disconnect", mapOf("clearSession" to clearSession))
         consumerDisconnected = true
         reconnectController.cancel()
-        stuckWatchdog.disarm()
         connectors.sessions.reset()
         // Terminal teardown (logout) frees the native codecs; a transient disconnect
         // (idle, reconnect) keeps them so TTS survives the next reconnect.
@@ -274,6 +282,7 @@ class SentientSdk(
             reestablishingSessionId = null
         }
         setStatus(SdkStatus.DISCONNECTED)
+        stuckWatchdog.disarm()
     }
 
     /** Send user text (text.input). Mirrors web-sdk sendText. */
@@ -288,11 +297,7 @@ class SentientSdk(
         log.info("interrupt")
         markInteraction()
         connectors.cycleError.noteInterrupt(null)
-        // Optimistic local clear — do NOT gate on cycle.aborted / playback.stop frames.
-        if (deriver.cognition != CognitionState.IDLE) deriver.cognition = CognitionState.IDLE
-        audio.stopLocal()       // clears isSpeaking + emits via onAudioStateChanged (if speaking)
-        stuckWatchdog.disarm()  // no dead-socket end-frame is coming; stop watching
-        emit()                  // publish the cognition reset even if audio wasn't speaking
+        clearActiveToIdle()
         sendControl(ClientMessage.Interrupt) // best-effort; null-safe if transport is dead
     }
 
@@ -485,6 +490,7 @@ class SentientSdk(
         if (deriver.status == next) return
         log.info("status", mapOf("from" to deriver.status, "to" to next))
         deriver.status = next
+        refreshStuckWatch() // a drop→RECONNECTING arms it; a reconnect→READY disarms it
         if (next == SdkStatus.READY) {
             deriver.connectionLost = false
             // First READY marks the user "in session" → gate stays on chat.
@@ -520,6 +526,8 @@ class SentientSdk(
         log.info("ready.reconnect.re-establish", mapOf("sessionId" to anchored))
         reestablishingSessionId = anchored
         sendSwitchSession(anchored)
+        // Slice 3 TODO: make resume-aware — only clear on stream.resumed{recovered:false}.
+        clearActiveToIdle()
     }
 
     /**

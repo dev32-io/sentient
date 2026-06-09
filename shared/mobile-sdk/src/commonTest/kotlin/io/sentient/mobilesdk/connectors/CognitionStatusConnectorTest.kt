@@ -78,4 +78,37 @@ class CognitionStatusConnectorTest {
         assertEquals(emptyList(), changes)
         assertEquals(CognitionState.IDLE, c.state())
     }
+
+    // ── reset() — connector-drift fix ───────────────────────────────────────
+
+    @Test
+    fun reset_forces_idle_and_next_cycle_started_still_fires_onStateChange() {
+        // Simulate connector stuck in THINKING (e.g. dead socket, no cycle.aborted).
+        // reset() clears it; the next cycle.started must STILL fire onStateChange(THINKING)
+        // — proving no short-circuit drift.
+        val (c, changes) = connectorWithChanges()
+        c.handle(ServerMessage.CycleStarted(cycleId = "c1", triggerKind = "test"))
+        assertEquals(listOf(CognitionState.THINKING), changes)
+        changes.clear()
+
+        // Optimistic local clear (interrupt / stuck-timeout / reconnect path).
+        c.reset()
+        assertEquals(listOf(CognitionState.IDLE), changes)
+        assertEquals(CognitionState.IDLE, c.state())
+        changes.clear()
+
+        // Next cycle arrives on the recovered socket — must NOT short-circuit.
+        c.handle(ServerMessage.CycleStarted(cycleId = "c2", triggerKind = "test"))
+        assertEquals(listOf(CognitionState.THINKING), changes)
+        assertEquals(CognitionState.THINKING, c.state())
+    }
+
+    @Test
+    fun reset_is_noop_when_already_idle() {
+        val (c, changes) = connectorWithChanges()
+        // Connector starts IDLE; reset() on an already-IDLE connector must not fire.
+        c.reset()
+        assertEquals(emptyList(), changes)
+        assertEquals(CognitionState.IDLE, c.state())
+    }
 }
