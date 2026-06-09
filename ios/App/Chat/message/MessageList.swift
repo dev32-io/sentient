@@ -43,6 +43,10 @@ struct MessageList: View {
     var pending: [PendingMessage] = []
     /// Called when the user taps the FAILED chip — re-queues by pendingId.
     var onRetry: (String) -> Void = { _ in }
+    /// True while an existing-session switch is fetching its snapshot. The falling
+    /// edge (snapshot landed) drives a reliable bottom-snap — a batch snapshot into
+    /// a LazyVStack otherwise races `scrollTo` and sometimes lands short.
+    var historyLoading: Bool = false
 
     /// Pin-to-bottom FSM state. iOS 18+ only; ignored on iOS 17 (always-follow).
     @State private var follow = FollowLatestState()
@@ -51,21 +55,35 @@ struct MessageList: View {
     private static let bottomAnchor = "chat-bottom-anchor"
 
     var body: some View {
-        Group {
-            if messages.isEmpty && pending.isEmpty {
-                emptyState
-            } else {
-                list
+        // GeometryReader reads the live pane width so each bubble can be capped at
+        // the smaller of the design `msgMax` and the viewport — see bubbleMaxWidth.
+        GeometryReader { geo in
+            Group {
+                if messages.isEmpty && pending.isEmpty {
+                    emptyState
+                } else {
+                    list
+                }
             }
+            .frame(width: geo.size.width, height: geo.size.height)
+            // Tap anywhere on the conversation dismisses the keyboard (ChatGPT/Claude
+            // style); contentShape makes the empty-state whitespace tappable too.
+            // simultaneousGesture (not onTapGesture) so a tap on a markdown link still
+            // opens the link AND dismisses the keyboard — a container onTapGesture would
+            // swallow the link's own tap. Swipe-down dismissal is handled by
+            // .scrollDismissesKeyboard on the list.
+            .contentShape(Rectangle())
+            .simultaneousGesture(TapGesture().onEnded { dismissKeyboard() })
+            .environment(\.bubbleMaxWidth, bubbleMaxWidth(paneWidth: geo.size.width))
         }
-        // Tap anywhere on the conversation dismisses the keyboard (ChatGPT/Claude
-        // style); contentShape makes the empty-state whitespace tappable too.
-        // simultaneousGesture (not onTapGesture) so a tap on a markdown link still
-        // opens the link AND dismisses the keyboard — a container onTapGesture would
-        // swallow the link's own tap. Swipe-down dismissal is handled by
-        // .scrollDismissesKeyboard on the list.
-        .contentShape(Rectangle())
-        .simultaneousGesture(TapGesture().onEnded { dismissKeyboard() })
+    }
+
+    /// Bubble width cap: the smaller of the design `msgMax` and the live pane width
+    /// minus the avatar column + row paddings. Capping at the viewport stops a
+    /// non-wrapping tool-pill strip from dragging the bubble off the screen edge.
+    private func bubbleMaxWidth(paneWidth: CGFloat) -> CGFloat {
+        let chrome = Space.lg * 2 + BubbleLayout.avatarSize + Space.md + BubbleLayout.edgeMin
+        return min(Space.msgMax, max(0, paneWidth - chrome))
     }
 
     /// Resign the first responder so the soft keyboard retracts. iOS has no
@@ -83,6 +101,11 @@ struct MessageList: View {
                 .scrollDismissesKeyboard(.interactively)
                 .accessibilityIdentifier("chat-message-list")
                 .onAppear { scrollToBottom(proxy, animated: false) }
+                // Snapshot just landed (switch / reconnect-resume) → land at the tail.
+                // Deferred a runloop tick so the LazyVStack measures the new rows first.
+                .onChange(of: historyLoading) { _, loading in
+                    if !loading { DispatchQueue.main.async { scrollToBottom(proxy, animated: false) } }
+                }
         }
     }
 
@@ -192,6 +215,22 @@ struct MessageList: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(Space.xl)
+    }
+}
+
+/// Max width for a message bubble, injected by `MessageList` from the live pane
+/// width. Defaults to the design `msgMax`; bubbles read it via `@Environment`.
+/// This is the iOS analogue of Compose `widthIn(max:)` — SwiftUI's bare
+/// `.frame(maxWidth:)` won't clamp a non-wrapping child (the tool-pill strip) to
+/// the parent's proposed width, so the cap must be an explicit viewport-derived value.
+private struct BubbleMaxWidthKey: EnvironmentKey {
+    static let defaultValue: CGFloat = Space.msgMax
+}
+
+extension EnvironmentValues {
+    var bubbleMaxWidth: CGFloat {
+        get { self[BubbleMaxWidthKey.self] }
+        set { self[BubbleMaxWidthKey.self] = newValue }
     }
 }
 

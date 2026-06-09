@@ -89,7 +89,10 @@ struct SideDrawer<Content: View, Drawer: View>: View {
                     .frame(maxHeight: .infinity)
                     .offset(x: drawerX)
                     .gesture(closeDrag(drawerWidth: drawerWidth))
-                    .ignoresSafeArea()
+                    // Bleed only the BOTTOM edge (home indicator); respect the TOP safe
+                    // area so the drawer header clears the status bar. The drawer's own
+                    // full-bleed background (set in ChatView) still covers the top strip.
+                    .ignoresSafeArea(.container, edges: .bottom)
             }
         }
         // Keep SwiftUI's source of truth (`isOpen`) and the visual fraction in
@@ -98,7 +101,6 @@ struct SideDrawer<Content: View, Drawer: View>: View {
             let target: CGFloat = nowOpen ? 1 : 0
             guard openFraction != target else { return }
             log.info("programmatic isOpen=\(nowOpen)")
-            dragX = 0
             animateSettle(open: nowOpen)
         }
     }
@@ -154,7 +156,6 @@ struct SideDrawer<Content: View, Drawer: View>: View {
             shouldOpen = fraction > DrawerMetrics.snapThreshold
         }
         log.info("snap dx=\(Int(translationX)) vx=\(Int(velocityX)) frac=\(String(format: "%.2f", fraction)) → open=\(shouldOpen)")
-        dragX = 0
         animateSettle(open: shouldOpen)
         reconcileBinding(open: shouldOpen)
     }
@@ -162,18 +163,24 @@ struct SideDrawer<Content: View, Drawer: View>: View {
     /// Drive the binding to a close via tap on the scrim.
     private func close() {
         log.info("scrim tap close")
-        dragX = 0
         animateSettle(open: false)
         reconcileBinding(open: false)
     }
 
-    /// Animate to the settled position. The fetch (via `onOpen`) is deferred to
-    /// the animation's COMPLETION so the history list never lays out while the
-    /// panel is still sliding — that mid-slide layout was the left-to-right paint
-    /// churn on a fast first open. Closing has nothing to fetch.
+    /// Animate to the settled position. `dragX` is zeroed INSIDE the animation
+    /// block (not before it) so the live finger delta interpolates to 0 alongside
+    /// `openFraction` — the panel animates continuously from the finger-release
+    /// point to the snap target. Zeroing `dragX` synchronously beforehand would
+    /// jump the panel back to the pre-drag edge for one frame, then animate
+    /// edge→target (the snap looked like it started from the edge, not the finger).
+    /// The fetch (via `onOpen`) is deferred to the animation's COMPLETION so the
+    /// history list never lays out while the panel is still sliding — that
+    /// mid-slide layout was the left-to-right paint churn on a fast first open.
+    /// Closing has nothing to fetch.
     private func animateSettle(open: Bool) {
         withAnimation(.snappy) {
             openFraction = open ? 1 : 0
+            dragX = 0
         } completion: {
             if open { onOpen() }
         }

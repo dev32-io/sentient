@@ -32,6 +32,10 @@ struct MessageBubble: View {
     /// Display name shown in the meta row above the bubble.
     var userName: String = "You"
 
+    /// Bubble width cap, injected by MessageList from the live viewport width so a
+    /// non-wrapping tool-pill strip can't drag the bubble off the screen edge.
+    @Environment(\.bubbleMaxWidth) private var bubbleMaxWidth
+
     private var isUser: Bool { message.role == "user" }
     private var isSpeaking: Bool { !isUser && avatarMode == .speaking }
 
@@ -74,7 +78,7 @@ struct MessageBubble: View {
     private var bubbleBody: some View {
         bubbleContent
             .padding(Space.padMsg)
-            .frame(maxWidth: Space.msgMax, alignment: .leading)
+            .frame(maxWidth: bubbleMaxWidth, alignment: .leading)
             .background {
                 ZStack {
                     isUser ? BubbleLayout.userBg : DuskColors.paper

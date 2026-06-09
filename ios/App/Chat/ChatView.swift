@@ -163,7 +163,8 @@ struct ChatView: View {
                 activeMarkMode: currentMarkMode,
                 userName: userName,
                 pending: pending,
-                onRetry: { vm.retry($0) }
+                onRetry: { vm.retry($0) },
+                historyLoading: historyLoading
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay {
