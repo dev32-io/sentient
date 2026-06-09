@@ -53,6 +53,7 @@ import io.sentient.android.chat.banner.MARK_SIZE_CONTENT
 import io.sentient.android.chat.banner.markModeOfConnection
 import io.sentient.android.chat.composer.Composer
 import io.sentient.android.chat.voice.MarkMode
+import io.sentient.android.chat.message.HistoryLoadingSpinner
 import io.sentient.android.chat.message.LoadingAffordance
 import io.sentient.android.chat.message.MessageList
 import io.sentient.android.chat.message.loadingAffordance
@@ -129,16 +130,27 @@ fun ChatContent(
                 onOpenHistory = onOpenHistory,
                 onNewChat = onNewChat,
             )
-            MessageList(
-                messages = displayMessages,
-                activeMarkMode = markMode,
-                userName = userName,
-                pending = pending,
-                onRetry = onRetry,
+            // Message-list region. While a switch loads its history snapshot, show a
+            // centered spinner over the cleared list; the composer below stays enabled
+            // (it is NEVER gated on historyLoading), so the user can type meanwhile.
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
-            )
+            ) {
+                if (uiState.historyLoading) {
+                    HistoryLoadingSpinner()
+                } else {
+                    MessageList(
+                        messages = displayMessages,
+                        activeMarkMode = markMode,
+                        userName = userName,
+                        pending = pending,
+                        onRetry = onRetry,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            }
             // Chat-side error banner (repository / model failure).
             if (uiState.banner != null) {
                 ContentErrorBanner(
