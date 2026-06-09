@@ -282,14 +282,18 @@ class SentientSdk(
         connectors.text.sendText(text, pendingId)
     }
 
-    /** UI Stop / Escape — idempotent hard interrupt. */
+    /** UI Stop / Escape — idempotent hard interrupt. Fire-and-forget: clears local
+     *  UI state immediately, never waits for a server ack (a dead socket sends none). */
     fun interrupt() {
         log.info("interrupt")
         markInteraction()
-        // Mark the active cycle's abort as self-initiated BEFORE the wire interrupt
-        // so the resulting cycle.aborted is never misread as an unsolicited error.
         connectors.cycleError.noteInterrupt(null)
-        sendControl(ClientMessage.Interrupt)
+        // Optimistic local clear — do NOT gate on cycle.aborted / playback.stop frames.
+        if (deriver.cognition != CognitionState.IDLE) deriver.cognition = CognitionState.IDLE
+        audio.stopLocal()       // clears isSpeaking + emits via onAudioStateChanged (if speaking)
+        stuckWatchdog.disarm()  // no dead-socket end-frame is coming; stop watching
+        emit()                  // publish the cognition reset even if audio wasn't speaking
+        sendControl(ClientMessage.Interrupt) // best-effort; null-safe if transport is dead
     }
 
     /**
