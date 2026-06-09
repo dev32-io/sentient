@@ -313,6 +313,12 @@ class AudioPipeline(
         transition(AudioInput.AudioDone, cycleId)
     }
 
+    /** Local Stop (UI/escape): force-stop playback for the active cycle without a server frame. */
+    fun stopLocal() {
+        if (activeCycleId.isEmpty() && !isSpeaking) return
+        onPlaybackStop(reason = "interrupt-local", cycleId = activeCycleId)
+    }
+
     /** playback.stop (barge-in / interrupt): cancel echo state, flush playback, reset decoder, clear speaking. */
     fun onPlaybackStop(reason: String, cycleId: String) {
         log.info("downlink-stop", mapOf("reason" to reason, "cycleId" to cycleId))

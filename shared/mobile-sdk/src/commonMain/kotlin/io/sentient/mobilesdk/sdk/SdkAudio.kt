@@ -108,4 +108,7 @@ class SdkAudio(
 
     /** Terminal: logout / SDK close. Free the native codecs. */
     fun dispose() = pipeline.dispose()
+
+    /** Local Stop (UI/escape): force-stop playback for the active cycle without a server frame. */
+    fun stopLocal() = pipeline.stopLocal()
 }
