@@ -15,7 +15,11 @@ const deps = (): SessionsHttpDeps => ({
     delete: async () => {},
   }),
   listSessions: async (_userId: string) => [{ sessionId: "s-1", title: "T", lastActiveAt: 5 }],
-  titleStore: { getTitlesFor: async () => ({}), setTitle: async () => {}, delete: async () => {} },
+  resolveTitleStore: (_userId: string) => ({
+    getTitlesFor: async () => ({}),
+    setTitle: async () => {},
+    delete: async () => {},
+  }),
 });
 
 describe("sessions REST handler — auth + scoping", () => {

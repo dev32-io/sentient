@@ -47,7 +47,10 @@ export interface SessionsHttpDeps {
   tokens: { validate: (token: string) => Promise<TokenResult<TokenPayload>> };
   resolvePluginClient: (userId: string) => Promise<PluginClientLike>;
   listSessions: (userId: string) => Promise<SessionListItem[]>;
-  titleStore: TitleStoreLike;
+  /** Returns a per-user title store. Implementations must be file-backed /
+   *  side-effect-free; a fresh instance per call is correct (no shared
+   *  in-memory cache is required). */
+  resolveTitleStore: (userId: string) => TitleStoreLike;
 }
 
 // --- Handler -----------------------------------------------------------------
@@ -105,7 +108,7 @@ async function handleList(deps: SessionsHttpDeps, userId: string): Promise<Respo
   try {
     const sessions = await deps.listSessions(userId);
     const ids = sessions.map((s) => s.sessionId);
-    const titleOverrides = await deps.titleStore.getTitlesFor(ids);
+    const titleOverrides = await deps.resolveTitleStore(userId).getTitlesFor(ids);
     const items = sessions.map((s) => ({
       ...s,
       title: titleOverrides[s.sessionId] ?? s.title,
@@ -191,7 +194,7 @@ async function handleRename(
 
   const title = (body as Record<string, unknown>).title as string;
   try {
-    await deps.titleStore.setTitle(sessionId, title);
+    await deps.resolveTitleStore(userId).setTitle(sessionId, title);
     log.info("sessions.rename.ok", { userId, sessionId, title_len: title.length });
     return Response.json({ sessionId, title }, { status: HTTP_OK });
   } catch (e: unknown) {
@@ -212,7 +215,7 @@ async function handleDelete(deps: SessionsHttpDeps, userId: string, sessionId: s
   try {
     const client = await deps.resolvePluginClient(userId);
     await client.delete(sessionId);
-    await deps.titleStore.delete(sessionId);
+    await deps.resolveTitleStore(userId).delete(sessionId);
     log.info("sessions.delete.ok", { userId, sessionId });
     return Response.json({ sessionId }, { status: HTTP_OK });
   } catch (e: unknown) {
