@@ -10,6 +10,7 @@
 package io.sentient.mobilesdk.sdk
 
 import io.sentient.mobilesdk.audioio.FaultAwareCaptureAdapter
+import io.sentient.mobilesdk.connectors.CognitionState
 import io.sentient.mobilesdk.connectors.SessionsListPage
 import io.sentient.mobilesdk.connectors.SessionsRequestException
 import io.sentient.mobilesdk.connectors.SessionsTimeoutException
@@ -76,6 +77,12 @@ class SentientSdk(
 
     private val deriver = StateDeriver(bundle.clock)
     private val idle = createIdleDetector(IdleDetectorConfig(idleThresholdMs = idleThresholdMs))
+    private val stuckWatchdog = StuckStateWatchdog(
+        timeoutMs = config.stuckStateTimeoutMs,
+        scope = scope,
+        delayFn = delayFn,
+        onTimeout = ::onStuckTimeout,
+    )
 
     // The active ACP session uuid, anchored ONLY from session.switched /
     // session.created broadcasts (non-empty ids). Drives the reconnect re-
@@ -140,6 +147,7 @@ class SentientSdk(
         clock = bundle.clock,
         mintDebounceMs = config.mintDebounceMs,
         audioHooks = { audio.downlinkHooks },
+        onCognitionChanged = ::onCognitionChanged,
     )
 
     private val router = MessageRouter(connectors.all, audioConnector = connectors.audioOutput)
@@ -147,7 +155,27 @@ class SentientSdk(
     private fun onAudioStateChanged(isSpeaking: Boolean, fsmState: AudioState) {
         deriver.isSpeaking = isSpeaking
         deriver.audioState = fsmState
+        refreshStuckWatch()
         emit()
+    }
+
+    private fun onCognitionChanged(state: CognitionState) {
+        deriver.cognition = state
+        refreshStuckWatch()
+        emit()
+    }
+
+    private fun onStuckTimeout() {
+        log.warn("stuck-state.reset", mapOf("cognition" to deriver.cognition, "isSpeaking" to deriver.isSpeaking))
+        if (deriver.cognition != CognitionState.IDLE) deriver.cognition = CognitionState.IDLE
+        audio.stopLocal()       // clears isSpeaking + emits via onAudioStateChanged (if it was speaking)
+        stuckWatchdog.disarm()  // cancel the just-fired timer + any re-arm from stopLocal's refreshStuckWatch
+        emit()                  // publish the cognition reset even when audio was not speaking
+    }
+
+    private fun refreshStuckWatch() {
+        val active = deriver.cognition != CognitionState.IDLE || deriver.isSpeaking
+        if (active) stuckWatchdog.arm() else stuckWatchdog.disarm()
     }
 
     private val reconnectController = ReconnectController(
@@ -230,6 +258,7 @@ class SentientSdk(
         log.info("disconnect", mapOf("clearSession" to clearSession))
         consumerDisconnected = true
         reconnectController.cancel()
+        stuckWatchdog.disarm()
         connectors.sessions.reset()
         // Terminal teardown (logout) frees the native codecs; a transient disconnect
         // (idle, reconnect) keeps them so TTS survives the next reconnect.

@@ -15,6 +15,7 @@
 package io.sentient.mobilesdk.sdk
 
 import io.sentient.mobilesdk.connectors.AssistantAudioResponseConnector
+import io.sentient.mobilesdk.connectors.CognitionState
 import io.sentient.mobilesdk.connectors.CognitionStatusConnector
 import io.sentient.mobilesdk.connectors.Connector
 import io.sentient.mobilesdk.connectors.ConversationHistoryConnector
@@ -74,6 +75,9 @@ class SdkConnectors(
     clock: Clock,
     mintDebounceMs: Long,
     private val audioHooks: () -> AudioDownlinkHooks = { AudioDownlinkHooks() },
+    // Default reproduces pre-1.4 direct-write behavior for standalone callsites/tests that don't inject a
+    // hook; the production path (SentientSdk) always passes ::onCognitionChanged, which also runs refreshStuckWatch().
+    private val onCognitionChanged: (CognitionState) -> Unit = { state -> deriver.cognition = state; emit() },
 ) {
     val text = UserTextInputConnector(send = send)
 
@@ -89,7 +93,7 @@ class SdkConnectors(
     )
 
     val cognition = CognitionStatusConnector(
-        onStateChange = { state -> deriver.cognition = state; emit() },
+        onStateChange = { state -> onCognitionChanged(state) },
         onEvent = emitEvent,
     )
 
