@@ -128,18 +128,21 @@ class UserSessionManager(
         return SentientSdk(config = config, bundle = createPlatformBundle(), scope = sessionScope)
     }
 
-    /** App foreground → re-arm reconnect on the live component (no-op if none). */
+    /** App foreground → one-shot liveness probe; reconnect (+ resume session) only if dead. */
     fun resume() {
         val c = chatComponent ?: return
         log.info("resume")
-        c.forceReconnect()
+        c.onForeground()
     }
 
-    /** App background → drop the socket but stay in session (clearSession=false). */
+    /**
+     * App background → KEEP the socket. The gateway holds the per-user session + ACP
+     * wire on detach and has no server ping/timeout, so a brief backgrounding survives
+     * on the SAME socket (no reload, no reconnect, no audio teardown). The OS suspends
+     * the process; a genuinely dead socket is caught by the foreground probe in [resume].
+     */
     fun pause() {
-        val c = chatComponent ?: return
-        log.info("pause")
-        c.disconnect(clearSession = false)
+        // Do NOT drop the socket on background. See [resume].
     }
 
     /** Attach this session's pause/resume to the app-scoped presence relay. */

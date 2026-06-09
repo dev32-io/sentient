@@ -53,6 +53,9 @@ class ChatComponent(
     /** Manual reconnect — re-arm the reconnect controller and drive recovery. */
     fun forceReconnect() = sdk.forceReconnect()
 
+    /** Foreground presence — one-shot liveness probe; reconnect only if the socket is dead. */
+    fun onForeground() = sdk.onForeground()
+
     /** Open the WS, authenticate, reach READY. Suspends until settled. */
     suspend fun connect() = sdk.connect()
 

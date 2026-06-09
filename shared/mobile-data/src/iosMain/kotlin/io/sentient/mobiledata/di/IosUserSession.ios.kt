@@ -109,14 +109,20 @@ class IosUserSession(
         }
     }
 
-    /** App background → drop the socket but stay in session (clearSession=false). */
+    /**
+     * App background → KEEP the socket. The gateway holds the per-user session +
+     * ACP wire on WS-detach and has no server ping/timeout, so a brief backgrounding
+     * survives on the SAME socket (no reload, no reconnect, no audio teardown). iOS
+     * suspends the app anyway; a genuinely dead socket is caught by the foreground
+     * probe in [resume]. Intentionally a no-op.
+     */
     fun pause() {
-        sdk.disconnect(clearSession = false)
+        // Do NOT drop the socket on background. See [resume].
     }
 
-    /** App foreground → re-arm reconnect on the live SDK. Idempotent. */
+    /** App foreground → one-shot liveness probe; reconnect (+ resume session) only if dead. */
     fun resume() {
-        sdk.forceReconnect()
+        sdk.onForeground()
     }
 
     /** Logout teardown: disconnect (clearSession=true) + cancel the session scope. */

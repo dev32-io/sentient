@@ -12,13 +12,13 @@ The OS suspends, kills, and resurrects mobile processes on its own schedule. Tre
 
 ## Chat-scoped session + presence relay
 
-- The SDK + socket + mic + repositories live in a chat-scoped session, built on entry, torn down on exit. Lifecycle ops: open (background connect), pause (drop socket, keep scope), resume (re-arm reconnect), close (disconnect + cancel scope).
+- The SDK + socket + mic + repositories live in a chat-scoped session, built on entry, torn down on exit. Lifecycle ops: open (background connect), pause (KEEP the socket on background — the gateway holds the session + wire with no server timeout, so a brief background survives on the same socket; do NOT drop), resume (foreground one-shot liveness probe — reconnect ONLY if the socket is dead), close (disconnect + cancel scope).
 - An app-scoped presence relay forwards foreground/background to the active session via the platform's process/scene lifecycle observer. It holds NO session state.
 - COLD-START-SKIP: the relay MUST skip the first foreground after launch — init already connected. Without the skip, init-connect and presence-resume race into a double connect. Only resume after a real background.
 
 ## Transitions — first-class state
 
-- Background → foreground is a state, not an edge case. On resume: re-arm reconnect, refresh staleable inputs (clocks, tokens, reachability).
+- Background → foreground is a state, not an edge case. On resume: probe liveness (reconnect only if dead), refresh staleable inputs (clocks, tokens, reachability).
 - Cover the triple: cold start, background+resume, background+kill+restore.
 
 ## Process death + restore — what actually persists
