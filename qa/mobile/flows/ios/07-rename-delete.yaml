@@ -1,0 +1,35 @@
+appId: io.dev32.sentient.debug
+---
+# 07-rename-delete — swipe a session row to rename, then delete it.
+#
+# ⚠ FLAG (iOS): Maestro swipe-actions on SwiftUI List rows within a .sheet
+# presentation are NOT driveable in Maestro 2.6.0. The swipe on the row
+# dismisses the sheet instead of revealing the swipe actions.
+#
+# Status: FLAGGED — rename/delete in HistorySheet not driveable via Maestro.
+# The affordances are wired and work with direct user interaction. This flow
+# tests: sheet opens → swipe attempt → no crash → back to chat.
+#
+# Resolution path: XCUITest with `swipeLeft()` on the specific List row, or a
+# context-menu long-press variant if added to HistoryRow on iOS.
+#
+# tags: [ios, simulator-ok, requires-prior-session, FLAGGED-swipe-actions-unreliable-in-sheet]
+- launchApp
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
+    timeout: 5000
+# Attempt swipe — this will likely dismiss the sheet on iOS (documented limitation)
+- swipe:
+    direction: LEFT
+    id: ".*history-row-.*"
+# Sheet may be dismissed; chat screen is the expected state
+- extendedWaitUntil:
+    visible:
+      id: "composer-input"
+    timeout: 5000
+# App alive — no crash — this is the extent of what Maestro can verify
+- assertVisible:
+    id: "composer-input"

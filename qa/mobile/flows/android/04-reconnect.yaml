@@ -1,0 +1,27 @@
+appId: io.dev32.sentient.debug
+---
+# 04-reconnect (Android-only) — assert connection-lost-banner on gateway drop.
+#
+# ⚠️  EMULATOR LIMITATION: Android emulators use virtual Ethernet (eth0) to reach
+# the host, not WiFi. `adb svc wifi disable` has no effect on emulator network
+# connectivity. This flow is designed for PHYSICAL DEVICES where WiFi toggle
+# actually drops the gateway WebSocket.
+#
+# On a physical device the harness (run-e2e.sh) disables WiFi BEFORE launching
+# this flow. On the emulator, the harness skips this flow (flagged: skip-emulator).
+#
+# Alternative emulator path: the harness can stop/start the Docker gateway
+# container to simulate a connectivity drop. That approach is higher-impact and
+# tested separately (qa/mobile/flows/android/04-reconnect-docker.yaml).
+#
+# tags: [skip-emulator, physical-device-only]
+#
+# Pre-condition: gateway unreachable (WiFi disabled on physical device, OR
+# gateway container stopped). App is running; SDK will lose its WebSocket and
+# enter the reconnect loop.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: "connection-lost-banner"
+    timeout: 30000
+# Post-condition: the harness restores connectivity.

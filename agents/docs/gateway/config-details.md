@@ -13,7 +13,8 @@ root: `agents/docs/config-details.md`.
 | tts | Fish Audio voice, format, chunk size, timeouts |
 | providers | Catalog cache TTLs, external fetch timeout |
 | mcp_catalog | Operator-managed MCP server inventory |
-| webui | Server-authoritative client tunables (e.g. playback) |
+| webui | Server-authoritative client tunables (e.g. playback). The `mobile` clientType reuses the webui playback fallback. |
+| hermes | Per-user Hermes (ACP) wiring. `acp_wire` = wire resilience tunables (`open_timeout_ms`, `reconnect_base_ms`, `reconnect_max_ms`, `reconnect_jitter_ms`, `reconnect_max_attempts`); `defaults.request_timeout_ms` = per-prompt deadline backstop. Schema: `shared/config/src/schemas/hermes-config.ts`. |
 
 The gateway no longer has a top-level `llm` section — Hermes owns the LLM
 call and reads its own config from per-user rendered profiles in

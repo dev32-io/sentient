@@ -7,7 +7,7 @@ const ADAPTER_ID = "user-text-input-v1";
 const MAX_LOG_TEXT_LEN = 80;
 
 export interface UserTextInputAdapter extends Adapter {
-  handleTextInput(text: string): void;
+  handleTextInput(text: string, pendingId?: string): void;
 }
 
 export function createUserTextInputAdapter(): UserTextInputAdapter {
@@ -27,11 +27,12 @@ export function createUserTextInputAdapter(): UserTextInputAdapter {
       ctx = null;
     },
 
-    handleTextInput(text: string): void {
+    handleTextInput(text: string, pendingId?: string): void {
       if (!ctx) return;
       const truncated = text.length > MAX_LOG_TEXT_LEN ? `${text.slice(0, MAX_LOG_TEXT_LEN)}…` : text;
-      log.debug("text-input", { text: truncated });
-      ctx.conversationHistory.append({ kind: "user", ts: Date.now(), channel: "text", content: text });
+      log.debug("text-input", { text: truncated, ...(pendingId !== undefined ? { pendingId } : {}) });
+      const entry = { kind: "user" as const, ts: Date.now(), channel: "text" as const, content: text };
+      ctx.conversationHistory.append(pendingId !== undefined ? { ...entry, pendingId } : entry);
     },
   };
 }

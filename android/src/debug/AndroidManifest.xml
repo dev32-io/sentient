@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- DebugFaultReceiver: Maestro E2E fault injection. Debug variant only.
+             Arm via: adb shell am broadcast -a io.sentient.debug.FAULT (with extras). -->
+        <!-- exported=true required for adb shell am broadcast from outside the app UID.
+             Safe: this manifest is debug-variant only and never ships in release. -->
+        <receiver
+            android:name=".debug.DebugFaultReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="io.sentient.debug.FAULT" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

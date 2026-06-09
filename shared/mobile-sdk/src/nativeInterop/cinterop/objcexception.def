@@ -1,0 +1,36 @@
+# cinterop def for the AVAudioEngine NSException → Kotlin-failure boundary shims.
+# Exposes sentient_avEnginePrepare / sentient_avEngineStart so AVAudioEngine's
+# prepare / start NSExceptions (sim with no audio I/O route → "inputNode != nullptr
+# || outputNode != nullptr") are caught at the boundary instead of tripping the K/N
+# terminate handler (SIGABRT). Declarations in objcexception.h; implementations in
+# the verbatim ObjC section below the `---` (compiled into the K/N image).
+# Signatures use ONLY `id` + `int` so this standalone interop need not share the
+# platform.AVFAudio / platform.Foundation ObjC types (see the header). -framework
+# AVFAudio lets the verbatim section #import the real AVAudioEngine for the cast.
+headers = objcexception.h
+language = Objective-C
+package = io.sentient.mobilesdk.cinterop.objcexception
+compilerOpts = -framework AVFAudio
+
+---
+
+#import <Foundation/Foundation.h>
+#import <AVFAudio/AVFAudio.h>
+
+int sentient_avEnginePrepare(id engine) {
+    @try {
+        [(AVAudioEngine *)engine prepare];
+        return 1;
+    } @catch (NSException *exception) {
+        return 0;
+    }
+}
+
+int sentient_avEngineStart(id engine) {
+    @try {
+        NSError *error = nil;
+        return [(AVAudioEngine *)engine startAndReturnError:&error] ? 1 : 0;
+    } @catch (NSException *exception) {
+        return 0;
+    }
+}

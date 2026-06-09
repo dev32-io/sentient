@@ -30,14 +30,26 @@ both containers.
 5. Per-profile-renderer regenerates `config.yaml` on every gateway boot
    so stale models / MCP catalogs never land at the worker
    (`gateway/src/admin/boot-migration.ts#renderConfigsForExistingUsers`).
-6. Each gateway WS-session dials `ws://sentient-hermes:<acpPort>/acp`
-   on demand via `bootstrapAcpWire`, runs `initialize`, and reaches the
-   AcpHermesClient adapter. There is **no long-lived gateway-owned
-   connection pool** under ACP — every WS-session owns its ACP
-   connection for its lifetime.
-7. Force-restart removes + rewrites the .conf and signals `restart`. The
-   restart orchestrator reports ready optimistically (no eager probe);
-   the next WS-session bootstrap proves dispatch end-to-end.
+6. The ACP wire is **pooled per userId, ref-counted** across a PersonSession's
+   device attachments (`hermes-adapter-client/acp-wire-registry.ts`). The first
+   attachment for a user dials `ws://sentient-hermes:<acpPort>/acp` via
+   `bootstrapAcpWire` (runs `initialize`, reaches the AcpHermesClient adapter);
+   subsequent attachments for the SAME user reuse the live wire (refCount++), and
+   it is disposed only when the last attachment releases. `acquire`/`release` are
+   driven from `ws-session-configure.ts`. WHY pool: the Hermes overlay
+   (`acp_ws_server.py`) permits ONE ACP WS per profile and evicts the prior one
+   with a clean 1000 close when a second client (e.g. webui + mobile) connects —
+   a second dial would tear down the first, so one wire is shared per user.
+7. The wire **self-heals**. A *remote* close (any code, including 1000 — overlay
+   restart / eviction / flap) is NOT terminal: it lazily reconnects on the next
+   dispatch, bounded by `hermes.acp_wire.reconnect_max_attempts`
+   (`acp-wire-socket.ts`). Only a *local* `dispose()` (last attachment released) is
+   terminal. An in-flight prompt is un-stuck two ways: WS reject-on-abnormal-close
+   (`per-profile-connection.ts#rejectInflight`) AND a `hermes.defaults.request_timeout_ms`
+   backstop on the AcpClient.
+8. Force-restart removes + rewrites the .conf and signals `restart`. The
+   restart orchestrator reports ready optimistically (no eager probe); the next
+   dispatch on the (reconnecting) wire proves dispatch end-to-end.
 
 **State:** supervisord tracks each program's state machine
 (STOPPED / STARTING / RUNNING / BACKOFF / FATAL / EXITED). RPC events are
@@ -51,6 +63,12 @@ both containers.
 | `session.created` / `session.switched` / `commands.available` / `sessions.renamed` | ACP `session/update` notifications | Routed via `acpConn.onEvent` in `ws-session-configure.ts`. Multiple subscribers OK. |
 | Past-sessions search / get / getMessages / delete | sentient-plugin REST (port = acpPort + 1000) | `SentientPluginClient` in `hermes-adapter-client/plugin-client.ts`. Bearer auth via `SENTIENT_HERMES_BEARER`. |
 | `/healthz` | HTTP at acpPort | Boot health check. ACP itself has no `/healthz` equivalent — the bridge (`acp_ws_server.py`) exposes one. |
+
+## Client contract notes
+
+- **clientTypes** = `webui | cube | mobile` (`shared/protocol` `clientTypeSchema`). TTS is per-clientType (`session-handlers/tts-policy.ts`); the `mobile` arm v1 mirrors webui (honour channel + `ttsEnabled`), with the webui playback fallback.
+- **`pendingId`** round-trips optimistic sends: optional on `text.input` and the user conversation-feed item (`shared/protocol`). The gateway threads the client id onto the committed user echo (`adapters/user-text-input-adapter.ts` → `cerebrum/conversation-feed.ts`) so the client reconciles by id. Absent ⇒ legacy text-FIFO dedup still applies.
+- **Conversation-feed `ts` is a guaranteed non-negative int.** NaN/null/negative are backstopped to 0 with a WARN (`cerebrum/conversation-feed.ts#safeTs`; resume backfill in `sessions/hermes-message-to-mirror.ts`) — NaN serialises to `null` and crashes the strict KMP SDK decoder.
 
 ## Stubbed paths under ACP (open todos)
 

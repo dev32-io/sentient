@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { conversationFeedUserItemSchema } from "./conversation.ts";
 import {
   clientMessageSchema,
   cognitionStatusSchema,
@@ -15,6 +16,7 @@ import {
   sessionConfigureSchema,
   sessionReadySchema,
   taskUpdateSchema,
+  textInputSchema,
 } from "./messages.ts";
 
 describe("session.configure", () => {
@@ -43,6 +45,25 @@ describe("session.configure", () => {
     const result = sessionConfigureSchema.safeParse({
       type: "session.configure",
       language: "en",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts clientType mobile", () => {
+    const result = sessionConfigureSchema.safeParse({
+      type: "session.configure",
+      capabilities: { supports: ["audio", "text"] },
+      clientType: "mobile",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.clientType).toBe("mobile");
+  });
+
+  it("rejects unknown clientType", () => {
+    const result = sessionConfigureSchema.safeParse({
+      type: "session.configure",
+      capabilities: { supports: [] },
+      clientType: "tablet",
     });
     expect(result.success).toBe(false);
   });
@@ -372,5 +393,51 @@ describe("task.update", () => {
       endedAtMs: 100,
     });
     expect(result.success).toBe(true);
+  });
+});
+
+describe("text.input pendingId", () => {
+  it("parses with pendingId present", () => {
+    const result = textInputSchema.safeParse({
+      type: "text.input",
+      text: "hello",
+      pendingId: "p1",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.pendingId).toBe("p1");
+  });
+
+  it("parses without pendingId (backward compat — undefined)", () => {
+    const result = textInputSchema.safeParse({
+      type: "text.input",
+      text: "hello",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.pendingId).toBeUndefined();
+  });
+});
+
+describe("conversationFeedUserItem pendingId", () => {
+  it("parses with pendingId present", () => {
+    const result = conversationFeedUserItemSchema.safeParse({
+      ts: 1000,
+      kind: "user",
+      channel: "text",
+      content: "hello",
+      pendingId: "p1",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.pendingId).toBe("p1");
+  });
+
+  it("parses without pendingId (backward compat — undefined)", () => {
+    const result = conversationFeedUserItemSchema.safeParse({
+      ts: 1000,
+      kind: "user",
+      channel: "text",
+      content: "hello",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.pendingId).toBeUndefined();
   });
 });

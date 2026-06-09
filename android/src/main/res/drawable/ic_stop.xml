@@ -1,0 +1,10 @@
+<!-- Stop (interrupt) — filled rounded square, matches the webui interrupt glyph. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M8,7 L16,7 a1,1 0 0 1 1,1 L17,16 a1,1 0 0 1 -1,1 L8,17 a1,1 0 0 1 -1,-1 L7,8 a1,1 0 0 1 1,-1 Z"
+        android:fillColor="#FFFFFFFF" />
+</vector>

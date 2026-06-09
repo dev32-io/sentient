@@ -89,4 +89,32 @@ describe("UserTextInputAdapter", () => {
     const adapter = createUserTextInputAdapter();
     expect(adapter.eventKinds).toEqual([]);
   });
+
+  it("threads pendingId onto the appended user entry when provided", async () => {
+    const adapter = createUserTextInputAdapter();
+    const { ctx, conversationMirror } = makeCtx();
+    await adapter.start(ctx);
+
+    adapter.handleTextInput("hello", "p1");
+
+    const entries = conversationMirror.snapshot();
+    expect(entries).toHaveLength(1);
+    const entry = entries[0];
+    expect(entry?.kind).toBe("user");
+    expect((entry as { pendingId?: string }).pendingId).toBe("p1");
+  });
+
+  it("leaves pendingId undefined when not provided (backward compat)", async () => {
+    const adapter = createUserTextInputAdapter();
+    const { ctx, conversationMirror } = makeCtx();
+    await adapter.start(ctx);
+
+    adapter.handleTextInput("hi");
+
+    const entries = conversationMirror.snapshot();
+    expect(entries).toHaveLength(1);
+    const entry = entries[0];
+    expect(entry?.kind).toBe("user");
+    expect((entry as { pendingId?: string }).pendingId).toBeUndefined();
+  });
 });

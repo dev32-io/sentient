@@ -25,6 +25,7 @@ import type { ApplyDeps } from "../apply/orchestrator.js";
 import type { SessionManager } from "../auth/session-manager.ts";
 import type { SalienceMap } from "../cerebrum/short-term-context-types.ts";
 import type { StartupConfig } from "../config/startup-config.ts";
+import type { AcpWireRegistry } from "../hermes-adapter-client/acp-wire-registry.js";
 import type { HealthPoller } from "../infrastructure/health-poller.js";
 import { getLog } from "../logging/logger.ts";
 import type { PersonSessionRegistry } from "../person-session/person-session-registry.js";
@@ -81,6 +82,8 @@ export interface GatewayServices {
   readonly sessionManager: SessionManager;
   readonly sessionRouter: SessionRouter;
   readonly personSessions: PersonSessionRegistry;
+  /** Pooled ACP wire per userId, ref-counted across PersonSession attachments. */
+  readonly acpWireRegistry: AcpWireRegistry;
   readonly sessionControls: SessionControlsRegistry;
   readonly stt: SttService | null;
   readonly tts: TtsService | null;
@@ -183,6 +186,7 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     sessionManager: routes.sessionManager,
     sessionRouter: services.sessionRouter,
     personSessions: routes.personSessions,
+    acpWireRegistry: routes.acpWireRegistry,
     sessionControls: routes.sessionControls,
     stt: services.stt,
     tts: services.tts,

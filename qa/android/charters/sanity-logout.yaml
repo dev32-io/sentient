@@ -1,0 +1,56 @@
+# Android logout + fresh-launch sanity — hasSession gate didn't regress routing.
+#   1. cold launch (no clearState) → assert NOT chat (no session in memory ⇒ login)
+#   2. login (PIN 1234) → chat (login→chat happy path)
+#   3. history drawer → settings → logout → back to login
+appId: io.dev32.sentient.debug
+---
+# ── Cold launch: no in-memory session ⇒ login, NOT chat ───────────────────────
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: "login-avatar-.*"
+    timeout: 20000
+- assertNotVisible:
+    id: "chat-input"
+- takeScreenshot: sanity-android-fresh-launch-login
+
+# ── Login → chat ──────────────────────────────────────────────────────────────
+- tapOn:
+    id: "login-avatar-.*"
+    index: 0
+- tapOn:
+    id: "pin-key-1"
+- tapOn:
+    id: "pin-key-2"
+- tapOn:
+    id: "pin-key-3"
+- tapOn:
+    id: "pin-key-4"
+- extendedWaitUntil:
+    visible:
+      id: "chat-screen"
+    timeout: 20000
+- takeScreenshot: sanity-android-login-to-chat
+
+# ── Logout: history drawer → settings → logout → login ────────────────────────
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-open"
+    timeout: 6000
+- tapOn:
+    id: "settings-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-logout"
+    timeout: 6000
+- tapOn:
+    id: "settings-logout"
+- extendedWaitUntil:
+    visible:
+      id: "login-avatar-.*"
+    timeout: 15000
+- assertNotVisible:
+    id: "chat-input"
+- takeScreenshot: sanity-android-logout-to-login

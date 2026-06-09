@@ -1,0 +1,7 @@
+# Copy to local.properties (gitignored) and set your debug gateway.
+# The Android debug build bakes this as BuildConfig.GATEWAY_WS_URL.
+# Emulator → host loopback is 10.0.2.2; a physical device uses the Mac's LAN IP.
+# Full WS URL including scheme + /api/v1/ws path.
+sentient.gatewayUrl=wss://10.0.2.2:8888/api/v1/ws
+
+# (Android Studio also writes sdk.dir here; leave that as-is in your real file.)

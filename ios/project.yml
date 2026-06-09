@@ -1,0 +1,86 @@
+name: SentientApp
+options:
+  bundleIdPrefix: io.dev32
+  deploymentTarget:
+    iOS: "18.0"
+packages:
+  # GFM markdown rendering for chat bubbles (SwiftUI-native), themed to Dusk.
+  MarkdownUI:
+    url: https://github.com/gonzalezreal/swift-markdown-ui
+    from: "2.4.1"
+targets:
+  SentientApp:
+    type: application
+    platform: iOS
+    sources: [App]
+    info:
+      path: App/Info.plist
+      properties:
+        UILaunchScreen: {}
+        CFBundleDisplayName: Sentient
+        # Register bundled custom fonts so UIKit can load them by family name.
+        # Filenames MUST match the .ttf files in App/Resources/Fonts/ exactly.
+        UIAppFonts:
+          - Fraunces-Regular.ttf
+          - Fraunces-Medium.ttf
+          - Fraunces-SemiBold.ttf
+          - DMSans-Regular.ttf
+          - DMSans-Medium.ttf
+          - DMSans-SemiBold.ttf
+          - DMSans-Bold.ttf
+          - JetBrainsMono-Regular.ttf
+          - JetBrainsMono-Medium.ttf
+        NSMicrophoneUsageDescription: Sentient uses the microphone for voice conversations.
+        # Required for iOS Local Network access (LAN gateway). The system shows this
+        # string in the Local Network permission prompt; without the key the prompt
+        # (and all local-network connections) are blocked.
+        NSLocalNetworkUsageDescription: Sentient connects to your home gateway on the local network.
+        # Build-time default gateway URL. Debug reads Local.xcconfig (gitignored);
+        # Release leaves it unset → "" → app forces the in-app backend-setup page.
+        GatewayWSURL: $(GATEWAY_WS_URL)
+        # Prod hosts must serve a CA-trusted cert (strict ATS). NSAllowsLocalNetworking exempts LAN/private-IP hosts for the self-signed dev/self-host case.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+          NSExceptionDomains:
+            localhost:
+              NSExceptionAllowsInsecureHTTPLoads: true
+              NSIncludesSubdomains: true
+    configFiles:
+      Debug: App/Local.xcconfig
+    settings:
+      base:
+        # Prod bundle id; Debug overrides to the .debug id so both install side by side.
+        PRODUCT_BUNDLE_IDENTIFIER: io.dev32.sentient
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      configs:
+        Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: io.dev32.sentient.debug
+    dependencies:
+      - framework: ../shared/mobile-data/build/XCFrameworks/debug/MobileData.xcframework
+        embed: false
+      - package: MarkdownUI
+        product: MarkdownUI
+
+  SentientAppTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.dev32.sentient.tests
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: SentientApp
+      - framework: ../shared/mobile-data/build/XCFrameworks/debug/MobileData.xcframework
+        embed: false
+
+schemes:
+  SentientApp:
+    build:
+      targets:
+        SentientApp: all
+        SentientAppTests: [test]
+    test:
+      targets:
+        - SentientAppTests

@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Sentient mark — converted from gateway/webui/public/sentient-mark.svg.
+  Sized for a 108dp adaptive foreground; mark occupies the inner ~66dp safe zone.
+  Gradients expressed via inline aapt:attr (requires API 24+; adaptive icons need API 26+).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!--
+      The SVG viewport is 64×64. We center it in 108dp with an offset of (108-64)/2 = 22.
+      All coordinates below are SVG coords + 22.
+    -->
+
+    <!-- Plate: subtle radial overlay on outer circle (r=32 → r=32 in viewport, cx/cy=54) -->
+    <path
+        android:pathData="M22,54 A32,32 0 1,0 86,54 A32,32 0 1,0 22,54 Z"
+        android:fillAlpha="1">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="54"
+                android:centerY="49"
+                android:gradientRadius="32">
+                <item android:offset="0" android:color="#52FFB87A"/>
+                <item android:offset="0.30" android:color="#33FFB87A"/>
+                <item android:offset="0.60" android:color="#1EF2A06A"/>
+                <item android:offset="0.88" android:color="#0DB85530"/>
+                <item android:offset="1" android:color="#00B85530"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Outer ring stroke (r=30, stroke-width=1.4, linear gradient top→bottom) -->
+    <path
+        android:pathData="M24,54 A30,30 0 1,0 84,54 A30,30 0 1,0 24,54 Z"
+        android:strokeWidth="1.4"
+        android:fillColor="#00000000">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:type="linear"
+                android:startX="54"
+                android:startY="24"
+                android:endX="54"
+                android:endY="84">
+                <item android:offset="0" android:color="#F2FFF3DB"/>
+                <item android:offset="0.35" android:color="#A6FFF3DB"/>
+                <item android:offset="0.70" android:color="#2DFFF3DB"/>
+                <item android:offset="1" android:color="#00FFF3DB"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Inner glow (r=14, radial gradient) -->
+    <path
+        android:pathData="M40,54 A14,14 0 1,0 68,54 A14,14 0 1,0 40,54 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="54"
+                android:centerY="54"
+                android:gradientRadius="14">
+                <item android:offset="0" android:color="#8CFFB87A"/>
+                <item android:offset="0.55" android:color="#1FFFB87A"/>
+                <item android:offset="1" android:color="#00FFB87A"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Orbit ring 1: ellipse rx=23, ry=9, rotated 18° around (54,54) -->
+    <group
+        android:rotation="18"
+        android:pivotX="54"
+        android:pivotY="54">
+        <path
+            android:pathData="M31,54 A23,9 0 1,0 77,54 A23,9 0 1,0 31,54 Z"
+            android:strokeColor="#80FFF3DB"
+            android:strokeWidth="0.9"
+            android:fillColor="#00000000"/>
+    </group>
+
+    <!-- Orbit ring 2: ellipse rx=23, ry=9, rotated -28° around (54,54) -->
+    <group
+        android:rotation="-28"
+        android:pivotX="54"
+        android:pivotY="54">
+        <path
+            android:pathData="M31,54 A23,9 0 1,0 77,54 A23,9 0 1,0 31,54 Z"
+            android:strokeColor="#80FFF3DB"
+            android:strokeWidth="0.9"
+            android:fillColor="#00000000"/>
+    </group>
+
+    <!-- Orbit ring 3: ellipse rx=23, ry=9, rotated 78° around (54,54) -->
+    <group
+        android:rotation="78"
+        android:pivotX="54"
+        android:pivotY="54">
+        <path
+            android:pathData="M31,54 A23,9 0 1,0 77,54 A23,9 0 1,0 31,54 Z"
+            android:strokeColor="#80FFF3DB"
+            android:strokeWidth="0.9"
+            android:fillColor="#00000000"/>
+    </group>
+
+    <!-- Nucleus (r=6, cx=54, cy=54 — SVG cx=32,cy=32 → +22 offset) -->
+    <path
+        android:pathData="M48,54 A6,6 0 1,0 60,54 A6,6 0 1,0 48,54 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="52.8"
+                android:centerY="52.32"
+                android:gradientRadius="6">
+                <item android:offset="0" android:color="#FFFFE1BD"/>
+                <item android:offset="0.35" android:color="#FFFFB87A"/>
+                <item android:offset="0.78" android:color="#FFF2A06A"/>
+                <item android:offset="1" android:color="#FFB85530"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Nucleus highlight (ellipse cx=52.5, cy=52, rx=2, ry=1.4, white 50%) -->
+    <path
+        android:pathData="M50.5,52 A2,1.4 0 1,0 54.5,52 A2,1.4 0 1,0 50.5,52 Z"
+        android:fillColor="#80FFFFFF"/>
+
+    <!-- Electron 1: r=1.4, cx=60.8, cy=64.77 (SVG 38.80+22, 42.77+22) -->
+    <path
+        android:pathData="M59.4,64.77 A1.4,1.4 0 1,0 62.2,64.77 A1.4,1.4 0 1,0 59.4,64.77 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="60.8"
+                android:centerY="64.77"
+                android:gradientRadius="1.4">
+                <item android:offset="0" android:color="#FFFFF3DB"/>
+                <item android:offset="0.55" android:color="#FFFFE1BD"/>
+                <item android:offset="1" android:color="#66FFB87A"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Electron 2: r=1.1, cx=36.3, cy=56.43 (SVG 14.30+22, 34.43+22) -->
+    <path
+        android:pathData="M35.2,56.43 A1.1,1.1 0 1,0 37.4,56.43 A1.1,1.1 0 1,0 35.2,56.43 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="36.3"
+                android:centerY="56.43"
+                android:gradientRadius="1.1">
+                <item android:offset="0" android:color="#FFFFF3DB"/>
+                <item android:offset="0.55" android:color="#FFFFE1BD"/>
+                <item android:offset="1" android:color="#66FFB87A"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Electron 3: r=1.6, cx=44.96, cy=36.9 (SVG 22.96+22, 14.90+22) -->
+    <path
+        android:pathData="M43.36,36.9 A1.6,1.6 0 1,0 46.56,36.9 A1.6,1.6 0 1,0 43.36,36.9 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="44.96"
+                android:centerY="36.9"
+                android:gradientRadius="1.6">
+                <item android:offset="0" android:color="#FFFFF3DB"/>
+                <item android:offset="0.55" android:color="#FFFFE1BD"/>
+                <item android:offset="1" android:color="#66FFB87A"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+
+</vector>

@@ -219,6 +219,21 @@ hermes:
     url_template: "http://sentient-hermes:{port}"
     port_base: 8650
 
+  # ACP wire resilience. The gateway→Hermes ACP WebSocket auto-reconnects on ANY
+  # remote close — abnormal (1006 after a gateway restart / resumed-session flap)
+  # AND a clean remote 1000 (the overlay evicts the prior wire when another client
+  # for the same user connects). On the next dispatch the wire re-opens + re-runs
+  # `initialize` so the session keeps dispatching cycles. Only a LOCAL teardown
+  # (dispose — the last PersonSession attachment releases the ref-counted wire) is
+  # terminal. Reconnect is bounded; after exhaustion the dispatch surfaces a
+  # terminal error rather than hanging.
+  acp_wire:
+    open_timeout_ms: 5000          # per WS open handshake deadline (500-60000)
+    reconnect_base_ms: 500         # first backoff delay (50-10000)
+    reconnect_max_ms: 5000         # backoff ceiling (100-60000)
+    reconnect_jitter_ms: 250       # random jitter added per backoff (0-10000)
+    reconnect_max_attempts: 5      # max re-open attempts before a send fails (1-20)
+
   defaults:
     max_output_tokens: 512                   # per-turn token cap
     request_timeout_ms: 60000                # Hermes call deadline

@@ -1,0 +1,30 @@
+# R4 recover — run AFTER `docker start sentient-gateway` (healthy), on chat with
+# the connection-lost banner showing. Taps connection-reconnect, asserts the
+# banner clears and a sent message gets a reply.
+appId: io.dev32.sentient.debug
+---
+- assertVisible:
+    id: "connection-reconnect"
+- tapOn:
+    id: "connection-reconnect"
+
+# Banner should clear once the SDK re-establishes READY.
+- extendedWaitUntil:
+    notVisible:
+      id: "connection-lost-banner"
+    timeout: 30000
+- assertVisible:
+    id: "chat-input"
+- takeScreenshot: R4-ios-recovered
+
+# Composer re-enabled — send a message and expect a reply.
+- tapOn:
+    id: "chat-input"
+- inputText: "say hi in 5 words"
+- tapOn:
+    id: "chat-send"
+- extendedWaitUntil:
+    visible:
+      id: "message-bubble-.*"
+    timeout: 30000
+- takeScreenshot: R4-ios-reply-after-recover

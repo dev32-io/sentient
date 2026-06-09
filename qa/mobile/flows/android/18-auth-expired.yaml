@@ -1,0 +1,62 @@
+appId: io.dev32.sentient.debug
+---
+# 18-auth-expired — arm expired-token fault, force reconnect, assert login screen.
+#
+# Strategy: the fault is armed while the app is RUNNING (same session). The
+# expired-token fault intercepts the NEXT auth.ok — we need to trigger a
+# reconnect cycle. The simplest way: disconnect WiFi briefly (emulator: use
+# Docker stop/start) OR force the SDK to reconnect via the app's presence system.
+#
+# SIMPLER APPROACH: arm the fault then kill + restart the app WITHOUT clearing
+# state. The app reconnects from scratch → auth.ok arrives → fault intercepts →
+# authExpired=true → login screen. This avoids WiFi toggle.
+#
+# PRE-CONDITION (handled by harness):
+#   1. App is running and showing chat (composer-input visible).
+#   2. Fault armed: adb shell am broadcast -a io.sentient.debug.FAULT
+#        -p io.dev32.sentient.debug --es kind expired
+#   3. App force-stopped + relaunched via adb between arm and this flow.
+#
+# The harness does:
+#   a. App running → arm fault → force-stop → relaunch → run THIS flow.
+#   b. On relaunch: SDK starts fresh, connects, auth.ok intercepted as expired.
+#
+# LIMITATION: The fault is armed on the OLD session before force-stop. After
+# force-stop, the new session gets new FaultHooks (not armed). This means the
+# simple approach of arm-then-relaunch doesn't work.
+#
+# CORRECT APPROACH: arm the fault on the NEW session (after relaunch). The
+# harness relaunches, waits for READY, arms the fault, then forces a reconnect
+# via the forceReconnect path. The next auth.ok is intercepted.
+#
+# Since Maestro can't interleave shell commands, this flow:
+#   1. Asserts app is running.
+#   2. The harness (not this flow) arms the fault on the running app AFTER
+#      this flow starts.
+#
+# FINAL APPROACH (used here): No-relaunch flow. The harness:
+#   a. Ensures app is running and connected.
+#   b. Arms expired-token fault on the RUNNING session.
+#   c. Runs this flow (which taps "force reconnect" or uses the
+#      connection banner if it appears).
+#   d. But the app may not show a reconnect trigger unless disconnected.
+#
+# ⚠ HONEST ASSESSMENT: The auth-expired fault flow requires coordination between
+# the harness (arm) and the Maestro flow (trigger reconnect) that is NOT achievable
+# with pure Maestro flows. The consultation point IS wired; the test path requires:
+#   - Either (a) a UI affordance to force-reconnect in the chat screen, OR
+#   - (b) The harness stops the Docker gateway briefly to force a disconnect →
+#     the SDK reconnects → auth.ok is intercepted.
+#
+# For now: the harness stops the Docker gateway (via docker stop) to force a
+# disconnect. The SDK reconnects. The next auth.ok is intercepted as expired.
+#
+# tags: [android, emulator-ok, fault-injection, requires-debug-apk, requires-docker-gateway]
+- assertVisible:
+    id: "composer-input"
+# The SDK will lose its WS connection when the gateway stops, then reconnect.
+# On reconnect, auth.ok is intercepted as expired → authExpired=true → login.
+- extendedWaitUntil:
+    visible:
+      id: "login-backend-setup"
+    timeout: 60000

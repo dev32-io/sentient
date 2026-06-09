@@ -59,9 +59,23 @@ function lastFrame(sent: string[]): Record<string, unknown> {
   return JSON.parse(last) as Record<string, unknown>;
 }
 
+/**
+ * Pre-attach a session to the (single, static-epoch) child so a following
+ * dispatch prompts directly instead of issuing the reconnect re-attach
+ * `session/load`. Mirrors steady state: the child already loaded this session.
+ * Tests exercising the post-reconnect re-attach do NOT call this.
+ */
+async function attach(bed: Bed, sessionId: string): Promise<void> {
+  const promise = bed.conn.loadSession({ sessionId });
+  const id = lastFrame(bed.sent).id as number;
+  bed.pump(JSON.stringify({ jsonrpc: "2.0", id, result: {} }));
+  await promise;
+}
+
 describe("AcpHermesClient — dispatch happy path", () => {
   it("yields synthetic created, fans out session/update events as text.delta, terminates with completed", async () => {
     const bed = buildBed();
+    await attach(bed, "sess_42");
     const client = createAcpHermesClient({ acpConn: bed.conn });
     const ctrl = new AbortController();
 
@@ -103,10 +117,14 @@ describe("AcpHermesClient — dispatch happy path", () => {
 
   it("uses forcedSessionId for the session/prompt sessionId param", async () => {
     const bed = buildBed();
+    await attach(bed, "sess_force");
     const client = createAcpHermesClient({ acpConn: bed.conn });
     const ctrl = new AbortController();
     const gen = client.dispatch(turnInput({ forcedSessionId: "sess_force" }), ctrl.signal, NEVER_BARGED);
     await gen.next(); // synthetic created (also triggers send)
+    // ensureSessionAttached resolves immediately (pre-attached); flush so the
+    // prompt frame lands before the assertion.
+    await Promise.resolve();
 
     const sent = lastFrame(bed.sent);
     expect(sent.method).toBe("session/prompt");
@@ -115,6 +133,7 @@ describe("AcpHermesClient — dispatch happy path", () => {
 
   it("uses conversationId as the prompt sessionId when no forced id is given (mid-chain follow-up)", async () => {
     const bed = buildBed();
+    await attach(bed, "sess_chain");
     const client = createAcpHermesClient({ acpConn: bed.conn });
     const ctrl = new AbortController();
     const gen = client.dispatch(
@@ -123,6 +142,7 @@ describe("AcpHermesClient — dispatch happy path", () => {
       NEVER_BARGED,
     );
     await gen.next();
+    await Promise.resolve();
     expect((lastFrame(bed.sent).params as { sessionId: string }).sessionId).toBe("sess_chain");
 
     // Reply to drain the queue cleanly.
@@ -265,11 +285,14 @@ describe("AcpHermesClient — lazy session/new fallback", () => {
 
   it("does NOT call newSession when forcedSessionId is supplied", async () => {
     const bed = buildBed();
+    await attach(bed, "sess_force");
     const client = createAcpHermesClient({ acpConn: bed.conn });
     const ctrl = new AbortController();
     const gen = client.dispatch(turnInput({ forcedSessionId: "sess_force" }), ctrl.signal, NEVER_BARGED);
     await gen.next();
-    // No session/new frame should appear in the wire — only session/prompt.
+    await Promise.resolve();
+    // No session/new frame should appear in the wire — only session/prompt
+    // (session/load was the pre-attach round-trip, already settled).
     const methods = bed.sent.map((raw) => (JSON.parse(raw) as { method?: string }).method);
     expect(methods).not.toContain("session/new");
     expect(methods).toContain("session/prompt");
@@ -283,10 +306,12 @@ describe("AcpHermesClient — lazy session/new fallback", () => {
 
   it("does NOT call newSession when conversationId is set (mid-chain follow-up)", async () => {
     const bed = buildBed();
+    await attach(bed, "sess_chain");
     const client = createAcpHermesClient({ acpConn: bed.conn });
     const ctrl = new AbortController();
     const gen = client.dispatch(turnInput({ conversationId: "sess_chain" }), ctrl.signal, NEVER_BARGED);
     await gen.next();
+    await Promise.resolve();
     const methods = bed.sent.map((raw) => (JSON.parse(raw) as { method?: string }).method);
     expect(methods).not.toContain("session/new");
     expect(methods).toContain("session/prompt");

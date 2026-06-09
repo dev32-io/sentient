@@ -1,0 +1,84 @@
+[versions]
+# Kotlin 2.3.10 — pinned to SKIE 0.10.11's documented support ceiling (SKIE docs cap at
+# 2.3.10; 2.3.20 support is unverified / tracked in touchlab/SKIE#174). Bump only when a
+# SKIE release explicitly lists the newer Kotlin, else the iOS link fails opaquely.
+# AGP 9.0+ requires Gradle 9.1+; since Gradle 8.13 is pinned for this project,
+# we use AGP 8.13.2 which is the last stable 8.x series and pairs with Gradle 8.13.
+# compose-compiler version must equal kotlin version (Kotlin 2.0+ compose-compiler plugin).
+kotlin = "2.3.10"
+agp = "8.13.2"
+skie = "0.10.11"
+ktor = "3.5.0"
+coroutines = "1.11.0"
+kotlinx-serialization = "1.11.0"
+# androidx.core:core-ktx 1.18.0 is latest stable (1.19.0-rc01 is RC-only as of 2026-06-01).
+androidx-core = "1.18.0"
+# androidx.activity:activity-compose 1.13.0 stable (March 2026).
+androidx-activity-compose = "1.13.0"
+# androidx.lifecycle 2.10.0 stable — viewmodel-compose + runtime-compose
+# (collectAsStateWithLifecycle). Pairs with Compose BOM 2026.05.01.
+androidx-lifecycle = "2.10.0"
+# 2026.05.01 is the latest stable patch (bug-fix over 2026.05.00).
+compose-bom = "2026.05.01"
+# Compose compiler plugin version == kotlin version since Kotlin 2.0.
+compose-compiler = "2.3.10"
+compileSdk = "36"
+minSdk = "26"
+targetSdk = "36"
+# mikepenz multiplatform-markdown-renderer — pure-Compose GFM renderer for the
+# chat bubble. 0.41.0 is built against Kotlin 2.3.20 / Compose 1.10.3; metadata is
+# forward-compatible within 2.3.x so it consumes from our pinned Kotlin 2.3.10.
+markdown-renderer = "0.41.0"
+# androidx.core:core-splashscreen 1.0.1 stable — system splash handoff.
+androidx-core-splashscreen = "1.0.1"
+# eu.buney.kopus:kopus 1.6.1.2 — KMP wrapper over libopus (MIT). Publishes
+# androidJvm, iosArm64, iosSimulatorArm64, iosX64, and jvm variants on Maven Central.
+# Used in commonMain for Opus encode/decode in the audio pipeline.
+kopus = "1.6.1.2"
+# Koin — pure-runtime DI for the Android UI layer ONLY (no KSP/annotation processor,
+# so it is Kotlin-version-agnostic and safe on Kotlin 2.3.10 where Hilt's KSP2 path is
+# unsupported). The shared KMP layer stays framework-free (manual ChatComponent factory).
+koin = "4.1.0"
+# androidx.navigation:navigation-compose — route-based navigation (chat as a sessionId
+# route; history/settings as destinations). Not in the Compose BOM, pinned here.
+androidx-navigation-compose = "2.9.5"
+
+[libraries]
+ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
+ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor" }
+ktor-client-darwin = { module = "io.ktor:ktor-client-darwin", version.ref = "ktor" }
+ktor-client-websockets = { module = "io.ktor:ktor-client-websockets", version.ref = "ktor" }
+ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
+ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
+ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx-core" }
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity-compose" }
+androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "androidx-lifecycle" }
+androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "androidx-lifecycle" }
+androidx-lifecycle-process = { module = "androidx.lifecycle:lifecycle-process", version.ref = "androidx-lifecycle" }
+compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
+compose-material3 = { module = "androidx.compose.material3:material3" }
+compose-ui = { module = "androidx.compose.ui:ui" }
+compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
+markdown-renderer-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "markdown-renderer" }
+kotlin-test = { group = "org.jetbrains.kotlin", name = "kotlin-test", version.ref = "kotlin" }
+androidx-core-splashscreen = { module = "androidx.core:core-splashscreen", version.ref = "androidx-core-splashscreen" }
+kopus = { module = "eu.buney.kopus:kopus", version.ref = "kopus" }
+koin-bom = { module = "io.insert-koin:koin-bom", version.ref = "koin" }
+koin-android = { module = "io.insert-koin:koin-android" }
+koin-androidx-compose = { module = "io.insert-koin:koin-androidx-compose" }
+koin-androidx-compose-navigation = { module = "io.insert-koin:koin-androidx-compose-navigation" }
+androidx-navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "androidx-navigation-compose" }
+
+[plugins]
+kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
+compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+skie = { id = "co.touchlab.skie", version.ref = "skie" }

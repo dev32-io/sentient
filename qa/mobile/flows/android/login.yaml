@@ -1,0 +1,39 @@
+appId: io.dev32.sentient.debug
+---
+# login — cold-launch → avatar select → PIN entry → chat screen.
+# Verifies the new Koin DI + Navigation-Compose nav gate routes to chat on valid auth.
+#
+# Selectors: login-avatar-* (avatar grid), pin-key-1..4 (pin pad), composer-input (chat landed).
+# PIN is 1234 per the dev/debug fixture.
+#
+# tags: [android, emulator-ok]
+- launchApp:
+    clearState: true
+# Avatar grid should appear (backend configured, user present)
+- extendedWaitUntil:
+    visible:
+      id: "login-backend-setup"
+    timeout: 8000
+# Tap the first avatar (Kevin)
+- tapOn:
+    id: ".*login-avatar-.*"
+    optional: false
+# PIN pad should appear
+- extendedWaitUntil:
+    visible:
+      id: "pin-key-1"
+    timeout: 5000
+# Enter PIN 1234
+- tapOn:
+    id: "pin-key-1"
+- tapOn:
+    id: "pin-key-2"
+- tapOn:
+    id: "pin-key-3"
+- tapOn:
+    id: "pin-key-4"
+# After correct PIN the nav gate should route to chat; composer-input proves we landed
+- extendedWaitUntil:
+    visible:
+      id: "composer-input"
+    timeout: 15000

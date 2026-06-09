@@ -1,0 +1,50 @@
+appId: io.dev32.sentient.debug
+---
+# 20-malformed-frame — arm malformed-frame fault, send a message, assert no
+# crash and logcat shows decode-failed.
+#
+# Strategy: the harness arms the fault AFTER this flow opens the app (via
+# maestroFlow.runAfterReady behavior), but since Maestro doesn't support
+# inter-step shell calls, the harness runs:
+#   1. Arm the fault on the running app BEFORE launching this flow.
+#   2. This flow uses the RUNNING app (no launchApp) via `openLink` or by not
+#      relaunching. But Maestro 2.x always relaunches on first step if the app
+#      isn't in foreground.
+#
+# WORKAROUND: The harness arms the fault AFTER the app is confirmed running
+# by running this flow WITHOUT launchApp as the first step — instead we assert
+# the app is visible first, then the harness arms, then we send.
+#
+# Since Maestro flows can't interleave with shell commands, we accept this
+# limitation:
+# - The harness launches the app, waits for composer-input, arms the fault, then
+#   signals ready (by checking logcat). This flow just asserts the app behavior.
+#
+# ACTUAL WORKAROUND USED: The harness arms the fault THEN runs this flow.
+# The flow does NOT use launchApp at the top (appId at the top is sufficient
+# to attach to the running foreground app in Maestro without relaunching).
+# The app PID is preserved since Maestro attaches to existing foreground app.
+#
+# PRE-CONDITION (handled by harness):
+#   1. App is running and showing chat (composer-input visible).
+#   2. Fault armed: adb shell am broadcast -a io.sentient.debug.FAULT
+#        -p io.dev32.sentient.debug --es kind malformed
+#
+# Log trail: harness greps logcat for "fault.malformed-frame" and "decode-failed".
+#
+# tags: [android, emulator-ok, fault-injection, requires-debug-apk, no-relaunch]
+- assertVisible:
+    id: "composer-input"
+- tapOn:
+    id: "composer-input"
+- inputText: "what is 2 plus 2"
+- tapOn:
+    id: "chat-send"
+- hideKeyboard
+- extendedWaitUntil:
+    visible:
+      id: "composer-input"
+    timeout: 8000
+# App is still alive — no crash after malformed frame
+- assertVisible:
+    id: "composer-input"

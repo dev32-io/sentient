@@ -1,4 +1,6 @@
 import { getLog } from "../logging/logger.js";
+import { type AcpWireReconnectConfig, DEFAULT_ACP_WIRE_RECONNECT, createManagedAcpSocket } from "./acp-wire-socket.js";
+import { type AcpWsFactory, defaultWsFactory, deriveAcpUrl } from "./acp-ws.js";
 import { type AcpPerProfileConnection, createAcpPerProfileConnection } from "./per-profile-connection.js";
 
 const log = getLog(["sentient", "hermes-adapter-client", "wire-bootstrap"]);
@@ -11,15 +13,18 @@ const log = getLog(["sentient", "hermes-adapter-client", "wire-bootstrap"]);
 // The overlay listens on the same per-profile port as Hermes' platform-adapter
 // WS but on path `/acp` (custom-WS uses `/ws`). Bearer auth via the
 // `Authorization: Bearer <token>` header — same scheme as the legacy wire.
-// Reconnect / health-poll is intentionally OUT of scope here: the existing
-// per-profile pool owns the legacy WS lifecycle and its supervision is
-// orthogonal to the ACP wire path. Lifetime of the ACP connection is tied to
-// the per-WS-session-configure call.
+//
+// Resilience: the socket is owned by a ManagedAcpSocket (acp-wire-socket.ts)
+// that swaps a dead WS for a fresh one — re-running `initialize` — on the next
+// dispatch send after ANY remote close: abnormal (e.g. 1006 after a gateway
+// restart / resumed-session flap) OR a remote normal-closure (1000, e.g. an
+// overlay restart). A resumed session therefore stays able to dispatch cycles
+// across a wire flap. Only a local teardown (`dispose`) is terminal — we don't
+// fight an intentional shutdown. The per-conversation Hermes sessionId is owned
+// by the dispatch layer (acp-hermes-client.ts re-targets it per prompt), so a
+// re-bootstrap fully restores dispatch capability — no Hermes resume call.
 // ---------------------------------------------------------------------------
 
-const READY_STATE_OPEN = 1;
-const ACP_PATH_SUFFIX = "/acp";
-const LEGACY_WS_PATH_SUFFIX = "/ws";
 const OPEN_TIMEOUT_MS_DEFAULT = 5_000;
 
 export interface AcpWireBootstrapInput {
@@ -29,95 +34,110 @@ export interface AcpWireBootstrapInput {
   readonly token: string;
   /** Optional WS factory — production uses Bun's WebSocket; tests inject a mock. */
   readonly wsFactory?: AcpWsFactory;
-  /** Hard timeout for the WS open handshake. */
+  /** Hard timeout for each WS open handshake. */
   readonly openTimeoutMs?: number;
+  /** Reconnect backoff tunables; defaults to DEFAULT_ACP_WIRE_RECONNECT. */
+  readonly reconnect?: AcpWireReconnectConfig;
+  /** sessionId for trace correlation across reconnects. */
+  readonly sessionId?: string;
+  /**
+   * Per-request deadline (ms) — backstop so an in-flight `session/prompt` can't
+   * hang the dispatcher if a close event is missed. Threads to AcpClient.
+   * Defaults to `hermes.defaults.request_timeout_ms` at the call site.
+   */
+  readonly requestTimeoutMs?: number;
+  /** Sleep injection for reconnect backoff — tests pass a fake. */
+  readonly sleep?: (ms: number) => Promise<void>;
 }
 
 export interface AcpWireBootstrapResult {
   readonly acpConn: AcpPerProfileConnection;
-  /** Tear down the WS + the ACP connection. Idempotent. */
+  /** Tear down the WS + the ACP connection. Idempotent. Blocks future reconnects. */
   dispose(): void;
 }
 
-export interface AcpWsLike {
-  readonly readyState: number;
-  send(data: string): void;
-  close(code?: number, reason?: string): void;
-  addEventListener(type: "open", listener: () => void): void;
-  addEventListener(type: "close", listener: (e: { code: number; reason: string }) => void): void;
-  addEventListener(type: "error", listener: (e: unknown) => void): void;
-  addEventListener(type: "message", listener: (e: { data: string | ArrayBuffer | Blob }) => void): void;
-}
-
-export type AcpWsFactory = (url: string, token: string) => AcpWsLike;
-
-/** Default factory — Bun's WebSocket honors a `headers` option for Bearer auth. */
-const defaultWsFactory: AcpWsFactory = (url, token) => {
-  // biome-ignore lint/suspicious/noExplicitAny: Bun supports headers param on WebSocket.
-  const ws = new WebSocket(url, { headers: { Authorization: `Bearer ${token}` } } as any);
-  return ws as unknown as AcpWsLike;
-};
-
-/** Rewrite the legacy `/ws` suffix to `/acp` so the same per-profile port hosts both endpoints. */
-export function deriveAcpUrl(wsUrl: string): string {
-  if (wsUrl.endsWith(LEGACY_WS_PATH_SUFFIX)) {
-    return `${wsUrl.slice(0, -LEGACY_WS_PATH_SUFFIX.length)}${ACP_PATH_SUFFIX}`;
-  }
-  return `${wsUrl.replace(/\/$/, "")}${ACP_PATH_SUFFIX}`;
-}
+export type { AcpWsLike, AcpWsFactory } from "./acp-ws.js";
+export { deriveAcpUrl } from "./acp-ws.js";
 
 /**
  * Open the ACP wire. Resolves once the underlying WS is open AND the ACP
  * `initialize` handshake has completed. On any failure (open timeout,
  * initialize rejection) the WS is closed and the returned promise rejects.
+ *
+ * After the first successful open the wire self-heals: any remote close
+ * (abnormal OR a remote 1000) drops the socket and the next dispatch send
+ * re-opens + re-initializes it (bounded by `reconnect.maxAttempts`). Only a
+ * local `dispose()` is terminal. A failed re-bootstrap surfaces as a rejected
+ * send → the dispatcher emits a terminal `error` so the client is never left
+ * silently dead.
  */
 export async function bootstrapAcpWire(input: AcpWireBootstrapInput): Promise<AcpWireBootstrapResult> {
   const url = deriveAcpUrl(input.wsUrl);
   const factory = input.wsFactory ?? defaultWsFactory;
   const openTimeoutMs = input.openTimeoutMs ?? OPEN_TIMEOUT_MS_DEFAULT;
+  const reconnect = input.reconnect ?? DEFAULT_ACP_WIRE_RECONNECT;
+  const sessionId = input.sessionId ?? "unknown";
 
-  log.info("bootstrap.begin", { url });
+  log.info("bootstrap.begin", { sessionId, url });
 
-  const ws = factory(url, input.token);
+  // Late-bound so the socket's `reinitialize` can call acpConn.initialize once
+  // acpConn exists. The first open below awaits this — by which point the ref
+  // is set.
+  let acpConn: AcpPerProfileConnection | null = null;
 
-  await waitForOpen(ws, openTimeoutMs, url);
-
-  let onIncomingCb: ((raw: string) => void) | null = null;
-  ws.addEventListener("message", (evt) => {
-    if (typeof evt.data !== "string") return;
-    if (onIncomingCb) onIncomingCb(evt.data);
-  });
-  ws.addEventListener("close", (e) => {
-    log.info("ws.close", { code: e.code, reason: e.reason });
-  });
-  ws.addEventListener("error", () => {
-    log.warn("ws.error");
-  });
-
-  const acpConn = createAcpPerProfileConnection({
-    send: async (raw: string) => {
-      if (ws.readyState !== READY_STATE_OPEN) {
-        throw new Error("acp-wire-bootstrap.send: WS not open");
+  const socket = createManagedAcpSocket({
+    url,
+    token: input.token,
+    wsFactory: factory,
+    openTimeoutMs,
+    reconnect,
+    sessionId,
+    reinitialize: async () => {
+      if (acpConn === null) {
+        throw new Error("acp-wire-bootstrap: reinitialize before acpConn bound");
       }
-      ws.send(raw);
+      await acpConn.initialize();
     },
-    onIncoming: (cb) => {
-      onIncomingCb = cb;
+    // A remote close of the live socket (abnormal OR a remote 1000, e.g. overlay
+    // restart) strands any in-flight prompt — the dead child will never answer
+    // it. Reject pending so the dispatcher emits a terminal error instead of
+    // hanging. (Reconnect for the NEXT dispatch is still lazy-on-send; this only
+    // un-sticks the request that was mid-flight.)
+    onRemoteClose: () => {
+      acpConn?.rejectInflight(new Error("acp-wire-flap: connection lost"));
     },
+    ...(input.sleep ? { sleep: input.sleep } : {}),
+  });
+
+  acpConn = createAcpPerProfileConnection({
+    send: (raw: string) => socket.send(raw),
+    onIncoming: (cb) => socket.onIncoming(cb),
+    // Feed the socket generation so the connection re-attaches a captured
+    // conversation (session/load) on the fresh child after a reconnect.
+    currentEpoch: () => socket.epoch(),
+    // Open the wire (lazy reconnect) before the epoch is read, so the re-attach
+    // decision sees the final post-reconnect generation.
+    ensureReady: () => socket.ensureReady(),
+    ...(input.requestTimeoutMs !== undefined ? { requestTimeoutMs: input.requestTimeoutMs } : {}),
   });
 
   try {
-    await acpConn.initialize();
+    // Drive the first open + initialize. `open()` runs `openOnce`, which opens
+    // the WS, sets it live, then calls `reinitialize` (= acpConn.initialize).
+    // initialize's own send sees the now-open socket and goes out directly —
+    // no reentrancy. On reconnect the same path re-runs from the next send.
+    await socket.open();
   } catch (err: unknown) {
     log.warn("bootstrap.initialize-failed", {
+      sessionId,
       reason: err instanceof Error ? err.message : String(err),
     });
-    safeClose(ws);
     acpConn.dispose();
+    socket.dispose();
     throw err;
   }
 
-  log.info("bootstrap.done", { url });
+  log.info("bootstrap.done", { sessionId, url });
 
   let disposed = false;
   return {
@@ -125,56 +145,9 @@ export async function bootstrapAcpWire(input: AcpWireBootstrapInput): Promise<Ac
     dispose(): void {
       if (disposed) return;
       disposed = true;
-      log.debug("dispose");
-      acpConn.dispose();
-      safeClose(ws);
+      log.debug("dispose", { sessionId });
+      acpConn?.dispose();
+      socket.dispose();
     },
   };
-}
-
-function waitForOpen(ws: AcpWsLike, timeoutMs: number, url: string): Promise<void> {
-  if (ws.readyState === READY_STATE_OPEN) return Promise.resolve();
-  return new Promise<void>((resolve, reject) => {
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      log.warn("ws.open-timeout", { url, timeoutMs });
-      try {
-        ws.close();
-      } catch {
-        /* already closing */
-      }
-      reject(new Error(`acp-wire-bootstrap.open-timeout: ${timeoutMs}ms`));
-    }, timeoutMs);
-    ws.addEventListener("open", () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      log.debug("ws.open", { url });
-      resolve();
-    });
-    ws.addEventListener("close", (e) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      log.warn("ws.close-before-open", { url, code: e.code, reason: e.reason });
-      reject(new Error(`acp-wire-bootstrap.closed-before-open: code=${e.code} reason=${e.reason}`));
-    });
-    ws.addEventListener("error", () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      log.warn("ws.error-before-open", { url });
-      reject(new Error("acp-wire-bootstrap.error-before-open"));
-    });
-  });
-}
-
-function safeClose(ws: AcpWsLike): void {
-  try {
-    ws.close();
-  } catch {
-    /* already closed */
-  }
 }

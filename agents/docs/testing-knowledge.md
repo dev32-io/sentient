@@ -21,7 +21,7 @@ and why those tools were chosen. One `###` subsection per surface.
 **Why this tool:** WebRTC AEC, AudioWorklet timing, jitter-buffer behaviour, and cycle-audio-queue state can only be exercised end-to-end in a real browser. Mocked playback misses these failure modes; they show up only as user-visible regressions.
 **How:**
 1. `source scripts/env.sh`
-2. `docker compose -f deploy/docker/docker-compose.yml build gateway && docker compose up -d gateway`
+2. `docker compose -f deploy/macos/docker-compose.yml build gateway && docker compose -f deploy/macos/docker-compose.yml up -d gateway`
 3. `until curl -sk -o /dev/null -w "%{http_code}" https://localhost:8888/ | grep -q 200; do sleep 1; done`
 4. Open `https://localhost:8888` in Chrome. Self-signed cert → click Advanced → Proceed.
 
@@ -220,7 +220,7 @@ the wizard handler. Wizard rejections look like `wizard.unlock.failed`,
 Run after any change touching `gateway/src/api/wizard/`, `gateway/src/admin/install-state.ts`, `gateway/templates/wizard/`, or the webui wizard components.
 
 1. `rm -rf ~/.sentient/`
-2. Bring up the stack: `cd deploy/docker && docker compose up -d`
+2. Bring up the stack: `cd deploy/macos && docker compose up -d`
 3. Read the unlock code: `cat ~/.sentient/gateway/data/unlock-code` (or read from gateway log banner).
 4. Open `https://localhost:8888`, enter the unlock code.
 5. Walk fresh: `provider → voice → secrets → bringup → admin → finish`.
@@ -238,3 +238,59 @@ After upgrading across the v0.1.0 → v0.2.0 install-state schema bump:
 2. Restart gateway. Read the file again.
 3. Expect: `schema_version: "0.2.0"`, `wizard_cursor: "admin"`.
 4. Repeat with `bootstrap_complete: true`. Expect: `wizard_cursor: "finish"`.
+
+## Mobile (Android emulator + iOS simulator via Maestro)
+
+**Tool:** Maestro CLI against a running Android emulator (`avd`) or iOS simulator (`xcrun simctl`).
+**When:** After any change to `android/`, `ios/`, or `shared/mobile-sdk/` that touches auth, chat UI, or WS transport — before merging.
+**How:** Write the Maestro YAML to `/tmp/<flow>.yaml` at run time (never commit it). Execute with `maestro test /tmp/<flow>.yaml`. Evidence screenshots → `qa/mobile/screens/` (gitignored).
+**testTags used:** `login-avatar-<userId>`, `pin-key-<n>`, `chat-screen`, `chat-input`, `chat-send`, `message-bubble-<index>`, `chat-message-list`, `login-error`.
+
+### T1 — Mobile login happy path
+**Scenario:** Avatar tap + correct 4-digit PIN lands the user on the chat screen.
+**Why added:** D-A2 phase gate; regression guard for the login path on both platforms: the auth screen writes the token, then chat entry builds a chat-scoped `MobileSession` whose `open()` drives the SDK to READY. (No SDK singleton — the deleted `SdkStore` path is gone.)
+**Steps:**
+1. Pre-state: gateway running, users seeded, app at login screen (logged out).
+2. `tapOn id: login-avatar-<userId>` (the target user's avatar).
+3. `tapOn id: pin-key-1`, `pin-key-2`, `pin-key-3`, `pin-key-4` (valid PIN).
+4. `assertVisible id: chat-screen`.
+**Expected user-visible:** Chat screen renders. **Expected log trail:** `auth.ok`; `session.ready` in gateway logs.
+**Platform notes:** Same testTag IDs on both Android (Compose `Modifier.testTag`) and iOS (SwiftUI `.accessibilityIdentifier`). Write one `/tmp/login-happy.yaml` per platform, identical flow body.
+
+### T2 — Mobile login bad PIN
+**Scenario:** Wrong PIN is rejected; error indicator shown; user stays on login screen.
+**Why added:** D-A2 phase gate; validates that `login-error` testTag renders and no token is persisted on credential failure.
+**Steps:**
+1. Pre-state: logged out.
+2. `tapOn id: login-avatar-<userId>`.
+3. Enter four wrong digits via `pin-key-*`.
+4. `assertVisible id: login-error`.
+5. `assertNotVisible id: chat-screen`.
+**Expected user-visible:** Error state on the PIN pad; login screen stays. **Expected log trail:** one WARN `invalid-credentials` in gateway; no auth token written.
+
+### T3 — Mobile send/receive (login → chat → assistant reply)
+**Scenario:** After login, the user types a message, sends it, and receives an LLM reply — both committed to the message list.
+**Why added:** D-A3 phase gate; end-to-end contract across login → WS `READY` → `ClientMessage.TextInput` → Hermes round-trip → `ConversationEntry` rendering. Builds on T1.
+**Steps:**
+1. Pre-state: logged in, connection READY (`ConnectionState.status == READY`) (complete T1 first, or launch into a pre-authenticated session).
+2. `tapOn id: chat-input` → `inputText: "hello"` → `tapOn id: chat-send`.
+3. `hideKeyboard` (soft keyboard obscures list on Android).
+4. `assertVisible id: message-bubble-0` (user bubble commits immediately).
+5. `extendedWaitUntil id: message-bubble-1, timeout: 40000` (LLM round-trip via Hermes, ~40 s budget).
+6. `assertVisible id: chat-message-list`.
+**Expected user-visible:** User bubble at index 0; assistant bubble at index 1 with non-empty text. **Expected log trail:** `text.input` frame out on transport; `conversation.entry` event received and rendered.
+**Platform notes:** Maestro YAML written to `/tmp/send-receive-android.yaml` (appId `io.sentient.android`) and `/tmp/send-receive-ios.yaml` (appId `io.sentient.ios`) at run time. Same step body; only `appId` differs. iOS simulator does not require `hideKeyboard` between send and assert.
+
+### T6 — Mobile settings logout (version + clear-token + disconnect → login)
+**Scenario:** From chat, open Settings, confirm the app-version string, tap Log out, and land back on the login screen — proving the token was cleared + the WS disconnected. Relaunch (without clearing app data) and confirm login again, proving the clear was persistent.
+**Why added:** D-A5 phase gate. Logout clears the token + display name; the chat view's teardown (VM clear / `deinit` → `MobileSession.close`) disconnects the WS. Regression guard: a future change that disconnects but forgets to clear the token would silently auto-resume on relaunch — only the relaunch leg catches it.
+**testTags used:** `settings-open` (chat top bar gear), `settings-screen`, `settings-version`, `settings-logout`, `settings-back`, plus `login-avatar-<userId>` for the return assertion.
+**Steps:**
+1. Pre-state: logged in, connection READY (`ConnectionState.status == READY`), chat showing (complete T1 first).
+2. `tapOn id: settings-open` → `assertVisible id: settings-screen`.
+3. `assertVisible id: settings-version` AND assert its text is a non-empty version string (`<name> (<code>)`, e.g. `0.0.1 (1)`).
+4. `tapOn id: settings-logout`.
+5. `assertVisible id: login-avatar-<userId>` (avatar grid OR PIN pad — both are the login screen; see platform note) AND `assertNotVisible id: chat-input`.
+6. Relaunch: `am force-stop` then `am start` (NEVER `pm clear` — that clears the token artificially and voids the proof). `assertVisible id: login-avatar-<userId>`; gateway shows NO new `attach` / `session.ready` (no auto-resume).
+**Expected user-visible:** Settings shows version + Log out; after logout the login screen returns; relaunch returns to login. **Expected log trail (gateway):** on logout — `[ws] client-disconnected`, `[ws] session-cleanup`, `[hermes-adapter-client:wire-bootstrap] ws.close code=1000`, `[person-session] detach attachmentCount=0`, `[gateway:session-router] release remainingBindings=0`; on relaunch — silence (no attach).
+**Platform notes:** Drive method on this stack was the **`android` CLI + adb** (Maestro not installed): `android layout --device=<serial> --pretty` yields each element's `center` coord → `adb shell input tap <x> <y>`; assertions are `android layout | grep <resource-id>`; screenshots via `adb exec-out screencap -p`. Same flow body for iOS via `xcrun simctl` + `.accessibilityIdentifier`. **Logout return state:** after logout *within the same process* the login screen re-renders in the PIN phase (Android `AuthViewModel` retains `selectedUser`), so step 5's `login-avatar` assertion may need a preceding `settings-back`-style back tap OR is satisfied by the PIN pad (`pin-key-1`); the avatar grid reliably reappears on the *relaunch* leg (fresh ViewModel ⇒ PICK_USER). Gateway logs on the macOS deploy write to `~/.sentient/gateway/logs/YYYY-MM-DD.log` (UTC), NOT `docker logs` stdout.

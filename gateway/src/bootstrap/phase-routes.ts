@@ -3,6 +3,7 @@ import type { UserPortStore } from "../admin/user-port-store.js";
 import { createSessionManager } from "../auth/session-manager.ts";
 import type { SessionManager } from "../auth/session-manager.ts";
 import type { StartupConfig } from "../config/startup-config.ts";
+import { type AcpWireRegistry, createAcpWireRegistry } from "../hermes-adapter-client/acp-wire-registry.js";
 import { getLog } from "../logging/logger.ts";
 import { createPersonSessionRegistry } from "../person-session/person-session-registry.js";
 import type { PersonSessionRegistry } from "../person-session/person-session-registry.js";
@@ -22,6 +23,7 @@ export interface PhaseRoutesInput {
 export interface PhaseRoutesOutput {
   readonly sessionManager: SessionManager;
   readonly personSessions: PersonSessionRegistry;
+  readonly acpWireRegistry: AcpWireRegistry;
   readonly sessionControls: SessionControlsRegistry;
 }
 
@@ -30,11 +32,15 @@ export function runPhaseRoutes(input: PhaseRoutesInput): PhaseRoutesOutput {
 
   const sessionManager = createSessionManager({ maxSessions: cfg.maxSessions });
   const personSessions = buildPersonSessionRegistry(cfg, internalSecretsStore, profileStore, userPortStore);
+  // One pooled ACP wire per userId, ref-counted across PersonSession
+  // attachments — keeps a second client (webui + mobile) from dialing a
+  // second wire, which the overlay would evict the first one for.
+  const acpWireRegistry = createAcpWireRegistry();
   const sessionControls = createSessionControlsRegistry();
 
   log.info("phase-routes-complete");
 
-  return { sessionManager, personSessions, sessionControls };
+  return { sessionManager, personSessions, acpWireRegistry, sessionControls };
 }
 
 function buildPersonSessionRegistry(

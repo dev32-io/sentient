@@ -30,7 +30,7 @@ import {
  * protocol error; the gateway fails the session loudly rather than silently
  * defaulting, so policy gates never quietly mis-classify a new client kind.
  */
-export const clientTypeSchema = z.enum(["webui", "cube"]);
+export const clientTypeSchema = z.enum(["webui", "cube", "mobile"]);
 export type ClientType = z.infer<typeof clientTypeSchema>;
 
 export const sessionConfigureSchema = z.object({
@@ -53,6 +53,7 @@ export const audioEndSchema = z.object({
 export const textInputSchema = z.object({
   type: z.literal("text.input"),
   text: z.string().min(1).max(10000),
+  pendingId: z.string().optional(),
 });
 
 export const toolConfirmSchema = z.object({

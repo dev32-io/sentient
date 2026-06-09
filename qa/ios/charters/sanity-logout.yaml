@@ -1,0 +1,50 @@
+# iOS logout sanity — start at login, log in → chat (login→chat happy path),
+# then history → settings → logout → assert back at login.
+appId: io.dev32.sentient.debug
+---
+- launchApp
+- extendedWaitUntil:
+    visible:
+      text: "Who's here?"
+    timeout: 20000
+
+# Login → chat (login→chat happy path).
+- tapOn:
+    id: "login-avatar-.*"
+    index: 0
+- tapOn:
+    id: "pin-key-1"
+- tapOn:
+    id: "pin-key-2"
+- tapOn:
+    id: "pin-key-3"
+- tapOn:
+    id: "pin-key-4"
+- extendedWaitUntil:
+    visible:
+      id: "chat-screen"
+    timeout: 20000
+- takeScreenshot: sanity-ios-login-to-chat
+
+# Logout: history drawer → settings gear → Log out → back to login.
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-open"
+    timeout: 6000
+- tapOn:
+    id: "settings-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-logout"
+    timeout: 6000
+- tapOn:
+    id: "settings-logout"
+- extendedWaitUntil:
+    visible:
+      text: "Who's here?"
+    timeout: 15000
+- assertNotVisible:
+    id: "chat-input"
+- takeScreenshot: sanity-ios-logout-to-login

@@ -1,0 +1,13 @@
+appId: io.dev32.sentient.debug
+---
+# 04b-reconnect-recover — assert the connection banner clears after WiFi restore.
+#
+# Pre-condition (set by harness): WiFi re-enabled on emulator-5554, app still
+# running from 04-reconnect.yaml. The SDK is retrying/reconnecting.
+# This flow asserts the banner clears and the composer is usable again.
+- extendedWaitUntil:
+    notVisible:
+      id: "connection-lost-banner"
+    timeout: 40000
+- assertVisible:
+    id: "composer-input"

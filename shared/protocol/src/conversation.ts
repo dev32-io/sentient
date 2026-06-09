@@ -40,6 +40,7 @@ export const conversationFeedUserItemSchema = z.object({
   kind: z.literal("user"),
   channel: conversationUserChannelSchema,
   content: z.string(),
+  pendingId: z.string().optional(),
 });
 
 export const conversationFeedTriggerItemSchema = z.object({

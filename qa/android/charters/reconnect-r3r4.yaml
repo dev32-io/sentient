@@ -1,0 +1,60 @@
+# Maestro E2E — Android R3/R4 connection-lost banner re-verification (Task 10 fix)
+#
+# Phase A (this flow): reach chat (READY) with gateway UP. Backend URL is baked
+#   (wss://10.0.2.2:8888 via local.properties); setup screen only shows if the
+#   user opened it. Login with PIN 1234.
+#
+# E2E matrix:
+# Case | Viewport | Pre-state | Action | Expected user-visible | Expected log trail
+# -----|----------|-----------|--------|-----------------------|-------------------
+# R3   | 390x844 emu | chat READY | docker stop gateway | stays on chat; reconnecting then connection-lost; NOT login | sdk: drop, exhaust; hasSession preserved
+# R4   | 390x844 emu | connection-lost | docker start + tap reconnect | READY, banner clears, reply | sdk: reconnect, ready
+appId: io.dev32.sentient.debug
+---
+- launchApp:
+    clearState: true
+
+# ── Backend setup — only if it appears (no baked URL) ─────────────────────────
+- runFlow:
+    when:
+      visible:
+        id: "backend-setup"
+    commands:
+      - tapOn:
+          id: "backend-host"
+      - eraseText: 50
+      - inputText: "10.0.2.2"
+      - tapOn:
+          id: "backend-port"
+      - eraseText: 10
+      - inputText: "8888"
+      - tapOn:
+          id: "backend-security-TLS_TRUST_SELF_SIGNED"
+      - tapOn:
+          id: "backend-save"
+
+# ── Login (PIN 1234) ──────────────────────────────────────────────────────────
+- extendedWaitUntil:
+    visible:
+      id: "login-avatar-.*"
+    timeout: 20000
+- tapOn:
+    id: "login-avatar-.*"
+    index: 0
+- tapOn:
+    id: "pin-key-1"
+- tapOn:
+    id: "pin-key-2"
+- tapOn:
+    id: "pin-key-3"
+- tapOn:
+    id: "pin-key-4"
+
+# ── Confirm chat (READY) ──────────────────────────────────────────────────────
+- extendedWaitUntil:
+    visible:
+      id: "chat-screen"
+    timeout: 20000
+- assertVisible:
+    id: "chat-input"
+- takeScreenshot: R3-android-chat-ready

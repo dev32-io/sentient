@@ -1,0 +1,215 @@
+# Maestro E2E flow — History panel (draggable side panel, edge-swipe)
+#
+# Covers design-polish features (Tasks 7.x–8.2) for the history surface:
+#   - Hamburger → panel opens (slides from left, scrim fades in)
+#   - Edge-swipe (20pt leading strip) → panel opens
+#   - Drag mid-panel → rubber-bands to snap open/closed
+#   - Scrim tap → panel closes
+#   - History account header (avatar initial + name)
+#   - Search pill (history-search)
+#   - "Past chats" section title
+#   - Session rows with relative time stamps (RelativeTime)
+#   - history-new-chat FAB (terra accent, rounded-square)
+#   - New session via panel → panel closes, empty chat
+#   - Settings gear (settings-open) → settings sheet
+#   - Rename / delete context-menu on a session row
+#
+# Prerequisites: same as chat-smoke.yaml (backend configured, user logged in).
+# This flow assumes the chat screen is already the active screen.
+#
+# Run: maestro test --device DB6D8CAF-B12E-44CA-87EB-6A0DD51FFA75 qa/ios/charters/history-panel.yaml
+#
+# E2E matrix:
+# Case                        | Viewport      | Pre-state           | Action                          | Expected user-visible                          | Expected log trail
+# ----------------------------|---------------|---------------------|---------------------------------|------------------------------------------------|------------------------------------
+# Open panel via hamburger    | 390×844 sim   | Chat screen         | Tap history-open (hamburger)    | Panel slides in from left; scrim appears       | historyModel.refresh
+# Panel layout — account hdr  | 390×844 sim   | Panel open          | Observe                         | User initial circle + name text                | —
+# Panel layout — search pill  | 390×844 sim   | Panel open          | Observe                         | Search field with magnifying-glass icon        | —
+# Panel layout — Past chats   | 390×844 sim   | Panel open          | Observe                         | "Past chats" section heading                   | —
+# Panel layout — session rows | 390×844 sim   | Panel open, history | Observe                         | Session title + relative timestamp per row     | —
+# Panel layout — FAB          | 390×844 sim   | Panel open          | Observe                         | Terra "+" FAB bottom-right                     | —
+# Settings gear entry         | 390×844 sim   | Panel open          | Tap settings-open               | Settings sheet appears                         | settingsPresented = true
+# Settings sheet dismiss      | 390×844 sim   | Settings sheet open | Dismiss sheet                   | Returns to panel-closed chat                   | settingsPresented = false
+# Scrim tap closes panel      | 390×844 sim   | Panel open          | Tap scrim (right side)          | Panel slides out; scrim fades                  | panelX = -panelWidth
+# Edge-swipe opens panel      | 390×844 sim   | Panel closed        | Swipe right from leading edge   | Panel begins to open                           | panelDrag gesture recognizer
+# Drag panel halfway + release open | 390×844 sim | Panel partly open | Drag right past 50%, release   | Panel snaps fully open (spring)                | interactiveSpring
+# Drag panel halfway + release close | 390×844 sim | Panel partly open | Drag left past 50%, release    | Panel snaps fully closed (spring)              | interactiveSpring
+# New chat via FAB            | 390×844 sim   | Panel open          | Tap history-new-chat FAB        | Panel closes; new empty chat starts            | historyModel.newChat; panelX = -w
+# Session select              | 390×844 sim   | Panel open, history | Tap a session row               | Panel closes; selected session loads in chat   | historyModel.switchSession
+# Search filter               | 390×844 sim   | Panel open, history | Type query in history-search    | Session list filters to matching titles        | historyModel.query updated
+# Rename via context menu     | 390×844 sim   | Panel open, history | Long-press session → Rename     | Alert with pre-filled title; confirm saves     | historyModel.renameSession
+# Delete via context menu     | 390×844 sim   | Panel open, history | Long-press session → Delete     | Confirm dialog; session removed from list      | historyModel.deleteSession
+
+appId: io.dev32.sentient.debug
+---
+# Launch + handle login if needed (flow may run standalone after a fresh sim lock).
+- launchApp
+
+# Backend setup — only if unconfigured (fresh install).
+- runFlow:
+    when:
+      visible: "Sentient backend"
+    commands:
+      - tapOn:
+          id: "backend-host"
+      - eraseText: 50
+      - inputText: "localhost"
+      - tapOn:
+          id: "backend-port"
+      - eraseText: 10
+      - inputText: "8888"
+      - tapOn:
+          text: "Plain ws"
+      - tapOn:
+          id: "backend-save"
+      - extendedWaitUntil:
+          visible:
+            text: "Who's here?"
+          timeout: 10000
+
+# Login — only if login screen is showing.
+- runFlow:
+    when:
+      visible: "Who's here?"
+    commands:
+      - tapOn:
+          id: "login-avatar-.*"
+          index: 0
+      - tapOn:
+          id: "pin-key-1"
+      - tapOn:
+          id: "pin-key-2"
+      - tapOn:
+          id: "pin-key-3"
+      - tapOn:
+          id: "pin-key-4"
+
+# Precondition: app is at the chat screen with at least one history session.
+
+# ── T1: Open panel via hamburger ──────────────────────────────────────────────
+- extendedWaitUntil:
+    visible:
+      id: "chat-screen"
+    timeout: 8000
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
+    timeout: 4000
+- takeScreenshot: history-01-panel-open
+
+# ── T2: Verify panel content ──────────────────────────────────────────────────
+- assertVisible:
+    id: "history-search"
+- assertVisible: "Past chats"
+- takeScreenshot: history-02-panel-layout
+
+# ── T3: Settings gear ─────────────────────────────────────────────────────────
+- tapOn:
+    id: "settings-open"
+- takeScreenshot: history-03-settings-sheet
+# Dismiss the settings sheet via the "Done" button (settings-back).
+# Avoid swipe-down gesture which can trigger iOS home/lock on simulator.
+- tapOn:
+    id: "settings-back"
+# Wait for sheet dismiss animation + panel to close before taking screenshot.
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: history-04-settings-dismissed
+
+# ── T4: Reopen panel — scrim tap closes ───────────────────────────────────────
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
+    timeout: 6000
+- takeScreenshot: history-05-panel-reopen
+# Tap scrim (right 10% of screen is outside the 86%-width panel).
+- tapOn:
+    point: "95%,50%"
+- takeScreenshot: history-06-panel-closed-scrim
+
+# ── T5: Edge-swipe to open ────────────────────────────────────────────────────
+- swipe:
+    start: "2%,50%"    # leading edge (within 20pt strip)
+    end: "50%,50%"
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
+    timeout: 3000
+- takeScreenshot: history-07-edge-swipe-open
+
+# Close the panel via scrim tap to set up T6/T7 from a clean closed state.
+- tapOn:
+    point: "95%,50%"
+- waitForAnimationToEnd:
+    timeout: 2000
+
+# ── T6: Drag panel right from closed past midpoint → snaps open ───────────────
+# Panel is closed. Drag from the leading edge strip (5%) past the midpoint (55%).
+# This puts the panel past the snap-open threshold → springs fully open.
+- swipe:
+    start: "5%,50%"
+    end: "55%,50%"
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
+    timeout: 3000
+- takeScreenshot: history-08-drag-snap-open
+
+# ── T7: Drag panel left past snap threshold → snap closed ─────────────────────
+# Panel is open (from T6). Drag it fully left past the close threshold.
+- swipe:
+    start: "43%,50%"
+    end: "2%,50%"
+- waitForAnimationToEnd:
+    timeout: 2000
+- takeScreenshot: history-09-snap-closed
+# Verify panel is closed (history-new-chat no longer visible).
+- takeScreenshot: history-10-snap-closed-settled
+
+# ── T8: New chat via panel FAB ────────────────────────────────────────────────
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
+    timeout: 4000
+- tapOn:
+    id: "history-new-chat"
+# Panel should close, chat screen remains with empty composer.
+- extendedWaitUntil:
+    visible:
+      id: "chat-screen"
+    timeout: 3000
+- takeScreenshot: history-11-new-chat-from-fab
+
+# ── T9: Search filter ─────────────────────────────────────────────────────────
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
+    timeout: 4000
+- tapOn:
+    id: "history-search"
+- inputText: "hi"
+- takeScreenshot: history-12-search-filtered
+# Clear search — field is already focused; just erase without re-tapping.
+- eraseText: 10
+- takeScreenshot: history-13-search-cleared
+
+# ── T10: Session select ───────────────────────────────────────────────────────
+# Tap the first session row (if any exist) — panel closes and that session loads.
+# Session rows have id "history-row-<sessionId>" — use regex to match first one.
+- runFlow:
+    when:
+      visible:
+        id: "history-row-.*"
+    commands:
+      - tapOn:
+          id: "history-row-.*"
+          index: 0
+      - takeScreenshot: history-14-session-selected

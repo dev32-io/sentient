@@ -1,21 +1,3 @@
 # Android Client
 
-Kotlin/Compose mobile client for Sentient voice assistant. Deferred to Phase 6.
-
-## MANDATORY — Read Rules First
-
-Rules live at the repo root: cross-cutting at `.claude/rules/*.md`, android-specific at `.claude/rules/android/*.md`. Auto-loaded by Claude Code via `paths:` frontmatter when you read matching source. Android details: `agents/docs/android/*-details.md`.
-
-## Stack
-
-- Language: Kotlin
-- UI: Jetpack Compose
-- DI: Koin
-- Networking: OkHttp WebSocket
-- Wake word: Porcupine (Picovoice)
-- Audio: AudioRecord + ring buffer
-- Build: Gradle
-
-## Status
-
-Not yet implemented. Rules and architecture documented for when Phase 6 begins.
+Native Android client for Sentient — a thin Jetpack Compose UI over the shared KMP SDK (`shared/mobile-sdk`). Transport, session/audio state, reconnect, and logging live in the SDK, not here. STT/TTS are server-side; no on-device wake word in v1.
