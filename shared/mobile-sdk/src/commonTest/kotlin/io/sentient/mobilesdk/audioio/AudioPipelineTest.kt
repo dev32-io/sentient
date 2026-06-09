@@ -56,11 +56,13 @@ class AudioPipelineTest {
         var startedRate: Int? = null
         var stopped = false
         var cleared = 0
+        var playbackIdle = true
         val enqueued = mutableListOf<ByteArray>()
         override suspend fun start(sampleRate: Int) { startedRate = sampleRate }
         override fun enqueue(pcm16: ByteArray) { enqueued += pcm16 }
         override suspend fun stop() { stopped = true }
         override fun clear() { cleared += 1 }
+        override val isPlaybackIdle: Boolean get() = playbackIdle
     }
 
     private class Sink {
@@ -277,14 +279,19 @@ class AudioPipelineTest {
     }
 
     @Test
-    fun audioDone_clears_speaking_and_drains_tail() = runTest {
+    fun audioDone_holds_speaking_until_player_drains_then_clears() = runTest {
         var speaking = true
         val gate = EchoGate(echoCfg)
         val (p, _) = pipeline(null, FakePlayback(), this, echoGate = gate, onStateChanged = { sp, _ -> speaking = sp })
         p.onAudioStart("c1")
         p.onAudioDone("c1")
-        assertTrue(!speaking, "isSpeaking=false on audio.done")
-        // Gate moved playback→tail; a mid frame still fails the tail threshold.
+        // audio.done = server finished SENDING; the player is still draining its tail,
+        // so isSpeaking (and the interrupt affordance) is HELD, not cleared here.
+        assertTrue(speaking, "isSpeaking stays true after audio.done while the speaker tail plays")
+        // The player reports idle + the settle elapses → speaking clears.
+        advanceUntilIdle()
+        assertTrue(!speaking, "isSpeaking clears once the speaker physically drained")
+        // Gate moved playback→tail at audio.done; a mid frame still fails the tail threshold.
         val mid = ShortArray(64) { 2000 }
         assertTrue(!gate.acceptFrame(mid, nowMs = 1), "tail still elevated right after drain")
     }
@@ -381,6 +388,10 @@ class AudioPipelineTest {
         assertTrue(speaking, "isSpeaking=true on text-path audio.start")
         assertEquals(AudioState.INACTIVE, lastState, "FSM stays INACTIVE on the text path")
         p.onAudioDone("c1")
-        assertTrue(!speaking, "isSpeaking=false on text-path audio.done")
+        // Held past audio.done while the player drains its tail (mirrors webui isAudioPlaying);
+        // clears once the player reports idle + the settle elapses.
+        assertTrue(speaking, "isSpeaking held after text-path audio.done while the tail plays")
+        advanceUntilIdle()
+        assertTrue(!speaking, "isSpeaking clears once the text-path player physically drained")
     }
 }

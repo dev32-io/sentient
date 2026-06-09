@@ -75,6 +75,24 @@ class AndroidAudioPlaybackAdapter : AudioPlaybackAdapter {
 
     private var enqueuedBytes = 0L
 
+    /**
+     * Idle when there is no track, nothing waiting in the overflow ring, AND the
+     * playback head has caught up to every frame written — i.e. the speaker has
+     * physically played everything enqueued. `flush()` (clear) resets both the head
+     * and [enqueuedBytes] to keep the comparison consistent across barge-ins.
+     */
+    override val isPlaybackIdle: Boolean
+        get() {
+            val active = track ?: return true
+            if (!overflow.isEmpty()) return false
+            val framesWritten = enqueuedBytes / (BYTES_PER_PCM16_SAMPLE * CHANNEL_COUNT)
+            // playbackHeadPosition throws on a concurrently-released track — degrade to
+            // "idle" (no-crash contract) so a teardown race can't crash the drain poll.
+            val head = runCatching { active.playbackHeadPosition.toLong() and 0xFFFFFFFFL }
+                .getOrElse { return true }
+            return head >= framesWritten
+        }
+
     override suspend fun start(sampleRate: Int) {
         if (track != null) {
             log.debug("start-already-active", mapOf("sampleRate" to sampleRate))
@@ -117,6 +135,9 @@ class AndroidAudioPlaybackAdapter : AudioPlaybackAdapter {
         }
         overflow.clear()
         runCatching { active.flush() }.onFailure { log.warn("clear-flush-failed", mapOf("cause" to (it.message ?: "unknown"))) }
+        // flush() resets the playback head to 0 — reset the written-frames baseline too
+        // so isPlaybackIdle stays consistent for the next stream.
+        enqueuedBytes = 0L
         log.info("clear", mapOf("reason" to "barge-in/interrupt drop-guard"))
     }
 

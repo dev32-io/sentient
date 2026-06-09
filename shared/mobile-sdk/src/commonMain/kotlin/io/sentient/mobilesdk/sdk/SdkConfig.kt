@@ -64,6 +64,13 @@ private const val DEFAULT_OUTPUT_SAMPLE_RATE = 24_000
 private const val DEFAULT_FRAME_DURATION_MS = 20
 
 /**
+ * Settle (ms) after the playback adapter reports idle (speaker physically drained)
+ * before the speaking state — and the interrupt affordance — clears. A small margin
+ * so the very tail of a reply isn't clipped from the affordance. Valid ~0–1000ms.
+ */
+private const val DEFAULT_PLAYBACK_DRAIN_SETTLE_MS = 250L
+
+/**
  * Audio voice-pipeline tunables (E3). All values are operator-tuned; the
  * orchestrator forwards them into the EchoGate / SpeechGate / capture rate. The
  * [echoGate] thresholds and [speechGate] debounce ARE the user-tuned constants
@@ -91,6 +98,7 @@ data class AudioPipelineConfig(
     val inputSampleRate: Int = DEFAULT_INPUT_SAMPLE_RATE,
     val outputSampleRate: Int = DEFAULT_OUTPUT_SAMPLE_RATE,
     val frameDurationMs: Int = DEFAULT_FRAME_DURATION_MS,
+    val playbackDrainSettleMs: Long = DEFAULT_PLAYBACK_DRAIN_SETTLE_MS,
 )
 
 /**

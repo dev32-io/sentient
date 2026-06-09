@@ -39,6 +39,8 @@ import io.sentient.mobilesdk.sdk.AudioInput
 import io.sentient.mobilesdk.sdk.AudioState
 import io.sentient.mobilesdk.util.Clock
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -50,6 +52,12 @@ private const val OPUS_DECODE_RATE_HZ = 48_000
 
 /** The connector.audio.start encoding value that selects opus-decode mode. */
 private const val ENCODING_OPUS = "opus"
+
+/** Poll interval (ms) while waiting for the player to physically drain after audio.done. */
+private const val DRAIN_POLL_MS = 50L
+
+/** Default settle (ms) after the player reports idle before clearing the speaking state. */
+private const val DEFAULT_DRAIN_SETTLE_MS = 250L
 
 /**
  * The voice flow manager. One per orchestrator; reusable across startMic cycles.
@@ -70,6 +78,8 @@ private const val ENCODING_OPUS = "opus"
  * @param preRollFrames Pre-roll frames for the uplink onset flush.
  * @param onStateChanged Pushes isSpeaking + FSM state into the orchestrator's StateDeriver.
  * @param onBargeIn Mic-onset-while-speaking barge-in signal (default no-op).
+ * @param playbackDrainSettleMs Settle (ms) after the player reports idle before the
+ *   speaking state clears — keeps the interrupt affordance through the speaker tail.
  */
 class AudioPipeline(
     capture: AudioCaptureAdapter?,
@@ -86,6 +96,7 @@ class AudioPipeline(
     preRollFrames: Int,
     private val onStateChanged: (isSpeaking: Boolean, fsmState: AudioState) -> Unit,
     private val onBargeIn: (cycleId: String) -> Unit = {},
+    private val playbackDrainSettleMs: Long = DEFAULT_DRAIN_SETTLE_MS,
 ) {
     private val log = createLogger("audio", "pipeline")
 
@@ -122,6 +133,12 @@ class AudioPipeline(
     // done / playback.stop). Carried into the barge-in log so a mic-onset-over-TTS
     // is traceable to the cycle it cut. "" when no TTS is active.
     private var activeCycleId = ""
+
+    // Drain-watch: true between audio.done and the speaker physically draining. While
+    // true, isSpeaking/ASSISTANT_SPEAKING (and the interrupt affordance) are HELD —
+    // audio.done only means the server finished sending, the player is still playing.
+    private var framesDone = false
+    private var drainJob: Job? = null
 
     // ── Uplink ────────────────────────────────────────────────────────────────
 
@@ -164,6 +181,18 @@ class AudioPipeline(
      * bytes through at the announced rate (or outputSampleRate fallback).
      */
     fun onAudioStart(cycleId: String, encoding: String? = null, sampleRate: Int? = null) {
+        // A NEWER cycle's audio arriving while a prior cycle is still playing/queued →
+        // drop the superseded audio so the user hears the LATEST response, not the tail
+        // of the old one (webui parity). The cycleId guard in onAudioFrame/onAudioDone
+        // then drops any late frames/done still in flight for the superseded cycle.
+        if (activeCycleId.isNotEmpty() && activeCycleId != cycleId) {
+            log.info("downlink-supersede", mapOf("superseded" to activeCycleId, "next" to cycleId))
+            playback?.clear()
+            pendingFrames.clear()
+        }
+        // A new cycle supersedes any pending drain-watch from the prior cycle.
+        drainJob?.cancel()
+        framesDone = false
         opusMode = encoding.equals(ENCODING_OPUS, ignoreCase = true)
         val playbackRate = if (opusMode) OPUS_DECODE_RATE_HZ else (sampleRate ?: outputSampleRate)
         log.info(
@@ -204,6 +233,13 @@ class AudioPipeline(
      */
     fun onAudioFrame(frame: ByteArray, cycleId: String) {
         if (playback == null) return
+        // Drop frames from a superseded cycle (a newer audio.start moved activeCycleId
+        // on). Dropping BEFORE decode is essential in opus mode — feeding a stale chunk
+        // would corrupt the freshly-reset decoder state for the new cycle.
+        if (activeCycleId.isNotEmpty() && cycleId != activeCycleId) {
+            log.debug("downlink-frame-stale-drop", mapOf("frameCycle" to cycleId, "activeCycle" to activeCycleId))
+            return
+        }
         if (!opusMode) {
             enqueueOrBuffer(frame, cycleId)
             return
@@ -230,19 +266,59 @@ class AudioPipeline(
         }
     }
 
-    /** connector.audio.done: drain the echo tail, reset the opus decoder, clear speaking. */
+    /**
+     * connector.audio.done: the server finished SENDING frames — but the player is
+     * still playing its buffered tail. Drain the echo tail + reset the decoder now,
+     * then HOLD the speaking state (and the interrupt affordance) until the player
+     * physically drains (armDrainWatch), instead of clearing it here.
+     */
     fun onAudioDone(cycleId: String) {
         log.info("downlink-done", mapOf("cycleId" to cycleId))
+        // Stale audio.done for a superseded cycle — the active cycle owns the state.
+        if (activeCycleId.isNotEmpty() && cycleId != activeCycleId) {
+            log.debug("downlink-done-stale-drop", mapOf("doneCycle" to cycleId, "activeCycle" to activeCycleId))
+            return
+        }
         echoGate.onPlaybackDrain(cycleId, clock.nowMs())
         if (opusMode) opusDecoder.reset()
+        framesDone = true
+        armDrainWatch(cycleId)
+    }
+
+    /**
+     * After audio.done, poll the playback adapter until it has PHYSICALLY drained
+     * (every enqueued frame played out the speaker), then a short settle, then clear
+     * the speaking state + fire the FSM AudioDone. Holding it this long is what keeps
+     * the interrupt affordance visible through the speaker tail (webui parity). A new
+     * cycle (onAudioStart) or an interrupt (onPlaybackStop) cancels the watch.
+     */
+    private fun armDrainWatch(cycleId: String) {
+        drainJob?.cancel()
+        val pb = playback ?: run { finalizeDrain(cycleId); return }
+        drainJob = scope.launch {
+            while (framesDone && !pb.isPlaybackIdle) delay(DRAIN_POLL_MS)
+            if (!framesDone) return@launch // superseded by a new cycle / interrupt
+            delay(playbackDrainSettleMs)
+            if (framesDone && pb.isPlaybackIdle) finalizeDrain(cycleId)
+        }
+    }
+
+    /** Clear the speaking latch + advance the FSM once the speaker has truly drained. */
+    private fun finalizeDrain(cycleId: String) {
+        if (!framesDone) return
+        framesDone = false
         isSpeaking = false
         activeCycleId = ""
+        log.info("downlink-drained", mapOf("cycleId" to cycleId))
         transition(AudioInput.AudioDone, cycleId)
     }
 
     /** playback.stop (barge-in / interrupt): cancel echo state, flush playback, reset decoder, clear speaking. */
     fun onPlaybackStop(reason: String, cycleId: String) {
         log.info("downlink-stop", mapOf("reason" to reason, "cycleId" to cycleId))
+        // Interrupt/barge-in clears speaking immediately — cancel any pending drain-watch.
+        drainJob?.cancel()
+        framesDone = false
         echoGate.onPlaybackCancel(cycleId)
         playback?.clear()
         if (opusMode) opusDecoder.reset()
@@ -264,6 +340,8 @@ class AudioPipeline(
      */
     fun suspendPlayback() {
         log.info("suspend")
+        drainJob?.cancel()
+        framesDone = false
         uplink.cancel()
         playbackReady = false
         pendingFrames.clear()

@@ -33,4 +33,13 @@ interface AudioPlaybackAdapter {
 
     /** Drop all queued frames immediately without closing the output (barge-in / interrupt). */
     fun clear()
+
+    /**
+     * True when nothing is currently scheduled or playing — every enqueued frame has
+     * PHYSICALLY finished playing out the device, not merely been handed off. The
+     * pipeline polls this after `audio.done` to hold the "speaking" state (and the
+     * interrupt affordance) until the speaker tail actually drains, mirroring the
+     * webui playback adapter's drain signal. A null/absent output reads idle (true).
+     */
+    val isPlaybackIdle: Boolean
 }

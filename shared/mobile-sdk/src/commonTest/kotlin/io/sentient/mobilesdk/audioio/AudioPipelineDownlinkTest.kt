@@ -26,7 +26,9 @@ import io.sentient.mobilesdk.sdk.AudioState
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -48,6 +50,7 @@ class AudioPipelineDownlinkTest {
         var startRate = -1
         var stopped = false
         var cleared = 0
+        var playbackIdle = true
 
         override suspend fun start(sampleRate: Int) {
             startCalled = true
@@ -58,6 +61,7 @@ class AudioPipelineDownlinkTest {
         override fun enqueue(pcm16: ByteArray) { enqueued += pcm16 }
         override suspend fun stop() { stopped = true }
         override fun clear() { cleared += 1 }
+        override val isPlaybackIdle: Boolean get() = playbackIdle
     }
 
     private class FakeCapture : AudioCaptureAdapter {
@@ -166,10 +170,12 @@ class AudioPipelineDownlinkTest {
         val enqueued = mutableListOf<ByteArray>()
         var startRate = -1
         var cleared = 0
+        var playbackIdle = true
         override suspend fun start(sampleRate: Int) { startRate = sampleRate }
         override fun enqueue(pcm16: ByteArray) { enqueued += pcm16 }
         override suspend fun stop() {}
         override fun clear() { cleared += 1 }
+        override val isPlaybackIdle: Boolean get() = playbackIdle
     }
 
     /** A FakeOpusDecoderPort yielding one canned PCM frame per chunk: chunk byte 0 → PCM tag. */
@@ -299,5 +305,67 @@ class AudioPipelineDownlinkTest {
         p.onAudioDone("c1")
 
         assertTrue(dec.resetCount > afterStart, "decoder.reset() called on opus audio.done")
+    }
+
+    // ── Cycle supersede + physical-drain hold ─────────────────────────────────────
+
+    @Test
+    fun newerCycle_supersedesOld_clearsPlayback_andDropsStaleFrames() = runTest {
+        val pb = FakeInstantPlayback()
+        val p = pipeline(pb, this)
+
+        p.onAudioStart("c1", encoding = "pcm16", sampleRate = 24000)
+        advanceUntilIdle()
+        p.onAudioFrame(byteArrayOf(1), "c1")
+        assertEquals(1, pb.enqueued.size, "c1 frame enqueued")
+
+        // A newer cycle's audio arrives while c1 is still active → flush c1's audio.
+        p.onAudioStart("c2", encoding = "pcm16", sampleRate = 24000)
+        advanceUntilIdle()
+        assertTrue(pb.cleared >= 1, "playback.clear() called when c2 supersedes c1")
+
+        // A late c1 frame is stale → dropped; only the newer c2 frame plays.
+        p.onAudioFrame(byteArrayOf(99), "c1")
+        p.onAudioFrame(byteArrayOf(2), "c2")
+        assertEquals(2, pb.enqueued.size, "stale c1 frame dropped; only c2's new frame added")
+        assertTrue(pb.enqueued.last().contentEquals(byteArrayOf(2)), "the newest enqueued frame is c2's")
+    }
+
+    @Test
+    fun speaking_heldWhilePlayerBusy_clearedOnceIdleAndSettled() = runTest {
+        var speaking = false
+        val pb = FakeInstantPlayback()
+        pb.playbackIdle = false // player still draining its tail
+        val connector = UserAudioInputConnector(send = {}, sendBinary = {})
+        connector.startStreaming()
+        val p = AudioPipeline(
+            capture = FakeCapture(),
+            playback = pb,
+            opusDecoder = FakeOpusDecoderPort(),
+            opusEncoder = FakeOpusEncoderPort(),
+            audioInput = { connector },
+            echoGate = EchoGate(echoCfg),
+            fsm = AudioFsm(),
+            clock = FixedClock(0L),
+            scope = this,
+            inputSampleRate = 16000,
+            outputSampleRate = 24000,
+            preRollFrames = 24,
+            onStateChanged = { sp, _ -> speaking = sp },
+            playbackDrainSettleMs = 100,
+        )
+
+        p.onAudioStart("c1", encoding = "pcm16", sampleRate = 24000)
+        p.onAudioDone("c1")
+        // Player still reports busy → speaking is HELD past audio.done.
+        advanceTimeBy(500)
+        runCurrent()
+        assertTrue(speaking, "speaking held while the player reports busy (still draining)")
+
+        // Player drains → the poll (50ms) catches idle, then the 100ms settle elapses.
+        pb.playbackIdle = true
+        advanceTimeBy(50 + 100 + 20)
+        runCurrent()
+        assertTrue(!speaking, "speaking cleared once the player drained + settle elapsed")
     }
 }

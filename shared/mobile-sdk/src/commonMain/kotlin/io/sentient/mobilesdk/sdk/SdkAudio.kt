@@ -80,6 +80,7 @@ class SdkAudio(
         preRollFrames = audioConfig.speechGate.preRollFrames,
         onStateChanged = onStateChanged,
         onBargeIn = onBargeIn,
+        playbackDrainSettleMs = audioConfig.playbackDrainSettleMs,
     )
 
     /** Downlink side-effect hooks the connector set routes audio frames into. */

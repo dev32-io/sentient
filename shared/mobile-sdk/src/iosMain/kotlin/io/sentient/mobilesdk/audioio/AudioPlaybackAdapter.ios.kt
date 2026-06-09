@@ -56,6 +56,7 @@ import kotlinx.cinterop.ExperimentalForeignApi
 import platform.AVFAudio.AVAudioEngine
 import platform.AVFAudio.AVAudioFormat
 import platform.AVFAudio.AVAudioPlayerNode
+import kotlin.concurrent.AtomicInt
 import kotlin.concurrent.Volatile
 
 private val log = createLogger("audioio", "playback", "ios")
@@ -90,6 +91,28 @@ class IosAudioPlaybackAdapter : AudioPlaybackAdapter {
 
     private var enqueuedBytes = 0L
 
+    // Outstanding scheduled buffers that have NOT yet finished playing. Incremented
+    // per enqueue, decremented in each buffer's completion handler (fires when the
+    // player has consumed/played that buffer). `isPlaybackIdle` reads this so the
+    // pipeline can hold "speaking" until the speaker tail physically drains.
+    // The completion handler runs on an audio render thread, so the counter is atomic.
+    private val outstanding = AtomicInt(0)
+
+    // Generation guard: bumped on start/clear/stop. A buffer's completion only
+    // decrements if its capture-time epoch still matches, so flushed (barge-in) or
+    // torn-down buffers can't underflow the count for a fresh stream.
+    private val playbackEpoch = AtomicInt(0)
+
+    /** Idle when there is no player, or every scheduled buffer has finished playing. */
+    override val isPlaybackIdle: Boolean
+        get() = player == null || outstanding.value == 0
+
+    /** Bump the generation + zero the in-flight count (new stream / flush / teardown). */
+    private fun resetPlaybackCount() {
+        playbackEpoch.incrementAndGet()
+        outstanding.value = 0
+    }
+
     override suspend fun start(sampleRate: Int) {
         if (player != null) {
             log.debug("start-already-active", mapOf("sampleRate" to sampleRate))
@@ -114,6 +137,7 @@ class IosAudioPlaybackAdapter : AudioPlaybackAdapter {
         }
         if (started) {
             backend = path
+            resetPlaybackCount() // fresh stream — zero the in-flight buffer count
         } else {
             releaseBackend(useShared)
         }
@@ -132,10 +156,20 @@ class IosAudioPlaybackAdapter : AudioPlaybackAdapter {
             return
         }
         enqueuedBytes += pcm16.size
+        val epochAtSchedule = playbackEpoch.value
+        outstanding.incrementAndGet()
         runCatching {
-            node.scheduleBuffer(buffer, completionHandler = null)
+            node.scheduleBuffer(buffer, completionHandler = {
+                // Fired when the player finished with this buffer. Ignore completions
+                // from a flushed/torn-down generation so a stale buffer can't underflow
+                // the count for a fresh stream.
+                if (playbackEpoch.value == epochAtSchedule) outstanding.decrementAndGet()
+            })
             if (!node.playing) node.play()
-        }.onFailure { log.error("enqueue-schedule-failed", mapOf("cause" to (it.message ?: "unknown"), "bytes" to pcm16.size)) }
+        }.onFailure {
+            if (playbackEpoch.value == epochAtSchedule) outstanding.decrementAndGet() // undo: never scheduled
+            log.error("enqueue-schedule-failed", mapOf("cause" to (it.message ?: "unknown"), "bytes" to pcm16.size))
+        }
     }
 
     override fun clear() {
@@ -149,6 +183,7 @@ class IosAudioPlaybackAdapter : AudioPlaybackAdapter {
             log.debug("clear-noop", mapOf("reason" to "backend already released (teardown in flight)"))
             return
         }
+        resetPlaybackCount() // flushed → no buffers in flight; ignore the flushed completions
         runCatching {
             node.stop() // flushes scheduled buffers
             if (ensureRunning()) node.play() // resume for the next stream
@@ -165,6 +200,7 @@ class IosAudioPlaybackAdapter : AudioPlaybackAdapter {
         player = null
         playerFormat = null
         backend = null
+        resetPlaybackCount() // teardown — drop any in-flight count (player is detached)
         log.info("stop", mapOf("enqueuedBytes" to enqueuedBytes, "path" to if (onShared) PATH_SHARED else PATH_STANDALONE))
         runCatching {
             node.stop()
