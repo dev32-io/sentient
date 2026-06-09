@@ -100,6 +100,10 @@ struct ChatView: View {
         chatLoading(status: connection.status)
     }
 
+    /// True while an existing-session switch is fetching history (snapshot pending).
+    /// Drives the message-list spinner ONLY — the composer stays live regardless.
+    private var historyLoading: Bool { vm.state.historyLoading }
+
     private var connectionBanner: ConnectionBannerState? {
         ConnectionBannerState.derive(status: connection.status, connectionLost: connection.connectionLost)
     }
@@ -163,7 +167,13 @@ struct ChatView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay {
-                if displayMessages.isEmpty && pending.isEmpty, chatLoadingState != .none {
+                // History-loading takes precedence: an existing-session switch is
+                // fetching its snapshot, so the list is cleared and a centered
+                // spinner stands in. A brand-new chat keeps historyLoading false →
+                // no spinner. The composer is NEVER gated on this (see below).
+                if historyLoading {
+                    HistoryLoadingOverlay()
+                } else if displayMessages.isEmpty && pending.isEmpty, chatLoadingState != .none {
                     ChatLoadingView(state: chatLoadingState)
                 }
             }
@@ -231,6 +241,25 @@ struct ChatView: View {
             onOpenPanel: { drawerOpen = true },
             onNewChat: { onNewChat() }
         )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HistoryLoadingOverlay — centred spinner shown over the (cleared) message list
+// while an existing-session switch fetches its conversation snapshot. Matches the
+// HistorySidePanel loading style (accent-tinted ProgressView). The composer is
+// never gated on this — it stays typeable throughout the switch.
+//
+// accessibilityIdentifier: history-loading (shared with the side-panel spinner,
+// scoped here to the message-list overlay).
+// ---------------------------------------------------------------------------
+
+private struct HistoryLoadingOverlay: View {
+    var body: some View {
+        ProgressView()
+            .tint(DuskColors.accent)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityIdentifier("history-loading")
     }
 }
 
