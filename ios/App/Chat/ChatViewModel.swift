@@ -43,14 +43,13 @@ final class ChatViewModel: ObservableObject {
         self.component = component
         log.info("init sessionId=\(sessionId ?? "<new>")")
 
-        // Make the route's conversation active (null = new chat). The flush gate +
-        // observeChat collect below pick up whatever conversation this resolves to.
-        Task { [weak self] in
-            guard let self else { return }
-            do { _ = try await self.component.switchConversation.invoke(sessionId: sessionId) } catch {
-                self.log.warn("switch-failed reason=\(error.localizedDescription)")
-            }
-        }
+        // Make the route's conversation active (null = new chat). Fire-and-forget:
+        // the usecase fires the session command and returns Unit (non-suspend,
+        // non-throwing) — the gateway buffers the next user.message behind the
+        // pending mint, so the UI never blocks on a session round-trip. The flush
+        // gate + observeChat collect below pick up whatever conversation this
+        // resolves to.
+        component.switchConversation.invoke(sessionId: sessionId)
 
         startChatCollecting()
         startConnectionCollecting()
@@ -61,19 +60,24 @@ final class ChatViewModel: ObservableObject {
     // ── Public actions ────────────────────────────────────────────────────────
 
     /// Enqueue an optimistic send; the outbox shows the bubble immediately. Flush
-    /// now if READY, otherwise it drains on the next rising edge to READY.
+    /// now if READY, otherwise it drains on the next rising edge to READY (the
+    /// connection collector re-fires flushIfReady on every emission).
     func send(_ text: String) {
         let id = UUID().uuidString
         log.info("send len=\(text.count) pendingId=\(id)")
         cache.enqueue(id: id, text: text)
-        if isReady { flush() }
+        if isReady {
+            component.sendMessage.flushIfReady(cache: cache, status: connection.status)
+        }
     }
 
-    /// Re-queue a FAILED pending message; flush now if READY.
+    /// Re-queue a FAILED pending message. If transport is down, force a reconnect so
+    /// the rising edge to READY drains it; then attempt an immediate ready-gated flush.
     func retry(_ pendingId: String) {
         log.info("retry pendingId=\(pendingId)")
         cache.retry(id: pendingId)
-        if isReady { flush() }
+        if !isReady { component.forceReconnect() }
+        component.sendMessage.flushIfReady(cache: cache, status: connection.status)
     }
 
     /// Toggle the voice uplink (mic on/off) through the component passthroughs.
@@ -104,16 +108,6 @@ final class ChatViewModel: ObservableObject {
         component.forceReconnect()
     }
 
-    // ── Flush ───────────────────────────────────────────────────────────────────
-
-    /// Drain still-QUEUED entries: send each, mark SENT (echo reconciles by id).
-    private func flush() {
-        for m in cache.queued() {
-            component.sendMessage.invoke(text: m.text, pendingId: m.id)
-            cache.markSent(id: m.id)
-        }
-    }
-
     // ── Chat stream collection ────────────────────────────────────────────────
 
     private func startChatCollecting() {
@@ -135,8 +129,8 @@ final class ChatViewModel: ObservableObject {
         for id in model.committed.compactMap({ $0.pendingId }) {
             cache.remove(id: id)
         }
-        state = ChatUiState(model: model, isLoading: false, banner: nil)
-        log.debug("chat committed=\(model.committed.count) pending=\(model.pending.count) live=\(model.live != nil)")
+        state = ChatUiState(model: model, isLoading: false, historyLoading: model.historyLoading, banner: nil)
+        log.debug("chat committed=\(model.committed.count) pending=\(model.pending.count) live=\(model.live != nil) historyLoading=\(model.historyLoading)")
     }
 
     // ── Connection stream collection + flush-on-READY ─────────────────────────
@@ -155,7 +149,10 @@ final class ChatViewModel: ObservableObject {
     private func applyConnection(_ conn: ConnectionState) {
         connection = conn
         log.debug("connection status=\(conn.status.name)")
-        if conn.status == .ready { flush() }
+        // flushIfReady is a no-op off the READY edge and when nothing is queued —
+        // safe + idempotent to fire on every emission. It drains the outbox on the
+        // rising edge into READY (reconnect / first-connect).
+        component.sendMessage.flushIfReady(cache: cache, status: conn.status)
     }
 
     /// Single teardown path for THIS VM: cancel collection tasks ONLY. The SDK /

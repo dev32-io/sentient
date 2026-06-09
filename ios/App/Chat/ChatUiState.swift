@@ -17,9 +17,13 @@ struct ErrorBanner {
 /// Immutable snapshot of the chat screen state, driven by ChatViewModel.
 struct ChatUiState {
     /// The last successfully received chat model; defaults to empty on first load.
-    var model: ChatModel = ChatModel(committed: [], live: nil, tasks: [], pending: [])
+    var model: ChatModel = ChatModel(committed: [], live: nil, tasks: [], pending: [], historyLoading: false)
     /// True while an initial (no-prior-model) load is in flight.
     var isLoading: Bool = false
+    /// True while an EXISTING-session switch is fetching history (between
+    /// session.switched and the next conversation.snapshot). Drives a message-list
+    /// spinner only; the composer is NEVER gated on it. A brand-new chat stays false.
+    var historyLoading: Bool = false
     /// Non-nil when the latest result was a failure; nil on success or loading.
     var banner: ErrorBanner? = nil
 }
