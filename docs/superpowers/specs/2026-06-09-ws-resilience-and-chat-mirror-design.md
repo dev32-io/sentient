@@ -69,11 +69,40 @@ Hermes ──ACP──> Gateway ──── sequenced WS frames (seq, epoch) �
                   │                                               (keyed by entryId)
                   └── on reconnect: client sends {epoch, lastSeq}       │
                       ├─ in-window  → replay seq>lastSeq (recovered)    │  cache-then-refresh
-                      └─ too old / epoch mismatch → recovered:false ────┘  → full snapshot
+                      └─ too old / epoch mismatch → recovered:false ────┘  → REST history refetch
 ```
 
 Single-writer authority: the gateway is the only writer; the device mirror is a
 read-only cache. Idempotent upsert-by-`entryId` makes replay/live overlap harmless.
+
+### 3.1 Transport boundary (governing principle)
+
+**WebSocket is exclusively for the live chat session that must sync in real time;
+everything else is REST.** Standing architectural rule, not just for this work:
+
+- **WebSocket (real-time, resumable, buffered):** the live conversation session — mic
+  audio in, TTS audio out, `cycle.*`, `message.delta` / `message.done`,
+  `cognition.status`, `task.status` — plus the resume handshake. *Everything on the WS
+  push channel is seq-stamped and replay-buffered.* A lightweight WS
+  `conversation.activate` control tells the gateway which conversation's live stream +
+  replay buffer this connection is focused on (carries no history payload).
+- **REST (client-driven, stateless, never buffered):** session list, conversation
+  history (paginated `getMessages`), search, preferences/settings, rename, delete,
+  devices. Client re-issues on demand; no resume/buffer semantics.
+
+**Migration (part of this work):** these are WS request/response RPCs today
+(`SessionsConnector.list`, `session.switch`→`conversation.snapshot`, preferences) — they
+move to client-facing gateway REST routes. The gateway already has this data over REST
+via the Hermes dashboard sidecar (`/api/plugins/sentient-plugin/`), so the routes are
+thin passthroughs; auth reuses the existing PASETO / shared-token model. The KMP + web
+SDKs gain a REST client path (Ktor already present). After migration the WS message
+schema no longer carries query RPCs → the replay-buffer rule becomes trivially "buffer
+everything on the push channel."
+
+Consequences threaded into the components below: resume `recovered:false` → **REST-refetch
+history** (not a WS snapshot); the mirror's cache-then-refresh loads history via **REST**
+while live entries arrive via **WS**; smart-async deletion diffs against the **REST**
+session list.
 
 ## 4. Component 1 — Gateway resumable stream
 
@@ -83,14 +112,14 @@ read-only cache. Idempotent upsert-by-`entryId` makes replay/live overlap harmle
 | G2 | Per device-session `epoch` (process/boot id). Sent at connect and on the first frame. | session configure |
 | G3 | Per device-session **in-memory ring buffer** `{seq, frame}`. Bounded by **16 MB** hard cap (evict-oldest) AND the retention TTL. **Audio coalesced to ~1s segments** before buffering to bound object count (see §9 footgun). Keyed by stable **device id** (per-device-session, not shared across a user's devices). | new `SessionReplayBuffer` on the device-session / PersonSession |
 | G4 | On disconnect: **keep the in-flight cycle running and journal its frames** into the buffer (fixes #4). Cycle abort stays the explicit interrupt path only. | `ws-handlers.ts:cleanupSession` |
-| G5 | **Resume handshake:** client reconnects sending `{epoch, lastSeq, deviceId}`. Gateway: `epoch` matches **and** `lastSeq ≥ oldest buffered seq` → replay frames `> lastSeq`, then go live, reply `recovered:true`. Else → reply `recovered:false`, client runs the **existing** full `session.switch` snapshot path. Additive over today's snapshot — low risk. | new resume handler; reuses `switch-flow.ts` |
+| G5 | **Resume handshake:** client reconnects sending `{epoch, lastSeq, deviceId}`. Gateway: `epoch` matches **and** `lastSeq ≥ oldest buffered seq` → replay frames `> lastSeq`, then go live, reply `recovered:true`. Else → reply `recovered:false`; client **REST-refetches** the conversation history (§3.1, Component 4). Additive — low risk. | new resume handler |
 | G6 | Stable `entryId` on each committed `conversation.entry`. | `hermes-event-translator.ts:289-301`, `hermes-message-to-mirror.ts` |
 | G7 | WS `idleTimeout` → 255s (Bun max). New app-level **session + buffer retention TTL → 30 min** (currently no eviction at all; PersonSession never freed — `ws-handlers.ts:278`). After 30 min zero-attachment → evict session + free buffer. | `server.ts:167`; new retention timer on the registry |
 
 **Why two timers (correcting the original premise):** Bun caps `idleTimeout` at 255s, so
 the *socket* cannot be kept alive for 30 min. Instead the socket dies at ≤255s when
 backgrounded, but the **app-level session+buffer survives 30 min** — reconnect within
-that window resumes cheaply; beyond it falls back to snapshot.
+that window resumes cheaply; beyond it falls back to a REST history refetch.
 
 **Backward compatibility:** gate the binary header + resume behind a `stream.resume`
 capability advertised at session configure. Clients that don't advertise it get the
@@ -114,10 +143,15 @@ single-digit MB.
 ## 5. Component 2 — Protocol changes (`shared/protocol`)
 
 - Frame envelope gains `seq: number` and `epoch: string` (`messages.ts`).
-- `conversation.entry` / snapshot items gain `entryId: string` (`messages.ts:205,210`).
+- Live `conversation.entry` (WS) **and** the REST history payload both carry
+  `entryId: string` (`messages.ts:210`) — the mirror upsert key, same on both paths.
 - Binary frame header spec: `[8-byte BE seq][1-byte type][payload]`.
 - New frames: `resume` (client→gateway: `{epoch, lastSeq, deviceId}`) and `resume.result`
   (gateway→client: `{recovered: boolean, fromSeq?, toSeq?}`).
+- `session.switch`→`conversation.snapshot` is **replaced** by a lightweight WS
+  `conversation.activate` (focus the live stream + replay buffer; **no** history payload).
+  Session list, history, search, and preferences **leave the WS schema entirely** → REST
+  (§3.1).
 - `stream.resume` added to the capability list.
 
 All three SDKs (web `shared/web-sdk`, mobile `shared/mobile-sdk`, and the gateway sender)
@@ -130,8 +164,9 @@ update in lockstep behind the capability flag.
 - On reconnect / foreground probe failure (`SentientSdk.kt:398-420`): send `resume`
   with the persisted cursor instead of unconditionally re-issuing `session.switch`.
 - `recovered:true` → apply replayed frames in seq order, continue live.
-- `recovered:false` → drop the conversation's local rows, run the existing full snapshot
-  (`onReadyReached` `session.switch` — `SentientSdk.kt:475-490`), reset cursor.
+- `recovered:false` → drop the conversation's local rows, **REST-refetch history**
+  (replaces the `onReadyReached` `session.switch` snapshot — `SentientSdk.kt:475-490`),
+  reset cursor.
 - Idempotent: applying a replayed frame whose `entryId` already exists is a no-op upsert.
 
 ## 7. Component 4 — Client chat mirror (SQLDelight)
@@ -152,8 +187,9 @@ sync_cursor(conversation_id TEXT PRIMARY KEY, epoch TEXT, last_seq INTEGER);
   `UPSERT … ON CONFLICT(entry_id) DO UPDATE` immediately; reactive
   `asFlow().mapToList()` repaints. The live frame *is* the write → mirror never lags.
 - **Cache-then-refresh:** on conversation-open / foreground, `SELECT … ORDER BY seq`
-  paints instantly (local, no network), then the resume handshake reconciles. Kills the
-  history spinner (`ChatModel.historyLoading`); speeds past-chat loading.
+  paints instantly (local, no network). Reconcile = **REST** history fetch (paginated)
+  upserted by `entryId`; live updates then arrive over **WS** (resume delta) and upsert
+  too. Kills the history spinner (`ChatModel.historyLoading`); speeds past-chat loading.
 - **Audio is NOT persisted** — replayed transiently via the gateway ring buffer, never
   stored on device. Bounds the mirror to text → ~10–20 MB for a heavy 90-day user.
 
@@ -172,8 +208,9 @@ unchanged. Update `repositories.md` to document the exception.
 - **Do not hardcode Hermes' retention (≈90 days, unverified — see §11) on the client.**
   Drive deletion off server *absence* so client/server never drift and Hermes can change
   retention without a client update.
-- **Pagination guard (critical):** today the list fetches `limit=100, offset=0`
-  (`SessionsConnector.list`). Deletion-by-absence is only safe against a **full** fetch.
+- **Pagination guard (critical):** the REST list endpoint (migrated from
+  `SessionsConnector.list`, today `limit=100, offset=0`) paginates. Deletion-by-absence is
+  only safe against a **full** fetch.
   The reconcile pass must paginate the full session-id set (ids + `updated_at` only) and
   only delete a local session absent from that complete set. Never delete from a partial
   page. Guard the active / just-created conversation.
@@ -228,9 +265,12 @@ client_stuck_state_timeout_ms: 8000 # (SDK config) reset cognition/isSpeaking to
 
 1. **Unstuck safety (#5 / Component 5)** — SDK-only, independent, highest immediate
    relief. Can merge alone.
-2. **Gateway resumable layer (Components 1–2) + client resume (Component 3)** — cheap
-   delta reconnect; no DB yet.
-3. **Device mirror (Component 4)** — instant paint, fast loading, durable resume.
+2. **Transport migration (§3.1)** — move session list / history / search / preferences /
+   rename / delete to gateway REST routes + a REST path in the SDKs; drop the WS query
+   RPCs (`session.switch` → `conversation.activate`). Prereq for a clean buffer rule.
+3. **Gateway resumable WS layer (Component 1) + protocol (Component 2) + client resume
+   (Component 3)** — cheap delta reconnect; no DB yet.
+4. **Device mirror (Component 4)** — instant paint, fast loading, durable resume.
 
 ## 13. E2E test matrix (inline — required)
 
@@ -242,17 +282,19 @@ to be added to `agents/docs/testing-knowledge.md`.
 | Case | Viewport / Driver | Pre-state | Action | Expected user-visible | Expected log trail |
 |------|-------------------|-----------|--------|------------------------|--------------------|
 | resume-within-window | Maestro iOS | active chat, cursor saved, `stream.resume` on | background 1 min, foreground | transcript stays; NO history spinner; no reload fl. | `resume` recv; `recovered=true`; replay N frames |
-| resume-beyond-window | Maestro iOS | active chat | background >30 min, foreground | brief graceful snapshot reload | `recovered=false`; full `session.switch` snapshot |
+| resume-beyond-window | Maestro iOS | active chat | background >30 min, foreground | brief graceful history reload | `recovered=false`; REST history refetch |
 | background-mid-response-text | Maestro Android | assistant mid-cycle (text) | background during cycle, foreground after done | full response present, no loss | cycle ran to completion; frames journaled; replayed on resume |
 | background-mid-speech-audio | Maestro iOS (voice) | assistant speaking | background mid-audio, foreground | missed audio replayed (client may skip if superseded) | audio frames buffered + replayed by seq |
 | fire-forget-stop-dead-socket | Maestro iOS | stuck "speaking"/"thinking" after silent socket death | tap Stop | UI clears to idle immediately, no hang | local stop; no server-ack gate; late `cycle.aborted` ignored |
 | stuck-state-timeout | Maestro Android | thinking/speaking, socket silently dies, user idle | wait `client_stuck_state_timeout_ms` | state auto-returns to idle | client-side stuck-state reset logged |
-| instant-paint-past-chat | Maestro iOS | conversation previously cached | open it from drawer | transcript paints instantly, then reconciles | local read; then resume/snapshot reconcile |
+| instant-paint-past-chat | Maestro iOS | conversation previously cached | open it from drawer | transcript paints instantly, then reconciles | local read; then REST history reconcile |
+| query-not-buffered | Maestro iOS | active live chat (cycle running) | fetch session list / open settings | list/settings load over REST; live stream untouched | REST request; no `seq` stamped; replay buffer size unchanged |
+| history-rest-live-ws | Maestro Android | conversation open, reply streaming | scroll to load older history mid-reply | older history loads (REST), live reply continues (WS), no dup | REST `getMessages` paginated; WS `message.delta`; upsert by `entryId` |
 | smart-async-deletion | Maestro Android | local has sessions Hermes pruned | refresh session list (full fetch) | pruned sessions vanish from drawer | reconcile diff; background-delete N sessions |
 | concurrent-devices | web (Playwright desktop) + Maestro iOS, same user | both attached | one backgrounds, other active | each resumes its own stream independently | per-device-session seq/buffer; no cross-talk |
 | reconnect-flap | Maestro iOS | rapid background/foreground | repeat | no full reloads; no duplicate messages | `recovered=true` each; no dup `entryId` |
 | web-reconnect-parity | Playwright desktop 1280×900 + mobile 390×844 | active web chat | network blip / tab background | resume, no full reload | web SDK resume handshake; `recovered=true` |
-| epoch-mismatch-restart | Maestro iOS | gateway restarts (new epoch) | reconnect | snapshot reload, no stale/dup | `epoch` mismatch → `recovered=false` → snapshot |
+| epoch-mismatch-restart | Maestro iOS | gateway restarts (new epoch) | reconnect | history re-fetched, no stale/dup | `epoch` mismatch → `recovered=false` → REST refetch |
 
 **Flagged for follow-up (driver limits):** true iOS OS-suspension socket-kill timing may
 need a real device; simulate via forced disconnect in Maestro. Paid-TTS audio cases use
@@ -267,9 +309,14 @@ any Pi consideration (separate approval).
 ### Doc updates
 - **WS wire contract (`shared/protocol`)** — document the new envelope fields (`seq`,
   `epoch`), `entryId` on conversation entries, the binary frame header
-  `[8B BE seq][1B type][payload]`, the `resume` / `resume.result` frames, and the
-  `stream.resume` capability. Authoritative gateway↔SDK contract; keep in lockstep with
-  `messages.ts`.
+  `[8B BE seq][1B type][payload]`, the `resume` / `resume.result` frames,
+  `conversation.activate`, and the `stream.resume` capability. Authoritative gateway↔SDK
+  contract; keep in lockstep with `messages.ts`.
+- **REST query API + transport boundary (§3.1)** — document the new client-facing gateway
+  REST routes (session list, history, search, preferences, rename, delete) and the
+  WS-vs-REST rule (WS = live chat session only; everything else REST) in
+  `gateway/README.md` and the SDK READMEs. This boundary is a standing convention for
+  future endpoints.
 - **`gateway/README.md`** — resumable stream, replay buffer + retention TTL, the
   two-timer model (255s socket vs 30-min session TTL).
 - **`shared/mobile-sdk/README.md`** — resume handshake, device-session cursor, persistent
@@ -290,6 +337,6 @@ any Pi consideration (separate approval).
 | Gateway | 1.10.0 | **1.11.0** | `gateway/package.json:3` (+ root `package.json` if mirrored) |
 | Android app | 0.0.1 (code 1) | **0.1.0 (code 2)** | `android/build.gradle.kts:27` |
 | iOS app | 0.0.1 | **0.1.0** | `MARKETING_VERSION` — verify location (`project.pbxproj` / Info.plist) |
-| KMP mobile-sdk | no explicit version literal found | bump only if one exists | `shared/mobile-sdk/build.gradle.kts` |
+| Mobile shared src (KMP) | none today | **set to 0.1.0** (add a version declaration) | `shared/mobile-sdk/build.gradle.kts`, `shared/mobile-data/build.gradle.kts` |
 
 Bump at the end of the work, once the deployable artifact is green.
