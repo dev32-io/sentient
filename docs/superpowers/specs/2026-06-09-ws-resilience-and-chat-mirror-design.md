@@ -40,7 +40,9 @@ number** today (client keys on `ts`, which collides and can be `0` —
   per device-session. Doubles as the **resume cursor** (replay from `lastSeq+1`) and the
   client mirror's ordering key.
 - **`entryId`** — a stable, gateway-minted id on each committed `conversation.entry`.
-  The mirror's **upsert key** (replaces blind full-replace).
+  The mirror's **per-path upsert key**. Note: live entries use a gateway UUID and REST
+  history uses `${conversationId}:${index}` — **different namespaces** (no shared Hermes
+  id), so cross-path reconcile is **replace-on-REST-reload, not merge** (see §7).
 
 One mechanism — a **resumable sequenced WS stream, mirrored to device** — then covers
 transport resilience (#3/#4) and fast/durable loading.
@@ -110,7 +112,7 @@ session list.
 |----|--------|-------|
 | G1 | Stamp monotonic `seq` on every outbound app frame. Binary audio (today untagged) carries `seq` in an **8-byte big-endian header + 1 type byte** prepended to the payload, so JSON, text, and audio all sequence uniformly. | `audio-frame-sender.ts`, the WS send path (`device-attachment.ts:58`, `ws-session-configure.ts:128`) |
 | G2 | Per device-session `epoch` (process/boot id). Sent at connect and on the first frame. | session configure |
-| G3 | Per device-session **in-memory ring buffer** `{seq, frame}`. Bounded by **16 MB** hard cap (evict-oldest) AND the retention TTL. **Audio coalesced to ~1s segments** before buffering to bound object count (see §9 footgun). Keyed by stable **device id** (per-device-session, not shared across a user's devices). | new `SessionReplayBuffer` on the device-session / PersonSession |
+| G3 | Per device-session **in-memory ring buffer** `{seq, frame}`. Bounded by **16 MB** hard cap (evict-oldest) AND the retention TTL. Audio journaled one `ReplayFrame` per Opus frame (coalescing deferred — see §9). Keyed by stable **device id** (per-device-session, not shared across a user's devices). | new `SessionReplayBuffer` on the device-session / PersonSession |
 | G4 | On disconnect: **keep the in-flight cycle running and journal its frames** into the buffer (fixes #4). Cycle abort stays the explicit interrupt path only. | `ws-handlers.ts:cleanupSession` |
 | G5 | **Resume handshake:** client reconnects sending `{epoch, lastSeq, deviceId}`. Gateway: `epoch` matches **and** `lastSeq ≥ oldest buffered seq` → replay frames `> lastSeq`, then go live, reply `recovered:true`. Else → reply `recovered:false`; client **REST-refetches** the conversation history (§3.1, Component 4). Additive — low risk. | new resume handler |
 | G6 | Stable `entryId` on each committed `conversation.entry`. | `hermes-event-translator.ts:289-301`, `hermes-message-to-mirror.ts` |
@@ -144,7 +146,8 @@ single-digit MB.
 
 - Frame envelope gains `seq: number` and `epoch: string` (`messages.ts`).
 - Live `conversation.entry` (WS) **and** the REST history payload both carry
-  `entryId: string` (`messages.ts:210`) — the mirror upsert key, same on both paths.
+  `entryId: string` (`messages.ts:210`) — the per-path mirror upsert key (live and REST
+  use different namespaces; cross-path reconcile is replace-on-reload — see §7).
 - Binary frame header spec: `[8-byte BE seq][1-byte type][payload]`.
 - New frames: `resume` (client→gateway: `{epoch, lastSeq, deviceId}`) and `resume.result`
   (gateway→client: `{recovered: boolean, fromSeq?, toSeq?}`).
@@ -188,8 +191,15 @@ sync_cursor(conversation_id TEXT PRIMARY KEY, epoch TEXT, last_seq INTEGER);
   `asFlow().mapToList()` repaints. The live frame *is* the write → mirror never lags.
 - **Cache-then-refresh:** on conversation-open / foreground, `SELECT … ORDER BY seq`
   paints instantly (local, no network). Reconcile = **REST** history fetch (paginated)
-  upserted by `entryId`; live updates then arrive over **WS** (resume delta) and upsert
-  too. Kills the history spinner (`ChatModel.historyLoading`); speeds past-chat loading.
+  that **REPLACES** the conversation's cached rows (`DELETE WHERE conversation_id=?` then
+  insert), NOT a cross-path upsert. **Why replace, not merge (resolved 2026-06-09):** live
+  entries carry a gateway-minted UUID `entryId`; REST entries carry a deterministic
+  `${conversationId}:${index}` `entryId` — **different namespaces** (no shared Hermes
+  message id exists — confirmed Task 3.4). They cannot cross-path-merge by `entryId`. So:
+  live `conversation.entry` frames **write-through** (upsert by their live `entryId`); a
+  REST reload **wipes + repopulates** the conversation (REST is authoritative on reload).
+  Within each path `entryId` dedups; the resume replay dedups by **seq** (the cursor).
+  Kills the history spinner (`ChatModel.historyLoading`); speeds past-chat loading.
 - **Audio is NOT persisted** — replayed transiently via the gateway ring buffer, never
   stored on device. Bounds the mirror to text → ~10–20 MB for a heavy 90-day user.
 
@@ -240,10 +250,15 @@ unchanged. Update `repositories.md` to document the exception.
 
 ## 9. Risks & footguns
 
-- **Audio object-count footgun:** buffering raw ~20 ms Opus frames (50/s) makes per-frame
-  JS-object overhead dominate (~13 MB overhead @30 min). **Mitigation:** coalesce audio
-  into ~1 s segments (or one growing contiguous buffer per cycle with seq markers) before
-  buffering. Measure actual Fish/OGG frame cadence during impl.
+- **Audio object-count footgun (DEFERRED 2026-06-09):** journaling raw Opus frames (~50/s)
+  one `ReplayFrame` object each makes per-frame JS-object overhead notable (~90k objects /
+  ~13 MB @30 min). **As built: coalescing is NOT implemented** — total memory is bounded by
+  the **16 MB byte-cap (evict-oldest)** + the **30-min retention TTL**, and the frame count
+  is implicitly bounded by the byte cap, which is acceptable at family scale. The
+  `replay_audio_coalesce_ms` knob was **removed** (it implied a guarantee that didn't
+  exist). Coalescing (~1 s segments) is a future optimization — it interacts with the
+  per-frame `seq` scheme (live send is per-frame; only the journal would coalesce), so it
+  was deferred rather than half-done.
 - **Binary-header lockstep:** changing binary framing breaks current parsing on both
   ends; the `stream.resume` capability gate makes the change opt-in and protects
   older clients / the cube.
@@ -260,7 +275,7 @@ session:
   ws_idle_timeout_ms: 255000        # 255s — Bun WS socket idle close. Bun's idleTimeout takes SECONDS, cap 255; gateway converts ms→s.
   retention_ttl_ms: 1800000         # 30 min — session + replay buffer survive disconnect this long
   replay_buffer_max_bytes: 16777216 # 16 MB per device-session ring cap (evict-oldest)
-  replay_audio_coalesce_ms: 1000    # coalesce audio into ~1s segments before buffering
+  # (replay_audio_coalesce_ms removed — coalescing deferred; per-frame journal bounded by the cap + TTL, see §9)
 client_stuck_state_timeout_ms: 8000 # (SDK config) grace before resetting cognition/isSpeaking→idle when a cycle is active AND the connection is not READY (socket dropped/reconnecting/lost). NOT a content-frame timer.
 ```
 
