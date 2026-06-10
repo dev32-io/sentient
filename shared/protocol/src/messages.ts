@@ -72,6 +72,14 @@ export const sessionConfigureSchema = z.object({
     supports: z.array(z.string()),
   }),
   clientType: clientTypeSchema,
+  /**
+   * Stable per-device identifier. REQUIRED — the client supplies the same
+   * value on every connection so the gateway can key the per-device replay
+   * buffer across reconnects (Task 3.8). A fresh connect gets a fresh buffer
+   * for this deviceId; a reconnect reuses it. The `stream.resume` frame
+   * carries the same deviceId; when both are present the resume frame wins.
+   */
+  deviceId: z.string().min(1),
 });
 
 export const audioStartSchema = z.object({

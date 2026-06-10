@@ -25,6 +25,18 @@ export interface AcquireDeviceBufferResult {
   readonly buffer: SessionReplayBuffer;
   readonly epoch: number;
   readonly resumed: boolean;
+  /**
+   * The deferred teardown that was stashed on the entry by the prior resumable
+   * disconnect (Task 3.7), RETURNED here on a matching-epoch resume so the
+   * caller (ws-session-configure) can run it NOW — disposing the orphaned old
+   * pipeline (gate / ACP wire / sessionManager entry / translator) before the
+   * new session configures fresh on the SAME buffer (Task 3.8 handover). null
+   * when there was nothing stashed, or on a fresh (non-resumed) acquire.
+   *
+   * acquire() detaches it from the entry (sets entry.deferredTeardown = null)
+   * so the retention sweep can NOT also run it later — exactly-once handover.
+   */
+  readonly priorDeferredTeardown: (() => void) | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -47,6 +59,10 @@ export function shouldEvictDeviceBuffer(detachedAtMs: number | null, nowMs: numb
 /**
  * Manages the per-device replay buffer map for a PersonSession.
  * Owns the buffer Map, epoch counter, acquire/release/sweep logic.
+ *
+ * NOTE: Each buffer is keyed per-device-session; no cross-device fan-out
+ * (B3 scope) — a user's other live device does not journal into this
+ * device's buffer.
  */
 export class DeviceBufferStore {
   private readonly _buffers = new Map<string, DeviceBufferEntry>();
@@ -73,14 +89,18 @@ export class DeviceBufferStore {
     const existing = this._buffers.get(deviceId);
     if (existing !== undefined && opts.resumeEpoch === existing.epoch) {
       existing.detachedAtMs = null;
-      // Cancel any pending deferred teardown — the device reconnected before
-      // the TTL expired, so the deferred actions must not run later.
-      if (existing.deferredTeardown !== null) {
-        log.debug("acquire.cancelled-deferred-teardown", { deviceId, epoch: existing.epoch });
+      // Detach the pending deferred teardown and HAND IT BACK to the caller.
+      // The device reconnected before the TTL expired, so the sweep must not
+      // run it — but the orphaned old pipeline from the prior disconnect still
+      // needs disposing. We return it so ws-session-configure runs it NOW (the
+      // handover) and clear it off the entry so it fires exactly once.
+      const priorDeferredTeardown = existing.deferredTeardown;
+      if (priorDeferredTeardown !== null) {
+        log.debug("acquire.handover-deferred-teardown", { deviceId, epoch: existing.epoch });
         existing.deferredTeardown = null;
       }
       log.debug("acquire.resumed", { deviceId, epoch: existing.epoch });
-      return { buffer: existing.buffer, epoch: existing.epoch, resumed: true };
+      return { buffer: existing.buffer, epoch: existing.epoch, resumed: true, priorDeferredTeardown };
     }
 
     this._epochCounter += 1;
@@ -93,7 +113,7 @@ export class DeviceBufferStore {
       epoch,
       prevEpoch: existing?.epoch ?? null,
     });
-    return { buffer, epoch, resumed: false };
+    return { buffer, epoch, resumed: false, priorDeferredTeardown: null };
   }
 
   /**

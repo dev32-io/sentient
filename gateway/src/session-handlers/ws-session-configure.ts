@@ -50,6 +50,7 @@ import { createSessionsHandlers } from "./sessions-handlers.js";
 import { ttsSkipReason } from "./tts-policy.js";
 import type { ClientData } from "./ws-helpers.js";
 import { errorMessage, sendError } from "./ws-helpers.js";
+import { handleResumeOrFresh, resolveDeviceId } from "./ws-resume-handover.js";
 
 // Resolve a config-supplied path that may start with "~/" against the
 // gateway user's $HOME. Tilde-prefixed values come straight from YAML;
@@ -77,6 +78,7 @@ export async function handleSessionConfigure(
   language: "en" | "zh",
   services: GatewayServices,
   clientType: ClientType,
+  configureDeviceId: string,
 ): Promise<void> {
   const sessionId = ws.data.sessionId;
   if (!sessionId) {
@@ -188,15 +190,37 @@ export async function handleSessionConfigure(
     sendError(ws, "protocol_error", "Person session create failed");
     return;
   }
-  // Task 3.8: replace placeholder deviceId/resumeEpoch with the client handshake values.
-  // For now, use the per-WS sessionId as a placeholder deviceId and no resumeEpoch
-  // so each connection starts a fresh buffer. Task 3.8 will wire the stable deviceId
-  // and resumeEpoch from the WS handshake to enable true resume across reconnects.
-  const deviceId = sessionId;
-  const { buffer: deviceBuffer, epoch: deviceEpoch } = personSession.acquireDeviceBuffer(deviceId);
+  // Task 3.8 — stable deviceId keys the per-device buffer across reconnects.
+  // The client supplies it on session.configure; a reconnect also supplies it
+  // on the stream.resume frame (stashed in ws.data.resumeParams). On mismatch
+  // the resume frame wins. When resumeParams carries a matching epoch, acquire
+  // REUSES the prior buffer (resumed:true) so the new FrameSequencer continues
+  // the same seq counter — seq continuity across reconnect.
+  const resumeParams = ws.data.resumeParams;
+  const deviceId = resolveDeviceId(configureDeviceId, resumeParams);
+  const acquired = personSession.acquireDeviceBuffer(deviceId, {
+    ...(resumeParams ? { resumeEpoch: resumeParams.epoch } : {}),
+  });
+  const { buffer: deviceBuffer, epoch: deviceEpoch, resumed: deviceResumed } = acquired;
 
+  // HANDOVER (Task 3.8): a matching-epoch resume hands back the deferred
+  // teardown stashed by the prior resumable disconnect (Task 3.7). Run it NOW
+  // to dispose the orphaned OLD pipeline (gate / ACP wire / sessionManager
+  // entry / translator) — aborting any still-running old cycle before the new
+  // session configures fresh on the SAME buffer. acquire already detached it
+  // from the entry so the retention sweep can never re-run it.
+  if (acquired.priorDeferredTeardown !== null) {
+    log.info("resume.handover-old-pipeline", { sessionId, deviceId, epoch: deviceEpoch });
+    acquired.priorDeferredTeardown();
+  }
+
+  // attachmentId is the stable deviceId — it keys the per-device replay buffer
+  // (DeviceBufferStore is keyed by deviceId), so the resumable-disconnect path
+  // in ws-handlers (releaseDeviceBuffer / bufferFor / disposeDeviceBuffer keyed
+  // by attachment.attachmentId) addresses the correct buffer across reconnects.
+  // sessionId stays the per-WS id used for sessionRouter / Manager / Controls.
   const attachment = createDeviceAttachment<ClientData>({
-    attachmentId: sessionId,
+    attachmentId: deviceId,
     ws,
     sessionId,
     profile: personSession.profile,
@@ -265,20 +289,12 @@ export async function handleSessionConfigure(
   });
   ws.data.preferenceAudioUnsub = preferenceAudioUnsub;
 
-  // Seed the client with the current audio preferences. The onChange listener
-  // above only fires on FUTURE changes, and session.ready carries no prefs — so
-  // without this initial emit the client keeps its schema default
-  // (ttsEnabled: true). When the saved profile differs, the toggle computes
-  // !current from the wrong value and sends a patch the server already matches →
-  // update() is a no-op → no echo → the button appears stuck. Both webui and the
-  // mobile SDK rely on this seed to reflect the real state and toggle reliably.
-  wsSend({
-    type: "session.preferences.changed",
-    preferences: {
-      ttsEnabled: preferenceManager.get().ttsEnabled,
-      channel: preferenceManager.get().channel,
-    },
-  });
+  // NOTE: the initial session.preferences.changed SEED is emitted in the
+  // fresh-only block below (co-located with session.ready), NOT here.
+  // On a successful resume (recovered:true), the prior connection's journaled
+  // session.preferences.changed frame is already in the replay window and is
+  // replayed verbatim — no re-seed needed. Seeding here would cause a
+  // double-send: once live AND once via replay.
 
   // Register MCP control surface. MCP tools (update_user_settings, ...)
   // look up this session's controls by sessionId and mutate per-session
@@ -836,6 +852,33 @@ export async function handleSessionConfigure(
     },
   };
 
+  // STREAM-RESUME decision (Task 3.8). When the device buffer was resumed AND
+  // it still holds the frames since the client's lastSeq, emit
+  // stream.resumed{recovered:true} + replay those frames VERBATIM (raw socket
+  // sends — they keep their original seq/header), then SUPPRESS the fresh
+  // frames below (session.ready, the conversation.activate rehydrate, the empty
+  // snapshot). Otherwise emit recovered:false (when a resume was requested) and
+  // fall through to the normal fresh setup; the client REST-refetches history.
+  const replayed = handleResumeOrFresh({
+    ws,
+    sessionId,
+    deviceId,
+    buffer: deviceBuffer,
+    epoch: deviceEpoch,
+    resumed: deviceResumed,
+    resumeParams,
+  });
+  // Clear the stashed params so a later configure on this socket does not
+  // re-resume (e.g. a second configure frame).
+  ws.data.resumeParams = null;
+
+  if (replayed) {
+    // Successful resume: the client already has session.ready + history from
+    // the prior connection; only the missed frames needed replaying. Go live.
+    log.info("session-configured.resumed", { sessionId, deviceId, epoch: deviceEpoch });
+    return;
+  }
+
   const playbackTunables = {
     minEagerEndMs: services.webui.playback.min_eager_end_ms,
     preemptFadeoutMs: services.webui.playback.preempt_fadeout_ms,
@@ -849,6 +892,23 @@ export async function handleSessionConfigure(
     outputSampleRate: OUTPUT_SAMPLE_RATE,
     enabledEffects: [],
     playback: playbackTunables,
+  });
+
+  // Seed the client with the current audio preferences. Fresh path only — on
+  // resume the prior connection's journaled session.preferences.changed is
+  // replayed verbatim (no double-send). The onChange listener above only fires
+  // on FUTURE changes, and session.ready carries no prefs — so without this
+  // seed the client keeps its schema default (ttsEnabled: true). When the
+  // saved profile differs, the toggle computes !current from the wrong value
+  // → update() is a no-op → no echo → button appears stuck. Both webui and
+  // the mobile SDK rely on this seed to reflect the real state and toggle
+  // reliably.
+  wsSend({
+    type: "session.preferences.changed",
+    preferences: {
+      ttsEnabled: preferenceManager.get().ttsEnabled,
+      channel: preferenceManager.get().channel,
+    },
   });
 
   // Resume on connect: if `?session_id=` was at WS upgrade, run the activate

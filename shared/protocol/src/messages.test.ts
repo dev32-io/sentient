@@ -34,6 +34,7 @@ describe("session.configure", () => {
       language: "zh",
       capabilities: { supports: ["audio", "text"] },
       clientType: "webui",
+      deviceId: "dev-abc",
     });
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.language).toBe("zh");
@@ -44,15 +45,48 @@ describe("session.configure", () => {
       type: "session.configure",
       capabilities: { supports: [] },
       clientType: "webui",
+      deviceId: "dev-abc",
     });
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.language).toBe("en");
+  });
+
+  it("parses with deviceId carried through", () => {
+    const result = sessionConfigureSchema.safeParse({
+      type: "session.configure",
+      capabilities: { supports: [] },
+      clientType: "webui",
+      deviceId: "dev-xyz",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.deviceId).toBe("dev-xyz");
+  });
+
+  it("rejects missing deviceId", () => {
+    const result = sessionConfigureSchema.safeParse({
+      type: "session.configure",
+      capabilities: { supports: [] },
+      clientType: "webui",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects empty deviceId", () => {
+    const result = sessionConfigureSchema.safeParse({
+      type: "session.configure",
+      capabilities: { supports: [] },
+      clientType: "webui",
+      deviceId: "",
+    });
+    expect(result.success).toBe(false);
   });
 
   it("rejects missing capabilities", () => {
     const result = sessionConfigureSchema.safeParse({
       type: "session.configure",
       language: "en",
+      clientType: "webui",
+      deviceId: "dev-abc",
     });
     expect(result.success).toBe(false);
   });
@@ -62,6 +96,7 @@ describe("session.configure", () => {
       type: "session.configure",
       capabilities: { supports: ["audio", "text"] },
       clientType: "mobile",
+      deviceId: "dev-abc",
     });
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.clientType).toBe("mobile");
@@ -72,6 +107,7 @@ describe("session.configure", () => {
       type: "session.configure",
       capabilities: { supports: [] },
       clientType: "tablet",
+      deviceId: "dev-abc",
     });
     expect(result.success).toBe(false);
   });
@@ -315,6 +351,7 @@ describe("clientMessageSchema", () => {
       type: "session.configure",
       capabilities: { supports: ["audio"] },
       clientType: "webui",
+      deviceId: "dev-abc",
     });
     expect(result.success).toBe(true);
   });

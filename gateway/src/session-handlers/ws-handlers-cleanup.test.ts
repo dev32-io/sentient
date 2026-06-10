@@ -95,6 +95,7 @@ function makeWs(overrides: Partial<ClientData>): ServerWebSocket<ClientData> {
     personSession: null,
     attachment: null,
     resumeSessionId: null,
+    resumeParams: null,
     sessionsHandlers: null,
     snapshotUnsub: null,
     acpWireDispose: null,
@@ -395,17 +396,19 @@ describe("DeviceBufferStore.sweepExpired — deferred teardown lifecycle", () =>
 // D) Reconnect cancels deferred teardown
 // ---------------------------------------------------------------------------
 
-describe("DeviceBufferStore.acquire — clears deferredTeardown on resume", () => {
-  it("deferredTeardown is null after a matching resumeEpoch re-acquire", () => {
+describe("DeviceBufferStore.acquire — hands deferredTeardown back on resume (Task 3.8)", () => {
+  it("returns the stashed teardown and detaches it from the entry so the sweep cannot re-run it", () => {
     const store = new DeviceBufferStore(REPLAY_MAX_BYTES);
     const first = store.acquire("dev-A");
     const teardown = vi.fn();
     store.release("dev-A", teardown);
 
-    // Device reconnects with correct epoch.
-    store.acquire("dev-A", { resumeEpoch: first.epoch });
+    // Device reconnects with correct epoch — acquire HANDS the teardown back
+    // (Task 3.8 handover) instead of silently dropping it. The caller runs it.
+    const resumed = store.acquire("dev-A", { resumeEpoch: first.epoch });
+    expect(resumed.priorDeferredTeardown).toBe(teardown);
 
-    // Sweep — teardown must NOT be called because the device reconnected.
+    // Sweep — teardown must NOT be called by the sweep (acquire detached it).
     const future = Date.now() + TTL_MS + 1000;
     store.release("dev-A"); // release again so sweep is eligible
     store.sweepExpired(future, TTL_MS);
