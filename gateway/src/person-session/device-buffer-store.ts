@@ -11,6 +11,14 @@ export interface DeviceBufferEntry {
   readonly buffer: SessionReplayBuffer;
   readonly epoch: number;
   detachedAtMs: number | null;
+  /**
+   * Teardown actions deferred from a resumable disconnect (Task 3.7).
+   * Stashed so the sweep can run them when the TTL expires without a
+   * reconnect. Must be idempotent (guard flag inside the closure).
+   * Cleared (set to null) when the device reconnects via acquireDeviceBuffer
+   * so it doesn't fire after a successful resume.
+   */
+  deferredTeardown: (() => void) | null;
 }
 
 export interface AcquireDeviceBufferResult {
@@ -65,6 +73,12 @@ export class DeviceBufferStore {
     const existing = this._buffers.get(deviceId);
     if (existing !== undefined && opts.resumeEpoch === existing.epoch) {
       existing.detachedAtMs = null;
+      // Cancel any pending deferred teardown — the device reconnected before
+      // the TTL expired, so the deferred actions must not run later.
+      if (existing.deferredTeardown !== null) {
+        log.debug("acquire.cancelled-deferred-teardown", { deviceId, epoch: existing.epoch });
+        existing.deferredTeardown = null;
+      }
       log.debug("acquire.resumed", { deviceId, epoch: existing.epoch });
       return { buffer: existing.buffer, epoch: existing.epoch, resumed: true };
     }
@@ -72,7 +86,7 @@ export class DeviceBufferStore {
     this._epochCounter += 1;
     const epoch = this._epochCounter;
     const buffer = createSessionReplayBuffer({ maxBytes: this._maxBytes });
-    const entry: DeviceBufferEntry = { buffer, epoch, detachedAtMs: null };
+    const entry: DeviceBufferEntry = { buffer, epoch, detachedAtMs: null, deferredTeardown: null };
     this._buffers.set(deviceId, entry);
     log.debug("acquire.fresh", {
       deviceId,
@@ -85,15 +99,38 @@ export class DeviceBufferStore {
   /**
    * Mark a device buffer as detached (start its TTL clock).
    * The buffer is retained briefly for a quick reconnect.
+   * An optional deferredTeardown callback is stashed on the entry and
+   * invoked by sweepExpired when the TTL expires without a reconnect.
    */
-  release(deviceId: string): void {
+  release(deviceId: string, deferredTeardown?: () => void): void {
     const entry = this._buffers.get(deviceId);
     if (entry === undefined) {
       log.warn("release.not-found", { deviceId });
       return;
     }
     entry.detachedAtMs = Date.now();
-    log.debug("release", { deviceId, epoch: entry.epoch });
+    entry.deferredTeardown = deferredTeardown ?? null;
+    log.debug("release", { deviceId, epoch: entry.epoch, hasDeferredTeardown: deferredTeardown !== undefined });
+  }
+
+  /**
+   * Immediately remove the device buffer entry (full teardown path).
+   * Unlike release(), this does not start a TTL — it disposes the entry
+   * outright. Used on explicit session.end / logout where replay retention
+   * is unwanted.
+   */
+  dispose(deviceId: string): void {
+    const entry = this._buffers.get(deviceId);
+    if (entry === undefined) {
+      // debug (not warn) — expected when the buffer was already swept by TTL
+      // expiry or never acquired for this device (e.g. pre-configure teardown).
+      // Contrast with release.not-found which is warn because release is always
+      // preceded by a successful acquire on the same code path.
+      log.debug("dispose.not-found", { deviceId });
+      return;
+    }
+    this._buffers.delete(deviceId);
+    log.debug("dispose", { deviceId, epoch: entry.epoch });
   }
 
   /** Read the replay buffer for a device (undefined if not present). */
@@ -108,6 +145,8 @@ export class DeviceBufferStore {
 
   /**
    * Evict device buffer entries that have been detached longer than `ttlMs`.
+   * For each evicted entry that carries a deferredTeardown, the teardown is
+   * invoked exactly once (the closure is idempotent by construction).
    * Returns the number of entries evicted.
    */
   sweepExpired(nowMs: number, ttlMs: number): number {
@@ -120,7 +159,18 @@ export class DeviceBufferStore {
           deviceId,
           epoch: entry.epoch,
           detachedAtMs: entry.detachedAtMs,
+          hasDeferredTeardown: entry.deferredTeardown !== null,
         });
+        if (entry.deferredTeardown !== null) {
+          try {
+            entry.deferredTeardown();
+          } catch (err: unknown) {
+            log.warn("sweepExpired.deferred-teardown-failed", {
+              deviceId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
       }
     }
     return evicted;

@@ -186,7 +186,10 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
       close(ws: ServerWebSocket<ClientData>) {
         activeConnections--;
         log.info("client-disconnected");
-        cleanupSession(ws, services);
+        // Transport close: attempt resumable disconnect if the client
+        // advertised stream.resume capability and a device buffer exists.
+        // Falls through to full teardown when the capability is absent.
+        cleanupSession(ws, services, { full: false });
       },
     },
   });

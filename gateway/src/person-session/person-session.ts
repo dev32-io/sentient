@@ -170,9 +170,22 @@ export class PersonSession {
     return result;
   }
 
-  releaseDeviceBuffer(deviceId: string): void {
-    this._deviceBuffers.release(deviceId);
-    log.debug("releaseDeviceBuffer", { profile: this.profile, deviceId });
+  releaseDeviceBuffer(deviceId: string, deferredTeardown?: () => void): void {
+    this._deviceBuffers.release(deviceId, deferredTeardown);
+    log.debug("releaseDeviceBuffer", {
+      profile: this.profile,
+      deviceId,
+      hasDeferredTeardown: deferredTeardown !== undefined,
+    });
+  }
+
+  /**
+   * Immediately remove the device buffer entry without starting a TTL.
+   * Used on explicit session.end / logout where replay retention is not wanted.
+   */
+  disposeDeviceBuffer(deviceId: string): void {
+    this._deviceBuffers.dispose(deviceId);
+    log.debug("disposeDeviceBuffer", { profile: this.profile, deviceId });
   }
 
   /** Read the replay buffer for a device (undefined if not present). */

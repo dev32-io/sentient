@@ -207,84 +207,282 @@ function handleTextInput(ws: ServerWebSocket<ClientData>, text: string, pendingI
 // Session end + cleanup
 // ---------------------------------------------------------------------------
 
+/** Capability advertised by clients that support stream resumption (Task 3.7+). */
+const CAP_STREAM_RESUME = "stream.resume";
+
 function handleSessionEnd(ws: ServerWebSocket<ClientData>, services: GatewayServices): void {
   if (!ws.data.sessionId) return;
-  cleanupSession(ws, services);
+  cleanupSession(ws, services, { full: true });
   ws.close(WS_NORMAL_CLOSURE, "Session ended");
 }
 
-export function cleanupSession(ws: ServerWebSocket<ClientData>, services: GatewayServices): void {
+export interface CleanupOptions {
+  /**
+   * true  → explicit session.end / logout: full teardown (dispose gate,
+   *          ACP wire, remove session, dispose device buffer).
+   * false → transport close: resumable if the client advertised stream.resume
+   *          AND a device buffer is present; otherwise falls through to full.
+   */
+  full: boolean;
+}
+
+export function cleanupSession(
+  ws: ServerWebSocket<ClientData>,
+  services: GatewayServices,
+  opts: CleanupOptions = { full: true },
+): void {
   const sessionId = ws.data.sessionId;
   if (!sessionId) return;
 
-  log.info("session-cleanup", { sessionId });
+  // Decide whether to run the RESUMABLE path. Conditions:
+  //   - caller requested a non-full cleanup (transport close, not session.end)
+  //   - the client advertised stream.resume capability
+  //   - a device buffer entry exists for this attachment (so there's somewhere
+  //     to keep journaling)
+  const hasStreamResume = ws.data.grantedCapabilities.has(CAP_STREAM_RESUME);
+  const hasPersonSession = ws.data.personSession !== null;
+  const hasAttachment = ws.data.attachment !== null;
+  const hasBuffer =
+    ws.data.personSession !== null &&
+    ws.data.attachment !== null &&
+    ws.data.personSession.bufferFor(ws.data.attachment.attachmentId) !== undefined;
+  const isResumable = !opts.full && hasStreamResume && hasPersonSession && hasAttachment && hasBuffer;
 
-  // Clear auth timeout if the session ends before auth completes
-  if (ws.data.authTimeout) {
-    clearTimeout(ws.data.authTimeout);
-    ws.data.authTimeout = null;
+  log.info("session-cleanup.decision", {
+    sessionId,
+    full: opts.full,
+    isResumable,
+    hasStreamResume,
+    hasPersonSession,
+    hasAttachment,
+    hasBuffer,
+  });
+
+  if (isResumable) {
+    runResumableDisconnect(ws, services, sessionId);
+  } else {
+    runFullTeardown(ws, services, sessionId);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shared teardown helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Captured pipeline state that survives a resumable disconnect until the
+ * deferred teardown fires (or is cancelled by a reconnect).
+ */
+interface CapturedPipelineResources {
+  readonly attentionGate: ClientData["attentionGate"];
+  readonly bargeInController: ClientData["bargeInController"];
+  readonly conversationFeedUnsub: ClientData["conversationFeedUnsub"];
+  readonly taskLifecycleUnsub: ClientData["taskLifecycleUnsub"];
+  readonly preferenceUnsub: ClientData["preferenceUnsub"];
+  readonly preferenceAudioUnsub: ClientData["preferenceAudioUnsub"];
+  readonly snapshotUnsub: ClientData["snapshotUnsub"];
+  readonly acpSdkFrameUnsub: ClientData["acpSdkFrameUnsub"];
+  readonly acpWireDispose: ClientData["acpWireDispose"];
+  readonly personSession: ClientData["personSession"];
+  readonly attachment: ClientData["attachment"];
+}
+
+/**
+ * Disposes all shared pipeline resources: attention gate, barge-in controller,
+ * subscription callbacks, ACP wire, person-session detach, and the three
+ * service registration teardown calls.
+ *
+ * Called from BOTH the full-teardown path (immediately) and the deferred
+ * teardown closure (on sweep expiry). This is the single place that lists
+ * every shared disposable — the two paths cannot silently diverge.
+ */
+function teardownPipelineResources(
+  captured: CapturedPipelineResources,
+  services: GatewayServices,
+  sessionId: string,
+): void {
+  captured.attentionGate?.dispose();
+  captured.bargeInController?.dispose();
+  captured.conversationFeedUnsub?.();
+  captured.taskLifecycleUnsub?.();
+  captured.preferenceUnsub?.();
+  captured.preferenceAudioUnsub?.();
+  captured.snapshotUnsub?.();
+  // Unsubscribe SDK-frame listener BEFORE releasing the wire.
+  captured.acpSdkFrameUnsub?.();
+  // Release this attachment's ref on the pooled wire. Disposes the underlying
+  // WS only when the last attachment for this user detaches.
+  captured.acpWireDispose?.();
+
+  if (captured.personSession && captured.attachment) {
+    captured.personSession.detach(captured.attachment);
   }
 
-  // Dispose attention gate (also cancels any in-flight cycle via cycleSlot)
-  ws.data.attentionGate?.dispose();
-  ws.data.attentionGate = null;
+  log.debug("session-hermes-release", { sessionId });
+  services.sessionControls.unregister(sessionId);
+  services.sessionRouter.release(sessionId);
+  services.sessionManager.removeSession(sessionId);
+}
 
-  // Stop all adapters
+// ---------------------------------------------------------------------------
+// Shared field helpers (capture / clear / stop)
+// ---------------------------------------------------------------------------
+
+/**
+ * Stops all active adapters and clears the adapter slots on ws.data.
+ * Called from both runResumableDisconnect and runFullTeardown.
+ */
+function stopAdapters(ws: ServerWebSocket<ClientData>, reason: string): void {
   for (const adapter of ws.data.adapters) {
-    adapter.stop("session-end").catch((err: unknown) => {
-      log.error("adapter-stop-failed", { id: adapter.id, error: errorMessage(err, "unknown") });
+    adapter.stop(reason).catch((err: unknown) => {
+      log.error("adapter-stop-failed", { id: adapter.id, error: errorMessage(err, "unknown"), path: reason });
     });
   }
   ws.data.adapters = [];
   ws.data.audioAdapter = null;
   ws.data.textAdapter = null;
+  ws.data.isStreaming = false;
+}
 
-  // Clear cerebrum state
-  ws.data.shortTermContext = null;
-  ws.data.taskManager = null;
-  ws.data.conversationFeedUnsub?.();
-  ws.data.conversationFeedUnsub = null;
-  ws.data.taskLifecycleUnsub?.();
-  ws.data.taskLifecycleUnsub = null;
-  ws.data.preferenceUnsub?.();
-  ws.data.preferenceUnsub = null;
-  ws.data.preferenceAudioUnsub?.();
-  ws.data.preferenceAudioUnsub = null;
-  ws.data.preferenceManager = null;
-  ws.data.bargeInController?.dispose();
+/**
+ * Snapshots the pipeline fields that teardownPipelineResources needs.
+ * Called from BOTH runResumableDisconnect and runFullTeardown so the capture
+ * list can never silently diverge between the two paths.
+ */
+function captureWsDataFields(ws: ServerWebSocket<ClientData>): CapturedPipelineResources {
+  return {
+    attentionGate: ws.data.attentionGate,
+    bargeInController: ws.data.bargeInController,
+    conversationFeedUnsub: ws.data.conversationFeedUnsub,
+    taskLifecycleUnsub: ws.data.taskLifecycleUnsub,
+    preferenceUnsub: ws.data.preferenceUnsub,
+    preferenceAudioUnsub: ws.data.preferenceAudioUnsub,
+    snapshotUnsub: ws.data.snapshotUnsub,
+    acpSdkFrameUnsub: ws.data.acpSdkFrameUnsub,
+    acpWireDispose: ws.data.acpWireDispose,
+    personSession: ws.data.personSession,
+    attachment: ws.data.attachment,
+  };
+}
+
+/**
+ * Zeros out every ws.data field that belongs to the session pipeline.
+ * Called from BOTH runResumableDisconnect and runFullTeardown after each path
+ * has finished with (or handed off) the live references — prevents the dead
+ * socket from holding stale captures.
+ */
+function clearWsDataFields(ws: ServerWebSocket<ClientData>): void {
+  ws.data.attentionGate = null;
+  ws.data.acpSdkFrameUnsub = null;
+  ws.data.acpWireDispose = null;
   ws.data.bargeInController = null;
   ws.data.interruptController = null;
-  ws.data.snapshotUnsub?.();
+  ws.data.conversationFeedUnsub = null;
+  ws.data.taskLifecycleUnsub = null;
+  ws.data.preferenceUnsub = null;
+  ws.data.preferenceAudioUnsub = null;
+  ws.data.preferenceManager = null;
   ws.data.snapshotUnsub = null;
-  // Stop this WS's out-of-band SDK-frame listener on the (pooled) acpConn
-  // BEFORE releasing the wire ref — the closed socket must not keep receiving
-  // frames if the wire stays alive for another attachment.
-  ws.data.acpSdkFrameUnsub?.();
-  ws.data.acpSdkFrameUnsub = null;
-  // Release this attachment's ref on the pooled wire. Disposes the underlying
-  // WS only when the last attachment for this user detaches.
-  ws.data.acpWireDispose?.();
-  ws.data.acpWireDispose = null;
+  ws.data.shortTermContext = null;
+  ws.data.taskManager = null;
   ws.data.sessionsHandlers = null;
   ws.data.resumeSessionId = null;
   ws.data.conversationHistory?.clear();
   ws.data.conversationHistory = null;
-  ws.data.isStreaming = false;
-
-  // Detach this device from the person session and release its replay buffer
-  // so the per-device TTL clock starts. Task 3.7 owns the full cleanup split;
-  // this minimum ensures the buffer is released when the attachment detaches.
-  if (ws.data.personSession && ws.data.attachment) {
-    ws.data.personSession.releaseDeviceBuffer(ws.data.attachment.attachmentId);
-    ws.data.personSession.detach(ws.data.attachment);
-  }
   ws.data.personSession = null;
   ws.data.attachment = null;
-
-  // Unregister session + release Hermes binding
-  log.debug("session-hermes-release", { sessionId });
-  services.sessionControls.unregister(sessionId);
-  services.sessionRouter.release(sessionId);
-  services.sessionManager.removeSession(sessionId);
   ws.data.sessionId = null;
+}
+
+// ---------------------------------------------------------------------------
+// Resumable disconnect
+// ---------------------------------------------------------------------------
+
+/**
+ * RESUMABLE DISCONNECT (transport close + stream.resume capability).
+ *
+ * - Stops input adapters (STT/mic) — dead socket, no more audio.
+ * - Does NOT dispose the AttentionGate, ACP wire, session registrations, or
+ *   the cycle-output pipeline — the in-flight Hermes cycle keeps running and
+ *   its output frames keep flowing into the device buffer via the FrameSequencer
+ *   (socket writes no-op on the dead socket per Task 3.5).
+ * - Releases the device buffer (starts TTL clock) and stashes a deferred
+ *   teardown closure that the retention sweep will run if the device never
+ *   reconnects before the TTL expires.
+ * - Clears the WS data fields for things we DID stop so the ws object is no
+ *   longer a live reference to them (avoids stale captures after the socket
+ *   is gone).
+ */
+function runResumableDisconnect(ws: ServerWebSocket<ClientData>, services: GatewayServices, sessionId: string): void {
+  log.info("session-cleanup.resumable", { sessionId });
+
+  // Clear auth timeout — no re-auth on dead socket.
+  if (ws.data.authTimeout) {
+    clearTimeout(ws.data.authTimeout);
+    ws.data.authTimeout = null;
+  }
+
+  // Stop INPUT adapters (STT / mic) — output-side pipeline stays alive.
+  stopAdapters(ws, "resumable-disconnect");
+
+  // Snapshot the live resources that must survive until the deferred teardown.
+  // An idempotency guard (tornDown) ensures teardownPipelineResources runs at
+  // most once even if the closure is somehow invoked twice.
+  const captured = captureWsDataFields(ws);
+
+  let tornDown = false;
+  const deferredTeardown = (): void => {
+    if (tornDown) return;
+    tornDown = true;
+    log.info("session-cleanup.deferred-teardown", { sessionId });
+    teardownPipelineResources(captured, services, sessionId);
+  };
+
+  // Release device buffer (start TTL) with the deferred teardown stashed.
+  // If the device reconnects before the TTL, acquireDeviceBuffer clears the
+  // deferredTeardown so it never fires.
+  if (ws.data.personSession && ws.data.attachment) {
+    ws.data.personSession.releaseDeviceBuffer(ws.data.attachment.attachmentId, deferredTeardown);
+    // Keep personSession attached so the buffer retention check
+    // (hasRetainedBuffers) correctly blocks session eviction during the TTL
+    // window. Detach happens in teardownPipelineResources → deferredTeardown.
+  }
+
+  // Null out all pipeline fields so the dead socket holds no stale references.
+  clearWsDataFields(ws);
+}
+
+// ---------------------------------------------------------------------------
+// Full teardown
+// ---------------------------------------------------------------------------
+
+/**
+ * FULL TEARDOWN (explicit session.end, or transport close without stream.resume).
+ *
+ * Disposes all session resources immediately: attention gate, ACP wire,
+ * session registrations, and the device buffer entry.
+ */
+function runFullTeardown(ws: ServerWebSocket<ClientData>, services: GatewayServices, sessionId: string): void {
+  log.info("session-cleanup.full", { sessionId });
+
+  // Clear auth timeout if the session ends before auth completes.
+  if (ws.data.authTimeout) {
+    clearTimeout(ws.data.authTimeout);
+    ws.data.authTimeout = null;
+  }
+
+  stopAdapters(ws, "session-end");
+
+  // Full teardown: dispose the device buffer entry immediately (no TTL).
+  // This is the logout/session.end path — we don't want to retain the buffer.
+  if (ws.data.personSession && ws.data.attachment) {
+    ws.data.personSession.disposeDeviceBuffer(ws.data.attachment.attachmentId);
+  }
+
+  // Snapshot current ws.data fields and run the shared pipeline teardown
+  // (gate, bargeIn, all unsubs, acp wire, personSession.detach, service calls).
+  teardownPipelineResources(captureWsDataFields(ws), services, sessionId);
+
+  // Null out all pipeline fields.
+  clearWsDataFields(ws);
 }
