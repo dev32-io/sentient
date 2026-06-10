@@ -1,11 +1,19 @@
 // ---------------------------------------------------------------------------
 // ResumeCursorStore — DURABLE persistence boundary for the in-memory [ResumeCursor].
 //
-// The SDK's ResumeCursor is in-memory: it dies with the process. To survive an app
-// restart (so a relaunch can `stream.resume` on recovered:true within the gateway's
-// replay-buffer TTL instead of recovered:false + full REST refetch), the orchestrator
-// SEEDS the cursor from this store on resume-prep, PERSISTS the snapshot when the
-// cursor advances, and CLEARS it on a non-recovered reset / conversation delete.
+// The SDK's ResumeCursor is in-memory: it dies with the process. This store persists
+// it so that an IN-PROCESS reconnect (a drop/foreground probe where the conversation
+// is ALREADY anchored — spec §6) can `stream.resume` on recovered:true within the
+// gateway's replay-buffer TTL instead of recovered:false + full REST refetch. The
+// orchestrator SEEDS the cursor from this store on resume-prep, PERSISTS the snapshot
+// when the cursor advances, and CLEARS it on a non-recovered reset / conversation delete.
+//
+// SCOPE — NOT cold-relaunch yet: on a COLD app relaunch the SDK does NOT restore its
+// session anchor on launch (the anchor is set only from a server frame), so the
+// FIRST connect after launch has a null anchor and the seed cannot fire — the cursor
+// stays fresh and the relaunch takes the recovered:false REST path. Surviving an app
+// kill is a FOLLOW-UP (restore the SDK session anchor on launch, THEN seed). Today's
+// guarantee is the in-process reconnect, which is what spec §6 frames.
 //
 // DEPENDENCY INVERSION: the SDK (commonMain, lowest layer) DEFINES this interface;
 // mobile-data IMPLEMENTS it over its durable SyncCursorStore. mobile-data depends on

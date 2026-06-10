@@ -2,10 +2,18 @@
 // SyncCursorStore — durable per-conversation resume cursor {epoch, lastSeq}.
 //
 // Slice 3's SDK ResumeCursor (transport/ResumeCursor.kt) is in-memory: it dies
-// with the process. This store persists the cursor across an app restart so that
-// — within the gateway's 30-min replay-buffer TTL — a relaunched app can seed the
-// SDK cursor and `stream.resume` lands on recovered:true (replay the gap) instead
-// of recovered:false (reset + full REST refetch).
+// with the process. This store persists the cursor so that — within the gateway's
+// 30-min replay-buffer TTL — an IN-PROCESS reconnect (a drop / foreground probe
+// where the conversation is still anchored, spec §6) can seed the SDK cursor and
+// `stream.resume` lands on recovered:true (replay the gap) instead of
+// recovered:false (reset + full REST refetch).
+//
+// SCOPE — NOT cold-relaunch yet: the persisted keys outlive the process, but the
+// SDK does NOT restore its session anchor on launch, so the FIRST connect after a
+// cold relaunch has a null anchor and the seed (ResumeCursorPersistence.seedIfEmpty)
+// early-returns → the relaunch takes the recovered:false path. Surviving an app kill
+// (restore the anchor on launch, THEN seed) is a FOLLOW-UP; today's guarantee is the
+// in-process reconnect.
 //
 // Backed by multiplatform-settings' `Settings` interface — an injectable boundary
 // the platform owner (UserSessionManager / IosUserSession) constructs concretely

@@ -32,10 +32,14 @@ class ResumeCursorPersistence(
     private var dirty = false
 
     /**
-     * SEED: if the in-memory cursor is empty (lastSeq==0 — a fresh app launch within
-     * the gateway's replay-buffer TTL) and a conversation is anchored, overwrite it
-     * with the persisted snapshot so the next resume carries the durable epoch/seq.
-     * No-op when the cursor already has a seq or nothing is persisted.
+     * SEED: if the in-memory cursor is empty (lastSeq==0) AND a conversation is already
+     * anchored, overwrite it with the persisted snapshot so the next resume carries the
+     * durable epoch/seq. No-op when the cursor already has a seq or nothing is persisted.
+     *
+     * The anchor guard means this fires on an IN-PROCESS reconnect (the conversation is
+     * still anchored — spec §6), NOT on a cold relaunch's first connect: the SDK does
+     * not restore its session anchor on launch, so [conversationId] is null there and
+     * the seed early-returns. Cold-relaunch resume (restore anchor → seed) is a follow-up.
      */
     fun seedIfEmpty() {
         if (cursor.snapshot.lastSeq != 0L) return

@@ -1,17 +1,22 @@
 // ---------------------------------------------------------------------------
-// CachingConversationRepositoryTest — pins the write-through + delete-on-switch
-// decorator against a REAL in-memory SQLite DB on the JVM host (androidUnitTest).
+// CachingConversationRepositoryTest — pins the client-intent anchor + write-through
+// + atomic-replace decorator against a REAL in-memory SQLite DB on the JVM host
+// (androidUnitTest).
 //
 // The decorator wraps a ConversationRepository (here a fake emitting the SDK's
 // fused timeline + liveEvents) and:
-//   • exposes a DB-BACKED timeline (instant-paint-on-launch from persisted rows),
+//   • exposes a DB-BACKED timeline anchored on the CLIENT-INTENT signal — the cached
+//     rows paint INSTANTLY from the client's switch intent, with NO server echo
+//     required (cold-start case),
 //   • writes COMMITTED (non-empty entryId) timeline entries through to the DB,
-//   • on SessionSwitched(nonEmpty) deletes the conversation's rows (replace-on-
-//     reload) so the incoming REST/live set repopulates fresh.
+//   • on SessionSwitched(nonEmpty) arms a one-shot ATOMIC replace: the next timeline
+//     snapshot runs delete+insert in a single transaction (replace-on-reload) so the
+//     reactive flow emits cached→REST with NO empty intermediate.
 //
-// These cover the matrix from the Task 4.5 brief: write-through, in-flight skip,
-// replace-on-reload (delete-then-repopulate, not merge), namespace independence
-// (live UUID + positional REST entries coexist), and seq ordering.
+// These cover the matrix from the Task 4.5 brief PLUS the cold-start instant-paint:
+// client-intent paint (no echo), atomic replace (no empty flash), write-through,
+// in-flight skip, namespace independence (live UUID + positional REST entries
+// coexist), and seq ordering.
 //
 // The decorator's collectors + DB-backed stateIn are launched on backgroundScope
 // (auto-cancelled at test end) and pinned to the test scheduler via an
@@ -36,6 +41,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -53,6 +59,11 @@ class CachingConversationRepositoryTest {
     private val driver = InMemoryDatabaseDriverFactory().create()
     private val db = ChatDatabase(driver)
 
+    // The shared CLIENT-INTENT anchor, owned in production by ChatComponent and SET by
+    // the sessions decorator's switch path. Here the test drives it directly to simulate
+    // the client's switch intent (route open) — independent of any server echo.
+    private val intent = MutableStateFlow<String?>(null)
+
     @AfterTest
     fun tearDown() = driver.close()
 
@@ -60,12 +71,17 @@ class CachingConversationRepositoryTest {
      * Build the decorator on the test scheduler so its DB query notifier is deterministic.
      * The SAME test dispatcher backs both the read query mapping AND the write seam
      * (ioDispatcher), so SQLite writes stay on the virtual scheduler — runCurrent()
-     * deterministically flushes delete-on-switch + write-through.
+     * deterministically flushes the atomic replace + write-through.
      */
     private fun TestScope.repoFor(under: ConversationRepository): CachingConversationRepository {
         val dispatcher = UnconfinedTestDispatcher(testScheduler)
         return CachingConversationRepository(
-            under, db, scope = backgroundScope, dispatcher = dispatcher, ioDispatcher = dispatcher,
+            under,
+            db,
+            scope = backgroundScope,
+            activeConversationIntent = intent,
+            dispatcher = dispatcher,
+            ioDispatcher = dispatcher,
         )
     }
 
@@ -80,7 +96,7 @@ class CachingConversationRepositoryTest {
             val under = FakeUnderlyingRepository()
             val repo = repoFor(under)
 
-            under.events.emit(SdkEvent.SessionSwitched("conv-1"))
+            intent.value = "conv-1" // client switch intent anchors the paint + write-through
             under.timelineState.value = listOf(committed("e1", "hello"))
             runCurrent()
 
@@ -100,7 +116,7 @@ class CachingConversationRepositoryTest {
             val under = FakeUnderlyingRepository()
             repoFor(under) // started for its collectors; this test asserts against the DB, not the decorator
 
-            under.events.emit(SdkEvent.SessionSwitched("conv-1"))
+            intent.value = "conv-1" // client switch intent
             under.timelineState.value = listOf(
                 committed("e1", "committed"),
                 ChatMessage(ts = 1, role = "assistant", content = "streaming…", streaming = true),
@@ -118,7 +134,7 @@ class CachingConversationRepositoryTest {
             val under = FakeUnderlyingRepository()
             repoFor(under) // started for its collectors; this test asserts against the DB, not the decorator
 
-            under.events.emit(SdkEvent.SessionSwitched("conv-1"))
+            intent.value = "conv-1" // client switch intent
             under.timelineState.value =
                 listOf(ChatMessage(ts = 0, role = "assistant", content = "draft", streaming = true))
             runCurrent()
@@ -142,7 +158,9 @@ class CachingConversationRepositoryTest {
             val under = FakeUnderlyingRepository()
             repoFor(under) // started for its collectors; this test asserts against the DB, not the decorator
 
-            // Switch INTO conv-1 → clears stale rows, then the REST set repopulates.
+            // Client anchors conv-1; the live echo arms the atomic replace; the REST
+            // snapshot then deletes the stale row + inserts the new set in one transaction.
+            intent.value = "conv-1"
             under.events.emit(SdkEvent.SessionSwitched("conv-1"))
             under.timelineState.value = listOf(committed("conv-1:0", "fresh-0"), committed("conv-1:1", "fresh-1"))
             runCurrent()
@@ -154,12 +172,83 @@ class CachingConversationRepositoryTest {
         }
 
     @Test
+    fun `COLD start — cached rows paint instantly from client intent with NO server echo`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Seed conv-X's persisted rows directly (as if from a prior launch's reload).
+            db.chatDatabaseQueries.upsertMessage(
+                entry_id = "conv-X:0", conversation_id = "conv-X", seq = 0,
+                role = "user", content = "cached-0", ts = 0, cutoff_kind = null,
+            )
+            db.chatDatabaseQueries.upsertMessage(
+                entry_id = "conv-X:1", conversation_id = "conv-X", seq = 1,
+                role = "assistant", content = "cached-1", ts = 1, cutoff_kind = null,
+            )
+            val under = FakeUnderlyingRepository()
+            val repo = repoFor(under)
+
+            // Client switch intent ONLY — no SessionSwitched echo, no SDK timeline. The
+            // DB-backed timeline must paint the cached rows immediately.
+            intent.value = "conv-X"
+            runCurrent()
+
+            val painted = repo.timeline.value
+            assertEquals(listOf("cached-0", "cached-1"), painted.map { it.content })
+            assertEquals(listOf("conv-X:0", "conv-X:1"), painted.map { it.entryId })
+        }
+
+    @Test
+    fun `atomic replace — cached paint never flashes to empty before the REST set lands`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Cold cached baseline for conv-X.
+            db.chatDatabaseQueries.upsertMessage(
+                entry_id = "conv-X:0", conversation_id = "conv-X", seq = 0,
+                role = "user", content = "cached", ts = 0, cutoff_kind = null,
+            )
+            val under = FakeUnderlyingRepository()
+            val repo = repoFor(under)
+
+            // Collect EVERY emission of the painted timeline so we can prove no empty
+            // intermediate slips between the cached set and the REST set.
+            val emissions = mutableListOf<List<String>>()
+            backgroundScope.launch { repo.timeline.collect { emissions.add(it.map { m -> m.content }) } }
+
+            intent.value = "conv-X" // paints the cached row
+            runCurrent()
+            assertEquals(listOf("cached"), repo.timeline.value.map { it.content })
+
+            // Live echo arms the replace. The SDK switch passes through an EMPTY
+            // intermediate snapshot (replaceMirror(emptyList()) while awaiting REST) —
+            // the delete must NOT fire here, or the cached rows would flash to empty.
+            under.events.emit(SdkEvent.SessionSwitched("conv-X"))
+            under.timelineState.value = emptyList()
+            runCurrent()
+            assertEquals(listOf("cached"), repo.timeline.value.map { it.content }) // survives the empty window
+
+            // The REST reload (different positional set) then arrives → atomic
+            // delete+insert in ONE transaction, cached → REST with no empty between.
+            under.timelineState.value = listOf(committed("conv-X:0", "rest-0"), committed("conv-X:1", "rest-1"))
+            runCurrent()
+
+            assertEquals(listOf("rest-0", "rest-1"), repo.timeline.value.map { it.content })
+            // The atomic transaction guarantees the reactive flow never emitted emptyList
+            // ONCE the cached set had painted. (The leading empty is the pre-anchor
+            // initial value of the Eagerly stateIn — not a flash.) From the first
+            // non-empty emission onward there must be NO empty: cached → REST, no gap.
+            val firstPainted = emissions.indexOfFirst { it.isNotEmpty() }
+            assertTrue(firstPainted >= 0, "timeline never painted: $emissions")
+            assertFalse(
+                emissions.drop(firstPainted).any { it.isEmpty() },
+                "timeline flashed to empty during replace: $emissions",
+            )
+        }
+
+    @Test
     fun `namespace independence — a live UUID entry coexists with positional REST entries`() =
         runTest(UnconfinedTestDispatcher()) {
             val under = FakeUnderlyingRepository()
             repoFor(under) // started for its collectors; this test asserts against the DB, not the decorator
 
-            under.events.emit(SdkEvent.SessionSwitched("conv-1"))
+            intent.value = "conv-1" // client switch intent
             under.timelineState.value = listOf(
                 committed("conv-1:0", "rest-0"),
                 committed("conv-1:1", "rest-1"),
@@ -181,7 +270,7 @@ class CachingConversationRepositoryTest {
             val under = FakeUnderlyingRepository()
             val repo = repoFor(under)
 
-            under.events.emit(SdkEvent.SessionSwitched("conv-1"))
+            intent.value = "conv-1" // client switch intent
             under.timelineState.value = listOf(
                 committed("e0", "first"),
                 committed("e1", "second"),

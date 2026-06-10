@@ -4,6 +4,7 @@ import io.sentient.mobiledata.cache.db.ChatDatabase
 import io.sentient.mobilesdk.log.createLogger
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -48,6 +49,13 @@ class CachingSessionsRepository(
     // smart-async delete), off the CPU `Dispatchers.Default` mirrorScope. Injected by
     // the platform owner — `Dispatchers.IO` is not a commonMain API (see [ioDispatcher]).
     private val ioDispatcher: CoroutineDispatcher,
+    // Shared CLIENT-INTENT anchor (owned by ChatComponent, read by the conversation
+    // decorator). The switch path lands HERE — `switchTo*` carries the target id the
+    // client KNOWS at route-open time, before any server echo — so we SET the anchor
+    // here to drive the conversation decorator's instant cached paint. New-chat clears
+    // it to null (no id minted yet). Default no-op signal keeps existing tests + any
+    // caller that doesn't wire the mirror anchor working unchanged.
+    private val activeConversationIntent: MutableStateFlow<String?> = MutableStateFlow(null),
 ) : SessionsRepository {
     private val log = createLogger("data", "caching-sessions")
     private val queries = db.chatDatabaseQueries
@@ -146,13 +154,34 @@ class CachingSessionsRepository(
         underlying.rename(sessionId, title)
     }
 
-    // Switch / new-chat are pure delegations — the next list() refresh repopulates the
-    // cache from REST. No local upsert here: a freshly-minted session has no title/ts
-    // to cache until the server reflects it.
-    override fun newChatFireAndForget() = underlying.newChatFireAndForget()
-    override fun switchToFireAndForget(sessionId: String) = underlying.switchToFireAndForget(sessionId)
-    override suspend fun switchTo(sessionId: String) = underlying.switchTo(sessionId)
-    override suspend fun newChat(): String = underlying.newChat()
+    // Switch / new-chat are pure delegations for the session LIST — the next list()
+    // refresh repopulates the cache from REST. No local upsert here: a freshly-minted
+    // session has no title/ts to cache until the server reflects it.
+    //
+    // CLIENT-INTENT ANCHOR: switch SETS the shared anchor to the target id BEFORE
+    // delegating, so the conversation decorator's DB-backed timeline re-subscribes and
+    // paints that conversation's cached rows INSTANTLY — driven by the client's switch
+    // intent, not awaited from the gateway's `session.switched` echo. New-chat clears
+    // the anchor to null (no id minted yet → blank canvas until the live snapshot lands).
+    override fun newChatFireAndForget() {
+        activeConversationIntent.value = null
+        underlying.newChatFireAndForget()
+    }
+
+    override fun switchToFireAndForget(sessionId: String) {
+        activeConversationIntent.value = sessionId
+        underlying.switchToFireAndForget(sessionId)
+    }
+
+    override suspend fun switchTo(sessionId: String) {
+        activeConversationIntent.value = sessionId
+        underlying.switchTo(sessionId)
+    }
+
+    override suspend fun newChat(): String {
+        activeConversationIntent.value = null
+        return underlying.newChat()
+    }
 
     private companion object {
         // Refresh fetches a generous window so the smart-async diff sees the whole

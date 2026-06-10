@@ -22,6 +22,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlin.time.Clock as KtClock
 
 /**
@@ -52,6 +53,14 @@ class ChatComponent(
     // they never run on the mirrorScope's CPU (Dispatchers.Default) pool. Android →
     // real Dispatchers.IO; iOS → a dedicated DB-writer thread (see [ioDispatcher]).
     //
+    // Shared CLIENT-INTENT anchor: the active conversation id, SET by the sessions
+    // decorator's switch path (route open, before any server echo) and READ by the
+    // conversation decorator as its DB-timeline anchor. Owned here so BOTH decorators
+    // observe the same signal — this is the seam that lets the persisted transcript
+    // paint instantly from the client's switch intent rather than awaiting a
+    // `session.switched` round-trip. Lives as long as this user component.
+    private val activeConversationIntent = MutableStateFlow<String?>(null)
+
     // ACTIVATION (Task 4.7): the usecases the ViewModels consume are built over the
     // CACHING decorators, NOT the raw SDK repos — so opening the app paints the last
     // conversation's transcript + session list from the local DB instantly, with the
@@ -63,18 +72,20 @@ class ChatComponent(
             SdkConversationRepository(sdk),
             database,
             mirrorScope,
+            activeConversationIntent = activeConversationIntent,
             ioDispatcher = ioDispatcher(),
         )
     // Same ChatDatabase + mirrorScope + ioDispatcher as the conversation decorator —
     // one durable cache, one connection scope. Serves the session list from the DB for
-    // instant paint and runs the smart-async deletion of locally-stale sessions on
-    // refresh. Wraps the pure REST repo, which still exists underneath.
+    // instant paint, runs the smart-async deletion of locally-stale sessions on refresh,
+    // and DRIVES the shared client-intent anchor on switch. Wraps the pure REST repo.
     val sessionsRepository: SessionsRepository =
         CachingSessionsRepository(
             SdkSessionsRepository(sdk),
             database,
             mirrorScope,
             ioDispatcher = ioDispatcher(),
+            activeConversationIntent = activeConversationIntent,
         )
     val connection = SdkConnectionStateRepository(sdk)
 
