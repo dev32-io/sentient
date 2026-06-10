@@ -6,6 +6,8 @@ const log = createLogger(["sentient", "sdk", "sessions", "rest"]);
 const HTTP_NO_CONTENT = 204;
 const DEFAULT_LIST_LIMIT = 50;
 const DEFAULT_SEARCH_LIMIT = 20;
+// Matches gateway DEFAULT_MESSAGES_LIMIT — returns the most-recent 200 messages (tail).
+const DEFAULT_MESSAGES_LIMIT = 200;
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -141,7 +143,7 @@ export function createSessionsRest(config: SessionsRestConfig): SessionsRest {
     },
 
     async getMessages(sessionId, opts = {}) {
-      const limit = opts.limit ?? DEFAULT_LIST_LIMIT;
+      const limit = opts.limit ?? DEFAULT_MESSAGES_LIMIT;
       const offset = opts.offset ?? 0;
       const url = `${baseUrl}/sessions/${encodeURIComponent(sessionId)}/messages?limit=${limit}&offset=${offset}`;
       log.debug("getMessages", { sessionId, limit, offset });

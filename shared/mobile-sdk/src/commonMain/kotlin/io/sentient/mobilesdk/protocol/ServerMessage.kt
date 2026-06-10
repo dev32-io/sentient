@@ -158,10 +158,11 @@ sealed class ServerMessage {
         val ts: Long,
     ) : ServerMessage()
 
-    /** Error frame for lifecycle operations (e.g. forbidden on re-establish switch). */
+    /** Error frame for lifecycle operations (e.g. forbidden on re-establish switch).
+     *  requestId is optional — conversation.activate errors have no requestId. */
     @Serializable @SerialName("sessions.error")
     data class SessionsError(
-        val requestId: String,
+        val requestId: String? = null,
         val code: String,
         val message: String,
     ) : ServerMessage()

@@ -99,6 +99,8 @@ class SessionsConnector(
 
     private fun onSessionsError(msg: ServerMessage.SessionsError) {
         // Only the switched-waiter path can receive a sessions.error now; reject it.
+        // requestId is nullable — conversation.activate errors have none; in that case
+        // no waiter exists (fire-and-forget) so the remove is a safe no-op.
         val waiter = switchedWaiters.remove(msg.requestId)
         if (waiter != null) {
             log.warn("switch.error", mapOf("requestId" to msg.requestId, "code" to msg.code))
@@ -176,7 +178,7 @@ class SessionsConnector(
         switchedWaiters[sessionId] = deferred
         val id = newId()
         log.info("switchTo", mapOf("sessionId" to sessionId, "requestId" to id))
-        send(ClientMessage.ConversationActivate(requestId = id, sessionId = sessionId))
+        send(ClientMessage.ConversationActivate(sessionId = sessionId))
         try {
             withTimeout(timeoutMs) { deferred.await() }
         } catch (e: TimeoutCancellationException) {
@@ -222,9 +224,8 @@ class SessionsConnector(
 
     /** Fire-and-forget switch via conversation.activate. Always sends — no debounce. */
     fun sendSwitch(sessionId: String) {
-        val id = newId()
-        log.info("sendSwitch", mapOf("sessionId" to sessionId, "requestId" to id))
-        send(ClientMessage.ConversationActivate(requestId = id, sessionId = sessionId))
+        log.info("sendSwitch", mapOf("sessionId" to sessionId))
+        send(ClientMessage.ConversationActivate(sessionId = sessionId))
     }
 
     /**

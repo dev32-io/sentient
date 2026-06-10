@@ -381,8 +381,8 @@ class SentientSdk(
 
     /**
      * Fire-and-forget switch (A2). Sends conversation.activate and returns immediately —
-     * the gateway emits session.switched + the session's snapshot. NEVER awaits,
-     * NEVER throws. Used both by the UI and by the reconnect re-establish (A1).
+     * the gateway emits session.switched only; the client loads history via REST.
+     * NEVER awaits, NEVER throws. Used both by the UI and by the reconnect re-establish (A1).
      */
     fun sendSwitchSession(id: String) {
         markInteraction()
@@ -508,8 +508,8 @@ class SentientSdk(
      * READY rising edge. The FIRST READY (first connect) has nothing to restore.
      * Every SUBSEQUENT READY is a reconnect: if a session is anchored, fire a
      * fire-and-forget conversation.activate to restore the server context (the gateway
-     * re-emits switched + snapshot; the WS preserves frame order so the next
-     * user.message routes to the restored session).
+     * emits session.switched only; the client loads history via REST; the WS preserves
+     * frame order so the next user.message routes to the restored session).
      */
     private fun onReadyReached() {
         val wasReconnect = hasReachedReadyOnce

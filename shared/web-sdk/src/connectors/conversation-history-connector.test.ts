@@ -293,6 +293,7 @@ describe("ConversationHistoryConnector — REST history on switch", () => {
 
   it("REST error clears awaitingSnapshot so the UI is not wedged", async () => {
     const sdk = fakeSdk();
+    const oldItem: ConversationFeedItem = { kind: "user", ts: 1, channel: "text", content: "old" };
     const rest: SessionsRest = {
       list: vi.fn().mockResolvedValue({ items: [], total: 0, hasMore: false }),
       search: vi.fn().mockResolvedValue([]),
@@ -300,16 +301,24 @@ describe("ConversationHistoryConnector — REST history on switch", () => {
       rename: vi.fn().mockResolvedValue(undefined),
       delete: vi.fn().mockResolvedValue(undefined),
     };
-    const c = new ConversationHistoryConnector({}, rest);
+    const onUpdate = vi.fn();
+    const c = new ConversationHistoryConnector({ onUpdate }, rest);
     c.attach(sdk as unknown as Parameters<typeof c.attach>[0]);
+
+    // Populate the mirror with the prior session's data.
+    sdk.emit("conversation.snapshot", { items: [oldItem] });
+    expect(c.items()).toHaveLength(1);
 
     sdk.emit("session.switched", { sessionId: "s1" });
     // Let the rejected promise settle
     await new Promise((res) => setTimeout(res, 0));
 
+    // Mirror must be EMPTY (not stale) after a failed switch fetch — matches mobile behaviour.
+    expect(c.items()).toHaveLength(0);
     // Gate cleared despite error — new entries must flow through.
-    sdk.emit("conversation.entry", { item: { kind: "user", ts: 1, channel: "text", content: "live" } });
+    sdk.emit("conversation.entry", { item: { kind: "user", ts: 2, channel: "text", content: "live" } });
     expect(c.items()).toHaveLength(1);
+    expect((c.items()[0] as { content: string }).content).toBe("live");
   });
 
   it("no-REST fallback: gate is cleared immediately and entries flow", () => {

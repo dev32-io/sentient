@@ -9,7 +9,11 @@ const okToken: TokenResult<TokenPayload> = {
 const deps = (): SessionsHttpDeps => ({
   tokens: { validate: async (_t: string) => okToken },
   resolvePluginClient: async (_userId: string) => ({
-    getMessages: async () => [{ role: "assistant", content: "hi", ts: 1 }],
+    getMessages: async () => [
+      { role: "assistant", content: "msg1", ts: 1 },
+      { role: "assistant", content: "msg2", ts: 2 },
+      { role: "assistant", content: "msg3", ts: 3 },
+    ],
     search: async () => [],
     get: async () => null,
     delete: async () => {},
@@ -69,12 +73,28 @@ describe("sessions REST handler — auth + scoping", () => {
     // Verify the items are feed-shaped (server-side mapped), not raw Hermes rows.
     const item = body.items[0];
     expect(item).toHaveProperty("kind", "assistant");
-    expect(item).toHaveProperty("content", "hi");
     expect(item).toHaveProperty("ts");
     expect(typeof item.ts).toBe("number");
     expect(body).toHaveProperty("total");
     expect(body).toHaveProperty("offset");
     expect(body).toHaveProperty("limit");
+  });
+
+  it("returns the tail (most-recent N) when no offset is specified", async () => {
+    // 3 messages total, limit=2 → should return the last 2 (msg2, msg3), not the first 2.
+    const h = createSessionsHttpHandler(deps());
+    const res = await h(
+      new Request("http://x/api/v1/sessions/s-1/messages?limit=2", {
+        headers: { authorization: "Bearer t" },
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.items).toHaveLength(2);
+    expect(body.total).toBe(3);
+    // tail: msg2 then msg3 (chronological order preserved)
+    expect(body.items[0]).toHaveProperty("content", "msg2");
+    expect(body.items[1]).toHaveProperty("content", "msg3");
   });
 
   // --- ownership ---

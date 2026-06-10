@@ -57,10 +57,11 @@ sealed class ClientMessage {
     @Serializable @SerialName("session.new")
     data class SessionNew(val requestId: String) : ClientMessage()
 
-    /** Replaces the retired session.switch — activates an existing session. */
+    /** Replaces the retired session.switch — activates an existing session.
+     *  Fire-and-forget: no requestId. The gateway strips any requestId on the
+     *  wire; web-sdk sends none. */
     @Serializable @SerialName("conversation.activate")
     data class ConversationActivate(
-        val requestId: String,
         val sessionId: String,
     ) : ClientMessage()
 }

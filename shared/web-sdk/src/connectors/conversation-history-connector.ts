@@ -148,8 +148,11 @@ export class ConversationHistoryConnector implements Connector {
           sessionId,
           error: String(err),
         });
-        // Don't wedge the UI — clear the gate so new entries can flow.
+        // Replace mirror with empty list (match mobile behaviour) and clear the
+        // gate so new entries can flow — don't leave the old session's data visible.
+        this.mirror = [];
         this.awaitingSnapshot = false;
+        this.config.onUpdate?.(this.mirror);
       },
     );
   }

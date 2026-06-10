@@ -19,7 +19,8 @@ const HTTP_INTERNAL = 500;
 // --- Pagination constants ----------------------------------------------------
 
 const DEFAULT_SEARCH_LIMIT = 20;
-const DEFAULT_MESSAGES_LIMIT = 100;
+// Returns the most-recent N messages (tail). Slice 4 adds proper cursor pagination.
+const DEFAULT_MESSAGES_LIMIT = 200;
 
 // --- Route patterns ----------------------------------------------------------
 
@@ -247,7 +248,12 @@ async function checkOwnership(deps: SessionsHttpDeps, userId: string, sessionId:
 /**
  * Map raw Hermes message rows to ConversationFeedItem[].
  * Non-mappable roles (tool/system) are filtered out — same policy as
- * SwitchFlow.fetchHistory.  Returns only the paginated slice.
+ * SwitchFlow.fetchHistory.
+ *
+ * When no offset is supplied (offset=0), returns the most-recent `limit`
+ * messages (the TAIL) so opening a past chat shows recent context rather than
+ * the oldest messages. Explicit offset>0 slices from the start (legacy path;
+ * Slice 4 adds proper cursor pagination).
  */
 function mapMessagesToFeed(
   rows: unknown[],
@@ -258,6 +264,10 @@ function mapMessagesToFeed(
     .map(hermesMessageToMirrorEntry)
     .filter((e) => e !== null)
     .map(toFeedItem);
+  if (offset === 0) {
+    // Tail slice: return the most-recent `limit` messages in chronological order.
+    return { items: mapped.slice(-limit), total: mapped.length };
+  }
   return { items: mapped.slice(offset, offset + limit), total: mapped.length };
 }
 
