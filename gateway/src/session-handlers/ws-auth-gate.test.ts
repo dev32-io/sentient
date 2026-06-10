@@ -51,6 +51,7 @@ function fakeWs(): FakeWs {
     interruptController: null,
     resumeSessionId: null,
     sessionsHandlers: null,
+    lastSessionNewAtMs: null,
     snapshotUnsub: null,
     acpWireDispose: null,
     acpSdkFrameUnsub: null,

@@ -126,4 +126,15 @@ describe("sessions lifecycle frames", () => {
       }).success,
     ).toBe(true);
   });
+
+  it("accepts sessions.error with code rate_limited (session.new spam guard)", () => {
+    expect(
+      sessionsErrorSchema.safeParse({
+        type: "sessions.error",
+        requestId: "r1",
+        code: "rate_limited",
+        message: "too many new chats",
+      }).success,
+    ).toBe(true);
+  });
 });

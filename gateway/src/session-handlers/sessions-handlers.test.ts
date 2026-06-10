@@ -87,7 +87,10 @@ describe("SessionsHandlers — session.new", () => {
     });
     await h.handle({ type: "session.new", requestId: "r1" });
     expect(setPendingPromise).toHaveBeenCalledTimes(1);
-    await expect(stashedPromise as unknown as Promise<string>).rejects.toThrow("acp boom");
+    // The shared mint helper swallows the ACP error and returns null; the
+    // handler rejects the stashed Promise with a generic reason and surfaces
+    // sessions.error (code internal) to the connector RPC.
+    await expect(stashedPromise as unknown as Promise<string>).rejects.toThrow("failed to create session");
     expect(setPending).not.toHaveBeenCalled();
     const err = send.mock.calls.find((c) => (c[0] as { type: string }).type === "sessions.error");
     expect(err?.[0]).toMatchObject({ requestId: "r1", code: "internal" });

@@ -3,6 +3,7 @@ import type { ServerWebSocket } from "bun";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { getLog } from "../logging/logger.js";
 import { handlePreferencesPatch } from "./handle-preferences-patch.js";
+import { shouldAdmitSessionNew } from "./session-new-rate-limit.js";
 import { handleAuthMessage, scheduleAuthTimeout } from "./ws-auth-gate.js";
 import type { ClientData } from "./ws-helpers.js";
 import { errorMessage, sendError } from "./ws-helpers.js";
@@ -142,6 +143,13 @@ export async function handleWebSocketMessage(
         sendError(ws, "protocol_error", "sessions handlers not configured for this session");
         return;
       }
+      // Per-connection spam guard on explicit client session.new frames only.
+      // The gate-path mint (fresh-chain first message) is NOT counted here —
+      // it's the guaranteed message path, so a rate-limited session.new still
+      // lets the next first message get a gate-mint + session.created.
+      if (msg.type === "session.new" && !admitSessionNew(ws, msg.requestId, services)) {
+        return;
+      }
       try {
         await handlers.handle(msg);
       } catch (err: unknown) {
@@ -153,6 +161,39 @@ export async function handleWebSocketMessage(
       return;
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// session.new spam guard (per-connection rate limit)
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-connection min-interval gate for explicit client `session.new` frames.
+ * Rejects with a `sessions.error rate_limited` frame + WARN when the previous
+ * `session.new` on this connection was less than `min_new_interval_ms` ago (does
+ * NOT delegate), otherwise records `Date.now()` and returns true so the caller
+ * delegates to the sessions handler. Blocks spam bursts / accidental
+ * double-fires, never human-paced new chats. Per connection — NOT per user.
+ */
+export function admitSessionNew(
+  ws: ServerWebSocket<ClientData>,
+  requestId: string,
+  services: GatewayServices,
+): boolean {
+  const now = Date.now();
+  const { min_new_interval_ms: minIntervalMs } = services.sessions;
+  if (!shouldAdmitSessionNew(ws.data.lastSessionNewAtMs, now, minIntervalMs)) {
+    log.warn("session-new-rate-limited", {
+      sessionId: ws.data.sessionId,
+      requestId,
+      reason: "session.new too frequent",
+      minIntervalMs,
+    });
+    ws.send(JSON.stringify({ type: "sessions.error", requestId, code: "rate_limited", message: "too many new chats" }));
+    return false;
+  }
+  ws.data.lastSessionNewAtMs = now;
+  return true;
 }
 
 // ---------------------------------------------------------------------------

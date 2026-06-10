@@ -2,6 +2,7 @@ import type { AcpPerProfileConnection } from "../hermes-adapter-client/per-profi
 import { getLog } from "../logging/logger.js";
 import type { SwitchFlow } from "../sessions/switch-flow.ts";
 import type { TitleStore } from "../sessions/title-store.ts";
+import { mintAndAnnounceSession } from "./mint-and-announce-session.js";
 
 const log = getLog(["sentient", "session-handlers", "sessions-handlers"]);
 
@@ -80,25 +81,26 @@ export function createSessionsHandlers(cfg: SessionsHandlersConfig): SessionsHan
 
             const requestId = frame.requestId;
             const promise: Promise<string> = (async () => {
-              try {
-                const result = await cfg.acpConn.newSession({});
-                cfg.setPendingNewSessionId?.(result.sessionId);
-                log.info("session.new:acp-minted", {
-                  sessionId: result.sessionId,
-                  requestId,
-                });
-                cfg.send({
-                  type: "session.created",
-                  sessionId: result.sessionId,
-                  ts: Date.now(),
-                });
-                return result.sessionId;
-              } catch (err: unknown) {
-                const message = err instanceof Error ? err.message : String(err);
-                log.warn("session.new:acp-failed", { requestId, reason: message });
+              // Delegate the mint + setPending + session.created broadcast to
+              // the shared helper (the gate fresh-chain path uses the same one
+              // — gateway = single source of truth for a new chain's id).
+              const sessionId = await mintAndAnnounceSession({
+                acpConn: cfg.acpConn,
+                send: cfg.send,
+                setPendingNewSessionId: (id) => cfg.setPendingNewSessionId?.(id),
+                log,
+                reason: "session.new",
+                requestId,
+              });
+              if (sessionId === null) {
+                // Helper already logged the failure; surface it to the
+                // connector RPC AND propagate through the stashed Promise so
+                // the user.message consumer rejects with a meaningful reason.
+                const message = "failed to create session";
                 sendError(requestId, "internal", message);
-                throw err;
+                throw new Error(message);
               }
+              return sessionId;
             })();
             cfg.setPendingNewSessionPromise?.(promise);
             // Swallow rejection at the dangling-Promise edge — user.message

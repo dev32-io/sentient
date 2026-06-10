@@ -65,7 +65,7 @@ export const sessionSwitchedEventSchema = z.object({
 export const sessionsErrorSchema = z.object({
   type: z.literal("sessions.error"),
   requestId: z.string().min(1).optional(),
-  code: z.enum(["forbidden", "not_found", "switching", "internal", "validation"]),
+  code: z.enum(["forbidden", "not_found", "switching", "internal", "validation", "rate_limited"]),
   message: z.string().max(ERROR_MESSAGE_MAX),
 });
 
