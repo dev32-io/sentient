@@ -59,6 +59,10 @@ targets:
     dependencies:
       - framework: ../shared/mobile-data/build/XCFrameworks/debug/MobileData.xcframework
         embed: false
+      # SQLDelight's native (iOS) driver cinterops touchlab/SQLiter against the
+      # system SQLite; the consumer app must link libsqlite3 or the sqlite3_*
+      # symbols are undefined at link time.
+      - sdk: libsqlite3.tbd
       - package: MarkdownUI
         product: MarkdownUI
 
@@ -74,6 +78,7 @@ targets:
       - target: SentientApp
       - framework: ../shared/mobile-data/build/XCFrameworks/debug/MobileData.xcframework
         embed: false
+      - sdk: libsqlite3.tbd
 
 schemes:
   SentientApp:
