@@ -1,6 +1,16 @@
 import { getLog } from "../logging/logger.js";
+import type { SessionReplayBuffer } from "../session-handlers/session-replay-buffer.js";
+import {
+  type AcquireDeviceBufferResult,
+  type DeviceBufferEntry,
+  DeviceBufferStore,
+  shouldEvictDeviceBuffer,
+} from "./device-buffer-store.js";
 
 const log = getLog(["sentient", "person-session"]);
+
+export type { DeviceBufferEntry, AcquireDeviceBufferResult };
+export { shouldEvictDeviceBuffer };
 
 /**
  * One PersonSession per profile (alice/bob/family). Owns the rolling
@@ -11,10 +21,6 @@ const log = getLog(["sentient", "person-session"]);
  * DeviceAttachment and become windows into that person's conversation.
  * The same conversation is shared by every attachment; any attachment
  * can drive input; output fans out.
- *
- * B1 (this commit) is the skeleton: identity fields + attachment book-
- * keeping + lifecycle logs. State that currently lives per-WS in
- * ws-session-configure is hoisted in B3.
  */
 
 /**
@@ -31,6 +37,8 @@ export interface PersonSessionInit {
   readonly hermesUrl: string;
   readonly hermesApiKey: string;
   readonly userId: string | null;
+  /** Max bytes retained per per-device replay buffer. */
+  readonly replayBufferMaxBytes: number;
 }
 
 export class PersonSession {
@@ -54,13 +62,23 @@ export class PersonSession {
   private _voiceId: string | null = null;
   private readonly _attachments = new Set<PersonSessionAttachment>();
   private readonly _createdAtMs: number;
+  private readonly _deviceBuffers: DeviceBufferStore;
+
+  /**
+   * Timestamp when the session first became idle (attachmentCount went to 0).
+   * Reset to null when an attachment is added. Starts at createdAtMs (a
+   * freshly created session with no attachments is immediately idle).
+   */
+  private _idleSinceMs: number;
 
   constructor(init: PersonSessionInit) {
     this.profile = init.profile;
     this.hermesUrl = init.hermesUrl;
     this.hermesApiKey = init.hermesApiKey;
     this.userId = init.userId;
+    this._deviceBuffers = new DeviceBufferStore(init.replayBufferMaxBytes);
     this._createdAtMs = Date.now();
+    this._idleSinceMs = this._createdAtMs;
     log.info("created", {
       profile: this.profile,
       hermesUrl: this.hermesUrl,
@@ -116,6 +134,8 @@ export class PersonSession {
       return;
     }
     this._attachments.add(a);
+    // Session is no longer idle — reset idle clock.
+    this._idleSinceMs = 0;
     log.info("attach", {
       profile: this.profile,
       attachmentId: a.attachmentId,
@@ -125,6 +145,9 @@ export class PersonSession {
 
   detach(a: PersonSessionAttachment): void {
     const removed = this._attachments.delete(a);
+    if (removed && this._attachments.size === 0) {
+      this._idleSinceMs = Date.now();
+    }
     log.info("detach", {
       profile: this.profile,
       attachmentId: a.attachmentId,
@@ -133,6 +156,57 @@ export class PersonSession {
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // Per-device replay buffer API — delegates to DeviceBufferStore
+  // ---------------------------------------------------------------------------
+
+  acquireDeviceBuffer(deviceId: string, opts: { resumeEpoch?: number } = {}): AcquireDeviceBufferResult {
+    const result = this._deviceBuffers.acquire(deviceId, opts);
+    log.debug(`acquireDeviceBuffer.${result.resumed ? "resumed" : "fresh"}`, {
+      profile: this.profile,
+      deviceId,
+      epoch: result.epoch,
+    });
+    return result;
+  }
+
+  releaseDeviceBuffer(deviceId: string): void {
+    this._deviceBuffers.release(deviceId);
+    log.debug("releaseDeviceBuffer", { profile: this.profile, deviceId });
+  }
+
+  /** Read the replay buffer for a device (undefined if not present). */
+  bufferFor(deviceId: string): SessionReplayBuffer | undefined {
+    return this._deviceBuffers.bufferFor(deviceId);
+  }
+
+  /** Read the current epoch for a device (undefined if not present). */
+  epochFor(deviceId: string): number | undefined {
+    return this._deviceBuffers.epochFor(deviceId);
+  }
+
+  /**
+   * Evict device buffer entries that have been detached longer than `ttlMs`.
+   * Returns the number of entries evicted.
+   */
+  sweepExpired(nowMs: number, ttlMs: number): number {
+    return this._deviceBuffers.sweepExpired(nowMs, ttlMs);
+  }
+
+  /**
+   * Returns true when at least one device buffer entry is still retained —
+   * including entries for currently-attached (not yet detached) devices.
+   * A live attached device blocks session eviction just as much as a detached
+   * but not-yet-expired one.
+   */
+  hasRetainedBuffers(): boolean {
+    return this._deviceBuffers.hasRetainedBuffers();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Lifecycle
+  // ---------------------------------------------------------------------------
+
   /**
    * Indicator for the registry's idle-archive decision. PersonSession is
    * idle when no device is attached. The registry decides when to archive
@@ -140,6 +214,15 @@ export class PersonSession {
    */
   get isIdle(): boolean {
     return this._attachments.size === 0;
+  }
+
+  /**
+   * Timestamp (ms) when the session most recently became idle (all
+   * attachments removed). 0 when the session currently has live attachments.
+   * Used by the registry sweep to determine if the TTL has elapsed.
+   */
+  get idleSinceMs(): number {
+    return this._idleSinceMs;
   }
 
   get ageMs(): number {

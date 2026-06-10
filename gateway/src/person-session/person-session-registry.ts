@@ -1,3 +1,4 @@
+import { clearInterval, setInterval } from "node:timers";
 import type { HermesConfig } from "@sentient/config";
 import type { UserPortStore } from "../admin/user-port-store.js";
 import { getLog } from "../logging/logger.js";
@@ -42,6 +43,23 @@ export interface PersonSessionRegistry {
    * PersonSession is bound to the userId.
    */
   refreshVoice(userId: string): Promise<void>;
+  /**
+   * Run a sweep of all sessions: evict expired device buffers, then remove
+   * idle sessions with no retained buffers and no live attachments that have
+   * exceeded the retention TTL. Exposed for testing (avoids real timers).
+   * Returns sweep stats for observability.
+   */
+  sweep(nowMs: number): SweepResult;
+  /**
+   * Stop the background sweep interval. Call during gateway shutdown.
+   */
+  dispose(): void;
+}
+
+export interface SweepResult {
+  readonly sessionsChecked: number;
+  readonly buffersEvicted: number;
+  readonly sessionsRemoved: number;
 }
 
 export interface PersonSessionRegistryOptions {
@@ -53,18 +71,37 @@ export interface PersonSessionRegistryOptions {
    * Tests can omit this safely.
    */
   readonly voiceLoader?: VoiceLoader;
+  /**
+   * Override the current-time source for testing. Defaults to Date.now().
+   */
+  readonly nowMs?: () => number;
 }
 
 export interface PersonSessionRegistryDeps {
   hermes: HermesConfig;
   userPortStore: UserPortStore;
   apiKeyResolver: ApiKeyResolver;
+  /**
+   * How long a detached session (idle + no retained buffers) survives.
+   * Must be provided explicitly — sourced from config.session.retention_ttl_ms.
+   */
+  retentionTtlMs: number;
+  /**
+   * Per-device replay ring buffer cap in bytes.
+   * Must be provided explicitly — sourced from config.session.replay_buffer_max_bytes.
+   */
+  replayBufferMaxBytes: number;
   options?: PersonSessionRegistryOptions;
 }
 
 export function createPersonSessionRegistry(deps: PersonSessionRegistryDeps): PersonSessionRegistry {
   const sessions = new Map<string, PersonSession>();
-  const { voiceLoader } = deps.options ?? {};
+  const { voiceLoader, nowMs: clockNowMs } = deps.options ?? {};
+  const retentionTtlMs = deps.retentionTtlMs;
+  const replayBufferMaxBytes = deps.replayBufferMaxBytes;
+  // Sweep every ~retentionTtlMs/6 (e.g. 5 min for a 30-min TTL).
+  const sweepIntervalMs = Math.max(60_000, Math.floor(retentionTtlMs / 6));
+  const now = clockNowMs ?? (() => Date.now());
 
   async function loadAndApplyVoice(session: PersonSession): Promise<void> {
     if (!voiceLoader || !session.userId) return;
@@ -78,6 +115,44 @@ export function createPersonSessionRegistry(deps: PersonSessionRegistryDeps): Pe
       });
     }
   }
+
+  function sweep(nowMs: number): SweepResult {
+    let sessionsChecked = 0;
+    let buffersEvicted = 0;
+    let sessionsRemoved = 0;
+
+    for (const [userId, session] of sessions) {
+      sessionsChecked += 1;
+      buffersEvicted += session.sweepExpired(nowMs, retentionTtlMs);
+
+      // Remove idle sessions (no attachments, no retained buffers) that have
+      // been idle longer than the TTL. `idleSinceMs === 0` means the session
+      // currently has live attachments — never remove those.
+      const idleSince = session.idleSinceMs;
+      const canRemove =
+        session.attachmentCount === 0 &&
+        !session.hasRetainedBuffers() &&
+        idleSince > 0 &&
+        nowMs - idleSince >= retentionTtlMs;
+
+      if (canRemove) {
+        sessions.delete(userId);
+        sessionsRemoved += 1;
+        log.info("sweep.session-removed", { userId, ageMs: session.ageMs });
+      }
+    }
+
+    log.debug("sweep.done", { sessionsChecked, buffersEvicted, sessionsRemoved });
+    return { sessionsChecked, buffersEvicted, sessionsRemoved };
+  }
+
+  // Background sweep interval — clears expired buffers + idle sessions.
+  // Import from node:timers so Bun returns a Timeout object (not a number)
+  // and .unref() actually runs, preventing the timer from keeping the process alive.
+  const sweepTimer = setInterval(() => {
+    sweep(now());
+  }, sweepIntervalMs);
+  sweepTimer.unref();
 
   return {
     async getOrCreate(userId) {
@@ -97,6 +172,7 @@ export function createPersonSessionRegistry(deps: PersonSessionRegistryDeps): Pe
         hermesUrl: url,
         hermesApiKey: deps.apiKeyResolver(),
         userId,
+        replayBufferMaxBytes,
       });
       sessions.set(userId, next);
       log.info("getOrCreate.miss-created", {
@@ -123,6 +199,13 @@ export function createPersonSessionRegistry(deps: PersonSessionRegistryDeps): Pe
         return;
       }
       await loadAndApplyVoice(session);
+    },
+
+    sweep,
+
+    dispose() {
+      clearInterval(sweepTimer);
+      log.info("registry.disposed");
     },
   };
 }
