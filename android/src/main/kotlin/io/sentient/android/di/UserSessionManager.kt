@@ -17,6 +17,7 @@
 // ---------------------------------------------------------------------------
 package io.sentient.android.di
 
+import android.content.Context
 import io.sentient.android.backend.BackendConfigHolder
 import io.sentient.android.backend.ResolvedBackend
 import io.sentient.android.backend.resolveBackend
@@ -24,6 +25,7 @@ import io.sentient.android.presence.PresenceCoordinator
 import io.sentient.android.sdk.AppDependencies
 import io.sentient.android.sdk.SdkFaultHolder
 import io.sentient.android.sdk.buildAuthHttpClient
+import io.sentient.mobiledata.cache.db.AndroidDatabaseDriverFactory
 import io.sentient.mobiledata.di.ChatComponent
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.sdk.SdkConfig
@@ -48,6 +50,7 @@ import kotlinx.coroutines.launch
  *  - A configured backend MUST be available (resolve returns Configured).
  */
 class UserSessionManager(
+    private val appContext: Context,
     private val presence: PresenceCoordinator? = null,
 ) {
     private val log = createLogger("android", "user-session")
@@ -83,7 +86,10 @@ class UserSessionManager(
         val sessionScope =
             CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1) + handler)
         newSdk = buildSdk(sessionScope)
-        val component = ChatComponent(newSdk)
+        val component = ChatComponent(
+            sdk = newSdk,
+            databaseDriverFactory = AndroidDatabaseDriverFactory(appContext.applicationContext),
+        )
 
         scope = sessionScope
         chatComponent = component

@@ -1,5 +1,6 @@
 package io.sentient.mobiledata.di
 
+import io.sentient.mobiledata.cache.db.DatabaseDriverFactory
 import io.sentient.mobiledata.data.SdkConnectionStateRepository
 import io.sentient.mobiledata.data.SdkConversationRepository
 import io.sentient.mobiledata.data.SdkSessionsRepository
@@ -17,9 +18,13 @@ import kotlin.time.Clock as KtClock
  * User/Connection-scoped component: one per logged-in user. Builds the stateless repos +
  * usecases over a single [SentientSdk]. Platform DI (Hilt / UserSession) owns the instance;
  * the chat VM resolves usecases from here, never the SDK directly.
+ *
+ * @param databaseDriverFactory The platform SQL driver factory for the device chat mirror
+ *   (Slice 4.5/4.6 consume it).
  */
 class ChatComponent(
     private val sdk: SentientSdk,
+    private val databaseDriverFactory: DatabaseDriverFactory,
     clock: Clock = Clock { KtClock.System.now().toEpochMilliseconds() },
 ) {
     private val conversation = SdkConversationRepository(sdk)

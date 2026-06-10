@@ -20,6 +20,7 @@
 // ---------------------------------------------------------------------------
 package io.sentient.mobiledata.di
 
+import io.sentient.mobiledata.cache.db.IosDatabaseDriverFactory
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.sdk.SdkConfig
 import io.sentient.mobilesdk.sdk.SentientSdk
@@ -101,7 +102,10 @@ class IosUserSession(
     )
 
     /** The single ChatComponent for this login — usecases + connection + passthroughs. */
-    val component: ChatComponent = ChatComponent(sdk)
+    val component: ChatComponent = ChatComponent(
+        sdk = sdk,
+        databaseDriverFactory = IosDatabaseDriverFactory(),
+    )
 
     /** Background connect: UI is usable immediately; reconnect is owned by the SDK. */
     fun open() {
