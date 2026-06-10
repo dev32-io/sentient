@@ -79,6 +79,12 @@ session:
   # Range: 0–5000. Default 2000.
   tts_drain_grace_ms: 2000
 
+  # WS resilience (resumable sequenced stream + replay buffer) — Slice 3
+  ws_idle_timeout_ms: 255000         # Range: 1000–255000. Bun WS idle close; Bun takes SECONDS (cap 255), gateway converts ms→s.
+  retention_ttl_ms: 1800000          # Range: 60000–86400000 (1 min–24 hr). PersonSession + per-device replay buffer survive disconnect this long, then evict. Default 30 min.
+  replay_buffer_max_bytes: 16777216  # 16 MB. Range: 65536–268435456 (64 KB–256 MB). Per device-session ring cap (evict-oldest).
+  replay_audio_coalesce_ms: 1000     # Range: 100–10000. Coalesce audio into ~1s segments before buffering to bound object count.
+
 # ---------------------------------------------------------------------------
 # STT — local-stt service (Silero VAD + Smart-Turn v3 + SenseVoice-Small)
 # See capabilityServices/STTService/CONTRACT.md for the wire protocol.

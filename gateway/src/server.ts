@@ -146,6 +146,9 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
   return Bun.serve<ClientData>({
     port: options.port,
     hostname: options.host,
+    // Bun's idleTimeout is in whole seconds, capped at 255. Convert from the
+    // ms YAML knob and round down so we never exceed the configured value.
+    idleTimeout: Math.floor(services.session.ws_idle_timeout_ms / 1000),
     ...(services.tls ? { tls: services.tls } : {}),
 
     async fetch(request, serverInstance) {

@@ -1,11 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { applyConfigSchema, gatewayConfigSchema, loggingConfigSchema, sttConfigSchema } from "./schema.ts";
+import {
+  applyConfigSchema,
+  gatewayConfigSchema,
+  loggingConfigSchema,
+  sessionConfigSchema,
+  sttConfigSchema,
+} from "./schema.ts";
+
+// Shared WS-resilience session fields required in every gateway config
+// (no code defaults — YAML is the source of truth per config rules).
+const wsResilienceSession = {
+  ws_idle_timeout_ms: 255000,
+  retention_ttl_ms: 1800000,
+  replay_buffer_max_bytes: 16777216,
+  replay_audio_coalesce_ms: 1000,
+};
 
 describe("gatewayConfigSchema", () => {
   const minimalValidConfig = {
     stt: { provider: "local-stt" },
     llm: {},
     tts: { provider: "fish-audio" },
+    session: wsResilienceSession,
   };
 
   it("accepts a minimal config and applies defaults", () => {
@@ -30,13 +46,13 @@ describe("gatewayConfigSchema", () => {
   it("accepts custom tts_drain_grace_ms", () => {
     const result = gatewayConfigSchema.parse({
       ...minimalValidConfig,
-      session: { tts_drain_grace_ms: 500 },
+      session: { ...wsResilienceSession, tts_drain_grace_ms: 500 },
     });
     expect(result.session.tts_drain_grace_ms).toBe(500);
   });
 
   it("rejects tts_drain_grace_ms above max", () => {
-    const invalid = { ...minimalValidConfig, session: { tts_drain_grace_ms: 6000 } };
+    const invalid = { ...minimalValidConfig, session: { ...wsResilienceSession, tts_drain_grace_ms: 6000 } };
     expect(gatewayConfigSchema.safeParse(invalid).success).toBe(false);
   });
 
@@ -71,7 +87,7 @@ describe("gatewayConfigSchema", () => {
       ...minimalValidConfig,
       stt: { provider: "local-stt", language: "zh" },
       tts: { provider: "fish-audio", voice_id: "custom", format: "pcm", sample_rate: 44100 },
-      session: { barge_in: { no_interrupt_ms: 300 } },
+      session: { ...wsResilienceSession, barge_in: { no_interrupt_ms: 300 } },
     });
     expect(result.stt.language).toBe("zh");
     expect(result.tts.voice_id).toBe("custom");
@@ -205,6 +221,7 @@ describe("gatewayConfigSchema logging field", () => {
       stt: { provider: "local-stt" },
       llm: { provider: "openrouter" },
       tts: { provider: "fish-audio" },
+      session: wsResilienceSession,
     };
     const parsed = gatewayConfigSchema.parse(minimal);
     expect(parsed.logging).toEqual({ level: "info", retention_days: 7, level_overrides: {} });
@@ -216,6 +233,7 @@ describe("gatewayConfigSchema webui field", () => {
     stt: { provider: "local-stt" },
     llm: {},
     tts: { provider: "fish-audio" },
+    session: wsResilienceSession,
   };
 
   it("applies webui playback defaults when section is omitted", () => {
@@ -247,6 +265,7 @@ describe("gateway config — auth/apply/providers sections", () => {
     stt: { provider: "local-stt" },
     llm: { provider: "openrouter" },
     tts: { provider: "fish-audio" },
+    session: wsResilienceSession,
   };
 
   it("defaults auth.token_ttl_seconds to 7 days", () => {
@@ -325,5 +344,55 @@ describe("applyConfigSchema", () => {
     expect(cfg.docker_restart_timeout_ms).toBe(45000);
     expect(cfg.health_check_timeout_ms).toBe(20000);
     expect(cfg.health_poll_interval_ms).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sessionConfigSchema — WS-resilience knobs (Slice 3, Task 3.1)
+// ---------------------------------------------------------------------------
+
+describe("sessionConfigSchema — WS-resilience fields", () => {
+  const validSession = {
+    ws_idle_timeout_ms: 255000,
+    retention_ttl_ms: 1800000,
+    replay_buffer_max_bytes: 16777216,
+    replay_audio_coalesce_ms: 1000,
+  };
+
+  it("parses a valid session config with WS-resilience fields", () => {
+    const result = sessionConfigSchema.parse(validSession);
+    expect(result.ws_idle_timeout_ms).toBe(255000);
+    expect(result.retention_ttl_ms).toBe(1800000);
+    expect(result.replay_buffer_max_bytes).toBe(16777216);
+    expect(result.replay_audio_coalesce_ms).toBe(1000);
+  });
+
+  it("fails loudly when retention_ttl_ms is missing", () => {
+    const { retention_ttl_ms: _omitted, ...withoutRetention } = validSession;
+    expect(sessionConfigSchema.safeParse(withoutRetention).success).toBe(false);
+  });
+
+  it("rejects ws_idle_timeout_ms above Bun cap (255000 ms)", () => {
+    expect(sessionConfigSchema.safeParse({ ...validSession, ws_idle_timeout_ms: 255001 }).success).toBe(false);
+  });
+
+  it("rejects retention_ttl_ms below minimum (60000 ms)", () => {
+    expect(sessionConfigSchema.safeParse({ ...validSession, retention_ttl_ms: 59999 }).success).toBe(false);
+  });
+
+  it("rejects replay_audio_coalesce_ms above max (10000 ms)", () => {
+    expect(sessionConfigSchema.safeParse({ ...validSession, replay_audio_coalesce_ms: 10001 }).success).toBe(false);
+  });
+
+  it("rejects ws_idle_timeout_ms below min (1000 ms)", () => {
+    expect(sessionConfigSchema.safeParse({ ...validSession, ws_idle_timeout_ms: 500 }).success).toBe(false);
+  });
+
+  it("rejects replay_buffer_max_bytes above max (268435456 bytes)", () => {
+    expect(sessionConfigSchema.safeParse({ ...validSession, replay_buffer_max_bytes: 300000000 }).success).toBe(false);
+  });
+
+  it("rejects replay_buffer_max_bytes below min (65536 bytes)", () => {
+    expect(sessionConfigSchema.safeParse({ ...validSession, replay_buffer_max_bytes: 1024 }).success).toBe(false);
   });
 });
