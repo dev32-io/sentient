@@ -1,44 +1,39 @@
 // ---------------------------------------------------------------------------
-// SessionsConnector — request/response + broadcast surface for chat-session
-// management (list / search / delete / rename / switchTo / newChat).
+// SessionsConnector — session lifecycle surface for the SDK.
 //
-// Mirrors web-sdk's sessions-connector.ts VERBATIM:
-//   capability = "sessions"  (status observer + request/response)
+// Mirrors web-sdk's sessions-connector.ts post-Task-2.5 shape:
+//   capability = "sessions"  (status observer + lifecycle frames)
 //
-// TWO correlation patterns (faithfully ported):
-//   1. requestId-correlated (list, search, delete, rename):
-//        send the frame with a generated requestId; the matching `*.result`
-//        frame resolves the suspend call by requestId; `sessions.error` with
-//        the same requestId rejects it.
-//   2. broadcast-correlated (switchTo, newChat):
-//        send the frame; resolve on the NEXT matching broadcast
-//        (`session.switched` for switchTo, `session.created` for newChat) —
-//        NOT by requestId (the gateway emits these without requestId echo).
+// Query/mutation operations (list/search/delete/rename) are now REST
+// (SessionsHttpClient) — the WS query RPCs were removed in protocol Task 2.1.
+// Only session-lifecycle WS frames remain here.
 //
-// Broadcasts (`sessions.deleted`, `session.created`, `session.switched`,
-// `sessions.renamed`) also fan out to onSessionsChanged listeners for live UI.
+// LIFECYCLE frame patterns:
+//   switchTo / sendSwitch — send conversation.activate; resolve on session.switched
+//   newChat / sendNew    — send session.new; resolve on session.created broadcast
 //
-// KMP-specific (vs web-sdk):
-//   - web-sdk uses Promise + setTimeout + crypto.randomUUID; both are
-//     unavailable / non-deterministic in commonMain. We use suspend +
-//     CompletableDeferred + withTimeout, and INJECT the id generator
-//     (`() -> String`) so tests pass a deterministic counter, and the timeout
-//     duration so tests drive it via kotlinx-coroutines-test virtual time.
-//   - On timeout the suspend fn throws [SessionsTimeoutException]; on
-//     gateway error it throws [SessionsRequestException]. Both are typed,
-//     documented exceptions the caller maps — no raw Throwable escapes.
+// Broadcasts (session.created, session.switched, sessions.deleted, sessions.renamed)
+// still fan out to onSessionsChanged listeners for live UI.
 //
-// Threading: the orchestrator routes frames on its dispatcher and awaits the
-// suspend calls in its scope. The pending map + listeners are owned here.
-// detach() does NOT clear listeners (they survive reconnect, matching the TS
-// comment) — only pending requests (failed) and inbound bindings reset.
+// REST ops (list/search/delete/rename) delegate to the injected
+// [SessionsHttpClient] and complete inline — no requestId correlation needed.
+//
+// KMP-specific:
+//   - timeout uses suspend + withTimeout + virtual time for tests.
+//   - On timeout the suspend fn throws [SessionsTimeoutException].
+//
+// Threading: the orchestrator routes frames on its dispatcher; the pending maps +
+// listeners are owned here. detach() does NOT clear listeners — they survive
+// reconnect. reset() fails pending requests on disconnect.
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.connectors
 
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.ClientMessage
+import io.sentient.mobilesdk.protocol.ConversationFeedItem
 import io.sentient.mobilesdk.protocol.ServerMessage
 import io.sentient.mobilesdk.protocol.SessionRow
+import io.sentient.mobilesdk.sessions.SessionsHttpClient
 import io.sentient.mobilesdk.util.Clock
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
@@ -59,23 +54,22 @@ sealed class SessionsChangeEvent {
     data class Renamed(val sessionId: String, val title: String) : SessionsChangeEvent()
 }
 
-/** Thrown when a session request times out waiting for its result frame. */
+/** Thrown when a session lifecycle request times out. */
 class SessionsTimeoutException(val frameType: String) :
     Exception("timeout waiting for $frameType")
 
-/** Thrown when the gateway returns a sessions.error for a request. */
+/** Thrown when the gateway returns a sessions.error for a lifecycle request. */
 class SessionsRequestException(val code: String, override val message: String) :
     Exception("$code: $message")
 
 private const val DEFAULT_TIMEOUT_MS = 5_000L
-
-/** Fallback mint-debounce window when none is injected (matches SdkConfig default). */
 private const val DEFAULT_MINT_DEBOUNCE_MS = 3_000L
 
 class SessionsConnector(
     private val send: (ClientMessage) -> Unit,
     private val newId: () -> String,
     private val clock: Clock,
+    private val httpClient: SessionsHttpClient? = null,
     private val timeoutMs: Long = DEFAULT_TIMEOUT_MS,
     private val mintDebounceMs: Long = DEFAULT_MINT_DEBOUNCE_MS,
 ) : Connector {
@@ -83,17 +77,10 @@ class SessionsConnector(
 
     private val log = createLogger("connector", "sessions")
 
-    // Wall-clock ms of the last fire-and-forget mint, or null when no mint is in
-    // flight. Connection-scoped: cleared on session.created (mint done) and on
-    // reset() (disconnect → fresh connection → fresh mint allowed).
+    // Connection-scoped: cleared on session.created (mint done) and on reset().
     private var lastMintAtMs: Long? = null
 
-    // requestId → deferred result payload. Resolved by the matching *.result
-    // frame, failed by sessions.error with the same requestId.
-    private val pending = mutableMapOf<String, CompletableDeferred<Any?>>()
-
-    // Broadcast-correlated waiters (switchTo / newChat): resolved by the next
-    // matching lifecycle broadcast, not by requestId.
+    // Broadcast-correlated waiters (switchTo / newChat).
     private val createdWaiters = mutableListOf<CompletableDeferred<String>>()
     private val switchedWaiters = mutableMapOf<String, CompletableDeferred<Unit>>()
 
@@ -101,44 +88,26 @@ class SessionsConnector(
 
     override fun handle(msg: ServerMessage) {
         when (msg) {
-            is ServerMessage.SessionsListResult ->
-                resolve(msg.requestId, SessionsListPage(msg.items, msg.total, msg.hasMore))
-            is ServerMessage.SessionsSearchResult -> resolve(msg.requestId, msg.items)
-            is ServerMessage.SessionsDeleteResult -> resolve(msg.requestId, Unit)
-            is ServerMessage.SessionsRenameResult -> resolve(msg.requestId, Unit)
-            is ServerMessage.SessionsError -> reject(msg.requestId, msg.code, msg.message)
-            is ServerMessage.SessionsDeleted -> onDeleted(msg)
-            is ServerMessage.SessionsRenamed -> onRenamed(msg)
+            is ServerMessage.SessionsError -> onSessionsError(msg)
+            is ServerMessage.SessionsDeleted -> dispatch(SessionsChangeEvent.Deleted(msg.sessionId))
+            is ServerMessage.SessionsRenamed -> dispatch(SessionsChangeEvent.Renamed(msg.sessionId, msg.title))
             is ServerMessage.SessionCreated -> onCreated(msg)
             is ServerMessage.SessionSwitched -> onSwitched(msg)
             else -> Unit // not owned by this connector
         }
     }
 
-    private fun resolve(requestId: String, value: Any?) {
-        val deferred = pending.remove(requestId) ?: return
-        log.info("resolve", mapOf("requestId" to requestId))
-        deferred.complete(value)
-    }
-
-    private fun reject(requestId: String, code: String, message: String) {
-        val deferred = pending.remove(requestId) ?: return
-        log.warn("reject", mapOf("requestId" to requestId, "code" to code))
-        deferred.completeExceptionally(SessionsRequestException(code, message))
-    }
-
-    private fun onDeleted(msg: ServerMessage.SessionsDeleted) {
-        dispatch(SessionsChangeEvent.Deleted(msg.sessionId))
-    }
-
-    private fun onRenamed(msg: ServerMessage.SessionsRenamed) {
-        dispatch(SessionsChangeEvent.Renamed(msg.sessionId, msg.title))
+    private fun onSessionsError(msg: ServerMessage.SessionsError) {
+        // Only the switched-waiter path can receive a sessions.error now; reject it.
+        val waiter = switchedWaiters.remove(msg.requestId)
+        if (waiter != null) {
+            log.warn("switch.error", mapOf("requestId" to msg.requestId, "code" to msg.code))
+            waiter.completeExceptionally(SessionsRequestException(msg.code, msg.message))
+        }
     }
 
     private fun onCreated(msg: ServerMessage.SessionCreated) {
-        // Mint complete → clear the debounce so the next explicit new-chat mints.
         lastMintAtMs = null
-        // Resolve any newChat() waiter first (broadcast-correlated), then fan out.
         val waiters = createdWaiters.toList()
         createdWaiters.clear()
         for (w in waiters) w.complete(msg.sessionId)
@@ -154,45 +123,60 @@ class SessionsConnector(
         for (l in listeners.toList()) l(event)
     }
 
-    // ── requestId-correlated suspend ops ──
+    // ── REST-backed query ops ──────────────────────────────────────────────────
 
+    /** Page the session list via REST GET /api/v1/sessions. */
     suspend fun list(limit: Int, offset: Int): SessionsListPage {
-        val id = newId()
-        return await(id, "sessions.list") {
-            send(ClientMessage.SessionsList(requestId = id, limit = limit, offset = offset))
-        } as SessionsListPage
+        log.debug("list", mapOf("limit" to limit, "offset" to offset))
+        val items = httpClient?.list(limit, offset) ?: emptyList()
+        return SessionsListPage(items = items, total = items.size, hasMore = false)
     }
 
-    @Suppress("UNCHECKED_CAST")
+    /** Search sessions via REST GET /api/v1/sessions/search. */
     suspend fun search(q: String, limit: Int = DEFAULT_SEARCH_LIMIT): List<SessionRow> {
-        val id = newId()
-        return await(id, "sessions.search") {
-            send(ClientMessage.SessionsSearch(requestId = id, q = q, limit = limit))
-        } as List<SessionRow>
+        log.debug("search", mapOf("q" to q.take(PREVIEW_LEN)))
+        return httpClient?.search(q, limit) ?: emptyList()
     }
 
+    /**
+     * Delete a session via REST DELETE /api/v1/sessions/:id.
+     * Fans out [SessionsChangeEvent.Deleted] only when the REST call returns true (2xx).
+     * On failure, logs a warn and does not fan out — the next list refresh shows reality.
+     */
     suspend fun delete(sessionId: String) {
-        val id = newId()
-        await(id, "sessions.delete") {
-            send(ClientMessage.SessionsDelete(requestId = id, sessionId = sessionId))
+        log.debug("delete", mapOf("sessionId" to sessionId))
+        val ok = httpClient?.delete(sessionId) ?: true
+        if (ok) {
+            dispatch(SessionsChangeEvent.Deleted(sessionId))
+        } else {
+            log.warn("delete.no-fanout", mapOf("sessionId" to sessionId, "reason" to "REST call failed"))
         }
     }
 
+    /**
+     * Rename a session via REST PATCH /api/v1/sessions/:id.
+     * Fans out [SessionsChangeEvent.Renamed] only when the REST call returns true (2xx).
+     * On failure, logs a warn and does not fan out — the next list refresh shows reality.
+     */
     suspend fun rename(sessionId: String, title: String) {
-        val id = newId()
-        await(id, "sessions.rename") {
-            send(ClientMessage.SessionsRename(requestId = id, sessionId = sessionId, title = title))
+        log.debug("rename", mapOf("sessionId" to sessionId))
+        val ok = httpClient?.rename(sessionId, title) ?: true
+        if (ok) {
+            dispatch(SessionsChangeEvent.Renamed(sessionId, title))
+        } else {
+            log.warn("rename.no-fanout", mapOf("sessionId" to sessionId, "reason" to "REST call failed"))
         }
     }
 
-    // ── broadcast-correlated suspend ops ──
+    // ── WS lifecycle ops ──────────────────────────────────────────────────────
 
+    /** Send conversation.activate and await the session.switched broadcast. */
     suspend fun switchTo(sessionId: String) {
         val deferred = CompletableDeferred<Unit>()
         switchedWaiters[sessionId] = deferred
         val id = newId()
         log.info("switchTo", mapOf("sessionId" to sessionId, "requestId" to id))
-        send(ClientMessage.SessionSwitch(requestId = id, sessionId = sessionId))
+        send(ClientMessage.ConversationActivate(requestId = id, sessionId = sessionId))
         try {
             withTimeout(timeoutMs) { deferred.await() }
         } catch (e: TimeoutCancellationException) {
@@ -202,6 +186,7 @@ class SessionsConnector(
         }
     }
 
+    /** Send session.new and await the session.created broadcast. */
     suspend fun newChat(): String {
         val deferred = CompletableDeferred<String>()
         createdWaiters.add(deferred)
@@ -217,16 +202,10 @@ class SessionsConnector(
         }
     }
 
-    // ── fire-and-forget ops (A2) ──
-    //
-    // Send the frame and return. The gateway broadcasts (session.created /
-    // session.switched) still flow back to listeners + the SDK anchor; the caller
-    // NEVER awaits, NEVER times out, NEVER throws. The UI must not block on a
-    // session round-trip (webui does `void newChat()`).
+    // ── fire-and-forget ops (A2) ──────────────────────────────────────────────
 
     /**
-     * Fire-and-forget new chat. Debounced: if a mint is still in flight within
-     * [mintDebounceMs], log and return so rapid taps collapse to a single ACP mint.
+     * Fire-and-forget new chat. Debounced: rapid taps collapse to one mint.
      */
     fun sendNew() {
         val now = clock.nowMs()
@@ -241,16 +220,16 @@ class SessionsConnector(
         send(ClientMessage.SessionNew(requestId = id))
     }
 
-    /** Fire-and-forget switch. Always sends — no debounce (switch is idempotent). */
+    /** Fire-and-forget switch via conversation.activate. Always sends — no debounce. */
     fun sendSwitch(sessionId: String) {
         val id = newId()
         log.info("sendSwitch", mapOf("sessionId" to sessionId, "requestId" to id))
-        send(ClientMessage.SessionSwitch(requestId = id, sessionId = sessionId))
+        send(ClientMessage.ConversationActivate(requestId = id, sessionId = sessionId))
     }
 
     /**
-     * Register a sessions-change listener. Returns an unsubscribe fn. Listeners
-     * survive detach()/reconnect — only the SDK unregisters them explicitly.
+     * Register a sessions-change listener. Returns an unsubscribe fn.
+     * Listeners survive detach()/reconnect.
      */
     fun onSessionsChanged(fn: (SessionsChangeEvent) -> Unit): () -> Unit {
         listeners.add(fn)
@@ -258,39 +237,23 @@ class SessionsConnector(
     }
 
     /**
-     * Fail all in-flight requests and clear inbound state. Does NOT clear
-     * listeners — they are user-registered and must survive WS reconnect
-     * (mirrors the web-sdk detach() note). Call on disconnect.
+     * Fail all in-flight lifecycle requests and clear connection-scoped state.
+     * Does NOT clear listeners — they survive WS reconnect.
+     * Call on disconnect.
      */
     fun reset() {
-        log.info("reset", mapOf("pending" to pending.size))
-        // Disconnect → new connection → a fresh mint is allowed; clear the debounce.
+        log.info("reset", mapOf("switched" to switchedWaiters.size, "created" to createdWaiters.size))
         lastMintAtMs = null
         val err = SessionsTimeoutException("connector reset")
-        for (d in pending.values) d.completeExceptionally(err)
-        pending.clear()
         for (d in createdWaiters) d.completeExceptionally(err)
         createdWaiters.clear()
         for (d in switchedWaiters.values) d.completeExceptionally(err)
         switchedWaiters.clear()
     }
 
-    private suspend fun await(requestId: String, frameType: String, sendFrame: () -> Unit): Any? {
-        val deferred = CompletableDeferred<Any?>()
-        pending[requestId] = deferred
-        log.info("request", mapOf("frame" to frameType, "requestId" to requestId))
-        sendFrame()
-        return try {
-            withTimeout(timeoutMs) { deferred.await() }
-        } catch (e: TimeoutCancellationException) {
-            pending.remove(requestId)
-            log.warn("timeout", mapOf("frame" to frameType, "requestId" to requestId))
-            throw SessionsTimeoutException(frameType)
-        }
-    }
-
     companion object {
         const val CAPABILITY: String = "sessions"
         private const val DEFAULT_SEARCH_LIMIT = 20
+        private const val PREVIEW_LEN = 60
     }
 }

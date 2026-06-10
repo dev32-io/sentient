@@ -25,6 +25,7 @@ import io.sentient.mobilesdk.sdk.SdkConfig
 import io.sentient.mobilesdk.sdk.SentientSdk
 import io.sentient.mobilesdk.sdk.createPlatformBundle
 import io.sentient.mobilesdk.sdk.isTerminalAuthError
+import io.sentient.mobilesdk.sessions.createSessionsHttpClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -74,6 +75,19 @@ class IosUserSession(
     private val scope: CoroutineScope =
         CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1) + exceptionHandler)
 
+    // Build the platform bundle once so the token store is shared between the SDK
+    // WS transport and the REST SessionsHttpClient (same Keychain item).
+    private val bundle = createPlatformBundle()
+
+    // REST HTTP client for session queries: Darwin engine + same TLS policy as
+    // the AuthClient. createSessionsHttpClient (iosMain factory) owns the engine
+    // construction so the dev-TLS bypass is consistent and not duplicated.
+    private val sessionsHttpClient = createSessionsHttpClient(
+        gatewayWsUrl = gatewayWsUrl,
+        allowSelfSignedDevHost = allowSelfSignedDevHost,
+        token = { bundle.tokenStore.load() ?: "" },
+    )
+
     private val sdk: SentientSdk = SentientSdk(
         config = SdkConfig(
             gatewayWsUrl = gatewayWsUrl,
@@ -81,8 +95,9 @@ class IosUserSession(
             capabilities = capabilities,
             devFaultsEnabled = devFaultsEnabled,
         ),
-        bundle = createPlatformBundle(),
+        bundle = bundle,
         scope = scope,
+        sessionsHttpClient = sessionsHttpClient,
     )
 
     /** The single ChatComponent for this login — usecases + connection + passthroughs. */

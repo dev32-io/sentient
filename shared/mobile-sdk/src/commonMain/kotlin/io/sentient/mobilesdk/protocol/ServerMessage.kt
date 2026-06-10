@@ -131,38 +131,16 @@ sealed class ServerMessage {
     @Serializable @SerialName("pong")
     data object Pong : ServerMessage()
 
-    // ── Sessions management (mirrors sessions.ts result/event types) ──
+    // ── Sessions management ──
+    // Note: sessions.list.result / sessions.search.result / sessions.delete.result /
+    // sessions.rename.result were REMOVED from the protocol in Task 2.1.
+    // Those query RPCs are now REST; only lifecycle broadcasts remain here.
 
-    @Serializable @SerialName("sessions.list.result")
-    data class SessionsListResult(
-        val requestId: String,
-        val items: List<SessionRow>,
-        val total: Int,
-        val hasMore: Boolean,
-    ) : ServerMessage()
-
-    @Serializable @SerialName("sessions.search.result")
-    data class SessionsSearchResult(
-        val requestId: String,
-        val items: List<SessionRow>,
-    ) : ServerMessage()
-
-    @Serializable @SerialName("sessions.delete.result")
-    data class SessionsDeleteResult(
-        val requestId: String,
-        val sessionId: String,
-    ) : ServerMessage()
-
+    /** Broadcast when a session is deleted (e.g. by another client). */
     @Serializable @SerialName("sessions.deleted")
     data class SessionsDeleted(val sessionId: String) : ServerMessage()
 
-    @Serializable @SerialName("sessions.rename.result")
-    data class SessionsRenameResult(
-        val requestId: String,
-        val sessionId: String,
-        val title: String,
-    ) : ServerMessage()
-
+    /** Broadcast when a session is renamed (e.g. by another client). */
     @Serializable @SerialName("sessions.renamed")
     data class SessionsRenamed(val sessionId: String, val title: String) : ServerMessage()
 
@@ -180,6 +158,7 @@ sealed class ServerMessage {
         val ts: Long,
     ) : ServerMessage()
 
+    /** Error frame for lifecycle operations (e.g. forbidden on re-establish switch). */
     @Serializable @SerialName("sessions.error")
     data class SessionsError(
         val requestId: String,
@@ -206,17 +185,19 @@ data class AuthUser(
     val avatarTint: String = "",
 )
 
-/** Client-facing session/chat-thread row. Mirrors sessions.ts sessionRowSchema. */
+/** Client-facing session/chat-thread row. Mirrors sessions.ts sessionRowSchema.
+ *  Defaults provided for fields absent in REST list/search responses so the same
+ *  DTO works for both WS result frames and REST JSON. */
 @Serializable
 data class SessionRow(
     val sessionId: String,
     /** rootId ties a branch to the root chain; nullable for resilience against older gateway versions. */
     val rootId: String? = null,
-    val title: String,
-    val startedAt: Long,
-    val lastActiveAt: Long,
-    val messageCount: Int,
-    val isActive: Boolean,
+    val title: String = "",
+    val startedAt: Long = 0L,
+    val lastActiveAt: Long = 0L,
+    val messageCount: Int = 0,
+    val isActive: Boolean = false,
 )
 
 /** Playback tuning hints from session.ready (optional field). */

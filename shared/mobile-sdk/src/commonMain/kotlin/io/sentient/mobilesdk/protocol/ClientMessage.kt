@@ -50,40 +50,16 @@ sealed class ClientMessage {
         val payload: PreferencesPatchPayload,
     ) : ClientMessage()
 
-    // ── Sessions management (mirrors sessions.ts) ──
-
-    @Serializable @SerialName("sessions.list")
-    data class SessionsList(
-        val requestId: String,
-        val limit: Int,
-        val offset: Int,
-    ) : ClientMessage()
-
-    @Serializable @SerialName("sessions.search")
-    data class SessionsSearch(
-        val requestId: String,
-        val q: String,
-        val limit: Int,
-    ) : ClientMessage()
-
-    @Serializable @SerialName("sessions.delete")
-    data class SessionsDelete(
-        val requestId: String,
-        val sessionId: String,
-    ) : ClientMessage()
-
-    @Serializable @SerialName("sessions.rename")
-    data class SessionsRename(
-        val requestId: String,
-        val sessionId: String,
-        val title: String,
-    ) : ClientMessage()
+    // ── Sessions management ──
+    // Query RPCs (list/search/delete/rename) were removed from the WS protocol in
+    // Task 2.1 — they are now REST (SessionsHttpClient). Only lifecycle frames remain.
 
     @Serializable @SerialName("session.new")
     data class SessionNew(val requestId: String) : ClientMessage()
 
-    @Serializable @SerialName("session.switch")
-    data class SessionSwitch(
+    /** Replaces the retired session.switch — activates an existing session. */
+    @Serializable @SerialName("conversation.activate")
+    data class ConversationActivate(
         val requestId: String,
         val sessionId: String,
     ) : ClientMessage()

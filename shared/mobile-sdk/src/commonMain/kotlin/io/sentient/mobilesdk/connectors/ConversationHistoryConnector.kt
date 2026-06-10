@@ -2,22 +2,32 @@
 // ConversationHistoryConnector — session-scoped read-only mirror of the
 // gateway's ConversationHistory.
 //
-// Mirrors web-sdk's conversation-history-connector.ts VERBATIM:
+// Mirrors web-sdk's conversation-history-connector.ts post-Task-2.5 shape:
 //   capability = "conversation.history"  (status observer)
 //
-//   conversation.snapshot → REPLACE the mirror, release the gate, fire
-//                           onSnapshot + onUpdate.
 //   conversation.entry    → APPEND to the mirror, fire onEntry + onUpdate,
-//                           UNLESS awaitingSnapshot (then DROP — a straggler
-//                           from the prior generation).
-//   session.switched      → set the awaitingSnapshot gate. The gateway emits
-//                           switched-then-snapshot on every switch/resume, so
-//                           the gate is set first and immediately released by
-//                           the snapshot — keeping post-switch live entries
-//                           flowing.
+//                           UNLESS awaitingHistory (straggler from prior
+//                           generation → DROP).
+//   session.switched      → increment generation; set awaitingHistory gate;
+//                           fire onHistoryNeeded(sessionId, generation) + onEvent.
+//   replaceMirror(items)  → REPLACE the mirror with REST history, release the
+//                           gate, fire onSnapshot + onUpdate.
+//
+// The gateway no longer sends conversation.snapshot on session.switched
+// (Task 2.1). History is loaded via REST getMessages. The gate semantics are
+// identical: stragglers between session.switched and the REST response drop;
+// the gate clears on replaceMirror success (or on a deliberate clear-with-empty
+// on REST error so the connector never wedges).
+//
+// Stale-switch guard: a generation counter increments on every session.switched.
+// onHistoryNeeded fires AFTER the increment so the generation token it carries
+// is the POST-bump value — the same value replaceMirror must match. This
+// eliminates the ordering dependency between router.route and onSessionAnchored
+// that caused the generation mismatch bug (Task 2.6 fix).
 //
 // Threading: single-threaded; the orchestrator routes frames on one dispatcher
-// and subscribes the callbacks. The mutable mirror + gate are owned here.
+// and calls replaceMirror from the SDK scope. The mutable mirror + gate are
+// owned here.
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.connectors
 
@@ -31,9 +41,11 @@ class ConversationHistoryConnector(
     private val onEntry: ((ConversationFeedItem) -> Unit)? = null,
     private val onUpdate: ((List<ConversationFeedItem>) -> Unit)? = null,
     private val onEvent: ((SdkEvent) -> Unit)? = null,
-    // Fired on session.switched so the orchestrator can drop cross-conversation
-    // derivation state (the ts → cycleId stamp map) before the next snapshot.
-    private val onSwitch: (() -> Unit)? = null,
+    // Fired AFTER the generation is incremented, with the post-bump generation
+    // token. The caller uses both to launch the REST fetch with the correct
+    // generation so replaceMirror(forGeneration) will match and apply, and
+    // to reset cross-conversation derivation state before the new history loads.
+    private val onHistoryNeeded: ((sessionId: String, generation: Int) -> Unit)? = null,
 ) : Connector {
     override val capability: String = CAPABILITY
 
@@ -41,15 +53,28 @@ class ConversationHistoryConnector(
 
     private var mirror: List<ConversationFeedItem> = emptyList()
 
-    // Generation gate: set on session.switched, cleared on every snapshot.
-    // Entries received between session.switched and the next snapshot are dropped.
-    private var awaitingSnapshot: Boolean = false
+    // Generation gate: increments on session.switched, checked on replaceMirror.
+    // A fast second switch invalidates a slow first REST fetch so the newer switch
+    // wins and the older response is silently discarded.
+    private var generation: Int = 0
+
+    // True between session.switched and the REST history arriving via replaceMirror.
+    private var awaitingHistory: Boolean = false
 
     /** Current ordered mirror of the feed. Safe to read synchronously. */
     fun items(): List<ConversationFeedItem> = mirror
 
+    /**
+     * Current generation token. Capture before launching a REST fetch and pass
+     * back to [replaceMirror] so a stale response from an earlier switch is
+     * silently discarded.
+     */
+    fun currentGeneration(): Int = generation
+
     override fun handle(msg: ServerMessage) {
         when (msg) {
+            // Forward-compat: a conversation.snapshot from an older gateway version
+            // (pre-Task-2.1 or a reconnect that sends one) still hydrates the mirror.
             is ServerMessage.ConversationSnapshot -> onSnapshotFrame(msg)
             is ServerMessage.ConversationEntry -> onEntryFrame(msg)
             is ServerMessage.SessionSwitched -> onSessionSwitched(msg)
@@ -57,21 +82,44 @@ class ConversationHistoryConnector(
         }
     }
 
+    /**
+     * Replace the conversation mirror with [items] from the REST history fetch.
+     * [forGeneration] must equal [currentGeneration]; if not, this response is
+     * stale (a faster switch superseded it) and is silently discarded.
+     *
+     * Always clears [awaitingHistory] even on a generation mismatch would be
+     * wrong — only clear when the response is current, to avoid wedging. If
+     * this IS stale the gate stays set; the winning (newer) fetch will clear it.
+     */
+    fun replaceMirror(items: List<ConversationFeedItem>, forGeneration: Int) {
+        if (forGeneration != generation) {
+            log.info(
+                "replaceMirror.stale",
+                mapOf("forGeneration" to forGeneration, "current" to generation),
+            )
+            return
+        }
+        log.info("replaceMirror", mapOf("count" to items.size, "generation" to generation))
+        mirror = items.toList()
+        awaitingHistory = false
+        onSnapshot?.invoke(mirror)
+        onUpdate?.invoke(mirror)
+    }
+
+    // ── Internal frame handlers ───────────────────────────────────────────────
+
     private fun onSnapshotFrame(msg: ServerMessage.ConversationSnapshot) {
-        log.info(
-            "snapshot",
-            mapOf("count" to msg.items.size, "wasAwaiting" to awaitingSnapshot),
-        )
-        mirror = msg.items.toList() // REPLACE, not merge
-        awaitingSnapshot = false
+        log.info("snapshot-legacy", mapOf("count" to msg.items.size))
+        mirror = msg.items.toList()
+        awaitingHistory = false
         onSnapshot?.invoke(mirror)
         onUpdate?.invoke(mirror)
     }
 
     private fun onEntryFrame(msg: ServerMessage.ConversationEntry) {
-        if (awaitingSnapshot) {
-            log.debug("entry-dropped", mapOf("reason" to "awaiting-snapshot", "ts" to msg.item.ts))
-            return // drop straggler from prior generation
+        if (awaitingHistory) {
+            log.debug("entry-dropped", mapOf("reason" to "awaiting-history", "ts" to msg.item.ts))
+            return
         }
         log.info("entry", mapOf("ts" to msg.item.ts, "size" to mirror.size + 1))
         mirror = mirror + msg.item
@@ -80,11 +128,16 @@ class ConversationHistoryConnector(
     }
 
     private fun onSessionSwitched(msg: ServerMessage.SessionSwitched) {
-        log.info("gate-set", mapOf("trigger" to "session.switched", "sessionId" to msg.sessionId))
-        awaitingSnapshot = true
-        // Drop cross-conversation derivation state BEFORE the following snapshot
-        // re-stamps; otherwise an old cycleId could attach to the new feed.
-        onSwitch?.invoke()
+        generation++
+        log.info(
+            "gate-set",
+            mapOf("trigger" to "session.switched", "sessionId" to msg.sessionId, "generation" to generation),
+        )
+        awaitingHistory = true
+        // Fire AFTER the bump so the callee receives the post-bump generation.
+        // This ensures the REST fetch launched in the callback uses the same
+        // generation token that replaceMirror will later validate against.
+        onHistoryNeeded?.invoke(msg.sessionId, generation)
         onEvent?.invoke(SdkEvent.SessionSwitched(sessionId = msg.sessionId))
     }
 

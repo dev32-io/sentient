@@ -22,6 +22,7 @@ import io.sentient.mobilesdk.presence.createIdleDetector
 import io.sentient.mobilesdk.protocol.AudioPreferencesPatch
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.protocol.SdkEvent
+import io.sentient.mobilesdk.sessions.SessionsHttpClient
 import io.sentient.mobilesdk.transport.ConnectResult
 import io.sentient.mobilesdk.transport.MessageRouter
 import io.sentient.mobilesdk.transport.ReconnectController
@@ -58,6 +59,8 @@ class SentientSdk(
     sessionsTimeoutMs: Long = DEFAULT_SESSIONS_TIMEOUT_MS,
     idleThresholdMs: Long = DEFAULT_IDLE_THRESHOLD_MS,
     idleTickMs: Long = DEFAULT_IDLE_TICK_MS,
+    /** REST client for session queries. Null in tests that don't exercise REST. */
+    sessionsHttpClient: SessionsHttpClient? = null,
 ) {
     private val log = createLogger("sdk", "orchestrator")
 
@@ -91,7 +94,7 @@ class SentientSdk(
 
     // The active ACP session uuid, anchored ONLY from session.switched /
     // session.created broadcasts (non-empty ids). Drives the reconnect re-
-    // establish (fire session.switch on a reconnect READY to restore server
+    // establish (fire conversation.activate on a reconnect READY to restore server
     // context) and is cleared on consumer disconnect(clearSession = true).
     // NOT a persistent connect-URL resume — see Task A1.
     private val _currentSessionId = MutableStateFlow<String?>(null)
@@ -151,6 +154,8 @@ class SentientSdk(
         sessionsTimeoutMs = sessionsTimeoutMs,
         clock = bundle.clock,
         mintDebounceMs = config.mintDebounceMs,
+        sessionsHttpClient = sessionsHttpClient,
+        scope = scope,
         audioHooks = { audio.downlinkHooks },
         onCognitionChanged = ::onCognitionChanged,
     )
@@ -333,12 +338,8 @@ class SentientSdk(
         connectors.preferences.patch(AudioPreferencesPatch(ttsEnabled = enabled))
     }
 
-    /** Page the session list (requestId-correlated). */
-    @Throws(
-        SessionsRequestException::class,
-        SessionsTimeoutException::class,
-        kotlin.coroutines.cancellation.CancellationException::class,
-    )
+    /** Page the session list via REST GET /api/v1/sessions. */
+    @Throws(kotlin.coroutines.cancellation.CancellationException::class)
     suspend fun listSessions(limit: Int, offset: Int): SessionsListPage =
         connectors.sessions.list(limit, offset)
 
@@ -379,7 +380,7 @@ class SentientSdk(
     }
 
     /**
-     * Fire-and-forget switch (A2). Sends session.switch and returns immediately —
+     * Fire-and-forget switch (A2). Sends conversation.activate and returns immediately —
      * the gateway emits session.switched + the session's snapshot. NEVER awaits,
      * NEVER throws. Used both by the UI and by the reconnect re-establish (A1).
      */
@@ -389,19 +390,18 @@ class SentientSdk(
         connectors.sessions.sendSwitch(id)
     }
 
-    @Throws(
-        SessionsRequestException::class,
-        SessionsTimeoutException::class,
-        kotlin.coroutines.cancellation.CancellationException::class,
-    )
+    /** Delete a session via REST DELETE /api/v1/sessions/:id. Never throws — safeBoolean absorbs all errors. */
+    @Throws(kotlin.coroutines.cancellation.CancellationException::class)
     suspend fun deleteSession(id: String) = connectors.sessions.delete(id)
 
-    @Throws(
-        SessionsRequestException::class,
-        SessionsTimeoutException::class,
-        kotlin.coroutines.cancellation.CancellationException::class,
-    )
+    /** Rename a session via REST PATCH /api/v1/sessions/:id. Never throws — safeBoolean absorbs all errors. */
+    @Throws(kotlin.coroutines.cancellation.CancellationException::class)
     suspend fun renameSession(id: String, title: String) = connectors.sessions.rename(id, title)
+
+    /** Search sessions via REST GET /api/v1/sessions/search. */
+    @Throws(kotlin.coroutines.cancellation.CancellationException::class)
+    suspend fun searchSessions(q: String, limit: Int = 20): List<io.sentient.mobilesdk.protocol.SessionRow> =
+        connectors.sessions.search(q, limit)
 
     // ── Reconnect wiring ────────────────────────────────────────────────────────
 
@@ -430,7 +430,7 @@ class SentientSdk(
      * foreground we send ONE liveness ping: if a pong returns within the configured
      * window the live socket is confirmed and we do nothing; if it times out (the
      * OS froze/killed the socket while suspended, or it is half-open) we reconnect,
-     * which re-establishes the anchored session via session.switch. One-shot per
+     * which re-establishes the anchored session via conversation.activate. One-shot per
      * foreground — no periodic heartbeat — so the battery cost is one ping.
      */
     fun onForeground() {
@@ -507,7 +507,7 @@ class SentientSdk(
     /**
      * READY rising edge. The FIRST READY (first connect) has nothing to restore.
      * Every SUBSEQUENT READY is a reconnect: if a session is anchored, fire a
-     * fire-and-forget session.switch to restore the server context (the gateway
+     * fire-and-forget conversation.activate to restore the server context (the gateway
      * re-emits switched + snapshot; the WS preserves frame order so the next
      * user.message routes to the restored session).
      */
@@ -535,6 +535,10 @@ class SentientSdk(
      * broadcast. Defensive empty-id guard: the gateway only emits session.switched
      * with a real uuid (session.new emits conversation.snapshot WITHOUT a switched
      * frame), so an empty id should never arrive — but never anchor one if it does.
+     *
+     * History loading is now fully connector-driven: [ConversationHistoryConnector]
+     * fires [SdkConnectors.loadHistoryForSession] directly from its onHistoryNeeded
+     * callback AFTER bumping the generation — no ordering dependency here.
      */
     private fun onSessionAnchored(sessionId: String) {
         if (sessionId.isEmpty()) {
@@ -543,9 +547,11 @@ class SentientSdk(
         }
         // A re-establish switch we were awaiting just confirmed.
         if (sessionId == reestablishingSessionId) reestablishingSessionId = null
-        if (_currentSessionId.value == sessionId) return
-        log.info("session.anchor", mapOf("sessionId" to sessionId))
-        _currentSessionId.value = sessionId
+        val isNewSession = _currentSessionId.value != sessionId
+        if (isNewSession) {
+            log.info("session.anchor", mapOf("sessionId" to sessionId))
+            _currentSessionId.value = sessionId
+        }
     }
 
     /**

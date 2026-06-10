@@ -1,36 +1,21 @@
 // ---------------------------------------------------------------------------
-// AuthClientFactory.ios — Swift-friendly construction of the REST [AuthClient]
-// and the Keychain token store for iOS.
+// SessionsHttpClientFactory.ios — Swift/SKIE-friendly construction of the
+// REST [SessionsHttpClient] for iOS.
 //
-// The commonMain [AuthClient] takes an INJECTED HttpClient so the platform owns
-// the engine + TLS policy. On iOS we supply Ktor's Darwin engine with JSON
-// ContentNegotiation and, in DEBUG only, the same self-signed dev-host TLS
-// bypass IosWebSocketEngine uses for wss://localhost — a handleChallenge that
-// trusts server-trust challenges unconditionally. The flag is supplied by the
-// Swift app from #if DEBUG; it is NEVER hardcoded true here.
+// The SessionsHttpClient takes an INJECTED HttpClient so the platform owns the
+// engine + TLS policy. On iOS we supply Ktor's Darwin engine with the same
+// JSON ContentNegotiation + debug self-signed TLS bypass as the AuthClient.
 //
-// SECURITY: the trust-all challenge handler is registered ONLY inside the
-// `if (allowSelfSignedDevHost)` branch. The release path (false) installs no
-// handleChallenge, so NSURLSession performs standard system certificate
-// validation. Mirrors the WS engine's policy + the Android AuthHttpClient.
-//
-// The Kotlin defaults on AuthClient's `log` and the Darwin client config are
-// lost across the ObjC/SKIE bridge, and a Swift caller cannot ergonomically
-// build a Ktor HttpClient or a handleChallenge lambda — so this factory keeps
-// that construction inside the SDK, mirroring createSentientSdk / the existing
-// createPlatformBundle helper. Swift calls createAuthClient(...) with primitives.
+// IosUserSession (mobile-data) calls createSessionsHttpClient() so it never
+// duplicates the Darwin engine or TLS-bypass logic.
 // ---------------------------------------------------------------------------
-@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
-
-package io.sentient.mobilesdk.auth
+package io.sentient.mobilesdk.sessions
 
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.darwin.Darwin
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
 import io.sentient.mobilesdk.log.createLogger
-import io.sentient.mobilesdk.secure.IosSecureTokenStore
-import io.sentient.mobilesdk.secure.SecureTokenStore
 import kotlinx.serialization.json.Json
 import platform.Foundation.NSURLAuthenticationChallenge
 import platform.Foundation.NSURLAuthenticationMethodServerTrust
@@ -44,41 +29,37 @@ import platform.Foundation.credentialForTrust
 import platform.Foundation.serverTrust
 import platform.Security.SecTrustRef
 
-private val log = createLogger("auth", "factory", "ios")
+@OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+
+private val log = createLogger("sessions", "http-client-factory", "ios")
 
 /**
- * Build the REST [AuthClient] for iOS: a Darwin-backed Ktor [HttpClient] with
- * JSON ContentNegotiation (ignoreUnknownKeys so newer gateway fields decode
- * cleanly) + the debug-only self-signed-dev-host TLS bypass, constructed from
- * the same gateway URL as the SDK. [deriveBaseUrl] (inside AuthClient) maps the
- * WS URL to the REST base.
+ * Build the [SessionsHttpClient] for iOS: a Darwin-backed Ktor [HttpClient]
+ * with JSON ContentNegotiation and, in DEBUG only, the same self-signed
+ * dev-host TLS bypass used by [AuthClientFactory.ios.kt].
  *
- * @param gatewayWsUrl Full WS URL, e.g. `wss://localhost:8888/api/v1/ws`.
+ * [IosUserSession] calls this and passes [token] as a lambda over the shared
+ * platform-bundle token store so the SDK and REST client read the same token.
+ *
+ * @param gatewayWsUrl Full WS URL, e.g. `wss://host/api/v1/ws`.
  * @param allowSelfSignedDevHost Debug-only TLS bypass. MUST be false in release.
+ * @param token Lambda returning the current PASETO session token.
  */
-fun createAuthClient(
+fun createSessionsHttpClient(
     gatewayWsUrl: String,
     allowSelfSignedDevHost: Boolean,
-): AuthClient {
+    token: () -> String,
+): SessionsHttpClient {
     log.info(
         "create",
         mapOf("gatewayWsUrl" to gatewayWsUrl, "allowSelfSignedDevHost" to allowSelfSignedDevHost),
     )
-    return AuthClient(
+    return SessionsHttpClient(
+        httpClient = buildSessionsHttpClient(allowSelfSignedDevHost),
         gatewayWsUrl = gatewayWsUrl,
-        httpClient = buildAuthHttpClient(allowSelfSignedDevHost),
+        token = token,
     )
 }
-
-/**
- * The same Keychain-backed [SecureTokenStore] the SDK reads its handshake token
- * from. The login flow saves the token here on success; [createSentientSdk]'s
- * bundle reads the identical Keychain item (fixed service/account) on connect.
- *
- * IosSecureTokenStore holds no mutable state — it reads/writes one fixed
- * Keychain entry — so this instance and the SDK bundle's instance share storage.
- */
-fun createTokenStore(): SecureTokenStore = IosSecureTokenStore()
 
 /**
  * Darwin engine + JSON ContentNegotiation, with the dev TLS bypass applied only
@@ -87,9 +68,9 @@ fun createTokenStore(): SecureTokenStore = IosSecureTokenStore()
  * SECURITY GUARD: handleChallenge is registered ONLY inside the bypass branch.
  * The release path installs no challenge handler — NSURLSession validates the
  * server certificate against the system trust store.
- *
  */
-private fun buildAuthHttpClient(allowSelfSignedDevHost: Boolean): HttpClient =
+@OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+private fun buildSessionsHttpClient(allowSelfSignedDevHost: Boolean): HttpClient =
     HttpClient(Darwin) {
         engine {
             if (allowSelfSignedDevHost) {

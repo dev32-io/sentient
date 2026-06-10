@@ -23,12 +23,14 @@ import io.sentient.android.backend.resolveBackend
 import io.sentient.android.presence.PresenceCoordinator
 import io.sentient.android.sdk.AppDependencies
 import io.sentient.android.sdk.SdkFaultHolder
+import io.sentient.android.sdk.buildAuthHttpClient
 import io.sentient.mobiledata.di.ChatComponent
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.sdk.SdkConfig
 import io.sentient.mobilesdk.sdk.SentientSdk
 import io.sentient.mobilesdk.sdk.createPlatformBundle
 import io.sentient.mobilesdk.sdk.isTerminalAuthError
+import io.sentient.mobilesdk.sessions.SessionsHttpClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -125,7 +127,22 @@ class UserSessionManager(
             capabilities = AppDependencies.capabilities,
             devFaultsEnabled = io.sentient.android.BuildConfig.DEBUG,
         )
-        return SentientSdk(config = config, bundle = createPlatformBundle(), scope = sessionScope)
+        // Build the platform bundle once so the token store is shared between the
+        // SDK WS transport and the REST SessionsHttpClient (same SecureTokenStore).
+        val bundle = createPlatformBundle()
+        // REST HTTP client for session queries: reuse the same OkHttp engine + TLS
+        // policy as the AuthClient so the dev self-signed bypass is applied once.
+        val sessionsHttpClient = SessionsHttpClient(
+            httpClient = buildAuthHttpClient(r.allowSelfSignedDevHost),
+            gatewayWsUrl = r.gatewayWsUrl,
+            token = { bundle.tokenStore.load() ?: "" },
+        )
+        return SentientSdk(
+            config = config,
+            bundle = bundle,
+            scope = sessionScope,
+            sessionsHttpClient = sessionsHttpClient,
+        )
     }
 
     /** App foreground → one-shot liveness probe; reconnect (+ resume session) only if dead. */
