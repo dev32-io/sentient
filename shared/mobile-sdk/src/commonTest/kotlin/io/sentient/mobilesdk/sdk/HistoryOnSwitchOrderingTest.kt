@@ -31,6 +31,7 @@ import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import io.sentient.mobilesdk.fakes.FakeWebSocketEngine
 import io.sentient.mobilesdk.fakes.FixedClock
+import io.sentient.mobilesdk.fakes.InMemoryDeviceIdStore
 import io.sentient.mobilesdk.fakes.InMemoryTokenStore
 import io.sentient.mobilesdk.sessions.SessionsHttpClient
 import io.sentient.mobilesdk.transport.SdkStatus
@@ -93,6 +94,7 @@ private fun buildSdkWithHistory(
     val bundle = PlatformBundle(
         engine = fake,
         tokenStore = InMemoryTokenStore().apply { save("tok-abc") },
+        deviceIdStore = InMemoryDeviceIdStore("dev-test"),
         clock = FixedClock(0L),
         capture = null,
         playback = null,

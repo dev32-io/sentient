@@ -44,6 +44,25 @@ sealed class ServerMessage {
     @Serializable @SerialName("session.expired")
     data class SessionExpired(val reason: String) : ServerMessage()
 
+    // ── Stream resume ack (Task 3.10) ──
+
+    /**
+     * Gateway ack of a client `stream.resume`. Mirrors shared/protocol streamResumedSchema.
+     * recovered=true  → the buffer held frames in [fromSeq, toSeq] and will replay them;
+     *                   the ResumeCursor dedups the replays, so the SDK no-ops.
+     * recovered=false → the epoch rolled over or the buffer expired; the SDK resets the
+     *                   cursor and REST-refetches history (clean reconnect).
+     * `epoch` is REQUIRED on this frame (the new/current epoch); fromSeq/toSeq are
+     * present only when recovered=true.
+     */
+    @Serializable @SerialName("stream.resumed")
+    data class StreamResumed(
+        val recovered: Boolean,
+        val epoch: Long,
+        val fromSeq: Long? = null,
+        val toSeq: Long? = null,
+    ) : ServerMessage()
+
     @Serializable @SerialName("session.preferences.changed")
     data class SessionPreferencesChanged(val preferences: AudioPreferences) : ServerMessage()
 

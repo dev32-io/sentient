@@ -33,6 +33,9 @@ enum class VoiceMode { OFF, ACTIVE }
  *   entry has no associated optimistic send (assistant, tool, trigger entries, or legacy user entries
  *   that predate the pendingId echo).
  * @param tools Tasks grouped onto this message by shared cycleId (mirrors web-sdk ChatMessage.tools).
+ * @param entryId Stable gateway entry id of the committed feed item this message folds. Empty for the
+ *   live streaming bubble (pre-commit) and for legacy frames without an entryId. Used for Slice-4
+ *   mirror keying + de-dup of a replayed committed entry on reconnect (Task 3.10).
  */
 data class ChatMessage(
     val ts: Long,
@@ -43,4 +46,5 @@ data class ChatMessage(
     val cycleId: String? = null,
     val pendingId: String? = null,
     val tools: List<TaskSnapshotItem> = emptyList(),
+    val entryId: String = "",
 )

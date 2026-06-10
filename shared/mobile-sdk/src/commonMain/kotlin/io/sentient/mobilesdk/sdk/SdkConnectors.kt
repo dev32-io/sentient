@@ -178,6 +178,18 @@ class SdkConnectors(
      * [forGeneration] therefore equals [history.currentGeneration()] at call
      * time — no external ordering dependency.
      */
+    /**
+     * Refetch history for [sessionId] outside the session.switched path (Task 3.10
+     * — stream.resumed{recovered:false}). Bumps the history connector's generation
+     * (arming its straggler gate) and reuses the same REST [loadHistoryForSession]
+     * path as a normal switch. Also resets cross-conversation derivation state.
+     */
+    fun refetchHistoryForSession(sessionId: String) {
+        val generation = history.bumpForRefetch()
+        deriver.resetForSessionSwitch()
+        loadHistoryForSession(sessionId, generation)
+    }
+
     fun loadHistoryForSession(sessionId: String, forGeneration: Int) {
         val client = sessionsHttpClient ?: run {
             log.debug("loadHistory.no-client", mapOf("sessionId" to sessionId))

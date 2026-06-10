@@ -46,6 +46,10 @@ interface LifecycleHooks {
     fun onSessionForbidden()
     /** A `pong` arrived — resolve an in-flight foreground liveness probe, if any. */
     fun onPong()
+    /** A `stream.resumed` ack arrived (Task 3.10). recovered drives dedup vs. cursor-reset+refetch. */
+    fun onStreamResumed(recovered: Boolean)
+    /** Send `stream.resume` after configure (no-op when the cursor has no seq — first connect). */
+    fun sendStreamResume()
     fun onAuthFailed()
     fun onConnectionDrop()
     fun mergedCapabilities(): List<String>
@@ -64,11 +68,15 @@ class SdkLifecycle(
     private val bundleEngine: io.sentient.mobilesdk.transport.WebSocketEngine,
     private val allowSelfSignedDevHost: Boolean,
     private val gatewayWsUrl: String,
+    /** Stable per-install device id (Task 3.10) — sent in session.configure (REQUIRED by gateway). */
+    private val deviceId: String,
     private val router: MessageRouter,
     private val idle: IdleDetector,
     private val idleTickMs: Long,
     private val delayFn: suspend (Long) -> Unit,
     private val hooks: LifecycleHooks,
+    /** Apply the resume cursor to (seq, epoch); returns false to DROP the frame as a replay dup. */
+    private val applyCursor: (seq: Long, epoch: Long?) -> Boolean,
     private val log: Log,
     private val handshakeLog: Log,
     /** Called with a typed [SentientError.Protocol] when a control frame fails decode. */
@@ -137,8 +145,13 @@ class SdkLifecycle(
                 ClientMessage.SessionConfigure(
                     capabilities = Capabilities(hooks.mergedCapabilities()),
                     clientType = CLIENT_TYPE_MOBILE,
+                    deviceId = deviceId,
                 ),
             )
+            // Right after configure, request replay of any frames missed during the
+            // outage. No-op on a first connect (the cursor has no seq yet); fires the
+            // stream.resume{epoch,lastSeq,deviceId} frame on a reconnect (Task 3.10).
+            hooks.sendStreamResume()
         },
         onReady = { log.info("session.ready.tunables", mapOf("inRate" to it.inputSampleRate, "outRate" to it.outputSampleRate)) },
         delayFn = delayFn,
@@ -154,8 +167,16 @@ class SdkLifecycle(
             // (control) never overtakes the trailing audio frames it terminates.
             tx.events.collect { event ->
                 when (event) {
-                    is WsEvent.Control -> onFrame(event.message)
-                    is WsEvent.Audio -> router.routeBinary(event.bytes)
+                    is WsEvent.Control -> {
+                        // Dedup replayed control frames by seq/epoch before routing.
+                        if (applyCursor(event.seq, event.epoch)) onFrame(event.message)
+                        else log.debug("frame.dedup-dropped", mapOf("seq" to event.seq, "type" to event.message::class.simpleName))
+                    }
+                    is WsEvent.Audio -> {
+                        // Dedup replayed audio frames by the header seq (peeled by WsTransport).
+                        if (applyCursor(event.seq, null)) router.routeBinary(event.bytes)
+                        else log.debug("audio.dedup-dropped", mapOf("seq" to event.seq, "bytes" to event.bytes.size))
+                    }
                 }
             }
         }
@@ -175,6 +196,9 @@ class SdkLifecycle(
             // Pong resolves an in-flight foreground liveness probe (proves the socket
             // survived a backgrounding); harmless if no probe is pending.
             is ServerMessage.Pong -> hooks.onPong()
+            // Resume ack (Task 3.10): recovered=true → dedup handles replays;
+            // recovered=false → orchestrator resets cursor + refetches history.
+            is ServerMessage.StreamResumed -> hooks.onStreamResumed(msg.recovered)
             else -> Unit
         }
         if (!intercepted) router.route(msg)

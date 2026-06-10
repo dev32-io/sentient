@@ -71,6 +71,20 @@ class ConversationHistoryConnector(
      */
     fun currentGeneration(): Int = generation
 
+    /**
+     * Force a history refetch outside the session.switched path (Task 3.10 —
+     * stream.resumed{recovered:false}). Bumps the generation + arms the gate so
+     * stragglers drop, then returns the post-bump generation the caller passes to
+     * the REST fetch + replaceMirror. Mirrors the session.switched bookkeeping
+     * without the SdkEvent.SessionSwitched emission (no UI session change here).
+     */
+    fun bumpForRefetch(): Int {
+        generation++
+        awaitingHistory = true
+        log.info("gate-set", mapOf("trigger" to "stream.resumed.refetch", "generation" to generation))
+        return generation
+    }
+
     override fun handle(msg: ServerMessage) {
         when (msg) {
             // Forward-compat: a conversation.snapshot from an older gateway version

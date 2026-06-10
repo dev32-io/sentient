@@ -22,10 +22,12 @@ import io.sentient.mobilesdk.presence.createIdleDetector
 import io.sentient.mobilesdk.protocol.AudioPreferencesPatch
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.protocol.SdkEvent
+import io.sentient.mobilesdk.secure.DeviceIdProvider
 import io.sentient.mobilesdk.sessions.SessionsHttpClient
 import io.sentient.mobilesdk.transport.ConnectResult
 import io.sentient.mobilesdk.transport.MessageRouter
 import io.sentient.mobilesdk.transport.ReconnectController
+import io.sentient.mobilesdk.transport.ResumeCursor
 import io.sentient.mobilesdk.transport.SdkStatus
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -120,6 +122,16 @@ class SentientSdk(
     // FaultHooks declared early so effectiveCapture + lifecycle can both reference it.
     private val faultHooks = FaultHooks()
 
+    // Resume cursor (Task 3.10): tracks seq/epoch so replayed frames dedup and the
+    // reconnect stream.resume carries the right {epoch,lastSeq}. In-memory for now
+    // (Slice 4 persists). The SDK owns it; WsTransport peels the header + emits seq,
+    // the pump applies the cursor (mirrors the web split).
+    private val resumeCursor = ResumeCursor()
+
+    // Stable per-install device id (Task 3.10). Resolved ONCE — the gateway requires
+    // it in session.configure and keys the per-device replay buffer by it.
+    private val deviceId: String = DeviceIdProvider(bundle.deviceIdStore).getOrCreate()
+
     // Voice pipeline (E3). Built BEFORE connectors so the downlink hooks exist
     // when the connector set reads them; the pipeline reaches connectors.audioInput
     // via a lazy lambda to break the construction cycle. See SdkAudio.
@@ -208,11 +220,13 @@ class SentientSdk(
         bundleEngine = bundle.engine,
         allowSelfSignedDevHost = config.allowSelfSignedDevHost,
         gatewayWsUrl = config.gatewayWsUrl,
+        deviceId = deviceId,
         router = router,
         idle = idle,
         idleTickMs = idleTickMs,
         delayFn = delayFn,
         hooks = Hooks(),
+        applyCursor = ::applyCursor,
         log = createLogger("sdk", "lifecycle"),
         handshakeLog = createLogger("sdk", "handshake"),
         onProtocolError = { err -> emitEvent(SdkEvent.ProtocolError(err)) },
@@ -505,29 +519,64 @@ class SentientSdk(
     }
 
     /**
-     * READY rising edge. The FIRST READY (first connect) has nothing to restore.
-     * Every SUBSEQUENT READY is a reconnect: if a session is anchored, fire a
-     * fire-and-forget conversation.activate to restore the server context (the gateway
-     * emits session.switched only; the client loads history via REST; the WS preserves
-     * frame order so the next user.message routes to the restored session).
+     * READY rising edge. RESUME-AWARE (Task 3.10-mobile, Slice 3).
+     *
+     * The FIRST READY (first connect) has nothing to restore. Every SUBSEQUENT
+     * READY is a reconnect, and its handling depends on whether a `stream.resume`
+     * was attempted (the cursor carries a seq — see [sendStreamResume], invoked
+     * inside the handshake's session.configure, which runs BEFORE this rising edge):
+     *
+     *   - resume IN FLIGHT (reconnect + anchor + cursor seq): DEFER. We already
+     *     sent stream.resume; do NOT clear-to-idle and do NOT re-activate here.
+     *     The gateway's `stream.resumed` ack ([onStreamResumed]) decides: a
+     *     recovered:true replay re-establishes the in-flight THINKING/speaking
+     *     (preserve it); a recovered:false ack does the A1-equivalent recovery.
+     *     This is the bug fix — clearing here would lose the state the resume
+     *     exists to preserve (an IDLE flash + a possible watchdog fire).
+     *
+     *   - NO resume possible (reconnect + anchor but cursor empty, lastSeq==0):
+     *     the legacy A1 path — fire-and-forget conversation.activate to restore
+     *     the server context + clear stale active UI state to idle. No resume
+     *     handshake is possible without a cursor.
+     *
+     * The gateway ALWAYS answers a stream.resume with a stream.resumed, so the
+     * deferred branch resolves reliably; the Slice-1 stuck-state watchdog is the
+     * defensive backstop if (against contract) no ack arrives.
      */
     private fun onReadyReached() {
         val wasReconnect = hasReachedReadyOnce
         hasReachedReadyOnce = true
         val anchored = _currentSessionId.value
-        if (!wasReconnect) {
-            log.info("ready.first-connect", mapOf("anchored" to anchored))
-            return
+        // Mirror sendStreamResume's exact gate: a resume was/will be sent iff the
+        // cursor carries a seq. Read here so the defer decision matches the wire.
+        val resumeWillBeAttempted = resumeCursor.snapshot.lastSeq > 0L
+        when (decideOnReady(wasReconnect, anchored != null, resumeWillBeAttempted)) {
+            ReadyAction.NOTHING_TO_RESTORE ->
+                log.info("ready.first-connect", mapOf("anchored" to anchored))
+            ReadyAction.NO_ANCHOR ->
+                log.info("ready.reconnect.no-anchor")
+            ReadyAction.DEFER_TO_RESUME ->
+                // stream.resume already sent in session.configure; await stream.resumed.
+                log.info("ready.reconnect.defer-to-resume", mapOf("sessionId" to anchored))
+            ReadyAction.REESTABLISH_AND_CLEAR -> {
+                log.info("ready.reconnect.re-establish", mapOf("sessionId" to anchored))
+                reestablishAnchoredSession(anchored!!)
+                clearActiveToIdle()
+            }
         }
-        if (anchored == null) {
-            log.info("ready.reconnect.no-anchor")
-            return
-        }
-        log.info("ready.reconnect.re-establish", mapOf("sessionId" to anchored))
-        reestablishingSessionId = anchored
-        sendSwitchSession(anchored)
-        // Slice 3 TODO: make resume-aware — only clear on stream.resumed{recovered:false}.
-        clearActiveToIdle()
+    }
+
+    /**
+     * Fire the fire-and-forget conversation.activate that re-focuses the gateway's
+     * active conversation on the anchored session after a reconnect (the gateway
+     * emits session.switched only; the client loads history via REST; the WS
+     * preserves frame order so the next user.message routes to the restored
+     * session). Shared by the no-resume A1 path ([onReadyReached]) and the
+     * recovered:false recovery ([onStreamResumed]).
+     */
+    private fun reestablishAnchoredSession(sessionId: String) {
+        reestablishingSessionId = sessionId
+        sendSwitchSession(sessionId)
     }
 
     /**
@@ -567,6 +616,67 @@ class SentientSdk(
         _currentSessionId.value = null
     }
 
+    // ── Resume handshake (Task 3.10) ─────────────────────────────────────────────
+
+    /**
+     * Apply the resume cursor to every decoded frame (control + peeled binary).
+     * Returns true if the frame should be processed; false to DROP it as a replay
+     * duplicate. seq==0 frames always pass (no seq stamp). Called from the pump
+     * BEFORE routing so deduped replays never reach the connectors.
+     */
+    private fun applyCursor(seq: Long, epoch: Long?): Boolean = resumeCursor.tryApply(seq, epoch)
+
+    /**
+     * Send `stream.resume` after `session.configure` on a RECONNECT. No-op when
+     * the cursor has no seq yet (first connect, or after a non-recovered reset).
+     * Mirrors web-sdk sendStreamResume.
+     */
+    private fun sendStreamResume() {
+        val (epoch, lastSeq) = resumeCursor.snapshot
+        if (lastSeq == 0L) {
+            log.debug("stream.resume.skip-no-cursor")
+            return
+        }
+        log.info("stream.resume.send", mapOf("epoch" to epoch, "lastSeq" to lastSeq, "deviceId" to deviceId))
+        sendControl(ClientMessage.StreamResume(epoch = epoch, lastSeq = lastSeq, deviceId = deviceId))
+    }
+
+    /**
+     * React to `stream.resumed` from the gateway (Task 3.10). RESUME-AWARE — the
+     * deferred half of the A1-vs-resume reconciliation ([onReadyReached] deferred
+     * the clear/activate decision to here).
+     *
+     * recovered=true → PRESERVE in-flight state. The gateway replayed the in-flight
+     *   cycle's frames; the cursor dedups them and they re-establish THINKING/
+     *   speaking. We must NOT clear cognition/isSpeaking — that is the whole point
+     *   of the resume. No-op beyond confirming the recovery.
+     *
+     * recovered=false → the gateway could NOT resume (epoch rolled over / buffer
+     *   expired). Do the A1-equivalent recovery NOW: reset the cursor, clear stale
+     *   active UI state to idle, REST-refetch history, and (if a session is
+     *   anchored) re-fire conversation.activate to re-focus the gateway's active
+     *   conversation — exactly what the old unconditional A1 path did, but deferred
+     *   to ack time so the recovered:true case can preserve state instead.
+     */
+    private fun onStreamResumed(recovered: Boolean) {
+        when (decideOnResumed(recovered)) {
+            ResumedAction.PRESERVE_IN_FLIGHT ->
+                log.info("stream.resumed.recovered", mapOf("epoch" to resumeCursor.snapshot.epoch))
+            ResumedAction.RECOVER_TO_IDLE -> {
+                log.info("stream.resumed.not-recovered — clear-to-idle + refetch + re-establish")
+                resumeCursor.reset()
+                clearActiveToIdle()
+                val sessionId = _currentSessionId.value
+                if (sessionId == null) {
+                    log.warn("stream.resumed.no-session — cannot refetch")
+                    return
+                }
+                connectors.refetchHistoryForSession(sessionId)
+                reestablishAnchoredSession(sessionId)
+            }
+        }
+    }
+
     private fun setError(authExpired: Boolean) {
         deriver.authExpired = authExpired
         // Terminal auth failure ends the session → gate falls back to login.
@@ -591,7 +701,7 @@ class SentientSdk(
     }
 
     private fun mergedCapabilities(): List<String> =
-        (config.capabilities + connectors.capabilities).distinct()
+        (config.capabilities + connectors.capabilities + STREAM_RESUME_CAPABILITY).distinct()
 
     // ── Lifecycle callbacks ──────────────────────────────────────────────────────
 
@@ -601,6 +711,8 @@ class SentientSdk(
         override fun onSessionAnchored(sessionId: String) = this@SentientSdk.onSessionAnchored(sessionId)
         override fun onSessionForbidden() = this@SentientSdk.onSessionForbidden()
         override fun onPong() = this@SentientSdk.onPong()
+        override fun onStreamResumed(recovered: Boolean) = this@SentientSdk.onStreamResumed(recovered)
+        override fun sendStreamResume() = this@SentientSdk.sendStreamResume()
         override fun onAuthFailed() = setError(authExpired = true)
         override fun onConnectionDrop() = this@SentientSdk.onConnectionDrop()
         override fun mergedCapabilities(): List<String> = this@SentientSdk.mergedCapabilities()
@@ -617,5 +729,8 @@ class SentientSdk(
     companion object {
         /** Back-pressure buffer depth for the events SharedFlow. */
         const val EVENTS_BUFFER_CAPACITY = 256
+
+        /** Capability advertised so the gateway enables the seq/epoch resume handshake (Task 3.10). */
+        const val STREAM_RESUME_CAPABILITY = "stream.resume"
     }
 }

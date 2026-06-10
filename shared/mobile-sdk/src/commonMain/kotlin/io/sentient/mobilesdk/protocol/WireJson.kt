@@ -1,6 +1,9 @@
 package io.sentient.mobilesdk.protocol
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.modules.SerializersModule
 
 /**
@@ -37,4 +40,19 @@ object WireJson {
      */
     fun decodeServerMessageResult(raw: String): Result<ServerMessage> =
         runCatching { instance.decodeFromString(ServerMessage.serializer(), raw) }
+
+    /**
+     * Peel the gateway's resume stamps (`seq` / `epoch`) off a raw JSON frame
+     * WITHOUT adding them to every [ServerMessage] variant. Mirrors web-sdk's
+     * `typeof msg.seq === "number" ? msg.seq : 0` read on the parsed object.
+     *
+     * @return ([seq], [epoch]) — seq is 0 when absent (non-seq frame); epoch is
+     *   null when absent. Any parse hiccup degrades to (0, null) — never throws.
+     */
+    fun peelSeqEpoch(raw: String): Pair<Long, Long?> = runCatching {
+        val obj = instance.parseToJsonElement(raw).jsonObject
+        val seq = obj["seq"]?.jsonPrimitive?.longOrNull ?: 0L
+        val epoch = obj["epoch"]?.jsonPrimitive?.longOrNull
+        seq to epoch
+    }.getOrDefault(0L to null)
 }

@@ -21,6 +21,12 @@ sealed class ClientMessage {
         val capabilities: Capabilities,
         /** R1: "mobile" extends the gateway enum ["webui","cube"] → ["webui","cube","mobile"]. */
         val clientType: String,
+        /**
+         * Stable per-install device id (Task 3.10). REQUIRED by the gateway — keys the
+         * per-device replay buffer across reconnects. The same value rides every connect
+         * and the `stream.resume` frame.
+         */
+        val deviceId: String,
     ) : ClientMessage()
 
     @Serializable @SerialName("audio.start")
@@ -63,6 +69,20 @@ sealed class ClientMessage {
     @Serializable @SerialName("conversation.activate")
     data class ConversationActivate(
         val sessionId: String,
+    ) : ClientMessage()
+
+    /**
+     * Resume handshake (Task 3.10) — sent after `session.configure` on a RECONNECT
+     * to request replay of any frames the client missed since [lastSeq] within
+     * [epoch]. Only fired when lastSeq>0 (a fresh connect has nothing to resume).
+     * Carries the same stable [deviceId] as session.configure so the gateway can
+     * key the per-device replay buffer.
+     */
+    @Serializable @SerialName("stream.resume")
+    data class StreamResume(
+        val epoch: Long,
+        val lastSeq: Long,
+        val deviceId: String,
     ) : ClientMessage()
 }
 

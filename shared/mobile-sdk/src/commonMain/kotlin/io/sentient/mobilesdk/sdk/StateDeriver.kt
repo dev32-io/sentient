@@ -195,7 +195,13 @@ private fun committedMessage(
 ): ChatMessage? = when (item) {
     is ConversationFeedItem.User ->
         if (item.content.isEmpty()) null
-        else ChatMessage(ts = item.ts, role = ROLE_USER, content = item.content, pendingId = item.pendingId)
+        else ChatMessage(
+            ts = item.ts,
+            role = ROLE_USER,
+            content = item.content,
+            pendingId = item.pendingId,
+            entryId = item.entryId,
+        )
 
     is ConversationFeedItem.Assistant -> {
         if (item.content.isEmpty() && item.cutoff == null) null
@@ -208,6 +214,7 @@ private fun committedMessage(
                 cutoffKind = item.cutoff?.kind,
                 cycleId = cycleId,
                 tools = toolsFor(cycleId, tasks),
+                entryId = item.entryId,
             )
         }
     }

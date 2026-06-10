@@ -128,4 +128,80 @@ class WireSerializationTest {
         assertEquals(null, item.pendingId)
         assertEquals("hello", item.content)
     }
+
+    // ── Task 3.10: deviceId + resume handshake + entryId ──
+
+    @Test fun session_configure_carries_device_id() {
+        val msg = ClientMessage.SessionConfigure(
+            capabilities = Capabilities(listOf("text.input", "stream.resume")),
+            clientType = "mobile",
+            deviceId = "dev-abc",
+        )
+        val json = WireJson.instance.encodeToString(ClientMessage.serializer(), msg)
+        assertTrue(json.contains("\"type\":\"session.configure\""), json)
+        assertTrue(json.contains("\"deviceId\":\"dev-abc\""), json)
+        assertTrue(json.contains("\"clientType\":\"mobile\""), json)
+    }
+
+    @Test fun stream_resume_round_trips() {
+        val msg: ClientMessage = ClientMessage.StreamResume(epoch = 3, lastSeq = 42, deviceId = "dev-xyz")
+        val s = WireJson.instance.encodeToString(ClientMessage.serializer(), msg)
+        assertTrue(s.contains("\"type\":\"stream.resume\""), s)
+        val back = WireJson.instance.decodeFromString(ClientMessage.serializer(), s)
+        assertEquals(msg, back)
+    }
+
+    @Test fun stream_resumed_recovered_decodes_with_range() {
+        val s = """{"type":"stream.resumed","recovered":true,"epoch":3,"fromSeq":10,"toSeq":20}"""
+        val msg = WireJson.instance.decodeFromString(ServerMessage.serializer(), s) as ServerMessage.StreamResumed
+        assertTrue(msg.recovered)
+        assertEquals(3L, msg.epoch)
+        assertEquals(10L, msg.fromSeq)
+        assertEquals(20L, msg.toSeq)
+    }
+
+    @Test fun stream_resumed_not_recovered_decodes_without_range() {
+        val s = """{"type":"stream.resumed","recovered":false,"epoch":4}"""
+        val msg = WireJson.instance.decodeFromString(ServerMessage.serializer(), s) as ServerMessage.StreamResumed
+        assertFalse(msg.recovered)
+        assertEquals(4L, msg.epoch)
+        assertEquals(null, msg.fromSeq)
+    }
+
+    @Test fun stream_resumed_tolerates_seq_stamp_from_frame_sequencer() {
+        // The gateway FrameSequencer stamps seq/epoch on the way out; the extra
+        // top-level seq must not break decode (ignoreUnknownKeys).
+        val s = """{"type":"stream.resumed","recovered":true,"epoch":2,"fromSeq":1,"toSeq":5,"seq":99}"""
+        val msg = WireJson.instance.decodeFromString(ServerMessage.serializer(), s) as ServerMessage.StreamResumed
+        assertTrue(msg.recovered)
+    }
+
+    @Test fun conversation_entry_reads_entry_id_from_wire() {
+        val s = """{"type":"conversation.entry","item":{"kind":"assistant","entryId":"e-7","ts":1,"content":"hi"}}"""
+        val msg = WireJson.instance.decodeFromString(ServerMessage.serializer(), s) as ServerMessage.ConversationEntry
+        val item = msg.item as ConversationFeedItem.Assistant
+        assertEquals("e-7", item.entryId)
+    }
+
+    @Test fun conversation_entry_without_entry_id_degrades_to_default() {
+        // Legacy / malformed frame without entryId still decodes (defense-in-depth).
+        val s = """{"type":"conversation.entry","item":{"kind":"user","ts":1,"channel":"text","content":"hi"}}"""
+        val msg = WireJson.instance.decodeFromString(ServerMessage.serializer(), s) as ServerMessage.ConversationEntry
+        val item = msg.item as ConversationFeedItem.User
+        assertEquals(UNKNOWN_ENTRY_ID, item.entryId)
+    }
+
+    @Test fun gateway_push_frame_seq_epoch_are_peelable() {
+        // The SDK reads seq/epoch generically off the raw JSON (not per-variant).
+        val s = """{"type":"message.delta","cycleId":"c1","delta":"hi","seq":7,"epoch":2}"""
+        val (seq, epoch) = WireJson.peelSeqEpoch(s)
+        assertEquals(7L, seq)
+        assertEquals(2L, epoch)
+    }
+
+    @Test fun frame_without_seq_epoch_peels_to_zero_and_null() {
+        val (seq, epoch) = WireJson.peelSeqEpoch("""{"type":"pong"}""")
+        assertEquals(0L, seq)
+        assertEquals(null, epoch)
+    }
 }

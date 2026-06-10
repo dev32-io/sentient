@@ -63,6 +63,10 @@ class SentientSdkTest {
         val cfg = fake.sentText[1]
         assertTrue(cfg.contains("\"type\":\"session.configure\""), "cfg=$cfg")
         assertTrue(cfg.contains("\"clientType\":\"mobile\""), "cfg=$cfg")
+        // Task 3.10: configure carries the stable deviceId (REQUIRED by the gateway)
+        // and advertises the stream.resume capability.
+        assertTrue(cfg.contains("\"deviceId\":\"dev-test\""), "cfg=$cfg")
+        assertTrue(cfg.contains("stream.resume"), "cfg=$cfg")
     }
 
     @Test
