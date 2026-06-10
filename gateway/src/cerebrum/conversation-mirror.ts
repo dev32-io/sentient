@@ -14,10 +14,17 @@ export type MirrorCutoff =
   | { kind: "length-cap" };
 
 export type MirrorEntry =
-  | { kind: "user"; ts: number; channel: "text" | "speech"; content: string; pendingId?: string }
-  | { kind: "assistant"; ts: number; content: string; cutoff?: MirrorCutoff }
-  | { kind: "tool"; ts: number; toolName: string; status: "finished" | "cancelled" | "failed"; summary: string }
-  | { kind: "trigger"; ts: number; source: string; summary: string };
+  | { entryId: string; kind: "user"; ts: number; channel: "text" | "speech"; content: string; pendingId?: string }
+  | { entryId: string; kind: "assistant"; ts: number; content: string; cutoff?: MirrorCutoff }
+  | {
+      entryId: string;
+      kind: "tool";
+      ts: number;
+      toolName: string;
+      status: "finished" | "cancelled" | "failed";
+      summary: string;
+    }
+  | { entryId: string; kind: "trigger"; ts: number; source: string; summary: string };
 
 export interface ConversationMirror {
   /** Append an entry. Oldest entries are evicted when over capacity. */

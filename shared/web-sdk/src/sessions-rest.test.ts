@@ -97,7 +97,7 @@ describe("sessions REST client", () => {
 
   it("GET /sessions/:id/messages returns items and sends bearer", async () => {
     const calls: Array<[string, RequestInit | undefined]> = [];
-    const feedItem = { kind: "assistant" as const, ts: 1000, content: "hello" };
+    const feedItem = { entryId: "e", kind: "assistant" as const, ts: 1000, content: "hello" };
     const fetchFn = mockFetch(async (url, init) => {
       calls.push([url, init]);
       return new Response(JSON.stringify({ items: [feedItem], total: 1, offset: 0, limit: 100 }), { status: 200 });

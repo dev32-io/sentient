@@ -39,6 +39,7 @@ export function toFeedItem(entry: MirrorEntry): ConversationFeedItem {
   switch (entry.kind) {
     case "user":
       return {
+        entryId: entry.entryId,
         ts,
         kind: "user",
         channel: entry.channel,
@@ -47,6 +48,7 @@ export function toFeedItem(entry: MirrorEntry): ConversationFeedItem {
       };
     case "trigger":
       return {
+        entryId: entry.entryId,
         ts,
         kind: "trigger",
         source: entry.source,
@@ -54,6 +56,7 @@ export function toFeedItem(entry: MirrorEntry): ConversationFeedItem {
       };
     case "assistant":
       return {
+        entryId: entry.entryId,
         ts,
         kind: "assistant",
         content: entry.content,
@@ -63,6 +66,7 @@ export function toFeedItem(entry: MirrorEntry): ConversationFeedItem {
       };
     case "tool":
       return {
+        entryId: entry.entryId,
         ts,
         kind: "tool",
         toolName: entry.toolName,

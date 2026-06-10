@@ -751,7 +751,9 @@ export async function handleSessionConfigure(
       if (signal.aborted) {
         throw Object.assign(new Error("aborted"), { name: "AbortError" });
       }
-      return raw.map((m) => hermesMessageToMirrorEntry(m)).filter((e): e is NonNullable<typeof e> => e !== null);
+      return raw
+        .map((m, i) => hermesMessageToMirrorEntry(m, targetSessionId, i))
+        .filter((e): e is NonNullable<typeof e> => e !== null);
     },
     teardownTimeoutMs: sessionsConfig.switch_teardown_timeout_ms,
   });

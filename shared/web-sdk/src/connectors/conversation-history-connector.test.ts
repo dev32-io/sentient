@@ -25,15 +25,15 @@ function createMockInternal(): SentientSDKInternal & {
 }
 
 function userItem(content: string, ts = 1): ConversationFeedItem {
-  return { ts, kind: "user", channel: "text", content };
+  return { entryId: `user:${ts}:${content}`, ts, kind: "user", channel: "text", content };
 }
 
 function assistantItem(content: string, ts = 2): ConversationFeedItem {
-  return { ts, kind: "assistant", content };
+  return { entryId: `assistant:${ts}:${content}`, ts, kind: "assistant", content };
 }
 
 function toolItem(summary: string, ts = 3): ConversationFeedItem {
-  return { ts, kind: "tool", toolName: "speak", status: "finished", summary };
+  return { entryId: `tool:${ts}:${summary}`, ts, kind: "tool", toolName: "speak", status: "finished", summary };
 }
 
 describe("ConversationHistoryConnector", () => {
@@ -148,8 +148,12 @@ describe("ConversationHistoryConnector — snapshot replace semantics", () => {
     const sdk = fakeSdk();
     const c = new ConversationHistoryConnector();
     c.attach(sdk as unknown as Parameters<typeof c.attach>[0]);
-    sdk.emit("conversation.snapshot", { items: [{ kind: "user", ts: 1, channel: "text", content: "old" }] });
-    sdk.emit("conversation.snapshot", { items: [{ kind: "user", ts: 2, channel: "text", content: "new" }] });
+    sdk.emit("conversation.snapshot", {
+      items: [{ entryId: "e", kind: "user", ts: 1, channel: "text", content: "old" }],
+    });
+    sdk.emit("conversation.snapshot", {
+      items: [{ entryId: "e", kind: "user", ts: 2, channel: "text", content: "new" }],
+    });
     expect(c.items()).toHaveLength(1);
     expect((c.items()[0] as { content: string }).content).toBe("new");
   });
@@ -169,14 +173,16 @@ describe("ConversationHistoryConnector — snapshot replace semantics", () => {
     };
     const c = new ConversationHistoryConnector({}, rest);
     c.attach(sdk as unknown as Parameters<typeof c.attach>[0]);
-    sdk.emit("conversation.snapshot", { items: [{ kind: "user", ts: 1, channel: "text", content: "a" }] });
+    sdk.emit("conversation.snapshot", {
+      items: [{ entryId: "e", kind: "user", ts: 1, channel: "text", content: "a" }],
+    });
     expect(c.items()).toHaveLength(1);
     sdk.emit("session.switched", { sessionId: "s2", ts: 2 });
     // Entry arrives while REST fetch is in flight — must be dropped.
-    sdk.emit("conversation.entry", { item: { kind: "user", ts: 3, channel: "text", content: "stale" } });
+    sdk.emit("conversation.entry", { item: { entryId: "e", kind: "user", ts: 3, channel: "text", content: "stale" } });
     expect(c.items().some((i) => (i as { content?: string }).content === "stale")).toBe(false);
     // Resolve fetch and verify mirror is replaced.
-    resolveMessages([{ kind: "user", ts: 4, channel: "text", content: "fresh" }]);
+    resolveMessages([{ entryId: "e", kind: "user", ts: 4, channel: "text", content: "fresh" }]);
     await pendingFetch;
     await Promise.resolve(); // flush microtask
     expect(c.items()).toHaveLength(1);
@@ -185,7 +191,9 @@ describe("ConversationHistoryConnector — snapshot replace semantics", () => {
 
   it("REST load after session.switched releases the gate; subsequent entries apply", async () => {
     const sdk = fakeSdk();
-    const freshItems: ConversationFeedItem[] = [{ kind: "user", ts: 4, channel: "text", content: "fresh" }];
+    const freshItems: ConversationFeedItem[] = [
+      { entryId: "e", kind: "user", ts: 4, channel: "text", content: "fresh" },
+    ];
     const rest: SessionsRest = {
       list: vi.fn().mockResolvedValue({ items: [], total: 0, hasMore: false }),
       search: vi.fn().mockResolvedValue([]),
@@ -195,14 +203,16 @@ describe("ConversationHistoryConnector — snapshot replace semantics", () => {
     };
     const c = new ConversationHistoryConnector({}, rest);
     c.attach(sdk as unknown as Parameters<typeof c.attach>[0]);
-    sdk.emit("conversation.snapshot", { items: [{ kind: "user", ts: 1, channel: "text", content: "a" }] });
+    sdk.emit("conversation.snapshot", {
+      items: [{ entryId: "e", kind: "user", ts: 1, channel: "text", content: "a" }],
+    });
     sdk.emit("session.switched", { sessionId: "s2", ts: 2 });
     // Wait for the microtask queue to drain (REST mock resolves immediately).
     await Promise.resolve();
     await Promise.resolve();
     expect(c.items()).toHaveLength(1);
     expect((c.items()[0] as { content: string }).content).toBe("fresh");
-    sdk.emit("conversation.entry", { item: { kind: "user", ts: 5, channel: "text", content: "live" } });
+    sdk.emit("conversation.entry", { item: { entryId: "e", kind: "user", ts: 5, channel: "text", content: "live" } });
     expect(c.items()).toHaveLength(2);
   });
 
@@ -211,7 +221,7 @@ describe("ConversationHistoryConnector — snapshot replace semantics", () => {
     const c = new ConversationHistoryConnector();
     c.attach(sdk as unknown as Parameters<typeof c.attach>[0]);
     sdk.emit("conversation.snapshot", { items: [] });
-    sdk.emit("conversation.entry", { item: { kind: "user", ts: 1, channel: "text", content: "live" } });
+    sdk.emit("conversation.entry", { item: { entryId: "e", kind: "user", ts: 1, channel: "text", content: "live" } });
     expect(c.items()).toHaveLength(1);
   });
 });
@@ -230,8 +240,8 @@ describe("ConversationHistoryConnector — REST history on switch", () => {
   it("fetches messages via REST and replaces mirror on session.switched", async () => {
     const sdk = fakeSdk();
     const historyItems: ConversationFeedItem[] = [
-      { kind: "user", ts: 10, channel: "text", content: "old msg" },
-      { kind: "assistant", ts: 11, content: "old reply" },
+      { entryId: "e", kind: "user", ts: 10, channel: "text", content: "old msg" },
+      { entryId: "e", kind: "assistant", ts: 11, content: "old reply" },
     ];
     const rest = makeRest(historyItems);
     const onSnapshot = vi.fn();
@@ -239,7 +249,9 @@ describe("ConversationHistoryConnector — REST history on switch", () => {
     const c = new ConversationHistoryConnector({ onSnapshot, onUpdate }, rest);
     c.attach(sdk as unknown as Parameters<typeof c.attach>[0]);
 
-    sdk.emit("conversation.snapshot", { items: [{ kind: "user", ts: 1, channel: "text", content: "initial" }] });
+    sdk.emit("conversation.snapshot", {
+      items: [{ entryId: "e", kind: "user", ts: 1, channel: "text", content: "initial" }],
+    });
     expect(c.items()).toHaveLength(1);
 
     sdk.emit("session.switched", { sessionId: "s2" });
@@ -262,7 +274,7 @@ describe("ConversationHistoryConnector — REST history on switch", () => {
     const firstFetch = new Promise<ConversationFeedItem[]>((res) => {
       resolveFirst = res;
     });
-    const secondItems: ConversationFeedItem[] = [{ kind: "assistant", ts: 20, content: "second" }];
+    const secondItems: ConversationFeedItem[] = [{ entryId: "e", kind: "assistant", ts: 20, content: "second" }];
     const rest: SessionsRest = {
       list: vi.fn().mockResolvedValue({ items: [], total: 0, hasMore: false }),
       search: vi.fn().mockResolvedValue([]),
@@ -283,7 +295,7 @@ describe("ConversationHistoryConnector — REST history on switch", () => {
     expect((c.items()[0] as { content: string }).content).toBe("second");
 
     // Now resolve the first (stale) fetch — must NOT overwrite.
-    resolveFirst([{ kind: "user", ts: 5, channel: "text", content: "stale" }]);
+    resolveFirst([{ entryId: "e", kind: "user", ts: 5, channel: "text", content: "stale" }]);
     await firstFetch;
     await Promise.resolve();
     // Mirror still shows the second session's data.
@@ -293,7 +305,7 @@ describe("ConversationHistoryConnector — REST history on switch", () => {
 
   it("REST error clears awaitingSnapshot so the UI is not wedged", async () => {
     const sdk = fakeSdk();
-    const oldItem: ConversationFeedItem = { kind: "user", ts: 1, channel: "text", content: "old" };
+    const oldItem: ConversationFeedItem = { entryId: "e", kind: "user", ts: 1, channel: "text", content: "old" };
     const rest: SessionsRest = {
       list: vi.fn().mockResolvedValue({ items: [], total: 0, hasMore: false }),
       search: vi.fn().mockResolvedValue([]),
@@ -316,7 +328,7 @@ describe("ConversationHistoryConnector — REST history on switch", () => {
     // Mirror must be EMPTY (not stale) after a failed switch fetch — matches mobile behaviour.
     expect(c.items()).toHaveLength(0);
     // Gate cleared despite error — new entries must flow through.
-    sdk.emit("conversation.entry", { item: { kind: "user", ts: 2, channel: "text", content: "live" } });
+    sdk.emit("conversation.entry", { item: { entryId: "e", kind: "user", ts: 2, channel: "text", content: "live" } });
     expect(c.items()).toHaveLength(1);
     expect((c.items()[0] as { content: string }).content).toBe("live");
   });
@@ -328,7 +340,7 @@ describe("ConversationHistoryConnector — REST history on switch", () => {
 
     sdk.emit("session.switched", { sessionId: "s1" });
     // With no REST, gate clears immediately.
-    sdk.emit("conversation.entry", { item: { kind: "user", ts: 1, channel: "text", content: "live" } });
+    sdk.emit("conversation.entry", { item: { entryId: "e", kind: "user", ts: 1, channel: "text", content: "live" } });
     expect(c.items()).toHaveLength(1);
   });
 });

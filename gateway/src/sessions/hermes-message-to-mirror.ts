@@ -20,6 +20,16 @@ const log = getLog(["sentient", "sessions", "hermes-message-to-mirror"]);
 //
 // system entries are also dropped — they're agent-internal and never
 // surfaced to the SDK feed.
+//
+// entryId derivation on the REST path:
+//   entryId = `${conversationId}:${rawIndex}` where rawIndex is the 0-based
+//   position of this row in the full ordered getMessages result (before null
+//   filtering). This is deterministic and fetch-stable — the same conversation
+//   mapped twice at the same position yields the same id.
+//   NOTE: live-path entryIds (minted via crypto.randomUUID()) and REST-path
+//   entryIds use different namespaces. Within each path the id is stable.
+//   The Slice-4 mirror reconciles via REPLACE-on-reload (not cross-path merge),
+//   so this divergence is safe.
 // ---------------------------------------------------------------------------
 
 const TS_MS_THRESHOLD = 1e12;
@@ -55,10 +65,27 @@ function tsToMs(ts: unknown): number {
   return ts > TS_MS_THRESHOLD ? Math.round(ts) : Math.round(ts * 1000);
 }
 
-export function hermesMessageToMirrorEntry(m: HermesRawMessage): MirrorEntry | null {
+/**
+ * Map one Hermes REST message row to a MirrorEntry.
+ *
+ * @param m          - Raw Hermes message row (untrusted external shape).
+ * @param conversationId - The Hermes session / conversation id for this batch.
+ *                     Used as the entryId namespace (`${conversationId}:${rawIndex}`).
+ * @param rawIndex   - 0-based position of this row in the full getMessages
+ *                     result (BEFORE null-filtering). Stable across refetches
+ *                     of the same conversation — the entryId is deterministic.
+ * @returns MirrorEntry or null for roles that are intentionally dropped.
+ */
+export function hermesMessageToMirrorEntry(
+  m: HermesRawMessage,
+  conversationId: string,
+  rawIndex: number,
+): MirrorEntry | null {
+  const entryId = `${conversationId}:${rawIndex}`;
   switch (m.role) {
     case "user":
       return {
+        entryId,
         kind: "user",
         ts: tsToMs(m.ts),
         channel: "text",
@@ -66,6 +93,7 @@ export function hermesMessageToMirrorEntry(m: HermesRawMessage): MirrorEntry | n
       };
     case "assistant":
       return {
+        entryId,
         kind: "assistant",
         ts: tsToMs(m.ts),
         content: m.content ?? "",

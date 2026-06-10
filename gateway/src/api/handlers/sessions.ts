@@ -163,7 +163,7 @@ async function handleGetMessages(
     const all = await client.getMessages(sessionId);
     const safeLimit = Number.isFinite(limit) ? limit : DEFAULT_MESSAGES_LIMIT;
     const safeOffset = Number.isFinite(offset) ? offset : 0;
-    const { items, total } = mapMessagesToFeed(all, safeOffset, safeLimit);
+    const { items, total } = mapMessagesToFeed(all, safeOffset, safeLimit, sessionId);
     log.debug("sessions.getMessages.ok", { userId, sessionId, total, returned: items.length });
     return Response.json({ items, total, offset: safeOffset, limit: safeLimit }, { status: HTTP_OK });
   } catch (e: unknown) {
@@ -259,9 +259,10 @@ function mapMessagesToFeed(
   rows: unknown[],
   offset: number,
   limit: number,
+  conversationId: string,
 ): { items: ConversationFeedItem[]; total: number } {
   const mapped = (rows as HermesRawMessage[])
-    .map(hermesMessageToMirrorEntry)
+    .map((m, i) => hermesMessageToMirrorEntry(m, conversationId, i))
     .filter((e) => e !== null)
     .map(toFeedItem);
   if (offset === 0) {

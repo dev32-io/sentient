@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { conversationFeedUserItemSchema } from "./conversation.ts";
+import {
+  conversationFeedAssistantItemSchema,
+  conversationFeedItemSchema,
+  conversationFeedToolItemSchema,
+  conversationFeedTriggerItemSchema,
+  conversationFeedUserItemSchema,
+} from "./conversation.ts";
 import {
   clientMessageSchema,
   cognitionStatusSchema,
@@ -420,6 +426,7 @@ describe("text.input pendingId", () => {
 describe("conversationFeedUserItem pendingId", () => {
   it("parses with pendingId present", () => {
     const result = conversationFeedUserItemSchema.safeParse({
+      entryId: "e-p1",
       ts: 1000,
       kind: "user",
       channel: "text",
@@ -432,6 +439,7 @@ describe("conversationFeedUserItem pendingId", () => {
 
   it("parses without pendingId (backward compat — undefined)", () => {
     const result = conversationFeedUserItemSchema.safeParse({
+      entryId: "e-nopid",
       ts: 1000,
       kind: "user",
       channel: "text",
@@ -465,5 +473,110 @@ describe("transport boundary — query RPCs removed from WS", () => {
       }).success,
     ).toBe(false);
     expect(gatewayMessageSchema.safeParse({ type: "sessions.deleted", sessionId: "s-1" }).success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// conversationFeedItem entryId — Slice 3/4 dedupe key
+// ---------------------------------------------------------------------------
+
+describe("conversationFeedItem entryId — required on all kinds", () => {
+  it("rejects a user item missing entryId", () => {
+    const result = conversationFeedUserItemSchema.safeParse({
+      ts: 1000,
+      kind: "user",
+      channel: "text",
+      content: "hello",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a user item with entryId", () => {
+    const result = conversationFeedUserItemSchema.safeParse({
+      entryId: "abc-123",
+      ts: 1000,
+      kind: "user",
+      channel: "text",
+      content: "hello",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.entryId).toBe("abc-123");
+  });
+
+  it("rejects an assistant item missing entryId", () => {
+    const result = conversationFeedAssistantItemSchema.safeParse({
+      ts: 1000,
+      kind: "assistant",
+      content: "hi there",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts an assistant item with entryId", () => {
+    const result = conversationFeedAssistantItemSchema.safeParse({
+      entryId: "def-456",
+      ts: 1000,
+      kind: "assistant",
+      content: "hi there",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.entryId).toBe("def-456");
+  });
+
+  it("rejects a tool item missing entryId", () => {
+    const result = conversationFeedToolItemSchema.safeParse({
+      ts: 1000,
+      kind: "tool",
+      toolName: "search",
+      status: "finished",
+      summary: "done",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a tool item with entryId", () => {
+    const result = conversationFeedToolItemSchema.safeParse({
+      entryId: "ghi-789",
+      ts: 1000,
+      kind: "tool",
+      toolName: "search",
+      status: "finished",
+      summary: "done",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.entryId).toBe("ghi-789");
+  });
+
+  it("rejects a trigger item missing entryId", () => {
+    const result = conversationFeedTriggerItemSchema.safeParse({
+      ts: 1000,
+      kind: "trigger",
+      source: "sensor.door",
+      summary: "opened",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a trigger item with entryId", () => {
+    const result = conversationFeedTriggerItemSchema.safeParse({
+      entryId: "jkl-012",
+      ts: 1000,
+      kind: "trigger",
+      source: "sensor.door",
+      summary: "opened",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.entryId).toBe("jkl-012");
+  });
+
+  it("discriminated union rejects any kind missing entryId", () => {
+    for (const item of [
+      { ts: 0, kind: "user", channel: "text", content: "x" },
+      { ts: 0, kind: "assistant", content: "y" },
+      { ts: 0, kind: "tool", toolName: "t", status: "finished", summary: "s" },
+      { ts: 0, kind: "trigger", source: "s", summary: "w" },
+    ]) {
+      expect(conversationFeedItemSchema.safeParse(item).success).toBe(false);
+    }
   });
 });

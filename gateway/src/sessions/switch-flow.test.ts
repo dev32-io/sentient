@@ -85,7 +85,7 @@ describe("SwitchFlow", () => {
     const f = createSwitchFlow({
       mirror: { replaceAll },
       cancelCurrentCycle: async () => {},
-      fetchHistory: async () => [{ kind: "user", ts: 1, channel: "text", content: "hi" }],
+      fetchHistory: async () => [{ entryId: "e1", kind: "user", ts: 1, channel: "text", content: "hi" }],
       teardownTimeoutMs: 1000,
     });
     await f.switchTo("s1");

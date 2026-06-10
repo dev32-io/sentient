@@ -5,8 +5,13 @@ import { z } from "zod";
 //
 // This is the CLIENT-facing shape of a conversation entry — deliberately
 // narrower than the gateway's internal `ConversationEntry`. Internal
-// plumbing (entry id, cycleId, taskId) is stripped; only fields the UI
-// needs to render chat bubbles + the task sidebar remain.
+// plumbing (cycleId, taskId) is stripped; only fields the UI needs to
+// render chat bubbles + the task sidebar remain.
+//
+// `entryId` — stable, opaque string id assigned at commit time (live path)
+// or derived deterministically from position (REST history path). Clients
+// use it for dedupe on replay (Slice 3) and as a mirror key (Slice 4).
+// It is REQUIRED on all feed items; a missing entryId is a schema error.
 //
 // Shape stays a discriminated union on `kind`, so the client can filter
 // without string parsing:
@@ -36,6 +41,7 @@ export const conversationAssistantCutoffSchema = z.discriminatedUnion("kind", [
 export type ConversationAssistantCutoff = z.infer<typeof conversationAssistantCutoffSchema>;
 
 export const conversationFeedUserItemSchema = z.object({
+  entryId: z.string(),
   ts: z.number().int().nonnegative(),
   kind: z.literal("user"),
   channel: conversationUserChannelSchema,
@@ -44,6 +50,7 @@ export const conversationFeedUserItemSchema = z.object({
 });
 
 export const conversationFeedTriggerItemSchema = z.object({
+  entryId: z.string(),
   ts: z.number().int().nonnegative(),
   kind: z.literal("trigger"),
   source: z.string(),
@@ -51,6 +58,7 @@ export const conversationFeedTriggerItemSchema = z.object({
 });
 
 export const conversationFeedAssistantItemSchema = z.object({
+  entryId: z.string(),
   ts: z.number().int().nonnegative(),
   kind: z.literal("assistant"),
   content: z.string(),
@@ -58,6 +66,7 @@ export const conversationFeedAssistantItemSchema = z.object({
 });
 
 export const conversationFeedToolItemSchema = z.object({
+  entryId: z.string(),
   ts: z.number().int().nonnegative(),
   kind: z.literal("tool"),
   toolName: z.string(),

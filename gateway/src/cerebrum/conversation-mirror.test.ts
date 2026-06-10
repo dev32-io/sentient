@@ -5,15 +5,15 @@ import type { MirrorEntry } from "./conversation-mirror.js";
 describe("ConversationMirror", () => {
   it("appends and snapshots entries", () => {
     const m = createConversationMirror();
-    m.append({ kind: "user", ts: 1, channel: "speech", content: "hi" });
-    m.append({ kind: "assistant", ts: 2, content: "hello" });
+    m.append({ entryId: "e1", kind: "user", ts: 1, channel: "speech", content: "hi" });
+    m.append({ entryId: "e2", kind: "assistant", ts: 2, content: "hello" });
     expect(m.snapshot()).toHaveLength(2);
   });
 
   it("caps at capacity with FIFO eviction", () => {
     const m = createConversationMirror(3);
     for (let i = 0; i < 5; i++) {
-      m.append({ kind: "user", ts: i, channel: "text", content: String(i) });
+      m.append({ entryId: `e${i}`, kind: "user", ts: i, channel: "text", content: String(i) });
     }
     const s = m.snapshot();
     expect(s).toHaveLength(3);
@@ -25,7 +25,7 @@ describe("ConversationMirror", () => {
 
   it("clears all entries", () => {
     const m = createConversationMirror();
-    m.append({ kind: "user", ts: 1, channel: "text", content: "x" });
+    m.append({ entryId: "e1", kind: "user", ts: 1, channel: "text", content: "x" });
     m.clear();
     expect(m.snapshot()).toEqual([]);
     expect(m.size()).toBe(0);
@@ -34,13 +34,14 @@ describe("ConversationMirror", () => {
   it("reports size correctly", () => {
     const m = createConversationMirror();
     expect(m.size()).toBe(0);
-    m.append({ kind: "user", ts: 1, channel: "text", content: "a" });
+    m.append({ entryId: "e1", kind: "user", ts: 1, channel: "text", content: "a" });
     expect(m.size()).toBe(1);
   });
 
   it("accepts assistant entry with barge-in cutoff", () => {
     const m = createConversationMirror();
     m.append({
+      entryId: "e1",
       kind: "assistant",
       ts: 1,
       content: "half a reply",
@@ -54,6 +55,7 @@ describe("ConversationMirror", () => {
   it("accepts assistant entry with interrupt cutoff", () => {
     const m = createConversationMirror();
     m.append({
+      entryId: "e1",
       kind: "assistant",
       ts: 1,
       content: "aborted",
@@ -67,6 +69,7 @@ describe("ConversationMirror", () => {
   it("accepts assistant entry with length-cap cutoff", () => {
     const m = createConversationMirror();
     m.append({
+      entryId: "e1",
       kind: "assistant",
       ts: 1,
       content: "truncated",
@@ -79,7 +82,7 @@ describe("ConversationMirror", () => {
 
   it("accepts tool entry", () => {
     const m = createConversationMirror();
-    m.append({ kind: "tool", ts: 1, toolName: "search", status: "finished", summary: "done" });
+    m.append({ entryId: "e1", kind: "tool", ts: 1, toolName: "search", status: "finished", summary: "done" });
     const s = m.snapshot();
     const first = s[0] as Extract<MirrorEntry, { kind: "tool" }>;
     expect(first.toolName).toBe("search");
@@ -88,7 +91,7 @@ describe("ConversationMirror", () => {
 
   it("accepts trigger entry", () => {
     const m = createConversationMirror();
-    m.append({ kind: "trigger", ts: 1, source: "sensor.door", summary: "door opened" });
+    m.append({ entryId: "e1", kind: "trigger", ts: 1, source: "sensor.door", summary: "door opened" });
     const s = m.snapshot();
     const first = s[0] as Extract<MirrorEntry, { kind: "trigger" }>;
     expect(first.source).toBe("sensor.door");
@@ -96,16 +99,16 @@ describe("ConversationMirror", () => {
 
   it("snapshot returns a copy (mutations do not affect mirror)", () => {
     const m = createConversationMirror();
-    m.append({ kind: "user", ts: 1, channel: "text", content: "hi" });
+    m.append({ entryId: "e1", kind: "user", ts: 1, channel: "text", content: "hi" });
     const snap = m.snapshot();
-    (snap as MirrorEntry[]).push({ kind: "user", ts: 99, channel: "text", content: "injected" });
+    (snap as MirrorEntry[]).push({ entryId: "injected", kind: "user", ts: 99, channel: "text", content: "injected" });
     expect(m.size()).toBe(1);
   });
 
   it("defaults capacity to 500", () => {
     const m = createConversationMirror();
     for (let i = 0; i < 501; i++) {
-      m.append({ kind: "user", ts: i, channel: "text", content: String(i) });
+      m.append({ entryId: `e${i}`, kind: "user", ts: i, channel: "text", content: String(i) });
     }
     expect(m.size()).toBe(500);
   });
@@ -120,9 +123,9 @@ describe("ConversationMirror.replaceAll", () => {
     mirror.onSnapshot(onSnapshot);
 
     const entries: MirrorEntry[] = [
-      { kind: "user", ts: 1, channel: "text", content: "hi" },
-      { kind: "assistant", ts: 2, content: "hello" },
-      { kind: "user", ts: 3, channel: "text", content: "how" },
+      { entryId: "e1", kind: "user", ts: 1, channel: "text", content: "hi" },
+      { entryId: "e2", kind: "assistant", ts: 2, content: "hello" },
+      { entryId: "e3", kind: "user", ts: 3, channel: "text", content: "how" },
     ];
     mirror.replaceAll(entries);
 
@@ -134,9 +137,9 @@ describe("ConversationMirror.replaceAll", () => {
   it("trims to capacity, keeping the tail", () => {
     const mirror = createConversationMirror(2);
     mirror.replaceAll([
-      { kind: "user", ts: 1, channel: "text", content: "a" },
-      { kind: "user", ts: 2, channel: "text", content: "b" },
-      { kind: "user", ts: 3, channel: "text", content: "c" },
+      { entryId: "e1", kind: "user", ts: 1, channel: "text", content: "a" },
+      { entryId: "e2", kind: "user", ts: 2, channel: "text", content: "b" },
+      { entryId: "e3", kind: "user", ts: 3, channel: "text", content: "c" },
     ]);
     expect(mirror.size()).toBe(2);
     expect(mirror.snapshot().map((e) => (e.kind === "user" ? e.content : ""))).toEqual(["b", "c"]);
@@ -146,14 +149,14 @@ describe("ConversationMirror.replaceAll", () => {
     const mirror = createConversationMirror(500);
     const onAppend = vi.fn();
     mirror.onAppend(onAppend);
-    mirror.replaceAll([{ kind: "user", ts: 1, channel: "text", content: "seeded" }]);
-    mirror.append({ kind: "user", ts: 2, channel: "text", content: "new" });
+    mirror.replaceAll([{ entryId: "e1", kind: "user", ts: 1, channel: "text", content: "seeded" }]);
+    mirror.append({ entryId: "e2", kind: "user", ts: 2, channel: "text", content: "new" });
     expect(onAppend).toHaveBeenCalledTimes(1);
   });
 
   it("replaceAll with empty array clears the buffer and emits empty snapshot", () => {
     const mirror = createConversationMirror(500);
-    mirror.append({ kind: "user", ts: 1, channel: "text", content: "x" });
+    mirror.append({ entryId: "e1", kind: "user", ts: 1, channel: "text", content: "x" });
     const onSnapshot = vi.fn();
     mirror.onSnapshot(onSnapshot);
     mirror.replaceAll([]);
