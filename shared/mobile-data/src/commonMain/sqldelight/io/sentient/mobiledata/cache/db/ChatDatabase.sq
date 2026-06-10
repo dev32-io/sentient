@@ -43,3 +43,7 @@ DELETE FROM session WHERE id = ?;
 -- smart-async deletion: the full local session id set to diff against the server list
 allSessionIds:
 SELECT id FROM session;
+
+-- targeted single-session lookup (rename optimism, avoids full-scan)
+sessionById:
+SELECT * FROM session WHERE id = ?;

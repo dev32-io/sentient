@@ -5,6 +5,7 @@ import io.sentient.mobiledata.cache.SyncCursorStore
 import io.sentient.mobiledata.cache.db.ChatDatabase
 import io.sentient.mobiledata.cache.db.DatabaseDriverFactory
 import io.sentient.mobiledata.data.CachingConversationRepository
+import io.sentient.mobiledata.data.CachingSessionsRepository
 import io.sentient.mobiledata.data.SdkConnectionStateRepository
 import io.sentient.mobiledata.data.ioDispatcher
 import io.sentient.mobiledata.data.SdkConversationRepository
@@ -61,7 +62,17 @@ class ChatComponent(
             mirrorScope,
             ioDispatcher = ioDispatcher(),
         )
-    private val sessions = SdkSessionsRepository(sdk)
+    // Same ChatDatabase + mirrorScope + ioDispatcher as the conversation decorator —
+    // one durable cache, one connection scope. Serves the session list from the DB for
+    // instant paint and runs the smart-async deletion of locally-stale sessions on
+    // refresh. Wraps the pure REST repo, which still exists underneath.
+    private val sessions =
+        CachingSessionsRepository(
+            SdkSessionsRepository(sdk),
+            database,
+            mirrorScope,
+            ioDispatcher = ioDispatcher(),
+        )
     val connection = SdkConnectionStateRepository(sdk)
 
     /**
