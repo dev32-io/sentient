@@ -18,6 +18,7 @@
 package io.sentient.android.di
 
 import android.content.Context
+import com.russhwolf.settings.SharedPreferencesSettings
 import io.sentient.android.backend.BackendConfigHolder
 import io.sentient.android.backend.ResolvedBackend
 import io.sentient.android.backend.resolveBackend
@@ -86,9 +87,18 @@ class UserSessionManager(
         val sessionScope =
             CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1) + handler)
         newSdk = buildSdk(sessionScope)
+        // Durable resume-cursor backing store: a dedicated private SharedPreferences
+        // file so the cursor keys never collide with other app prefs.
+        val syncCursorSettings = SharedPreferencesSettings(
+            appContext.applicationContext.getSharedPreferences(
+                SYNC_CURSOR_PREFS,
+                Context.MODE_PRIVATE,
+            ),
+        )
         val component = ChatComponent(
             sdk = newSdk,
             databaseDriverFactory = AndroidDatabaseDriverFactory(appContext.applicationContext),
+            settings = syncCursorSettings,
         )
 
         scope = sessionScope
@@ -185,5 +195,10 @@ class UserSessionManager(
         if (io.sentient.android.BuildConfig.DEBUG) SdkFaultHolder.clear()
         chatComponent = null
         scope = null
+    }
+
+    private companion object {
+        /** Private SharedPreferences file for the durable resume cursor. */
+        const val SYNC_CURSOR_PREFS = "sentient_sync_cursor"
     }
 }

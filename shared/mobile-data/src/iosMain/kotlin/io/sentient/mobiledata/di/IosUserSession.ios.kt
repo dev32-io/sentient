@@ -20,6 +20,7 @@
 // ---------------------------------------------------------------------------
 package io.sentient.mobiledata.di
 
+import com.russhwolf.settings.NSUserDefaultsSettings
 import io.sentient.mobiledata.cache.db.IosDatabaseDriverFactory
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.sdk.SdkConfig
@@ -34,6 +35,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import platform.Foundation.NSUserDefaults
+
+/** NSUserDefaults suite for the durable resume cursor (isolated from other prefs). */
+private const val SYNC_CURSOR_SUITE = "sentient_sync_cursor"
 
 /**
  * One per logged-in user. Holds the SDK + ChatComponent + the session scope; the
@@ -101,11 +106,43 @@ class IosUserSession(
         sessionsHttpClient = sessionsHttpClient,
     )
 
+    // Durable resume-cursor backing store: a dedicated NSUserDefaults suite so the
+    // cursor keys never collide with other app prefs. Falls back to the standard
+    // defaults if the suite can't be opened (e.g. an invalid suite name).
+    private val syncCursorSettings = NSUserDefaultsSettings(openSyncCursorDefaults())
+
     /** The single ChatComponent for this login — usecases + connection + passthroughs. */
     val component: ChatComponent = ChatComponent(
         sdk = sdk,
         databaseDriverFactory = IosDatabaseDriverFactory(),
+        settings = syncCursorSettings,
     )
+
+    /**
+     * Opens the dedicated NSUserDefaults suite for the sync cursor. If the suite
+     * cannot be opened (nil return — invalid or sandbox-restricted suite name), falls
+     * back to standardUserDefaults and logs a WARN so the degraded path is visible:
+     * cursor keys will live in the standard defaults (collision risk) and will not be
+     * scoped to logout.
+     */
+    @Suppress("ALWAYS_NULL") // Apple docs: init?(suiteName:) returns nil for invalid/restricted names.
+    // The KMP binding maps the return as non-null, but the nil-path is real at runtime
+    // (e.g. app-group container not entitled). Keep the defensive check + WARN.
+    private fun openSyncCursorDefaults(): NSUserDefaults {
+        @Suppress("SENSELESS_COMPARISON")
+        val suite: NSUserDefaults? = NSUserDefaults(suiteName = SYNC_CURSOR_SUITE)
+        if (suite == null) {
+            log.warn(
+                "sync-cursor-settings.suite-fallback",
+                mapOf(
+                    "reason" to "suiteName open failed → using standard defaults",
+                    "suite" to SYNC_CURSOR_SUITE,
+                ),
+            )
+            return NSUserDefaults.standardUserDefaults
+        }
+        return suite
+    }
 
     /** Background connect: UI is usable immediately; reconnect is owned by the SDK. */
     fun open() {

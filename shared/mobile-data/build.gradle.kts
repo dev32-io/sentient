@@ -40,6 +40,8 @@ kotlin {
         commonTest.dependencies {
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutines.test)
+            // MapSettings (in-memory Settings) for SyncCursorStore tests.
+            implementation(libs.multiplatform.settings.test)
         }
         androidMain.dependencies { implementation(libs.sqldelight.android.driver) }
         iosMain.dependencies { implementation(libs.sqldelight.native.driver) }

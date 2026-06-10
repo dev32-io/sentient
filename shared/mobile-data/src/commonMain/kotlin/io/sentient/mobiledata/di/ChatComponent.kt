@@ -1,5 +1,7 @@
 package io.sentient.mobiledata.di
 
+import com.russhwolf.settings.Settings
+import io.sentient.mobiledata.cache.SyncCursorStore
 import io.sentient.mobiledata.cache.db.DatabaseDriverFactory
 import io.sentient.mobiledata.data.SdkConnectionStateRepository
 import io.sentient.mobiledata.data.SdkConversationRepository
@@ -21,15 +23,26 @@ import kotlin.time.Clock as KtClock
  *
  * @param databaseDriverFactory The platform SQL driver factory for the device chat mirror
  *   (Slice 4.5/4.6 consume it).
+ * @param settings The platform key-value store (SharedPreferencesSettings /
+ *   NSUserDefaultsSettings) backing the durable resume cursor. Required, non-null
+ *   per the 4.3 lesson — the platform owner always supplies a concrete instance.
  */
 class ChatComponent(
     private val sdk: SentientSdk,
     private val databaseDriverFactory: DatabaseDriverFactory,
+    settings: Settings,
     clock: Clock = Clock { KtClock.System.now().toEpochMilliseconds() },
 ) {
     private val conversation = SdkConversationRepository(sdk)
     private val sessions = SdkSessionsRepository(sdk)
     val connection = SdkConnectionStateRepository(sdk)
+
+    /**
+     * Durable per-conversation resume cursor. Slice 4.7 seeds the SDK cursor from
+     * here on launch and persists the SDK's snapshot on update; exposed here so the
+     * wiring layer can reach it without a second DI seam.
+     */
+    val syncCursorStore = SyncCursorStore(settings)
 
     val observeChat = ObserveChatUseCase(conversation, clock)
     val switchConversation = SwitchConversationUseCase(sessions)
