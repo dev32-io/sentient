@@ -30,12 +30,13 @@ const log = getLog(["sentient", "session", "replay-buffer"]);
 export interface SessionReplayFrame {
   readonly seq: number;
   readonly bytes: Uint8Array;
+  readonly kind: "text" | "binary";
 }
 
 export interface SessionReplayBuffer {
   nextSeq(): number;
-  store(seq: number, bytes: Uint8Array): void;
-  append(bytes: Uint8Array): number;
+  store(seq: number, bytes: Uint8Array, kind: "text" | "binary"): void;
+  append(bytes: Uint8Array, kind: "text" | "binary"): number;
   since(lastSeq: number): SessionReplayFrame[] | null;
   readonly oldestSeq: number;
   readonly newestSeq: number;
@@ -61,7 +62,7 @@ export function createSessionReplayBuffer(options: SessionReplayBufferOptions): 
     return seqCounter;
   }
 
-  function store(seq: number, bytes: Uint8Array): void {
+  function store(seq: number, bytes: Uint8Array, kind: "text" | "binary"): void {
     if (seq !== pendingSeq) {
       throw new Error(
         `store(${seq}) does not match the most recently allocated seq (${pendingSeq}). Call nextSeq() immediately before store() and use the returned value.`,
@@ -69,7 +70,7 @@ export function createSessionReplayBuffer(options: SessionReplayBufferOptions): 
     }
     pendingSeq = null;
 
-    frames.push({ seq, bytes });
+    frames.push({ seq, bytes, kind });
     totalBytes += bytes.byteLength;
 
     // Evict oldest while over cap, but never evict the only remaining frame.
@@ -87,9 +88,9 @@ export function createSessionReplayBuffer(options: SessionReplayBufferOptions): 
     }
   }
 
-  function append(bytes: Uint8Array): number {
+  function append(bytes: Uint8Array, kind: "text" | "binary"): number {
     const seq = nextSeq();
-    store(seq, bytes);
+    store(seq, bytes, kind);
     return seq;
   }
 
