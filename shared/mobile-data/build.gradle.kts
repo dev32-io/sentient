@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.skie)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.sqldelight)
 }
 
 kotlin {
@@ -32,10 +33,33 @@ kotlin {
         commonMain.dependencies {
             api(project(":shared:mobile-sdk"))
             implementation(libs.kotlinx.coroutines.core)
+            implementation(libs.sqldelight.runtime)
+            implementation(libs.sqldelight.coroutines.extensions)
+            implementation(libs.multiplatform.settings)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutines.test)
+        }
+        androidMain.dependencies { implementation(libs.sqldelight.android.driver) }
+        iosMain.dependencies { implementation(libs.sqldelight.native.driver) }
+
+        // androidUnitTest is the JVM-host home for DB-backed repository tests
+        // (Slice 4: CachingConversationRepository with JdbcSqliteDriver(IN_MEMORY)).
+        // sqldelight sqlite-driver is a JVM-only artifact — it cannot be resolved
+        // by the native (iOS) test compile, so it MUST NOT be in commonTest.
+        val androidUnitTest by getting {
+            dependencies {
+                implementation(libs.sqldelight.sqlite.driver)
+            }
+        }
+    }
+}
+
+sqldelight {
+    databases {
+        create("ChatDatabase") {
+            packageName.set("io.sentient.mobiledata.cache.db")
         }
     }
 }
