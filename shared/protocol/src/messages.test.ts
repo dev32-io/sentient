@@ -21,9 +21,11 @@ import {
   messageDoneSchema,
   sessionConfigureSchema,
   sessionReadySchema,
+  streamResumedSchema,
   taskUpdateSchema,
   textInputSchema,
 } from "./messages.ts";
+import type { StreamResumed } from "./messages.ts";
 
 describe("session.configure", () => {
   it("parses with explicit language", () => {
@@ -473,6 +475,212 @@ describe("transport boundary — query RPCs removed from WS", () => {
       }).success,
     ).toBe(false);
     expect(gatewayMessageSchema.safeParse({ type: "sessions.deleted", sessionId: "s-1" }).success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3.9 — seq/epoch on gateway push frames + resume handshake
+// ---------------------------------------------------------------------------
+
+describe("message.delta with seq/epoch (gateway push frames)", () => {
+  it("parses message.delta WITHOUT seq/epoch (backwards compat)", () => {
+    const result = gatewayMessageSchema.safeParse({
+      type: "message.delta",
+      cycleId: "c-1",
+      delta: "Hello",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("parses message.delta WITH seq and epoch", () => {
+    const result = gatewayMessageSchema.safeParse({
+      type: "message.delta",
+      cycleId: "c-1",
+      delta: "Hello",
+      seq: 42,
+      epoch: 7,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.seq).toBe(42);
+      expect(result.data.epoch).toBe(7);
+    }
+  });
+
+  it("rejects negative seq", () => {
+    const result = gatewayMessageSchema.safeParse({
+      type: "message.delta",
+      cycleId: "c-1",
+      delta: "Hello",
+      seq: -1,
+      epoch: 0,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects fractional seq", () => {
+    const result = gatewayMessageSchema.safeParse({
+      type: "message.delta",
+      cycleId: "c-1",
+      delta: "Hello",
+      seq: 1.5,
+      epoch: 0,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("parses auth.ok WITH seq/epoch", () => {
+    const result = gatewayMessageSchema.safeParse({
+      type: "auth.ok",
+      sessionId: "s-1",
+      role: "adult",
+      seq: 0,
+      epoch: 1,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("parses cognition.status WITH seq/epoch", () => {
+    const result = gatewayMessageSchema.safeParse({
+      type: "cognition.status",
+      state: "thinking",
+      runningEffects: [],
+      seq: 100,
+      epoch: 3,
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe("stream.resume (client → gateway)", () => {
+  it("accepts valid stream.resume", () => {
+    const result = clientMessageSchema.safeParse({
+      type: "stream.resume",
+      epoch: 3,
+      lastSeq: 99,
+      deviceId: "dev-abc",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.type).toBe("stream.resume");
+    }
+  });
+
+  it("rejects stream.resume missing deviceId", () => {
+    const result = clientMessageSchema.safeParse({
+      type: "stream.resume",
+      epoch: 3,
+      lastSeq: 99,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects stream.resume with empty deviceId", () => {
+    const result = clientMessageSchema.safeParse({
+      type: "stream.resume",
+      epoch: 3,
+      lastSeq: 99,
+      deviceId: "",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects stream.resume with negative lastSeq", () => {
+    const result = clientMessageSchema.safeParse({
+      type: "stream.resume",
+      epoch: 3,
+      lastSeq: -1,
+      deviceId: "dev-abc",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects stream.resume with negative epoch", () => {
+    const result = clientMessageSchema.safeParse({
+      type: "stream.resume",
+      epoch: -1,
+      lastSeq: 99,
+      deviceId: "dev-abc",
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("stream.resumed (gateway → client)", () => {
+  it("accepts stream.resumed with recovered=true and optional seq range", () => {
+    const result = gatewayMessageSchema.safeParse({
+      type: "stream.resumed",
+      recovered: true,
+      epoch: 3,
+      fromSeq: 100,
+      toSeq: 200,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.type).toBe("stream.resumed");
+    }
+  });
+
+  it("accepts stream.resumed with recovered=false and no fromSeq/toSeq", () => {
+    const result = gatewayMessageSchema.safeParse({
+      type: "stream.resumed",
+      recovered: false,
+      epoch: 3,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts stream.resumed with seq/epoch stamped (gateway push frame)", () => {
+    const result = gatewayMessageSchema.safeParse({
+      type: "stream.resumed",
+      recovered: true,
+      epoch: 3,
+      fromSeq: 100,
+      toSeq: 200,
+      seq: 201,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects stream.resumed missing recovered", () => {
+    const result = gatewayMessageSchema.safeParse({
+      type: "stream.resumed",
+      epoch: 3,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects stream.resumed missing epoch", () => {
+    const result = gatewayMessageSchema.safeParse({
+      type: "stream.resumed",
+      recovered: true,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("StreamResumed type includes seq — type and runtime agree", () => {
+    // Type-level assertion: StreamResumed must have an optional seq field.
+    // If the type lacks seq this line will produce a TS compile error.
+    const typed: StreamResumed = {
+      type: "stream.resumed",
+      recovered: true,
+      epoch: 5,
+      seq: 201,
+    };
+    expect(typed.seq).toBe(201);
+
+    // Runtime: streamResumedSchema (the exported wire schema) must parse seq.
+    const result = streamResumedSchema.safeParse({
+      type: "stream.resumed",
+      recovered: true,
+      epoch: 5,
+      seq: 201,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.seq).toBe(201);
+      expect(result.data.epoch).toBe(5);
+    }
   });
 });
 
