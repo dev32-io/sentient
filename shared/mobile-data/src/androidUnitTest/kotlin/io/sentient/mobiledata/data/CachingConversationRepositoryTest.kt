@@ -284,6 +284,63 @@ class CachingConversationRepositoryTest {
         }
 
     @Test
+    fun `REGRESSION new chat — committed reply is DROPPED on null anchor, LANDS after re-anchor to the minted id`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // A NEW chat: no client switchTo ran, so the shared client-intent anchor
+            // is null (this is exactly ChatComponent's state before the VM re-remembers).
+            val under = FakeUnderlyingRepository()
+            val repo = repoFor(under)
+            assertNull(intent.value, "precondition: a new chat has no client switch intent yet")
+
+            // The user's first message + the live assistant stream flow over the SDK
+            // timeline while the anchor is still null (the optimistic outbox + live
+            // bubble — untouched by this fix — carry the UI here). The streaming bubble
+            // has an EMPTY entryId; write-through skips it AND the DB timeline is
+            // messagesFor(null) = emptyList — nothing persists. This is correct so far.
+            val mintedId = "minted-conv-1"
+            under.timelineState.value = listOf(
+                ChatMessage(ts = 0, role = "user", content = "first question", entryId = "u1"),
+                ChatMessage(ts = 1, role = "assistant", content = "streaming…", streaming = true),
+            )
+            runCurrent()
+            assertTrue(rows(mintedId).isEmpty(), "nothing persists under the minted id while the anchor is null")
+            assertTrue(repo.timeline.value.isEmpty(), "DB-backed timeline is empty while the anchor is null")
+
+            // session.created lands FIRST in the cycle → the SDK anchors currentSessionId
+            // → the VM re-remembers the minted id (ChatComponent.rememberActiveConversation
+            // sets THIS same intent). Re-anchoring re-subscribes the DB timeline to
+            // messagesFor(mintedId).
+            intent.value = mintedId
+            runCurrent()
+
+            // THEN the assistant reply COMMITS — a distinct SDK timeline snapshot. With
+            // the anchor now set, write-through persists the committed entries under the
+            // minted id. WITHOUT the re-anchor fix this snapshot would early-return on the
+            // null anchor and the committed reply would be dropped — the exact regression.
+            under.timelineState.value = listOf(
+                ChatMessage(ts = 0, role = "user", content = "first question", entryId = "u1"),
+                committed("e1", "the answer that must not be dropped"),
+            )
+            runCurrent()
+
+            // AFTER the re-anchor: the committed user message + assistant reply are both
+            // persisted under the minted id AND paint in the DB-backed timeline.
+            val persisted = rows(mintedId)
+            assertEquals(listOf("u1", "e1"), persisted.map { it.entry_id })
+            assertEquals(
+                "the answer that must not be dropped",
+                persisted.single { it.entry_id == "e1" }.content,
+            )
+
+            val painted = repo.timeline.value
+            assertEquals(listOf("u1", "e1"), painted.map { it.entryId })
+            assertEquals(
+                "the answer that must not be dropped",
+                painted.single { it.entryId == "e1" }.content,
+            )
+        }
+
+    @Test
     fun `send and liveEvents pass through to the underlying repository`() =
         runTest(UnconfinedTestDispatcher()) {
             val under = FakeUnderlyingRepository()

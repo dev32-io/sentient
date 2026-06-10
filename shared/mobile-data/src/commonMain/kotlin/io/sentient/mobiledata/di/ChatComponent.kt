@@ -23,6 +23,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlin.time.Clock as KtClock
 
 /**
@@ -88,6 +89,35 @@ class ChatComponent(
             activeConversationIntent = activeConversationIntent,
         )
     val connection = SdkConnectionStateRepository(sdk)
+
+    // ── New-chat re-anchor seam ──────────────────────────────────────────────
+    // A NEW chat mints its conversation id SERVER-side AFTER the first message
+    // (session.created), with NO client `switchTo` — so [activeConversationIntent]
+    // stays null and the DB-backed timeline is anchored on null (messagesFor(null)
+    // = emptyList) while write-through early-returns on the null anchor. The
+    // committed assistant reply would be neither persisted nor displayed.
+    //
+    // The SDK already anchors the gateway-minted id (from session.created /
+    // session.switched) on [SentientSdk.currentSessionId]. We expose it here so the
+    // chat VM can OBSERVE it on a new chat and RE-REMEMBER the minted id via
+    // [rememberActiveConversation] — re-anchoring the cache to the new conversation
+    // exactly as a client `switchTo` would, so the committed entries write through
+    // and the timeline paints. Existing chats already anchored via switchTo at
+    // route-open, so the VM only observes-and-remembers when the route arg was null.
+
+    /** The gateway-minted active session id, from the SDK's session.created/switched anchor. */
+    val currentSessionId: StateFlow<String?> get() = sdk.currentSessionId
+
+    /**
+     * Re-anchor the durable chat cache to [id] — sets the SAME client-intent signal
+     * that `switchTo*` drives. The chat VM calls this on a NEW chat once the gateway
+     * mints the session id ([currentSessionId] turns non-null) so the just-created
+     * conversation's committed entries write through + the DB timeline paints.
+     * Idempotent: re-setting the same id is a no-op for the StateFlow.
+     */
+    fun rememberActiveConversation(id: String) {
+        activeConversationIntent.value = id
+    }
 
     val observeChat = ObserveChatUseCase(conversationRepository, clock)
     val switchConversation = SwitchConversationUseCase(sessionsRepository)
