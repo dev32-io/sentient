@@ -1,0 +1,42 @@
+appId: io.dev32.sentient.debug
+---
+# 01-newchat — validates the new-chat committed-reply render fix on iOS.
+# A NEW chat (fresh chain) previously failed to render the committed assistant
+# reply on mobile because the cache anchor stayed null (gateway minted the
+# session id lazily, invisible to the client). The gateway now mints + broadcasts
+# session.created on the fresh-chain first message; the iOS ChatViewModel
+# re-anchors the cache on currentSessionId. This flow proves the committed reply
+# renders on iOS.
+#
+# Flow: login (avatar + PIN 1234) → new chat → composer → send → assert both the
+# user message AND a committed assistant reply render.
+- runFlow: login.yaml
+- extendedWaitUntil:
+    visible:
+      id: "composer-input"
+    timeout: 15000
+# Force a fresh chain: tap new-chat (the "+" in the title bar) so the cache anchor
+# starts null — the exact state the fix repairs.
+- tapOn:
+    id: "new-chat"
+- extendedWaitUntil:
+    visible:
+      id: "composer-input"
+    timeout: 5000
+- tapOn:
+    id: "composer-input"
+- inputText: "what is 8 plus 9"
+- tapOn:
+    id: "chat-send"
+# Assert the user message rendered.
+- extendedWaitUntil:
+    visible: "what is 8 plus 9"
+    timeout: 10000
+# Dismiss the keyboard by tapping the message list so the assistant bubble shows.
+- tapOn:
+    id: "chat-message-list"
+# Assert a COMMITTED assistant reply renders (the fix under test).
+- extendedWaitUntil:
+    visible:
+      id: "assistant-bubble"
+    timeout: 60000

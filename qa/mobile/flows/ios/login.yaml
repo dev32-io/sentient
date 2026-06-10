@@ -10,10 +10,10 @@ appId: io.dev32.sentient.debug
     commands:
       - tapOn:
           point: "50%, 53%"        # Kevin avatar circle
-      - tapOn: "1"
-      - tapOn: "2"
-      - tapOn: "3"
-      - tapOn: "4"                  # PIN 1234
+      - tapOn: { id: "pin-key-1" }
+      - tapOn: { id: "pin-key-2" }
+      - tapOn: { id: "pin-key-3" }
+      - tapOn: { id: "pin-key-4" }  # PIN 1234 (PinPad buttons expose pin-key-N ids)
       - extendedWaitUntil:
           visible:
             id: "composer-input"
