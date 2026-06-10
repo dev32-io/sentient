@@ -49,6 +49,12 @@ interface LifecycleHooks {
     /** A `stream.resumed` ack arrived (Task 3.10). recovered drives dedup vs. cursor-reset+refetch. */
     fun onStreamResumed(recovered: Boolean)
     /**
+     * A cycle reached a natural boundary (completed / aborted). Coalesce point for
+     * the durable resume cursor: flush the latest cursor snapshot to the store once
+     * per cycle instead of on every applied frame (Task 4.7 save throttling).
+     */
+    fun onCycleSettled()
+    /**
      * Resume params to fold INTO session.configure on a RECONNECT, or null on a
      * first connect / after a non-recovered reset (the cursor has no seq). Read at
      * configure-build time so the gateway sees resume on the single configure frame.
@@ -204,6 +210,9 @@ class SdkLifecycle(
             // Resume ack (Task 3.10): recovered=true → dedup handles replays;
             // recovered=false → orchestrator resets cursor + refetches history.
             is ServerMessage.StreamResumed -> hooks.onStreamResumed(msg.recovered)
+            // Cycle boundary → coalesce the durable resume-cursor write (Task 4.7).
+            is ServerMessage.CycleCompleted -> hooks.onCycleSettled()
+            is ServerMessage.CycleAborted -> hooks.onCycleSettled()
             else -> Unit
         }
         if (!intercepted) router.route(msg)

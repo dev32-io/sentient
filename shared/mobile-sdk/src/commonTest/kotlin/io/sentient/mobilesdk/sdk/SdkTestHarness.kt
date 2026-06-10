@@ -14,6 +14,8 @@ import io.sentient.mobilesdk.fakes.FakeWebSocketEngine
 import io.sentient.mobilesdk.fakes.FixedClock
 import io.sentient.mobilesdk.fakes.InMemoryDeviceIdStore
 import io.sentient.mobilesdk.fakes.InMemoryTokenStore
+import io.sentient.mobilesdk.transport.NoOpResumeCursorStore
+import io.sentient.mobilesdk.transport.ResumeCursorStore
 import io.sentient.mobilesdk.transport.SdkStatus
 import io.sentient.mobilesdk.transport.WebSocketEngine
 import io.sentient.mobilesdk.transport.WsIncoming
@@ -38,6 +40,7 @@ internal const val AUTH_OK_FRAME =
 internal fun TestScope.buildSdk(
     engine: WebSocketEngine,
     tokenStore: InMemoryTokenStore = InMemoryTokenStore().apply { save("tok-abc") },
+    resumeCursorStore: ResumeCursorStore = NoOpResumeCursorStore,
 ): SentientSdk {
     val bundle = PlatformBundle(
         engine = engine,
@@ -62,6 +65,7 @@ internal fun TestScope.buildSdk(
         // Park the idle tick far beyond the test horizon so the disconnect-on-idle
         // loop never races the assertions under runTest virtual time.
         idleTickMs = 1_000_000_000L,
+        resumeCursorStore = resumeCursorStore,
     )
 }
 

@@ -27,8 +27,11 @@ import io.sentient.mobilesdk.secure.DeviceIdProvider
 import io.sentient.mobilesdk.sessions.SessionsHttpClient
 import io.sentient.mobilesdk.transport.ConnectResult
 import io.sentient.mobilesdk.transport.MessageRouter
+import io.sentient.mobilesdk.transport.NoOpResumeCursorStore
 import io.sentient.mobilesdk.transport.ReconnectController
 import io.sentient.mobilesdk.transport.ResumeCursor
+import io.sentient.mobilesdk.transport.ResumeCursorPersistence
+import io.sentient.mobilesdk.transport.ResumeCursorStore
 import io.sentient.mobilesdk.transport.SdkStatus
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -64,6 +67,14 @@ class SentientSdk(
     idleTickMs: Long = DEFAULT_IDLE_TICK_MS,
     /** REST client for session queries. Null in tests that don't exercise REST. */
     sessionsHttpClient: SessionsHttpClient? = null,
+    /**
+     * Durable resume-cursor persistence (Task 4.7). Dependency-inverted: the SDK
+     * defines the interface; mobile-data backs it with the SyncCursorStore. Defaults
+     * to a no-op so existing construction + tests that don't exercise persistence
+     * still build. Seeds the in-memory cursor on resume-prep, persists on advance
+     * (coalesced to cycle boundaries), clears on a non-recovered reset / delete.
+     */
+    private val resumeCursorStore: ResumeCursorStore = NoOpResumeCursorStore,
 ) {
     private val log = createLogger("sdk", "orchestrator")
 
@@ -124,10 +135,19 @@ class SentientSdk(
     private val faultHooks = FaultHooks()
 
     // Resume cursor (Task 3.10): tracks seq/epoch so replayed frames dedup and the
-    // reconnect stream.resume carries the right {epoch,lastSeq}. In-memory for now
-    // (Slice 4 persists). The SDK owns it; WsTransport peels the header + emits seq,
-    // the pump applies the cursor (mirrors the web split).
+    // reconnect stream.resume carries the right {epoch,lastSeq}. The SDK owns it;
+    // WsTransport peels the header + emits seq, the pump applies the cursor (mirrors
+    // the web split). Task 4.7 persists it durably via [cursorPersistence].
     private val resumeCursor = ResumeCursor()
+
+    // Task 4.7 durable persistence: seeds the empty cursor on resume-prep, persists
+    // on advance (coalesced to cycle boundaries), clears on a non-recovered reset /
+    // delete. Keyed by the live currentSessionId so it never holds a stale anchor.
+    private val cursorPersistence = ResumeCursorPersistence(
+        cursor = resumeCursor,
+        store = resumeCursorStore,
+        conversationId = { _currentSessionId.value },
+    )
 
     // Stable per-install device id (Task 3.10). Resolved ONCE — the gateway requires
     // it in session.configure and keys the per-device replay buffer by it.
@@ -407,7 +427,12 @@ class SentientSdk(
 
     /** Delete a session via REST DELETE /api/v1/sessions/:id. Never throws — safeBoolean absorbs all errors. */
     @Throws(kotlin.coroutines.cancellation.CancellationException::class)
-    suspend fun deleteSession(id: String) = connectors.sessions.delete(id)
+    suspend fun deleteSession(id: String) {
+        // Drop any durable resume cursor for the deleted conversation (Task 4.7 clear)
+        // so a relaunch never seeds a resume for a session the server no longer has.
+        cursorPersistence.clearFor(id)
+        connectors.sessions.delete(id)
+    }
 
     /** Rename a session via REST PATCH /api/v1/sessions/:id. Never throws — safeBoolean absorbs all errors. */
     @Throws(kotlin.coroutines.cancellation.CancellationException::class)
@@ -624,16 +649,31 @@ class SentientSdk(
      * Returns true if the frame should be processed; false to DROP it as a replay
      * duplicate. seq==0 frames always pass (no seq stamp). Called from the pump
      * BEFORE routing so deduped replays never reach the connectors.
+     *
+     * On a real advance (the cursor moved forward) note it on [cursorPersistence] so
+     * the next cycle boundary persists the snapshot (Task 4.7 save coalescing).
      */
-    private fun applyCursor(seq: Long, epoch: Long?): Boolean = resumeCursor.tryApply(seq, epoch)
+    private fun applyCursor(seq: Long, epoch: Long?): Boolean {
+        val before = resumeCursor.snapshot
+        val applied = resumeCursor.tryApply(seq, epoch)
+        if (resumeCursor.snapshot != before) cursorPersistence.noteAdvance()
+        return applied
+    }
 
     /**
      * Build the resume params to fold INTO `session.configure` on a RECONNECT.
-     * Null when the cursor has no seq yet (first connect, or after a non-recovered
-     * reset) → configure omits the resume field and the gateway runs the fresh path.
-     * Mirrors web-sdk buildConfigureResume.
+     *
+     * SEED (Task 4.7): if the in-memory cursor is empty (a fresh app launch within the
+     * gateway's replay-buffer TTL) AND a conversation is anchored, [cursorPersistence]
+     * seeds it from durable storage so a relaunch sends a real resume (→ recovered:true,
+     * replay the gap) instead of recovered:false (reset + full REST refetch).
+     *
+     * Null only when there is STILL no seq after the seed attempt (first ever connect
+     * for this conversation, or after a non-recovered reset) → configure omits resume
+     * and the gateway runs the fresh path. Mirrors web-sdk buildConfigureResume.
      */
     private fun resumeParams(): ResumeParams? {
+        cursorPersistence.seedIfEmpty()
         val (epoch, lastSeq) = resumeCursor.snapshot
         if (lastSeq == 0L) {
             log.debug("configure.resume.skip-no-cursor")
@@ -667,6 +707,9 @@ class SentientSdk(
             ResumedAction.RECOVER_TO_IDLE -> {
                 log.info("stream.resumed.not-recovered — clear-to-idle + refetch + re-establish")
                 resumeCursor.reset()
+                // The gateway could not resume → the persisted cursor is stale. Drop
+                // it (Task 4.7 clear) so the NEXT relaunch doesn't re-seed a dead epoch.
+                cursorPersistence.clearAnchored()
                 clearActiveToIdle()
                 val sessionId = _currentSessionId.value
                 if (sessionId == null) {
@@ -714,6 +757,7 @@ class SentientSdk(
         override fun onSessionForbidden() = this@SentientSdk.onSessionForbidden()
         override fun onPong() = this@SentientSdk.onPong()
         override fun onStreamResumed(recovered: Boolean) = this@SentientSdk.onStreamResumed(recovered)
+        override fun onCycleSettled() = cursorPersistence.flush()
         override fun resumeParams(): ResumeParams? = this@SentientSdk.resumeParams()
         override fun onAuthFailed() = setError(authExpired = true)
         override fun onConnectionDrop() = this@SentientSdk.onConnectionDrop()

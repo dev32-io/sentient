@@ -1,0 +1,46 @@
+// ---------------------------------------------------------------------------
+// ResumeCursorStore — DURABLE persistence boundary for the in-memory [ResumeCursor].
+//
+// The SDK's ResumeCursor is in-memory: it dies with the process. To survive an app
+// restart (so a relaunch can `stream.resume` on recovered:true within the gateway's
+// replay-buffer TTL instead of recovered:false + full REST refetch), the orchestrator
+// SEEDS the cursor from this store on resume-prep, PERSISTS the snapshot when the
+// cursor advances, and CLEARS it on a non-recovered reset / conversation delete.
+//
+// DEPENDENCY INVERSION: the SDK (commonMain, lowest layer) DEFINES this interface;
+// mobile-data IMPLEMENTS it over its durable SyncCursorStore. mobile-data depends on
+// mobile-sdk, never the reverse — so the SDK cannot reach SyncCursorStore directly.
+// The store is OPTIONAL on the orchestrator and defaults to [NoOpResumeCursorStore],
+// so existing construction (and tests that don't exercise persistence) never break.
+//
+// Single-threaded contract: the orchestrator drives load/save/clear from the WS pump
+// dispatcher, mirroring ResumeCursor. Implementations MUST NOT block (a quick
+// key-value read/write); heavy I/O is the implementation's problem, not the caller's.
+// ---------------------------------------------------------------------------
+package io.sentient.mobilesdk.transport
+
+/**
+ * Durable per-conversation persistence for the resume cursor's [CursorSnapshot].
+ * Keyed by the conversation id (the SDK's `currentSessionId`).
+ */
+interface ResumeCursorStore {
+    /** The persisted snapshot for [conversationId], or null if none stored / cleared. */
+    fun load(conversationId: String): CursorSnapshot?
+
+    /** Persist [snapshot] for [conversationId], overwriting any prior value. */
+    fun save(conversationId: String, snapshot: CursorSnapshot)
+
+    /** Remove the stored snapshot for [conversationId] (non-recovered reset / delete). */
+    fun clear(conversationId: String)
+}
+
+/**
+ * Default no-op store: load returns null, save/clear are no-ops. Lets the SDK be
+ * constructed without a durable backing (tests, or a platform that opts out) while
+ * the seed/save/clear hooks stay unconditional in the orchestrator.
+ */
+object NoOpResumeCursorStore : ResumeCursorStore {
+    override fun load(conversationId: String): CursorSnapshot? = null
+    override fun save(conversationId: String, snapshot: CursorSnapshot) {}
+    override fun clear(conversationId: String) {}
+}

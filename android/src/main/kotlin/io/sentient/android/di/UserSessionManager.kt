@@ -26,6 +26,8 @@ import io.sentient.android.presence.PresenceCoordinator
 import io.sentient.android.sdk.AppDependencies
 import io.sentient.android.sdk.SdkFaultHolder
 import io.sentient.android.sdk.buildAuthHttpClient
+import io.sentient.mobiledata.cache.SyncCursorStore
+import io.sentient.mobiledata.cache.SyncCursorStoreResumeAdapter
 import io.sentient.mobiledata.cache.db.AndroidDatabaseDriverFactory
 import io.sentient.mobiledata.di.ChatComponent
 import io.sentient.mobilesdk.log.createLogger
@@ -86,19 +88,21 @@ class UserSessionManager(
         }
         val sessionScope =
             CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1) + handler)
-        newSdk = buildSdk(sessionScope)
         // Durable resume-cursor backing store: a dedicated private SharedPreferences
-        // file so the cursor keys never collide with other app prefs.
+        // file so the cursor keys never collide with other app prefs. Wrapped in the
+        // adapter and handed to the SDK so the in-memory cursor survives an app kill
+        // (Task 4.7): seed on relaunch, persist on advance, clear on reset/delete.
         val syncCursorSettings = SharedPreferencesSettings(
             appContext.applicationContext.getSharedPreferences(
                 SYNC_CURSOR_PREFS,
                 Context.MODE_PRIVATE,
             ),
         )
+        val resumeCursorStore = SyncCursorStoreResumeAdapter(SyncCursorStore(syncCursorSettings))
+        newSdk = buildSdk(sessionScope, resumeCursorStore)
         val component = ChatComponent(
             sdk = newSdk,
             databaseDriverFactory = AndroidDatabaseDriverFactory(appContext.applicationContext),
-            settings = syncCursorSettings,
         )
 
         scope = sessionScope
@@ -128,7 +132,10 @@ class UserSessionManager(
         return component
     }
 
-    private fun buildSdk(sessionScope: CoroutineScope): SentientSdk {
+    private fun buildSdk(
+        sessionScope: CoroutineScope,
+        resumeCursorStore: io.sentient.mobilesdk.transport.ResumeCursorStore,
+    ): SentientSdk {
         val r = resolveBackend(
             override = BackendConfigHolder.store.config.value,
             buildTimeDefaultUrl = io.sentient.android.BuildConfig.GATEWAY_WS_URL,
@@ -158,6 +165,7 @@ class UserSessionManager(
             bundle = bundle,
             scope = sessionScope,
             sessionsHttpClient = sessionsHttpClient,
+            resumeCursorStore = resumeCursorStore,
         )
     }
 

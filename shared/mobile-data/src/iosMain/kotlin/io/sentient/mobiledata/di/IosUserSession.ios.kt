@@ -21,6 +21,8 @@
 package io.sentient.mobiledata.di
 
 import com.russhwolf.settings.NSUserDefaultsSettings
+import io.sentient.mobiledata.cache.SyncCursorStore
+import io.sentient.mobiledata.cache.SyncCursorStoreResumeAdapter
 import io.sentient.mobiledata.cache.db.IosDatabaseDriverFactory
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.sdk.SdkConfig
@@ -94,6 +96,14 @@ class IosUserSession(
         token = { bundle.tokenStore.load() ?: "" },
     )
 
+    // Durable resume-cursor backing store: a dedicated NSUserDefaults suite so the
+    // cursor keys never collide with other app prefs. Falls back to the standard
+    // defaults if the suite can't be opened (e.g. an invalid suite name). Wrapped in
+    // the adapter and handed to the SDK so the in-memory cursor survives an app kill
+    // (Task 4.7): seed on relaunch, persist on advance, clear on reset/delete.
+    private val syncCursorSettings = NSUserDefaultsSettings(openSyncCursorDefaults())
+    private val resumeCursorStore = SyncCursorStoreResumeAdapter(SyncCursorStore(syncCursorSettings))
+
     private val sdk: SentientSdk = SentientSdk(
         config = SdkConfig(
             gatewayWsUrl = gatewayWsUrl,
@@ -104,18 +114,13 @@ class IosUserSession(
         bundle = bundle,
         scope = scope,
         sessionsHttpClient = sessionsHttpClient,
+        resumeCursorStore = resumeCursorStore,
     )
-
-    // Durable resume-cursor backing store: a dedicated NSUserDefaults suite so the
-    // cursor keys never collide with other app prefs. Falls back to the standard
-    // defaults if the suite can't be opened (e.g. an invalid suite name).
-    private val syncCursorSettings = NSUserDefaultsSettings(openSyncCursorDefaults())
 
     /** The single ChatComponent for this login — usecases + connection + passthroughs. */
     val component: ChatComponent = ChatComponent(
         sdk = sdk,
         databaseDriverFactory = IosDatabaseDriverFactory(),
-        settings = syncCursorSettings,
     )
 
     /**
