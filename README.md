@@ -85,6 +85,31 @@ are planned but not yet started — see `ROADMAP.md`.
 - **Open and runnable** — docker compose, one `HOST_DOCKER_GID` env var,
   the stack boots on a Mac in a few minutes.
 
+## Resilient transport + instant chat (mobile)
+
+The client ↔ gateway link is built to survive flaky mobile networks and OS
+backgrounding without losing output or forcing a full reload. Design spec:
+[`docs/superpowers/specs/2026-06-09-ws-resilience-and-chat-mirror-design.md`](docs/superpowers/specs/2026-06-09-ws-resilience-and-chat-mirror-design.md).
+The wire contract lives in [`shared/protocol/WIRE.md`](shared/protocol/WIRE.md).
+
+- **Transport boundary** — the WebSocket carries the **live chat session only**
+  (mic audio, TTS audio, the live conversation stream, the resume handshake);
+  **everything client-driven is REST** (session list, history, search, rename,
+  delete, preferences, under `/api/v1/sessions`). The old WS query RPCs are gone.
+- **Resumable WS** — every push frame carries a monotonic `seq` and a per-session
+  `epoch` (binary audio via a 9-byte header `[8B BE seq][1B type][payload]`). A
+  per-device replay buffer (16 MB cap, 30-min TTL) survives a short disconnect; on
+  reconnect the client folds `resume:{epoch,lastSeq}` into `session.configure` and
+  the gateway replays missed frames (`stream.resumed{recovered}`) or falls back to
+  a REST history refetch. The socket dies at ≤255s when backgrounded, but the
+  app-level session survives 30 min — so a brief background resumes cheaply.
+- **Device chat mirror** — the mobile clients keep a local SQLDelight mirror keyed
+  by a stable `entryId`: session list and transcript paint **instantly** from cache,
+  then reconcile via REST (replace-on-reload). Live frames write through; sessions
+  Hermes has pruned are deleted smart-async (server-list-authoritative). Stop is
+  fire-and-forget (clears UI immediately), with a connection-driven stuck-state
+  watchdog.
+
 ## What makes Sentient specific
 
 Three design choices that don't exist in hosted real-time voice APIs or

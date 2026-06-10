@@ -24,6 +24,26 @@ change together.
 - Async ops are `suspend`, streams are `Flow` — both bridge cleanly to Swift async / SKIE
   `AsyncSequence`. No `Channel`/`Deferred`/raw `Job` crosses the public boundary.
 
+## Transport boundary + resilience
+
+The SDK follows the gateway's WS-vs-REST split (wire contract:
+[`../protocol/WIRE.md`](../protocol/WIRE.md)). The **WebSocket carries the live chat
+session only** — audio, the live conversation stream, the resume handshake;
+`conversation.activate` (fire-and-forget `switchSession`) focuses it without a history
+payload. **REST drives everything else** — `listSessions`, `deleteSession`,
+`renameSession`, and history paging all hit `/api/v1/sessions`.
+
+- **Resume handshake** — the SDK reads `seq` off every frame (peeling the 9-byte binary
+  audio header), persists a per-device-session `{epoch, lastSeq}` cursor, and on reconnect
+  folds `resume` into `session.configure`. `stream.resumed{recovered:true}` → apply replayed
+  frames in seq order; `recovered:false` → drop local rows + REST-refetch. A stable
+  `deviceId` (generated + persisted by the SDK) keys the gateway's per-device buffer.
+- **Fire-and-forget Stop + stuck-state** — `interrupt()` clears local UI immediately and
+  best-effort fires the interrupt frame (never gates on a server ack). A watchdog arms only
+  when a cycle is active AND the connection is not READY, resetting to idle after
+  `client_stuck_state_timeout_ms` — transport-liveness-driven, NOT content-frame silence
+  (a healthy slow cycle can legitimately gap 30s+).
+
 ## Layout (commonMain)
 
 ```
