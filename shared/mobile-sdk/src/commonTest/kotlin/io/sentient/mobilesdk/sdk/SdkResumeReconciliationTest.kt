@@ -69,8 +69,10 @@ class SdkResumeReconciliationTest {
     private fun activateFrames(sent: List<String>) =
         sent.filter { it.contains("\"type\":\"conversation.activate\"") }
 
+    // Resume now rides INSIDE session.configure (no separate stream.resume frame):
+    // a "resumed" reconnect is a configure frame that carries a `resume` object.
     private fun resumeFrames(sent: List<String>) =
-        sent.filter { it.contains("\"type\":\"stream.resume\"") }
+        sent.filter { it.contains("\"type\":\"session.configure\"") && it.contains("\"resume\":") }
 
     // ── recovered:true → PRESERVE in-flight state ─────────────────────────────
 
@@ -89,7 +91,7 @@ class SdkResumeReconciliationTest {
         fake.emit(WsIncoming.Text(cycleStartedSeq(seq = 5)))
         sdk.connection.first { it.cognition == CognitionState.THINKING }
 
-        // Drop → reconnect → READY. The DEFER path: a stream.resume is sent in
+        // Drop → reconnect → READY. The DEFER path: resume is carried in
         // session.configure; onReadyReached must NOT clear cognition or re-activate.
         fake.failIncoming("network drop")
         sdk.connection.first { fake.openedUrls.size >= 2 }
@@ -98,8 +100,8 @@ class SdkResumeReconciliationTest {
         sdk.connection.first { it.status == SdkStatus.READY }
         runCurrent()
 
-        // Resume cursor had a seq → a stream.resume MUST have been sent on the reconnect.
-        assertTrue(resumeFrames(fake.sentText).isNotEmpty(), "reconnect with a cursor must send stream.resume, sent=${fake.sentText}")
+        // Resume cursor had a seq → configure MUST carry a resume object on the reconnect.
+        assertTrue(resumeFrames(fake.sentText).isNotEmpty(), "reconnect with a cursor must carry resume in configure, sent=${fake.sentText}")
         // DEFERRED: no clear, no re-activate yet — in-flight THINKING preserved.
         assertEquals(CognitionState.THINKING, sdk.connection.value.cognition, "cognition must stay THINKING before stream.resumed")
         assertTrue(activateFrames(fake.sentText).isEmpty(), "deferred path must NOT re-activate before the ack, sent=${fake.sentText}")
@@ -180,9 +182,9 @@ class SdkResumeReconciliationTest {
         sdk.connection.first { it.cognition == CognitionState.IDLE }
         runCurrent()
 
-        // Legacy A1: cleared to idle + re-activated, and NO stream.resume was sent.
+        // Legacy A1: cleared to idle + re-activated, and configure carried NO resume.
         assertEquals(CognitionState.IDLE, sdk.connection.value.cognition, "no-cursor reconnect clears to IDLE (legacy A1)")
-        assertTrue(resumeFrames(fake.sentText).isEmpty(), "no-cursor reconnect must NOT send stream.resume, sent=${fake.sentText}")
+        assertTrue(resumeFrames(fake.sentText).isEmpty(), "no-cursor reconnect must NOT carry resume in configure, sent=${fake.sentText}")
         assertEquals(1, activateFrames(fake.sentText).size, "no-cursor reconnect must re-activate exactly once, sent=${fake.sentText}")
     }
 

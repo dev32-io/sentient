@@ -2,8 +2,8 @@
 // device-id — stable per-browser deviceId persisted to localStorage.
 //
 // Used in `session.configure` so the gateway can identify the client device
-// across reconnects, and in `stream.resume` so the gateway can replay missed
-// frames to the right device.
+// across reconnects and replay missed frames to the right device (the resume
+// request rides inside the same configure frame).
 //
 // Falls back to an in-memory UUID when localStorage is unavailable (SSR, tests,
 // or when storage is disabled by browser policy). The in-memory fallback

@@ -111,6 +111,51 @@ describe("session.configure", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it("parses configure-carried resume on a reconnect", () => {
+    const result = sessionConfigureSchema.safeParse({
+      type: "session.configure",
+      capabilities: { supports: [] },
+      clientType: "webui",
+      deviceId: "dev-abc",
+      resume: { epoch: 3, lastSeq: 99 },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.resume).toEqual({ epoch: 3, lastSeq: 99 });
+  });
+
+  it("omits resume on a fresh connect (undefined)", () => {
+    const result = sessionConfigureSchema.safeParse({
+      type: "session.configure",
+      capabilities: { supports: [] },
+      clientType: "webui",
+      deviceId: "dev-abc",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.resume).toBeUndefined();
+  });
+
+  it("rejects resume with a negative lastSeq", () => {
+    const result = sessionConfigureSchema.safeParse({
+      type: "session.configure",
+      capabilities: { supports: [] },
+      clientType: "webui",
+      deviceId: "dev-abc",
+      resume: { epoch: 3, lastSeq: -1 },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects resume with a negative epoch", () => {
+    const result = sessionConfigureSchema.safeParse({
+      type: "session.configure",
+      capabilities: { supports: [] },
+      clientType: "webui",
+      deviceId: "dev-abc",
+      resume: { epoch: -1, lastSeq: 99 },
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe("session.ready", () => {
@@ -586,60 +631,6 @@ describe("message.delta with seq/epoch (gateway push frames)", () => {
       epoch: 3,
     });
     expect(result.success).toBe(true);
-  });
-});
-
-describe("stream.resume (client → gateway)", () => {
-  it("accepts valid stream.resume", () => {
-    const result = clientMessageSchema.safeParse({
-      type: "stream.resume",
-      epoch: 3,
-      lastSeq: 99,
-      deviceId: "dev-abc",
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.type).toBe("stream.resume");
-    }
-  });
-
-  it("rejects stream.resume missing deviceId", () => {
-    const result = clientMessageSchema.safeParse({
-      type: "stream.resume",
-      epoch: 3,
-      lastSeq: 99,
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects stream.resume with empty deviceId", () => {
-    const result = clientMessageSchema.safeParse({
-      type: "stream.resume",
-      epoch: 3,
-      lastSeq: 99,
-      deviceId: "",
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects stream.resume with negative lastSeq", () => {
-    const result = clientMessageSchema.safeParse({
-      type: "stream.resume",
-      epoch: 3,
-      lastSeq: -1,
-      deviceId: "dev-abc",
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects stream.resume with negative epoch", () => {
-    const result = clientMessageSchema.safeParse({
-      type: "stream.resume",
-      epoch: -1,
-      lastSeq: 99,
-      deviceId: "dev-abc",
-    });
-    expect(result.success).toBe(false);
   });
 });
 

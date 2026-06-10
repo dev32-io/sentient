@@ -22,7 +22,7 @@ import { DeviceBufferStore } from "../person-session/device-buffer-store.js";
 import { BINARY_TYPE_AUDIO, createFrameSequencer } from "./frame-sequencer.js";
 import { type SessionReplayBuffer, createSessionReplayBuffer } from "./session-replay-buffer.js";
 import type { ClientData } from "./ws-helpers.js";
-import { handleResumeOrFresh, resolveDeviceId } from "./ws-resume-handover.js";
+import { handleResumeOrFresh } from "./ws-resume-handover.js";
 
 const REPLAY_MAX_BYTES = 64 * 1024;
 const TTL_MS = 30_000;
@@ -71,24 +71,6 @@ function parseResumed(sent: SentFrame[]): Record<string, unknown> | null {
   if (!frame || typeof frame.value !== "string") return null;
   return JSON.parse(frame.value) as Record<string, unknown>;
 }
-
-// ---------------------------------------------------------------------------
-// resolveDeviceId
-// ---------------------------------------------------------------------------
-
-describe("resolveDeviceId", () => {
-  it("returns the configure deviceId when no resume frame", () => {
-    expect(resolveDeviceId("dev-A", null)).toBe("dev-A");
-  });
-
-  it("returns the configure deviceId when resume frame matches", () => {
-    expect(resolveDeviceId("dev-A", { epoch: 1, lastSeq: 0, deviceId: "dev-A" })).toBe("dev-A");
-  });
-
-  it("prefers the resume frame deviceId on mismatch", () => {
-    expect(resolveDeviceId("dev-A", { epoch: 1, lastSeq: 0, deviceId: "dev-B" })).toBe("dev-B");
-  });
-});
 
 // ---------------------------------------------------------------------------
 // 1) Resume-in-window

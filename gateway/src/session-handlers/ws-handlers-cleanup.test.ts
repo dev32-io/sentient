@@ -95,7 +95,6 @@ function makeWs(overrides: Partial<ClientData>): ServerWebSocket<ClientData> {
     personSession: null,
     attachment: null,
     resumeSessionId: null,
-    resumeParams: null,
     sessionsHandlers: null,
     snapshotUnsub: null,
     acpWireDispose: null,

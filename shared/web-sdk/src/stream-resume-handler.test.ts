@@ -1,8 +1,9 @@
 // ---------------------------------------------------------------------------
-// stream-resume-handler — outbound wire-contract test.
+// stream-resume-handler — configure-carried-resume + inbound contract test.
 //
-// Pins: gateway↔SDK outbound contract (stream.resume frame sent on RECONNECT
-// with lastSeq > 0; NOT sent on first connect or when cursor is zero).
+// Pins: gateway↔SDK outbound contract (the resume params folded into
+// session.configure on RECONNECT with lastSeq > 0; omitted on first connect or
+// when the cursor is zero).
 //
 // Testing doctrine: wire/protocol contract at a process boundary.
 // ---------------------------------------------------------------------------
@@ -10,7 +11,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createResumeCursor } from "./resume-cursor.ts";
 import { _resetResumeStateForTests } from "./sdk-reconnect.ts";
-import { type StreamResumeHandlerDeps, handleStreamResumed, sendStreamResume } from "./stream-resume-handler.ts";
+import { type StreamResumeHandlerDeps, buildConfigureResume, handleStreamResumed } from "./stream-resume-handler.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -24,7 +25,6 @@ function makeDeps(
   const cursor = overrides.cursor ?? createResumeCursor();
   return {
     cursor,
-    deviceId: overrides.deviceId ?? "dev-test",
     send: overrides.send ?? ((msg) => sentMessages.push(msg)),
     getMessageHandlers: overrides.getMessageHandlers ?? (() => messageHandlers),
     sentMessages,
@@ -54,57 +54,41 @@ function uninstallSessionStorageShim(): void {
 }
 
 // ---------------------------------------------------------------------------
-// sendStreamResume — outbound wire contract
+// buildConfigureResume — configure-carried resume params
 // ---------------------------------------------------------------------------
 
-describe("sendStreamResume — outbound wire contract", () => {
-  it("sends stream.resume with epoch/lastSeq/deviceId on RECONNECT when lastSeq > 0", () => {
-    const deps = makeDeps({ deviceId: "device-abc" });
+describe("buildConfigureResume — configure-carried resume", () => {
+  it("returns {epoch,lastSeq} on RECONNECT when lastSeq > 0", () => {
+    const cursor = createResumeCursor();
     // Simulate cursor after having received seq=5 epoch=42 in a prior session.
-    deps.cursor.tryApply(5, 42);
+    cursor.tryApply(5, 42);
 
-    sendStreamResume(deps);
-
-    expect(deps.sentMessages).toHaveLength(1);
-    expect(deps.sentMessages[0]).toEqual({
-      type: "stream.resume",
-      epoch: 42,
-      lastSeq: 5,
-      deviceId: "device-abc",
-    });
+    expect(buildConfigureResume(cursor)).toEqual({ epoch: 42, lastSeq: 5 });
   });
 
-  it("does NOT send stream.resume on first connect (lastSeq === 0)", () => {
-    const deps = makeDeps({ deviceId: "device-abc" });
+  it("returns undefined on first connect (lastSeq === 0)", () => {
+    const cursor = createResumeCursor();
     // Fresh cursor — no seq applied yet.
 
-    sendStreamResume(deps);
-
-    expect(deps.sentMessages).toHaveLength(0);
+    expect(buildConfigureResume(cursor)).toBeUndefined();
   });
 
-  it("does NOT send stream.resume after cursor reset (recovered=false)", () => {
-    const deps = makeDeps({ deviceId: "device-abc" });
+  it("returns undefined after cursor reset (recovered=false)", () => {
+    const cursor = createResumeCursor();
     // Apply seq then reset (simulating a not-recovered resume).
-    deps.cursor.tryApply(10, 1);
-    deps.cursor.reset();
+    cursor.tryApply(10, 1);
+    cursor.reset();
 
-    sendStreamResume(deps);
-
-    expect(deps.sentMessages).toHaveLength(0);
+    expect(buildConfigureResume(cursor)).toBeUndefined();
   });
 
-  it("sends the correct lastSeq after cursor advances multiple times", () => {
-    const deps = makeDeps({ deviceId: "dev-xyz" });
-    deps.cursor.tryApply(3, 1);
-    deps.cursor.tryApply(7, 1);
-    deps.cursor.tryApply(12, 1);
+  it("carries the latest lastSeq after the cursor advances multiple times", () => {
+    const cursor = createResumeCursor();
+    cursor.tryApply(3, 1);
+    cursor.tryApply(7, 1);
+    cursor.tryApply(12, 1);
 
-    sendStreamResume(deps);
-
-    expect(deps.sentMessages).toHaveLength(1);
-    const frame = deps.sentMessages[0] as { type: string; lastSeq: number };
-    expect(frame.lastSeq).toBe(12);
+    expect(buildConfigureResume(cursor)).toEqual({ epoch: 1, lastSeq: 12 });
   });
 });
 

@@ -21,6 +21,19 @@
  *   oldestSeq: seqCounter+1 when empty ("oldest is in the future, so any
  *              real lastSeq forces a refetch").
  *   newestSeq: seqCounter when empty (0 before any allocation).
+ *
+ * Audio journaling + memory bound (spec §9 object-count footgun):
+ *   Audio is journaled one ReplayFrame per Opus frame (~50/s) — at ~30 min of
+ *   continuous playback that is ~90k frame objects. Total memory is bounded by
+ *   TWO independent caps: the per-device byte cap (replay_buffer_max_bytes,
+ *   16 MB default → evict-oldest) and the 30-min retention TTL on the buffer
+ *   entry. The frame COUNT is therefore implicitly bounded by the byte cap
+ *   (cap / avg-frame-bytes), which keeps per-object overhead acceptable at
+ *   family scale. Audio coalescing (folding many Opus frames into one larger
+ *   ReplayFrame to cut object count) is DEFERRED for Slice 3 — it interacts
+ *   non-trivially with the per-frame seq scheme (each Opus frame currently
+ *   carries its own seq for dedup/replay), so it is intentionally NOT
+ *   implemented and the false-implying coalesce knob was removed.
  */
 
 import { getLog } from "../logging/logger.js";

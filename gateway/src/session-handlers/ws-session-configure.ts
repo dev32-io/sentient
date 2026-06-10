@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import type { HermesAcpWire } from "@sentient/config";
-import type { ClientType } from "@sentient/protocol";
+import type { ClientType, SessionConfigureResume } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import type { Adapter } from "../adapters/adapter-types.js";
 import type { STTAdapterConfig } from "../adapters/stt/stt-adapter-types.js";
@@ -50,7 +50,7 @@ import { createSessionsHandlers } from "./sessions-handlers.js";
 import { ttsSkipReason } from "./tts-policy.js";
 import type { ClientData } from "./ws-helpers.js";
 import { errorMessage, sendError } from "./ws-helpers.js";
-import { handleResumeOrFresh, resolveDeviceId } from "./ws-resume-handover.js";
+import { type ResumeParams, handleResumeOrFresh } from "./ws-resume-handover.js";
 
 // Resolve a config-supplied path that may start with "~/" against the
 // gateway user's $HOME. Tilde-prefixed values come straight from YAML;
@@ -79,6 +79,7 @@ export async function handleSessionConfigure(
   services: GatewayServices,
   clientType: ClientType,
   configureDeviceId: string,
+  configureResume: SessionConfigureResume | undefined,
 ): Promise<void> {
   const sessionId = ws.data.sessionId;
   if (!sessionId) {
@@ -191,13 +192,16 @@ export async function handleSessionConfigure(
     return;
   }
   // Task 3.8 — stable deviceId keys the per-device buffer across reconnects.
-  // The client supplies it on session.configure; a reconnect also supplies it
-  // on the stream.resume frame (stashed in ws.data.resumeParams). On mismatch
-  // the resume frame wins. When resumeParams carries a matching epoch, acquire
-  // REUSES the prior buffer (resumed:true) so the new FrameSequencer continues
-  // the same seq counter — seq continuity across reconnect.
-  const resumeParams = ws.data.resumeParams;
-  const deviceId = resolveDeviceId(configureDeviceId, resumeParams);
+  // The client supplies it on session.configure; the resume request now rides
+  // INSIDE that same frame (configureResume), so the resume decision is a
+  // synchronous read off the parsed configure message — no separate frame, no
+  // same-tick ordering race. When resumeParams carries a matching epoch,
+  // acquire REUSES the prior buffer (resumed:true) so the new FrameSequencer
+  // continues the same seq counter — seq continuity across reconnect.
+  const resumeParams: ResumeParams | null = configureResume
+    ? { epoch: configureResume.epoch, lastSeq: configureResume.lastSeq, deviceId: configureDeviceId }
+    : null;
+  const deviceId = configureDeviceId;
   const acquired = personSession.acquireDeviceBuffer(deviceId, {
     ...(resumeParams ? { resumeEpoch: resumeParams.epoch } : {}),
   });
@@ -868,9 +872,6 @@ export async function handleSessionConfigure(
     resumed: deviceResumed,
     resumeParams,
   });
-  // Clear the stashed params so a later configure on this socket does not
-  // re-resume (e.g. a second configure frame).
-  ws.data.resumeParams = null;
 
   if (replayed) {
     // Successful resume: the client already has session.ready + history from

@@ -63,15 +63,6 @@ export interface CerebrumSessionData {
    * to resume a specific chain.
    */
   resumeSessionId: string | null;
-  /**
-   * Stream-resume parameters captured from a `stream.resume` frame received
-   * after auth, before/around session.configure (Task 3.8). `epoch` + `lastSeq`
-   * + `deviceId` let session.configure attempt a per-device buffer resume
-   * (replay frames since lastSeq) instead of a fresh setup. Cleared after the
-   * resume branch runs so a later configure does not re-resume. null when the
-   * client did not send a resume frame (fresh connect).
-   */
-  resumeParams: { epoch: number; lastSeq: number; deviceId: string } | null;
   /** Sessions wire-frame handler: dispatches sessions.* / session.new / conversation.activate. */
   sessionsHandlers: SessionsHandlers | null;
   /** Cleanup for the mirror.onSnapshot subscription created in session.configure. */
@@ -122,7 +113,6 @@ export function createEmptySessionData(): CerebrumSessionData {
     personSession: null,
     attachment: null,
     resumeSessionId: null,
-    resumeParams: null,
     sessionsHandlers: null,
     snapshotUnsub: null,
     acpWireDispose: null,

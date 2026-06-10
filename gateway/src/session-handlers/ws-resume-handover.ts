@@ -5,9 +5,6 @@
  * so the resume branch stays small and testable.
  *
  * Flow:
- *  - resolveDeviceId: pick the stable deviceId for buffer keying. The client
- *    sends it both on session.configure AND on the stream.resume frame; on a
- *    mismatch the resume frame wins (and we warn).
  *  - handleResumeOrFresh: the terminal decision after the pipeline is built.
  *    If the device buffer was resumed AND it still holds frames since the
  *    client's lastSeq, emit stream.resumed{recovered:true} and replay those
@@ -35,27 +32,8 @@ const decoder = new TextDecoder();
 export interface ResumeParams {
   readonly epoch: number;
   readonly lastSeq: number;
+  /** The stable deviceId from session.configure — resume now rides in that frame. */
   readonly deviceId: string;
-}
-
-/**
- * Resolve the stable deviceId used to key the per-device replay buffer.
- *
- * The client supplies it on session.configure; a reconnect also supplies it on
- * the stream.resume frame. They MUST match — if they differ, the resume frame's
- * deviceId wins (it is the authority on which buffer to resume) and we warn.
- */
-export function resolveDeviceId(configureDeviceId: string, resumeParams: ResumeParams | null): string {
-  if (resumeParams === null) return configureDeviceId;
-  if (resumeParams.deviceId !== configureDeviceId) {
-    log.warn("device-id-mismatch", {
-      configureDeviceId,
-      resumeDeviceId: resumeParams.deviceId,
-      reason: "stream.resume deviceId differs from session.configure deviceId; using resume frame's",
-    });
-    return resumeParams.deviceId;
-  }
-  return configureDeviceId;
 }
 
 export interface HandleResumeOrFreshInput {
@@ -67,7 +45,7 @@ export interface HandleResumeOrFreshInput {
   readonly epoch: number;
   /** True when acquireDeviceBuffer reused an existing entry (matching epoch). */
   readonly resumed: boolean;
-  /** The stashed resume params from the stream.resume frame, or null. */
+  /** Resume params from the session.configure `resume` object, or null (fresh connect). */
   readonly resumeParams: ResumeParams | null;
 }
 

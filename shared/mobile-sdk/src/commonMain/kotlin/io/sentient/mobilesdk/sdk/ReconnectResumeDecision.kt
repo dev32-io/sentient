@@ -64,9 +64,9 @@ enum class ResumedAction {
  * @param wasReconnect false on the first-ever READY (nothing to restore); true on
  *   every subsequent READY (a reconnect).
  * @param hasAnchor true when a session uuid is anchored (re-establish target exists).
- * @param resumeWillBeAttempted true when a `stream.resume` was/will be sent — i.e.
- *   the resume cursor has a seq (`lastSeq > 0`). MUST mirror the exact condition
- *   `sendStreamResume` uses so the defer decision is consistent with the wire.
+ * @param resumeWillBeAttempted true when resume was/will be carried in configure —
+ *   i.e. the resume cursor has a seq (`lastSeq > 0`). MUST mirror the exact condition
+ *   `resumeParams` uses so the defer decision is consistent with the wire.
  */
 internal fun decideOnReady(
     wasReconnect: Boolean,

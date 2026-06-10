@@ -13,7 +13,6 @@ const wsResilienceSession = {
   ws_idle_timeout_ms: 255000,
   retention_ttl_ms: 1800000,
   replay_buffer_max_bytes: 16777216,
-  replay_audio_coalesce_ms: 1000,
 };
 
 describe("gatewayConfigSchema", () => {
@@ -356,7 +355,6 @@ describe("sessionConfigSchema — WS-resilience fields", () => {
     ws_idle_timeout_ms: 255000,
     retention_ttl_ms: 1800000,
     replay_buffer_max_bytes: 16777216,
-    replay_audio_coalesce_ms: 1000,
   };
 
   it("parses a valid session config with WS-resilience fields", () => {
@@ -364,7 +362,6 @@ describe("sessionConfigSchema — WS-resilience fields", () => {
     expect(result.ws_idle_timeout_ms).toBe(255000);
     expect(result.retention_ttl_ms).toBe(1800000);
     expect(result.replay_buffer_max_bytes).toBe(16777216);
-    expect(result.replay_audio_coalesce_ms).toBe(1000);
   });
 
   it("fails loudly when retention_ttl_ms is missing", () => {
@@ -378,10 +375,6 @@ describe("sessionConfigSchema — WS-resilience fields", () => {
 
   it("rejects retention_ttl_ms below minimum (60000 ms)", () => {
     expect(sessionConfigSchema.safeParse({ ...validSession, retention_ttl_ms: 59999 }).success).toBe(false);
-  });
-
-  it("rejects replay_audio_coalesce_ms above max (10000 ms)", () => {
-    expect(sessionConfigSchema.safeParse({ ...validSession, replay_audio_coalesce_ms: 10001 }).success).toBe(false);
   });
 
   it("rejects ws_idle_timeout_ms below min (1000 ms)", () => {

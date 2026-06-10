@@ -50,7 +50,6 @@ function fakeWs(): FakeWs {
     bargeInController: null,
     interruptController: null,
     resumeSessionId: null,
-    resumeParams: null,
     sessionsHandlers: null,
     snapshotUnsub: null,
     acpWireDispose: null,

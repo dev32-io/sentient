@@ -14,7 +14,9 @@
  * a seq gap is a true miss or a reconnect restart. epoch is NOT carried in the
  * binary header — it is carried on JSON frames generally: the client first
  * learns the current epoch from auth.ok / session.ready, and again on the
- * stream.resumed reply after reconnect.
+ * stream.resumed reply after reconnect. On a reconnect the client requests
+ * replay by carrying a `resume` object in session.configure (NOT a separate
+ * frame); the gateway replies with stream.resumed.
  */
 
 import { z } from "zod";
@@ -65,6 +67,17 @@ function withSeq<T extends z.ZodRawShape>(schema: z.ZodObject<T>) {
 export const clientTypeSchema = z.enum(["webui", "cube", "mobile"]);
 export type ClientType = z.infer<typeof clientTypeSchema>;
 
+// Resume request carried INSIDE session.configure on a reconnect. Folding it
+// into configure (rather than a separate stream.resume frame) makes the
+// gateway's resume decision a synchronous read off the one parsed configure
+// message — no same-tick frame-ordering race. Present only on a reconnect with
+// a non-zero cursor; omitted on a fresh connect (nothing to replay).
+export const sessionConfigureResumeSchema = z.object({
+  epoch: z.number().int().nonnegative(),
+  lastSeq: z.number().int().nonnegative(),
+});
+export type SessionConfigureResume = z.infer<typeof sessionConfigureResumeSchema>;
+
 export const sessionConfigureSchema = z.object({
   type: z.literal("session.configure"),
   language: z.enum(["en", "zh"]).default("en"),
@@ -76,10 +89,16 @@ export const sessionConfigureSchema = z.object({
    * Stable per-device identifier. REQUIRED — the client supplies the same
    * value on every connection so the gateway can key the per-device replay
    * buffer across reconnects (Task 3.8). A fresh connect gets a fresh buffer
-   * for this deviceId; a reconnect reuses it. The `stream.resume` frame
-   * carries the same deviceId; when both are present the resume frame wins.
+   * for this deviceId; a reconnect reuses it.
    */
   deviceId: z.string().min(1),
+  /**
+   * Optional resume request (Slice 3 hardening). When present, the gateway
+   * attempts a per-device buffer resume (replay frames since lastSeq within
+   * epoch) instead of a fresh setup. Read synchronously off this frame — there
+   * is no separate stream.resume frame.
+   */
+  resume: sessionConfigureResumeSchema.optional(),
 });
 
 export const audioStartSchema = z.object({
@@ -118,15 +137,9 @@ export const interruptSchema = z.object({
   type: z.literal("interrupt"),
 });
 
-// Resume handshake — sent by the client after reconnect to request replay
-// of any frames missed since lastSeq within the current epoch.
-export const streamResumeSchema = z.object({
-  type: z.literal("stream.resume"),
-  epoch: z.number().int().nonnegative(),
-  lastSeq: z.number().int().nonnegative(),
-  deviceId: z.string().min(1),
-});
-export type StreamResume = z.infer<typeof streamResumeSchema>;
+// NOTE: the resume request is carried INSIDE session.configure (see
+// sessionConfigureSchema.resume) — there is no separate stream.resume frame.
+// The gateway → client reply is stream.resumed (below), still its own frame.
 
 export const clientMessageSchema = z.discriminatedUnion("type", [
   sessionConfigureSchema,
@@ -139,7 +152,6 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   interruptSchema,
   sessionNewSchema,
   conversationActivateSchema,
-  streamResumeSchema,
 ]);
 
 export type ClientMessage = z.infer<typeof clientMessageSchema>;

@@ -98,7 +98,17 @@ export async function handleWebSocketMessage(
       return;
 
     case "session.configure":
-      await handleSessionConfigure(ws, msg.capabilities.supports, msg.language, services, msg.clientType, msg.deviceId);
+      // Resume params ride INSIDE the configure frame (msg.resume) — read
+      // synchronously by the handler, no separate stream.resume frame, no race.
+      await handleSessionConfigure(
+        ws,
+        msg.capabilities.supports,
+        msg.language,
+        services,
+        msg.clientType,
+        msg.deviceId,
+        msg.resume,
+      );
       return;
 
     case "text.input":
@@ -123,15 +133,6 @@ export async function handleWebSocketMessage(
 
     case "interrupt":
       ws.data.interruptController?.trigger();
-      return;
-
-    case "stream.resume":
-      // Stash the resume parameters so the upcoming session.configure can
-      // attempt a per-device buffer resume (replay frames since lastSeq)
-      // instead of a fresh setup. deviceId also arrives via configure; the
-      // resume frame's deviceId wins on mismatch (see ws-session-configure).
-      ws.data.resumeParams = { epoch: msg.epoch, lastSeq: msg.lastSeq, deviceId: msg.deviceId };
-      log.debug("stream-resume-stashed", { epoch: msg.epoch, lastSeq: msg.lastSeq, deviceId: msg.deviceId });
       return;
 
     case "session.new":
@@ -396,7 +397,6 @@ function clearWsDataFields(ws: ServerWebSocket<ClientData>): void {
   ws.data.taskManager = null;
   ws.data.sessionsHandlers = null;
   ws.data.resumeSessionId = null;
-  ws.data.resumeParams = null;
   ws.data.conversationHistory?.clear();
   ws.data.conversationHistory = null;
   ws.data.personSession = null;

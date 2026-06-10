@@ -29,9 +29,6 @@ export const sessionConfigSchema = z.object({
   // Per device-session replay ring buffer cap in bytes (evict-oldest).
   // Range: 65536–268435456 (64 KB – 256 MB).
   replay_buffer_max_bytes: z.number().int().min(65_536).max(268_435_456),
-  // Audio segment coalesce window before buffering (ms).
-  // Range: 100–10000.
-  replay_audio_coalesce_ms: z.number().int().min(100).max(10_000),
 });
 
 export type SessionConfig = z.output<typeof sessionConfigSchema>;

@@ -21,6 +21,7 @@ import io.sentient.mobilesdk.presence.IdleDetectorEvent
 import io.sentient.mobilesdk.presence.createIdleDetector
 import io.sentient.mobilesdk.protocol.AudioPreferencesPatch
 import io.sentient.mobilesdk.protocol.ClientMessage
+import io.sentient.mobilesdk.protocol.ResumeParams
 import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.secure.DeviceIdProvider
 import io.sentient.mobilesdk.sessions.SessionsHttpClient
@@ -522,13 +523,13 @@ class SentientSdk(
      * READY rising edge. RESUME-AWARE (Task 3.10-mobile, Slice 3).
      *
      * The FIRST READY (first connect) has nothing to restore. Every SUBSEQUENT
-     * READY is a reconnect, and its handling depends on whether a `stream.resume`
-     * was attempted (the cursor carries a seq — see [sendStreamResume], invoked
-     * inside the handshake's session.configure, which runs BEFORE this rising edge):
+     * READY is a reconnect, and its handling depends on whether a resume was
+     * attempted (the cursor carries a seq — see [resumeParams], folded INTO the
+     * handshake's session.configure, which is sent BEFORE this rising edge):
      *
      *   - resume IN FLIGHT (reconnect + anchor + cursor seq): DEFER. We already
-     *     sent stream.resume; do NOT clear-to-idle and do NOT re-activate here.
-     *     The gateway's `stream.resumed` ack ([onStreamResumed]) decides: a
+     *     carried resume in configure; do NOT clear-to-idle and do NOT re-activate
+     *     here. The gateway's `stream.resumed` ack ([onStreamResumed]) decides: a
      *     recovered:true replay re-establishes the in-flight THINKING/speaking
      *     (preserve it); a recovered:false ack does the A1-equivalent recovery.
      *     This is the bug fix — clearing here would lose the state the resume
@@ -547,8 +548,8 @@ class SentientSdk(
         val wasReconnect = hasReachedReadyOnce
         hasReachedReadyOnce = true
         val anchored = _currentSessionId.value
-        // Mirror sendStreamResume's exact gate: a resume was/will be sent iff the
-        // cursor carries a seq. Read here so the defer decision matches the wire.
+        // Mirror resumeParams's exact gate: resume was/will be carried in configure
+        // iff the cursor carries a seq. Read here so the defer decision matches the wire.
         val resumeWillBeAttempted = resumeCursor.snapshot.lastSeq > 0L
         when (decideOnReady(wasReconnect, anchored != null, resumeWillBeAttempted)) {
             ReadyAction.NOTHING_TO_RESTORE ->
@@ -556,7 +557,7 @@ class SentientSdk(
             ReadyAction.NO_ANCHOR ->
                 log.info("ready.reconnect.no-anchor")
             ReadyAction.DEFER_TO_RESUME ->
-                // stream.resume already sent in session.configure; await stream.resumed.
+                // resume already carried in session.configure; await stream.resumed.
                 log.info("ready.reconnect.defer-to-resume", mapOf("sessionId" to anchored))
             ReadyAction.REESTABLISH_AND_CLEAR -> {
                 log.info("ready.reconnect.re-establish", mapOf("sessionId" to anchored))
@@ -627,18 +628,19 @@ class SentientSdk(
     private fun applyCursor(seq: Long, epoch: Long?): Boolean = resumeCursor.tryApply(seq, epoch)
 
     /**
-     * Send `stream.resume` after `session.configure` on a RECONNECT. No-op when
-     * the cursor has no seq yet (first connect, or after a non-recovered reset).
-     * Mirrors web-sdk sendStreamResume.
+     * Build the resume params to fold INTO `session.configure` on a RECONNECT.
+     * Null when the cursor has no seq yet (first connect, or after a non-recovered
+     * reset) → configure omits the resume field and the gateway runs the fresh path.
+     * Mirrors web-sdk buildConfigureResume.
      */
-    private fun sendStreamResume() {
+    private fun resumeParams(): ResumeParams? {
         val (epoch, lastSeq) = resumeCursor.snapshot
         if (lastSeq == 0L) {
-            log.debug("stream.resume.skip-no-cursor")
-            return
+            log.debug("configure.resume.skip-no-cursor")
+            return null
         }
-        log.info("stream.resume.send", mapOf("epoch" to epoch, "lastSeq" to lastSeq, "deviceId" to deviceId))
-        sendControl(ClientMessage.StreamResume(epoch = epoch, lastSeq = lastSeq, deviceId = deviceId))
+        log.info("configure.resume.attached", mapOf("epoch" to epoch, "lastSeq" to lastSeq))
+        return ResumeParams(epoch = epoch, lastSeq = lastSeq)
     }
 
     /**
@@ -712,7 +714,7 @@ class SentientSdk(
         override fun onSessionForbidden() = this@SentientSdk.onSessionForbidden()
         override fun onPong() = this@SentientSdk.onPong()
         override fun onStreamResumed(recovered: Boolean) = this@SentientSdk.onStreamResumed(recovered)
-        override fun sendStreamResume() = this@SentientSdk.sendStreamResume()
+        override fun resumeParams(): ResumeParams? = this@SentientSdk.resumeParams()
         override fun onAuthFailed() = setError(authExpired = true)
         override fun onConnectionDrop() = this@SentientSdk.onConnectionDrop()
         override fun mergedCapabilities(): List<String> = this@SentientSdk.mergedCapabilities()

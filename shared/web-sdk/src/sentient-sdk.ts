@@ -30,8 +30,8 @@ import {
 import { type SdkTimers, createSdkTimers } from "./sdk-timers.ts";
 import {
   type StreamResumeHandlerDeps,
+  buildConfigureResume,
   handleStreamResumed as handleStreamResumedFn,
-  sendStreamResume as sendStreamResumeFn,
 } from "./stream-resume-handler.ts";
 
 // SentientSDK — WS/status core; presence idle-close + reconnect-loop recovery.
@@ -244,7 +244,6 @@ export class SentientSDK {
   private resumeHandlerDeps(): StreamResumeHandlerDeps {
     return {
       cursor: this.cursor,
-      deviceId: this.deviceId,
       send: (msg) => this.sendRaw(msg),
       getMessageHandlers: () => this.messageHandlers,
     };
@@ -347,14 +346,18 @@ export class SentientSDK {
       timers: this.timers,
       sendSessionConfigure: () => {
         this.isReconnectCycle = false; // consumed; reset for next cycle
+        // Fold the resume request INTO configure on a reconnect with a non-zero
+        // cursor (omitted on first connect). Single frame → the gateway reads
+        // resume synchronously off configure, no separate stream.resume frame,
+        // no send-ordering race.
+        const resume = isReconnect ? buildConfigureResume(this.cursor) : undefined;
         this.sendRaw({
           type: "session.configure",
           capabilities: { supports: [...this.capabilities] },
           clientType: "webui",
           deviceId: this.deviceId,
+          ...(resume ? { resume } : {}),
         });
-        // After configure, send stream.resume if this is a reconnect with a cursor.
-        if (isReconnect) sendStreamResumeFn(this.resumeHandlerDeps());
       },
       onSessionReady: this.config.onSessionReady,
       attachAll: () => this.attachAll(),

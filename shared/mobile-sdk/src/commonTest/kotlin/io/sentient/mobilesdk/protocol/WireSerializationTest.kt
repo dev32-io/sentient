@@ -141,12 +141,20 @@ class WireSerializationTest {
         assertTrue(json.contains("\"type\":\"session.configure\""), json)
         assertTrue(json.contains("\"deviceId\":\"dev-abc\""), json)
         assertTrue(json.contains("\"clientType\":\"mobile\""), json)
+        // Fresh connect: no resume object on the wire (explicitNulls=false).
+        assertTrue(!json.contains("\"resume\""), json)
     }
 
-    @Test fun stream_resume_round_trips() {
-        val msg: ClientMessage = ClientMessage.StreamResume(epoch = 3, lastSeq = 42, deviceId = "dev-xyz")
+    @Test fun session_configure_carries_resume_on_reconnect() {
+        val msg: ClientMessage = ClientMessage.SessionConfigure(
+            capabilities = Capabilities(listOf("text.input", "stream.resume")),
+            clientType = "mobile",
+            deviceId = "dev-xyz",
+            resume = ResumeParams(epoch = 3, lastSeq = 42),
+        )
         val s = WireJson.instance.encodeToString(ClientMessage.serializer(), msg)
-        assertTrue(s.contains("\"type\":\"stream.resume\""), s)
+        assertTrue(s.contains("\"type\":\"session.configure\""), s)
+        assertTrue(s.contains("\"resume\":{\"epoch\":3,\"lastSeq\":42}"), s)
         val back = WireJson.instance.decodeFromString(ClientMessage.serializer(), s)
         assertEquals(msg, back)
     }

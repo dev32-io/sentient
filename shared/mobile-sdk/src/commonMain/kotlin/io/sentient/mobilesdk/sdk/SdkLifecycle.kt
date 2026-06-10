@@ -48,8 +48,12 @@ interface LifecycleHooks {
     fun onPong()
     /** A `stream.resumed` ack arrived (Task 3.10). recovered drives dedup vs. cursor-reset+refetch. */
     fun onStreamResumed(recovered: Boolean)
-    /** Send `stream.resume` after configure (no-op when the cursor has no seq — first connect). */
-    fun sendStreamResume()
+    /**
+     * Resume params to fold INTO session.configure on a RECONNECT, or null on a
+     * first connect / after a non-recovered reset (the cursor has no seq). Read at
+     * configure-build time so the gateway sees resume on the single configure frame.
+     */
+    fun resumeParams(): io.sentient.mobilesdk.protocol.ResumeParams?
     fun onAuthFailed()
     fun onConnectionDrop()
     fun mergedCapabilities(): List<String>
@@ -141,17 +145,18 @@ class SdkLifecycle(
         sendAuth = { transport?.send(ClientMessage.Auth(token = hooks.token())) },
         faultHooks = faultHooks,
         sendConfigure = {
+            // Fold the resume request INTO configure on a reconnect (hooks.resumeParams()
+            // is null on a first connect / after a non-recovered reset). Single frame →
+            // the gateway reads resume synchronously off configure, no separate
+            // stream.resume frame, no send-ordering race.
             transport?.send(
                 ClientMessage.SessionConfigure(
                     capabilities = Capabilities(hooks.mergedCapabilities()),
                     clientType = CLIENT_TYPE_MOBILE,
                     deviceId = deviceId,
+                    resume = hooks.resumeParams(),
                 ),
             )
-            // Right after configure, request replay of any frames missed during the
-            // outage. No-op on a first connect (the cursor has no seq yet); fires the
-            // stream.resume{epoch,lastSeq,deviceId} frame on a reconnect (Task 3.10).
-            hooks.sendStreamResume()
         },
         onReady = { log.info("session.ready.tunables", mapOf("inRate" to it.inputSampleRate, "outRate" to it.outputSampleRate)) },
         delayFn = delayFn,

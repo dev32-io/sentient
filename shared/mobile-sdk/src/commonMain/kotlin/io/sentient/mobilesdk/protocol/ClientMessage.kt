@@ -23,10 +23,16 @@ sealed class ClientMessage {
         val clientType: String,
         /**
          * Stable per-install device id (Task 3.10). REQUIRED by the gateway — keys the
-         * per-device replay buffer across reconnects. The same value rides every connect
-         * and the `stream.resume` frame.
+         * per-device replay buffer across reconnects. The same value rides every connect.
          */
         val deviceId: String,
+        /**
+         * Resume request carried INSIDE configure on a RECONNECT (Slice 3 hardening).
+         * Null on a fresh connect. The gateway reads it synchronously off this frame —
+         * there is no separate stream.resume frame, so no send-ordering race.
+         * Omitted from the wire when null ([WireJson] explicitNulls=false).
+         */
+        val resume: ResumeParams? = null,
     ) : ClientMessage()
 
     @Serializable @SerialName("audio.start")
@@ -70,24 +76,21 @@ sealed class ClientMessage {
     data class ConversationActivate(
         val sessionId: String,
     ) : ClientMessage()
-
-    /**
-     * Resume handshake (Task 3.10) — sent after `session.configure` on a RECONNECT
-     * to request replay of any frames the client missed since [lastSeq] within
-     * [epoch]. Only fired when lastSeq>0 (a fresh connect has nothing to resume).
-     * Carries the same stable [deviceId] as session.configure so the gateway can
-     * key the per-device replay buffer.
-     */
-    @Serializable @SerialName("stream.resume")
-    data class StreamResume(
-        val epoch: Long,
-        val lastSeq: Long,
-        val deviceId: String,
-    ) : ClientMessage()
 }
 
 @Serializable
 data class Capabilities(val supports: List<String>)
+
+/**
+ * Resume request folded into [ClientMessage.SessionConfigure.resume] on a RECONNECT
+ * (Slice 3 hardening). Requests replay of any frames missed since [lastSeq] within
+ * [epoch]. Built only when lastSeq>0 (a fresh connect has nothing to resume).
+ */
+@Serializable
+data class ResumeParams(
+    val epoch: Long,
+    val lastSeq: Long,
+)
 
 /** Payload body for [ClientMessage.UserPreferencesPatch]. Both fields are optional so callers
  *  can patch only what changed. Null fields are omitted from JSON by [WireJson] (explicitNulls=false). */
