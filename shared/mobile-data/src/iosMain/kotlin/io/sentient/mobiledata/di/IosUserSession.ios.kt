@@ -181,9 +181,10 @@ class IosUserSession(
         sdk.onForeground()
     }
 
-    /** Logout teardown: disconnect (clearSession=true) + cancel the session scope. */
+    /** Logout teardown: disconnect (clearSession=true), release the chat mirror, cancel the scope. */
     fun close() {
         sdk.disconnect(clearSession = true)
+        component.close()
         scope.cancel()
     }
 }

@@ -2,8 +2,11 @@ package io.sentient.mobiledata.di
 
 import com.russhwolf.settings.Settings
 import io.sentient.mobiledata.cache.SyncCursorStore
+import io.sentient.mobiledata.cache.db.ChatDatabase
 import io.sentient.mobiledata.cache.db.DatabaseDriverFactory
+import io.sentient.mobiledata.data.CachingConversationRepository
 import io.sentient.mobiledata.data.SdkConnectionStateRepository
+import io.sentient.mobiledata.data.ioDispatcher
 import io.sentient.mobiledata.data.SdkConversationRepository
 import io.sentient.mobiledata.data.SdkSessionsRepository
 import io.sentient.mobiledata.usecase.DeleteSessionUseCase
@@ -14,6 +17,10 @@ import io.sentient.mobiledata.usecase.SendMessageUseCase
 import io.sentient.mobiledata.usecase.SwitchConversationUseCase
 import io.sentient.mobilesdk.sdk.SentientSdk
 import io.sentient.mobilesdk.util.Clock
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlin.time.Clock as KtClock
 
 /**
@@ -33,7 +40,27 @@ class ChatComponent(
     settings: Settings,
     clock: Clock = Clock { KtClock.System.now().toEpochMilliseconds() },
 ) {
-    private val conversation = SdkConversationRepository(sdk)
+    // Connection-scoped scope for the durable chat mirror's write-through + DB-backed
+    // timeline collectors. Lives as long as this user component; the platform owner
+    // tears the component down on logout, which cancels these collectors.
+    private val mirrorScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    // One SQL driver + ChatDatabase per connection scope (the driver factory opens +
+    // migrates the schema; we wrap it once here and inject the DB into the caching
+    // decorator). The driver is released in [close] on logout.
+    private val driver = databaseDriverFactory.create()
+    private val database = ChatDatabase(driver)
+
+    // Platform IO dispatcher for the caching decorator's blocking SQLite writes, so
+    // they never run on the mirrorScope's CPU (Dispatchers.Default) pool. Android →
+    // real Dispatchers.IO; iOS → a dedicated DB-writer thread (see [ioDispatcher]).
+    private val conversation =
+        CachingConversationRepository(
+            SdkConversationRepository(sdk),
+            database,
+            mirrorScope,
+            ioDispatcher = ioDispatcher(),
+        )
     private val sessions = SdkSessionsRepository(sdk)
     val connection = SdkConnectionStateRepository(sdk)
 
@@ -82,4 +109,14 @@ class ChatComponent(
      * (logout); false keeps the user in session (idle/pause).
      */
     fun disconnect(clearSession: Boolean = true) = sdk.disconnect(clearSession)
+
+    /**
+     * Connection-scope teardown (logout): cancel the chat-mirror collectors and
+     * release the SQL driver. Call after [disconnect]. Idempotent at the platform
+     * layer (the component is nulled and rebuilt on the next login).
+     */
+    fun close() {
+        mirrorScope.cancel()
+        driver.close()
+    }
 }

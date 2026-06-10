@@ -191,6 +191,7 @@ class UserSessionManager(
         log.info("shutdown")
         presence?.unbind()
         chatComponent?.disconnect(clearSession = true)
+        chatComponent?.close()
         scope?.cancel()
         if (io.sentient.android.BuildConfig.DEBUG) SdkFaultHolder.clear()
         chatComponent = null
