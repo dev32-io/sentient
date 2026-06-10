@@ -108,6 +108,23 @@ export async function handleSessionConfigure(
   const conversationMirror = createConversationMirror(services.cerebrum.conversation_history.max_entries);
   ws.data.conversationHistory = conversationMirror;
 
+  // Egress proxy — all outbound push frames route through this pair of
+  // closures. The inner target starts as a direct ws.send fallback so the
+  // early setup paths (preferences seed, session.ready) that emit before
+  // the FrameSequencer attachment is built still work. Once the attachment
+  // is constructed (below), the target is replaced with attachment.send /
+  // attachment.sendBinary so everything from that point is seq/epoch-stamped
+  // and journaled into the per-device replay buffer.
+  let egressSend: (msg: unknown) => void = (msg) => {
+    ws.send(JSON.stringify(msg));
+  };
+  let egressSendBinary: (data: Uint8Array) => void = (data) => {
+    ws.send(data);
+  };
+  // stable capture; egressSend/egressSendBinary are retargeted to attachment.send below
+  const wsSend = (msg: unknown): void => egressSend(msg);
+  const wsSendBinary = (data: Uint8Array): void => egressSendBinary(data);
+
   // Conversation feed: the HermesEventTranslator emits conversation.entry for
   // assistant/tool entries it produces. User and trigger entries (from
   // adapters + sensors) don't flow through the translator — mirror onAppend
@@ -121,16 +138,9 @@ export async function handleSessionConfigure(
       kind: entry.kind,
       preview,
     });
-    ws.send(JSON.stringify({ type: "conversation.entry", item: toFeedItem(entry) }));
+    wsSend({ type: "conversation.entry", item: toFeedItem(entry) });
   });
   ws.data.conversationFeedUnsub = conversationFeedUnsub;
-
-  const wsSend = (msg: unknown): void => {
-    ws.send(JSON.stringify(msg));
-  };
-  const wsSendBinary = (data: Uint8Array): void => {
-    ws.send(data);
-  };
 
   // Hermes dispatcher deps — wired below after the gate is created.
   // The gate's onCycle callback closes over these.
@@ -178,15 +188,34 @@ export async function handleSessionConfigure(
     sendError(ws, "protocol_error", "Person session create failed");
     return;
   }
+  // Task 3.8: replace placeholder deviceId/resumeEpoch with the client handshake values.
+  // For now, use the per-WS sessionId as a placeholder deviceId and no resumeEpoch
+  // so each connection starts a fresh buffer. Task 3.8 will wire the stable deviceId
+  // and resumeEpoch from the WS handshake to enable true resume across reconnects.
+  const deviceId = sessionId;
+  const { buffer: deviceBuffer, epoch: deviceEpoch } = personSession.acquireDeviceBuffer(deviceId);
+
   const attachment = createDeviceAttachment<ClientData>({
     attachmentId: sessionId,
     ws,
     sessionId,
     profile: personSession.profile,
+    buffer: deviceBuffer,
+    epoch: deviceEpoch,
   });
   personSession.attach(attachment);
   ws.data.personSession = personSession;
   ws.data.attachment = attachment;
+
+  // Route all subsequent outbound push frames through the FrameSequencer so
+  // they are seq/epoch-stamped and journaled before the socket write. Everything
+  // after this point — preferences seed, session.ready, Hermes cycle frames,
+  // audio frames — flows through the attachment. Frames emitted before this
+  // point (auth-handshake, protocol errors) are raw ws.send; those happen
+  // before the device buffer exists and cannot be replayed — acceptable.
+  // one-time retarget: all push frames now flow through the per-device FrameSequencer
+  egressSend = (msg) => attachment.send(msg);
+  egressSendBinary = (data) => attachment.sendBinary(data);
 
   // Seed session preferences from the user's profile.audio so the entry-gate
   // ttsEnabled check (below) and the channel mid-stream gate honor the
@@ -761,7 +790,7 @@ export async function handleSessionConfigure(
   // On conversation.activate the gateway emits session.switched only —
   // history is now REST (no conversation.snapshot on activate).
   const emitActivateSwitched = (switchedTo: string): void => {
-    ws.send(JSON.stringify({ type: "session.switched", sessionId: switchedTo, ts: Date.now() }));
+    wsSend({ type: "session.switched", sessionId: switchedTo, ts: Date.now() });
     log.info("session.switched.emitted", { sessionId, switchedTo });
   };
 
@@ -782,7 +811,7 @@ export async function handleSessionConfigure(
     userId: initialBinding.userId,
     titleStore,
     send: (frame) => {
-      ws.send(JSON.stringify(frame));
+      wsSend(frame);
     },
     switchFlow,
     profileSessionsLookup,
@@ -812,17 +841,15 @@ export async function handleSessionConfigure(
     preemptFadeoutMs: services.webui.playback.preempt_fadeout_ms,
   };
   log.debug("session-ready-playback-tunables", { sessionId, ...playbackTunables });
-  ws.send(
-    JSON.stringify({
-      type: "session.ready",
-      sessionId,
-      audioEncoding: AUDIO_ENCODING,
-      inputSampleRate: INPUT_SAMPLE_RATE,
-      outputSampleRate: OUTPUT_SAMPLE_RATE,
-      enabledEffects: [],
-      playback: playbackTunables,
-    }),
-  );
+  wsSend({
+    type: "session.ready",
+    sessionId,
+    audioEncoding: AUDIO_ENCODING,
+    inputSampleRate: INPUT_SAMPLE_RATE,
+    outputSampleRate: OUTPUT_SAMPLE_RATE,
+    enabledEffects: [],
+    playback: playbackTunables,
+  });
 
   // Resume on connect: if `?session_id=` was at WS upgrade, run the activate
   // flow now. The mirror.onSnapshot listener emits session.switched only
@@ -847,12 +874,10 @@ export async function handleSessionConfigure(
 
   if (!resumeHandled) {
     // Initial sync of the conversation mirror. Empty on fresh session.
-    ws.send(
-      JSON.stringify({
-        type: "conversation.snapshot",
-        items: toFeed(conversationMirror.snapshot()),
-      }),
-    );
+    wsSend({
+      type: "conversation.snapshot",
+      items: toFeed(conversationMirror.snapshot()),
+    });
   }
 }
 

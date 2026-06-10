@@ -271,9 +271,11 @@ export function cleanupSession(ws: ServerWebSocket<ClientData>, services: Gatewa
   ws.data.conversationHistory = null;
   ws.data.isStreaming = false;
 
-  // Detach this device from the person session (PersonSession itself stays
-  // alive; B1/B2 scope is bookkeeping only, no archive timer yet).
+  // Detach this device from the person session and release its replay buffer
+  // so the per-device TTL clock starts. Task 3.7 owns the full cleanup split;
+  // this minimum ensures the buffer is released when the attachment detaches.
   if (ws.data.personSession && ws.data.attachment) {
+    ws.data.personSession.releaseDeviceBuffer(ws.data.attachment.attachmentId);
     ws.data.personSession.detach(ws.data.attachment);
   }
   ws.data.personSession = null;
