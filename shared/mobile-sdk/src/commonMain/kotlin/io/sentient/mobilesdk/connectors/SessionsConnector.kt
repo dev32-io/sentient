@@ -226,15 +226,17 @@ class SessionsConnector(
      * True when a sendNew was attempted but session.created has not yet confirmed it.
      * Used by the SDK to detect a dropped pre-READY mint and re-fire on the READY
      * rising edge (the transport was not open when the original sendNew fired).
+     * SDK-internal — not part of the public connector surface.
      */
-    fun hasPendingMint(): Boolean = lastMintAtMs != null
+    internal fun hasPendingMint(): Boolean = lastMintAtMs != null
 
     /**
      * Clear the mint debounce clock and re-send a session.new. Used exclusively by
      * the SDK on the first-connect READY rising edge when [hasPendingMint] is true:
      * the original sendNew was dropped (null transport), so we retry unconditionally.
+     * SDK-internal — not part of the public connector surface.
      */
-    fun retryPendingMint() {
+    internal fun retryPendingMint() {
         lastMintAtMs = null
         sendNew()
     }

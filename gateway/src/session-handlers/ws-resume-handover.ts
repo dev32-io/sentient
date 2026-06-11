@@ -32,7 +32,7 @@
 
 import type { ServerWebSocket } from "bun";
 import { getLog } from "../logging/logger.js";
-import type { SessionReplayBuffer } from "./session-replay-buffer.js";
+import type { SessionReplayBuffer, SessionReplayFrame } from "./session-replay-buffer.js";
 import type { ClientData } from "./ws-helpers.js";
 
 const log = getLog(["sentient", "ws", "resume"]);
@@ -105,10 +105,30 @@ export function handleResumeOrFresh(input: HandleResumeOrFreshInput): boolean {
   // before session.ready would run the defer decision after the ack already
   // passed — semantically wrong. The prefs seed + empty snapshot stay
   // suppressed (caller skips its fresh block) — the client has both via replay.
+  sendRecoveredTrue(ws, sessionId, deviceId, buffer, epoch, resumeParams.lastSeq, sendReady, missed);
+  return true;
+}
+
+/**
+ * recovered:true path — mirrors sendRecoveredFalse for symmetry.
+ * ORDER IS LOAD-BEARING: sendReady() FIRST so the client handshake's ready-gate
+ * completes, THEN stream.resumed ack, THEN verbatim frame replay.
+ */
+function sendRecoveredTrue(
+  ws: ServerWebSocket<ClientData>,
+  sessionId: string,
+  deviceId: string,
+  buffer: SessionReplayBuffer,
+  epoch: number,
+  lastSeq: number,
+  sendReady: () => void,
+  missed: SessionReplayFrame[],
+): void {
+  // sendReady first — order is load-bearing (see handleResumeOrFresh comment).
   sendReady();
   // emit the ack with the replayed range, then replay each buffered frame
   // VERBATIM. fromSeq is lastSeq+1; toSeq is the buffer head.
-  const fromSeq = resumeParams.lastSeq + 1;
+  const fromSeq = lastSeq + 1;
   const toSeq = buffer.newestSeq;
   sendRawFrame(
     ws,
@@ -123,7 +143,6 @@ export function handleResumeOrFresh(input: HandleResumeOrFreshInput): boolean {
     toSeq,
     replayCount: missed.length,
   });
-
   for (const frame of missed) {
     if (frame.kind === "text") {
       sendRawFrame(ws, decoder.decode(frame.bytes), "replay-text");
@@ -131,7 +150,6 @@ export function handleResumeOrFresh(input: HandleResumeOrFreshInput): boolean {
       sendRawFrame(ws, frame.bytes, "replay-binary");
     }
   }
-  return true;
 }
 
 function sendRecoveredFalse(

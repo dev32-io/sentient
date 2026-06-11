@@ -473,7 +473,7 @@ class SentientSdk(
             // in flight or terminal — no-op. Starting another would orphan the in-flight
             // handshake (double-connect race). The handshake's ready-timeout self-recovers
             // a genuinely stuck connect. ERROR requires an explicit forceReconnect() call.
-            else -> log.info("ensureConnected.skip — connect in flight or terminal", mapOf("status" to deriver.status))
+            else -> log.info("ensureConnected.skip", mapOf("status" to deriver.status, "reason" to "connect-in-flight-or-terminal"))
         }
     }
 
@@ -769,8 +769,19 @@ class SentientSdk(
     private fun markInteraction() {
     }
 
+    /**
+     * Fire-and-forget control frame. Silently drops if no active transport exists (pre-READY).
+     * Callers that need guaranteed delivery must defer until READY or use the pending-mint retry.
+     */
     private fun sendControl(msg: ClientMessage) {
-        scope.launch { lifecycle.activeTransport?.send(msg) }
+        scope.launch {
+            val tx = lifecycle.activeTransport
+            if (tx == null) {
+                log.warn("sendControl.dropped", mapOf("type" to msg::class.simpleName, "reason" to "no-active-transport-pre-ready"))
+                return@launch
+            }
+            tx.send(msg)
+        }
     }
 
     private fun sendBinary(bytes: ByteArray) {
