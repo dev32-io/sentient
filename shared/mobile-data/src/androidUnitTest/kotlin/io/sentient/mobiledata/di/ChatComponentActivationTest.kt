@@ -69,7 +69,6 @@ class ChatComponentActivationTest {
                 clock = Clock { 0L },
             ),
             scope = scope,
-            idleTickMs = 1_000_000_000L,
         )
         return ChatComponent(sdk = sdk, databaseDriverFactory = InMemoryDatabaseDriverFactory())
     }
