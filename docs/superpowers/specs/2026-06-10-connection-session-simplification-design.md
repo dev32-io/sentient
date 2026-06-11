@@ -140,8 +140,12 @@ send → enqueue "sending" → flush when (WS ready AND id attached) → wire te
   - *Reconcile (client, already works):* the gateway echoes `pendingId` on the committed
     user entry; the client drops the matching optimistic bubble (handles identical text).
   - *Idempotency (server, new):* the gateway dedups in `handleTextInput` — a `text.input`
-    whose `pendingId` was already processed for this session is **re-echoed but NOT
-    re-dispatched**. The dedup window is bounded (per active session, recent ids).
+    whose `pendingId` was already processed for this session is **dropped (not re-dispatched)**.
+    No second cycle, no duplicate entry. The client's optimistic bubble still reconciles —
+    not from a re-echo of the dropped frame, but because a resend only happens after a
+    socket drop, and the original committed echo arrives via warm replay (the gateway
+    replays the journaled entry) or, on a cold reconnect, the cold-history-replace drop
+    (§9). The dedup window is bounded (per active session, recent ids — `PENDING_ID_CAP`).
 - **The `flushed` double-send guard is deleted.** With server dedup, the client resends
   unacked messages freely on reconnect — a re-send can never create a duplicate.
 - **Outbox unacked-timeout** (config, §10): a flushed "sending" message with no echo within

@@ -9,8 +9,10 @@
 //
 // Lifecycle:
 //   - open()   — background connect(); the UI never blocks on it.
-//   - pause()  — app background: drop the socket but stay in session (clearSession=false).
-//   - resume() — app foreground: re-arm reconnect.
+//   - pause()  — app background: KEEP the socket (gateway holds the session; a brief
+//                background survives on the same socket). Intentionally a no-op.
+//   - resume() — app foreground: one-shot liveness probe / reconnect. (The iOS Swift host
+//                routes foreground engagement through component.ensureConnected(); see resume().)
 //   - close()  — logout: disconnect(clearSession=true) + cancel the scope.
 //
 // Construction mirrors MobileSessionFactory.ios.kt: a SupervisorJob +

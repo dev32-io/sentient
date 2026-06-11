@@ -13,8 +13,9 @@
 // asks for a fresh VM each time the active conversation changes, the SwiftUI
 // analogue of Android's route-recreates-VM.
 //
-// Presence: pause()/resume() forward background/foreground to the KMP session
-// (drop socket / re-arm reconnect). The owning view drives these from scenePhase
+// Presence: pause() KEEPS the socket on background (the gateway holds the session);
+// resume() routes foreground engagement to component.ensureConnected() (probe/reconnect).
+// The owning view drives these from scenePhase
 // with a cold-start-skip (init already connected).
 // ---------------------------------------------------------------------------
 import Foundation
