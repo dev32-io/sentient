@@ -16,6 +16,15 @@ data class ChatModel(
      * snapshot is empty/immediate, carried by an empty switched sessionId).
      */
     val historyLoading: Boolean = false,
+    /**
+     * ACCUMULATING set of pendingIds whose committed echo has been seen on the LIVE
+     * timeline (the reconcile source that still carries pendingId — NOT the
+     * pendingId-stripping DB mirror). The VM calls cache.remove(id) for each id in this
+     * set; cache.remove is idempotent so duplicate echoes are harmless. [pending] is
+     * ALREADY filtered to exclude these for display; this set is the VM's drive signal
+     * for cache eviction, not a per-emission action set.
+     */
+    val reconciledPendingIds: Set<String> = emptySet(),
 ) {
     fun messagesForUi(): List<ChatMessage> =
         if (live == null) committed else committed + live.copy(tools = tasks)

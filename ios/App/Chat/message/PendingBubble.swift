@@ -1,13 +1,12 @@
 // ---------------------------------------------------------------------------
 // PendingBubble — optimistic user-side bubble while the outbox entry is in
-// QUEUED, SENT, or FAILED state. Mirrors the Android PendingBubble
-// (android/.../chat/MessageList.kt). Reconciled away by ChatRepository once
-// the gateway echoes back the committed feed entry carrying the matching
-// pendingId. Rendered as a trailing user-aligned bubble with an inline status
-// chip below the bubble body.
+// QUEUED or FAILED state. There is NO "sent" state: the bubble is reconciled
+// AWAY (cache.remove) on its committed echo, never promoted to a "✓ sent" chip.
+// Mirrors the Android PendingBubble (android/.../chat/MessageList.kt). Rendered
+// as a trailing user-aligned bubble with an inline status chip below the body.
 //
-// accessibilityIdentifiers: msg-status-queued / msg-status-sent /
-// msg-status-failed — mirrors Android testTags.
+// accessibilityIdentifiers: msg-status-queued / msg-status-failed — mirrors
+// Android testTags.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
@@ -67,11 +66,8 @@ struct PendingBubble: View {
     @ViewBuilder
     private var statusChip: some View {
         if msg.status == .queued {
-            chipLabel("queued", color: DuskColors.ink3)
+            chipLabel("Sending…", color: DuskColors.ink3)
                 .accessibilityIdentifier("msg-status-queued")
-        } else if msg.status == .sent {
-            chipLabel("✓ sent", color: DuskColors.ok)
-                .accessibilityIdentifier("msg-status-sent")
         } else {
             // FAILED — tappable retry chip.
             Button(action: onRetry) {
@@ -96,9 +92,8 @@ struct PendingBubble: View {
     let now = Int64(Date().timeIntervalSince1970 * 1000)
     ScrollView {
         VStack(spacing: Space.gapMsg) {
-            PendingBubble(msg: PendingMessage(id: "1", text: "Hello, how are you?", status: .queued), userName: "Alice")
-            PendingBubble(msg: PendingMessage(id: "2", text: "Can you help me with this?", status: .sent), userName: "Alice")
-            PendingBubble(msg: PendingMessage(id: "3", text: "This message failed to send.", status: .failed), userName: "Alice")
+            PendingBubble(msg: PendingMessage(id: "1", text: "Hello, how are you?", status: .queued, flushed: false), userName: "Alice")
+            PendingBubble(msg: PendingMessage(id: "3", text: "This message failed to send.", status: .failed, flushed: false), userName: "Alice")
         }
         .padding()
     }

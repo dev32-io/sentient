@@ -35,27 +35,29 @@ class OutboxTest {
     }
 
     @Test
-    fun reenqueue_of_sent_id_does_not_resurrect_or_double_send() {
+    fun reenqueue_of_flushed_id_does_not_resurrect_or_double_send() {
         val sent = mutableListOf<String>()
         val ob = Outbox(send = { sent.add(it.text) })
         ob.enqueue(PendingMessage("m1", "hello"))
-        ob.onReady()                                   // m1 sent
-        ob.enqueue(PendingMessage("m1", "hello-again")) // same id, already SENT
+        ob.onReady()                                   // m1 flushed (stays QUEUED)
+        ob.enqueue(PendingMessage("m1", "hello-again")) // same id, already flushed
         ob.onReady()
         assertEquals(1, sent.size)                     // not re-sent
-        assertEquals(MessageStatus.SENT, ob.snapshot().first().status)  // stays SENT, not resurrected
+        val m1 = ob.snapshot().first()
+        assertEquals(MessageStatus.QUEUED, m1.status)  // no SENT state — stays QUEUED
+        assertTrue(m1.flushed)                          // flushed guard intact, not resurrected
     }
 
     @Test
-    fun failAll_leaves_sent_entries_untouched() {
+    fun failAll_leaves_flushed_entries_untouched() {
         val ob = Outbox(send = {})
         ob.enqueue(PendingMessage("m1", "hello"))
-        ob.onReady()                                   // m1 -> SENT
-        ob.enqueue(PendingMessage("m2", "world"))      // m2 stays QUEUED
+        ob.onReady()                                   // m1 flushed (QUEUED, awaiting echo)
+        ob.enqueue(PendingMessage("m2", "world"))      // m2 stays QUEUED, unflushed
         ob.failAll("auth dead")
         val snap = ob.snapshot().associateBy { it.id }
-        assertEquals(MessageStatus.SENT, snap["m1"]?.status)    // untouched
-        assertEquals(MessageStatus.FAILED, snap["m2"]?.status)  // failed
+        assertEquals(MessageStatus.QUEUED, snap["m1"]?.status)   // flushed → untouched (not failed)
+        assertEquals(MessageStatus.FAILED, snap["m2"]?.status)   // unflushed → failed
     }
 
     @Test
@@ -71,7 +73,8 @@ class OutboxTest {
 
         ob.onReady()
         assertEquals(listOf("hello"), sent)    // flushed after retry
-        assertEquals(MessageStatus.SENT, ob.snapshot().first().status)
+        assertEquals(MessageStatus.QUEUED, ob.snapshot().first().status)  // no SENT state
+        assertTrue(ob.snapshot().first().flushed)
     }
 
     @Test
@@ -84,13 +87,13 @@ class OutboxTest {
         assertEquals(MessageStatus.QUEUED, ob.snapshot().first().status)
 
         ob.onReady()
-        // still sent once — QUEUED → SENT via onReady
+        // sent once — QUEUED stays QUEUED but is now flushed (guard against re-send)
         assertEquals(1, sent.size)
-        assertEquals(MessageStatus.SENT, ob.snapshot().first().status)
+        assertTrue(ob.snapshot().first().flushed)
 
-        // retry on SENT is also a no-op
+        // retry on a flushed (QUEUED, not FAILED) entry is a no-op
         ob.retry("m1")
-        assertEquals(MessageStatus.SENT, ob.snapshot().first().status)
+        assertTrue(ob.snapshot().first().flushed)
     }
 
     @Test

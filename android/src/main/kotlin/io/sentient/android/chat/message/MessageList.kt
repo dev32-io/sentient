@@ -61,7 +61,7 @@ fun MessageList(
     userName: String = "You",
     modifier: Modifier = Modifier,
     // Optimistic pending rows appended AFTER committed history. Rendered with
-    // status chips (QUEUED / SENT / FAILED) until reconciled by ChatRepository.
+    // status chips (QUEUED / FAILED) until reconciled away on the committed echo.
     pending: List<PendingMessage> = emptyList(),
     // Invoked when the user taps the FAILED chip on a specific pending message.
     onRetry: (String) -> Unit = {},
@@ -196,12 +196,12 @@ private fun EmptyState(modifier: Modifier = Modifier) {
 
 // ---------------------------------------------------------------------------
 // PendingBubble — optimistic user-side bubble while the outbox entry is in
-// QUEUED, SENT, or FAILED state. Mirrors MessageBubble's user-aligned layout
-// (right-side avatar + user bubble shape) with an inline status chip below the
-// bubble body. Reconciled away by ChatRepository once the gateway echoes back
-// the committed feed entry carrying the matching pendingId.
+// QUEUED or FAILED state. There is NO "sent" state: the bubble is reconciled
+// AWAY (cache.remove) on its committed echo, never promoted to a "✓ sent" chip.
+// Mirrors MessageBubble's user-aligned layout (right-side avatar + user bubble
+// shape) with an inline status chip below the bubble body.
 //
-// testTags: msg-status-queued / msg-status-sent / msg-status-failed on the chip.
+// testTags: msg-status-queued / msg-status-failed on the chip.
 // ---------------------------------------------------------------------------
 
 private val FLUSH_CORNER_PENDING = 6.dp
@@ -269,8 +269,7 @@ internal fun PendingBubble(
 private fun PendingStatusChip(status: MessageStatus, onRetry: () -> Unit = {}) {
     val tokens = LocalTokens.current
     val (label, tagName, chipColor) = when (status) {
-        MessageStatus.QUEUED -> Triple("queued", "msg-status-queued", Color(Colors.ink3))
-        MessageStatus.SENT -> Triple("✓ sent", "msg-status-sent", Color(Colors.ok))
+        MessageStatus.QUEUED -> Triple("Sending…", "msg-status-queued", Color(Colors.ink3))
         MessageStatus.FAILED -> Triple("↺ Retry", "msg-status-failed", Color(Colors.stop))
     }
     val clickModifier = if (status == MessageStatus.FAILED) {

@@ -17,7 +17,7 @@
 //
 // Row ordering in MessageList:
 //   1. committed messages (with day-dividers via chatRows())
-//   2. pending outbox entries (QUEUED→SENT→FAILED chips; FAILED = tappable Retry)
+//   2. pending outbox entries (QUEUED / FAILED chips; FAILED = tappable Retry)
 //   3. live streaming assistant bubble (appended when ChatModel.live != nil)
 //
 // Banners (highest priority first):
@@ -194,7 +194,6 @@ struct ChatView: View {
                 ttsEnabled: connection.prefs.ttsEnabled,
                 micActive: voiceActive,
                 canInterrupt: canInterrupt,
-                sendInFlight: !pending.isEmpty,
                 onSend: { vm.send($0) },
                 onMicToggle: { vm.toggleMic() },
                 onTtsToggle: { vm.toggleTts() },

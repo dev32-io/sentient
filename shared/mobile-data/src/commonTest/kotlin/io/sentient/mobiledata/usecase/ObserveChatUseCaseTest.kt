@@ -23,8 +23,13 @@ import kotlin.test.assertTrue
 private class FakeConversationRepository : ConversationRepository {
     val timelineState = MutableStateFlow<List<ChatMessage>>(emptyList())
     val events = MutableSharedFlow<SdkEvent>(extraBufferCapacity = 64)
+    // The LIVE-echo reconcile source: pendingIds seen on committed user entries of the
+    // SDK's OWN (pre-strip) timeline. Driven directly by tests to simulate the echo, since
+    // the DB-backed timeline strips pendingId (so committed.pendingId can no longer carry it).
+    val echoed = MutableStateFlow<Set<String>>(emptySet())
     override val timeline: StateFlow<List<ChatMessage>> = timelineState
     override val liveEvents: SharedFlow<SdkEvent> = events
+    override val echoedPendingIds: kotlinx.coroutines.flow.Flow<Set<String>> = echoed
     val sent = mutableListOf<Pair<String, String>>()
     override fun send(text: String, pendingId: String) { sent.add(text to pendingId) }
 }
@@ -53,18 +58,45 @@ class ObserveChatUseCaseTest {
     }
 
     @Test
-    fun pending_reconciled_by_id() = runTest(UnconfinedTestDispatcher()) {
+    fun pending_reconciled_by_live_echo() = runTest(UnconfinedTestDispatcher()) {
         val repo = FakeConversationRepository()
+        // The committed user entry carries pendingId on the SDK's own timeline; the echo
+        // is surfaced via echoedPendingIds (the reconcile source).
         repo.timelineState.value = listOf(ChatMessage(ts = 1, role = "user", content = "hi", pendingId = "p1"))
-        val pending = MutableStateFlow(listOf(PendingMessage("p1", "hi", MessageStatus.SENT)))
+        repo.echoed.value = setOf("p1")
+        val pending = MutableStateFlow(listOf(PendingMessage("p1", "hi", MessageStatus.QUEUED, flushed = true)))
         val models = mutableListOf<ChatModel>()
         val job = launch { useCase(repo).invoke(pending).collect { models.add(it) } }
         runCurrent()
         val m = models.last()
-        assertTrue(m.pending.isEmpty(), "echo with same pendingId reconciles the optimistic bubble")
+        assertTrue(m.pending.isEmpty(), "live echo with same pendingId reconciles the optimistic bubble")
+        assertTrue("p1" in m.reconciledPendingIds, "the reconciled id is surfaced for the VM's cache.remove")
         assertEquals(1, m.committed.size)
         job.cancel()
     }
+
+    @Test
+    fun pending_dropped_on_live_echo_even_when_committed_entry_has_no_pendingId() =
+        runTest(UnconfinedTestDispatcher()) {
+            // REGRESSION (Slice 4 DB mirror): the DB-backed timeline STRIPS pendingId, so the
+            // committed user entry the VM sees has pendingId=null. Reconcile must still fire,
+            // driven by the LIVE echo set — NOT committed.pendingId.
+            val repo = FakeConversationRepository()
+            repo.timelineState.value =
+                listOf(ChatMessage(ts = 1, role = "user", content = "hi", pendingId = null))
+            repo.echoed.value = setOf("p1") // the live echo carries the pendingId the DB row dropped
+            val pending = MutableStateFlow(listOf(PendingMessage("p1", "hi", MessageStatus.QUEUED, flushed = true)))
+            val models = mutableListOf<ChatModel>()
+            val job = launch { useCase(repo).invoke(pending).collect { models.add(it) } }
+            runCurrent()
+            val m = models.last()
+            assertTrue(
+                m.pending.isEmpty(),
+                "optimistic bubble dropped on live echo despite the DB-stripped committed pendingId",
+            )
+            assertEquals(1, m.committed.size, "exactly one user bubble remains (the committed twin)")
+            job.cancel()
+        }
 
     @Test
     fun session_switch_drops_live_bubble() = runTest(UnconfinedTestDispatcher()) {

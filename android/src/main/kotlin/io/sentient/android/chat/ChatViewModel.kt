@@ -79,8 +79,10 @@ class ChatViewModel(
         }
         viewModelScope.launch {
             component.observeChat(cache.pending).collect { model ->
-                // Reconcile: drop optimistic entries whose committed echo arrived.
-                model.committed.mapNotNull { it.pendingId }.forEach(cache::remove)
+                // Reconcile: drop optimistic entries whose committed echo arrived. Driven by
+                // the LIVE echo (model.reconciledPendingIds) — NOT model.committed.pendingId,
+                // which the DB mirror strips to null (the bug this fix addresses).
+                model.reconciledPendingIds.forEach(cache::remove)
                 _state.value = ChatUiState(model = model)
             }
         }

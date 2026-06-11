@@ -33,6 +33,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -50,6 +52,11 @@ private class FakeUnderlyingRepository : ConversationRepository {
     val events = MutableSharedFlow<SdkEvent>(extraBufferCapacity = 64)
     override val timeline: StateFlow<List<ChatMessage>> = timelineState
     override val liveEvents: SharedFlow<SdkEvent> = events
+    // Mirror the real SdkConversationRepository derivation: the underlying (pre-strip)
+    // timeline's committed pendingIds, accumulated. The decorator delegates echoedPendingIds
+    // straight through to this, surfacing the echo BEFORE the DB mapping strips it.
+    override val echoedPendingIds: kotlinx.coroutines.flow.Flow<Set<String>> =
+        timelineState.scan(emptySet()) { acc, list -> acc + list.mapNotNull { it.pendingId } }
     val sent = mutableListOf<Pair<String, String>>()
     override fun send(text: String, pendingId: String) { sent.add(text to pendingId) }
 }
@@ -338,6 +345,41 @@ class CachingConversationRepositoryTest {
                 "the answer that must not be dropped",
                 painted.single { it.entryId == "e1" }.content,
             )
+        }
+
+    @Test
+    fun `REGRESSION optimistic send — DB mirror STRIPS pendingId but the live echo still reconciles`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // The exact Slice-4 bug: the durable mirror persists entry_id but DROPS pendingId
+            // (the reconcile key), so the DB-backed timeline the VM sees has pendingId=null and
+            // committed-pendingId reconcile never fires. The FIX surfaces the echo via
+            // echoedPendingIds (delegated to the underlying pre-strip timeline), so the
+            // optimistic copy IS dropped even though the persisted row carries no pendingId.
+            val under = FakeUnderlyingRepository()
+            val repo = repoFor(under)
+
+            intent.value = "conv-1" // client switch intent anchors paint + write-through
+            // A committed USER entry carrying the optimistic pendingId on the SDK's own timeline.
+            under.timelineState.value =
+                listOf(ChatMessage(ts = 1, role = "user", content = "hello", pendingId = "p1", entryId = "e1"))
+            runCurrent()
+
+            // (1) The persisted DB row STRIPS pendingId — it is NOT in the durable store.
+            val persisted = rows("conv-1")
+            assertEquals(1, persisted.size)
+            assertEquals("e1", persisted.single().entry_id)
+
+            // (2) The DB-backed timeline the VM consumes also has pendingId=null (mirror strips it),
+            //     and exactly ONE user bubble persists (the committed twin).
+            val painted = repo.timeline.value
+            assertEquals(1, painted.size)
+            assertNull(painted.single().pendingId, "the mirror strips pendingId off the persisted timeline")
+
+            // (3) The LIVE echo STILL surfaces the pendingId — the reconcile source the usecase
+            //     filters against — so the optimistic outbox copy is dropped despite (2). scan over
+            //     the StateFlow emits its seed (emptySet) first, then folds the held snapshot in;
+            //     take the first non-empty emission (the folded value).
+            assertTrue("p1" in repo.echoedPendingIds.first { it.isNotEmpty() }, "live echo surfaces the stripped pendingId")
         }
 
     @Test

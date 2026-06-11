@@ -15,8 +15,10 @@
 // MicPermission). When voiceMode .active the mic button wears the accent
 // "mic-on" styling.
 //
-// In-flight send: when sendInFlight == true the send button is replaced by a
-// small ProgressView (a11y id chat-send-spinner), signalling the pending queue.
+// Send is optimistic — it returns immediately and the outbox renders the
+// pending bubble, so the composer NEVER spins on the socket (no in-flight
+// spinner). The send button is always the paper-plane action, enabled on a
+// non-empty draft.
 //
 // The composer owns only the draft text + the mic-denied flag (local @State);
 // everything else is read from SdkState and dispatched up through callbacks.
@@ -26,7 +28,7 @@
 // Mic/preview extracted to Composer+Mic.swift (line-limit compliance).
 //
 // accessibilityIdentifiers: composer-input (TextField, matches Android tag),
-// chat-send, chat-send-spinner, chat-interrupt, chat-tts-toggle, chat-mic, mic-denied-notice.
+// chat-send, chat-interrupt, chat-tts-toggle, chat-mic, mic-denied-notice.
 // ---------------------------------------------------------------------------
 import AVFoundation
 import SwiftUI
@@ -42,8 +44,6 @@ struct Composer: View {
     let micActive: Bool
     /// True when a cycle is in flight or audio is playing.
     let canInterrupt: Bool
-    /// True while a user message is pending in the send queue (hasPendingSends).
-    let sendInFlight: Bool
     let onSend: (String) -> Void
     let onMicToggle: () -> Void
     let onTtsToggle: () -> Void
@@ -170,26 +170,21 @@ struct Composer: View {
         }
     }
 
-    // ── Send button / in-flight spinner ──────────────────────────────────────
+    // ── Send button ───────────────────────────────────────────────────────────
+    //
+    // Always the paper-plane action, enabled on a non-empty draft. There is no
+    // in-flight spinner: an optimistic send returns immediately (the outbox shows
+    // the pending bubble), so the composer never spins on the socket.
 
-    @ViewBuilder
     private var sendButton: some View {
-        if sendInFlight {
-            ProgressView()
-                .controlSize(.small)
-                .tint(DuskColors.accent)
-                .frame(width: ComposerLayout.buttonSize, height: ComposerLayout.buttonSize)
-                .accessibilityIdentifier("chat-send-spinner")
-        } else {
-            ComposerAction(
-                systemName: "paperplane.fill",
-                tint: sendEnabled ? DuskColors.accent : DuskColors.ink4,
-                action: submit
-            )
-            .disabled(!sendEnabled)
-            .accessibilityLabel("Send")
-            .accessibilityIdentifier("chat-send")
-        }
+        ComposerAction(
+            systemName: "paperplane.fill",
+            tint: sendEnabled ? DuskColors.accent : DuskColors.ink4,
+            action: submit
+        )
+        .disabled(!sendEnabled)
+        .accessibilityLabel("Send")
+        .accessibilityIdentifier("chat-send")
     }
 
     // ── Submit ──────────────────────────────────────────────────────────────

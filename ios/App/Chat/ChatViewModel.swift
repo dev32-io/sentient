@@ -131,8 +131,10 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func applyChat(_ model: ChatModel) {
-        // Reconcile: drop optimistic entries whose committed echo arrived.
-        for id in model.committed.compactMap({ $0.pendingId }) {
+        // Reconcile: drop optimistic entries whose committed echo arrived. Driven by the
+        // LIVE echo (model.reconciledPendingIds) — NOT model.committed.pendingId, which the
+        // DB mirror strips to null (the bug this fix addresses).
+        for id in model.reconciledPendingIds {
             cache.remove(id: id)
         }
         state = ChatUiState(model: model, isLoading: false, historyLoading: model.historyLoading, banner: nil)

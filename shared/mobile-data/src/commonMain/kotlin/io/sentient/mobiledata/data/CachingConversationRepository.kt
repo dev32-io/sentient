@@ -94,6 +94,13 @@ class CachingConversationRepository(
     override val liveEvents: SharedFlow<SdkEvent> get() = underlying.liveEvents
     override fun send(text: String, pendingId: String) = underlying.send(text, pendingId)
 
+    // The reconcile source is the LIVE echo, NOT this decorator's DB-backed timeline.
+    // The underlying SDK repo's timeline still carries pendingId on committed user
+    // entries; the write-through below STRIPS it when mapping to the DB row (A2: pendingId
+    // stays OUT of the durable store). So we delegate echoedPendingIds straight through to
+    // the underlying repo — same as liveEvents + send — surfacing the pre-strip echo.
+    override val echoedPendingIds: Flow<Set<String>> get() = underlying.echoedPendingIds
+
     /**
      * DB-backed committed history for the active conversation. Re-subscribes to the
      * right `messagesFor` query whenever the CLIENT-INTENT anchor changes; emits the

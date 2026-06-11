@@ -41,9 +41,13 @@ class ObserveChatUseCase(
             revealFlow(),
             pending,
             historyLoadingFlow(),
-        ) { committed, rs, pendingMsgs, loading ->
-            val committedPendingIds = committed.mapNotNull { it.pendingId }.toSet()
-            val visiblePending = pendingMsgs.filter { it.id !in committedPendingIds }
+            conversation.echoedPendingIds,
+        ) { committed, rs, pendingMsgs, loading, echoedPendingIds ->
+            // Reconcile against the LIVE echo, NOT committed.pendingId: the DB-backed
+            // timeline strips pendingId, so committed.mapNotNull { it.pendingId } would be
+            // empty and the optimistic bubble would never drop. echoedPendingIds comes from
+            // the SDK's own (pre-strip) timeline (see ConversationRepository.echoedPendingIds).
+            val visiblePending = pendingMsgs.filter { it.id !in echoedPendingIds }
             val liveCycleId = rs.bubble?.cycleId
             val visibleCommitted =
                 if (liveCycleId == null) committed
@@ -63,6 +67,7 @@ class ObserveChatUseCase(
                 live = liveBubble,
                 tasks = rs.tasks,
                 historyLoading = loading,
+                reconciledPendingIds = echoedPendingIds,
             )
         }
 

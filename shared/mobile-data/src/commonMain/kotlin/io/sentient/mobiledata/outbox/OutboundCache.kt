@@ -9,8 +9,14 @@ import kotlinx.coroutines.flow.asStateFlow
  * cache), so it is owned by the chat VM and dies with the conversation — no reset().
  * Knows nothing about the connection; the VM gates the flush on connection-ready.
  *
- * FSM per id: QUEUED → SENT (flushed) | FAILED (disconnect) → QUEUED (retry). A non-QUEUED
- * id is never resurrected by a duplicate enqueue, and never re-sent once SENT.
+ * There is NO "sent" state. An entry is QUEUED until its committed echo arrives, at
+ * which point the VM [remove]s it (reconcile-by-pendingId, driven by the LIVE echo —
+ * NOT the pendingId-stripping DB mirror). The only terminal-visible state is FAILED
+ * (disconnect), which a [retry] re-queues.
+ *
+ * FSM per id: QUEUED → (flushed guard set on drain, still QUEUED) → removed on echo,
+ * OR QUEUED → FAILED (disconnect) → QUEUED (retry). A flushed or FAILED id is never
+ * resurrected by a duplicate enqueue, and a flushed entry is never re-sent.
  */
 class OutboundCache {
     private val queue = LinkedHashMap<String, PendingMessage>()
@@ -19,20 +25,25 @@ class OutboundCache {
 
     fun enqueue(id: String, text: String) {
         val existing = queue[id]
-        if (existing != null && existing.status != MessageStatus.QUEUED) return
+        if (existing != null && (existing.flushed || existing.status == MessageStatus.FAILED)) return
         queue[id] = PendingMessage(id, text, MessageStatus.QUEUED)
         publish()
     }
 
-    /** All still-QUEUED entries — the VM flushes these on connection-ready. */
-    fun queued(): List<PendingMessage> = queue.values.filter { it.status == MessageStatus.QUEUED }
+    /**
+     * Still-flushable entries — QUEUED and NOT yet flushed. The VM drains these on
+     * connection-ready; the [flushed] guard keeps a reconnect re-fire from re-sending an
+     * entry that is still awaiting its echo.
+     */
+    fun queued(): List<PendingMessage> = queue.values.filter { it.status == MessageStatus.QUEUED && !it.flushed }
 
-    fun markSent(id: String) = transition(id) { it.copy(status = MessageStatus.SENT) }
+    /** Mark an entry flushed (handed to the transport). Stays QUEUED for display; the echo removes it. */
+    fun markFlushed(id: String) = transition(id) { it.copy(flushed = true) }
     fun markFailed(id: String) = transition(id) {
-        if (it.status == MessageStatus.QUEUED) it.copy(status = MessageStatus.FAILED) else it
+        if (it.status == MessageStatus.QUEUED && !it.flushed) it.copy(status = MessageStatus.FAILED) else it
     }
     fun retry(id: String) = transition(id) {
-        if (it.status == MessageStatus.FAILED) it.copy(status = MessageStatus.QUEUED) else it
+        if (it.status == MessageStatus.FAILED) it.copy(status = MessageStatus.QUEUED, flushed = false) else it
     }
 
     /** Drop a reconciled entry (its committed echo arrived). */

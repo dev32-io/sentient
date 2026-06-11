@@ -17,6 +17,7 @@ import kotlin.test.assertTrue
 private class CapturingConversationRepository : ConversationRepository {
     override val timeline: StateFlow<List<ChatMessage>> = MutableStateFlow(emptyList())
     override val liveEvents: SharedFlow<SdkEvent> = MutableSharedFlow()
+    override val echoedPendingIds: kotlinx.coroutines.flow.Flow<Set<String>> = MutableStateFlow(emptySet())
     val sent = mutableListOf<Pair<String, String>>()
     override fun send(text: String, pendingId: String) { sent.add(text to pendingId) }
 }
@@ -49,16 +50,18 @@ class SendMessageUseCaseTest {
     }
 
     @Test
-    fun sent_entries_are_not_resent() {
+    fun flushed_entries_are_not_resent() {
         val repo = CapturingConversationRepository()
         val cache = OutboundCache()
         cache.enqueue("p1", "hello")
         val useCase = SendMessageUseCase(repo)
 
         useCase.flushIfReady(cache, SdkStatus.READY)
-        useCase.flushIfReady(cache, SdkStatus.READY)
+        useCase.flushIfReady(cache, SdkStatus.READY) // reconnect re-fire
 
-        assertEquals(1, repo.sent.size, "a SENT entry is never re-sent on a second flush")
-        assertEquals(MessageStatus.SENT, cache.pending.value.single().status)
+        assertEquals(1, repo.sent.size, "a flushed entry is never re-sent on a second flush")
+        // No SENT state: the entry stays QUEUED (flushed guard) until its echo removes it.
+        assertEquals(MessageStatus.QUEUED, cache.pending.value.single().status)
+        assertTrue(cache.queued().isEmpty(), "a flushed entry is excluded from the flushable set")
     }
 }

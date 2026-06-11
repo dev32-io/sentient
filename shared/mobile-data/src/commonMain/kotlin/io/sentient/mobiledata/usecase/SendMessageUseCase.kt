@@ -18,9 +18,11 @@ class SendMessageUseCase(private val conversation: ConversationRepository) {
     operator fun invoke(text: String, pendingId: String) = conversation.send(text, pendingId)
 
     /**
-     * Drain still-QUEUED entries iff transport is ready. Each is sent then marked SENT;
-     * the committed echo reconciles by pendingId later. A non-READY status is a no-op
-     * (the entries stay QUEUED for the next rising edge). SENT entries are never re-sent.
+     * Drain still-flushable entries iff transport is ready. Each is sent then marked
+     * flushed (an INTERNAL re-send guard — the entry stays QUEUED for display until its
+     * committed echo reconciles it away by pendingId). A non-READY status is a no-op (the
+     * entries stay QUEUED + unflushed for the next rising edge). A flushed entry is never
+     * re-sent (queued() excludes it).
      */
     fun flushIfReady(cache: OutboundCache, status: SdkStatus) {
         if (status != SdkStatus.READY) {
@@ -31,7 +33,7 @@ class SendMessageUseCase(private val conversation: ConversationRepository) {
         log.info("flush", mapOf("count" to queued.size))
         for (m in queued) {
             conversation.send(m.text, m.id)
-            cache.markSent(m.id)
+            cache.markFlushed(m.id)
         }
     }
 }
