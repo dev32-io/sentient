@@ -29,7 +29,7 @@ describe("gatewayConfigSchema", () => {
 
     expect(result.port).toBe(8888);
     expect(result.host).toBe("0.0.0.0");
-    expect(result.max_sessions).toBe(10);
+    expect(result.max_sessions).toBe(100);
     expect(result.auth_timeout_ms).toBe(5000);
     expect(result.session_persist_ms).toBe(120000);
   });

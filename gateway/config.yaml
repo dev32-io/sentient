@@ -11,7 +11,7 @@ schema_version: "0.1.0"
 # ---------------------------------------------------------------------------
 port: 8888
 host: 0.0.0.0
-max_sessions: 10
+max_sessions: 100                        # Max concurrent WS connections (mobile + webui + cube, multi-user). Range 1–1000.
 auth_timeout_ms: 5000
 session_persist_ms: 120000           # how long a disconnected session stays alive
 

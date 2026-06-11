@@ -389,7 +389,7 @@ export type CompanionsConfig = z.output<typeof companionsConfigSchema>;
 export const gatewayConfigSchema = z.object({
   port: z.number().int().min(1).max(65535).default(8888),
   host: z.string().default("0.0.0.0"),
-  max_sessions: z.number().int().min(1).max(100).default(10),
+  max_sessions: z.number().int().min(1).max(1000).default(100),
   auth_timeout_ms: z.number().int().min(1000).default(5000),
   session_persist_ms: z.number().int().min(0).default(120000),
   tls: tlsConfigSchema.default({}),
