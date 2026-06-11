@@ -76,7 +76,7 @@ class ChatViewModel(
         viewModelScope.launch {
             component.connection.state.collect { conn ->
                 component.sendMessage.flushIfReady(cache, conn.status)
-                cache.sweepTimeouts()
+                if (cache.pending.value.isNotEmpty()) cache.sweepTimeouts()
             }
         }
         // Periodic sweep: drives unacked-timeout FAILED transitions even when there are
@@ -124,7 +124,10 @@ class ChatViewModel(
      * Engagement signal from the chat screen: fires on screen entry (LaunchedEffect)
      * and on composer focus. Idempotent — READY → liveness probe; not-READY → reconnect.
      */
-    fun ensureConnected() = component.ensureConnected()
+    fun ensureConnected() {
+        log.debug("ensureConnected")
+        component.ensureConnected()
+    }
 
     /**
      * Composer gained keyboard focus — user is about to type; ensure the connection is
