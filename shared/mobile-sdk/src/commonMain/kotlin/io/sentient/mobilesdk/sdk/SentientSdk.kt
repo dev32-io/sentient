@@ -452,6 +452,23 @@ class SentientSdk(
     }
 
     /**
+     * Engagement-driven connectivity check — call from every "user is at the chat"
+     * signal (foreground, chat screen appears, composer focus, pre-send). READY =>
+     * one liveness probe (delegates to [onForeground]); not-READY => [forceReconnect],
+     * which re-establishes the anchored conversation via conversation.activate on the
+     * next READY rising edge. On-demand only: never a timer, never while backgrounded.
+     */
+    fun ensureConnected() {
+        log.info("ensureConnected", mapOf("status" to deriver.status))
+        markInteraction()
+        if (deriver.status == SdkStatus.READY) {
+            onForeground()
+        } else {
+            forceReconnect()
+        }
+    }
+
+    /**
      * Foreground presence signal — the app returned to the foreground.
      *
      * We do NOT proactively drop the socket on background (the gateway keeps the
