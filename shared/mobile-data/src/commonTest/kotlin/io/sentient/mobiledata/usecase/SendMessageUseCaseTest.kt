@@ -27,11 +27,12 @@ class SendMessageUseCaseTest {
     @Test
     fun queued_entries_drain_only_when_ready() {
         val repo = CapturingConversationRepository()
+        val attachedId = MutableStateFlow<String?>("existing-conv")
         val cache = OutboundCache()
         cache.enqueue("p1", "hello")
         cache.enqueue("p2", "world")
 
-        SendMessageUseCase(repo).flushIfReady(cache, SdkStatus.READY)
+        SendMessageUseCase(repo, attachedId).flushIfReady(cache, SdkStatus.READY)
 
         assertEquals(listOf("hello" to "p1", "world" to "p2"), repo.sent)
         assertTrue(cache.queued().isEmpty(), "drained entries leave the QUEUED set")
@@ -40,10 +41,11 @@ class SendMessageUseCaseTest {
     @Test
     fun non_ready_status_is_a_no_op() {
         val repo = CapturingConversationRepository()
+        val attachedId = MutableStateFlow<String?>("existing-conv")
         val cache = OutboundCache()
         cache.enqueue("p1", "hello")
 
-        SendMessageUseCase(repo).flushIfReady(cache, SdkStatus.RECONNECTING)
+        SendMessageUseCase(repo, attachedId).flushIfReady(cache, SdkStatus.RECONNECTING)
 
         assertTrue(repo.sent.isEmpty(), "no send while not READY")
         assertEquals(1, cache.queued().size, "entry stays QUEUED for the next rising edge")
@@ -52,9 +54,10 @@ class SendMessageUseCaseTest {
     @Test
     fun flushed_entries_are_not_resent() {
         val repo = CapturingConversationRepository()
+        val attachedId = MutableStateFlow<String?>("existing-conv")
         val cache = OutboundCache()
         cache.enqueue("p1", "hello")
-        val useCase = SendMessageUseCase(repo)
+        val useCase = SendMessageUseCase(repo, attachedId)
 
         useCase.flushIfReady(cache, SdkStatus.READY)
         useCase.flushIfReady(cache, SdkStatus.READY) // reconnect re-fire
@@ -63,5 +66,25 @@ class SendMessageUseCaseTest {
         // No SENT state: the entry stays QUEUED (flushed guard) until its echo removes it.
         assertEquals(MessageStatus.QUEUED, cache.pending.value.single().status)
         assertTrue(cache.queued().isEmpty(), "a flushed entry is excluded from the flushable set")
+    }
+
+    @Test
+    fun does_not_flush_until_a_session_id_is_attached() {
+        val repo = CapturingConversationRepository()
+        val attachedId = MutableStateFlow<String?>(null)
+        val cache = OutboundCache()
+        cache.enqueue("p1", "hello")
+        val useCase = SendMessageUseCase(repo, attachedId)
+
+        // READY but no id yet — must be gated
+        useCase.flushIfReady(cache, SdkStatus.READY)
+        assertTrue(repo.sent.isEmpty(), "gated: READY but no conversation id attached")
+        assertEquals(1, cache.queued().size, "entry stays QUEUED while id is unattached")
+
+        // id attaches — flush must succeed now
+        attachedId.value = "conv-Y"
+        useCase.flushIfReady(cache, SdkStatus.READY)
+        assertEquals(listOf("hello" to "p1"), repo.sent, "flushes once conversation id is attached")
+        assertTrue(cache.queued().isEmpty(), "drained after id attached")
     }
 }

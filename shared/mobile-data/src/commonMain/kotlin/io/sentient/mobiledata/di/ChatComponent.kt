@@ -121,7 +121,7 @@ class ChatComponent(
 
     val observeChat = ObserveChatUseCase(conversationRepository, clock)
     val switchConversation = SwitchConversationUseCase(sessionsRepository)
-    val sendMessage = SendMessageUseCase(conversationRepository)
+    val sendMessage = SendMessageUseCase(conversationRepository, currentSessionId)
     val observeSessions = ObserveSessionsUseCase(sessionsRepository)
     val renameSession = RenameSessionUseCase(sessionsRepository)
     val deleteSession = DeleteSessionUseCase(sessionsRepository)
