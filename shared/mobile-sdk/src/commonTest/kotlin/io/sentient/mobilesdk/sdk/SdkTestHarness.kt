@@ -2,8 +2,7 @@
 // SdkTestHarness — shared fixtures for the C7 orchestrator tests.
 //
 // Builds a SentientSdk over a FakeWebSocketEngine with runTest virtual time and
-// injected clock/newId — no real waits, no platform. The idle tick is parked far
-// beyond the test horizon so the disconnect-on-idle loop never races assertions.
+// injected clock/newId — no real waits, no platform.
 //
 // B1 caveat: FakeWebSocketEngine mints a FRESH session per open(); the helpers
 // drive the CURRENT session, so a reconnect's second open() is driven cleanly.
@@ -62,9 +61,6 @@ internal fun TestScope.buildSdk(
             var n = 0
             { "req-${n++}" }
         },
-        // Park the idle tick far beyond the test horizon so the disconnect-on-idle
-        // loop never races the assertions under runTest virtual time.
-        idleTickMs = 1_000_000_000L,
         resumeCursorStore = resumeCursorStore,
     )
 }

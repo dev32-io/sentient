@@ -217,8 +217,6 @@ class LiveTextRoundTripTest {
                 clock = Clock { System.currentTimeMillis() },
             ),
             scope = scope,
-            // Park idle far beyond the round-trip horizon.
-            idleTickMs = 1_000_000_000L,
         )
         try {
             // 3. connect → READY.

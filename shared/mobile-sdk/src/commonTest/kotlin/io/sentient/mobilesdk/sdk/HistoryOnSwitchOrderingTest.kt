@@ -108,7 +108,6 @@ private fun buildSdkWithHistory(
         bundle = bundle,
         scope = scope,
         newId = { "req-${n++}" },
-        idleTickMs = 1_000_000_000L,
         sessionsHttpClient = sessionsHttpClient,
     )
 }

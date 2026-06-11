@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // SentientSdk — THE orchestrator. Wires transport + connectors + handshake +
-// reconnect + idle into the split observable surfaces:
+// reconnect into the split observable surfaces:
 //   connection: StateFlow<ConnectionState>  — transport + voice axis
 //   timeline:   StateFlow<List<ChatMessage>> — committed message history
 //   events:     SharedFlow<SdkEvent>         — one-shot notifications
@@ -16,9 +16,6 @@ import io.sentient.mobilesdk.connectors.SessionsRequestException
 import io.sentient.mobilesdk.connectors.SessionsTimeoutException
 import io.sentient.mobilesdk.dev.FaultHooks
 import io.sentient.mobilesdk.log.createLogger
-import io.sentient.mobilesdk.presence.IdleDetectorConfig
-import io.sentient.mobilesdk.presence.IdleDetectorEvent
-import io.sentient.mobilesdk.presence.createIdleDetector
 import io.sentient.mobilesdk.protocol.AudioPreferencesPatch
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.protocol.ResumeParams
@@ -48,8 +45,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.random.Random
 
 private const val DEFAULT_SESSIONS_TIMEOUT_MS = 5_000L
-private const val DEFAULT_IDLE_THRESHOLD_MS = 3_600_000L
-private const val DEFAULT_IDLE_TICK_MS = 30_000L
 
 /** A1: "stuck" only when a cycle is active AND the socket is not healthy. A slow healthy
  *  cycle stays READY and never arms — no content-frame false-positives. */
@@ -63,8 +58,6 @@ class SentientSdk(
     newId: () -> String = { Random.nextLong().toString(16) },
     private val delayFn: suspend (Long) -> Unit = { delay(it) },
     sessionsTimeoutMs: Long = DEFAULT_SESSIONS_TIMEOUT_MS,
-    idleThresholdMs: Long = DEFAULT_IDLE_THRESHOLD_MS,
-    idleTickMs: Long = DEFAULT_IDLE_TICK_MS,
     /** REST client for session queries. Null in tests that don't exercise REST. */
     sessionsHttpClient: SessionsHttpClient? = null,
     /**
@@ -98,7 +91,6 @@ class SentientSdk(
     }
 
     private val deriver = StateDeriver(bundle.clock)
-    private val idle = createIdleDetector(IdleDetectorConfig(idleThresholdMs = idleThresholdMs))
     private val stuckWatchdog = StuckStateWatchdog(
         timeoutMs = config.stuckStateTimeoutMs,
         scope = scope,
@@ -243,8 +235,6 @@ class SentientSdk(
         gatewayWsUrl = config.gatewayWsUrl,
         deviceId = deviceId,
         router = router,
-        idle = idle,
-        idleTickMs = idleTickMs,
         delayFn = delayFn,
         hooks = Hooks(),
         applyCursor = ::applyCursor,
@@ -299,9 +289,9 @@ class SentientSdk(
      * Tear down the WS + all loops. Idempotent. Status → DISCONNECTED.
      *
      * @param clearSession true (default — logout/consumer teardown) clears
-     *   the hasSession slice so the gate falls back to login. false (idle-
-     *   disconnect via [Hooks.disconnectForIdle]) keeps the user "in session"
-     *   (gate stays on chat; SDK auto-reconnects on the next presence signal).
+     *   the hasSession slice so the gate falls back to login. false (transient
+     *   teardown) keeps the user "in session" (gate stays on chat; SDK
+     *   auto-reconnects on the next presence signal).
      */
     fun disconnect(clearSession: Boolean = true) {
         log.info("disconnect", mapOf("clearSession" to clearSession))
@@ -309,7 +299,7 @@ class SentientSdk(
         reconnectController.cancel()
         connectors.sessions.reset()
         // Terminal teardown (logout) frees the native codecs; a transient disconnect
-        // (idle, reconnect) keeps them so TTS survives the next reconnect.
+        // (reconnect) keeps them so TTS survives the next reconnect.
         if (clearSession) audio.dispose() else audio.suspendForReconnect()
         lifecycle.teardown()
         if (clearSession && deriver.hasSession) {
@@ -733,8 +723,12 @@ class SentientSdk(
         setStatus(SdkStatus.ERROR)
     }
 
+    /**
+     * Engagement bookkeeping hook. Currently a no-op — retained because the
+     * forthcoming ensureConnected()/presence work will record interaction here,
+     * and the send/interrupt call sites already invoke it.
+     */
     private fun markInteraction() {
-        idle.handle(IdleDetectorEvent.Interaction(bundle.clock.nowMs()))
     }
 
     private fun sendControl(msg: ClientMessage) {
@@ -766,10 +760,6 @@ class SentientSdk(
         override fun nowMs(): Long = bundle.clock.nowMs()
         override fun isConsumerDisconnected(): Boolean = consumerDisconnected
         override fun status(): SdkStatus = deriver.status
-        // Idle-disconnect keeps hasSession=true: the user stays "in session" and
-        // the SDK auto-reconnects on the next presence signal. Only explicit
-        // logout (the default disconnect()) clears the session.
-        override fun disconnectForIdle() = disconnect(clearSession = false)
     }
 
     companion object {

@@ -5,12 +5,12 @@
 // KEEPER (per .claude/rules/testing.md): hasSession is an FSM invariant the
 // gate divergence depends on (transport-status-gated screens unmounted chat on
 // every drop, hiding the connection-lost banner). The contract:
-//   reach READY                ⇒ hasSession TRUE
-//   transport drop (reconnect) ⇒ hasSession STAYS TRUE  (auto-reconnect)
-//   reconnect exhausted        ⇒ hasSession STAYS TRUE  (presence retry later)
-//   idle-disconnect            ⇒ hasSession STAYS TRUE  (still "in session")
-//   logout (disconnect())      ⇒ hasSession FALSE
-//   terminal authExpired       ⇒ hasSession FALSE
+//   reach READY                     ⇒ hasSession TRUE
+//   transport drop (reconnect)      ⇒ hasSession STAYS TRUE  (auto-reconnect)
+//   reconnect exhausted             ⇒ hasSession STAYS TRUE  (presence retry later)
+//   disconnect(clearSession=false)  ⇒ hasSession STAYS TRUE  (transient teardown)
+//   logout (disconnect())           ⇒ hasSession FALSE
+//   terminal authExpired            ⇒ hasSession FALSE
 //
 // Drives the real orchestrator over a FakeWebSocketEngine under runTest virtual
 // time (mirrors SentientSdkReconnectTest).
@@ -86,10 +86,10 @@ class SentientSdkSessionTest {
     }
 
     @Test
-    fun idle_disconnect_preserves_hasSession() = runTest {
-        // disconnectForIdle() delegates to disconnect(clearSession = false); assert
-        // that exact branch keeps the user "in session" (auto-reconnect on presence)
-        // while still tearing the WS down to DISCONNECTED.
+    fun transient_disconnect_preserves_hasSession() = runTest {
+        // disconnect(clearSession = false) is a transient teardown (e.g. a reconnect
+        // cycle); it must keep the user "in session" (gate stays on chat, auto-reconnect
+        // on presence) while still tearing the WS down to DISCONNECTED.
         val fake = FakeWebSocketEngine()
         val sdk = buildSdk(fake)
         connectToReady(sdk, fake)
@@ -99,7 +99,7 @@ class SentientSdkSessionTest {
         yield()
 
         assertEquals(SdkStatus.DISCONNECTED, sdk.connection.value.status)
-        assertTrue(sdk.connection.value.hasSession, "idle-disconnect must NOT clear hasSession")
+        assertTrue(sdk.connection.value.hasSession, "transient disconnect must NOT clear hasSession")
     }
 
     @Test

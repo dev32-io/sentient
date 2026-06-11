@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // SdkLifecycle — owns the WS connect attempt, the incoming pump (lifecycle-
-// frame interception → router broadcast), the transport-signal → reconnect
-// watch, and the idle tick loop. Extracted from SentientSdk so the orchestrator
-// stays under the 300-line clean-code budget.
+// frame interception → router broadcast), and the transport-signal → reconnect
+// watch. Extracted from SentientSdk so the orchestrator stays under the
+// 300-line clean-code budget.
 //
 // Mirrors web-sdk sentient-sdk.ts connect() + the message-router dispatch +
 // the close/reconnect handlers. Holds the mutable transport/session/handshake/
@@ -12,9 +12,6 @@ package io.sentient.mobilesdk.sdk
 
 import io.sentient.mobilesdk.dev.FaultHooks
 import io.sentient.mobilesdk.log.Log
-import io.sentient.mobilesdk.presence.IdleDetector
-import io.sentient.mobilesdk.presence.IdleDetectorEvent
-import io.sentient.mobilesdk.presence.IdleDetectorState
 import io.sentient.mobilesdk.protocol.Capabilities
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.protocol.ServerMessage
@@ -69,8 +66,6 @@ interface LifecycleHooks {
     fun isConsumerDisconnected(): Boolean
     /** Read the live status for the signal/reconnect decision. */
     fun status(): SdkStatus
-    /** Disconnect on idle (device disconnect-on-idle policy). */
-    fun disconnectForIdle()
 }
 
 class SdkLifecycle(
@@ -81,8 +76,6 @@ class SdkLifecycle(
     /** Stable per-install device id (Task 3.10) — sent in session.configure (REQUIRED by gateway). */
     private val deviceId: String,
     private val router: MessageRouter,
-    private val idle: IdleDetector,
-    private val idleTickMs: Long,
     private val delayFn: suspend (Long) -> Unit,
     private val hooks: LifecycleHooks,
     /** Apply the resume cursor to (seq, epoch); returns false to DROP the frame as a replay dup. */
@@ -98,7 +91,6 @@ class SdkLifecycle(
     private var session: WebSocketSession? = null
     private var handshake: Handshake? = null
     private var pumpJob: Job? = null
-    private var idleJob: Job? = null
 
     val activeTransport: WsTransport? get() = transport
 
@@ -136,8 +128,6 @@ class SdkLifecycle(
         // ACP uuid is anchored from session.switched / session.created (onFrame).
         hooks.onReady(sessionId)
         hooks.setStatus(SdkStatus.READY)
-        idle.handle(IdleDetectorEvent.Interaction(hooks.nowMs()))
-        startIdleLoop()
         return ConnectResult.Success
     }
 
@@ -249,27 +239,9 @@ class SdkLifecycle(
             status == SdkStatus.AUTHENTICATING ||
             status == SdkStatus.RECONNECTING
 
-    // ── Idle loop: tick → disconnect on IDLE ────────────────────────────────────
-
-    private fun startIdleLoop() {
-        if (idleJob?.isActive == true) return
-        idleJob = scope.launch {
-            while (isActive) {
-                delayFn(idleTickMs)
-                val s = idle.handle(IdleDetectorEvent.Tick(hooks.nowMs()))
-                if (s == IdleDetectorState.IDLE) {
-                    log.info("idle.disconnect")
-                    hooks.disconnectForIdle()
-                    return@launch
-                }
-            }
-        }
-    }
-
     /** Tear down the WS + all loops. Idempotent. */
     fun teardown() {
         pumpJob?.cancel(); pumpJob = null
-        idleJob?.cancel(); idleJob = null
         val open = session
         if (open != null) {
             scope.launch { open.close(WS_NORMAL_CLOSURE, "User disconnect") }

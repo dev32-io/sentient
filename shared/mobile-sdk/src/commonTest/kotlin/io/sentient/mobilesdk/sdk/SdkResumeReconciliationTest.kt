@@ -147,8 +147,7 @@ class SdkResumeReconciliationTest {
         sdk.connection.first { it.cognition == CognitionState.IDLE }
         // The history refetch is launched on the scope and round-trips the MockEngine,
         // then replaces the mirror — await the timeline to populate (end-to-end proof
-        // the REST refetch fired) rather than draining virtual time (would trip the
-        // parked idle-disconnect tick).
+        // the REST refetch fired) rather than draining virtual time.
         sdk.timeline.first { it.isNotEmpty() }
 
         assertEquals(CognitionState.IDLE, sdk.connection.value.cognition, "recovered:false must clear cognition to IDLE")
@@ -235,7 +234,6 @@ class SdkResumeReconciliationTest {
             bundle = bundle,
             scope = scope,
             newId = { "req-${n++}" },
-            idleTickMs = 1_000_000_000L,
             sessionsHttpClient = sessionsHttpClient,
         )
     }
