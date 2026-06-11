@@ -1,5 +1,5 @@
-import type { ConversationFeedItem, ConversationUserChannel } from "@sentient/protocol";
-import type { InFlightMessage, TaskSnapshotItem } from "@sentient/web-sdk";
+import type { ConversationUserChannel } from "@sentient/protocol";
+import type { CommittedFeedItem, InFlightMessage, TaskSnapshotItem } from "@sentient/web-sdk";
 import type { ChatMessage } from "../types.ts";
 
 // ---------------------------------------------------------------------------
@@ -141,32 +141,6 @@ export function attachToolsToAssistantMessages(
 }
 
 // ---------------------------------------------------------------------------
-// cycleId preservation — simpler fallback strategy:
-// Track the last inflight (timestamp → cycleId). When a committed assistant
-// entry arrives within CYCLE_ID_WINDOW_MS of that timestamp, stamp it with
-// the inflight's cycleId. Good enough for single-cycle-at-a-time sessions.
-// ---------------------------------------------------------------------------
-
-/**
- * Max ms difference between committed assistant entry ts and inflight capture ts.
- *
- * Used to stamp the committed assistant entry with its originating cycleId so
- * the drain-suppression logic can hide the committed entry while the
- * typewriter is still revealing the inflight copy. Too tight → stamping fails
- * and both bubbles briefly co-exist ("phantom double bubble"). Hermes's
- * `response.output_text.done` sits between the last `response.output_text.delta`
- * and `response.completed`, widening the real gap to ~500ms in practice — so
- * 2s gives plenty of margin without risking cross-cycle confusion (lastInflight
- * is always the most recent cycle's id).
- */
-export const CYCLE_ID_WINDOW_MS = 2000;
-
-export interface LastInflightStamp {
-  ts: number;
-  cycleId: string;
-}
-
-// ---------------------------------------------------------------------------
 // Feed → UI derivation
 // ---------------------------------------------------------------------------
 
@@ -184,44 +158,23 @@ function buildUserMessage(
   };
 }
 
-function buildAssistantMessage(
-  id: string,
-  item: ConversationFeedItem & { kind: "assistant" },
-  lastInflight: LastInflightStamp | null,
-): ChatMessage {
-  const cycleId =
-    lastInflight && Math.abs(item.ts - lastInflight.ts) <= CYCLE_ID_WINDOW_MS ? lastInflight.cycleId : undefined;
+function buildAssistantMessage(id: string, item: CommittedFeedItem & { kind: "assistant" }): ChatMessage {
   return {
     id,
     role: "assistant",
     text: item.content,
     timestamp: item.ts,
     isStreaming: false,
-    ...(cycleId ? { cycleId } : {}),
+    // cycleId is the gateway-owned join key carried on the conversation.entry
+    // frame (CommittedFeedItem) — read straight through, never invented client-side.
+    ...(item.cycleId ? { cycleId: item.cycleId } : {}),
     ...(item.cutoff ? { cutoff: item.cutoff } : {}),
   };
 }
 
-/**
- * Stamps cycleId onto committed assistant messages that fall within the
- * CYCLE_ID_WINDOW_MS window of the last known inflight timestamp.
- */
-export function stampCycleIdFromLastInflight(
-  messages: ChatMessage[],
-  lastInflight: LastInflightStamp | null,
-): ChatMessage[] {
-  if (!lastInflight) return messages;
-  return messages.map((msg) => {
-    if (msg.role !== "assistant" || msg.cycleId || msg.isStreaming) return msg;
-    if (Math.abs(msg.timestamp - lastInflight.ts) > CYCLE_ID_WINDOW_MS) return msg;
-    return { ...msg, cycleId: lastInflight.cycleId };
-  });
-}
-
 function appendCommittedItems(
   out: ChatMessage[],
-  items: readonly ConversationFeedItem[],
-  lastInflight: LastInflightStamp | null,
+  items: readonly CommittedFeedItem[],
   suppressAssistantCycleId?: string,
 ): void {
   for (let i = 0; i < items.length; i++) {
@@ -237,7 +190,7 @@ function appendCommittedItems(
 
     if (item.kind === "assistant") {
       if (item.content.length === 0 && !item.cutoff) continue;
-      const msg = buildAssistantMessage(stableId, item, lastInflight);
+      const msg = buildAssistantMessage(stableId, item);
       // While the typewriter is draining a cycle, suppress the committed
       // assistant entry for that cycleId so the inflight (typewriter) bubble
       // stays the sole render until it catches up. Prevents the "chunk pop"
@@ -274,16 +227,16 @@ function appendInflightMessage(out: ChatMessage[], inflight: InFlightMessage | n
  * partial reveal. `suppressAssistantCycleId` hides the committed assistant entry
  * for a cycle that is still mid-drain — keeping the typewriter bubble onscreen
  * until it catches up, instead of letting the committed full-text bubble pop in.
+ * The committed entry's cycleId is the gateway-owned one off its frame.
  */
 export function deriveMessages(
-  items: readonly ConversationFeedItem[],
+  items: readonly CommittedFeedItem[],
   inflight: InFlightMessage | null,
-  lastInflight: LastInflightStamp | null,
   visibleOverride?: string,
   suppressAssistantCycleId?: string,
 ): ChatMessage[] {
   const messages: ChatMessage[] = [];
-  appendCommittedItems(messages, items, lastInflight, suppressAssistantCycleId);
+  appendCommittedItems(messages, items, suppressAssistantCycleId);
   appendInflightMessage(messages, inflight, visibleOverride);
   return messages;
 }

@@ -1,10 +1,10 @@
 import { useSignal } from "@preact/signals";
-import type { ConversationFeedItem } from "@sentient/protocol";
 import {
   AssistantAudioResponseConnector,
   type AudioPreferences,
   type CognitionState,
   CognitionStatusConnector,
+  type CommittedFeedItem,
   ConversationHistoryConnector,
   type EchoGate,
   type InFlightMessage,
@@ -53,12 +53,7 @@ import {
   SPEECH_GATE_PREROLL_FRAMES,
 } from "../constants.ts";
 import { createAwaitingTracker } from "./awaiting-tracker.ts";
-import {
-  type LastInflightStamp,
-  attachToolsToAssistantMessages,
-  deriveCycleStatus,
-  deriveMessages,
-} from "./cycle-helpers.ts";
+import { attachToolsToAssistantMessages, deriveCycleStatus, deriveMessages } from "./cycle-helpers.ts";
 import { useTypewriterBuffer } from "./use-typewriter-buffer.ts";
 import { buildVoiceStatus, resolveGatewayUrl } from "./voice-status.ts";
 
@@ -147,18 +142,13 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     });
 
     const inflightRef: { current: InFlightMessage | null } = { current: null };
-    const committedRef: { current: readonly ConversationFeedItem[] } = { current: [] };
-    const lastInflightRef: { current: LastInflightStamp | null } = { current: null };
+    const committedRef: { current: readonly CommittedFeedItem[] } = { current: [] };
     // Post-stream drain state: when message.done fires, the connector clears
     // inflight but the typewriter may still be mid-reveal. We keep rendering
     // a synthetic inflight bubble (driven by the typewriter) until its visible
     // catches up to the final buffered text. During drain, the committed
     // assistant entry for this cycleId is suppressed to prevent a pop.
     const drainCycleRef: { current: { cycleId: string; snapshot: InFlightMessage } | null } = { current: null };
-    // Cache cycleIds stamped onto committed messages so they survive after
-    // `lastInflight` moves to a newer cycle. Without this, older messages
-    // lose their cycleId on re-derive and their tool pills detach.
-    const cycleIdByTsRef: { current: Map<number, string> } = { current: new Map() };
     // Empty-history detection: snapshot committed-count when leaving `ready`
     // status; on next conversation snapshot post-reconnect, compare. Empty
     // result + nonzero prior == server-side PersonSession archive cycled.
@@ -200,27 +190,16 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     function refreshMessages(): void {
       // During drain, render a synthetic inflight bubble from the drain snapshot.
       const effectiveInflight = inflightRef.current ?? drainCycleRef.current?.snapshot ?? null;
+      // Committed assistant entries already carry their gateway cycleId
+      // (CommittedFeedItem) — read it straight through. No ts-window stamping,
+      // no per-message cache: the gateway is the source of truth for the id.
       const base = deriveMessages(
         committedRef.current,
         effectiveInflight,
-        lastInflightRef.current,
         effectiveInflight ? typewriterRef.current.visible.value : undefined,
         drainCycleRef.current?.cycleId,
       );
-      // Merge per-message cycleId cache with fresh window-matched stamps.
-      // Freshly-stamped messages get cached for future derives; previously-
-      // stamped messages without a fresh stamp get their cycleId restored.
-      const cache = cycleIdByTsRef.current;
-      const stamped = base.map((msg) => {
-        if (msg.role !== "assistant" || msg.isStreaming) return msg;
-        if (msg.cycleId) {
-          cache.set(msg.timestamp, msg.cycleId);
-          return msg;
-        }
-        const cached = cache.get(msg.timestamp);
-        return cached ? { ...msg, cycleId: cached } : msg;
-      });
-      messages.value = attachToolsToAssistantMessages(stamped, rawTasksRef.current);
+      messages.value = attachToolsToAssistantMessages(base, rawTasksRef.current);
     }
 
     const speechGate = createSpeechGate({
@@ -462,7 +441,6 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
             drainCycleRef.current = null;
           }
           typewriterRef.current.setBuffer(inflight.text);
-          lastInflightRef.current = { ts: Date.now(), cycleId: inflight.cycleId };
           currentCycleId.value = inflight.cycleId;
           inflightRef.current = inflight;
         } else {
@@ -577,7 +555,6 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       log.debug("session-boundary.clear-drain", { kind: e.kind, sessionId: e.sessionId });
       drainCycleRef.current = null;
       inflightRef.current = null;
-      lastInflightRef.current = null;
       typewriterCycleIdRef.current = null;
       typewriterRef.current.reset();
       refreshMessages();

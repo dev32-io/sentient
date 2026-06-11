@@ -47,7 +47,7 @@ export type {
 } from "./connectors/cognition-status-connector.ts";
 
 export { ConversationHistoryConnector } from "./connectors/conversation-history-connector.ts";
-export type { ConversationHistoryConfig } from "./connectors/conversation-history-connector.ts";
+export type { CommittedFeedItem, ConversationHistoryConfig } from "./connectors/conversation-history-connector.ts";
 
 export { InFlightMessageConnector } from "./connectors/inflight-message-connector.ts";
 export type {

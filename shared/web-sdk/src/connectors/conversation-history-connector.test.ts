@@ -83,6 +83,34 @@ describe("ConversationHistoryConnector", () => {
     expect(onUpdate).toHaveBeenCalledTimes(4);
   });
 
+  it("re-attaches the frame cycleId to a committed assistant entry (no client-side id invention)", () => {
+    const onEntry = vi.fn();
+    const connector = new ConversationHistoryConnector({ onEntry });
+    const internal = createMockInternal();
+    connector.attach(internal);
+
+    internal.messageHandlers.get("conversation.snapshot")?.({ type: "conversation.snapshot", items: [] });
+    internal.messageHandlers.get("conversation.entry")?.({
+      type: "conversation.entry",
+      cycleId: "c-1",
+      item: assistantItem("hello"),
+    });
+
+    expect(connector.items()[0]?.cycleId).toBe("c-1");
+    expect(onEntry).toHaveBeenCalledWith(expect.objectContaining({ cycleId: "c-1", kind: "assistant" }));
+  });
+
+  it("leaves cycleId undefined for an entry with no originating cycle (user echo)", () => {
+    const connector = new ConversationHistoryConnector();
+    const internal = createMockInternal();
+    connector.attach(internal);
+
+    internal.messageHandlers.get("conversation.snapshot")?.({ type: "conversation.snapshot", items: [] });
+    internal.messageHandlers.get("conversation.entry")?.({ type: "conversation.entry", item: userItem("hi") });
+
+    expect(connector.items()[0]?.cycleId).toBeUndefined();
+  });
+
   it("ignores malformed entry messages", () => {
     const onEntry = vi.fn();
     const connector = new ConversationHistoryConnector({ onEntry });

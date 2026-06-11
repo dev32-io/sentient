@@ -6,16 +6,28 @@ import type { SessionsRest } from "../sessions-rest.ts";
 const log = createLogger(["sentient", "sdk", "connectors", "conversation-history"]);
 
 // ---------------------------------------------------------------------------
+// CommittedFeedItem — a feed item plus the gateway-owned `cycleId` carried on
+// its conversation.entry FRAME. The wire item itself strips cycle plumbing
+// (see protocol/conversation.ts); we re-attach the frame's cycleId here so the
+// UI can join a committed assistant entry to its live streaming bubble WITHOUT
+// inventing an id (no ts-window stamping). `cycleId` is undefined for snapshot /
+// REST-history items (historical entries have no live cycle) and for user /
+// trigger entries (no originating cycle).
+// ---------------------------------------------------------------------------
+
+export type CommittedFeedItem = ConversationFeedItem & { readonly cycleId?: string };
+
+// ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
 
 export interface ConversationHistoryConfig {
   /** Called with the full initial feed when the gateway sends snapshot. */
-  onSnapshot?: (items: readonly ConversationFeedItem[]) => void;
+  onSnapshot?: (items: readonly CommittedFeedItem[]) => void;
   /** Called for each new entry appended at the gateway. */
-  onEntry?: (item: ConversationFeedItem) => void;
+  onEntry?: (item: CommittedFeedItem) => void;
   /** Called whenever the local mirror changes (snapshot OR entry). */
-  onUpdate?: (items: readonly ConversationFeedItem[]) => void;
+  onUpdate?: (items: readonly CommittedFeedItem[]) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -51,7 +63,7 @@ export class ConversationHistoryConnector implements Connector {
   private readonly config: ConversationHistoryConfig;
   private readonly rest: SessionsRest | null;
   private unsubs: (() => void)[] = [];
-  private mirror: ConversationFeedItem[] = [];
+  private mirror: CommittedFeedItem[] = [];
   // Generation gate: bumped on session.switched so a stale fetch for an earlier
   // session cannot overwrite the current mirror.
   private switchGen = 0;
@@ -65,7 +77,7 @@ export class ConversationHistoryConnector implements Connector {
   }
 
   /** Current ordered mirror of the feed. Safe to read synchronously. */
-  items(): readonly ConversationFeedItem[] {
+  items(): readonly CommittedFeedItem[] {
     return this.mirror;
   }
 
@@ -88,10 +100,13 @@ export class ConversationHistoryConnector implements Connector {
     this.unsubs.push(
       sdk.onMessage("conversation.entry", (msg: unknown) => {
         if (this.awaitingSnapshot) return; // drop straggler from prior generation
-        const m = msg as { item?: ConversationFeedItem };
+        const m = msg as { item?: ConversationFeedItem; cycleId?: string };
         if (!m.item) return;
-        this.mirror = [...this.mirror, m.item];
-        this.config.onEntry?.(m.item);
+        // Re-attach the gateway's frame cycleId to the committed item so the UI
+        // joins it to the live bubble by id (never by ts-window guessing).
+        const entry: CommittedFeedItem = m.cycleId ? { ...m.item, cycleId: m.cycleId } : m.item;
+        this.mirror = [...this.mirror, entry];
+        this.config.onEntry?.(entry);
         this.config.onUpdate?.(this.mirror);
       }),
     );
