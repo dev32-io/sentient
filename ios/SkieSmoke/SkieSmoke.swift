@@ -13,5 +13,6 @@ func describeSdkEvent(_ e: SdkEvent) -> String {
     case .cycleAborted: return "aborted"
     case .sessionSwitched: return "switched"
     case .protocolError: return "error"
+    case .reopenFailed: return "reopenFailed"
     }
 }
