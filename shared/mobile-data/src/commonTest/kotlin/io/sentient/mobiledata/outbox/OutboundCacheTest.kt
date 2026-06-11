@@ -36,7 +36,7 @@ class OutboundCacheTest {
     }
 
     @Test
-    fun `markFailed fails a sent-but-unechoed entry (disconnect)`() {
+    fun `markFailed fails a sent-but-unechoed entry on disconnect`() {
         // Any QUEUED entry — sent or unsent — can be failed on disconnect.
         val cache = OutboundCache()
         cache.enqueue("p1", "hello")
@@ -70,7 +70,7 @@ class OutboundCacheTest {
     }
 
     @Test
-    fun `sweepTimeouts is a no-op for unsent (sentAtMs null) entries`() {
+    fun `sweepTimeouts is a no-op for unsent entries with null sentAtMs`() {
         val clock = MutableClock(99_999L)
         val cache = OutboundCache(clock = clock, unackedTimeoutMs = 10_000L)
         cache.enqueue("p1", "hello")  // never markSent

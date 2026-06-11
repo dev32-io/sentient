@@ -134,7 +134,7 @@ class ObserveChatUseCaseTest {
     }
 
     @Test
-    fun `cold history replace drops still-pending optimistic entries (cold history has no pendingId)`() =
+    fun `cold history replace drops still-pending optimistic entries from cold REST history`() =
         runTest(UnconfinedTestDispatcher()) {
             // A COLD REST history snapshot (recovered:false refetch / existing-switch reload)
             // carries NO pendingId, so reconcile-by-pendingId can't drop the optimistic bubble:
