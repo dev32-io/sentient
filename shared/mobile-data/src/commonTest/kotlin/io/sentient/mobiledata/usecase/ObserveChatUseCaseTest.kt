@@ -64,7 +64,7 @@ class ObserveChatUseCaseTest {
         // is surfaced via echoedPendingIds (the reconcile source).
         repo.timelineState.value = listOf(ChatMessage(ts = 1, role = "user", content = "hi", pendingId = "p1"))
         repo.echoed.value = setOf("p1")
-        val pending = MutableStateFlow(listOf(PendingMessage("p1", "hi", MessageStatus.QUEUED, flushed = true)))
+        val pending = MutableStateFlow(listOf(PendingMessage("p1", "hi", MessageStatus.QUEUED, sentAtMs = 1L)))
         val models = mutableListOf<ChatModel>()
         val job = launch { useCase(repo).invoke(pending).collect { models.add(it) } }
         runCurrent()
@@ -85,7 +85,7 @@ class ObserveChatUseCaseTest {
             repo.timelineState.value =
                 listOf(ChatMessage(ts = 1, role = "user", content = "hi", pendingId = null))
             repo.echoed.value = setOf("p1") // the live echo carries the pendingId the DB row dropped
-            val pending = MutableStateFlow(listOf(PendingMessage("p1", "hi", MessageStatus.QUEUED, flushed = true)))
+            val pending = MutableStateFlow(listOf(PendingMessage("p1", "hi", MessageStatus.QUEUED, sentAtMs = 1L)))
             val models = mutableListOf<ChatModel>()
             val job = launch { useCase(repo).invoke(pending).collect { models.add(it) } }
             runCurrent()

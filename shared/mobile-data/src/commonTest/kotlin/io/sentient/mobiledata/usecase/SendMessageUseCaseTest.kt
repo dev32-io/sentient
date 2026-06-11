@@ -35,7 +35,8 @@ class SendMessageUseCaseTest {
         SendMessageUseCase(repo, attachedId).flushIfReady(cache, SdkStatus.READY)
 
         assertEquals(listOf("hello" to "p1", "world" to "p2"), repo.sent)
-        assertTrue(cache.queued().isEmpty(), "drained entries leave the QUEUED set")
+        // After markSent the entries are still QUEUED (awaiting echo) but sentAtMs is set.
+        assertEquals(2, cache.queued().size, "sent-but-unechoed entries remain in queued() for reconnect re-send")
     }
 
     @Test
@@ -52,7 +53,9 @@ class SendMessageUseCaseTest {
     }
 
     @Test
-    fun flushed_entries_are_not_resent() {
+    fun sent_entries_are_resent_on_reconnect_because_gateway_dedups_by_pendingId() {
+        // New behaviour: queued() returns ALL QUEUED entries (including sent-but-unechoed).
+        // The gateway deduplicates by pendingId so re-sending is safe.
         val repo = CapturingConversationRepository()
         val attachedId = MutableStateFlow<String?>("existing-conv")
         val cache = OutboundCache()
@@ -60,12 +63,11 @@ class SendMessageUseCaseTest {
         val useCase = SendMessageUseCase(repo, attachedId)
 
         useCase.flushIfReady(cache, SdkStatus.READY)
-        useCase.flushIfReady(cache, SdkStatus.READY) // reconnect re-fire
+        useCase.flushIfReady(cache, SdkStatus.READY)  // reconnect re-fire
 
-        assertEquals(1, repo.sent.size, "a flushed entry is never re-sent on a second flush")
-        // No SENT state: the entry stays QUEUED (flushed guard) until its echo removes it.
+        assertEquals(2, repo.sent.size, "a sent-but-unechoed entry IS re-sent on reconnect (gateway dedups)")
+        // The entry stays QUEUED until its echo arrives.
         assertEquals(MessageStatus.QUEUED, cache.pending.value.single().status)
-        assertTrue(cache.queued().isEmpty(), "a flushed entry is excluded from the flushable set")
     }
 
     @Test
@@ -85,6 +87,5 @@ class SendMessageUseCaseTest {
         attachedId.value = "conv-Y"
         useCase.flushIfReady(cache, SdkStatus.READY)
         assertEquals(listOf("hello" to "p1"), repo.sent, "flushes once conversation id is attached")
-        assertTrue(cache.queued().isEmpty(), "drained after id attached")
     }
 }

@@ -92,8 +92,8 @@ struct PendingBubble: View {
     let now = Int64(Date().timeIntervalSince1970 * 1000)
     ScrollView {
         VStack(spacing: Space.gapMsg) {
-            PendingBubble(msg: PendingMessage(id: "1", text: "Hello, how are you?", status: .queued, flushed: false), userName: "Alice")
-            PendingBubble(msg: PendingMessage(id: "3", text: "This message failed to send.", status: .failed, flushed: false), userName: "Alice")
+            PendingBubble(msg: PendingMessage(id: "1", text: "Hello, how are you?", status: .queued, sentAtMs: nil), userName: "Alice")
+            PendingBubble(msg: PendingMessage(id: "3", text: "This message failed to send.", status: .failed, sentAtMs: nil), userName: "Alice")
         }
         .padding()
     }

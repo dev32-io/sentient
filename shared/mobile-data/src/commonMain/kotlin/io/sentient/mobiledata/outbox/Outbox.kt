@@ -8,57 +8,15 @@ package io.sentient.mobiledata.outbox
 enum class MessageStatus { QUEUED, FAILED }
 
 /**
- * @param flushed INTERNAL re-send guard, NOT a user-visible status. Set true once the
- *   entry has been handed to the transport during the in-flight window (the old SENT
- *   state was previously this guard). A flushed entry stays [QUEUED] for display but is
- *   excluded from the next flush so a reconnect re-fire never double-sends it. The
- *   committed echo drops the entry entirely; a [retry] clears the flag so a FAILED→retry
- *   re-sends.
+ * @param sentAtMs Wall-clock ms when the entry was handed to the transport
+ *   ([markSent] sets this). Null means not yet sent. Used ONLY for the
+ *   unacked-timeout sweep — NOT as a re-send guard. The gateway dedups by
+ *   pendingId, so re-sending a sent-but-unechoed entry is safe.
  */
 data class PendingMessage(
     val id: String,
     val text: String,
     val status: MessageStatus = MessageStatus.QUEUED,
-    val flushed: Boolean = false,
+    val sentAtMs: Long? = null,
 )
 
-class Outbox(private val send: (PendingMessage) -> Unit) {
-    private val queue = LinkedHashMap<String, PendingMessage>()
-
-    fun enqueue(msg: PendingMessage) {
-        val existing = queue[msg.id]
-        if (existing != null && (existing.flushed || existing.status == MessageStatus.FAILED)) return
-        queue[msg.id] = msg
-    }
-
-    fun onReady() {
-        for (m in queue.values.toList()) {
-            if (m.status == MessageStatus.QUEUED && !m.flushed) {
-                send(m)
-                queue[m.id] = m.copy(flushed = true) // stays QUEUED; flushed guards re-send
-            }
-        }
-    }
-
-    // reason: surfaced by callers/logging; body marks all still-unflushed QUEUED messages FAILED.
-    fun failAll(@Suppress("UNUSED_PARAMETER") reason: String) {
-        for (m in queue.values.toList()) {
-            if (m.status == MessageStatus.QUEUED && !m.flushed) {
-                queue[m.id] = m.copy(status = MessageStatus.FAILED)
-            }
-        }
-    }
-
-    /** Reset a FAILED message back to QUEUED (clearing the flush guard) so the next flush re-sends it. No-op if not FAILED. */
-    fun retry(id: String) {
-        val m = queue[id] ?: return
-        if (m.status == MessageStatus.FAILED) queue[id] = m.copy(status = MessageStatus.QUEUED, flushed = false)
-    }
-
-    /** Drop every entry. Used to reset the outbox when the conversation switches. */
-    fun clear() {
-        queue.clear()
-    }
-
-    fun snapshot(): List<PendingMessage> = queue.values.toList()
-}

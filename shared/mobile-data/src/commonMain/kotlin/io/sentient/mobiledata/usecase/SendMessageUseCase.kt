@@ -31,12 +31,12 @@ class SendMessageUseCase(
     operator fun invoke(text: String, pendingId: String) = conversation.send(text, pendingId)
 
     /**
-     * Drain still-flushable entries iff transport is READY AND a conversation id is
-     * attached. Each entry is sent then marked flushed (an INTERNAL re-send guard — the
-     * entry stays QUEUED for display until its committed echo reconciles it away by
-     * pendingId). A non-READY status or missing id is a no-op (entries stay QUEUED +
-     * unflushed for the next rising edge). A flushed entry is never re-sent
-     * (queued() excludes it).
+     * Drain all QUEUED entries iff transport is READY AND a conversation id is attached.
+     * Each entry is sent then marked sent ([markSent] records sentAtMs for the unacked-
+     * timeout sweep; the entry stays QUEUED for display until its committed echo reconciles
+     * it away by pendingId). A non-READY status or missing id is a no-op (entries stay
+     * QUEUED for the next rising edge). Re-sending a previously sent-but-unechoed entry
+     * on reconnect is safe — the gateway dedups by pendingId.
      */
     fun flushIfReady(cache: OutboundCache, status: SdkStatus) {
         if (status != SdkStatus.READY) {
@@ -52,7 +52,7 @@ class SendMessageUseCase(
         log.info("flush", mapOf("count" to queued.size, "sessionId" to sessionId))
         for (m in queued) {
             conversation.send(m.text, m.id)
-            cache.markFlushed(m.id)
+            cache.markSent(m.id)
         }
     }
 }
