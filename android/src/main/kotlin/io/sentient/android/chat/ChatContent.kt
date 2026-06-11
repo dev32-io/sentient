@@ -50,6 +50,7 @@ import io.sentient.android.chat.banner.ContentErrorBanner
 import io.sentient.android.chat.banner.ContentLoadingPill
 import io.sentient.android.chat.banner.ContentTitleBar
 import io.sentient.android.chat.banner.MARK_SIZE_CONTENT
+import io.sentient.android.chat.banner.ReopenFailedNoticeBanner
 import io.sentient.android.chat.banner.markModeOfConnection
 import io.sentient.android.chat.composer.Composer
 import io.sentient.android.chat.voice.MarkMode
@@ -73,10 +74,11 @@ import io.sentient.mobilesdk.transport.SdkStatus
  * @param onInterrupt   Stop button tapped (cycle/audio abort).
  * @param onOpenHistory History drawer opened.
  * @param onNewChat     New-chat button tapped.
- * @param onReconnect      Retry button on the connection-lost banner tapped.
- * @param onRetry          User tapped the FAILED chip on a pending message — re-queues by pendingId.
- * @param onComposerFocus  Composer TextField gained focus — used to trigger ensureConnected.
- * @param userName         Logged-in user's display name for bubble avatars.
+ * @param onReconnect         Retry button on the connection-lost banner tapped.
+ * @param onRetry             User tapped the FAILED chip on a pending message — re-queues by pendingId.
+ * @param onComposerFocus     Composer TextField gained focus — used to trigger ensureConnected.
+ * @param onDismissReopenFailed  Tap-to-dismiss for the ReopenFailed one-shot notice.
+ * @param userName            Logged-in user's display name for bubble avatars.
  */
 @Composable
 fun ChatContent(
@@ -91,6 +93,7 @@ fun ChatContent(
     onReconnect: () -> Unit,
     onRetry: (String) -> Unit = {},
     onComposerFocus: () -> Unit = {},
+    onDismissReopenFailed: () -> Unit = {},
     userName: String = "You",
     modifier: Modifier = Modifier,
 ) {
@@ -159,6 +162,14 @@ fun ChatContent(
                 ContentErrorBanner(
                     banner = uiState.banner,
                     onRetry = if (uiState.banner.canRetry) onReconnect else null,
+                )
+            }
+            // One-shot ReopenFailed notice (spec §14). Auto-dismissed by the VM after ~4 s
+            // or earlier on tap. Independent of the repo-failure banner above.
+            if (uiState.reopenFailedNotice != null) {
+                ReopenFailedNoticeBanner(
+                    noticeText = uiState.reopenFailedNotice,
+                    onDismiss = onDismissReopenFailed,
                 )
             }
             if (affordance != LoadingAffordance.NONE) {

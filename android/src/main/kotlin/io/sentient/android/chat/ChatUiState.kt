@@ -6,10 +6,20 @@ import io.sentient.mobilesdk.result.RetryPolicy
 
 data class ErrorBanner(val text: String, val canRetry: Boolean)
 
+/** Copy shown when a reconnect re-establish was rejected (spec §14). */
+internal const val REOPEN_FAILED_NOTICE = "Couldn't reopen that chat — started a new one."
+
 data class ChatUiState(
     val model: ChatModel = ChatModel(),
     val isLoading: Boolean = false,
     val banner: ErrorBanner? = null,
+    /**
+     * Non-null while the ReopenFailed one-shot notice is visible. The VM sets this
+     * when [SdkEvent.ReopenFailed] arrives and clears it on acknowledgement (tap or
+     * auto-dismiss). The notice is unrelated to [banner] (which reflects repo
+     * failures); they are independent UI elements.
+     */
+    val reopenFailedNotice: String? = null,
 ) {
     /**
      * True while an existing-session switch is loading its history snapshot — the

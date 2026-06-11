@@ -11,9 +11,13 @@ import io.sentient.mobiledata.usecase.ObserveSessionsUseCase
 import io.sentient.mobiledata.usecase.RenameSessionUseCase
 import io.sentient.mobiledata.usecase.SendMessageUseCase
 import io.sentient.mobiledata.usecase.SwitchConversationUseCase
+import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.sdk.SentientSdk
 import io.sentient.mobilesdk.util.Clock
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.map
 import kotlin.time.Clock as KtClock
 
 /**
@@ -38,6 +42,17 @@ open class ChatComponent(
 
     /** The gateway-minted active session id, from the SDK's session.created/switched anchor. */
     val currentSessionId: StateFlow<String?> get() = sdk.currentSessionId
+
+    /**
+     * One-shot notice stream: emits [Unit] whenever the SDK fires [SdkEvent.ReopenFailed]
+     * (a reconnect re-establish was rejected — the owned conversation was dropped).
+     * The VM collects this in its scope and folds the event into its UI state as a
+     * transient notice. Thin passthrough only: no buffering, no accumulation.
+     */
+    val reopenFailed: Flow<Unit>
+        get() = conversationRepository.liveEvents
+            .filterIsInstance<SdkEvent.ReopenFailed>()
+            .map { }
 
     val observeChat = ObserveChatUseCase(conversationRepository, clock)
     val switchConversation = SwitchConversationUseCase(sessionsRepository)

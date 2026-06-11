@@ -42,10 +42,13 @@ final class ChatViewModel: ObservableObject {
     private var connectionTask: Task<Void, Never>?
     private var coldReplaceTask: Task<Void, Never>?
     private var sweepTask: Task<Void, Never>?
+    private var reopenFailedTask: Task<Void, Never>?
     private let log = AppLog("chat", "viewmodel")
 
     /// Periodic outbox-sweep interval (unacked-timeout detection) in nanoseconds.
     private static let sweepIntervalNs: UInt64 = 1_000_000_000
+    /// Auto-dismiss interval for the ReopenFailed notice (spec §14) in nanoseconds.
+    private static let reopenFailedAutoDismissNs: UInt64 = 4_000_000_000
 
     init(component: ChatComponent, sessionId: String?) {
         self.component = component
@@ -63,6 +66,7 @@ final class ChatViewModel: ObservableObject {
         startConnectionCollecting()
         startColdReplaceCollecting()
         startPeriodicSweep()
+        startReopenFailedCollecting()
     }
 
     private var isReady: Bool { connection.status == .ready }
@@ -131,6 +135,12 @@ final class ChatViewModel: ObservableObject {
     func onComposerFocus() {
         log.debug("onComposerFocus")
         component.ensureConnected()
+    }
+
+    /// Tap-to-dismiss the ReopenFailed one-shot notice. Idempotent.
+    func dismissReopenFailedNotice() {
+        log.debug("reopen-failed.notice.dismissed")
+        state.reopenFailedNotice = nil
     }
 
     // ── Chat stream collection ────────────────────────────────────────────────
@@ -221,6 +231,29 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    // ── ReopenFailed one-shot notice (spec §14) ───────────────────────────────
+
+    /// Collect the one-shot ReopenFailed signal from the component. Each emission
+    /// folds a transient notice into published state, then auto-dismisses after 4 s
+    /// unless the user already tapped the dismiss button. The VM owns the collection
+    /// lifetime so the event is folded into durable state immediately — never dropped
+    /// by a lifecycle pause.
+    private func startReopenFailedCollecting() {
+        reopenFailedTask = Task { [weak self] in
+            guard let self else { return }
+            for await _ in self.component.reopenFailed {
+                self.log.info("reopen-failed.notice.show")
+                self.state.reopenFailedNotice = reopenFailedNoticeCopy
+                try? await Task.sleep(nanoseconds: Self.reopenFailedAutoDismissNs)
+                // Auto-dismiss only if not already cleared by a tap.
+                if self.state.reopenFailedNotice != nil {
+                    self.log.debug("reopen-failed.notice.auto-dismiss")
+                    self.state.reopenFailedNotice = nil
+                }
+            }
+        }
+    }
+
     /// Single teardown path for THIS VM: cancel collection tasks ONLY. The SDK /
     /// socket are owned by UserSession and MUST survive a conversation switch.
     deinit {
@@ -228,5 +261,6 @@ final class ChatViewModel: ObservableObject {
         connectionTask?.cancel()
         coldReplaceTask?.cancel()
         sweepTask?.cancel()
+        reopenFailedTask?.cancel()
     }
 }

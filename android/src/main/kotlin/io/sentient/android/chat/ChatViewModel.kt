@@ -89,6 +89,22 @@ class ChatViewModel(
                 }
             }
         }
+        // Collect the one-shot ReopenFailed notice from the component. Folds it into
+        // UI state as a transient notice; auto-dismissed after 4 s or on tap. The VM
+        // owns the lifetime of this collection so the event is never dropped on a
+        // lifecycle pause — it is already folded into the durable state snapshot.
+        viewModelScope.launch {
+            component.reopenFailed.collect {
+                log.info("reopen-failed.notice.show")
+                _state.value = _state.value.copy(reopenFailedNotice = REOPEN_FAILED_NOTICE)
+                delay(REOPEN_FAILED_AUTO_DISMISS_MS)
+                // Auto-dismiss only if not already cleared by a tap.
+                if (_state.value.reopenFailedNotice != null) {
+                    log.debug("reopen-failed.notice.auto-dismiss")
+                    _state.value = _state.value.copy(reopenFailedNotice = null)
+                }
+            }
+        }
     }
 
     private val isReady: Boolean get() = connection.value.status == SdkStatus.READY
@@ -138,10 +154,18 @@ class ChatViewModel(
         component.ensureConnected()
     }
 
+    /** Acknowledge the ReopenFailed notice (tap-to-dismiss). Idempotent. */
+    fun dismissReopenFailedNotice() {
+        log.debug("reopen-failed.notice.dismissed")
+        _state.value = _state.value.copy(reopenFailedNotice = null)
+    }
+
     companion object {
         /** Keep the connection StateFlow warm briefly across config changes. */
         private const val STATE_SUBSCRIBE_STOP_MS = 5_000L
         /** Periodic sweep interval for unacked-timeout detection. */
         private const val SWEEP_INTERVAL_MS = 1_000L
+        /** Auto-dismiss the ReopenFailed notice after this duration (ms). */
+        private const val REOPEN_FAILED_AUTO_DISMISS_MS = 4_000L
     }
 }

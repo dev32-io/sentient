@@ -192,6 +192,14 @@ struct ChatView: View {
                     onRetry: banner.canRetry ? { vm.reconnect() } : nil
                 )
             }
+            // One-shot ReopenFailed notice (spec §14). Auto-dismissed by the VM after ~4 s
+            // or earlier on tap. Independent of the repo-failure banner above.
+            if let notice = vm.state.reopenFailedNotice {
+                ReopenFailedNoticeBanner(
+                    noticeText: notice,
+                    onDismiss: { vm.dismissReopenFailedNotice() }
+                )
+            }
         }
         .safeAreaInset(edge: .bottom) {
             Composer(

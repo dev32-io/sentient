@@ -89,6 +89,7 @@ internal fun ChatHost(
             onNewChat = onNewChat,
             onReconnect = chatVm::reconnect,
             onComposerFocus = chatVm::onComposerFocus,
+            onDismissReopenFailed = chatVm::dismissReopenFailedNotice,
         )
     }
 }
