@@ -849,13 +849,38 @@ export async function handleSessionConfigure(
     },
   };
 
+  // session.ready builder — sent on BOTH paths. The client handshake's
+  // ready-gate ONLY completes on session.ready (its FSM has no stream.resumed
+  // case), so a warm resume MUST send it too or the handshake times out
+  // (4002) → reconnect storm. handleResumeOrFresh invokes this thunk on the
+  // recovered:true path BEFORE stream.resumed (order is load-bearing — see its
+  // doc). On recovered:false / fresh, the thunk runs here in the fresh block.
+  const playbackTunables = {
+    minEagerEndMs: services.webui.playback.min_eager_end_ms,
+    preemptFadeoutMs: services.webui.playback.preempt_fadeout_ms,
+  };
+  const sendReady = (): void => {
+    log.debug("session-ready-playback-tunables", { sessionId, ...playbackTunables });
+    wsSend({
+      type: "session.ready",
+      sessionId,
+      audioEncoding: AUDIO_ENCODING,
+      inputSampleRate: INPUT_SAMPLE_RATE,
+      outputSampleRate: OUTPUT_SAMPLE_RATE,
+      enabledEffects: [],
+      playback: playbackTunables,
+    });
+  };
+
   // STREAM-RESUME decision (Task 3.8). When the device buffer was resumed AND
-  // it still holds the frames since the client's lastSeq, emit
-  // stream.resumed{recovered:true} + replay those frames VERBATIM (raw socket
-  // sends — they keep their original seq/header), then SUPPRESS the fresh
-  // frames below (session.ready, the conversation.activate rehydrate, the empty
-  // snapshot). Otherwise emit recovered:false (when a resume was requested) and
-  // fall through to the normal fresh setup; the client REST-refetches history.
+  // it still holds the frames since the client's lastSeq: send session.ready
+  // (via sendReady) THEN stream.resumed{recovered:true} + replay those frames
+  // VERBATIM (raw socket sends — they keep their original seq/header), then
+  // SUPPRESS the fresh-only block below (prefs seed + the conversation.activate
+  // rehydrate / empty snapshot). session.ready is NOT suppressed — it was sent
+  // inside handleResumeOrFresh. Otherwise emit recovered:false (when a resume
+  // was requested) and fall through to the normal fresh setup; the client
+  // REST-refetches history.
   const replayed = handleResumeOrFresh({
     ws,
     sessionId,
@@ -864,29 +889,21 @@ export async function handleSessionConfigure(
     epoch: deviceEpoch,
     resumed: deviceResumed,
     resumeParams,
+    sendReady,
   });
 
   if (replayed) {
-    // Successful resume: the client already has session.ready + history from
-    // the prior connection; only the missed frames needed replaying. Go live.
+    // Successful resume: session.ready + the missed frames were already sent
+    // (session.ready first, then stream.resumed + replay). The client has
+    // history + prefs from the replay window. Go live; suppress the fresh-only
+    // block (prefs seed + snapshot).
     log.info("session-configured.resumed", { sessionId, deviceId, epoch: deviceEpoch });
     return;
   }
 
-  const playbackTunables = {
-    minEagerEndMs: services.webui.playback.min_eager_end_ms,
-    preemptFadeoutMs: services.webui.playback.preempt_fadeout_ms,
-  };
-  log.debug("session-ready-playback-tunables", { sessionId, ...playbackTunables });
-  wsSend({
-    type: "session.ready",
-    sessionId,
-    audioEncoding: AUDIO_ENCODING,
-    inputSampleRate: INPUT_SAMPLE_RATE,
-    outputSampleRate: OUTPUT_SAMPLE_RATE,
-    enabledEffects: [],
-    playback: playbackTunables,
-  });
+  // Fresh / recovered:false path: send session.ready now (the thunk the resume
+  // path would have called).
+  sendReady();
 
   // Seed the client with the current audio preferences. Fresh path only — on
   // resume the prior connection's journaled session.preferences.changed is

@@ -7,12 +7,22 @@
  * Flow:
  *  - handleResumeOrFresh: the terminal decision after the pipeline is built.
  *    If the device buffer was resumed AND it still holds frames since the
- *    client's lastSeq, emit stream.resumed{recovered:true} and replay those
- *    frames VERBATIM (they already carry seq + the 9-byte binary header — we
- *    do NOT re-sequence them), then suppress the fresh-connect frames. Else
- *    emit stream.resumed{recovered:false} and let the caller run the normal
- *    fresh setup (session.ready + empty snapshot). The client REST-refetches
- *    history on recovered:false.
+ *    client's lastSeq, this is a recovered:true resume. It FIRST emits
+ *    session.ready (via the injected sendReady thunk) so the client's connect
+ *    handshake completes its ready-gate — the client FSM only ungates on
+ *    session.ready and has no stream.resumed case — THEN emits
+ *    stream.resumed{recovered:true} and replays the missed frames VERBATIM
+ *    (they already carry seq + the 9-byte binary header — we do NOT
+ *    re-sequence them). The ORDER is load-bearing: session.ready BEFORE
+ *    stream.resumed so the client runs DEFER_TO_RESUME on READY (cursor has a
+ *    seq) and PRESERVE_IN_FLIGHT on the resume ack, in that order. The empty
+ *    conversation.snapshot and the session.preferences.changed seed stay
+ *    suppressed — the client has history + prefs via the replay window (a
+ *    re-seed would double-send). The caller suppresses those by skipping the
+ *    fresh-only block when this returns true.
+ *    Else (no buffer to resume) emit stream.resumed{recovered:false} and let
+ *    the caller run the normal fresh setup (session.ready + prefs seed + empty
+ *    snapshot). The client REST-refetches history on recovered:false.
  *
  * All resume frames bypass the FrameSequencer — the stream.resumed control
  * frame and the replayed frames are sent RAW on the socket. The control frame
@@ -47,16 +57,26 @@ export interface HandleResumeOrFreshInput {
   readonly resumed: boolean;
   /** Resume params from the session.configure `resume` object, or null (fresh connect). */
   readonly resumeParams: ResumeParams | null;
+  /**
+   * Emit the session.ready frame. Called on the recovered:true path BEFORE the
+   * stream.resumed ack so the client handshake's ready-gate completes (its FSM
+   * only ungates on session.ready). On recovered:false / fresh the caller sends
+   * session.ready itself, so this is NOT invoked there.
+   */
+  readonly sendReady: () => void;
 }
 
 /**
  * Terminal resume decision. Returns true when the caller should SUPPRESS the
- * fresh-connect frames (session.ready + empty snapshot) because a successful
- * replay was emitted; false when the caller should proceed with the normal
- * fresh setup (recovered:false was sent, client will REST-refetch).
+ * fresh-only block (the prefs seed + empty snapshot) because a recovered:true
+ * replay was emitted — session.ready was already sent here via sendReady, so
+ * the caller must NOT send it again. Returns false when the caller should
+ * proceed with the normal fresh setup (recovered:false was sent, or no resume;
+ * the caller sends session.ready + prefs seed + snapshot and the client
+ * REST-refetches on recovered:false).
  */
 export function handleResumeOrFresh(input: HandleResumeOrFreshInput): boolean {
-  const { ws, sessionId, deviceId, buffer, epoch, resumed, resumeParams } = input;
+  const { ws, sessionId, deviceId, buffer, epoch, resumed, resumeParams, sendReady } = input;
 
   // Fresh connect (no resume frame) OR epoch mismatch (acquire gave a new
   // buffer). Nothing to replay — but a client that asked to resume still needs
@@ -77,8 +97,17 @@ export function handleResumeOrFresh(input: HandleResumeOrFreshInput): boolean {
     return false;
   }
 
-  // recovered:true — emit the ack with the replayed range, then replay each
-  // buffered frame VERBATIM. fromSeq is lastSeq+1; toSeq is the buffer head.
+  // recovered:true — ORDER IS LOAD-BEARING. session.ready FIRST so the client
+  // handshake's ready-gate completes (its FSM only ungates on session.ready and
+  // has no stream.resumed case); on READY the client runs DEFER_TO_RESUME
+  // (cursor has a seq) and waits for the ack. THEN the stream.resumed ack +
+  // replay, which the client handles as PRESERVE_IN_FLIGHT. Sending the ack
+  // before session.ready would run the defer decision after the ack already
+  // passed — semantically wrong. The prefs seed + empty snapshot stay
+  // suppressed (caller skips its fresh block) — the client has both via replay.
+  sendReady();
+  // emit the ack with the replayed range, then replay each buffered frame
+  // VERBATIM. fromSeq is lastSeq+1; toSeq is the buffer head.
   const fromSeq = resumeParams.lastSeq + 1;
   const toSeq = buffer.newestSeq;
   sendRawFrame(
