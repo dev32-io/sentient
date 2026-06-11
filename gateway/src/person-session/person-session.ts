@@ -71,6 +71,16 @@ export class PersonSession {
    */
   private _idleSinceMs: number;
 
+  /**
+   * Recently-seen client pendingIds for idempotent resend dedup. A resend
+   * (same pendingId on a new connection after reconnect) is rejected so it is
+   * re-echoed via replay/REST history but NOT re-dispatched to Hermes. Bounded
+   * insertion-ordered; evicts with the session at retention. Survives reconnect
+   * (the whole point of placing it here, like _lastResponseId).
+   */
+  private readonly _recentPendingIds = new Set<string>();
+  private static readonly PENDING_ID_CAP = 256;
+
   constructor(init: PersonSessionInit) {
     this.profile = init.profile;
     this.hermesUrl = init.hermesUrl;
@@ -98,6 +108,20 @@ export class PersonSession {
       prev,
       next: id,
     });
+  }
+
+  /**
+   * Returns true if [pendingId] is new (record it and admit the message),
+   * false if it was already seen (a resend — caller must skip re-dispatch).
+   */
+  admitPendingId(pendingId: string): boolean {
+    if (this._recentPendingIds.has(pendingId)) return false;
+    this._recentPendingIds.add(pendingId);
+    if (this._recentPendingIds.size > PersonSession.PENDING_ID_CAP) {
+      const oldest = this._recentPendingIds.values().next().value;
+      if (oldest !== undefined) this._recentPendingIds.delete(oldest);
+    }
+    return true;
   }
 
   get voiceId(): string | null {

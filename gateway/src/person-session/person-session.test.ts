@@ -187,3 +187,24 @@ describe("PersonSession", () => {
     expect(s.hasRetainedBuffers()).toBe(true);
   });
 });
+
+describe("PersonSession.admitPendingId", () => {
+  it("admits a new pendingId once, rejects the duplicate", () => {
+    const s = makeSession();
+    expect(s.admitPendingId("p1")).toBe(true);
+    expect(s.admitPendingId("p1")).toBe(false);
+  });
+  it("admits distinct ids", () => {
+    const s = makeSession();
+    expect(s.admitPendingId("p1")).toBe(true);
+    expect(s.admitPendingId("p2")).toBe(true);
+  });
+  it("evicts oldest beyond the cap so the set is bounded", () => {
+    const s = makeSession();
+    for (let i = 0; i < 300; i++) expect(s.admitPendingId(`p${i}`)).toBe(true);
+    // p0 was evicted (cap 256) -> re-admitting it succeeds (treated as new)
+    expect(s.admitPendingId("p0")).toBe(true);
+    // a recent one is still remembered
+    expect(s.admitPendingId("p299")).toBe(false);
+  });
+});
