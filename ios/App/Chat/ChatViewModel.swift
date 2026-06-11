@@ -37,7 +37,7 @@ final class ChatViewModel: ObservableObject {
 
     private var chatTask: Task<Void, Never>?
     private var connectionTask: Task<Void, Never>?
-    private var sessionAnchorTask: Task<Void, Never>?
+    private var coldReplaceTask: Task<Void, Never>?
     private let log = AppLog("chat", "viewmodel")
 
     init(component: ChatComponent, sessionId: String?) {
@@ -54,11 +54,7 @@ final class ChatViewModel: ObservableObject {
 
         startChatCollecting()
         startConnectionCollecting()
-        // NEW chat only (route arg nil): re-anchor the cache once the gateway mints
-        // the conversation id. See startSessionAnchorCollecting.
-        if sessionId == nil {
-            startSessionAnchorCollecting()
-        }
+        startColdReplaceCollecting()
     }
 
     private var isReady: Bool { connection.status == .ready }
@@ -132,8 +128,8 @@ final class ChatViewModel: ObservableObject {
 
     private func applyChat(_ model: ChatModel) {
         // Reconcile: drop optimistic entries whose committed echo arrived. Driven by the
-        // LIVE echo (model.reconciledPendingIds) — NOT model.committed.pendingId, which the
-        // DB mirror strips to null (the bug this fix addresses).
+        // LIVE echo (model.reconciledPendingIds) from the in-memory timeline — NOT
+        // model.committed.pendingId (the committed twin may carry it null).
         for id in model.reconciledPendingIds {
             cache.remove(id: id)
         }
@@ -163,29 +159,18 @@ final class ChatViewModel: ObservableObject {
         component.sendMessage.flushIfReady(cache: cache, status: conn.status)
     }
 
-    // ── New-chat re-anchor (route arg nil) ────────────────────────────────────
+    // ── Cold-reconcile (existing-conversation history reload) ─────────────────
 
-    /// A NEW chat mints its conversation id SERVER-side AFTER the first message
-    /// (session.created) with no client switchTo, so the durable cache anchor stays
-    /// nil and the committed reply would be dropped. Observe the SDK's minted id
-    /// (component.currentSessionId is a StateFlow<String?> bridged as an
-    /// AsyncSequence) and re-remember the gateway-minted id → re-anchors the cache to
-    /// the new conversation so the committed entries write through + the timeline
-    /// paints. Idempotent: re-setting the same id is a no-op.
-    ///
-    /// STALE-ANCHOR GUARD: currentSessionId is sticky across new-chat navigation (it's
-    /// cleared only on logout). Opening a new chat from within an existing conversation
-    /// leaves the PRIOR conversation's id as the first emission; re-anchoring to THAT
-    /// would flash the old conversation's history into the new chat. Capture the
-    /// baseline at observe-start and only re-anchor to a DISTINCT, gateway-minted id.
-    private func startSessionAnchorCollecting() {
-        let staleBaseline = component.currentSessionId.value
-        sessionAnchorTask = Task { [weak self] in
+    /// An existing-conversation switch reloads authoritative history from REST. That
+    /// cold snapshot carries NO pendingId, so reconcile-by-pendingId can't drop a
+    /// still-pending optimistic bubble → a duplicate. On the cold-replace signal,
+    /// drop every still-present optimistic entry (now in the authoritative history,
+    /// or already swept to FAILED by the unacked-timeout).
+    private func startColdReplaceCollecting() {
+        coldReplaceTask = Task { [weak self] in
             guard let self else { return }
-            for await id in self.component.currentSessionId {
-                guard let id, !id.isEmpty, id != staleBaseline else { continue }
-                self.log.info("new-chat.re-anchor sessionId=\(id)")
-                self.component.rememberActiveConversation(id: id)
+            for await _ in self.component.observeChat.coldHistoryReplaceSignal() {
+                self.component.observeChat.onColdHistoryReplace(cache: self.cache)
             }
         }
     }
@@ -195,6 +180,6 @@ final class ChatViewModel: ObservableObject {
     deinit {
         chatTask?.cancel()
         connectionTask?.cancel()
-        sessionAnchorTask?.cancel()
+        coldReplaceTask?.cancel()
     }
 }

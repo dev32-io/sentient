@@ -103,12 +103,13 @@ The wire contract lives in [`shared/protocol/WIRE.md`](shared/protocol/WIRE.md).
   the gateway replays missed frames (`stream.resumed{recovered}`) or falls back to
   a REST history refetch. The socket dies at ≤255s when backgrounded, but the
   app-level session survives 30 min — so a brief background resumes cheaply.
-- **Device chat mirror** — the mobile clients keep a local SQLDelight mirror keyed
-  by a stable `entryId`: session list and transcript paint **instantly** from cache,
-  then reconcile via REST (replace-on-reload). Live frames write through; sessions
-  Hermes has pruned are deleted smart-async (server-list-authoritative). Stop is
-  fire-and-forget (clears UI immediately), with a connection-driven stuck-state
-  watchdog.
+- **No durable client store** — mobile clients keep NO local database. The
+  conversation timeline is the SDK's **in-memory fused stream** (REST history
+  replace + live WS appends), anchored by the SDK's `currentSessionId`; session
+  list and history arrive from the gateway/Hermes on attach (cache-then-refresh,
+  in-memory only). The optimistic outbox is likewise in-memory, reconciled against
+  the live echo's `echoedPendingIds`. Stop is fire-and-forget (clears UI
+  immediately), with a connection-driven stuck-state watchdog.
 
 ## What makes Sentient specific
 

@@ -24,7 +24,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -50,38 +49,21 @@ class ChatViewModel(
         // the usecase no longer suspends or throws — no launch, no runCatching. The
         // gateway buffers user.message behind the pending mint, so the UI never blocks.
         component.switchConversation(sessionId)
-        // NEW chat (route arg null): the gateway mints the conversation id server-side
-        // AFTER the first message (session.created) with no client switchTo, so the
-        // cache anchor stays null and the committed reply is dropped. Observe the SDK's
-        // minted id and RE-REMEMBER the gateway-minted id → re-anchors the cache to the
-        // new conversation (its table is empty, then the committed entries write through).
-        // Idempotent. An EXISTING chat already anchored via switchConversation above, so
-        // we only observe-and-remember when the route arg was null.
-        //
-        // STALE-ANCHOR GUARD: currentSessionId is sticky across new-chat navigation (it's
-        // cleared only on logout). Opening a new chat from within an existing conversation
-        // leaves the PRIOR conversation's id as the first emission; re-anchoring to THAT
-        // would flash the old conversation's history into the new chat. So we capture the
-        // baseline at observe-start and only re-anchor to a DISTINCT, gateway-minted id.
-        if (sessionId == null) {
-            val staleBaseline = component.currentSessionId.value
-            viewModelScope.launch {
-                // collect (not collectLatest): the body is a single idempotent StateFlow
-                // assignment, not a cancellable job. Re-emissions after the first anchor are
-                // idempotent no-ops (rememberActiveConversation to the same id).
-                component.currentSessionId.filterNotNull().collect { id ->
-                    if (id.isNotEmpty() && id != staleBaseline) {
-                        log.info("new-chat.re-anchor", mapOf("sessionId" to id))
-                        component.rememberActiveConversation(id)
-                    }
-                }
+        // COLD-RECONCILE: an existing-conversation switch reloads authoritative history
+        // from REST. That cold snapshot carries NO pendingId, so reconcile-by-pendingId
+        // can't drop a still-pending optimistic bubble → a duplicate. On the cold-replace
+        // signal, drop every still-present optimistic entry (now in the authoritative
+        // history, or already swept to FAILED).
+        viewModelScope.launch {
+            component.observeChat.coldHistoryReplaceSignal().collect {
+                component.observeChat.onColdHistoryReplace(cache)
             }
         }
         viewModelScope.launch {
             component.observeChat(cache.pending).collect { model ->
                 // Reconcile: drop optimistic entries whose committed echo arrived. Driven by
-                // the LIVE echo (model.reconciledPendingIds) — NOT model.committed.pendingId,
-                // which the DB mirror strips to null (the bug this fix addresses).
+                // the LIVE echo (model.reconciledPendingIds) from the in-memory timeline —
+                // NOT model.committed.pendingId (the committed twin may carry it null).
                 model.reconciledPendingIds.forEach(cache::remove)
                 _state.value = ChatUiState(model = model)
             }

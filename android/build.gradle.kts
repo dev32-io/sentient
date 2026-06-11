@@ -77,10 +77,6 @@ dependencies {
     implementation(libs.compose.ui.tooling.preview)
     // Markdown rendering for assistant chat bubbles (GFM, pure Compose).
     implementation(libs.markdown.renderer.m3)
-    // Key-value prefs: the platform owner constructs SharedPreferencesSettings for
-    // ChatComponent's durable resume cursor (mobile-data declares it implementation,
-    // so the app needs its own direct dependency to reference the platform class).
-    implementation(libs.multiplatform.settings)
     // System splash screen handoff.
     implementation(libs.androidx.core.splashscreen)
     // JVM unit tests (Layer 1): pure use-cases, mappers, pure models.

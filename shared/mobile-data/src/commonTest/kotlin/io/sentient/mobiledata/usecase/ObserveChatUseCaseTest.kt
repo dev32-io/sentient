@@ -3,6 +3,7 @@ package io.sentient.mobiledata.usecase
 import io.sentient.mobiledata.data.ConversationRepository
 import io.sentient.mobiledata.model.ChatModel
 import io.sentient.mobiledata.outbox.MessageStatus
+import io.sentient.mobiledata.outbox.OutboundCache
 import io.sentient.mobiledata.outbox.PendingMessage
 import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.sdk.ChatMessage
@@ -131,6 +132,27 @@ class ObserveChatUseCaseTest {
         assertTrue(!models.last().historyLoading, "snapshot clears loading")
         job.cancel()
     }
+
+    @Test
+    fun `cold history replace drops still-pending optimistic entries (cold history has no pendingId)`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // A COLD REST history snapshot (recovered:false refetch / existing-switch reload)
+            // carries NO pendingId, so reconcile-by-pendingId can't drop the optimistic bubble:
+            // the authoritative "hello" lands as a committed entry with pendingId=null while the
+            // optimistic "hello" stays in the cache → a DUPLICATE bubble. onColdHistoryReplace
+            // drops every still-present optimistic entry (now in the authoritative history, or
+            // already swept to FAILED by the unacked-timeout) so a single committed bubble remains.
+            val cache = OutboundCache().apply {
+                enqueue("p1", "hello")
+                markSent("p1") // sent-but-unechoed: still in cache.pending, no echo will carry p1
+            }
+            val repo = FakeConversationRepository()
+            useCase(repo).onColdHistoryReplace(cache)
+            assertTrue(
+                cache.pending.value.none { it.id == "p1" },
+                "cold replace drops the optimistic entry → single committed bubble",
+            )
+        }
 
     @Test
     fun new_chat_never_shows_history_loading() = runTest(UnconfinedTestDispatcher()) {

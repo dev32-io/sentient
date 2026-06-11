@@ -12,8 +12,10 @@ import kotlinx.coroutines.flow.asStateFlow
  * Knows nothing about the connection; the VM gates the flush on connection-ready.
  *
  * There is NO "sent" state. An entry is QUEUED until its committed echo arrives, at
- * which point the VM [remove]s it (reconcile-by-pendingId, driven by the LIVE echo —
- * NOT the pendingId-stripping DB mirror). The only terminal-visible state is FAILED
+ * which point the VM [remove]s it. Reconcile is driven by the LIVE echo's
+ * [echoedPendingIds] (in-memory; no DB). Committed entries from a cold REST snapshot
+ * carry pendingId=null, so the live echo — not committed.pendingId — is the reconcile
+ * source. The only terminal-visible state is FAILED
  * (disconnect or unacked-timeout), which a [retry] re-queues.
  *
  * FSM per id:
@@ -83,8 +85,7 @@ class OutboundCache(
      * Any QUEUED entry with a non-null [sentAtMs] older than the timeout is
      * transitioned to FAILED (shows Retry chip). Publishes once if any change.
      *
-     * Call site: the VM should drive this on a periodic tick or on connection events.
-     * Phase 4 wiring responsibility.
+     * Call site: the VM drives this on a periodic tick or on connection events.
      */
     fun sweepTimeouts() {
         val now = clock.nowMs()
@@ -102,6 +103,20 @@ class OutboundCache(
     /** Drop a reconciled entry (its committed echo arrived). */
     fun remove(id: String) {
         if (queue.remove(id) != null) publish()
+    }
+
+    /**
+     * Drop EVERY still-present entry (QUEUED or FAILED). Called on a COLD history
+     * replace: an authoritative REST history snapshot carries NO pendingId, so the
+     * normal reconcile-by-pendingId can't drop the optimistic copy. After a cold
+     * replace every remaining optimistic entry is either now represented in the
+     * authoritative history or was already swept to FAILED — keeping it would paint
+     * a duplicate bubble, so wipe the cache. No-op (no publish) when already empty.
+     */
+    fun dropPending() {
+        if (queue.isEmpty()) return
+        queue.clear()
+        publish()
     }
 
     private fun transition(id: String, f: (PendingMessage) -> PendingMessage) {

@@ -74,7 +74,9 @@ client send(text)
 
 The gateway side: `pendingId` is an optional protocol field (`shared/protocol`) threaded through `text.input` → conversation feed → the committed-user echo. Web clients that omit it are unaffected.
 
-**Slice-4 gotcha:** The DB mirror strips `pendingId` before persisting (it is a transient client field). Reconcile therefore uses `reconciledPendingIds` accumulated from the LIVE `conversation.snapshot` / `conversation.append` echo — NOT the pendingId-stripping DB timeline. `ChatModel.reconciledPendingIds` is an accumulating set; `cache.remove` is idempotent, so duplicate echoes are harmless.
+Reconcile uses `reconciledPendingIds` accumulated from the LIVE echo on the SDK's in-memory timeline (`conversation.append`). `ChatModel.reconciledPendingIds` is an accumulating set; `cache.remove` is idempotent, so duplicate echoes are harmless.
+
+**Cold-reconcile gotcha.** A COLD REST history snapshot (an existing-conversation switch reload, or a `recovered:false` in-place refetch) is authoritative history from Hermes and carries NO `pendingId`. So reconcile-by-pendingId can't drop a still-pending optimistic copy — the authoritative entry lands committed with `pendingId=null` while the optimistic bubble stays → a DUPLICATE. The fix: `ObserveChatUseCase.coldHistoryReplaceSignal()` emits on the cold-replace signal (`SdkEvent.SessionSwitched` with a non-empty id); the VM calls `onColdHistoryReplace(cache)`, which drops EVERY still-present optimistic entry (`OutboundCache.dropPending`) — they are now in the authoritative history, or were already swept to FAILED by the unacked-timeout.
 
 ## Gotchas
 

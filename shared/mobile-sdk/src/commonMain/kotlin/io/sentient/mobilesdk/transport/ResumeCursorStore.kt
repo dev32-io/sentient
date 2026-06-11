@@ -15,11 +15,12 @@
 // kill is a FOLLOW-UP (restore the SDK session anchor on launch, THEN seed). Today's
 // guarantee is the in-process reconnect, which is what spec §6 frames.
 //
-// DEPENDENCY INVERSION: the SDK (commonMain, lowest layer) DEFINES this interface;
-// mobile-data IMPLEMENTS it over its durable SyncCursorStore. mobile-data depends on
-// mobile-sdk, never the reverse — so the SDK cannot reach SyncCursorStore directly.
-// The store is OPTIONAL on the orchestrator and defaults to [NoOpResumeCursorStore],
-// so existing construction (and tests that don't exercise persistence) never break.
+// DEPENDENCY INVERSION: the SDK (commonMain, lowest layer) DEFINES this interface so a
+// higher layer could supply a durable backing without the SDK depending on it. There is
+// NO durable implementation today — mobile-data keeps the chat timeline in-memory, so it
+// injects nothing and the orchestrator defaults to [NoOpResumeCursorStore]. The store is
+// OPTIONAL on the orchestrator, so construction (and tests) never break; the seed/save/
+// clear hooks stay unconditional and simply no-op against the default.
 //
 // Single-threaded contract: the orchestrator drives load/save/clear from the WS pump
 // dispatcher, mirroring ResumeCursor. Implementations MUST NOT block (a quick

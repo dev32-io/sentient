@@ -5,11 +5,10 @@ plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.skie)
     alias(libs.plugins.kotlin.serialization)
-    alias(libs.plugins.sqldelight)
 }
 
-// Shared mobile-data source version. Set to 0.1.0 with the WS-resilience +
-// chat-mirror work (resumable WS, REST sessions, device chat mirror).
+// Shared mobile-data source version. Set to 0.1.0 with the WS-resilience + REST
+// sessions work. The chat timeline is in-memory from the SDK — no durable store.
 version = "0.1.0"
 
 kotlin {
@@ -37,35 +36,10 @@ kotlin {
         commonMain.dependencies {
             api(project(":shared:mobile-sdk"))
             implementation(libs.kotlinx.coroutines.core)
-            implementation(libs.sqldelight.runtime)
-            implementation(libs.sqldelight.coroutines.extensions)
-            implementation(libs.multiplatform.settings)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutines.test)
-            // MapSettings (in-memory Settings) for SyncCursorStore tests.
-            implementation(libs.multiplatform.settings.test)
-        }
-        androidMain.dependencies { implementation(libs.sqldelight.android.driver) }
-        iosMain.dependencies { implementation(libs.sqldelight.native.driver) }
-
-        // androidUnitTest is the JVM-host home for DB-backed repository tests
-        // (Slice 4: CachingConversationRepository with JdbcSqliteDriver(IN_MEMORY)).
-        // sqldelight sqlite-driver is a JVM-only artifact — it cannot be resolved
-        // by the native (iOS) test compile, so it MUST NOT be in commonTest.
-        val androidUnitTest by getting {
-            dependencies {
-                implementation(libs.sqldelight.sqlite.driver)
-            }
-        }
-    }
-}
-
-sqldelight {
-    databases {
-        create("ChatDatabase") {
-            packageName.set("io.sentient.mobiledata.cache.db")
         }
     }
 }

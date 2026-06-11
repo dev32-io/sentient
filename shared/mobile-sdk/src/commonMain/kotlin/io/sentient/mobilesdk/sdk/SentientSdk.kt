@@ -61,11 +61,13 @@ class SentientSdk(
     /** REST client for session queries. Null in tests that don't exercise REST. */
     sessionsHttpClient: SessionsHttpClient? = null,
     /**
-     * Durable resume-cursor persistence (Task 4.7). Dependency-inverted: the SDK
-     * defines the interface; mobile-data backs it with the SyncCursorStore. Defaults
-     * to a no-op so existing construction + tests that don't exercise persistence
-     * still build. Seeds the in-memory cursor on resume-prep, persists on advance
-     * (coalesced to cycle boundaries), clears on a non-recovered reset / delete.
+     * Durable resume-cursor persistence. Dependency-inverted: the SDK defines the
+     * interface so a higher layer COULD supply a durable backing. None does today —
+     * mobile-data keeps the chat timeline in-memory and injects nothing — so this
+     * defaults to a no-op and the in-memory cursor dies with the process (a cold
+     * relaunch takes the recovered:false REST-refetch path). When set, it seeds the
+     * cursor on resume-prep, persists on advance (coalesced to cycle boundaries), and
+     * clears on a non-recovered reset / delete.
      */
     private val resumeCursorStore: ResumeCursorStore = NoOpResumeCursorStore,
 ) {

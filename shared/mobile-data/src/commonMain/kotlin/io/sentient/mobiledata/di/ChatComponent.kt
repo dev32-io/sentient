@@ -1,12 +1,7 @@
 package io.sentient.mobiledata.di
 
-import io.sentient.mobiledata.cache.db.ChatDatabase
-import io.sentient.mobiledata.cache.db.DatabaseDriverFactory
-import io.sentient.mobiledata.data.CachingConversationRepository
-import io.sentient.mobiledata.data.CachingSessionsRepository
 import io.sentient.mobiledata.data.ConversationRepository
 import io.sentient.mobiledata.data.SdkConnectionStateRepository
-import io.sentient.mobiledata.data.ioDispatcher
 import io.sentient.mobiledata.data.SdkConversationRepository
 import io.sentient.mobiledata.data.SdkSessionsRepository
 import io.sentient.mobiledata.data.SessionsRepository
@@ -18,11 +13,6 @@ import io.sentient.mobiledata.usecase.SendMessageUseCase
 import io.sentient.mobiledata.usecase.SwitchConversationUseCase
 import io.sentient.mobilesdk.sdk.SentientSdk
 import io.sentient.mobilesdk.util.Clock
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.time.Clock as KtClock
 
@@ -31,93 +21,23 @@ import kotlin.time.Clock as KtClock
  * usecases over a single [SentientSdk]. Platform DI (Hilt / UserSession) owns the instance;
  * the chat VM resolves usecases from here, never the SDK directly.
  *
- * @param databaseDriverFactory The platform SQL driver factory for the device chat mirror
- *   (Slice 4.5/4.6 consume it).
+ * The chat timeline is IN-MEMORY: it comes straight from the SDK's fused [SentientSdk.timeline]
+ * (REST history replace + live appends), anchored by the SDK's own [SentientSdk.currentSessionId].
+ * There is NO durable client store — history is re-fetched from the gateway/Hermes on attach.
  */
 class ChatComponent(
     private val sdk: SentientSdk,
-    private val databaseDriverFactory: DatabaseDriverFactory,
     clock: Clock = Clock { KtClock.System.now().toEpochMilliseconds() },
 ) {
-    // Connection-scoped scope for the durable chat mirror's write-through + DB-backed
-    // timeline collectors. Lives as long as this user component; the platform owner
-    // tears the component down on logout, which cancels these collectors.
-    private val mirrorScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-
-    // One SQL driver + ChatDatabase per connection scope (the driver factory opens +
-    // migrates the schema; we wrap it once here and inject the DB into the caching
-    // decorator). The driver is released in [close] on logout.
-    private val driver = databaseDriverFactory.create()
-    private val database = ChatDatabase(driver)
-
-    // Platform IO dispatcher for the caching decorator's blocking SQLite writes, so
-    // they never run on the mirrorScope's CPU (Dispatchers.Default) pool. Android →
-    // real Dispatchers.IO; iOS → a dedicated DB-writer thread (see [ioDispatcher]).
-    //
-    // Shared CLIENT-INTENT anchor: the active conversation id, SET by the sessions
-    // decorator's switch path (route open, before any server echo) and READ by the
-    // conversation decorator as its DB-timeline anchor. Owned here so BOTH decorators
-    // observe the same signal — this is the seam that lets the persisted transcript
-    // paint instantly from the client's switch intent rather than awaiting a
-    // `session.switched` round-trip. Lives as long as this user component.
-    private val activeConversationIntent = MutableStateFlow<String?>(null)
-
-    // ACTIVATION (Task 4.7): the usecases the ViewModels consume are built over the
-    // CACHING decorators, NOT the raw SDK repos — so opening the app paints the last
-    // conversation's transcript + session list from the local DB instantly, with the
-    // REST/SDK refresh layered on. The raw SdkConversationRepository / SdkSessionsRepository
-    // survive ONLY as the decorators' underlying passthrough. Exposed (read-only) so the
-    // wiring is unit-testable: the VM-facing repos ARE the Caching types.
-    val conversationRepository: ConversationRepository =
-        CachingConversationRepository(
-            SdkConversationRepository(sdk),
-            database,
-            mirrorScope,
-            activeConversationIntent = activeConversationIntent,
-            ioDispatcher = ioDispatcher(),
-        )
-    // Same ChatDatabase + mirrorScope + ioDispatcher as the conversation decorator —
-    // one durable cache, one connection scope. Serves the session list from the DB for
-    // instant paint, runs the smart-async deletion of locally-stale sessions on refresh,
-    // and DRIVES the shared client-intent anchor on switch. Wraps the pure REST repo.
-    val sessionsRepository: SessionsRepository =
-        CachingSessionsRepository(
-            SdkSessionsRepository(sdk),
-            database,
-            mirrorScope,
-            ioDispatcher = ioDispatcher(),
-            activeConversationIntent = activeConversationIntent,
-        )
+    // VM-facing repos are the pure SDK passthroughs: data in, data out, no accumulated
+    // state. The active conversation is anchored by the SDK ([currentSessionId]); the
+    // timeline is the SDK's in-memory fused stream — no client-side cache or anchor seam.
+    val conversationRepository: ConversationRepository = SdkConversationRepository(sdk)
+    val sessionsRepository: SessionsRepository = SdkSessionsRepository(sdk)
     val connection = SdkConnectionStateRepository(sdk)
-
-    // ── New-chat re-anchor seam ──────────────────────────────────────────────
-    // A NEW chat mints its conversation id SERVER-side AFTER the first message
-    // (session.created), with NO client `switchTo` — so [activeConversationIntent]
-    // stays null and the DB-backed timeline is anchored on null (messagesFor(null)
-    // = emptyList) while write-through early-returns on the null anchor. The
-    // committed assistant reply would be neither persisted nor displayed.
-    //
-    // The SDK already anchors the gateway-minted id (from session.created /
-    // session.switched) on [SentientSdk.currentSessionId]. We expose it here so the
-    // chat VM can OBSERVE it on a new chat and RE-REMEMBER the minted id via
-    // [rememberActiveConversation] — re-anchoring the cache to the new conversation
-    // exactly as a client `switchTo` would, so the committed entries write through
-    // and the timeline paints. Existing chats already anchored via switchTo at
-    // route-open, so the VM only observes-and-remembers when the route arg was null.
 
     /** The gateway-minted active session id, from the SDK's session.created/switched anchor. */
     val currentSessionId: StateFlow<String?> get() = sdk.currentSessionId
-
-    /**
-     * Re-anchor the durable chat cache to [id] — sets the SAME client-intent signal
-     * that `switchTo*` drives. The chat VM calls this on a NEW chat once the gateway
-     * mints the session id ([currentSessionId] turns non-null) so the just-created
-     * conversation's committed entries write through + the DB timeline paints.
-     * Idempotent: re-setting the same id is a no-op for the StateFlow.
-     */
-    fun rememberActiveConversation(id: String) {
-        activeConversationIntent.value = id
-    }
 
     val observeChat = ObserveChatUseCase(conversationRepository, clock)
     val switchConversation = SwitchConversationUseCase(sessionsRepository)
@@ -159,12 +79,11 @@ class ChatComponent(
     fun disconnect(clearSession: Boolean = true) = sdk.disconnect(clearSession)
 
     /**
-     * Connection-scope teardown (logout): cancel the chat-mirror collectors and
-     * release the SQL driver. Call after [disconnect]. Idempotent at the platform
-     * layer (the component is nulled and rebuilt on the next login).
+     * Connection-scope teardown (logout). No-op today — the SDK + its scope are owned
+     * by the platform layer, and there is no durable store to release. Kept as the
+     * stable platform-facing teardown hook (call after [disconnect]); idempotent.
      */
     fun close() {
-        mirrorScope.cancel()
-        driver.close()
+        // Nothing client-scoped to release: the timeline is in-memory in the SDK.
     }
 }

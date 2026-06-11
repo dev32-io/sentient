@@ -20,12 +20,12 @@ interface ConversationRepository {
 
     /**
      * Accumulating set of pendingIds echoed back on COMMITTED user entries — the LIVE
-     * reconcile source. Derived from the SDK's own timeline (which still carries
-     * pendingId), NOT the durable DB mirror (which DROPS pendingId on the persisted
-     * row). The optimistic outbox is reconciled against THIS set, so an optimistic
-     * bubble is dropped on its echo even though the DB-mapped committed entry has
-     * pendingId=null. Accumulating: once an id is seen it stays in the set, so the
-     * bubble stays dropped after the live streaming bubble clears.
+     * reconcile source, derived from the SDK's in-memory timeline. The optimistic
+     * outbox is reconciled against THIS set, so an optimistic bubble is dropped on its
+     * echo. Accumulating: once an id is seen it stays in the set, so the bubble stays
+     * dropped after the live streaming bubble clears. A COLD REST history snapshot
+     * carries no pendingId — those entries are reconciled by the usecase's cold-replace
+     * drop (onColdHistoryReplace), not by this set.
      */
     val echoedPendingIds: Flow<Set<String>>
 
