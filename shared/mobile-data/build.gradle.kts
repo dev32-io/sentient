@@ -7,6 +7,10 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+// Shared mobile-data source version. Set to 0.1.0 with the WS-resilience + REST
+// sessions work. The chat timeline is in-memory from the SDK — no durable store.
+version = "0.1.0"
+
 kotlin {
     androidTarget {
         compilations.all {

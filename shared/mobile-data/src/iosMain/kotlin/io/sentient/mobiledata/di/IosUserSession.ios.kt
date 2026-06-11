@@ -9,8 +9,10 @@
 //
 // Lifecycle:
 //   - open()   — background connect(); the UI never blocks on it.
-//   - pause()  — app background: drop the socket but stay in session (clearSession=false).
-//   - resume() — app foreground: re-arm reconnect.
+//   - pause()  — app background: KEEP the socket (gateway holds the session; a brief
+//                background survives on the same socket). Intentionally a no-op.
+//   - resume() — app foreground: one-shot liveness probe / reconnect. (The iOS Swift host
+//                routes foreground engagement through component.ensureConnected(); see resume().)
 //   - close()  — logout: disconnect(clearSession=true) + cancel the scope.
 //
 // Construction mirrors MobileSessionFactory.ios.kt: a SupervisorJob +
@@ -25,6 +27,7 @@ import io.sentient.mobilesdk.sdk.SdkConfig
 import io.sentient.mobilesdk.sdk.SentientSdk
 import io.sentient.mobilesdk.sdk.createPlatformBundle
 import io.sentient.mobilesdk.sdk.isTerminalAuthError
+import io.sentient.mobilesdk.sessions.createSessionsHttpClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -74,6 +77,22 @@ class IosUserSession(
     private val scope: CoroutineScope =
         CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1) + exceptionHandler)
 
+    // Build the platform bundle once so the token store is shared between the SDK
+    // WS transport and the REST SessionsHttpClient (same Keychain item).
+    private val bundle = createPlatformBundle()
+
+    // REST HTTP client for session queries: Darwin engine + same TLS policy as
+    // the AuthClient. createSessionsHttpClient (iosMain factory) owns the engine
+    // construction so the dev-TLS bypass is consistent and not duplicated.
+    private val sessionsHttpClient = createSessionsHttpClient(
+        gatewayWsUrl = gatewayWsUrl,
+        allowSelfSignedDevHost = allowSelfSignedDevHost,
+        token = { bundle.tokenStore.load() ?: "" },
+    )
+
+    // No durable resume-cursor store: the SDK's ResumeCursor stays in-memory and
+    // defaults to NoOpResumeCursorStore. A cold relaunch takes the recovered:false
+    // REST-refetch path (history comes from the gateway/Hermes on attach).
     private val sdk: SentientSdk = SentientSdk(
         config = SdkConfig(
             gatewayWsUrl = gatewayWsUrl,
@@ -81,12 +100,13 @@ class IosUserSession(
             capabilities = capabilities,
             devFaultsEnabled = devFaultsEnabled,
         ),
-        bundle = createPlatformBundle(),
+        bundle = bundle,
         scope = scope,
+        sessionsHttpClient = sessionsHttpClient,
     )
 
     /** The single ChatComponent for this login — usecases + connection + passthroughs. */
-    val component: ChatComponent = ChatComponent(sdk)
+    val component: ChatComponent = ChatComponent(sdk = sdk)
 
     /** Background connect: UI is usable immediately; reconnect is owned by the SDK. */
     fun open() {
@@ -120,14 +140,24 @@ class IosUserSession(
         // Do NOT drop the socket on background. See [resume].
     }
 
-    /** App foreground → one-shot liveness probe; reconnect (+ resume session) only if dead. */
+    /**
+     * App foreground → one-shot liveness probe; reconnect (+ resume session) only if dead.
+     *
+     * NOTE: the iOS Swift host (`UserSession.resume()`) now routes foreground engagement
+     * through `component.ensureConnected()` (the single engagement entry — probe when READY,
+     * reconnect when not), so THIS method is currently not on the app's foreground path.
+     * Kept as the KMP foreground primitive; do NOT also call it alongside `ensureConnected()`
+     * or the probe double-fires. `pause()`'s reference to the foreground probe still holds —
+     * it just arrives via `ensureConnected()` now.
+     */
     fun resume() {
         sdk.onForeground()
     }
 
-    /** Logout teardown: disconnect (clearSession=true) + cancel the session scope. */
+    /** Logout teardown: disconnect (clearSession=true), close the component, cancel the scope. */
     fun close() {
         sdk.disconnect(clearSession = true)
+        component.close()
         scope.cancel()
     }
 }

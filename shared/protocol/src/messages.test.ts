@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { conversationFeedUserItemSchema } from "./conversation.ts";
+import {
+  conversationFeedAssistantItemSchema,
+  conversationFeedItemSchema,
+  conversationFeedToolItemSchema,
+  conversationFeedTriggerItemSchema,
+  conversationFeedUserItemSchema,
+} from "./conversation.ts";
 import {
   clientMessageSchema,
   cognitionStatusSchema,
@@ -7,6 +13,7 @@ import {
   connectorAudioStartSchema,
   connectorCancelledSchema,
   connectorTranscriptFinalSchema,
+  conversationEntrySchema,
   cycleAbortedSchema,
   cycleCompletedSchema,
   cycleStartedSchema,
@@ -15,9 +22,11 @@ import {
   messageDoneSchema,
   sessionConfigureSchema,
   sessionReadySchema,
+  streamResumedSchema,
   taskUpdateSchema,
   textInputSchema,
 } from "./messages.ts";
+import type { StreamResumed } from "./messages.ts";
 
 describe("session.configure", () => {
   it("parses with explicit language", () => {
@@ -26,6 +35,7 @@ describe("session.configure", () => {
       language: "zh",
       capabilities: { supports: ["audio", "text"] },
       clientType: "webui",
+      deviceId: "dev-abc",
     });
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.language).toBe("zh");
@@ -36,15 +46,48 @@ describe("session.configure", () => {
       type: "session.configure",
       capabilities: { supports: [] },
       clientType: "webui",
+      deviceId: "dev-abc",
     });
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.language).toBe("en");
+  });
+
+  it("parses with deviceId carried through", () => {
+    const result = sessionConfigureSchema.safeParse({
+      type: "session.configure",
+      capabilities: { supports: [] },
+      clientType: "webui",
+      deviceId: "dev-xyz",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.deviceId).toBe("dev-xyz");
+  });
+
+  it("rejects missing deviceId", () => {
+    const result = sessionConfigureSchema.safeParse({
+      type: "session.configure",
+      capabilities: { supports: [] },
+      clientType: "webui",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects empty deviceId", () => {
+    const result = sessionConfigureSchema.safeParse({
+      type: "session.configure",
+      capabilities: { supports: [] },
+      clientType: "webui",
+      deviceId: "",
+    });
+    expect(result.success).toBe(false);
   });
 
   it("rejects missing capabilities", () => {
     const result = sessionConfigureSchema.safeParse({
       type: "session.configure",
       language: "en",
+      clientType: "webui",
+      deviceId: "dev-abc",
     });
     expect(result.success).toBe(false);
   });
@@ -54,6 +97,7 @@ describe("session.configure", () => {
       type: "session.configure",
       capabilities: { supports: ["audio", "text"] },
       clientType: "mobile",
+      deviceId: "dev-abc",
     });
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.clientType).toBe("mobile");
@@ -64,6 +108,52 @@ describe("session.configure", () => {
       type: "session.configure",
       capabilities: { supports: [] },
       clientType: "tablet",
+      deviceId: "dev-abc",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("parses configure-carried resume on a reconnect", () => {
+    const result = sessionConfigureSchema.safeParse({
+      type: "session.configure",
+      capabilities: { supports: [] },
+      clientType: "webui",
+      deviceId: "dev-abc",
+      resume: { epoch: 3, lastSeq: 99 },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.resume).toEqual({ epoch: 3, lastSeq: 99 });
+  });
+
+  it("omits resume on a fresh connect (undefined)", () => {
+    const result = sessionConfigureSchema.safeParse({
+      type: "session.configure",
+      capabilities: { supports: [] },
+      clientType: "webui",
+      deviceId: "dev-abc",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.resume).toBeUndefined();
+  });
+
+  it("rejects resume with a negative lastSeq", () => {
+    const result = sessionConfigureSchema.safeParse({
+      type: "session.configure",
+      capabilities: { supports: [] },
+      clientType: "webui",
+      deviceId: "dev-abc",
+      resume: { epoch: 3, lastSeq: -1 },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects resume with a negative epoch", () => {
+    const result = sessionConfigureSchema.safeParse({
+      type: "session.configure",
+      capabilities: { supports: [] },
+      clientType: "webui",
+      deviceId: "dev-abc",
+      resume: { epoch: -1, lastSeq: 99 },
     });
     expect(result.success).toBe(false);
   });
@@ -242,6 +332,34 @@ describe("message.done", () => {
   });
 });
 
+describe("conversation.entry cycleId (live-bubble join key)", () => {
+  const assistantItem = {
+    entryId: "e-1",
+    ts: 1,
+    kind: "assistant" as const,
+    content: "hi",
+  };
+
+  it("carries cycleId on the frame so clients join live↔committed without inventing it", () => {
+    const result = conversationEntrySchema.safeParse({
+      type: "conversation.entry",
+      cycleId: "c-1",
+      item: assistantItem,
+    });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.cycleId).toBe("c-1");
+  });
+
+  it("is optional — a user-echo / out-of-band entry carries no cycle", () => {
+    const result = conversationEntrySchema.safeParse({
+      type: "conversation.entry",
+      item: assistantItem,
+    });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.cycleId).toBeUndefined();
+  });
+});
+
 describe("connector.audio.start", () => {
   it("parses valid audio start", () => {
     const result = connectorAudioStartSchema.safeParse({
@@ -307,6 +425,7 @@ describe("clientMessageSchema", () => {
       type: "session.configure",
       capabilities: { supports: ["audio"] },
       clientType: "webui",
+      deviceId: "dev-abc",
     });
     expect(result.success).toBe(true);
   });
@@ -420,6 +539,7 @@ describe("text.input pendingId", () => {
 describe("conversationFeedUserItem pendingId", () => {
   it("parses with pendingId present", () => {
     const result = conversationFeedUserItemSchema.safeParse({
+      entryId: "e-p1",
       ts: 1000,
       kind: "user",
       channel: "text",
@@ -432,6 +552,7 @@ describe("conversationFeedUserItem pendingId", () => {
 
   it("parses without pendingId (backward compat — undefined)", () => {
     const result = conversationFeedUserItemSchema.safeParse({
+      entryId: "e-nopid",
       ts: 1000,
       kind: "user",
       channel: "text",
@@ -439,5 +560,288 @@ describe("conversationFeedUserItem pendingId", () => {
     });
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.pendingId).toBeUndefined();
+  });
+});
+
+describe("transport boundary — query RPCs removed from WS", () => {
+  it("rejects sessions.list on the WS client schema", () => {
+    expect(clientMessageSchema.safeParse({ type: "sessions.list", limit: 100, offset: 0 }).success).toBe(false);
+  });
+  it("rejects sessions.search/delete/rename on the WS client schema", () => {
+    for (const type of ["sessions.search", "sessions.delete", "sessions.rename"]) {
+      expect(clientMessageSchema.safeParse({ type, requestId: "x" }).success).toBe(false);
+    }
+  });
+  it("accepts conversation.activate", () => {
+    expect(clientMessageSchema.safeParse({ type: "conversation.activate", sessionId: "s-1" }).success).toBe(true);
+  });
+  it("drops sessions.*.result from the gateway schema but keeps broadcasts", () => {
+    expect(
+      gatewayMessageSchema.safeParse({
+        type: "sessions.list.result",
+        requestId: "r-1",
+        items: [],
+        total: 0,
+        hasMore: false,
+      }).success,
+    ).toBe(false);
+    expect(gatewayMessageSchema.safeParse({ type: "sessions.deleted", sessionId: "s-1" }).success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3.9 — seq/epoch on gateway push frames + resume handshake
+// ---------------------------------------------------------------------------
+
+describe("message.delta with seq/epoch (gateway push frames)", () => {
+  it("parses message.delta WITHOUT seq/epoch (backwards compat)", () => {
+    const result = gatewayMessageSchema.safeParse({
+      type: "message.delta",
+      cycleId: "c-1",
+      delta: "Hello",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("parses message.delta WITH seq and epoch", () => {
+    const result = gatewayMessageSchema.safeParse({
+      type: "message.delta",
+      cycleId: "c-1",
+      delta: "Hello",
+      seq: 42,
+      epoch: 7,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.seq).toBe(42);
+      expect(result.data.epoch).toBe(7);
+    }
+  });
+
+  it("rejects negative seq", () => {
+    const result = gatewayMessageSchema.safeParse({
+      type: "message.delta",
+      cycleId: "c-1",
+      delta: "Hello",
+      seq: -1,
+      epoch: 0,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects fractional seq", () => {
+    const result = gatewayMessageSchema.safeParse({
+      type: "message.delta",
+      cycleId: "c-1",
+      delta: "Hello",
+      seq: 1.5,
+      epoch: 0,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("parses auth.ok WITH seq/epoch", () => {
+    const result = gatewayMessageSchema.safeParse({
+      type: "auth.ok",
+      sessionId: "s-1",
+      role: "adult",
+      seq: 0,
+      epoch: 1,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("parses cognition.status WITH seq/epoch", () => {
+    const result = gatewayMessageSchema.safeParse({
+      type: "cognition.status",
+      state: "thinking",
+      runningEffects: [],
+      seq: 100,
+      epoch: 3,
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe("stream.resumed (gateway → client)", () => {
+  it("accepts stream.resumed with recovered=true and optional seq range", () => {
+    const result = gatewayMessageSchema.safeParse({
+      type: "stream.resumed",
+      recovered: true,
+      epoch: 3,
+      fromSeq: 100,
+      toSeq: 200,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.type).toBe("stream.resumed");
+    }
+  });
+
+  it("accepts stream.resumed with recovered=false and no fromSeq/toSeq", () => {
+    const result = gatewayMessageSchema.safeParse({
+      type: "stream.resumed",
+      recovered: false,
+      epoch: 3,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts stream.resumed with seq/epoch stamped (gateway push frame)", () => {
+    const result = gatewayMessageSchema.safeParse({
+      type: "stream.resumed",
+      recovered: true,
+      epoch: 3,
+      fromSeq: 100,
+      toSeq: 200,
+      seq: 201,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects stream.resumed missing recovered", () => {
+    const result = gatewayMessageSchema.safeParse({
+      type: "stream.resumed",
+      epoch: 3,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects stream.resumed missing epoch", () => {
+    const result = gatewayMessageSchema.safeParse({
+      type: "stream.resumed",
+      recovered: true,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("StreamResumed type includes seq — type and runtime agree", () => {
+    // Type-level assertion: StreamResumed must have an optional seq field.
+    // If the type lacks seq this line will produce a TS compile error.
+    const typed: StreamResumed = {
+      type: "stream.resumed",
+      recovered: true,
+      epoch: 5,
+      seq: 201,
+    };
+    expect(typed.seq).toBe(201);
+
+    // Runtime: streamResumedSchema (the exported wire schema) must parse seq.
+    const result = streamResumedSchema.safeParse({
+      type: "stream.resumed",
+      recovered: true,
+      epoch: 5,
+      seq: 201,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.seq).toBe(201);
+      expect(result.data.epoch).toBe(5);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// conversationFeedItem entryId — Slice 3/4 dedupe key
+// ---------------------------------------------------------------------------
+
+describe("conversationFeedItem entryId — required on all kinds", () => {
+  it("rejects a user item missing entryId", () => {
+    const result = conversationFeedUserItemSchema.safeParse({
+      ts: 1000,
+      kind: "user",
+      channel: "text",
+      content: "hello",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a user item with entryId", () => {
+    const result = conversationFeedUserItemSchema.safeParse({
+      entryId: "abc-123",
+      ts: 1000,
+      kind: "user",
+      channel: "text",
+      content: "hello",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.entryId).toBe("abc-123");
+  });
+
+  it("rejects an assistant item missing entryId", () => {
+    const result = conversationFeedAssistantItemSchema.safeParse({
+      ts: 1000,
+      kind: "assistant",
+      content: "hi there",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts an assistant item with entryId", () => {
+    const result = conversationFeedAssistantItemSchema.safeParse({
+      entryId: "def-456",
+      ts: 1000,
+      kind: "assistant",
+      content: "hi there",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.entryId).toBe("def-456");
+  });
+
+  it("rejects a tool item missing entryId", () => {
+    const result = conversationFeedToolItemSchema.safeParse({
+      ts: 1000,
+      kind: "tool",
+      toolName: "search",
+      status: "finished",
+      summary: "done",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a tool item with entryId", () => {
+    const result = conversationFeedToolItemSchema.safeParse({
+      entryId: "ghi-789",
+      ts: 1000,
+      kind: "tool",
+      toolName: "search",
+      status: "finished",
+      summary: "done",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.entryId).toBe("ghi-789");
+  });
+
+  it("rejects a trigger item missing entryId", () => {
+    const result = conversationFeedTriggerItemSchema.safeParse({
+      ts: 1000,
+      kind: "trigger",
+      source: "sensor.door",
+      summary: "opened",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a trigger item with entryId", () => {
+    const result = conversationFeedTriggerItemSchema.safeParse({
+      entryId: "jkl-012",
+      ts: 1000,
+      kind: "trigger",
+      source: "sensor.door",
+      summary: "opened",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.entryId).toBe("jkl-012");
+  });
+
+  it("discriminated union rejects any kind missing entryId", () => {
+    for (const item of [
+      { ts: 0, kind: "user", channel: "text", content: "x" },
+      { ts: 0, kind: "assistant", content: "y" },
+      { ts: 0, kind: "tool", toolName: "t", status: "finished", summary: "s" },
+      { ts: 0, kind: "trigger", source: "s", summary: "w" },
+    ]) {
+      expect(conversationFeedItemSchema.safeParse(item).success).toBe(false);
+    }
   });
 });

@@ -87,6 +87,7 @@ fun createTokenStore(): SecureTokenStore = IosSecureTokenStore()
  * SECURITY GUARD: handleChallenge is registered ONLY inside the bypass branch.
  * The release path installs no challenge handler — NSURLSession validates the
  * server certificate against the system trust store.
+ *
  */
 private fun buildAuthHttpClient(allowSelfSignedDevHost: Boolean): HttpClient =
     HttpClient(Darwin) {

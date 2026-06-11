@@ -6,11 +6,11 @@
 // invariant + a wire contract with the gateway. The bug it guards:
 //   - the OLD connect-URL resume replayed the gateway CONNECTION id → the
 //     gateway rejected `forbidden "session not owned by current"`.
-// The NEW contract:
-//   (a) FIRST connect with no anchored session → NO session.switch (nothing to
-//       restore — a phantom switch would churn the gateway).
+// The NEW contract (post-Task-2.1):
+//   (a) FIRST connect with no anchored session → NO conversation.activate
+//       (nothing to restore — a phantom switch would churn the gateway).
 //   (b) after a session.created(uuid) anchors the ACP session, a RECONNECT that
-//       reaches READY fires exactly ONE fire-and-forget session.switch(uuid).
+//       reaches READY fires exactly ONE fire-and-forget conversation.activate(uuid).
 //   (c) the connect URL handed to the engine NEVER contains `session_id` — there
 //       is no connect-URL resume anymore.
 //
@@ -40,10 +40,10 @@ class SdkReconnectResumeTest {
         "{\"type\":\"session.created\",\"sessionId\":\"$uuid\",\"ts\":1}"
 
     private fun switchFrames(sent: List<String>) =
-        sent.filter { it.contains("\"type\":\"session.switch\"") }
+        sent.filter { it.contains("\"type\":\"conversation.activate\"") }
 
     @Test
-    fun first_connect_with_no_anchor_sends_no_session_switch() = runTest {
+    fun first_connect_with_no_anchor_sends_no_activate_frame() = runTest {
         val fake = FakeWebSocketEngine()
         val sdk = buildSdk(fake)
 
@@ -53,12 +53,12 @@ class SdkReconnectResumeTest {
         assertEquals(null, sdk.currentSessionId.value, "no anchor on a fresh first connect")
         assertTrue(
             switchFrames(fake.sentText).isEmpty(),
-            "first connect must NOT send session.switch, sent=${fake.sentText}",
+            "first connect must NOT send conversation.activate, sent=${fake.sentText}",
         )
     }
 
     @Test
-    fun reconnect_after_anchor_fires_exactly_one_session_switch_with_uuid() = runTest {
+    fun reconnect_after_anchor_fires_exactly_one_activate_with_uuid() = runTest {
         val fake = FakeWebSocketEngine()
         val sdk = buildSdk(fake)
         connectToReady(sdk, fake)
@@ -75,7 +75,7 @@ class SdkReconnectResumeTest {
 
         // Finish the reconnect handshake to READY on the fresh session. The READY
         // rising edge (a reconnect, not the first connect) must re-establish the
-        // anchored session via a single fire-and-forget session.switch(uuid).
+        // anchored session via a single fire-and-forget conversation.activate(uuid).
         fake.emit(WsIncoming.Text(AUTH_OK_FRAME))
         fake.emit(WsIncoming.Text(READY_FRAME))
         sdk.connection.first { it.status == SdkStatus.READY }
@@ -84,7 +84,7 @@ class SdkReconnectResumeTest {
         assertEquals(
             1,
             switches.size,
-            "reconnect-READY with an anchor must fire exactly one session.switch, sent=${fake.sentText}",
+            "reconnect-READY with an anchor must fire exactly one conversation.activate, sent=${fake.sentText}",
         )
         assertTrue(
             switches.single().contains(anchoredUuid),
@@ -133,7 +133,7 @@ class SdkReconnectResumeTest {
         fake.emit(WsIncoming.Text(AUTH_OK_FRAME))
         fake.emit(WsIncoming.Text(READY_FRAME))
         sdk.connection.first { it.status == SdkStatus.READY }
-        assertEquals(1, switchFrames(fake.sentText).size, "reconnect #1 re-establishes")
+        assertEquals(1, switchFrames(fake.sentText).size, "reconnect #1 re-establishes with conversation.activate")
 
         // The gateway rejects it — the anchored session was revoked elsewhere.
         fake.emit(WsIncoming.Text(forbiddenFrame()))
@@ -148,7 +148,7 @@ class SdkReconnectResumeTest {
         runCurrent()
         assertTrue(
             switchFrames(fake.sentText).isEmpty(),
-            "after a forbidden cleared the anchor, reconnect must not re-fire, sent=${fake.sentText}",
+            "after a forbidden cleared the anchor, reconnect must not re-fire conversation.activate, sent=${fake.sentText}",
         )
     }
 }

@@ -9,12 +9,21 @@ enum ChatRow: Identifiable {
     var id: String {
         switch self {
         case let .divider(_, id): return "div-\(id)"
-        // Index-only id — DO NOT include m.ts here. The streaming bubble's ts is stamped
-        // clock.nowMs() fresh on every SDK derive (StateDeriver), so an id with ts would
-        // churn SwiftUI identity each token and reset the typewriter @State to zero each frame.
-        // History is append-only so existing indices are stable; the bubble is always last.
-        case let .message(_, i): return "msg-\(i)"
+        case let .message(m, i): return Self.messageRowId(m, index: i)
         }
+    }
+
+    // Stable per-message identity — ONE row per logical message across its whole
+    // lifecycle. The live streaming bubble and its committed twin share the
+    // gateway-owned cycleId, so the streaming→committed handoff is the SAME
+    // SwiftUI row (no remount, no flash). cycleId is constant across tokens, so
+    // unlike ts it never churns mid-reveal. Entries with no cycle (user, REST
+    // history) key by their stable gateway entryId. Index is a last-resort
+    // fallback only (every committed row carries entryId; the live bubble cycleId).
+    private static func messageRowId(_ m: ChatMessage, index: Int) -> String {
+        if let cycleId = m.cycleId, !cycleId.isEmpty { return "cyc-\(cycleId)" }
+        if !m.entryId.isEmpty { return "ent-\(m.entryId)" }
+        return "idx-\(index)"
     }
 }
 

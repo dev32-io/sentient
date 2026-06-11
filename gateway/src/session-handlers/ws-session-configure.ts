@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import type { HermesAcpWire } from "@sentient/config";
-import type { ClientType } from "@sentient/protocol";
+import type { ClientType, SessionConfigureResume } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import type { Adapter } from "../adapters/adapter-types.js";
 import type { STTAdapterConfig } from "../adapters/stt/stt-adapter-types.js";
@@ -14,7 +14,7 @@ import { createAttentionGate } from "../cerebrum/attention-gate.js";
 import type { AttentionGateConfig } from "../cerebrum/attention-gate.js";
 import { toFeed, toFeedItem } from "../cerebrum/conversation-feed.js";
 import { createConversationMirror } from "../cerebrum/conversation-mirror.js";
-import type { ConversationMirror, MirrorEntry } from "../cerebrum/conversation-mirror.js";
+import type { ConversationMirror } from "../cerebrum/conversation-mirror.js";
 import type { HermesProfileBinding } from "../cerebrum/hermes-client.js";
 import type { HermesDispatcherDeps } from "../cerebrum/hermes-dispatcher.js";
 import { dispatchHermesCycle } from "../cerebrum/hermes-dispatcher.js";
@@ -50,6 +50,7 @@ import { createSessionsHandlers } from "./sessions-handlers.js";
 import { ttsSkipReason } from "./tts-policy.js";
 import type { ClientData } from "./ws-helpers.js";
 import { errorMessage, sendError } from "./ws-helpers.js";
+import { type ResumeParams, handleResumeOrFresh } from "./ws-resume-handover.js";
 
 // Resolve a config-supplied path that may start with "~/" against the
 // gateway user's $HOME. Tilde-prefixed values come straight from YAML;
@@ -77,6 +78,8 @@ export async function handleSessionConfigure(
   language: "en" | "zh",
   services: GatewayServices,
   clientType: ClientType,
+  configureDeviceId: string,
+  configureResume: SessionConfigureResume | undefined,
 ): Promise<void> {
   const sessionId = ws.data.sessionId;
   if (!sessionId) {
@@ -108,6 +111,23 @@ export async function handleSessionConfigure(
   const conversationMirror = createConversationMirror(services.cerebrum.conversation_history.max_entries);
   ws.data.conversationHistory = conversationMirror;
 
+  // Egress proxy — all outbound push frames route through this pair of
+  // closures. The inner target starts as a direct ws.send fallback so the
+  // early setup paths (preferences seed, session.ready) that emit before
+  // the FrameSequencer attachment is built still work. Once the attachment
+  // is constructed (below), the target is replaced with attachment.send /
+  // attachment.sendBinary so everything from that point is seq/epoch-stamped
+  // and journaled into the per-device replay buffer.
+  let egressSend: (msg: unknown) => void = (msg) => {
+    ws.send(JSON.stringify(msg));
+  };
+  let egressSendBinary: (data: Uint8Array) => void = (data) => {
+    ws.send(data);
+  };
+  // stable capture; egressSend/egressSendBinary are retargeted to attachment.send below
+  const wsSend = (msg: unknown): void => egressSend(msg);
+  const wsSendBinary = (data: Uint8Array): void => egressSendBinary(data);
+
   // Conversation feed: the HermesEventTranslator emits conversation.entry for
   // assistant/tool entries it produces. User and trigger entries (from
   // adapters + sensors) don't flow through the translator — mirror onAppend
@@ -121,16 +141,9 @@ export async function handleSessionConfigure(
       kind: entry.kind,
       preview,
     });
-    ws.send(JSON.stringify({ type: "conversation.entry", item: toFeedItem(entry) }));
+    wsSend({ type: "conversation.entry", item: toFeedItem(entry) });
   });
   ws.data.conversationFeedUnsub = conversationFeedUnsub;
-
-  const wsSend = (msg: unknown): void => {
-    ws.send(JSON.stringify(msg));
-  };
-  const wsSendBinary = (data: Uint8Array): void => {
-    ws.send(data);
-  };
 
   // Hermes dispatcher deps — wired below after the gate is created.
   // The gate's onCycle callback closes over these.
@@ -178,15 +191,59 @@ export async function handleSessionConfigure(
     sendError(ws, "protocol_error", "Person session create failed");
     return;
   }
+  // Task 3.8 — stable deviceId keys the per-device buffer across reconnects.
+  // The client supplies it on session.configure; the resume request now rides
+  // INSIDE that same frame (configureResume), so the resume decision is a
+  // synchronous read off the parsed configure message — no separate frame, no
+  // same-tick ordering race. When resumeParams carries a matching epoch,
+  // acquire REUSES the prior buffer (resumed:true) so the new FrameSequencer
+  // continues the same seq counter — seq continuity across reconnect.
+  const resumeParams: ResumeParams | null = configureResume
+    ? { epoch: configureResume.epoch, lastSeq: configureResume.lastSeq, deviceId: configureDeviceId }
+    : null;
+  const deviceId = configureDeviceId;
+  const acquired = personSession.acquireDeviceBuffer(deviceId, {
+    ...(resumeParams ? { resumeEpoch: resumeParams.epoch } : {}),
+  });
+  const { buffer: deviceBuffer, epoch: deviceEpoch, resumed: deviceResumed } = acquired;
+
+  // HANDOVER (Task 3.8): a matching-epoch resume hands back the deferred
+  // teardown stashed by the prior resumable disconnect (Task 3.7). Run it NOW
+  // to dispose the orphaned OLD pipeline (gate / ACP wire / sessionManager
+  // entry / translator) — aborting any still-running old cycle before the new
+  // session configures fresh on the SAME buffer. acquire already detached it
+  // from the entry so the retention sweep can never re-run it.
+  if (acquired.priorDeferredTeardown !== null) {
+    log.info("resume.handover-old-pipeline", { sessionId, deviceId, epoch: deviceEpoch });
+    acquired.priorDeferredTeardown();
+  }
+
+  // attachmentId is the stable deviceId — it keys the per-device replay buffer
+  // (DeviceBufferStore is keyed by deviceId), so the resumable-disconnect path
+  // in ws-handlers (releaseDeviceBuffer / bufferFor / disposeDeviceBuffer keyed
+  // by attachment.attachmentId) addresses the correct buffer across reconnects.
+  // sessionId stays the per-WS id used for sessionRouter / Manager / Controls.
   const attachment = createDeviceAttachment<ClientData>({
-    attachmentId: sessionId,
+    attachmentId: deviceId,
     ws,
     sessionId,
     profile: personSession.profile,
+    buffer: deviceBuffer,
+    epoch: deviceEpoch,
   });
   personSession.attach(attachment);
   ws.data.personSession = personSession;
   ws.data.attachment = attachment;
+
+  // Route all subsequent outbound push frames through the FrameSequencer so
+  // they are seq/epoch-stamped and journaled before the socket write. Everything
+  // after this point — preferences seed, session.ready, Hermes cycle frames,
+  // audio frames — flows through the attachment. Frames emitted before this
+  // point (auth-handshake, protocol errors) are raw ws.send; those happen
+  // before the device buffer exists and cannot be replayed — acceptable.
+  // one-time retarget: all push frames now flow through the per-device FrameSequencer
+  egressSend = (msg) => attachment.send(msg);
+  egressSendBinary = (data) => attachment.sendBinary(data);
 
   // Seed session preferences from the user's profile.audio so the entry-gate
   // ttsEnabled check (below) and the channel mid-stream gate honor the
@@ -236,20 +293,12 @@ export async function handleSessionConfigure(
   });
   ws.data.preferenceAudioUnsub = preferenceAudioUnsub;
 
-  // Seed the client with the current audio preferences. The onChange listener
-  // above only fires on FUTURE changes, and session.ready carries no prefs — so
-  // without this initial emit the client keeps its schema default
-  // (ttsEnabled: true). When the saved profile differs, the toggle computes
-  // !current from the wrong value and sends a patch the server already matches →
-  // update() is a no-op → no echo → the button appears stuck. Both webui and the
-  // mobile SDK rely on this seed to reflect the real state and toggle reliably.
-  wsSend({
-    type: "session.preferences.changed",
-    preferences: {
-      ttsEnabled: preferenceManager.get().ttsEnabled,
-      channel: preferenceManager.get().channel,
-    },
-  });
+  // NOTE: the initial session.preferences.changed SEED is emitted in the
+  // fresh-only block below (co-located with session.ready), NOT here.
+  // On a successful resume (recovered:true), the prior connection's journaled
+  // session.preferences.changed frame is already in the replay window and is
+  // replayed verbatim — no re-seed needed. Seeding here would cause a
+  // double-send: once live AND once via replay.
 
   // Register MCP control surface. MCP tools (update_user_settings, ...)
   // look up this session's controls by sessionId and mutate per-session
@@ -552,27 +601,19 @@ export async function handleSessionConfigure(
           { once: true },
         );
 
-        // Consume the pending gateway-minted session id once. Subsequent
+        // Consume the pending client-minted session id once. Subsequent
         // ReAct continuations within the same cycle (and the next cycle
         // after a normal turn) MUST NOT re-force the id — Hermes' default
         // keying takes over once the chain is established.
         //
-        // Pre-warm: if session.new is still in flight (`acpConn.newSession`
-        // hasn't resolved), await the stashed Promise. Failure rethrows so
-        // the cycle aborts cleanly instead of dispatching to a nonexistent
-        // session — sessions-handlers already surfaced the error to the UI.
-        let forcedSessionId: string | null = pendingNewSessionId;
-        if (forcedSessionId === null && pendingNewSessionPromise !== null) {
-          try {
-            forcedSessionId = await pendingNewSessionPromise;
-          } catch (err) {
-            log.warn("pending-new-session-failed", {
-              cycleId: params.cycleId,
-              reason: errorMessage(err, "unknown"),
-            });
-            forcedSessionId = null;
-          }
-        }
+        // Priority: eager pending id → in-flight session.new pre-warm Promise
+        // → null (no mint; Hermes default keying). The only mint is an eager
+        // client session.new. See resolveForcedSessionId for the full contract.
+        const forcedSessionId = await resolveForcedSessionId({
+          pendingNewSessionId,
+          pendingNewSessionPromise,
+          cycleId: params.cycleId,
+        });
         pendingNewSessionId = null;
         pendingNewSessionPromise = null;
 
@@ -620,6 +661,7 @@ export async function handleSessionConfigure(
         shortTermContext,
         conversationHistory: conversationMirror,
         abortSignal: adapterAbortController.signal,
+        admitPendingId: (id: string) => personSession.admitPendingId(id),
       })
       .catch((err: unknown) => {
         log.error("adapter-start-failed", { id: adapter.id, error: errorMessage(err, "unknown") });
@@ -751,29 +793,30 @@ export async function handleSessionConfigure(
       if (signal.aborted) {
         throw Object.assign(new Error("aborted"), { name: "AbortError" });
       }
-      return raw.map((m) => hermesMessageToMirrorEntry(m)).filter((e): e is NonNullable<typeof e> => e !== null);
+      return raw
+        .map((m, i) => hermesMessageToMirrorEntry(m, targetSessionId, i))
+        .filter((e): e is NonNullable<typeof e> => e !== null);
     },
     teardownTimeoutMs: sessionsConfig.switch_teardown_timeout_ms,
   });
 
-  // SDK contract: `session.switched` MUST precede `conversation.snapshot`
-  // — ConversationHistoryConnector raises an awaitingSnapshot gate on
-  // switched and only clears it on the next snapshot. Reverse order leaves
-  // the gate stuck up and drops live conversation.entry frames.
-  const emitSnapshotPair = (switchedTo: string | null, entries: readonly MirrorEntry[]): void => {
-    if (switchedTo !== null) {
-      ws.send(JSON.stringify({ type: "session.switched", sessionId: switchedTo, ts: Date.now() }));
-      log.info("session.switched.emitted", { sessionId, switchedTo });
-    }
-    ws.send(JSON.stringify({ type: "conversation.snapshot", items: toFeed(entries) }));
+  // On conversation.activate the gateway emits session.switched only —
+  // history is now REST (no conversation.snapshot on activate).
+  const emitActivateSwitched = (switchedTo: string): void => {
+    wsSend({ type: "session.switched", sessionId: switchedTo, ts: Date.now() });
+    log.info("session.switched.emitted", { sessionId, switchedTo });
   };
 
   // switchFlow drives mirror.replaceAll, which fires onSnapshot.
-  // pendingSwitchId latch correlates the snapshot with the originating switch.
-  snapshotUnsub = conversationMirror.onSnapshot((entries) => {
+  // pendingSwitchId latch correlates the snapshot with the originating activate.
+  // On conversation.activate: emit session.switched only (history is REST).
+  // On session.new: pendingSwitchId is null — nothing to emit here.
+  snapshotUnsub = conversationMirror.onSnapshot((_entries) => {
     const switchedTo = pendingSwitchId;
     pendingSwitchId = null;
-    emitSnapshotPair(switchedTo, entries);
+    if (switchedTo !== null) {
+      emitActivateSwitched(switchedTo);
+    }
   });
   ws.data.snapshotUnsub = snapshotUnsub;
 
@@ -781,7 +824,7 @@ export async function handleSessionConfigure(
     userId: initialBinding.userId,
     titleStore,
     send: (frame) => {
-      ws.send(JSON.stringify(frame));
+      wsSend(frame);
     },
     switchFlow,
     profileSessionsLookup,
@@ -792,28 +835,33 @@ export async function handleSessionConfigure(
       pendingNewSessionPromise = promise;
     },
     acpConn,
-    pluginClient,
   });
 
   // Latch pendingSwitchId before delegating, so the upcoming mirror
-  // snapshot fan-out is correlated with this switch. session.new clears
+  // snapshot fan-out is correlated with this activate. session.new clears
   // the latch — its empty-snapshot has nothing to pair against; Hermes
   // emits session.created on the first user.message of the new chain.
   ws.data.sessionsHandlers = {
     handle: async (frame) => {
-      if (frame.type === "session.switch") pendingSwitchId = frame.sessionId;
+      if (frame.type === "conversation.activate") pendingSwitchId = frame.sessionId;
       else if (frame.type === "session.new") pendingSwitchId = null;
       await sessionsHandlers.handle(frame);
     },
   };
 
+  // session.ready builder — sent on BOTH paths. The client handshake's
+  // ready-gate ONLY completes on session.ready (its FSM has no stream.resumed
+  // case), so a warm resume MUST send it too or the handshake times out
+  // (4002) → reconnect storm. handleResumeOrFresh invokes this thunk on the
+  // recovered:true path BEFORE stream.resumed (order is load-bearing — see its
+  // doc). On recovered:false / fresh, the thunk runs here in the fresh block.
   const playbackTunables = {
     minEagerEndMs: services.webui.playback.min_eager_end_ms,
     preemptFadeoutMs: services.webui.playback.preempt_fadeout_ms,
   };
-  log.debug("session-ready-playback-tunables", { sessionId, ...playbackTunables });
-  ws.send(
-    JSON.stringify({
+  const sendReady = (): void => {
+    log.debug("session-ready-playback-tunables", { sessionId, ...playbackTunables });
+    wsSend({
       type: "session.ready",
       sessionId,
       audioEncoding: AUDIO_ENCODING,
@@ -821,20 +869,69 @@ export async function handleSessionConfigure(
       outputSampleRate: OUTPUT_SAMPLE_RATE,
       enabledEffects: [],
       playback: playbackTunables,
-    }),
-  );
+    });
+  };
 
-  // Resume on connect: if `?session_id=` was at WS upgrade, run the switch
-  // flow now. The mirror.onSnapshot listener emits the paired
-  // session.switched + conversation.snapshot. On failure (404, network),
-  // fall through to the empty-snapshot path below.
+  // STREAM-RESUME decision (Task 3.8). When the device buffer was resumed AND
+  // it still holds the frames since the client's lastSeq: send session.ready
+  // (via sendReady) THEN stream.resumed{recovered:true} + replay those frames
+  // VERBATIM (raw socket sends — they keep their original seq/header), then
+  // SUPPRESS the fresh-only block below (prefs seed + the conversation.activate
+  // rehydrate / empty snapshot). session.ready is NOT suppressed — it was sent
+  // inside handleResumeOrFresh. Otherwise emit recovered:false (when a resume
+  // was requested) and fall through to the normal fresh setup; the client
+  // REST-refetches history.
+  const replayed = handleResumeOrFresh({
+    ws,
+    sessionId,
+    deviceId,
+    buffer: deviceBuffer,
+    epoch: deviceEpoch,
+    resumed: deviceResumed,
+    resumeParams,
+    sendReady,
+  });
+
+  if (replayed) {
+    // Successful resume: session.ready + the missed frames were already sent
+    // (session.ready first, then stream.resumed + replay). The client has
+    // history + prefs from the replay window. Go live; suppress the fresh-only
+    // block (prefs seed + snapshot).
+    log.info("session-configured.resumed", { sessionId, deviceId, epoch: deviceEpoch });
+    return;
+  }
+
+  // Fresh / recovered:false path: send session.ready now (the thunk the resume
+  // path would have called).
+  sendReady();
+
+  // Seed the client with the current audio preferences. Fresh path only — on
+  // resume the prior connection's journaled session.preferences.changed is
+  // replayed verbatim (no double-send). The onChange listener above only fires
+  // on FUTURE changes, and session.ready carries no prefs — so without this
+  // seed the client keeps its schema default (ttsEnabled: true). When the
+  // saved profile differs, the toggle computes !current from the wrong value
+  // → update() is a no-op → no echo → button appears stuck. Both webui and
+  // the mobile SDK rely on this seed to reflect the real state and toggle
+  // reliably.
+  wsSend({
+    type: "session.preferences.changed",
+    preferences: {
+      ttsEnabled: preferenceManager.get().ttsEnabled,
+      channel: preferenceManager.get().channel,
+    },
+  });
+
+  // Resume on connect: if `?session_id=` was at WS upgrade, run the activate
+  // flow now. The mirror.onSnapshot listener emits session.switched only
+  // (history is REST). On failure (404, network), fall through to the
+  // empty-snapshot path below.
   const resumeSessionId = ws.data.resumeSessionId;
   let resumeHandled = false;
   if (resumeSessionId !== null && ws.data.sessionsHandlers !== null) {
     try {
       await ws.data.sessionsHandlers.handle({
-        type: "session.switch",
-        requestId: `resume-${sessionId}`,
+        type: "conversation.activate",
         sessionId: resumeSessionId,
       });
       gate.clearConversationSalience();
@@ -848,12 +945,10 @@ export async function handleSessionConfigure(
 
   if (!resumeHandled) {
     // Initial sync of the conversation mirror. Empty on fresh session.
-    ws.send(
-      JSON.stringify({
-        type: "conversation.snapshot",
-        items: toFeed(conversationMirror.snapshot()),
-      }),
-    );
+    wsSend({
+      type: "conversation.snapshot",
+      items: toFeed(conversationMirror.snapshot()),
+    });
   }
 }
 
@@ -1020,4 +1115,37 @@ function getLastUserMessage(mirror: ConversationMirror): string {
     }
   }
   return "";
+}
+
+export interface ResolveForcedSessionIdInput {
+  readonly pendingNewSessionId: string | null;
+  readonly pendingNewSessionPromise: Promise<string> | null;
+  readonly cycleId: string;
+}
+
+/**
+ * Resolve which sessionId the upcoming cycle should force, in priority order:
+ *
+ *   1. An eager `pendingNewSessionId` (session.new pre-warm already resolved).
+ *   2. An in-flight `pendingNewSessionPromise` (session.new pre-warm still
+ *      racing the first message) — awaited once.
+ *   3. No pending session.new: return null — the cycle falls through to Hermes
+ *      default keying. The only mint is an eager client `session.new`
+ *      (visible `session.created`). A fresh-chain message with no pending id
+ *      does NOT trigger an invisible gateway mint.
+ */
+export async function resolveForcedSessionId(input: ResolveForcedSessionIdInput): Promise<string | null> {
+  if (input.pendingNewSessionId !== null) return input.pendingNewSessionId;
+  if (input.pendingNewSessionPromise !== null) {
+    try {
+      return await input.pendingNewSessionPromise;
+    } catch (err) {
+      log.warn("pending-new-session-failed", { cycleId: input.cycleId, reason: errorMessage(err, "unknown") });
+      return null;
+    }
+  }
+  // No pending session.new on a fresh chain: do NOT mint here. The client mints
+  // eagerly via session.new (visible session.created); a fresh-chain message with
+  // no pending id falls through to Hermes default keying (no invisible mint).
+  return null;
 }

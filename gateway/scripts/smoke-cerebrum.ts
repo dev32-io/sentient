@@ -43,6 +43,8 @@ async function runSmoke(url: string, token: string | undefined): Promise<SmokeRe
           capabilities: {
             supports: ["text.input", "audio.output", "cognition.status"],
           },
+          clientType: "webui",
+          deviceId: "smoke-cerebrum",
         }),
       );
     };

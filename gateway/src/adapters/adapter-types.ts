@@ -12,4 +12,10 @@ export interface AdapterContext {
   readonly shortTermContext: ShortTermContext;
   readonly conversationHistory: ConversationMirror;
   readonly abortSignal: AbortSignal;
+  /**
+   * Idempotency gate for client message ids. Returns false for a pendingId
+   * already processed on this PersonSession (a resend) — the adapter then skips
+   * re-dispatch. Non-session contexts pass `() => true`.
+   */
+  readonly admitPendingId: (pendingId: string) => boolean;
 }

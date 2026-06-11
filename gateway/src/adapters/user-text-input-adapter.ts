@@ -29,9 +29,19 @@ export function createUserTextInputAdapter(): UserTextInputAdapter {
 
     handleTextInput(text: string, pendingId?: string): void {
       if (!ctx) return;
+      if (pendingId !== undefined && !ctx.admitPendingId(pendingId)) {
+        log.info("text-input.dedup-skip", { pendingId });
+        return;
+      }
       const truncated = text.length > MAX_LOG_TEXT_LEN ? `${text.slice(0, MAX_LOG_TEXT_LEN)}…` : text;
       log.debug("text-input", { text: truncated, ...(pendingId !== undefined ? { pendingId } : {}) });
-      const entry = { kind: "user" as const, ts: Date.now(), channel: "text" as const, content: text };
+      const entry = {
+        entryId: crypto.randomUUID(),
+        kind: "user" as const,
+        ts: Date.now(),
+        channel: "text" as const,
+        content: text,
+      };
       ctx.conversationHistory.append(pendingId !== undefined ? { ...entry, pendingId } : entry);
     },
   };

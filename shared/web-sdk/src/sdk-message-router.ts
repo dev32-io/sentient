@@ -6,15 +6,26 @@
 // `connector.cancelled`) and dispatches everything else to per-type
 // connector handlers.
 //
+// Binary frame format (Task 3.5+):
+//   [8-byte BE u64 seq][1-byte type][payload]
+//   type 0x01 = audio
+//
+// The router peels the 9-byte header, extracts the seq for cursor advancement,
+// and delivers only the payload bytes to binary handlers.
+//
 // Extracted to keep `sentient-sdk.ts` under the 300-line clean-code budget.
 // ---------------------------------------------------------------------------
 
 import type { Connector, SDKStatus, SessionReadyPayload } from "./connector-types.ts";
 import { sdkLog } from "./debug.ts";
+import type { ResumeCursorState } from "./resume-cursor.ts";
 import type { SdkTimers } from "./sdk-timers.ts";
 import { handleSessionReady as readyDispatcher } from "./session-ready-handler.ts";
 
 type ErrorKind = "auth" | "network" | "timeout" | null;
+
+const BINARY_HEADER_BYTES = 9;
+const BINARY_TYPE_AUDIO = 0x01;
 
 export interface MessageRouterDeps {
   getStatus: () => SDKStatus;
@@ -35,6 +46,10 @@ export interface MessageRouterDeps {
   getBinaryHandlers: () => Set<(data: ArrayBuffer) => void>;
   /** Connectors registered with the SDK; used for routing connector.cancelled. */
   getConnectors: () => readonly Connector[];
+  /** Resume cursor — updated by every seq-bearing frame. */
+  cursor: ResumeCursorState;
+  /** Handler called when stream.resumed arrives (after reconnect). */
+  onStreamResumed: (recovered: boolean) => void;
 }
 
 export function dispatchMessage(
@@ -44,9 +59,7 @@ export function dispatchMessage(
   reject: (err: Error) => void,
 ): void {
   if (event.data instanceof ArrayBuffer) {
-    const handlers = deps.getBinaryHandlers();
-    sdkLog.debug("binary-frame", { bytes: event.data.byteLength, handlers: handlers.size });
-    for (const handler of handlers) handler(event.data);
+    dispatchBinary(deps, event.data);
     return;
   }
   let parsed: unknown;
@@ -58,9 +71,58 @@ export function dispatchMessage(
   const msg = parsed as Record<string, unknown>;
   const type = msg.type as string | undefined;
   if (type === undefined) return;
+
+  // Seq/epoch dedup for JSON frames.
+  const seq = typeof msg.seq === "number" ? msg.seq : 0;
+  const epoch = typeof msg.epoch === "number" ? msg.epoch : undefined;
+  if (seq !== 0 && !deps.cursor.tryApply(seq, epoch)) {
+    sdkLog.debug("json-frame.dedup-dropped", { type, seq, epoch });
+    return;
+  }
+  // Capture epoch even on frames that only carry it (e.g. auth.ok, session.ready).
+  if (epoch !== undefined && seq === 0) {
+    deps.cursor.tryApply(0, epoch);
+  }
+
   sdkLog.debug(type, msg);
   deps.notifyPresence(type);
   routeByType(deps, type, msg, resolve, reject);
+}
+
+/**
+ * Peel the 9-byte binary header and dispatch the payload to binary handlers.
+ *
+ * Header layout: [8-byte BE u64 seq][1-byte type]
+ * Only type 0x01 (audio) is currently defined; unknown types are logged and
+ * dropped to keep the audio pipeline clean.
+ */
+function dispatchBinary(deps: MessageRouterDeps, data: ArrayBuffer): void {
+  if (data.byteLength < BINARY_HEADER_BYTES) {
+    sdkLog.warn("binary-frame.too-short", { bytes: data.byteLength });
+    return;
+  }
+
+  const view = new DataView(data);
+  // u64 BE seq — safe for all seq < 2^53 (practical maximum for any
+  // realistic stream). getBigUint64 is available in all modern runtimes.
+  const seq = Number(view.getBigUint64(0, false));
+  const frameType = view.getUint8(8);
+  const payload = data.slice(BINARY_HEADER_BYTES);
+
+  if (frameType !== BINARY_TYPE_AUDIO) {
+    sdkLog.debug("binary-frame.unknown-type", { frameType, seq, bytes: data.byteLength });
+    return;
+  }
+
+  // Dedup by seq.
+  if (seq !== 0 && !deps.cursor.tryApply(seq)) {
+    sdkLog.debug("binary-frame.dedup-dropped", { seq, bytes: payload.byteLength });
+    return;
+  }
+
+  const handlers = deps.getBinaryHandlers();
+  sdkLog.debug("binary-frame", { seq, payloadBytes: payload.byteLength, handlers: handlers.size });
+  for (const handler of handlers) handler(payload);
 }
 
 function routeByType(
@@ -81,6 +143,10 @@ function routeByType(
   }
   if (type === "session.ready" && status === "authenticating") {
     handleReady(deps, msg, resolve);
+    return;
+  }
+  if (type === "stream.resumed") {
+    handleStreamResumed(deps, msg);
     return;
   }
   if (type === "connector.cancelled") {
@@ -110,6 +176,12 @@ function handleReady(deps: MessageRouterDeps, msg: Record<string, unknown>, reso
   readyDispatcher(msg, deps.onSessionReady, (tag, detail) => sdkLog.warn(tag, { detail }));
   deps.attachAll();
   resolve();
+}
+
+function handleStreamResumed(deps: MessageRouterDeps, msg: Record<string, unknown>): void {
+  const recovered = msg.recovered === true;
+  sdkLog.info("stream.resumed", { recovered, fromSeq: msg.fromSeq, toSeq: msg.toSeq });
+  deps.onStreamResumed(recovered);
 }
 
 function routeCancelled(deps: MessageRouterDeps, msg: Record<string, unknown>): void {

@@ -1,9 +1,10 @@
 // ---------------------------------------------------------------------------
 // ChatViewModel — thin per-conversation state holder over the shared usecase layer.
 //
-// Resolves the User/Connection-scoped ChatComponent from UserSessionManager (never
-// the SDK directly). On init it switches the active conversation to the route's
-// sessionId (null = new chat), then folds observeChat(cache.pending) → ChatUiState.
+// Receives the User/Connection-scoped ChatComponent directly (DI resolves it from
+// UserSessionManager in production; tests inject a fake subclass). Never holds the
+// SDK directly. On init it switches the active conversation to the route's sessionId
+// (null = new chat), then folds observeChat(cache.pending) → ChatUiState.
 // The optimistic outbox (OutboundCache) is per-conversation: it lives and dies with
 // this VM, so switching conversation = navigating = a fresh VM = clean state.
 //
@@ -14,26 +15,27 @@ package io.sentient.android.chat
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import io.sentient.android.di.UserSessionManager
+import io.sentient.mobiledata.di.ChatComponent
 import io.sentient.mobiledata.outbox.OutboundCache
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.sdk.ConnectionState
 import io.sentient.mobilesdk.sdk.VoiceMode
 import io.sentient.mobilesdk.transport.SdkStatus
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.UUID
 
 class ChatViewModel(
-    userSession: UserSessionManager,
+    private val component: ChatComponent,
     sessionId: String?,
 ) : ViewModel() {
     private val log = createLogger("android", "chat-viewmodel")
-    private val component = userSession.component()
     private val cache = OutboundCache()
 
     private val _state = MutableStateFlow(ChatUiState())
@@ -49,19 +51,58 @@ class ChatViewModel(
         // the usecase no longer suspends or throws — no launch, no runCatching. The
         // gateway buffers user.message behind the pending mint, so the UI never blocks.
         component.switchConversation(sessionId)
+        // COLD-RECONCILE: an existing-conversation switch reloads authoritative history
+        // from REST. That cold snapshot carries NO pendingId, so reconcile-by-pendingId
+        // can't drop a still-pending optimistic bubble → a duplicate. On the cold-replace
+        // signal, drop every still-present optimistic entry (now in the authoritative
+        // history, or already swept to FAILED).
+        viewModelScope.launch {
+            component.observeChat.coldHistoryReplaceSignal().collect {
+                component.observeChat.onColdHistoryReplace(cache)
+            }
+        }
         viewModelScope.launch {
             component.observeChat(cache.pending).collect { model ->
-                // Reconcile: drop optimistic entries whose committed echo arrived.
-                model.committed.mapNotNull { it.pendingId }.forEach(cache::remove)
+                // Reconcile: drop optimistic entries whose committed echo arrived. Driven by
+                // the LIVE echo (model.reconciledPendingIds) from the in-memory timeline —
+                // NOT model.committed.pendingId (the committed twin may carry it null).
+                model.reconciledPendingIds.forEach(cache::remove)
                 _state.value = ChatUiState(model = model)
             }
         }
-        // Drain the outbox on every READY emission (rising edge): flushIfReady is a
-        // no-op when not READY and when nothing's queued, so calling it on each
-        // emission is safe and idempotent.
+        // Drain the outbox on every READY emission AND sweep unacked timeouts. Both
+        // operations are idempotent: flushIfReady is a no-op when not READY or nothing
+        // queued; sweepTimeouts is a no-op when nothing is sent-but-unechoed.
         viewModelScope.launch {
             component.connection.state.collect { conn ->
                 component.sendMessage.flushIfReady(cache, conn.status)
+                if (cache.pending.value.isNotEmpty()) cache.sweepTimeouts()
+            }
+        }
+        // Periodic sweep: drives unacked-timeout FAILED transitions even when there are
+        // no connection events. Runs only while pending entries exist; cancels on VM clear.
+        viewModelScope.launch {
+            while (isActive) {
+                delay(SWEEP_INTERVAL_MS)
+                if (cache.pending.value.isNotEmpty()) {
+                    cache.sweepTimeouts()
+                }
+            }
+        }
+        // Collect the one-shot ReopenFailed notice from the component. Folds it into
+        // UI state as a transient notice; auto-dismissed after 4 s or on tap. The VM
+        // owns the lifetime of this collection so the event is never dropped on a
+        // lifecycle pause — it is already folded into the durable state snapshot.
+        viewModelScope.launch {
+            component.reopenFailed.collect {
+                log.info("reopen-failed.notice.show")
+                _state.value = _state.value.copy(reopenFailedNotice = REOPEN_FAILED_NOTICE)
+                delay(REOPEN_FAILED_AUTO_DISMISS_MS)
+                // Auto-dismiss only if not already cleared by a tap.
+                if (_state.value.reopenFailedNotice != null) {
+                    log.debug("reopen-failed.notice.auto-dismiss")
+                    _state.value = _state.value.copy(reopenFailedNotice = null)
+                }
             }
         }
     }
@@ -95,8 +136,36 @@ class ChatViewModel(
 
     fun reconnect() = component.forceReconnect()
 
+    /**
+     * Engagement signal from the chat screen: fires on screen entry (LaunchedEffect)
+     * and on composer focus. Idempotent — READY → liveness probe; not-READY → reconnect.
+     */
+    fun ensureConnected() {
+        log.debug("ensureConnected")
+        component.ensureConnected()
+    }
+
+    /**
+     * Composer gained keyboard focus — user is about to type; ensure the connection is
+     * live so the first send is not blocked by a stale reconnect race.
+     */
+    fun onComposerFocus() {
+        log.debug("onComposerFocus")
+        component.ensureConnected()
+    }
+
+    /** Acknowledge the ReopenFailed notice (tap-to-dismiss). Idempotent. */
+    fun dismissReopenFailedNotice() {
+        log.debug("reopen-failed.notice.dismissed")
+        _state.value = _state.value.copy(reopenFailedNotice = null)
+    }
+
     companion object {
         /** Keep the connection StateFlow warm briefly across config changes. */
         private const val STATE_SUBSCRIBE_STOP_MS = 5_000L
+        /** Periodic sweep interval for unacked-timeout detection. */
+        private const val SWEEP_INTERVAL_MS = 1_000L
+        /** Auto-dismiss the ReopenFailed notice after this duration (ms). */
+        private const val REOPEN_FAILED_AUTO_DISMISS_MS = 4_000L
     }
 }

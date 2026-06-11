@@ -6,6 +6,7 @@
 //   ContentTitleBar   — top navigation row (history / mark / new-chat).
 //   ContentErrorBanner — inline chat-side error pill (repo/model failures).
 //   ContentLoadingPill — connecting/sending spinner pill near the composer.
+//   ReopenFailedNoticeBanner — transient one-shot notice (spec §14 ReopenFailed).
 //   markModeOfConnection — pure mapping from ConnectionState → MarkMode.
 // ---------------------------------------------------------------------------
 package io.sentient.android.chat.banner
@@ -27,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import io.sentient.android.chat.ErrorBanner
 import io.sentient.android.chat.brand.SentientMark
@@ -34,6 +36,7 @@ import io.sentient.android.chat.message.LoadingAffordance
 import io.sentient.android.chat.voice.MarkMode
 import io.sentient.android.theme.Fraunces
 import io.sentient.android.theme.LocalTokens
+import io.sentient.android.theme.SentientTheme
 import io.sentient.mobilesdk.connectors.CognitionState
 import io.sentient.mobilesdk.design.Colors
 import io.sentient.mobilesdk.sdk.AudioState
@@ -180,5 +183,59 @@ internal fun ContentLoadingPill(affordance: LoadingAffordance) {
             strokeWidth = CONTENT_SPINNER_STROKE,
         )
         Text(text = label, color = Color(Colors.ink2), fontSize = tokens.type.sm)
+    }
+}
+
+/**
+ * Transient one-shot notice shown when a reconnect re-establish was rejected
+ * (spec §14: "Couldn't reopen that chat — started a new one."). Tapping the
+ * notice or waiting ~4 s dismisses it. Stateless: the VM owns the notice text
+ * and the dismiss action.
+ *
+ * testTag: `banner-reopen-failed`.
+ */
+@Composable
+internal fun ReopenFailedNoticeBanner(
+    noticeText: String,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val tokens = LocalTokens.current
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = tokens.space.lg, vertical = tokens.space.xs)
+            .background(Color(Colors.bgElev), RoundedCornerShape(tokens.radii.pill))
+            .border(BANNER_BORDER, Color(Colors.line), RoundedCornerShape(tokens.radii.pill))
+            .padding(horizontal = tokens.space.md, vertical = tokens.space.xs)
+            .testTag("banner-reopen-failed"),
+        horizontalArrangement = Arrangement.spacedBy(tokens.space.sm),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = noticeText,
+            color = Color(Colors.ink2),
+            fontSize = tokens.type.sm,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(onClick = onDismiss) {
+            Text(
+                text = "✕",
+                color = Color(Colors.ink3),
+                fontSize = tokens.type.sm,
+            )
+        }
+    }
+}
+
+@Preview(name = "Reopen failed notice", showBackground = true, backgroundColor = 0xFF2B2621)
+@Composable
+private fun ReopenFailedNoticeBannerPreview() {
+    SentientTheme {
+        ReopenFailedNoticeBanner(
+            noticeText = "Couldn't reopen that chat — started a new one.",
+            onDismiss = {},
+        )
     }
 }

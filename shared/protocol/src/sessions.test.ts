@@ -1,18 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  conversationActivateSchema,
   sessionCreatedEventSchema,
   sessionNewSchema,
   sessionRowSchema,
-  sessionSwitchSchema,
   sessionSwitchedEventSchema,
-  sessionsDeleteResultSchema,
-  sessionsDeleteSchema,
+  sessionsDeletedEventSchema,
   sessionsErrorSchema,
-  sessionsListResultSchema,
-  sessionsListSchema,
-  sessionsRenameResultSchema,
-  sessionsRenameSchema,
-  sessionsSearchSchema,
+  sessionsRenamedEventSchema,
 } from "./sessions.ts";
 
 describe("SessionRow", () => {
@@ -43,68 +38,29 @@ describe("SessionRow", () => {
   });
 });
 
-describe("sessions WS frames", () => {
-  it("accepts sessions.list with positive bounds", () => {
+describe("sessions lifecycle frames", () => {
+  it("accepts session.new with requestId", () => {
     expect(
-      sessionsListSchema.safeParse({
-        type: "sessions.list",
+      sessionNewSchema.safeParse({
+        type: "session.new",
         requestId: "r1",
-        limit: 20,
-        offset: 0,
       }).success,
     ).toBe(true);
   });
 
-  it("rejects sessions.list with limit > 100", () => {
+  it("accepts conversation.activate without requestId", () => {
     expect(
-      sessionsListSchema.safeParse({
-        type: "sessions.list",
-        requestId: "r1",
-        limit: 999,
-        offset: 0,
-      }).success,
-    ).toBe(false);
-  });
-
-  it("accepts sessions.search with non-empty query", () => {
-    expect(
-      sessionsSearchSchema.safeParse({
-        type: "sessions.search",
-        requestId: "r1",
-        q: "weather",
-        limit: 10,
-      }).success,
-    ).toBe(true);
-  });
-
-  it("accepts session.switch with sessionId", () => {
-    expect(
-      sessionSwitchSchema.safeParse({
-        type: "session.switch",
-        requestId: "r1",
+      conversationActivateSchema.safeParse({
+        type: "conversation.activate",
         sessionId: "abc",
       }).success,
     ).toBe(true);
   });
 
-  it("rejects sessions.rename with title > 200 chars", () => {
+  it("rejects conversation.activate missing sessionId", () => {
     expect(
-      sessionsRenameSchema.safeParse({
-        type: "sessions.rename",
-        requestId: "r1",
-        sessionId: "abc",
-        title: "x".repeat(201),
-      }).success,
-    ).toBe(false);
-  });
-
-  it("rejects sessions.rename with control chars", () => {
-    expect(
-      sessionsRenameSchema.safeParse({
-        type: "sessions.rename",
-        requestId: "r1",
-        sessionId: "abc",
-        title: "hello\x07world",
+      conversationActivateSchema.safeParse({
+        type: "conversation.activate",
       }).success,
     ).toBe(false);
   });
@@ -131,7 +87,26 @@ describe("sessions WS frames", () => {
     ).toBe(true);
   });
 
-  it("accepts sessions.error", () => {
+  it("accepts sessions.deleted broadcast", () => {
+    expect(
+      sessionsDeletedEventSchema.safeParse({
+        type: "sessions.deleted",
+        sessionId: "abc",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("accepts sessions.renamed broadcast", () => {
+    expect(
+      sessionsRenamedEventSchema.safeParse({
+        type: "sessions.renamed",
+        sessionId: "abc",
+        title: "Renamed",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("accepts sessions.error with requestId", () => {
     expect(
       sessionsErrorSchema.safeParse({
         type: "sessions.error",
@@ -142,62 +117,23 @@ describe("sessions WS frames", () => {
     ).toBe(true);
   });
 
-  it("accepts sessions.list.result with empty items", () => {
+  it("accepts sessions.error without requestId (conversation.activate failure)", () => {
     expect(
-      sessionsListResultSchema.safeParse({
-        type: "sessions.list.result",
-        requestId: "r1",
-        items: [],
-        total: 0,
-        hasMore: false,
+      sessionsErrorSchema.safeParse({
+        type: "sessions.error",
+        code: "forbidden",
+        message: "not your session",
       }).success,
     ).toBe(true);
   });
 
-  it("accepts sessions.delete.result with requestId + sessionId", () => {
+  it("accepts sessions.error with code rate_limited (session.new spam guard)", () => {
     expect(
-      sessionsDeleteResultSchema.safeParse({
-        type: "sessions.delete.result",
+      sessionsErrorSchema.safeParse({
+        type: "sessions.error",
         requestId: "r1",
-        sessionId: "abc",
-      }).success,
-    ).toBe(true);
-  });
-
-  it("rejects sessions.delete.result missing requestId", () => {
-    expect(
-      sessionsDeleteResultSchema.safeParse({
-        type: "sessions.delete.result",
-        sessionId: "abc",
-      }).success,
-    ).toBe(false);
-  });
-
-  it("accepts sessions.rename.result with title", () => {
-    expect(
-      sessionsRenameResultSchema.safeParse({
-        type: "sessions.rename.result",
-        requestId: "r1",
-        sessionId: "abc",
-        title: "Renamed",
-      }).success,
-    ).toBe(true);
-  });
-});
-
-describe("sessions module exports", () => {
-  it("exports sessionsDeleteSchema and sessionNewSchema for envelope wiring", () => {
-    expect(
-      sessionsDeleteSchema.safeParse({
-        type: "sessions.delete",
-        requestId: "r1",
-        sessionId: "abc",
-      }).success,
-    ).toBe(true);
-    expect(
-      sessionNewSchema.safeParse({
-        type: "session.new",
-        requestId: "r1",
+        code: "rate_limited",
+        message: "too many new chats",
       }).success,
     ).toBe(true);
   });

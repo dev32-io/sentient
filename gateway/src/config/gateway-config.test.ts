@@ -8,6 +8,10 @@ host: 0.0.0.0
 max_sessions: 10
 auth_timeout_ms: 5000
 session_persist_ms: 120000
+session:
+  ws_idle_timeout_ms: 255000
+  retention_ttl_ms: 1800000
+  replay_buffer_max_bytes: 16777216
 stt:
   provider: local-stt
   url: ws://stt-service:8766
@@ -41,6 +45,10 @@ host: 0.0.0.0
 max_sessions: 10
 auth_timeout_ms: 5000
 session_persist_ms: 120000
+session:
+  ws_idle_timeout_ms: 255000
+  retention_ttl_ms: 1800000
+  replay_buffer_max_bytes: 16777216
 stt:
   provider: local-stt
 llm:
@@ -61,6 +69,10 @@ host: 0.0.0.0
 max_sessions: 10
 auth_timeout_ms: 5000
 session_persist_ms: 120000
+session:
+  ws_idle_timeout_ms: 255000
+  retention_ttl_ms: 1800000
+  replay_buffer_max_bytes: 16777216
 stt:
   provider: local-stt
 llm:
@@ -92,6 +104,10 @@ host: 0.0.0.0
 max_sessions: 5
 auth_timeout_ms: 3000
 session_persist_ms: 60000
+session:
+  ws_idle_timeout_ms: 255000
+  retention_ttl_ms: 1800000
+  replay_buffer_max_bytes: 16777216
 stt:
   provider: local-stt
 llm:
@@ -112,6 +128,10 @@ host: 0.0.0.0
 max_sessions: 10
 auth_timeout_ms: 5000
 session_persist_ms: 120000
+session:
+  ws_idle_timeout_ms: 255000
+  retention_ttl_ms: 1800000
+  replay_buffer_max_bytes: 16777216
 stt:
   provider: local-stt
 llm:

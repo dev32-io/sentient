@@ -17,18 +17,21 @@
 // ---------------------------------------------------------------------------
 package io.sentient.android.di
 
+import android.content.Context
 import io.sentient.android.backend.BackendConfigHolder
 import io.sentient.android.backend.ResolvedBackend
 import io.sentient.android.backend.resolveBackend
 import io.sentient.android.presence.PresenceCoordinator
 import io.sentient.android.sdk.AppDependencies
 import io.sentient.android.sdk.SdkFaultHolder
+import io.sentient.android.sdk.buildAuthHttpClient
 import io.sentient.mobiledata.di.ChatComponent
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.sdk.SdkConfig
 import io.sentient.mobilesdk.sdk.SentientSdk
 import io.sentient.mobilesdk.sdk.createPlatformBundle
 import io.sentient.mobilesdk.sdk.isTerminalAuthError
+import io.sentient.mobilesdk.sessions.SessionsHttpClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -46,6 +49,7 @@ import kotlinx.coroutines.launch
  *  - A configured backend MUST be available (resolve returns Configured).
  */
 class UserSessionManager(
+    private val appContext: Context,
     private val presence: PresenceCoordinator? = null,
 ) {
     private val log = createLogger("android", "user-session")
@@ -80,8 +84,11 @@ class UserSessionManager(
         }
         val sessionScope =
             CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1) + handler)
+        // No durable resume-cursor store: the SDK's ResumeCursor stays in-memory and
+        // defaults to NoOpResumeCursorStore. A cold relaunch takes the recovered:false
+        // REST-refetch path (history comes from the gateway/Hermes on attach).
         newSdk = buildSdk(sessionScope)
-        val component = ChatComponent(newSdk)
+        val component = ChatComponent(sdk = newSdk)
 
         scope = sessionScope
         chatComponent = component
@@ -125,7 +132,22 @@ class UserSessionManager(
             capabilities = AppDependencies.capabilities,
             devFaultsEnabled = io.sentient.android.BuildConfig.DEBUG,
         )
-        return SentientSdk(config = config, bundle = createPlatformBundle(), scope = sessionScope)
+        // Build the platform bundle once so the token store is shared between the
+        // SDK WS transport and the REST SessionsHttpClient (same SecureTokenStore).
+        val bundle = createPlatformBundle()
+        // REST HTTP client for session queries: reuse the same OkHttp engine + TLS
+        // policy as the AuthClient so the dev self-signed bypass is applied once.
+        val sessionsHttpClient = SessionsHttpClient(
+            httpClient = buildAuthHttpClient(r.allowSelfSignedDevHost),
+            gatewayWsUrl = r.gatewayWsUrl,
+            token = { bundle.tokenStore.load() ?: "" },
+        )
+        return SentientSdk(
+            config = config,
+            bundle = bundle,
+            scope = sessionScope,
+            sessionsHttpClient = sessionsHttpClient,
+        )
     }
 
     /** App foreground → one-shot liveness probe; reconnect (+ resume session) only if dead. */
@@ -158,6 +180,7 @@ class UserSessionManager(
         log.info("shutdown")
         presence?.unbind()
         chatComponent?.disconnect(clearSession = true)
+        chatComponent?.close()
         scope?.cancel()
         if (io.sentient.android.BuildConfig.DEBUG) SdkFaultHolder.clear()
         chatComponent = null

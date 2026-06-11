@@ -11,7 +11,7 @@
 //
 // NOTE: transcript_clears_when_matching_speech_user_entry_commits was deleted
 // because `transcript` is only exposed on the removed SdkState aggregate
-// (not on connection or timeline). The applyFeed/stampCycleIds logic is still
+// (not on connection or timeline). The applyFeed → timeline projection is still
 // exercised indirectly via tool_and_trigger_feed_entries_are_dropped_from_messages.
 //
 // B1 caveat: FakeWebSocketEngine mints a FRESH session per open(); the reconnect

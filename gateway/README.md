@@ -79,11 +79,29 @@ task-cancel request to Hermes alongside the cycle/TTS abort.
 2. `ws-auth-gate` validates the token, looks up the user, attaches the
    user's Hermes worker connection (already pre-warmed by the
    per-profile-connection FSM).
-3. Client sends `session.configure`; gateway replies `session.ready`.
+3. Client sends `session.configure` (REQUIRES a stable `deviceId`; an optional
+   `resume:{epoch,lastSeq}` on a reconnect); gateway replies `session.ready`
+   (and `stream.resumed` if a resume was requested).
 4. Audio + text flow until the client disconnects or idles.
-5. PersonSession persists for `session_persist_ms` (default 2 minutes,
-   configurable in `config.yaml`) after disconnect; reopen within that
-   window rejoins the same conversation.
+5. On disconnect the in-flight cycle keeps running and its frames are journaled
+   into the per-device replay buffer; the PersonSession + buffer survive
+   `session.retention_ttl_ms` (default 30 min), then evict. Reconnect within that
+   window resumes cheaply (replay frames `> lastSeq`); beyond it the client
+   REST-refetches history. Two timers, by design: the Bun socket idle-closes at
+   `session.ws_idle_timeout_ms` (≤255s, Bun's cap), but the app-level session
+   outlives the socket for the full 30-min TTL.
+
+## Transport boundary (WS vs REST)
+
+The WebSocket carries the **live chat session only** — mic audio, TTS audio, the
+live conversation stream (`conversation.entry`, `cycle.*`, `cognition.status`,
+`task.update`), `ping`/`pong`, `interrupt`, and the resume handshake. Everything
+on the WS push channel is `seq`-stamped and replay-buffered. **Everything
+client-driven is REST**: session list, conversation history, search, rename,
+delete, preferences — under `/api/v1/sessions`. The old WS query RPCs
+(`session.switch` → `conversation.snapshot`, list, preferences) were removed; a
+lightweight WS `conversation.activate` focuses the live stream (no history
+payload). Full wire contract: [`../shared/protocol/WIRE.md`](../shared/protocol/WIRE.md).
 
 ## TTS
 

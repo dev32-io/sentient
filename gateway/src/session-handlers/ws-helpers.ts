@@ -63,8 +63,17 @@ export interface CerebrumSessionData {
    * to resume a specific chain.
    */
   resumeSessionId: string | null;
-  /** Sessions wire-frame handler: dispatches sessions.* / session.new / session.switch. */
+  /** Sessions wire-frame handler: dispatches sessions.* / session.new / conversation.activate. */
   sessionsHandlers: SessionsHandlers | null;
+  /**
+   * `Date.now()` of the last accepted `session.new` frame on THIS connection,
+   * or null before the first. The min-interval gate admits the next frame only
+   * once `min_new_interval_ms` has elapsed since this. Per connection (one
+   * client) — NOT per user; a user with web + app open gets a separate gate for
+   * each. Blocks spam / double-fire; the cycle path (user.message) is not
+   * gated here — it runs through a different handler.
+   */
+  lastSessionNewAtMs: number | null;
   /** Cleanup for the mirror.onSnapshot subscription created in session.configure. */
   snapshotUnsub: (() => void) | null;
   /**
@@ -114,6 +123,7 @@ export function createEmptySessionData(): CerebrumSessionData {
     attachment: null,
     resumeSessionId: null,
     sessionsHandlers: null,
+    lastSessionNewAtMs: null,
     snapshotUnsub: null,
     acpWireDispose: null,
     acpSdkFrameUnsub: null,

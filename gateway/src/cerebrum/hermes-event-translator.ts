@@ -120,6 +120,7 @@ export async function translateHermesStream(
     emit({ type: "cycle.aborted", cycleId, reason: "error" });
     if (assistantText.length > 0) {
       mirror.append({
+        entryId: crypto.randomUUID(),
         kind: "assistant",
         ts: Date.now(),
         content: assistantText,
@@ -147,6 +148,7 @@ export async function translateHermesStream(
     emit({ type: "cycle.aborted", cycleId, reason: "interrupt" });
     if (assistantText.length > 0) {
       mirror.append({
+        entryId: crypto.randomUUID(),
         kind: "assistant",
         ts: Date.now(),
         content: assistantText,
@@ -274,6 +276,7 @@ function handleEvent(
 
       if (rec) {
         const toolEntry: MirrorEntry = {
+          entryId: crypto.randomUUID(),
           kind: "tool",
           ts: Date.now(),
           toolName: rec.toolName,
@@ -292,6 +295,7 @@ function handleEvent(
 
       if (deps.assistantTextRef.value.length > 0) {
         const assistantEntry: MirrorEntry = {
+          entryId: crypto.randomUUID(),
           kind: "assistant",
           ts: Date.now(),
           content: deps.assistantTextRef.value,

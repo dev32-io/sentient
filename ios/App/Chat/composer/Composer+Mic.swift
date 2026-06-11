@@ -80,11 +80,11 @@ enum MicPermission {
             ttsEnabled: true,
             micActive: false,
             canInterrupt: false,
-            sendInFlight: false,
             onSend: { _ in },
             onMicToggle: {},
             onTtsToggle: {},
-            onInterrupt: {}
+            onInterrupt: {},
+            onFocusGained: {}
         )
     }
     .background(DuskColors.bg)
@@ -98,11 +98,11 @@ enum MicPermission {
             ttsEnabled: true,
             micActive: true,
             canInterrupt: false,
-            sendInFlight: false,
             onSend: { _ in },
             onMicToggle: {},
             onTtsToggle: {},
-            onInterrupt: {}
+            onInterrupt: {},
+            onFocusGained: {}
         )
     }
     .background(DuskColors.bg)
@@ -116,29 +116,11 @@ enum MicPermission {
             ttsEnabled: true,
             micActive: false,
             canInterrupt: true,
-            sendInFlight: false,
             onSend: { _ in },
             onMicToggle: {},
             onTtsToggle: {},
-            onInterrupt: {}
-        )
-    }
-    .background(DuskColors.bg)
-}
-
-#Preview("Send in-flight (spinner)") {
-    VStack {
-        Spacer()
-        Composer(
-            canSend: true,
-            ttsEnabled: true,
-            micActive: false,
-            canInterrupt: false,
-            sendInFlight: true,
-            onSend: { _ in },
-            onMicToggle: {},
-            onTtsToggle: {},
-            onInterrupt: {}
+            onInterrupt: {},
+            onFocusGained: {}
         )
     }
     .background(DuskColors.bg)

@@ -21,6 +21,18 @@ sealed class ClientMessage {
         val capabilities: Capabilities,
         /** R1: "mobile" extends the gateway enum ["webui","cube"] → ["webui","cube","mobile"]. */
         val clientType: String,
+        /**
+         * Stable per-install device id (Task 3.10). REQUIRED by the gateway — keys the
+         * per-device replay buffer across reconnects. The same value rides every connect.
+         */
+        val deviceId: String,
+        /**
+         * Resume request carried INSIDE configure on a RECONNECT (Slice 3 hardening).
+         * Null on a fresh connect. The gateway reads it synchronously off this frame —
+         * there is no separate stream.resume frame, so no send-ordering race.
+         * Omitted from the wire when null ([WireJson] explicitNulls=false).
+         */
+        val resume: ResumeParams? = null,
     ) : ClientMessage()
 
     @Serializable @SerialName("audio.start")
@@ -50,47 +62,35 @@ sealed class ClientMessage {
         val payload: PreferencesPatchPayload,
     ) : ClientMessage()
 
-    // ── Sessions management (mirrors sessions.ts) ──
-
-    @Serializable @SerialName("sessions.list")
-    data class SessionsList(
-        val requestId: String,
-        val limit: Int,
-        val offset: Int,
-    ) : ClientMessage()
-
-    @Serializable @SerialName("sessions.search")
-    data class SessionsSearch(
-        val requestId: String,
-        val q: String,
-        val limit: Int,
-    ) : ClientMessage()
-
-    @Serializable @SerialName("sessions.delete")
-    data class SessionsDelete(
-        val requestId: String,
-        val sessionId: String,
-    ) : ClientMessage()
-
-    @Serializable @SerialName("sessions.rename")
-    data class SessionsRename(
-        val requestId: String,
-        val sessionId: String,
-        val title: String,
-    ) : ClientMessage()
+    // ── Sessions management ──
+    // Query RPCs (list/search/delete/rename) were removed from the WS protocol in
+    // Task 2.1 — they are now REST (SessionsHttpClient). Only lifecycle frames remain.
 
     @Serializable @SerialName("session.new")
     data class SessionNew(val requestId: String) : ClientMessage()
 
-    @Serializable @SerialName("session.switch")
-    data class SessionSwitch(
-        val requestId: String,
+    /** Replaces the retired session.switch — activates an existing session.
+     *  Fire-and-forget: no requestId. The gateway strips any requestId on the
+     *  wire; web-sdk sends none. */
+    @Serializable @SerialName("conversation.activate")
+    data class ConversationActivate(
         val sessionId: String,
     ) : ClientMessage()
 }
 
 @Serializable
 data class Capabilities(val supports: List<String>)
+
+/**
+ * Resume request folded into [ClientMessage.SessionConfigure.resume] on a RECONNECT
+ * (Slice 3 hardening). Requests replay of any frames missed since [lastSeq] within
+ * [epoch]. Built only when lastSeq>0 (a fresh connect has nothing to resume).
+ */
+@Serializable
+data class ResumeParams(
+    val epoch: Long,
+    val lastSeq: Long,
+)
 
 /** Payload body for [ClientMessage.UserPreferencesPatch]. Both fields are optional so callers
  *  can patch only what changed. Null fields are omitted from JSON by [WireJson] (explicitNulls=false). */

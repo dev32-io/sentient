@@ -2,8 +2,7 @@
 // SdkTestHarness — shared fixtures for the C7 orchestrator tests.
 //
 // Builds a SentientSdk over a FakeWebSocketEngine with runTest virtual time and
-// injected clock/newId — no real waits, no platform. The idle tick is parked far
-// beyond the test horizon so the disconnect-on-idle loop never races assertions.
+// injected clock/newId — no real waits, no platform.
 //
 // B1 caveat: FakeWebSocketEngine mints a FRESH session per open(); the helpers
 // drive the CURRENT session, so a reconnect's second open() is driven cleanly.
@@ -12,7 +11,10 @@ package io.sentient.mobilesdk.sdk
 
 import io.sentient.mobilesdk.fakes.FakeWebSocketEngine
 import io.sentient.mobilesdk.fakes.FixedClock
+import io.sentient.mobilesdk.fakes.InMemoryDeviceIdStore
 import io.sentient.mobilesdk.fakes.InMemoryTokenStore
+import io.sentient.mobilesdk.transport.NoOpResumeCursorStore
+import io.sentient.mobilesdk.transport.ResumeCursorStore
 import io.sentient.mobilesdk.transport.SdkStatus
 import io.sentient.mobilesdk.transport.WebSocketEngine
 import io.sentient.mobilesdk.transport.WsIncoming
@@ -37,10 +39,12 @@ internal const val AUTH_OK_FRAME =
 internal fun TestScope.buildSdk(
     engine: WebSocketEngine,
     tokenStore: InMemoryTokenStore = InMemoryTokenStore().apply { save("tok-abc") },
+    resumeCursorStore: ResumeCursorStore = NoOpResumeCursorStore,
 ): SentientSdk {
     val bundle = PlatformBundle(
         engine = engine,
         tokenStore = tokenStore,
+        deviceIdStore = InMemoryDeviceIdStore("dev-test"),
         clock = FixedClock(0L),
         capture = null,
         playback = null,
@@ -57,9 +61,7 @@ internal fun TestScope.buildSdk(
             var n = 0
             { "req-${n++}" }
         },
-        // Park the idle tick far beyond the test horizon so the disconnect-on-idle
-        // loop never races the assertions under runTest virtual time.
-        idleTickMs = 1_000_000_000L,
+        resumeCursorStore = resumeCursorStore,
     )
 }
 

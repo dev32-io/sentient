@@ -44,7 +44,7 @@ const SESSION_CTX = { sessionId: "test-session", source: "test" };
 describe("salienceKeyForMirrorEntry", () => {
   it("maps user text channel to conversation.user.text", () => {
     const entry = {
-      id: "1",
+      entryId: "1",
       ts: 0,
       kind: "user" as const,
       channel: "text" as const,
@@ -55,7 +55,7 @@ describe("salienceKeyForMirrorEntry", () => {
 
   it("maps user speech channel to conversation.user.speech", () => {
     const entry = {
-      id: "1",
+      entryId: "1",
       ts: 0,
       kind: "user" as const,
       channel: "speech" as const,
@@ -66,7 +66,7 @@ describe("salienceKeyForMirrorEntry", () => {
 
   it("maps trigger entry to conversation.trigger", () => {
     const entry = {
-      id: "1",
+      entryId: "1",
       ts: 0,
       kind: "trigger" as const,
       source: "sensor.temperature",
@@ -77,7 +77,7 @@ describe("salienceKeyForMirrorEntry", () => {
 
   it("returns null for assistant entry", () => {
     const entry = {
-      id: "1",
+      entryId: "1",
       ts: 0,
       kind: "assistant" as const,
       cycleId: "c-1",
@@ -88,7 +88,7 @@ describe("salienceKeyForMirrorEntry", () => {
 
   it("returns null for tool entry", () => {
     const entry = {
-      id: "1",
+      entryId: "1",
       ts: 0,
       kind: "tool" as const,
       cycleId: "c-1",

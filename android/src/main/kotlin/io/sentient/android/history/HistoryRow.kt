@@ -78,7 +78,10 @@ fun HistoryRow(
             overflow = TextOverflow.Ellipsis,
         )
         Text(
-            text = "${relativeTime(nowMs, row.lastActiveAt)} · ${messageCountLabel(row.messageCount)}",
+            // Relative time only. The message-count suffix was dropped: the gateway
+            // session list does not populate a count (always 0 → a misleading "no
+            // messages" on every row), so the suffix was pure noise.
+            text = relativeTime(nowMs, row.lastActiveAt),
             color = Color(Colors.ink3),
             fontSize = tokens.type.xs,
             maxLines = 1,

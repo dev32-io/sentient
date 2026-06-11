@@ -6,8 +6,10 @@ import type {
   SentientSDKInternal,
 } from "./connector-types.ts";
 import { sdkLog } from "./debug.ts";
+import { getOrCreateDeviceId } from "./device-id.ts";
 import { type ConnectionMonitor, createConnectionMonitor } from "./presence/connection-monitor.ts";
 import { type PresenceCoordinator, createPresenceCoordinator } from "./presence/presence-coordinator.ts";
+import { type ResumeCursorState, createResumeCursor } from "./resume-cursor.ts";
 import {
   type CloseHandlerDeps,
   handleSocketClose as handleClose,
@@ -26,6 +28,11 @@ import {
   setCurrentSessionId,
 } from "./sdk-reconnect.ts";
 import { type SdkTimers, createSdkTimers } from "./sdk-timers.ts";
+import {
+  type StreamResumeHandlerDeps,
+  buildConfigureResume,
+  handleStreamResumed as handleStreamResumedFn,
+} from "./stream-resume-handler.ts";
 
 // SentientSDK — WS/status core; presence idle-close + reconnect-loop recovery.
 // Message dispatch in sdk-message-router; close handling in sdk-close-handler.
@@ -59,15 +66,19 @@ const NOOP_RELEASE = (): void => {};
 export class SentientSDK {
   private readonly config: SentientSDKConfig;
   private readonly connectors: Connector[] = [];
-  private readonly capabilities: Set<string> = new Set();
+  private readonly capabilities: Set<string> = new Set(["stream.resume"]);
   private readonly messageHandlers = new Map<string, Set<(msg: unknown) => void>>();
   private readonly binaryHandlers = new Set<(data: ArrayBuffer) => void>();
+  private readonly deviceId: string;
+  private readonly cursor: ResumeCursorState;
 
   private currentStatus: SDKStatus = "disconnected";
   private ws: WebSocket | null = null;
   private pendingPresenceReconnect = false;
   private consumerDisconnected = false;
   private lastErrorKind: ErrorKind = null;
+  // True when the current connect cycle is a reconnect (not the first connect).
+  private isReconnectCycle = false;
   // Pending stale-resume timer. conversation.snapshot arms it; session.switched
   // disarms. If it fires, the resume 404'd and the stored id is dropped.
   private staleResumeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -78,6 +89,8 @@ export class SentientSDK {
 
   constructor(config: SentientSDKConfig) {
     this.config = config;
+    this.deviceId = getOrCreateDeviceId();
+    this.cursor = createResumeCursor();
     this.timers = createSdkTimers({
       onAuthTimeout: () => {
         this.lastErrorKind = "timeout";
@@ -151,6 +164,7 @@ export class SentientSDK {
     this.detachAll();
     this.presence?.dispose();
     this.pendingPresenceReconnect = false;
+    this.isReconnectCycle = false;
     if (this.ws !== null) {
       this.ws.onclose = null;
       this.ws.onmessage = null;
@@ -227,6 +241,14 @@ export class SentientSDK {
     };
   }
 
+  private resumeHandlerDeps(): StreamResumeHandlerDeps {
+    return {
+      cursor: this.cursor,
+      send: (msg) => this.sendRaw(msg),
+      getMessageHandlers: () => this.messageHandlers,
+    };
+  }
+
   /**
    * Track the per-tab "current session" pointer. session.created /
    * session.switched update sessionStorage; conversation.snapshot without a
@@ -294,7 +316,10 @@ export class SentientSDK {
 
   private buildReconnect(): ReconnectController {
     return createReconnectController({
-      connect: () => this.connect(),
+      connect: () => {
+        this.isReconnectCycle = true;
+        return this.connect();
+      },
       teardownWs: () => teardownWsFn(this.closeDeps()),
       getWs: () => this.ws,
       getStatus: () => this.currentStatus,
@@ -311,6 +336,7 @@ export class SentientSDK {
   }
 
   private routerDeps(): MessageRouterDeps {
+    const isReconnect = this.isReconnectCycle;
     return {
       getStatus: () => this.currentStatus,
       setStatus: (s) => this.setStatus(s),
@@ -318,18 +344,29 @@ export class SentientSDK {
         this.lastErrorKind = k;
       },
       timers: this.timers,
-      sendSessionConfigure: () =>
+      sendSessionConfigure: () => {
+        this.isReconnectCycle = false; // consumed; reset for next cycle
+        // Fold the resume request INTO configure on a reconnect with a non-zero
+        // cursor (omitted on first connect). Single frame → the gateway reads
+        // resume synchronously off configure, no separate stream.resume frame,
+        // no send-ordering race.
+        const resume = isReconnect ? buildConfigureResume(this.cursor) : undefined;
         this.sendRaw({
           type: "session.configure",
           capabilities: { supports: [...this.capabilities] },
           clientType: "webui",
-        }),
+          deviceId: this.deviceId,
+          ...(resume ? { resume } : {}),
+        });
+      },
       onSessionReady: this.config.onSessionReady,
       attachAll: () => this.attachAll(),
       notifyPresence: (type) => this.presence?.notifyForType(type),
       getMessageHandlers: () => this.messageHandlers,
       getBinaryHandlers: () => this.binaryHandlers,
       getConnectors: () => this.connectors,
+      cursor: this.cursor,
+      onStreamResumed: (recovered) => handleStreamResumedFn(this.resumeHandlerDeps(), recovered),
     };
   }
 
@@ -370,9 +407,11 @@ export class SentientSDK {
     }
     this.ws.send(JSON.stringify(message));
   }
+
   private sendBinaryRaw(data: ArrayBuffer | Uint8Array): void {
     if (this.ws?.readyState === WS_READY_STATE_OPEN) this.ws.send(data);
   }
+
   private setStatus(next: SDKStatus): void {
     if (this.currentStatus === next) return;
     sdkLog.debug(`status: ${this.currentStatus} → ${next}`);

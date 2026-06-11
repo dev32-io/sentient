@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // SentientSdk — THE orchestrator. Wires transport + connectors + handshake +
-// reconnect + idle into the split observable surfaces:
+// reconnect into the split observable surfaces:
 //   connection: StateFlow<ConnectionState>  — transport + voice axis
 //   timeline:   StateFlow<List<ChatMessage>> — committed message history
 //   events:     SharedFlow<SdkEvent>         — one-shot notifications
@@ -10,20 +10,25 @@
 package io.sentient.mobilesdk.sdk
 
 import io.sentient.mobilesdk.audioio.FaultAwareCaptureAdapter
+import io.sentient.mobilesdk.connectors.CognitionState
 import io.sentient.mobilesdk.connectors.SessionsListPage
 import io.sentient.mobilesdk.connectors.SessionsRequestException
 import io.sentient.mobilesdk.connectors.SessionsTimeoutException
 import io.sentient.mobilesdk.dev.FaultHooks
 import io.sentient.mobilesdk.log.createLogger
-import io.sentient.mobilesdk.presence.IdleDetectorConfig
-import io.sentient.mobilesdk.presence.IdleDetectorEvent
-import io.sentient.mobilesdk.presence.createIdleDetector
 import io.sentient.mobilesdk.protocol.AudioPreferencesPatch
 import io.sentient.mobilesdk.protocol.ClientMessage
+import io.sentient.mobilesdk.protocol.ResumeParams
 import io.sentient.mobilesdk.protocol.SdkEvent
+import io.sentient.mobilesdk.secure.DeviceIdProvider
+import io.sentient.mobilesdk.sessions.SessionsHttpClient
 import io.sentient.mobilesdk.transport.ConnectResult
 import io.sentient.mobilesdk.transport.MessageRouter
+import io.sentient.mobilesdk.transport.NoOpResumeCursorStore
 import io.sentient.mobilesdk.transport.ReconnectController
+import io.sentient.mobilesdk.transport.ResumeCursor
+import io.sentient.mobilesdk.transport.ResumeCursorPersistence
+import io.sentient.mobilesdk.transport.ResumeCursorStore
 import io.sentient.mobilesdk.transport.SdkStatus
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -40,8 +45,11 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.random.Random
 
 private const val DEFAULT_SESSIONS_TIMEOUT_MS = 5_000L
-private const val DEFAULT_IDLE_THRESHOLD_MS = 3_600_000L
-private const val DEFAULT_IDLE_TICK_MS = 30_000L
+
+/** A1: "stuck" only when a cycle is active AND the socket is not healthy. A slow healthy
+ *  cycle stays READY and never arms — no content-frame false-positives. */
+internal fun shouldWatchStuck(cognition: CognitionState, isSpeaking: Boolean, status: SdkStatus): Boolean =
+    (cognition != CognitionState.IDLE || isSpeaking) && status != SdkStatus.READY
 
 class SentientSdk(
     private val config: SdkConfig,
@@ -50,8 +58,18 @@ class SentientSdk(
     newId: () -> String = { Random.nextLong().toString(16) },
     private val delayFn: suspend (Long) -> Unit = { delay(it) },
     sessionsTimeoutMs: Long = DEFAULT_SESSIONS_TIMEOUT_MS,
-    idleThresholdMs: Long = DEFAULT_IDLE_THRESHOLD_MS,
-    idleTickMs: Long = DEFAULT_IDLE_TICK_MS,
+    /** REST client for session queries. Null in tests that don't exercise REST. */
+    sessionsHttpClient: SessionsHttpClient? = null,
+    /**
+     * Durable resume-cursor persistence. Dependency-inverted: the SDK defines the
+     * interface so a higher layer COULD supply a durable backing. None does today —
+     * mobile-data keeps the chat timeline in-memory and injects nothing — so this
+     * defaults to a no-op and the in-memory cursor dies with the process (a cold
+     * relaunch takes the recovered:false REST-refetch path). When set, it seeds the
+     * cursor on resume-prep, persists on advance (coalesced to cycle boundaries), and
+     * clears on a non-recovered reset / delete.
+     */
+    private val resumeCursorStore: ResumeCursorStore = NoOpResumeCursorStore,
 ) {
     private val log = createLogger("sdk", "orchestrator")
 
@@ -75,11 +93,16 @@ class SentientSdk(
     }
 
     private val deriver = StateDeriver(bundle.clock)
-    private val idle = createIdleDetector(IdleDetectorConfig(idleThresholdMs = idleThresholdMs))
+    private val stuckWatchdog = StuckStateWatchdog(
+        timeoutMs = config.stuckStateTimeoutMs,
+        scope = scope,
+        delayFn = delayFn,
+        onTimeout = ::onStuckTimeout,
+    )
 
     // The active ACP session uuid, anchored ONLY from session.switched /
     // session.created broadcasts (non-empty ids). Drives the reconnect re-
-    // establish (fire session.switch on a reconnect READY to restore server
+    // establish (fire conversation.activate on a reconnect READY to restore server
     // context) and is cleared on consumer disconnect(clearSession = true).
     // NOT a persistent connect-URL resume — see Task A1.
     private val _currentSessionId = MutableStateFlow<String?>(null)
@@ -104,6 +127,25 @@ class SentientSdk(
 
     // FaultHooks declared early so effectiveCapture + lifecycle can both reference it.
     private val faultHooks = FaultHooks()
+
+    // Resume cursor (Task 3.10): tracks seq/epoch so replayed frames dedup and the
+    // reconnect stream.resume carries the right {epoch,lastSeq}. The SDK owns it;
+    // WsTransport peels the header + emits seq, the pump applies the cursor (mirrors
+    // the web split). Task 4.7 persists it durably via [cursorPersistence].
+    private val resumeCursor = ResumeCursor()
+
+    // Task 4.7 durable persistence: seeds the empty cursor on resume-prep, persists
+    // on advance (coalesced to cycle boundaries), clears on a non-recovered reset /
+    // delete. Keyed by the live currentSessionId so it never holds a stale anchor.
+    private val cursorPersistence = ResumeCursorPersistence(
+        cursor = resumeCursor,
+        store = resumeCursorStore,
+        conversationId = { _currentSessionId.value },
+    )
+
+    // Stable per-install device id (Task 3.10). Resolved ONCE — the gateway requires
+    // it in session.configure and keys the per-device replay buffer by it.
+    private val deviceId: String = DeviceIdProvider(bundle.deviceIdStore).getOrCreate()
 
     // Voice pipeline (E3). Built BEFORE connectors so the downlink hooks exist
     // when the connector set reads them; the pipeline reaches connectors.audioInput
@@ -139,7 +181,10 @@ class SentientSdk(
         sessionsTimeoutMs = sessionsTimeoutMs,
         clock = bundle.clock,
         mintDebounceMs = config.mintDebounceMs,
+        sessionsHttpClient = sessionsHttpClient,
+        scope = scope,
         audioHooks = { audio.downlinkHooks },
+        onCognitionChanged = ::onCognitionChanged,
     )
 
     private val router = MessageRouter(connectors.all, audioConnector = connectors.audioOutput)
@@ -147,7 +192,31 @@ class SentientSdk(
     private fun onAudioStateChanged(isSpeaking: Boolean, fsmState: AudioState) {
         deriver.isSpeaking = isSpeaking
         deriver.audioState = fsmState
+        refreshStuckWatch()
         emit()
+    }
+
+    private fun onCognitionChanged(state: CognitionState) {
+        deriver.cognition = state
+        refreshStuckWatch()
+        emit()
+    }
+
+    private fun clearActiveToIdle() {
+        connectors.cognition.reset()  // currentState→IDLE + onCognitionChanged → deriver IDLE + refreshStuckWatch + emit
+        audio.stopLocal()             // isSpeaking→false (if speaking) via onAudioStateChanged
+        stuckWatchdog.disarm()
+        emit()
+    }
+
+    private fun onStuckTimeout() {
+        log.warn("stuck-state.reset", mapOf("status" to deriver.status, "cognition" to deriver.cognition, "isSpeaking" to deriver.isSpeaking))
+        clearActiveToIdle()
+    }
+
+    private fun refreshStuckWatch() {
+        if (shouldWatchStuck(deriver.cognition, deriver.isSpeaking, deriver.status)) stuckWatchdog.arm()
+        else stuckWatchdog.disarm()
     }
 
     private val reconnectController = ReconnectController(
@@ -166,11 +235,11 @@ class SentientSdk(
         bundleEngine = bundle.engine,
         allowSelfSignedDevHost = config.allowSelfSignedDevHost,
         gatewayWsUrl = config.gatewayWsUrl,
+        deviceId = deviceId,
         router = router,
-        idle = idle,
-        idleTickMs = idleTickMs,
         delayFn = delayFn,
         hooks = Hooks(),
+        applyCursor = ::applyCursor,
         log = createLogger("sdk", "lifecycle"),
         handshakeLog = createLogger("sdk", "handshake"),
         onProtocolError = { err -> emitEvent(SdkEvent.ProtocolError(err)) },
@@ -222,9 +291,9 @@ class SentientSdk(
      * Tear down the WS + all loops. Idempotent. Status → DISCONNECTED.
      *
      * @param clearSession true (default — logout/consumer teardown) clears
-     *   the hasSession slice so the gate falls back to login. false (idle-
-     *   disconnect via [Hooks.disconnectForIdle]) keeps the user "in session"
-     *   (gate stays on chat; SDK auto-reconnects on the next presence signal).
+     *   the hasSession slice so the gate falls back to login. false (transient
+     *   teardown) keeps the user "in session" (gate stays on chat; SDK
+     *   auto-reconnects on the next presence signal).
      */
     fun disconnect(clearSession: Boolean = true) {
         log.info("disconnect", mapOf("clearSession" to clearSession))
@@ -232,7 +301,7 @@ class SentientSdk(
         reconnectController.cancel()
         connectors.sessions.reset()
         // Terminal teardown (logout) frees the native codecs; a transient disconnect
-        // (idle, reconnect) keeps them so TTS survives the next reconnect.
+        // (reconnect) keeps them so TTS survives the next reconnect.
         if (clearSession) audio.dispose() else audio.suspendForReconnect()
         lifecycle.teardown()
         if (clearSession && deriver.hasSession) {
@@ -245,6 +314,7 @@ class SentientSdk(
             reestablishingSessionId = null
         }
         setStatus(SdkStatus.DISCONNECTED)
+        stuckWatchdog.disarm()
     }
 
     /** Send user text (text.input). Mirrors web-sdk sendText. */
@@ -253,14 +323,14 @@ class SentientSdk(
         connectors.text.sendText(text, pendingId)
     }
 
-    /** UI Stop / Escape — idempotent hard interrupt. */
+    /** UI Stop / Escape — idempotent hard interrupt. Fire-and-forget: clears local
+     *  UI state immediately, never waits for a server ack (a dead socket sends none). */
     fun interrupt() {
         log.info("interrupt")
         markInteraction()
-        // Mark the active cycle's abort as self-initiated BEFORE the wire interrupt
-        // so the resulting cycle.aborted is never misread as an unsolicited error.
         connectors.cycleError.noteInterrupt(null)
-        sendControl(ClientMessage.Interrupt)
+        clearActiveToIdle()
+        sendControl(ClientMessage.Interrupt) // best-effort; null-safe if transport is dead
     }
 
     /**
@@ -295,12 +365,8 @@ class SentientSdk(
         connectors.preferences.patch(AudioPreferencesPatch(ttsEnabled = enabled))
     }
 
-    /** Page the session list (requestId-correlated). */
-    @Throws(
-        SessionsRequestException::class,
-        SessionsTimeoutException::class,
-        kotlin.coroutines.cancellation.CancellationException::class,
-    )
+    /** Page the session list via REST GET /api/v1/sessions. */
+    @Throws(kotlin.coroutines.cancellation.CancellationException::class)
     suspend fun listSessions(limit: Int, offset: Int): SessionsListPage =
         connectors.sessions.list(limit, offset)
 
@@ -341,9 +407,9 @@ class SentientSdk(
     }
 
     /**
-     * Fire-and-forget switch (A2). Sends session.switch and returns immediately —
-     * the gateway emits session.switched + the session's snapshot. NEVER awaits,
-     * NEVER throws. Used both by the UI and by the reconnect re-establish (A1).
+     * Fire-and-forget switch (A2). Sends conversation.activate and returns immediately —
+     * the gateway emits session.switched only; the client loads history via REST.
+     * NEVER awaits, NEVER throws. Used both by the UI and by the reconnect re-establish (A1).
      */
     fun sendSwitchSession(id: String) {
         markInteraction()
@@ -351,19 +417,23 @@ class SentientSdk(
         connectors.sessions.sendSwitch(id)
     }
 
-    @Throws(
-        SessionsRequestException::class,
-        SessionsTimeoutException::class,
-        kotlin.coroutines.cancellation.CancellationException::class,
-    )
-    suspend fun deleteSession(id: String) = connectors.sessions.delete(id)
+    /** Delete a session via REST DELETE /api/v1/sessions/:id. Never throws — safeBoolean absorbs all errors. */
+    @Throws(kotlin.coroutines.cancellation.CancellationException::class)
+    suspend fun deleteSession(id: String) {
+        // Drop any durable resume cursor for the deleted conversation (Task 4.7 clear)
+        // so a relaunch never seeds a resume for a session the server no longer has.
+        cursorPersistence.clearFor(id)
+        connectors.sessions.delete(id)
+    }
 
-    @Throws(
-        SessionsRequestException::class,
-        SessionsTimeoutException::class,
-        kotlin.coroutines.cancellation.CancellationException::class,
-    )
+    /** Rename a session via REST PATCH /api/v1/sessions/:id. Never throws — safeBoolean absorbs all errors. */
+    @Throws(kotlin.coroutines.cancellation.CancellationException::class)
     suspend fun renameSession(id: String, title: String) = connectors.sessions.rename(id, title)
+
+    /** Search sessions via REST GET /api/v1/sessions/search. */
+    @Throws(kotlin.coroutines.cancellation.CancellationException::class)
+    suspend fun searchSessions(q: String, limit: Int = 20): List<io.sentient.mobilesdk.protocol.SessionRow> =
+        connectors.sessions.search(q, limit)
 
     // ── Reconnect wiring ────────────────────────────────────────────────────────
 
@@ -384,6 +454,30 @@ class SentientSdk(
     }
 
     /**
+     * Engagement-driven connectivity check — call from every "user is at the chat"
+     * signal (foreground, chat screen appears, composer focus, pre-send). READY =>
+     * one liveness probe (delegates to [onForeground]); DISCONNECTED => start a fresh
+     * connect via [forceReconnect]; CONNECTING / AUTHENTICATING / RECONNECTING => a
+     * connect is already in flight — NO-OP (let the handshake finish). Opening a
+     * second socket while a handshake is in flight orphans it and causes the gateway
+     * to emit 4002 session-ready timeout → reconnect storm. On-demand only: never a
+     * timer, never while backgrounded.
+     */
+    fun ensureConnected() {
+        log.info("ensureConnected", mapOf("status" to deriver.status))
+        markInteraction()
+        when (deriver.status) {
+            SdkStatus.READY -> onForeground()
+            SdkStatus.DISCONNECTED -> forceReconnect()
+            // CONNECTING / AUTHENTICATING / RECONNECTING / ERROR: a connect is already
+            // in flight or terminal — no-op. Starting another would orphan the in-flight
+            // handshake (double-connect race). The handshake's ready-timeout self-recovers
+            // a genuinely stuck connect. ERROR requires an explicit forceReconnect() call.
+            else -> log.info("ensureConnected.skip", mapOf("status" to deriver.status, "reason" to "connect-in-flight-or-terminal"))
+        }
+    }
+
+    /**
      * Foreground presence signal — the app returned to the foreground.
      *
      * We do NOT proactively drop the socket on background (the gateway keeps the
@@ -392,7 +486,7 @@ class SentientSdk(
      * foreground we send ONE liveness ping: if a pong returns within the configured
      * window the live socket is confirmed and we do nothing; if it times out (the
      * OS froze/killed the socket while suspended, or it is half-open) we reconnect,
-     * which re-establishes the anchored session via session.switch. One-shot per
+     * which re-establishes the anchored session via conversation.activate. One-shot per
      * foreground — no periodic heartbeat — so the battery cost is one ping.
      */
     fun onForeground() {
@@ -452,6 +546,7 @@ class SentientSdk(
         if (deriver.status == next) return
         log.info("status", mapOf("from" to deriver.status, "to" to next))
         deriver.status = next
+        refreshStuckWatch() // a drop→RECONNECTING arms it; a reconnect→READY disarms it
         if (next == SdkStatus.READY) {
             deriver.connectionLost = false
             // First READY marks the user "in session" → gate stays on chat.
@@ -466,27 +561,72 @@ class SentientSdk(
     }
 
     /**
-     * READY rising edge. The FIRST READY (first connect) has nothing to restore.
-     * Every SUBSEQUENT READY is a reconnect: if a session is anchored, fire a
-     * fire-and-forget session.switch to restore the server context (the gateway
-     * re-emits switched + snapshot; the WS preserves frame order so the next
-     * user.message routes to the restored session).
+     * READY rising edge. RESUME-AWARE (Task 3.10-mobile, Slice 3).
+     *
+     * The FIRST READY (first connect) has nothing to restore. Every SUBSEQUENT
+     * READY is a reconnect, and its handling depends on whether a resume was
+     * attempted (the cursor carries a seq — see [resumeParams], folded INTO the
+     * handshake's session.configure, which is sent BEFORE this rising edge):
+     *
+     *   - resume IN FLIGHT (reconnect + anchor + cursor seq): DEFER. We already
+     *     carried resume in configure; do NOT clear-to-idle and do NOT re-activate
+     *     here. The gateway's `stream.resumed` ack ([onStreamResumed]) decides: a
+     *     recovered:true replay re-establishes the in-flight THINKING/speaking
+     *     (preserve it); a recovered:false ack does the A1-equivalent recovery.
+     *     This is the bug fix — clearing here would lose the state the resume
+     *     exists to preserve (an IDLE flash + a possible watchdog fire).
+     *
+     *   - NO resume possible (reconnect + anchor but cursor empty, lastSeq==0):
+     *     the legacy A1 path — fire-and-forget conversation.activate to restore
+     *     the server context + clear stale active UI state to idle. No resume
+     *     handshake is possible without a cursor.
+     *
+     * The gateway ALWAYS answers a stream.resume with a stream.resumed, so the
+     * deferred branch resolves reliably; the Slice-1 stuck-state watchdog is the
+     * defensive backstop if (against contract) no ack arrives.
      */
     private fun onReadyReached() {
         val wasReconnect = hasReachedReadyOnce
         hasReachedReadyOnce = true
         val anchored = _currentSessionId.value
-        if (!wasReconnect) {
-            log.info("ready.first-connect", mapOf("anchored" to anchored))
-            return
+        // Mirror resumeParams's exact gate: resume was/will be carried in configure
+        // iff the cursor carries a seq. Read here so the defer decision matches the wire.
+        val resumeWillBeAttempted = resumeCursor.snapshot.lastSeq > 0L
+        when (decideOnReady(wasReconnect, anchored != null, resumeWillBeAttempted)) {
+            ReadyAction.NOTHING_TO_RESTORE -> {
+                log.info("ready.first-connect", mapOf("anchored" to anchored))
+                // If a sendNew was fired before the transport was open (pre-READY mint),
+                // the session.new frame was silently dropped (null activeTransport). Retry
+                // it now so the session.created anchor arrives and flushIfReady can drain.
+                if (connectors.sessions.hasPendingMint()) {
+                    log.info("ready.first-connect.retry-pending-mint")
+                    connectors.sessions.retryPendingMint()
+                }
+            }
+            ReadyAction.NO_ANCHOR ->
+                log.info("ready.reconnect.no-anchor")
+            ReadyAction.DEFER_TO_RESUME ->
+                // resume already carried in session.configure; await stream.resumed.
+                log.info("ready.reconnect.defer-to-resume", mapOf("sessionId" to anchored))
+            ReadyAction.REESTABLISH_AND_CLEAR -> {
+                log.info("ready.reconnect.re-establish", mapOf("sessionId" to anchored))
+                reestablishAnchoredSession(anchored!!)
+                clearActiveToIdle()
+            }
         }
-        if (anchored == null) {
-            log.info("ready.reconnect.no-anchor")
-            return
-        }
-        log.info("ready.reconnect.re-establish", mapOf("sessionId" to anchored))
-        reestablishingSessionId = anchored
-        sendSwitchSession(anchored)
+    }
+
+    /**
+     * Fire the fire-and-forget conversation.activate that re-focuses the gateway's
+     * active conversation on the anchored session after a reconnect (the gateway
+     * emits session.switched only; the client loads history via REST; the WS
+     * preserves frame order so the next user.message routes to the restored
+     * session). Shared by the no-resume A1 path ([onReadyReached]) and the
+     * recovered:false recovery ([onStreamResumed]).
+     */
+    private fun reestablishAnchoredSession(sessionId: String) {
+        reestablishingSessionId = sessionId
+        sendSwitchSession(sessionId)
     }
 
     /**
@@ -494,6 +634,10 @@ class SentientSdk(
      * broadcast. Defensive empty-id guard: the gateway only emits session.switched
      * with a real uuid (session.new emits conversation.snapshot WITHOUT a switched
      * frame), so an empty id should never arrive — but never anchor one if it does.
+     *
+     * History loading is now fully connector-driven: [ConversationHistoryConnector]
+     * fires [SdkConnectors.loadHistoryForSession] directly from its onHistoryNeeded
+     * callback AFTER bumping the generation — no ordering dependency here.
      */
     private fun onSessionAnchored(sessionId: String) {
         if (sessionId.isEmpty()) {
@@ -502,15 +646,19 @@ class SentientSdk(
         }
         // A re-establish switch we were awaiting just confirmed.
         if (sessionId == reestablishingSessionId) reestablishingSessionId = null
-        if (_currentSessionId.value == sessionId) return
-        log.info("session.anchor", mapOf("sessionId" to sessionId))
-        _currentSessionId.value = sessionId
+        val isNewSession = _currentSessionId.value != sessionId
+        if (isNewSession) {
+            log.info("session.anchor", mapOf("sessionId" to sessionId))
+            _currentSessionId.value = sessionId
+        }
     }
 
     /**
      * `sessions.error forbidden` arrived. If a reconnect re-establish switch is in
      * flight, the anchored session was revoked elsewhere — drop the anchor so the
-     * next reconnect does not re-fire a switch to a dead session. A forbidden with
+     * next reconnect does not re-fire a switch to a dead session, and surface a
+     * one-shot [SdkEvent.ReopenFailed] so the UI can tell the user the chat could
+     * not be reopened (the next send mints a fresh conversation). A forbidden with
      * no re-establish in flight is unrelated (e.g. an explicit op) and left alone.
      */
     private fun onSessionForbidden() {
@@ -518,6 +666,88 @@ class SentientSdk(
         log.info("session.anchor.cleared-forbidden", mapOf("sessionId" to pending))
         reestablishingSessionId = null
         _currentSessionId.value = null
+        log.info("event.reopen-failed", mapOf("sessionId" to pending))
+        emitEvent(SdkEvent.ReopenFailed)
+    }
+
+    // ── Resume handshake (Task 3.10) ─────────────────────────────────────────────
+
+    /**
+     * Apply the resume cursor to every decoded frame (control + peeled binary).
+     * Returns true if the frame should be processed; false to DROP it as a replay
+     * duplicate. seq==0 frames always pass (no seq stamp). Called from the pump
+     * BEFORE routing so deduped replays never reach the connectors.
+     *
+     * On a real advance (the cursor moved forward) note it on [cursorPersistence] so
+     * the next cycle boundary persists the snapshot (Task 4.7 save coalescing).
+     */
+    private fun applyCursor(seq: Long, epoch: Long?): Boolean {
+        val before = resumeCursor.snapshot
+        val applied = resumeCursor.tryApply(seq, epoch)
+        if (resumeCursor.snapshot != before) cursorPersistence.noteAdvance()
+        return applied
+    }
+
+    /**
+     * Build the resume params to fold INTO `session.configure` on a RECONNECT.
+     *
+     * SEED (Task 4.7): if the in-memory cursor is empty (a fresh app launch within the
+     * gateway's replay-buffer TTL) AND a conversation is anchored, [cursorPersistence]
+     * seeds it from durable storage so a relaunch sends a real resume (→ recovered:true,
+     * replay the gap) instead of recovered:false (reset + full REST refetch).
+     *
+     * Null only when there is STILL no seq after the seed attempt (first ever connect
+     * for this conversation, or after a non-recovered reset) → configure omits resume
+     * and the gateway runs the fresh path. Mirrors web-sdk buildConfigureResume.
+     */
+    private fun resumeParams(): ResumeParams? {
+        cursorPersistence.seedIfEmpty()
+        val (epoch, lastSeq) = resumeCursor.snapshot
+        if (lastSeq == 0L) {
+            log.debug("configure.resume.skip-no-cursor")
+            return null
+        }
+        log.info("configure.resume.attached", mapOf("epoch" to epoch, "lastSeq" to lastSeq))
+        return ResumeParams(epoch = epoch, lastSeq = lastSeq)
+    }
+
+    /**
+     * React to `stream.resumed` from the gateway (Task 3.10). RESUME-AWARE — the
+     * deferred half of the A1-vs-resume reconciliation ([onReadyReached] deferred
+     * the clear/activate decision to here).
+     *
+     * recovered=true → PRESERVE in-flight state. The gateway replayed the in-flight
+     *   cycle's frames; the cursor dedups them and they re-establish THINKING/
+     *   speaking. We must NOT clear cognition/isSpeaking — that is the whole point
+     *   of the resume. No-op beyond confirming the recovery.
+     *
+     * recovered=false → the gateway could NOT resume (epoch rolled over / buffer
+     *   expired). Do the A1-equivalent recovery NOW: reset the cursor, clear stale
+     *   active UI state to idle, REST-refetch history, and (if a session is
+     *   anchored) re-fire conversation.activate to re-focus the gateway's active
+     *   conversation — exactly what the old unconditional A1 path did, but deferred
+     *   to ack time so the recovered:true case can preserve state instead.
+     */
+    private fun onStreamResumed(recovered: Boolean) {
+        when (decideOnResumed(recovered)) {
+            ResumedAction.PRESERVE_IN_FLIGHT ->
+                log.info("stream.resumed.recovered", mapOf("epoch" to resumeCursor.snapshot.epoch))
+            ResumedAction.RECOVER_TO_IDLE -> {
+                log.info("stream.resumed.not-recovered — clear-to-idle + refetch + re-establish")
+                resumeCursor.reset()
+                // The gateway could not resume → the persisted cursor is stale. Drop
+                // it (Task 4.7 clear) so the NEXT relaunch doesn't re-seed a dead epoch.
+                cursorPersistence.clearAnchored()
+                clearActiveToIdle()
+                val sessionId = _currentSessionId.value
+                if (sessionId == null) {
+                    log.warn("stream.resumed.no-session — cannot refetch")
+                    return
+                }
+                connectors.refetchHistoryForSession(sessionId)
+                reestablishAnchoredSession(sessionId)
+            }
+        }
     }
 
     private fun setError(authExpired: Boolean) {
@@ -531,12 +761,27 @@ class SentientSdk(
         setStatus(SdkStatus.ERROR)
     }
 
+    /**
+     * Engagement bookkeeping hook. Currently a no-op — retained because the
+     * forthcoming ensureConnected()/presence work will record interaction here,
+     * and the send/interrupt call sites already invoke it.
+     */
     private fun markInteraction() {
-        idle.handle(IdleDetectorEvent.Interaction(bundle.clock.nowMs()))
     }
 
+    /**
+     * Fire-and-forget control frame. Silently drops if no active transport exists (pre-READY).
+     * Callers that need guaranteed delivery must defer until READY or use the pending-mint retry.
+     */
     private fun sendControl(msg: ClientMessage) {
-        scope.launch { lifecycle.activeTransport?.send(msg) }
+        scope.launch {
+            val tx = lifecycle.activeTransport
+            if (tx == null) {
+                log.warn("sendControl.dropped", mapOf("type" to msg::class.simpleName, "reason" to "no-active-transport-pre-ready"))
+                return@launch
+            }
+            tx.send(msg)
+        }
     }
 
     private fun sendBinary(bytes: ByteArray) {
@@ -544,7 +789,7 @@ class SentientSdk(
     }
 
     private fun mergedCapabilities(): List<String> =
-        (config.capabilities + connectors.capabilities).distinct()
+        (config.capabilities + connectors.capabilities + STREAM_RESUME_CAPABILITY).distinct()
 
     // ── Lifecycle callbacks ──────────────────────────────────────────────────────
 
@@ -554,6 +799,9 @@ class SentientSdk(
         override fun onSessionAnchored(sessionId: String) = this@SentientSdk.onSessionAnchored(sessionId)
         override fun onSessionForbidden() = this@SentientSdk.onSessionForbidden()
         override fun onPong() = this@SentientSdk.onPong()
+        override fun onStreamResumed(recovered: Boolean) = this@SentientSdk.onStreamResumed(recovered)
+        override fun onCycleSettled() = cursorPersistence.flush()
+        override fun resumeParams(): ResumeParams? = this@SentientSdk.resumeParams()
         override fun onAuthFailed() = setError(authExpired = true)
         override fun onConnectionDrop() = this@SentientSdk.onConnectionDrop()
         override fun mergedCapabilities(): List<String> = this@SentientSdk.mergedCapabilities()
@@ -561,14 +809,13 @@ class SentientSdk(
         override fun nowMs(): Long = bundle.clock.nowMs()
         override fun isConsumerDisconnected(): Boolean = consumerDisconnected
         override fun status(): SdkStatus = deriver.status
-        // Idle-disconnect keeps hasSession=true: the user stays "in session" and
-        // the SDK auto-reconnects on the next presence signal. Only explicit
-        // logout (the default disconnect()) clears the session.
-        override fun disconnectForIdle() = disconnect(clearSession = false)
     }
 
     companion object {
         /** Back-pressure buffer depth for the events SharedFlow. */
         const val EVENTS_BUFFER_CAPACITY = 256
+
+        /** Capability advertised so the gateway enables the seq/epoch resume handshake (Task 3.10). */
+        const val STREAM_RESUME_CAPABILITY = "stream.resume"
     }
 }

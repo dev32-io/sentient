@@ -109,7 +109,13 @@ export function createUserAudioInputAdapter(
       }
       if (event.type === "transcript") {
         log.debug("speech-append-history", { turnIdx: event.turnIdx, language: currentConfig.language });
-        ctx.conversationHistory.append({ kind: "user", ts: Date.now(), channel: "speech", content: event.text });
+        ctx.conversationHistory.append({
+          entryId: crypto.randomUUID(),
+          kind: "user",
+          ts: Date.now(),
+          channel: "speech",
+          content: event.text,
+        });
       }
     }
   }

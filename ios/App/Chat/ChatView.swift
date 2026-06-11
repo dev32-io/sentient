@@ -17,7 +17,7 @@
 //
 // Row ordering in MessageList:
 //   1. committed messages (with day-dividers via chatRows())
-//   2. pending outbox entries (QUEUED→SENT→FAILED chips; FAILED = tappable Retry)
+//   2. pending outbox entries (QUEUED / FAILED chips; FAILED = tappable Retry)
 //   3. live streaming assistant bubble (appended when ChatModel.live != nil)
 //
 // Banners (highest priority first):
@@ -152,6 +152,11 @@ struct ChatView: View {
         .panelDeletePrompt($panelDeleting) { id in
             Task { await historyModel.deleteSession(id) }
         }
+        .task {
+            // Engagement signal: the chat surface appeared. Idempotent — READY → a
+            // liveness probe; not-READY → reconnect. Scoped to this view's lifetime.
+            vm.ensureConnected()
+        }
     }
 
     // ── Main content column ───────────────────────────────────────────────────────
@@ -187,6 +192,14 @@ struct ChatView: View {
                     onRetry: banner.canRetry ? { vm.reconnect() } : nil
                 )
             }
+            // One-shot ReopenFailed notice (spec §14). Auto-dismissed by the VM after ~4 s
+            // or earlier on tap. Independent of the repo-failure banner above.
+            if let notice = vm.state.reopenFailedNotice {
+                ReopenFailedNoticeBanner(
+                    noticeText: notice,
+                    onDismiss: { vm.dismissReopenFailedNotice() }
+                )
+            }
         }
         .safeAreaInset(edge: .bottom) {
             Composer(
@@ -194,11 +207,11 @@ struct ChatView: View {
                 ttsEnabled: connection.prefs.ttsEnabled,
                 micActive: voiceActive,
                 canInterrupt: canInterrupt,
-                sendInFlight: !pending.isEmpty,
                 onSend: { vm.send($0) },
                 onMicToggle: { vm.toggleMic() },
                 onTtsToggle: { vm.toggleTts() },
-                onInterrupt: { vm.interrupt() }
+                onInterrupt: { vm.interrupt() },
+                onFocusGained: { vm.onComposerFocus() }
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

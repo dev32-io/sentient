@@ -166,12 +166,11 @@ struct MessageList: View {
         // window (the post-commit TTS tail has no streaming bubble).
         let lastAssistant = messages.lastIndex(where: { $0.role == "assistant" })
         return LazyVStack(alignment: .leading, spacing: Space.gapMsg) {
-            // ChatRow is Identifiable; divider ids are day-keyed, message ids are
-            // index-keyed. NOTE: do NOT key on message.ts — the streaming bubble's
-            // ts is stamped `clock.nowMs()` fresh on every derive, so a ts-based id
-            // would churn the bubble's identity each token and reset the typewriter
-            // @State (re-revealing from zero every frame). chatRows() preserves
-            // index-only identity for .message rows, keeping this invariant safe.
+            // ChatRow is Identifiable; divider ids are day-keyed. Message ids are
+            // the gateway-owned cycleId (assistant) / entryId (committed), so a
+            // streaming bubble and its committed twin are the SAME row — the reveal
+            // grows in place with no remount. Stable across tokens (cycleId never
+            // churns), so no ts-based identity flicker. See ChatRow.messageRowId.
             ForEach(chatRows(messages)) { row in
                 switch row {
                 case let .divider(label, _): DayDivider(label: label)
@@ -252,9 +251,9 @@ extension EnvironmentValues {
     // Yesterday messages trigger a day divider before today's messages.
     let yesterday = now - 86_400_000
     MessageList(messages: [
-        ChatMessage(ts: yesterday, role: "user", content: "message from yesterday", streaming: false, cutoffKind: nil, cycleId: nil, pendingId: nil, tools: []),
-        ChatMessage(ts: now, role: "user", content: "hello", streaming: false, cutoffKind: nil, cycleId: nil, pendingId: nil, tools: []),
-        ChatMessage(ts: now + 1, role: "assistant", content: "Hi! How can I help today?", streaming: false, cutoffKind: nil, cycleId: nil, pendingId: nil, tools: []),
+        ChatMessage(ts: yesterday, role: "user", content: "message from yesterday", streaming: false, cutoffKind: nil, cycleId: nil, pendingId: nil, tools: [], entryId: "preview-y0"),
+        ChatMessage(ts: now, role: "user", content: "hello", streaming: false, cutoffKind: nil, cycleId: nil, pendingId: nil, tools: [], entryId: "preview-u0"),
+        ChatMessage(ts: now + 1, role: "assistant", content: "Hi! How can I help today?", streaming: false, cutoffKind: nil, cycleId: nil, pendingId: nil, tools: [], entryId: "preview-a1"),
     ], userName: "Alice")
     .background(DuskColors.bg)
 }

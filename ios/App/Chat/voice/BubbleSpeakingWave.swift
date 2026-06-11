@@ -78,12 +78,16 @@ struct AvatarRipple: View {
         }
     }
 
+    /// Ripple ring color — mark-`hi` #FFE1BD: brighter than terra, in the rim
+    /// family but distinct from the static shiny edge so the two read apart.
+    private static let ringColor = Color(.sRGB, red: 1.0, green: 0.882, blue: 0.741, opacity: 1)
+
     private func ring(_ t: Double, delay: Double) -> some View {
         let raw = (t - delay).truncatingRemainder(dividingBy: 1.8) / 1.8
         let phase = max(0, raw)
         return Circle()
-            .stroke(DuskColors.accent, lineWidth: 1.5)
-            .scaleEffect(1 + 0.8 * phase)
-            .opacity(0.7 * (1 - phase))
+            .stroke(Self.ringColor, lineWidth: 1.5)
+            .scaleEffect(1 + 0.85 * phase)
+            .opacity(0.75 * (1 - phase))
     }
 }

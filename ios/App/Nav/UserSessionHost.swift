@@ -28,9 +28,19 @@ struct UserSessionHost: View {
     let onLogout: () -> Void
 
     /// The active conversation id; nil = new chat. Changing it rebuilds the root
-    /// ChatView (and its thin VM) via `.id(activeSessionId)`.
+    /// ChatView (and its thin VM) via `.id(chatIdentity)`.
     @State private var activeSessionId: String?
+    /// Monotonic new-chat nonce. `activeSessionId` never advances off nil for a
+    /// gate-minted chat (the mint re-anchors INSIDE the VM's cache, not here), so
+    /// `onNewChat` setting nil→nil was a SwiftUI `.id` no-op — "+" did nothing from a
+    /// fresh chat. Bumping this on every new-chat forces a distinct identity → a real
+    /// rebuild → a clean nil-route VM, even when already on a new chat.
+    @State private var newChatEpoch = 0
     @State private var path: [Route] = []
+
+    /// Root ChatView identity: the conversation id when one is selected (history),
+    /// else a per-new-chat nonce so each "+" rebuilds a fresh nil-route VM.
+    private var chatIdentity: String { activeSessionId ?? "new-\(newChatEpoch)" }
 
     @Environment(\.scenePhase) private var scenePhase
     /// Cold-start-skip: only resume after a REAL background. The init-connect
@@ -53,9 +63,9 @@ struct UserSessionHost: View {
     var body: some View {
         NavigationStack(path: $path) {
             // VM factories (NOT prebuilt VMs): ChatView wraps them in @StateObject so
-            // each instance owns its VM for its lifetime. `.id(activeSessionId)` makes
+            // each instance owns its VM for its lifetime. `.id(chatIdentity)` makes
             // SwiftUI build a FRESH ChatView (hence a fresh @StateObject ChatViewModel)
-            // whenever the active conversation changes — route-recreates-VM.
+            // whenever the identity changes — a selected id, or a new-chat nonce bump.
             ChatView(
                 makeVM: { userSession.makeChatVM(sessionId: activeSessionId) },
                 makeHistoryVM: { userSession.makeHistoryVM() },
@@ -66,12 +76,13 @@ struct UserSessionHost: View {
                 },
                 onNewChat: {
                     activeSessionId = nil
+                    newChatEpoch += 1
                     path.removeAll()
                 },
                 onOpenSettings: { path = [.settings] },
                 onLogout: logout
             )
-            .id(activeSessionId)
+            .id(chatIdentity)
             .navigationDestination(for: Route.self) { route in
                 switch route {
                 case .settings:

@@ -11,7 +11,7 @@ schema_version: "0.1.0"
 # ---------------------------------------------------------------------------
 port: 8888
 host: 0.0.0.0
-max_sessions: 10
+max_sessions: 100                        # Max concurrent WS connections (mobile + webui + cube, multi-user). Range 1–1000.
 auth_timeout_ms: 5000
 session_persist_ms: 120000           # how long a disconnected session stays alive
 
@@ -78,6 +78,11 @@ session:
   # loopback buffers 200–500ms depending on browser + network; 2000 is safe.
   # Range: 0–5000. Default 2000.
   tts_drain_grace_ms: 2000
+
+  # WS resilience (resumable sequenced stream + replay buffer) — Slice 3
+  ws_idle_timeout_ms: 255000         # Range: 1000–255000. Bun WS idle close; Bun takes SECONDS (cap 255), gateway converts ms→s.
+  retention_ttl_ms: 1800000          # Range: 60000–86400000 (1 min–24 hr). PersonSession + per-device replay buffer survive disconnect this long, then evict. Default 30 min.
+  replay_buffer_max_bytes: 16777216  # 16 MB. Range: 65536–268435456 (64 KB–256 MB). Per device-session ring cap (evict-oldest).
 
 # ---------------------------------------------------------------------------
 # STT — local-stt service (Silero VAD + Smart-Turn v3 + SenseVoice-Small)
@@ -334,6 +339,7 @@ sessions:
   source_tag: sentient-user  # adapter writes this on every new chain
   hermes_http_timeout_ms: 5000           # per-request timeout for Hermes /api/sessions/* (1000-30000)
   switch_teardown_timeout_ms: 3000       # max wait for cycle-cancel before switch proceeds (500-10000)
+  min_new_interval_ms: 500               # min ms between client session.new — blocks spam/double-fire, not human-paced new chats (0-60000)
 
 # ---------------------------------------------------------------------------
 # Companions — on-demand version resolution for co-deployed services.

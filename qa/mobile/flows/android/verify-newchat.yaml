@@ -1,0 +1,9 @@
+appId: io.dev32.sentient.debug
+---
+- launchApp
+- assertVisible: { id: "composer-input" }
+- tapOn: { id: "new-chat" }
+- tapOn: { id: "composer-input" }
+- inputText: "what is 30 plus 12"
+- tapOn: { id: "chat-send" }
+- assertVisible: { text: "what is 30 plus 12" }

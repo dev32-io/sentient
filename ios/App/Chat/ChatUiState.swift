@@ -14,10 +14,13 @@ struct ErrorBanner {
     let canRetry: Bool
 }
 
+/// Copy shown when a reconnect re-establish was rejected (spec §14).
+let reopenFailedNoticeCopy = "Couldn't reopen that chat — started a new one."
+
 /// Immutable snapshot of the chat screen state, driven by ChatViewModel.
 struct ChatUiState {
     /// The last successfully received chat model; defaults to empty on first load.
-    var model: ChatModel = ChatModel(committed: [], live: nil, tasks: [], pending: [], historyLoading: false)
+    var model: ChatModel = ChatModel(committed: [], live: nil, tasks: [], pending: [], historyLoading: false, reconciledPendingIds: [])
     /// True while an initial (no-prior-model) load is in flight.
     var isLoading: Bool = false
     /// True while an EXISTING-session switch is fetching history (between
@@ -26,6 +29,9 @@ struct ChatUiState {
     var historyLoading: Bool = false
     /// Non-nil when the latest result was a failure; nil on success or loading.
     var banner: ErrorBanner? = nil
+    /// Non-nil while the ReopenFailed one-shot notice is visible (spec §14). Set by
+    /// the VM on SdkEvent.ReopenFailed; cleared on tap or after ~4 s auto-dismiss.
+    var reopenFailedNotice: String? = nil
 }
 
 /// Build a DISCONNECTED placeholder ConnectionState for use before the first

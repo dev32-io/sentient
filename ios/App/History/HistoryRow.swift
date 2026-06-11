@@ -26,10 +26,11 @@ struct HistoryRow: View {
     private var titleColor: Color { row.isActive ? DuskColors.accent : DuskColors.ink }
     private var rowFill: Color { row.isActive ? DuskColors.accent50 : .clear }
 
+    // Relative time only. The message-count suffix was dropped: the gateway
+    // session list does not populate a count (always 0 → a misleading "no
+    // messages" on every row), so the suffix was pure noise.
     private var secondaryLine: String {
-        let when = RelativeTime.relative(nowMs: nowMs, lastActiveMs: row.lastActiveAt)
-        let count = RelativeTime.messageCountLabel(row.messageCount)
-        return "\(when) · \(count)"
+        RelativeTime.relative(nowMs: nowMs, lastActiveMs: row.lastActiveAt)
     }
 
     var body: some View {

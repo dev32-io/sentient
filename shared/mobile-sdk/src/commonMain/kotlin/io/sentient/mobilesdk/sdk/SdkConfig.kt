@@ -56,6 +56,15 @@ private const val DEFAULT_MINT_DEBOUNCE_MS = 3_000L
  */
 private const val DEFAULT_FOREGROUND_PROBE_TIMEOUT_MS = 3_000L
 
+/**
+ * Client-side stuck-state safety-net timeout (ms). If cognition is THINKING or
+ * audio is SPEAKING but no server frame advances or ends the cycle within this
+ * window (e.g. the socket silently died while backgrounded), the SDK resets
+ * cognition→IDLE / isSpeaking→false so Stop is never a dead end. Valid range
+ * ~4000–15000ms. Default 8000.
+ */
+private const val DEFAULT_STUCK_STATE_TIMEOUT_MS = 8_000L
+
 /** Gateway-negotiated STT input rate (Hz). Capture emits PCM16 LE at this rate. */
 private const val DEFAULT_INPUT_SAMPLE_RATE = 16_000
 /** Default assistant playback rate (Hz) until session.ready overrides it. */
@@ -117,6 +126,9 @@ data class AudioPipelineConfig(
  *   ACP mint (A2). Default [DEFAULT_MINT_DEBOUNCE_MS]; valid range ~1000–5000ms.
  * @param foregroundProbeTimeoutMs Ms to await a pong after the one-shot foreground
  *   liveness ping before reconnecting. Default [DEFAULT_FOREGROUND_PROBE_TIMEOUT_MS].
+ * @param stuckStateTimeoutMs Client-side safety-net: reset THINKING/SPEAKING to IDLE
+ *   if no server frame advances or ends the cycle within this window. Valid range
+ *   ~4000–15000ms. Default 8000.
  */
 data class SdkConfig(
     val gatewayWsUrl: String,
@@ -126,6 +138,7 @@ data class SdkConfig(
     val audio: AudioPipelineConfig = AudioPipelineConfig(),
     val mintDebounceMs: Long = DEFAULT_MINT_DEBOUNCE_MS,
     val foregroundProbeTimeoutMs: Long = DEFAULT_FOREGROUND_PROBE_TIMEOUT_MS,
+    val stuckStateTimeoutMs: Long = DEFAULT_STUCK_STATE_TIMEOUT_MS,
     // Debug-only: enables FaultHooks injection for E2E. MUST be false in release.
     val devFaultsEnabled: Boolean = false,
 )

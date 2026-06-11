@@ -61,7 +61,7 @@ fun MessageList(
     userName: String = "You",
     modifier: Modifier = Modifier,
     // Optimistic pending rows appended AFTER committed history. Rendered with
-    // status chips (QUEUED / SENT / FAILED) until reconciled by ChatRepository.
+    // status chips (QUEUED / FAILED) until reconciled away on the committed echo.
     pending: List<PendingMessage> = emptyList(),
     // Invoked when the user taps the FAILED chip on a specific pending message.
     onRetry: (String) -> Unit = {},
@@ -128,17 +128,15 @@ fun MessageList(
     ) {
         items(
             rows,
-            // Index-only key for Msg rows — the streaming bubble's ts is stamped fresh on
-            // every SDK derive, so a ts-based key would churn row identity each token and
-            // reset the typewriter rememberTypewriterText @State (re-revealing from zero
-            // every frame). History is append-only so the index is stable; the streaming
-            // bubble is always the last Msg. Matches the iOS Task 5.1/4.2 fix.
-            // Pending rows use a stable "pending-<id>" key so they survive recomposition
-            // without resetting any local state.
+            // Stable per-message key for Msg rows — the live streaming bubble and its
+            // committed twin share the gateway-owned cycleId, so the streaming→committed
+            // handoff is the SAME row (grows in place, no remount). cycleId is constant
+            // across tokens, so unlike ts it never churns mid-reveal. See messageRowKey.
+            // Pending rows use a stable "pending-<id>" key so they survive recomposition.
             key = { row ->
                 when (row) {
                     is ChatRow.Divider -> "div-${row.key}"
-                    is ChatRow.Msg -> "msg-${row.index}"
+                    is ChatRow.Msg -> messageRowKey(row.message, row.index)
                     is ChatRow.Pending -> "pending-${row.msg.id}"
                 }
             },
@@ -196,12 +194,12 @@ private fun EmptyState(modifier: Modifier = Modifier) {
 
 // ---------------------------------------------------------------------------
 // PendingBubble — optimistic user-side bubble while the outbox entry is in
-// QUEUED, SENT, or FAILED state. Mirrors MessageBubble's user-aligned layout
-// (right-side avatar + user bubble shape) with an inline status chip below the
-// bubble body. Reconciled away by ChatRepository once the gateway echoes back
-// the committed feed entry carrying the matching pendingId.
+// QUEUED or FAILED state. There is NO "sent" state: the bubble is reconciled
+// AWAY (cache.remove) on its committed echo, never promoted to a "✓ sent" chip.
+// Mirrors MessageBubble's user-aligned layout (right-side avatar + user bubble
+// shape) with an inline status chip below the bubble body.
 //
-// testTags: msg-status-queued / msg-status-sent / msg-status-failed on the chip.
+// testTags: msg-status-queued / msg-status-failed on the chip.
 // ---------------------------------------------------------------------------
 
 private val FLUSH_CORNER_PENDING = 6.dp
@@ -269,8 +267,7 @@ internal fun PendingBubble(
 private fun PendingStatusChip(status: MessageStatus, onRetry: () -> Unit = {}) {
     val tokens = LocalTokens.current
     val (label, tagName, chipColor) = when (status) {
-        MessageStatus.QUEUED -> Triple("queued", "msg-status-queued", Color(Colors.ink3))
-        MessageStatus.SENT -> Triple("✓ sent", "msg-status-sent", Color(Colors.ok))
+        MessageStatus.QUEUED -> Triple("Sending…", "msg-status-queued", Color(Colors.ink3))
         MessageStatus.FAILED -> Triple("↺ Retry", "msg-status-failed", Color(Colors.stop))
     }
     val clickModifier = if (status == MessageStatus.FAILED) {

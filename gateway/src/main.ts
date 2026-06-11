@@ -119,6 +119,7 @@ process.on("SIGINT", async () => {
   log.info("shutdown", { signal: "SIGINT" });
   haObserver?.stop();
   if (mcpHost) await mcpHost.stop();
+  services.personSessions.dispose();
   process.exit(0);
 });
 
@@ -126,6 +127,7 @@ process.on("SIGTERM", async () => {
   log.info("shutdown", { signal: "SIGTERM" });
   haObserver?.stop();
   if (mcpHost) await mcpHost.stop();
+  services.personSessions.dispose();
   process.exit(0);
 });
 

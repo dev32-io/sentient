@@ -18,6 +18,7 @@ package io.sentient.mobilesdk.sdk
 
 import io.sentient.mobilesdk.audioio.AudioCaptureAdapter
 import io.sentient.mobilesdk.audioio.AudioPlaybackAdapter
+import io.sentient.mobilesdk.secure.DeviceIdStore
 import io.sentient.mobilesdk.secure.SecureTokenStore
 import io.sentient.mobilesdk.transport.WebSocketEngine
 import io.sentient.mobilesdk.util.Clock
@@ -28,6 +29,8 @@ import io.sentient.mobilesdk.util.Clock
  *
  * @param engine WS transport factory (B2 actuals: OkHttp / Darwin).
  * @param tokenStore Encrypted auth-token store (B3 actuals: Keystore / Keychain).
+ * @param deviceIdStore Stable per-install device-id store (Task 3.10 actuals:
+ *   SharedPreferences / NSUserDefaults). Tests pass an in-memory fake.
  * @param clock Injected wall-clock (B1). Tests pass FixedClock.
  * @param capture Mic capture adapter. NULL until E1 — text path does not need it.
  * @param playback Audio playback adapter. NULL until E2 — text path does not need it.
@@ -35,6 +38,7 @@ import io.sentient.mobilesdk.util.Clock
 data class PlatformBundle(
     val engine: WebSocketEngine,
     val tokenStore: SecureTokenStore,
+    val deviceIdStore: DeviceIdStore,
     val clock: Clock,
     val capture: AudioCaptureAdapter? = null,
     val playback: AudioPlaybackAdapter? = null,

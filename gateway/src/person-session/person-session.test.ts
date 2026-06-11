@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { PersonSession, type PersonSessionAttachment } from "./person-session.js";
 
+const REPLAY_BUFFER_MAX_BYTES = 1024 * 64; // 64 KB — small for tests
+
 function makeSession(): PersonSession {
   return new PersonSession({
     profile: "alice",
     hermesUrl: "http://hermes-alice:8643",
     hermesApiKey: "test-key",
     userId: null,
+    replayBufferMaxBytes: REPLAY_BUFFER_MAX_BYTES,
   });
 }
 
@@ -28,6 +31,7 @@ describe("PersonSession", () => {
       hermesUrl: "http://h:1",
       hermesApiKey: "k",
       userId: "kevin",
+      replayBufferMaxBytes: REPLAY_BUFFER_MAX_BYTES,
     });
     expect(ps.userId).toBe("kevin");
   });
@@ -95,5 +99,112 @@ describe("PersonSession", () => {
     // mutating the snapshot must not affect the session
     (snap as PersonSessionAttachment[]).pop();
     expect(s.attachmentCount).toBe(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Per-device replay buffer
+  // -------------------------------------------------------------------------
+
+  it("acquireDeviceBuffer returns resumed:false and epoch 1 on first call", () => {
+    const s = makeSession();
+    const result = s.acquireDeviceBuffer("dev-A");
+    expect(result.resumed).toBe(false);
+    expect(result.epoch).toBe(1);
+    expect(result.buffer).toBeDefined();
+  });
+
+  it("acquireDeviceBuffer resumes the same buffer when resumeEpoch matches", () => {
+    const s = makeSession();
+    const first = s.acquireDeviceBuffer("dev-A");
+    s.releaseDeviceBuffer("dev-A");
+    const second = s.acquireDeviceBuffer("dev-A", { resumeEpoch: first.epoch });
+    expect(second.resumed).toBe(true);
+    expect(second.epoch).toBe(first.epoch);
+    expect(second.buffer).toBe(first.buffer);
+  });
+
+  it("acquireDeviceBuffer creates a fresh buffer when resumeEpoch does not match", () => {
+    const s = makeSession();
+    const first = s.acquireDeviceBuffer("dev-A");
+    s.releaseDeviceBuffer("dev-A");
+    const second = s.acquireDeviceBuffer("dev-A", { resumeEpoch: 999 });
+    expect(second.resumed).toBe(false);
+    expect(second.epoch).toBe(2);
+    expect(second.buffer).not.toBe(first.buffer);
+  });
+
+  it("acquireDeviceBuffer creates independent buffers per deviceId", () => {
+    const s = makeSession();
+    const a = s.acquireDeviceBuffer("dev-A");
+    const b = s.acquireDeviceBuffer("dev-B");
+    expect(a.buffer).not.toBe(b.buffer);
+    expect(a.epoch).toBe(1);
+    expect(b.epoch).toBe(2);
+  });
+
+  it("bufferFor and epochFor return the active entry values", () => {
+    const s = makeSession();
+    const { buffer, epoch } = s.acquireDeviceBuffer("dev-A");
+    expect(s.bufferFor("dev-A")).toBe(buffer);
+    expect(s.epochFor("dev-A")).toBe(epoch);
+  });
+
+  it("bufferFor and epochFor return undefined for unknown deviceId", () => {
+    const s = makeSession();
+    expect(s.bufferFor("unknown")).toBeUndefined();
+    expect(s.epochFor("unknown")).toBeUndefined();
+  });
+
+  it("hasRetainedBuffers is false before any acquire, true after", () => {
+    const s = makeSession();
+    expect(s.hasRetainedBuffers()).toBe(false);
+    s.acquireDeviceBuffer("dev-A");
+    expect(s.hasRetainedBuffers()).toBe(true);
+  });
+
+  it("sweepExpired evicts detached entries past TTL", () => {
+    const s = makeSession();
+    const TTL = 30_000;
+
+    s.acquireDeviceBuffer("dev-A");
+    s.releaseDeviceBuffer("dev-A");
+    s.acquireDeviceBuffer("dev-B");
+    s.releaseDeviceBuffer("dev-B");
+
+    // Sweep far in the future — both entries are past the TTL.
+    const FAR_FUTURE = Date.now() + TTL + 1000;
+    const evicted = s.sweepExpired(FAR_FUTURE, TTL);
+    expect(evicted).toBe(2);
+    expect(s.hasRetainedBuffers()).toBe(false);
+  });
+
+  it("sweepExpired does not evict a still-attached entry (detachedAtMs is null)", () => {
+    const s = makeSession();
+    s.acquireDeviceBuffer("dev-A");
+    // Never released — detachedAtMs remains null.
+    const evicted = s.sweepExpired(Number.MAX_SAFE_INTEGER, 0);
+    expect(evicted).toBe(0);
+    expect(s.hasRetainedBuffers()).toBe(true);
+  });
+});
+
+describe("PersonSession.admitPendingId", () => {
+  it("admits a new pendingId once, rejects the duplicate", () => {
+    const s = makeSession();
+    expect(s.admitPendingId("p1")).toBe(true);
+    expect(s.admitPendingId("p1")).toBe(false);
+  });
+  it("admits distinct ids", () => {
+    const s = makeSession();
+    expect(s.admitPendingId("p1")).toBe(true);
+    expect(s.admitPendingId("p2")).toBe(true);
+  });
+  it("evicts oldest beyond the cap so the set is bounded", () => {
+    const s = makeSession();
+    for (let i = 0; i < 300; i++) expect(s.admitPendingId(`p${i}`)).toBe(true);
+    // p0 was evicted (cap 256) -> re-admitting it succeeds (treated as new)
+    expect(s.admitPendingId("p0")).toBe(true);
+    // a recent one is still remembered
+    expect(s.admitPendingId("p299")).toBe(false);
   });
 });

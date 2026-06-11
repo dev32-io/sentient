@@ -117,7 +117,7 @@ describe("AttentionGate", () => {
     const gate = createAttentionGate(ctx, DEFAULT_CONFIG, callbacks, conversationMirror, testSalienceMap);
 
     // history append → "conversation.user.speech" => reply: 85 > 50
-    conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "hello" });
+    conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "hello" });
 
     // Cycle should NOT fire before debounce
     expect(cycleCalls).toHaveLength(0);
@@ -154,15 +154,15 @@ describe("AttentionGate", () => {
     const gate = createAttentionGate(ctx, DEFAULT_CONFIG, callbacks, conversationMirror, testSalienceMap);
 
     // Inject several events within the debounce window
-    conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "first" });
+    conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "first" });
 
     await sleep(30); // 30ms into debounce
 
-    conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "second" }); // resets debounce
+    conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "second" }); // resets debounce
 
     await sleep(30); // 60ms since second append
 
-    conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "third" }); // resets debounce again
+    conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "third" }); // resets debounce again
 
     await sleep(DEFAULT_CONFIG.debounceWindowMs + 1);
 
@@ -193,21 +193,21 @@ describe("AttentionGate", () => {
     const gate = createAttentionGate(ctx, config, callbacks, conversationMirror, testSalienceMap);
 
     // Cycle 1
-    conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "one" });
+    conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "one" });
     await sleep(config.debounceWindowMs + 1);
     expect(cycleCalls).toHaveLength(1);
     resolvers[0]?.();
     await sleep(0);
 
     // Cycle 2
-    conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "two" });
+    conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "two" });
     await sleep(config.debounceWindowMs + 1);
     expect(cycleCalls).toHaveLength(2);
     resolvers[1]?.();
     await sleep(0);
 
     // Cycle 3 should be suppressed (maxPerHour = 2)
-    conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "three" });
+    conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "three" });
     await sleep(config.debounceWindowMs + 1);
     expect(cycleCalls).toHaveLength(2);
 
@@ -221,12 +221,12 @@ describe("AttentionGate", () => {
     const gate = createAttentionGate(ctx, DEFAULT_CONFIG, callbacks, conversationMirror, testSalienceMap);
 
     // Start first cycle
-    conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "first" });
+    conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "first" });
     await sleep(DEFAULT_CONFIG.debounceWindowMs + 1);
     expect(cycleCalls).toHaveLength(1);
 
     // Inject more events while cycle is active
-    conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "second" });
+    conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "second" });
     await sleep(DEFAULT_CONFIG.debounceWindowMs + 1);
 
     // Should still be only one cycle
@@ -251,12 +251,12 @@ describe("AttentionGate", () => {
     const gate = createAttentionGate(ctx, DEFAULT_CONFIG, callbacks, conversationMirror, testSalienceMap);
 
     // Start first cycle
-    conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "first" });
+    conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "first" });
     await sleep(DEFAULT_CONFIG.debounceWindowMs + 1);
     expect(cycleCalls).toHaveLength(1);
 
     // Inject event during active cycle
-    conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "second" });
+    conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "second" });
     await sleep(DEFAULT_CONFIG.debounceWindowMs + 1);
     expect(cycleCalls).toHaveLength(1); // still 1
 
@@ -284,7 +284,13 @@ describe("AttentionGate", () => {
     const gate = createAttentionGate(ctx, DEFAULT_CONFIG, callbacks, conversationMirror, testSalienceMap);
 
     // "conversation.user.text" => reply: 120 > 100 (immediateWakeThreshold)
-    conversationMirror.append({ kind: "user", ts: Date.now(), channel: "text", content: "urgent message" });
+    conversationMirror.append({
+      entryId: "e",
+      kind: "user",
+      ts: Date.now(),
+      channel: "text",
+      content: "urgent message",
+    });
 
     // Should fire immediately, no debounce
     expect(cycleCalls).toHaveLength(1);
@@ -301,7 +307,13 @@ describe("AttentionGate", () => {
 
     gate.dispose();
 
-    conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "after dispose" });
+    conversationMirror.append({
+      entryId: "e",
+      kind: "user",
+      ts: Date.now(),
+      channel: "speech",
+      content: "after dispose",
+    });
     await sleep(DEFAULT_CONFIG.debounceWindowMs + 1);
 
     expect(cycleCalls).toHaveLength(0);
@@ -326,12 +338,12 @@ describe("AttentionGate", () => {
     const gate = createAttentionGate(ctx, DEFAULT_CONFIG, callbacks, conversationMirror, testSalienceMap);
 
     // Start first cycle
-    conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "first" });
+    conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "first" });
     await sleep(DEFAULT_CONFIG.debounceWindowMs + 1);
     expect(cycleCalls).toHaveLength(1);
 
     // Inject event during active cycle
-    conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "second" });
+    conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "second" });
 
     // Reject first cycle (simulating barge-in abort)
     resolvers[0]?.reject(new Error("aborted"));
@@ -384,7 +396,7 @@ describe("AttentionGate", () => {
       const { callbacks, cycleCalls, resolveWith } = makeChainCallbacks();
       const gate = createAttentionGate(ctx, DEFAULT_CONFIG, callbacks, conversationMirror, testSalienceMap);
 
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "hi" });
+      conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "hi" });
       await sleep(DEFAULT_CONFIG.debounceWindowMs + 1);
       expect(cycleCalls).toHaveLength(1);
       expect(cycleCalls[0]?.forceFinal).toBe(false);
@@ -408,7 +420,7 @@ describe("AttentionGate", () => {
       const { callbacks, cycleCalls, resolveWith } = makeChainCallbacks();
       const gate = createAttentionGate(ctx, DEFAULT_CONFIG, callbacks, conversationMirror, testSalienceMap);
 
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "hi" });
+      conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "hi" });
       await sleep(DEFAULT_CONFIG.debounceWindowMs + 1);
       expect(cycleCalls).toHaveLength(1);
 
@@ -427,7 +439,7 @@ describe("AttentionGate", () => {
       const config: AttentionGateConfig = { ...DEFAULT_CONFIG, maxIterations: 3 };
       const gate = createAttentionGate(ctx, config, callbacks, conversationMirror, testSalienceMap);
 
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "go" });
+      conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "go" });
       await sleep(config.debounceWindowMs + 1);
       expect(cycleCalls).toHaveLength(1);
       expect(cycleCalls[0]?.forceFinal).toBe(false);
@@ -460,7 +472,13 @@ describe("AttentionGate", () => {
       const { callbacks, cycleCalls, resolveWith } = makeChainCallbacks();
       const gate = createAttentionGate(ctx, DEFAULT_CONFIG, callbacks, conversationMirror, testSalienceMap);
 
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "first turn" });
+      conversationMirror.append({
+        entryId: "e",
+        kind: "user",
+        ts: Date.now(),
+        channel: "speech",
+        content: "first turn",
+      });
       await sleep(DEFAULT_CONFIG.debounceWindowMs + 1);
       expect(cycleCalls).toHaveLength(1);
 
@@ -476,7 +494,13 @@ describe("AttentionGate", () => {
       resolveWith({ shouldContinue: false });
       await sleep(0);
 
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "second turn" });
+      conversationMirror.append({
+        entryId: "e",
+        kind: "user",
+        ts: Date.now(),
+        channel: "speech",
+        content: "second turn",
+      });
       await sleep(DEFAULT_CONFIG.debounceWindowMs + 1);
       expect(cycleCalls).toHaveLength(3);
 
@@ -492,7 +516,7 @@ describe("AttentionGate", () => {
       const { callbacks, cycleCalls, resolveWith } = makeChainCallbacks();
       const gate = createAttentionGate(ctx, DEFAULT_CONFIG, callbacks, conversationMirror, testSalienceMap);
 
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "hi" });
+      conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "hi" });
       await sleep(DEFAULT_CONFIG.debounceWindowMs + 1);
       expect(cycleCalls).toHaveLength(1);
 
@@ -552,7 +576,7 @@ describe("AttentionGate", () => {
       const config: AttentionGateConfig = { ...DEFAULT_CONFIG, maxIterations: 5, maxIterWarnAhead: 2 };
       const gate = createAttentionGate(ctx, config, callbacks, conversationMirror, testSalienceMap);
 
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "go" });
+      conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "go" });
       await sleep(config.debounceWindowMs + 1);
       expect(cycleCalls).toHaveLength(1);
 
@@ -598,7 +622,7 @@ describe("AttentionGate", () => {
       const config: AttentionGateConfig = { ...DEFAULT_CONFIG, maxIterations: 4, maxIterWarnAhead: 2 };
       const gate = createAttentionGate(ctx, config, callbacks, conversationMirror, testSalienceMap);
 
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "go" });
+      conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "go" });
       await sleep(config.debounceWindowMs + 1);
       expect(cycleCalls).toHaveLength(1);
 
@@ -626,7 +650,7 @@ describe("AttentionGate", () => {
       const gate = createAttentionGate(ctx, config, callbacks, conversationMirror, testSalienceMap);
 
       // First turn: drive to cap so warning injects.
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "first" });
+      conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "first" });
       await sleep(config.debounceWindowMs + 1);
       expect(cycleCalls).toHaveLength(1);
       resolveWith({ shouldContinue: true });
@@ -641,7 +665,7 @@ describe("AttentionGate", () => {
       await sleep(5);
 
       // Second turn: new user stimulus resets chain. Warning should re-fire.
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "second" });
+      conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "second" });
       await sleep(config.debounceWindowMs + 1);
       resolveWith({ shouldContinue: true });
       await sleep(0);
@@ -665,6 +689,7 @@ describe("AttentionGate", () => {
       // Append a react-budget trigger directly — no prior user stimulus, so the
       // gate is idle. A react-budget trigger must NOT start a debounce / fire a cycle.
       conversationMirror.append({
+        entryId: "e",
         kind: "trigger",
         ts: Date.now(),
         source: "react-budget",
@@ -676,7 +701,7 @@ describe("AttentionGate", () => {
       // Sanity: a non-silent trigger DOES wake (conversation.trigger key
       // has salience 50, meeting the 50 threshold strict-exceed, so no fire.
       // Use a user entry to confirm the gate is still responsive).
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "hi" });
+      conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "hi" });
       await sleep(DEFAULT_CONFIG.debounceWindowMs + 1);
       expect(cycleCalls).toHaveLength(1);
 
@@ -696,7 +721,7 @@ describe("AttentionGate", () => {
       const gate = createAttentionGate(ctx, DEFAULT_CONFIG, callbacks, conversationMirror, testSalienceMap);
 
       // text channel → "conversation.user.text" => reply: 120 > immediateWakeThreshold(100)
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "text", content: "hello" });
+      conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "text", content: "hello" });
 
       // fires immediately (above immediate threshold)
       expect(cycleCalls.length).toBeGreaterThanOrEqual(1);
@@ -712,7 +737,7 @@ describe("AttentionGate", () => {
       const gate = createAttentionGate(ctx, DEFAULT_CONFIG, callbacks, conversationMirror, testSalienceMap);
 
       // speech channel → "conversation.user.speech" => reply: 85, above standard(50), below immediate(100)
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "hello" });
+      conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "hello" });
 
       await sleep(DEFAULT_CONFIG.debounceWindowMs + 1);
 
@@ -729,7 +754,7 @@ describe("AttentionGate", () => {
       const { callbacks, cycleCalls } = makeCallbacks();
       const gate = createAttentionGate(ctx, DEFAULT_CONFIG, callbacks, conversationMirror, testSalienceMap);
 
-      conversationMirror.append({ kind: "assistant", ts: Date.now(), content: "I'm the assistant" });
+      conversationMirror.append({ entryId: "e", kind: "assistant", ts: Date.now(), content: "I'm the assistant" });
 
       await sleep(DEFAULT_CONFIG.debounceWindowMs + 1);
 
@@ -745,6 +770,7 @@ describe("AttentionGate", () => {
       const gate = createAttentionGate(ctx, DEFAULT_CONFIG, callbacks, conversationMirror, testSalienceMap);
 
       conversationMirror.append({
+        entryId: "e",
         kind: "tool",
         ts: Date.now(),
         toolName: "search",
@@ -769,7 +795,13 @@ describe("AttentionGate", () => {
       // reply: 50 → total 100 which exceeds standard threshold (50) and
       // reaches immediate threshold exactly (100 > 100 is false, 100 is not
       // exceeding). Wait for debounce to confirm standard path fires.
-      conversationMirror.append({ kind: "trigger", ts: Date.now(), source: "sensor.temperature", summary: "22°C" });
+      conversationMirror.append({
+        entryId: "e",
+        kind: "trigger",
+        ts: Date.now(),
+        source: "sensor.temperature",
+        summary: "22°C",
+      });
 
       await sleep(DEFAULT_CONFIG.debounceWindowMs + 1);
 
@@ -797,13 +829,13 @@ describe("AttentionGate", () => {
       const gate = createAttentionGate(ctx, DEFAULT_CONFIG, callbacks, conversationMirror, testSalienceMap);
 
       // Kick off first cycle via a speech entry (reply: 85 → immediate after debounce)
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "start" });
+      conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "start" });
       await sleep(DEFAULT_CONFIG.debounceWindowMs + 1);
       expect(cycleCalls).toHaveLength(1);
 
       // During the active cycle: two trigger entries accumulate reply: 50 each → total 100
-      conversationMirror.append({ kind: "trigger", ts: Date.now(), source: "sensor.a", summary: "a" });
-      conversationMirror.append({ kind: "trigger", ts: Date.now(), source: "sensor.b", summary: "b" });
+      conversationMirror.append({ entryId: "e", kind: "trigger", ts: Date.now(), source: "sensor.a", summary: "a" });
+      conversationMirror.append({ entryId: "e", kind: "trigger", ts: Date.now(), source: "sensor.b", summary: "b" });
 
       // Salience accumulator now at reply: 100 (not yet > 50 standard individually,
       // but summed it crosses the threshold)
@@ -837,7 +869,7 @@ describe("AttentionGate", () => {
       expect(cycleCalls).toHaveLength(0);
 
       // Authoritative path: history append fires cycle immediately (120 > 100)
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "text", content: "hello" });
+      conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "text", content: "hello" });
       expect(cycleCalls).toHaveLength(1);
       expect(cycleCalls[0]?.triggerReason).toContain("immediate");
 
@@ -854,7 +886,13 @@ describe("AttentionGate", () => {
 
       // Neither STC inject nor history append should trigger a cycle after dispose
       ctx.inject(speechFinalEvent("after dispose"));
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "text", content: "after dispose" });
+      conversationMirror.append({
+        entryId: "e",
+        kind: "user",
+        ts: Date.now(),
+        channel: "text",
+        content: "after dispose",
+      });
 
       await sleep(DEFAULT_CONFIG.debounceWindowMs + 1);
 
@@ -883,12 +921,18 @@ describe("AttentionGate", () => {
       const gate = createAttentionGate(ctx, DEFAULT_CONFIG, callbacks, conversationMirror, testSalienceMap);
 
       // Start first cycle via an immediate text append (reply: 120 > 100)
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "text", content: "start" });
+      conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "text", content: "start" });
       expect(cycleCalls).toHaveLength(1);
 
       // While cycle is active: inject ambient event (monitor: 10) + conversation append (reply: 85)
       ctx.inject(lowSalienceAmbientEvent());
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "queued message" });
+      conversationMirror.append({
+        entryId: "e",
+        kind: "user",
+        ts: Date.now(),
+        channel: "speech",
+        content: "queued message",
+      });
 
       // Clear only conversation salience — ambient should survive
       gate.clearPendingConversationSalience();
@@ -920,11 +964,11 @@ describe("AttentionGate", () => {
       const gate = createAttentionGate(ctx, DEFAULT_CONFIG, callbacks, conversationMirror, testSalienceMap);
 
       // Start first cycle
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "text", content: "start" });
+      conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "text", content: "start" });
       expect(cycleCalls).toHaveLength(1);
 
       // Queue a conversation event during active cycle (sets pendingSalience)
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "queued" });
+      conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "queued" });
       // Only low-salience ambient (monitor: 10 < 50 threshold)
       ctx.inject(lowSalienceAmbientEvent());
 
@@ -966,7 +1010,7 @@ describe("AttentionGate", () => {
       const gate = createAttentionGate(ctx, config, callbacks, conversationMirror, highAmbientMap);
 
       // Start first cycle
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "text", content: "start" });
+      conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "text", content: "start" });
       expect(cycleCalls).toHaveLength(1);
 
       // Inject high-salience ambient event during active cycle
@@ -980,7 +1024,7 @@ describe("AttentionGate", () => {
       });
 
       // Also queue a conversation event
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "text", content: "queued" });
+      conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "text", content: "queued" });
 
       // Clear conversation salience only
       gate.clearPendingConversationSalience();
@@ -1014,11 +1058,11 @@ describe("AttentionGate", () => {
       const gate = createAttentionGate(ctx, DEFAULT_CONFIG, callbacks, conversationMirror, testSalienceMap);
 
       // Start first cycle
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "text", content: "first" });
+      conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "text", content: "first" });
       expect(cycleCalls).toHaveLength(1);
 
       // Queue a conversation event during the active cycle
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "queued" });
+      conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "queued" });
 
       // Use the alias method instead of the original
       gate.clearConversationSalience();
@@ -1048,11 +1092,17 @@ describe("AttentionGate", () => {
       const gate = createAttentionGate(ctx, DEFAULT_CONFIG, callbacks, conversationMirror, testSalienceMap);
 
       // Start first cycle
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "text", content: "first" });
+      conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "text", content: "first" });
       expect(cycleCalls).toHaveLength(1);
 
       // Queue a message then interrupt clears it
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "speech", content: "cancelled" });
+      conversationMirror.append({
+        entryId: "e",
+        kind: "user",
+        ts: Date.now(),
+        channel: "speech",
+        content: "cancelled",
+      });
       gate.clearPendingConversationSalience();
 
       // Complete first cycle — no second cycle (cancelled message was cleared)
@@ -1061,7 +1111,7 @@ describe("AttentionGate", () => {
       expect(cycleCalls).toHaveLength(1);
 
       // New user message after clear — gate is idle, should trigger normally
-      conversationMirror.append({ kind: "user", ts: Date.now(), channel: "text", content: "fresh" });
+      conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "text", content: "fresh" });
 
       // reply: 120 > immediateWakeThreshold(100) → immediate dispatch
       expect(cycleCalls).toHaveLength(2);

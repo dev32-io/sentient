@@ -105,6 +105,7 @@ function makeCtxWithInject(): {
     shortTermContext,
     conversationHistory: conversationMirror,
     abortSignal: abortController.signal,
+    admitPendingId: () => true,
   };
   return { ctx, inject, conversationMirror };
 }

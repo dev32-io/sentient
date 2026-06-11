@@ -58,6 +58,10 @@ class CognitionStatusConnector(
         }
     }
 
+    /** Force-reset to IDLE (optimistic local clear). Fires onStateChange via setState so the
+     *  orchestrator's deriver stays in sync; prevents the next cycle.started short-circuiting. */
+    fun reset() = setState(CognitionState.IDLE, "reset", null)
+
     private fun setState(next: CognitionState, trigger: String, cycleId: String?) {
         if (next == currentState) return
         log.info(

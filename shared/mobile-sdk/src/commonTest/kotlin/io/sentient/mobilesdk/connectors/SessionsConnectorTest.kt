@@ -1,25 +1,32 @@
 // ---------------------------------------------------------------------------
-// SessionsConnectorTest — ported VERBATIM from web-sdk
-// sessions-connector.test.ts. Pins the request/response correlation contract
-// at the gateway↔SDK boundary: each op sends the right frame with a generated
-// requestId; the matching *.result frame resolves by requestId; sessions.error
-// rejects; broadcast frames fire onSessionsChanged; a timeout fails the call.
-// Wire/protocol contract → keeper per .claude/rules/testing.md.
+// SessionsConnectorTest — pins the session lifecycle frame contract and REST
+// delegation after protocol Task 2.1/2.6.
 //
-// KMP-specific test harness vs web-sdk:
-//   - requestId generation is INJECTED as a deterministic counter (not
-//     crypto.randomUUID) so assertions are stable.
-//   - timeout uses kotlinx-coroutines-test runTest virtual time (advanceTimeBy)
-//     so the 5s default never makes the test wait real time; we also inject a
-//     short timeout to exercise the boundary explicitly.
-//   - On timeout the suspend fn throws the typed SessionsTimeoutException; on
-//     gateway error it throws the typed SessionsRequestException.
+// Query RPCs (list/search/delete/rename) now delegate to SessionsHttpClient
+// (REST). The WS connector only owns lifecycle frames:
+//   switchTo   → sends conversation.activate; resolves on session.switched
+//   newChat    → sends session.new; resolves on session.created
+//
+// Wire/protocol contract → keeper per .claude/rules/testing.md:
+//   - switchTo sends conversation.activate (not session.switch)
+//   - newChat still sends session.new
+//   - session.switched resolves switchTo; session.created resolves newChat
+//   - broadcasts fan out to onSessionsChanged
+//   - timeout on switch throws SessionsTimeoutException
+//   - reset() fails pending waiters
+//   - list/delete/rename delegate to httpClient (no WS frame sent)
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.connectors
 
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
+import io.ktor.http.HttpStatusCode
 import io.sentient.mobilesdk.protocol.ClientMessage
+import io.sentient.mobilesdk.protocol.ConversationFeedItem
 import io.sentient.mobilesdk.protocol.ServerMessage
 import io.sentient.mobilesdk.protocol.SessionRow
+import io.sentient.mobilesdk.sessions.SessionsHttpClient
 import io.sentient.mobilesdk.util.Clock
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.advanceTimeBy
@@ -27,143 +34,97 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
-class SessionsConnectorTest {
+// ── Test helpers ──────────────────────────────────────────────────────────────
 
-    /** Deterministic monotonic id generator: r0, r1, r2, … */
-    private fun counterIds(): () -> String {
-        var n = 0
-        return { "r${n++}" }
+private fun row(id: String) = SessionRow(
+    sessionId = id,
+    rootId = null,
+    title = "t-$id",
+    startedAt = 0L,
+    lastActiveAt = 0L,
+    messageCount = 0,
+    isActive = false,
+)
+
+private fun counterIds(): () -> String {
+    var n = 0
+    return { "r${n++}" }
+}
+
+/**
+ * Minimal fake REST client. Uses a stub MockEngine (never called in unit tests
+ * since we directly call the fake methods via FakeSessionsHttpClient).
+ */
+private class FakeSessionsHttpClient(
+    private val deleteSuccess: Boolean = true,
+    private val renameSuccess: Boolean = true,
+) : SessionsHttpClient(
+    httpClient = HttpClient(MockEngine { _ -> respond("", HttpStatusCode.OK) }),
+    gatewayWsUrl = "wss://h/api/v1/ws",
+    token = { "" },
+) {
+    val listCalls = mutableListOf<Pair<Int, Int>>()
+    val deleteCalls = mutableListOf<String>()
+    val renameCalls = mutableListOf<Pair<String, String>>()
+    var listResult: List<SessionRow> = emptyList()
+
+    override suspend fun list(limit: Int, offset: Int): List<SessionRow> {
+        listCalls += limit to offset
+        return listResult
     }
 
-    private fun row(id: String) = SessionRow(
-        sessionId = id,
-        rootId = null,
-        title = "t-$id",
-        startedAt = 0L,
-        lastActiveAt = 0L,
-        messageCount = 0,
-        isActive = false,
+    override suspend fun delete(sessionId: String): Boolean {
+        deleteCalls += sessionId
+        return deleteSuccess
+    }
+
+    override suspend fun rename(sessionId: String, title: String): Boolean {
+        renameCalls += sessionId to title
+        return renameSuccess
+    }
+
+    override suspend fun getMessages(sessionId: String, limit: Int, offset: Int): List<ConversationFeedItem> =
+        emptyList()
+
+    override suspend fun search(q: String, limit: Int): List<SessionRow> = emptyList()
+}
+
+private fun connector(
+    sent: MutableList<ClientMessage>,
+    httpClient: SessionsHttpClient? = null,
+    timeoutMs: Long = 5_000L,
+): SessionsConnector =
+    SessionsConnector(
+        send = { sent += it },
+        newId = counterIds(),
+        clock = Clock { 0L },
+        httpClient = httpClient,
+        timeoutMs = timeoutMs,
     )
 
-    private fun connector(
-        sent: MutableList<ClientMessage>,
-        timeoutMs: Long = 5_000L,
-    ): SessionsConnector =
-        SessionsConnector(send = { sent += it }, newId = counterIds(), clock = Clock { 0L }, timeoutMs = timeoutMs)
+class SessionsConnectorTest {
 
     @Test
     fun has_capability_sessions() {
         assertEquals("sessions", connector(mutableListOf()).capability)
     }
 
-    @Test
-    fun list_sends_frame_and_resolves_on_matching_requestId() = runTest {
-        val sent = mutableListOf<ClientMessage>()
-        val c = connector(sent)
-        val deferred = async { c.list(limit = 20, offset = 0) }
-        runCurrent()
-
-        val frame = sent[0] as ClientMessage.SessionsList
-        assertEquals(20, frame.limit)
-        assertEquals(0, frame.offset)
-        c.handle(
-            ServerMessage.SessionsListResult(
-                requestId = frame.requestId,
-                items = listOf(row("s1")),
-                total = 1,
-                hasMore = false,
-            ),
-        )
-
-        assertEquals(SessionsListPage(listOf(row("s1")), total = 1, hasMore = false), deferred.await())
-    }
+    // ── switchTo sends conversation.activate ──────────────────────────────────
 
     @Test
-    fun list_rejects_on_sessions_error_matching_requestId() = runTest {
+    fun switchTo_sends_conversation_activate() = runTest {
         val sent = mutableListOf<ClientMessage>()
         val c = connector(sent)
-        // Catch inside the coroutine so the failure does not propagate to the
-        // runTest scope (structured concurrency cancels the parent otherwise).
-        val captured = async { runCatching { c.list(limit = 20, offset = 0) } }
+        val deferred = async { c.switchTo("s1") }
         runCurrent()
 
-        val frame = sent[0] as ClientMessage.SessionsList
-        c.handle(ServerMessage.SessionsError(requestId = frame.requestId, code = "internal", message = "boom"))
-
-        val ex = captured.await().exceptionOrNull()
-        assertTrue(ex is SessionsRequestException)
-        assertEquals("internal", ex.code)
-        assertTrue(ex.message.contains("boom"))
-    }
-
-    @Test
-    fun search_sends_frame_and_resolves_with_items() = runTest {
-        val sent = mutableListOf<ClientMessage>()
-        val c = connector(sent)
-        val deferred = async { c.search(q = "hi", limit = 10) }
-        runCurrent()
-
-        val frame = sent[0] as ClientMessage.SessionsSearch
-        assertEquals("hi", frame.q)
-        assertEquals(10, frame.limit)
-        c.handle(ServerMessage.SessionsSearchResult(requestId = frame.requestId, items = listOf(row("s2"))))
-
-        assertEquals(listOf(row("s2")), deferred.await())
-    }
-
-    @Test
-    fun delete_resolves_on_delete_result_matching_requestId() = runTest {
-        val sent = mutableListOf<ClientMessage>()
-        val c = connector(sent)
-        val deferred = async { c.delete("s1") }
-        runCurrent()
-
-        val frame = sent[0] as ClientMessage.SessionsDelete
+        val frame = sent.single()
+        assertIs<ClientMessage.ConversationActivate>(frame)
         assertEquals("s1", frame.sessionId)
-        c.handle(ServerMessage.SessionsDeleteResult(requestId = frame.requestId, sessionId = "s1"))
-
-        deferred.await() // resolves Unit, no throw
-    }
-
-    @Test
-    fun delete_broadcasts_change_event_on_sessions_deleted() {
-        val sent = mutableListOf<ClientMessage>()
-        val c = connector(sent)
-        val events = mutableListOf<SessionsChangeEvent>()
-        c.onSessionsChanged { events += it }
-
-        c.handle(ServerMessage.SessionsDeleted(sessionId = "s1"))
-
-        assertEquals(listOf<SessionsChangeEvent>(SessionsChangeEvent.Deleted("s1")), events)
-    }
-
-    @Test
-    fun rename_resolves_on_rename_result_matching_requestId() = runTest {
-        val sent = mutableListOf<ClientMessage>()
-        val c = connector(sent)
-        val deferred = async { c.rename("s1", "New Title") }
-        runCurrent()
-
-        val frame = sent[0] as ClientMessage.SessionsRename
-        assertEquals("s1", frame.sessionId)
-        assertEquals("New Title", frame.title)
-        c.handle(ServerMessage.SessionsRenameResult(requestId = frame.requestId, sessionId = "s1", title = "New Title"))
-
-        deferred.await() // resolves Unit, no throw
-    }
-
-    @Test
-    fun rename_broadcasts_change_event_on_sessions_renamed() {
-        val sent = mutableListOf<ClientMessage>()
-        val c = connector(sent)
-        val events = mutableListOf<SessionsChangeEvent>()
-        c.onSessionsChanged { events += it }
-
-        c.handle(ServerMessage.SessionsRenamed(sessionId = "s1", title = "Renamed"))
-
-        assertEquals(listOf<SessionsChangeEvent>(SessionsChangeEvent.Renamed("s1", "Renamed")), events)
+        deferred.cancel()
     }
 
     @Test
@@ -175,11 +136,37 @@ class SessionsConnectorTest {
         val deferred = async { c.switchTo("s1") }
         runCurrent()
 
-        assertTrue(sent[0] is ClientMessage.SessionSwitch)
         c.handle(ServerMessage.SessionSwitched(sessionId = "s1", ts = 1L))
 
-        deferred.await() // resolves Unit
+        deferred.await()
         assertEquals(listOf<SessionsChangeEvent>(SessionsChangeEvent.Switched("s1", null, 1L)), events)
+    }
+
+    @Test
+    fun switchTo_times_out_and_throws_typed_exception() = runTest {
+        val sent = mutableListOf<ClientMessage>()
+        val c = connector(sent, timeoutMs = 50L)
+        val captured = async { runCatching { c.switchTo("s1") } }
+        runCurrent()
+        advanceTimeBy(60L)
+        runCurrent()
+
+        val ex = captured.await().exceptionOrNull()
+        assertTrue(ex is SessionsTimeoutException)
+        assertEquals("session.switched", ex.frameType)
+    }
+
+    // ── newChat sends session.new ──────────────────────────────────────────────
+
+    @Test
+    fun newChat_sends_session_new() = runTest {
+        val sent = mutableListOf<ClientMessage>()
+        val c = connector(sent)
+        val deferred = async { c.newChat() }
+        runCurrent()
+
+        assertIs<ClientMessage.SessionNew>(sent.single())
+        deferred.cancel()
     }
 
     @Test
@@ -189,31 +176,40 @@ class SessionsConnectorTest {
         val deferred = async { c.newChat() }
         runCurrent()
 
-        assertTrue(sent[0] is ClientMessage.SessionNew)
         c.handle(ServerMessage.SessionCreated(sessionId = "s2", ts = 1L))
-
         assertEquals("s2", deferred.await())
     }
 
-    @Test
-    fun request_times_out_and_throws_typed_timeout_exception() = runTest {
-        val sent = mutableListOf<ClientMessage>()
-        val c = connector(sent, timeoutMs = 50L)
-        val captured = async { runCatching { c.list(limit = 20, offset = 0) } }
-        runCurrent()
-        advanceTimeBy(60L)
-        runCurrent()
+    // ── broadcast fan-out ────────────────────────────────────────────────────
 
-        val ex = captured.await().exceptionOrNull()
-        assertTrue(ex is SessionsTimeoutException)
-        assertEquals("sessions.list", ex.frameType)
+    @Test
+    fun deleted_broadcast_fans_out_to_listeners() {
+        val c = connector(mutableListOf())
+        val events = mutableListOf<SessionsChangeEvent>()
+        c.onSessionsChanged { events += it }
+
+        c.handle(ServerMessage.SessionsDeleted(sessionId = "s1"))
+
+        assertEquals(listOf<SessionsChangeEvent>(SessionsChangeEvent.Deleted("s1")), events)
     }
 
     @Test
-    fun reset_fails_in_flight_requests() = runTest {
-        val sent = mutableListOf<ClientMessage>()
-        val c = connector(sent)
-        val captured = async { runCatching { c.list(limit = 20, offset = 0) } }
+    fun renamed_broadcast_fans_out_to_listeners() {
+        val c = connector(mutableListOf())
+        val events = mutableListOf<SessionsChangeEvent>()
+        c.onSessionsChanged { events += it }
+
+        c.handle(ServerMessage.SessionsRenamed(sessionId = "s1", title = "Renamed"))
+
+        assertEquals(listOf<SessionsChangeEvent>(SessionsChangeEvent.Renamed("s1", "Renamed")), events)
+    }
+
+    // ── reset fails in-flight waiters ─────────────────────────────────────────
+
+    @Test
+    fun reset_fails_in_flight_switch_waiter() = runTest {
+        val c = connector(mutableListOf())
+        val captured = async { runCatching { c.switchTo("s1") } }
         runCurrent()
 
         c.reset()
@@ -222,15 +218,99 @@ class SessionsConnectorTest {
     }
 
     @Test
-    fun ignores_unowned_frames() {
+    fun reset_fails_in_flight_newChat_waiter() = runTest {
+        val c = connector(mutableListOf())
+        val captured = async { runCatching { c.newChat() } }
+        runCurrent()
+
+        c.reset()
+
+        assertTrue(captured.await().exceptionOrNull() is SessionsTimeoutException)
+    }
+
+    // ── REST delegation: no WS frames sent ───────────────────────────────────
+
+    @Test
+    fun list_delegates_to_httpClient_and_sends_no_ws_frame() = runTest {
         val sent = mutableListOf<ClientMessage>()
-        val c = connector(sent)
+        val http = FakeSessionsHttpClient().also { it.listResult = listOf(row("s1")) }
+        val c = connector(sent, httpClient = http)
+
+        val page = c.list(limit = 20, offset = 0)
+
+        assertEquals(listOf(row("s1")), page.items)
+        assertTrue(sent.isEmpty(), "list must NOT send WS frame, sent=$sent")
+        assertEquals(listOf(20 to 0), http.listCalls)
+    }
+
+    @Test
+    fun delete_delegates_to_httpClient_and_fans_out() = runTest {
+        val sent = mutableListOf<ClientMessage>()
+        val http = FakeSessionsHttpClient(deleteSuccess = true)
+        val c = connector(sent, httpClient = http)
+        val events = mutableListOf<SessionsChangeEvent>()
+        c.onSessionsChanged { events += it }
+
+        c.delete("s-99")
+
+        assertEquals(listOf("s-99"), http.deleteCalls)
+        assertEquals(listOf<SessionsChangeEvent>(SessionsChangeEvent.Deleted("s-99")), events)
+        assertTrue(sent.isEmpty(), "delete must NOT send WS frame, sent=$sent")
+    }
+
+    @Test
+    fun delete_does_not_fan_out_on_rest_failure() = runTest {
+        val sent = mutableListOf<ClientMessage>()
+        val http = FakeSessionsHttpClient(deleteSuccess = false)
+        val c = connector(sent, httpClient = http)
+        val events = mutableListOf<SessionsChangeEvent>()
+        c.onSessionsChanged { events += it }
+
+        c.delete("s-99")
+
+        assertEquals(listOf("s-99"), http.deleteCalls, "REST call must still be attempted")
+        assertEquals(emptyList(), events, "no fan-out when REST call fails")
+        assertTrue(sent.isEmpty(), "delete must NOT send WS frame, sent=$sent")
+    }
+
+    @Test
+    fun rename_delegates_to_httpClient_and_fans_out() = runTest {
+        val sent = mutableListOf<ClientMessage>()
+        val http = FakeSessionsHttpClient(renameSuccess = true)
+        val c = connector(sent, httpClient = http)
+        val events = mutableListOf<SessionsChangeEvent>()
+        c.onSessionsChanged { events += it }
+
+        c.rename("s-5", "My Chat")
+
+        assertEquals(listOf("s-5" to "My Chat"), http.renameCalls)
+        assertEquals(listOf<SessionsChangeEvent>(SessionsChangeEvent.Renamed("s-5", "My Chat")), events)
+        assertTrue(sent.isEmpty(), "rename must NOT send WS frame, sent=$sent")
+    }
+
+    @Test
+    fun rename_does_not_fan_out_on_rest_failure() = runTest {
+        val sent = mutableListOf<ClientMessage>()
+        val http = FakeSessionsHttpClient(renameSuccess = false)
+        val c = connector(sent, httpClient = http)
+        val events = mutableListOf<SessionsChangeEvent>()
+        c.onSessionsChanged { events += it }
+
+        c.rename("s-5", "My Chat")
+
+        assertEquals(listOf("s-5" to "My Chat"), http.renameCalls, "REST call must still be attempted")
+        assertEquals(emptyList(), events, "no fan-out when REST call fails")
+        assertTrue(sent.isEmpty(), "rename must NOT send WS frame, sent=$sent")
+    }
+
+    @Test
+    fun ignores_unowned_frames() {
+        val c = connector(mutableListOf())
         val events = mutableListOf<SessionsChangeEvent>()
         c.onSessionsChanged { events += it }
 
         c.handle(ServerMessage.Pong)
 
         assertEquals(emptyList(), events)
-        assertEquals(emptyList(), sent)
     }
 }

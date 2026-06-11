@@ -102,10 +102,7 @@ class WsTransport(
     private suspend fun route(frame: WsIncoming) {
         when (frame) {
             is WsIncoming.Text -> routeText(frame.data)
-            is WsIncoming.Binary -> {
-                log.debug("recv-binary", mapOf("bytes" to frame.data.size))
-                eventChannel.send(WsEvent.Audio(frame.data))
-            }
+            is WsIncoming.Binary -> routeBinary(frame.data)
             is WsIncoming.Closed -> {
                 log.info("recv-closed", mapOf("code" to frame.code, "reason" to frame.reason))
                 signalChannel.send(TransportSignal.Closed(frame.code, frame.reason))
@@ -117,6 +114,27 @@ class WsTransport(
                 closeChannels()
             }
         }
+    }
+
+    /**
+     * Peel the 9-byte gateway header off a binary frame and deliver ONLY the
+     * payload as [WsEvent.Audio], tagged with the header seq for the resume
+     * cursor. Without this peel the leading 9 bytes corrupt the Opus stream
+     * (the mobile audio break from Task 3.5). A frame shorter than the header or
+     * of an unknown type is logged and dropped — the audio pipeline stays clean.
+     */
+    private suspend fun routeBinary(data: ByteArray) {
+        val parsed = parseBinaryFrame(data)
+        if (parsed == null) {
+            log.warn("recv-binary.too-short", mapOf("bytes" to data.size))
+            return
+        }
+        if (parsed.type != BINARY_TYPE_AUDIO) {
+            log.debug("recv-binary.unknown-type", mapOf("type" to parsed.type, "seq" to parsed.seq, "bytes" to data.size))
+            return
+        }
+        log.debug("recv-binary", mapOf("seq" to parsed.seq, "payloadBytes" to parsed.payload.size, "frameBytes" to data.size))
+        eventChannel.send(WsEvent.Audio(parsed.payload, parsed.seq))
     }
 
     private suspend fun routeText(raw: String) {
@@ -134,7 +152,13 @@ class WsTransport(
         }
         val result = WireJson.decodeServerMessageResult(effectiveRaw)
         result.fold(
-            onSuccess = { msg -> eventChannel.send(WsEvent.Control(msg)) },
+            onSuccess = { msg ->
+                // Peel the gateway's seq/epoch resume stamps off the raw JSON
+                // (read generically, not added to every variant) so the SDK can
+                // feed them to the ResumeCursor for replay dedup.
+                val (seq, epoch) = WireJson.peelSeqEpoch(effectiveRaw)
+                eventChannel.send(WsEvent.Control(msg, seq, epoch))
+            },
             onFailure = { err ->
                 log.warn("decode-failed", mapOf("reason" to (err.message ?: "parse error"), "frame" to effectiveRaw))
                 onProtocolError?.invoke(SentientError.Protocol("decode failed", cause = err))

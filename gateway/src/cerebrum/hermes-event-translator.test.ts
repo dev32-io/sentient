@@ -73,6 +73,9 @@ describe("translateHermesStream", () => {
     const entry = entry4.item as Record<string, unknown>;
     expect(entry.kind).toBe("assistant");
     expect(entry.content).toBe("Hello world");
+    // entryId must be a non-empty string on every committed entry (Slice 3/4 dedupe).
+    expect(typeof entry.entryId).toBe("string");
+    expect((entry.entryId as string).length).toBeGreaterThan(0);
 
     expect(emitted[5]).toEqual({
       type: "cycle.completed",
@@ -84,6 +87,8 @@ describe("translateHermesStream", () => {
     const snap = mirror.snapshot();
     const assistantEntry = snap[0] as Extract<(typeof snap)[0], { kind: "assistant" }>;
     expect(assistantEntry.content).toBe("Hello world");
+    expect(typeof assistantEntry.entryId).toBe("string");
+    expect(assistantEntry.entryId.length).toBeGreaterThan(0);
   });
 
   it("emits correct wire messages for tool call lifecycle", async () => {
@@ -151,6 +156,8 @@ describe("translateHermesStream", () => {
     expect(toolData.toolName).toBe("search");
     expect(toolData.status).toBe("finished");
     expect(toolData.summary).toBe("found results");
+    expect(typeof toolData.entryId).toBe("string");
+    expect((toolData.entryId as string).length).toBeGreaterThan(0);
 
     // message.done (no assistant text, but still emitted)
     expect(emitted[4]).toEqual({ type: "message.done", cycleId: "c1" });
@@ -428,5 +435,42 @@ describe("translateHermesStream", () => {
     const snap = tasks.snapshot();
     const task = snap.find((r) => r.taskId === "c1");
     expect(task?.status).toBe("cancelled");
+  });
+
+  it("two distinct commits get distinct entryIds", async () => {
+    // Wire-protocol contract (Slice 3/4): each committed conversation.entry
+    // carries a unique entryId so the client can dedupe on replay.
+    const ctx = makeContext();
+    const mirror = createConversationMirror();
+    const tasks = createTaskMirror();
+    const emitted: Record<string, unknown>[] = [];
+
+    const input: HermesEvent[] = [
+      { type: "created", responseId: "r1", conversationId: "conv-distinct" },
+      { type: "tool.started", callId: "call1", toolName: "search", argsPreview: "x" },
+      { type: "tool.finished", callId: "call1", status: "ok", summary: "done" },
+      { type: "text.delta", delta: "hello" },
+      { type: "completed", usage: { inputTokens: 5, outputTokens: 3 } },
+    ];
+
+    await translateHermesStream(
+      events(input),
+      ctx,
+      mirror,
+      tasks,
+      (m) => {
+        emitted.push(m);
+      },
+      () => {},
+    );
+
+    const entries = emitted
+      .filter((m) => m.type === "conversation.entry")
+      .map((m) => (m.item as Record<string, unknown>).entryId as string);
+
+    expect(entries).toHaveLength(2); // tool + assistant
+    expect(entries[0]).toBeDefined();
+    expect(entries[1]).toBeDefined();
+    expect(entries[0]).not.toBe(entries[1]);
   });
 });

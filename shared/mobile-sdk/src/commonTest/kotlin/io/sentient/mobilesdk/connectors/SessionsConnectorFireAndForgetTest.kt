@@ -116,7 +116,7 @@ class SessionsConnectorFireAndForgetTest {
     }
 
     @Test
-    fun sendSwitch_always_emits_a_session_switch() {
+    fun sendSwitch_always_emits_conversation_activate() {
         val sent = mutableListOf<ClientMessage>()
         val clock = FixedClock(1_000L)
         val c = connector(sent, clock)
@@ -124,9 +124,9 @@ class SessionsConnectorFireAndForgetTest {
         c.sendSwitch("s-1")
         c.sendSwitch("s-2") // no debounce on switch
 
-        val switches = sent.filterIsInstance<ClientMessage.SessionSwitch>()
-        assertEquals(2, switches.size, "every sendSwitch must emit, sent=$sent")
-        assertEquals(listOf("s-1", "s-2"), switches.map { it.sessionId })
+        val activates = sent.filterIsInstance<ClientMessage.ConversationActivate>()
+        assertEquals(2, activates.size, "every sendSwitch must emit, sent=$sent")
+        assertEquals(listOf("s-1", "s-2"), activates.map { it.sessionId })
     }
 
     @Test

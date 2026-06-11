@@ -1,23 +1,57 @@
+/**
+ * Binary frame layout (audio frames sent gateway → client):
+ *
+ *   ┌──────────────────────────────┬────────────┬──────────────────────┐
+ *   │  8 bytes (big-endian u64)    │  1 byte    │  N bytes             │
+ *   │  seq (monotonic counter)     │  type      │  payload             │
+ *   └──────────────────────────────┴────────────┴──────────────────────┘
+ *
+ *   type 0x01 = audio PCM/Opus payload
+ *
+ * JSON push frames carry seq + epoch as top-level optional fields (added by
+ * FrameSequencer on the gateway before sending). The epoch is a session-scoped
+ * counter that increments on each reconnect; it lets the client detect whether
+ * a seq gap is a true miss or a reconnect restart. epoch is NOT carried in the
+ * binary header — it is carried on JSON frames generally: the client first
+ * learns the current epoch from auth.ok / session.ready, and again on the
+ * stream.resumed reply after reconnect. On a reconnect the client requests
+ * replay by carrying a `resume` object in session.configure (NOT a separate
+ * frame); the gateway replies with stream.resumed.
+ */
+
 import { z } from "zod";
 import { conversationFeedItemSchema } from "./conversation.ts";
 import { userRoleSchema } from "./roles.ts";
 import {
+  conversationActivateSchema,
   sessionCreatedEventSchema,
   sessionNewSchema,
-  sessionSwitchSchema,
   sessionSwitchedEventSchema,
-  sessionsDeleteResultSchema,
-  sessionsDeleteSchema,
   sessionsDeletedEventSchema,
   sessionsErrorSchema,
-  sessionsListResultSchema,
-  sessionsListSchema,
-  sessionsRenameResultSchema,
-  sessionsRenameSchema,
   sessionsRenamedEventSchema,
-  sessionsSearchResultSchema,
-  sessionsSearchSchema,
 } from "./sessions.ts";
+
+// ─── Shared seq/epoch extension for gateway push frames ───
+//
+// Every gateway → client JSON frame optionally carries seq (monotonic frame
+// counter within the epoch) and epoch (increments on each server reconnect).
+// Both are non-negative integers; absence means the frame pre-dates sequencing.
+
+const seqEpochFields = {
+  seq: z.number().int().nonnegative().optional(),
+  epoch: z.number().int().nonnegative().optional(),
+} as const;
+
+function withSeqEpoch<T extends z.ZodRawShape>(schema: z.ZodObject<T>) {
+  return schema.extend(seqEpochFields);
+}
+
+// withSeq: for frames that already have a required `epoch` field of their own
+// (e.g. stream.resumed). Adding seq only avoids overwriting epoch as optional.
+function withSeq<T extends z.ZodRawShape>(schema: z.ZodObject<T>) {
+  return schema.extend({ seq: z.number().int().nonnegative().optional() });
+}
 
 // ─── Client → Gateway Messages ───
 
@@ -33,6 +67,17 @@ import {
 export const clientTypeSchema = z.enum(["webui", "cube", "mobile"]);
 export type ClientType = z.infer<typeof clientTypeSchema>;
 
+// Resume request carried INSIDE session.configure on a reconnect. Folding it
+// into configure (rather than a separate stream.resume frame) makes the
+// gateway's resume decision a synchronous read off the one parsed configure
+// message — no same-tick frame-ordering race. Present only on a reconnect with
+// a non-zero cursor; omitted on a fresh connect (nothing to replay).
+export const sessionConfigureResumeSchema = z.object({
+  epoch: z.number().int().nonnegative(),
+  lastSeq: z.number().int().nonnegative(),
+});
+export type SessionConfigureResume = z.infer<typeof sessionConfigureResumeSchema>;
+
 export const sessionConfigureSchema = z.object({
   type: z.literal("session.configure"),
   language: z.enum(["en", "zh"]).default("en"),
@@ -40,6 +85,20 @@ export const sessionConfigureSchema = z.object({
     supports: z.array(z.string()),
   }),
   clientType: clientTypeSchema,
+  /**
+   * Stable per-device identifier. REQUIRED — the client supplies the same
+   * value on every connection so the gateway can key the per-device replay
+   * buffer across reconnects (Task 3.8). A fresh connect gets a fresh buffer
+   * for this deviceId; a reconnect reuses it.
+   */
+  deviceId: z.string().min(1),
+  /**
+   * Optional resume request (Slice 3 hardening). When present, the gateway
+   * attempts a per-device buffer resume (replay frames since lastSeq within
+   * epoch) instead of a fresh setup. Read synchronously off this frame — there
+   * is no separate stream.resume frame.
+   */
+  resume: sessionConfigureResumeSchema.optional(),
 });
 
 export const audioStartSchema = z.object({
@@ -78,6 +137,10 @@ export const interruptSchema = z.object({
   type: z.literal("interrupt"),
 });
 
+// NOTE: the resume request is carried INSIDE session.configure (see
+// sessionConfigureSchema.resume) — there is no separate stream.resume frame.
+// The gateway → client reply is stream.resumed (below), still its own frame.
+
 export const clientMessageSchema = z.discriminatedUnion("type", [
   sessionConfigureSchema,
   audioStartSchema,
@@ -87,12 +150,8 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   sessionEndSchema,
   pingSchema,
   interruptSchema,
-  sessionsListSchema,
-  sessionsSearchSchema,
-  sessionsDeleteSchema,
-  sessionsRenameSchema,
   sessionNewSchema,
-  sessionSwitchSchema,
+  conversationActivateSchema,
 ]);
 
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
@@ -207,8 +266,15 @@ export const conversationSnapshotSchema = z.object({
   items: z.array(conversationFeedItemSchema),
 });
 
+// `cycleId` is the gateway-owned join key between a live streaming bubble
+// (message.delta/done) and its committed entry. It is carried on the FRAME,
+// not on the item (the feed item deliberately strips cycle/task plumbing —
+// see conversation.ts). Clients read it here to render ONE bubble per reply
+// instead of reverse-engineering it client-side. Optional because some entries
+// have no originating cycle (a user-input echo, an out-of-band activate entry).
 export const conversationEntrySchema = z.object({
   type: z.literal("conversation.entry"),
+  cycleId: z.string().optional(),
   item: conversationFeedItemSchema,
 });
 
@@ -272,36 +338,57 @@ export const playbackStopSchema = z.object({
   reason: z.enum(["barge-in", "interrupt"]),
 });
 
+// Resume acknowledgement — sent by the gateway after processing stream.resume.
+// recovered=true means the buffer contained frames in [fromSeq, toSeq] that
+// will be replayed. recovered=false means the epoch has rolled over or the
+// buffer was empty; client should treat this as a clean reconnect.
+//
+// The base schema holds the domain fields (epoch is REQUIRED here — it is
+// always present on this frame). The wire schema adds the optional seq stamp
+// that FrameSequencer injects on the way out. StreamResumed is typed from the
+// wire schema so client code reading .seq on a typed value is valid.
+const streamResumedBaseSchema = z.object({
+  type: z.literal("stream.resumed"),
+  recovered: z.boolean(),
+  epoch: z.number().int().nonnegative(),
+  fromSeq: z.number().int().nonnegative().optional(),
+  toSeq: z.number().int().nonnegative().optional(),
+});
+export const streamResumedSchema = withSeq(streamResumedBaseSchema);
+export type StreamResumed = z.infer<typeof streamResumedSchema>;
+
+/**
+ * Invariant: every entry MUST be wrapped with `withSeqEpoch` (or `withSeq` for
+ * frames that already require `epoch` in their own schema, e.g. stream.resumed)
+ * so the client can parse the sequencer-stamped seq/epoch fields.
+ */
 export const gatewayMessageSchema = z.discriminatedUnion("type", [
-  authOkSchema,
-  sessionReadySchema,
-  cycleStartedSchema,
-  connectorCancelledSchema,
-  cycleAbortedSchema,
-  cycleCompletedSchema,
-  connectorTranscriptFinalSchema,
-  connectorAudioStartSchema,
-  connectorAudioDoneSchema,
-  messageDeltaSchema,
-  messageDoneSchema,
-  cognitionStatusSchema,
-  conversationSnapshotSchema,
-  conversationEntrySchema,
-  taskUpdateSchema,
-  toolConfirmRequestSchema,
-  errorSchema,
-  pongSchema,
-  sessionExpiredSchema,
-  playbackStopSchema,
-  sessionsListResultSchema,
-  sessionsSearchResultSchema,
-  sessionsDeleteResultSchema,
-  sessionsDeletedEventSchema,
-  sessionsRenameResultSchema,
-  sessionsRenamedEventSchema,
-  sessionCreatedEventSchema,
-  sessionSwitchedEventSchema,
-  sessionsErrorSchema,
+  withSeqEpoch(authOkSchema),
+  withSeqEpoch(sessionReadySchema),
+  withSeqEpoch(cycleStartedSchema),
+  withSeqEpoch(connectorCancelledSchema),
+  withSeqEpoch(cycleAbortedSchema),
+  withSeqEpoch(cycleCompletedSchema),
+  withSeqEpoch(connectorTranscriptFinalSchema),
+  withSeqEpoch(connectorAudioStartSchema),
+  withSeqEpoch(connectorAudioDoneSchema),
+  withSeqEpoch(messageDeltaSchema),
+  withSeqEpoch(messageDoneSchema),
+  withSeqEpoch(cognitionStatusSchema),
+  withSeqEpoch(conversationSnapshotSchema),
+  withSeqEpoch(conversationEntrySchema),
+  withSeqEpoch(taskUpdateSchema),
+  withSeqEpoch(toolConfirmRequestSchema),
+  withSeqEpoch(errorSchema),
+  withSeqEpoch(pongSchema),
+  withSeqEpoch(sessionExpiredSchema),
+  withSeqEpoch(playbackStopSchema),
+  withSeqEpoch(sessionsDeletedEventSchema),
+  withSeqEpoch(sessionsRenamedEventSchema),
+  withSeqEpoch(sessionCreatedEventSchema),
+  withSeqEpoch(sessionSwitchedEventSchema),
+  withSeqEpoch(sessionsErrorSchema),
+  streamResumedSchema, // already wrapped with withSeq; epoch is required on this frame
 ]);
 
 export type GatewayMessage = z.infer<typeof gatewayMessageSchema>;

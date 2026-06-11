@@ -263,6 +263,7 @@ export function createAttentionGate(
       if (!warningInjectedInChain && totalAfterDispatch + config.maxIterWarnAhead > config.maxIterations) {
         const remaining = config.maxIterations - totalAfterDispatch + 1;
         conversationMirror.append({
+          entryId: crypto.randomUUID(),
           kind: "trigger",
           ts: Date.now(),
           source: "react-budget",

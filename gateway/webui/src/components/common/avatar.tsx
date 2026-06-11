@@ -12,12 +12,6 @@ export interface AvatarProps {
   mode?: SentientMarkMode;
 }
 
-function avatarRingClass(mode: SentientMarkMode): string {
-  if (mode === "listening") return " avatar--listening";
-  if (mode === "thinking" || mode === "speaking") return " avatar--running";
-  return "";
-}
-
 export function Avatar({
   kind,
   initial,
@@ -28,10 +22,12 @@ export function Avatar({
   const sizeClass = size === "lg" ? " avatar--lg" : "";
   if (kind === "assistant") {
     const px = size === "lg" ? 44 : 28;
-    const ringClass = avatarRingClass(mode);
+    // The active ripple lives on THIS avatar wrapper (.avatar--active) so it
+    // appears only at the chat avatar — the top bar / brand mark stays static.
+    const activeClass = mode !== "idle" ? " avatar--active" : "";
     return (
-      <span class={`avatar avatar--assistant${sizeClass}${ringClass}`} aria-hidden="true">
-        <SentientMark size={px} mode={mode} />
+      <span class={`avatar avatar--assistant${sizeClass}${activeClass}`} aria-hidden="true">
+        <SentientMark size={px} />
       </span>
     );
   }

@@ -7,6 +7,10 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+// Shared mobile-SDK source version. Set to 0.1.0 with the WS-resilience +
+// chat-mirror work (resumable WS, REST sessions, device chat mirror).
+version = "0.1.0"
+
 kotlin {
     androidTarget {
         compilations.all {

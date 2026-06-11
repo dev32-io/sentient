@@ -1,10 +1,10 @@
 import { useSignal } from "@preact/signals";
-import type { ConversationFeedItem } from "@sentient/protocol";
 import {
   AssistantAudioResponseConnector,
   type AudioPreferences,
   type CognitionState,
   CognitionStatusConnector,
+  type CommittedFeedItem,
   ConversationHistoryConnector,
   type EchoGate,
   type InFlightMessage,
@@ -20,7 +20,9 @@ import {
   UserTextInputConnector,
   createEchoGate,
   createLogger,
+  createSessionsRest,
   createSpeechGate,
+  deriveRestBaseUrl,
 } from "@sentient/web-sdk";
 import type { ChatMessage, VoiceStatus } from "@sentient/web-sdk";
 import { useEffect, useMemo, useRef } from "preact/hooks";
@@ -51,12 +53,7 @@ import {
   SPEECH_GATE_PREROLL_FRAMES,
 } from "../constants.ts";
 import { createAwaitingTracker } from "./awaiting-tracker.ts";
-import {
-  type LastInflightStamp,
-  attachToolsToAssistantMessages,
-  deriveCycleStatus,
-  deriveMessages,
-} from "./cycle-helpers.ts";
+import { attachToolsToAssistantMessages, deriveCycleStatus, deriveMessages } from "./cycle-helpers.ts";
 import { useTypewriterBuffer } from "./use-typewriter-buffer.ts";
 import { buildVoiceStatus, resolveGatewayUrl } from "./voice-status.ts";
 
@@ -145,18 +142,13 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     });
 
     const inflightRef: { current: InFlightMessage | null } = { current: null };
-    const committedRef: { current: readonly ConversationFeedItem[] } = { current: [] };
-    const lastInflightRef: { current: LastInflightStamp | null } = { current: null };
+    const committedRef: { current: readonly CommittedFeedItem[] } = { current: [] };
     // Post-stream drain state: when message.done fires, the connector clears
     // inflight but the typewriter may still be mid-reveal. We keep rendering
     // a synthetic inflight bubble (driven by the typewriter) until its visible
     // catches up to the final buffered text. During drain, the committed
     // assistant entry for this cycleId is suppressed to prevent a pop.
     const drainCycleRef: { current: { cycleId: string; snapshot: InFlightMessage } | null } = { current: null };
-    // Cache cycleIds stamped onto committed messages so they survive after
-    // `lastInflight` moves to a newer cycle. Without this, older messages
-    // lose their cycleId on re-derive and their tool pills detach.
-    const cycleIdByTsRef: { current: Map<number, string> } = { current: new Map() };
     // Empty-history detection: snapshot committed-count when leaving `ready`
     // status; on next conversation snapshot post-reconnect, compare. Empty
     // result + nonzero prior == server-side PersonSession archive cycled.
@@ -198,27 +190,16 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     function refreshMessages(): void {
       // During drain, render a synthetic inflight bubble from the drain snapshot.
       const effectiveInflight = inflightRef.current ?? drainCycleRef.current?.snapshot ?? null;
+      // Committed assistant entries already carry their gateway cycleId
+      // (CommittedFeedItem) — read it straight through. No ts-window stamping,
+      // no per-message cache: the gateway is the source of truth for the id.
       const base = deriveMessages(
         committedRef.current,
         effectiveInflight,
-        lastInflightRef.current,
         effectiveInflight ? typewriterRef.current.visible.value : undefined,
         drainCycleRef.current?.cycleId,
       );
-      // Merge per-message cycleId cache with fresh window-matched stamps.
-      // Freshly-stamped messages get cached for future derives; previously-
-      // stamped messages without a fresh stamp get their cycleId restored.
-      const cache = cycleIdByTsRef.current;
-      const stamped = base.map((msg) => {
-        if (msg.role !== "assistant" || msg.isStreaming) return msg;
-        if (msg.cycleId) {
-          cache.set(msg.timestamp, msg.cycleId);
-          return msg;
-        }
-        const cached = cache.get(msg.timestamp);
-        return cached ? { ...msg, cycleId: cached } : msg;
-      });
-      messages.value = attachToolsToAssistantMessages(stamped, rawTasksRef.current);
+      messages.value = attachToolsToAssistantMessages(base, rawTasksRef.current);
     }
 
     const speechGate = createSpeechGate({
@@ -409,30 +390,45 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       },
     });
 
+    // SessionsRest is created early so both ConversationHistoryConnector and
+    // SessionsConnector can share the same REST client instance. The REST client
+    // only needs the gateway base URL + token, both available at this point.
+    const restBaseUrl = deriveRestBaseUrl(gatewayUrl);
+    const sessionsRest = createSessionsRest({
+      baseUrl: restBaseUrl,
+      token: () => options.token,
+    });
+
     // Committed conversation + live streaming bubble come from two connectors.
     // `message.done` clears inflight just before the committed entry arrives —
     // UI swaps cleanly without a visible double-render.
-    const conversationConnector = new ConversationHistoryConnector({
-      onUpdate: (items) => {
-        // Empty-history-after-reconnect detection — runs once per reconnect.
-        // The first snapshot after a session.ready is the authoritative
-        // server-of-record state; if it's empty but we had entries before
-        // the disconnect, the gateway archived our PersonSession.
-        if (awaitingHistoryAfterReconnectRef.current) {
-          awaitingHistoryAfterReconnectRef.current = false;
-          if (items.length === 0 && priorCommittedCountRef.current > 0) {
-            log.warn("history-archived", { priorCount: priorCommittedCountRef.current });
-            options.onHistoryArchived?.();
+    // `sessionsRest` is passed as the 2nd arg so that after `session.switched`
+    // the connector can fetch the new session's history via REST (instead of
+    // clearing awaitingSnapshot with an empty mirror).
+    const conversationConnector = new ConversationHistoryConnector(
+      {
+        onUpdate: (items) => {
+          // Empty-history-after-reconnect detection — runs once per reconnect.
+          // The first snapshot after a session.ready is the authoritative
+          // server-of-record state; if it's empty but we had entries before
+          // the disconnect, the gateway archived our PersonSession.
+          if (awaitingHistoryAfterReconnectRef.current) {
+            awaitingHistoryAfterReconnectRef.current = false;
+            if (items.length === 0 && priorCommittedCountRef.current > 0) {
+              log.warn("history-archived", { priorCount: priorCommittedCountRef.current });
+              options.onHistoryArchived?.();
+            }
+            priorCommittedCountRef.current = 0;
           }
-          priorCommittedCountRef.current = 0;
-        }
-        committedRef.current = items;
-        refreshMessages();
-        // Clear live STT preview once finalized user/speech entry lands.
-        const last = items.findLast((i) => i.kind === "user" && i.channel === "speech");
-        if (last && (last as { content: string }).content === transcript.value) transcript.value = "";
+          committedRef.current = items;
+          refreshMessages();
+          // Clear live STT preview once finalized user/speech entry lands.
+          const last = items.findLast((i) => i.kind === "user" && i.channel === "speech");
+          if (last && (last as { content: string }).content === transcript.value) transcript.value = "";
+        },
       },
-    });
+      sessionsRest,
+    );
 
     const inflightMessageConnector = new InFlightMessageConnector({
       onUpdate: (inflight) => {
@@ -445,7 +441,6 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
             drainCycleRef.current = null;
           }
           typewriterRef.current.setBuffer(inflight.text);
-          lastInflightRef.current = { ts: Date.now(), cycleId: inflight.cycleId };
           currentCycleId.value = inflight.cycleId;
           inflightRef.current = inflight;
         } else {
@@ -537,7 +532,7 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
         authExpired.value = true;
       },
     });
-    const sessionsConnector = new SessionsConnector();
+    const sessionsConnector = new SessionsConnector({ rest: sessionsRest });
 
     // Audio preferences mirror. Server pushes `session.preferences.changed`
     // when the model calls `update_user_settings`; the connector calls back
@@ -560,7 +555,6 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       log.debug("session-boundary.clear-drain", { kind: e.kind, sessionId: e.sessionId });
       drainCycleRef.current = null;
       inflightRef.current = null;
-      lastInflightRef.current = null;
       typewriterCycleIdRef.current = null;
       typewriterRef.current.reset();
       refreshMessages();

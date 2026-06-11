@@ -80,12 +80,14 @@ fun AvatarRipple(active: Boolean, modifier: Modifier = Modifier) {
         animationSpec = infiniteRepeatable(tween(1800, easing = LinearEasing)),
         label = "p",
     )
-    val accent = Color(Colors.accent)
+    // Ripple ring color — mark-`hi` #FFE1BD: brighter than terra, in the rim
+    // family but distinct from the static shiny edge so the two read apart.
+    val ringColor = Color(0xFFFFE1BD)
     Canvas(modifier = modifier.fillMaxSize()) {
         fun ring(phase: Float) {
-            val r = size.minDimension / 2f * (1f + 0.8f * phase)
+            val r = size.minDimension / 2f * (1f + 0.85f * phase)
             drawCircle(
-                color = accent.copy(alpha = 0.7f * (1f - phase)),
+                color = ringColor.copy(alpha = 0.75f * (1f - phase)),
                 radius = r,
                 style = Stroke(width = 1.5.dp.toPx()),
             )

@@ -11,17 +11,19 @@ import type { MirrorEntry } from "./conversation-mirror.js";
 describe("toFeedItem", () => {
   it("maps a user entry to the wire shape", () => {
     const entry: MirrorEntry = {
+      entryId: "eid-1",
       ts: 123,
       kind: "user",
       channel: "text",
       content: "hello",
     };
     const item = toFeedItem(entry);
-    expect(item).toEqual({ ts: 123, kind: "user", channel: "text", content: "hello" });
+    expect(item).toEqual({ entryId: "eid-1", ts: 123, kind: "user", channel: "text", content: "hello" });
   });
 
   it("threads pendingId onto the wire user item when set on the mirror entry", () => {
     const entry: MirrorEntry = {
+      entryId: "eid-2",
       ts: 123,
       kind: "user",
       channel: "text",
@@ -35,6 +37,7 @@ describe("toFeedItem", () => {
 
   it("omits pendingId from the wire user item when absent on the mirror entry", () => {
     const entry: MirrorEntry = {
+      entryId: "eid-3",
       ts: 123,
       kind: "user",
       channel: "text",
@@ -47,28 +50,37 @@ describe("toFeedItem", () => {
 
   it("maps a trigger entry to the wire shape", () => {
     const entry: MirrorEntry = {
+      entryId: "eid-4",
       ts: 456,
       kind: "trigger",
       source: "motion.kitchen",
       summary: "motion detected",
     };
     const item = toFeedItem(entry);
-    expect(item).toEqual({ ts: 456, kind: "trigger", source: "motion.kitchen", summary: "motion detected" });
+    expect(item).toEqual({
+      entryId: "eid-4",
+      ts: 456,
+      kind: "trigger",
+      source: "motion.kitchen",
+      summary: "motion detected",
+    });
   });
 
   it("maps an assistant entry without cutoff", () => {
     const entry: MirrorEntry = {
+      entryId: "eid-5",
       ts: 789,
       kind: "assistant",
       content: "Greeted back.",
     };
     const item = toFeedItem(entry);
-    expect(item).toEqual({ ts: 789, kind: "assistant", content: "Greeted back." });
+    expect(item).toEqual({ entryId: "eid-5", ts: 789, kind: "assistant", content: "Greeted back." });
     expect((item as Record<string, unknown>).cutoff).toBeUndefined();
   });
 
   it("propagates a barge-in cutoff on the assistant item", () => {
     const entry: MirrorEntry = {
+      entryId: "eid-6",
       ts: 789,
       kind: "assistant",
       content: "The moon is approximately...",
@@ -76,6 +88,7 @@ describe("toFeedItem", () => {
     };
     const item = toFeedItem(entry);
     expect(item).toEqual({
+      entryId: "eid-6",
       ts: 789,
       kind: "assistant",
       content: "The moon is approximately...",
@@ -85,6 +98,7 @@ describe("toFeedItem", () => {
 
   it("propagates an interrupt cutoff with cancelledTaskIds", () => {
     const entry: MirrorEntry = {
+      entryId: "eid-7",
       ts: 789,
       kind: "assistant",
       content: "Let me look that up for y",
@@ -92,6 +106,7 @@ describe("toFeedItem", () => {
     };
     const item = toFeedItem(entry);
     expect(item).toEqual({
+      entryId: "eid-7",
       ts: 789,
       kind: "assistant",
       content: "Let me look that up for y",
@@ -101,6 +116,7 @@ describe("toFeedItem", () => {
 
   it("filters out length-cap cutoff (internal-only, not in wire protocol)", () => {
     const entry: MirrorEntry = {
+      entryId: "eid-8",
       ts: 789,
       kind: "assistant",
       content: "Clean reply",
@@ -112,6 +128,7 @@ describe("toFeedItem", () => {
 
   it("maps a tool entry and drops cycleId + taskId", () => {
     const entry: MirrorEntry = {
+      entryId: "eid-9",
       ts: 100,
       kind: "tool",
       toolName: "speak",
@@ -120,6 +137,7 @@ describe("toFeedItem", () => {
     };
     const item = toFeedItem(entry);
     expect(item).toEqual({
+      entryId: "eid-9",
       ts: 100,
       kind: "tool",
       toolName: "speak",
@@ -134,6 +152,7 @@ describe("toFeedItem", () => {
     const statuses = ["finished", "cancelled", "failed"] as const;
     for (const status of statuses) {
       const entry: MirrorEntry = {
+        entryId: "eid-status",
         ts: 0,
         kind: "tool",
         toolName: "speak",
@@ -149,13 +168,13 @@ describe("toFeedItem", () => {
   // missing Hermes timestamp); the transformer MUST coerce it, never emit
   // null/NaN, or strict SDK clients crash decoding `$.ts`.
   it("preserves a real ts and yields a schema-valid item", () => {
-    const item = toFeedItem({ ts: 1717000000000, kind: "user", channel: "text", content: "hi" });
+    const item = toFeedItem({ entryId: "eid-ts1", ts: 1717000000000, kind: "user", channel: "text", content: "hi" });
     expect(item.ts).toBe(1717000000000);
     expect(conversationFeedItemSchema.safeParse(item).success).toBe(true);
   });
 
   it("backstops a NaN ts to a non-negative number (never null/NaN)", () => {
-    const item = toFeedItem({ ts: Number.NaN, kind: "user", channel: "text", content: "hi" });
+    const item = toFeedItem({ entryId: "eid-ts2", ts: Number.NaN, kind: "user", channel: "text", content: "hi" });
     expect(Number.isNaN(item.ts)).toBe(false);
     expect(item.ts).toBeGreaterThanOrEqual(0);
     // JSON round-trip is what bites strict clients: NaN serialises to null.
@@ -165,10 +184,10 @@ describe("toFeedItem", () => {
 
   it("backstops a null/undefined ts across every feed kind", () => {
     const kinds: MirrorEntry[] = [
-      { ts: undefined as unknown as number, kind: "user", channel: "speech", content: "x" },
-      { ts: null as unknown as number, kind: "assistant", content: "y" },
-      { ts: Number.NaN, kind: "tool", toolName: "speak", status: "finished", summary: "z" },
-      { ts: -5, kind: "trigger", source: "motion.kitchen", summary: "w" },
+      { entryId: "eid-k1", ts: undefined as unknown as number, kind: "user", channel: "speech", content: "x" },
+      { entryId: "eid-k2", ts: null as unknown as number, kind: "assistant", content: "y" },
+      { entryId: "eid-k3", ts: Number.NaN, kind: "tool", toolName: "speak", status: "finished", summary: "z" },
+      { entryId: "eid-k4", ts: -5, kind: "trigger", source: "motion.kitchen", summary: "w" },
     ];
     for (const entry of kinds) {
       const item = toFeedItem(entry);
@@ -182,9 +201,10 @@ describe("toFeedItem", () => {
 describe("toFeed", () => {
   it("maps an array of entries preserving order", () => {
     const entries: MirrorEntry[] = [
-      { ts: 1, kind: "user", channel: "text", content: "hi" },
-      { ts: 2, kind: "assistant", content: "hello" },
+      { entryId: "e1", ts: 1, kind: "user", channel: "text", content: "hi" },
+      { entryId: "e2", ts: 2, kind: "assistant", content: "hello" },
       {
+        entryId: "e3",
         ts: 3,
         kind: "tool",
         toolName: "speak",

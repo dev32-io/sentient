@@ -10,6 +10,7 @@ package io.sentient.mobilesdk.sdk
 
 import io.sentient.mobilesdk.audioio.AndroidAudioCaptureAdapter
 import io.sentient.mobilesdk.audioio.AndroidAudioPlaybackAdapter
+import io.sentient.mobilesdk.secure.AndroidDeviceIdStore
 import io.sentient.mobilesdk.secure.AndroidSecureTokenStore
 import io.sentient.mobilesdk.transport.AndroidWebSocketEngine
 import io.sentient.mobilesdk.util.Clock
@@ -17,6 +18,7 @@ import io.sentient.mobilesdk.util.Clock
 actual fun createPlatformBundle(): PlatformBundle = PlatformBundle(
     engine = AndroidWebSocketEngine(),
     tokenStore = AndroidSecureTokenStore(),
+    deviceIdStore = AndroidDeviceIdStore(),
     clock = Clock { System.currentTimeMillis() },
     capture = AndroidAudioCaptureAdapter(), // E1: AudioRecord VOICE_COMMUNICATION + AEC
     playback = AndroidAudioPlaybackAdapter(), // E2: AudioTrack VOICE_COMMUNICATION streaming

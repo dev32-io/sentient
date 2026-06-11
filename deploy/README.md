@@ -99,6 +99,25 @@ docker compose -f deploy/pi/docker-compose.yml up -d
 User accounts, secrets, and profiles persist across image bumps —
 they live in `~/.sentient/` outside the container.
 
+### Upgrade note — gateway 1.11.0 requires new `session.*` config
+
+The WS-resilience work (gateway 1.11.0) adds **three REQUIRED** keys to the
+`session:` block. They have no defaults — a pre-existing operator
+`~/.sentient/gateway/config.yaml` without them **fails schema validation and the
+gateway will not start**. After `git pull`, edit your operator config and add:
+
+```yaml
+session:
+  # ... existing keys ...
+  ws_idle_timeout_ms: 255000         # Bun WS socket idle close (≤255000; Bun takes seconds)
+  retention_ttl_ms: 1800000          # 30 min — session + replay buffer survive disconnect this long
+  replay_buffer_max_bytes: 16777216  # 16 MB per device-session ring cap
+```
+
+Match the values in the repo's `gateway/config.yaml` (the canonical defaults).
+The setup wizard writes these for fresh installs; only **existing** operator
+configs need the manual add.
+
 ---
 
 ## Reaching host services from the gateway container

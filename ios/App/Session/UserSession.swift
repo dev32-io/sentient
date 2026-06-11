@@ -13,8 +13,9 @@
 // asks for a fresh VM each time the active conversation changes, the SwiftUI
 // analogue of Android's route-recreates-VM.
 //
-// Presence: pause()/resume() forward background/foreground to the KMP session
-// (drop socket / re-arm reconnect). The owning view drives these from scenePhase
+// Presence: pause() KEEPS the socket on background (the gateway holds the session);
+// resume() routes foreground engagement to component.ensureConnected() (probe/reconnect).
+// The owning view drives these from scenePhase
 // with a cold-start-skip (init already connected).
 // ---------------------------------------------------------------------------
 import Foundation
@@ -71,10 +72,14 @@ final class UserSession: ObservableObject {
         inner.pause()
     }
 
-    /// App foreground → re-arm reconnect.
+    /// App foreground → engagement-driven connectivity check. ensureConnected is the
+    /// single engagement entry (READY → one liveness probe; not-READY → reconnect),
+    /// routed through the component per the iOS layering (UI reaches the component,
+    /// not the SDK). The cold-start-skip lives in UserSessionHost, so this only fires
+    /// after a real background.
     func resume() {
         log.info("resume")
-        inner.resume()
+        component.ensureConnected()
     }
 
     // ── Teardown ────────────────────────────────────────────────────────────────

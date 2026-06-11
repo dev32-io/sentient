@@ -30,7 +30,7 @@ const WS_READY_STATE_OPEN = 1;
 // snapshot/switched handlers in sentient-sdk.ts are the only call sites.
 // ---------------------------------------------------------------------------
 
-const CURRENT_SESSION_STORAGE_KEY = "sentient.currentSessionId";
+export const CURRENT_SESSION_STORAGE_KEY = "sentient.currentSessionId";
 
 // Set by buildConnectUrl when a stored session id is attached to the URL.
 // Cleared by markResumeResolved (success) or clearStaleResumeId (404 fallback).
@@ -138,6 +138,20 @@ export function hasPendingResume(): boolean {
 /** Test helper — reset module state between tests. */
 export function _resetResumeStateForTests(): void {
   pendingResume = null;
+}
+
+/**
+ * Read the current tab's session id from sessionStorage.
+ * Shared by `sentient-sdk.ts` (triggerHistoryRefetch) and
+ * `stream-resume-handler.ts` to avoid inlining the storage key literal.
+ */
+export function getCurrentSessionId(): string | null {
+  try {
+    if (typeof sessionStorage === "undefined") return null;
+    return sessionStorage.getItem(CURRENT_SESSION_STORAGE_KEY);
+  } catch {
+    return null;
+  }
 }
 
 export interface ReconnectControllerDeps {

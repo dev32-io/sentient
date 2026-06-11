@@ -121,6 +121,8 @@ export interface GatewayServices {
   /** Deps bag for the `/api/v1/devices*` handler. Null in headless / CI builds
    *  where hermes + supervisordControl are not configured. */
   readonly devicesHandlerDeps: DevicesHandlerDeps | null;
+  /** Returns the shared Hermes bearer token used for per-user ACP / plugin auth. */
+  readonly hermesApiKey: () => string;
   resolveProfileDir(userId: string): string;
 }
 
@@ -222,6 +224,7 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     buildPersonalityStore: services.buildPersonalityStore,
     systemOrchestrator,
     devicesHandlerDeps: services.devicesHandlerDeps,
+    hermesApiKey: () => internalSecretsStore.getHermesAuthTokenSync(),
     resolveProfileDir: getHermesProfileDir,
   };
 }

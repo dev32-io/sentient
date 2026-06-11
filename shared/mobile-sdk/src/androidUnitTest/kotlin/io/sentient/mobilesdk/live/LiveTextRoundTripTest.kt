@@ -41,6 +41,7 @@ import io.sentient.mobilesdk.auth.AuthError
 import io.sentient.mobilesdk.auth.AuthResponse
 import io.sentient.mobilesdk.auth.AuthResult
 import io.sentient.mobilesdk.auth.AuthUserLite
+import io.sentient.mobilesdk.fakes.InMemoryDeviceIdStore
 import io.sentient.mobilesdk.fakes.InMemoryTokenStore
 import io.sentient.mobilesdk.sdk.PlatformBundle
 import io.sentient.mobilesdk.sdk.SdkConfig
@@ -212,11 +213,10 @@ class LiveTextRoundTripTest {
             bundle = PlatformBundle(
                 engine = AndroidWebSocketEngine(),
                 tokenStore = tokenStore,
+                deviceIdStore = InMemoryDeviceIdStore("dev-live-test"),
                 clock = Clock { System.currentTimeMillis() },
             ),
             scope = scope,
-            // Park idle far beyond the round-trip horizon.
-            idleTickMs = 1_000_000_000L,
         )
         try {
             // 3. connect → READY.

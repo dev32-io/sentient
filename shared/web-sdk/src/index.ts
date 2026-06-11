@@ -47,7 +47,7 @@ export type {
 } from "./connectors/cognition-status-connector.ts";
 
 export { ConversationHistoryConnector } from "./connectors/conversation-history-connector.ts";
-export type { ConversationHistoryConfig } from "./connectors/conversation-history-connector.ts";
+export type { CommittedFeedItem, ConversationHistoryConfig } from "./connectors/conversation-history-connector.ts";
 
 export { InFlightMessageConnector } from "./connectors/inflight-message-connector.ts";
 export type {
@@ -63,6 +63,9 @@ export type {
   SessionsChangeEvent,
   SessionsConnectorConfig,
 } from "./connectors/sessions-connector.ts";
+
+export { createSessionsRest, deriveRestBaseUrl, SessionsRestError } from "./sessions-rest.ts";
+export type { SessionsRest, SessionsRestConfig, SessionsListResult } from "./sessions-rest.ts";
 
 export { createCrossTabSync } from "./cross-tab-sync.ts";
 export type { CrossTabSync, CrossTabSyncConfig } from "./cross-tab-sync.ts";
