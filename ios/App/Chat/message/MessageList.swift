@@ -166,12 +166,11 @@ struct MessageList: View {
         // window (the post-commit TTS tail has no streaming bubble).
         let lastAssistant = messages.lastIndex(where: { $0.role == "assistant" })
         return LazyVStack(alignment: .leading, spacing: Space.gapMsg) {
-            // ChatRow is Identifiable; divider ids are day-keyed, message ids are
-            // index-keyed. NOTE: do NOT key on message.ts — the streaming bubble's
-            // ts is stamped `clock.nowMs()` fresh on every derive, so a ts-based id
-            // would churn the bubble's identity each token and reset the typewriter
-            // @State (re-revealing from zero every frame). chatRows() preserves
-            // index-only identity for .message rows, keeping this invariant safe.
+            // ChatRow is Identifiable; divider ids are day-keyed. Message ids are
+            // the gateway-owned cycleId (assistant) / entryId (committed), so a
+            // streaming bubble and its committed twin are the SAME row — the reveal
+            // grows in place with no remount. Stable across tokens (cycleId never
+            // churns), so no ts-based identity flicker. See ChatRow.messageRowId.
             ForEach(chatRows(messages)) { row in
                 switch row {
                 case let .divider(label, _): DayDivider(label: label)

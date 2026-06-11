@@ -128,17 +128,15 @@ fun MessageList(
     ) {
         items(
             rows,
-            // Index-only key for Msg rows — the streaming bubble's ts is stamped fresh on
-            // every SDK derive, so a ts-based key would churn row identity each token and
-            // reset the typewriter rememberTypewriterText @State (re-revealing from zero
-            // every frame). History is append-only so the index is stable; the streaming
-            // bubble is always the last Msg. Matches the iOS Task 5.1/4.2 fix.
-            // Pending rows use a stable "pending-<id>" key so they survive recomposition
-            // without resetting any local state.
+            // Stable per-message key for Msg rows — the live streaming bubble and its
+            // committed twin share the gateway-owned cycleId, so the streaming→committed
+            // handoff is the SAME row (grows in place, no remount). cycleId is constant
+            // across tokens, so unlike ts it never churns mid-reveal. See messageRowKey.
+            // Pending rows use a stable "pending-<id>" key so they survive recomposition.
             key = { row ->
                 when (row) {
                     is ChatRow.Divider -> "div-${row.key}"
-                    is ChatRow.Msg -> "msg-${row.index}"
+                    is ChatRow.Msg -> messageRowKey(row.message, row.index)
                     is ChatRow.Pending -> "pending-${row.msg.id}"
                 }
             },
