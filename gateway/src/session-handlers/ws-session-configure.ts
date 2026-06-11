@@ -676,6 +676,7 @@ export async function handleSessionConfigure(
         shortTermContext,
         conversationHistory: conversationMirror,
         abortSignal: adapterAbortController.signal,
+        admitPendingId: (id: string) => personSession.admitPendingId(id),
       })
       .catch((err: unknown) => {
         log.error("adapter-start-failed", { id: adapter.id, error: errorMessage(err, "unknown") });

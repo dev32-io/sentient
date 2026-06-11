@@ -9,7 +9,7 @@ import { createUserTextInputAdapter } from "./user-text-input-adapter.js";
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeCtx(): {
+function makeCtx(seen?: Set<string>): {
   ctx: AdapterContext;
   inject: ReturnType<typeof vi.fn>;
   conversationMirror: ConversationMirror;
@@ -23,10 +23,16 @@ function makeCtx(): {
     onInject: vi.fn().mockReturnValue(() => {}) as ShortTermContext["onInject"],
   } satisfies ShortTermContext;
   const conversationMirror = createConversationMirror(100);
+  const seenSet = seen ?? new Set<string>();
   const ctx: AdapterContext = {
     shortTermContext,
     conversationHistory: conversationMirror,
     abortSignal: new AbortController().signal,
+    admitPendingId: (id: string) => {
+      if (seenSet.has(id)) return false;
+      seenSet.add(id);
+      return true;
+    },
   };
   return { ctx, inject, conversationMirror };
 }
@@ -116,5 +122,37 @@ describe("UserTextInputAdapter", () => {
     const entry = entries[0];
     expect(entry?.kind).toBe("user");
     expect((entry as { pendingId?: string }).pendingId).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Dedup tests
+// ---------------------------------------------------------------------------
+
+describe("user-text-input dedup", () => {
+  it("appends a first message", async () => {
+    const { ctx, conversationMirror } = makeCtx(new Set());
+    const a = createUserTextInputAdapter();
+    await a.start(ctx);
+    a.handleTextInput("hello", "p1");
+    expect(conversationMirror.snapshot()).toHaveLength(1);
+  });
+
+  it("skips a duplicate pendingId (resend) — no second entry", async () => {
+    const { ctx, conversationMirror } = makeCtx(new Set());
+    const a = createUserTextInputAdapter();
+    await a.start(ctx);
+    a.handleTextInput("hello", "p1");
+    a.handleTextInput("hello", "p1");
+    expect(conversationMirror.snapshot()).toHaveLength(1);
+  });
+
+  it("does not dedup messages with no pendingId", async () => {
+    const { ctx, conversationMirror } = makeCtx(new Set());
+    const a = createUserTextInputAdapter();
+    await a.start(ctx);
+    a.handleTextInput("hi");
+    a.handleTextInput("hi");
+    expect(conversationMirror.snapshot()).toHaveLength(2);
   });
 });
