@@ -18,6 +18,7 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.ImeAction
@@ -32,6 +33,7 @@ internal fun DraftField(
     micActive: Boolean,
     streaming: Boolean,
     onChange: (String) -> Unit,
+    onFocus: () -> Unit = {},
 ) {
     val tokens = LocalTokens.current
     val showWave = micActive && draft.isEmpty()
@@ -42,7 +44,8 @@ internal fun DraftField(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 48.dp)
-                .testTag("composer-input"),
+                .testTag("composer-input")
+                .onFocusChanged { if (it.isFocused) onFocus() },
             placeholder = {
                 if (!showWave) {
                     Text(

@@ -58,6 +58,12 @@ internal fun ChatHost(
         if (connection.authExpired) onAuthExpired()
     }
 
+    // Engagement-driven connectivity check on screen entry. Idempotent: READY →
+    // liveness probe; not-READY → reconnect + re-establish anchored conversation.
+    LaunchedEffect(Unit) {
+        chatVm.ensureConnected()
+    }
+
     val drawerState: DrawerState = rememberHistoryDrawerState()
     val scope = rememberCoroutineScope()
 
@@ -82,6 +88,7 @@ internal fun ChatHost(
             onOpenHistory = { scope.launch { drawerState.open() } },
             onNewChat = onNewChat,
             onReconnect = chatVm::reconnect,
+            onComposerFocus = chatVm::onComposerFocus,
         )
     }
 }

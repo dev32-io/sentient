@@ -84,6 +84,7 @@ private val composerLog = createLogger("android", "composer")
  * @param ttsEnabled Server-of-record TTS preference (mirrored, not owned).
  * @param micActive True while voiceMode == ACTIVE.
  * @param canInterrupt True when a cycle is in flight or audio is playing.
+ * @param onFocus Called once when the text field gains focus — used for ensureConnected.
  */
 @Composable
 fun Composer(
@@ -95,6 +96,7 @@ fun Composer(
     onMicToggle: () -> Unit,
     onTtsToggle: () -> Unit,
     onInterrupt: () -> Unit,
+    onFocus: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val tokens = LocalTokens.current
@@ -180,6 +182,7 @@ fun Composer(
             micActive = micActive,
             streaming = canInterrupt,
             onChange = { draft = it },
+            onFocus = onFocus,
         )
         ButtonRow(
             sendEnabled = sendEnabled,

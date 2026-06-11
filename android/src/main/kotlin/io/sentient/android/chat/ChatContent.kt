@@ -73,9 +73,10 @@ import io.sentient.mobilesdk.transport.SdkStatus
  * @param onInterrupt   Stop button tapped (cycle/audio abort).
  * @param onOpenHistory History drawer opened.
  * @param onNewChat     New-chat button tapped.
- * @param onReconnect   Retry button on the connection-lost banner tapped.
- * @param onRetry       User tapped the FAILED chip on a pending message — re-queues by pendingId.
- * @param userName      Logged-in user's display name for bubble avatars.
+ * @param onReconnect      Retry button on the connection-lost banner tapped.
+ * @param onRetry          User tapped the FAILED chip on a pending message — re-queues by pendingId.
+ * @param onComposerFocus  Composer TextField gained focus — used to trigger ensureConnected.
+ * @param userName         Logged-in user's display name for bubble avatars.
  */
 @Composable
 fun ChatContent(
@@ -89,6 +90,7 @@ fun ChatContent(
     onNewChat: () -> Unit,
     onReconnect: () -> Unit,
     onRetry: (String) -> Unit = {},
+    onComposerFocus: () -> Unit = {},
     userName: String = "You",
     modifier: Modifier = Modifier,
 ) {
@@ -171,6 +173,7 @@ fun ChatContent(
                 onMicToggle = onMicToggle,
                 onTtsToggle = onTtsToggle,
                 onInterrupt = onInterrupt,
+                onFocus = onComposerFocus,
             )
         }
 

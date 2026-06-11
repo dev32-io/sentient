@@ -25,7 +25,7 @@ import kotlin.time.Clock as KtClock
  * (REST history replace + live appends), anchored by the SDK's own [SentientSdk.currentSessionId].
  * There is NO durable client store — history is re-fetched from the gateway/Hermes on attach.
  */
-class ChatComponent(
+open class ChatComponent(
     private val sdk: SentientSdk,
     clock: Clock = Clock { KtClock.System.now().toEpochMilliseconds() },
 ) {
@@ -65,6 +65,14 @@ class ChatComponent(
 
     /** Manual reconnect — re-arm the reconnect controller and drive recovery. */
     fun forceReconnect() = sdk.forceReconnect()
+
+    /**
+     * Engagement-driven connectivity check — call from every "user is at the chat"
+     * signal: screen entry, ON_RESUME, composer focus, pre-send.
+     * READY → liveness probe; not-READY → forceReconnect (re-establishes anchored
+     * conversation via conversation.activate on the next READY rising edge).
+     */
+    fun ensureConnected() = sdk.ensureConnected()
 
     /** Foreground presence — one-shot liveness probe; reconnect only if the socket is dead. */
     fun onForeground() = sdk.onForeground()

@@ -27,8 +27,12 @@ val appModule = module {
     single { UserSessionManager(appContext = androidContext(), presence = get()) }
 
     // sessionId comes from the chat route (null = new chat). A switch is a navigation
-    // that recreates this VM → clean per-conversation state.
-    viewModel { (sessionId: String?) -> ChatViewModel(get(), sessionId) }
+    // that recreates this VM → clean per-conversation state. The ChatComponent is
+    // resolved from the connection-scoped UserSessionManager (not the raw SDK).
+    viewModel { (sessionId: String?) ->
+        val userSession = get<UserSessionManager>()
+        ChatViewModel(userSession.component(), sessionId)
+    }
     viewModel { HistoryViewModel(get()) }
 
     viewModel { AuthViewModel() }

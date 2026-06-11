@@ -1,9 +1,10 @@
 // ---------------------------------------------------------------------------
 // ChatViewModel — thin per-conversation state holder over the shared usecase layer.
 //
-// Resolves the User/Connection-scoped ChatComponent from UserSessionManager (never
-// the SDK directly). On init it switches the active conversation to the route's
-// sessionId (null = new chat), then folds observeChat(cache.pending) → ChatUiState.
+// Receives the User/Connection-scoped ChatComponent directly (DI resolves it from
+// UserSessionManager in production; tests inject a fake subclass). Never holds the
+// SDK directly. On init it switches the active conversation to the route's sessionId
+// (null = new chat), then folds observeChat(cache.pending) → ChatUiState.
 // The optimistic outbox (OutboundCache) is per-conversation: it lives and dies with
 // this VM, so switching conversation = navigating = a fresh VM = clean state.
 //
@@ -14,26 +15,27 @@ package io.sentient.android.chat
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import io.sentient.android.di.UserSessionManager
+import io.sentient.mobiledata.di.ChatComponent
 import io.sentient.mobiledata.outbox.OutboundCache
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.sdk.ConnectionState
 import io.sentient.mobilesdk.sdk.VoiceMode
 import io.sentient.mobilesdk.transport.SdkStatus
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.UUID
 
 class ChatViewModel(
-    userSession: UserSessionManager,
+    private val component: ChatComponent,
     sessionId: String?,
 ) : ViewModel() {
     private val log = createLogger("android", "chat-viewmodel")
-    private val component = userSession.component()
     private val cache = OutboundCache()
 
     private val _state = MutableStateFlow(ChatUiState())
@@ -68,12 +70,23 @@ class ChatViewModel(
                 _state.value = ChatUiState(model = model)
             }
         }
-        // Drain the outbox on every READY emission (rising edge): flushIfReady is a
-        // no-op when not READY and when nothing's queued, so calling it on each
-        // emission is safe and idempotent.
+        // Drain the outbox on every READY emission AND sweep unacked timeouts. Both
+        // operations are idempotent: flushIfReady is a no-op when not READY or nothing
+        // queued; sweepTimeouts is a no-op when nothing is sent-but-unechoed.
         viewModelScope.launch {
             component.connection.state.collect { conn ->
                 component.sendMessage.flushIfReady(cache, conn.status)
+                cache.sweepTimeouts()
+            }
+        }
+        // Periodic sweep: drives unacked-timeout FAILED transitions even when there are
+        // no connection events. Runs only while pending entries exist; cancels on VM clear.
+        viewModelScope.launch {
+            while (isActive) {
+                delay(SWEEP_INTERVAL_MS)
+                if (cache.pending.value.isNotEmpty()) {
+                    cache.sweepTimeouts()
+                }
             }
         }
     }
@@ -107,8 +120,25 @@ class ChatViewModel(
 
     fun reconnect() = component.forceReconnect()
 
+    /**
+     * Engagement signal from the chat screen: fires on screen entry (LaunchedEffect)
+     * and on composer focus. Idempotent — READY → liveness probe; not-READY → reconnect.
+     */
+    fun ensureConnected() = component.ensureConnected()
+
+    /**
+     * Composer gained keyboard focus — user is about to type; ensure the connection is
+     * live so the first send is not blocked by a stale reconnect race.
+     */
+    fun onComposerFocus() {
+        log.debug("onComposerFocus")
+        component.ensureConnected()
+    }
+
     companion object {
         /** Keep the connection StateFlow warm briefly across config changes. */
         private const val STATE_SUBSCRIBE_STOP_MS = 5_000L
+        /** Periodic sweep interval for unacked-timeout detection. */
+        private const val SWEEP_INTERVAL_MS = 1_000L
     }
 }

@@ -81,4 +81,5 @@ dependencies {
     implementation(libs.androidx.core.splashscreen)
     // JVM unit tests (Layer 1): pure use-cases, mappers, pure models.
     testImplementation(libs.kotlin.test)
+    testImplementation(libs.kotlinx.coroutines.test)
 }
