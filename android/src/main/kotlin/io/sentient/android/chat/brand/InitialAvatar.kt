@@ -1,11 +1,13 @@
 // ---------------------------------------------------------------------------
-// InitialAvatar — a circle filled with [background] and the first letter of
-// [name] centered in ink. Shared between the chat user bubble and the login
-// avatar grid so the two surfaces stay pixel-identical.
+// InitialAvatar — webui .avatar--user.avatar--terra parity: a dark-terra circle
+// (accent50) with a faint accent ring and the first letter of [name] in accent.
+// Shared between the chat user bubble and the login avatar grid so the two
+// surfaces stay pixel-identical.
 // ---------------------------------------------------------------------------
 package io.sentient.android.chat.brand
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -21,6 +23,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.sentient.android.theme.LocalTokens
 import io.sentient.mobilesdk.design.Colors
+
+/** Faint accent ring opacity (webui: accent @ 20%). */
+private const val AVATAR_RING_ALPHA = 0.2f
 
 /** First letter of [name], uppercased; '?' when blank. */
 private fun initialOf(name: String): String =
@@ -47,11 +52,13 @@ fun InitialAvatar(
         modifier = modifier
             .size(size)
             .clip(CircleShape)
-            .background(background),
+            .background(background)
+            // Faint accent ring (webui: accent @ 20%).
+            .border(1.dp, Color(Colors.accent).copy(alpha = AVATAR_RING_ALPHA), CircleShape),
     ) {
         Text(
             text = initialOf(name),
-            color = Color(Colors.ink),
+            color = Color(Colors.accent),
             fontSize = tokens.type.sm,
             fontWeight = FontWeight.SemiBold,
         )

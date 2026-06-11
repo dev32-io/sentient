@@ -17,10 +17,13 @@ struct UserAvatar: View {
 
     var body: some View {
         ZStack {
-            Circle().fill(DuskColors.accent)
+            // webui parity (.avatar--user.avatar--terra): dark terra fill, faint
+            // accent ring, accent-colored initial — not a solid-accent fill.
+            Circle().fill(DuskColors.accent50)
+            Circle().strokeBorder(DuskColors.accent.opacity(UserAvatarLayout.ringOpacity), lineWidth: 1)
             Text(initial)
                 .font(Typo.ui(size * UserAvatarLayout.glyphRatio, .semibold))
-                .foregroundStyle(DuskColors.ink)
+                .foregroundStyle(DuskColors.accent)
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
@@ -32,4 +35,6 @@ struct UserAvatar: View {
 enum UserAvatarLayout {
     /// Initial glyph size as a fraction of the avatar circle diameter.
     static let glyphRatio: CGFloat = 0.5
+    /// Faint accent ring opacity (webui: accent @ 20%).
+    static let ringOpacity: Double = 0.2
 }

@@ -176,40 +176,28 @@ html.is-paused *::after {
   position: relative;
 }
 
-/* Active states — soft amber halo + two expanding ring pulses (0.9s phased).
-   `--running` covers thinking + speaking (shared visual); `--listening` is
-   the same ring effect for mic-open state. Bubble content distinguishes the
-   specific state. */
-.avatar--running,
-.avatar--listening {
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--mark-terra, #F2A06A) 28%, transparent);
-}
-.avatar--running::before,
-.avatar--running::after,
-.avatar--listening::before,
-.avatar--listening::after {
+/* Active (thinking / speaking / listening): the ripple lives ONLY on the chat
+   assistant avatar wrapper (.avatar--active) — so the top bar / brand mark stays
+   static. A bright ring (#FFE1BD — brighter than the static rim) pulses out from
+   the icon's edge (scale 1 → 1.85) and fades. No steady ring. Two staggered.
+   Mirrors the native iOS/Android AvatarRipple. */
+.avatar--active::before,
+.avatar--active::after {
   content: "";
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  border: 1.5px solid var(--mark-terra, #F2A06A);
+  border: 1.5px solid #FFE1BD;
   opacity: 0;
   pointer-events: none;
 }
 @media (prefers-reduced-motion: no-preference) {
-  .avatar--running::before,
-  .avatar--listening::before {
-    animation: avatar-ripple 1.8s ease-out infinite;
-  }
-  .avatar--running::after,
-  .avatar--listening::after {
-    animation: avatar-ripple 1.8s ease-out infinite;
-    animation-delay: 0.9s;
-  }
+  .avatar--active::before { animation: avatar-ripple 1.8s ease-out infinite; }
+  .avatar--active::after  { animation: avatar-ripple 1.8s ease-out infinite; animation-delay: 0.9s; }
 }
 @keyframes avatar-ripple {
-  0%   { transform: scale(1);   opacity: 0.7; }
-  100% { transform: scale(1.8); opacity: 0; }
+  0%   { transform: scale(1);    opacity: 0.75; }
+  100% { transform: scale(1.85); opacity: 0; }
 }
 
 /* ─── StatusChip ─── */
@@ -298,77 +286,8 @@ html.is-paused *::after {
   justify-content: center;
   position: relative;
   flex-shrink: 0;
-  /* Dusk palette — tuned for dark warm bg (#2B2621). */
-  --mark-hi: #FFE1BD;
-  --mark-rim: #FFF3DB;
-  --mark-ember: #FFB87A;
-  --mark-terra: #F2A06A;
-  --mark-deep: #B85530;
 }
-.sentient-mark svg { display: block; overflow: visible; }
-.sentient-mark__halo,
-.sentient-mark__nucleus {
-  transform-origin: 32px 32px;
-  transform-box: fill-box;
-}
-.sentient-mark__electron-wrap {
-  transform-origin: 32px 32px;
-  transform-box: fill-box;
-}
-@media (prefers-reduced-motion: no-preference) {
-  /* `--running` is the shared "Sentient is active" pulse (thinking + speaking).
-     The bubble content (pulse-dot ellipsis vs streaming text vs audio wave)
-     distinguishes the two states — the avatar just signals engagement. */
-  .sentient-mark--running .sentient-mark__halo {
-    animation: sentient-mark-halo 6.5s ease-in-out infinite;
-  }
-  .sentient-mark--running .sentient-mark__nucleus {
-    animation: sentient-mark-nuc 4.5s ease-in-out infinite;
-  }
-  /* Listening — full suite: breathe, faster nucleus, ring, electron orbits. */
-  .sentient-mark--listening .sentient-mark__halo {
-    animation: sentient-mark-halo-breathe 2.4s ease-in-out infinite;
-  }
-  .sentient-mark--listening .sentient-mark__nucleus {
-    animation: sentient-mark-nuc 1.8s ease-in-out infinite;
-  }
-  .sentient-mark--listening .sentient-mark__ring {
-    animation: sentient-mark-ring 2.4s ease-in-out infinite;
-  }
-  .sentient-mark--listening .sentient-mark__electron-wrap--0 {
-    animation: sentient-mark-orbit-cw 3.8s linear infinite;
-  }
-  .sentient-mark--listening .sentient-mark__electron-wrap--1 {
-    animation: sentient-mark-orbit-ccw 5.2s linear infinite;
-  }
-  .sentient-mark--listening .sentient-mark__electron-wrap--2 {
-    animation: sentient-mark-orbit-cw 4.4s linear infinite;
-  }
-}
-@keyframes sentient-mark-halo {
-  0%, 100% { opacity: 0.85; transform: scale(1); }
-  50%      { opacity: 1;    transform: scale(1.08); }
-}
-@keyframes sentient-mark-halo-breathe {
-  0%, 100% { opacity: 0.9; transform: scale(1); }
-  50%      { opacity: 1;   transform: scale(1.12); }
-}
-@keyframes sentient-mark-nuc {
-  0%, 100% { transform: scale(1); }
-  50%      { transform: scale(1.06); }
-}
-@keyframes sentient-mark-ring {
-  0%, 100% { opacity: 0.6; }
-  50%      { opacity: 0.9; }
-}
-@keyframes sentient-mark-orbit-cw {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
-}
-@keyframes sentient-mark-orbit-ccw {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(-360deg); }
-}
+.sentient-mark img { display: block; width: 100%; height: 100%; }
 .topbar__brand-name {
   color: var(--color-ink);
 }
