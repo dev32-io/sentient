@@ -266,8 +266,15 @@ export const conversationSnapshotSchema = z.object({
   items: z.array(conversationFeedItemSchema),
 });
 
+// `cycleId` is the gateway-owned join key between a live streaming bubble
+// (message.delta/done) and its committed entry. It is carried on the FRAME,
+// not on the item (the feed item deliberately strips cycle/task plumbing —
+// see conversation.ts). Clients read it here to render ONE bubble per reply
+// instead of reverse-engineering it client-side. Optional because some entries
+// have no originating cycle (a user-input echo, an out-of-band activate entry).
 export const conversationEntrySchema = z.object({
   type: z.literal("conversation.entry"),
+  cycleId: z.string().optional(),
   item: conversationFeedItemSchema,
 });
 

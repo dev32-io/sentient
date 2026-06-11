@@ -101,6 +101,18 @@ write-through by their live `entryId`; a REST reload wipes + repopulates the
 conversation. Within each path `entryId` dedups; the resume replay dedupes by
 `seq`.
 
+## `cycleId` on the `conversation.entry` frame (live-bubble join key)
+
+The `conversation.entry` FRAME carries an optional `cycleId` (sibling of `item`)
+— the gateway-owned id of the turn that produced the entry. It is **stripped from
+the item** (the item is a UI-display projection) but present on the frame for
+assistant/tool entries the translator emits. This is the join key between a live
+streaming bubble (`message.delta`/`message.done`, which carry `cycleId`) and its
+committed entry: the client renders ONE bubble per reply by suppressing the
+committed twin while its bubble reveals, matched by exact `cycleId`. **Clients
+read it off the frame — they never derive it** (no text-match, no ts-window). It
+is absent on user-echo / out-of-band entries and on REST history (no live cycle).
+
 ## Capability gate
 
 The binary header + resume behaviour is advertised via the `stream.resume`

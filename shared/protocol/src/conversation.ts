@@ -5,8 +5,13 @@ import { z } from "zod";
 //
 // This is the CLIENT-facing shape of a conversation entry — deliberately
 // narrower than the gateway's internal `ConversationEntry`. Internal
-// plumbing (cycleId, taskId) is stripped; only fields the UI needs to
+// plumbing (taskId) is stripped from the ITEM; only fields the UI needs to
 // render chat bubbles + the task sidebar remain.
+//
+// NOTE on cycleId: it is stripped from the ITEM but carried on the
+// `conversation.entry` FRAME (see messages.ts conversationEntrySchema). Clients
+// re-attach the frame cycleId to a live assistant entry so the committed twin
+// joins its streaming bubble by id — the client never invents/derives the id.
 //
 // `entryId` — stable, opaque string id assigned at commit time (live path)
 // or derived deterministically from position (REST history path). Clients

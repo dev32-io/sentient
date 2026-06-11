@@ -13,6 +13,7 @@ import {
   connectorAudioStartSchema,
   connectorCancelledSchema,
   connectorTranscriptFinalSchema,
+  conversationEntrySchema,
   cycleAbortedSchema,
   cycleCompletedSchema,
   cycleStartedSchema,
@@ -328,6 +329,34 @@ describe("message.done", () => {
       cycleId: "c-1",
     });
     expect(result.success).toBe(true);
+  });
+});
+
+describe("conversation.entry cycleId (live-bubble join key)", () => {
+  const assistantItem = {
+    entryId: "e-1",
+    ts: 1,
+    kind: "assistant" as const,
+    content: "hi",
+  };
+
+  it("carries cycleId on the frame so clients join live↔committed without inventing it", () => {
+    const result = conversationEntrySchema.safeParse({
+      type: "conversation.entry",
+      cycleId: "c-1",
+      item: assistantItem,
+    });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.cycleId).toBe("c-1");
+  });
+
+  it("is optional — a user-echo / out-of-band entry carries no cycle", () => {
+    const result = conversationEntrySchema.safeParse({
+      type: "conversation.entry",
+      item: assistantItem,
+    });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.cycleId).toBeUndefined();
   });
 });
 
