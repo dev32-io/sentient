@@ -152,6 +152,11 @@ struct ChatView: View {
         .panelDeletePrompt($panelDeleting) { id in
             Task { await historyModel.deleteSession(id) }
         }
+        .task {
+            // Engagement signal: the chat surface appeared. Idempotent — READY → a
+            // liveness probe; not-READY → reconnect. Scoped to this view's lifetime.
+            vm.ensureConnected()
+        }
     }
 
     // ── Main content column ───────────────────────────────────────────────────────
@@ -197,7 +202,8 @@ struct ChatView: View {
                 onSend: { vm.send($0) },
                 onMicToggle: { vm.toggleMic() },
                 onTtsToggle: { vm.toggleTts() },
-                onInterrupt: { vm.interrupt() }
+                onInterrupt: { vm.interrupt() },
+                onFocusGained: { vm.onComposerFocus() }
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

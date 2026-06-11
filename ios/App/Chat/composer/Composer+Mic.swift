@@ -83,7 +83,8 @@ enum MicPermission {
             onSend: { _ in },
             onMicToggle: {},
             onTtsToggle: {},
-            onInterrupt: {}
+            onInterrupt: {},
+            onFocusGained: {}
         )
     }
     .background(DuskColors.bg)
@@ -100,7 +101,8 @@ enum MicPermission {
             onSend: { _ in },
             onMicToggle: {},
             onTtsToggle: {},
-            onInterrupt: {}
+            onInterrupt: {},
+            onFocusGained: {}
         )
     }
     .background(DuskColors.bg)
@@ -117,7 +119,8 @@ enum MicPermission {
             onSend: { _ in },
             onMicToggle: {},
             onTtsToggle: {},
-            onInterrupt: {}
+            onInterrupt: {},
+            onFocusGained: {}
         )
     }
     .background(DuskColors.bg)

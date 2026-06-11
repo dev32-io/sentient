@@ -134,3 +134,14 @@ class OutboundCache(
         const val DEFAULT_UNACKED_TIMEOUT_MS: Long = 10_000L
     }
 }
+
+/**
+ * Build a default [OutboundCache] (system clock + default unacked timeout).
+ *
+ * SKIE does NOT synthesise a zero-argument Swift `init()` for a Kotlin constructor
+ * whose parameters all have defaults — Swift only sees the full-argument initialiser,
+ * which would force the Swift side to construct a [Clock]. This free function gives
+ * Swift the same default-constructed cache Android gets from `OutboundCache()`, with
+ * no clock plumbing leaking into the UI layer.
+ */
+fun createOutboundCache(): OutboundCache = OutboundCache()

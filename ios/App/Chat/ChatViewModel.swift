@@ -33,12 +33,19 @@ final class ChatViewModel: ObservableObject {
 
     private let component: ChatComponent
     /// Per-conversation optimistic outbox. Dies with this VM (conversation switch).
-    private let cache = OutboundCache()
+    /// Built via the createOutboundCache() factory: SKIE doesn't synthesise a zero-arg
+    /// init() for OutboundCache's all-default Kotlin constructor, so the factory hands
+    /// Swift the same system-clock + default-timeout cache Android gets from OutboundCache().
+    private let cache = createOutboundCache()
 
     private var chatTask: Task<Void, Never>?
     private var connectionTask: Task<Void, Never>?
     private var coldReplaceTask: Task<Void, Never>?
+    private var sweepTask: Task<Void, Never>?
     private let log = AppLog("chat", "viewmodel")
+
+    /// Periodic outbox-sweep interval (unacked-timeout detection) in nanoseconds.
+    private static let sweepIntervalNs: UInt64 = 1_000_000_000
 
     init(component: ChatComponent, sessionId: String?) {
         self.component = component
@@ -55,6 +62,7 @@ final class ChatViewModel: ObservableObject {
         startChatCollecting()
         startConnectionCollecting()
         startColdReplaceCollecting()
+        startPeriodicSweep()
     }
 
     private var isReady: Bool { connection.status == .ready }
@@ -110,6 +118,21 @@ final class ChatViewModel: ObservableObject {
         component.forceReconnect()
     }
 
+    /// Engagement signal from the chat screen: fires on screen appear and on composer
+    /// focus. Idempotent — READY → liveness probe; not-READY → reconnect (re-anchors
+    /// the conversation via conversation.activate on the next READY edge).
+    func ensureConnected() {
+        log.debug("ensureConnected")
+        component.ensureConnected()
+    }
+
+    /// Composer gained keyboard focus — user is about to type; ensure the connection is
+    /// live so the first send is not blocked by a stale reconnect race.
+    func onComposerFocus() {
+        log.debug("onComposerFocus")
+        component.ensureConnected()
+    }
+
     // ── Chat stream collection ────────────────────────────────────────────────
 
     private func startChatCollecting() {
@@ -157,6 +180,29 @@ final class ChatViewModel: ObservableObject {
         // safe + idempotent to fire on every emission. It drains the outbox on the
         // rising edge into READY (reconnect / first-connect).
         component.sendMessage.flushIfReady(cache: cache, status: conn.status)
+        // Sweep unacked timeouts on every connection event (idempotent; guarded so we
+        // only touch the cache when something is in flight). The cache owns the
+        // clock + timeout — we only DRIVE the sweep.
+        if !cache.pending.value.isEmpty {
+            cache.sweepTimeouts()
+        }
+    }
+
+    // ── Periodic unacked-timeout sweep ────────────────────────────────────────
+
+    /// Drive cache.sweepTimeouts() on a ~1s tick so unacked-timeout FAILED transitions
+    /// fire even with no connection events. Runs only while pending entries exist;
+    /// cancelled in deinit. The cache holds the clock + timeout — we just tick it.
+    private func startPeriodicSweep() {
+        sweepTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: Self.sweepIntervalNs)
+                guard let self else { return }
+                if !self.cache.pending.value.isEmpty {
+                    self.cache.sweepTimeouts()
+                }
+            }
+        }
     }
 
     // ── Cold-reconcile (existing-conversation history reload) ─────────────────
@@ -181,5 +227,6 @@ final class ChatViewModel: ObservableObject {
         chatTask?.cancel()
         connectionTask?.cancel()
         coldReplaceTask?.cancel()
+        sweepTask?.cancel()
     }
 }

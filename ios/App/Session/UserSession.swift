@@ -71,10 +71,14 @@ final class UserSession: ObservableObject {
         inner.pause()
     }
 
-    /// App foreground → re-arm reconnect.
+    /// App foreground → engagement-driven connectivity check. ensureConnected is the
+    /// single engagement entry (READY → one liveness probe; not-READY → reconnect),
+    /// routed through the component per the iOS layering (UI reaches the component,
+    /// not the SDK). The cold-start-skip lives in UserSessionHost, so this only fires
+    /// after a real background.
     func resume() {
         log.info("resume")
-        inner.resume()
+        component.ensureConnected()
     }
 
     // ── Teardown ────────────────────────────────────────────────────────────────

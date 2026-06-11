@@ -138,7 +138,16 @@ class IosUserSession(
         // Do NOT drop the socket on background. See [resume].
     }
 
-    /** App foreground → one-shot liveness probe; reconnect (+ resume session) only if dead. */
+    /**
+     * App foreground → one-shot liveness probe; reconnect (+ resume session) only if dead.
+     *
+     * NOTE: the iOS Swift host (`UserSession.resume()`) now routes foreground engagement
+     * through `component.ensureConnected()` (the single engagement entry — probe when READY,
+     * reconnect when not), so THIS method is currently not on the app's foreground path.
+     * Kept as the KMP foreground primitive; do NOT also call it alongside `ensureConnected()`
+     * or the probe double-fires. `pause()`'s reference to the foreground probe still holds —
+     * it just arrives via `ensureConnected()` now.
+     */
     fun resume() {
         sdk.onForeground()
     }

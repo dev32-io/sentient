@@ -48,6 +48,9 @@ struct Composer: View {
     let onMicToggle: () -> Void
     let onTtsToggle: () -> Void
     let onInterrupt: () -> Void
+    /// Composer gained keyboard focus — the host ensures the connection is live so the
+    /// first send isn't blocked by a stale reconnect race. Fired on the focus rising edge.
+    let onFocusGained: () -> Void
 
     @State var draft = ""
     @State var micDenied = false
@@ -95,6 +98,14 @@ struct Composer: View {
                     }
                 }
         )
+        .onChange(of: inputFocused) { _, focused in
+            // Fire the engagement signal only on the focus rising edge (gained), not
+            // on blur. The host routes it to ensureConnected.
+            if focused {
+                log.info("composer.focus-gained")
+                onFocusGained()
+            }
+        }
     }
 
     // ── Derived state ───────────────────────────────────────────────────────
