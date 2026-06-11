@@ -222,6 +222,23 @@ class SessionsConnector(
         send(ClientMessage.SessionNew(requestId = id))
     }
 
+    /**
+     * True when a sendNew was attempted but session.created has not yet confirmed it.
+     * Used by the SDK to detect a dropped pre-READY mint and re-fire on the READY
+     * rising edge (the transport was not open when the original sendNew fired).
+     */
+    fun hasPendingMint(): Boolean = lastMintAtMs != null
+
+    /**
+     * Clear the mint debounce clock and re-send a session.new. Used exclusively by
+     * the SDK on the first-connect READY rising edge when [hasPendingMint] is true:
+     * the original sendNew was dropped (null transport), so we retry unconditionally.
+     */
+    fun retryPendingMint() {
+        lastMintAtMs = null
+        sendNew()
+    }
+
     /** Fire-and-forget switch via conversation.activate. Always sends — no debounce. */
     fun sendSwitch(sessionId: String) {
         log.info("sendSwitch", mapOf("sessionId" to sessionId))

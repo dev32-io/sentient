@@ -456,17 +456,24 @@ class SentientSdk(
     /**
      * Engagement-driven connectivity check — call from every "user is at the chat"
      * signal (foreground, chat screen appears, composer focus, pre-send). READY =>
-     * one liveness probe (delegates to [onForeground]); not-READY => [forceReconnect],
-     * which re-establishes the anchored conversation via conversation.activate on the
-     * next READY rising edge. On-demand only: never a timer, never while backgrounded.
+     * one liveness probe (delegates to [onForeground]); DISCONNECTED => start a fresh
+     * connect via [forceReconnect]; CONNECTING / AUTHENTICATING / RECONNECTING => a
+     * connect is already in flight — NO-OP (let the handshake finish). Opening a
+     * second socket while a handshake is in flight orphans it and causes the gateway
+     * to emit 4002 session-ready timeout → reconnect storm. On-demand only: never a
+     * timer, never while backgrounded.
      */
     fun ensureConnected() {
         log.info("ensureConnected", mapOf("status" to deriver.status))
         markInteraction()
-        if (deriver.status == SdkStatus.READY) {
-            onForeground()
-        } else {
-            forceReconnect()
+        when (deriver.status) {
+            SdkStatus.READY -> onForeground()
+            SdkStatus.DISCONNECTED -> forceReconnect()
+            // CONNECTING / AUTHENTICATING / RECONNECTING / ERROR: a connect is already
+            // in flight or terminal — no-op. Starting another would orphan the in-flight
+            // handshake (double-connect race). The handshake's ready-timeout self-recovers
+            // a genuinely stuck connect. ERROR requires an explicit forceReconnect() call.
+            else -> log.info("ensureConnected.skip — connect in flight or terminal", mapOf("status" to deriver.status))
         }
     }
 
@@ -586,8 +593,16 @@ class SentientSdk(
         // iff the cursor carries a seq. Read here so the defer decision matches the wire.
         val resumeWillBeAttempted = resumeCursor.snapshot.lastSeq > 0L
         when (decideOnReady(wasReconnect, anchored != null, resumeWillBeAttempted)) {
-            ReadyAction.NOTHING_TO_RESTORE ->
+            ReadyAction.NOTHING_TO_RESTORE -> {
                 log.info("ready.first-connect", mapOf("anchored" to anchored))
+                // If a sendNew was fired before the transport was open (pre-READY mint),
+                // the session.new frame was silently dropped (null activeTransport). Retry
+                // it now so the session.created anchor arrives and flushIfReady can drain.
+                if (connectors.sessions.hasPendingMint()) {
+                    log.info("ready.first-connect.retry-pending-mint")
+                    connectors.sessions.retryPendingMint()
+                }
+            }
             ReadyAction.NO_ANCHOR ->
                 log.info("ready.reconnect.no-anchor")
             ReadyAction.DEFER_TO_RESUME ->
