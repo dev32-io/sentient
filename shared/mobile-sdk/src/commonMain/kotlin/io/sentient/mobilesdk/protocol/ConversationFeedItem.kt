@@ -61,13 +61,22 @@ sealed class ConversationFeedItem {
         val summary: String,
     ) : ConversationFeedItem()
 
-    /** kind="assistant" — model reply, optionally cut short. */
+    /**
+     * kind="assistant" — model reply, optionally cut short.
+     *
+     * `cycleId` is the gateway-owned join key to the live streaming bubble. The
+     * wire item strips it (it rides the conversation.entry FRAME); the history
+     * connector re-attaches it here from the frame on a LIVE append so the
+     * committed twin can be suppressed by exact id while its bubble reveals.
+     * Null for REST history / snapshot entries (no live cycle to join).
+     */
     @Serializable @SerialName("assistant")
     data class Assistant(
         override val entryId: String = UNKNOWN_ENTRY_ID,
         override val ts: Long = UNKNOWN_TS,
         val content: String,
         val cutoff: Cutoff? = null,
+        val cycleId: String? = null,
     ) : ConversationFeedItem()
 
     /** kind="tool" — completed tool invocation in the feed. */

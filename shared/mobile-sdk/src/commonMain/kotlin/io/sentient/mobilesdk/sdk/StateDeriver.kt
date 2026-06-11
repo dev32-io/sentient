@@ -38,30 +38,8 @@ class StateDeriver(private val clock: Clock) {
     var status: SdkStatus = SdkStatus.DISCONNECTED
     var feed: List<ConversationFeedItem> = emptyList()
 
-    /**
-     * Live in-flight buffer. The setter captures cycleId + text so that
-     * [applyFeed] can later stamp the matching committed Assistant entry.
-     */
+    /** Live in-flight buffer for the streaming bubble. */
     var inflight: InFlightMessage? = null
-        set(value) {
-            field = value
-            // Intentionally NOT cleared on null: lastInflightCycleId/lastInflightText
-            // must survive past `inflight = null` so applyFeed can stamp the matching
-            // committed entry (the commit lands after the inflight slot clears).
-            if (value != null) {
-                lastInflightCycleId = value.cycleId
-                lastInflightText = value.text
-            }
-        }
-
-    /** Last non-null cycleId seen from the inflight setter. */
-    private var lastInflightCycleId: String? = null
-
-    /** Last non-null text seen from the inflight setter (used to match the committed entry). */
-    private var lastInflightText: String = ""
-
-    /** ts → cycleId: populated in applyFeed when a committed entry matches the last inflight text. */
-    private val cycleByTs = HashMap<Long, String>()
 
     var transcript: String = ""
     var cognition: CognitionState = CognitionState.IDLE
@@ -84,12 +62,12 @@ class StateDeriver(private val clock: Clock) {
      * must not linger as a duplicate bubble. Channel-scoped to "speech" so a
      * text.input commit never clears a voice preview.
      *
-     * Also stamps any Assistant entry whose content matches the last inflight
-     * buffer, recording the cycleId so [derive] can attach tools to that message.
+     * Each committed Assistant entry already carries its gateway cycleId (the
+     * history connector re-attaches the frame cycleId), so the live-bubble
+     * suppression + tool attachment read it straight off the item — no stamping.
      */
     fun applyFeed(items: List<ConversationFeedItem>) {
         feed = items
-        stampCycleIds(items)
         if (transcript.isEmpty()) return
         val lastSpeechUser = items.asReversed().firstOrNull {
             it is ConversationFeedItem.User && it.channel == SPEECH_CHANNEL
@@ -116,38 +94,7 @@ class StateDeriver(private val clock: Clock) {
      * committed entries without the streaming noise.
      */
     fun deriveTimeline(): List<ChatMessage> =
-        deriveMessages(feed, inflight = null, clock.nowMs(), tasks, cycleByTs)
-
-    /**
-     * Drop cross-conversation stamping state on a session switch. The ts → cycleId
-     * map and the last-inflight buffer belong to the previous conversation; clearing
-     * them prevents an old cycleId from being attached to the next conversation's
-     * feed (which would mis-route tool pills or, paired with the live-bubble suppress
-     * filter, drop a freshly-committed message). The snapshot that follows the switch
-     * re-stamps from scratch.
-     */
-    fun resetForSessionSwitch() {
-        cycleByTs.clear()
-        lastInflightCycleId = null
-        lastInflightText = ""
-    }
-
-    /**
-     * Match the last-seen inflight text against new feed entries, recording
-     * ts → cycleId for any Assistant entry that commits that exact text.
-     */
-    private fun stampCycleIds(items: List<ConversationFeedItem>) {
-        val cycle = lastInflightCycleId ?: return
-        if (lastInflightText.isEmpty()) return
-        for (item in items) {
-            if (item is ConversationFeedItem.Assistant &&
-                item.content == lastInflightText &&
-                item.ts !in cycleByTs
-            ) {
-                cycleByTs[item.ts] = cycle
-            }
-        }
-    }
+        deriveMessages(feed, inflight = null, clock.nowMs(), tasks)
 }
 
 /**
@@ -160,18 +107,16 @@ class StateDeriver(private val clock: Clock) {
  * streaming bubble last.
  *
  * @param tasks Current task list used to attach tools to messages by cycleId.
- * @param cycleByTs Map of feed-item ts → cycleId, populated by StateDeriver.applyFeed.
  */
 internal fun deriveMessages(
     feed: List<ConversationFeedItem>,
     inflight: InFlightMessage?,
     nowMs: Long,
     tasks: List<TaskSnapshotItem> = emptyList(),
-    cycleByTs: Map<Long, String> = emptyMap(),
 ): List<ChatMessage> {
     val out = ArrayList<ChatMessage>(feed.size + 1)
     for (item in feed) {
-        committedMessage(item, tasks, cycleByTs)?.let(out::add)
+        committedMessage(item, tasks)?.let(out::add)
     }
     if (inflight != null) {
         out.add(
@@ -191,7 +136,6 @@ internal fun deriveMessages(
 private fun committedMessage(
     item: ConversationFeedItem,
     tasks: List<TaskSnapshotItem>,
-    cycleByTs: Map<Long, String>,
 ): ChatMessage? = when (item) {
     is ConversationFeedItem.User ->
         if (item.content.isEmpty()) null
@@ -206,7 +150,10 @@ private fun committedMessage(
     is ConversationFeedItem.Assistant -> {
         if (item.content.isEmpty() && item.cutoff == null) null
         else {
-            val cycleId = cycleByTs[item.ts]
+            // cycleId is the gateway-owned join key carried on the entry (re-attached
+            // from the conversation.entry frame by the history connector). Read it
+            // directly — no client-side text-match/ts-window derivation.
+            val cycleId = item.cycleId
             ChatMessage(
                 ts = item.ts,
                 role = ROLE_ASSISTANT,

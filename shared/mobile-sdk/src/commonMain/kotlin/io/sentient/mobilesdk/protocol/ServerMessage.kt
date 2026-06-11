@@ -118,8 +118,15 @@ sealed class ServerMessage {
         val items: List<ConversationFeedItem> = emptyList(),
     ) : ServerMessage()
 
+    // `cycleId` is the gateway-owned join key between this committed entry and
+    // its live streaming bubble (carried on the FRAME; the item strips it). Read
+    // it straight through — the client never invents/derives it. Null for
+    // user-echo / out-of-band entries and for REST history (no live cycle).
     @Serializable @SerialName("conversation.entry")
-    data class ConversationEntry(val item: ConversationFeedItem) : ServerMessage()
+    data class ConversationEntry(
+        val item: ConversationFeedItem,
+        val cycleId: String? = null,
+    ) : ServerMessage()
 
     // ── Task sidebar ──
 

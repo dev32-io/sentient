@@ -1,15 +1,16 @@
 // ---------------------------------------------------------------------------
-// StateDeriverToolsTest — pins cycleId stamping + tools attach in StateDeriver.
+// StateDeriverToolsTest — pins cycleId read-through + tools attach in StateDeriver.
 //
 // Three invariants:
 //   1. Live inflight bubble gets its cycleId + tools filtered by that cycleId.
-//   2. Committed message retains cycleId + tools after inflight clears + feed commits.
-//   3. Reloaded history (no inflight seen) has cycleId=null + empty tools.
+//   2. Committed message carries the gateway cycleId (re-attached on the feed
+//      item by the history connector) + tools filtered by it.
+//   3. Reloaded history (REST item, no cycleId) has cycleId=null + empty tools.
 //
-// NOTE: previously used deriver.derive() to access messages. Now uses the
-// direct deriveMessages() helper (internal, callable from commonTest) for the
-// inflight case, and deriveTimeline() for the committed case. derive() was
-// removed with the legacy SdkState aggregate.
+// cycleId is the gateway-owned join key carried on the conversation.entry frame
+// and re-attached to the assistant item by ConversationHistoryConnector — the
+// client never text-matches/ts-window-stamps it. derive() was removed with the
+// legacy SdkState aggregate; this uses deriveMessages()/deriveTimeline() directly.
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.sdk
 
@@ -42,12 +43,12 @@ class StateDeriverToolsTest {
     }
 
     @Test
-    fun committedMessageRetainsCycleToolsAfterCommit() {
+    fun committedMessageCarriesFrameCycleAndTools() {
         val d = StateDeriver(FixedClockLocal(100))
         d.tasks = listOf(task("t1", "c1"))
-        d.inflight = InFlightMessage(cycleId = "c1", text = "answer")
-        d.inflight = null
-        d.applyFeed(listOf(ConversationFeedItem.Assistant(ts = 50, content = "answer")))
+        // The history connector re-attaches the frame cycleId onto the committed
+        // assistant item before applyFeed sees it — model that here directly.
+        d.applyFeed(listOf(ConversationFeedItem.Assistant(ts = 50, content = "answer", cycleId = "c1")))
         // deriveTimeline() returns committed-only (no inflight bubble).
         val committed = d.deriveTimeline().single()
         assertEquals("c1", committed.cycleId)
@@ -55,7 +56,7 @@ class StateDeriverToolsTest {
     }
 
     @Test
-    fun reloadedHistoryWithoutSeenCycleHasNoTools() {
+    fun reloadedHistoryWithoutCycleHasNoTools() {
         val d = StateDeriver(FixedClockLocal(100))
         d.tasks = listOf(task("t1", "c1"))
         d.applyFeed(listOf(ConversationFeedItem.Assistant(ts = 50, content = "old reply")))

@@ -135,9 +135,17 @@ class ConversationHistoryConnector(
             log.debug("entry-dropped", mapOf("reason" to "awaiting-history", "ts" to msg.item.ts))
             return
         }
-        log.info("entry", mapOf("ts" to msg.item.ts, "size" to mirror.size + 1))
-        mirror = mirror + msg.item
-        onEntry?.invoke(msg.item)
+        // Re-attach the gateway's frame cycleId onto an assistant entry so the
+        // committed twin can be suppressed by exact id while its live bubble
+        // reveals. The wire item strips cycleId; the frame carries it. No
+        // client-side derivation (text-match / ts-window) anywhere.
+        val item = msg.item
+        val enriched =
+            if (item is ConversationFeedItem.Assistant && msg.cycleId != null) item.copy(cycleId = msg.cycleId)
+            else item
+        log.info("entry", mapOf("ts" to enriched.ts, "cycleId" to (msg.cycleId ?: "-"), "size" to mirror.size + 1))
+        mirror = mirror + enriched
+        onEntry?.invoke(enriched)
         onUpdate?.invoke(mirror)
     }
 

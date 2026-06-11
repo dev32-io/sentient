@@ -155,6 +155,27 @@ class ConversationHistoryConnectorTest {
     }
 
     @Test
+    fun reattaches_frame_cycleId_onto_committed_assistant_entry() {
+        var emitted: ConversationFeedItem? = null
+        val c = ConversationHistoryConnector(onEntry = { emitted = it })
+
+        c.handle(ServerMessage.ConversationSnapshot(items = emptyList()))
+        c.handle(ServerMessage.ConversationEntry(assistantItem("hello"), cycleId = "c-1"))
+
+        val item = c.items().single()
+        assertEquals("c-1", (item as ConversationFeedItem.Assistant).cycleId)
+        assertEquals("c-1", (emitted as ConversationFeedItem.Assistant).cycleId)
+    }
+
+    @Test
+    fun leaves_cycleId_null_when_frame_carries_none() {
+        val c = ConversationHistoryConnector()
+        c.handle(ServerMessage.ConversationSnapshot(items = emptyList()))
+        c.handle(ServerMessage.ConversationEntry(assistantItem("hello")))
+        assertEquals(null, (c.items().single() as ConversationFeedItem.Assistant).cycleId)
+    }
+
+    @Test
     fun handles_missing_items_in_snapshot_gracefully() {
         val c = ConversationHistoryConnector()
         c.handle(ServerMessage.ConversationSnapshot())
