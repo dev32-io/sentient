@@ -70,8 +70,8 @@ export interface CerebrumSessionData {
    * or null before the first. The min-interval gate admits the next frame only
    * once `min_new_interval_ms` has elapsed since this. Per connection (one
    * client) — NOT per user; a user with web + app open gets a separate gate for
-   * each. Blocks spam / double-fire; the gate-path mint is not gated here
-   * (it's the guaranteed message path).
+   * each. Blocks spam / double-fire; the cycle path (user.message) is not
+   * gated here — it runs through a different handler.
    */
   lastSessionNewAtMs: number | null;
   /** Cleanup for the mirror.onSnapshot subscription created in session.configure. */

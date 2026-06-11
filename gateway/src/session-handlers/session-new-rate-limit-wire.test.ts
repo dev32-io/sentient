@@ -62,11 +62,10 @@ describe("admitSessionNew — per-connection session.new min-interval", () => {
     vi.restoreAllMocks();
   });
 
-  it("does not affect the gate-mint path — a rejected frame leaves pending session state untouched", () => {
+  it("a rejected session.new frame mutates only lastSessionNewAtMs — pending cycle state is untouched", () => {
     // The min-interval only short-circuits the session.new delegation; it never
     // touches pendingNewSessionId / pendingNewSessionPromise (those live in the
-    // configure closure). So a blocked session.new cannot prevent the next
-    // first message from gate-minting. Here we assert the guard mutates ONLY
+    // configure closure). Here we assert the guard mutates ONLY
     // lastSessionNewAtMs on ws.data and emits a frame — nothing else.
     const { ws } = makeWs();
     const services = makeServices();

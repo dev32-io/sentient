@@ -45,7 +45,6 @@ import { drainAudioToWs } from "./audio-frame-sender.js";
 import { createBargeInController } from "./barge-in-controller.js";
 import { createInterruptController } from "./interrupt-controller.js";
 import { buildMicSuppressionOptions, createMicEchoGuard } from "./mic-echo-guard.js";
-import { mintAndAnnounceSession } from "./mint-and-announce-session.js";
 import { createSessionAudioWire } from "./session-audio-wire.js";
 import { createSessionsHandlers } from "./sessions-handlers.js";
 import { ttsSkipReason } from "./tts-policy.js";
@@ -602,31 +601,17 @@ export async function handleSessionConfigure(
           { once: true },
         );
 
-        // Consume the pending gateway-minted session id once. Subsequent
+        // Consume the pending client-minted session id once. Subsequent
         // ReAct continuations within the same cycle (and the next cycle
         // after a normal turn) MUST NOT re-force the id — Hermes' default
         // keying takes over once the chain is established.
         //
         // Priority: eager pending id → in-flight session.new pre-warm Promise
-        // → gate fresh-chain mint (gateway = source of truth; mints +
-        // broadcasts session.created when the client never sent session.new).
-        // See resolveForcedSessionId for the full contract + timeout backstop.
+        // → null (no mint; Hermes default keying). The only mint is an eager
+        // client session.new. See resolveForcedSessionId for the full contract.
         const forcedSessionId = await resolveForcedSessionId({
           pendingNewSessionId,
           pendingNewSessionPromise,
-          conversationId: binding.conversationId,
-          acpConn,
-          wsSend,
-          // The gate-mint's pending write is immediately consumed: both
-          // pendings are nulled right after resolveForcedSessionId returns
-          // (below). Turn-2 reuse does NOT come from this pending — it comes
-          // from binding.conversationId, set post-dispatch via
-          // sessionRouter.updateConversationId once the cycle resolves a
-          // conversationId.
-          setPendingNewSessionId: (id) => {
-            pendingNewSessionId = id;
-          },
-          gateMintTimeoutMs: services.sessions.gate_mint_timeout_ms,
           cycleId: params.cycleId,
         });
         pendingNewSessionId = null;
@@ -1118,12 +1103,6 @@ function getLastUserMessage(mirror: ConversationMirror): string {
 export interface ResolveForcedSessionIdInput {
   readonly pendingNewSessionId: string | null;
   readonly pendingNewSessionPromise: Promise<string> | null;
-  /** conversationId on the live binding; null means a fresh (unbound) chain. */
-  readonly conversationId: string | null;
-  readonly acpConn: AcpPerProfileConnection;
-  readonly wsSend: (frame: Record<string, unknown>) => void;
-  readonly setPendingNewSessionId: (id: string) => void;
-  readonly gateMintTimeoutMs: number;
   readonly cycleId: string;
 }
 
@@ -1133,18 +1112,10 @@ export interface ResolveForcedSessionIdInput {
  *   1. An eager `pendingNewSessionId` (session.new pre-warm already resolved).
  *   2. An in-flight `pendingNewSessionPromise` (session.new pre-warm still
  *      racing the first message) — awaited once.
- *   3. Gate fresh-chain mint: if BOTH pendings were null AND this is a fresh
- *      chain (no conversationId yet), the gateway mints + broadcasts
- *      `session.created` itself so the client ALWAYS learns the new id — even
- *      when it never sent `session.new` (mobile debounce swallowed it / a
- *      `text.input` beat it). Bounded by `gateMintTimeoutMs` so a wedged ACP
- *      mint aborts cleanly instead of hanging the first message; on timeout /
- *      failure returns null and the cycle falls through to the deeper lazy
- *      mint in acp-hermes-client (which emits no session.created — non-UI
- *      fallback only).
- *
- * Returns null only when there is no forced id (Hermes default keying or the
- * lazy mint takes over).
+ *   3. No pending session.new: return null — the cycle falls through to Hermes
+ *      default keying. The only mint is an eager client `session.new`
+ *      (visible `session.created`). A fresh-chain message with no pending id
+ *      does NOT trigger an invisible gateway mint.
  */
 export async function resolveForcedSessionId(input: ResolveForcedSessionIdInput): Promise<string | null> {
   if (input.pendingNewSessionId !== null) return input.pendingNewSessionId;
@@ -1156,15 +1127,8 @@ export async function resolveForcedSessionId(input: ResolveForcedSessionIdInput)
       return null;
     }
   }
-  if (input.conversationId !== null) return null;
-  // Fresh chain, no client session.new: gateway mints + announces.
-  log.info("gate-mint.fresh-chain", { cycleId: input.cycleId });
-  return mintAndAnnounceSession({
-    acpConn: input.acpConn,
-    send: input.wsSend,
-    setPendingNewSessionId: input.setPendingNewSessionId,
-    log,
-    reason: "gate-fresh-chain",
-    timeoutMs: input.gateMintTimeoutMs,
-  });
+  // No pending session.new on a fresh chain: do NOT mint here. The client mints
+  // eagerly via session.new (visible session.created); a fresh-chain message with
+  // no pending id falls through to Hermes default keying (no invisible mint).
+  return null;
 }

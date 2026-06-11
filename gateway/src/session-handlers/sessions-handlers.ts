@@ -82,8 +82,7 @@ export function createSessionsHandlers(cfg: SessionsHandlersConfig): SessionsHan
             const requestId = frame.requestId;
             const promise: Promise<string> = (async () => {
               // Delegate the mint + setPending + session.created broadcast to
-              // the shared helper (the gate fresh-chain path uses the same one
-              // — gateway = single source of truth for a new chain's id).
+              // the shared helper.
               const sessionId = await mintAndAnnounceSession({
                 acpConn: cfg.acpConn,
                 send: cfg.send,

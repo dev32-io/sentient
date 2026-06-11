@@ -215,20 +215,15 @@ describe("loggingConfigSchema", () => {
   });
 });
 
-describe("sessionsConfigSchema rate-limit + gate-mint fields", () => {
-  it("applies defaults for the session.new min-interval and gate-mint backstop", () => {
+describe("sessionsConfigSchema rate-limit fields", () => {
+  it("applies the default for the session.new min-interval", () => {
     const result = sessionsConfigSchema.parse({});
     expect(result.min_new_interval_ms).toBe(500);
-    expect(result.gate_mint_timeout_ms).toBe(5000);
   });
 
-  it("accepts custom min-interval and gate-mint values within bounds", () => {
-    const result = sessionsConfigSchema.parse({
-      min_new_interval_ms: 1000,
-      gate_mint_timeout_ms: 8000,
-    });
+  it("accepts a custom min-interval within bounds", () => {
+    const result = sessionsConfigSchema.parse({ min_new_interval_ms: 1000 });
     expect(result.min_new_interval_ms).toBe(1000);
-    expect(result.gate_mint_timeout_ms).toBe(8000);
   });
 
   it("rejects min_new_interval_ms below 0", () => {
@@ -237,14 +232,6 @@ describe("sessionsConfigSchema rate-limit + gate-mint fields", () => {
 
   it("rejects min_new_interval_ms above 60000", () => {
     expect(sessionsConfigSchema.safeParse({ min_new_interval_ms: 60001 }).success).toBe(false);
-  });
-
-  it("rejects gate_mint_timeout_ms above 30000", () => {
-    expect(sessionsConfigSchema.safeParse({ gate_mint_timeout_ms: 30001 }).success).toBe(false);
-  });
-
-  it("rejects gate_mint_timeout_ms below 1000", () => {
-    expect(sessionsConfigSchema.safeParse({ gate_mint_timeout_ms: 999 }).success).toBe(false);
   });
 });
 

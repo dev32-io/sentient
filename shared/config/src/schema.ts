@@ -349,14 +349,9 @@ export const sessionsConfigSchema = z.object({
   // proceeding with the switch anyway. Range: 500–10000.
   switch_teardown_timeout_ms: z.number().int().min(500).max(10_000).default(3000),
   // Min ms between client session.new — blocks spam/double-fire, not
-  // human-paced new chats. Per-connection (one client), NOT per-user; the
-  // gate-path mint (fresh-chain first message) is NOT gated. Range: 0–60000.
+  // human-paced new chats. Per-connection (one client), NOT per-user.
+  // Range: 0–60000.
   min_new_interval_ms: z.number().int().min(0).max(60_000).default(500),
-  // Backstop (ms) for the gate-path session mint on a fresh-chain first
-  // message. If the ACP `newSession` doesn't settle within this window the
-  // gate aborts the mint (falls through to the lazy mint) rather than hanging
-  // the first message forever. Range: 1000–30000.
-  gate_mint_timeout_ms: z.number().int().min(1000).max(30_000).default(5000),
 });
 
 export type SessionsConfig = z.output<typeof sessionsConfigSchema>;

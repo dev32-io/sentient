@@ -339,8 +339,7 @@ sessions:
   source_tag: sentient-user  # adapter writes this on every new chain
   hermes_http_timeout_ms: 5000           # per-request timeout for Hermes /api/sessions/* (1000-30000)
   switch_teardown_timeout_ms: 3000       # max wait for cycle-cancel before switch proceeds (500-10000)
-  min_new_interval_ms: 500               # min ms between client session.new — blocks spam/double-fire, not human-paced new chats (0-60000); gate-path mint is NOT gated
-  gate_mint_timeout_ms: 5000             # backstop (ms) for the gate-path fresh-chain mint; abort + fall through to lazy mint on timeout (1000-30000)
+  min_new_interval_ms: 500               # min ms between client session.new — blocks spam/double-fire, not human-paced new chats (0-60000)
 
 # ---------------------------------------------------------------------------
 # Companions — on-demand version resolution for co-deployed services.

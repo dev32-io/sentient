@@ -144,9 +144,8 @@ export async function handleWebSocketMessage(
         return;
       }
       // Per-connection spam guard on explicit client session.new frames only.
-      // The gate-path mint (fresh-chain first message) is NOT counted here —
-      // it's the guaranteed message path, so a rate-limited session.new still
-      // lets the next first message get a gate-mint + session.created.
+      // The cycle path (user.message) is not rate-limited here — it runs through
+      // a different handler.
       if (msg.type === "session.new" && !admitSessionNew(ws, msg.requestId, services)) {
         return;
       }

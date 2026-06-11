@@ -14,7 +14,7 @@ export interface MintAndAnnounceInput {
   /** Stash the minted id so the next user.message forces it onto Hermes. */
   readonly setPendingNewSessionId: (sessionId: string) => void;
   readonly log: Log;
-  /** Why the mint fired — `session.new` frame vs gate fresh-chain first message. */
+  /** Why the mint fired — currently only the `session.new` frame. */
   readonly reason: string;
   /** Correlates with the originating client request, when one exists. */
   readonly requestId?: string;
