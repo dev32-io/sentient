@@ -49,10 +49,3 @@ fun relativeTime(nowMs: Long, lastActiveMs: Long): String {
         else -> "${delta / DAY_MS}d ago"
     }
 }
-
-/** "12 messages" / "1 message" / "no messages" — secondary metadata. */
-fun messageCountLabel(count: Int): String = when (count) {
-    0 -> "no messages"
-    1 -> "1 message"
-    else -> "$count messages"
-}

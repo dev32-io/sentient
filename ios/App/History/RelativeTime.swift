@@ -49,13 +49,4 @@ enum RelativeTime {
         default: return "\(delta / dayMs)d ago"
         }
     }
-
-    /// "12 messages" / "1 message" / "no messages" — secondary metadata.
-    static func messageCountLabel(_ count: Int32) -> String {
-        switch count {
-        case 0: return "no messages"
-        case 1: return "1 message"
-        default: return "\(count) messages"
-        }
-    }
 }
