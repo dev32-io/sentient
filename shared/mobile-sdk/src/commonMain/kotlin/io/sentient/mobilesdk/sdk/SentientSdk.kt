@@ -639,7 +639,9 @@ class SentientSdk(
     /**
      * `sessions.error forbidden` arrived. If a reconnect re-establish switch is in
      * flight, the anchored session was revoked elsewhere — drop the anchor so the
-     * next reconnect does not re-fire a switch to a dead session. A forbidden with
+     * next reconnect does not re-fire a switch to a dead session, and surface a
+     * one-shot [SdkEvent.ReopenFailed] so the UI can tell the user the chat could
+     * not be reopened (the next send mints a fresh conversation). A forbidden with
      * no re-establish in flight is unrelated (e.g. an explicit op) and left alone.
      */
     private fun onSessionForbidden() {
@@ -647,6 +649,8 @@ class SentientSdk(
         log.info("session.anchor.cleared-forbidden", mapOf("sessionId" to pending))
         reestablishingSessionId = null
         _currentSessionId.value = null
+        log.info("event.reopen-failed", mapOf("sessionId" to pending))
+        emitEvent(SdkEvent.ReopenFailed)
     }
 
     // ── Resume handshake (Task 3.10) ─────────────────────────────────────────────
