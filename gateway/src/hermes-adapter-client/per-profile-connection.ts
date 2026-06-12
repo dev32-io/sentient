@@ -235,12 +235,20 @@ export function createAcpPerProfileConnection(cfg: AcpPerProfileConnectionConfig
       log.debug("cancel.noop");
       return;
     }
-    const { sessionId } = inflight;
+    const { id, sessionId } = inflight;
     log.info("cancel.send", { sessionId });
     // ACP cancel is a session/cancel notification keyed by sessionId — NOT
     // LSP-style $/cancelRequest. The agent will resolve the in-flight prompt
     // with stopReason="cancelled" of its own accord.
-    await client.notify("session/cancel", { sessionId });
+    try {
+      await client.notify("session/cancel", { sessionId });
+    } finally {
+      // Settle the in-flight session/prompt promise regardless of whether the
+      // cancel send reached Hermes — a dead wire must not leak a pending entry.
+      // cancelPending is a no-op if the prompt already resolved (e.g. Hermes
+      // answered before the cancel notification arrived).
+      client.cancelPending(id, "cycle aborted");
+    }
   }
 
   function onEvent(cb: (e: InternalEvent) => void): () => void {

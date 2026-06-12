@@ -290,7 +290,10 @@ describe("AcpPerProfileConnection — re-attach on epoch advance (reconnect)", (
 describe("AcpPerProfileConnection — cancelInflight", () => {
   it("sends session/cancel notification with sessionId (NOT $/cancelRequest)", async () => {
     await attach(bed, "sess_1");
-    void bed.conn.sendUserMessage({ sessionId: "sess_1", text: "hi" });
+    // cancelInflight now also calls cancelPending which rejects the promise —
+    // swallow it here so the unhandled rejection does not fail the test runner.
+    const sendPromise = bed.conn.sendUserMessage({ sessionId: "sess_1", text: "hi" });
+    sendPromise.catch(() => {});
     await flushUntil(bed, "session/prompt");
 
     await bed.conn.cancelInflight();
@@ -304,6 +307,82 @@ describe("AcpPerProfileConnection — cancelInflight", () => {
   it("is a no-op when no prompt is in flight", async () => {
     await bed.conn.cancelInflight();
     expect(bed.sent).toHaveLength(0);
+  });
+
+  it("rejects sendUserMessage even when the cancel notify send throws (dead/hung wire)", async () => {
+    // Build a connection where the transport-level send rejects for
+    // "session/cancel" frames, simulating a dead wire. cancelPending must still
+    // run (the try/finally in cancelInflight) so the in-flight session/prompt
+    // promise settles and does not leak.
+    const sent: string[] = [];
+    let pump: (raw: string) => void = () => {
+      throw new Error("pump not registered yet");
+    };
+
+    const conn = createAcpPerProfileConnection({
+      send: (raw: string): Promise<void> => {
+        const frame = JSON.parse(raw) as { method?: string };
+        if (frame.method === "session/cancel") {
+          // Dead wire — the cancel notification can't be sent.
+          return Promise.reject(new Error("write EPIPE"));
+        }
+        sent.push(raw);
+        return Promise.resolve();
+      },
+      onIncoming: (cb) => {
+        pump = (raw: string): void => cb(raw);
+      },
+    });
+
+    // Pre-attach the session so sendUserMessage goes straight to the prompt.
+    const loadPromise = conn.loadSession({ sessionId: "sess_dead" });
+    await flushUntil({ sent, pump, conn }, "session/load");
+    const loadId = (JSON.parse(sent[sent.length - 1] as string) as { id: number }).id;
+    pump(JSON.stringify({ jsonrpc: "2.0", id: loadId, result: {} }));
+    await loadPromise;
+
+    // Start a sendUserMessage — the prompt will never receive a reply (dead wire).
+    const sendPromise = conn.sendUserMessage({ sessionId: "sess_dead", text: "hello" });
+    await flushUntil({ sent, pump, conn }, "session/prompt");
+
+    // Attach a rejection handler on sendPromise BEFORE calling cancelInflight
+    // so the "cycle aborted" rejection is never unhandled. cancelPending fires
+    // synchronously inside the finally block (while the notify await is still
+    // in the microtask queue), so the rejection must be wired up first.
+    const sendRejected = expect(sendPromise).rejects.toThrow("cycle aborted");
+
+    // cancelInflight: the session/cancel send THROWS (write EPIPE) but
+    // cancelPending must run in the finally block regardless.
+    // cancelInflight propagates the notify error after the finally — that's
+    // correct (fire-and-forget callers have a .catch()).
+    const cancelResult = conn.cancelInflight();
+    await expect(cancelResult).rejects.toThrow("write EPIPE");
+
+    // The sendUserMessage promise must STILL reject with "cycle aborted" —
+    // proving cancelPending ran despite the notify send throwing.
+    await sendRejected;
+  });
+
+  it("rejects the sendUserMessage promise when Hermes never answers the prompt (dead wire)", async () => {
+    // Simulate a dead wire: session/cancel notification is sent but Hermes
+    // never answers the in-flight session/prompt (no reply pumped in).
+    await attach(bed, "sess_1");
+    const sendPromise = bed.conn.sendUserMessage({ sessionId: "sess_1", text: "hi" });
+    await flushUntil(bed, "session/prompt");
+
+    // cancelInflight: sends session/cancel + calls cancelPending(id, "cycle aborted")
+    // which rejects the pending Map entry so the promise settles immediately.
+    await bed.conn.cancelInflight();
+
+    // sendUserMessage must reject — not hang — when the wire never answers.
+    await expect(sendPromise).rejects.toThrow("cycle aborted");
+
+    // No pending entry leaked: a subsequent sendUserMessage on the same session
+    // works correctly (the connection is still alive, not disposed).
+    const sendPromise2 = bed.conn.sendUserMessage({ sessionId: "sess_1", text: "next" });
+    await flushUntil(bed, "session/prompt");
+    const id2 = reply(bed, { stopReason: "end_turn" });
+    await expect(sendPromise2).resolves.toEqual({ cycleId: String(id2), stopReason: "end_turn" });
   });
 });
 
