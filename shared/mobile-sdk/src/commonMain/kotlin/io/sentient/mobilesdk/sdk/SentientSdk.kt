@@ -379,7 +379,15 @@ class SentientSdk(
     suspend fun switchSession(sessionId: String) {
         markInteraction()
         connectors.cycleError.reset()
+        // Problem 1: drop the current session's messages NOW so the spinner
+        // renders over an empty chat, not stale history, while the target loads.
+        connectors.history.clearForSwitch()
         connectors.sessions.switchTo(sessionId)
+        // Bug #3: switching to a past chat must drop stale active cognition
+        // (THINKING / interrupt) from the current view — the gateway cancels the
+        // current cycle on switch but emits no cognition idle. Clear AFTER the
+        // switch is sent so it can never gate the request.
+        clearActiveToIdle()
     }
 
     /** Start a fresh chat; awaits the session.created broadcast. */
@@ -391,7 +399,13 @@ class SentientSdk(
     suspend fun newChat(): String {
         markInteraction()
         connectors.cycleError.reset()
-        return connectors.sessions.newChat()
+        // Bug #1: the gateway clears its own mirror on session.new but emits no
+        // client-facing clear; drop the visible past-chat history locally the
+        // instant "+" is tapped (safe pure-state clear — never gates the mint).
+        connectors.history.clearForNewChat()
+        val id = connectors.sessions.newChat()
+        clearActiveToIdle()
+        return id
     }
 
     /**
@@ -403,7 +417,12 @@ class SentientSdk(
     fun sendNewChat() {
         markInteraction()
         connectors.cycleError.reset()
+        // Bug #1: the gateway clears its own mirror on session.new but emits no
+        // client-facing clear; drop the visible past-chat history locally the
+        // instant "+" is tapped (safe pure-state clear — never gates the mint).
+        connectors.history.clearForNewChat()
         connectors.sessions.sendNew()
+        clearActiveToIdle()
     }
 
     /**
@@ -412,6 +431,24 @@ class SentientSdk(
      * NEVER awaits, NEVER throws. Used both by the UI and by the reconnect re-establish (A1).
      */
     fun sendSwitchSession(id: String) {
+        // Problem 1: drop the current session's messages NOW so the spinner
+        // renders over an empty chat, not stale history, while the target loads.
+        connectors.history.clearForSwitch()
+        // Send the activate FIRST (never gated), THEN drop stale active cognition
+        // (THINKING / interrupt) from the current view (bug #3). The reconnect
+        // re-establish path uses fireSwitch directly (no cognition clear AND no
+        // mirror clear — that path is managed by onReadyReached / onStreamResumed),
+        // so a recovered resume's preserved state is never wiped here.
+        fireSwitch(id)
+        clearActiveToIdle()
+    }
+
+    /**
+     * Raw fire-and-forget conversation.activate WITHOUT touching cognition. The
+     * shared core of [sendSwitchSession] (UI) and [reestablishAnchoredSession]
+     * (reconnect). NEVER throws.
+     */
+    private fun fireSwitch(id: String) {
         markInteraction()
         connectors.cycleError.reset()
         connectors.sessions.sendSwitch(id)
@@ -626,7 +663,10 @@ class SentientSdk(
      */
     private fun reestablishAnchoredSession(sessionId: String) {
         reestablishingSessionId = sessionId
-        sendSwitchSession(sessionId)
+        // fireSwitch, NOT sendSwitchSession: the reconnect path must NOT clear
+        // cognition here. onReadyReached (REESTABLISH_AND_CLEAR) and onStreamResumed
+        // (RECOVER_TO_IDLE) own that decision; the resume PRESERVE path keeps state.
+        fireSwitch(sessionId)
     }
 
     /**

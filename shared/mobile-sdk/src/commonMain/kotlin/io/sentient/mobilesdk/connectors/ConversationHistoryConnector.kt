@@ -85,6 +85,48 @@ class ConversationHistoryConnector(
         return generation
     }
 
+    /**
+     * Local clear for the "+ new chat" path (bug #1). The gateway clears its own
+     * mirror on session.new but emits no client-facing switch/snapshot (the
+     * empty-id switched is intentionally ignored), so the app must drop its
+     * visible history the instant the user taps "+". Bumps the generation so any
+     * in-flight REST fetch from a prior switch is invalidated, resets the mirror
+     * to empty, and emits the empty snapshot/update so the UI clears immediately.
+     *
+     * Does NOT arm [awaitingHistory]: a new chat has no REST history to wait for,
+     * and the FIRST entry of the new cycle must reach the mirror, not be gated.
+     */
+    fun clearForNewChat() {
+        generation++
+        awaitingHistory = false
+        mirror = emptyList()
+        log.info("clear-new-chat", mapOf("generation" to generation))
+        onSnapshot?.invoke(mirror)
+        onUpdate?.invoke(mirror)
+    }
+
+    /**
+     * Local clear for the user-initiated SWITCH path (Problem 1). Tapping a past
+     * chat must drop the CURRENT session's messages immediately and show the
+     * loading gate, so the spinner renders over an EMPTY chat — not over stale
+     * history that lingers until the REST fetch lands.
+     *
+     * Clears the mirror and ARMS [awaitingHistory] (so the spinner shows now and
+     * any straggler entry from the outgoing session is gated out). The
+     * subsequent `session.switched` re-arms the gate, bumps the generation, and
+     * launches the REST fetch whose `replaceMirror` fills the target + releases
+     * the gate (on success OR on error-clear, so it never wedges). NOT called on
+     * the reconnect re-establish path — that uses fireSwitch and must not flash
+     * the chat empty.
+     */
+    fun clearForSwitch() {
+        awaitingHistory = true
+        mirror = emptyList()
+        log.info("clear-for-switch")
+        onSnapshot?.invoke(mirror)
+        onUpdate?.invoke(mirror)
+    }
+
     override fun handle(msg: ServerMessage) {
         when (msg) {
             // Forward-compat: a conversation.snapshot from an older gateway version
