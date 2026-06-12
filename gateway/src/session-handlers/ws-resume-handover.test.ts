@@ -46,14 +46,11 @@ function makeWs(): { ws: ServerWebSocket<ClientData>; sent: SentFrame[] } {
 }
 
 /**
- * Build a sendReady thunk that records a minimal session.ready frame onto the
- * SAME ordered `sent` list — so a test can assert session.ready lands at the
- * right INDEX relative to stream.resumed. Mirrors the caller's wsSend, which
- * also routes through the socket.
+ * Minimal session.ready payload. On recovered:true the handover sends THIS
+ * object RAW (seq-less) onto the same ordered `sent` list, so a test can assert
+ * session.ready lands at the right INDEX relative to stream.resumed.
  */
-function makeSendReady(ws: ServerWebSocket<ClientData>): () => void {
-  return () => ws.send(JSON.stringify({ type: "session.ready", sessionId: "sess-new" }));
-}
+const READY_FRAME: Record<string, unknown> = { type: "session.ready", sessionId: "sess-new" };
 
 /** Index of the first text frame whose JSON `type` equals `type`, or -1. */
 function indexOfType(sent: SentFrame[], type: string): number {
@@ -98,6 +95,7 @@ describe("handleResumeOrFresh — resume in window (recovered:true)", () => {
     const storedTexts = journalJsonFrames(buffer, epoch, 5); // seq 1..5
 
     const { ws, sent } = makeWs();
+    const goLive = vi.fn();
     const suppressFresh = handleResumeOrFresh({
       ws,
       sessionId: "sess-new",
@@ -106,7 +104,8 @@ describe("handleResumeOrFresh — resume in window (recovered:true)", () => {
       epoch,
       resumed: true,
       resumeParams: { epoch, lastSeq: 2, deviceId: "dev-A" },
-      sendReady: makeSendReady(ws),
+      readyFrame: READY_FRAME,
+      goLive,
     });
 
     expect(suppressFresh).toBe(true);
@@ -114,9 +113,10 @@ describe("handleResumeOrFresh — resume in window (recovered:true)", () => {
     const resumed = parseResumed(sent);
     expect(resumed).toMatchObject({ type: "stream.resumed", recovered: true, epoch, fromSeq: 3, toSeq: 5 });
 
-    // ORDER (load-bearing): session.ready BEFORE stream.resumed. The client's
+    // ORDER (load-bearing): RAW session.ready BEFORE stream.resumed. The client's
     // handshake ready-gate only completes on session.ready; sending it first
-    // lets the client run DEFER_TO_RESUME, then PRESERVE on the resume ack.
+    // (seq-less so it can't poison the resume cursor) lets the client run
+    // DEFER_TO_RESUME, then PRESERVE on the resume ack.
     const readyIdx = indexOfType(sent, "session.ready");
     const resumedIdx = indexOfType(sent, "stream.resumed");
     expect(readyIdx).toBeGreaterThanOrEqual(0);
@@ -125,6 +125,9 @@ describe("handleResumeOrFresh — resume in window (recovered:true)", () => {
     // The replayed frames follow the ack, in order, byte-identical to storage.
     const replayed = sent.filter((f, i) => i > resumedIdx && f.kind === "text").map((f) => f.value as string);
     expect(replayed).toEqual([storedTexts[2], storedTexts[3], storedTexts[4]]);
+
+    // goLive() fires AFTER the replay so the live continuation follows behind it.
+    expect(goLive).toHaveBeenCalledTimes(1);
   });
 
   it("preserves seq continuity — a NEW frame after resume continues at seq 6", () => {
@@ -141,7 +144,8 @@ describe("handleResumeOrFresh — resume in window (recovered:true)", () => {
       epoch,
       resumed: true,
       resumeParams: { epoch, lastSeq: 2, deviceId: "dev-A" },
-      sendReady: makeSendReady(ws),
+      readyFrame: READY_FRAME,
+      goLive: vi.fn(),
     });
 
     // Going live: the new attachment's sequencer reuses the SAME buffer object.
@@ -172,7 +176,8 @@ describe("handleResumeOrFresh — resume in window (recovered:true)", () => {
       epoch,
       resumed: true,
       resumeParams: { epoch, lastSeq: 0, deviceId: "dev-A" },
-      sendReady: makeSendReady(ws),
+      readyFrame: READY_FRAME,
+      goLive: vi.fn(),
     });
 
     const binarySent = sent.find((f) => f.kind === "binary");
@@ -194,7 +199,7 @@ describe("handleResumeOrFresh — stale lastSeq (gap, recovered:false)", () => {
     expect(buffer.oldestSeq).toBeGreaterThan(1);
 
     const { ws, sent } = makeWs();
-    const sendReady = vi.fn();
+    const goLive = vi.fn();
     const suppressFresh = handleResumeOrFresh({
       ws,
       sessionId: "sess-new",
@@ -203,15 +208,18 @@ describe("handleResumeOrFresh — stale lastSeq (gap, recovered:false)", () => {
       epoch: 7,
       resumed: true,
       resumeParams: { epoch: 7, lastSeq: 1, deviceId: "dev-A" }, // seq1 evicted
-      sendReady,
+      readyFrame: READY_FRAME,
+      goLive,
     });
 
     expect(suppressFresh).toBe(false);
     expect(parseResumed(sent)).toMatchObject({ type: "stream.resumed", recovered: false, epoch: 7 });
     // No replayed frames after the ack.
     expect(sent.filter((f) => f.kind === "binary")).toHaveLength(0);
-    // session.ready is the CALLER's job on recovered:false — not sent here.
-    expect(sendReady).not.toHaveBeenCalled();
+    // session.ready is the CALLER's job on recovered:false — not sent here; and
+    // the caller (not the handover) goes live on this path.
+    expect(indexOfType(sent, "session.ready")).toBe(-1);
+    expect(goLive).not.toHaveBeenCalled();
   });
 });
 
@@ -232,7 +240,7 @@ describe("handleResumeOrFresh — epoch mismatch (fresh buffer, recovered:false)
     expect(second.epoch).not.toBe(first.epoch);
 
     const { ws, sent } = makeWs();
-    const sendReady = vi.fn();
+    const goLive = vi.fn();
     const suppressFresh = handleResumeOrFresh({
       ws,
       sessionId: "sess-new",
@@ -241,12 +249,14 @@ describe("handleResumeOrFresh — epoch mismatch (fresh buffer, recovered:false)
       epoch: second.epoch,
       resumed: second.resumed,
       resumeParams: { epoch: 999, lastSeq: 2, deviceId: "dev-A" },
-      sendReady,
+      readyFrame: READY_FRAME,
+      goLive,
     });
 
     expect(suppressFresh).toBe(false);
     expect(parseResumed(sent)).toMatchObject({ type: "stream.resumed", recovered: false, epoch: second.epoch });
-    expect(sendReady).not.toHaveBeenCalled();
+    expect(indexOfType(sent, "session.ready")).toBe(-1);
+    expect(goLive).not.toHaveBeenCalled();
   });
 
   it("a client that never asked to resume gets NO stream.resumed ack (plain fresh)", () => {
@@ -254,7 +264,7 @@ describe("handleResumeOrFresh — epoch mismatch (fresh buffer, recovered:false)
     const { buffer, epoch, resumed } = store.acquire("dev-A");
 
     const { ws, sent } = makeWs();
-    const sendReady = vi.fn();
+    const goLive = vi.fn();
     const suppressFresh = handleResumeOrFresh({
       ws,
       sessionId: "sess-new",
@@ -263,12 +273,14 @@ describe("handleResumeOrFresh — epoch mismatch (fresh buffer, recovered:false)
       epoch,
       resumed,
       resumeParams: null,
-      sendReady,
+      readyFrame: READY_FRAME,
+      goLive,
     });
 
     expect(suppressFresh).toBe(false);
     expect(parseResumed(sent)).toBeNull();
-    expect(sendReady).not.toHaveBeenCalled();
+    expect(indexOfType(sent, "session.ready")).toBe(-1);
+    expect(goLive).not.toHaveBeenCalled();
   });
 });
 
@@ -317,30 +329,27 @@ describe("DeviceBufferStore.acquire — handover of the prior deferred teardown"
 // ---------------------------------------------------------------------------
 // 5) Prefs seed double-send prevention + session.ready emission
 //
-// On recovered:true, handleResumeOrFresh sends session.ready ITSELF (via the
-// injected thunk, BEFORE stream.resumed so the client handshake completes) and
-// returns true → the caller's fresh-only block (which would send the prefs seed
-// + a SECOND session.ready) is SUPPRESSED. The prefs frame reaches the client
-// only via the replay window — exactly once. session.ready reaches it exactly
-// once — from the thunk, not double-sent.
+// On recovered:true, handleResumeOrFresh sends session.ready ITSELF — RAW
+// (seq-less) FIRST so the client handshake completes WITHOUT advancing the
+// resume cursor past the replay window — and returns true → the caller's
+// fresh-only block (which would send the prefs seed + a SECOND session.ready)
+// is SUPPRESSED. The prefs frame reaches the client only via the replay window
+// — exactly once. session.ready reaches it exactly once. goLive() fires after
+// the replay so the live continuation follows behind it.
 //
 // On a fresh connect (recovered:false or no resume frame), handleResumeOrFresh
-// does NOT call the thunk and returns false → the caller's fresh block sends
-// session.ready + the prefs seed once.
+// does NOT send session.ready and returns false → the caller's fresh block
+// sends session.ready (seq-stamped) + the prefs seed once, and goes live.
 // ---------------------------------------------------------------------------
 
 describe("handleResumeOrFresh — session.ready + prefs seed contract", () => {
-  it("on recovered:true sends session.ready via the thunk (before stream.resumed) and suppresses fresh", () => {
+  it("on recovered:true sends RAW session.ready FIRST (before stream.resumed), suppresses fresh, goes live", () => {
     const store = new DeviceBufferStore(REPLAY_MAX_BYTES);
     const { buffer, epoch } = store.acquire("dev-A");
     journalJsonFrames(buffer, epoch, 3); // seq 1..3
 
     const { ws, sent } = makeWs();
-    let readyAtSendIndex = -1;
-    const sendReady = vi.fn(() => {
-      readyAtSendIndex = sent.length; // index this frame WOULD occupy
-      ws.send(JSON.stringify({ type: "session.ready", sessionId: "sess-prefs" }));
-    });
+    const goLive = vi.fn();
     const suppressFresh = handleResumeOrFresh({
       ws,
       sessionId: "sess-prefs",
@@ -349,24 +358,29 @@ describe("handleResumeOrFresh — session.ready + prefs seed contract", () => {
       epoch,
       resumed: true,
       resumeParams: { epoch, lastSeq: 0, deviceId: "dev-A" },
-      sendReady,
+      readyFrame: { type: "session.ready", sessionId: "sess-prefs" },
+      goLive,
     });
 
     // session.ready was sent here EXACTLY once; caller then suppresses the
     // fresh block (no second session.ready, no prefs seed).
     expect(suppressFresh).toBe(true);
-    expect(sendReady).toHaveBeenCalledTimes(1);
-    // It landed BEFORE stream.resumed (load-bearing order).
-    expect(readyAtSendIndex).toBe(0);
+    // It is the FIRST frame and lands BEFORE stream.resumed (load-bearing order).
+    expect(indexOfType(sent, "session.ready")).toBe(0);
     expect(indexOfType(sent, "session.ready")).toBeLessThan(indexOfType(sent, "stream.resumed"));
+    // RAW: the session.ready frame carries NO seq (would poison the client cursor).
+    const readyFrame = JSON.parse(sent[0]?.value as string) as Record<string, unknown>;
+    expect(readyFrame.seq).toBeUndefined();
+    // Live only after the replay flush.
+    expect(goLive).toHaveBeenCalledTimes(1);
   });
 
-  it("does NOT send session.ready (caller's job) on fresh connect; returns false", () => {
+  it("does NOT send session.ready (caller's job) on fresh connect; returns false; does not go live", () => {
     const store = new DeviceBufferStore(REPLAY_MAX_BYTES);
     const { buffer, epoch, resumed } = store.acquire("dev-A"); // fresh, no prior buffer
 
-    const { ws } = makeWs();
-    const sendReady = vi.fn();
+    const { ws, sent } = makeWs();
+    const goLive = vi.fn();
     const suppressFresh = handleResumeOrFresh({
       ws,
       sessionId: "sess-prefs-fresh",
@@ -375,15 +389,17 @@ describe("handleResumeOrFresh — session.ready + prefs seed contract", () => {
       epoch,
       resumed,
       resumeParams: null,
-      sendReady,
+      readyFrame: READY_FRAME,
+      goLive,
     });
 
-    // Caller MUST send session.ready + prefs seed once when suppressFresh is false.
+    // Caller MUST send session.ready + prefs seed + go live when suppressFresh is false.
     expect(suppressFresh).toBe(false);
-    expect(sendReady).not.toHaveBeenCalled();
+    expect(indexOfType(sent, "session.ready")).toBe(-1);
+    expect(goLive).not.toHaveBeenCalled();
   });
 
-  it("does NOT send session.ready on epoch mismatch (recovered:false); returns false", () => {
+  it("does NOT send session.ready on epoch mismatch (recovered:false); returns false; does not go live", () => {
     const store = new DeviceBufferStore(REPLAY_MAX_BYTES);
     const first = store.acquire("dev-A");
     journalJsonFrames(first.buffer, first.epoch, 2);
@@ -391,8 +407,8 @@ describe("handleResumeOrFresh — session.ready + prefs seed contract", () => {
 
     // Stale epoch → fresh buffer, recovered:false.
     const second = store.acquire("dev-A", { resumeEpoch: 999 });
-    const { ws } = makeWs();
-    const sendReady = vi.fn();
+    const { ws, sent } = makeWs();
+    const goLive = vi.fn();
     const suppressFresh = handleResumeOrFresh({
       ws,
       sessionId: "sess-prefs-mismatch",
@@ -401,11 +417,13 @@ describe("handleResumeOrFresh — session.ready + prefs seed contract", () => {
       epoch: second.epoch,
       resumed: second.resumed,
       resumeParams: { epoch: 999, lastSeq: 1, deviceId: "dev-A" },
-      sendReady,
+      readyFrame: READY_FRAME,
+      goLive,
     });
 
-    // Caller MUST send session.ready + prefs seed once when suppressFresh is false.
+    // Caller MUST send session.ready + prefs seed + go live when suppressFresh is false.
     expect(suppressFresh).toBe(false);
-    expect(sendReady).not.toHaveBeenCalled();
+    expect(indexOfType(sent, "session.ready")).toBe(-1);
+    expect(goLive).not.toHaveBeenCalled();
   });
 });

@@ -205,14 +205,52 @@ export async function handleSessionConfigure(
   const acquired = personSession.acquireDeviceBuffer(deviceId, {
     ...(resumeParams ? { resumeEpoch: resumeParams.epoch } : {}),
   });
-  const { buffer: deviceBuffer, epoch: deviceEpoch, resumed: deviceResumed } = acquired;
+  const { buffer: deviceBuffer, epoch: deviceEpoch, resumed: deviceResumed, liveSocket: deviceLiveSocket } = acquired;
+
+  // ACP WIRE — acquired BEFORE the handover (order is load-bearing). The wire
+  // is pooled per-user and ref-counted; on a resume the OLD pipeline still holds
+  // a ref (the in-flight Hermes cycle is streaming on it). Acquiring here REUSES
+  // that wire (refcount 1→2) so when the handover below releases the old ref
+  // (2→1) the wire never hits 0 — it is NOT disposed, and the in-flight cycle is
+  // NOT killed. The gateway keeps receiving the cycle's output (final answer +
+  // cycle.done) and streams it to the resumed socket. On a fresh connect there
+  // is no handover, so this just dials/reuses normally — order is immaterial.
+  let resolvedWsUrl: string;
+  try {
+    resolvedWsUrl = await buildWsUrlForUser(services.hermes, services.userPortStore, initialBinding.userId);
+  } catch (err: unknown) {
+    log.error("acp.ws-url-resolve-failed", {
+      sessionId,
+      userId: initialBinding.userId,
+      reason: errorMessage(err, "unknown"),
+    });
+    sendError(ws, "protocol_error", "Cannot resolve Hermes WS URL");
+    return;
+  }
+  const acpConn = await acquireAcpWireOrFail({
+    sessionId,
+    userId: initialBinding.userId,
+    registry: services.acpWireRegistry,
+    wsUrl: resolvedWsUrl,
+    token: initialBinding.apiKey,
+    acpWire: services.hermes?.acp_wire,
+    requestTimeoutMs: services.hermes?.defaults.request_timeout_ms,
+    setDispose: (fn) => {
+      ws.data.acpWireDispose = fn;
+    },
+  });
+  if (acpConn === null) {
+    sendError(ws, "protocol_error", "Cannot reach Hermes ACP wire");
+    return;
+  }
 
   // HANDOVER (Task 3.8): a matching-epoch resume hands back the deferred
   // teardown stashed by the prior resumable disconnect (Task 3.7). Run it NOW
-  // to dispose the orphaned OLD pipeline (gate / ACP wire / sessionManager
-  // entry / translator) — aborting any still-running old cycle before the new
-  // session configures fresh on the SAME buffer. acquire already detached it
-  // from the entry so the retention sweep can never re-run it.
+  // to dispose the orphaned OLD pipeline (gate / sessionManager entry /
+  // translator) and RELEASE its wire ref. Because we acquired the wire ABOVE,
+  // that release drops refcount 2→1 — the wire and the in-flight cycle on it
+  // SURVIVE the handover (instead of being disposed mid-flight). acquire already
+  // detached the teardown from the entry so the retention sweep can never re-run it.
   if (acquired.priorDeferredTeardown !== null) {
     log.info("resume.handover-old-pipeline", { sessionId, deviceId, epoch: deviceEpoch });
     acquired.priorDeferredTeardown();
@@ -223,6 +261,10 @@ export async function handleSessionConfigure(
   // in ws-handlers (releaseDeviceBuffer / bufferFor / disposeDeviceBuffer keyed
   // by attachment.attachmentId) addresses the correct buffer across reconnects.
   // sessionId stays the per-WS id used for sessionRouter / Manager / Controls.
+  // Creating the attachment registers THIS socket as the device's current live
+  // writer (deviceLiveSocket.current). Runs AFTER the handover above, so on a
+  // resume it deliberately takes over from the old attachment — the in-flight
+  // cycle's old sequencer (sharing this ref) now writes to the new socket.
   const attachment = createDeviceAttachment<ClientData>({
     attachmentId: deviceId,
     ws,
@@ -230,10 +272,20 @@ export async function handleSessionConfigure(
     profile: personSession.profile,
     buffer: deviceBuffer,
     epoch: deviceEpoch,
+    liveSocket: deviceLiveSocket,
   });
   personSession.attach(attachment);
   ws.data.personSession = personSession;
   ws.data.attachment = attachment;
+
+  // Live-socket activation is DEFERRED on a matching-epoch resume: the new
+  // socket must not receive any frame until AFTER the replay window flushes
+  // (else an in-flight cycle frame outruns the replay and poisons the client
+  // cursor). For every other path (fresh, no-resume, or epoch-mismatch fresh
+  // buffer) there is no replay window, so go live now — the configure handshake
+  // (session.ready / prefs / snapshot) writes through this socket.
+  const isResumeAttempt = resumeParams !== null && deviceResumed;
+  if (!isResumeAttempt) attachment.goLive();
 
   // Route all subsequent outbound push frames through the FrameSequencer so
   // they are seq/epoch-stamped and journaled before the socket write. Everything
@@ -401,38 +453,6 @@ export async function handleSessionConfigure(
   // back to the gateway-wide default when null.
   const synthesizer: TextStreamSynthesizer | null = services.createSynthesizerFor(() => personSession.voiceId);
   const stripChain = composeTextStages(createMarkdownStripper(), createEmojiStripper());
-
-  // ACP wire bootstrap. Open a WS to the overlay's `acp_ws_server.py`, run
-  // `initialize`, and use the ACP adapter as the HermesClient implementation
-  // so the cerebrum pipeline keeps consuming HermesEvent unchanged.
-  let resolvedWsUrl: string;
-  try {
-    resolvedWsUrl = await buildWsUrlForUser(services.hermes, services.userPortStore, initialBinding.userId);
-  } catch (err: unknown) {
-    log.error("acp.ws-url-resolve-failed", {
-      sessionId,
-      userId: initialBinding.userId,
-      reason: errorMessage(err, "unknown"),
-    });
-    sendError(ws, "protocol_error", "Cannot resolve Hermes WS URL");
-    return;
-  }
-  const acpConn = await acquireAcpWireOrFail({
-    sessionId,
-    userId: initialBinding.userId,
-    registry: services.acpWireRegistry,
-    wsUrl: resolvedWsUrl,
-    token: initialBinding.apiKey,
-    acpWire: services.hermes?.acp_wire,
-    requestTimeoutMs: services.hermes?.defaults.request_timeout_ms,
-    setDispose: (fn) => {
-      ws.data.acpWireDispose = fn;
-    },
-  });
-  if (acpConn === null) {
-    sendError(ws, "protocol_error", "Cannot reach Hermes ACP wire");
-    return;
-  }
 
   // Route `session/update` notifications carrying out-of-band SDK frames
   // (sessions.renamed, commands.available) directly to the client. The cycle
@@ -859,17 +879,22 @@ export async function handleSessionConfigure(
     minEagerEndMs: services.webui.playback.min_eager_end_ms,
     preemptFadeoutMs: services.webui.playback.preempt_fadeout_ms,
   };
+  // The session.ready payload. On the fresh / recovered:false path it is sent
+  // seq-stamped via wsSend (sendReady below). On recovered:true the handover
+  // sends this SAME object RAW (seq-less) so it ungates the client without
+  // poisoning the resume cursor — see ws-resume-handover.
+  const readyFrame: Record<string, unknown> = {
+    type: "session.ready",
+    sessionId,
+    audioEncoding: AUDIO_ENCODING,
+    inputSampleRate: INPUT_SAMPLE_RATE,
+    outputSampleRate: OUTPUT_SAMPLE_RATE,
+    enabledEffects: [],
+    playback: playbackTunables,
+  };
   const sendReady = (): void => {
     log.debug("session-ready-playback-tunables", { sessionId, ...playbackTunables });
-    wsSend({
-      type: "session.ready",
-      sessionId,
-      audioEncoding: AUDIO_ENCODING,
-      inputSampleRate: INPUT_SAMPLE_RATE,
-      outputSampleRate: OUTPUT_SAMPLE_RATE,
-      enabledEffects: [],
-      playback: playbackTunables,
-    });
+    wsSend(readyFrame);
   };
 
   // STREAM-RESUME decision (Task 3.8). When the device buffer was resumed AND
@@ -889,20 +914,24 @@ export async function handleSessionConfigure(
     epoch: deviceEpoch,
     resumed: deviceResumed,
     resumeParams,
-    sendReady,
+    readyFrame,
+    goLive: () => attachment.goLive(),
   });
 
   if (replayed) {
-    // Successful resume: session.ready + the missed frames were already sent
-    // (session.ready first, then stream.resumed + replay). The client has
-    // history + prefs from the replay window. Go live; suppress the fresh-only
-    // block (prefs seed + snapshot).
+    // Successful resume: RAW session.ready + the missed frames were already sent
+    // (session.ready first, then stream.resumed + replay), and the handover went
+    // live AFTER the replay. The client has history + prefs from the replay
+    // window. Suppress the fresh-only block (prefs seed + snapshot).
     log.info("session-configured.resumed", { sessionId, deviceId, epoch: deviceEpoch });
     return;
   }
 
-  // Fresh / recovered:false path: send session.ready now (the thunk the resume
-  // path would have called).
+  // Fresh / recovered:false path. On a recovered:false resume the live socket
+  // was deferred (isResumeAttempt) but there is no replay window, so go live now
+  // before the fresh handshake writes session.ready / prefs / snapshot.
+  if (isResumeAttempt) attachment.goLive();
+  // Send session.ready now (the thunk the resume path would have called).
   sendReady();
 
   // Seed the client with the current audio preferences. Fresh path only — on

@@ -58,12 +58,22 @@ export interface HandleResumeOrFreshInput {
   /** Resume params from the session.configure `resume` object, or null (fresh connect). */
   readonly resumeParams: ResumeParams | null;
   /**
-   * Emit the session.ready frame. Called on the recovered:true path BEFORE the
-   * stream.resumed ack so the client handshake's ready-gate completes (its FSM
-   * only ungates on session.ready). On recovered:false / fresh the caller sends
-   * session.ready itself, so this is NOT invoked there.
+   * The session.ready payload. On the recovered:true path it is sent RAW (no
+   * seq) BEFORE stream.resumed so the client handshake's ready-gate completes
+   * (its FSM only ungates on session.ready) WITHOUT advancing the client resume
+   * cursor — a seq-stamped session.ready would jump the cursor past the replay
+   * window and the client would drop every replayed frame. On recovered:false /
+   * fresh the caller sends session.ready itself (seq-stamped), so this is unused
+   * there.
    */
-  readonly sendReady: () => void;
+  readonly readyFrame: Record<string, unknown>;
+  /**
+   * Make the new socket the device's live writer. On recovered:true this is
+   * called AFTER the replay window is flushed, so the in-flight cycle's
+   * continuation (final answer + cycle.done) streams to the new socket in seq
+   * order behind the replay — never ahead of it.
+   */
+  readonly goLive: () => void;
 }
 
 /**
@@ -76,7 +86,7 @@ export interface HandleResumeOrFreshInput {
  * REST-refetches on recovered:false).
  */
 export function handleResumeOrFresh(input: HandleResumeOrFreshInput): boolean {
-  const { ws, sessionId, deviceId, buffer, epoch, resumed, resumeParams, sendReady } = input;
+  const { ws, sessionId, deviceId, buffer, epoch, resumed, resumeParams, readyFrame, goLive } = input;
 
   // Fresh connect (no resume frame) OR epoch mismatch (acquire gave a new
   // buffer). Nothing to replay — but a client that asked to resume still needs
@@ -97,22 +107,29 @@ export function handleResumeOrFresh(input: HandleResumeOrFreshInput): boolean {
     return false;
   }
 
-  // recovered:true — ORDER IS LOAD-BEARING. session.ready FIRST so the client
-  // handshake's ready-gate completes (its FSM only ungates on session.ready and
-  // has no stream.resumed case); on READY the client runs DEFER_TO_RESUME
-  // (cursor has a seq) and waits for the ack. THEN the stream.resumed ack +
-  // replay, which the client handles as PRESERVE_IN_FLIGHT. Sending the ack
-  // before session.ready would run the defer decision after the ack already
-  // passed — semantically wrong. The prefs seed + empty snapshot stay
-  // suppressed (caller skips its fresh block) — the client has both via replay.
-  sendRecoveredTrue(ws, sessionId, deviceId, buffer, epoch, resumeParams.lastSeq, sendReady, missed);
+  // recovered:true — ORDER IS LOAD-BEARING. RAW session.ready FIRST so the
+  // client handshake's ready-gate completes (its FSM only ungates on
+  // session.ready and has no stream.resumed case) WITHOUT advancing the resume
+  // cursor; on READY the client runs DEFER_TO_RESUME (cursor has a seq) and
+  // waits for the ack. THEN the stream.resumed ack + replay, which the client
+  // handles as PRESERVE_IN_FLIGHT. Finally goLive() so the in-flight cycle's
+  // continuation streams to the new socket BEHIND the replay (correct seq
+  // order). The prefs seed + empty snapshot stay suppressed (caller skips its
+  // fresh block) — the client has both via replay.
+  sendRecoveredTrue(ws, sessionId, deviceId, buffer, epoch, resumeParams.lastSeq, readyFrame, goLive, missed);
   return true;
 }
 
 /**
  * recovered:true path — mirrors sendRecoveredFalse for symmetry.
- * ORDER IS LOAD-BEARING: sendReady() FIRST so the client handshake's ready-gate
- * completes, THEN stream.resumed ack, THEN verbatim frame replay.
+ * ORDER IS LOAD-BEARING: RAW session.ready FIRST so the client handshake's
+ * ready-gate completes WITHOUT advancing the resume cursor, THEN stream.resumed
+ * ack, THEN verbatim frame replay, THEN goLive() so the live continuation
+ * follows behind the replay in seq order.
+ *
+ * Everything here is SYNCHRONOUS — no await between snapshotting `missed`
+ * (already done by the caller) and goLive() — so no in-flight cycle frame can
+ * interleave between the replay and going live.
  */
 function sendRecoveredTrue(
   ws: ServerWebSocket<ClientData>,
@@ -121,13 +138,17 @@ function sendRecoveredTrue(
   buffer: SessionReplayBuffer,
   epoch: number,
   lastSeq: number,
-  sendReady: () => void,
+  readyFrame: Record<string, unknown>,
+  goLive: () => void,
   missed: SessionReplayFrame[],
 ): void {
-  // sendReady first — order is load-bearing (see handleResumeOrFresh comment).
-  sendReady();
+  // RAW session.ready first — NO seq, so it ungates the client handshake
+  // without advancing the resume cursor past the replay window. A seq-stamped
+  // session.ready here would make the client drop every replayed frame.
+  sendRawFrame(ws, JSON.stringify(readyFrame), "session.ready");
   // emit the ack with the replayed range, then replay each buffered frame
-  // VERBATIM. fromSeq is lastSeq+1; toSeq is the buffer head.
+  // VERBATIM. fromSeq is lastSeq+1; toSeq is the buffer head (NOT bumped by the
+  // raw session.ready — it bypasses the sequencer/buffer).
   const fromSeq = lastSeq + 1;
   const toSeq = buffer.newestSeq;
   sendRawFrame(
@@ -150,6 +171,10 @@ function sendRecoveredTrue(
       sendRawFrame(ws, frame.bytes, "replay-binary");
     }
   }
+  // Replay flushed — NOW route the device's live socket to the new connection.
+  // The in-flight cycle's next frame (seq > toSeq) streams here, behind the
+  // replay, in order.
+  goLive();
 }
 
 function sendRecoveredFalse(

@@ -7,10 +7,36 @@ const log = getLog(["sentient", "person-session", "device-buffer-store"]);
 // Types
 // ---------------------------------------------------------------------------
 
+/** Raw writer pair for the device's CURRENT live socket. */
+export interface DeviceSocketSink {
+  sendText: (s: string) => void;
+  sendBinary: (b: Uint8Array) => void;
+}
+
+/**
+ * Shared, mutable reference to the device's CURRENT live socket writer.
+ * Lives on the device buffer entry so it SURVIVES reconnects (keyed by
+ * deviceId). Every DeviceAttachment for the device resolves this ref at send
+ * time rather than capturing its own socket — so a STALE attachment still
+ * driving an in-flight Hermes cycle after a resumable reconnect writes its
+ * post-resume frames (the final answer + cycle.done) to the NEW socket instead
+ * of the dead old one. `null` while the device is disconnected: frames still
+ * journal into the buffer (replayed on the next resume); the socket write
+ * no-ops.
+ */
+export interface DeviceSocketRef {
+  current: DeviceSocketSink | null;
+}
+
 export interface DeviceBufferEntry {
   readonly buffer: SessionReplayBuffer;
   readonly epoch: number;
   detachedAtMs: number | null;
+  /**
+   * The device's current live socket writer, shared across every attachment
+   * for this device and across reconnects. See DeviceSocketRef.
+   */
+  readonly liveSocket: DeviceSocketRef;
   /**
    * Teardown actions deferred from a resumable disconnect (Task 3.7).
    * Stashed so the sweep can run them when the TTL expires without a
@@ -37,6 +63,13 @@ export interface AcquireDeviceBufferResult {
    * so the retention sweep can NOT also run it later — exactly-once handover.
    */
   readonly priorDeferredTeardown: (() => void) | null;
+  /**
+   * The device's shared live-socket ref. The caller hands this to the new
+   * DeviceAttachment so its sequencer writes resolve the current socket, and
+   * so a stale in-flight cycle's old sequencer (sharing this same ref) follows
+   * to the new socket after a resume. Reused across reconnects.
+   */
+  readonly liveSocket: DeviceSocketRef;
 }
 
 // ---------------------------------------------------------------------------
@@ -100,20 +133,32 @@ export class DeviceBufferStore {
         existing.deferredTeardown = null;
       }
       log.debug("acquire.resumed", { deviceId, epoch: existing.epoch });
-      return { buffer: existing.buffer, epoch: existing.epoch, resumed: true, priorDeferredTeardown };
+      return {
+        buffer: existing.buffer,
+        epoch: existing.epoch,
+        resumed: true,
+        priorDeferredTeardown,
+        liveSocket: existing.liveSocket,
+      };
     }
 
     this._epochCounter += 1;
     const epoch = this._epochCounter;
     const buffer = createSessionReplayBuffer({ maxBytes: this._maxBytes });
-    const entry: DeviceBufferEntry = { buffer, epoch, detachedAtMs: null, deferredTeardown: null };
+    const entry: DeviceBufferEntry = {
+      buffer,
+      epoch,
+      detachedAtMs: null,
+      liveSocket: { current: null },
+      deferredTeardown: null,
+    };
     this._buffers.set(deviceId, entry);
     log.debug("acquire.fresh", {
       deviceId,
       epoch,
       prevEpoch: existing?.epoch ?? null,
     });
-    return { buffer, epoch, resumed: false, priorDeferredTeardown: null };
+    return { buffer, epoch, resumed: false, priorDeferredTeardown: null, liveSocket: entry.liveSocket };
   }
 
   /**

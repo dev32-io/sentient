@@ -2,6 +2,7 @@ import type { ServerWebSocket } from "bun";
 import { describe, expect, it, vi } from "vitest";
 import { createSessionReplayBuffer } from "../session-handlers/session-replay-buffer.js";
 import { createDeviceAttachment } from "./device-attachment.js";
+import type { DeviceSocketRef } from "./device-buffer-store.js";
 
 function makeMockWs() {
   return {
@@ -13,8 +14,12 @@ function makeBuffer() {
   return createSessionReplayBuffer({ maxBytes: 64_000 });
 }
 
-function makeAttachment(ws: ServerWebSocket<unknown> = makeMockWs()) {
-  const buffer = makeBuffer();
+function makeAttachment(
+  ws: ServerWebSocket<unknown> = makeMockWs(),
+  liveSocket: DeviceSocketRef = { current: null },
+  buffer = makeBuffer(),
+  live = true,
+) {
   const epoch = 42;
   const a = createDeviceAttachment({
     attachmentId: "att-1",
@@ -23,8 +28,11 @@ function makeAttachment(ws: ServerWebSocket<unknown> = makeMockWs()) {
     profile: "alice",
     buffer,
     epoch,
+    liveSocket,
   });
-  return { a, buffer, epoch };
+  // Most tests want a live socket; the resume-gating tests pass live=false.
+  if (live) a.goLive();
+  return { a, buffer, epoch, liveSocket };
 }
 
 describe("DeviceAttachment", () => {
@@ -123,6 +131,75 @@ describe("DeviceAttachment", () => {
     expect(a.sessionId).toBe("sess-1");
     expect(a.profile).toBe("alice");
     expect(a.ws).toBe(ws);
+  });
+
+  // ── Live-socket retarget (resume in-flight cycle fix) ─────────────────────
+
+  it("does NOT claim the live socket until goLive() (resume defers it past the replay)", () => {
+    const ws = makeMockWs();
+    const liveSocket: DeviceSocketRef = { current: null };
+    const { a } = makeAttachment(ws, liveSocket, makeBuffer(), /* live */ false);
+    expect(liveSocket.current).toBeNull();
+    a.goLive();
+    expect(liveSocket.current).not.toBeNull();
+  });
+
+  it("send() journals but does NOT write to the socket before goLive()", () => {
+    const ws = makeMockWs();
+    const liveSocket: DeviceSocketRef = { current: null };
+    const { a, buffer } = makeAttachment(ws, liveSocket, makeBuffer(), /* live */ false);
+    a.send({ type: "delta", delta: "pre-live" });
+    expect(ws.send).not.toHaveBeenCalled();
+    expect(buffer.newestSeq).toBe(1); // still journaled for the replay window
+  });
+
+  it("a STALE attachment's send follows the live ref to the NEW socket after a resume", () => {
+    // Shared per-device ref + buffer survive the reconnect.
+    const liveSocket: DeviceSocketRef = { current: null };
+    const buffer = makeBuffer();
+    const oldWs = makeMockWs();
+    const newWs = makeMockWs();
+
+    // Old connection.
+    const { a: oldAtt } = makeAttachment(oldWs, liveSocket, buffer);
+    // New connection (resume) takes over the live ref — same buffer, continued seq.
+    makeAttachment(newWs, liveSocket, buffer);
+
+    // The in-flight cycle still drives the OLD attachment. Its frame must land
+    // on the NEW socket, not the dead old one.
+    oldAtt.send({ type: "cycle.done", cycleId: "1" });
+    expect(oldWs.send).not.toHaveBeenCalled();
+    expect(newWs.send).toHaveBeenCalledTimes(1);
+    // Still journaled (seq continues on the shared buffer).
+    expect(buffer.newestSeq).toBe(1);
+  });
+
+  it("releaseSocket() nulls the ref only when this attachment still holds it", () => {
+    const liveSocket: DeviceSocketRef = { current: null };
+    const { a } = makeAttachment(makeMockWs(), liveSocket);
+    expect(liveSocket.current).not.toBeNull();
+    a.releaseSocket();
+    expect(liveSocket.current).toBeNull();
+  });
+
+  it("releaseSocket() is a no-op once a newer attachment has taken over (handover guard)", () => {
+    const liveSocket: DeviceSocketRef = { current: null };
+    const buffer = makeBuffer();
+    const { a: oldAtt } = makeAttachment(makeMockWs(), liveSocket, buffer);
+    makeAttachment(makeMockWs(), liveSocket, buffer); // new takes over
+    const afterTakeover = liveSocket.current;
+    oldAtt.releaseSocket(); // old teardown must NOT clobber the new writer
+    expect(liveSocket.current).toBe(afterTakeover);
+    expect(liveSocket.current).not.toBeNull();
+  });
+
+  it("send() no-ops cleanly (still journals) while the device is disconnected (ref null)", () => {
+    const liveSocket: DeviceSocketRef = { current: null };
+    const { a, buffer } = makeAttachment(makeMockWs(), liveSocket);
+    a.releaseSocket(); // simulate disconnect
+    expect(() => a.send({ type: "delta" })).not.toThrow();
+    // Frame still journaled for replay on the next resume.
+    expect(buffer.newestSeq).toBe(1);
   });
 
   // warn-once on repeated socket failures

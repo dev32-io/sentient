@@ -351,6 +351,11 @@ function teardownPipelineResources(
   services: GatewayServices,
   sessionId: string,
 ): void {
+  // Relinquish the device's live socket if this attachment still holds it.
+  // Identity-guarded inside releaseSocket: a resume handover where a newer
+  // attachment already took over is a no-op here, so the in-flight cycle keeps
+  // streaming to the new socket. On full teardown (no successor) it nulls.
+  captured.attachment?.releaseSocket();
   captured.attentionGate?.dispose();
   captured.bargeInController?.dispose();
   captured.conversationFeedUnsub?.();
@@ -497,6 +502,11 @@ function runResumableDisconnect(ws: ServerWebSocket<ClientData>, services: Gatew
     // (hasRetainedBuffers) correctly blocks session eviction during the TTL
     // window. Detach happens in teardownPipelineResources → deferredTeardown.
   }
+
+  // The socket is dead — stop routing the device's live writes here. The
+  // in-flight cycle keeps journaling into the buffer (replayed on resume); the
+  // socket write no-ops until the next attachment re-registers on reconnect.
+  ws.data.attachment?.releaseSocket();
 
   // Null out all pipeline fields so the dead socket holds no stale references.
   clearWsDataFields(ws);

@@ -52,7 +52,7 @@ function makePersonSession(): PersonSession {
 }
 
 function makeAttachment(id: string) {
-  return { attachmentId: id };
+  return { attachmentId: id, releaseSocket: vi.fn() };
 }
 
 function makeServices(): GatewayServices {

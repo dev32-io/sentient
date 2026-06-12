@@ -2,7 +2,7 @@ import type { ServerWebSocket } from "bun";
 import { getLog } from "../logging/logger.js";
 import { BINARY_TYPE_AUDIO, type FrameSequencer, createFrameSequencer } from "../session-handlers/frame-sequencer.js";
 import type { SessionReplayBuffer } from "../session-handlers/session-replay-buffer.js";
-import type { PersonSessionAttachment } from "./person-session.js";
+import type { DeviceSocketRef, DeviceSocketSink, PersonSessionAttachment } from "./person-session.js";
 
 const log = getLog(["sentient", "device-attachment"]);
 
@@ -27,6 +27,14 @@ export interface DeviceAttachmentInit<TData> {
   readonly buffer: SessionReplayBuffer;
   /** Epoch for the current buffer. Stamped on every JSON frame. */
   readonly epoch: number;
+  /**
+   * Shared per-device live-socket ref (acquired from PersonSession). This
+   * attachment registers its own raw socket writer as `current` on creation,
+   * and its sequencer resolves `current` at send time. A stale attachment that
+   * is still draining an in-flight cycle after a resumable reconnect therefore
+   * writes to whatever socket is currently live, not the dead one it captured.
+   */
+  readonly liveSocket: DeviceSocketRef;
 }
 
 export interface DeviceAttachment<TData = unknown> extends PersonSessionAttachment {
@@ -44,6 +52,21 @@ export interface DeviceAttachment<TData = unknown> extends PersonSessionAttachme
   readonly ws: ServerWebSocket<TData>;
   /** The frame sequencer — exposed for testing. */
   readonly sequencer: FrameSequencer;
+  /**
+   * Make THIS attachment's socket the device's current live writer. Deferred
+   * (not done at construction) so a resume can flush its replay window FIRST,
+   * then go live — otherwise an in-flight cycle frame could outrun the replay
+   * and poison the client's resume cursor. Idempotent.
+   */
+  goLive(): void;
+  /**
+   * Stop routing the device's live socket writes to THIS attachment's socket.
+   * Identity-guarded: only clears the shared ref when it still points at this
+   * attachment's writer, so a newer attachment that already took over (the
+   * resume handover case) is never clobbered. Called on resumable disconnect
+   * (socket dead → frames journal only) and on full teardown.
+   */
+  releaseSocket(): void;
 }
 
 export function createDeviceAttachment<TData>(init: DeviceAttachmentInit<TData>): DeviceAttachment<TData> {
@@ -87,11 +110,23 @@ export function createDeviceAttachment<TData>(init: DeviceAttachmentInit<TData>)
     }
   };
 
+  // This attachment's raw writer pair. Becomes the device's CURRENT live socket
+  // only when goLive() runs, so every sequencer (this one AND any stale one
+  // still draining an in-flight cycle) resolves it at send time. On a resume the
+  // caller DEFERS goLive() until AFTER the replay window is flushed — otherwise
+  // an in-flight frame could reach the new socket with a seq above the replay
+  // window and poison the client's resume cursor (dropping the replay).
+  const myWriter: DeviceSocketSink = { sendText, sendBinary: sendBinaryRaw };
+
+  // The sequencer journals to the buffer, then writes to whatever socket is
+  // CURRENTLY live for the device (resolved per-call), not a captured one. A
+  // null ref (device disconnected, or not yet live) still journals — the socket
+  // write no-ops.
   const sequencer = createFrameSequencer({
     epoch: init.epoch,
     buffer: init.buffer,
-    sendText,
-    sendBinary: sendBinaryRaw,
+    sendText: (s) => init.liveSocket.current?.sendText(s),
+    sendBinary: (b) => init.liveSocket.current?.sendBinary(b),
   });
 
   log.debug("created", {
@@ -118,6 +153,19 @@ export function createDeviceAttachment<TData>(init: DeviceAttachmentInit<TData>)
     },
     sendBinary(data) {
       sequencer.binary(data, BINARY_TYPE_AUDIO);
+    },
+    goLive() {
+      init.liveSocket.current = myWriter;
+      log.debug("goLive", { attachmentId: init.attachmentId, sessionId: init.sessionId });
+    },
+    releaseSocket() {
+      // Identity guard: only relinquish the live ref if it still points at this
+      // attachment. After a resume handover a newer attachment has already
+      // claimed it — the old attachment's teardown must NOT clobber it.
+      if (init.liveSocket.current === myWriter) {
+        init.liveSocket.current = null;
+        log.debug("releaseSocket", { attachmentId: init.attachmentId, sessionId: init.sessionId });
+      }
     },
   };
 }

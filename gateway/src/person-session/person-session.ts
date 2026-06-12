@@ -4,12 +4,14 @@ import {
   type AcquireDeviceBufferResult,
   type DeviceBufferEntry,
   DeviceBufferStore,
+  type DeviceSocketRef,
+  type DeviceSocketSink,
   shouldEvictDeviceBuffer,
 } from "./device-buffer-store.js";
 
 const log = getLog(["sentient", "person-session"]);
 
-export type { DeviceBufferEntry, AcquireDeviceBufferResult };
+export type { DeviceBufferEntry, AcquireDeviceBufferResult, DeviceSocketRef, DeviceSocketSink };
 export { shouldEvictDeviceBuffer };
 
 /**
