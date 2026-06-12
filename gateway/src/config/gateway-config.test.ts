@@ -12,6 +12,8 @@ session:
   ws_idle_timeout_ms: 255000
   retention_ttl_ms: 1800000
   replay_buffer_max_bytes: 16777216
+  per_user_max_sessions: 40
+  idle_timeout_ms: 900000
 stt:
   provider: local-stt
   url: ws://stt-service:8766
@@ -49,6 +51,8 @@ session:
   ws_idle_timeout_ms: 255000
   retention_ttl_ms: 1800000
   replay_buffer_max_bytes: 16777216
+  per_user_max_sessions: 40
+  idle_timeout_ms: 900000
 stt:
   provider: local-stt
 llm:
@@ -73,6 +77,8 @@ session:
   ws_idle_timeout_ms: 255000
   retention_ttl_ms: 1800000
   replay_buffer_max_bytes: 16777216
+  per_user_max_sessions: 40
+  idle_timeout_ms: 900000
 stt:
   provider: local-stt
 llm:
@@ -108,6 +114,8 @@ session:
   ws_idle_timeout_ms: 255000
   retention_ttl_ms: 1800000
   replay_buffer_max_bytes: 16777216
+  per_user_max_sessions: 40
+  idle_timeout_ms: 900000
 stt:
   provider: local-stt
 llm:
@@ -132,6 +140,8 @@ session:
   ws_idle_timeout_ms: 255000
   retention_ttl_ms: 1800000
   replay_buffer_max_bytes: 16777216
+  per_user_max_sessions: 40
+  idle_timeout_ms: 900000
 stt:
   provider: local-stt
 llm:

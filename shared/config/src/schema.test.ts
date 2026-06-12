@@ -14,6 +14,8 @@ const wsResilienceSession = {
   ws_idle_timeout_ms: 255000,
   retention_ttl_ms: 1800000,
   replay_buffer_max_bytes: 16777216,
+  per_user_max_sessions: 40,
+  idle_timeout_ms: 900000,
 };
 
 describe("gatewayConfigSchema", () => {
@@ -376,6 +378,8 @@ describe("sessionConfigSchema — WS-resilience fields", () => {
     ws_idle_timeout_ms: 255000,
     retention_ttl_ms: 1800000,
     replay_buffer_max_bytes: 16777216,
+    per_user_max_sessions: 40,
+    idle_timeout_ms: 900000,
   };
 
   it("parses a valid session config with WS-resilience fields", () => {
