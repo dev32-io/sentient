@@ -451,6 +451,7 @@ function clearWsDataFields(ws: ServerWebSocket<ClientData>): void {
   ws.data.conversationHistory = null;
   ws.data.personSession = null;
   ws.data.attachment = null;
+  ws.data.activityClock = null;
   ws.data.sessionId = null;
 }
 
