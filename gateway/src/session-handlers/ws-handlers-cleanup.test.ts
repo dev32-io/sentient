@@ -100,6 +100,7 @@ function makeWs(overrides: Partial<ClientData>): ServerWebSocket<ClientData> {
     snapshotUnsub: null,
     acpWireDispose: null,
     acpSdkFrameUnsub: null,
+    activityClock: null,
     ...overrides,
   };
   return { data, send: vi.fn(), close: vi.fn() } as unknown as ServerWebSocket<ClientData>;

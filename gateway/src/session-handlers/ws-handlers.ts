@@ -50,6 +50,7 @@ export async function handleWebSocketMessage(
   // adapter config (see STTAdapterConfig.audioFormat).
   if (typeof message !== "string") {
     if (ws.data.audioAdapter && ws.data.isStreaming) {
+      ws.data.activityClock?.touch("ws.in");
       ws.data.audioAdapter.sendAudioFrame(message);
     }
     return;
@@ -78,6 +79,9 @@ export async function handleWebSocketMessage(
     parsed !== null &&
     (parsed as { type?: unknown }).type === "user.preferences.patch"
   ) {
+    // A preferences change is real session activity — touch before the early
+    // return so a prefs-only session doesn't read as idle to the watchdog.
+    ws.data.activityClock?.touch("ws.in");
     await dispatchPreferencesPatch(ws, parsed, services);
     return;
   }
@@ -90,6 +94,7 @@ export async function handleWebSocketMessage(
   const msg = msgResult.data;
 
   if (msg.type !== "ping") {
+    ws.data.activityClock?.touch("ws.in");
     log.debug("message-received", { type: msg.type });
   }
 

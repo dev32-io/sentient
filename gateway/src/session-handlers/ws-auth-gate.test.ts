@@ -55,6 +55,7 @@ function fakeWs(): FakeWs {
     snapshotUnsub: null,
     acpWireDispose: null,
     acpSdkFrameUnsub: null,
+    activityClock: null,
   };
   const ws: FakeWs = {
     data,
