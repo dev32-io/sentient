@@ -60,7 +60,7 @@ function buildPersonSessionRegistry(
     hermes: cfg.hermes,
     userPortStore,
     apiKeyResolver: () => secrets.getHermesAuthTokenSync(),
-    retentionTtlMs: cfg.session.retention_ttl_ms,
+    idleTimeoutMs: cfg.session.idle_timeout_ms,
     replayBufferMaxBytes: cfg.session.replay_buffer_max_bytes,
     options: { voiceLoader },
   });

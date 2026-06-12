@@ -84,7 +84,7 @@ describe("PersonSessionRegistry", () => {
       hermes: CONFIG,
       userPortStore,
       apiKeyResolver: () => FAKE_TOKEN,
-      retentionTtlMs: TTL_MS,
+      idleTimeoutMs: TTL_MS,
       replayBufferMaxBytes: REPLAY_BYTES,
     });
   });
@@ -149,77 +149,75 @@ describe("PersonSessionRegistry.sweep", () => {
       hermes: CONFIG,
       userPortStore,
       apiKeyResolver: () => FAKE_TOKEN,
-      retentionTtlMs: TTL_MS,
+      idleTimeoutMs: TTL_MS,
       replayBufferMaxBytes: REPLAY_BYTES,
     });
   }
 
-  it("does not remove a session that has live attachments", async () => {
+  it("does not remove a session that has a live retained device buffer (attached, within idle window)", async () => {
     const reg = makeRegistry();
     const session = await reg.getOrCreate(ALICE);
     expect(session).not.toBeNull();
-    const attachment = makeAttachment("ws-1");
-    session?.attach(attachment);
 
-    const result = reg.sweep(Date.now() + TTL_MS + 60_000);
+    // Acquire a device buffer — still attached (not released).
+    // Clock was just stamped at acquire time; nowMs is far future but idleTimeoutMs
+    // is also very large so the buffer is NOT idle yet.
+    session?.acquireDeviceBuffer("dev-phone");
+
+    // Sweep with a nowMs just 1 second past acquisition — well within any idle window.
+    const result = reg.sweep(Date.now() + 1_000);
     expect(result.sessionsRemoved).toBe(0);
     expect(reg.get(ALICE)).not.toBeNull();
   });
 
-  it("does not remove a session that is idle but within TTL", async () => {
-    const reg = makeRegistry();
-    await reg.getOrCreate(ALICE);
-    // Session was just created; idleSinceMs is very recent.
-    const result = reg.sweep(Date.now() + TTL_MS - 100);
-    expect(result.sessionsRemoved).toBe(0);
-    expect(reg.get(ALICE)).not.toBeNull();
-  });
-
-  it("removes an idle session with no retained buffers after TTL expires", async () => {
+  it("removes a session once all its device buffers are swept idle", async () => {
     const reg = makeRegistry();
     const session = await reg.getOrCreate(ALICE);
     expect(session).not.toBeNull();
-    // Attach then detach to set idleSinceMs to now.
+
+    // Acquire then detach a device buffer.
     const att = makeAttachment("ws-1");
     session?.attach(att);
+    session?.acquireDeviceBuffer("dev-phone");
     session?.detach(att);
+    session?.releaseDeviceBuffer("dev-phone");
 
-    // Sweep far in the future — past the TTL.
+    // Sweep far in the future — past the idle timeout.
     const result = reg.sweep(Date.now() + TTL_MS + 60_000);
     expect(result.sessionsChecked).toBeGreaterThanOrEqual(1);
     expect(result.sessionsRemoved).toBe(1);
     expect(reg.get(ALICE)).toBeNull();
   });
 
-  it("keeps an active session and removes the idle one when both exist", async () => {
+  it("keeps an active session with a live buffer and removes the empty idle one", async () => {
     const reg = makeRegistry();
     const alice = await reg.getOrCreate(ALICE);
     const bob = await reg.getOrCreate(BOB);
     expect(alice).not.toBeNull();
     expect(bob).not.toBeNull();
 
-    // Attach alice — she stays active.
-    const att = makeAttachment("ws-alice");
-    alice?.attach(att);
+    // Alice has an acquired device buffer (still attached, recently stamped).
+    alice?.acquireDeviceBuffer("dev-alice");
 
-    // Bob is idle since creation.
-    const result = reg.sweep(Date.now() + TTL_MS + 60_000);
+    // Bob has no device buffers — hasRetainedBuffers() is false → removed immediately.
+    const result = reg.sweep(Date.now() + 1_000);
     expect(result.sessionsRemoved).toBe(1);
-    expect(reg.get(ALICE)).not.toBeNull(); // still live (has attachment)
-    expect(reg.get(BOB)).toBeNull(); // evicted
+    expect(reg.get(ALICE)).not.toBeNull(); // still live (has retained buffer)
+    expect(reg.get(BOB)).toBeNull(); // evicted (no buffers)
   });
 
-  it("does not remove an idle session that still has retained device buffers", async () => {
+  it("does not remove a session that still has a retained device buffer (even when idle timeout is large)", async () => {
     const reg = makeRegistry();
     const session = await reg.getOrCreate(ALICE);
     expect(session).not.toBeNull();
 
-    // Acquire a device buffer (attaches; then detach session attachment but keep buffer)
+    // Acquire a device buffer but do NOT release it → hasRetainedBuffers() = true.
     const att = makeAttachment("ws-1");
     session?.attach(att);
     session?.acquireDeviceBuffer("dev-phone");
     session?.detach(att);
-    // Do NOT release the device buffer → hasRetainedBuffers() = true.
+    // Buffer still attached (not released) — idle sweep won't remove attached entries
+    // unless forceClose fires (and we haven't registered one here).
 
     const result = reg.sweep(Date.now() + TTL_MS + 60_000);
     expect(result.sessionsRemoved).toBe(0);

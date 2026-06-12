@@ -307,7 +307,7 @@ describe("DeviceBufferStore.acquire — handover of the prior deferred teardown"
     // The sweep must NOT re-run it (acquire detached it from the entry).
     store.release("dev-A");
     const future = Date.now() + TTL_MS + 1000;
-    store.sweepExpired(future, TTL_MS);
+    store.sweepIdle(future, TTL_MS);
     expect(teardown).toHaveBeenCalledTimes(1);
   });
 

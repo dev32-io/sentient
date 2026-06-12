@@ -162,27 +162,27 @@ describe("PersonSession", () => {
     expect(s.hasRetainedBuffers()).toBe(true);
   });
 
-  it("sweepExpired evicts detached entries past TTL", () => {
+  it("sweepIdle evicts detached idle entries past the window", () => {
     const s = makeSession();
-    const TTL = 30_000;
+    const IDLE_TIMEOUT = 30_000;
 
     s.acquireDeviceBuffer("dev-A");
     s.releaseDeviceBuffer("dev-A");
     s.acquireDeviceBuffer("dev-B");
     s.releaseDeviceBuffer("dev-B");
 
-    // Sweep far in the future — both entries are past the TTL.
-    const FAR_FUTURE = Date.now() + TTL + 1000;
-    const evicted = s.sweepExpired(FAR_FUTURE, TTL);
+    // Sweep far in the future — both entries are past the idle timeout.
+    const FAR_FUTURE = Date.now() + IDLE_TIMEOUT + 1000;
+    const evicted = s.sweepIdle(FAR_FUTURE, IDLE_TIMEOUT);
     expect(evicted).toBe(2);
     expect(s.hasRetainedBuffers()).toBe(false);
   });
 
-  it("sweepExpired does not evict a still-attached entry (detachedAtMs is null)", () => {
+  it("sweepIdle force-closes a still-attached idle entry (does not remove it here)", () => {
     const s = makeSession();
     s.acquireDeviceBuffer("dev-A");
-    // Never released — detachedAtMs remains null.
-    const evicted = s.sweepExpired(Number.MAX_SAFE_INTEGER, 0);
+    // Never released — still attached.
+    const evicted = s.sweepIdle(Number.MAX_SAFE_INTEGER, 0);
     expect(evicted).toBe(0);
     expect(s.hasRetainedBuffers()).toBe(true);
   });

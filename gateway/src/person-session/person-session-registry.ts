@@ -82,10 +82,11 @@ export interface PersonSessionRegistryDeps {
   userPortStore: UserPortStore;
   apiKeyResolver: ApiKeyResolver;
   /**
-   * How long a detached session (idle + no retained buffers) survives.
-   * Must be provided explicitly — sourced from config.session.retention_ttl_ms.
+   * How long a device buffer may be idle (no activity-clock touch) before
+   * the sweep reaps it. Must be provided explicitly — sourced from
+   * config.session.idle_timeout_ms.
    */
-  retentionTtlMs: number;
+  idleTimeoutMs: number;
   /**
    * Per-device replay ring buffer cap in bytes.
    * Must be provided explicitly — sourced from config.session.replay_buffer_max_bytes.
@@ -97,10 +98,10 @@ export interface PersonSessionRegistryDeps {
 export function createPersonSessionRegistry(deps: PersonSessionRegistryDeps): PersonSessionRegistry {
   const sessions = new Map<string, PersonSession>();
   const { voiceLoader, nowMs: clockNowMs } = deps.options ?? {};
-  const retentionTtlMs = deps.retentionTtlMs;
+  const idleTimeoutMs = deps.idleTimeoutMs;
   const replayBufferMaxBytes = deps.replayBufferMaxBytes;
-  // Sweep every ~retentionTtlMs/6 (e.g. 5 min for a 30-min TTL).
-  const sweepIntervalMs = Math.max(60_000, Math.floor(retentionTtlMs / 6));
+  // Sweep every ~idleTimeoutMs/6 (e.g. 5 min for a 30-min idle timeout).
+  const sweepIntervalMs = Math.max(60_000, Math.floor(idleTimeoutMs / 6));
   const now = clockNowMs ?? (() => Date.now());
 
   async function loadAndApplyVoice(session: PersonSession): Promise<void> {
@@ -123,19 +124,8 @@ export function createPersonSessionRegistry(deps: PersonSessionRegistryDeps): Pe
 
     for (const [userId, session] of sessions) {
       sessionsChecked += 1;
-      buffersEvicted += session.sweepExpired(nowMs, retentionTtlMs);
-
-      // Remove idle sessions (no attachments, no retained buffers) that have
-      // been idle longer than the TTL. `idleSinceMs === 0` means the session
-      // currently has live attachments — never remove those.
-      const idleSince = session.idleSinceMs;
-      const canRemove =
-        session.attachmentCount === 0 &&
-        !session.hasRetainedBuffers() &&
-        idleSince > 0 &&
-        nowMs - idleSince >= retentionTtlMs;
-
-      if (canRemove) {
+      buffersEvicted += session.sweepIdle(nowMs, idleTimeoutMs);
+      if (!session.hasRetainedBuffers()) {
         sessions.delete(userId);
         sessionsRemoved += 1;
         log.info("sweep.session-removed", { userId, ageMs: session.ageMs });
