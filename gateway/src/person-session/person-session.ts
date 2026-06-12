@@ -6,13 +6,11 @@ import {
   DeviceBufferStore,
   type DeviceSocketRef,
   type DeviceSocketSink,
-  shouldEvictDeviceBuffer,
 } from "./device-buffer-store.js";
 
 const log = getLog(["sentient", "person-session"]);
 
 export type { DeviceBufferEntry, AcquireDeviceBufferResult, DeviceSocketRef, DeviceSocketSink };
-export { shouldEvictDeviceBuffer };
 
 /**
  * One PersonSession per profile (alice/bob/family). Owns the rolling
@@ -224,12 +222,14 @@ export class PersonSession {
     return this._deviceBuffers.epochFor(deviceId);
   }
 
-  /**
-   * Evict device buffer entries that have been detached longer than `ttlMs`.
-   * Returns the number of entries evicted.
-   */
-  sweepExpired(nowMs: number, ttlMs: number): number {
-    return this._deviceBuffers.sweepExpired(nowMs, ttlMs);
+  /** Reap idle device buffers (>= idleTimeoutMs of no activity). Returns count removed. */
+  sweepIdle(nowMs: number, idleTimeoutMs: number): number {
+    return this._deviceBuffers.sweepIdle(nowMs, idleTimeoutMs);
+  }
+
+  /** Register the live-WS close hook for a device (session-configure). */
+  setForceClose(deviceId: string, forceClose: (() => void) | null): void {
+    this._deviceBuffers.setForceClose(deviceId, forceClose);
   }
 
   /**

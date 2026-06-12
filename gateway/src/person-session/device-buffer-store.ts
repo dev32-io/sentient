@@ -1,5 +1,6 @@
 import { getLog } from "../logging/logger.js";
 import { type SessionReplayBuffer, createSessionReplayBuffer } from "../session-handlers/session-replay-buffer.js";
+import { type ActivityClock, createActivityClock } from "../session/activity/activity-clock.js";
 
 const log = getLog(["sentient", "person-session", "device-buffer-store"]);
 
@@ -45,6 +46,14 @@ export interface DeviceBufferEntry {
    * so it doesn't fire after a successful resume.
    */
   deferredTeardown: (() => void) | null;
+  /** Activity clock — single idle source of truth for this device's session.
+   *  Reused across reconnects (same entry), like liveSocket. */
+  readonly clock: ActivityClock;
+  /** Closes the CURRENT live WS for this device, running the normal full
+   *  teardown. Registered at session-configure. null while detached. Used by
+   *  the idle sweep to reap a still-attached but silent (ping-keepalive)
+   *  session. Cleared on detach. */
+  forceClose: (() => void) | null;
 }
 
 export interface AcquireDeviceBufferResult {
@@ -70,19 +79,8 @@ export interface AcquireDeviceBufferResult {
    * to the new socket after a resume. Reused across reconnects.
    */
   readonly liveSocket: DeviceSocketRef;
-}
-
-// ---------------------------------------------------------------------------
-// Pure predicate
-// ---------------------------------------------------------------------------
-
-/**
- * Pure predicate: should a device buffer entry be evicted?
- * Detached entries older than `ttlMs` are eligible for eviction.
- * An entry that is still attached (detachedAtMs === null) is never evicted.
- */
-export function shouldEvictDeviceBuffer(detachedAtMs: number | null, nowMs: number, ttlMs: number): boolean {
-  return detachedAtMs !== null && nowMs - detachedAtMs >= ttlMs;
+  /** The device's activity clock, reused across reconnects. */
+  readonly clock: ActivityClock;
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +137,7 @@ export class DeviceBufferStore {
         resumed: true,
         priorDeferredTeardown,
         liveSocket: existing.liveSocket,
+        clock: existing.clock,
       };
     }
 
@@ -151,6 +150,8 @@ export class DeviceBufferStore {
       detachedAtMs: null,
       liveSocket: { current: null },
       deferredTeardown: null,
+      clock: createActivityClock(),
+      forceClose: null,
     };
     this._buffers.set(deviceId, entry);
     log.debug("acquire.fresh", {
@@ -158,14 +159,27 @@ export class DeviceBufferStore {
       epoch,
       prevEpoch: existing?.epoch ?? null,
     });
-    return { buffer, epoch, resumed: false, priorDeferredTeardown: null, liveSocket: entry.liveSocket };
+    return {
+      buffer,
+      epoch,
+      resumed: false,
+      priorDeferredTeardown: null,
+      liveSocket: entry.liveSocket,
+      clock: entry.clock,
+    };
+  }
+
+  /** Register the live-WS close hook for a device (called at session-configure). */
+  setForceClose(deviceId: string, forceClose: (() => void) | null): void {
+    const entry = this._buffers.get(deviceId);
+    if (entry !== undefined) entry.forceClose = forceClose;
   }
 
   /**
    * Mark a device buffer as detached (start its TTL clock).
    * The buffer is retained briefly for a quick reconnect.
    * An optional deferredTeardown callback is stashed on the entry and
-   * invoked by sweepExpired when the TTL expires without a reconnect.
+   * invoked by sweepIdle when the idle timeout expires without a reconnect.
    */
   release(deviceId: string, deferredTeardown?: () => void): void {
     const entry = this._buffers.get(deviceId);
@@ -175,6 +189,7 @@ export class DeviceBufferStore {
     }
     entry.detachedAtMs = Date.now();
     entry.deferredTeardown = deferredTeardown ?? null;
+    entry.forceClose = null;
     log.debug("release", { deviceId, epoch: entry.epoch, hasDeferredTeardown: deferredTeardown !== undefined });
   }
 
@@ -209,36 +224,53 @@ export class DeviceBufferStore {
   }
 
   /**
-   * Evict device buffer entries that have been detached longer than `ttlMs`.
-   * For each evicted entry that carries a deferredTeardown, the teardown is
-   * invoked exactly once (the closure is idempotent by construction).
-   * Returns the number of entries evicted.
+   * Reap device buffers that have been idle (no activity-clock touch) for
+   * >= idleTimeoutMs. Detached entries -> remove + run deferred teardown.
+   * Still-attached entries (a ping-keepalive client) -> invoke forceClose
+   * (the normal full teardown via WS close); the entry is removed on the
+   * resulting detach/dispose, not here. Returns the number of entries
+   * REMOVED here (attached forceClose excluded).
    */
-  sweepExpired(nowMs: number, ttlMs: number): number {
-    let evicted = 0;
+  sweepIdle(nowMs: number, idleTimeoutMs: number): number {
+    let removed = 0;
     for (const [deviceId, entry] of this._buffers) {
-      if (shouldEvictDeviceBuffer(entry.detachedAtMs, nowMs, ttlMs)) {
-        this._buffers.delete(deviceId);
-        evicted += 1;
-        log.debug("sweepExpired.evicted", {
+      if (entry.clock.idleMs(nowMs) < idleTimeoutMs) continue;
+      const attached = entry.detachedAtMs === null;
+      if (attached) {
+        log.info("sweepIdle.force-close", {
           deviceId,
           epoch: entry.epoch,
-          detachedAtMs: entry.detachedAtMs,
-          hasDeferredTeardown: entry.deferredTeardown !== null,
+          idleMs: entry.clock.idleMs(nowMs),
         });
-        if (entry.deferredTeardown !== null) {
-          try {
-            entry.deferredTeardown();
-          } catch (err: unknown) {
-            log.warn("sweepExpired.deferred-teardown-failed", {
-              deviceId,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
+        try {
+          entry.forceClose?.();
+        } catch (err: unknown) {
+          log.warn("sweepIdle.force-close-failed", {
+            deviceId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        continue;
+      }
+      this._buffers.delete(deviceId);
+      removed += 1;
+      log.info("sweepIdle.evicted", {
+        deviceId,
+        epoch: entry.epoch,
+        idleMs: entry.clock.idleMs(nowMs),
+      });
+      if (entry.deferredTeardown !== null) {
+        try {
+          entry.deferredTeardown();
+        } catch (err: unknown) {
+          log.warn("sweepIdle.deferred-teardown-failed", {
+            deviceId,
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
       }
     }
-    return evicted;
+    return removed;
   }
 
   /**

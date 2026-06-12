@@ -4,7 +4,7 @@
 # ---------------------------------------------------------------------------
 # Schema version — bumped by deploy/setup.py migrations. Do not hand-edit.
 # ---------------------------------------------------------------------------
-schema_version: "0.1.0"
+schema_version: "0.1.1"
 
 # ---------------------------------------------------------------------------
 # Server
@@ -13,7 +13,6 @@ port: 8888
 host: 0.0.0.0
 max_sessions: 100                        # Max concurrent WS connections (mobile + webui + cube, multi-user). Range 1–1000.
 auth_timeout_ms: 5000
-session_persist_ms: 120000           # how long a disconnected session stays alive
 
 # ---------------------------------------------------------------------------
 # Logging — verbosity, file rotation and retention
@@ -64,9 +63,6 @@ tls:
 # Session — turn detection, barge-in, inactivity
 # ---------------------------------------------------------------------------
 session:
-  inactivity_timeout_ms: 300000      # 5 min — suspend STT/TTS after this idle period
-  inactivity_check_interval_ms: 30000
-
   # Barge-in: user interrupts assistant mid-speech
   barge_in:
     no_interrupt_ms: 500             # ignore audio for this long after assistant starts speaking
@@ -81,8 +77,10 @@ session:
 
   # WS resilience (resumable sequenced stream + replay buffer) — Slice 3
   ws_idle_timeout_ms: 255000         # Range: 1000–255000. Bun WS idle close; Bun takes SECONDS (cap 255), gateway converts ms→s.
-  retention_ttl_ms: 1800000          # Range: 60000–86400000 (1 min–24 hr). PersonSession + per-device replay buffer survive disconnect this long, then evict. Default 30 min.
   replay_buffer_max_bytes: 16777216  # 16 MB. Range: 65536–268435456 (64 KB–256 MB). Per device-session ring cap (evict-oldest).
+  per_user_max_sessions: 40           # max concurrent WS sessions for ONE user (1–100). Bounds memory under churn.
+  idle_timeout_ms: 900000             # 15 min. Reap a device buffer + its session after this much silence across
+                                      # WS (in/out) AND Hermes ACP (in/out). Resets on any activity; ping/pong excluded.
 
 # ---------------------------------------------------------------------------
 # STT — local-stt service (Silero VAD + Smart-Turn v3 + SenseVoice-Small)
@@ -241,16 +239,6 @@ hermes:
 
   defaults:
     max_output_tokens: 512                   # per-turn token cap
-    request_timeout_ms: 60000                # Hermes call deadline
-    idempotency_window_s: 300                # Hermes de-dup window
-
-  resource_management:
-    mode: always_on                          # or "on_demand" per spec §5.11
-    max_concurrent: 3
-    idle_pause_after_ms: 900000              # 15 min
-    idle_stop_after_ms: 3600000              # 60 min
-    ram_pressure_threshold_pct: 85
-    cold_start_filler_text: "one sec..."
 
   web_tools:
     provider: searxng

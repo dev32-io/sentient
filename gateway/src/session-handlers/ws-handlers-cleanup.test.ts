@@ -59,7 +59,7 @@ function makeServices(): GatewayServices {
   return {
     sessionControls: { unregister: vi.fn(), register: vi.fn() },
     sessionRouter: { release: vi.fn(), bind: vi.fn(), get: vi.fn(), updateConversationId: vi.fn() },
-    sessionManager: { removeSession: vi.fn(), createSession: vi.fn() },
+    sessionManager: { removeSession: vi.fn(), createSession: vi.fn(), unbindUser: vi.fn(), bindUser: vi.fn() },
   } as unknown as GatewayServices;
 }
 
@@ -100,6 +100,7 @@ function makeWs(overrides: Partial<ClientData>): ServerWebSocket<ClientData> {
     snapshotUnsub: null,
     acpWireDispose: null,
     acpSdkFrameUnsub: null,
+    activityClock: null,
     ...overrides,
   };
   return { data, send: vi.fn(), close: vi.fn() } as unknown as ServerWebSocket<ClientData>;
@@ -236,7 +237,7 @@ describe("cleanupSession — resumable disconnect (full=false + stream.resume)",
 
     // Sweep past TTL — should call teardown.
     const future = Date.now() + TTL_MS + 1000;
-    store.sweepExpired(future, TTL_MS);
+    store.sweepIdle(future, TTL_MS);
 
     expect(teardown).toHaveBeenCalledTimes(1);
   });
@@ -338,7 +339,7 @@ describe("cleanupSession — full teardown (full=true)", () => {
 // C) Retention sweep runs deferred teardown exactly once (idempotency)
 // ---------------------------------------------------------------------------
 
-describe("DeviceBufferStore.sweepExpired — deferred teardown lifecycle", () => {
+describe("DeviceBufferStore.sweepIdle — deferred teardown lifecycle", () => {
   it("runs deferredTeardown when the entry is evicted by sweep", () => {
     const store = new DeviceBufferStore(REPLAY_MAX_BYTES);
     store.acquire("dev-A");
@@ -346,7 +347,7 @@ describe("DeviceBufferStore.sweepExpired — deferred teardown lifecycle", () =>
     store.release("dev-A", teardown);
 
     const future = Date.now() + TTL_MS + 1000;
-    const evicted = store.sweepExpired(future, TTL_MS);
+    const evicted = store.sweepIdle(future, TTL_MS);
 
     expect(evicted).toBe(1);
     expect(teardown).toHaveBeenCalledTimes(1);
@@ -360,16 +361,16 @@ describe("DeviceBufferStore.sweepExpired — deferred teardown lifecycle", () =>
 
     const future = Date.now() + TTL_MS + 1000;
     // First sweep evicts and calls teardown.
-    store.sweepExpired(future, TTL_MS);
+    store.sweepIdle(future, TTL_MS);
     // Second sweep — entry is already gone, teardown must not be called again.
-    store.sweepExpired(future + 1000, TTL_MS);
+    store.sweepIdle(future + 1000, TTL_MS);
 
     expect(teardown).toHaveBeenCalledTimes(1);
   });
 
   it("idempotency guard prevents double-run even when teardown is called manually then by sweep", () => {
     // The deferredTeardown closure itself has an idempotency guard (tornDown flag).
-    // This test verifies the guard using the raw DeviceBufferStore.release + sweepExpired.
+    // This test verifies the guard using the raw DeviceBufferStore.release + sweepIdle.
     const store = new DeviceBufferStore(REPLAY_MAX_BYTES);
     store.acquire("dev-A");
 
@@ -386,7 +387,7 @@ describe("DeviceBufferStore.sweepExpired — deferred teardown lifecycle", () =>
     teardown();
     // Sweep now tries to call it again.
     const future = Date.now() + TTL_MS + 1000;
-    store.sweepExpired(future, TTL_MS);
+    store.sweepIdle(future, TTL_MS);
 
     expect(callCount).toBe(1);
   });
@@ -411,7 +412,7 @@ describe("DeviceBufferStore.acquire — hands deferredTeardown back on resume (T
     // Sweep — teardown must NOT be called by the sweep (acquire detached it).
     const future = Date.now() + TTL_MS + 1000;
     store.release("dev-A"); // release again so sweep is eligible
-    store.sweepExpired(future, TTL_MS);
+    store.sweepIdle(future, TTL_MS);
 
     expect(teardown).not.toHaveBeenCalled();
   });
@@ -515,9 +516,9 @@ describe("cleanupSession — deferred closure fires teardownPipelineResources on
     expect(services.sessionRouter.release).not.toHaveBeenCalled();
     expect(services.sessionManager.removeSession).not.toHaveBeenCalled();
 
-    // Advance time past TTL and sweep — the closure fires via sweepExpired.
+    // Advance time past TTL and sweep — the closure fires via sweepIdle.
     const future = Date.now() + TTL_MS + 1000;
-    session.sweepExpired(future, TTL_MS);
+    session.sweepIdle(future, TTL_MS);
 
     // The three service teardown calls must have fired exactly once.
     expect(services.sessionControls.unregister).toHaveBeenCalledTimes(1);
@@ -547,9 +548,9 @@ describe("cleanupSession — deferred closure fires teardownPipelineResources on
 
     const future = Date.now() + TTL_MS + 1000;
     // First sweep evicts the entry and fires the closure.
-    session.sweepExpired(future, TTL_MS);
+    session.sweepIdle(future, TTL_MS);
     // Second sweep — entry is gone, closure must not run again.
-    session.sweepExpired(future + 1000, TTL_MS);
+    session.sweepIdle(future + 1000, TTL_MS);
 
     expect(services.sessionControls.unregister).toHaveBeenCalledTimes(1);
     expect(services.sessionRouter.release).toHaveBeenCalledTimes(1);

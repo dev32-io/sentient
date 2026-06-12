@@ -30,7 +30,10 @@ export interface PhaseRoutesOutput {
 export function runPhaseRoutes(input: PhaseRoutesInput): PhaseRoutesOutput {
   const { cfg, internalSecretsStore, profileStore, userPortStore } = input;
 
-  const sessionManager = createSessionManager({ maxSessions: cfg.maxSessions });
+  const sessionManager = createSessionManager({
+    maxSessions: cfg.maxSessions,
+    perUserMaxSessions: cfg.session.per_user_max_sessions,
+  });
   const personSessions = buildPersonSessionRegistry(cfg, internalSecretsStore, profileStore, userPortStore);
   // One pooled ACP wire per userId, ref-counted across PersonSession
   // attachments — keeps a second client (webui + mobile) from dialing a
@@ -60,7 +63,7 @@ function buildPersonSessionRegistry(
     hermes: cfg.hermes,
     userPortStore,
     apiKeyResolver: () => secrets.getHermesAuthTokenSync(),
-    retentionTtlMs: cfg.session.retention_ttl_ms,
+    idleTimeoutMs: cfg.session.idle_timeout_ms,
     replayBufferMaxBytes: cfg.session.replay_buffer_max_bytes,
     options: { voiceLoader },
   });

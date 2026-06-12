@@ -1,40 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { DeviceBufferStore, shouldEvictDeviceBuffer } from "./device-buffer-store.js";
+import { describe, expect, it, vi } from "vitest";
+import { DeviceBufferStore } from "./device-buffer-store.js";
 
 const BUFFER_MAX_BYTES = 1024 * 64; // 64 KB — small for tests
-const TTL_MS = 30_000; // 30 s for tests
 
 function makeStore(): DeviceBufferStore {
   return new DeviceBufferStore(BUFFER_MAX_BYTES);
 }
-
-// ---------------------------------------------------------------------------
-// shouldEvictDeviceBuffer truth table
-// ---------------------------------------------------------------------------
-
-describe("shouldEvictDeviceBuffer", () => {
-  it("returns false when detachedAtMs is null (still attached)", () => {
-    expect(shouldEvictDeviceBuffer(null, 9_999_999, TTL_MS)).toBe(false);
-  });
-
-  it("returns false when detached but within TTL", () => {
-    const detached = 1_000_000;
-    const now = detached + TTL_MS - 1;
-    expect(shouldEvictDeviceBuffer(detached, now, TTL_MS)).toBe(false);
-  });
-
-  it("returns true when detached exactly at TTL boundary", () => {
-    const detached = 1_000_000;
-    const now = detached + TTL_MS;
-    expect(shouldEvictDeviceBuffer(detached, now, TTL_MS)).toBe(true);
-  });
-
-  it("returns true when detached past TTL", () => {
-    const detached = 1_000_000;
-    const now = detached + TTL_MS + 1000;
-    expect(shouldEvictDeviceBuffer(detached, now, TTL_MS)).toBe(true);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // DeviceBufferStore
@@ -47,6 +18,7 @@ describe("DeviceBufferStore", () => {
     expect(result.resumed).toBe(false);
     expect(result.epoch).toBe(1);
     expect(result.buffer).toBeDefined();
+    expect(result.clock).toBeDefined();
   });
 
   it("acquire resumes the same buffer when resumeEpoch matches", () => {
@@ -116,31 +88,47 @@ describe("DeviceBufferStore", () => {
     expect(store.hasRetainedBuffers()).toBe(true);
   });
 
-  it("sweepExpired evicts detached entries past TTL", () => {
-    const store = makeStore();
-    store.acquire("dev-A");
-    store.release("dev-A");
-    store.acquire("dev-B");
-    store.release("dev-B");
-
-    const FAR_FUTURE = Date.now() + TTL_MS + 1000;
-    const evicted = store.sweepExpired(FAR_FUTURE, TTL_MS);
-    expect(evicted).toBe(2);
-    expect(store.hasRetainedBuffers()).toBe(false);
+  it("evicts a detached idle buffer past the window, running deferred teardown", () => {
+    const store = new DeviceBufferStore(1024);
+    store.acquire("dev-1");
+    const td = vi.fn();
+    store.release("dev-1", td);
+    const removed = store.sweepIdle(Date.now() + 900_000, 900_000);
+    expect(removed).toBe(1);
+    expect(td).toHaveBeenCalledTimes(1);
   });
 
-  it("sweepExpired does not evict a still-attached entry (detachedAtMs is null)", () => {
-    const store = makeStore();
-    store.acquire("dev-A");
-    // Never released — detachedAtMs remains null.
-    const evicted = store.sweepExpired(Number.MAX_SAFE_INTEGER, 0);
-    expect(evicted).toBe(0);
-    expect(store.hasRetainedBuffers()).toBe(true);
+  it("force-closes a still-attached but idle buffer (ping-keepalive), without removing it here", () => {
+    const store = new DeviceBufferStore(1024);
+    store.acquire("dev-1"); // attached (detachedAtMs === null)
+    const fc = vi.fn();
+    store.setForceClose("dev-1", fc);
+    const removed = store.sweepIdle(Date.now() + 900_000, 900_000);
+    expect(fc).toHaveBeenCalledTimes(1);
+    expect(removed).toBe(0);
+  });
+
+  it("keeps a buffer whose clock was recently touched", () => {
+    const store = new DeviceBufferStore(1024);
+    const acq = store.acquire("dev-1");
+    // Touch resets lastActivityMs to Date.now() at that instant.
+    acq.clock.touch("acp.in");
+    // Use a nowMs just 1 second after the touch — well under the 900s window.
+    const justAfterTouch = acq.clock.lastActivityMs() + 1_000;
+    expect(store.sweepIdle(justAfterTouch, 900_000)).toBe(0);
   });
 
   it("release warns on unknown deviceId (no throw)", () => {
     const store = makeStore();
     // Should not throw — just a warn log.
     expect(() => store.release("ghost")).not.toThrow();
+  });
+
+  it("reuses the same activity clock across a resumed acquire", () => {
+    const store = new DeviceBufferStore(1024);
+    const first = store.acquire("dev-1");
+    const resumed = store.acquire("dev-1", { resumeEpoch: first.epoch });
+    expect(resumed.resumed).toBe(true);
+    expect(resumed.clock).toBe(first.clock);
   });
 });

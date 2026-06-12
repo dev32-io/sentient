@@ -40,8 +40,6 @@ export interface AcpPerProfileConnectionConfig {
   readonly currentEpoch?: () => number;
   /** Open the wire (lazy reconnect) WITHOUT sending; awaited before reading the epoch so the re-attach decision sees the final generation. */
   readonly ensureReady?: () => Promise<void>;
-  /** Per-request deadline (ms) — backstop so a prompt can't hang if a close event is missed. Forwarded to AcpClient. */
-  readonly requestTimeoutMs?: number;
   /** Optional override — testing only. */
   readonly client?: AcpClient;
 }
@@ -112,7 +110,6 @@ export function createAcpPerProfileConnection(cfg: AcpPerProfileConnectionConfig
       onRequestSent: (id) => {
         nextRequestId = id;
       },
-      ...(cfg.requestTimeoutMs !== undefined ? { requestTimeoutMs: cfg.requestTimeoutMs } : {}),
     });
 
   cfg.onIncoming((raw) => client.handleIncoming(raw));
@@ -235,12 +232,25 @@ export function createAcpPerProfileConnection(cfg: AcpPerProfileConnectionConfig
       log.debug("cancel.noop");
       return;
     }
-    const { sessionId } = inflight;
+    const { id, sessionId } = inflight;
     log.info("cancel.send", { sessionId });
     // ACP cancel is a session/cancel notification keyed by sessionId — NOT
     // LSP-style $/cancelRequest. The agent will resolve the in-flight prompt
     // with stopReason="cancelled" of its own accord.
-    await client.notify("session/cancel", { sessionId });
+    try {
+      await client.notify("session/cancel", { sessionId });
+    } catch (err: unknown) {
+      // Best-effort: a failed cancel send (dead/hung wire) does not matter for
+      // local cleanup — cancelPending below settles the in-flight prompt. Log
+      // and swallow so cancelInflight never rejects (its caller fire-and-forgets).
+      log.warn("cancel.send-failed", { sessionId, reason: err instanceof Error ? err.message : String(err) });
+    } finally {
+      // Settle the in-flight session/prompt promise regardless of whether the
+      // cancel send reached Hermes — a dead wire must not leak a pending entry.
+      // cancelPending is a no-op if the prompt already resolved (e.g. Hermes
+      // answered before the cancel notification arrived).
+      client.cancelPending(id, "cycle aborted");
+    }
   }
 
   function onEvent(cb: (e: InternalEvent) => void): () => void {

@@ -71,6 +71,13 @@ export async function translateHermesStream(
   // every event arrival; if the gap exceeds CYCLE_GAP_WARN_MS the
   // recurring timer logs a WARN with the last event type so we can
   // tell whether the stall is post-tool-start, mid-text-stream, etc.
+  //
+  // Intentionally NOT folded into the session ActivityClock idle watchdog
+  // (the cycle-abort control). This tracks HERMES-side silence only (resets on
+  // Hermes events, not client WS traffic) — exactly the signal for diagnosing
+  // where a cycle stalled. The ActivityClock, by contrast, stays warm on any
+  // boundary (ws+acp) and owns the reap decision. Two different questions, two
+  // signals; this one never aborts, so it is not a second control timer.
   let lastEventTs = startedAtMs;
   let lastEventType: HermesEvent["type"] | "<start>" = "<start>";
   const watchdog = setInterval(() => {

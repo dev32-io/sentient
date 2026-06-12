@@ -12,8 +12,9 @@ import {
 // (no code defaults — YAML is the source of truth per config rules).
 const wsResilienceSession = {
   ws_idle_timeout_ms: 255000,
-  retention_ttl_ms: 1800000,
   replay_buffer_max_bytes: 16777216,
+  per_user_max_sessions: 40,
+  idle_timeout_ms: 900000,
 };
 
 describe("gatewayConfigSchema", () => {
@@ -31,13 +32,10 @@ describe("gatewayConfigSchema", () => {
     expect(result.host).toBe("0.0.0.0");
     expect(result.max_sessions).toBe(100);
     expect(result.auth_timeout_ms).toBe(5000);
-    expect(result.session_persist_ms).toBe(120000);
   });
 
   it("applies session defaults", () => {
     const result = gatewayConfigSchema.parse(minimalValidConfig);
-    expect(result.session.inactivity_timeout_ms).toBe(300_000);
-    expect(result.session.inactivity_check_interval_ms).toBe(30_000);
     expect(result.session.tts_drain_grace_ms).toBe(2000);
     expect(result.session.barge_in.no_interrupt_ms).toBe(500);
     expect(result.session.barge_in.min_speech_duration_ms).toBe(50);
@@ -374,28 +372,20 @@ describe("applyConfigSchema", () => {
 describe("sessionConfigSchema — WS-resilience fields", () => {
   const validSession = {
     ws_idle_timeout_ms: 255000,
-    retention_ttl_ms: 1800000,
     replay_buffer_max_bytes: 16777216,
+    per_user_max_sessions: 40,
+    idle_timeout_ms: 900000,
   };
 
   it("parses a valid session config with WS-resilience fields", () => {
     const result = sessionConfigSchema.parse(validSession);
     expect(result.ws_idle_timeout_ms).toBe(255000);
-    expect(result.retention_ttl_ms).toBe(1800000);
     expect(result.replay_buffer_max_bytes).toBe(16777216);
-  });
-
-  it("fails loudly when retention_ttl_ms is missing", () => {
-    const { retention_ttl_ms: _omitted, ...withoutRetention } = validSession;
-    expect(sessionConfigSchema.safeParse(withoutRetention).success).toBe(false);
+    expect(result.idle_timeout_ms).toBe(900000);
   });
 
   it("rejects ws_idle_timeout_ms above Bun cap (255000 ms)", () => {
     expect(sessionConfigSchema.safeParse({ ...validSession, ws_idle_timeout_ms: 255001 }).success).toBe(false);
-  });
-
-  it("rejects retention_ttl_ms below minimum (60000 ms)", () => {
-    expect(sessionConfigSchema.safeParse({ ...validSession, retention_ttl_ms: 59999 }).success).toBe(false);
   });
 
   it("rejects ws_idle_timeout_ms below min (1000 ms)", () => {

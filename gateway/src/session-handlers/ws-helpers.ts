@@ -10,6 +10,7 @@ import type { ShortTermContext } from "../cerebrum/short-term-context-types.js";
 import type { TaskMirror } from "../cerebrum/task-mirror.js";
 import type { DeviceAttachment } from "../person-session/device-attachment.js";
 import type { PersonSession } from "../person-session/person-session.js";
+import type { ActivityClock } from "../session/activity/activity-clock.js";
 import type { BargeInController } from "./barge-in-controller.js";
 import type { InterruptController } from "./interrupt-controller.js";
 import type { SessionsHandlers } from "./sessions-handlers.js";
@@ -90,6 +91,12 @@ export interface CerebrumSessionData {
    * shared wire's lifetime.
    */
   acpSdkFrameUnsub: (() => void) | null;
+  /**
+   * Per-device activity clock. Null until session.configure completes and the
+   * device buffer's clock is wired in (Slice 7). Touches (ws.in / ws.out) are
+   * no-ops while null — safe to call unconditionally with optional chaining.
+   */
+  activityClock: ActivityClock | null;
 }
 
 /** Alias for compatibility with server.ts and ws-handlers.ts */
@@ -127,6 +134,7 @@ export function createEmptySessionData(): CerebrumSessionData {
     snapshotUnsub: null,
     acpWireDispose: null,
     acpSdkFrameUnsub: null,
+    activityClock: null,
   };
 }
 

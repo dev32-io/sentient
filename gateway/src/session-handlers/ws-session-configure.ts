@@ -67,6 +67,9 @@ const log = getLog(["sentient", "ws", "session-configure"]);
 const INPUT_SAMPLE_RATE = 16000;
 const OUTPUT_SAMPLE_RATE = 48000;
 const AUDIO_ENCODING = "pcm16";
+// Normal WS closure code (RFC 6455 1000). Local copy to avoid a circular import
+// from ws-handlers, which imports handleSessionConfigure from this file.
+const WS_NORMAL_CLOSURE = 1000;
 
 // ---------------------------------------------------------------------------
 // Session configure — Hermes dispatch wiring
@@ -234,7 +237,6 @@ export async function handleSessionConfigure(
     wsUrl: resolvedWsUrl,
     token: initialBinding.apiKey,
     acpWire: services.hermes?.acp_wire,
-    requestTimeoutMs: services.hermes?.defaults.request_timeout_ms,
     setDispose: (fn) => {
       ws.data.acpWireDispose = fn;
     },
@@ -273,10 +275,13 @@ export async function handleSessionConfigure(
     buffer: deviceBuffer,
     epoch: deviceEpoch,
     liveSocket: deviceLiveSocket,
+    clock: acquired.clock,
   });
   personSession.attach(attachment);
+  personSession.setForceClose(deviceId, () => ws.close(WS_NORMAL_CLOSURE, "idle-timeout"));
   ws.data.personSession = personSession;
   ws.data.attachment = attachment;
+  ws.data.activityClock = acquired.clock;
 
   // Live-socket activation is DEFERRED on a matching-epoch resume: the new
   // socket must not receive any frame until AFTER the replay window flushes
@@ -477,7 +482,7 @@ export async function handleSessionConfigure(
   ws.data.acpSdkFrameUnsub = sdkFrameUnsub;
 
   const hermesDeps: HermesDispatcherDeps = {
-    clientFor: () => createAcpHermesClient({ acpConn }),
+    clientFor: () => createAcpHermesClient({ acpConn, onActivity: (source) => acquired.clock.touch(source) }),
     mirror: conversationMirror,
     tasks: taskMirror,
     emit: wsSend,
@@ -1022,8 +1027,6 @@ interface AcquireAcpWireOrFailInput {
   readonly token: string;
   /** ACP wire resilience tunables (open timeout + reconnect backoff). */
   readonly acpWire: HermesAcpWire | undefined;
-  /** Per-request deadline backstop (ms) so an in-flight prompt can't hang. */
-  readonly requestTimeoutMs: number | undefined;
   /** Stash the release fn on the WS so the close-handler can drop this attachment's ref. */
   readonly setDispose: (fn: () => void) => void;
 }
@@ -1044,7 +1047,6 @@ async function acquireAcpWireOrFail(input: AcquireAcpWireOrFailInput): Promise<A
       wsUrl: input.wsUrl,
       token: input.token,
       sessionId: input.sessionId,
-      ...(input.requestTimeoutMs !== undefined ? { requestTimeoutMs: input.requestTimeoutMs } : {}),
       ...(acpWire
         ? {
             openTimeoutMs: acpWire.open_timeout_ms,

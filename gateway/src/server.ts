@@ -283,7 +283,6 @@ function buildSessionsHandler(services: GatewayServices): (req: Request) => Prom
     hermesApiKey: services.hermesApiKey,
     timeoutMs: services.sessions.hermes_http_timeout_ms,
     acpOpenTimeoutMs: services.hermes.acp_wire.open_timeout_ms,
-    acpRequestTimeoutMs: services.hermes.defaults.request_timeout_ms,
   };
   const userDataRoot = expandHome(services.sessions.user_data_root);
   return createSessionsHttpHandler({

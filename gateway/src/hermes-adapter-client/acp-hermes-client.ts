@@ -1,6 +1,7 @@
 import type { HermesClient } from "../cerebrum/hermes-client.js";
 import type { DispatchMode, HermesEvent, HermesTurnInput } from "../cerebrum/hermes-event-types.js";
 import { getLog } from "../logging/logger.js";
+import type { ActivitySource } from "../session/activity/activity-clock.js";
 import type { InternalEvent } from "./event-translator.js";
 import type { AcpPerProfileConnection } from "./per-profile-connection.js";
 
@@ -34,6 +35,10 @@ const log = getLog(["sentient", "hermes-adapter-client", "acp-hermes-client"]);
 export interface AcpHermesClientDeps {
   /** Long-lived ACP connection bootstrapped per WS session. */
   readonly acpConn: AcpPerProfileConnection;
+  /** Bound to this session's device activity clock. Touched on every ACP event
+   *  in (session/update) and the prompt send out. Optional so existing
+   *  callers/tests without a clock still compile. */
+  readonly onActivity?: (source: ActivitySource) => void;
 }
 
 interface QueueItem {
@@ -87,6 +92,7 @@ export function createAcpHermesClient(deps: AcpHermesClientDeps): HermesClient {
       // `session/new` request — events for the resulting sessionId can
       // arrive immediately, even before sendUserMessage's send completes).
       const unsubEvents = deps.acpConn.onEvent((evt) => {
+        deps.onActivity?.("acp.in");
         const translated = internalToHermesEvents(evt);
         if (translated.length === 0) return;
         queue.push(translated, false);
@@ -178,6 +184,7 @@ export function createAcpHermesClient(deps: AcpHermesClientDeps): HermesClient {
         forced: input.forcedSessionId !== undefined,
         chars: input.userMessage.length,
       });
+      deps.onActivity?.("acp.out");
       const sendPromise = deps.acpConn.sendUserMessage(promptArgs);
       sendPromise.catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);

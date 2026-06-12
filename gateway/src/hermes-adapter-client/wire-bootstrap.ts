@@ -40,12 +40,6 @@ export interface AcpWireBootstrapInput {
   readonly reconnect?: AcpWireReconnectConfig;
   /** sessionId for trace correlation across reconnects. */
   readonly sessionId?: string;
-  /**
-   * Per-request deadline (ms) — backstop so an in-flight `session/prompt` can't
-   * hang the dispatcher if a close event is missed. Threads to AcpClient.
-   * Defaults to `hermes.defaults.request_timeout_ms` at the call site.
-   */
-  readonly requestTimeoutMs?: number;
   /** Sleep injection for reconnect backoff — tests pass a fake. */
   readonly sleep?: (ms: number) => Promise<void>;
 }
@@ -118,7 +112,6 @@ export async function bootstrapAcpWire(input: AcpWireBootstrapInput): Promise<Ac
     // Open the wire (lazy reconnect) before the epoch is read, so the re-attach
     // decision sees the final post-reconnect generation.
     ensureReady: () => socket.ensureReady(),
-    ...(input.requestTimeoutMs !== undefined ? { requestTimeoutMs: input.requestTimeoutMs } : {}),
   });
 
   try {

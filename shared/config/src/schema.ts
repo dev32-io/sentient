@@ -15,20 +15,22 @@ export const bargeInConfigSchema = z.object({
 export type BargeInConfig = z.output<typeof bargeInConfigSchema>;
 
 export const sessionConfigSchema = z.object({
-  inactivity_timeout_ms: z.number().int().min(0).default(300_000),
-  inactivity_check_interval_ms: z.number().int().min(1000).default(30_000),
   tts_drain_grace_ms: z.number().int().min(0).max(5000).default(2000),
   barge_in: bargeInConfigSchema.default({}),
   // WS resilience (resumable sequenced stream + replay buffer) — Slice 3
   // Bun WS idle close timeout in ms; gateway converts to seconds at boot.
   // Bun's idleTimeout cap is 255 s → max effective value 255000 ms.
   ws_idle_timeout_ms: z.number().int().min(1000).max(255000),
-  // How long a disconnected PersonSession + per-device replay buffer survive
-  // before eviction. Range: 60000–86400000 (1 min – 24 hr).
-  retention_ttl_ms: z.number().int().min(60_000).max(86_400_000),
   // Per device-session replay ring buffer cap in bytes (evict-oldest).
   // Range: 65536–268435456 (64 KB – 256 MB).
   replay_buffer_max_bytes: z.number().int().min(65_536).max(268_435_456),
+  // Per-user concurrent WS session cap. Bounds memory under churn (one user /
+  // reconnect-loop). Range 1–100.
+  per_user_max_sessions: z.number().int().min(1).max(100),
+  // Single activity-based idle window. A device buffer + its session are reaped
+  // after this much silence across BOTH boundaries (client WS in/out + Hermes
+  // ACP in/out). Resets on any activity; ping/pong excluded. Range: 60000–86400000.
+  idle_timeout_ms: z.number().int().min(60_000).max(86_400_000),
 });
 
 export type SessionConfig = z.output<typeof sessionConfigSchema>;
@@ -386,7 +388,6 @@ export const gatewayConfigSchema = z.object({
   host: z.string().default("0.0.0.0"),
   max_sessions: z.number().int().min(1).max(1000).default(100),
   auth_timeout_ms: z.number().int().min(1000).default(5000),
-  session_persist_ms: z.number().int().min(0).default(120000),
   tls: tlsConfigSchema.default({}),
   // session block is required — no default; WS-resilience fields must be
   // explicitly present in every config.yaml (fail loud if missing per config rule).

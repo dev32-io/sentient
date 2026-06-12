@@ -2,6 +2,7 @@ import type { ServerWebSocket } from "bun";
 import { getLog } from "../logging/logger.js";
 import { BINARY_TYPE_AUDIO, type FrameSequencer, createFrameSequencer } from "../session-handlers/frame-sequencer.js";
 import type { SessionReplayBuffer } from "../session-handlers/session-replay-buffer.js";
+import type { ActivityClock } from "../session/activity/activity-clock.js";
 import type { DeviceSocketRef, DeviceSocketSink, PersonSessionAttachment } from "./person-session.js";
 
 const log = getLog(["sentient", "device-attachment"]);
@@ -35,6 +36,9 @@ export interface DeviceAttachmentInit<TData> {
    * writes to whatever socket is currently live, not the dead one it captured.
    */
   readonly liveSocket: DeviceSocketRef;
+  /** The device's activity clock (from the buffer entry). Touched "ws.out" on
+   *  every outbound frame so the idle sweep sees server→client traffic. */
+  readonly clock: ActivityClock;
 }
 
 export interface DeviceAttachment<TData = unknown> extends PersonSessionAttachment {
@@ -125,8 +129,14 @@ export function createDeviceAttachment<TData>(init: DeviceAttachmentInit<TData>)
   const sequencer = createFrameSequencer({
     epoch: init.epoch,
     buffer: init.buffer,
-    sendText: (s) => init.liveSocket.current?.sendText(s),
-    sendBinary: (b) => init.liveSocket.current?.sendBinary(b),
+    sendText: (s) => {
+      init.clock.touch("ws.out");
+      init.liveSocket.current?.sendText(s);
+    },
+    sendBinary: (b) => {
+      init.clock.touch("ws.out");
+      init.liveSocket.current?.sendBinary(b);
+    },
   });
 
   log.debug("created", {

@@ -190,32 +190,60 @@ describe("AcpClient — onRequestSent hook", () => {
   });
 });
 
-describe("AcpClient — requestTimeoutMs backstop", () => {
-  // Real (short) time, not fake timers: the backstop fires a real `setTimeout`,
-  // and vitest fake timers do not patch Bun's `setTimeout` under `bun test`
-  // (advancing them never fires the timer → the promise hangs forever). A small
-  // deadline + a real delay keeps the test deterministic and fast.
-  const TIMEOUT_MS = 15;
-  const WAIT_MS = 60;
-  const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
-  it("rejects a request whose response never lands within the deadline", async () => {
+describe("AcpClient — no flat request timeout (idle watchdog is the backstop)", () => {
+  it("does not time out a long-running request — promise stays pending without a response", async () => {
     const cap = captureSend();
-    const client = createAcpClient({ send: cap.send, requestTimeoutMs: TIMEOUT_MS });
+    const client = createAcpClient({ send: cap.send });
+    let settled = false;
     const promise = client.request("session/prompt", { sessionId: "s1" });
-    const expectation = expect(promise).rejects.toThrow(/timeout.*session\/prompt.*15ms/i);
-    await delay(WAIT_MS);
-    await expectation;
+    promise.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    // Yield to the microtask queue; the promise must not have settled.
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    // Resolve it so the test doesn't leave a dangling promise.
+    client.handleIncoming(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { stopReason: "end_turn" } }));
+    await expect(promise).resolves.toEqual({ stopReason: "end_turn" });
+  });
+});
+
+describe("AcpClient — cancelPending", () => {
+  it("rejects the pending promise with the given reason and removes the entry", async () => {
+    const cap = captureSend();
+    const seen: Array<{ id: number | string; method: string }> = [];
+    const client = createAcpClient({
+      send: cap.send,
+      onRequestSent: (id, method) => {
+        seen.push({ id, method });
+      },
+    });
+
+    const promise = client.request("session/prompt", { sessionId: "s1", prompt: [] });
+    // onRequestSent fires synchronously — id is captured before send resolves.
+    expect(seen).toHaveLength(1);
+    const capturedId = seen[0]?.id ?? 1;
+
+    client.cancelPending(capturedId, "cycle aborted");
+
+    await expect(promise).rejects.toThrow("cycle aborted");
+
+    // A stale response for the same id must not throw — entry already removed.
+    expect(() =>
+      client.handleIncoming(JSON.stringify({ jsonrpc: "2.0", id: capturedId, result: { stopReason: "end_turn" } })),
+    ).not.toThrow();
   });
 
-  it("does NOT reject when the response arrives before the deadline", async () => {
+  it("is a no-op for an unknown id", () => {
     const cap = captureSend();
-    const client = createAcpClient({ send: cap.send, requestTimeoutMs: TIMEOUT_MS });
-    const promise = client.request("session/new", {});
-    client.handleIncoming(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { sessionId: "s1" } }));
-    await expect(promise).resolves.toEqual({ sessionId: "s1" });
-    // Past the deadline the cleared timer must not double-settle or throw.
-    await delay(WAIT_MS);
+    const client = createAcpClient({ send: cap.send });
+    // No request in flight — must not throw.
+    expect(() => client.cancelPending(99, "gone")).not.toThrow();
   });
 });
 

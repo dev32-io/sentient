@@ -33,8 +33,6 @@ export interface PerUserPluginDeps {
   readonly timeoutMs: number;
   /** ACP WS open handshake timeout (ms). Sourced from hermes.acp_wire.open_timeout_ms. */
   readonly acpOpenTimeoutMs: number;
-  /** Per-request deadline backstop (ms). Sourced from hermes.defaults.request_timeout_ms. */
-  readonly acpRequestTimeoutMs: number;
 }
 
 /**
@@ -78,7 +76,6 @@ export async function listSessionsForUser(userId: string, deps: PerUserPluginDep
       wsUrl,
       token,
       openTimeoutMs: deps.acpOpenTimeoutMs,
-      requestTimeoutMs: deps.acpRequestTimeoutMs,
     }),
   );
   try {
