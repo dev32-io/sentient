@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AuthConfig } from "@sentient/config";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createSessionManager } from "../auth/session-manager.js";
 import { createAuthService } from "../user-auth/auth-service.js";
 import { handleAuthMessage } from "./ws-auth-gate.js";
 import type { ClientData } from "./ws-helpers.js";
@@ -73,6 +74,8 @@ function fakeWs(): FakeWs {
 
 describe("ws auth gate", () => {
   let root: string;
+  // Unlimited session manager for tests that don't exercise the per-user cap.
+  const sessionManager = createSessionManager();
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "sentient-wsg-"));
@@ -102,6 +105,7 @@ describe("ws auth gate", () => {
       ws as unknown as { data: ClientData; send: (s: string) => void; close: (c: number) => void },
       { type: "auth", token: r.value.token },
       auth,
+      sessionManager,
     );
     expect(ws.data.authState).toBe("authed");
     expect(ws.data.userId).toBe("kevin");
@@ -121,6 +125,7 @@ describe("ws auth gate", () => {
       ws as unknown as { data: ClientData; send: (s: string) => void; close: (c: number) => void },
       { type: "auth", token: "garbage" },
       auth,
+      sessionManager,
     );
     expect(ws.data.authState).toBe("rejected");
     expect(ws.data.userId).toBeNull();
@@ -135,6 +140,7 @@ describe("ws auth gate", () => {
       ws as unknown as { data: ClientData; send: (s: string) => void; close: (c: number) => void },
       { type: "session.configure" },
       auth,
+      sessionManager,
     );
     expect(ws.data.authState).toBe("rejected");
     expect(ws.sent[0]).toMatchObject({ type: "auth.error", code: "auth-required" });
@@ -159,9 +165,38 @@ describe("ws auth gate", () => {
       ws as unknown as { data: ClientData; send: (s: string) => void; close: (c: number) => void },
       { type: "auth", token: r.value.token },
       auth,
+      sessionManager,
     );
     expect(ws.data.authState).toBe("rejected");
     expect(ws.sent[0]).toMatchObject({ type: "auth.error" });
+    expect(ws.closeCode).not.toBeNull();
+  });
+
+  it("rejects when user hits per-user session cap", async () => {
+    const auth = await createAuthService(AUTH_CONFIG);
+    await auth.createUser({
+      userId: "kevin",
+      displayName: "Kevin",
+      pin: "1234",
+      isAdmin: true,
+      avatarTint: "terra",
+    });
+    const r = await auth.authenticate("kevin", "1234");
+    if (!r.ok) throw new Error("seed failed");
+
+    const cappedManager = createSessionManager({ perUserMaxSessions: 1 });
+    // Bind one session manually to exhaust the cap.
+    cappedManager.bindUser("pre-existing-session", "kevin");
+
+    const ws = fakeWs();
+    await handleAuthMessage(
+      ws as unknown as { data: ClientData; send: (s: string) => void; close: (c: number) => void },
+      { type: "auth", token: r.value.token },
+      auth,
+      cappedManager,
+    );
+    expect(ws.data.authState).toBe("rejected");
+    expect(ws.sent[0]).toMatchObject({ type: "auth.error", code: "session-limit" });
     expect(ws.closeCode).not.toBeNull();
   });
 });

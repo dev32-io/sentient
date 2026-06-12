@@ -30,7 +30,10 @@ export interface PhaseRoutesOutput {
 export function runPhaseRoutes(input: PhaseRoutesInput): PhaseRoutesOutput {
   const { cfg, internalSecretsStore, profileStore, userPortStore } = input;
 
-  const sessionManager = createSessionManager({ maxSessions: cfg.maxSessions });
+  const sessionManager = createSessionManager({
+    maxSessions: cfg.maxSessions,
+    perUserMaxSessions: cfg.session.per_user_max_sessions,
+  });
   const personSessions = buildPersonSessionRegistry(cfg, internalSecretsStore, profileStore, userPortStore);
   // One pooled ACP wire per userId, ref-counted across PersonSession
   // attachments — keeps a second client (webui + mobile) from dialing a

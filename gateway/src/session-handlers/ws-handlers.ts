@@ -65,7 +65,7 @@ export async function handleWebSocketMessage(
   }
 
   if (ws.data.authState !== "authed") {
-    await handleAuthMessage(ws, parsed, services.auth);
+    await handleAuthMessage(ws, parsed, services.auth, services.sessionManager);
     return;
   }
 
@@ -381,6 +381,7 @@ function teardownPipelineResources(
   log.debug("session-hermes-release", { sessionId });
   services.sessionControls.unregister(sessionId);
   services.sessionRouter.release(sessionId);
+  services.sessionManager.unbindUser(sessionId);
   services.sessionManager.removeSession(sessionId);
 }
 

@@ -94,4 +94,38 @@ describe("SessionManager", () => {
     manager.createSession();
     expect(manager.listSessions()).toHaveLength(2);
   });
+
+  describe("per-user session cap", () => {
+    it("admits up to perUserMaxSessions for one user, rejects the next", () => {
+      const mgr = createSessionManager({ perUserMaxSessions: 2 });
+      expect(mgr.bindUser("s1", "u1").ok).toBe(true);
+      expect(mgr.bindUser("s2", "u1").ok).toBe(true);
+      expect(mgr.bindUser("s3", "u1").ok).toBe(false);
+      const rejected = mgr.bindUser("s3", "u1");
+      if (!rejected.ok) {
+        expect(rejected.error).toContain("limit");
+      }
+      mgr.unbindUser("s1");
+      expect(mgr.bindUser("s4", "u1").ok).toBe(true);
+    });
+
+    it("counts per user independently", () => {
+      const mgr = createSessionManager({ perUserMaxSessions: 1 });
+      expect(mgr.bindUser("s1", "u1").ok).toBe(true);
+      expect(mgr.bindUser("s2", "u2").ok).toBe(true);
+      expect(mgr.bindUser("s3", "u1").ok).toBe(false);
+    });
+
+    it("unbindUser is a no-op for never-bound sessionId", () => {
+      const mgr = createSessionManager({ perUserMaxSessions: 1 });
+      expect(() => mgr.unbindUser("never-bound")).not.toThrow();
+    });
+
+    it("allows unlimited binds when perUserMaxSessions is not set", () => {
+      const mgr = createSessionManager();
+      for (let i = 0; i < 50; i++) {
+        expect(mgr.bindUser(`s${i}`, "u1").ok).toBe(true);
+      }
+    });
+  });
 });

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { SessionManager } from "../auth/session-manager.js";
 import { getLog } from "../logging/logger.js";
 import type { AuthService } from "../user-auth/auth-service.js";
 import type { ClientData } from "./ws-helpers.js";
@@ -22,7 +23,12 @@ interface WsLike {
  * Process the very first WS message. Closes the connection on any failure.
  * Idempotent: if already authed or rejected, drops silently.
  */
-export async function handleAuthMessage(ws: WsLike, message: unknown, auth: AuthService): Promise<void> {
+export async function handleAuthMessage(
+  ws: WsLike,
+  message: unknown,
+  auth: AuthService,
+  sessionManager: SessionManager,
+): Promise<void> {
   if (ws.data.authState !== "pending") {
     log.debug("auth.ignored", { sessionId: ws.data.sessionId, state: ws.data.authState });
     return;
@@ -43,7 +49,15 @@ export async function handleAuthMessage(ws: WsLike, message: unknown, auth: Auth
     return reject(ws, "user-not-found", "token valid but user gone");
   }
 
-  ws.data.userId = userR.value.userId;
+  const userId = userR.value.userId;
+  const sessionId = ws.data.sessionId ?? "";
+  const bindResult = sessionManager.bindUser(sessionId, userId);
+  if (!bindResult.ok) {
+    log.warn("auth.per-user-cap-reached", { sessionId, userId, reason: bindResult.error });
+    return reject(ws, "session-limit", bindResult.error);
+  }
+
+  ws.data.userId = userId;
   ws.data.authState = "authed";
   if (ws.data.authTimeout) {
     clearTimeout(ws.data.authTimeout);
@@ -60,7 +74,7 @@ export async function handleAuthMessage(ws: WsLike, message: unknown, auth: Auth
       },
     }),
   );
-  log.info("auth.ok", { sessionId: ws.data.sessionId, userId: userR.value.userId });
+  log.info("auth.ok", { sessionId: ws.data.sessionId, userId });
 }
 
 /**

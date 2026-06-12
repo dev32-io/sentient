@@ -59,7 +59,7 @@ function makeServices(): GatewayServices {
   return {
     sessionControls: { unregister: vi.fn(), register: vi.fn() },
     sessionRouter: { release: vi.fn(), bind: vi.fn(), get: vi.fn(), updateConversationId: vi.fn() },
-    sessionManager: { removeSession: vi.fn(), createSession: vi.fn() },
+    sessionManager: { removeSession: vi.fn(), createSession: vi.fn(), unbindUser: vi.fn(), bindUser: vi.fn() },
   } as unknown as GatewayServices;
 }
 

@@ -12,6 +12,13 @@ import type { Result, Session, UserRole } from "@sentient/protocol";
 
 export interface SessionManagerOptions {
   maxSessions?: number;
+  /**
+   * Maximum concurrent WS sessions one user may hold simultaneously.
+   * Enforced at auth.ok (bind time), not at session creation.
+   * Defaults to Number.MAX_SAFE_INTEGER (unlimited) so existing callers
+   * that omit the option are unaffected.
+   */
+  perUserMaxSessions?: number;
 }
 
 const DEFAULT_MAX_SESSIONS = 10;
@@ -31,6 +38,16 @@ export interface SessionManager {
   removeSession(sessionId: string): boolean;
   activeCount(): number;
   listSessions(): Session[];
+  /**
+   * Bind a session to a real userId after auth.ok.
+   * Returns ok:false if the user already has >= perUserMaxSessions live sessions.
+   */
+  bindUser(sessionId: string, userId: string): Result<void>;
+  /**
+   * Release the per-user session slot on disconnect / teardown.
+   * No-op if the sessionId was never bound (e.g. session torn down before auth).
+   */
+  unbindUser(sessionId: string): void;
 }
 
 function generateSessionId(): string {
@@ -41,7 +58,12 @@ function generateSessionId(): string {
 
 export function createSessionManager(options: SessionManagerOptions = {}): SessionManager {
   const maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS;
+  const perUserMaxSessions = options.perUserMaxSessions ?? Number.MAX_SAFE_INTEGER;
   const sessions = new Map<string, Session>();
+  // userId → set of bound sessionIds
+  const userSessions = new Map<string, Set<string>>();
+  // sessionId → userId (reverse index for unbindUser)
+  const sessionToUser = new Map<string, string>();
 
   return {
     createSession(): Result<Session> {
@@ -79,6 +101,37 @@ export function createSessionManager(options: SessionManagerOptions = {}): Sessi
 
     listSessions(): Session[] {
       return Array.from(sessions.values());
+    },
+
+    bindUser(sessionId: string, userId: string): Result<void> {
+      const existing = userSessions.get(userId);
+      const count = existing?.size ?? 0;
+      if (count >= perUserMaxSessions) {
+        return {
+          ok: false,
+          error: `Per-user session limit reached (${perUserMaxSessions}) for user ${userId}.`,
+        };
+      }
+      if (!existing) {
+        userSessions.set(userId, new Set([sessionId]));
+      } else {
+        existing.add(sessionId);
+      }
+      sessionToUser.set(sessionId, userId);
+      return { ok: true, value: undefined };
+    },
+
+    unbindUser(sessionId: string): void {
+      const userId = sessionToUser.get(sessionId);
+      if (!userId) return;
+      sessionToUser.delete(sessionId);
+      const set = userSessions.get(userId);
+      if (set) {
+        set.delete(sessionId);
+        if (set.size === 0) {
+          userSessions.delete(userId);
+        }
+      }
     },
   };
 }
