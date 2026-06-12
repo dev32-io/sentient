@@ -198,7 +198,7 @@ session:
 | Case | Viewport | Pre-state | Action | Expected user-visible | Expected log trail |
 |---|---|---|---|---|---|
 | Long/slow cycle survives | mobile 390×844 | idle | "news for today pls", stay foreground | full answer, no stuck `…` | tools→answer; **no** `request:timeout`; sweep sees buffer non-idle |
-| Stuck cycle reaped | mobile | mock Hermes silent post-prompt | send, wait >15 min | reconnect → cancelled/partial via REST | sweep `idleMs≥900000` → deferred teardown → `cancel.send` stopReason=cancelled |
+| Stuck cycle reaped | mobile | mock Hermes silent post-prompt | send, wait >15 min | reconnect → partial/empty via REST | sweep `idleMs≥900000` → deferred teardown → `dispatch.abort` → `cancel.send` (best-effort) → `cancelPending "cycle aborted"` settles the pending prompt. Note: a mocked-silent Hermes never replies, so there is **no** `stopReason=cancelled` from Hermes — the prompt settles locally. |
 | Idle connection reaped | desktop 1280×900 | connected, walk away | no activity 15 min | silent disconnect; clean reconnect on return | Bun 255 s socket reap → buffer idle → swept at 15 min → dispose |
 | Per-user cap | mobile | user at 40 sessions | open 41st | rejected gracefully (no crash) | per-user 40 reject at WS accept |
 | Active cycle across background | mobile | sent prompt | background <15 min, return | answer present (replay) | `acp.in` keeps clock warm; buffer not swept; replay on resume |
@@ -224,6 +224,7 @@ Do not test: the timer plumbing/DI, config loading, the Bun transport reap, or a
 - Client SDK idle-disconnect alignment (bump on inbound frames, not just taps).
 - Adaptive idle thresholds (shorter when disconnected) — explicitly rejected for simplicity.
 - Replay-buffer audio coalescing (object-count reduction).
+- **Multi-device-per-user shared-wire residual** (holistic-review follow-up): the ACP wire is ref-counted per user across devices. If user U has two devices and device A's session is reaped while a *stalled* in-flight prompt sits on the shared wire that device B still holds (refcount stays ≥1, wire not disposed), A's reap aborts A's own cycle (→ `cancelInflight`/`cancelPending` settles A's prompt) but a prompt owned by B's session is only settled when B also reaps, Hermes replies, or the wire reconnects. The removed flat `request_timeout_ms` used to bound this. Narrow coincidence (same user + 2 live devices + Hermes hang); single-device and disconnect-driven paths are fully covered. Harden only if multi-device-per-user with concurrent stalls becomes real.
 
 ---
 
