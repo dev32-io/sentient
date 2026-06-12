@@ -368,3 +368,52 @@ describe("AcpHermesClient — lazy session/new fallback", () => {
     expect(term.done).toBe(true);
   });
 });
+
+describe("AcpHermesClient — activity clock touches", () => {
+  it("touches acp.out on prompt send and acp.in on each update", async () => {
+    const bed = buildBed();
+    await attach(bed, "sess_activity");
+    const sources: string[] = [];
+    const client = createAcpHermesClient({
+      acpConn: bed.conn,
+      onActivity: (s) => sources.push(s),
+    });
+    const ctrl = new AbortController();
+    const gen = client.dispatch(
+      turnInput({ forcedSessionId: "sess_activity", cycleId: "cycle_act" }),
+      ctrl.signal,
+      NEVER_BARGED,
+    );
+
+    // Drain the synthetic created event (no wire activity yet).
+    await gen.next();
+
+    // Flush so the prompt send (acp.out touch) lands.
+    await Promise.resolve();
+
+    // Pump a session/update notification to trigger the acp.in touch.
+    bed.pump(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: "sess_activity",
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "hi" } },
+        },
+      }),
+    );
+
+    // Drain the text.delta event so the acp.in callback fires.
+    await gen.next();
+
+    // Reply to the in-flight prompt to close the generator cleanly.
+    const id = lastFrame(bed.sent).id as number;
+    bed.pump(JSON.stringify({ jsonrpc: "2.0", id, result: { stopReason: "end_turn" } }));
+    for await (const _ of gen) {
+      /* drain */
+    }
+
+    expect(sources).toContain("acp.out");
+    expect(sources).toContain("acp.in");
+  });
+});
