@@ -182,11 +182,17 @@ export class DeviceBufferStore {
     };
   }
 
+  /** Register the live-WS close hook for a device (called at session-configure). */
+  setForceClose(deviceId: string, forceClose: (() => void) | null): void {
+    const entry = this._buffers.get(deviceId);
+    if (entry !== undefined) entry.forceClose = forceClose;
+  }
+
   /**
    * Mark a device buffer as detached (start its TTL clock).
    * The buffer is retained briefly for a quick reconnect.
    * An optional deferredTeardown callback is stashed on the entry and
-   * invoked by sweepExpired when the TTL expires without a reconnect.
+   * invoked by sweepIdle when the idle timeout expires without a reconnect.
    */
   release(deviceId: string, deferredTeardown?: () => void): void {
     const entry = this._buffers.get(deviceId);
@@ -230,36 +236,53 @@ export class DeviceBufferStore {
   }
 
   /**
-   * Evict device buffer entries that have been detached longer than `ttlMs`.
-   * For each evicted entry that carries a deferredTeardown, the teardown is
-   * invoked exactly once (the closure is idempotent by construction).
-   * Returns the number of entries evicted.
+   * Reap device buffers that have been idle (no activity-clock touch) for
+   * >= idleTimeoutMs. Detached entries -> remove + run deferred teardown.
+   * Still-attached entries (a ping-keepalive client) -> invoke forceClose
+   * (the normal full teardown via WS close); the entry is removed on the
+   * resulting detach/dispose, not here. Returns the number of entries
+   * REMOVED here (attached forceClose excluded).
    */
-  sweepExpired(nowMs: number, ttlMs: number): number {
-    let evicted = 0;
+  sweepIdle(nowMs: number, idleTimeoutMs: number): number {
+    let removed = 0;
     for (const [deviceId, entry] of this._buffers) {
-      if (shouldEvictDeviceBuffer(entry.detachedAtMs, nowMs, ttlMs)) {
-        this._buffers.delete(deviceId);
-        evicted += 1;
-        log.debug("sweepExpired.evicted", {
+      if (entry.clock.idleMs(nowMs) < idleTimeoutMs) continue;
+      const attached = entry.detachedAtMs === null;
+      if (attached) {
+        log.info("sweepIdle.force-close", {
           deviceId,
           epoch: entry.epoch,
-          detachedAtMs: entry.detachedAtMs,
-          hasDeferredTeardown: entry.deferredTeardown !== null,
+          idleMs: entry.clock.idleMs(nowMs),
         });
-        if (entry.deferredTeardown !== null) {
-          try {
-            entry.deferredTeardown();
-          } catch (err: unknown) {
-            log.warn("sweepExpired.deferred-teardown-failed", {
-              deviceId,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
+        try {
+          entry.forceClose?.();
+        } catch (err: unknown) {
+          log.warn("sweepIdle.force-close-failed", {
+            deviceId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        continue;
+      }
+      this._buffers.delete(deviceId);
+      removed += 1;
+      log.info("sweepIdle.evicted", {
+        deviceId,
+        epoch: entry.epoch,
+        idleMs: entry.clock.idleMs(nowMs),
+      });
+      if (entry.deferredTeardown !== null) {
+        try {
+          entry.deferredTeardown();
+        } catch (err: unknown) {
+          log.warn("sweepIdle.deferred-teardown-failed", {
+            deviceId,
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
       }
     }
-    return evicted;
+    return removed;
   }
 
   /**

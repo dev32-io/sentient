@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DeviceBufferStore, shouldEvictDeviceBuffer } from "./device-buffer-store.js";
 
 const BUFFER_MAX_BYTES = 1024 * 64; // 64 KB — small for tests
@@ -117,26 +117,34 @@ describe("DeviceBufferStore", () => {
     expect(store.hasRetainedBuffers()).toBe(true);
   });
 
-  it("sweepExpired evicts detached entries past TTL", () => {
-    const store = makeStore();
-    store.acquire("dev-A");
-    store.release("dev-A");
-    store.acquire("dev-B");
-    store.release("dev-B");
-
-    const FAR_FUTURE = Date.now() + TTL_MS + 1000;
-    const evicted = store.sweepExpired(FAR_FUTURE, TTL_MS);
-    expect(evicted).toBe(2);
-    expect(store.hasRetainedBuffers()).toBe(false);
+  it("evicts a detached idle buffer past the window, running deferred teardown", () => {
+    const store = new DeviceBufferStore(1024);
+    store.acquire("dev-1");
+    const td = vi.fn();
+    store.release("dev-1", td);
+    const removed = store.sweepIdle(Date.now() + 900_000, 900_000);
+    expect(removed).toBe(1);
+    expect(td).toHaveBeenCalledTimes(1);
   });
 
-  it("sweepExpired does not evict a still-attached entry (detachedAtMs is null)", () => {
-    const store = makeStore();
-    store.acquire("dev-A");
-    // Never released — detachedAtMs remains null.
-    const evicted = store.sweepExpired(Number.MAX_SAFE_INTEGER, 0);
-    expect(evicted).toBe(0);
-    expect(store.hasRetainedBuffers()).toBe(true);
+  it("force-closes a still-attached but idle buffer (ping-keepalive), without removing it here", () => {
+    const store = new DeviceBufferStore(1024);
+    store.acquire("dev-1"); // attached (detachedAtMs === null)
+    const fc = vi.fn();
+    store.setForceClose("dev-1", fc);
+    const removed = store.sweepIdle(Date.now() + 900_000, 900_000);
+    expect(fc).toHaveBeenCalledTimes(1);
+    expect(removed).toBe(0);
+  });
+
+  it("keeps a buffer whose clock was recently touched", () => {
+    const store = new DeviceBufferStore(1024);
+    const acq = store.acquire("dev-1");
+    // Touch resets lastActivityMs to Date.now() at that instant.
+    acq.clock.touch("acp.in");
+    // Use a nowMs just 1 second after the touch — well under the 900s window.
+    const justAfterTouch = acq.clock.lastActivityMs() + 1_000;
+    expect(store.sweepIdle(justAfterTouch, 900_000)).toBe(0);
   });
 
   it("release warns on unknown deviceId (no throw)", () => {
