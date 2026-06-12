@@ -44,9 +44,9 @@ export interface PersonSessionRegistry {
    */
   refreshVoice(userId: string): Promise<void>;
   /**
-   * Run a sweep of all sessions: evict expired device buffers, then remove
-   * idle sessions with no retained buffers and no live attachments that have
-   * exceeded the retention TTL. Exposed for testing (avoids real timers).
+   * Run a sweep of all sessions: reap device buffers idle past idle_timeout_ms
+   * (detached -> evict + deferred teardown; still-attached -> forceClose), then
+   * remove any session left with no retained buffers. Exposed for testing.
    * Returns sweep stats for observability.
    */
   sweep(nowMs: number): SweepResult;

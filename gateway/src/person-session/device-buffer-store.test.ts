@@ -1,40 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { DeviceBufferStore, shouldEvictDeviceBuffer } from "./device-buffer-store.js";
+import { DeviceBufferStore } from "./device-buffer-store.js";
 
 const BUFFER_MAX_BYTES = 1024 * 64; // 64 KB — small for tests
-const TTL_MS = 30_000; // 30 s for tests
 
 function makeStore(): DeviceBufferStore {
   return new DeviceBufferStore(BUFFER_MAX_BYTES);
 }
-
-// ---------------------------------------------------------------------------
-// shouldEvictDeviceBuffer truth table
-// ---------------------------------------------------------------------------
-
-describe("shouldEvictDeviceBuffer", () => {
-  it("returns false when detachedAtMs is null (still attached)", () => {
-    expect(shouldEvictDeviceBuffer(null, 9_999_999, TTL_MS)).toBe(false);
-  });
-
-  it("returns false when detached but within TTL", () => {
-    const detached = 1_000_000;
-    const now = detached + TTL_MS - 1;
-    expect(shouldEvictDeviceBuffer(detached, now, TTL_MS)).toBe(false);
-  });
-
-  it("returns true when detached exactly at TTL boundary", () => {
-    const detached = 1_000_000;
-    const now = detached + TTL_MS;
-    expect(shouldEvictDeviceBuffer(detached, now, TTL_MS)).toBe(true);
-  });
-
-  it("returns true when detached past TTL", () => {
-    const detached = 1_000_000;
-    const now = detached + TTL_MS + 1000;
-    expect(shouldEvictDeviceBuffer(detached, now, TTL_MS)).toBe(true);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // DeviceBufferStore

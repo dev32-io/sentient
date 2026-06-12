@@ -84,19 +84,6 @@ export interface AcquireDeviceBufferResult {
 }
 
 // ---------------------------------------------------------------------------
-// Pure predicate
-// ---------------------------------------------------------------------------
-
-/**
- * Pure predicate: should a device buffer entry be evicted?
- * Detached entries older than `ttlMs` are eligible for eviction.
- * An entry that is still attached (detachedAtMs === null) is never evicted.
- */
-export function shouldEvictDeviceBuffer(detachedAtMs: number | null, nowMs: number, ttlMs: number): boolean {
-  return detachedAtMs !== null && nowMs - detachedAtMs >= ttlMs;
-}
-
-// ---------------------------------------------------------------------------
 // DeviceBufferStore
 // ---------------------------------------------------------------------------
 
@@ -202,6 +189,7 @@ export class DeviceBufferStore {
     }
     entry.detachedAtMs = Date.now();
     entry.deferredTeardown = deferredTeardown ?? null;
+    entry.forceClose = null;
     log.debug("release", { deviceId, epoch: entry.epoch, hasDeferredTeardown: deferredTeardown !== undefined });
   }
 

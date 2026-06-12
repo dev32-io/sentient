@@ -6,13 +6,11 @@ import {
   DeviceBufferStore,
   type DeviceSocketRef,
   type DeviceSocketSink,
-  shouldEvictDeviceBuffer,
 } from "./device-buffer-store.js";
 
 const log = getLog(["sentient", "person-session"]);
 
 export type { DeviceBufferEntry, AcquireDeviceBufferResult, DeviceSocketRef, DeviceSocketSink };
-export { shouldEvictDeviceBuffer };
 
 /**
  * One PersonSession per profile (alice/bob/family). Owns the rolling
