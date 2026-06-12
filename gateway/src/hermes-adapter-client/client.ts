@@ -53,12 +53,6 @@ export interface AcpClientConfig {
    * caught and logged so they cannot poison the request path.
    */
   readonly onRequestSent?: (id: JsonRpcId, method: string) => void;
-  /**
-   * DEPRECATED: no longer used (idle watchdog replaced the flat per-request
-   * timeout); threading removed in a later slice. Field kept so callers
-   * (per-profile-connection, wire-bootstrap, etc.) compile without changes.
-   */
-  readonly requestTimeoutMs?: number;
 }
 
 export interface AcpClient {

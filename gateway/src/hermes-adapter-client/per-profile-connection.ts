@@ -40,8 +40,6 @@ export interface AcpPerProfileConnectionConfig {
   readonly currentEpoch?: () => number;
   /** Open the wire (lazy reconnect) WITHOUT sending; awaited before reading the epoch so the re-attach decision sees the final generation. */
   readonly ensureReady?: () => Promise<void>;
-  /** Per-request deadline (ms) — backstop so a prompt can't hang if a close event is missed. Forwarded to AcpClient. */
-  readonly requestTimeoutMs?: number;
   /** Optional override — testing only. */
   readonly client?: AcpClient;
 }
@@ -112,7 +110,6 @@ export function createAcpPerProfileConnection(cfg: AcpPerProfileConnectionConfig
       onRequestSent: (id) => {
         nextRequestId = id;
       },
-      ...(cfg.requestTimeoutMs !== undefined ? { requestTimeoutMs: cfg.requestTimeoutMs } : {}),
     });
 
   cfg.onIncoming((raw) => client.handleIncoming(raw));

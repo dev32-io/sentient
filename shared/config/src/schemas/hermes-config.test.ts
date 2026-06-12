@@ -60,8 +60,6 @@ describe("hermesConfigSchema", () => {
       },
     };
     const result = hermesConfigSchema.parse(input);
-    expect(result.resource_management.mode).toBe("always_on");
-    expect(result.resource_management.cold_start_filler_text).toBe("one sec...");
     expect(result.mcp_host.transport).toBe("unix_socket");
     expect(result.tts.markdown_stripping_enabled).toBe(true);
   });

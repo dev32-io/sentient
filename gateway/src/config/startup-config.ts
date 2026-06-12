@@ -34,7 +34,6 @@ export interface StartupConfig {
   host: string;
   maxSessions: number;
   authTimeoutMs: number;
-  sessionPersistMs: number;
 
   webDistDir: string | undefined;
 
@@ -119,7 +118,6 @@ export function loadStartupConfig(): StartupConfig {
     host: cfg.host,
     maxSessions: cfg.max_sessions,
     authTimeoutMs: cfg.auth_timeout_ms,
-    sessionPersistMs: cfg.session_persist_ms,
 
     webDistDir: process.env.WEB_DIST_DIR,
 

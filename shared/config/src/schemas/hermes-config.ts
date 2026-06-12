@@ -26,16 +26,6 @@ export const hermesWorkerSchema = z.object({
 });
 export type HermesWorker = z.infer<typeof hermesWorkerSchema>;
 
-export const hermesResourceManagementSchema = z.object({
-  mode: z.enum(["always_on", "on_demand"]).default("always_on"),
-  max_concurrent: z.number().int().min(1).default(3),
-  idle_pause_after_ms: z.number().int().default(900_000),
-  idle_stop_after_ms: z.number().int().default(3_600_000),
-  ram_pressure_threshold_pct: z.number().min(0).max(100).default(85),
-  cold_start_filler_text: z.string().default("one sec..."),
-});
-export type HermesResourceManagement = z.infer<typeof hermesResourceManagementSchema>;
-
 export const hermesWebToolsSchema = z
   .object({
     provider: z.enum(["searxng"]).default("searxng"),
@@ -119,11 +109,8 @@ export const hermesConfigSchema = z.object({
   defaults: z
     .object({
       max_output_tokens: z.number().int().default(512),
-      request_timeout_ms: z.number().int().default(60_000),
-      idempotency_window_s: z.number().int().default(300),
     })
     .default({}),
-  resource_management: hermesResourceManagementSchema.default({}),
   web_tools: hermesWebToolsSchema,
   home_assistant_observer: hermesHomeAssistantObserverSchema,
   mcp_host: hermesMcpHostSchema.default({}),

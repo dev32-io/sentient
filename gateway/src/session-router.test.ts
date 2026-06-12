@@ -20,15 +20,7 @@ const baseConfig: HermesConfig = {
     reconnect_jitter_ms: 250,
     reconnect_max_attempts: 5,
   },
-  defaults: { max_output_tokens: 512, request_timeout_ms: 60000, idempotency_window_s: 300 },
-  resource_management: {
-    mode: "always_on",
-    max_concurrent: 3,
-    idle_pause_after_ms: 900000,
-    idle_stop_after_ms: 3_600_000,
-    ram_pressure_threshold_pct: 85,
-    cold_start_filler_text: "one sec...",
-  },
+  defaults: { max_output_tokens: 512 },
   web_tools: {
     provider: "searxng",
     searxng: { enabled: true },
