@@ -189,6 +189,81 @@ class ConversationHistoryConnectorTest {
         c.handle(ServerMessage.MessageDelta(cycleId = "c1", delta = "x"))
         assertEquals(emptyList(), c.items())
     }
+
+    // ── clearForNewChat — local "+" clear (bug #1) ────────────────────────────
+
+    @Test
+    fun clearForNewChat_empties_mirror_and_fires_callbacks() {
+        var snapshots = 0
+        var updates = 0
+        val c = ConversationHistoryConnector(onSnapshot = { snapshots++ }, onUpdate = { updates++ })
+        c.replaceMirror(listOf(userItem("hi"), assistantItem("hey")), forGeneration = c.currentGeneration())
+        snapshots = 0
+        updates = 0
+
+        c.clearForNewChat()
+
+        assertEquals(emptyList(), c.items())
+        assertEquals(1, snapshots)
+        assertEquals(1, updates)
+    }
+
+    @Test
+    fun clearForNewChat_bumps_generation_so_a_stale_rest_fetch_is_discarded() {
+        val c = ConversationHistoryConnector()
+        val staleGen = c.currentGeneration()
+        c.clearForNewChat()
+        // A REST response captured before the "+" tap must NOT overwrite the now-empty chat.
+        c.replaceMirror(listOf(userItem("from old session")), forGeneration = staleGen)
+        assertEquals(emptyList(), c.items())
+    }
+
+    @Test
+    fun clearForNewChat_does_not_arm_the_gate_so_the_new_cycle_first_entry_shows() {
+        val c = ConversationHistoryConnector()
+        c.clearForNewChat()
+        // The first entry of the brand-new chat's cycle must reach the mirror,
+        // not be dropped as an awaiting-history straggler.
+        c.handle(ServerMessage.ConversationEntry(userItem("first message in new chat")))
+        assertEquals(1, c.items().size)
+    }
+
+    // ── clearForSwitch — local clear on user-initiated switch (Problem 1) ──────
+
+    @Test
+    fun clearForSwitch_empties_mirror_and_fires_callbacks() {
+        var snapshots = 0
+        var updates = 0
+        val c = ConversationHistoryConnector(onSnapshot = { snapshots++ }, onUpdate = { updates++ })
+        c.replaceMirror(listOf(userItem("old a"), assistantItem("old b")), forGeneration = c.currentGeneration())
+        snapshots = 0
+        updates = 0
+
+        c.clearForSwitch()
+
+        assertEquals(emptyList(), c.items())
+        assertEquals(1, snapshots)
+        assertEquals(1, updates)
+    }
+
+    @Test
+    fun clearForSwitch_arms_the_gate_so_a_straggler_from_the_outgoing_session_drops() {
+        val c = ConversationHistoryConnector()
+        c.replaceMirror(listOf(userItem("old")), forGeneration = c.currentGeneration())
+        c.clearForSwitch()
+        // A late entry from the session we are leaving must NOT repopulate the cleared chat.
+        c.handle(ServerMessage.ConversationEntry(assistantItem("late straggler")))
+        assertEquals(emptyList(), c.items())
+    }
+
+    @Test
+    fun clearForSwitch_gate_releases_when_target_history_loads() {
+        val c = ConversationHistoryConnector()
+        c.clearForSwitch()
+        // The target session's REST history fills the mirror + releases the gate.
+        c.replaceMirror(listOf(userItem("target msg")), forGeneration = c.currentGeneration())
+        assertEquals(1, c.items().size)
+    }
 }
 
 private fun ConversationFeedItem.kindName(): String = when (this) {
