@@ -273,6 +273,7 @@ export async function handleSessionConfigure(
     buffer: deviceBuffer,
     epoch: deviceEpoch,
     liveSocket: deviceLiveSocket,
+    clock: acquired.clock,
   });
   personSession.attach(attachment);
   ws.data.personSession = personSession;

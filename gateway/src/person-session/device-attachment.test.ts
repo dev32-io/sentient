@@ -14,6 +14,14 @@ function makeBuffer() {
   return createSessionReplayBuffer({ maxBytes: 64_000 });
 }
 
+function makeNopClock() {
+  return {
+    touch: (_source: string) => {},
+    idleMs: (_nowMs: number) => 0,
+    lastActivityMs: () => 0,
+  };
+}
+
 function makeAttachment(
   ws: ServerWebSocket<unknown> = makeMockWs(),
   liveSocket: DeviceSocketRef = { current: null },
@@ -29,7 +37,8 @@ function makeAttachment(
     buffer,
     epoch,
     liveSocket,
-  });
+    clock: makeNopClock(),
+  } as never);
   // Most tests want a live socket; the resume-gating tests pass live=false.
   if (live) a.goLive();
   return { a, buffer, epoch, liveSocket };
@@ -244,5 +253,55 @@ describe("DeviceAttachment", () => {
     expect(() => a.send({ type: "json-frame" })).not.toThrow();
     expect(() => a.sendBinary(new Uint8Array([0xaa]))).not.toThrow();
     expect(buffer.newestSeq).toBe(2);
+  });
+
+  it("touches ws.out on every outbound frame", () => {
+    const touches: string[] = [];
+    const clock = {
+      touch: (s: string) => touches.push(s),
+      idleMs: (_nowMs: number) => 0,
+      lastActivityMs: () => 0,
+    };
+    const ws = makeMockWs();
+    const liveSocket: DeviceSocketRef = { current: null };
+    const buffer = makeBuffer();
+    const a = createDeviceAttachment({
+      attachmentId: "att-1",
+      ws,
+      sessionId: "sess-1",
+      profile: "alice",
+      buffer,
+      epoch: 42,
+      liveSocket,
+      clock,
+    } as never);
+    a.goLive();
+    a.send({ type: "x" });
+    expect(touches).toContain("ws.out");
+  });
+
+  it("touches ws.out on outbound binary frame", () => {
+    const touches: string[] = [];
+    const clock = {
+      touch: (s: string) => touches.push(s),
+      idleMs: (_nowMs: number) => 0,
+      lastActivityMs: () => 0,
+    };
+    const ws = makeMockWs();
+    const liveSocket: DeviceSocketRef = { current: null };
+    const buffer = makeBuffer();
+    const a = createDeviceAttachment({
+      attachmentId: "att-1",
+      ws,
+      sessionId: "sess-1",
+      profile: "alice",
+      buffer,
+      epoch: 42,
+      liveSocket,
+      clock,
+    } as never);
+    a.goLive();
+    a.sendBinary(new Uint8Array([0xab]));
+    expect(touches).toContain("ws.out");
   });
 });
