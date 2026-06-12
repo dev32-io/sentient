@@ -9,14 +9,14 @@ import { type JsonRpcEnvelope, type JsonRpcId, parseJsonRpcEnvelope } from "./js
 //   - pending request registry (Map<id, {resolve, reject}>).
 //   - notification dispatch (multi-handler per method, throw-isolated).
 //   - clean shutdown (rejectAllPending).
+//   - cancelPending: deterministic per-id rejection on cycle abort so a
+//     never-answered session/prompt does not leak a pending Map entry.
 //
-// Request timeout: an optional `requestTimeoutMs` backstop rejects a pending
-// request whose response never lands (a missed close event, a wedged child) so
-// a `session/prompt` can never hang the dispatcher forever. The primary
-// un-stick path is the WS layer's reject-on-abnormal-close (acp-wire-socket →
-// per-profile-connection.rejectInflight); this timer is the belt-and-braces
-// fallback for the case where the close event itself is dropped. Omit the
-// option to disable (used by tests that drive responses synchronously).
+// Request timeout: the flat per-request setTimeout backstop has been removed.
+// The activity-idle watchdog (cerebrum layer) is now the backstop for stuck
+// wires. `cancelPending` lets the caller settle a specific pending request
+// deterministically on abort (e.g. when Hermes never answers a cancelled
+// session/prompt).
 //
 // Out of scope (intentionally — caller responsibilities):
 //   - method-specific schema validation: schemas.ts is the source of truth;
@@ -40,8 +40,6 @@ interface PendingRequest {
   readonly method: string;
   readonly resolve: (value: unknown) => void;
   readonly reject: (error: Error) => void;
-  /** Timeout handle (when requestTimeoutMs is set); cleared on settle. */
-  readonly timer?: ReturnType<typeof setTimeout>;
 }
 
 export interface AcpClientConfig {
@@ -56,10 +54,9 @@ export interface AcpClientConfig {
    */
   readonly onRequestSent?: (id: JsonRpcId, method: string) => void;
   /**
-   * Optional per-request deadline (ms). When set, a request whose response has
-   * not arrived within the window is rejected with a timeout error and its
-   * pending entry removed, so a missed close event can't wedge the caller
-   * forever. Omit (or <= 0) to disable. Cleared on resolve/reject.
+   * DEPRECATED: no longer used (idle watchdog replaced the flat per-request
+   * timeout); threading removed in a later slice. Field kept so callers
+   * (per-profile-connection, wire-bootstrap, etc.) compile without changes.
    */
   readonly requestTimeoutMs?: number;
 }
@@ -94,6 +91,12 @@ export interface AcpClient {
 
   /** Clean shutdown — rejects every pending request with the given error. */
   rejectAllPending(error: Error): void;
+
+  /**
+   * Reject + drop a pending request by id (used on cycle abort so a never-
+   * answered session/prompt does not leak a pending Map entry). No-op if unknown.
+   */
+  cancelPending(id: JsonRpcId, reason: string): void;
 }
 
 export function createAcpClient(cfg: AcpClientConfig): AcpClient {
@@ -117,23 +120,12 @@ export function createAcpClient(cfg: AcpClientConfig): AcpClient {
       }
     }
     return new Promise<unknown>((resolve, reject) => {
-      const timeoutMs = cfg.requestTimeoutMs;
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      if (timeoutMs !== undefined && timeoutMs > 0) {
-        timer = setTimeout(() => {
-          if (pending.delete(id)) {
-            log.warn("request:timeout", { id, method, timeoutMs });
-            reject(new Error(`ACP request timeout: ${method} after ${timeoutMs}ms`));
-          }
-        }, timeoutMs);
-      }
-      pending.set(id, { method, resolve, reject, ...(timer !== undefined ? { timer } : {}) });
+      pending.set(id, { method, resolve, reject });
       send({ jsonrpc: JSONRPC_VERSION, id, method, params: params ?? {} }).catch((err: unknown) => {
         // Send failed before the response window opens — bail out the
         // pending entry so the caller's promise is not orphaned.
         const entry = pending.get(id);
         if (entry && pending.delete(id)) {
-          if (entry.timer !== undefined) clearTimeout(entry.timer);
           const message = err instanceof Error ? err.message : String(err);
           log.warn("request:send-failed", { id, method, reason: message });
           reject(err instanceof Error ? err : new Error(message));
@@ -187,7 +179,6 @@ export function createAcpClient(cfg: AcpClientConfig): AcpClient {
       return;
     }
     pending.delete(id);
-    if (entry.timer !== undefined) clearTimeout(entry.timer);
     log.debug("response:resolve", { id, method: entry.method });
     entry.resolve(result);
   };
@@ -199,7 +190,6 @@ export function createAcpClient(cfg: AcpClientConfig): AcpClient {
       return;
     }
     pending.delete(id);
-    if (entry.timer !== undefined) clearTimeout(entry.timer);
     log.debug("response:reject", { id, method: entry.method, code: error.code });
     entry.reject(new Error(`ACP error ${error.code}: ${error.message}`));
   };
@@ -235,6 +225,14 @@ export function createAcpClient(cfg: AcpClientConfig): AcpClient {
     log.warn("incoming:unexpected-request", { id: env.id, method: env.method });
   };
 
+  const cancelPending = (id: JsonRpcId, reason: string): void => {
+    const entry = pending.get(id);
+    if (entry && pending.delete(id)) {
+      log.warn("request:cancelled", { id, method: entry.method, reason });
+      entry.reject(new Error(reason));
+    }
+  };
+
   const rejectAllPending = (error: Error): void => {
     if (pending.size === 0) return;
     log.warn("shutdown:reject-all", { count: pending.size, reason: error.message });
@@ -243,10 +241,9 @@ export function createAcpClient(cfg: AcpClientConfig): AcpClient {
     const entries = [...pending.values()];
     pending.clear();
     for (const entry of entries) {
-      if (entry.timer !== undefined) clearTimeout(entry.timer);
       entry.reject(error);
     }
   };
 
-  return { request, notify, onNotification, handleIncoming, rejectAllPending };
+  return { request, notify, onNotification, handleIncoming, rejectAllPending, cancelPending };
 }
