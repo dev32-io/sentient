@@ -29,6 +29,15 @@ export const sessionConfigSchema = z.object({
   // Per device-session replay ring buffer cap in bytes (evict-oldest).
   // Range: 65536–268435456 (64 KB – 256 MB).
   replay_buffer_max_bytes: z.number().int().min(65_536).max(268_435_456),
+  // Per-user concurrent WS session cap. Bounds memory under churn (one user /
+  // reconnect-loop). Range 1–100.
+  per_user_max_sessions: z.number().int().min(1).max(100),
+  // Single activity-based idle window. A device buffer + its session are reaped
+  // after this much silence across BOTH boundaries (client WS in/out + Hermes
+  // ACP in/out). Resets on any activity; ping/pong excluded. Supersedes
+  // retention_ttl_ms + the flat request_timeout once the sweep is rewired
+  // (Slices 5/8); both remain active in this slice. Range: 60000–86400000.
+  idle_timeout_ms: z.number().int().min(60_000).max(86_400_000),
 });
 
 export type SessionConfig = z.output<typeof sessionConfigSchema>;
