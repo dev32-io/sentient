@@ -74,19 +74,17 @@ Under the `session:` block (near `retention_ttl_ms`, line ~84), add:
                                         # WS (in/out) AND Hermes ACP (in/out). Resets on any activity; ping/pong excluded.
 ```
 
-- [ ] **Step 3: Migrate operator (host) config**
+> **Host-config migration is deferred to Slice 8.** The config reaches its final shape (new keys added + 6 dead keys removed) in Slice 8, so ALL host-config migration + the version bump land there in ONE version-anchored step (`schema_version` 0.1.0 → 0.1.1). Doing it here would mean a confusing two-step migration. Slice 0 only edits the schema + the repo template `config.yaml`, which dev/CI read directly.
 
-Read `gateway/src/config/operator-config-migrator.ts` to learn the existing migration mechanism (`migrateOperatorConfigYamlSync`). Add a migration that injects `session.per_user_max_sessions: 40` and `session.idle_timeout_ms: 900000` into a host `config.yaml` that lacks them (idempotent — skip when present). This is REQUIRED: the host `~/.sentient/gateway/config.yaml` will not have the new keys, and they are non-defaulted schema fields, so boot would otherwise fail.
-
-- [ ] **Step 4: Typecheck**
+- [ ] **Step 3: Typecheck**
 
 Run: `source scripts/env.sh && bun run typecheck`
 Expected: PASS (the `session` block flows through `StartupConfig.session` verbatim — no startup-config change needed for these two).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add shared/config/src/schema.ts gateway/config.yaml gateway/src/config/operator-config-migrator.ts
+git add shared/config/src/schema.ts gateway/config.yaml
 git commit -m "feat(config): add per_user_max_sessions + idle_timeout_ms (slice 0)"
 ```
 
@@ -854,20 +852,28 @@ Delete the lines: `session_persist_ms`, `session.inactivity_timeout_ms`, `sessio
 
 Delete `sessionPersistMs: number` from `StartupConfig` and `sessionPersistMs: cfg.session_persist_ms` from `loadStartupConfig`.
 
-- [ ] **Step 4: Migrator — strip dead keys**
+- [ ] **Step 4: Version-anchored host-config migrator (add new + strip dead)**
 
-Extend `operator-config-migrator.ts` to delete the dead keys from a host config (idempotent), so existing `~/.sentient/gateway/config.yaml` files validate against the trimmed schema.
+This is the SINGLE host-config migration for the whole feature. Bump the repo template `gateway/config.yaml` `schema_version: "0.1.0" → "0.1.1"`. Extend `operator-config-migrator.ts` with a migration gated on `schema_version < "0.1.1"` that, on a host `~/.sentient/gateway/config.yaml`:
+  - **adds** `session.per_user_max_sessions: 40` and `session.idle_timeout_ms: 900000` if missing (non-defaulted schema fields — boot fails without them);
+  - **removes** the dead keys: `session_persist_ms`, `session.inactivity_timeout_ms`, `session.inactivity_check_interval_ms`, `session.retention_ttl_ms`, `hermes.defaults.request_timeout_ms`, `hermes.defaults.idempotency_window_s`, `hermes.resource_management`;
+  - **sets** `schema_version: "0.1.1"` and writes back atomically.
+  Idempotent (no-op when already at 0.1.1). Follow the existing `migrateOperatorConfigYamlSync` structure. Add a unit test: a 0.1.0 host config → migrated to 0.1.1 with the right keys added/removed.
 
-- [ ] **Step 5: Typecheck + full test**
+- [ ] **Step 5: Bump the gateway app version**
+
+`gateway/package.json` `"version": "1.11.0" → "1.11.1"` — this release changes config schema + adds the migration, so the app version bumps in lockstep with `schema_version`.
+
+- [ ] **Step 6: Typecheck + full test**
 
 Run: `source scripts/env.sh && bun run typecheck && bun run --filter @sentient/gateway test`
 Expected: PASS. Fix any dangling reference the compiler flags.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add shared/config gateway/config.yaml gateway/src/config
-git commit -m "chore(config): delete 4 dead timers + request_timeout + retention (slice 8.1)"
+git add shared/config gateway/config.yaml gateway/package.json gateway/src/config
+git commit -m "chore(config): delete dead timers, migrate host config to schema 0.1.1 (slice 8.1)"
 ```
 
 ### Task 8.2: Fold cycle-gap WARN onto the shared clock (diagnostic only)
