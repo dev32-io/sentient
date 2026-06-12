@@ -309,11 +309,12 @@ describe("AcpPerProfileConnection — cancelInflight", () => {
     expect(bed.sent).toHaveLength(0);
   });
 
-  it("rejects sendUserMessage even when the cancel notify send throws (dead/hung wire)", async () => {
+  it("resolves cancelInflight and rejects sendUserMessage even when the cancel notify send throws (dead/hung wire)", async () => {
     // Build a connection where the transport-level send rejects for
     // "session/cancel" frames, simulating a dead wire. cancelPending must still
     // run (the try/finally in cancelInflight) so the in-flight session/prompt
-    // promise settles and does not leak.
+    // promise settles and does not leak. cancelInflight itself must RESOLVE
+    // (best-effort: the send failure is logged and swallowed).
     const sent: string[] = [];
     let pump: (raw: string) => void = () => {
       throw new Error("pump not registered yet");
@@ -343,24 +344,27 @@ describe("AcpPerProfileConnection — cancelInflight", () => {
 
     // Start a sendUserMessage — the prompt will never receive a reply (dead wire).
     const sendPromise = conn.sendUserMessage({ sessionId: "sess_dead", text: "hello" });
+    // Attach a rejection handler immediately so the "cycle aborted" rejection
+    // is never unhandled when cancelPending fires.
+    let sendError: unknown;
+    const sendSettled = sendPromise.catch((err: unknown) => {
+      sendError = err;
+    });
+
     await flushUntil({ sent, pump, conn }, "session/prompt");
 
-    // Attach a rejection handler on sendPromise BEFORE calling cancelInflight
-    // so the "cycle aborted" rejection is never unhandled. cancelPending fires
-    // synchronously inside the finally block (while the notify await is still
-    // in the microtask queue), so the rejection must be wired up first.
-    const sendRejected = expect(sendPromise).rejects.toThrow("cycle aborted");
+    // cancelInflight: the session/cancel send throws (write EPIPE) but the catch
+    // block logs + swallows it so cancelInflight resolves. cancelPending still
+    // runs in the finally block and settles the in-flight session/prompt promise.
+    await conn.cancelInflight();
 
-    // cancelInflight: the session/cancel send THROWS (write EPIPE) but
-    // cancelPending must run in the finally block regardless.
-    // cancelInflight propagates the notify error after the finally — that's
-    // correct (fire-and-forget callers have a .catch()).
-    const cancelResult = conn.cancelInflight();
-    await expect(cancelResult).rejects.toThrow("write EPIPE");
+    // Wait for the sendPromise to settle now that cancelPending ran.
+    await sendSettled;
 
-    // The sendUserMessage promise must STILL reject with "cycle aborted" —
-    // proving cancelPending ran despite the notify send throwing.
-    await sendRejected;
+    // sendUserMessage must have rejected with "cycle aborted" — proving
+    // cancelPending ran despite the notify send throwing.
+    expect(sendError).toBeInstanceOf(Error);
+    expect((sendError as Error).message).toBe("cycle aborted");
   });
 
   it("rejects the sendUserMessage promise when Hermes never answers the prompt (dead wire)", async () => {

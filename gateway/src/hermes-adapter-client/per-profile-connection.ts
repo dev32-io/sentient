@@ -239,6 +239,11 @@ export function createAcpPerProfileConnection(cfg: AcpPerProfileConnectionConfig
     // with stopReason="cancelled" of its own accord.
     try {
       await client.notify("session/cancel", { sessionId });
+    } catch (err: unknown) {
+      // Best-effort: a failed cancel send (dead/hung wire) does not matter for
+      // local cleanup — cancelPending below settles the in-flight prompt. Log
+      // and swallow so cancelInflight never rejects (its caller fire-and-forgets).
+      log.warn("cancel.send-failed", { sessionId, reason: err instanceof Error ? err.message : String(err) });
     } finally {
       // Settle the in-flight session/prompt promise regardless of whether the
       // cancel send reached Hermes — a dead wire must not leak a pending entry.
