@@ -1,5 +1,6 @@
 import { getLog } from "../logging/logger.js";
 import { type SessionReplayBuffer, createSessionReplayBuffer } from "../session-handlers/session-replay-buffer.js";
+import { type ActivityClock, createActivityClock } from "../session/activity/activity-clock.js";
 
 const log = getLog(["sentient", "person-session", "device-buffer-store"]);
 
@@ -45,6 +46,14 @@ export interface DeviceBufferEntry {
    * so it doesn't fire after a successful resume.
    */
   deferredTeardown: (() => void) | null;
+  /** Activity clock — single idle source of truth for this device's session.
+   *  Reused across reconnects (same entry), like liveSocket. */
+  readonly clock: ActivityClock;
+  /** Closes the CURRENT live WS for this device, running the normal full
+   *  teardown. Registered at session-configure. null while detached. Used by
+   *  the idle sweep to reap a still-attached but silent (ping-keepalive)
+   *  session. Cleared on detach. */
+  forceClose: (() => void) | null;
 }
 
 export interface AcquireDeviceBufferResult {
@@ -70,6 +79,8 @@ export interface AcquireDeviceBufferResult {
    * to the new socket after a resume. Reused across reconnects.
    */
   readonly liveSocket: DeviceSocketRef;
+  /** The device's activity clock, reused across reconnects. */
+  readonly clock: ActivityClock;
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +150,7 @@ export class DeviceBufferStore {
         resumed: true,
         priorDeferredTeardown,
         liveSocket: existing.liveSocket,
+        clock: existing.clock,
       };
     }
 
@@ -151,6 +163,8 @@ export class DeviceBufferStore {
       detachedAtMs: null,
       liveSocket: { current: null },
       deferredTeardown: null,
+      clock: createActivityClock(),
+      forceClose: null,
     };
     this._buffers.set(deviceId, entry);
     log.debug("acquire.fresh", {
@@ -158,7 +172,14 @@ export class DeviceBufferStore {
       epoch,
       prevEpoch: existing?.epoch ?? null,
     });
-    return { buffer, epoch, resumed: false, priorDeferredTeardown: null, liveSocket: entry.liveSocket };
+    return {
+      buffer,
+      epoch,
+      resumed: false,
+      priorDeferredTeardown: null,
+      liveSocket: entry.liveSocket,
+      clock: entry.clock,
+    };
   }
 
   /**

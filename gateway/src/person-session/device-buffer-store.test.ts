@@ -47,6 +47,7 @@ describe("DeviceBufferStore", () => {
     expect(result.resumed).toBe(false);
     expect(result.epoch).toBe(1);
     expect(result.buffer).toBeDefined();
+    expect(result.clock).toBeDefined();
   });
 
   it("acquire resumes the same buffer when resumeEpoch matches", () => {
@@ -142,5 +143,13 @@ describe("DeviceBufferStore", () => {
     const store = makeStore();
     // Should not throw — just a warn log.
     expect(() => store.release("ghost")).not.toThrow();
+  });
+
+  it("reuses the same activity clock across a resumed acquire", () => {
+    const store = new DeviceBufferStore(1024);
+    const first = store.acquire("dev-1");
+    const resumed = store.acquire("dev-1", { resumeEpoch: first.epoch });
+    expect(resumed.resumed).toBe(true);
+    expect(resumed.clock).toBe(first.clock);
   });
 });
