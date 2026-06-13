@@ -84,6 +84,7 @@ services:
       - "8888:8888"
     volumes:
       - ~/.sentient/gateway/logs:/app/logs
+      - ~/.sentient/gateway/clientLogs:/app/clientLogs
       - ~/.sentient/gateway/data:/app/gateway-data
       - ${HOME}/.sentient/gateway/data:${HOME}/.sentient/gateway/data
       - ~/.sentient/run/sentient:/run/sentient
