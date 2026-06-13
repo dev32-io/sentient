@@ -1,8 +1,10 @@
 package io.sentient.mobilesdk.vitals
 
 import io.sentient.mobilesdk.log.LogLevel
+import io.sentient.mobilesdk.log.createLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import kotlin.concurrent.Volatile
 
 /**
  * Facade for the client diagnostic subsystem. The app calls init() once at launch,
@@ -11,7 +13,8 @@ import kotlinx.coroutines.launch
  * NEXT launch auto-uploads any session that carries a crash marker.
  */
 class SentientMobileVitals {
-    private var inited = false
+    private val log = createLogger("vitals", "facade")
+    @Volatile private var inited = false
     private lateinit var ring: VitalsRing
     private lateinit var files: VitalsFiles
     private var uploader: VitalsUploader? = null
@@ -28,6 +31,7 @@ class SentientMobileVitals {
         uploader: VitalsUploader?,
         scope: CoroutineScope?,
     ) {
+        if (inited) { log.warn("init.duplicate"); return }
         this.uploader = uploader
         this.scope = scope
         ring = VitalsRing(config.ringMaxBytes)
@@ -58,6 +62,7 @@ class SentientMobileVitals {
             files.markCrash()
         }
         inited = true
+        log.info("init", mapOf("crashed" to crashed.size, "userId" to (userId ?: "-")))
         for (s in crashed) autoUpload(platform, s)
     }
 
@@ -90,6 +95,7 @@ class SentientMobileVitals {
         val u = uploader ?: return
         val sc = scope ?: return
         val body = platform.readFile(s.path) ?: return
+        log.info("auto-upload.fire", mapOf("path" to s.path))
         sc.launch { u.upload(s.path.substringAfterLast('/'), body) { } }
     }
 }
