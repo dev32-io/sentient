@@ -80,7 +80,7 @@ struct SettingsSheet: View {
                         .accessibilityIdentifier("settings-back")
                 }
             }
-            .task { sendLogs.load() }
+            .task { await sendLogs.load() }
         }
         .duskTheme()
     }

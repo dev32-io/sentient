@@ -100,6 +100,15 @@ struct SettingsDiagnostics: View {
     }
 }
 
+#Preview("empty") {
+    SettingsDiagnostics(
+        model: SendLogsViewModel(),
+        nowMs: Int64(Date().timeIntervalSince1970 * 1000)
+    )
+    .padding()
+    .background(DuskColors.bg)
+}
+
 /// One session: a select-row whose trailing send control morphs into a bar then a result.
 private struct SessionUploadRow: View {
     let info: VitalsSessionInfo

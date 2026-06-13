@@ -16,6 +16,7 @@
 package io.sentient.mobilesdk.vitals
 
 import io.sentient.mobilesdk.log.createLogger
+import kotlin.concurrent.Volatile
 import kotlin.experimental.ExperimentalNativeApi
 import kotlin.native.setUnhandledExceptionHook
 import kotlinx.cinterop.BetaInteropApi
@@ -132,5 +133,5 @@ class IosVitalsPlatform : SentientMobileVitalsPlatform {
  * nullable var is sufficient — the handler runs on the crashing thread.
  */
 object IosCrashBridge {
-    var onCrash: (() -> Unit)? = null
+    @Volatile var onCrash: (() -> Unit)? = null
 }

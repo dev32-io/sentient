@@ -41,9 +41,13 @@ final class SendLogsViewModel: ObservableObject {
     }
 
     /// Load the session list (newest-first). Idempotent; safe to call on each appear.
-    func load() {
-        sessions = holder.listSessions()
-        log.info("load count=\(sessions.count)")
+    /// Runs the flush + file reads off the main thread; assigns back on MainActor.
+    func load() async {
+        let result = await Task.detached(priority: .utility) { [holder] in
+            holder.listSessions()
+        }.value
+        sessions = result // back on MainActor after await
+        log.info("load count=\(result.count)")
     }
 
     /// Upload the session at `path`. Drives `progress` during the POST and sets
@@ -59,7 +63,11 @@ final class SendLogsViewModel: ObservableObject {
 
         uploadTask = Task { [weak self] in
             guard let self else { return }
-            guard let body = self.holder.readSessionBody(path: path) else {
+            // Read the session file off the main actor before the network await.
+            let body = await Task.detached(priority: .utility) { [holder = self.holder] in
+                holder.readSessionBody(path: path)
+            }.value
+            guard let body else {
                 self.log.warn("upload.no-body file=\(fileName)")
                 self.finish(.failed)
                 return

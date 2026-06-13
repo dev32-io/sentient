@@ -59,6 +59,11 @@ final class VitalsHolder {
         let deviceId = createVitalsDeviceId()
         let uploader = Self.buildUploaderOrNil(log: log)
 
+        // network: "unknown" on the init path — NetworkProbe uses a DispatchSemaphore
+        // wait (≤150 ms) and must NOT run on the main thread before the first frame.
+        // Crash-capture-live-from-launch + non-blocking init win over exact network
+        // metadata in the header; the background probe below logs the resolved value
+        // so it still appears in the diagnostic stream.
         vitals.doInit(
             // createVitalsConfig applies the commonMain default tunables (ring/file
             // caps, keepFiles, sdkVersion) — Kotlin defaults don't cross the bridge,
@@ -71,11 +76,18 @@ final class VitalsHolder {
             deviceId: deviceId,
             userId: nil, // not available at app start; see file header.
             nowMs: Self.nowMs(),
-            network: NetworkProbe.current(),
+            network: "unknown",
             uploader: uploader,
             scope: createVitalsAppScope()
         )
         log.info("start uploader=\(uploader != nil) deviceId.len=\(deviceId.count)")
+
+        // Probe the real network off the main thread and log it into the diagnostic
+        // stream. The header field is already written as "unknown"; this is info-only.
+        Task.detached(priority: .background) { [log] in
+            let net = NetworkProbe.current()
+            log.info("network.probed value=\(net)")
+        }
 
         // ObjC NSException → flush+mark synchronously in the dying process. The
         // IosVitalsPlatform.registerCrashHandler already wired the Kotlin/Native
@@ -94,13 +106,15 @@ final class VitalsHolder {
     }
 
     /// Newest-first vitals sessions (flushes the ring first).
-    func listSessions() -> [VitalsSessionInfo] {
+    /// `nonisolated`: only accesses the immutable `let vitals` — safe off the main actor.
+    nonisolated func listSessions() -> [VitalsSessionInfo] {
         vitals.listSessions()
     }
 
     /// Read a chosen session's file body for upload. Nil if missing/unreadable.
+    /// `nonisolated`: only accesses the immutable `let platform` — safe off the main actor.
     /// Mirrors Android's `VitalsHolder.readSessionBody` (on the holder, not the facade).
-    func readSessionBody(path: String) -> String? {
+    nonisolated func readSessionBody(path: String) -> String? {
         platform.readFile(path: path)
     }
 
