@@ -11,11 +11,12 @@ const HTTP_OK = 200;
 const HTTP_BAD_REQUEST = 400;
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_METHOD_NOT_ALLOWED = 405;
+const HTTP_INTERNAL = 500;
 
 // --- Upload constants --------------------------------------------------------
 
-/** Maximum accepted body size (bytes). Rejects oversized uploads early. */
-const MAX_BYTES = 64 * 1024 * 1024; // 64 MB
+/** Maximum accepted body size in bytes. Rejects oversized uploads before allocation. */
+export const MAX_BYTES = 64 * 1024 * 1024; // 64 MB
 
 /** Number of hex chars taken from UUID (without dashes) for the short ref. */
 const REF_LEN = 6;
@@ -23,7 +24,11 @@ const REF_LEN = 6;
 /** Sentinel in crash logs: presence triggers "-crash-" suffix in filename. */
 const CRASH_SENTINEL = "=== CRASH ===";
 
-/** Default base directory for client log files (overridden by env in tests). */
+/**
+ * Default base directory for client log files (overridden by env in tests).
+ * Growth of clientLogs/ is operator-managed: external rotation/cleanup is
+ * deferred to the operator (e.g. logrotate, cron). No automatic pruning here.
+ */
 const DEFAULT_CLIENT_LOGS_DIR = "/app/clientLogs";
 
 /** Sub-directory under CLIENT_LOGS_DIR for mobile uploads. */
@@ -63,13 +68,24 @@ async function handleDiagnostics(deps: DiagnosticsDeps, request: Request): Promi
 
   const userId = valid.value.userId;
 
-  const body = await request.text();
-  if (body.length > MAX_BYTES) {
-    log.warn("diagnostics.too-large", { userId, bytes: body.length });
-    return jsonError(HTTP_BAD_REQUEST, "too-large", "Log body exceeds 64 MB limit");
+  // Reject well-behaved oversized uploads before allocating the body buffer.
+  const declaredLen = Number(request.headers.get("content-length") ?? 0);
+  if (declaredLen > MAX_BYTES) {
+    log.warn("diagnostics.too-large", { userId, bytes: declaredLen });
+    return jsonError(HTTP_BAD_REQUEST, "too-large", "Log body exceeds limit");
   }
 
+  // Read as ArrayBuffer for a byte-accurate size guard (avoids UTF-16 code-unit inflation).
+  const buf = await request.arrayBuffer();
+  if (buf.byteLength > MAX_BYTES) {
+    log.warn("diagnostics.too-large", { userId, bytes: buf.byteLength });
+    return jsonError(HTTP_BAD_REQUEST, "too-large", "Log body exceeds limit");
+  }
+  const body = new TextDecoder().decode(buf);
+
   const fileHint = safe(request.headers.get(VITALS_FILE_HEADER) ?? "session");
+  // Primary: filename hint from the uploader. Fallback: body-sentinel scan for when
+  // the x-vitals-file header is absent or stripped by an intermediate proxy.
   const crashed = fileHint.includes("crash") || body.includes(CRASH_SENTINEL);
   const ref = makeRef();
   const ts = Date.now();
@@ -78,10 +94,15 @@ async function handleDiagnostics(deps: DiagnosticsDeps, request: Request): Promi
 
   const clientLogsDir = process.env.CLIENT_LOGS_DIR ?? DEFAULT_CLIENT_LOGS_DIR;
   const dir = join(clientLogsDir, MOBILE_SUBDIR);
-  await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, name), `# fileHint=${fileHint}\n${body}`, { mode: 0o644 });
+  try {
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, name), `# fileHint=${fileHint}\n${body}`, { mode: 0o644 });
+  } catch (e) {
+    log.warn("diagnostics.write-failed", { userId, reason: e instanceof Error ? e.message : "unknown" });
+    return jsonError(HTTP_INTERNAL, "write-failed", "Could not persist diagnostic log");
+  }
 
-  log.info("diagnostics.received", { userId, bytes: body.length, crashed, ref, name });
+  log.info("diagnostics.received", { userId, bytes: buf.byteLength, crashed, ref, name });
   return new Response(JSON.stringify({ ref }), {
     status: HTTP_OK,
     headers: { "content-type": "application/json" },

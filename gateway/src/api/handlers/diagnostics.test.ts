@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { TokenPayload, TokenResult } from "../../user-auth/types.js";
-import { type DiagnosticsDeps, createDiagnosticsHandler } from "./diagnostics.js";
+import { type DiagnosticsDeps, MAX_BYTES, createDiagnosticsHandler } from "./diagnostics.js";
 
 // --- Test fixtures -----------------------------------------------------------
 
@@ -21,10 +21,14 @@ function makeDeps(token: TokenResult<TokenPayload> = OK_TOKEN): DiagnosticsDeps 
   return { tokens: { validate: async (_t: string) => token } };
 }
 
-function postRequest(body: string, opts: { bearer?: string; vitalsFile?: string } = {}): Request {
+function postRequest(
+  body: string,
+  opts: { bearer?: string; vitalsFile?: string; contentLength?: number } = {},
+): Request {
   const headers: Record<string, string> = { "content-type": "text/plain" };
   if (opts.bearer !== undefined) headers.authorization = `Bearer ${opts.bearer}`;
   if (opts.vitalsFile !== undefined) headers["x-vitals-file"] = opts.vitalsFile;
+  if (opts.contentLength !== undefined) headers["content-length"] = String(opts.contentLength);
   return new Request("http://localhost/api/v1/diagnostics/logs", {
     method: "POST",
     headers,
@@ -86,12 +90,21 @@ describe("POST /api/v1/diagnostics/logs — wire contract", () => {
     expect(body.error).toBe("expired");
   });
 
-  it("400 too-large when body exceeds 64 MB", async () => {
+  it("400 too-large when body byte length exceeds MAX_BYTES", async () => {
     const handler = createDiagnosticsHandler(makeDeps());
-    // Build a body just over 64 MB (64 * 1024 * 1024 + 1 bytes).
-    const OVER_LIMIT = 64 * 1024 * 1024 + 1;
-    const bigBody = "x".repeat(OVER_LIMIT);
+    // Build a body just over the limit (MAX_BYTES + 1 ASCII bytes = MAX_BYTES + 1 bytes).
+    const bigBody = "x".repeat(MAX_BYTES + 1);
     const res = await handler(postRequest(bigBody, { bearer: "t" }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("too-large");
+  });
+
+  it("400 too-large when content-length header exceeds MAX_BYTES (pre-buffer check)", async () => {
+    const handler = createDiagnosticsHandler(makeDeps());
+    // Small actual body but declared size over limit — exercises the Content-Length pre-check
+    // that rejects the request before the body is buffered.
+    const res = await handler(postRequest("small body", { bearer: "t", contentLength: MAX_BYTES + 1 }));
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toBe("too-large");
