@@ -1,5 +1,6 @@
 package io.sentient.mobilesdk.log
 
+import io.sentient.mobilesdk.vitals.VitalsLogTap
 import kotlin.concurrent.Volatile
 
 /**
@@ -49,7 +50,8 @@ fun createLogger(vararg tags: String): Log {
     val tag = loggerTag(*tags)
     return object : Log {
         private fun emit(level: LogLevel, message: String, props: Map<String, Any?>) {
-            if (level.ordinal < LogConfig.minLevel.ordinal) return
+            val belowMin = level.ordinal < LogConfig.minLevel.ordinal
+            if (belowMin && !VitalsLogTap.hasSink()) return // nothing consumes it — skip build+sanitize
             val propsStr = if (props.isEmpty()) {
                 ""
             } else {
@@ -57,7 +59,10 @@ fun createLogger(vararg tags: String): Log {
                     "$k=${truncatePreview(v.toString())}"
                 }
             }
-            platformLogSink(tag, level, sanitizeLog(message + propsStr))
+            val line = sanitizeLog(message + propsStr)
+            VitalsLogTap.capture(level, tag, line)
+            if (belowMin) return
+            platformLogSink(tag, level, line)
         }
 
         override fun debug(message: String, props: Map<String, Any?>) =

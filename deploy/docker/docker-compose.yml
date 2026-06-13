@@ -90,6 +90,7 @@ services:
       # (see gateway/Dockerfile). Operator can override either by mounting
       # a custom file at /app/config/config.yaml or /app/config/salience_map.yaml.
       - ~/.sentient/gateway/logs:/app/logs
+      - ~/.sentient/gateway/clientLogs:/app/clientLogs
       # Mutable gateway data — users.json, secrets.json, profiles, archives,
       # shared templates. Resolved by getGatewayRoot() inside the gateway.
       # Without this mount, accounts disappear on every `docker compose

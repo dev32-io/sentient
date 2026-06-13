@@ -9,7 +9,10 @@ appId: io.dev32.sentient.debug
       visible: "Who's here?"
     commands:
       - tapOn:
-          point: "50%, 53%"        # Kevin avatar circle
+          id: "login-avatar-u_8c866990"    # Kevin avatar (stable resource-id)
+      - extendedWaitUntil:
+          visible: { id: "pin-key-1" }
+          timeout: 5000
       - tapOn: { id: "pin-key-1" }
       - tapOn: { id: "pin-key-2" }
       - tapOn: { id: "pin-key-3" }

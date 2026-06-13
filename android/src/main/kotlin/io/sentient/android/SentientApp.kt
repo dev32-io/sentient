@@ -25,6 +25,10 @@ class SentientApp : Application() {
         MobileSdk.initAndroid(applicationContext)
         io.sentient.android.backend.BackendConfigHolder.init(applicationContext)
         io.sentient.android.sdk.DisplayNameHolder.init(applicationContext)
+        // Vitals: crash capture + file rotation MUST be live from the earliest point.
+        // Runs after MobileSdk.initAndroid (Context populated) + BackendConfigHolder.init
+        // (so the uploader can resolve the configured backend). See VitalsHolder.
+        io.sentient.android.sdk.VitalsHolder.init(applicationContext)
         // Koin DI graph: UserSessionManager (User/Connection scope) + per-screen VMs.
         startKoin {
             androidContext(this@SentientApp)

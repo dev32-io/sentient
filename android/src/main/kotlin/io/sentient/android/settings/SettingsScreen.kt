@@ -11,7 +11,11 @@
 // one defined back target per the mobile-navigation rule. The version-check hook
 // is a STUB only — spec §12.2 P2 carry — no networking in v1.
 //
-// testTags: settings-screen, settings-version, settings-logout, settings-back.
+// The diagnostics "Send diagnostic log" two-lane section lives in
+// SettingsDiagnostics.kt (hoisted state from SettingsViewModel).
+//
+// testTags: settings-screen, settings-version, settings-logout, settings-back,
+// settings-send-logs (+ the per-row diagnostics tags in SettingsDiagnostics).
 // The settings-open entry point lives in the chat top bar (ChatContent).
 // ---------------------------------------------------------------------------
 package io.sentient.android.settings
@@ -28,6 +32,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -37,6 +45,7 @@ import io.sentient.android.BuildConfig
 import io.sentient.android.theme.LocalTokens
 import io.sentient.mobilesdk.design.Colors
 import io.sentient.mobilesdk.log.createLogger
+import io.sentient.mobilesdk.vitals.VitalsSessionInfo
 
 private const val TITLE = "Settings"
 private const val VERSION_LABEL = "App version"
@@ -65,16 +74,24 @@ private fun checkForUpdatesStub() {
 
 /**
  * Thin Settings screen. [onLogout] clears the token + disconnects (see
- * [SettingsViewModel.logout]); [onBack] returns to chat. Both are plain
- * callbacks — the host owns navigation + the ViewModel.
+ * [SettingsViewModel.logout]); [onBack] returns to chat. The diagnostics block is
+ * driven by hoisted vitals state ([sessions] / [progress] / [outcome]) + [onUpload].
+ * All callbacks/state are hoisted — the host owns navigation + the ViewModel.
  */
 @Composable
 fun SettingsScreen(
     onLogout: () -> Unit,
     onBack: () -> Unit,
+    sessions: List<VitalsSessionInfo>,
+    progress: Float?,
+    outcome: UploadOutcome?,
+    onUpload: (String) -> Unit,
     modifier: Modifier = Modifier,
+    nowMs: Long = System.currentTimeMillis(),
 ) {
     val tokens = LocalTokens.current
+    // Track which row's upload is in flight so only that row morphs into a bar/result.
+    var uploadingPath by remember { mutableStateOf<String?>(null) }
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -89,6 +106,14 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(tokens.space.md),
         ) {
             VersionRow()
+            SettingsDiagnostics(
+                sessions = sessions,
+                nowMs = nowMs,
+                uploadingPath = uploadingPath,
+                progress = progress,
+                outcome = outcome,
+                onUpload = { path -> uploadingPath = path; onUpload(path) },
+            )
             LogoutButton(onLogout = onLogout)
         }
     }

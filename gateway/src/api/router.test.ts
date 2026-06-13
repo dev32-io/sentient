@@ -28,6 +28,7 @@ function makeDeps(overrides: Partial<ApiRouterDeps> = {}): ApiRouterDeps {
     handleApply: fallthrough,
     handleDevices: fallthrough,
     handleSessions: fallthrough,
+    handleDiagnostics: fallthrough,
     handleStatic: nullStatic,
     ...overrides,
   };

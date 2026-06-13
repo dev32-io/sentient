@@ -187,6 +187,38 @@ class SdkResumeReconciliationTest {
         assertEquals(1, activateFrames(fake.sentText).size, "no-cursor reconnect must re-activate exactly once, sent=${fake.sentText}")
     }
 
+    // ── configure carries conversationId on reconnect ────────────────────────
+
+    @Test
+    fun `configure carries current conversationId on reconnect`() = runTest {
+        val fake = FakeWebSocketEngine()
+        val sdk = buildSdkWithHistory(backgroundScope, fake, countingHttpClient {})
+        connectToReady(sdk, fake)
+
+        // Anchor a conversation so _currentSessionId = "conv-A".
+        fake.emit(WsIncoming.Text(createdFrame(anchoredUuid)))
+        sdk.currentSessionId.first { it == anchoredUuid }
+
+        // Drop → reconnect → the handshake fires a fresh session.configure.
+        fake.failIncoming("network drop")
+        // Wait for the reconnect to open a new socket.
+        sdk.connection.first { fake.openedUrls.size >= 2 }
+        // Drive the reconnect handshake to READY.
+        fake.emit(WsIncoming.Text(AUTH_OK_FRAME))
+        fake.emit(WsIncoming.Text(READY_FRAME))
+        sdk.connection.first { it.status == SdkStatus.READY }
+
+        // The reconnect session's configure frame MUST carry conversationId = anchoredUuid.
+        val configureFrames = fake.sentText.filter { it.contains("\"type\":\"session.configure\"") }
+        assertTrue(configureFrames.isNotEmpty(), "reconnect must send session.configure, sent=${fake.sentText}")
+        // .last() because the initial connect also sends session.configure (no conversationId yet — nothing anchored); the reconnect's configure is the last one and carries the anchored id.
+        val configureJson = configureFrames.last()
+        assertTrue(
+            configureJson.contains("\"conversationId\":\"$anchoredUuid\""),
+            "session.configure must carry conversationId=\"$anchoredUuid\", got: $configureJson",
+        )
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────
 
     /** SessionsHttpClient whose getMessages records each call via [onGetMessages] and

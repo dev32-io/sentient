@@ -56,10 +56,15 @@ struct SettingsSheet: View {
     let onLogout: () -> Void
     let onDismiss: () -> Void
 
+    /// The diagnostics command surface (list + upload vitals sessions). Owned here
+    /// so it lives for the sheet's lifetime; the app-global VitalsHolder backs it.
+    @StateObject private var sendLogs = SendLogsViewModel()
+
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: Space.lg) {
                 versionRow
+                SettingsDiagnostics(model: sendLogs, nowMs: Int64(Date().timeIntervalSince1970 * 1000))
                 logoutButton
                 Spacer()
             }
@@ -75,6 +80,7 @@ struct SettingsSheet: View {
                         .accessibilityIdentifier("settings-back")
                 }
             }
+            .task { await sendLogs.load() }
         }
         .duskTheme()
     }

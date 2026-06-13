@@ -15,6 +15,13 @@ struct SentientApp: App {
         #else
         MobileData.LogConfig.shared.minLevel = .info
         #endif
+
+        // Start the diagnostic subsystem from the EARLIEST point — before login,
+        // before any connection scope — so crash capture + file rotation are live
+        // from launch and survive logout→login. The uploader is built only if a
+        // backend is already configured (else a prior crash auto-uploads next
+        // launch). Mirrors Android's VitalsHolder.init in SentientApp.onCreate.
+        VitalsHolder.shared.start()
     }
 
     var body: some Scene {

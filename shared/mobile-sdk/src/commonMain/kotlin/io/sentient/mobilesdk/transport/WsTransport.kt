@@ -18,9 +18,9 @@
 // is single-consumer) and routes onto the completing channels, so each public
 // flow terminates when the socket closes — `toList` does not hang.
 //
-// Per logging.md: raw incoming TEXT is logged at DEBUG (truncated by the logger)
-// at the decode boundary BEFORE decoding, so frames that fall through to
-// ServerMessage.Unknown stay traceable. Sends log type only, never the payload.
+// Per logging.md: incoming TEXT is logged at DEBUG (frame length only) so the
+// diagnostic ring never captures chat content. Sends log type only, never the
+// payload. If a protocol break needs the raw bytes, the gateway logs hold them.
 // Per error-handling.md: failures are signals on [signals], never thrown.
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.transport
@@ -138,9 +138,10 @@ class WsTransport(
     }
 
     private suspend fun routeText(raw: String) {
-        // Log the raw frame BEFORE decoding so Unknown-decoding frames stay
-        // traceable (logger truncates the preview).
-        log.debug("recv-text", mapOf("raw" to raw))
+        // Log frame length only — never the content. Chat text must not enter the
+        // diagnostic ring. The gateway logs hold raw bytes if a protocol break
+        // needs them.
+        log.debug("recv-text", mapOf("len" to raw.length))
         // DEBUG fault injection: if malformed-frame is armed, corrupt the payload so
         // decoding fails and the existing ProtocolError path fires. Arm via:
         //   adb shell am broadcast -a io.sentient.debug.FAULT --es kind malformed
@@ -160,7 +161,7 @@ class WsTransport(
                 eventChannel.send(WsEvent.Control(msg, seq, epoch))
             },
             onFailure = { err ->
-                log.warn("decode-failed", mapOf("reason" to (err.message ?: "parse error"), "frame" to effectiveRaw))
+                log.warn("decode-failed", mapOf("reason" to (err.message ?: "parse error"), "frameLen" to effectiveRaw.length))
                 onProtocolError?.invoke(SentientError.Protocol("decode failed", cause = err))
                 // Skip the malformed frame; pump continues.
             },

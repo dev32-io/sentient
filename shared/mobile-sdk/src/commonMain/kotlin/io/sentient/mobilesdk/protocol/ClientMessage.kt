@@ -33,6 +33,16 @@ sealed class ClientMessage {
          * Omitted from the wire when null ([WireJson] explicitNulls=false).
          */
         val resume: ResumeParams? = null,
+        /**
+         * The ACP conversation uuid the client is currently displaying, sent on a
+         * RECONNECT so the gateway can re-anchor Hermes to that conversation before
+         * the next user.message arrives (Task 3 — conversation continuity).
+         * Null on a first connect (nothing anchored yet).
+         * Omitted from the wire when null ([WireJson] explicitNulls=false) — the
+         * gateway schema is `conversationId: z.string().min(1).optional()` and
+         * rejects an explicit null, so wire-omit is required.
+         */
+        val conversationId: String? = null,
     ) : ClientMessage()
 
     @Serializable @SerialName("audio.start")

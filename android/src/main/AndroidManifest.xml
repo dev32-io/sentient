@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Read the active transport (wifi/cellular/none) for the vitals session header. Normal permission, no runtime prompt. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Read wifi RSSI for signal-level vitals (0–4 bars). Normal permission, no runtime prompt. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <!-- Mic capture for voice conversations (E1 AudioRecord). Runtime prompt handled by the app (E5/E6). -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <application

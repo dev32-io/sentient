@@ -842,6 +842,7 @@ class SentientSdk(
         override fun onStreamResumed(recovered: Boolean) = this@SentientSdk.onStreamResumed(recovered)
         override fun onCycleSettled() = cursorPersistence.flush()
         override fun resumeParams(): ResumeParams? = this@SentientSdk.resumeParams()
+        override fun currentConversationId(): String? = _currentSessionId.value
         override fun onAuthFailed() = setError(authExpired = true)
         override fun onConnectionDrop() = this@SentientSdk.onConnectionDrop()
         override fun mergedCapabilities(): List<String> = this@SentientSdk.mergedCapabilities()

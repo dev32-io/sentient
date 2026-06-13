@@ -1,44 +1,110 @@
 // ---------------------------------------------------------------------------
-// SettingsViewModel — the logout command surface for the thin Settings screen
-// (D-A5). v1 Settings is INTENTIONALLY THIN (operator directive: show version,
-// add the rest later), so the only side-effecting action here is logout.
+// SettingsViewModel — the command surface for the thin Settings screen (D-A5).
 //
-// Logout is the inverse of the AuthViewModel login flow:
-//   login:  tokenStore.save(token) + displayNameStore.save(name)
-//   logout: tokenStore.clear() + displayNameStore.clear()
+// Two commands:
+//   - logout: clears the persisted token + display name (inverse of login). The SDK
+//     teardown is owned by AppNavHost (UserSessionManager.shutdown()).
+//   - send diagnostic log: list the vitals sessions, upload a chosen one, surface
+//     per-upload progress + a ref/error result. The vitals facade owns the file
+//     read + the authenticated POST; this VM just drives + folds the result.
 //
-// Clearing displayName flips the auth gate (displayName == null). The actual SDK
-// teardown on logout is owned by AppNavHost: it calls UserSessionManager.shutdown()
-// (disconnect + cancel scope) alongside this logout(). So this VM only clears the
-// persisted auth state. Mirrors iOS: clearing the store flips the nav gate.
+// sessions is loaded on Dispatchers.IO in init {}; progress/result are hot
+// StateFlows the row binds to so the button morphs into a progress bar and then
+// a result line.
 // ---------------------------------------------------------------------------
 package io.sentient.android.settings
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import io.sentient.android.sdk.AppDependencies
 import io.sentient.android.sdk.DisplayNameHolder
 import io.sentient.android.sdk.DisplayNameStore
+import io.sentient.android.sdk.VitalsHolder
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.secure.SecureTokenStore
+import io.sentient.mobilesdk.vitals.SentientMobileVitals
+import io.sentient.mobilesdk.vitals.VitalsSessionInfo
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/** Terminal upload outcome surfaced on the row, or null while idle/in-flight. */
+sealed interface UploadOutcome {
+    /** Uploaded; [ref] is the server ref ("" when the upload succeeded but no ref parsed). */
+    data class Sent(val ref: String) : UploadOutcome
+    /** Upload failed (transport error / non-2xx / missing body). Offer a retry. */
+    data object Failed : UploadOutcome
+}
 
 /**
- * Drives the Settings screen's only command: [logout]. Default constructor reads
- * from [AppDependencies]; both params are injectable for tests.
+ * Drives the Settings screen's commands. Default constructor reads app singletons;
+ * every param is injectable for tests (no DI framework).
  *
  * @param tokenStore The same store login wrote to; clearing it prevents auto-resume.
  * @param displayNameStore Clearing this flips the nav gate to the login screen.
+ * @param vitals The app-lifetime diagnostic facade (list + upload sessions).
+ * @param readBody Reads a chosen session's file body for upload. Defaults to the holder.
  */
 class SettingsViewModel(
     private val tokenStore: SecureTokenStore = AppDependencies.tokenStore,
     private val displayNameStore: DisplayNameStore = DisplayNameHolder.store,
+    private val vitals: SentientMobileVitals = VitalsHolder.vitals,
+    private val readBody: (String) -> String? = VitalsHolder::readSessionBody,
 ) : ViewModel() {
     private val log = createLogger("android", "settings-viewmodel")
 
+    /** Newest-first vitals sessions loaded on IO; empty until the first emission. */
+    private val _sessions = MutableStateFlow<List<VitalsSessionInfo>>(emptyList())
+    val sessions: StateFlow<List<VitalsSessionInfo>> = _sessions.asStateFlow()
+
+    // Upload progress in [0,1]; null = idle / done. The row morphs into a bar while non-null.
+    private val _progress = MutableStateFlow<Float?>(null)
+    val progress: StateFlow<Float?> = _progress.asStateFlow()
+
+    // Terminal outcome (ref or failure); null until an upload completes.
+    private val _outcome = MutableStateFlow<UploadOutcome?>(null)
+    val outcome: StateFlow<UploadOutcome?> = _outcome.asStateFlow()
+
+    // Tracks the in-flight upload job so a new tap cancels a previous one.
+    private var uploadJob: Job? = null
+
+    init {
+        viewModelScope.launch(Dispatchers.IO) { _sessions.value = vitals.listSessions() }
+    }
+
     /**
-     * Logs the user out: clears the persisted token + display name. Idempotent —
-     * [SecureTokenStore.clear] and [DisplayNameStore.clear] are both safe to call
-     * when already logged out. AppNavHost pairs this with UserSessionManager.shutdown()
-     * for the SDK disconnect + scope cancel, then routes to login.
+     * Upload the session at [path]. Drives [progress] during the POST and sets [outcome]
+     * on completion. A missing/unreadable body is a Failed outcome (never throws).
+     * Cancels any in-flight upload before starting a new one.
+     */
+    fun uploadSession(path: String) {
+        uploadJob?.cancel()
+        uploadJob = viewModelScope.launch {
+            val fileName = path.substringAfterLast('/')
+            log.info("upload.start", mapOf("file" to fileName))
+            _outcome.value = null
+            _progress.value = 0f
+            val body = withContext(Dispatchers.IO) { readBody(path) }
+            if (body == null) {
+                log.warn("upload.no-body", mapOf("reason" to "unreadable", "file" to fileName))
+                _progress.value = null
+                _outcome.value = UploadOutcome.Failed
+                return@launch
+            }
+            val ref = vitals.upload(fileName, body) { p -> _progress.value = p.toFloat() }
+            _progress.value = null
+            _outcome.value = if (ref != null) UploadOutcome.Sent(ref) else UploadOutcome.Failed
+            log.info("upload.done", mapOf("file" to fileName, "ok" to (ref != null), "ref" to (ref ?: "-")))
+        }
+    }
+
+    /**
+     * Logs the user out: clears the persisted token + display name. Idempotent.
+     * AppNavHost pairs this with UserSessionManager.shutdown() + routes to login.
      */
     fun logout() {
         log.info("logout.start")

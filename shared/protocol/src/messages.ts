@@ -99,6 +99,16 @@ export const sessionConfigureSchema = z.object({
    * is no separate stream.resume frame.
    */
   resume: sessionConfigureResumeSchema.optional(),
+  /**
+   * Optional — the Hermes conversation/thread id the client is currently
+   * displaying. This is the same value the client receives as `sessionId` on
+   * `session.created` / `session.switched` and sends back in
+   * `conversation.activate.sessionId`. It is NOT the per-WS connection id
+   * (`auth.ok.sessionId` / `session.ready.sessionId`). Sent on (re)connect so
+   * the gateway re-anchors the thread for the next message instead of forking.
+   * Omitted on a fresh chat.
+   */
+  conversationId: z.string().min(1).optional(),
 });
 
 export const audioStartSchema = z.object({

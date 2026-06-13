@@ -142,7 +142,7 @@ open class SessionsHttpClient(
      */
     open suspend fun search(q: String, limit: Int = DEFAULT_SEARCH_LIMIT): List<SessionRow> {
         val encodedQ = q.encodeURLQueryComponent()
-        log.debug("search", mapOf("q" to q.take(PREVIEW_LEN), "limit" to limit))
+        log.debug("search", mapOf("qLen" to q.length, "limit" to limit))
         return safeGet {
             val resp = httpClient.get(
                 "$baseUrl$PATH_SESSIONS/search?q=$encodedQ&limit=$limit",

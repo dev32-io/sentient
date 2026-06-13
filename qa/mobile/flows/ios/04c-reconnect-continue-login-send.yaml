@@ -1,0 +1,34 @@
+appId: io.dev32.sentient.debug
+---
+# 04c (part 1/2, iOS) — reconnect conversation-continuity, FIRST turn.
+#
+# Validates the same fix as the Android 04c: on reconnect the SDK sends
+# `conversationId` in `session.configure`; the gateway re-anchors so the
+# follow-up CONTINUES the same Hermes conversation (gateway log
+# `resume.reanchor source=configure`, same conversationId, no
+# dispatch.session-new.lazy). The fix lives in shared commonMain — this iOS run
+# exercises the identical SDK path on the Apple framework.
+#
+# The reconnect is forced BETWEEN this flow and the followup by the runner (NOT
+# a Maestro step): `docker restart sentient-gateway` drops the WS while the app
+# process stays alive (so its in-memory currentSessionId survives), then the SDK
+# reconnects and re-sends configure with conversationId. See
+# qa/mobile/evidence/2026-06-12-resume-continuity/results.md.
+#
+# tags: [ios, simulator-ok, reconnect, continuity]
+- runFlow: login.yaml
+- extendedWaitUntil:
+    visible: { id: "composer-input" }
+    timeout: 15000
+- tapOn:
+    id: "new-chat"
+- extendedWaitUntil:
+    visible: { id: "composer-input" }
+    timeout: 5000
+- tapOn: { id: "composer-input" }
+- inputText: "My lucky color is teal. Please remember it."
+- tapOn: { id: "chat-send" }
+- tapOn: { id: "chat-message-list" }
+- extendedWaitUntil:
+    visible: { id: "assistant-bubble" }
+    timeout: 60000

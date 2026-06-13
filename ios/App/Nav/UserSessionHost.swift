@@ -104,6 +104,9 @@ struct UserSessionHost: View {
                 hasBackgrounded = true
                 sceneLog.info("background")
                 userSession.pause()
+                // Flush the diagnostic ring to the current session file on background
+                // (the app-global vitals facade; same instance as init / Settings).
+                VitalsHolder.shared.onAppBackground()
             case .active:
                 if hasBackgrounded {
                     sceneLog.info("foreground")

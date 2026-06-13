@@ -1,0 +1,61 @@
+appId: io.dev32.sentient.debug
+---
+# 30-send-diagnostic (iOS) — Task 13 SentientMobileVitals manual-upload smoke.
+#
+# Flow: launch + login (reusable login.yaml: Kevin avatar + PIN 1234) → send one
+# chat turn (so the rolling vitals file has content) → open the history side panel
+# → settings-open (gear in the account header) → tap settings-send-logs (expands
+# the session list) → "This session" (newest) is default-selected → tap
+# settings-log-send → the control morphs into a progress bar (settings-log-progress)
+# → "Sent ✓ — ref XXXX" (settings-log-sent).
+#
+# The REAL assertion (a new file under ~/.sentient/gateway/clientLogs/mobile/ with a
+# session-meta header, the gateway `diagnostics.received` log line, and absence of
+# the chat text) is verified out-of-band by the runner, not by Maestro.
+#
+# Selectors reuse the existing 04c / 09-logout / login flows verbatim (same app,
+# same auth, same drawer→settings nav). accessibilityIdentifiers from
+# SettingsDiagnostics.swift.
+#
+# tags: [ios, simulator-ok, vitals, diagnostics]
+- runFlow: login.yaml
+- extendedWaitUntil:
+    visible: { id: "composer-input" }
+    timeout: 20000
+# One chat turn so the diagnostic log captures live session content.
+- tapOn: { id: "composer-input" }
+- inputText: "hi"
+- tapOn: { id: "chat-send" }
+- tapOn: { id: "chat-message-list" }
+- extendedWaitUntil:
+    visible: { id: "assistant-bubble" }
+    timeout: 60000
+# Open the history side panel, then Settings via the account-header gear.
+- tapOn: { id: "history-open" }
+- extendedWaitUntil:
+    visible: { id: "history-new-chat" }
+    timeout: 5000
+- tapOn: { id: "settings-open" }
+- extendedWaitUntil:
+    visible: { id: "settings-send-logs" }
+    timeout: 10000
+# Reveal the session list. Newest ("This session") is default-selected → "Send".
+# NOTE: on iOS SwiftUI the inner button's accessibilityIdentifier (settings-log-send /
+# settings-log-sent) is NOT surfaced in the tree — only the row container's id
+# (settings-log-session-<ms>) is. So we drive + assert by the visible button TEXT,
+# which is the reliable selector here. The "This session" row owns the "Send" control.
+- tapOn: { id: "settings-send-logs" }
+- extendedWaitUntil:
+    visible:
+      text: "This session"
+    timeout: 5000
+- tapOn:
+    text: "Send"
+# The control morphs: progress bar in flight, then "Sent ✓ — ref XXXX".
+- extendedWaitUntil:
+    visible:
+      text: "Sent ✓.*"
+    timeout: 20000
+- assertVisible:
+    text: "Sent ✓.*"
+- takeScreenshot: vitals-ios-sent

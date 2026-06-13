@@ -845,3 +845,43 @@ describe("conversationFeedItem entryId — required on all kinds", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// session.configure conversationId — resume-conversation-continuity
+// ---------------------------------------------------------------------------
+
+describe("session.configure conversationId", () => {
+  it("accepts session.configure with an optional conversationId", () => {
+    const result = sessionConfigureSchema.safeParse({
+      type: "session.configure",
+      capabilities: { supports: [] },
+      clientType: "mobile",
+      deviceId: "dev-1",
+      conversationId: "conv-abc",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.conversationId).toBe("conv-abc");
+  });
+
+  it("accepts session.configure with conversationId omitted (back-compat)", () => {
+    const result = sessionConfigureSchema.safeParse({
+      type: "session.configure",
+      capabilities: { supports: [] },
+      clientType: "webui",
+      deviceId: "dev-1",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.conversationId).toBeUndefined();
+  });
+
+  it("rejects empty-string conversationId", () => {
+    const result = sessionConfigureSchema.safeParse({
+      type: "session.configure",
+      capabilities: { supports: [] },
+      clientType: "webui",
+      deviceId: "dev-1",
+      conversationId: "",
+    });
+    expect(result.success).toBe(false);
+  });
+});
