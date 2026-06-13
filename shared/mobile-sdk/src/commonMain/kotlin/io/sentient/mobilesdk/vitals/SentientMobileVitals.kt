@@ -57,11 +57,14 @@ class SentientMobileVitals {
             freeDiskBytes = dm.freeDiskBytes,
         )
         files.startSession(meta)
+        runCatching { files.flush(platform.deviceSnapshot().renderBlock("@init")) }
+            .onFailure { log.warn("snapshot.init-failed", mapOf("reason" to (it.message ?: "unknown"))) }
         platform.registerCrashHandler {
             // Non-blocking drain: iOS NSLock is non-reentrant; if the crashing thread
             // held the ring lock (crashed mid-append), a blocking drain() would deadlock
             // the dying process and prevent the crash marker from being written.
             files.flush(ring.drainTry())
+            runCatching { files.flush(platform.deviceSnapshot().renderBlock("@crash")) }
             files.markCrash()
         }
         inited = true

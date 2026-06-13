@@ -29,4 +29,9 @@ interface SentientMobileVitalsPlatform {
     fun registerCrashHandler(onCrash: () -> Unit)
 
     fun deviceMeta(): DeviceMeta
+
+    /** Volatile runtime state (battery / memory / network / thermal). Read at init
+     *  and at crash; MUST be cheap + synchronous + non-throwing (it runs in the dying
+     *  process at crash time). Return sentinel values for anything unavailable. */
+    fun deviceSnapshot(): DeviceSnapshot
 }

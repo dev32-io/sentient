@@ -56,6 +56,13 @@ class AndroidVitalsPlatform(private val context: Context) : SentientMobileVitals
         log.info("crash-handler.registered", mapOf("chainedPrior" to (prior != null)))
     }
 
+    // TODO(next-task): replace stub with real Android battery/mem/network/thermal reads.
+    override fun deviceSnapshot(): DeviceSnapshot = DeviceSnapshot(
+        batteryPct = -1, isCharging = false, availMemBytes = -1, totalMemBytes = -1,
+        lowMemory = false, networkType = "unknown", signalLevel = -1,
+        thermalState = "unknown", freeDiskBytes = -1,
+    )
+
     override fun deviceMeta(): DeviceMeta = DeviceMeta(
         platform = PLATFORM_ANDROID,
         device = "${Build.MANUFACTURER} ${Build.MODEL}",

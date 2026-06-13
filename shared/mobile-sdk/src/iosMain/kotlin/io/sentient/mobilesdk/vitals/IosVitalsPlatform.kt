@@ -110,6 +110,13 @@ class IosVitalsPlatform : SentientMobileVitalsPlatform {
         log.info("crash-handler.registered")
     }
 
+    // TODO(next-task): replace stub with real iOS battery/mem/network/thermal reads.
+    override fun deviceSnapshot(): DeviceSnapshot = DeviceSnapshot(
+        batteryPct = -1, isCharging = false, availMemBytes = -1, totalMemBytes = -1,
+        lowMemory = false, networkType = "unknown", signalLevel = -1,
+        thermalState = "unknown", freeDiskBytes = -1,
+    )
+
     override fun deviceMeta(): DeviceMeta {
         val d = UIDevice.currentDevice
         return DeviceMeta(

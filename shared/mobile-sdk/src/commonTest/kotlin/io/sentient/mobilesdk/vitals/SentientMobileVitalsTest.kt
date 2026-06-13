@@ -43,4 +43,23 @@ class SentientMobileVitalsTest {
         v.onAppBackground()                 // must not throw
         assertTrue(v.listSessions().isEmpty())
     }
+
+    @Test fun init_writes_a_device_state_block() {
+        val p = FakeVitalsPlatform()
+        val v = SentientMobileVitals()
+        v.initForTest(cfg(), p, "d", "u", 1, "wifi", uploader = null)
+        val file = p.files.entries.single { it.key.contains("vitals-") }.value
+        assertTrue(file.contains("=== STATE @init ==="))
+        assertTrue(file.contains("batteryPct=80"))
+        assertTrue(file.contains("thermalState=nominal"))
+    }
+
+    @Test fun crash_writes_a_device_state_block() {
+        val p = FakeVitalsPlatform()
+        val v = SentientMobileVitals()
+        v.initForTest(cfg(), p, "d", "u", 1, "wifi", uploader = null)
+        p.crashHook!!.invoke()
+        val file = p.files.entries.single { it.key.contains("vitals-") }.value
+        assertTrue(file.contains("=== STATE @crash ==="))
+    }
 }
