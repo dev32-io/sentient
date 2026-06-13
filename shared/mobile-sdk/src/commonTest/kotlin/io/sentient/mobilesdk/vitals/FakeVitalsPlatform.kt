@@ -4,8 +4,8 @@ class FakeVitalsPlatform(
     private val meta: DeviceMeta = DeviceMeta("android", "Pixel", "Android 14", "en", 1, 2),
     private val snapshot: DeviceSnapshot = DeviceSnapshot(
         batteryPct = 80, isCharging = false, availMemBytes = 100, totalMemBytes = 200,
-        lowMemory = false, networkType = "wifi", signalLevel = 3, thermalState = "nominal",
-        freeDiskBytes = 500,
+        lowMemory = false, networkType = DeviceSnapshot.NET_WIFI, signalLevel = 3,
+        thermalState = DeviceSnapshot.THERMAL_NOMINAL, freeDiskBytes = 500,
     ),
 ) : SentientMobileVitalsPlatform {
     val files = LinkedHashMap<String, String>()

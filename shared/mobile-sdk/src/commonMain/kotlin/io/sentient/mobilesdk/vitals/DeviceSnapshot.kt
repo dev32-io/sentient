@@ -30,4 +30,18 @@ data class DeviceSnapshot(
         appendLine("thermalState=$thermalState")
         appendLine("freeDiskBytes=$freeDiskBytes")
     }
+
+    companion object {
+        const val NET_WIFI = "wifi"
+        const val NET_CELLULAR = "cellular"
+        const val NET_NONE = "none"
+        const val NET_UNKNOWN = "unknown"
+        const val THERMAL_NOMINAL = "nominal"
+        const val THERMAL_FAIR = "fair"
+        const val THERMAL_SERIOUS = "serious"
+        const val THERMAL_CRITICAL = "critical"
+        const val THERMAL_UNKNOWN = "unknown"
+        const val UNKNOWN_INT = -1        // battery / signal sentinel
+        const val UNKNOWN_LONG = -1L      // mem / disk sentinel
+    }
 }

@@ -64,7 +64,11 @@ class SentientMobileVitals {
             // held the ring lock (crashed mid-append), a blocking drain() would deadlock
             // the dying process and prevent the crash marker from being written.
             files.flush(ring.drainTry())
+            // Dying process: no structured logger (re-entrant lock / allocation risk). On a
+            // snapshot-read failure, append a literal marker so the file shows the read FAILED
+            // (vs. looking truncated). markCrash() still runs after, so the crash is always marked.
             runCatching { files.flush(platform.deviceSnapshot().renderBlock("@crash")) }
+                .onFailure { runCatching { files.flush("=== STATE @crash unavailable ===\n") } }
             files.markCrash()
         }
         inited = true

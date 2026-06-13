@@ -52,17 +52,8 @@ import platform.UIKit.UIDeviceBatteryState
 private const val PLATFORM_IOS = "ios"
 private const val VITALS_SUBDIR = "vitals"
 
-// Thermal state strings (shared with DeviceSnapshot contract)
-private const val THERMAL_NOMINAL = "nominal"
-private const val THERMAL_FAIR = "fair"
-private const val THERMAL_SERIOUS = "serious"
-private const val THERMAL_CRITICAL = "critical"
-private const val THERMAL_UNKNOWN = "unknown"
-
-// Network type sentinel (synchronous read not available on iOS)
-private const val NET_UNKNOWN = "unknown"
-
 private const val SIGNAL_UNKNOWN = -1
+private const val BYTES_PER_MB = 1_048_576L
 
 /** iOS actual of [SentientMobileVitalsPlatform]. File ops over Caches/vitals. */
 class IosVitalsPlatform : SentientMobileVitalsPlatform {
@@ -146,18 +137,18 @@ class IosVitalsPlatform : SentientMobileVitalsPlatform {
             mapOf(
                 "batteryPct" to batteryPct,
                 "isCharging" to isCharging,
-                "totalMemMb" to if (totalMem >= 0) totalMem / 1_048_576 else -1,
+                "totalMemMb" to if (totalMem >= 0) totalMem / BYTES_PER_MB else -1,
                 "thermalState" to thermal,
-                "freeDiskMb" to if (freeDisk >= 0) freeDisk / 1_048_576 else -1,
+                "freeDiskMb" to if (freeDisk >= 0) freeDisk / BYTES_PER_MB else -1,
             ),
         )
         return DeviceSnapshot(
             batteryPct = batteryPct,
             isCharging = isCharging,
-            availMemBytes = -1L,       // os_proc_available_memory not in K/N platform bindings
+            availMemBytes = DeviceSnapshot.UNKNOWN_LONG, // os_proc_available_memory not in K/N platform bindings
             totalMemBytes = totalMem,
             lowMemory = false,         // no synchronous iOS flag
-            networkType = NET_UNKNOWN, // NWPathMonitor is async-only; real network logged elsewhere
+            networkType = DeviceSnapshot.NET_UNKNOWN, // NWPathMonitor is async-only; real network logged elsewhere
             signalLevel = SIGNAL_UNKNOWN,
             thermalState = thermal,
             freeDiskBytes = freeDisk,
@@ -181,12 +172,13 @@ class IosVitalsPlatform : SentientMobileVitalsPlatform {
 
     private fun readThermalState(): String = runCatching {
         when (NSProcessInfo.processInfo.thermalState) {
-            NSProcessInfoThermalState.NSProcessInfoThermalStateNominal -> THERMAL_NOMINAL
-            NSProcessInfoThermalState.NSProcessInfoThermalStateFair -> THERMAL_FAIR
-            NSProcessInfoThermalState.NSProcessInfoThermalStateSerious -> THERMAL_SERIOUS
-            NSProcessInfoThermalState.NSProcessInfoThermalStateCritical -> THERMAL_CRITICAL
+            NSProcessInfoThermalState.NSProcessInfoThermalStateNominal -> DeviceSnapshot.THERMAL_NOMINAL
+            NSProcessInfoThermalState.NSProcessInfoThermalStateFair -> DeviceSnapshot.THERMAL_FAIR
+            NSProcessInfoThermalState.NSProcessInfoThermalStateSerious -> DeviceSnapshot.THERMAL_SERIOUS
+            NSProcessInfoThermalState.NSProcessInfoThermalStateCritical -> DeviceSnapshot.THERMAL_CRITICAL
+            else -> DeviceSnapshot.THERMAL_UNKNOWN
         }
-    }.getOrDefault(THERMAL_UNKNOWN)
+    }.getOrDefault(DeviceSnapshot.THERMAL_UNKNOWN)
 
     // --- memory ----------------------------------------------------------------
 

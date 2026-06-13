@@ -76,20 +76,20 @@ class AndroidVitalsPlatform(private val context: Context) : SentientMobileVitals
             mapOf(
                 "batteryPct" to battery.pct,
                 "isCharging" to battery.isCharging,
-                "availMemMb" to if (mem.first >= 0) mem.first / 1_048_576 else -1,
-                "lowMemory" to mem.third,
+                "availMemMb" to if (mem.availMemBytes >= 0) mem.availMemBytes / BYTES_PER_MB else -1,
+                "lowMemory" to mem.lowMemory,
                 "networkType" to net,
                 "signalLevel" to signal,
                 "thermalState" to thermal,
-                "freeDiskMb" to if (disk >= 0) disk / 1_048_576 else -1,
+                "freeDiskMb" to if (disk >= 0) disk / BYTES_PER_MB else -1,
             ),
         )
         return DeviceSnapshot(
             batteryPct = battery.pct,
             isCharging = battery.isCharging,
-            availMemBytes = mem.first,
-            totalMemBytes = mem.second,
-            lowMemory = mem.third,
+            availMemBytes = mem.availMemBytes,
+            totalMemBytes = mem.totalMemBytes,
+            lowMemory = mem.lowMemory,
             networkType = net,
             signalLevel = signal,
             thermalState = thermal,
@@ -118,31 +118,37 @@ class AndroidVitalsPlatform(private val context: Context) : SentientMobileVitals
     }.getOrDefault(BatteryReading(-1, false))
 
     // --- memory (ActivityManager, no permission) -----------------------------
+    // Binder IPC: cheap at @init; in adversarial crash conditions (binder pool exhausted)
+    // could block — accepted v1 trade-off; markCrash() runs after the prior ring-flush regardless.
 
-    private fun readMemory(): Triple<Long, Long, Boolean> = runCatching {
+    private data class MemoryReading(val availMemBytes: Long, val totalMemBytes: Long, val lowMemory: Boolean)
+
+    private fun readMemory(): MemoryReading = runCatching {
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val info = ActivityManager.MemoryInfo()
         am.getMemoryInfo(info)
-        Triple(info.availMem, info.totalMem, info.lowMemory)
-    }.getOrDefault(Triple(-1L, -1L, false))
+        MemoryReading(info.availMem, info.totalMem, info.lowMemory)
+    }.getOrDefault(MemoryReading(DeviceSnapshot.UNKNOWN_LONG, DeviceSnapshot.UNKNOWN_LONG, false))
 
     // --- network type (ACCESS_NETWORK_STATE, already declared) ---------------
+    // Binder IPC: cheap at @init; in adversarial crash conditions (binder pool exhausted)
+    // could block — accepted v1 trade-off; markCrash() runs after the prior ring-flush regardless.
 
     private fun readNetworkType(): String = runCatching {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val net = cm.activeNetwork ?: return@runCatching NET_NONE
-        val caps = cm.getNetworkCapabilities(net) ?: return@runCatching NET_NONE
+        val net = cm.activeNetwork ?: return@runCatching DeviceSnapshot.NET_NONE
+        val caps = cm.getNetworkCapabilities(net) ?: return@runCatching DeviceSnapshot.NET_NONE
         when {
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> NET_WIFI
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> NET_CELLULAR
-            else -> NET_UNKNOWN
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> DeviceSnapshot.NET_WIFI
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> DeviceSnapshot.NET_CELLULAR
+            else -> DeviceSnapshot.NET_UNKNOWN
         }
-    }.getOrDefault(NET_UNKNOWN)
+    }.getOrDefault(DeviceSnapshot.NET_UNKNOWN)
 
     // --- signal level (ACCESS_WIFI_STATE, normal — wifi only) ----------------
 
     private fun readSignalLevel(networkType: String): Int = runCatching {
-        if (networkType != NET_WIFI) return@runCatching SIGNAL_UNKNOWN
+        if (networkType != DeviceSnapshot.NET_WIFI) return@runCatching SIGNAL_UNKNOWN
         val wm = context.applicationContext
             .getSystemService(Context.WIFI_SERVICE) as? WifiManager
             ?: return@runCatching SIGNAL_UNKNOWN
@@ -156,19 +162,19 @@ class AndroidVitalsPlatform(private val context: Context) : SentientMobileVitals
     // --- thermal state (PowerManager API 29+) --------------------------------
 
     private fun readThermalState(): String = runCatching {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return@runCatching THERMAL_UNKNOWN
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return@runCatching DeviceSnapshot.THERMAL_UNKNOWN
         val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
         when (pm.currentThermalStatus) {
             PowerManager.THERMAL_STATUS_NONE,
-            PowerManager.THERMAL_STATUS_LIGHT -> THERMAL_NOMINAL
-            PowerManager.THERMAL_STATUS_MODERATE -> THERMAL_FAIR
-            PowerManager.THERMAL_STATUS_SEVERE -> THERMAL_SERIOUS
+            PowerManager.THERMAL_STATUS_LIGHT -> DeviceSnapshot.THERMAL_NOMINAL
+            PowerManager.THERMAL_STATUS_MODERATE -> DeviceSnapshot.THERMAL_FAIR
+            PowerManager.THERMAL_STATUS_SEVERE -> DeviceSnapshot.THERMAL_SERIOUS
             PowerManager.THERMAL_STATUS_CRITICAL,
             PowerManager.THERMAL_STATUS_EMERGENCY,
-            PowerManager.THERMAL_STATUS_SHUTDOWN -> THERMAL_CRITICAL
-            else -> THERMAL_UNKNOWN
+            PowerManager.THERMAL_STATUS_SHUTDOWN -> DeviceSnapshot.THERMAL_CRITICAL
+            else -> DeviceSnapshot.THERMAL_UNKNOWN
         }
-    }.getOrDefault(THERMAL_UNKNOWN)
+    }.getOrDefault(DeviceSnapshot.THERMAL_UNKNOWN)
 
     // --- free disk (filesDir partition) --------------------------------------
 
@@ -189,21 +195,11 @@ class AndroidVitalsPlatform(private val context: Context) : SentientMobileVitals
         const val VITALS_DIR = "vitals"
         const val PLATFORM_ANDROID = "android"
 
-        // network type strings
-        const val NET_WIFI = "wifi"
-        const val NET_CELLULAR = "cellular"
-        const val NET_NONE = "none"
-        const val NET_UNKNOWN = "unknown"
-
         // signal
         const val SIGNAL_BARS = 5       // WifiManager.calculateSignalLevel range (0..4)
         const val SIGNAL_UNKNOWN = -1
 
-        // thermal state strings
-        const val THERMAL_NOMINAL = "nominal"
-        const val THERMAL_FAIR = "fair"
-        const val THERMAL_SERIOUS = "serious"
-        const val THERMAL_CRITICAL = "critical"
-        const val THERMAL_UNKNOWN = "unknown"
+        // memory/disk MB conversion
+        const val BYTES_PER_MB = 1_048_576L
     }
 }
