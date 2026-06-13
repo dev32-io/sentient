@@ -5,6 +5,7 @@ import { createAdminHandler } from "./api/handlers/admin.ts";
 import { type ApplyHandlerDeps, createApplyHandler } from "./api/handlers/apply.ts";
 import { createAuthHandler } from "./api/handlers/auth.ts";
 import { createDevicesHandler } from "./api/handlers/devices.ts";
+import { createDiagnosticsHandler } from "./api/handlers/diagnostics.ts";
 import { createHealthHandler } from "./api/handlers/health.ts";
 import { createInstallStateHandler } from "./api/handlers/install-state.ts";
 import { createMcpCatalogHandler } from "./api/handlers/mcp-catalog.ts";
@@ -142,6 +143,7 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
     ? createDevicesHandler({ tokens: services.auth.tokens, ...services.devicesHandlerDeps })
     : async (_req: Request) => new Response("Service Unavailable", { status: 503 });
   const handleSessions = buildSessionsHandler(services);
+  const handleDiagnostics = createDiagnosticsHandler({ tokens: services.auth.tokens });
 
   return Bun.serve<ClientData>({
     port: options.port,
@@ -169,6 +171,7 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
         handleApply,
         handleDevices,
         handleSessions,
+        handleDiagnostics,
         handleStatic,
       });
       return router(request);

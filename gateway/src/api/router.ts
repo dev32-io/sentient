@@ -34,6 +34,8 @@ export interface ApiRouterDeps {
   handleDevices: (request: Request) => Promise<Response>;
   /** Handles every `/api/v1/sessions*` path. Bearer auth applied per route. */
   handleSessions: (request: Request) => Promise<Response>;
+  /** Handles `POST /api/v1/diagnostics/logs`. Bearer auth applied per route. */
+  handleDiagnostics: (request: Request) => Promise<Response>;
   /** Serves a static file or the SPA fallback. Returns null when the path
    *  is unambiguously an API path that the static handler must not claim. */
   handleStatic: (request: Request) => Promise<Response | null>;
@@ -59,6 +61,7 @@ export function createApiRouter(deps: ApiRouterDeps): ApiRouter {
     if (pathname === `${API_V1}/apply`) return deps.handleApply(request);
     if (pathname.startsWith(`${API_V1}/devices`)) return deps.handleDevices(request);
     if (pathname.startsWith(`${API_V1}/sessions`)) return deps.handleSessions(request);
+    if (pathname.startsWith(`${API_V1}/diagnostics`)) return deps.handleDiagnostics(request);
     if (pathname === `${API_V1}/health`) return deps.handleHealth(request);
     if (pathname === `${API_V1}/ready`) return deps.handleReady(request);
     if (pathname === `${API_V1}/ws`) return deps.handleWsUpgrade(request);
