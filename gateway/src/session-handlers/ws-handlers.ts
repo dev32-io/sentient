@@ -114,6 +114,7 @@ export async function handleWebSocketMessage(
         msg.clientType,
         msg.deviceId,
         msg.resume,
+        msg.conversationId,
       );
       return;
 

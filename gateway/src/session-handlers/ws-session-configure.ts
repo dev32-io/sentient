@@ -83,6 +83,7 @@ export async function handleSessionConfigure(
   clientType: ClientType,
   configureDeviceId: string,
   configureResume: SessionConfigureResume | undefined,
+  configureConversationId: string | undefined,
 ): Promise<void> {
   const sessionId = ws.data.sessionId;
   if (!sessionId) {
@@ -911,6 +912,28 @@ export async function handleSessionConfigure(
   // inside handleResumeOrFresh. Otherwise emit recovered:false (when a resume
   // was requested) and fall through to the normal fresh setup; the client
   // REST-refetches history.
+
+  // Re-anchor the conversation thread for the NEXT user message. The client
+  // declares the conversationId it is displaying (configure field, mobile) or
+  // via the ?session_id= upgrade param (web). Seed it HERE — before the
+  // recovered:true early-return below — so a warm buffer-resume reconnect still
+  // continues the same Hermes thread instead of forking. The next cycle's
+  // resolveForcedSessionId consumes this; an unknown id degrades to a fresh
+  // Hermes session/load (per-user worker isolation makes a stale id harmless).
+  // On the fresh / recovered:false path the conversation.activate block further
+  // below re-seeds pendingNewSessionId to the same id — an idempotent no-op;
+  // this early seed exists solely to cover the recovered:true path that returns
+  // before that block.
+  const reanchorConversationId = configureConversationId ?? ws.data.resumeSessionId;
+  if (reanchorConversationId != null) {
+    pendingNewSessionId = reanchorConversationId;
+    log.info("resume.reanchor", {
+      sessionId,
+      conversationId: reanchorConversationId,
+      source: configureConversationId ? "configure" : "url",
+    });
+  }
+
   const replayed = handleResumeOrFresh({
     ws,
     sessionId,
