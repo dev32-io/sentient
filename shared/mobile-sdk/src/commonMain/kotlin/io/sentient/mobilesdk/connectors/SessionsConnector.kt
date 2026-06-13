@@ -136,7 +136,7 @@ class SessionsConnector(
 
     /** Search sessions via REST GET /api/v1/sessions/search. */
     suspend fun search(q: String, limit: Int = DEFAULT_SEARCH_LIMIT): List<SessionRow> {
-        log.debug("search", mapOf("q" to q.take(PREVIEW_LEN)))
+        log.debug("search", mapOf("qLen" to q.length))
         return httpClient?.search(q, limit) ?: emptyList()
     }
 
@@ -274,6 +274,5 @@ class SessionsConnector(
     companion object {
         const val CAPABILITY: String = "sessions"
         private const val DEFAULT_SEARCH_LIMIT = 20
-        private const val PREVIEW_LEN = 60
     }
 }

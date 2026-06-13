@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // PrivacyGuardTest — privacy boundary: chat content must never appear in the
-// captured diagnostic log. Two cases are pinned:
+// captured diagnostic log. Three cases are pinned:
 //
 //   1. InFlightMessageConnector (streaming assistant text path): logs only
 //      cycleId, deltaLen, totalLen — never the raw delta. This was the
@@ -12,6 +12,12 @@
 //      FakeWebSocketEngine so the guard now exercises the actual leak vector
 //      and will fail loudly if raw-frame logging is ever re-introduced.
 //
+//   3. Conversation-search query path: SessionsConnector.search() and
+//      SessionsHttpClient.search() both previously logged `q.take(60)` —
+//      the raw user search query = user content. The fix changed to `qLen`
+//      (integer length only). This case drives the REAL SessionsConnector
+//      path so the guard fails loudly if raw query logging is re-introduced.
+//
 // Why this test belongs here (.claude/rules/testing.md):
 //   Security boundary — log content privacy is an explicit boundary concern.
 //   The SDK's logging convention logs lengths/ids/types only, never message
@@ -20,13 +26,22 @@
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.vitals
 
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.headersOf
 import io.sentient.mobilesdk.connectors.InFlightMessageConnector
+import io.sentient.mobilesdk.connectors.SessionsConnector
 import io.sentient.mobilesdk.fakes.FakeWebSocketEngine
 import io.sentient.mobilesdk.log.LogConfig
 import io.sentient.mobilesdk.log.LogLevel
+import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.protocol.ServerMessage
+import io.sentient.mobilesdk.sessions.SessionsHttpClient
 import io.sentient.mobilesdk.transport.WsIncoming
 import io.sentient.mobilesdk.transport.WsTransport
+import io.sentient.mobilesdk.util.Clock
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.test.runTest
 import kotlin.test.AfterTest
@@ -109,6 +124,62 @@ class PrivacyGuardTest {
         assertTrue(
             !log.contains(secret),
             "chat text from WS frame leaked into the diagnostic log:\n$log",
+        )
+    }
+
+    /**
+     * Exercises the REAL SessionsConnector.search() path — the proven search-query
+     * content leak site (SessionsConnector.kt line 139 logged `q.take(60)` directly
+     * before the fix; SessionsHttpClient.kt line 145 did the same).
+     *
+     * The fix changed both to `qLen` (integer length only). This guard drives the
+     * REAL SessionsConnector with a MockEngine-backed SessionsHttpClient so that
+     * both the connector and http-client log lines execute. The captured ring must
+     * contain ZERO search query content.
+     *
+     * Before fix: log.debug("search", mapOf("q" to q.take(60))) → up to 60 chars
+     *   of the raw user query appear in the ring.
+     * After fix:  log.debug("search", mapOf("qLen" to q.length)) → only an integer
+     *   length is captured; the secret cannot appear.
+     */
+    @Test
+    fun search_query_never_logged_as_content() = runTest {
+        val secret = "my-secret-search-query-chocolate-labrador-1928"
+        val captured = StringBuilder()
+        VitalsLogTap.register { _, tag, line ->
+            captured.append(tag).append(' ').append(line).append('\n')
+        }
+
+        // Build a real SessionsHttpClient backed by a MockEngine that returns an
+        // empty result — we don't care about the response, only the log output.
+        val engine = MockEngine { _ ->
+            respond(
+                """{"items":[],"total":0,"hasMore":false}""",
+                HttpStatusCode.OK,
+                headersOf("Content-Type", "application/json"),
+            )
+        }
+        val httpClient = SessionsHttpClient(
+            httpClient = HttpClient(engine),
+            gatewayWsUrl = "wss://test/api/v1/ws",
+            token = { "tok" },
+        )
+
+        // Drive the REAL SessionsConnector.search() — this is the code path that
+        // called q.take(PREVIEW_LEN) before the fix. The connector delegates to the
+        // http client which also had the same log line; both paths run here.
+        val connector = SessionsConnector(
+            send = { _: ClientMessage -> },
+            newId = { "r0" },
+            clock = Clock { 0L },
+            httpClient = httpClient,
+        )
+        connector.search(q = secret, limit = 10)
+
+        val log = captured.toString()
+        assertTrue(
+            !log.contains(secret),
+            "search query content leaked into the diagnostic log:\n$log",
         )
     }
 }

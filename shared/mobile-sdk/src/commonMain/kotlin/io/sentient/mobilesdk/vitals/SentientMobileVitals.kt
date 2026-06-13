@@ -58,7 +58,10 @@ class SentientMobileVitals {
         )
         files.startSession(meta)
         platform.registerCrashHandler {
-            files.flush(ring.drain())
+            // Non-blocking drain: iOS NSLock is non-reentrant; if the crashing thread
+            // held the ring lock (crashed mid-append), a blocking drain() would deadlock
+            // the dying process and prevent the crash marker from being written.
+            files.flush(ring.drainTry())
             files.markCrash()
         }
         inited = true

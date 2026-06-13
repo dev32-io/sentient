@@ -31,4 +31,12 @@ class VitalsRingTest {
         repeat(5) { r.append("y".repeat(50)) }
         assertEquals("", r.drain()) // never accumulates
     }
+
+    @Test fun drainTry_returns_buffered_lines_when_uncontended() {
+        val r = VitalsRing(maxBytes = 1000)
+        r.append("line-a")
+        r.append("line-b")
+        assertEquals("line-a\nline-b\n", r.drainTry())
+        assertEquals("", r.drainTry()) // buffer cleared by first drainTry
+    }
 }

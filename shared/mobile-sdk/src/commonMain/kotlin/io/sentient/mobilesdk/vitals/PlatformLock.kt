@@ -6,6 +6,8 @@ package io.sentient.mobilesdk.vitals
 expect class PlatformLock() {
     fun lock()
     fun unlock()
+    /** Non-blocking attempt. Returns true if the lock was acquired, false if already held. */
+    fun tryLock(): Boolean
 }
 
 inline fun <T> PlatformLock.withLock(block: () -> T): T {

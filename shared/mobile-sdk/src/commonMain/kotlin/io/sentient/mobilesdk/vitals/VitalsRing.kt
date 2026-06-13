@@ -32,4 +32,26 @@ class VitalsRing(private val maxBytes: Int) {
         bytes = 0
         sb.toString()
     }
+
+    /**
+     * Non-blocking drain for the crash handler. If the lock cannot be acquired
+     * (e.g. the crashing thread was interrupted mid-append while holding it),
+     * returns "" immediately rather than deadlocking the dying process. iOS NSLock
+     * is non-reentrant, so a blocking drain() on the crash path can deadlock and
+     * prevent the crash marker from being written. Non-crash callers (onAppBackground,
+     * listSessions) use the blocking drain() — only the crash handler uses this.
+     */
+    fun drainTry(): String {
+        if (!lock.tryLock()) return ""
+        try {
+            if (lines.isEmpty()) return ""
+            val sb = StringBuilder()
+            for (l in lines) { sb.append(l); sb.append('\n') }
+            lines.clear()
+            bytes = 0
+            return sb.toString()
+        } finally {
+            lock.unlock()
+        }
+    }
 }
