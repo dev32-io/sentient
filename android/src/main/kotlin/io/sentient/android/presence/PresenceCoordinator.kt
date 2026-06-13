@@ -15,6 +15,7 @@ package io.sentient.android.presence
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
+import io.sentient.android.sdk.VitalsHolder
 import io.sentient.mobilesdk.log.createLogger
 
 /** App-scoped presence signal. Holds NO chat/session state — only forwards foreground/background. */
@@ -53,6 +54,9 @@ class PresenceCoordinator {
             override fun onStop(owner: LifecycleOwner) {
                 backgrounded = true
                 log.info("background")
+                // App-scoped: flush the vitals ring to disk on every background, even
+                // before any chat session is bound. Safe pre-init (facade guards on inited).
+                VitalsHolder.onAppBackground()
                 onBackground?.invoke()
             }
         })
