@@ -9,8 +9,15 @@ import kotlin.test.assertTrue
 
 class VitalsLogTapTest {
     @AfterTest fun reset() {
-        VitalsLogTap.register { _, _, _ -> }
+        VitalsLogTap.clear()
         LogConfig.minLevel = LogLevel.DEBUG
+    }
+
+    @Test fun no_sink_does_not_throw_and_captures_nothing() {
+        VitalsLogTap.clear()
+        LogConfig.minLevel = LogLevel.INFO
+        createLogger("t").debug("ignored-while-no-sink") // must not throw
+        assertTrue(!VitalsLogTap.hasSink())
     }
 
     @Test fun captures_debug_even_when_logcat_is_info() {
