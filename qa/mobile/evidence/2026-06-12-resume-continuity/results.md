@@ -53,12 +53,44 @@ Both Maestro flows passed. Gateway log trail (verbatim):
   This is the existing mobile reconnect UX (orthogonal to the continuity fix).
   Worth a separate look at auto-reconnect-on-presence if it adds friction.
 
-## iOS leg — flagged for follow-up
+## iOS leg — GREEN
 
-The fix lives in shared `commonMain` (mobile-sdk): `SessionConfigure.conversationId`
-+ `SdkLifecycle.sendConfigure` + the `SentientSdk` hook are the identical code
-path on iOS. The gateway is platform-agnostic. The Android run above exercises
-that shared code end-to-end. The iOS app was NOT rebuilt/run here (the sim holds
-the pre-fix build; an iOS app rebuild + Maestro is a separate effort). Recommend
-an iOS-device/simulator smoke of the same scenario as follow-up; behavior is
-expected identical given the shared SDK.
+**App:** iOS debug v0.1.1 (rebuilt: `assembleMobileDataDebugXCFramework` → `xcodegen` →
+`xcodebuild -scheme SentientApp -configuration Debug`) on sim `2BB144EC…` (iPhone 14 Pro).
+The earlier-flagged `compileIosMainKotlinMetadata` failure was environmental — the real
+iOS framework + app build cleanly. Distinct phrase used ("lucky color teal") to keep the
+iOS conversation unambiguous in the shared log.
+
+**Reconnect mechanism (iOS):** `docker restart sentient-gateway` drops the WS while the app
+process stays alive (currentSessionId survives). The **foregrounded** iOS app
+**auto-reconnects** (SDK ReconnectController) and re-sends configure with conversationId —
+**no foreground nudge needed**.
+
+> HARNESS NOTE: do NOT use Maestro `launchApp` to "nudge" an iOS reconnect — `launchApp`
+> cold-starts the app, which rebuilds a FRESH chat (a new conversationId), contaminating
+> the test. Let the foregrounded app auto-reconnect instead. (A first attempt that used a
+> `pressKey home` + `launchApp` nudge produced a spurious new conversation — that was the
+> cold-start artifact, not a fix failure; the re-anchor fired correctly each time.)
+
+Gateway log trail (verbatim, clean run):
+
+```
+# Turn 1 — establishes CONV_IOS
+21:42:?? dispatch.end  conversationId="4eab2eca-1254-4dcb-8a2c-7f9e042644e0"
+
+# Auto-reconnect after gateway restart — the fix firing on iOS
+21:42:28 [ws:session-configure] resume.reanchor  sessionId="s-mqbvcvon-..."  conversationId="4eab2eca-1254-4dcb-8a2c-7f9e042644e0"  source="configure"
+
+# Follow-up — CONTINUES CONV_IOS, no fork
+21:43:48 dispatch.begin  userMessagePreview="What is my lucky color?"
+21:43:48 dispatch.send   sessionId="4eab2eca-1254-4dcb-8a2c-7f9e042644e0"  forced=true
+21:43:55 dispatch.end    conversationId="4eab2eca-1254-4dcb-8a2c-7f9e042644e0"   # SAME as turn 1
+#        dispatch.session-new.lazy  → ABSENT (no fork)
+```
+
+- Same `conversationId` on both turns → thread continued on iOS.
+- `resume.reanchor source=configure` → the iOS SDK's new `conversationId` field drove it.
+- Reply: **"Your lucky color is teal!"** — context retained (screenshot `03-ios-followup-continues.png`).
+
+**Coverage summary:** Android = warm buffer-resume (`recovered:true`); iOS = gateway-restart
+(`recovered:false`/fresh) — both reconnect tiers, both platforms, both continue the thread.
