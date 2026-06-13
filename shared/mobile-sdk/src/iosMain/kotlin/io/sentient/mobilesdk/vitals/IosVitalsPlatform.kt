@@ -25,8 +25,14 @@ import platform.Foundation.NSCachesDirectory
 import platform.Foundation.NSData
 import platform.Foundation.NSFileHandle
 import platform.Foundation.NSFileManager
+import platform.Foundation.NSFileSystemFreeSize
+import platform.Foundation.NSHomeDirectory
 import platform.Foundation.NSLocale
+import platform.Foundation.NSNumber
+import platform.Foundation.NSProcessInfo
+import platform.Foundation.NSProcessInfoThermalState
 import platform.Foundation.NSSearchPathForDirectoriesInDomains
+import platform.Foundation.thermalState
 import platform.Foundation.NSString
 import platform.Foundation.NSUTF8StringEncoding
 import platform.Foundation.NSUserDomainMask
@@ -41,14 +47,33 @@ import platform.Foundation.stringWithContentsOfFile
 import platform.Foundation.writeData
 import platform.Foundation.writeToFile
 import platform.UIKit.UIDevice
+import platform.UIKit.UIDeviceBatteryState
 
 private const val PLATFORM_IOS = "ios"
 private const val VITALS_SUBDIR = "vitals"
+
+// Thermal state strings (shared with DeviceSnapshot contract)
+private const val THERMAL_NOMINAL = "nominal"
+private const val THERMAL_FAIR = "fair"
+private const val THERMAL_SERIOUS = "serious"
+private const val THERMAL_CRITICAL = "critical"
+private const val THERMAL_UNKNOWN = "unknown"
+
+// Network type sentinel (synchronous read not available on iOS)
+private const val NET_UNKNOWN = "unknown"
+
+private const val SIGNAL_UNKNOWN = -1
 
 /** iOS actual of [SentientMobileVitalsPlatform]. File ops over Caches/vitals. */
 class IosVitalsPlatform : SentientMobileVitalsPlatform {
     private val log = createLogger("vitals", "platform", "ios")
     private val fm = NSFileManager.defaultManager
+
+    init {
+        // Battery monitoring must be enabled once before batteryLevel / batteryState
+        // return real values; enabling it is idempotent and cheap.
+        UIDevice.currentDevice.batteryMonitoringEnabled = true
+    }
 
     // Caches (not Documents): diagnostics are reproducible, OS-evictable artifacts,
     // not user data to back up. Created on first access.
@@ -110,12 +135,74 @@ class IosVitalsPlatform : SentientMobileVitalsPlatform {
         log.info("crash-handler.registered")
     }
 
-    // TODO(next-task): replace stub with real iOS battery/mem/network/thermal reads.
-    override fun deviceSnapshot(): DeviceSnapshot = DeviceSnapshot(
-        batteryPct = -1, isCharging = false, availMemBytes = -1, totalMemBytes = -1,
-        lowMemory = false, networkType = "unknown", signalLevel = -1,
-        thermalState = "unknown", freeDiskBytes = -1,
-    )
+    override fun deviceSnapshot(): DeviceSnapshot {
+        val batteryPct = readBatteryPct()
+        val isCharging = readIsCharging()
+        val totalMem = readTotalMemBytes()
+        val freeDisk = readFreeDiskBytes()
+        val thermal = readThermalState()
+        log.debug(
+            "device-snapshot",
+            mapOf(
+                "batteryPct" to batteryPct,
+                "isCharging" to isCharging,
+                "totalMemMb" to if (totalMem >= 0) totalMem / 1_048_576 else -1,
+                "thermalState" to thermal,
+                "freeDiskMb" to if (freeDisk >= 0) freeDisk / 1_048_576 else -1,
+            ),
+        )
+        return DeviceSnapshot(
+            batteryPct = batteryPct,
+            isCharging = isCharging,
+            availMemBytes = -1L,       // os_proc_available_memory not in K/N platform bindings
+            totalMemBytes = totalMem,
+            lowMemory = false,         // no synchronous iOS flag
+            networkType = NET_UNKNOWN, // NWPathMonitor is async-only; real network logged elsewhere
+            signalLevel = SIGNAL_UNKNOWN,
+            thermalState = thermal,
+            freeDiskBytes = freeDisk,
+        )
+    }
+
+    // --- battery ---------------------------------------------------------------
+
+    private fun readBatteryPct(): Int = runCatching {
+        val level = UIDevice.currentDevice.batteryLevel
+        if (level < 0f) -1 else (level * 100).toInt()
+    }.getOrDefault(-1)
+
+    private fun readIsCharging(): Boolean = runCatching {
+        val state = UIDevice.currentDevice.batteryState
+        state == UIDeviceBatteryState.UIDeviceBatteryStateCharging ||
+            state == UIDeviceBatteryState.UIDeviceBatteryStateFull
+    }.getOrDefault(false)
+
+    // --- thermal state ---------------------------------------------------------
+
+    private fun readThermalState(): String = runCatching {
+        when (NSProcessInfo.processInfo.thermalState) {
+            NSProcessInfoThermalState.NSProcessInfoThermalStateNominal -> THERMAL_NOMINAL
+            NSProcessInfoThermalState.NSProcessInfoThermalStateFair -> THERMAL_FAIR
+            NSProcessInfoThermalState.NSProcessInfoThermalStateSerious -> THERMAL_SERIOUS
+            NSProcessInfoThermalState.NSProcessInfoThermalStateCritical -> THERMAL_CRITICAL
+        }
+    }.getOrDefault(THERMAL_UNKNOWN)
+
+    // --- memory ----------------------------------------------------------------
+
+    private fun readTotalMemBytes(): Long = runCatching {
+        NSProcessInfo.processInfo.physicalMemory.toLong()
+    }.getOrDefault(-1L)
+
+    // --- free disk -------------------------------------------------------------
+
+    private fun readFreeDiskBytes(): Long = runCatching {
+        val attrs = fm.attributesOfFileSystemForPath(
+            NSHomeDirectory(),
+            error = null,
+        ) ?: return@runCatching -1L
+        (attrs[NSFileSystemFreeSize] as? NSNumber)?.longLongValue() ?: -1L
+    }.getOrDefault(-1L)
 
     override fun deviceMeta(): DeviceMeta {
         val d = UIDevice.currentDevice
