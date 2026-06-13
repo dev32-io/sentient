@@ -42,4 +42,22 @@ class VitalsFilesTest {
         assertTrue(p.readFile(path)!!.contains("=== CRASH ==="))
         assertTrue(f.listSessions().single().crashed)
     }
+
+    @Test fun flush_drops_when_file_ceiling_reached() {
+        val p = FakeVitalsPlatform()
+        val f = VitalsFiles(p, keepFiles = 5, fileMaxBytes = 10) // header alone exceeds 10
+        val path = f.startSession(meta(1))
+        val before = p.readFile(path)!!.length
+        f.flush("should-not-be-written\n")
+        assertEquals(before, p.readFile(path)!!.length)
+    }
+
+    @Test fun same_timestamp_relaunch_does_not_clobber() {
+        val p = FakeVitalsPlatform()
+        val f = VitalsFiles(p, keepFiles = 5, fileMaxBytes = 1_000_000)
+        val a = f.startSession(meta(42))
+        val b = f.startSession(meta(42))
+        assertTrue(a != b, "second same-ms session reused the same path")
+        assertEquals(2, p.listFiles("/vitals").size)
+    }
 }
