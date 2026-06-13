@@ -5,6 +5,14 @@ restarted with the diagnostics endpoint + `~/.sentient/gateway/clientLogs` volum
 live. Driver: Maestro 2.6.0. Android `emulator-5554` (Pixel_3a_API_34, Android 14).
 iOS `iPhone 14 Pro (26.5)` sim `2BB144EC-281C-4E5E-883F-65A21EF67056`.
 
+> **Privacy re-verify (2026-06-13, app v0.1.2):** the inbound-WS chat-content leak
+> (the one RED case below) was fixed in commonMain — `WsTransport.routeText` now
+> logs `recv-text len=…` instead of the raw frame (commit `c57dae8`). Both apps were
+> rebuilt + reinstalled at **v0.1.2** (Android versionCode 4, iOS build 1, sdk 0.1.2)
+> and the send-diagnostic flow re-run. The privacy-guard row is now **PASS on both
+> platforms** — clean grep output in the "Privacy guard — PASS (re-verified)" section
+> below. Original RED findings retained for the audit trail.
+
 Flows (new, committed):
 - `qa/mobile/flows/android/30-send-diagnostic.yaml`
 - `qa/mobile/flows/ios/30-send-diagnostic.yaml`
@@ -16,12 +24,14 @@ Flows (new, committed):
 | manual-upload Android | emulator-5554 | logged out, fresh launch | login → chat "hi" → drawer → settings → send-logs → send "This session" | progress bar → "Sent ✓ — ref XXXX" | gateway `diagnostics.received` + new file under clientLogs/mobile/ | **PASS** |
 | manual-upload iOS | iPhone 14 Pro (26.5) | logged out, fresh launch | login → chat "hi" → drawer → settings → send-logs → send "This session" | progress bar → "Sent ✓ — ref XXXX" | gateway `diagnostics.received` + new file under clientLogs/mobile/ | **PASS** (see below) |
 | session-meta present | both | uploaded file exists | inspect file header | n/a | header has platform/device/os/appVersion/deviceId/network | **PASS** |
-| privacy guard | both | uploaded file exists | grep file for chat text | chat text ABSENT | no user/assistant text in file | **FAIL** — chat text PRESENT on Android AND iOS (see Privacy section) |
+| privacy guard | both | uploaded file exists | grep file for chat text | chat text ABSENT | no user/assistant text in file | **PASS** (re-verified v0.1.2, fix `c57dae8`) — chat content ABSENT on Android AND iOS (see "Privacy guard — PASS" section) |
 | crash-auto-upload | both | n/a | trigger native unhandled crash | crash log auto-uploads with `-crash-` ref | gateway `diagnostics.received crashed=true` | **BLOCKED** — no in-app crash trigger (follow-up) |
 
 Manual-upload happy path (user-visible behavior + file write + gateway log line) is
 GREEN on both platforms. The session-meta header is present on both. The privacy
-guard is the one RED case, and it fails identically on both platforms.
+guard was the one RED case in the first run; it is now **GREEN on both platforms**
+after the `c57dae8` commonMain fix + a v0.1.2 rebuild/reinstall (clean grep proof in
+"Privacy guard — PASS"). The original RED section is kept below for the audit trail.
 
 ## Gateway evidence — Android upload
 
@@ -96,7 +106,66 @@ flow therefore drives + asserts by the visible button TEXT ("Send" / "Sent ✓")
 which is reliable. Android's Compose `testTag` ids ARE queryable, so the Android
 flow uses ids. This is a selector quirk, not a defect.
 
-## Privacy guard — FAIL (security-boundary regression, BOTH platforms)
+## Privacy guard — PASS (re-verified v0.1.2, fix `c57dae8`)
+
+After the commonMain fix landed (`WsTransport.routeText` logs `recv-text len=…`,
+never the raw frame — commit `c57dae8`), both apps were rebuilt + reinstalled at
+**v0.1.2** and the send-diagnostic flow re-run. The chat content I exchanged
+(user "hi" + the assistant reply) is now **ABSENT** from both uploaded files. The
+old leak signature `recv-text raw=` is gone — `recv-text` now carries only `len=`.
+
+**Re-verify uploads (NEW, v0.1.2 — distinct from the original RED files):**
+- Android: `~/.sentient/gateway/clientLogs/mobile/u_8c866990-1781388428373-4825E1.log` (9600 bytes, ref `4825E1`); header `appVersion=0.1.2 build=4 sdkVersion=0.1.2`.
+- iOS: `~/.sentient/gateway/clientLogs/mobile/u_8c866990-1781388591825-280C7A.log` (8346 bytes, ref `280C7A`); header `appVersion=0.1.2 build=1 sdkVersion=0.1.2`.
+
+### Android — clean grep against `u_8c866990-1781388428373-4825E1.log`:
+
+```
+$ grep -c 'recv-text' <file>          → 13   (line still present)
+$ grep 'recv-text' <file>             → every line reads "recv-text len=NNN", e.g.:
+    sentient.mobile-sdk.transport.ws recv-text len=107
+    sentient.mobile-sdk.transport.ws recv-text len=225
+    sentient.mobile-sdk.transport.ws recv-text len=388
+    …  (no chat content — length only)
+$ grep -c 'recv-text raw=' <file>     → 0    (OLD leak signature GONE)
+$ grep -cE '"delta"|"text"|message.delta' <file>   → 0    (no raw frame bodies)
+$ grep -cE 'conversation\.entry|"type":|"item":|"kind":|entryId|"assistant"|"user"' <file>  → 0
+$ grep -cE '\{' <file>                → 0    (no JSON frame bodies persisted at all)
+```
+Content-sensitive sinks log metadata only:
+`inflight-message delta cycleId=cycle-1 deltaLen=36 totalLen=36` (length, not text),
+`conversation-history entry ts=… cycleId=… size=…` (no item text),
+`user-text-input send type=text.input len=2 pendingId=…` (length, not "hi"),
+`send-text length=NNN` (length only).
+
+### iOS — clean grep against `u_8c866990-1781388591825-280C7A.log`:
+
+```
+$ grep -c 'recv-text' <file>          → 14
+$ grep 'recv-text' <file>             → every line "recv-text len=NNN", e.g.:
+    sentient.mobile-sdk.transport.ws recv-text len=107
+    sentient.mobile-sdk.transport.ws recv-text len=388
+    sentient.mobile-sdk.transport.ws recv-text len=241
+    …  (length only)
+$ grep -c 'recv-text raw=' <file>     → 0    (OLD leak signature GONE)
+$ grep -cE '"delta"|"text"|message.delta' <file>   → 0
+$ grep -cE 'conversation\.entry|"type":|"item":|"kind":|entryId|"assistant"|"user"' <file>  → 0
+$ grep -cE '\{' <file>                → 0
+```
+Content-sensitive sinks log metadata only:
+`inflight-message delta cycleId=cycle-1 deltaLen=63 totalLen=63` (length, not the
+63-char reply), `conversation-history entry ts=… size=…` (no item text),
+`user-text-input send … len=2 pendingId=…` (length, not "hi"), `send-text length=NNN`.
+
+Header block (`platform=`/`device=`/`os=`/`appVersion=`/`deviceId=`/`network=`),
+`len=`/`deltaLen=`/ids are EXPECTED and present on both — only chat CONTENT must be
+absent, and it is. Gateway `diagnostics.received` logged both uploads
+(`ref=4825E1` Android, `ref=280C7A` iOS; both `crashed=false`); session-meta header
+present + well-formed on both. **Privacy gate: GREEN on both platforms.**
+
+---
+
+## Privacy guard — FAIL (ORIGINAL RUN, superseded by the PASS above — audit trail)
 
 The spec requires the chat text I sent (and the assistant reply) to be ABSENT from
 the uploaded file. It is PRESENT on both Android and iOS. The leak is on the
@@ -147,15 +216,14 @@ not an environment blocker. The manual-upload happy path (user-visible + file wr
 + gateway log) is GREEN on both platforms; the privacy guard is RED and is the
 headline finding for follow-up.
 
-**Suggested fix direction (for the follow-up, not applied here):** the diagnostic
-ring should never persist `recv-text raw=` content. Options: (a) drop the `raw`
-field from that DEBUG log and log only `type` + byte length + seq; (b) gate the
-raw-frame log behind a flag that the vitals ring does not capture; or (c) redact
-known content-bearing fields (`delta`, `conversation.entry.item.*text`) before
-logging. The send path already demonstrates the right pattern (length-only).
-Note: `PrivacyGuardTest` in `shared/mobile-sdk/src/commonTest/.../vitals/` passes in
-unit form because it drives a synthetic text path; it does NOT exercise the
-`WsTransport.routeText` `recv-text raw=` sink, which is why the leak slipped through.
+**Fix applied (commit `c57dae8`, option a above):** `WsTransport.routeText` now logs
+`log.debug("recv-text", mapOf("len" to raw.length))` — frame length only, never the
+raw content. Re-verified at v0.1.2: see "Privacy guard — PASS (re-verified)" above —
+`recv-text raw=` is gone on both platforms; `recv-text len=…` is all that remains.
+Note: `PrivacyGuardTest` in `shared/mobile-sdk/src/commonTest/.../vitals/` passed in
+unit form because it drove a synthetic text path; it did NOT exercise the
+`WsTransport.routeText` `recv-text raw=` sink, which is why the leak slipped through
+to the first E2E run — caught here, fixed, and now confirmed by a REAL upload.
 
 ## Crash auto-upload — BLOCKED (follow-up)
 
@@ -196,9 +264,15 @@ Take screenshot vitals-ios-sent... COMPLETED
 (iOS drives the send/assert by visible text — see the iOS selector note above.)
 
 ## Build / install notes
-- Gateway: `docker compose -f deploy/macos/docker-compose.yml build gateway` then `up -d gateway`; healthy; `/api/v1/diagnostics/logs` returns 401 `missing-token` unauthenticated (route live); clientLogs volume mounted host↔container.
+- Gateway: `docker compose -f deploy/macos/docker-compose.yml build gateway` then `up -d gateway`; healthy; `/api/v1/diagnostics/logs` returns 401 `missing-token` unauthenticated (route live); clientLogs volume mounted host↔container. (Privacy re-verify did NOT rebuild the gateway — the fix is client-side; the gateway just stores what it receives.)
 - Android: `./gradlew :android:assembleDebug` → `android/build/outputs/apk/debug/android-debug.apk` → `adb -s emulator-5554 install -r` (data preserved → persisted backend config survived).
 - iOS: XCFramework + `xcodegen generate` + `xcodebuild -scheme SentientApp -configuration Debug` (SIGNED, no CODE_SIGNING_ALLOWED=NO) → `BUILD SUCCEEDED` → `xcrun simctl install`. The debug build is an arm64 sim slice; runs fine on the Apple-Silicon iPhone 14 Pro (26.5) simulator (no arch blocker).
+
+### Privacy re-verify rebuild (v0.1.2, fix `c57dae8`)
+Both apps rebuilt + reinstalled to carry the commonMain privacy fix + the 0.1.2
+version bump, then the send-diagnostic flow re-run on each. Builds all green.
+- Android: `./gradlew :android:assembleDebug` → `BUILD SUCCESSFUL` → `adb -s emulator-5554 install -r android/build/outputs/apk/debug/android-debug.apk` → `Success`. Uploaded header `appVersion=0.1.2 build=4`; on-screen "App version 0.1.2 (4)" → "Sent ✓ — ref 4825E1".
+- iOS: `./gradlew :shared:mobile-data:assembleMobileDataDebugXCFramework` → `BUILD SUCCESSFUL`; `cd ios && xcodegen generate`; `xcodebuild -scheme SentientApp -configuration Debug -destination 'id=2BB144EC-…' build` (SIGNED — "Sign to Run Locally", no `CODE_SIGNING_ALLOWED=NO`) → `BUILD SUCCEEDED`; `xcrun simctl install …` → app `CFBundleShortVersionString 0.1.2`. Uploaded header `appVersion=0.1.2 build=1`; on-screen "App version 0.1.2 (1)" → "Sent ✓ — ref 280C7A".
 
 ## Screenshots
 - `android-sent.png` — Android Settings "Sent ✓ — ref …" state (adb screencap right after the flow).
