@@ -57,6 +57,13 @@ interface LifecycleHooks {
      * configure-build time so the gateway sees resume on the single configure frame.
      */
     fun resumeParams(): io.sentient.mobilesdk.protocol.ResumeParams?
+    /**
+     * The ACP conversation uuid the client is currently displaying, or null when
+     * no conversation has been anchored yet. Folded into session.configure so the
+     * gateway re-anchors Hermes to the right conversation on a reconnect before
+     * the next user.message arrives (Task 3 — conversation continuity).
+     */
+    fun currentConversationId(): String?
     fun onAuthFailed()
     fun onConnectionDrop()
     fun mergedCapabilities(): List<String>
@@ -151,6 +158,7 @@ class SdkLifecycle(
                     clientType = CLIENT_TYPE_MOBILE,
                     deviceId = deviceId,
                     resume = hooks.resumeParams(),
+                    conversationId = hooks.currentConversationId(),
                 ),
             )
         },

@@ -9,7 +9,8 @@ plugins {
 
 // Shared mobile-SDK source version. Set to 0.1.0 with the WS-resilience +
 // chat-mirror work (resumable WS, REST sessions, device chat mirror).
-version = "0.1.0"
+// Bumped to 0.1.1: send conversationId in session.configure on reconnect (Task 3).
+version = "0.1.1"
 
 kotlin {
     androidTarget {
