@@ -8,9 +8,9 @@
 //     per-upload progress + a ref/error result. The vitals facade owns the file
 //     read + the authenticated POST; this VM just drives + folds the result.
 //
-// sessions is a SNAPSHOT taken at construction (the screen is entered fresh each
-// time → a fresh VM → a fresh list); progress/result are hot StateFlows the row
-// binds to so the button morphs into a progress bar and then a result line.
+// sessions is loaded on Dispatchers.IO in init {}; progress/result are hot
+// StateFlows the row binds to so the button morphs into a progress bar and then
+// a result line.
 // ---------------------------------------------------------------------------
 package io.sentient.android.settings
 
@@ -24,10 +24,13 @@ import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.secure.SecureTokenStore
 import io.sentient.mobilesdk.vitals.SentientMobileVitals
 import io.sentient.mobilesdk.vitals.VitalsSessionInfo
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Terminal upload outcome surfaced on the row, or null while idle/in-flight. */
 sealed interface UploadOutcome {
@@ -54,8 +57,9 @@ class SettingsViewModel(
 ) : ViewModel() {
     private val log = createLogger("android", "settings-viewmodel")
 
-    /** Newest-first vitals sessions, snapshotted at construction. */
-    val sessions: List<VitalsSessionInfo> = vitals.listSessions()
+    /** Newest-first vitals sessions loaded on IO; empty until the first emission. */
+    private val _sessions = MutableStateFlow<List<VitalsSessionInfo>>(emptyList())
+    val sessions: StateFlow<List<VitalsSessionInfo>> = _sessions.asStateFlow()
 
     // Upload progress in [0,1]; null = idle / done. The row morphs into a bar while non-null.
     private val _progress = MutableStateFlow<Float?>(null)
@@ -65,17 +69,26 @@ class SettingsViewModel(
     private val _outcome = MutableStateFlow<UploadOutcome?>(null)
     val outcome: StateFlow<UploadOutcome?> = _outcome.asStateFlow()
 
+    // Tracks the in-flight upload job so a new tap cancels a previous one.
+    private var uploadJob: Job? = null
+
+    init {
+        viewModelScope.launch(Dispatchers.IO) { _sessions.value = vitals.listSessions() }
+    }
+
     /**
      * Upload the session at [path]. Drives [progress] during the POST and sets [outcome]
      * on completion. A missing/unreadable body is a Failed outcome (never throws).
+     * Cancels any in-flight upload before starting a new one.
      */
     fun uploadSession(path: String) {
-        val fileName = path.substringAfterLast('/')
-        log.info("upload.start", mapOf("file" to fileName))
-        _outcome.value = null
-        _progress.value = 0f
-        viewModelScope.launch {
-            val body = readBody(path)
+        uploadJob?.cancel()
+        uploadJob = viewModelScope.launch {
+            val fileName = path.substringAfterLast('/')
+            log.info("upload.start", mapOf("file" to fileName))
+            _outcome.value = null
+            _progress.value = 0f
+            val body = withContext(Dispatchers.IO) { readBody(path) }
             if (body == null) {
                 log.warn("upload.no-body", mapOf("reason" to "unreadable", "file" to fileName))
                 _progress.value = null

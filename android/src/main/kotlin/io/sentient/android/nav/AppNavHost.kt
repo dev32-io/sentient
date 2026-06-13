@@ -150,6 +150,7 @@ private fun NavGraphBuilder.settingsDestination(nav: NavHostController) {
     composable(Routes.SETTINGS) {
         val settingsVm = koinViewModel<SettingsViewModel>()
         val userSession = koinInject<UserSessionManager>()
+        val sessions by settingsVm.sessions.collectAsStateWithLifecycle()
         val progress by settingsVm.progress.collectAsStateWithLifecycle()
         val outcome by settingsVm.outcome.collectAsStateWithLifecycle()
         SettingsScreen(
@@ -158,7 +159,7 @@ private fun NavGraphBuilder.settingsDestination(nav: NavHostController) {
                 logoutTo(nav, userSession)
             },
             onBack = { nav.popBackStack() },
-            sessions = settingsVm.sessions,
+            sessions = sessions,
             progress = progress,
             outcome = outcome,
             onUpload = settingsVm::uploadSession,

@@ -43,6 +43,12 @@ private const val SEND_LOGS_LABEL = "Send diagnostic log"
 private const val DIAGNOSTICS_LABEL = "Diagnostics"
 private const val CRASH_FLAG = "🔴 "
 private const val ROW_TAG_PREFIX = "settings-log-session-"
+private const val LABEL_SENT = "Sent ✓"
+private const val SENT_REF_PREFIX = "Sent ✓ — ref "
+private const val LABEL_RETRY = "Retry"
+private const val LABEL_SEND = "Send"
+private const val LABEL_SELECT = "Select"
+private const val LABEL_NO_SESSIONS = "No diagnostic sessions yet."
 private val PROGRESS_WIDTH = 64.dp
 
 /**
@@ -78,7 +84,7 @@ fun SettingsDiagnostics(
         if (expanded) {
             if (sessions.isEmpty()) {
                 Text(
-                    text = "No diagnostic sessions yet.",
+                    text = LABEL_NO_SESSIONS,
                     modifier = Modifier.testTag("settings-log-empty"),
                     color = Color(Colors.ink3),
                     fontSize = tokens.type.sm,
@@ -157,7 +163,7 @@ private fun UploadControl(
             modifier = Modifier.width(PROGRESS_WIDTH).testTag("settings-log-progress"),
         )
         outcome is UploadOutcome.Sent -> Text(
-            text = if (outcome.ref.isEmpty()) "Sent ✓" else "Sent ✓ — ref ${outcome.ref}",
+            text = if (outcome.ref.isEmpty()) LABEL_SENT else "$SENT_REF_PREFIX${outcome.ref}",
             modifier = Modifier.testTag("settings-log-sent"),
             color = Color(Colors.accent),
             fontSize = tokens.type.xs,
@@ -166,14 +172,14 @@ private fun UploadControl(
             onClick = { onSelect(); onUpload() },
             modifier = Modifier.testTag("settings-log-failed"),
             colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(Colors.stop)),
-        ) { Text("Retry") }
+        ) { Text(LABEL_RETRY) }
         selected -> Button(
             onClick = onUpload,
             modifier = Modifier.testTag("settings-log-send"),
-        ) { Text("Send") }
+        ) { Text(LABEL_SEND) }
         else -> OutlinedButton(
             onClick = onSelect,
             modifier = Modifier.testTag("settings-log-select"),
-        ) { Text("Select") }
+        ) { Text(LABEL_SELECT) }
     }
 }
