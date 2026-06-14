@@ -9,18 +9,25 @@ const log = getLog(["sentient", "gateway", "session-router"]);
 /** Maps sessions to per-user Hermes profile bindings with conversation persistence. */
 export interface SessionRouter {
   /** Bind a session to a user's Hermes worker. UserId is required — every
-   *  session is associated with the auth-derived userId from ws-auth-gate. */
-  bind(sessionId: string, userId: string): Promise<HermesProfileBinding>;
-  /** Release a session binding when WS closes. */
+   *  session is associated with the auth-derived userId from ws-auth-gate.
+   *  surfaceId keys the conversation anchor: the per-transport sessionId
+   *  binding dies on reconnect, but the surface (and its anchored
+   *  conversationId) survives the handover. */
+  bind(sessionId: string, userId: string, surfaceId: string): Promise<HermesProfileBinding>;
+  /** Release a session binding when WS closes. Does NOT drop the surface
+   *  anchor — the surface outlives the transport. */
   release(sessionId: string): void;
   /** Rebind a session to a different user (Phase 1.7 `identify_user`). */
   rebind(sessionId: string, newUserId: string): Promise<HermesProfileBinding>;
-  /** Current binding for a session (read-only lookup). */
+  /** Current binding for a session (read-only lookup). conversationId is read
+   *  off the surface anchor, not the per-session binding. */
   get(sessionId: string): HermesProfileBinding | null;
-  /** Update conversationId on an existing binding after a Hermes turn. */
-  updateConversationId(sessionId: string, conversationId: string): void;
+  /** Anchor a conversationId to a surface after a Hermes turn. Keyed by
+   *  surfaceId so the anchor survives transport reconnects on the same
+   *  surface. */
+  updateConversationId(surfaceId: string, conversationId: string): void;
   /**
-   * Clear conversationId on every binding for this userId.
+   * Clear the conversation anchor on every surface bound to this userId.
    * Called by the apply orchestrator so the next turn starts a fresh Hermes
    * chain that reads the new SOUL.md / config.yaml.
    */
@@ -29,8 +36,12 @@ export interface SessionRouter {
   findActiveSessionFor(userId: string): string | null;
 }
 
-interface InternalBinding extends HermesProfileBinding {
+interface InternalBinding {
   sessionId: string;
+  userId: string;
+  url: string;
+  apiKey: string;
+  surfaceId: string;
   boundAt: number;
 }
 
@@ -42,6 +53,9 @@ export interface SessionRouterDeps {
 
 export function createSessionRouter(deps: SessionRouterDeps): SessionRouter {
   const bindings = new Map<string, InternalBinding>();
+  // surfaceId → conversationId. Survives transport handover: a new sessionId
+  // on the same surface reads the anchor set by the prior transport.
+  const anchors = new Map<string, string>();
   let bindSeq = 0;
 
   async function resolveBinding(userId: string): Promise<HermesProfileBinding> {
@@ -60,14 +74,22 @@ export function createSessionRouter(deps: SessionRouterDeps): SessionRouter {
   }
 
   return {
-    async bind(sessionId, userId) {
+    async bind(sessionId, userId, surfaceId) {
       const b = await resolveBinding(userId);
-      const rec: InternalBinding = { ...b, sessionId, boundAt: ++bindSeq };
+      const rec: InternalBinding = {
+        sessionId,
+        userId: b.userId,
+        url: b.url,
+        apiKey: b.apiKey,
+        surfaceId,
+        boundAt: ++bindSeq,
+      };
       bindings.set(sessionId, rec);
       log.info("bind", {
         sessionId,
         userId: b.userId,
         url: b.url,
+        surfaceId,
         boundAt: rec.boundAt,
       });
       return b;
@@ -75,11 +97,15 @@ export function createSessionRouter(deps: SessionRouterDeps): SessionRouter {
 
     release(sessionId) {
       const prior = bindings.get(sessionId);
+      // Delete ONLY the per-transport binding. The surface anchor is keyed by
+      // surfaceId and outlives the transport — a reconnect on the same surface
+      // must still read the conversationId set by the released transport.
       bindings.delete(sessionId);
       log.info("release", {
         sessionId,
         priorUserId: prior?.userId ?? null,
-        priorConversationId: prior?.conversationId ?? null,
+        priorSurfaceId: prior?.surfaceId ?? null,
+        priorConversationId: prior ? (anchors.get(prior.surfaceId) ?? null) : null,
         remainingBindings: bindings.size,
       });
     },
@@ -91,13 +117,24 @@ export function createSessionRouter(deps: SessionRouterDeps): SessionRouter {
         throw new Error(`rebind: unknown session ${sessionId}`);
       }
       const b = await resolveBinding(newUserId);
-      const rec: InternalBinding = { ...b, sessionId, boundAt: ++bindSeq };
+      const rec: InternalBinding = {
+        sessionId,
+        userId: b.userId,
+        url: b.url,
+        apiKey: b.apiKey,
+        surfaceId: prior.surfaceId,
+        boundAt: ++bindSeq,
+      };
       bindings.set(sessionId, rec);
+      // The surface now belongs to a different user — drop the prior anchor so
+      // the next turn starts a fresh Hermes chain under the new identity.
+      anchors.delete(prior.surfaceId);
       log.info("rebind", {
         sessionId,
         priorUserId: prior.userId,
         newUserId: b.userId,
         url: b.url,
+        surfaceId: prior.surfaceId,
         boundAt: rec.boundAt,
       });
       return b;
@@ -106,40 +143,38 @@ export function createSessionRouter(deps: SessionRouterDeps): SessionRouter {
     get(sessionId) {
       const b = bindings.get(sessionId) ?? null;
       if (b === null) return null;
-      return { userId: b.userId, url: b.url, apiKey: b.apiKey, conversationId: b.conversationId };
+      return { userId: b.userId, url: b.url, apiKey: b.apiKey, conversationId: anchors.get(b.surfaceId) ?? null };
     },
 
-    updateConversationId(sessionId, conversationId) {
-      const b = bindings.get(sessionId);
-      if (!b) {
-        log.warn("updateConversationId.unknown-session", {
-          sessionId,
-          conversationId,
-          reason: "session not bound",
-        });
-        return;
-      }
+    updateConversationId(surfaceId, conversationId) {
+      const prev = anchors.get(surfaceId) ?? null;
+      // Surface-keyed: the anchor lands even when the originating transport was
+      // already released (the surface key survives the handover).
+      anchors.set(surfaceId, conversationId);
       log.debug("updateConversationId", {
-        sessionId,
-        userId: b.userId,
-        prevConversationId: b.conversationId,
+        surfaceId,
+        prevConversationId: prev,
         nextConversationId: conversationId,
       });
-      b.conversationId = conversationId;
     },
 
     clearConversationIdForAllSessions(userId) {
       let cleared = 0;
+      // Collect this user's surfaces from the live bindings, then drop each
+      // surface anchor. Anchors are keyed by surfaceId, so we go through the
+      // bindings to find which surfaces belong to this userId.
       for (const b of bindings.values()) {
         if (b.userId !== userId) continue;
-        if (b.conversationId === null) continue;
+        const priorConversationId = anchors.get(b.surfaceId) ?? null;
+        if (priorConversationId === null) continue;
         log.info("conversation.cleared", {
           sessionId: b.sessionId,
           userId,
-          priorConversationId: b.conversationId,
+          surfaceId: b.surfaceId,
+          priorConversationId,
           reason: "apply",
         });
-        b.conversationId = null;
+        anchors.delete(b.surfaceId);
         cleared++;
       }
       log.debug("clearConversationIdForAllSessions.done", { userId, cleared });

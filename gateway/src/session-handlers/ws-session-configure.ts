@@ -169,13 +169,20 @@ export async function handleSessionConfigure(
   // alongside pendingNewSessionId after consumption.
   let pendingNewSessionPromise: Promise<string> | null = null;
 
+  const deviceId = configureDeviceId;
+  // Surface key — the unit of session isolation. Old clients omit surfaceId →
+  // fall back to deviceId (today's per-device behavior, spec §4). Derived
+  // before the bind so the conversation anchor is keyed by surface (D2): the
+  // anchor survives transport handover, the per-sessionId binding does not.
+  const surfaceId = configureSurfaceId ?? deviceId;
+
   // Bind session to the auth-derived userId at session start (instead of
   // per-cycle) so identify_user's findActiveSessionFor can resolve from
-  // turn 1, and so the conversationId captured by a prior cycle is reused
-  // by the next one.
+  // turn 1, and so the conversationId anchored to the surface by a prior cycle
+  // is reused by the next one.
   let initialBinding: HermesProfileBinding;
   try {
-    initialBinding = await services.sessionRouter.bind(sessionId, userId);
+    initialBinding = await services.sessionRouter.bind(sessionId, userId, surfaceId);
   } catch (err) {
     log.error("session-bind-failed", { sessionId, userId, reason: errorMessage(err, "unknown") });
     sendError(ws, "protocol_error", "Session binding failed");
@@ -207,10 +214,6 @@ export async function handleSessionConfigure(
   const resumeParams: ResumeParams | null = configureResume
     ? { epoch: configureResume.epoch, lastSeq: configureResume.lastSeq, deviceId: configureDeviceId }
     : null;
-  const deviceId = configureDeviceId;
-  // Surface key — the unit of session isolation. Old clients omit surfaceId →
-  // fall back to deviceId (today's per-device behavior, spec §4).
-  const surfaceId = configureSurfaceId ?? deviceId;
   log.info("session-configure.surface", {
     sessionId,
     surfaceId,
@@ -705,7 +708,7 @@ export async function handleSessionConfigure(
             hermesDeps,
           );
           if (result.conversationId && result.conversationId !== binding.conversationId) {
-            services.sessionRouter.updateConversationId(sessionId, result.conversationId);
+            services.sessionRouter.updateConversationId(surfaceId, result.conversationId);
           }
         } finally {
           cycleSlot.complete(params.cycleId);
