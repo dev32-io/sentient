@@ -31,6 +31,13 @@ const log = getLog(["sentient", "hermes-adapter-client", "acp", "per-profile-con
 
 const DISPOSED_REASON = "connection-disposed";
 
+/** Read `params.sessionId` off a `session/update` notification, guarding the unknown shape. */
+function readUpdateSessionId(params: unknown): string | null {
+  if (typeof params !== "object" || params === null) return null;
+  const id = (params as { sessionId?: unknown }).sessionId;
+  return typeof id === "string" ? id : null;
+}
+
 export interface AcpPerProfileConnectionConfig {
   /** Outbound transport — owned by the WS layer in T4.7. */
   readonly send: (raw: string) => Promise<void>;
@@ -76,6 +83,14 @@ export interface AcpPerProfileConnection {
   onEvent(cb: (e: InternalEvent) => void): () => void;
   onCycleDone(cb: (e: CycleDoneEvent) => void): () => void;
   /**
+   * Fan out the REAL Hermes session id read off each `session/update`
+   * notification (`params.sessionId`). The adapter compares this against the
+   * id it FORCED into the prompt: a divergence means Hermes forked (committed
+   * the turn under a different session). Lets the gateway detect + re-anchor
+   * instead of silently reporting the forced id.
+   */
+  onSessionId(cb: (sessionId: string) => void): () => void;
+  /**
    * Reject every in-flight JSON-RPC request with `error`. The WS layer calls
    * this on an ABNORMAL close so a `session/prompt` mid-flight rejects (→ the
    * dispatch surfaces a terminal `error`) instead of hanging. Does NOT dispose
@@ -102,6 +117,7 @@ export function createAcpPerProfileConnection(cfg: AcpPerProfileConnectionConfig
 
   const eventHandlers = new Set<(e: InternalEvent) => void>();
   const cycleDoneHandlers = new Set<(e: CycleDoneEvent) => void>();
+  const sessionIdHandlers = new Set<(sessionId: string) => void>();
 
   const client: AcpClient =
     cfg.client ??
@@ -115,6 +131,20 @@ export function createAcpPerProfileConnection(cfg: AcpPerProfileConnectionConfig
   cfg.onIncoming((raw) => client.handleIncoming(raw));
 
   client.onNotification("session/update", (params) => {
+    // Fan the REAL session id FIRST so a divergence-driven corrective `created`
+    // is emitted before this update's translated text delta — keeping the
+    // cerebrum re-anchored on Hermes' truth ahead of the content it carries.
+    const realSessionId = readUpdateSessionId(params);
+    if (realSessionId !== null) {
+      for (const h of [...sessionIdHandlers]) {
+        try {
+          h(realSessionId);
+        } catch (err: unknown) {
+          log.warn("session-id.handler-threw", { reason: err instanceof Error ? err.message : String(err) });
+        }
+      }
+    }
+
     const events = translateSessionUpdate(params);
     if (events.length === 0) return;
     log.debug("session-update.fan-out", { count: events.length, handlers: eventHandlers.size });
@@ -267,6 +297,13 @@ export function createAcpPerProfileConnection(cfg: AcpPerProfileConnectionConfig
     };
   }
 
+  function onSessionId(cb: (sessionId: string) => void): () => void {
+    sessionIdHandlers.add(cb);
+    return (): void => {
+      sessionIdHandlers.delete(cb);
+    };
+  }
+
   function rejectInflight(error: Error): void {
     if (disposed) return;
     // Clear the (no-longer-cancellable) inflight marker, then reject pending so
@@ -282,6 +319,7 @@ export function createAcpPerProfileConnection(cfg: AcpPerProfileConnectionConfig
     log.info("dispose");
     eventHandlers.clear();
     cycleDoneHandlers.clear();
+    sessionIdHandlers.clear();
     inflight = null;
     client.rejectAllPending(new Error(DISPOSED_REASON));
   }
@@ -295,6 +333,7 @@ export function createAcpPerProfileConnection(cfg: AcpPerProfileConnectionConfig
     listSessions,
     onEvent,
     onCycleDone,
+    onSessionId,
     rejectInflight,
     dispose,
   };

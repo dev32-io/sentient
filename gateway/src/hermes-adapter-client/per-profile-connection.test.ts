@@ -464,6 +464,24 @@ describe("AcpPerProfileConnection — rejectInflight", () => {
   });
 });
 
+describe("AcpPerProfileConnection — real session id readback", () => {
+  it("fans the real session/update sessionId to onSessionId subscribers", () => {
+    const seen: string[] = [];
+    bed.conn.onSessionId((id) => seen.push(id));
+    bed.pump(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: "session_20260614_000829_2ef209",
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "x" } },
+        },
+      }),
+    );
+    expect(seen).toEqual(["session_20260614_000829_2ef209"]);
+  });
+});
+
 describe("AcpPerProfileConnection — dispose", () => {
   it("rejects pending requests with connection-disposed", async () => {
     const promise = bed.conn.sendUserMessage({ sessionId: "sess_1", text: "hi" });
