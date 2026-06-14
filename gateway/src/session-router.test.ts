@@ -214,4 +214,14 @@ describe("SessionRouter — conversation anchor survives transport handover (D2)
     router.updateConversationId("surface_a", "conv_a");
     expect(router.get("sess_b")?.conversationId).toBeNull();
   });
+
+  it("dropAnchor removes a surface's anchor (anchor lifetime == surface lifetime)", async () => {
+    const router = createSessionRouter(makeDeps());
+    await router.bind("sess_a", ALICE, "surface_a");
+    router.updateConversationId("surface_a", "conv_42");
+    router.dropAnchor("surface_a");
+    // a fresh bind on the same surfaceId now sees no stale anchor
+    await router.bind("sess_b", ALICE, "surface_a");
+    expect(router.get("sess_b")?.conversationId).toBeNull();
+  });
 });

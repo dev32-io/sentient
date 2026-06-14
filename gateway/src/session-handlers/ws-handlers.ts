@@ -340,6 +340,7 @@ interface CapturedPipelineResources {
   readonly snapshotUnsub: ClientData["snapshotUnsub"];
   readonly acpSdkFrameUnsub: ClientData["acpSdkFrameUnsub"];
   readonly acpWireDispose: ClientData["acpWireDispose"];
+  readonly dropAnchor: ClientData["dropAnchor"];
   readonly personSession: ClientData["personSession"];
   readonly attachment: ClientData["attachment"];
 }
@@ -380,6 +381,10 @@ function teardownPipelineResources(
   // immediately. The registry disposes the child when this drops the last ref.
   // Reuses the existing reap; no new TTL constant.
   captured.acpWireDispose?.();
+  // Drop the surface's conversation anchor on the SAME reap that disposes the
+  // wire (D3 invariant). Anchor lifetime == surface lifetime — without this the
+  // anchors map grows unbounded as surfaces (web tabs / app installs) churn.
+  captured.dropAnchor?.();
 
   if (captured.personSession && captured.attachment) {
     captured.personSession.detach(captured.attachment);
@@ -428,6 +433,7 @@ function captureWsDataFields(ws: ServerWebSocket<ClientData>): CapturedPipelineR
     snapshotUnsub: ws.data.snapshotUnsub,
     acpSdkFrameUnsub: ws.data.acpSdkFrameUnsub,
     acpWireDispose: ws.data.acpWireDispose,
+    dropAnchor: ws.data.dropAnchor,
     personSession: ws.data.personSession,
     attachment: ws.data.attachment,
   };
@@ -443,6 +449,7 @@ function clearWsDataFields(ws: ServerWebSocket<ClientData>): void {
   ws.data.attentionGate = null;
   ws.data.acpSdkFrameUnsub = null;
   ws.data.acpWireDispose = null;
+  ws.data.dropAnchor = null;
   ws.data.bargeInController = null;
   ws.data.interruptController = null;
   ws.data.conversationFeedUnsub = null;

@@ -262,6 +262,10 @@ export async function handleSessionConfigure(
     sendError(ws, "protocol_error", "Cannot reach Hermes ACP wire");
     return;
   }
+  // Sibling of acpWireDispose: drop the surface's conversation anchor on the
+  // SAME reap that disposes the wire (D3). Anchor lifetime == surface lifetime —
+  // prevents unbounded anchor growth as surfaces churn (D2 leak fix).
+  ws.data.dropAnchor = () => services.sessionRouter.dropAnchor(surfaceId);
 
   // HANDOVER (Task 3.8): a matching-epoch resume hands back the deferred
   // teardown stashed by the prior resumable disconnect (Task 3.7). Run it NOW

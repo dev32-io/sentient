@@ -26,6 +26,10 @@ export interface SessionRouter {
    *  surfaceId so the anchor survives transport reconnects on the same
    *  surface. */
   updateConversationId(surfaceId: string, conversationId: string): void;
+  /** Drop a surface's conversation anchor when the surface is permanently
+   *  reaped (buffer sweep / full teardown). Anchor lifetime == surface
+   *  lifetime — prevents unbounded anchor growth as surfaces churn. */
+  dropAnchor(surfaceId: string): void;
   /**
    * Clear the conversation anchor on every surface bound to this userId.
    * Called by the apply orchestrator so the next turn starts a fresh Hermes
@@ -156,6 +160,13 @@ export function createSessionRouter(deps: SessionRouterDeps): SessionRouter {
         prevConversationId: prev,
         nextConversationId: conversationId,
       });
+    },
+
+    dropAnchor(surfaceId) {
+      const prior = anchors.get(surfaceId) ?? null;
+      if (prior === null) return;
+      anchors.delete(surfaceId);
+      log.debug("dropAnchor", { surfaceId, priorConversationId: prior });
     },
 
     clearConversationIdForAllSessions(userId) {
