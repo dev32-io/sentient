@@ -88,6 +88,7 @@ ios/App/Local.xcconfig
 # Mobile release signing + deploy config — NEVER commit (templates use *.example)
 android/release.keystore
 *.jks                       # JKS/keystore files have no legitimate committed use anywhere
+*.keystore                  # same — covers android/release.keystore and any stray keystore
 android/keystore.properties
 scripts/release.local.conf
 
