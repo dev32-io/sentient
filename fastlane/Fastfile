@@ -1,0 +1,45 @@
+require "shellwords"
+
+default_platform(:ios)
+
+REPO = File.expand_path("..", __dir__) # fastlane/ -> repo root
+
+platform :ios do
+  desc "Build a signed ad-hoc .ipa using the local Keychain identity + Xcode auto profiles"
+  lane :adhoc do
+    # Required. Fail with a clean fastlane error (no Ruby backtrace) if unset/empty.
+    team_id = ENV["IOS_TEAM_ID"].to_s.strip
+    UI.user_error!("IOS_TEAM_ID is not set — export it or add it to scripts/release.local.conf.") if team_id.empty?
+
+    # Step 0: build the RELEASE KMP XCFramework (gradle owns the shared code)
+    sh("cd #{REPO.shellescape} && ./gradlew :shared:mobile-data:assembleMobileDataReleaseXCFramework")
+
+    # Step 1: place the release XCFramework at the variant-neutral stable path
+    xcf_dir = "#{REPO}/shared/mobile-data/build/XCFrameworks"
+    sh("rm -rf #{xcf_dir.shellescape}/MobileData.xcframework")
+    sh("cp -R #{xcf_dir.shellescape}/release/MobileData.xcframework #{xcf_dir.shellescape}/MobileData.xcframework")
+
+    # Step 2: ensure Local.xcconfig + regenerate the project from the spec
+    sh("#{REPO.shellescape}/scripts/ios-gen-project.sh")
+
+    # Step 3: archive + export ad-hoc. Signs with the cert ALREADY in the Keychain;
+    # -allowProvisioningUpdates lets Xcode refresh the profile via its own account session.
+    # NOTE: "ad-hoc" is the legacy export-method name; newer Xcode calls it "release-testing"
+    # (still accepted as an alias). export_method is gym's canonical param — export_options
+    # carries only the extra signing keys, so the method isn't specified twice.
+    build_app(
+      project: "#{REPO}/ios/SentientApp.xcodeproj",
+      scheme: "SentientApp",
+      configuration: "Release",
+      export_method: "ad-hoc",
+      archive_path: "#{REPO}/ios/build/SentientApp.xcarchive",
+      output_directory: "#{REPO}/ios/build/ipa",
+      output_name: "SentientApp.ipa",
+      xcargs: "-allowProvisioningUpdates DEVELOPMENT_TEAM=#{team_id} CODE_SIGN_STYLE=Automatic",
+      export_options: {
+        signingStyle: "automatic",
+        teamID: team_id,
+      },
+    )
+  end
+end
