@@ -557,3 +557,66 @@ describe("cleanupSession — deferred closure fires teardownPipelineResources on
     expect(services.sessionManager.removeSession).toHaveBeenCalledTimes(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// G) D3 regression lock — ACP wire release is bound to the surface-attachment
+//    reap, not to transport close
+// ---------------------------------------------------------------------------
+
+describe("cleanupSession — D3 ACP wire release bound to buffer reap, not transport close", () => {
+  it("resumable disconnect does NOT release the ACP wire until the deferred teardown runs (D3)", () => {
+    // Build a real PersonSession so releaseDeviceBuffer stashes the closure.
+    const session = makePersonSession();
+    const attachment = makeAttachment("sess-001");
+    session.acquireDeviceBuffer("sess-001", { deviceId: "sess-001" });
+    session.attach(attachment);
+
+    const acpWireDispose = vi.fn();
+    const services = makeServices();
+
+    const ws = makeWs({
+      sessionId: "sess-001",
+      grantedCapabilities: new Set(["stream.resume"]),
+      acpWireDispose,
+      personSession: session,
+      attachment: attachment as never,
+    });
+
+    // Transport close (full=false) — must NOT call acpWireDispose inline.
+    cleanupSession(ws, services, { full: false });
+    expect(acpWireDispose).not.toHaveBeenCalled();
+
+    // Buffer entry still exists; deferred closure is stashed.
+    expect(session.bufferFor("sess-001")).toBeDefined();
+
+    // Advance past TTL and sweep — the deferred teardown fires.
+    const future = Date.now() + TTL_MS + 1000;
+    session.sweepIdle(future, TTL_MS);
+
+    // NOW the wire must have been released (exactly once, via the deferred closure).
+    expect(acpWireDispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("full teardown releases the ACP wire immediately (D3)", () => {
+    const session = makePersonSession();
+    const attachment = makeAttachment("sess-001");
+    session.acquireDeviceBuffer("sess-001", { deviceId: "sess-001" });
+    session.attach(attachment);
+
+    const acpWireDispose = vi.fn();
+    const services = makeServices();
+
+    const ws = makeWs({
+      sessionId: "sess-001",
+      grantedCapabilities: new Set(["stream.resume"]),
+      acpWireDispose,
+      personSession: session,
+      attachment: attachment as never,
+    });
+
+    // Explicit session.end (full=true) — wire must be released immediately.
+    cleanupSession(ws, services, { full: true });
+
+    expect(acpWireDispose).toHaveBeenCalledTimes(1);
+  });
+});

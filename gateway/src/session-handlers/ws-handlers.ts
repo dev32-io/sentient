@@ -372,8 +372,13 @@ function teardownPipelineResources(
   captured.snapshotUnsub?.();
   // Unsubscribe SDK-frame listener BEFORE releasing the wire.
   captured.acpSdkFrameUnsub?.();
-  // Release this attachment's ref on the pooled wire. Disposes the underlying
-  // WS only when the last attachment for this user detaches.
+  // Release this attachment's ref on the pooled wire. The wire's lifetime is the
+  // SURFACE's lifetime (D3): on a resumable disconnect this runs only from the
+  // deferred teardown the buffer reap (sweepIdle @ session.idle_timeout_ms) fires
+  // — never eagerly on transport close — so a reconnect within the grace window
+  // reuses the warm child instead of respawning it. On full teardown it runs
+  // immediately. The registry disposes the child when this drops the last ref.
+  // Reuses the existing reap; no new TTL constant.
   captured.acpWireDispose?.();
 
   if (captured.personSession && captured.attachment) {
