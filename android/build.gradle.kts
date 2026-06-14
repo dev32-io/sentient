@@ -6,6 +6,27 @@ plugins {
     alias(libs.plugins.compose.compiler)
 }
 android {
+    // Release signing — sourced from android/keystore.properties (gitignored). Absent →
+    // release stays unsigned so a public-repo contributor can still build. Present → signed.
+    // Generate with scripts/android-make-keystore.sh.
+    val keystorePropsFile = file("keystore.properties")
+    val hasReleaseSigning = keystorePropsFile.exists()
+    val keystoreProps = Properties().apply {
+        if (hasReleaseSigning) keystorePropsFile.inputStream().use { load(it) }
+    }
+    fun requiredKeystoreProp(key: String): String = requireNotNull(keystoreProps.getProperty(key)) {
+        "android/keystore.properties is missing required key: $key (see keystore.properties.example)"
+    }
+    if (hasReleaseSigning) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(requiredKeystoreProp("storeFile"))
+                storePassword = requiredKeystoreProp("storePassword")
+                keyAlias = requiredKeystoreProp("keyAlias")
+                keyPassword = requiredKeystoreProp("keyPassword")
+            }
+        }
+    }
     namespace = "io.sentient.android"
     compileSdk = libs.versions.compileSdk.get().toInt()
     // Debug gateway URL is sourced from local.properties (gitignored) so no private
@@ -37,6 +58,7 @@ android {
             buildConfigField("String", "GATEWAY_WS_URL", "\"$debugGatewayUrl\"")
         }
         getByName("release") {
+            if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")
             // No baked default: empty ⇒ resolver returns Unconfigured ⇒ setup page.
             buildConfigField("String", "GATEWAY_WS_URL", "\"\"")
             isMinifyEnabled = true
