@@ -109,6 +109,15 @@ export const sessionConfigureSchema = z.object({
    * Omitted on a fresh chat.
    */
   conversationId: z.string().min(1).optional(),
+  /**
+   * Optional — the chat-surface id (one browser tab / one mobile app instance).
+   * Layers on top of `deviceId`; does NOT replace it (2026-06-14 surface-
+   * isolation design §1). Web mints a per-tab UUID in sessionStorage; mobile
+   * sends `surfaceId = deviceId`. The gateway keys the ACP wire pool / resume
+   * buffer / replay attachment by this value so each surface is isolated.
+   * OMITTED by old clients → the gateway falls back to `deviceId` (no break).
+   */
+  surfaceId: z.string().min(1).optional(),
 });
 
 export const audioStartSchema = z.object({
