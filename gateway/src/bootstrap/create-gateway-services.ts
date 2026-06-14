@@ -83,7 +83,7 @@ export interface GatewayServices {
   readonly sessionManager: SessionManager;
   readonly sessionRouter: SessionRouter;
   readonly personSessions: PersonSessionRegistry;
-  /** Pooled ACP wire per userId, ref-counted across PersonSession attachments. */
+  /** Pooled ACP wire per surfaceId, ref-counted across a surface's reconnects. */
   readonly acpWireRegistry: AcpWireRegistry;
   /** One in-flight cycle per surface; survives transport reconnects. */
   readonly surfaceCycles: SurfaceCycleRegistry;

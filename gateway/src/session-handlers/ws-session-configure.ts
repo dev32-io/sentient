@@ -204,8 +204,9 @@ export async function handleSessionConfigure(
     sendError(ws, "protocol_error", "Person session create failed");
     return;
   }
-  // Task 3.8 — stable deviceId keys the per-device buffer across reconnects.
-  // The client supplies it on session.configure; the resume request now rides
+  // Task 3.8 — the resolved surfaceId (configureSurfaceId ?? deviceId) keys the
+  // per-surface replay buffer across reconnects; deviceId is carried for presence.
+  // The client supplies both on session.configure; the resume request now rides
   // INSIDE that same frame (configureResume), so the resume decision is a
   // synchronous read off the parsed configure message — no separate frame, no
   // same-tick ordering race. When resumeParams carries a matching epoch,
