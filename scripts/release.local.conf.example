@@ -1,0 +1,9 @@
+# Copy to scripts/release.local.conf (gitignored). Drives deploy + iOS signing identity.
+# Sourced by build-ios.sh, build-android.sh, deploy-mobile.sh. NONE of this is committed.
+DEPLOY_HOST=your-fileserver.local          # ssh host for the file server
+DEPLOY_USER=youruser                       # ssh user
+DEPLOY_PATH=/home/youruser/path/to/files   # remote dir holding the artifacts
+IPA_NAME=Sentient.ipa                      # remote filename for the .ipa
+APK_NAME=Sentient.apk                      # remote filename for the .apk
+IOS_TEAM_ID=YOURTEAMID                     # Apple Developer team (DEVELOPMENT_TEAM); not secret, kept out of git
+# APPLE_ID=you@example.com                 # OPTIONAL — only for App Store Connect (unused here)

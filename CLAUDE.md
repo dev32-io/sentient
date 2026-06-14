@@ -43,6 +43,14 @@ All `bun run` commands, test scripts, and quality-gate hooks depend on this.
     bun run typecheck     — TypeScript strict check
     bun run ci            — Full local CI (lint + typecheck + test)
 
+## Mobile build/release
+
+    ./scripts/ios-setup.sh           — local iOS dev: debug XCFramework + generate project
+    ./scripts/build-android.sh       — signed release apk (add --deploy to scp to the file server)
+    ./scripts/build-ios.sh           — signed ad-hoc ipa  (add --deploy to scp to the file server)
+
+See `docs/mobile-release.md` for one-time setup (keystore, `scripts/release.local.conf`, signing).
+
 ## Architecture
 
 The gateway is an **ACP (Agent Client Protocol) client** that dials per-user Hermes workers. Hermes (a separate runtime, supervised by `sentient-hermes`) owns the LLM call, agent loop, tool execution, and per-user profile memory. The gateway terminates the client WebSocket, runs STT and TTS, decides WHEN to dispatch a cycle, and translates Hermes' ACP `session/update` notifications back into the SDK's wire protocol. Search / get / getMessages / delete are not covered by ACP — those route through a per-profile `hermes -p X dashboard` sidecar that mounts the bundled `sentient-plugin` REST tree at `/api/plugins/sentient-plugin/`.

@@ -1,0 +1,5 @@
+# Identity comes from ENV (set by scripts/build-ios.sh ← scripts/release.local.conf).
+# Nothing personal is committed here: the bundle id is already public in project.yml.
+app_identifier "io.dev32.sentient"
+team_id(ENV["IOS_TEAM_ID"]) if ENV["IOS_TEAM_ID"]
+apple_id(ENV["APPLE_ID"]) if ENV["APPLE_ID"]   # optional; unused for local ad-hoc

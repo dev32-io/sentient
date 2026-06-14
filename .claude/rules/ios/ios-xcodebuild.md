@@ -24,6 +24,7 @@ The project is GENERATED, not hand-edited: an XcodeGen spec is the single source
 
 - CI/local gates run `xcodebuild build` / `xcodebuild test` against a simulator destination.
 - Regenerate the project before building so it matches the spec.
+- Local dev: regenerate + build via `scripts/ios-setup.sh` (debug XCFramework → stable path → xcodegen). Release ipa: `scripts/build-ios.sh`. See `docs/mobile-release.md`.
 
 ## Dependencies — vendored XCFramework + SPM
 
