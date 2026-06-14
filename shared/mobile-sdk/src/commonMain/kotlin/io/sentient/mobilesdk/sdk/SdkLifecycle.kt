@@ -157,6 +157,7 @@ class SdkLifecycle(
                     capabilities = Capabilities(hooks.mergedCapabilities()),
                     clientType = CLIENT_TYPE_MOBILE,
                     deviceId = deviceId,
+                    surfaceId = deviceId, // 1 app = 1 surface (design §1)
                     resume = hooks.resumeParams(),
                     conversationId = hooks.currentConversationId(),
                 ),
