@@ -636,19 +636,31 @@ export async function handleSessionConfigure(
         // Per-surface ownership gate (D1). The first cycle on an idle surface
         // wins the lease and dispatches; a concurrent dispatch (an internal
         // save-skill cycle, OR a reconnecting transport's fresh cycle) is
-        // REFUSED — it queues behind / adopts the in-flight cycle whose output
-        // already streams to the surface's resume buffer. We do NOT register the
-        // per-transport cycleSlot and do NOT dispatch a second session/prompt;
-        // the incumbent is NEVER cancelled.
-        const admission = admitCycle(services.surfaceCycles, surfaceId, params.cycleId, controller);
-        if (!admission.dispatch) {
-          log.info("onCycle.queued-behind-surface-cycle", {
+        // REFUSED — it must QUEUE behind the in-flight cycle whose output
+        // already streams to the surface's resume buffer. We AWAIT the lease
+        // here (abortable) rather than returning shouldContinue:true: returning
+        // would make the gate re-fire this cycle synchronously → a tight
+        // busy-loop that exhausts the surface's per-hour cycle budget (D1 bug).
+        // While awaiting, onCycle has not returned, so the gate holds this cycle
+        // as active and accumulates other stimuli in pendingSalience (drained at
+        // natural end) — no spin, no dropped message. We do NOT register the
+        // per-transport cycleSlot until we win; the incumbent is NEVER cancelled.
+        let admission = admitCycle(services.surfaceCycles, surfaceId, params.cycleId, controller);
+        while (!admission.dispatch) {
+          if (controller.signal.aborted) {
+            return { aborted: true, shouldContinue: false };
+          }
+          log.info("onCycle.awaiting-surface-cycle", {
             sessionId,
             surfaceKey: surfaceId,
             requestedCycleId: params.cycleId,
             activeCycleId: admission.activeCycleId,
           });
-          return { aborted: false, shouldContinue: true };
+          await waitForReleaseOrAbort(services.surfaceCycles.whenReleased(surfaceId), controller.signal);
+          if (controller.signal.aborted) {
+            return { aborted: true, shouldContinue: false };
+          }
+          admission = admitCycle(services.surfaceCycles, surfaceId, params.cycleId, controller);
         }
 
         cycleSlot.register(params.cycleId, controller);
@@ -1265,4 +1277,20 @@ export function admitCycle(
 ): CycleAdmission {
   const lease = registry.acquire(surfaceKey, cycleId, controller);
   return { dispatch: lease.owner, activeCycleId: lease.activeCycleId };
+}
+
+/** Resolve when the surface lease frees OR the cycle aborts, whichever first. */
+async function waitForReleaseOrAbort(released: Promise<void>, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return;
+  await new Promise<void>((resolve) => {
+    let done = false;
+    const finish = (): void => {
+      if (done) return;
+      done = true;
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    signal.addEventListener("abort", finish, { once: true });
+    released.then(finish, finish);
+  });
 }

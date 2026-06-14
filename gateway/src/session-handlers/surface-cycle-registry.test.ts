@@ -39,4 +39,35 @@ describe("SurfaceCycleRegistry — one in-flight cycle per surface", () => {
     reg.complete("surface_a", "cycle_OLD");
     expect(reg.activeCycleId("surface_a")).toBe("cycle_1");
   });
+  it("whenReleased resolves when the in-flight cycle completes", async () => {
+    const reg = createSurfaceCycleRegistry();
+    reg.acquire("s", "c1", new AbortController());
+    const p = reg.whenReleased("s");
+    reg.complete("s", "c1");
+    await p; // the await returning IS the assertion — it would hang if unresolved
+    expect(reg.activeCycleId("s")).toBe(null);
+  });
+  it("a stale complete does NOT resolve waiters", async () => {
+    const reg = createSurfaceCycleRegistry();
+    reg.acquire("s", "c1", new AbortController());
+    const p = reg.whenReleased("s");
+    reg.complete("s", "STALE");
+    const outcome = await Promise.race([p.then(() => "resolved"), Promise.resolve("pending")]);
+    expect(outcome).toBe("pending");
+  });
+  it("after release, a previously-refused acquire can become owner", () => {
+    const reg = createSurfaceCycleRegistry();
+    reg.acquire("s", "c1", new AbortController()); // owner
+    expect(reg.acquire("s", "c2", new AbortController()).owner).toBe(false); // refused
+    reg.complete("s", "c1");
+    expect(reg.acquire("s", "c2", new AbortController()).owner).toBe(true); // now owner
+  });
+  it("whenReleased await path: refused acquire becomes owner after release", async () => {
+    const reg = createSurfaceCycleRegistry();
+    reg.acquire("s", "c1", new AbortController());
+    const w = reg.whenReleased("s");
+    queueMicrotask(() => reg.complete("s", "c1"));
+    await w;
+    expect(reg.acquire("s", "c2", new AbortController()).owner).toBe(true);
+  });
 });

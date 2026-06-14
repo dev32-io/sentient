@@ -17,10 +17,17 @@ export interface SurfaceCycleRegistry {
   complete(surfaceKey: string, cycleId: string): void;
   activeCycleId(surfaceKey: string): string | null;
   currentController(surfaceKey: string): AbortController | null;
+  /**
+   * Resolve when the surface's in-flight cycle next completes (non-stale
+   * `complete`). A refused cycle awaits this to queue behind the incumbent
+   * rather than spin-redispatching. Each call returns a fresh one-shot Promise.
+   */
+  whenReleased(surfaceKey: string): Promise<void>;
 }
 
 export function createSurfaceCycleRegistry(): SurfaceCycleRegistry {
   const slots = new Map<string, SurfaceSlot>();
+  const waiters = new Map<string, Array<() => void>>();
 
   return {
     acquire(surfaceKey, cycleId, controller) {
@@ -42,6 +49,22 @@ export function createSurfaceCycleRegistry(): SurfaceCycleRegistry {
       }
       slots.delete(surfaceKey);
       log.debug("complete", { surfaceKey, cycleId });
+      // Lease freed — wake every waiter queued behind this surface so they can
+      // re-attempt acquire. Stale completes (above) deliberately do NOT wake
+      // waiters: the slot is still held by the adopted cycle.
+      const w = waiters.get(surfaceKey);
+      if (w) {
+        waiters.delete(surfaceKey);
+        for (const r of w) r();
+      }
+    },
+
+    whenReleased(surfaceKey) {
+      return new Promise<void>((resolve) => {
+        const arr = waiters.get(surfaceKey) ?? [];
+        arr.push(resolve);
+        waiters.set(surfaceKey, arr);
+      });
     },
 
     activeCycleId(surfaceKey) {
