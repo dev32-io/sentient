@@ -71,7 +71,10 @@ export async function resolvePluginClientForUser(
 export async function listSessionsForUser(userId: string, deps: PerUserPluginDeps): Promise<SessionListItem[]> {
   const wsUrl = await buildWsUrlForUser(deps.hermes, deps.userPortStore, userId);
   const token = deps.hermesApiKey();
-  const conn = await deps.acpWireRegistry.acquire(userId, () =>
+  // REST list is not a surface — ephemeral un-pooled key so it never aliases a
+  // real surface; finally-release at refCount 0 disposes immediately.
+  const wireKey = `rest-list:${userId}`;
+  const conn = await deps.acpWireRegistry.acquire(wireKey, () =>
     bootstrapAcpWire({
       wsUrl,
       token,
@@ -86,6 +89,6 @@ export async function listSessionsForUser(userId: string, deps: PerUserPluginDep
       lastActiveAt: s.lastActiveAt,
     }));
   } finally {
-    deps.acpWireRegistry.release(userId);
+    deps.acpWireRegistry.release(wireKey);
   }
 }

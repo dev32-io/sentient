@@ -4,10 +4,10 @@ import type { AcpPerProfileConnection } from "./per-profile-connection.js";
 
 // ---------------------------------------------------------------------------
 // AcpWireRegistry — wire/process-boundary contract: one pooled ACP wire per
-// userId, ref-counted across PersonSession attachments. The overlay evicts a
-// second same-profile connection with a clean 1000 close, so a second client
-// MUST reuse the live wire instead of dialing. The dial fn / handle are mocked
-// here — no real overlay is touched.
+// surfaceId (chat tab / app instance), ref-counted across that surface's
+// reconnects. The overlay spawns a fresh child per connection so per-surface
+// wires are fully isolated; a surface's reconnect reuses the warm child.
+// The dial fn / handle are mocked here — no real overlay is touched.
 // ---------------------------------------------------------------------------
 
 /** A stub handle: a sentinel acpConn + a spy dispose. */
@@ -38,47 +38,57 @@ function immediateDial(): { dial: () => Promise<AcpWireHandle>; calls: () => num
   };
 }
 
-describe("AcpWireRegistry — ref-counted per-user pooling", () => {
-  it("dials once and reuses the live wire on a second same-user acquire", async () => {
+describe("AcpWireRegistry — ref-counted per-surface pooling", () => {
+  it("dials once and reuses the live wire on a second same-surface acquire", async () => {
     const reg = createAcpWireRegistry();
     const d = immediateDial();
 
-    const a = await reg.acquire("alice", d.dial);
-    const b = await reg.acquire("alice", d.dial);
+    const a = await reg.acquire("surface-alice", d.dial);
+    const b = await reg.acquire("surface-alice", d.dial);
 
     expect(d.calls()).toBe(1);
     expect(a).toBe(b);
-    expect(reg.refCount("alice")).toBe(2);
+    expect(reg.refCount("surface-alice")).toBe(2);
   });
 
   it("keeps the wire live after one release, disposes it on the last release", async () => {
     const reg = createAcpWireRegistry();
     const d = immediateDial();
 
-    await reg.acquire("alice", d.dial);
-    await reg.acquire("alice", d.dial);
+    await reg.acquire("surface-alice", d.dial);
+    await reg.acquire("surface-alice", d.dial);
     const handle = d.last() as AcpWireHandle & { disposed: () => boolean };
 
-    reg.release("alice");
-    expect(reg.refCount("alice")).toBe(1);
+    reg.release("surface-alice");
+    expect(reg.refCount("surface-alice")).toBe(1);
     expect(handle.disposed()).toBe(false);
 
-    reg.release("alice");
-    expect(reg.refCount("alice")).toBe(0);
+    reg.release("surface-alice");
+    expect(reg.refCount("surface-alice")).toBe(0);
     expect(handle.disposed()).toBe(true);
   });
 
-  it("dials a separate wire per distinct userId", async () => {
+  it("dials a separate wire per distinct surfaceId", async () => {
     const reg = createAcpWireRegistry();
     const d = immediateDial();
 
-    const a = await reg.acquire("alice", d.dial);
-    const b = await reg.acquire("bob", d.dial);
+    const a = await reg.acquire("surface-1", d.dial);
+    const b = await reg.acquire("surface-2", d.dial);
 
     expect(d.calls()).toBe(2);
     expect(a).not.toBe(b);
-    expect(reg.refCount("alice")).toBe(1);
-    expect(reg.refCount("bob")).toBe(1);
+  });
+
+  it("dials TWO isolated wires for two surfaces of the SAME user (no cross-surface fork)", async () => {
+    const reg = createAcpWireRegistry();
+    const d = immediateDial();
+    const tabA = await reg.acquire("alice-tab-A", d.dial);
+    const tabB = await reg.acquire("alice-tab-B", d.dial);
+    expect(d.calls()).toBe(2);
+    expect(tabA).not.toBe(tabB);
+    reg.release("alice-tab-A");
+    expect(reg.refCount("alice-tab-A")).toBe(0);
+    expect(reg.refCount("alice-tab-B")).toBe(1);
   });
 
   it("collapses a concurrent first-acquire race into a single dial", async () => {
@@ -92,8 +102,8 @@ describe("AcpWireRegistry — ref-counted per-user pooling", () => {
     );
 
     // Two acquires fire BEFORE the dial resolves — both must await the same one.
-    const p1 = reg.acquire("alice", dial);
-    const p2 = reg.acquire("alice", dial);
+    const p1 = reg.acquire("surface-alice", dial);
+    const p2 = reg.acquire("surface-alice", dial);
     expect(dial).toHaveBeenCalledTimes(1);
 
     const handle = fakeHandle("shared");
@@ -102,7 +112,7 @@ describe("AcpWireRegistry — ref-counted per-user pooling", () => {
     const [c1, c2] = await Promise.all([p1, p2]);
     expect(c1).toBe(c2);
     expect(c1).toBe(handle.acpConn);
-    expect(reg.refCount("alice")).toBe(2);
+    expect(reg.refCount("surface-alice")).toBe(2);
   });
 
   it("drops the entry when the shared dial of a concurrent acquire rejects", async () => {
@@ -117,10 +127,10 @@ describe("AcpWireRegistry — ref-counted per-user pooling", () => {
 
     // Two acquires share one in-flight dial; the second is on the reuse branch
     // with refCount already bumped to 2 — then the shared dial REJECTS.
-    const p1 = reg.acquire("alice", dial);
-    const p2 = reg.acquire("alice", dial);
+    const p1 = reg.acquire("surface-alice", dial);
+    const p2 = reg.acquire("surface-alice", dial);
     expect(dial).toHaveBeenCalledTimes(1);
-    expect(reg.refCount("alice")).toBe(2);
+    expect(reg.refCount("surface-alice")).toBe(2);
 
     // Attach a real rejection handler to BOTH derived acquire promises BEFORE
     // firing reject(), capturing each error. This leaves NO transient
@@ -138,13 +148,13 @@ describe("AcpWireRegistry — ref-counted per-user pooling", () => {
     expect(err2).toBeInstanceOf(Error);
     expect((err2 as Error).message).toMatch(/overlay unreachable/);
     // No leaked ref: the poisoned entry is gone, not stuck at 2.
-    expect(reg.refCount("alice")).toBe(0);
+    expect(reg.refCount("surface-alice")).toBe(0);
 
     // A later acquire RE-DIALS and succeeds — entry was dropped, not poisoned.
     const d = immediateDial();
-    const conn = await reg.acquire("alice", d.dial);
+    const conn = await reg.acquire("surface-alice", d.dial);
     expect(d.calls()).toBe(1);
-    expect(reg.refCount("alice")).toBe(1);
+    expect(reg.refCount("surface-alice")).toBe(1);
     expect(conn).toBeDefined();
   });
 
@@ -152,18 +162,18 @@ describe("AcpWireRegistry — ref-counted per-user pooling", () => {
     const reg = createAcpWireRegistry();
     const failing = vi.fn(() => Promise.reject(new Error("overlay unreachable")));
 
-    await expect(reg.acquire("alice", failing)).rejects.toThrow(/overlay unreachable/);
-    expect(reg.refCount("alice")).toBe(0);
+    await expect(reg.acquire("surface-alice", failing)).rejects.toThrow(/overlay unreachable/);
+    expect(reg.refCount("surface-alice")).toBe(0);
 
     // A later acquire must re-dial (no poisoned entry).
     const d = immediateDial();
-    const conn = await reg.acquire("alice", d.dial);
+    const conn = await reg.acquire("surface-alice", d.dial);
     expect(d.calls()).toBe(1);
-    expect(reg.refCount("alice")).toBe(1);
+    expect(reg.refCount("surface-alice")).toBe(1);
     expect(conn).toBeDefined();
   });
 
-  it("release of an unknown user is a no-op", () => {
+  it("release of an unknown surfaceId is a no-op", () => {
     const reg = createAcpWireRegistry();
     expect(() => reg.release("nobody")).not.toThrow();
     expect(reg.refCount("nobody")).toBe(0);
@@ -177,10 +187,10 @@ describe("AcpWireRegistry — ref-counted per-user pooling", () => {
         resolveDial = resolve;
       });
 
-    const acquirePromise = reg.acquire("alice", dial);
+    const acquirePromise = reg.acquire("surface-alice", dial);
     // Release before the dial settles — refCount hits 0 with no handle yet.
-    reg.release("alice");
-    expect(reg.refCount("alice")).toBe(0);
+    reg.release("surface-alice");
+    expect(reg.refCount("surface-alice")).toBe(0);
 
     const handle = fakeHandle("late") as AcpWireHandle & { disposed: () => boolean };
     (resolveDial as unknown as (h: AcpWireHandle) => void)(handle);
