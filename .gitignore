@@ -94,3 +94,4 @@ scripts/release.local.conf
 # Fastlane build artifacts (not secrets, just noise)
 fastlane/report.xml
 fastlane/Preview.html
+fastlane/README.md
