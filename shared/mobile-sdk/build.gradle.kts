@@ -11,7 +11,8 @@ plugins {
 // chat-mirror work (resumable WS, REST sessions, device chat mirror).
 // Bumped to 0.1.1: send conversationId in session.configure on reconnect (Task 3).
 // Bumped to 0.1.2: SentientMobileVitals (Task 14).
-version = "0.1.2"
+// Bumped to 0.1.3: surface-isolation (per-tab/per-app surfaceId in session.configure).
+version = "0.1.3"
 
 kotlin {
     androidTarget {
