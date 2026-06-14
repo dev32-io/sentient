@@ -84,3 +84,13 @@ qa/*/results/
 
 # iOS per-machine debug backend (see ios/App/Local.xcconfig.example)
 ios/App/Local.xcconfig
+
+# Mobile release signing + deploy config — NEVER commit (templates use *.example)
+android/release.keystore
+*.jks                       # JKS/keystore files have no legitimate committed use anywhere
+android/keystore.properties
+scripts/release.local.conf
+
+# Fastlane build artifacts (not secrets, just noise)
+fastlane/report.xml
+fastlane/Preview.html

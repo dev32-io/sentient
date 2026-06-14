@@ -4,7 +4,7 @@ pre-commit:
     secrets-guard:
       run: |
         BLOCKED=$(git diff --cached --name-only \
-          | grep -iE '\.env($|\..*)$|\.env\.local$|(^|/)secrets?\.|credentials|\.pem$|\.key$|\.p12$|\.pfx$|\.jks$|(^|/)keys\.yaml$|(^|/)state\.yaml$' \
+          | grep -iE '\.env($|\..*)$|\.env\.local$|(^|/)secrets?\.|credentials|\.pem$|\.key$|\.p12$|\.pfx$|\.jks$|\.keystore$|(^|/)keys\.yaml$|(^|/)state\.yaml$|(^|/)keystore\.properties$|(^|/)release\.local\.conf$' \
           | grep -vE '\.env\.example$|\.(ts|tsx)$|gateway/templates/' \
           || true)
         if [ -n "$BLOCKED" ]; then
