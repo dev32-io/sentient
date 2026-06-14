@@ -50,10 +50,16 @@ describe("SurfaceCycleRegistry — one in-flight cycle per surface", () => {
   it("a stale complete does NOT resolve waiters", async () => {
     const reg = createSurfaceCycleRegistry();
     reg.acquire("s", "c1", new AbortController());
-    const p = reg.whenReleased("s");
+    let resolved = false;
+    reg.whenReleased("s").then(() => {
+      resolved = true;
+    });
     reg.complete("s", "STALE");
-    const outcome = await Promise.race([p.then(() => "resolved"), Promise.resolve("pending")]);
-    expect(outcome).toBe("pending");
+    // Drain micro + macrotasks: a stale complete must NOT wake the waiter,
+    // and the lease must stay held by the real in-flight cycle.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(resolved).toBe(false);
+    expect(reg.activeCycleId("s")).toBe("c1");
   });
   it("after release, a previously-refused acquire can become owner", () => {
     const reg = createSurfaceCycleRegistry();
