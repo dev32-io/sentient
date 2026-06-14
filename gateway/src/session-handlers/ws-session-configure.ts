@@ -47,6 +47,7 @@ import { createInterruptController } from "./interrupt-controller.js";
 import { buildMicSuppressionOptions, createMicEchoGuard } from "./mic-echo-guard.js";
 import { createSessionAudioWire } from "./session-audio-wire.js";
 import { createSessionsHandlers } from "./sessions-handlers.js";
+import type { SurfaceCycleRegistry } from "./surface-cycle-registry.js";
 import { ttsSkipReason } from "./tts-policy.js";
 import type { ClientData } from "./ws-helpers.js";
 import { errorMessage, sendError } from "./ws-helpers.js";
@@ -631,6 +632,25 @@ export async function handleSessionConfigure(
         const mode: DispatchMode = params.forceFinal ? { bargedIn: () => true } : { bargedIn: () => false };
 
         const controller = new AbortController();
+
+        // Per-surface ownership gate (D1). The first cycle on an idle surface
+        // wins the lease and dispatches; a concurrent dispatch (an internal
+        // save-skill cycle, OR a reconnecting transport's fresh cycle) is
+        // REFUSED — it queues behind / adopts the in-flight cycle whose output
+        // already streams to the surface's resume buffer. We do NOT register the
+        // per-transport cycleSlot and do NOT dispatch a second session/prompt;
+        // the incumbent is NEVER cancelled.
+        const admission = admitCycle(services.surfaceCycles, surfaceId, params.cycleId, controller);
+        if (!admission.dispatch) {
+          log.info("onCycle.queued-behind-surface-cycle", {
+            sessionId,
+            surfaceKey: surfaceId,
+            requestedCycleId: params.cycleId,
+            activeCycleId: admission.activeCycleId,
+          });
+          return { aborted: false, shouldContinue: true };
+        }
+
         cycleSlot.register(params.cycleId, controller);
 
         controller.signal.addEventListener(
@@ -677,6 +697,10 @@ export async function handleSessionConfigure(
           }
         } finally {
           cycleSlot.complete(params.cycleId);
+          // Release the surface lease so the next cycle on this surface can win
+          // ownership. Keyed-stale-safe: complete() no-ops if a newer cycle owns
+          // the surface slot.
+          services.surfaceCycles.complete(surfaceId, params.cycleId);
         }
 
         return { aborted: controller.signal.aborted, shouldContinue: false };
@@ -1220,4 +1244,25 @@ export async function resolveForcedSessionId(input: ResolveForcedSessionIdInput)
   // eagerly via session.new (visible session.created); a fresh-chain message with
   // no pending id falls through to Hermes default keying (no invisible mint).
   return null;
+}
+
+export interface CycleAdmission {
+  readonly dispatch: boolean;
+  readonly activeCycleId: string;
+}
+
+/**
+ * Per-surface cycle gate (D1). First cycle on an idle surface dispatches; any
+ * concurrent dispatch (internal save-skill, or a reconnecting transport's fresh
+ * cycle) is REFUSED — it queues behind / adopts the in-flight cycle whose output
+ * already streams to the resume buffer. NEVER cancels the incumbent.
+ */
+export function admitCycle(
+  registry: SurfaceCycleRegistry,
+  surfaceKey: string,
+  cycleId: string,
+  controller: AbortController,
+): CycleAdmission {
+  const lease = registry.acquire(surfaceKey, cycleId, controller);
+  return { dispatch: lease.owner, activeCycleId: lease.activeCycleId };
 }

@@ -620,3 +620,48 @@ describe("cleanupSession — D3 ACP wire release bound to buffer reap, not trans
     expect(acpWireDispose).toHaveBeenCalledTimes(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// H) D1 adopt-not-cancel — a resumable disconnect must NOT abort the in-flight
+//    cycle's controller. The cycle keeps running on the surface's wire and
+//    streams to the resume buffer; a reconnect adopts it. The only two paths
+//    that abort the cycle controller are interruptController.trigger() and
+//    bargeInController.trigger(); neither fires on a resumable disconnect.
+// ---------------------------------------------------------------------------
+
+describe("cleanupSession — resumable disconnect adopts (does NOT cancel) the in-flight cycle (D1)", () => {
+  it("does NOT abort the in-flight cycle controller on a resumable disconnect", () => {
+    const session = makePersonSession();
+    const attachment = makeAttachment("sess-001");
+    session.acquireDeviceBuffer("sess-001", { deviceId: "sess-001" });
+    session.attach(attachment);
+
+    // Stand-in for the in-flight cycle's AbortController (owned by the onCycle
+    // closure). Wire both cancellation paths to abort it: if the resumable path
+    // ever fired interrupt OR barge-in, this controller would be aborted.
+    const inFlightCycle = new AbortController();
+    const interruptController = { trigger: vi.fn(() => inFlightCycle.abort("interrupt")), dispose: vi.fn() };
+    const bargeInController = { trigger: vi.fn(() => inFlightCycle.abort("barge-in")), dispose: vi.fn() };
+    const gate = makeGate();
+
+    const ws = makeWs({
+      sessionId: "sess-001",
+      grantedCapabilities: new Set(["stream.resume"]),
+      attentionGate: gate as never,
+      interruptController: interruptController as never,
+      bargeInController: bargeInController as never,
+      personSession: session,
+      attachment: attachment as never,
+    });
+    const services = makeServices();
+
+    cleanupSession(ws, services, { full: false });
+
+    // The cycle controller is untouched — the cycle keeps running for adoption.
+    expect(inFlightCycle.signal.aborted).toBe(false);
+    expect(interruptController.trigger).not.toHaveBeenCalled();
+    expect(bargeInController.trigger).not.toHaveBeenCalled();
+    // The gate (which owns the cycle dispatch) is NOT disposed on the resumable path.
+    expect(gate.dispose).not.toHaveBeenCalled();
+  });
+});
