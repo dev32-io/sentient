@@ -113,6 +113,7 @@ export async function handleWebSocketMessage(
         services,
         msg.clientType,
         msg.deviceId,
+        msg.surfaceId,
         msg.resume,
         msg.conversationId,
       );

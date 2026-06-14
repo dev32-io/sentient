@@ -42,15 +42,15 @@ const decoder = new TextDecoder();
 export interface ResumeParams {
   readonly epoch: number;
   readonly lastSeq: number;
-  /** The stable deviceId from session.configure — resume now rides in that frame. */
+  /** The stable deviceId from session.configure — carried for logging only. */
   readonly deviceId: string;
 }
 
 export interface HandleResumeOrFreshInput {
   readonly ws: ServerWebSocket<ClientData>;
   readonly sessionId: string;
-  /** The stable deviceId that keys the per-device replay buffer. */
-  readonly deviceId: string;
+  /** The resolved surfaceId that keys the per-surface replay buffer. */
+  readonly surfaceId: string;
   readonly buffer: SessionReplayBuffer;
   readonly epoch: number;
   /** True when acquireDeviceBuffer reused an existing entry (matching epoch). */
@@ -86,7 +86,7 @@ export interface HandleResumeOrFreshInput {
  * REST-refetches on recovered:false).
  */
 export function handleResumeOrFresh(input: HandleResumeOrFreshInput): boolean {
-  const { ws, sessionId, deviceId, buffer, epoch, resumed, resumeParams, readyFrame, goLive } = input;
+  const { ws, sessionId, surfaceId, buffer, epoch, resumed, resumeParams, readyFrame, goLive } = input;
 
   // Fresh connect (no resume frame) OR epoch mismatch (acquire gave a new
   // buffer). Nothing to replay — but a client that asked to resume still needs
@@ -94,7 +94,7 @@ export function handleResumeOrFresh(input: HandleResumeOrFreshInput): boolean {
   // (resumeParams === null) gets the plain fresh setup with no ack.
   if (!resumed || resumeParams === null) {
     if (resumeParams !== null) {
-      sendRecoveredFalse(ws, sessionId, deviceId, epoch, "epoch-mismatch-or-no-prior-buffer");
+      sendRecoveredFalse(ws, sessionId, surfaceId, epoch, "epoch-mismatch-or-no-prior-buffer");
     }
     return false;
   }
@@ -103,7 +103,7 @@ export function handleResumeOrFresh(input: HandleResumeOrFreshInput): boolean {
   // Gap: the frame at lastSeq was evicted (byte-cap) → contiguous replay
   // impossible. Fall back to recovered:false; client REST-refetches history.
   if (missed === null) {
-    sendRecoveredFalse(ws, sessionId, deviceId, epoch, "gap-evicted");
+    sendRecoveredFalse(ws, sessionId, surfaceId, epoch, "gap-evicted");
     return false;
   }
 
@@ -116,7 +116,7 @@ export function handleResumeOrFresh(input: HandleResumeOrFreshInput): boolean {
   // continuation streams to the new socket BEHIND the replay (correct seq
   // order). The prefs seed + empty snapshot stay suppressed (caller skips its
   // fresh block) — the client has both via replay.
-  sendRecoveredTrue(ws, sessionId, deviceId, buffer, epoch, resumeParams.lastSeq, readyFrame, goLive, missed);
+  sendRecoveredTrue(ws, sessionId, surfaceId, buffer, epoch, resumeParams.lastSeq, readyFrame, goLive, missed);
   return true;
 }
 
@@ -134,7 +134,7 @@ export function handleResumeOrFresh(input: HandleResumeOrFreshInput): boolean {
 function sendRecoveredTrue(
   ws: ServerWebSocket<ClientData>,
   sessionId: string,
-  deviceId: string,
+  surfaceId: string,
   buffer: SessionReplayBuffer,
   epoch: number,
   lastSeq: number,
@@ -158,7 +158,7 @@ function sendRecoveredTrue(
   );
   log.info("resume.recovered", {
     sessionId,
-    deviceId,
+    surfaceId,
     epoch,
     fromSeq,
     toSeq,
@@ -171,7 +171,7 @@ function sendRecoveredTrue(
       sendRawFrame(ws, frame.bytes, "replay-binary");
     }
   }
-  // Replay flushed — NOW route the device's live socket to the new connection.
+  // Replay flushed — NOW route the surface's live socket to the new connection.
   // The in-flight cycle's next frame (seq > toSeq) streams here, behind the
   // replay, in order.
   goLive();
@@ -180,12 +180,12 @@ function sendRecoveredTrue(
 function sendRecoveredFalse(
   ws: ServerWebSocket<ClientData>,
   sessionId: string,
-  deviceId: string,
+  surfaceId: string,
   epoch: number,
   reason: string,
 ): void {
   sendRawFrame(ws, JSON.stringify({ type: "stream.resumed", recovered: false, epoch }), "stream.resumed");
-  log.info("resume.recovered-false", { sessionId, deviceId, epoch, reason });
+  log.info("resume.recovered-false", { sessionId, surfaceId, epoch, reason });
 }
 
 /**

@@ -82,6 +82,7 @@ export async function handleSessionConfigure(
   services: GatewayServices,
   clientType: ClientType,
   configureDeviceId: string,
+  configureSurfaceId: string | undefined,
   configureResume: SessionConfigureResume | undefined,
   configureConversationId: string | undefined,
 ): Promise<void> {
@@ -206,9 +207,16 @@ export async function handleSessionConfigure(
     ? { epoch: configureResume.epoch, lastSeq: configureResume.lastSeq, deviceId: configureDeviceId }
     : null;
   const deviceId = configureDeviceId;
-  // GK-2: pass deviceId as BOTH the key and the carried field for now.
-  // GK-3 will re-key to surfaceId; for this task deviceId === surfaceId.
-  const acquired = personSession.acquireDeviceBuffer(deviceId, {
+  // Surface key — the unit of session isolation. Old clients omit surfaceId →
+  // fall back to deviceId (today's per-device behavior, spec §4).
+  const surfaceId = configureSurfaceId ?? deviceId;
+  log.info("session-configure.surface", {
+    sessionId,
+    surfaceId,
+    deviceId,
+    surfaceFromConfigure: configureSurfaceId !== undefined,
+  });
+  const acquired = personSession.acquireDeviceBuffer(surfaceId, {
     deviceId,
     ...(resumeParams ? { resumeEpoch: resumeParams.epoch } : {}),
   });
@@ -237,6 +245,7 @@ export async function handleSessionConfigure(
   const acpConn = await acquireAcpWireOrFail({
     sessionId,
     userId: initialBinding.userId,
+    surfaceId,
     registry: services.acpWireRegistry,
     wsUrl: resolvedWsUrl,
     token: initialBinding.apiKey,
@@ -258,21 +267,22 @@ export async function handleSessionConfigure(
   // SURVIVE the handover (instead of being disposed mid-flight). acquire already
   // detached the teardown from the entry so the retention sweep can never re-run it.
   if (acquired.priorDeferredTeardown !== null) {
-    log.info("resume.handover-old-pipeline", { sessionId, deviceId, epoch: deviceEpoch });
+    log.info("resume.handover-old-pipeline", { sessionId, surfaceId, epoch: deviceEpoch });
     acquired.priorDeferredTeardown();
   }
 
-  // attachmentId is the stable deviceId — it keys the per-device replay buffer
-  // (DeviceBufferStore is keyed by deviceId), so the resumable-disconnect path
-  // in ws-handlers (releaseDeviceBuffer / bufferFor / disposeDeviceBuffer keyed
-  // by attachment.attachmentId) addresses the correct buffer across reconnects.
+  // attachmentId is the resolved surfaceId — it keys the per-surface replay
+  // buffer (DeviceBufferStore is keyed by surfaceId), so the resumable-disconnect
+  // path in ws-handlers (releaseDeviceBuffer / bufferFor / disposeDeviceBuffer
+  // keyed by attachment.attachmentId) addresses the correct buffer across
+  // reconnects. The carried deviceId is for device-presence tracking only.
   // sessionId stays the per-WS id used for sessionRouter / Manager / Controls.
-  // Creating the attachment registers THIS socket as the device's current live
+  // Creating the attachment registers THIS socket as the surface's current live
   // writer (deviceLiveSocket.current). Runs AFTER the handover above, so on a
   // resume it deliberately takes over from the old attachment — the in-flight
   // cycle's old sequencer (sharing this ref) now writes to the new socket.
   const attachment = createDeviceAttachment<ClientData>({
-    attachmentId: deviceId,
+    attachmentId: surfaceId,
     deviceId,
     ws,
     sessionId,
@@ -283,7 +293,7 @@ export async function handleSessionConfigure(
     clock: acquired.clock,
   });
   personSession.attach(attachment);
-  personSession.setForceClose(deviceId, () => ws.close(WS_NORMAL_CLOSURE, "idle-timeout"));
+  personSession.setForceClose(surfaceId, () => ws.close(WS_NORMAL_CLOSURE, "idle-timeout"));
   ws.data.personSession = personSession;
   ws.data.attachment = attachment;
   ws.data.activityClock = acquired.clock;
@@ -941,7 +951,7 @@ export async function handleSessionConfigure(
   const replayed = handleResumeOrFresh({
     ws,
     sessionId,
-    deviceId,
+    surfaceId,
     buffer: deviceBuffer,
     epoch: deviceEpoch,
     resumed: deviceResumed,
@@ -955,7 +965,7 @@ export async function handleSessionConfigure(
     // (session.ready first, then stream.resumed + replay), and the handover went
     // live AFTER the replay. The client has history + prefs from the replay
     // window. Suppress the fresh-only block (prefs seed + snapshot).
-    log.info("session-configured.resumed", { sessionId, deviceId, epoch: deviceEpoch });
+    log.info("session-configured.resumed", { sessionId, surfaceId, epoch: deviceEpoch });
     return;
   }
 
@@ -1040,13 +1050,15 @@ function registerAdapters(
 }
 
 // ---------------------------------------------------------------------------
-// ACP wire acquire (pooled per userId)
+// ACP wire acquire (pooled per surfaceId)
 // ---------------------------------------------------------------------------
 
 interface AcquireAcpWireOrFailInput {
   readonly sessionId: string;
   readonly userId: string;
-  /** Per-userId pool — reuses a live wire across attachments instead of re-dialing. */
+  /** Surface key for the wire pool — one isolated Hermes child per surface. */
+  readonly surfaceId: string;
+  /** Per-surfaceId pool — reuses a live wire across transport reconnects for the same surface. */
   readonly registry: AcpWireRegistry;
   /** Per-profile WS URL ending in `/ws` — `bootstrapAcpWire` rewrites the suffix to `/acp`. */
   readonly wsUrl: string;
@@ -1059,13 +1071,14 @@ interface AcquireAcpWireOrFailInput {
 }
 
 /**
- * Acquire the user's pooled ACP wire — dials on the first attachment, reuses
- * the live wire (refCount++) for every subsequent same-user attachment so the
- * overlay never evicts the first connection. On failure, log + return null so
+ * Acquire the surface's pooled ACP wire — dials on the first attachment, reuses
+ * the live wire (refCount++) for every subsequent same-surface reconnect so the
+ * overlay never evicts the in-flight connection. On failure, log + return null so
  * the caller can reject the session cleanly. ACP is the only wire — no legacy
  * fallback. The dial threads the reconnect config so the wire self-heals on
  * abnormal close. The stashed dispose releases ONE reference; the registry
- * tears the wire down only when the last attachment detaches.
+ * tears the wire down only when the last attachment for this surface detaches.
+ * userId is used for WS-URL resolution and logging only — the pool key is surfaceId.
  */
 async function acquireAcpWireOrFail(input: AcquireAcpWireOrFailInput): Promise<AcpPerProfileConnection | null> {
   const dial = (): Promise<AcpWireHandle> => {
@@ -1088,19 +1101,20 @@ async function acquireAcpWireOrFail(input: AcquireAcpWireOrFailInput): Promise<A
     });
   };
   try {
-    const acpConn = await input.registry.acquire(input.userId, dial);
+    const acpConn = await input.registry.acquire(input.surfaceId, dial);
     let released = false;
     input.setDispose(() => {
       if (released) return;
       released = true;
-      input.registry.release(input.userId);
+      input.registry.release(input.surfaceId);
     });
-    log.info("acp-wire-acquire-ok", { sessionId: input.sessionId, userId: input.userId });
+    log.info("acp-wire-acquire-ok", { sessionId: input.sessionId, userId: input.userId, surfaceId: input.surfaceId });
     return acpConn;
   } catch (err: unknown) {
     log.warn("acp-wire-acquire-failed", {
       sessionId: input.sessionId,
       userId: input.userId,
+      surfaceId: input.surfaceId,
       reason: errorMessage(err, "unknown"),
     });
     return null;

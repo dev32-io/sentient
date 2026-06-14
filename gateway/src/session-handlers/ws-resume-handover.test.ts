@@ -99,7 +99,7 @@ describe("handleResumeOrFresh — resume in window (recovered:true)", () => {
     const suppressFresh = handleResumeOrFresh({
       ws,
       sessionId: "sess-new",
-      deviceId: "dev-A",
+      surfaceId: "dev-A",
       buffer,
       epoch,
       resumed: true,
@@ -139,7 +139,7 @@ describe("handleResumeOrFresh — resume in window (recovered:true)", () => {
     handleResumeOrFresh({
       ws,
       sessionId: "sess-new",
-      deviceId: "dev-A",
+      surfaceId: "dev-A",
       buffer,
       epoch,
       resumed: true,
@@ -171,7 +171,7 @@ describe("handleResumeOrFresh — resume in window (recovered:true)", () => {
     handleResumeOrFresh({
       ws,
       sessionId: "sess-new",
-      deviceId: "dev-A",
+      surfaceId: "dev-A",
       buffer,
       epoch,
       resumed: true,
@@ -203,7 +203,7 @@ describe("handleResumeOrFresh — stale lastSeq (gap, recovered:false)", () => {
     const suppressFresh = handleResumeOrFresh({
       ws,
       sessionId: "sess-new",
-      deviceId: "dev-A",
+      surfaceId: "dev-A",
       buffer,
       epoch: 7,
       resumed: true,
@@ -244,7 +244,7 @@ describe("handleResumeOrFresh — epoch mismatch (fresh buffer, recovered:false)
     const suppressFresh = handleResumeOrFresh({
       ws,
       sessionId: "sess-new",
-      deviceId: "dev-A",
+      surfaceId: "dev-A",
       buffer: second.buffer,
       epoch: second.epoch,
       resumed: second.resumed,
@@ -268,7 +268,7 @@ describe("handleResumeOrFresh — epoch mismatch (fresh buffer, recovered:false)
     const suppressFresh = handleResumeOrFresh({
       ws,
       sessionId: "sess-new",
-      deviceId: "dev-A",
+      surfaceId: "dev-A",
       buffer,
       epoch,
       resumed,
@@ -353,7 +353,7 @@ describe("handleResumeOrFresh — session.ready + prefs seed contract", () => {
     const suppressFresh = handleResumeOrFresh({
       ws,
       sessionId: "sess-prefs",
-      deviceId: "dev-A",
+      surfaceId: "dev-A",
       buffer,
       epoch,
       resumed: true,
@@ -384,7 +384,7 @@ describe("handleResumeOrFresh — session.ready + prefs seed contract", () => {
     const suppressFresh = handleResumeOrFresh({
       ws,
       sessionId: "sess-prefs-fresh",
-      deviceId: "dev-A",
+      surfaceId: "dev-A",
       buffer,
       epoch,
       resumed,
@@ -412,7 +412,7 @@ describe("handleResumeOrFresh — session.ready + prefs seed contract", () => {
     const suppressFresh = handleResumeOrFresh({
       ws,
       sessionId: "sess-prefs-mismatch",
-      deviceId: "dev-A",
+      surfaceId: "dev-A",
       buffer: second.buffer,
       epoch: second.epoch,
       resumed: second.resumed,
