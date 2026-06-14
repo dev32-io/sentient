@@ -299,11 +299,15 @@ chmod +x scripts/ios-setup.sh
 ./scripts/ios-setup.sh
 ls -d shared/mobile-data/build/XCFrameworks/MobileData.xcframework   # stable path populated
 ls -d ios/SentientApp.xcodeproj                                      # project generated
-xcodebuild -project ios/SentientApp.xcodeproj -scheme SentientApp \
-  -destination 'generic/platform=iOS Simulator' build CODE_SIGNING_ALLOWED=NO 2>&1 | tail -3
+# Build for DEVICE (arm64) — the representative target for the release ipa.
+# Do NOT use '-destination generic/platform=iOS Simulator' here: that admits x86_64,
+# and the KMP framework ships only arm64 + arm64-simulator slices (no x86_64), so the
+# x86_64 compile fails with misleading "cannot find <symbol> in scope" errors.
+xcodebuild -project ios/SentientApp.xcodeproj -scheme SentientApp -configuration Release \
+  -destination 'generic/platform=iOS' build CODE_SIGNING_ALLOWED=NO 2>&1 | tail -3
 ```
 
-Expected: stable path + `.xcodeproj` exist; the simulator build ends with `** BUILD SUCCEEDED **` (signing disabled — just proves the stable-path link compiles).
+Expected: stable path + `.xcodeproj` exist; the device build ends with `** BUILD SUCCEEDED **` (signing disabled — just proves the stable-path link compiles). For a simulator-specific check, target a concrete arm64 simulator (e.g. `-destination 'platform=iOS Simulator,name=iPhone 16'`), never the generic simulator destination.
 
 - [ ] **Step 5: Commit (project.yml + scripts; generated project is gitignored).**
 
@@ -696,3 +700,4 @@ Run after all tasks (needs local machine + file server). Each row maps to a spec
 - **apk module name:** AGP names the artifact after the gradle module (`:android`) → `android-release.apk`. If the module is ever renamed, update `build-android.sh` + this plan.
 - **Stable-path migration:** any existing local checkout must run `scripts/ios-setup.sh` once after pulling — the old `debug/` path is no longer referenced by the spec.
 - **fastlane run dir:** the lane is invoked from the repo root (`Gemfile` + `fastlane/` live there); all lane paths are absolute via `REPO`.
+- **No x86_64 simulator slice:** the KMP framework targets `iosArm64` + `iosSimulatorArm64` only. Any iOS build must be arm64 — a `generic/platform=iOS Simulator` destination can pull x86_64 and fail with misleading "cannot find &lt;symbol&gt; in scope" errors. Verify with a device build (`generic/platform=iOS`) or a concrete arm64 simulator.
