@@ -206,7 +206,10 @@ export async function handleSessionConfigure(
     ? { epoch: configureResume.epoch, lastSeq: configureResume.lastSeq, deviceId: configureDeviceId }
     : null;
   const deviceId = configureDeviceId;
+  // GK-2: pass deviceId as BOTH the key and the carried field for now.
+  // GK-3 will re-key to surfaceId; for this task deviceId === surfaceId.
   const acquired = personSession.acquireDeviceBuffer(deviceId, {
+    deviceId,
     ...(resumeParams ? { resumeEpoch: resumeParams.epoch } : {}),
   });
   const { buffer: deviceBuffer, epoch: deviceEpoch, resumed: deviceResumed, liveSocket: deviceLiveSocket } = acquired;
@@ -270,6 +273,7 @@ export async function handleSessionConfigure(
   // cycle's old sequencer (sharing this ref) now writes to the new socket.
   const attachment = createDeviceAttachment<ClientData>({
     attachmentId: deviceId,
+    deviceId,
     ws,
     sessionId,
     profile: personSession.profile,

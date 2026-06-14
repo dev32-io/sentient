@@ -119,7 +119,7 @@ describe("cleanupSession — resumable disconnect (full=false + stream.resume)",
   it("does NOT dispose the attention gate", () => {
     const session = makePersonSession();
     const attachment = makeAttachment("sess-001");
-    session.acquireDeviceBuffer("sess-001");
+    session.acquireDeviceBuffer("sess-001", { deviceId: "sess-001" });
     session.attach(attachment);
 
     const gate = makeGate();
@@ -140,7 +140,7 @@ describe("cleanupSession — resumable disconnect (full=false + stream.resume)",
   it("does NOT call acpSdkFrameUnsub or acpWireDispose", () => {
     const session = makePersonSession();
     const attachment = makeAttachment("sess-001");
-    session.acquireDeviceBuffer("sess-001");
+    session.acquireDeviceBuffer("sess-001", { deviceId: "sess-001" });
     session.attach(attachment);
 
     const acpSdkFrameUnsub = vi.fn();
@@ -165,7 +165,7 @@ describe("cleanupSession — resumable disconnect (full=false + stream.resume)",
   it("does NOT unregister the session from sessionControls/Router/Manager", () => {
     const session = makePersonSession();
     const attachment = makeAttachment("sess-001");
-    session.acquireDeviceBuffer("sess-001");
+    session.acquireDeviceBuffer("sess-001", { deviceId: "sess-001" });
     session.attach(attachment);
 
     const ws = makeWs({
@@ -186,7 +186,7 @@ describe("cleanupSession — resumable disconnect (full=false + stream.resume)",
   it("releases the device buffer (TTL started) but does NOT remove it", () => {
     const session = makePersonSession();
     const attachment = makeAttachment("sess-001");
-    session.acquireDeviceBuffer("sess-001");
+    session.acquireDeviceBuffer("sess-001", { deviceId: "sess-001" });
     session.attach(attachment);
 
     const ws = makeWs({
@@ -206,7 +206,7 @@ describe("cleanupSession — resumable disconnect (full=false + stream.resume)",
   it("frames journaled AFTER the close land in the buffer", () => {
     const session = makePersonSession();
     const attachment = makeAttachment("sess-001");
-    const { buffer } = session.acquireDeviceBuffer("sess-001");
+    const { buffer } = session.acquireDeviceBuffer("sess-001", { deviceId: "sess-001" });
     session.attach(attachment);
 
     const ws = makeWs({
@@ -231,7 +231,7 @@ describe("cleanupSession — resumable disconnect (full=false + stream.resume)",
     // Test the DeviceBufferStore directly to confirm the deferred teardown
     // is stashed on release.
     const store = new DeviceBufferStore(REPLAY_MAX_BYTES);
-    store.acquire("dev-A");
+    store.acquire("dev-A", { deviceId: "dev-A" });
     const teardown = vi.fn();
     store.release("dev-A", teardown);
 
@@ -251,7 +251,7 @@ describe("cleanupSession — full teardown (full=true)", () => {
   it("disposes the attention gate", () => {
     const session = makePersonSession();
     const attachment = makeAttachment("sess-001");
-    session.acquireDeviceBuffer("sess-001");
+    session.acquireDeviceBuffer("sess-001", { deviceId: "sess-001" });
     session.attach(attachment);
 
     const gate = makeGate();
@@ -272,7 +272,7 @@ describe("cleanupSession — full teardown (full=true)", () => {
   it("calls acpSdkFrameUnsub and acpWireDispose", () => {
     const session = makePersonSession();
     const attachment = makeAttachment("sess-001");
-    session.acquireDeviceBuffer("sess-001");
+    session.acquireDeviceBuffer("sess-001", { deviceId: "sess-001" });
     session.attach(attachment);
 
     const acpSdkFrameUnsub = vi.fn();
@@ -297,7 +297,7 @@ describe("cleanupSession — full teardown (full=true)", () => {
   it("removes the session from sessionControls/Router/Manager", () => {
     const session = makePersonSession();
     const attachment = makeAttachment("sess-001");
-    session.acquireDeviceBuffer("sess-001");
+    session.acquireDeviceBuffer("sess-001", { deviceId: "sess-001" });
     session.attach(attachment);
 
     const ws = makeWs({
@@ -318,7 +318,7 @@ describe("cleanupSession — full teardown (full=true)", () => {
   it("disposes the device buffer entry immediately (bufferFor returns undefined after full teardown)", () => {
     const session = makePersonSession();
     const attachment = makeAttachment("sess-001");
-    session.acquireDeviceBuffer("sess-001");
+    session.acquireDeviceBuffer("sess-001", { deviceId: "sess-001" });
     session.attach(attachment);
 
     const ws = makeWs({
@@ -342,7 +342,7 @@ describe("cleanupSession — full teardown (full=true)", () => {
 describe("DeviceBufferStore.sweepIdle — deferred teardown lifecycle", () => {
   it("runs deferredTeardown when the entry is evicted by sweep", () => {
     const store = new DeviceBufferStore(REPLAY_MAX_BYTES);
-    store.acquire("dev-A");
+    store.acquire("dev-A", { deviceId: "dev-A" });
     const teardown = vi.fn();
     store.release("dev-A", teardown);
 
@@ -355,7 +355,7 @@ describe("DeviceBufferStore.sweepIdle — deferred teardown lifecycle", () => {
 
   it("does NOT run deferredTeardown a second time on subsequent sweeps", () => {
     const store = new DeviceBufferStore(REPLAY_MAX_BYTES);
-    store.acquire("dev-A");
+    store.acquire("dev-A", { deviceId: "dev-A" });
     const teardown = vi.fn();
     store.release("dev-A", teardown);
 
@@ -372,7 +372,7 @@ describe("DeviceBufferStore.sweepIdle — deferred teardown lifecycle", () => {
     // The deferredTeardown closure itself has an idempotency guard (tornDown flag).
     // This test verifies the guard using the raw DeviceBufferStore.release + sweepIdle.
     const store = new DeviceBufferStore(REPLAY_MAX_BYTES);
-    store.acquire("dev-A");
+    store.acquire("dev-A", { deviceId: "dev-A" });
 
     let callCount = 0;
     let tornDown = false;
@@ -400,13 +400,13 @@ describe("DeviceBufferStore.sweepIdle — deferred teardown lifecycle", () => {
 describe("DeviceBufferStore.acquire — hands deferredTeardown back on resume (Task 3.8)", () => {
   it("returns the stashed teardown and detaches it from the entry so the sweep cannot re-run it", () => {
     const store = new DeviceBufferStore(REPLAY_MAX_BYTES);
-    const first = store.acquire("dev-A");
+    const first = store.acquire("dev-A", { deviceId: "dev-A" });
     const teardown = vi.fn();
     store.release("dev-A", teardown);
 
     // Device reconnects with correct epoch — acquire HANDS the teardown back
     // (Task 3.8 handover) instead of silently dropping it. The caller runs it.
-    const resumed = store.acquire("dev-A", { resumeEpoch: first.epoch });
+    const resumed = store.acquire("dev-A", { deviceId: "dev-A", resumeEpoch: first.epoch });
     expect(resumed.priorDeferredTeardown).toBe(teardown);
 
     // Sweep — teardown must NOT be called by the sweep (acquire detached it).
@@ -426,7 +426,7 @@ describe("cleanupSession — transport close without stream.resume falls through
   it("disposes the gate when stream.resume is absent from capabilities", () => {
     const session = makePersonSession();
     const attachment = makeAttachment("sess-001");
-    session.acquireDeviceBuffer("sess-001");
+    session.acquireDeviceBuffer("sess-001", { deviceId: "sess-001" });
     session.attach(attachment);
 
     const gate = makeGate();
@@ -448,7 +448,7 @@ describe("cleanupSession — transport close without stream.resume falls through
   it("removes session when stream.resume absent (full:false falls through)", () => {
     const session = makePersonSession();
     const attachment = makeAttachment("sess-001");
-    session.acquireDeviceBuffer("sess-001");
+    session.acquireDeviceBuffer("sess-001", { deviceId: "sess-001" });
     session.attach(attachment);
 
     const ws = makeWs({
@@ -467,7 +467,7 @@ describe("cleanupSession — transport close without stream.resume falls through
   it("disposes buffer entry immediately (no TTL) when fallback path runs", () => {
     const session = makePersonSession();
     const attachment = makeAttachment("sess-001");
-    session.acquireDeviceBuffer("sess-001");
+    session.acquireDeviceBuffer("sess-001", { deviceId: "sess-001" });
     session.attach(attachment);
 
     const ws = makeWs({
@@ -496,7 +496,7 @@ describe("cleanupSession — deferred closure fires teardownPipelineResources on
     // which in turn invokes the three service registration teardown calls.
     const session = makePersonSession();
     const attachment = makeAttachment("sess-001");
-    session.acquireDeviceBuffer("sess-001");
+    session.acquireDeviceBuffer("sess-001", { deviceId: "sess-001" });
     session.attach(attachment);
 
     const services = makeServices();
@@ -532,7 +532,7 @@ describe("cleanupSession — deferred closure fires teardownPipelineResources on
   it("teardown fires exactly once even when sweep is called twice (idempotency)", () => {
     const session = makePersonSession();
     const attachment = makeAttachment("sess-001");
-    session.acquireDeviceBuffer("sess-001");
+    session.acquireDeviceBuffer("sess-001", { deviceId: "sess-001" });
     session.attach(attachment);
 
     const services = makeServices();

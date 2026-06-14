@@ -151,10 +151,10 @@ describe("PersonSessionRegistry.sweep", () => {
     const session = await reg.getOrCreate(ALICE);
     expect(session).not.toBeNull();
 
-    // Acquire a device buffer — still attached (not released).
+    // Acquire a surface buffer — still attached (not released).
     // Clock was just stamped at acquire time; nowMs is far future but idleTimeoutMs
     // is also very large so the buffer is NOT idle yet.
-    session?.acquireDeviceBuffer("dev-phone");
+    session?.acquireDeviceBuffer("surf-phone", { deviceId: "dev-phone" });
 
     // Sweep with a nowMs just 1 second past acquisition — well within any idle window.
     const result = reg.sweep(Date.now() + 1_000);
@@ -167,12 +167,12 @@ describe("PersonSessionRegistry.sweep", () => {
     const session = await reg.getOrCreate(ALICE);
     expect(session).not.toBeNull();
 
-    // Acquire then detach a device buffer.
+    // Acquire then detach a surface buffer.
     const att = makeAttachment("ws-1");
     session?.attach(att);
-    session?.acquireDeviceBuffer("dev-phone");
+    session?.acquireDeviceBuffer("surf-phone", { deviceId: "dev-phone" });
     session?.detach(att);
-    session?.releaseDeviceBuffer("dev-phone");
+    session?.releaseDeviceBuffer("surf-phone");
 
     // Sweep far in the future — past the idle timeout.
     const result = reg.sweep(Date.now() + TTL_MS + 60_000);
@@ -188,8 +188,8 @@ describe("PersonSessionRegistry.sweep", () => {
     expect(alice).not.toBeNull();
     expect(bob).not.toBeNull();
 
-    // Alice has an acquired device buffer (still attached, recently stamped).
-    alice?.acquireDeviceBuffer("dev-alice");
+    // Alice has an acquired surface buffer (still attached, recently stamped).
+    alice?.acquireDeviceBuffer("surf-alice", { deviceId: "dev-alice" });
 
     // Bob has no device buffers — hasRetainedBuffers() is false → removed immediately.
     const result = reg.sweep(Date.now() + 1_000);
@@ -203,10 +203,10 @@ describe("PersonSessionRegistry.sweep", () => {
     const session = await reg.getOrCreate(ALICE);
     expect(session).not.toBeNull();
 
-    // Acquire a device buffer but do NOT release it → hasRetainedBuffers() = true.
+    // Acquire a surface buffer but do NOT release it → hasRetainedBuffers() = true.
     const att = makeAttachment("ws-1");
     session?.attach(att);
-    session?.acquireDeviceBuffer("dev-phone");
+    session?.acquireDeviceBuffer("surf-phone", { deviceId: "dev-phone" });
     session?.detach(att);
     // Buffer still attached (not released) — idle sweep won't remove attached entries
     // unless forceClose fires (and we haven't registered one here).

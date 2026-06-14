@@ -8,48 +8,51 @@ const log = getLog(["sentient", "person-session", "device-buffer-store"]);
 // Types
 // ---------------------------------------------------------------------------
 
-/** Raw writer pair for the device's CURRENT live socket. */
+/** Raw writer pair for the surface's CURRENT live socket. */
 export interface DeviceSocketSink {
   sendText: (s: string) => void;
   sendBinary: (b: Uint8Array) => void;
 }
 
 /**
- * Shared, mutable reference to the device's CURRENT live socket writer.
- * Lives on the device buffer entry so it SURVIVES reconnects (keyed by
- * deviceId). Every DeviceAttachment for the device resolves this ref at send
- * time rather than capturing its own socket — so a STALE attachment still
- * driving an in-flight Hermes cycle after a resumable reconnect writes its
- * post-resume frames (the final answer + cycle.done) to the NEW socket instead
- * of the dead old one. `null` while the device is disconnected: frames still
- * journal into the buffer (replayed on the next resume); the socket write
- * no-ops.
+ * Shared, mutable reference to the surface's CURRENT live socket writer.
+ * Lives on the surface buffer entry so it SURVIVES reconnects (keyed by
+ * surfaceId). Every DeviceAttachment for the surface resolves this ref at
+ * send time rather than capturing its own socket — so a STALE attachment
+ * still driving an in-flight Hermes cycle after a resumable reconnect writes
+ * its post-resume frames (the final answer + cycle.done) to the NEW socket
+ * instead of the dead old one. `null` while the surface is disconnected:
+ * frames still journal into the buffer (replayed on the next resume); the
+ * socket write no-ops.
  */
 export interface DeviceSocketRef {
   current: DeviceSocketSink | null;
 }
 
 export interface DeviceBufferEntry {
+  /** Physical device this surface belongs to. CARRIED for device-presence
+   *  (Steward attached-devices, idle-archive); NEVER the map key (keyed by surfaceId). */
+  readonly deviceId: string;
   readonly buffer: SessionReplayBuffer;
   readonly epoch: number;
   detachedAtMs: number | null;
   /**
-   * The device's current live socket writer, shared across every attachment
-   * for this device and across reconnects. See DeviceSocketRef.
+   * The surface's current live socket writer, shared across every attachment
+   * for this surface and across reconnects. See DeviceSocketRef.
    */
   readonly liveSocket: DeviceSocketRef;
   /**
    * Teardown actions deferred from a resumable disconnect (Task 3.7).
    * Stashed so the sweep can run them when the TTL expires without a
    * reconnect. Must be idempotent (guard flag inside the closure).
-   * Cleared (set to null) when the device reconnects via acquireDeviceBuffer
+   * Cleared (set to null) when the surface reconnects via acquireDeviceBuffer
    * so it doesn't fire after a successful resume.
    */
   deferredTeardown: (() => void) | null;
-  /** Activity clock — single idle source of truth for this device's session.
+  /** Activity clock — single idle source of truth for this surface's session.
    *  Reused across reconnects (same entry), like liveSocket. */
   readonly clock: ActivityClock;
-  /** Closes the CURRENT live WS for this device, running the normal full
+  /** Closes the CURRENT live WS for this surface, running the normal full
    *  teardown. Registered at session-configure. null while detached. Used by
    *  the idle sweep to reap a still-attached but silent (ping-keepalive)
    *  session. Cleared on detach. */
@@ -73,13 +76,13 @@ export interface AcquireDeviceBufferResult {
    */
   readonly priorDeferredTeardown: (() => void) | null;
   /**
-   * The device's shared live-socket ref. The caller hands this to the new
+   * The surface's shared live-socket ref. The caller hands this to the new
    * DeviceAttachment so its sequencer writes resolve the current socket, and
    * so a stale in-flight cycle's old sequencer (sharing this same ref) follows
    * to the new socket after a resume. Reused across reconnects.
    */
   readonly liveSocket: DeviceSocketRef;
-  /** The device's activity clock, reused across reconnects. */
+  /** The surface's activity clock, reused across reconnects. */
   readonly clock: ActivityClock;
 }
 
@@ -88,12 +91,13 @@ export interface AcquireDeviceBufferResult {
 // ---------------------------------------------------------------------------
 
 /**
- * Manages the per-device replay buffer map for a PersonSession.
+ * Manages the per-surface replay buffer map for a PersonSession.
  * Owns the buffer Map, epoch counter, acquire/release/sweep logic.
  *
- * NOTE: Each buffer is keyed per-device-session; no cross-device fan-out
- * (B3 scope) — a user's other live device does not journal into this
- * device's buffer.
+ * NOTE: Each buffer is keyed per-SURFACE (chat tab / app instance), not per
+ * device — two web tabs of one browser share a deviceId but have independent
+ * buffers and epochs. The deviceId is CARRIED on the entry for device-presence
+ * queries (Steward attached-devices, idle-archive) but is NEVER the map key.
  */
 export class DeviceBufferStore {
   private readonly _buffers = new Map<string, DeviceBufferEntry>();
@@ -105,9 +109,9 @@ export class DeviceBufferStore {
   }
 
   /**
-   * Acquire a replay buffer for a reconnecting or newly-connecting device.
+   * Acquire a replay buffer for a reconnecting or newly-connecting surface.
    *
-   * - If an entry for `deviceId` exists AND `resumeEpoch` matches its epoch
+   * - If an entry for `surfaceId` exists AND `resumeEpoch` matches its epoch
    *   AND it hasn't been evicted → reuse the buffer (clear detachedAtMs),
    *   `resumed: true`.
    * - Otherwise → bump the epoch counter, create a fresh buffer, `resumed: false`.
@@ -115,22 +119,29 @@ export class DeviceBufferStore {
    * Note: passing no `resumeEpoch` (or `undefined`) on an existing entry
    * always produces a fresh buffer + new epoch because `undefined` never
    * equals a real epoch number.
+   *
+   * `opts.deviceId` is stored as a carried field for device-presence queries
+   * (Steward, idle-archive). It is never used as a map key.
    */
-  acquire(deviceId: string, opts: { resumeEpoch?: number } = {}): AcquireDeviceBufferResult {
-    const existing = this._buffers.get(deviceId);
+  acquire(surfaceId: string, opts: { deviceId: string; resumeEpoch?: number }): AcquireDeviceBufferResult {
+    const existing = this._buffers.get(surfaceId);
     if (existing !== undefined && opts.resumeEpoch === existing.epoch) {
       existing.detachedAtMs = null;
       // Detach the pending deferred teardown and HAND IT BACK to the caller.
-      // The device reconnected before the TTL expired, so the sweep must not
+      // The surface reconnected before the TTL expired, so the sweep must not
       // run it — but the orphaned old pipeline from the prior disconnect still
       // needs disposing. We return it so ws-session-configure runs it NOW (the
       // handover) and clear it off the entry so it fires exactly once.
       const priorDeferredTeardown = existing.deferredTeardown;
       if (priorDeferredTeardown !== null) {
-        log.debug("acquire.handover-deferred-teardown", { deviceId, epoch: existing.epoch });
+        log.debug("acquire.handover-deferred-teardown", {
+          surfaceId,
+          deviceId: existing.deviceId,
+          epoch: existing.epoch,
+        });
         existing.deferredTeardown = null;
       }
-      log.debug("acquire.resumed", { deviceId, epoch: existing.epoch });
+      log.debug("acquire.resumed", { surfaceId, deviceId: existing.deviceId, epoch: existing.epoch });
       return {
         buffer: existing.buffer,
         epoch: existing.epoch,
@@ -145,6 +156,7 @@ export class DeviceBufferStore {
     const epoch = this._epochCounter;
     const buffer = createSessionReplayBuffer({ maxBytes: this._maxBytes });
     const entry: DeviceBufferEntry = {
+      deviceId: opts.deviceId,
       buffer,
       epoch,
       detachedAtMs: null,
@@ -153,9 +165,10 @@ export class DeviceBufferStore {
       clock: createActivityClock(),
       forceClose: null,
     };
-    this._buffers.set(deviceId, entry);
+    this._buffers.set(surfaceId, entry);
     log.debug("acquire.fresh", {
-      deviceId,
+      surfaceId,
+      deviceId: opts.deviceId,
       epoch,
       prevEpoch: existing?.epoch ?? null,
     });
@@ -169,62 +182,72 @@ export class DeviceBufferStore {
     };
   }
 
-  /** Register the live-WS close hook for a device (called at session-configure). */
-  setForceClose(deviceId: string, forceClose: (() => void) | null): void {
-    const entry = this._buffers.get(deviceId);
+  /** Register the live-WS close hook for a surface (called at session-configure). */
+  setForceClose(surfaceId: string, forceClose: (() => void) | null): void {
+    const entry = this._buffers.get(surfaceId);
     if (entry !== undefined) entry.forceClose = forceClose;
   }
 
   /**
-   * Mark a device buffer as detached (start its TTL clock).
+   * Mark a surface buffer as detached (start its TTL clock).
    * The buffer is retained briefly for a quick reconnect.
    * An optional deferredTeardown callback is stashed on the entry and
    * invoked by sweepIdle when the idle timeout expires without a reconnect.
    */
-  release(deviceId: string, deferredTeardown?: () => void): void {
-    const entry = this._buffers.get(deviceId);
+  release(surfaceId: string, deferredTeardown?: () => void): void {
+    const entry = this._buffers.get(surfaceId);
     if (entry === undefined) {
-      log.warn("release.not-found", { deviceId });
+      log.warn("release.not-found", { surfaceId });
       return;
     }
     entry.detachedAtMs = Date.now();
     entry.deferredTeardown = deferredTeardown ?? null;
     entry.forceClose = null;
-    log.debug("release", { deviceId, epoch: entry.epoch, hasDeferredTeardown: deferredTeardown !== undefined });
+    log.debug("release", {
+      surfaceId,
+      deviceId: entry.deviceId,
+      epoch: entry.epoch,
+      hasDeferredTeardown: deferredTeardown !== undefined,
+    });
   }
 
   /**
-   * Immediately remove the device buffer entry (full teardown path).
+   * Immediately remove the surface buffer entry (full teardown path).
    * Unlike release(), this does not start a TTL — it disposes the entry
    * outright. Used on explicit session.end / logout where replay retention
    * is unwanted.
    */
-  dispose(deviceId: string): void {
-    const entry = this._buffers.get(deviceId);
+  dispose(surfaceId: string): void {
+    const entry = this._buffers.get(surfaceId);
     if (entry === undefined) {
       // debug (not warn) — expected when the buffer was already swept by TTL
-      // expiry or never acquired for this device (e.g. pre-configure teardown).
+      // expiry or never acquired for this surface (e.g. pre-configure teardown).
       // Contrast with release.not-found which is warn because release is always
       // preceded by a successful acquire on the same code path.
-      log.debug("dispose.not-found", { deviceId });
+      log.debug("dispose.not-found", { surfaceId });
       return;
     }
-    this._buffers.delete(deviceId);
-    log.debug("dispose", { deviceId, epoch: entry.epoch });
+    this._buffers.delete(surfaceId);
+    log.debug("dispose", { surfaceId, deviceId: entry.deviceId, epoch: entry.epoch });
   }
 
-  /** Read the replay buffer for a device (undefined if not present). */
-  bufferFor(deviceId: string): SessionReplayBuffer | undefined {
-    return this._buffers.get(deviceId)?.buffer;
+  /** Read the replay buffer for a surface (undefined if not present). */
+  bufferFor(surfaceId: string): SessionReplayBuffer | undefined {
+    return this._buffers.get(surfaceId)?.buffer;
   }
 
-  /** Read the current epoch for a device (undefined if not present). */
-  epochFor(deviceId: string): number | undefined {
-    return this._buffers.get(deviceId)?.epoch;
+  /** Read the current epoch for a surface (undefined if not present). */
+  epochFor(surfaceId: string): number | undefined {
+    return this._buffers.get(surfaceId)?.epoch;
+  }
+
+  /** Read the carried deviceId for a surface (undefined if absent). */
+  deviceIdFor(surfaceId: string): string | undefined {
+    return this._buffers.get(surfaceId)?.deviceId;
   }
 
   /**
-   * Reap device buffers that have been idle (no activity-clock touch) for
+   * Reap surface buffers that have been idle (no activity-clock touch) for
    * >= idleTimeoutMs. Detached entries -> remove + run deferred teardown.
    * Still-attached entries (a ping-keepalive client) -> invoke forceClose
    * (the normal full teardown via WS close); the entry is removed on the
@@ -233,12 +256,13 @@ export class DeviceBufferStore {
    */
   sweepIdle(nowMs: number, idleTimeoutMs: number): number {
     let removed = 0;
-    for (const [deviceId, entry] of this._buffers) {
+    for (const [surfaceId, entry] of this._buffers) {
       if (entry.clock.idleMs(nowMs) < idleTimeoutMs) continue;
       const attached = entry.detachedAtMs === null;
       if (attached) {
         log.info("sweepIdle.force-close", {
-          deviceId,
+          surfaceId,
+          deviceId: entry.deviceId,
           epoch: entry.epoch,
           idleMs: entry.clock.idleMs(nowMs),
         });
@@ -246,16 +270,18 @@ export class DeviceBufferStore {
           entry.forceClose?.();
         } catch (err: unknown) {
           log.warn("sweepIdle.force-close-failed", {
-            deviceId,
+            surfaceId,
+            deviceId: entry.deviceId,
             error: err instanceof Error ? err.message : String(err),
           });
         }
         continue;
       }
-      this._buffers.delete(deviceId);
+      this._buffers.delete(surfaceId);
       removed += 1;
       log.info("sweepIdle.evicted", {
-        deviceId,
+        surfaceId,
+        deviceId: entry.deviceId,
         epoch: entry.epoch,
         idleMs: entry.clock.idleMs(nowMs),
       });
@@ -264,7 +290,8 @@ export class DeviceBufferStore {
           entry.deferredTeardown();
         } catch (err: unknown) {
           log.warn("sweepIdle.deferred-teardown-failed", {
-            deviceId,
+            surfaceId,
+            deviceId: entry.deviceId,
             error: err instanceof Error ? err.message : String(err),
           });
         }
@@ -274,9 +301,9 @@ export class DeviceBufferStore {
   }
 
   /**
-   * Returns true when at least one device buffer entry is still retained —
-   * including entries for currently-attached (not yet detached) devices.
-   * A live attached device blocks session eviction just as much as a detached
+   * Returns true when at least one surface buffer entry is still retained —
+   * including entries for currently-attached (not yet detached) surfaces.
+   * A live attached surface blocks session eviction just as much as a detached
    * but not-yet-expired one.
    */
   hasRetainedBuffers(): boolean {

@@ -19,24 +19,28 @@ const log = getLog(["sentient", "device-attachment"]);
  */
 
 export interface DeviceAttachmentInit<TData> {
+  /** = surfaceId — the unit of session isolation (chat tab / app instance). */
   readonly attachmentId: string;
+  /** Physical device this surface belongs to. CARRIED for device-presence
+   *  (Steward attached-devices, idle-archive); NEVER used as a map key. */
+  readonly deviceId: string;
   readonly ws: ServerWebSocket<TData>;
   readonly sessionId: string;
   /** Profile this attachment is a window into. Logged for tracing. */
   readonly profile: string;
-  /** Per-device replay buffer (acquired from PersonSession). */
+  /** Per-surface replay buffer (acquired from PersonSession). */
   readonly buffer: SessionReplayBuffer;
   /** Epoch for the current buffer. Stamped on every JSON frame. */
   readonly epoch: number;
   /**
-   * Shared per-device live-socket ref (acquired from PersonSession). This
+   * Shared per-surface live-socket ref (acquired from PersonSession). This
    * attachment registers its own raw socket writer as `current` on creation,
    * and its sequencer resolves `current` at send time. A stale attachment that
    * is still draining an in-flight cycle after a resumable reconnect therefore
    * writes to whatever socket is currently live, not the dead one it captured.
    */
   readonly liveSocket: DeviceSocketRef;
-  /** The device's activity clock (from the buffer entry). Touched "ws.out" on
+  /** The surface's activity clock (from the buffer entry). Touched "ws.out" on
    *  every outbound frame so the idle sweep sees server→client traffic. */
   readonly clock: ActivityClock;
 }
@@ -44,6 +48,8 @@ export interface DeviceAttachmentInit<TData> {
 export interface DeviceAttachment<TData = unknown> extends PersonSessionAttachment {
   readonly sessionId: string;
   readonly profile: string;
+  /** Physical device this surface belongs to. CARRIED for device-presence. */
+  readonly deviceId: string;
   /**
    * True iff this attachment should receive TTS audio frames. Flipped at
    * input time by PersonSession ("last-to-speak wins") in B4. Defaults
@@ -57,14 +63,14 @@ export interface DeviceAttachment<TData = unknown> extends PersonSessionAttachme
   /** The frame sequencer — exposed for testing. */
   readonly sequencer: FrameSequencer;
   /**
-   * Make THIS attachment's socket the device's current live writer. Deferred
+   * Make THIS attachment's socket the surface's current live writer. Deferred
    * (not done at construction) so a resume can flush its replay window FIRST,
    * then go live — otherwise an in-flight cycle frame could outrun the replay
    * and poison the client's resume cursor. Idempotent.
    */
   goLive(): void;
   /**
-   * Stop routing the device's live socket writes to THIS attachment's socket.
+   * Stop routing the surface's live socket writes to THIS attachment's socket.
    * Identity-guarded: only clears the shared ref when it still points at this
    * attachment's writer, so a newer attachment that already took over (the
    * resume handover case) is never clobbered. Called on resumable disconnect
@@ -141,6 +147,7 @@ export function createDeviceAttachment<TData>(init: DeviceAttachmentInit<TData>)
 
   log.debug("created", {
     attachmentId: init.attachmentId,
+    deviceId: init.deviceId,
     sessionId: init.sessionId,
     profile: init.profile,
     epoch: init.epoch,
@@ -148,6 +155,7 @@ export function createDeviceAttachment<TData>(init: DeviceAttachmentInit<TData>)
 
   return {
     attachmentId: init.attachmentId,
+    deviceId: init.deviceId,
     sessionId: init.sessionId,
     profile: init.profile,
     get ttsTarget() {
