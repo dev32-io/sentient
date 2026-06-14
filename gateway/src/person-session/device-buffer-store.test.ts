@@ -83,6 +83,14 @@ describe("DeviceBufferStore", () => {
     expect(store.deviceIdFor("surf-A")).toBe("dev-A");
   });
 
+  it("does not overwrite the carried deviceId when a different deviceId is passed on resume", () => {
+    const store = makeStore();
+    const first = store.acquire("surf-A", { deviceId: "dev-A" });
+    store.release("surf-A");
+    store.acquire("surf-A", { deviceId: "DIFFERENT-dev", resumeEpoch: first.epoch });
+    expect(store.deviceIdFor("surf-A")).toBe("dev-A");
+  });
+
   it("bufferFor and epochFor return the active entry values", () => {
     const store = makeStore();
     const { buffer, epoch } = store.acquire("surf-A", { deviceId: "dev-A" });
