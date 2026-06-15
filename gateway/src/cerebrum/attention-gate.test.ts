@@ -1138,7 +1138,9 @@ describe("AttentionGate", () => {
       await sleep(DEFAULT_CONFIG.debounceWindowMs + 40);
       expect(cycleCalls).toHaveLength(1);
       gate.dispose();
-      return cycleCalls[0]!.cycleId;
+      const [call] = cycleCalls;
+      if (!call) throw new Error("expected exactly one dispatched cycle");
+      return call.cycleId;
     }
 
     const id1 = await dispatchOnceOnAFreshGate();
