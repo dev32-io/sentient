@@ -251,16 +251,15 @@ async def acp_ws_handler(request: web.Request) -> web.WebSocketResponse:
 
     profile = request.app["profile"]
 
-    # Single-client per profile: close any prior WS before accepting the new
-    # one. Spec mandates one Bun gateway dialed into one Hermes-profile worker.
-    prior = request.app.get("active_ws")
-    if prior is not None and not prior.closed:
-        logger.info("closing prior ws for profile=%s before accepting new", profile)
-        await prior.close()
-
+    # Overlay is a dumb per-connection transport: every WS gets its own hermes
+    # acp child. The gateway owns all pooling + single-flight gating (the
+    # surfaceId-keyed AcpWireRegistry), so concurrent connections per profile —
+    # one per surface wire plus the rest-list session-query wire — are expected
+    # and coexist. We never close a "prior" connection; doing so kicked a
+    # surface wire mid-session/new and stuck the client at "sending". The shared
+    # profile store (state.db) is WAL-mode, so concurrent children are safe.
     ws = web.WebSocketResponse(heartbeat=30.0)
     await ws.prepare(request)
-    request.app["active_ws"] = ws
     logger.info("ws-connected profile=%s remote=%s", profile, request.remote)
 
     bridge = HermesACPBridge(ws, profile)
@@ -273,9 +272,6 @@ async def acp_ws_handler(request: web.Request) -> web.WebSocketResponse:
         await bridge.shutdown()
         if not ws.closed:
             await ws.close()
-        # Only clear if still ours — a newer connection may have replaced us.
-        if request.app.get("active_ws") is ws:
-            request.app["active_ws"] = None
         logger.info("ws-disconnected profile=%s remote=%s", profile, request.remote)
 
     return ws
@@ -285,7 +281,6 @@ def build_app(profile: str, expected_token: str) -> web.Application:
     app = web.Application()
     app["profile"] = profile
     app["expected_token"] = expected_token
-    app["active_ws"] = None  # type: ignore[assignment]
     app.router.add_get("/healthz", health_handler)
     app.router.add_get("/acp", acp_ws_handler)
     return app

@@ -63,10 +63,12 @@ export async function resolvePluginClientForUser(
 /**
  * List sessions for a userId via ACP session/list.
  *
- * Acquires the per-user ACP wire from the registry (shared with any live WS
- * sessions for the same user), calls listSessionsViaAcp, then releases in
- * finally. Maps SessionRow → SessionListItem (the shape the sessions HTTP
- * handler expects).
+ * Acquires a DEDICATED ephemeral ACP wire under the `rest-list:` key — NOT a
+ * surface wire and never shared with one — calls listSessionsViaAcp, then
+ * releases in finally (refCount hits 0 → wire disposed immediately). The
+ * overlay spawns its own child for this connection, which coexists with any
+ * live surface wires. Maps SessionRow → SessionListItem (the shape the sessions
+ * HTTP handler expects).
  */
 export async function listSessionsForUser(userId: string, deps: PerUserPluginDeps): Promise<SessionListItem[]> {
   const wsUrl = await buildWsUrlForUser(deps.hermes, deps.userPortStore, userId);
