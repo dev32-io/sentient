@@ -185,8 +185,24 @@ class ConversationHistoryConnector(
         val enriched =
             if (item is ConversationFeedItem.Assistant && msg.cycleId != null) item.copy(cycleId = msg.cycleId)
             else item
-        log.info("entry", mapOf("ts" to enriched.ts, "cycleId" to (msg.cycleId ?: "-"), "size" to mirror.size + 1))
-        mirror = mirror + enriched
+        // Dedup by stable entryId: a re-delivered entry (e.g. a committed entry
+        // replayed on resume) updates in place instead of double-appending.
+        // Empty entryId (UNKNOWN_ENTRY_ID) has no identity → never deduped.
+        val existingIdx =
+            if (enriched.entryId.isNotEmpty()) mirror.indexOfFirst { it.entryId == enriched.entryId } else -1
+        mirror =
+            if (existingIdx >= 0) mirror.toMutableList().also { it[existingIdx] = enriched }
+            else mirror + enriched
+        log.info(
+            "entry",
+            mapOf(
+                "entryId" to enriched.entryId,
+                "ts" to enriched.ts,
+                "cycleId" to (msg.cycleId ?: "-"),
+                "deduped" to (existingIdx >= 0),
+                "size" to mirror.size,
+            ),
+        )
         onEntry?.invoke(enriched)
         onUpdate?.invoke(mirror)
     }
