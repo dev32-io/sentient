@@ -45,6 +45,15 @@ One `###` subsection per case.
 3. Observe the composer task strip simultaneously.
 **Expected:** A tool pill appears on the bubble for the duration of the tool call; the composer strip shows the same pill as a persistent mirror until the cycle completes.
 
+### Distinct cycleId per turn + many-entry turn renders distinctly (web)
+**Scenario:** The gateway mints a server-unique `cycleId = String(Date.now())` per turn (one POSIX-ms id, never resetting on reconnect). Multiple turns each render under their own message; a single multi-tool turn renders every entry (intermediate narration + each tool pill + final answer) as its own row under ONE cycleId.
+**Why added:** Regression guard for the cycleId render-key fix (2026-06-14). The old `cycle-${counter}` reset to `cycle-1` on every `session.configure` (reconnect), aliasing turns onto one render row → "follow-up reply missing / previous shown" + stale-bottom-on-scroll. cycleId is cycle-meta only; committed history is keyed by `entryId`.
+**Steps:**
+1. Two turns, no reconnect (desktop 1280×900): send msg 1 → await reply; send msg 2 → await reply.
+2. Many-entry turn (desktop + mobile 390×844): send a multi-tool prompt (e.g. "search the web for X and summarize").
+**Expected user-visible:** both single-turn replies render under their own messages (no alias); every entry of the multi-tool turn renders as its own row (tool pill + answer), no rows collapse; streaming bubble grows in place then commits with no duplicate.
+**Expected log trail (gateway `~/.sentient/gateway/logs/YYYY-MM-DD.log`, local-date rotation):** each turn emits a DISTINCT numeric `[cerebrum:attention-gate] cycle dispatched | cycleId="<ms>"`; NO `cycleId="cycle-N"`. (The small-integer `[hermes-adapter-client:acp:per-profile-connection] cycle.start cycleId="N"` is Hermes' ACP-internal counter — a different namespace, ignore it.) Before/after proof: pre-fix turns logged `cycle-N`, post-fix turns log ms strings.
+
 ### Speaking state tracks audio drain, not cycle end
 **Scenario:** When the assistant returns a long spoken reply, the speaking indicator must remain lit through the final word of audio, not drop on `cycle.done`.
 **Why added:** Regression guard for the `onDrain` path — the speaking state needs to follow the playback adapter's drain signal, not the gateway-side `cycle.done` event (which fires before audio finishes playing).
@@ -306,3 +315,18 @@ After upgrading across the v0.1.0 → v0.2.0 install-state schema bump:
 4. `assertVisible` the progress view, then the "Sent ✓" + ref text.
 **Expected user-visible:** button → progress bar → "Sent ✓ — ref XXXX" (or "Upload failed — retry"). **Expected log trail (gateway):** `[*:api:diagnostics] received` with `userId`/`bytes`/`crashed`/`ref`; a new `~/.sentient/gateway/clientLogs/mobile/<userId>-<ts>[-crash]-<ref>.log` whose header carries `platform`/`device`/`os`/`appVersion`/`deviceId`/`network` + a `=== STATE @init ===` block (battery/mem/thermal). **Privacy assertion (security boundary):** grep the uploaded file — it MUST contain ZERO chat text; `recv-text` lines must read `len=` not raw frames.
 **Platform notes:** Flows are COMMITTED at `qa/mobile/flows/{android,ios}/30-send-diagnostic.yaml` (the vitals work commits Maestro flows under `qa/`, unlike the `/tmp` convention in the Mobile method header above). **Crash auto-upload is NOT yet E2E-coverable** — no in-app way to trigger a Kotlin unhandled exception (adb/simctl signals don't fire the `UncaughtExceptionHandler`/K-N hook); needs a debug-only crash trigger (follow-up). iOS app version may show build `(1)` vs Android `(N)`; both must read `0.1.2+`.
+
+### T8 — Mobile follow-up across reconnect + scroll stability (cycleId fix)
+**Scenario:** A chat with a completed turn; force a WS reconnect, then send a follow-up. The follow-up's reply renders under the follow-up message; the previous response is shown exactly once (not re-shown, not missing). Separately, scrolling up past the latest reply then back down keeps the bottom reply visible + correct.
+**Why added:** E2E guard for the cycleId render-key fix (2026-06-14) — the production iOS bug "follow-up reply missing / previous response shown" + "scroll bottom stale". The fix is server cycleId uniqueness + mobile `entryId` dedup in `ConversationHistoryConnector`.
+**Flows (committed):** `qa/ios/charters/cycleid-reconnect-followup-part1.yaml` (login + turn 1), then a shell `docker restart sentient-gateway` (wait healthy), then `…-part2.yaml` (foreground → reconnect → follow-up + assertions); `qa/ios/charters/cycleid-scroll-stability.yaml`. Findings + cycleId values in `qa/ios/findings/cycleid-fix/findings.md` (PNGs gitignored repo-wide).
+**testTags used:** `composer-input` (NOT `chat-input`), `chat-send`, `assistant-bubble` (NOT `message-bubble-1`), `message-bubble-0` (user), `connection-lost-banner`, `connection-reconnect`, `new-chat`. Assert on reply TEXT, not bubble indices.
+**Steps:**
+1. Login (avatar + PIN 1234), fresh chat. Send "Reply with exactly: ALPHA"; await reply.
+2. Shell: `docker restart sentient-gateway`; wait `docker inspect --format '{{.State.Health.Status}}'` == healthy.
+3. Foreground app → tap `connection-reconnect` if `connection-lost-banner` shows → wait banner notVisible + `composer-input` visible.
+4. Send "Reply with exactly: BRAVO"; await reply. Assert BOTH ALPHA and BRAVO replies visible, in order, ALPHA exactly once.
+5. Scroll: build ≥2 turns incl. a long reply; swipe to top (first user msg visible) then back to bottom; assert last reply still visible + correct.
+**Expected user-visible:** follow-up reply renders under the follow-up; prior reply not duplicated/missing; bottom reply stable across scroll.
+**Expected log trail (gateway):** the two `[cerebrum:attention-gate] cycle dispatched` lines carry DISTINCT numeric cycleIds (e.g. `1781509517090` then `1781509545080`); no `cycle-N`.
+**Known limitation (flagged):** the exact cross-gate colliding-id repro (resumable socket drop that KEEPS the same conversation but rebuilds the AttentionGate) is NOT cleanly agent-reproducible on-sim — `docker restart` / `launchApp` both hit `configure.resume.skip-no-cursor` → a fresh empty chat, and a brief network blip leaves loopback TCP intact (same gate). That collision path is covered server-side (cycleId-uniqueness, gateway unit test) + by the mobile `entryId`-dedup unit guard. **Build note:** the sim app MUST be signed (`CODE_SIGN_IDENTITY=- CODE_SIGN_INJECT_BASE_ENTITLEMENTS=YES`); `CODE_SIGNING_ALLOWED=NO` strips the keychain entitlement → `errSecMissingEntitlement (-34018)` → empty WS auth token → WS rejected `1008 "first message must be type:auth"` → login fails.
