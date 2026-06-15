@@ -1,0 +1,139 @@
+# Maestro E2E — cycleId render-key fix: scroll stability
+#
+# After the entryId-keyed projection fix, scrolling a chat with >=2 turns (one a
+# long reply) up past the latest reply and back down must NOT swap a stale/previous
+# row into the bottom slot. The last reply stays correct after the round-trip.
+#
+# Standalone: login + build a fresh 2-turn chat (short ALPHA reply, then a long
+# ocean paragraph), then scroll up and back down.
+#
+# Pre-state: backend already configured (TLS · self-signed, localhost:8888).
+#
+# E2E matrix:
+# Case                   | Viewport    | Pre-state                  | Action                        | Expected user-visible                             | Expected log trail
+# -----------------------|-------------|----------------------------|-------------------------------|---------------------------------------------------|--------------------------------------
+# Scroll stability       | 390x844 sim | chat with >=2 turns (long) | scroll up past latest, back   | bottom (ocean) reply stays visible + correct      | two numeric cycleIds, no row swap
+appId: io.dev32.sentient.debug
+---
+- launchApp
+
+# ── Backend setup (conditional) ─────────────────────────────────────────────────
+- runFlow:
+    when:
+      visible: "Sentient backend"
+    commands:
+      - tapOn:
+          id: "backend-host"
+      - eraseText: 50
+      - inputText: "localhost"
+      - tapOn:
+          id: "backend-port"
+      - eraseText: 10
+      - inputText: "8888"
+      - tapOn:
+          text: "TLS · self-signed"
+      - tapOn:
+          id: "backend-save"
+      - extendedWaitUntil:
+          visible:
+            text: "Who's here?"
+          timeout: 15000
+
+# ── Login (PIN 1234) ──────────────────────────────────────────────────────────
+- runFlow:
+    when:
+      visible: "Who's here?"
+    commands:
+      - tapOn:
+          id: "login-avatar-.*"
+          index: 0
+      - tapOn:
+          id: "pin-key-1"
+      - tapOn:
+          id: "pin-key-2"
+      - tapOn:
+          id: "pin-key-3"
+      - tapOn:
+          id: "pin-key-4"
+
+- extendedWaitUntil:
+    visible:
+      id: "chat-screen"
+    timeout: 20000
+- extendedWaitUntil:
+    visible:
+      id: "composer-input"
+    timeout: 10000
+
+# ── Fresh chat ──────────────────────────────────────────────────────────────────
+- tapOn:
+    id: "new-chat"
+- extendedWaitUntil:
+    visible:
+      id: "composer-input"
+    timeout: 10000
+
+# ── Turn 1: short reply (ALPHA) ─────────────────────────────────────────────────
+- tapOn:
+    id: "composer-input"
+- inputText: "Reply with exactly: ALPHA"
+- tapOn:
+    id: "chat-send"
+- extendedWaitUntil:
+    visible: "ALPHA"
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 20000
+
+# ── Turn 2: long reply (ocean paragraph) ────────────────────────────────────────
+- tapOn:
+    id: "composer-input"
+- inputText: "Write a 4-sentence paragraph about the ocean. Start the paragraph with the word OCEANIC."
+- tapOn:
+    id: "chat-send"
+# Long reply streams in; match the assistant bubble (starts with OCEANIC) by regex
+# substring — a bare "OCEANIC" only matches a node whose whole label equals it.
+- extendedWaitUntil:
+    visible:
+      text: ".*OCEANIC.*"
+    timeout: 60000
+- waitForAnimationToEnd:
+    timeout: 25000
+
+# ── Turn 3: another long reply (mountains) so the list reliably overflows ────────
+- tapOn:
+    id: "composer-input"
+- inputText: "Write a 5-sentence paragraph about mountains. Start the paragraph with the word DELTA."
+- tapOn:
+    id: "chat-send"
+- extendedWaitUntil:
+    visible:
+      text: ".*DELTA.*"
+    timeout: 60000
+- waitForAnimationToEnd:
+    timeout: 25000
+- assertVisible:
+    text: ".*DELTA.*"          # latest reply at the bottom
+- takeScreenshot: B1-before-scroll
+
+# ── Scroll UP to the top (reveal the first turn — ALPHA) ─────────────────────────
+# Coordinate swipes inside the message-list region (avoid the composer at the bottom).
+# scrollUntilVisible can no-op on a partially-clipped node; explicit swipes are reliable.
+- swipe: { start: "50%,25%", end: "50%,78%", duration: 500 }
+- swipe: { start: "50%,25%", end: "50%,78%", duration: 500 }
+- swipe: { start: "50%,25%", end: "50%,78%", duration: 500 }
+- swipe: { start: "50%,25%", end: "50%,78%", duration: 500 }
+- takeScreenshot: B2-scrolled-up
+- assertVisible: "Reply with exactly: ALPHA"
+
+# ── Scroll back DOWN to the bottom (latest reply) ────────────────────────────────
+- swipe: { start: "50%,78%", end: "50%,25%", duration: 500 }
+- swipe: { start: "50%,78%", end: "50%,25%", duration: 500 }
+- swipe: { start: "50%,78%", end: "50%,25%", duration: 500 }
+- swipe: { start: "50%,78%", end: "50%,25%", duration: 500 }
+- takeScreenshot: B3-scrolled-back-down
+
+# ── ASSERT: bottom reply still visible + correct after the scroll round-trip ─────
+# No stale/previous row swapped into the bottom slot — the DELTA reply is intact.
+- assertVisible:
+    text: ".*DELTA.*"

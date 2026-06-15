@@ -1,0 +1,109 @@
+# Maestro E2E — cycleId render-key fix: reconnect-followup REPRO (PART 1 of 2)
+#
+# Verifies the user-visible guarantee of the cycleId render-key fix: a follow-up
+# turn renders its own reply under its own message, the prior reply stays shown
+# ONCE, nothing missing or duplicated — and the server mints a UNIQUE NUMERIC
+# (POSIX-ms) cycleId per turn (no "cycle-N" counter that resets and collides).
+#
+# Run order (agent-orchestrated; Maestro can't drive transport mid-flow):
+#   1. maestro test cycleid-reconnect-followup-part1.yaml   (login + clean chat + turn-1 ALPHA)
+#   2. maestro test cycleid-reconnect-followup-part2.yaml   (SAME live app, NO relaunch —
+#       continues the conversation; sends follow-up BRAVO; asserts both render once)
+#   3. SHELL: grep gateway log — both cycleIds NUMERIC + DISTINCT, zero client "cycle-N".
+#   NOTE: do NOT relaunch / docker-restart between 1 and 2 — that starts a fresh chat
+#   (see part2 CONTINUITY NOTE). part2 must run against part1's live process.
+#
+# IMPORTANT BUILD PREREQ: the sim app MUST be SIGNED (build WITHOUT
+# CODE_SIGNING_ALLOWED=NO). An unsigned build strips the keychain entitlement →
+# token-store errSecMissingEntitlement (-34018) → empty WS auth token → gateway
+# rejects with 1008 "first message must be type:auth" → app never reaches chat.
+#
+# Pre-state: backend already configured (TLS · self-signed, localhost:8888) + dev user present.
+# This flow does NOT clearState — it relies on persisted backend config; the setup
+# + login blocks are conditional (skipped when already configured / authenticated).
+#
+# E2E matrix (full case spans part1 + part2):
+# Case                          | Viewport    | Pre-state                | Action                                   | Expected user-visible                                          | Expected log trail
+# ------------------------------|-------------|--------------------------|------------------------------------------|---------------------------------------------------------------|--------------------------------------------------
+# Reconnect-followup turn 1     | 390x844 sim | configured               | login → new chat → send "Reply ... ALPHA"| ALPHA user bubble + assistant reply rendered                   | [attention-gate] cycle dispatched cycleId="<numeric-1>" (ALPHA)
+# Reconnect-followup recover    | 390x844 sim | turn-1 done              | foreground (probe) + reconnect if banner | connection-lost banner clears, composer re-enabled, ALPHA kept | sdk resume probe / reconnect → READY
+# Reconnect-followup turn 2     | 390x844 sim | reconnected              | send "Reply ... BRAVO"                    | BRAVO reply renders; ALPHA reply still shown ONCE; none dup    | [attention-gate] cycle dispatched cycleId="<numeric-2>" (BRAVO); numeric, != numeric-1; NO cycleId="cycle-N"
+appId: io.dev32.sentient.debug
+---
+- launchApp
+
+# ── Backend setup (conditional — skipped when already configured) ──────────────
+- runFlow:
+    when:
+      visible: "Sentient backend"
+    commands:
+      - tapOn:
+          id: "backend-host"
+      - eraseText: 50
+      - inputText: "localhost"
+      - tapOn:
+          id: "backend-port"
+      - eraseText: 10
+      - inputText: "8888"
+      - tapOn:
+          text: "TLS · self-signed"
+      - tapOn:
+          id: "backend-save"
+      - extendedWaitUntil:
+          visible:
+            text: "Who's here?"
+          timeout: 15000
+
+# ── Login (PIN 1234) ──────────────────────────────────────────────────────────
+- runFlow:
+    when:
+      visible: "Who's here?"
+    commands:
+      - tapOn:
+          id: "login-avatar-.*"
+          index: 0
+      - tapOn:
+          id: "pin-key-1"
+      - tapOn:
+          id: "pin-key-2"
+      - tapOn:
+          id: "pin-key-3"
+      - tapOn:
+          id: "pin-key-4"
+
+# ── Reach chat (READY) ─────────────────────────────────────────────────────────
+- extendedWaitUntil:
+    visible:
+      id: "chat-screen"
+    timeout: 20000
+- extendedWaitUntil:
+    visible:
+      id: "composer-input"
+    timeout: 10000
+
+# ── Clean chat — start a fresh conversation via title-bar "+" ──────────────────
+- tapOn:
+    id: "new-chat"
+- extendedWaitUntil:
+    visible:
+      id: "composer-input"
+    timeout: 10000
+
+# ── Turn 1: ALPHA ──────────────────────────────────────────────────────────────
+- tapOn:
+    id: "composer-input"
+- inputText: "Reply with exactly: ALPHA"
+- tapOn:
+    id: "chat-send"
+
+# Wait for the assistant reply text to appear (assistant bubbles use id "assistant-bubble";
+# assert on the reply TEXT, which is the spec's user-visible evidence).
+- extendedWaitUntil:
+    visible: "ALPHA"
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 20000
+- assertVisible:
+    id: "assistant-bubble"
+- assertVisible: "ALPHA"
+- takeScreenshot: A1-turn1-reply
