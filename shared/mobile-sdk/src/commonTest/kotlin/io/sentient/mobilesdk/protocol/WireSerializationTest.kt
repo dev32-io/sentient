@@ -199,6 +199,27 @@ class WireSerializationTest {
         assertEquals(UNKNOWN_ENTRY_ID, item.entryId)
     }
 
+    @Test fun session_configure_carries_surface_id_when_set() {
+        val msg = ClientMessage.SessionConfigure(
+            capabilities = Capabilities(listOf("text.input", "stream.resume")),
+            clientType = "mobile",
+            deviceId = "dev-abc",
+            surfaceId = "dev-abc",
+        )
+        val json = WireJson.instance.encodeToString(ClientMessage.serializer(), msg)
+        assertTrue(json.contains("\"surfaceId\":\"dev-abc\""), json)
+    }
+
+    @Test fun session_configure_omits_surface_id_when_null() {
+        val msg = ClientMessage.SessionConfigure(
+            capabilities = Capabilities(listOf("text.input")),
+            clientType = "mobile",
+            deviceId = "dev-abc",
+        )
+        val json = WireJson.instance.encodeToString(ClientMessage.serializer(), msg)
+        assertFalse(json.contains("surfaceId"), json)
+    }
+
     @Test fun gateway_push_frame_seq_epoch_are_peelable() {
         // The SDK reads seq/epoch generically off the raw JSON (not per-variant).
         val s = """{"type":"message.delta","cycleId":"c1","delta":"hi","seq":7,"epoch":2}"""

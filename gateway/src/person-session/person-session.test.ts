@@ -107,7 +107,7 @@ describe("PersonSession", () => {
 
   it("acquireDeviceBuffer returns resumed:false and epoch 1 on first call", () => {
     const s = makeSession();
-    const result = s.acquireDeviceBuffer("dev-A");
+    const result = s.acquireDeviceBuffer("surf-A", { deviceId: "dev-A" });
     expect(result.resumed).toBe(false);
     expect(result.epoch).toBe(1);
     expect(result.buffer).toBeDefined();
@@ -115,9 +115,9 @@ describe("PersonSession", () => {
 
   it("acquireDeviceBuffer resumes the same buffer when resumeEpoch matches", () => {
     const s = makeSession();
-    const first = s.acquireDeviceBuffer("dev-A");
-    s.releaseDeviceBuffer("dev-A");
-    const second = s.acquireDeviceBuffer("dev-A", { resumeEpoch: first.epoch });
+    const first = s.acquireDeviceBuffer("surf-A", { deviceId: "dev-A" });
+    s.releaseDeviceBuffer("surf-A");
+    const second = s.acquireDeviceBuffer("surf-A", { deviceId: "dev-A", resumeEpoch: first.epoch });
     expect(second.resumed).toBe(true);
     expect(second.epoch).toBe(first.epoch);
     expect(second.buffer).toBe(first.buffer);
@@ -125,18 +125,18 @@ describe("PersonSession", () => {
 
   it("acquireDeviceBuffer creates a fresh buffer when resumeEpoch does not match", () => {
     const s = makeSession();
-    const first = s.acquireDeviceBuffer("dev-A");
-    s.releaseDeviceBuffer("dev-A");
-    const second = s.acquireDeviceBuffer("dev-A", { resumeEpoch: 999 });
+    const first = s.acquireDeviceBuffer("surf-A", { deviceId: "dev-A" });
+    s.releaseDeviceBuffer("surf-A");
+    const second = s.acquireDeviceBuffer("surf-A", { deviceId: "dev-A", resumeEpoch: 999 });
     expect(second.resumed).toBe(false);
     expect(second.epoch).toBe(2);
     expect(second.buffer).not.toBe(first.buffer);
   });
 
-  it("acquireDeviceBuffer creates independent buffers per deviceId", () => {
+  it("acquireDeviceBuffer creates independent buffers per surfaceId", () => {
     const s = makeSession();
-    const a = s.acquireDeviceBuffer("dev-A");
-    const b = s.acquireDeviceBuffer("dev-B");
+    const a = s.acquireDeviceBuffer("surf-A", { deviceId: "dev-A" });
+    const b = s.acquireDeviceBuffer("surf-B", { deviceId: "dev-B" });
     expect(a.buffer).not.toBe(b.buffer);
     expect(a.epoch).toBe(1);
     expect(b.epoch).toBe(2);
@@ -144,12 +144,12 @@ describe("PersonSession", () => {
 
   it("bufferFor and epochFor return the active entry values", () => {
     const s = makeSession();
-    const { buffer, epoch } = s.acquireDeviceBuffer("dev-A");
-    expect(s.bufferFor("dev-A")).toBe(buffer);
-    expect(s.epochFor("dev-A")).toBe(epoch);
+    const { buffer, epoch } = s.acquireDeviceBuffer("surf-A", { deviceId: "dev-A" });
+    expect(s.bufferFor("surf-A")).toBe(buffer);
+    expect(s.epochFor("surf-A")).toBe(epoch);
   });
 
-  it("bufferFor and epochFor return undefined for unknown deviceId", () => {
+  it("bufferFor and epochFor return undefined for unknown surfaceId", () => {
     const s = makeSession();
     expect(s.bufferFor("unknown")).toBeUndefined();
     expect(s.epochFor("unknown")).toBeUndefined();
@@ -158,7 +158,7 @@ describe("PersonSession", () => {
   it("hasRetainedBuffers is false before any acquire, true after", () => {
     const s = makeSession();
     expect(s.hasRetainedBuffers()).toBe(false);
-    s.acquireDeviceBuffer("dev-A");
+    s.acquireDeviceBuffer("surf-A", { deviceId: "dev-A" });
     expect(s.hasRetainedBuffers()).toBe(true);
   });
 
@@ -166,10 +166,10 @@ describe("PersonSession", () => {
     const s = makeSession();
     const IDLE_TIMEOUT = 30_000;
 
-    s.acquireDeviceBuffer("dev-A");
-    s.releaseDeviceBuffer("dev-A");
-    s.acquireDeviceBuffer("dev-B");
-    s.releaseDeviceBuffer("dev-B");
+    s.acquireDeviceBuffer("surf-A", { deviceId: "dev-A" });
+    s.releaseDeviceBuffer("surf-A");
+    s.acquireDeviceBuffer("surf-B", { deviceId: "dev-B" });
+    s.releaseDeviceBuffer("surf-B");
 
     // Sweep far in the future — both entries are past the idle timeout.
     const FAR_FUTURE = Date.now() + IDLE_TIMEOUT + 1000;
@@ -180,7 +180,7 @@ describe("PersonSession", () => {
 
   it("sweepIdle force-closes a still-attached idle entry (does not remove it here)", () => {
     const s = makeSession();
-    s.acquireDeviceBuffer("dev-A");
+    s.acquireDeviceBuffer("surf-A", { deviceId: "dev-A" });
     // Never released — still attached.
     const evicted = s.sweepIdle(Number.MAX_SAFE_INTEGER, 0);
     expect(evicted).toBe(0);

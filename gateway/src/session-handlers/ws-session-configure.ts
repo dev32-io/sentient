@@ -47,6 +47,7 @@ import { createInterruptController } from "./interrupt-controller.js";
 import { buildMicSuppressionOptions, createMicEchoGuard } from "./mic-echo-guard.js";
 import { createSessionAudioWire } from "./session-audio-wire.js";
 import { createSessionsHandlers } from "./sessions-handlers.js";
+import type { SurfaceCycleRegistry } from "./surface-cycle-registry.js";
 import { ttsSkipReason } from "./tts-policy.js";
 import type { ClientData } from "./ws-helpers.js";
 import { errorMessage, sendError } from "./ws-helpers.js";
@@ -82,6 +83,7 @@ export async function handleSessionConfigure(
   services: GatewayServices,
   clientType: ClientType,
   configureDeviceId: string,
+  configureSurfaceId: string | undefined,
   configureResume: SessionConfigureResume | undefined,
   configureConversationId: string | undefined,
 ): Promise<void> {
@@ -167,13 +169,20 @@ export async function handleSessionConfigure(
   // alongside pendingNewSessionId after consumption.
   let pendingNewSessionPromise: Promise<string> | null = null;
 
+  const deviceId = configureDeviceId;
+  // Surface key — the unit of session isolation. Old clients omit surfaceId →
+  // fall back to deviceId (today's per-device behavior, spec §4). Derived
+  // before the bind so the conversation anchor is keyed by surface (D2): the
+  // anchor survives transport handover, the per-sessionId binding does not.
+  const surfaceId = configureSurfaceId ?? deviceId;
+
   // Bind session to the auth-derived userId at session start (instead of
   // per-cycle) so identify_user's findActiveSessionFor can resolve from
-  // turn 1, and so the conversationId captured by a prior cycle is reused
-  // by the next one.
+  // turn 1, and so the conversationId anchored to the surface by a prior cycle
+  // is reused by the next one.
   let initialBinding: HermesProfileBinding;
   try {
-    initialBinding = await services.sessionRouter.bind(sessionId, userId);
+    initialBinding = await services.sessionRouter.bind(sessionId, userId, surfaceId);
   } catch (err) {
     log.error("session-bind-failed", { sessionId, userId, reason: errorMessage(err, "unknown") });
     sendError(ws, "protocol_error", "Session binding failed");
@@ -195,8 +204,9 @@ export async function handleSessionConfigure(
     sendError(ws, "protocol_error", "Person session create failed");
     return;
   }
-  // Task 3.8 — stable deviceId keys the per-device buffer across reconnects.
-  // The client supplies it on session.configure; the resume request now rides
+  // Task 3.8 — the resolved surfaceId (configureSurfaceId ?? deviceId) keys the
+  // per-surface replay buffer across reconnects; deviceId is carried for presence.
+  // The client supplies both on session.configure; the resume request now rides
   // INSIDE that same frame (configureResume), so the resume decision is a
   // synchronous read off the parsed configure message — no separate frame, no
   // same-tick ordering race. When resumeParams carries a matching epoch,
@@ -205,8 +215,14 @@ export async function handleSessionConfigure(
   const resumeParams: ResumeParams | null = configureResume
     ? { epoch: configureResume.epoch, lastSeq: configureResume.lastSeq, deviceId: configureDeviceId }
     : null;
-  const deviceId = configureDeviceId;
-  const acquired = personSession.acquireDeviceBuffer(deviceId, {
+  log.info("session-configure.surface", {
+    sessionId,
+    surfaceId,
+    deviceId,
+    surfaceFromConfigure: configureSurfaceId !== undefined,
+  });
+  const acquired = personSession.acquireDeviceBuffer(surfaceId, {
+    deviceId,
     ...(resumeParams ? { resumeEpoch: resumeParams.epoch } : {}),
   });
   const { buffer: deviceBuffer, epoch: deviceEpoch, resumed: deviceResumed, liveSocket: deviceLiveSocket } = acquired;
@@ -234,6 +250,7 @@ export async function handleSessionConfigure(
   const acpConn = await acquireAcpWireOrFail({
     sessionId,
     userId: initialBinding.userId,
+    surfaceId,
     registry: services.acpWireRegistry,
     wsUrl: resolvedWsUrl,
     token: initialBinding.apiKey,
@@ -246,6 +263,10 @@ export async function handleSessionConfigure(
     sendError(ws, "protocol_error", "Cannot reach Hermes ACP wire");
     return;
   }
+  // Sibling of acpWireDispose: drop the surface's conversation anchor on the
+  // SAME reap that disposes the wire (D3). Anchor lifetime == surface lifetime —
+  // prevents unbounded anchor growth as surfaces churn (D2 leak fix).
+  ws.data.dropAnchor = () => services.sessionRouter.dropAnchor(surfaceId);
 
   // HANDOVER (Task 3.8): a matching-epoch resume hands back the deferred
   // teardown stashed by the prior resumable disconnect (Task 3.7). Run it NOW
@@ -255,21 +276,23 @@ export async function handleSessionConfigure(
   // SURVIVE the handover (instead of being disposed mid-flight). acquire already
   // detached the teardown from the entry so the retention sweep can never re-run it.
   if (acquired.priorDeferredTeardown !== null) {
-    log.info("resume.handover-old-pipeline", { sessionId, deviceId, epoch: deviceEpoch });
+    log.info("resume.handover-old-pipeline", { sessionId, surfaceId, epoch: deviceEpoch });
     acquired.priorDeferredTeardown();
   }
 
-  // attachmentId is the stable deviceId — it keys the per-device replay buffer
-  // (DeviceBufferStore is keyed by deviceId), so the resumable-disconnect path
-  // in ws-handlers (releaseDeviceBuffer / bufferFor / disposeDeviceBuffer keyed
-  // by attachment.attachmentId) addresses the correct buffer across reconnects.
+  // attachmentId is the resolved surfaceId — it keys the per-surface replay
+  // buffer (DeviceBufferStore is keyed by surfaceId), so the resumable-disconnect
+  // path in ws-handlers (releaseDeviceBuffer / bufferFor / disposeDeviceBuffer
+  // keyed by attachment.attachmentId) addresses the correct buffer across
+  // reconnects. The carried deviceId is for device-presence tracking only.
   // sessionId stays the per-WS id used for sessionRouter / Manager / Controls.
-  // Creating the attachment registers THIS socket as the device's current live
+  // Creating the attachment registers THIS socket as the surface's current live
   // writer (deviceLiveSocket.current). Runs AFTER the handover above, so on a
   // resume it deliberately takes over from the old attachment — the in-flight
   // cycle's old sequencer (sharing this ref) now writes to the new socket.
   const attachment = createDeviceAttachment<ClientData>({
-    attachmentId: deviceId,
+    attachmentId: surfaceId,
+    deviceId,
     ws,
     sessionId,
     profile: personSession.profile,
@@ -279,7 +302,7 @@ export async function handleSessionConfigure(
     clock: acquired.clock,
   });
   personSession.attach(attachment);
-  personSession.setForceClose(deviceId, () => ws.close(WS_NORMAL_CLOSURE, "idle-timeout"));
+  personSession.setForceClose(surfaceId, () => ws.close(WS_NORMAL_CLOSURE, "idle-timeout"));
   ws.data.personSession = personSession;
   ws.data.attachment = attachment;
   ws.data.activityClock = acquired.clock;
@@ -617,6 +640,37 @@ export async function handleSessionConfigure(
         const mode: DispatchMode = params.forceFinal ? { bargedIn: () => true } : { bargedIn: () => false };
 
         const controller = new AbortController();
+
+        // Per-surface ownership gate (D1). The first cycle on an idle surface
+        // wins the lease and dispatches; a concurrent dispatch (an internal
+        // save-skill cycle, OR a reconnecting transport's fresh cycle) is
+        // REFUSED — it must QUEUE behind the in-flight cycle whose output
+        // already streams to the surface's resume buffer. We AWAIT the lease
+        // here (abortable) rather than returning shouldContinue:true: returning
+        // would make the gate re-fire this cycle synchronously → a tight
+        // busy-loop that exhausts the surface's per-hour cycle budget (D1 bug).
+        // While awaiting, onCycle has not returned, so the gate holds this cycle
+        // as active and accumulates other stimuli in pendingSalience (drained at
+        // natural end) — no spin, no dropped message. We do NOT register the
+        // per-transport cycleSlot until we win; the incumbent is NEVER cancelled.
+        let admission = admitCycle(services.surfaceCycles, surfaceId, params.cycleId, controller);
+        while (!admission.dispatch) {
+          if (controller.signal.aborted) {
+            return { aborted: true, shouldContinue: false };
+          }
+          log.info("onCycle.awaiting-surface-cycle", {
+            sessionId,
+            surfaceKey: surfaceId,
+            requestedCycleId: params.cycleId,
+            activeCycleId: admission.activeCycleId,
+          });
+          await waitForReleaseOrAbort(services.surfaceCycles.whenReleased(surfaceId), controller.signal);
+          if (controller.signal.aborted) {
+            return { aborted: true, shouldContinue: false };
+          }
+          admission = admitCycle(services.surfaceCycles, surfaceId, params.cycleId, controller);
+        }
+
         cycleSlot.register(params.cycleId, controller);
 
         controller.signal.addEventListener(
@@ -659,10 +713,14 @@ export async function handleSessionConfigure(
             hermesDeps,
           );
           if (result.conversationId && result.conversationId !== binding.conversationId) {
-            services.sessionRouter.updateConversationId(sessionId, result.conversationId);
+            services.sessionRouter.updateConversationId(surfaceId, result.conversationId);
           }
         } finally {
           cycleSlot.complete(params.cycleId);
+          // Release the surface lease so the next cycle on this surface can win
+          // ownership. Keyed-stale-safe: complete() no-ops if a newer cycle owns
+          // the surface slot.
+          services.surfaceCycles.complete(surfaceId, params.cycleId);
         }
 
         return { aborted: controller.signal.aborted, shouldContinue: false };
@@ -937,7 +995,7 @@ export async function handleSessionConfigure(
   const replayed = handleResumeOrFresh({
     ws,
     sessionId,
-    deviceId,
+    surfaceId,
     buffer: deviceBuffer,
     epoch: deviceEpoch,
     resumed: deviceResumed,
@@ -951,7 +1009,7 @@ export async function handleSessionConfigure(
     // (session.ready first, then stream.resumed + replay), and the handover went
     // live AFTER the replay. The client has history + prefs from the replay
     // window. Suppress the fresh-only block (prefs seed + snapshot).
-    log.info("session-configured.resumed", { sessionId, deviceId, epoch: deviceEpoch });
+    log.info("session-configured.resumed", { sessionId, surfaceId, epoch: deviceEpoch });
     return;
   }
 
@@ -1036,13 +1094,15 @@ function registerAdapters(
 }
 
 // ---------------------------------------------------------------------------
-// ACP wire acquire (pooled per userId)
+// ACP wire acquire (pooled per surfaceId)
 // ---------------------------------------------------------------------------
 
 interface AcquireAcpWireOrFailInput {
   readonly sessionId: string;
   readonly userId: string;
-  /** Per-userId pool — reuses a live wire across attachments instead of re-dialing. */
+  /** Surface key for the wire pool — one isolated Hermes child per surface. */
+  readonly surfaceId: string;
+  /** Per-surfaceId pool — reuses a live wire across transport reconnects for the same surface. */
   readonly registry: AcpWireRegistry;
   /** Per-profile WS URL ending in `/ws` — `bootstrapAcpWire` rewrites the suffix to `/acp`. */
   readonly wsUrl: string;
@@ -1055,13 +1115,14 @@ interface AcquireAcpWireOrFailInput {
 }
 
 /**
- * Acquire the user's pooled ACP wire — dials on the first attachment, reuses
- * the live wire (refCount++) for every subsequent same-user attachment so the
- * overlay never evicts the first connection. On failure, log + return null so
+ * Acquire the surface's pooled ACP wire — dials on the first attachment, reuses
+ * the live wire (refCount++) for every subsequent same-surface reconnect so the
+ * overlay never evicts the in-flight connection. On failure, log + return null so
  * the caller can reject the session cleanly. ACP is the only wire — no legacy
  * fallback. The dial threads the reconnect config so the wire self-heals on
  * abnormal close. The stashed dispose releases ONE reference; the registry
- * tears the wire down only when the last attachment detaches.
+ * tears the wire down only when the last attachment for this surface detaches.
+ * userId is used for WS-URL resolution and logging only — the pool key is surfaceId.
  */
 async function acquireAcpWireOrFail(input: AcquireAcpWireOrFailInput): Promise<AcpPerProfileConnection | null> {
   const dial = (): Promise<AcpWireHandle> => {
@@ -1084,19 +1145,20 @@ async function acquireAcpWireOrFail(input: AcquireAcpWireOrFailInput): Promise<A
     });
   };
   try {
-    const acpConn = await input.registry.acquire(input.userId, dial);
+    const acpConn = await input.registry.acquire(input.surfaceId, dial);
     let released = false;
     input.setDispose(() => {
       if (released) return;
       released = true;
-      input.registry.release(input.userId);
+      input.registry.release(input.surfaceId);
     });
-    log.info("acp-wire-acquire-ok", { sessionId: input.sessionId, userId: input.userId });
+    log.info("acp-wire-acquire-ok", { sessionId: input.sessionId, userId: input.userId, surfaceId: input.surfaceId });
     return acpConn;
   } catch (err: unknown) {
     log.warn("acp-wire-acquire-failed", {
       sessionId: input.sessionId,
       userId: input.userId,
+      surfaceId: input.surfaceId,
       reason: errorMessage(err, "unknown"),
     });
     return null;
@@ -1202,4 +1264,41 @@ export async function resolveForcedSessionId(input: ResolveForcedSessionIdInput)
   // eagerly via session.new (visible session.created); a fresh-chain message with
   // no pending id falls through to Hermes default keying (no invisible mint).
   return null;
+}
+
+export interface CycleAdmission {
+  readonly dispatch: boolean;
+  readonly activeCycleId: string;
+}
+
+/**
+ * Per-surface cycle gate (D1). First cycle on an idle surface dispatches; any
+ * concurrent dispatch (internal save-skill, or a reconnecting transport's fresh
+ * cycle) is REFUSED — it queues behind / adopts the in-flight cycle whose output
+ * already streams to the resume buffer. NEVER cancels the incumbent.
+ */
+export function admitCycle(
+  registry: SurfaceCycleRegistry,
+  surfaceKey: string,
+  cycleId: string,
+  controller: AbortController,
+): CycleAdmission {
+  const lease = registry.acquire(surfaceKey, cycleId, controller);
+  return { dispatch: lease.owner, activeCycleId: lease.activeCycleId };
+}
+
+/** Resolve when the surface lease frees OR the cycle aborts, whichever first. */
+async function waitForReleaseOrAbort(released: Promise<void>, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return;
+  await new Promise<void>((resolve) => {
+    let done = false;
+    const finish = (): void => {
+      if (done) return;
+      done = true;
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    signal.addEventListener("abort", finish, { once: true });
+    released.then(finish, finish);
+  });
 }

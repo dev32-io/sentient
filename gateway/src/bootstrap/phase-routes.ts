@@ -35,9 +35,10 @@ export function runPhaseRoutes(input: PhaseRoutesInput): PhaseRoutesOutput {
     perUserMaxSessions: cfg.session.per_user_max_sessions,
   });
   const personSessions = buildPersonSessionRegistry(cfg, internalSecretsStore, profileStore, userPortStore);
-  // One pooled ACP wire per userId, ref-counted across PersonSession
-  // attachments — keeps a second client (webui + mobile) from dialing a
-  // second wire, which the overlay would evict the first one for.
+  // One pooled ACP wire per SURFACE (chat tab / app instance), ref-counted
+  // across that surface's transport reconnects — each surface gets its own
+  // isolated Hermes child, so concurrent cycles on different surfaces can't
+  // cross-wire (the fork root cause). Reconnect reuses the warm child.
   const acpWireRegistry = createAcpWireRegistry();
   const sessionControls = createSessionControlsRegistry();
 

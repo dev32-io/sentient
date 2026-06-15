@@ -173,6 +173,29 @@ export function createAcpHermesClient(deps: AcpHermesClientDeps): HermesClient {
 
       queue.push([{ type: "created", responseId: input.cycleId, conversationId: resolvedSessionId }], false);
 
+      // Read back the REAL session id from the first session/update. If Hermes
+      // forked (committed under a different id than we forced), emit a SECOND
+      // ("corrective") `created` carrying the real id so the cerebrum re-anchors
+      // onto Hermes' truth + log a warning so the fork is DETECTABLE. The
+      // provisional created above stays (contract 1) — the FSM ungate and the
+      // happy-path tests depend on it. Only the first update is acted on.
+      let realSessionCaptured = false;
+      const unsubSessionId = deps.acpConn.onSessionId((realId) => {
+        if (realSessionCaptured) return;
+        realSessionCaptured = true;
+        if (realId !== resolvedSessionId) {
+          log.warn("created.real-id-divergence", {
+            userId: input.userId,
+            cycleId: input.cycleId,
+            forcedSessionId: resolvedSessionId,
+            realSessionId: realId,
+          });
+          queue.push([{ type: "created", responseId: input.cycleId, conversationId: realId }], false);
+        } else {
+          log.debug("created.real-id-confirmed", { cycleId: input.cycleId, sessionId: realId });
+        }
+      });
+
       const promptArgs: { sessionId: string; text: string; internal?: boolean } = {
         sessionId: resolvedSessionId,
         text: input.userMessage,
@@ -212,6 +235,7 @@ export function createAcpHermesClient(deps: AcpHermesClientDeps): HermesClient {
         signal.removeEventListener("abort", onAbort);
         unsubEvents();
         unsubCycleDone();
+        unsubSessionId();
       }
     },
   };

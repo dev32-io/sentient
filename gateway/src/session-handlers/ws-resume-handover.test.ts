@@ -91,7 +91,7 @@ function parseResumed(sent: SentFrame[]): Record<string, unknown> | null {
 describe("handleResumeOrFresh — resume in window (recovered:true)", () => {
   it("emits recovered:true with fromSeq/toSeq and replays missed frames verbatim", () => {
     const store = new DeviceBufferStore(REPLAY_MAX_BYTES);
-    const { buffer, epoch } = store.acquire("dev-A");
+    const { buffer, epoch } = store.acquire("dev-A", { deviceId: "dev-A" });
     const storedTexts = journalJsonFrames(buffer, epoch, 5); // seq 1..5
 
     const { ws, sent } = makeWs();
@@ -99,7 +99,7 @@ describe("handleResumeOrFresh — resume in window (recovered:true)", () => {
     const suppressFresh = handleResumeOrFresh({
       ws,
       sessionId: "sess-new",
-      deviceId: "dev-A",
+      surfaceId: "dev-A",
       buffer,
       epoch,
       resumed: true,
@@ -132,14 +132,14 @@ describe("handleResumeOrFresh — resume in window (recovered:true)", () => {
 
   it("preserves seq continuity — a NEW frame after resume continues at seq 6", () => {
     const store = new DeviceBufferStore(REPLAY_MAX_BYTES);
-    const { buffer, epoch } = store.acquire("dev-A");
+    const { buffer, epoch } = store.acquire("dev-A", { deviceId: "dev-A" });
     journalJsonFrames(buffer, epoch, 5); // seq 1..5
 
     const { ws } = makeWs();
     handleResumeOrFresh({
       ws,
       sessionId: "sess-new",
-      deviceId: "dev-A",
+      surfaceId: "dev-A",
       buffer,
       epoch,
       resumed: true,
@@ -155,7 +155,7 @@ describe("handleResumeOrFresh — resume in window (recovered:true)", () => {
 
   it("replays a binary frame verbatim (with its 9-byte header)", () => {
     const store = new DeviceBufferStore(REPLAY_MAX_BYTES);
-    const { buffer, epoch } = store.acquire("dev-A");
+    const { buffer, epoch } = store.acquire("dev-A", { deviceId: "dev-A" });
     let storedBinary: Uint8Array | null = null;
     const seq = createFrameSequencer({
       epoch,
@@ -171,7 +171,7 @@ describe("handleResumeOrFresh — resume in window (recovered:true)", () => {
     handleResumeOrFresh({
       ws,
       sessionId: "sess-new",
-      deviceId: "dev-A",
+      surfaceId: "dev-A",
       buffer,
       epoch,
       resumed: true,
@@ -203,7 +203,7 @@ describe("handleResumeOrFresh — stale lastSeq (gap, recovered:false)", () => {
     const suppressFresh = handleResumeOrFresh({
       ws,
       sessionId: "sess-new",
-      deviceId: "dev-A",
+      surfaceId: "dev-A",
       buffer,
       epoch: 7,
       resumed: true,
@@ -230,12 +230,12 @@ describe("handleResumeOrFresh — stale lastSeq (gap, recovered:false)", () => {
 describe("handleResumeOrFresh — epoch mismatch (fresh buffer, recovered:false)", () => {
   it("a wrong resumeEpoch produces a fresh buffer + new epoch; recovered:false", () => {
     const store = new DeviceBufferStore(REPLAY_MAX_BYTES);
-    const first = store.acquire("dev-A"); // epoch 1
+    const first = store.acquire("dev-A", { deviceId: "dev-A" }); // epoch 1
     journalJsonFrames(first.buffer, first.epoch, 3);
     store.release("dev-A");
 
     // Reconnect with a STALE epoch → acquire returns a fresh buffer + new epoch.
-    const second = store.acquire("dev-A", { resumeEpoch: 999 });
+    const second = store.acquire("dev-A", { deviceId: "dev-A", resumeEpoch: 999 });
     expect(second.resumed).toBe(false);
     expect(second.epoch).not.toBe(first.epoch);
 
@@ -244,7 +244,7 @@ describe("handleResumeOrFresh — epoch mismatch (fresh buffer, recovered:false)
     const suppressFresh = handleResumeOrFresh({
       ws,
       sessionId: "sess-new",
-      deviceId: "dev-A",
+      surfaceId: "dev-A",
       buffer: second.buffer,
       epoch: second.epoch,
       resumed: second.resumed,
@@ -261,14 +261,14 @@ describe("handleResumeOrFresh — epoch mismatch (fresh buffer, recovered:false)
 
   it("a client that never asked to resume gets NO stream.resumed ack (plain fresh)", () => {
     const store = new DeviceBufferStore(REPLAY_MAX_BYTES);
-    const { buffer, epoch, resumed } = store.acquire("dev-A");
+    const { buffer, epoch, resumed } = store.acquire("dev-A", { deviceId: "dev-A" });
 
     const { ws, sent } = makeWs();
     const goLive = vi.fn();
     const suppressFresh = handleResumeOrFresh({
       ws,
       sessionId: "sess-new",
-      deviceId: "dev-A",
+      surfaceId: "dev-A",
       buffer,
       epoch,
       resumed,
@@ -291,12 +291,12 @@ describe("handleResumeOrFresh — epoch mismatch (fresh buffer, recovered:false)
 describe("DeviceBufferStore.acquire — handover of the prior deferred teardown", () => {
   it("returns the stashed deferredTeardown on a matching-epoch resume, then detaches it", () => {
     const store = new DeviceBufferStore(REPLAY_MAX_BYTES);
-    const first = store.acquire("dev-A");
+    const first = store.acquire("dev-A", { deviceId: "dev-A" });
     const teardown = vi.fn();
     store.release("dev-A", teardown);
 
     // Reconnect with the matching epoch → handover hands the teardown back.
-    const resumed = store.acquire("dev-A", { resumeEpoch: first.epoch });
+    const resumed = store.acquire("dev-A", { deviceId: "dev-A", resumeEpoch: first.epoch });
     expect(resumed.resumed).toBe(true);
     expect(resumed.priorDeferredTeardown).toBe(teardown);
 
@@ -313,15 +313,15 @@ describe("DeviceBufferStore.acquire — handover of the prior deferred teardown"
 
   it("returns null priorDeferredTeardown when nothing was stashed", () => {
     const store = new DeviceBufferStore(REPLAY_MAX_BYTES);
-    const first = store.acquire("dev-A");
+    const first = store.acquire("dev-A", { deviceId: "dev-A" });
     store.release("dev-A"); // no teardown
-    const resumed = store.acquire("dev-A", { resumeEpoch: first.epoch });
+    const resumed = store.acquire("dev-A", { deviceId: "dev-A", resumeEpoch: first.epoch });
     expect(resumed.priorDeferredTeardown).toBeNull();
   });
 
   it("a fresh (non-resumed) acquire returns null priorDeferredTeardown", () => {
     const store = new DeviceBufferStore(REPLAY_MAX_BYTES);
-    const result = store.acquire("dev-A");
+    const result = store.acquire("dev-A", { deviceId: "dev-A" });
     expect(result.priorDeferredTeardown).toBeNull();
   });
 });
@@ -345,7 +345,7 @@ describe("DeviceBufferStore.acquire — handover of the prior deferred teardown"
 describe("handleResumeOrFresh — session.ready + prefs seed contract", () => {
   it("on recovered:true sends RAW session.ready FIRST (before stream.resumed), suppresses fresh, goes live", () => {
     const store = new DeviceBufferStore(REPLAY_MAX_BYTES);
-    const { buffer, epoch } = store.acquire("dev-A");
+    const { buffer, epoch } = store.acquire("dev-A", { deviceId: "dev-A" });
     journalJsonFrames(buffer, epoch, 3); // seq 1..3
 
     const { ws, sent } = makeWs();
@@ -353,7 +353,7 @@ describe("handleResumeOrFresh — session.ready + prefs seed contract", () => {
     const suppressFresh = handleResumeOrFresh({
       ws,
       sessionId: "sess-prefs",
-      deviceId: "dev-A",
+      surfaceId: "dev-A",
       buffer,
       epoch,
       resumed: true,
@@ -377,14 +377,14 @@ describe("handleResumeOrFresh — session.ready + prefs seed contract", () => {
 
   it("does NOT send session.ready (caller's job) on fresh connect; returns false; does not go live", () => {
     const store = new DeviceBufferStore(REPLAY_MAX_BYTES);
-    const { buffer, epoch, resumed } = store.acquire("dev-A"); // fresh, no prior buffer
+    const { buffer, epoch, resumed } = store.acquire("dev-A", { deviceId: "dev-A" }); // fresh, no prior buffer
 
     const { ws, sent } = makeWs();
     const goLive = vi.fn();
     const suppressFresh = handleResumeOrFresh({
       ws,
       sessionId: "sess-prefs-fresh",
-      deviceId: "dev-A",
+      surfaceId: "dev-A",
       buffer,
       epoch,
       resumed,
@@ -401,18 +401,18 @@ describe("handleResumeOrFresh — session.ready + prefs seed contract", () => {
 
   it("does NOT send session.ready on epoch mismatch (recovered:false); returns false; does not go live", () => {
     const store = new DeviceBufferStore(REPLAY_MAX_BYTES);
-    const first = store.acquire("dev-A");
+    const first = store.acquire("dev-A", { deviceId: "dev-A" });
     journalJsonFrames(first.buffer, first.epoch, 2);
     store.release("dev-A");
 
     // Stale epoch → fresh buffer, recovered:false.
-    const second = store.acquire("dev-A", { resumeEpoch: 999 });
+    const second = store.acquire("dev-A", { deviceId: "dev-A", resumeEpoch: 999 });
     const { ws, sent } = makeWs();
     const goLive = vi.fn();
     const suppressFresh = handleResumeOrFresh({
       ws,
       sessionId: "sess-prefs-mismatch",
-      deviceId: "dev-A",
+      surfaceId: "dev-A",
       buffer: second.buffer,
       epoch: second.epoch,
       resumed: second.resumed,

@@ -33,6 +33,7 @@ import type { PersonalityStore } from "../profile-store/personality-store.js";
 import type { ProfileStore } from "../profile-store/profile-store.ts";
 import type { TemplateLoader } from "../profile-store/template-loader.ts";
 import type { SessionControlsRegistry } from "../session-handlers/session-controls-registry.js";
+import { type SurfaceCycleRegistry, createSurfaceCycleRegistry } from "../session-handlers/surface-cycle-registry.js";
 import type { GatewayTlsMaterial } from "../session-handlers/ws-handlers.ts";
 import type { SessionRouter } from "../session-router.js";
 import type { SystemOrchestratorService } from "../system-orchestrator/index.js";
@@ -82,8 +83,10 @@ export interface GatewayServices {
   readonly sessionManager: SessionManager;
   readonly sessionRouter: SessionRouter;
   readonly personSessions: PersonSessionRegistry;
-  /** Pooled ACP wire per userId, ref-counted across PersonSession attachments. */
+  /** Pooled ACP wire per surfaceId, ref-counted across a surface's reconnects. */
   readonly acpWireRegistry: AcpWireRegistry;
+  /** One in-flight cycle per surface; survives transport reconnects. */
+  readonly surfaceCycles: SurfaceCycleRegistry;
   readonly sessionControls: SessionControlsRegistry;
   readonly stt: SttService | null;
   readonly tts: TtsService | null;
@@ -170,6 +173,8 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     userPortStore,
   });
 
+  const surfaceCycles = createSurfaceCycleRegistry();
+
   log.info("services-composed", {
     stt: services.stt !== null,
     tts: services.tts !== null,
@@ -189,6 +194,7 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     sessionRouter: services.sessionRouter,
     personSessions: routes.personSessions,
     acpWireRegistry: routes.acpWireRegistry,
+    surfaceCycles,
     sessionControls: routes.sessionControls,
     stt: services.stt,
     tts: services.tts,

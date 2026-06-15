@@ -30,18 +30,23 @@ both containers.
 5. Per-profile-renderer regenerates `config.yaml` on every gateway boot
    so stale models / MCP catalogs never land at the worker
    (`gateway/src/admin/boot-migration.ts#renderConfigsForExistingUsers`).
-6. The ACP wire is **pooled per userId, ref-counted** across a PersonSession's
-   device attachments (`hermes-adapter-client/acp-wire-registry.ts`). The first
-   attachment for a user dials `ws://sentient-hermes:<acpPort>/acp` via
-   `bootstrapAcpWire` (runs `initialize`, reaches the AcpHermesClient adapter);
-   subsequent attachments for the SAME user reuse the live wire (refCount++), and
-   it is disposed only when the last attachment releases. `acquire`/`release` are
-   driven from `ws-session-configure.ts`. WHY pool: the Hermes overlay
-   (`acp_ws_server.py`) permits ONE ACP WS per profile and evicts the prior one
-   with a clean 1000 close when a second client (e.g. webui + mobile) connects —
-   a second dial would tear down the first, so one wire is shared per user.
+6. The ACP wire is **pooled per surfaceId, ref-counted** across that surface's
+   reconnects (`hermes-adapter-client/acp-wire-registry.ts`). A surface (web tab
+   = per-tab sessionStorage `surfaceId`; mobile = `deviceId`) dials
+   `ws://sentient-hermes:<acpPort>/acp` via `bootstrapAcpWire` on first attach
+   (runs `initialize`, reaches the AcpHermesClient adapter); reconnects with the
+   SAME surfaceId reuse the live wire (refCount++), and it is disposed only when
+   the surface's last attachment releases. `acquire`/`release` are driven from
+   `ws-session-configure.ts`. WHY per-surface: the Hermes overlay
+   (`acp_ws_server.py`) spawns a fresh Hermes child **per WS connection**, so one
+   wire per surface = one isolated child = no cross-surface conversation forks.
+   The overlay is a **dumb transport** — it does NOT evict prior connections;
+   concurrent connections per profile (multiple surfaces PLUS the ephemeral
+   `rest-list:<userId>` session-list wire) coexist, each with its own child. The
+   gateway owns all pooling + single-flight gating. (`state.db`, the shared
+   per-profile memory chain, is WAL-mode → concurrent children write safely.)
 7. The wire **self-heals**. A *remote* close (any code, including 1000 — overlay
-   restart / eviction / flap) is NOT terminal: it lazily reconnects on the next
+   restart / network flap) is NOT terminal: it lazily reconnects on the next
    dispatch, bounded by `hermes.acp_wire.reconnect_max_attempts`
    (`acp-wire-socket.ts`). Only a *local* `dispose()` (last attachment released) is
    terminal. An in-flight prompt is un-stuck two ways: WS reject-on-abnormal-close

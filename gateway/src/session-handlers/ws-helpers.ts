@@ -85,6 +85,15 @@ export interface CerebrumSessionData {
    */
   acpWireDispose: (() => void) | null;
   /**
+   * Drop this surface's conversation anchor on the SessionRouter when the
+   * surface is permanently reaped. Set in session.configure alongside
+   * acpWireDispose; invoked from the SAME teardown path so the anchor's
+   * lifetime tracks the surface (and the wire) — prevents unbounded anchor
+   * growth as web tabs / app surfaces churn. Optional so existing fixtures
+   * that don't set it stay valid.
+   */
+  dropAnchor?: (() => void) | null;
+  /**
    * Unsubscribe for this WS's out-of-band SDK-frame listener
    * (sessions.renamed / commands.available) on the pooled acpConn. Must run on
    * cleanup so a detached client's closed socket stops receiving frames for the
@@ -133,6 +142,7 @@ export function createEmptySessionData(): CerebrumSessionData {
     lastSessionNewAtMs: null,
     snapshotUnsub: null,
     acpWireDispose: null,
+    dropAnchor: null,
     acpSdkFrameUnsub: null,
     activityClock: null,
   };

@@ -184,52 +184,58 @@ export class PersonSession {
   // Per-device replay buffer API — delegates to DeviceBufferStore
   // ---------------------------------------------------------------------------
 
-  acquireDeviceBuffer(deviceId: string, opts: { resumeEpoch?: number } = {}): AcquireDeviceBufferResult {
-    const result = this._deviceBuffers.acquire(deviceId, opts);
+  acquireDeviceBuffer(surfaceId: string, opts: { deviceId: string; resumeEpoch?: number }): AcquireDeviceBufferResult {
+    const result = this._deviceBuffers.acquire(surfaceId, opts);
     log.debug(`acquireDeviceBuffer.${result.resumed ? "resumed" : "fresh"}`, {
       profile: this.profile,
-      deviceId,
+      surfaceId,
+      deviceId: opts.deviceId,
       epoch: result.epoch,
     });
     return result;
   }
 
-  releaseDeviceBuffer(deviceId: string, deferredTeardown?: () => void): void {
-    this._deviceBuffers.release(deviceId, deferredTeardown);
+  releaseDeviceBuffer(surfaceId: string, deferredTeardown?: () => void): void {
+    this._deviceBuffers.release(surfaceId, deferredTeardown);
     log.debug("releaseDeviceBuffer", {
       profile: this.profile,
-      deviceId,
+      surfaceId,
       hasDeferredTeardown: deferredTeardown !== undefined,
     });
   }
 
   /**
-   * Immediately remove the device buffer entry without starting a TTL.
+   * Immediately remove the surface buffer entry without starting a TTL.
    * Used on explicit session.end / logout where replay retention is not wanted.
    */
-  disposeDeviceBuffer(deviceId: string): void {
-    this._deviceBuffers.dispose(deviceId);
-    log.debug("disposeDeviceBuffer", { profile: this.profile, deviceId });
+  disposeDeviceBuffer(surfaceId: string): void {
+    this._deviceBuffers.dispose(surfaceId);
+    log.debug("disposeDeviceBuffer", { profile: this.profile, surfaceId });
   }
 
-  /** Read the replay buffer for a device (undefined if not present). */
-  bufferFor(deviceId: string): SessionReplayBuffer | undefined {
-    return this._deviceBuffers.bufferFor(deviceId);
+  /** Read the replay buffer for a surface (undefined if not present). */
+  bufferFor(surfaceId: string): SessionReplayBuffer | undefined {
+    return this._deviceBuffers.bufferFor(surfaceId);
   }
 
-  /** Read the current epoch for a device (undefined if not present). */
-  epochFor(deviceId: string): number | undefined {
-    return this._deviceBuffers.epochFor(deviceId);
+  /** Read the current epoch for a surface (undefined if not present). */
+  epochFor(surfaceId: string): number | undefined {
+    return this._deviceBuffers.epochFor(surfaceId);
   }
 
-  /** Reap idle device buffers (>= idleTimeoutMs of no activity). Returns count removed. */
+  /** Read the carried deviceId for a surface (undefined if absent). */
+  deviceIdFor(surfaceId: string): string | undefined {
+    return this._deviceBuffers.deviceIdFor(surfaceId);
+  }
+
+  /** Reap idle surface buffers (>= idleTimeoutMs of no activity). Returns count removed. */
   sweepIdle(nowMs: number, idleTimeoutMs: number): number {
     return this._deviceBuffers.sweepIdle(nowMs, idleTimeoutMs);
   }
 
-  /** Register the live-WS close hook for a device (session-configure). */
-  setForceClose(deviceId: string, forceClose: (() => void) | null): void {
-    this._deviceBuffers.setForceClose(deviceId, forceClose);
+  /** Register the live-WS close hook for a surface (session-configure). */
+  setForceClose(surfaceId: string, forceClose: (() => void) | null): void {
+    this._deviceBuffers.setForceClose(surfaceId, forceClose);
   }
 
   /**

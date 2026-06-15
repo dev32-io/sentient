@@ -33,6 +33,7 @@ import {
   buildConfigureResume,
   handleStreamResumed as handleStreamResumedFn,
 } from "./stream-resume-handler.ts";
+import { getOrCreateSurfaceId } from "./surface-id.ts";
 
 // SentientSDK — WS/status core; presence idle-close + reconnect-loop recovery.
 // Message dispatch in sdk-message-router; close handling in sdk-close-handler.
@@ -70,6 +71,7 @@ export class SentientSDK {
   private readonly messageHandlers = new Map<string, Set<(msg: unknown) => void>>();
   private readonly binaryHandlers = new Set<(data: ArrayBuffer) => void>();
   private readonly deviceId: string;
+  private readonly surfaceId: string;
   private readonly cursor: ResumeCursorState;
 
   private currentStatus: SDKStatus = "disconnected";
@@ -90,6 +92,7 @@ export class SentientSDK {
   constructor(config: SentientSDKConfig) {
     this.config = config;
     this.deviceId = getOrCreateDeviceId();
+    this.surfaceId = getOrCreateSurfaceId();
     this.cursor = createResumeCursor();
     this.timers = createSdkTimers({
       onAuthTimeout: () => {
@@ -356,6 +359,7 @@ export class SentientSDK {
           capabilities: { supports: [...this.capabilities] },
           clientType: "webui",
           deviceId: this.deviceId,
+          surfaceId: this.surfaceId,
           ...(resume ? { resume } : {}),
         });
       },

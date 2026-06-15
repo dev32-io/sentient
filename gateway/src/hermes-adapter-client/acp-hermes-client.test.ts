@@ -154,6 +154,90 @@ describe("AcpHermesClient — dispatch happy path", () => {
   });
 });
 
+describe("AcpHermesClient — real session id divergence", () => {
+  it("emits a corrective created with the REAL session id when session/update diverges from the forced id", async () => {
+    const bed = buildBed();
+    await attach(bed, "forced_id");
+    const client = createAcpHermesClient({ acpConn: bed.conn });
+    const ctrl = new AbortController();
+
+    const gen = client.dispatch(
+      turnInput({ forcedSessionId: "forced_id", cycleId: "cycle_div" }),
+      ctrl.signal,
+      NEVER_BARGED,
+    );
+
+    // 1. Provisional created from the forced id (no wire activity required).
+    const provisional = await gen.next();
+    expect(provisional.value).toEqual({ type: "created", responseId: "cycle_div", conversationId: "forced_id" });
+
+    // 2. Hermes forks: the first session/update carries a DIFFERENT real id.
+    const id = lastFrame(bed.sent).id as number;
+    bed.pump(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: "real_fork_id",
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "forked reply" } },
+        },
+      }),
+    );
+
+    // 3. Next yield is the corrective created carrying the REAL id.
+    const corrective = await gen.next();
+    expect(corrective.value).toEqual({ type: "created", responseId: "cycle_div", conversationId: "real_fork_id" });
+
+    // 4. Then the buffered text delta from the same update.
+    const delta = await gen.next();
+    expect(delta.value).toEqual({ type: "text.delta", delta: "forked reply\n" });
+
+    // Drain.
+    bed.pump(JSON.stringify({ jsonrpc: "2.0", id, result: { stopReason: "end_turn" } }));
+    for await (const _ of gen) {
+      /* drain */
+    }
+  });
+
+  it("does NOT emit a second created when the session/update id matches the forced id", async () => {
+    const bed = buildBed();
+    await attach(bed, "forced_id");
+    const client = createAcpHermesClient({ acpConn: bed.conn });
+    const ctrl = new AbortController();
+
+    const gen = client.dispatch(
+      turnInput({ forcedSessionId: "forced_id", cycleId: "cycle_match" }),
+      ctrl.signal,
+      NEVER_BARGED,
+    );
+
+    const provisional = await gen.next();
+    expect(provisional.value).toEqual({ type: "created", responseId: "cycle_match", conversationId: "forced_id" });
+
+    const id = lastFrame(bed.sent).id as number;
+    bed.pump(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: "forced_id",
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "same reply" } },
+        },
+      }),
+    );
+
+    // Ids match — the next yield is the text delta, NOT a second created.
+    const next = await gen.next();
+    expect(next.value).toEqual({ type: "text.delta", delta: "same reply\n" });
+
+    // Drain.
+    bed.pump(JSON.stringify({ jsonrpc: "2.0", id, result: { stopReason: "end_turn" } }));
+    for await (const _ of gen) {
+      /* drain */
+    }
+  });
+});
+
 describe("AcpHermesClient — abort path", () => {
   it("on abort calls cancelInflight and terminates the generator", async () => {
     const bed = buildBed();
@@ -189,7 +273,9 @@ describe("AcpHermesClient — translator coverage for tool events", () => {
         jsonrpc: "2.0",
         method: "session/update",
         params: {
-          sessionId: "s",
+          // Match the forced id so no spurious corrective `created` (real-id
+          // divergence) fires — this case is about tool-event translation.
+          sessionId: "sess_t",
           update: {
             sessionUpdate: "tool_call",
             toolCallId: "call_1",
@@ -204,7 +290,7 @@ describe("AcpHermesClient — translator coverage for tool events", () => {
         jsonrpc: "2.0",
         method: "session/update",
         params: {
-          sessionId: "s",
+          sessionId: "sess_t",
           update: {
             sessionUpdate: "tool_call_update",
             toolCallId: "call_1",

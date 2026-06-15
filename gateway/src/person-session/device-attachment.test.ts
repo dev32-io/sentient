@@ -31,6 +31,7 @@ function makeAttachment(
   const epoch = 42;
   const a = createDeviceAttachment({
     attachmentId: "att-1",
+    deviceId: "dev-1",
     ws,
     sessionId: "sess-1",
     profile: "alice",
@@ -137,6 +138,7 @@ describe("DeviceAttachment", () => {
     const ws = makeMockWs();
     const { a } = makeAttachment(ws);
     expect(a.attachmentId).toBe("att-1");
+    expect(a.deviceId).toBe("dev-1");
     expect(a.sessionId).toBe("sess-1");
     expect(a.profile).toBe("alice");
     expect(a.ws).toBe(ws);
@@ -267,6 +269,7 @@ describe("DeviceAttachment", () => {
     const buffer = makeBuffer();
     const a = createDeviceAttachment({
       attachmentId: "att-1",
+      deviceId: "dev-1",
       ws,
       sessionId: "sess-1",
       profile: "alice",
@@ -292,6 +295,7 @@ describe("DeviceAttachment", () => {
     const buffer = makeBuffer();
     const a = createDeviceAttachment({
       attachmentId: "att-1",
+      deviceId: "dev-1",
       ws,
       sessionId: "sess-1",
       profile: "alice",

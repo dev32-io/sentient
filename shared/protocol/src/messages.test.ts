@@ -885,3 +885,39 @@ describe("session.configure conversationId", () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe("session.configure surfaceId", () => {
+  it("accepts session.configure with an optional surfaceId", () => {
+    const result = sessionConfigureSchema.safeParse({
+      type: "session.configure",
+      capabilities: { supports: [] },
+      clientType: "webui",
+      deviceId: "dev-1",
+      surfaceId: "surf-tab-abc",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.surfaceId).toBe("surf-tab-abc");
+  });
+
+  it("accepts session.configure with surfaceId omitted (old-client back-compat)", () => {
+    const result = sessionConfigureSchema.safeParse({
+      type: "session.configure",
+      capabilities: { supports: [] },
+      clientType: "webui",
+      deviceId: "dev-1",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.surfaceId).toBeUndefined();
+  });
+
+  it("rejects empty-string surfaceId", () => {
+    const result = sessionConfigureSchema.safeParse({
+      type: "session.configure",
+      capabilities: { supports: [] },
+      clientType: "webui",
+      deviceId: "dev-1",
+      surfaceId: "",
+    });
+    expect(result.success).toBe(false);
+  });
+});

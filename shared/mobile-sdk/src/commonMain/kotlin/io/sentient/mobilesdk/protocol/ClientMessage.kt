@@ -43,6 +43,13 @@ sealed class ClientMessage {
          * rejects an explicit null, so wire-omit is required.
          */
         val conversationId: String? = null,
+        /**
+         * Chat-surface id (one app instance). Mobile sends `surfaceId = deviceId`
+         * (1 app = 1 surface) — 2026-06-14 design §1. Omitted from the wire when
+         * null (WireJson explicitNulls=false); the gateway schema is
+         * `surfaceId: z.string().min(1).optional()` and rejects an explicit null.
+         */
+        val surfaceId: String? = null,
     ) : ClientMessage()
 
     @Serializable @SerialName("audio.start")

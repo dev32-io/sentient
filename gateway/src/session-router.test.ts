@@ -80,7 +80,7 @@ describe("SessionRouter", () => {
       [ALICE, 8650],
       [BOB, 8651],
     ]);
-    const b = await router.bind("sess-1", BOB);
+    const b = await router.bind("sess-1", BOB, "surf-1");
     expect(b.userId).toBe(BOB);
     expect(b.url).toBe("http://sentient-hermes:8651");
     expect(b.apiKey).toBe(FAKE_TOKEN);
@@ -89,18 +89,18 @@ describe("SessionRouter", () => {
 
   it("throws when userId has no port binding", async () => {
     const router = makeRouter([[ALICE, 8650]]);
-    await expect(router.bind("sess-1", CHARLIE)).rejects.toThrow(/no port binding/);
+    await expect(router.bind("sess-1", CHARLIE, "surf-1")).rejects.toThrow(/no port binding/);
   });
 
   it("throws on malformed userId", async () => {
     const router = makeRouter();
-    await expect(router.bind("sess-1", "admin")).rejects.toThrow(/invalid userId/);
+    await expect(router.bind("sess-1", "admin", "surf-1")).rejects.toThrow(/invalid userId/);
   });
 
   it("updateConversationId mutates stored binding", async () => {
     const router = makeRouter([[ALICE, 8650]]);
-    await router.bind("sess-1", ALICE);
-    router.updateConversationId("sess-1", "conv-abc-123");
+    await router.bind("sess-1", ALICE, "surf-1");
+    router.updateConversationId("surf-1", "conv-abc-123");
     expect(router.get("sess-1")?.conversationId).toBe("conv-abc-123");
   });
 
@@ -114,12 +114,13 @@ describe("SessionRouter", () => {
       [ALICE, 8650],
       [BOB, 8651],
     ]);
-    await router.bind("sess-1", ALICE);
-    router.updateConversationId("sess-1", "conv-alice-1");
+    await router.bind("sess-1", ALICE, "surf-1");
+    router.updateConversationId("surf-1", "conv-alice-1");
     const after = await router.rebind("sess-1", BOB);
     expect(after.userId).toBe(BOB);
     expect(after.conversationId).toBeNull();
     expect(router.get("sess-1")?.userId).toBe(BOB);
+    expect(router.get("sess-1")?.conversationId).toBeNull();
   });
 
   it("throws on rebind of unknown session", async () => {
@@ -132,9 +133,9 @@ describe("SessionRouter", () => {
       [ALICE, 8650],
       [BOB, 8651],
     ]);
-    await router.bind("sess-1", ALICE);
-    await router.bind("sess-2", BOB);
-    await router.bind("sess-3", ALICE);
+    await router.bind("sess-1", ALICE, "surf-1");
+    await router.bind("sess-2", BOB, "surf-2");
+    await router.bind("sess-3", ALICE, "surf-3");
     expect(router.findActiveSessionFor(ALICE)).toBe("sess-3");
     expect(router.findActiveSessionFor(BOB)).toBe("sess-2");
   });
@@ -144,7 +145,7 @@ describe("SessionRouter", () => {
       [ALICE, 8650],
       [BOB, 8651],
     ]);
-    await router.bind("sess-1", ALICE);
+    await router.bind("sess-1", ALICE, "surf-1");
     expect(router.findActiveSessionFor(BOB)).toBeNull();
   });
 
@@ -155,7 +156,7 @@ describe("SessionRouter", () => {
 
   it("release removes binding", async () => {
     const router = makeRouter([[ALICE, 8650]]);
-    await router.bind("sess-1", ALICE);
+    await router.bind("sess-1", ALICE, "surf-1");
     expect(router.get("sess-1")).not.toBeNull();
     router.release("sess-1");
     expect(router.get("sess-1")).toBeNull();
@@ -166,17 +167,61 @@ describe("SessionRouter", () => {
       [ALICE, 8650],
       [BOB, 8651],
     ]);
-    await router.bind("sess-alice-1", ALICE);
-    await router.bind("sess-alice-2", ALICE);
-    await router.bind("sess-bob-1", BOB);
-    router.updateConversationId("sess-alice-1", "conv-A");
-    router.updateConversationId("sess-alice-2", "conv-B");
-    router.updateConversationId("sess-bob-1", "conv-X");
+    await router.bind("sess-alice-1", ALICE, "surf-alice-1");
+    await router.bind("sess-alice-2", ALICE, "surf-alice-2");
+    await router.bind("sess-bob-1", BOB, "surf-bob-1");
+    router.updateConversationId("surf-alice-1", "conv-A");
+    router.updateConversationId("surf-alice-2", "conv-B");
+    router.updateConversationId("surf-bob-1", "conv-X");
 
     router.clearConversationIdForAllSessions(ALICE);
 
     expect(router.get("sess-alice-1")?.conversationId).toBeNull();
     expect(router.get("sess-alice-2")?.conversationId).toBeNull();
     expect(router.get("sess-bob-1")?.conversationId).toBe("conv-X");
+  });
+});
+
+describe("SessionRouter — conversation anchor survives transport handover (D2)", () => {
+  function makeDeps() {
+    const bindings = new Map<string, number>([[ALICE, 8650]]);
+    const userPortStore = makeStore(bindings);
+    return { hermes: baseConfig, userPortStore, apiKeyResolver: fakeResolver };
+  }
+
+  it("a new sessionId on the SAME surface reads the conversationId anchored by the prior transport", async () => {
+    const router = createSessionRouter(makeDeps());
+    await router.bind("sess_old", ALICE, "surface_a");
+    router.updateConversationId("surface_a", "conv_42");
+    router.release("sess_old");
+    await router.bind("sess_new", ALICE, "surface_a");
+    expect(router.get("sess_new")?.conversationId).toBe("conv_42");
+  });
+
+  it("updateConversationId after the originating transport was released still lands on the surface anchor", async () => {
+    const router = createSessionRouter(makeDeps());
+    await router.bind("sess_old", ALICE, "surface_a");
+    await router.bind("sess_new", ALICE, "surface_a");
+    router.release("sess_old");
+    router.updateConversationId("surface_a", "conv_99");
+    expect(router.get("sess_new")?.conversationId).toBe("conv_99");
+  });
+
+  it("two different surfaces do not share an anchor", async () => {
+    const router = createSessionRouter(makeDeps());
+    await router.bind("sess_a", ALICE, "surface_a");
+    await router.bind("sess_b", ALICE, "surface_b");
+    router.updateConversationId("surface_a", "conv_a");
+    expect(router.get("sess_b")?.conversationId).toBeNull();
+  });
+
+  it("dropAnchor removes a surface's anchor (anchor lifetime == surface lifetime)", async () => {
+    const router = createSessionRouter(makeDeps());
+    await router.bind("sess_a", ALICE, "surface_a");
+    router.updateConversationId("surface_a", "conv_42");
+    router.dropAnchor("surface_a");
+    // a fresh bind on the same surfaceId now sees no stale anchor
+    await router.bind("sess_b", ALICE, "surface_a");
+    expect(router.get("sess_b")?.conversationId).toBeNull();
   });
 });
