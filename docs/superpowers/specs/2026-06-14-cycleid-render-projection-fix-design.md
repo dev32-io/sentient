@@ -41,14 +41,17 @@ This alone eliminates the collision: a post-reconnect turn gets a fresh, distinc
 
 ### 3.2 Client — key chat history by `entryId`/`seq`, not `cycleId`
 
-The client already receives `entryId` on every committed entry and `seq` on every frame. It just keys the wrong field. **This is mobile-specific** — the web client (web-sdk + webui) uses `cycleId` only for cycle-meta (audio playback, task pills, live bubble) and does not key committed history on it, so it needs no render re-key (it still benefits from §3.1's server fix removing any latent collision). Changes (mobile SDK + iOS):
+**Most of the mobile render is correct once `cycleId` is unique (§3.1) — no logic change.** Reading the code, two render keys deliberately use `cycleId` for the live-bubble↔committed handoff, and they were buggy *only* because the id collided across turns:
 
-1. **Committed row identity** — iOS `ChatRows.swift`: committed rows key on **`"ent-\(entryId)"`** (already the fallback; promote it to primary). The transient live bubble row keeps `cycleId`.
-2. **History dedup + order** — `ConversationHistoryConnector.kt`: dedup committed entries by **`entryId`** and keep **seq/arrival order** (implement the specced-but-missing dedup). A re-delivered entry (same `entryId`) updates in place rather than appending a duplicate.
-3. **Live-bubble↔committed handoff** — `ObserveChatUseCase.kt`: the `committed.filter { it.cycleId != liveCycleId }` suppression stays (it hides the live turn's committed twin while the bubble streams) but is now **safe**, because `cycleId` is unique — only the *current* turn's committed entry is suppressed, never a past turn's.
-4. **Live bubble accumulation** — `InFlightMessageConnector.kt`: continues to key the in-flight bubble + deltas by `cycleId`. Correct now that `cycleId` is unique.
+- `ChatRows.swift` keys the assistant row by `cycleId`-first **on purpose**: the live streaming bubble and its committed twin share the turn's `cycleId` so the streaming→committed handoff is the **same SwiftUI row — no remount/flash**. A turn emits exactly **one** assistant committed entry (tool/user/REST entries already key by `entryId`), so with a unique `cycleId` this is distinct per turn → no collision. **Keep as-is** — switching it to `entryId` would re-introduce a remount flash for no benefit.
+- `ObserveChatUseCase.kt`'s `committed.filter { it.cycleId != liveCycleId }` suppression: with a unique `cycleId` it drops only the *current* turn's one assistant entry → already correct. **Keep as-is.**
 
-**The handoff, stated plainly:** committed entries are the history — rendered/deduped/ordered by `entryId` in `seq` order. The streaming bubble is a transient keyed by `cycleId`; when its committed twin (same `cycleId`) arrives or `cycle.completed` fires, the transient is dropped. `cycleId` only relates a live bubble to its own turn — cycle-meta, never a history key.
+The one real client change, plus guard tests:
+
+1. **History dedup** — `ConversationHistoryConnector.kt#onEntryFrame`: today it appends blindly (`mirror = mirror + enriched`). Dedup by **`entryId`** — a re-delivered entry (same `entryId`, e.g. a replayed committed entry on resume) updates **in place** instead of appending a duplicate. (Fixes a separate replay-duplicate defect and realises the "clean projection" principle; the `entryId` field exists for exactly this and was never used.)
+2. **Guard tests** — pin that the server fix holds end-to-end on the client: (a) `ChatRows` — two messages with **distinct** `cycleId`s produce **distinct** row ids (no alias); (b) `ObserveChatUseCase` — with a unique live `cycleId`, only the live turn's committed entry is suppressed, a prior turn's entry stays visible; (c) `ConversationHistoryConnector` — a duplicate `entryId` does not double-append.
+
+**The model, stated plainly:** committed entries are the history — keyed/deduped by `entryId` in `seq` order. The streaming bubble is transient; it shares its turn's unique `cycleId` with that turn's one committed assistant entry purely to make the handoff a smooth in-place row update. `cycleId` never keys *arbitrary* history — only a turn's own live↔committed pair (cycle-meta).
 
 ### 3.3 Error handling
 
@@ -75,16 +78,16 @@ No case is skipped. (Reusable cases: extend `agents/docs/testing-knowledge.md` w
 
 ## 6. Files touched
 
-- `gateway/src/cerebrum/attention-gate.ts` — `generateCycleId` → `String(Date.now())`; drop `cycleCounter`.
-- `shared/mobile-sdk/.../connectors/ConversationHistoryConnector.kt` — entryId dedup + order.
-- `shared/mobile-sdk/.../connectors/InFlightMessageConnector.kt` — confirm cycleId-keyed live bubble (likely no change).
-- `shared/mobile-data/.../usecase/ObserveChatUseCase.kt` — suppression now safe (verify, add a guard test).
-- `ios/App/Chat/.../ChatRows.swift` — committed row id → `ent-<entryId>`.
+- `gateway/src/cerebrum/attention-gate.ts` — `generateCycleId` → `String(Date.now())`; drop `cycleCounter`. **(logic change)**
+- `shared/mobile-sdk/.../connectors/ConversationHistoryConnector.kt` — `onEntryFrame` entryId dedup (replace-in-place). **(logic change)**
+- `ios/App/Chat/message/ChatRows.swift` — **no logic change** (cycleId-first handoff is correct once cycleId is unique); add a guard test that distinct cycleIds → distinct row ids.
+- `shared/mobile-data/.../usecase/ObserveChatUseCase.kt` — **no logic change** (suppression correct with unique cycleId); add a guard test (prior-turn entry not suppressed).
+- `shared/mobile-sdk/.../connectors/InFlightMessageConnector.kt` — no change.
 - `shared/web-sdk/`, `webui/` — **no change** (web keys history correctly; `cycleId` is cycle-meta only). Covered by §3.1.
-- Tests: gateway unit (cycleId unique-per-turn), mobile-sdk unit (entryId dedup, reused-cycleId no longer aliases).
+- Tests: gateway unit (cycleId unique-per-turn / no reset across gate re-creation); mobile-sdk unit (entryId dedup no double-append, ChatRows distinct-cycleId no-alias, ObserveChatUseCase prior-turn-not-suppressed).
 
 ## 7. Slices (for the plan)
 
-1. **Server cycleId** — `attention-gate.ts` → `Date.now()`; unit test cycleId unique per turn.
-2. **Client render re-key (mobile)** — entryId dedup (ConversationHistoryConnector), iOS row id (ChatRows), suppression-safety guard (ObserveChatUseCase); mobile-sdk unit tests for reused-cycleId-no-alias + many-entry render.
+1. **Server cycleId** — `attention-gate.ts` `generateCycleId` → `String(Date.now())`, drop `cycleCounter`; gateway unit test (unique per turn / no reset across gate re-creation).
+2. **Client dedup + guard tests** — `ConversationHistoryConnector` entryId dedup (logic) + dedup test; `ChatRows` distinct-cycleId-no-alias guard test (no logic change); `ObserveChatUseCase` prior-turn-not-suppressed guard test (no logic change).
 3. **E2E** — run the matrix (web Playwright + iOS Maestro) against the local stack. Web is a no-code-change regression check (confirms the server cycleId fix doesn't break web render).
