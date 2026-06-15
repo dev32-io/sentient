@@ -168,4 +168,29 @@ class ObserveChatUseCaseTest {
         assertTrue(models.none { it.historyLoading }, "empty-id switch never raises the spinner")
         job.cancel()
     }
+
+    @Test
+    fun prior_turn_is_not_suppressed_when_live_cycle_differs() = runTest(UnconfinedTestDispatcher()) {
+        // With unique cycleIds, the live turn's id never matches a PRIOR turn's id,
+        // so the suppression filter drops only the live turn's committed twin. (Under
+        // the old reused-"cycle-1" bug, the prior turn's reply was wrongly suppressed.)
+        val repo = FakeConversationRepository()
+        repo.timelineState.value = listOf(
+            ChatMessage(ts = 1, role = "user", content = "q1"),
+            ChatMessage(ts = 2, role = "assistant", content = "answer-1", cycleId = "1000"), // prior turn
+            ChatMessage(ts = 3, role = "user", content = "q2"),
+        )
+        val models = mutableListOf<ChatModel>()
+        val job = launch { useCase(repo).invoke(MutableStateFlow(emptyList())).collect { models.add(it) } }
+        repo.events.emit(SdkEvent.MessageStarted("2000")) // live = a DIFFERENT (later) turn
+        repo.events.emit(SdkEvent.MessageDelta("2000", "answer-2"))
+        runCurrent()
+        val m = models.last()
+        assertTrue(
+            m.committed.any { it.cycleId == "1000" && it.content == "answer-1" },
+            "the prior turn's reply must stay visible — only the live turn (2000) is suppressed",
+        )
+        assertEquals("2000", m.live?.cycleId)
+        job.cancel()
+    }
 }
