@@ -7,6 +7,25 @@
 
 ---
 
+> **Addendum (2026-06-14, post-implementation — overlay co-fix):** §4's premise
+> that `acp_ws_server.py` already "spawns a fresh Hermes child **per
+> connection** (already its behavior)" was **incomplete**. The overlay also
+> enforced ONE WS per profile, closing any prior connection (`active_ws` +
+> `prior.close()`). So opening a second overlay connection — a second surface,
+> OR the drawer's ephemeral `rest-list:<userId>` session-list wire
+> (`server.ts` → `listSessionsForUser` → `listSessionsViaAcp`) — **kicked the
+> first**. That kick, not a reconnect, is the proven root cause of the iOS
+> "stuck at sending" bug: a fresh-session `session.new` was in flight on the
+> surface wire when the drawer's rest-list dial closed it →
+> `reject-inflight: acp-wire-flap` → `mint-session.failed` → no id → stuck.
+> **Fix (commit `2c2ab1b`):** the overlay is now a dumb per-connection
+> transport — the single-connection kill is removed; the gateway owns all
+> pooling + gating; concurrent children per profile coexist (`state.db` is
+> WAL-mode → concurrent-safe). The per-surface design below stands unchanged —
+> the overlay constraint was the missing enabler, not a contradiction.
+
+---
+
 ## 1. Problem
 
 Mobile users see **duplicate / forked chat sessions** ("#2"-suffixed titles, full-history copies). Confirmed root cause, end-to-end from logs + Hermes' own store.
