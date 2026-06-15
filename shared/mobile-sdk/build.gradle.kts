@@ -12,7 +12,8 @@ plugins {
 // Bumped to 0.1.1: send conversationId in session.configure on reconnect (Task 3).
 // Bumped to 0.1.2: SentientMobileVitals (Task 14).
 // Bumped to 0.1.3: surface-isolation (per-tab/per-app surfaceId in session.configure).
-version = "0.1.3"
+// Bumped to 0.1.4: cycleId render-key fix (committed-history entryId dedup).
+version = "0.1.4"
 
 kotlin {
     androidTarget {
