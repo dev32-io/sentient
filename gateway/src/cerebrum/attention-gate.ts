@@ -113,7 +113,6 @@ export function createAttentionGate(
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let pendingSalience = false;
   const cycleTimestamps: number[] = [];
-  let cycleCounter = 0;
   let disposed = false;
 
   // Salience accumulators, split by source so interrupt can clear only
@@ -129,8 +128,14 @@ export function createAttentionGate(
   let chainLength = 0;
 
   function generateCycleId(): string {
-    cycleCounter++;
-    return `cycle-${cycleCounter}`;
+    // Server-authoritative, globally-unique per turn: a POSIX-millisecond id.
+    // The old per-gate counter reset to 1 on every reconnect (a new gate per
+    // session.configure), so two turns shared "cycle-1" and the client aliased
+    // them onto one render row. A timestamp never collides across turns or gate
+    // re-creations (turns are human-paced, far more than 1ms apart). cycleId is
+    // cycle-meta only (live bubble, task pills); the client keys committed
+    // history by entryId, never cycleId.
+    return String(Date.now());
   }
 
   function isRateLimited(): boolean {

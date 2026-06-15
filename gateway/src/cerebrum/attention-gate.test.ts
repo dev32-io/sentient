@@ -1123,4 +1123,31 @@ describe("AttentionGate", () => {
       gate.dispose();
     });
   });
+
+  it("mints a unique POSIX-ms cycleId per turn that does not reset when the gate is re-created (reconnect)", async () => {
+    // Every session.configure builds a NEW AttentionGate. Two gates simulate a
+    // reconnect. OLD behaviour: both minted "cycle-1" (per-gate counter) → the
+    // client aliased two different turns onto one render row.
+    async function dispatchOnceOnAFreshGate(): Promise<string> {
+      const ctx = createShortTermContext("sess-x", testSalienceMap);
+      const conversationMirror = makeConversationMirror();
+      const { callbacks, cycleCalls } = makeCallbacks();
+      const gate = createAttentionGate(ctx, DEFAULT_CONFIG, callbacks, conversationMirror, testSalienceMap);
+      // "conversation.user.speech" => reply 85 > standard threshold 50 → fires after debounce.
+      conversationMirror.append({ entryId: "e", kind: "user", ts: Date.now(), channel: "speech", content: "hi" });
+      await sleep(DEFAULT_CONFIG.debounceWindowMs + 40);
+      expect(cycleCalls).toHaveLength(1);
+      gate.dispose();
+      return cycleCalls[0]!.cycleId;
+    }
+
+    const id1 = await dispatchOnceOnAFreshGate();
+    const id2 = await dispatchOnceOnAFreshGate();
+
+    expect(id1).toMatch(/^\d+$/); // POSIX-ms numeric string, not "cycle-N"
+    expect(id1).not.toBe("cycle-1"); // old per-gate format is gone
+    // The debounce sleep separates the two Date.now() calls by >> 1ms, so the
+    // ids never collide in practice — this asserts no reset across gate re-creation.
+    expect(id2).not.toBe(id1); // distinct per turn
+  });
 });
