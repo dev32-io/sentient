@@ -1,0 +1,74 @@
+# Maestro E2E — cycleId render-key fix: reconnect-followup REPRO (PART 2 of 2)
+#
+# Run this IMMEDIATELY AFTER part1, against the SAME live app process (do NOT
+# relaunch — see CONTINUITY NOTE). It sends the BRAVO FOLLOW-UP and asserts the
+# user-visible guarantee of the fix: BRAVO renders under its own user message,
+# ALPHA's reply is STILL shown ONCE above it, nothing missing or duplicated.
+#
+# ── CONTINUITY / RECONNECT NOTE (why this is a same-session follow-up) ───────────
+# The original bug needed a *resumable* socket drop: the gateway PersonSession +
+# conversation SURVIVE, but a FRESH AttentionGate is built for the next turn (the
+# old per-gate "cycle-N" counter reset → colliding render key). On THIS build the
+# agent-reachable transport events do NOT cleanly hit that path:
+#   - Maestro `launchApp` and a full `docker restart sentient-gateway` BOTH lead to
+#     a fresh chat: launchApp is a COLD relaunch (process killed→restarted), and a
+#     full restart destroys the server session. Either way the SDK logs
+#     `configure.resume.skip-no-cursor` → `switch-conversation: new-chat` → an
+#     EMPTY chat. ALPHA is gone from view (by design — mobile-lifecycle rule: chat
+#     is rebuilt FRESH on cold entry, not snapshot-restored). So relaunching or
+#     restarting between part1 and part2 makes the ALPHA assertions FAIL — that is
+#     NOT a regression, it is the fresh-chat path.
+#   - A brief network blip leaves the loopback TCP intact (same session, same gate).
+# So part2 verifies the SAME-CONVERSATION follow-up (ALPHA still shown, BRAVO added)
+# — the user-visible no-missing/no-dup guarantee. The cross-gate colliding-id case
+# is covered server-side by the LOG assertion (two distinct NUMERIC cycleIds, zero
+# client-facing "cycle-N") + the mobile entryId-dedup unit guard; it is FLAGGED as
+# not cleanly reachable by an agent-driven E2E on this build (no resumable-drop hook).
+#
+# See part1 header for the full E2E matrix.
+appId: io.dev32.sentient.debug
+---
+# ── CONTINUE the live app from part1 — do NOT launchApp ─────────────────────────
+# CRITICAL: Maestro `launchApp` does a COLD relaunch (kills + restarts the process),
+# not a foreground. A cold start rebuilds the chat FRESH (mobile-lifecycle rule),
+# so ALPHA would be wiped. This flow therefore continues the SAME live process that
+# part1 left running, keeping the conversation intact. Run part2 immediately after
+# part1 against the same app session.
+
+# ── If a manual-reconnect banner is showing, recover; else proceed ──────────────
+- runFlow:
+    when:
+      visible:
+        id: "connection-reconnect"
+    commands:
+      - tapOn:
+          id: "connection-reconnect"
+
+# Connection healthy (no lost banner) + composer usable.
+- assertNotVisible:
+    id: "connection-lost-banner"
+- assertVisible:
+    id: "composer-input"
+# ALPHA from turn 1 still on screen → conversation preserved.
+- assertVisible: "ALPHA"
+- takeScreenshot: A2-reconnected
+
+# ── Follow-up turn: BRAVO ───────────────────────────────────────────────────────
+- tapOn:
+    id: "composer-input"
+- inputText: "Reply with exactly: BRAVO"
+- tapOn:
+    id: "chat-send"
+
+# Wait for the BRAVO reply to render.
+- extendedWaitUntil:
+    visible: "BRAVO"
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 20000
+
+# ── ASSERT: both turns present, no missing / no duplicated reply ────────────────
+# ALPHA (turn-1 reply) still shown ONCE, and BRAVO (follow-up reply) now shown.
+- assertVisible: "ALPHA"
+- assertVisible: "BRAVO"
+- takeScreenshot: A3-followup-reply

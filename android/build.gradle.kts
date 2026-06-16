@@ -45,7 +45,7 @@ android {
         applicationId = "io.dev32.sentient"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 5; versionName = "0.1.3"
+        versionCode = 6; versionName = "0.1.4"
     }
     buildFeatures { compose = true; buildConfig = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }

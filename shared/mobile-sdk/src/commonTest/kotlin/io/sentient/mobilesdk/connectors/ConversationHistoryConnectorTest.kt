@@ -264,6 +264,39 @@ class ConversationHistoryConnectorTest {
         c.replaceMirror(listOf(userItem("target msg")), forGeneration = c.currentGeneration())
         assertEquals(1, c.items().size)
     }
+
+    // ── entryId dedup — replace-in-place on resume/reconnect ─────────────────
+
+    @Test
+    fun duplicate_entryId_replaces_in_place_not_appends() {
+        val c = ConversationHistoryConnector()
+        c.handle(ServerMessage.ConversationEntry(ConversationFeedItem.Assistant(entryId = "e1", ts = 2, content = "first")))
+        c.handle(ServerMessage.ConversationEntry(ConversationFeedItem.Assistant(entryId = "e2", ts = 3, content = "second")))
+        assertEquals(2, c.items().size)
+        // Re-deliver e1 (the non-tail item, e.g. a committed entry replayed on resume).
+        c.handle(ServerMessage.ConversationEntry(ConversationFeedItem.Assistant(entryId = "e1", ts = 2, content = "first-updated")))
+        assertEquals(2, c.items().size, "duplicate entryId must replace in place, not double-append")
+        // Replaced in its original slot; the tail item is not displaced.
+        assertEquals("first-updated", (c.items()[0] as ConversationFeedItem.Assistant).content)
+        assertEquals("e2", c.items()[1].entryId)
+    }
+
+    @Test
+    fun distinct_entryIds_still_append() {
+        val c = ConversationHistoryConnector()
+        c.handle(ServerMessage.ConversationEntry(ConversationFeedItem.Assistant(entryId = "e1", ts = 1, content = "a")))
+        c.handle(ServerMessage.ConversationEntry(ConversationFeedItem.Assistant(entryId = "e2", ts = 2, content = "b")))
+        assertEquals(2, c.items().size)
+    }
+
+    @Test
+    fun empty_entryId_is_never_deduped() {
+        val c = ConversationHistoryConnector()
+        // entryId defaults to UNKNOWN_ENTRY_ID ("") — those have no identity, must not collapse.
+        c.handle(ServerMessage.ConversationEntry(ConversationFeedItem.User(ts = 1, channel = "text", content = "a")))
+        c.handle(ServerMessage.ConversationEntry(ConversationFeedItem.User(ts = 2, channel = "text", content = "b")))
+        assertEquals(2, c.items().size, "empty entryId must not collapse distinct entries")
+    }
 }
 
 private fun ConversationFeedItem.kindName(): String = when (this) {

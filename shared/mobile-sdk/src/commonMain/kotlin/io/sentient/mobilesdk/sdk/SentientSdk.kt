@@ -403,9 +403,26 @@ class SentientSdk(
         // client-facing clear; drop the visible past-chat history locally the
         // instant "+" is tapped (safe pure-state clear — never gates the mint).
         connectors.history.clearForNewChat()
+        dropAnchorForNewChat()
         val id = connectors.sessions.newChat()
         clearActiveToIdle()
         return id
+    }
+
+    /**
+     * Identity axis: leave the current conversation ATOMICALLY when a new chat is
+     * requested. Until the mint's session.created arrives the anchor is null, so a
+     * session.configure fired during the pending mint (relaunch / reconnect) declares
+     * NO conversationId — the gateway cannot re-anchor the session to the old
+     * conversation (resume.reanchor source="configure"). Without this the stale anchor
+     * leaks into configure: the next user.message lands in the previous conversation and
+     * the fresh mint is abandoned (a phantom empty session).
+     */
+    private fun dropAnchorForNewChat() {
+        if (_currentSessionId.value != null) {
+            log.info("session.anchor.clear", mapOf("trigger" to "new-chat"))
+        }
+        _currentSessionId.value = null
     }
 
     /**
@@ -421,6 +438,7 @@ class SentientSdk(
         // client-facing clear; drop the visible past-chat history locally the
         // instant "+" is tapped (safe pure-state clear — never gates the mint).
         connectors.history.clearForNewChat()
+        dropAnchorForNewChat()
         connectors.sessions.sendNew()
         clearActiveToIdle()
     }
