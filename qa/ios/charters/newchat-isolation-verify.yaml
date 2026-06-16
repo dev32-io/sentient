@@ -1,0 +1,87 @@
+# Maestro E2E — new-chat identity-axis fix verification
+#
+# Repro of the user-reported bug: hit "+", send a message, it landed in the
+# PREVIOUS conversation (stale _currentSessionId leaked into session.configure →
+# gateway resume.reanchor source="configure" → message routed to the old convo;
+# the fresh mint abandoned as a phantom). Fix: sendNewChat drops the conversation
+# anchor atomically (SentientSdk.dropAnchorForNewChat).
+#
+# Pass = turn-2 lands in a FRESH chat: YANKEE visible, the prior turn's ZULU GONE.
+#
+# Build prereq: SIGNED sim app (CODE_SIGN_INJECT_BASE_ENTITLEMENTS=YES); an
+# unsigned build fails login (errSecMissingEntitlement → empty WS token → 1008).
+#
+# E2E matrix:
+# Case                        | Viewport    | Pre-state           | Action                                  | Expected user-visible                              | Expected log trail
+# ----------------------------|-------------|---------------------|-----------------------------------------|----------------------------------------------------|--------------------------------------------------
+# New-chat isolation          | 390x844 sim | configured, logged  | send ZULU → "+" new chat → send YANKEE   | fresh chat: YANKEE reply shown, ZULU NOT shown      | turn-2 dispatch.begin conversationId != turn-1; NO resume.reanchor source="configure" to the ZULU convo
+appId: io.dev32.sentient.debug
+---
+- launchApp
+
+# ── Backend setup (conditional) ────────────────────────────────────────────────
+- runFlow:
+    when:
+      visible: "Sentient backend"
+    commands:
+      - tapOn: { id: "backend-host" }
+      - eraseText: 50
+      - inputText: "localhost"
+      - tapOn: { id: "backend-port" }
+      - eraseText: 10
+      - inputText: "8888"
+      - tapOn: { text: "TLS · self-signed" }
+      - tapOn: { id: "backend-save" }
+      - extendedWaitUntil:
+          visible: { text: "Who's here?" }
+          timeout: 15000
+
+# ── Login (PIN 1234) ───────────────────────────────────────────────────────────
+- runFlow:
+    when:
+      visible: "Who's here?"
+    commands:
+      - tapOn: { id: "login-avatar-.*", index: 0 }
+      - tapOn: { id: "pin-key-1" }
+      - tapOn: { id: "pin-key-2" }
+      - tapOn: { id: "pin-key-3" }
+      - tapOn: { id: "pin-key-4" }
+
+- extendedWaitUntil:
+    visible: { id: "composer-input" }
+    timeout: 20000
+
+# ── Clean start: new chat, then turn 1 (ZULU) → conversation A ─────────────────
+- tapOn: { id: "new-chat" }
+- extendedWaitUntil:
+    visible: { id: "composer-input" }
+    timeout: 10000
+- tapOn: { id: "composer-input" }
+- inputText: "Reply with exactly: ZULU"
+- tapOn: { id: "chat-send" }
+- extendedWaitUntil:
+    visible: "ZULU"
+    timeout: 30000
+- waitForAnimationToEnd: { timeout: 20000 }
+- takeScreenshot: NC1-turn1-zulu
+
+# ── "+" new chat → turn 2 (YANKEE). Must be a FRESH conversation ───────────────
+- tapOn: { id: "new-chat" }
+- extendedWaitUntil:
+    visible: { id: "composer-input" }
+    timeout: 10000
+# The screen must already be clear of the prior turn the instant "+" is tapped.
+- assertNotVisible: "ZULU"
+- takeScreenshot: NC2-after-plus-empty
+- tapOn: { id: "composer-input" }
+- inputText: "Reply with exactly: YANKEE"
+- tapOn: { id: "chat-send" }
+- extendedWaitUntil:
+    visible: "YANKEE"
+    timeout: 30000
+- waitForAnimationToEnd: { timeout: 20000 }
+
+# ── Assert isolation: YANKEE present, ZULU GONE (not re-shown from the old convo) ─
+- assertVisible: "YANKEE"
+- assertNotVisible: "ZULU"
+- takeScreenshot: NC3-fresh-chat-isolated
