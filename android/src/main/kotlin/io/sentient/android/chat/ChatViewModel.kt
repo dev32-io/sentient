@@ -119,8 +119,8 @@ class ChatViewModel(
     fun retry(pendingId: String) {
         log.info("retry", mapOf("pendingId" to pendingId))
         cache.retry(pendingId)
-        // A stuck queued message: reconnect first (user-driven recovery), then drain.
-        if (!isReady) component.forceReconnect()
+        // Verify the socket rather than trusting a possibly-stale READY (see iOS note).
+        component.ensureConnected()
         component.sendMessage.flushIfReady(cache, connection.value.status)
     }
 
