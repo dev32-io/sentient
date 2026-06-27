@@ -4,77 +4,95 @@ The gateway runs in Docker and spawns its sibling services
 (`sentient-hermes` per user, `stt-service`, `egress-proxy`, MCP sidecars)
 on demand via the host docker socket. **All provider keys, voice IDs,
 and admin secrets are entered through the webui setup wizard** on first
-launch — there is nothing to configure on disk beyond `HOST_DOCKER_GID`,
-which `setup-prod.py` autodetects.
+launch — there is nothing to configure on disk beyond `HOST_DOCKER_GID`.
 
 Three compose files:
 
 | File | Purpose |
 |------|---------|
-| `deploy/macos/docker-compose.yml` | Local dev on macOS Docker Desktop — uses a docker named volume for the supervisord socket because virtiofs bind-mounts reject AF_UNIX bind(). See header in that file. |
+| `deploy/mac-prod/docker-compose.yml` | **Production** — macOS Docker Desktop (Apple-silicon Mac mini). Builds all images locally; release profile. The supported deploy path. |
+| `deploy/macos/docker-compose.yml` | Local dev on macOS Docker Desktop — debug build. Uses a docker named volume for the supervisord socket (virtiofs rejects AF_UNIX `bind()`). |
 | `deploy/docker/docker-compose.yml` | Local dev on Linux — bind-mounts everything under `~/.sentient/`. |
-| `deploy/pi/docker-compose.yml`     | Pi / production — builds **all** images locally (gateway + sibling services) from this checkout. No registry needed. |
 
-The Pi flow is the supported deploy path. The dev flows are for working
-on the gateway itself.
+## Why macOS for production
+
+Production moved from a Raspberry Pi 5 to an Apple-silicon **Mac mini**.
+The Pi couldn't give the speech/agent stack enough headroom; the Mac's
+unified memory + Neural Engine do. The drivers were:
+
+- **Faster agent loop** (Hermes round-trips).
+- **Local Whisper-large STT** running on-device.
+- **Large local TTS models** with real headroom.
+
+You are not locked into all-on-one. The architecture still supports a
+**split**: run the lightweight **gateway on a Pi** (or any small box) and
+point its orchestrator at **sibling services hosted on a more powerful
+machine**. The `mac-prod` folder just targets the common case — everything
+on one macOS host. (The retired `deploy/pi/` all-on-Pi compose was removed;
+recover it from git history if you want the old single-Pi layout as a
+starting point.)
 
 ---
 
-## Pi install
+## Production install (macOS)
 
-The Pi clones the repo and builds images locally. No private registry,
+The Mac clones the repo and builds images locally. No private registry,
 no CI dependency.
 
-### 1. One-time host setup
+### 1. Host setup
+
+Install Docker Desktop (no Apple ID / App Store needed):
 
 ```bash
-# Install docker
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER && newgrp docker
-
-# Hermes host user — uid=10000 must match the in-container uid so
-# bind-mounted per-user files have stable ownership across recreates.
-sudo groupadd -g 10000 hermes
-sudo useradd  -u 10000 -g hermes -M -s /usr/sbin/nologin hermes
-sudo usermod -aG docker hermes
+brew install --cask docker
+open -a Docker            # accept terms on first launch
 ```
 
-### 2. Clone
+Enable **Settings → General → "Start Docker Desktop when you sign in"** and
+set up **auto-login** so the daemon comes back after an unattended reboot.
+(Full headless 24×7 host setup — power/no-sleep, firewall, stable MAC,
+auto security updates — lives in your ops runbook, not here.)
+
+The hermes uid=10000 host user is **not** required on macOS — Docker
+Desktop's VM handles bind-mount ownership internally.
+
+### 2. Clone + run the setup helper
 
 ```bash
-git clone https://lab.null32.com/kevin-ye/sentient.git ~/sentient
+git clone <repo-url> ~/sentient
 cd ~/sentient
-```
-
-### 3. Run setup-prod.py
-
-```bash
 python3 deploy/setup-prod.py
 ```
 
-What it does:
-1. Verifies docker is reachable
-2. Verifies the `hermes` host user exists (Linux)
-3. Writes `deploy/pi/.env` with the auto-detected `HOST_DOCKER_GID`
-4. Asks if you want to build images now (`docker compose ... build`,
-   live progress streamed)
-5. Asks if you want to remove existing orchestrator-managed containers
-   so the next start picks up the freshly-built images
-6. Prints the `docker compose up` command — does **not** run it itself
+`setup-prod.py` is the install/update helper: it verifies docker, auto-detects
+and writes `HOST_DOCKER_GID` into `deploy/mac-prod/.env`, builds the images, and
+clears stale containers — then stops short of `up` so you choose when to go
+live. **Re-run it any time after `git pull`** to refresh. Targets
+`deploy/mac-prod` by default; pass a name (e.g. `python3 deploy/setup-prod.py docker`)
+to target another deploy dir.
 
-This is idempotent. Run it again any time after `git pull` to refresh.
-
-### 4. Bring it up
+<details><summary>Manual equivalent (if you skip the script)</summary>
 
 ```bash
-docker compose -f deploy/pi/docker-compose.yml up -d
-docker compose -f deploy/pi/docker-compose.yml logs -f gateway
+cp deploy/mac-prod/.env.example deploy/mac-prod/.env
+# HOST_DOCKER_GID = GID inside the Docker Desktop VM:
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock alpine stat -c '%g' /var/run/docker.sock
+docker compose -f deploy/mac-prod/docker-compose.yml --profile build-only build \
+  gateway stt-service hermes ma-mcp searxng-mcp fetch-mcp
+```
+</details>
+
+### 3. Bring it up
+
+```bash
+docker compose -f deploy/mac-prod/docker-compose.yml up -d
+docker compose -f deploy/mac-prod/docker-compose.yml logs -f gateway
 ```
 
-### 5. First launch
+### 4. First launch
 
-Open `https://<pi-ip>:8888` in a browser. Accept the self-signed cert
-(one warning per device, persists). The setup wizard walks through:
+Open `https://sentient.dev32.io` (port 443) or `https://<host>:8888`. The
+setup wizard walks through:
 
 - Admin password / PIN
 - LLM provider + key (Ollama Cloud — direct API to ollama.com — or
@@ -85,6 +103,12 @@ Open `https://<pi-ip>:8888` in a browser. Accept the self-signed cert
 Once finished, the gateway spawns the per-user Hermes worker and is
 ready for voice traffic.
 
+User accounts, secrets, profiles, **and the Hermes "brain"**
+(`~/.sentient/hermes/data`) all live under `~/.sentient/` outside the
+container — migrate or back up the whole assistant with one `rsync` of
+`~/.sentient/`. (The TLS cert at `~/.data/certs/` is the one intentional
+exception — externally managed by `acme.sh`.)
+
 ---
 
 ## Updates
@@ -92,12 +116,11 @@ ready for voice traffic.
 ```bash
 cd ~/sentient
 git pull
-python3 deploy/setup-prod.py     # rebuild + clear old containers
-docker compose -f deploy/pi/docker-compose.yml up -d
+python3 deploy/setup-prod.py          # rebuild images + clear stale containers
+docker compose -f deploy/mac-prod/docker-compose.yml up -d
 ```
 
-User accounts, secrets, and profiles persist across image bumps —
-they live in `~/.sentient/` outside the container.
+State in `~/.sentient/` persists across image bumps.
 
 ### Upgrade note — gateway 1.11.1 migrates `session.*` config automatically
 
@@ -128,52 +151,25 @@ values are preserved.
 The gateway runs in docker; ollama-on-host (Custom provider tab),
 Home Assistant, Music Assistant, and any other LAN service does not.
 **The wizard's URL fields take the host's LAN IP directly** — e.g.
-`http://192.168.0.240:11434/v1` for an ollama daemon on the Pi itself.
+`http://192.168.0.240:11434/v1` for an ollama daemon on the host itself.
 
-Find your Pi's LAN IP:
+Find the host's LAN IP (macOS):
 
 ```bash
-hostname -I | awk '{print $1}'
+ipconfig getifaddr en0     # ethernet (or en1 for Wi-Fi)
 ```
-
-Why this works (and why it's not a router hop): the Pi's kernel sees
-its own LAN IP as a local address, so traffic from the gateway
-container to `192.168.0.240` short-circuits via the kernel's `local`
-routing table. The packet never touches the home router. Same
-mechanism for any other LAN device — just type its LAN address.
 
 ### One gotcha — local Ollama daemon binding
 
-Skip this section if you're using **Ollama Cloud** (direct API at
-`https://ollama.com/v1`). It only matters for the **Custom** tab when
-you're running an ollama daemon on the Pi host.
+Skip this if you're using **Ollama Cloud** (direct API at
+`https://ollama.com/v1`). It only matters for the **Custom** tab with a
+local ollama daemon.
 
 Ollama's default install binds `127.0.0.1` only. Containers can't reach
-loopback-bound services on the host, even with the right IP — the
-kernel's socket lookup rejects packets whose dest IP doesn't match
-the bind. Override with one systemd drop-in, then restart:
-
-```bash
-sudo systemctl edit ollama
-```
-
-Paste:
-
-```ini
-[Service]
-Environment="OLLAMA_HOST=0.0.0.0:11434"
-```
-
-Save, then:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl restart ollama
-ss -tlnp | grep 11434     # confirm: 0.0.0.0:11434, not 127.0.0.1:11434
-```
-
-Other LAN services (HA, MA) already bind their LAN interface — no
-override needed. Just type their address.
+loopback-bound services on the host. Override the bind to `0.0.0.0:11434`
+(on macOS: Ollama app → Settings → "Expose to network", or set
+`OLLAMA_HOST=0.0.0.0:11434`), then restart ollama. Confirm it's no longer
+loopback-only before pointing the wizard at the host LAN IP.
 
 ---
 
@@ -213,13 +209,10 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
   alpine stat -c '%g' /var/run/docker.sock
 ```
 
-The hermes uid=10000 host user is **not** required on macOS — Docker
-Desktop's VM handles socket perms internally.
-
 ### macOS wipe
 
 ```bash
-docker compose -f deploy/macos/docker-compose.yml down
-rm -rf ~/.sentient/                       # bind-mounted state
+docker compose -f deploy/macos/docker-compose.yml down   # or mac-prod
+rm -rf ~/.sentient/                       # bind-mounted state (incl. hermes brain)
 docker volume rm sentient-supervisor      # supervisord socket + programs
 ```

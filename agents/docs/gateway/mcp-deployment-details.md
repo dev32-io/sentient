@@ -150,7 +150,7 @@ When converting a `command:`-shaped MCP to the standard:
 1. Add `gateway/mcp/<name>/Dockerfile` that installs the package,
    pins version, and runs FastMCP HTTP on a fixed port.
 2. Add the service block to `deploy/docker/docker-compose.yml` (and
-   `deploy/pi/docker-compose.yml`). Mirror the network/`extra_hosts`
+   `deploy/mac-prod/docker-compose.yml`). Mirror the network/`extra_hosts`
    posture from the rules.
 3. Update `gateway/src/profile-store/profile-renderer.ts` to emit
    `url:` for that MCP. Remove the legacy `command/args/env` branch

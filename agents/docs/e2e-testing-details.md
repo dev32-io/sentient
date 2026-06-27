@@ -117,20 +117,24 @@ docker compose -f deploy/macos/docker-compose.yml restart gateway
 Wait for `/health` to come back, then verify the tab reconnected. The
 SDK's exponential-backoff path is in `shared/web-sdk/src/sdk-reconnect.ts`.
 
-## Pi / production smoke (NOT agent-driven)
+## Production smoke (macOS mini — NOT agent-driven)
 
-Pi rebuild + health-check + log-level smoke only:
+Production runs on the Apple-silicon Mac mini (`mini0@mini0.lan`). Rebuild +
+health-check + log-level smoke only:
 
 ```bash
-ssh kevinye@hacore.lan
-cd ~/sentient && git pull && docker compose -f deploy/pi/docker-compose.yml \
-  build gateway && docker compose -f deploy/pi/docker-compose.yml up -d gateway
-docker compose -f deploy/pi/docker-compose.yml ps
-docker compose -f deploy/pi/docker-compose.yml logs gateway --tail=200 \
+ssh mini0@mini0.lan
+cd ~/sentient && git pull && docker compose -f deploy/mac-prod/docker-compose.yml \
+  build gateway && docker compose -f deploy/mac-prod/docker-compose.yml up -d gateway
+docker compose -f deploy/mac-prod/docker-compose.yml ps
+docker compose -f deploy/mac-prod/docker-compose.yml logs gateway --tail=200 \
   | grep -E "WARN|ERROR" || echo "clean"
 ```
 
-Real-user smoke on Pi is the operator's job, not the agent's.
+Real-user smoke on prod is the operator's job, not the agent's. On PROD the
+agent is **observational only** — inspect container / mount / log state via
+SSH; never inject test chats or actively probe the live family assistant, and
+assume no prod credentials.
 
 ## When a case is genuinely unreachable
 

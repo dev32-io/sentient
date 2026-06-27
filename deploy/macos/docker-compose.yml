@@ -9,8 +9,9 @@
 #   loop. The fix is to back /data/supervisor with a docker NAMED VOLUME
 #   (ext4 inside the VM), which both gateway and hermes mount the same way.
 #
-# Linux / Pi don't have this problem because the bind mount is plain ext4 —
-# they keep the bind in deploy/docker/docker-compose.yml + deploy/pi/...
+# Linux doesn't have this problem because the bind mount is plain ext4 —
+# deploy/docker/docker-compose.yml keeps the plain bind. The macOS PRODUCTION
+# deploy (deploy/mac-prod/) uses this SAME named-volume workaround.
 #
 # All other persistent state (gateway-data, certs, secrets, profiles) stays
 # bind-mounted under ~/.sentient/ so the wipe story is mostly intact:

@@ -24,7 +24,7 @@ The gateway connects to this service over a WebSocket, sends raw mic audio, and 
 ```bash
 # On the Pi, create the host directories the container mounts into.
 # CHANGE ~/.sentient/stt-service/ if you prefer a different location —
-# then update the volume paths in deploy/pi/docker-compose.yml to match.
+# then update the volume paths in deploy/mac-prod/docker-compose.yml to match.
 mkdir -p ~/.sentient/stt-service/config
 mkdir -p ~/.sentient/stt-service/logs
 mkdir -p ~/.sentient/stt-service/recordings
@@ -37,7 +37,7 @@ cp capabilityServices/STTService/config/config.example.yaml \
 ### 2. Start the stack
 
 ```bash
-cd deploy/pi
+cd deploy/mac-prod
 docker compose up -d
 ```
 
@@ -397,7 +397,7 @@ These are set in the Dockerfile and should NOT be changed:
 | `/app/recordings/` | Turn WAV files | `~/.sentient/stt-service/recordings/` |
 | `/app/models/` | ML model weights | Baked into image (not mounted) |
 
-To change the **host** paths, edit `deploy/pi/docker-compose.yml`. The container-side paths are fixed.
+To change the **host** paths, edit `deploy/mac-prod/docker-compose.yml`. The container-side paths are fixed.
 
 ### Clearing disk space
 

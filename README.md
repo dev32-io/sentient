@@ -3,8 +3,8 @@
 A real-time streaming voice assistant for the home. Built around streaming
 STT, streaming TTS, mid-response barge-in, and a **per-user agent runtime
 sandboxed inside a Sentient-managed container jail** so a compromised
-agent cannot reach the host or other family members. Runs on a pair of
-Raspberry Pi 5 boards in production (or a single dev box for local
+agent cannot reach the host or other family members. Runs on an
+Apple-silicon Mac mini in production (or a single dev box for local
 development), with a web client today and an ESP32-S3 hardware "cube" +
 mobile clients in progress.
 
@@ -222,9 +222,13 @@ in `gateway/todo.md`:
 
 ## Hardware
 
-- **Production install:** dual Raspberry Pi 5 (capture Pi for mic + STT;
-  compute Pi for Hermes + TTS). Splitting capture from compute keeps mic
-  latency deterministic when the LLM container is busy.
+- **Production install:** an Apple-silicon Mac mini — enough headroom for a
+  faster agent loop plus local Whisper-large STT and large local TTS models,
+  which the previous Raspberry Pi 5 setup couldn't sustain. See
+  `deploy/mac-prod/`.
+- **Split option:** the lightweight gateway can still run on a small box
+  (e.g. a Pi) with the heavier sibling services hosted on a more powerful
+  machine — the orchestrator dials them over the network.
 - **Local development:** any Linux or macOS box with Docker.
 
 ## Quick start (local dev)

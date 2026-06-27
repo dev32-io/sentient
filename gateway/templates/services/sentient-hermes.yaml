@@ -22,5 +22,16 @@ volumes:
   - ${HOST_HOME}/.sentient/gateway/data:${HOST_HOME}/.sentient/gateway/data
   - /var/run/docker.sock:/var/run/docker.sock
   - ${HOST_HOME}/.sentient/run/sentient:/run/sentient
+  # The Hermes "brain" — the image declares `VOLUME /opt/data` (the hermes
+  # user's home: sessions/chat history, memories, SOUL.md, config.yaml,
+  # skills, plans, hooks). WITHOUT this bind Docker creates an ANONYMOUS
+  # volume that lives outside ~/.sentient (invisible to backup/migration)
+  # and is orphaned on any orchestrator-driven recreate. Bind it under
+  # ~/.sentient so all persistent state is captured by one rsync.
+  # Ownership: /opt/data is uid:gid 10000 (USER hermes). On Linux the host
+  # dir must be chowned 10000 (see admin/chown-hermes.ts, overridable via
+  # SENTIENT_HERMES_UID/GID); on macOS Docker Desktop virtiofs remaps
+  # bind-mount ownership so the container writes regardless.
+  - ${HOST_HOME}/.sentient/hermes/data:/opt/data
 group_add:
   - "${HOST_DOCKER_GID}"

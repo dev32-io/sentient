@@ -150,7 +150,7 @@ class Config:
 
     Paths are NOT in ``config.yaml`` on purpose: they are container-
     internal, fixed by the Dockerfile, and must match the volume
-    mounts declared in ``deploy/pi/docker-compose.yml``. Putting them
+    mounts declared in ``deploy/mac-prod/docker-compose.yml``. Putting them
     in a third place would create a three-way sync footgun.
     """
 

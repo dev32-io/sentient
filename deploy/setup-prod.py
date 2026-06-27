@@ -11,7 +11,8 @@ Idempotent: re-run any time after `git pull` to refresh images. Existing
 state (~/.sentient/, secrets, gateway-data) is never touched.
 
 Usage:
-    python3 deploy/setup-prod.py
+    python3 deploy/setup-prod.py            # targets deploy/mac-prod (production)
+    python3 deploy/setup-prod.py <name>     # target deploy/<name> instead
 """
 from __future__ import annotations
 
@@ -26,10 +27,15 @@ from pathlib import Path
 from typing import Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PI_DIR = REPO_ROOT / "deploy" / "pi"
-COMPOSE_FILE = PI_DIR / "docker-compose.yml"
-ENV_FILE = PI_DIR / ".env"
-ENV_EXAMPLE = PI_DIR / ".env.example"
+
+# Which deploy/<dir> to target. Defaults to mac-prod (current production —
+# Apple-silicon Mac mini). Pass a name to target another prod env, e.g.
+#   python3 deploy/setup-prod.py docker
+DEPLOY_NAME = sys.argv[1] if len(sys.argv) > 1 else "mac-prod"
+DEPLOY_DIR = REPO_ROOT / "deploy" / DEPLOY_NAME
+COMPOSE_FILE = DEPLOY_DIR / "docker-compose.yml"
+ENV_FILE = DEPLOY_DIR / ".env"
+ENV_EXAMPLE = DEPLOY_DIR / ".env.example"
 SENTIENT_CERT_DIR = Path.home() / ".sentient" / "certs"
 
 # ANSI colors — works in any modern terminal; degrades gracefully if piped.
@@ -75,10 +81,16 @@ def run(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess[str]:
 def check_docker_cli() -> bool:
     if shutil.which("docker") is None:
         fail("`docker` not found on PATH.")
-        print(
-            f"\n  Install:  {DIM}curl -fsSL https://get.docker.com | sh{RESET}\n"
-            f"  Then:     {DIM}sudo usermod -aG docker $USER && newgrp docker{RESET}\n"
-        )
+        if platform.system() == "Darwin":
+            print(
+                f"\n  Install Docker Desktop:  {DIM}brew install --cask docker{RESET}\n"
+                f"  Launch once:             {DIM}open -a Docker{RESET}\n"
+            )
+        else:
+            print(
+                f"\n  Install:  {DIM}curl -fsSL https://get.docker.com | sh{RESET}\n"
+                f"  Then:     {DIM}sudo usermod -aG docker $USER && newgrp docker{RESET}\n"
+            )
         return False
     try:
         run(["docker", "version", "--format", "{{.Server.Version}}"])
@@ -187,15 +199,15 @@ def build_images() -> bool:
         )
         return True
 
-    info("Building images. First run on a Pi 5 takes ~10-15 min (STT models bake).")
+    info("Building images. First run takes ~10-20 min (STT + Hermes images bake).")
+    # Explicit working set — skip signal-cli (optional Signal bridge): its
+    # upstream Dockerfile currently fails on a libsignal-client jar version
+    # mismatch and it's not part of the core voice/chat path. Add it back here
+    # once that pin is fixed.
     cmd = [
-        "docker",
-        "compose",
-        "-f",
-        str(COMPOSE_FILE),
-        "--profile",
-        "build-only",
-        "build",
+        "docker", "compose", "-f", str(COMPOSE_FILE),
+        "--profile", "build-only", "build",
+        "gateway", "stt-service", "hermes", "ma-mcp", "searxng-mcp", "fetch-mcp",
     ]
     # Stream output directly — buildx already renders its own progress UI.
     rc = subprocess.call(cmd, cwd=REPO_ROOT)
@@ -367,7 +379,7 @@ def configure_tls_cert() -> bool:
     # sees a dangling symlink, the gateway treats the cert as missing, and
     # boot falls back to self-signed generation against a read-only mount
     # (which then errors on key.pem write). See the volumes block in
-    # deploy/pi/docker-compose.yml.
+    # the deploy compose's volumes block.
     upsert_env(ENV_FILE, "HOST_CERT_DIR", str(cert_dir))
     ok(f"wrote HOST_CERT_DIR={cert_dir} to {ENV_FILE.relative_to(REPO_ROOT)}")
     return True
@@ -424,7 +436,7 @@ def print_next_steps() -> None:
         f"`rm -rf ~/.sentient` is the only wipe needed for a fresh start.\n\n"
         "  Then open the wizard:\n\n"
         f"    {GREEN}https://localhost:8888{RESET}    "
-        f"{DIM}(or https://<pi-ip>:8888 from another device){RESET}\n\n"
+        f"{DIM}(or https://<host>:8888 from another device){RESET}\n\n"
         "  Tail logs:\n\n"
         f"    {DIM}docker compose -f {COMPOSE_FILE.relative_to(REPO_ROOT)} "
         f"logs -f gateway{RESET}\n"
@@ -432,7 +444,11 @@ def print_next_steps() -> None:
 
 
 def main() -> int:
-    print(f"{BOLD}Sentient — production setup{RESET}\n")
+    print(f"{BOLD}Sentient — production setup{RESET}  {DIM}(deploy/{DEPLOY_NAME}){RESET}\n")
+
+    if not COMPOSE_FILE.exists():
+        fail(f"no compose at {COMPOSE_FILE.relative_to(REPO_ROOT)} — check the deploy-dir arg")
+        return 1
 
     info("Checking docker access")
     if not check_docker_cli():
@@ -442,7 +458,7 @@ def main() -> int:
     if not check_hermes_user():
         return 1
 
-    info("Checking deploy/pi/.env")
+    info(f"Checking {ENV_FILE.relative_to(REPO_ROOT)}")
     if not check_env():
         return 1
 
