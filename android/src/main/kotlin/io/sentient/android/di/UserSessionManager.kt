@@ -21,6 +21,7 @@ import android.content.Context
 import io.sentient.android.backend.BackendConfigHolder
 import io.sentient.android.backend.ResolvedBackend
 import io.sentient.android.backend.resolveBackend
+import io.sentient.android.presence.NetworkChangeObserver
 import io.sentient.android.presence.PresenceCoordinator
 import io.sentient.android.sdk.AppDependencies
 import io.sentient.android.sdk.SdkFaultHolder
@@ -56,6 +57,7 @@ class UserSessionManager(
 
     private var scope: CoroutineScope? = null
     private var chatComponent: ChatComponent? = null
+    private var networkObserver: NetworkChangeObserver? = null
 
     /**
      * The active [ChatComponent]. Builds the SDK + scope on first call and launches
@@ -114,6 +116,16 @@ class UserSessionManager(
                 }
             }
         }
+
+        // Reconnect on a network-path change (VPN→WiFi, etc.): verify the socket so a
+        // queued send is never stranded on a dead-but-"READY" connection.
+        networkObserver = NetworkChangeObserver(appContext) {
+            chatComponent?.let {
+                log.info("network-changed → ensureConnected")
+                it.ensureConnected()
+            }
+        }.also { it.start() }
+
         return component
     }
 
@@ -179,6 +191,8 @@ class UserSessionManager(
     fun shutdown() {
         log.info("shutdown")
         presence?.unbind()
+        networkObserver?.stop()
+        networkObserver = null
         chatComponent?.disconnect(clearSession = true)
         chatComponent?.close()
         scope?.cancel()
