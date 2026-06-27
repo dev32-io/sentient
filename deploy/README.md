@@ -56,26 +56,35 @@ auto security updates — lives in your ops runbook, not here.)
 The hermes uid=10000 host user is **not** required on macOS — Docker
 Desktop's VM handles bind-mount ownership internally.
 
-### 2. Clone + configure
+### 2. Clone + run the setup helper
 
 ```bash
 git clone <repo-url> ~/sentient
 cd ~/sentient
+python3 deploy/setup-prod.py
+```
+
+`setup-prod.py` is the install/update helper: it verifies docker, auto-detects
+and writes `HOST_DOCKER_GID` into `deploy/mac-prod/.env`, builds the images, and
+clears stale containers — then stops short of `up` so you choose when to go
+live. **Re-run it any time after `git pull`** to refresh. Targets
+`deploy/mac-prod` by default; pass a name (e.g. `python3 deploy/setup-prod.py docker`)
+to target another deploy dir.
+
+<details><summary>Manual equivalent (if you skip the script)</summary>
+
+```bash
 cp deploy/mac-prod/.env.example deploy/mac-prod/.env
+# HOST_DOCKER_GID = GID inside the Docker Desktop VM:
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock alpine stat -c '%g' /var/run/docker.sock
+docker compose -f deploy/mac-prod/docker-compose.yml --profile build-only build \
+  gateway stt-service hermes ma-mcp searxng-mcp fetch-mcp
 ```
+</details>
 
-Set `HOST_DOCKER_GID` — the GID inside the Docker Desktop VM:
+### 3. Bring it up
 
 ```bash
-docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-  alpine stat -c '%g' /var/run/docker.sock
-```
-
-### 3. Build + bring up
-
-```bash
-docker compose -f deploy/mac-prod/docker-compose.yml --profile build-only build
-docker compose -f deploy/mac-prod/docker-compose.yml build gateway
 docker compose -f deploy/mac-prod/docker-compose.yml up -d
 docker compose -f deploy/mac-prod/docker-compose.yml logs -f gateway
 ```
@@ -107,8 +116,7 @@ exception — externally managed by `acme.sh`.)
 ```bash
 cd ~/sentient
 git pull
-docker compose -f deploy/mac-prod/docker-compose.yml --profile build-only build
-docker compose -f deploy/mac-prod/docker-compose.yml build gateway
+python3 deploy/setup-prod.py          # rebuild images + clear stale containers
 docker compose -f deploy/mac-prod/docker-compose.yml up -d
 ```
 
