@@ -50,8 +50,8 @@ class NetworkChangeObserver(
             log.warn("start.skip", mapOf("reason" to "no-ConnectivityManager"))
             return
         }
-        started = true
         manager.registerDefaultNetworkCallback(callback)
+        started = true
         log.info("start")
     }
 

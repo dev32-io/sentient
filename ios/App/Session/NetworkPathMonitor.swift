@@ -18,12 +18,16 @@ final class NetworkPathMonitor: @unchecked Sendable {
     private let log = AppLog("net-path-monitor")
     /// Single-writer (the monitor queue) flag: skip the initial path snapshot.
     private var sawFirstPath = false
+    /// Main-actor-confined (set only from start/cancel, called by UserSession on MainActor).
+    private var started = false
 
     init(onChange: @escaping @Sendable () -> Void) {
         self.onChange = onChange
     }
 
     func start() {
+        if started { return }
+        started = true
         log.info("start")
         monitor.pathUpdateHandler = { [weak self] path in
             guard let self else { return }
@@ -42,5 +46,6 @@ final class NetworkPathMonitor: @unchecked Sendable {
     func cancel() {
         log.info("cancel")
         monitor.cancel()
+        started = false
     }
 }
