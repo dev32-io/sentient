@@ -3,7 +3,7 @@ paths:
   - "deploy/docker/**/*.yml"
   - "deploy/docker/**/*.yaml"
   - "deploy/docker/**/Dockerfile"
-  - "deploy/pi/**/*.yml"
+  - "deploy/mac-prod/**/*.yml"
   - "gateway/config.yaml"
   - "gateway/mcp/**"
   - "gateway/src/profile-store/profile-renderer.ts"

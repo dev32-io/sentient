@@ -12,7 +12,7 @@
 #
 # Container-internal paths (/app/models, /app/logs, /app/data/recordings)
 # are fixed in the Dockerfile and mounted from the host. Change the
-# HOST paths in deploy/pi/docker-compose.yml if you want the data
+# HOST paths in deploy/mac-prod/docker-compose.yml if you want the data
 # somewhere other than ~/.sentient/stt-service/.
 
 # =============================================================================
@@ -30,7 +30,7 @@ server:
   host: "0.0.0.0"
 
   # WebSocket port inside the container. If you ever move this, update
-  # the host->container port mapping in deploy/pi/docker-compose.yml too.
+  # the host->container port mapping in deploy/mac-prod/docker-compose.yml too.
   port: 8766
 
   # Maximum accepted WebSocket frame size in bytes. 16 MiB ≈ 8 minutes

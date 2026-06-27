@@ -1,6 +1,6 @@
 # Sentient
 
-Voice gateway for a family AI assistant on Raspberry Pi 5.
+Voice gateway for a family AI assistant. Production runs on an Apple-silicon Mac mini (`deploy/mac-prod/`; the retired Raspberry Pi setup was `deploy/pi/`).
 
 ## MANDATORY — Read Rules First
 

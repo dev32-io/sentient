@@ -156,7 +156,7 @@ export type TlsConfig = z.output<typeof tlsConfigSchema>;
 
 export const loggingConfigSchema = z.object({
   // Log verbosity. "debug" for local dev (deploy/docker/), "info" for
-  // production (deploy/pi/). Lower-cased; accepts debug|info|warning|error.
+  // production (deploy/mac-prod/). Lower-cased; accepts debug|info|warning|error.
   level: z.enum(["debug", "info", "warning", "error"]).default("info"),
 
   // Number of days to keep rotated log files. Files older than this are
