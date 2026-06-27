@@ -26,6 +26,9 @@ final class UserSession: ObservableObject {
     /// The KMP User-scope holder: SDK + ChatComponent + session scope.
     private let inner: IosUserSession
     private let log = AppLog("user-session")
+    /// Persistent network-path observer: a path change (VPN→WiFi, etc.) re-checks the
+    /// socket so a queued send is never stranded on a dead-but-"READY" connection.
+    private var networkMonitor: NetworkPathMonitor?
 
     /// The shared usecase layer for this login. Chat + history VMs resolve their
     /// usecases / passthroughs from here — never the SDK directly.
@@ -50,6 +53,16 @@ final class UserSession: ObservableObject {
         log.info("init — open")
         // Background connect: the chat UI is usable immediately; reconnect is the SDK's.
         inner.open()
+        // Start the network-path observer: on a path change, verify the socket.
+        let monitor = NetworkPathMonitor(onChange: { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                self.log.info("network-changed → ensureConnected")
+                self.component.ensureConnected()
+            }
+        })
+        monitor.start()
+        self.networkMonitor = monitor
     }
 
     /// Build a thin per-conversation ChatViewModel over the shared ChatComponent.
@@ -87,6 +100,8 @@ final class UserSession: ObservableObject {
     /// Logout teardown: disconnect (clearSession=true) + cancel the session scope.
     func shutdown() {
         log.info("shutdown")
+        networkMonitor?.cancel()
+        networkMonitor = nil
         inner.close()
     }
 }
