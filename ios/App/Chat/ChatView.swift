@@ -39,6 +39,9 @@ struct ChatView: View {
     /// User's display name for bubble avatars and drawer header.
     let userName: String
 
+    /// Shared OTA-update state (owned by UpdateGate); read by the Settings sheet.
+    let updateModel: UpdateModel
+
     /// History select → host flips activeSessionId (rebuilds the VM).
     let onSelectSession: (String) -> Void
     /// New chat → host sets activeSessionId = nil (a fresh conversation).
@@ -67,6 +70,7 @@ struct ChatView: View {
         makeVM: @escaping () -> ChatViewModel,
         makeHistoryVM: @escaping () -> HistoryViewModel,
         userName: String,
+        updateModel: UpdateModel,
         onSelectSession: @escaping (String) -> Void,
         onNewChat: @escaping () -> Void,
         onOpenSettings: @escaping () -> Void,
@@ -75,6 +79,7 @@ struct ChatView: View {
         _vm = StateObject(wrappedValue: makeVM())
         _historyModel = StateObject(wrappedValue: makeHistoryVM())
         self.userName = userName
+        self.updateModel = updateModel
         self.onSelectSession = onSelectSession
         self.onNewChat = onNewChat
         self.onOpenSettings = onOpenSettings
@@ -139,6 +144,7 @@ struct ChatView: View {
         )
         .sheet(isPresented: $settingsPresented) {
             SettingsSheet(
+                updateModel: updateModel,
                 onLogout: {
                     onLogout()
                     settingsPresented = false

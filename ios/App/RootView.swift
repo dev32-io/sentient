@@ -19,6 +19,12 @@
 // per authed entry: ONE ChatComponent + SDK that survives navigation. Logout
 // (UserSessionHost.logout → appConfig.logout → hasToken=false) exits the authed
 // branch → the UserSession @StateObject deinits → its KMP session is shut down.
+//
+// The authed branch is wrapped in UpdateGate: it owns the shared UpdateModel, runs
+// the cold-start OTA check, and renders the force-update gate (blocking, ahead of
+// chat) / optional banner overlay. Auth-scoped (mounts only on the hasToken
+// branch) so it rebuilds fresh on logout/reconfigure, and a WS drop never bounces
+// to login — the gate keys on AUTH, never transport.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
@@ -40,7 +46,7 @@ struct RootView: View {
                     onSaved: { showSetupOverride = false }
                 )
             } else if appConfig.hasToken {
-                UserSessionHost(appConfig: appConfig)
+                UpdateGate(appConfig: appConfig)
             } else {
                 LoginView(
                     onConnect: { appConfig.didLogin() },
