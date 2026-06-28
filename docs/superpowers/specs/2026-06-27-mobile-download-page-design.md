@@ -162,13 +162,11 @@ mobile 390×844). Native on-device install is flagged for manual verify.
 > iOS actual on-device itms install is **not chromium-testable** → flagged for manual
 > verify on a registered device in handover.
 
-## Open item (non-blocking)
+## Transport
 
-User reports serving on `80` + `443`, but exploration found only a `:443` (and `:8888`)
-listener in `deploy/mac-prod/`, no `:80`. itms-services + APK trust both need HTTPS (present
-via the acme cert), so `/download` works on 443. Add an `:80→:443` redirect if `:80` isn't
-already wired, so a bare `http://sentient.dev32.io/download` typed on a phone doesn't
-dead-end. Verify the actual `:80` state during implementation.
+HTTPS-only. The stack serves `/download` and all artifacts over `443` (acme cert on
+`sentient.dev32.io`) — required anyway for itms-services + APK trust. No `:80` listener,
+no HTTP→HTTPS redirect.
 
 ## Out of scope (YAGNI)
 
