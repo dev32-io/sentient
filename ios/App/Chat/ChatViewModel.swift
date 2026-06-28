@@ -90,7 +90,10 @@ final class ChatViewModel: ObservableObject {
     func retry(_ pendingId: String) {
         log.info("retry pendingId=\(pendingId)")
         cache.retry(id: pendingId)
-        if !isReady { component.forceReconnect() }
+        // Verify the socket rather than trusting a possibly-stale READY: a dead socket
+        // after a silent path change still reports READY, so a bare re-send would fail
+        // again. ensureConnected() probes (READY→ping→reconnect-if-dead) or reconnects.
+        component.ensureConnected()
         component.sendMessage.flushIfReady(cache: cache, status: connection.status)
     }
 
