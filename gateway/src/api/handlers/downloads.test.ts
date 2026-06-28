@@ -16,6 +16,28 @@ function fixtureDir(): string {
   return dir;
 }
 
+/** Fixture with a full manifest (android + ios blocks) for plist serving tests. */
+function fixtureDirWithIos(): string {
+  const dir = mkdtempSync(join(tmpdir(), "dl-ios-"));
+  writeFileSync(
+    join(dir, "manifest.json"),
+    JSON.stringify({
+      android: { versionCode: 7 },
+      ios: {
+        bundleVersion: 3,
+        shortVersion: "0.1.5",
+        bundleId: "io.test.app",
+        url: "/download/ios/latest.ipa",
+        manifestUrl: "/download/ios/manifest.plist",
+      },
+    }),
+  );
+  mkdirSync(join(dir, "android"), { recursive: true });
+  writeFileSync(join(dir, "android", "latest.apk"), "APKBYTES");
+  mkdirSync(join(dir, "ios"), { recursive: true });
+  return dir;
+}
+
 function handler(dir: string) {
   return createDownloadsHandler({
     artifactsDir: dir,
@@ -64,11 +86,15 @@ describe("downloads handler", () => {
   });
 
   it("serves the ios plist at /download/ios/manifest.plist", async () => {
-    const dir = fixtureDir();
-    mkdirSync(join(dir, "ios"), { recursive: true });
-    const res = await handler(dir)(new Request("https://x/download/ios/manifest.plist"));
+    const res = await handler(fixtureDirWithIos())(new Request("https://x/download/ios/manifest.plist"));
     expect(res?.status).toBe(200);
     expect(res?.headers.get("content-type")).toContain("application/xml");
+  });
+
+  it("404s /download/ios/manifest.plist when manifest has no ios block", async () => {
+    // android-only manifest — servePlist must guard and return 404, not 500
+    const res = await handler(fixtureDir())(new Request("https://x/download/ios/manifest.plist"));
+    expect(res?.status).toBe(404);
   });
 
   it("serves /download/qr.png as image/png with max-age=3600", async () => {

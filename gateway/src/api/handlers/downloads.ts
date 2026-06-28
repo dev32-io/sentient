@@ -80,6 +80,8 @@ async function servePlist(deps: DownloadsHandlerDeps): Promise<Response> {
   const manifestFile = Bun.file(manifestPath);
   if (!(await manifestFile.exists())) return notFound("/download/ios/manifest.plist");
   const manifest: unknown = await manifestFile.json();
+  const iosBlock = (manifest as { ios?: { url?: string } }).ios;
+  if (!iosBlock?.url) return notFound("/download/ios/manifest.plist");
   const plist = deps.renderPlist(manifest);
   log.info("plist-serve", { bytes: plist.length });
   return new Response(plist, {

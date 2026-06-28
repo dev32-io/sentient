@@ -162,6 +162,11 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
     idleTimeout: Math.floor(services.session.ws_idle_timeout_ms / 1000),
     ...(services.tls ? { tls: services.tls } : {}),
 
+    error(err: Error): Response {
+      log.warn("server-error", { type: err.constructor.name, message: err.message });
+      return new Response("Internal Server Error", { status: 500 });
+    },
+
     async fetch(request, serverInstance) {
       const router = createApiRouter({
         handleDownloads,
