@@ -12,6 +12,7 @@ const nullStatic = async (_req: Request) => null as Response | null;
 
 function makeDeps(overrides: Partial<ApiRouterDeps> = {}): ApiRouterDeps {
   return {
+    handleDownloads: nullStatic,
     handleHealth: fallthrough,
     handleReady: fallthrough,
     handleWsUpgrade: (_req) => undefined,

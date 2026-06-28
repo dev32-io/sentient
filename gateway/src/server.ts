@@ -6,6 +6,9 @@ import { type ApplyHandlerDeps, createApplyHandler } from "./api/handlers/apply.
 import { createAuthHandler } from "./api/handlers/auth.ts";
 import { createDevicesHandler } from "./api/handlers/devices.ts";
 import { createDiagnosticsHandler } from "./api/handlers/diagnostics.ts";
+import { renderDownloadPage } from "./api/handlers/downloads-page.ts";
+import { renderItmsPlist } from "./api/handlers/downloads-plist.ts";
+import { createDownloadsHandler } from "./api/handlers/downloads.ts";
 import { createHealthHandler } from "./api/handlers/health.ts";
 import { createInstallStateHandler } from "./api/handlers/install-state.ts";
 import { createMcpCatalogHandler } from "./api/handlers/mcp-catalog.ts";
@@ -126,6 +129,12 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
     tokens: services.auth.tokens,
   });
   const handleStatic = createWebuiHandler({ distDir: services.webDistDir });
+  const handleDownloads = createDownloadsHandler({
+    artifactsDir: services.downloads.artifactsDir,
+    publicBaseUrl: services.downloads.publicBaseUrl,
+    renderLandingPage: () => renderDownloadPage(services.downloads.publicBaseUrl),
+    renderPlist: (manifest) => renderItmsPlist(manifest, services.downloads.publicBaseUrl),
+  });
   const handleWizard = createWizardHandler({
     installState: services.installState,
     unlockCode: services.unlockCode,
@@ -155,6 +164,7 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
 
     async fetch(request, serverInstance) {
       const router = createApiRouter({
+        handleDownloads,
         handleHealth,
         handleReady,
         handleWsUpgrade: createWsUpgradeHandler(serverInstance),
