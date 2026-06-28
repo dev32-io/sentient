@@ -111,6 +111,7 @@
     flex-wrap: nowrap;
     gap: 6px;
     padding: 10px 12px;
+    min-width: 0; /* allow the strip to shrink to the column so overflow-x clips, not expands */
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }

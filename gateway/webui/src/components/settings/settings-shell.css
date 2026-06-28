@@ -39,8 +39,14 @@
 }
 
 @media (max-width: 880px) {
-  .settings-v2 { grid-template-columns: 1fr; }
+  /* minmax(0, 1fr), NOT a bare 1fr: a plain 1fr track keeps an implicit
+     min-width:min-content, so the wide horizontal nav strip would blow the
+     column out past the viewport (content clipped by app-shell, not scrolled).
+     minmax(0,…) + min-width:0 lets the column shrink to the viewport and the
+     strip scroll internally; panes then wrap correctly. */
+  .settings-v2 { grid-template-columns: minmax(0, 1fr); }
   .settings-v2 .s-side {
+    min-width: 0;
     border-right: 0;
     border-bottom: 1px solid var(--color-line-soft);
     /* keep the strip pinned + scrollable on narrow screens */
