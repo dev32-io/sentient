@@ -1,8 +1,32 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createDownloadsHandler } from "./downloads.ts";
+
+// Bun global is not present in vitest's Node worker threads. Stub it with a
+// node:fs-backed implementation so Bun.file() calls in the handler work in tests
+// while the real streaming Bun.file is used in production.
+beforeAll(() => {
+  vi.stubGlobal("Bun", {
+    file: (path: string) => {
+      // Build a Blob from the real file bytes so blob.size is correct and
+      // new Response(blob) works as a BodyInit. Blob.size is readonly so we
+      // cannot add our own size getter via Object.assign — the natural value is fine.
+      const bytes = existsSync(path) ? readFileSync(path) : Buffer.alloc(0);
+      const blob = new Blob([bytes]);
+      return Object.assign(blob, {
+        exists: async () => existsSync(path),
+        json: async () => JSON.parse(readFileSync(path, "utf8")),
+        text: async () => readFileSync(path, "utf8"),
+      });
+    },
+  });
+});
+
+afterAll(() => {
+  vi.unstubAllGlobals();
+});
 
 function fixtureDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "dl-"));
@@ -57,5 +81,13 @@ describe("downloads handler", () => {
     // a recognisable traversal attempt that the handler must reject.
     const res = await handler(fixtureDir())(new Request("https://x/download/..%2Fetc%2Fpasswd"));
     expect(res?.status).toBe(404);
+  });
+
+  it("serves the ios plist at /download/ios/manifest.plist", async () => {
+    const dir = fixtureDir();
+    mkdirSync(join(dir, "ios"), { recursive: true });
+    const res = await handler(dir)(new Request("https://x/download/ios/manifest.plist"));
+    expect(res?.status).toBe(200);
+    expect(res?.headers.get("content-type")).toContain("application/xml");
   });
 });

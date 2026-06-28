@@ -1,4 +1,3 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { getLog } from "../../logging/logger.js";
 
@@ -45,12 +44,12 @@ export function createDownloadsHandler(deps: DownloadsHandlerDeps): DownloadsHan
     if (ENCODED_TRAVERSAL.test(pathname)) return notFound(pathname);
 
     if (pathname === PREFIX) return html(deps.renderLandingPage());
-    if (pathname === "/download/ios/manifest.plist") return servePlist(deps);
+    if (pathname === "/download/ios/manifest.plist") return await servePlist(deps);
 
     const route = ARTIFACT_ROUTES[pathname];
     if (!route) return notFound(pathname);
 
-    return serveFile(join(deps.artifactsDir, route.file), route.mime, pathname, artifactsDirResolved);
+    return await serveFile(join(deps.artifactsDir, route.file), route.mime, pathname, artifactsDirResolved);
   };
 }
 
@@ -60,26 +59,33 @@ function html(body: string): Response {
   });
 }
 
-function servePlist(deps: DownloadsHandlerDeps): Response {
+async function servePlist(deps: DownloadsHandlerDeps): Promise<Response> {
   const manifestPath = join(deps.artifactsDir, "manifest.json");
-  if (!existsSync(manifestPath)) return notFound("/download/ios/manifest.plist");
-  const manifest: unknown = JSON.parse(readFileSync(manifestPath, "utf8"));
-  return new Response(deps.renderPlist(manifest), {
+  const manifestFile = Bun.file(manifestPath);
+  if (!(await manifestFile.exists())) return notFound("/download/ios/manifest.plist");
+  const manifest: unknown = await manifestFile.json();
+  const plist = deps.renderPlist(manifest);
+  log.info("plist-serve", { bytes: plist.length });
+  return new Response(plist, {
     headers: { "Content-Type": "application/xml; charset=utf-8", "Cache-Control": NO_CACHE },
   });
 }
 
-function serveFile(path: string, mime: string, pathname: string, artifactsDirResolved: string): Response {
+async function serveFile(
+  path: string,
+  mime: string,
+  pathname: string,
+  artifactsDirResolved: string,
+): Promise<Response> {
   // Defense-in-depth: verify the resolved path is within artifactsDir even when routes
   // are hardcoded, to catch any future dynamic routing mistakes.
   const resolvedPath = resolve(path);
   if (!resolvedPath.startsWith(`${artifactsDirResolved}/`)) return notFound(pathname);
 
-  if (!existsSync(resolvedPath)) return notFound(pathname);
-  const size = statSync(resolvedPath).size;
-  log.info("artifact-serve", { path: pathname, bytes: size, mime });
-  const body = readFileSync(resolvedPath);
-  return new Response(body, { headers: { "Content-Type": mime, "Cache-Control": NO_CACHE } });
+  const file = Bun.file(resolvedPath);
+  if (!(await file.exists())) return notFound(pathname);
+  log.info("artifact-serve", { path: pathname, bytes: file.size, mime });
+  return new Response(file, { headers: { "Content-Type": mime, "Cache-Control": NO_CACHE } });
 }
 
 function notFound(pathname: string): Response {
