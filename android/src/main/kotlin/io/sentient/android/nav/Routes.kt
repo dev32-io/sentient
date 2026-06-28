@@ -21,6 +21,9 @@ object Routes {
 
     const val SETTINGS = "settings"
 
+    /** Full-screen blocking gate routed AHEAD of the authed destination on a mandatory update. */
+    const val FORCE_UPDATE = "force-update"
+
     /** Build a concrete chat route. Null sessionId → new chat (no query value). */
     fun chat(sessionId: String?): String =
         if (sessionId == null) "chat" else "chat?$ARG_SESSION_ID=$sessionId"

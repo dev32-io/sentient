@@ -26,6 +26,8 @@ import io.sentient.android.presence.PresenceCoordinator
 import io.sentient.android.sdk.AppDependencies
 import io.sentient.android.sdk.SdkFaultHolder
 import io.sentient.android.sdk.buildAuthHttpClient
+import io.sentient.android.update.UpdateDeps
+import io.sentient.android.update.buildUpdateDeps
 import io.sentient.mobiledata.di.ChatComponent
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.sdk.SdkConfig
@@ -33,6 +35,8 @@ import io.sentient.mobilesdk.sdk.SentientSdk
 import io.sentient.mobilesdk.sdk.createPlatformBundle
 import io.sentient.mobilesdk.sdk.isTerminalAuthError
 import io.sentient.mobilesdk.sessions.SessionsHttpClient
+import io.sentient.mobilesdk.update.AppUpdateInstaller
+import io.sentient.mobilesdk.update.UpdateChecker
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -58,6 +62,7 @@ class UserSessionManager(
     private var scope: CoroutineScope? = null
     private var chatComponent: ChatComponent? = null
     private var networkObserver: NetworkChangeObserver? = null
+    private var updateDeps: UpdateDeps? = null
 
     /**
      * The active [ChatComponent]. Builds the SDK + scope on first call and launches
@@ -130,14 +135,7 @@ class UserSessionManager(
     }
 
     private fun buildSdk(sessionScope: CoroutineScope): SentientSdk {
-        val r = resolveBackend(
-            override = BackendConfigHolder.store.config.value,
-            buildTimeDefaultUrl = io.sentient.android.BuildConfig.GATEWAY_WS_URL,
-            buildTimeAllowSelfSigned = io.sentient.android.BuildConfig.DEBUG,
-        )
-        require(r is ResolvedBackend.Configured) {
-            "UserSessionManager.component() called while backend unconfigured"
-        }
+        val r = resolveConfiguredBackend()
         val config = SdkConfig(
             gatewayWsUrl = r.gatewayWsUrl,
             allowSelfSignedDevHost = r.allowSelfSignedDevHost,
@@ -162,6 +160,39 @@ class UserSessionManager(
         )
     }
 
+    /** The resolved backend, or throw — every session/update dep needs a configured host. */
+    private fun resolveConfiguredBackend(): ResolvedBackend.Configured {
+        val r = resolveBackend(
+            override = BackendConfigHolder.store.config.value,
+            buildTimeDefaultUrl = io.sentient.android.BuildConfig.GATEWAY_WS_URL,
+            buildTimeAllowSelfSigned = io.sentient.android.BuildConfig.DEBUG,
+        )
+        require(r is ResolvedBackend.Configured) {
+            "UserSessionManager accessed while backend unconfigured"
+        }
+        return r
+    }
+
+    /** Connection-scoped OTA checker. Built lazily from the resolved gateway host;
+     *  reset by [shutdown] so a re-login rebuilds against the current backend. */
+    fun updateChecker(): UpdateChecker = updateDeps().checker
+
+    /** Connection-scoped OTA installer (downloads the apk + opens PackageInstaller). */
+    fun updateInstaller(): AppUpdateInstaller = updateDeps().installer
+
+    private fun updateDeps(): UpdateDeps = updateDeps ?: run {
+        val r = resolveConfiguredBackend()
+        // Reuse one Ktor client (JSON ContentNegotiation + dev TLS bypass) for both the
+        // manifest fetch and the apk download — same engine/TLS policy as the AuthClient.
+        buildUpdateDeps(
+            appContext = appContext,
+            gatewayWsUrl = r.gatewayWsUrl,
+            httpClient = buildAuthHttpClient(r.allowSelfSignedDevHost),
+            installedBuild = io.sentient.android.BuildConfig.VERSION_CODE,
+            installedVersionName = io.sentient.android.BuildConfig.VERSION_NAME,
+        ).also { updateDeps = it }
+    }
+
     /** App foreground → one-shot liveness probe; reconnect (+ resume session) only if dead. */
     fun resume() {
         val c = chatComponent ?: return
@@ -179,9 +210,20 @@ class UserSessionManager(
         // Do NOT drop the socket on background. See [resume].
     }
 
-    /** Attach this session's pause/resume to the app-scoped presence relay. */
-    fun bindPresence() {
-        presence?.bind(onForeground = ::resume, onBackground = ::pause)
+    /**
+     * Attach this session's pause/resume to the app-scoped presence relay.
+     *
+     * [onForegroundExtra] rides the SAME foreground signal (so it inherits the relay's
+     * COLD-START-SKIP — it never fires on the first foreground after launch). Used to
+     * trigger the OTA update check on a real foreground without giving the relay any
+     * update knowledge. The relay's bind is last-wins, so this MUST be the single bind
+     * site that composes both concerns.
+     */
+    fun bindPresence(onForegroundExtra: () -> Unit = {}) {
+        presence?.bind(
+            onForeground = { resume(); onForegroundExtra() },
+            onBackground = ::pause,
+        )
     }
 
     /**
@@ -199,5 +241,7 @@ class UserSessionManager(
         if (io.sentient.android.BuildConfig.DEBUG) SdkFaultHolder.clear()
         chatComponent = null
         scope = null
+        // Drop the update deps so a re-login rebuilds them against the current backend.
+        updateDeps = null
     }
 }

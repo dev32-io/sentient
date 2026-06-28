@@ -22,11 +22,17 @@
 // ---------------------------------------------------------------------------
 package io.sentient.android.nav
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.semantics
@@ -50,6 +56,10 @@ import io.sentient.android.sdk.DisplayNameHolder
 import io.sentient.android.settings.SettingsScreen
 import io.sentient.android.settings.SettingsViewModel
 import io.sentient.android.splash.AppSplashOverlay
+import io.sentient.android.update.ForceUpdateScreen
+import io.sentient.android.update.UpdateBanner
+import io.sentient.android.update.UpdateViewModel
+import io.sentient.mobilesdk.update.UpdateStatus
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
 
@@ -63,14 +73,67 @@ private fun isBackendConfigured(): Boolean =
 @Composable
 fun AppNavHost() {
     val nav = rememberNavController()
+    // Auth gate value (token presence). The OTA overlay only mounts once authed so its
+    // single (UpdateViewModel → resolved backend) is never constructed pre-config.
+    val name by DisplayNameHolder.store.name.collectAsStateWithLifecycle()
     Surface(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
-        NavHost(navController = nav, startDestination = Routes.SPLASH) {
-            splashDestination(nav)
-            setupDestination(nav)
-            loginDestination(nav)
-            chatDestination(nav)
-            settingsDestination(nav)
+        Box(Modifier.fillMaxSize()) {
+            NavHost(navController = nav, startDestination = Routes.SPLASH) {
+                splashDestination(nav)
+                setupDestination(nav)
+                loginDestination(nav)
+                chatDestination(nav)
+                settingsDestination(nav)
+                forceUpdateDestination()
+            }
+            if (name != null && isBackendConfigured()) {
+                UpdateOverlay(nav)
+            }
         }
+    }
+}
+
+/**
+ * The OTA overlay, mounted only while authed. Owns the single shared [UpdateViewModel]
+ * (resolved via koinInject, not koinViewModel — one instance for gate + settings +
+ * foreground). Two effects:
+ *   - force gate: status flips to Available && mandatory → route to ForceUpdate AHEAD
+ *     of the authed screen (launchSingleTop; the screen itself blocks back).
+ *   - optional banner: Available && !mandatory → a dismissible top in-screen overlay.
+ */
+@Composable
+private fun BoxScope.UpdateOverlay(nav: NavHostController) {
+    val updateVm = koinInject<UpdateViewModel>()
+    val status by updateVm.status.collectAsStateWithLifecycle()
+    var dismissed by remember { mutableStateOf(false) }
+
+    LaunchedEffect(status) {
+        val s = status
+        if (s is UpdateStatus.Available && s.mandatory) {
+            nav.navigate(Routes.FORCE_UPDATE) { launchSingleTop = true }
+        }
+    }
+
+    val s = status
+    if (s is UpdateStatus.Available && !s.mandatory && !dismissed) {
+        UpdateBanner(
+            versionName = s.versionName,
+            onInstall = updateVm::install,
+            onDismiss = { dismissed = true },
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
+    }
+}
+
+private fun NavGraphBuilder.forceUpdateDestination() {
+    composable(Routes.FORCE_UPDATE) {
+        val updateVm = koinInject<UpdateViewModel>()
+        val status by updateVm.status.collectAsStateWithLifecycle()
+        val s = status
+        ForceUpdateScreen(
+            versionName = if (s is UpdateStatus.Available) s.versionName else "",
+            onInstall = updateVm::install,
+        )
     }
 }
 
@@ -129,8 +192,11 @@ private fun NavGraphBuilder.chatDestination(nav: NavHostController) {
     ) { backStackEntry ->
         val sessionId = backStackEntry.arguments?.getString(ARG_SESSION_ID)
         val userSession = koinInject<UserSessionManager>()
+        val updateVm = koinInject<UpdateViewModel>()
         // Cold-start-skip + presence: bind the live session to the app presence relay.
-        LaunchedEffect(Unit) { userSession.bindPresence() }
+        // The OTA check rides the SAME foreground signal, so it inherits the cold-start
+        // skip (no check on the first foreground after launch) — only on a real resume.
+        LaunchedEffect(Unit) { userSession.bindPresence(onForegroundExtra = updateVm::check) }
         ChatHost(
             sessionId = sessionId,
             userName = rememberUserName(),
@@ -150,9 +216,11 @@ private fun NavGraphBuilder.settingsDestination(nav: NavHostController) {
     composable(Routes.SETTINGS) {
         val settingsVm = koinViewModel<SettingsViewModel>()
         val userSession = koinInject<UserSessionManager>()
+        val updateVm = koinInject<UpdateViewModel>()
         val sessions by settingsVm.sessions.collectAsStateWithLifecycle()
         val progress by settingsVm.progress.collectAsStateWithLifecycle()
         val outcome by settingsVm.outcome.collectAsStateWithLifecycle()
+        val updateStatus by updateVm.status.collectAsStateWithLifecycle()
         SettingsScreen(
             onLogout = {
                 settingsVm.logout()
@@ -163,6 +231,9 @@ private fun NavGraphBuilder.settingsDestination(nav: NavHostController) {
             progress = progress,
             outcome = outcome,
             onUpload = settingsVm::uploadSession,
+            updateStatus = updateStatus,
+            onCheckUpdate = updateVm::check,
+            onInstallUpdate = updateVm::install,
         )
     }
 }
