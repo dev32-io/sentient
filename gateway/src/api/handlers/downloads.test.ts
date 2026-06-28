@@ -90,4 +90,11 @@ describe("downloads handler", () => {
     expect(res?.status).toBe(200);
     expect(res?.headers.get("content-type")).toContain("application/xml");
   });
+
+  it("serves /download/qr.png as image/png with max-age=3600", async () => {
+    const res = await handler(fixtureDir())(new Request("https://x/download/qr.png"));
+    expect(res?.status).toBe(200);
+    expect(res?.headers.get("content-type")).toBe("image/png");
+    expect(res?.headers.get("cache-control")).toContain("max-age=3600");
+  });
 });

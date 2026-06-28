@@ -57,11 +57,16 @@ export function createDownloadsHandler(deps: DownloadsHandlerDeps): DownloadsHan
 
 async function serveQr(publicBaseUrl: string): Promise<Response> {
   const url = `${publicBaseUrl.replace(/\/$/, "")}/download`;
-  log.debug("qr-serve", { url });
-  const buf = await QRCode.toBuffer(url, { type: "png", width: 240, margin: 2 });
-  return new Response(new Uint8Array(buf), {
-    headers: { "Content-Type": "image/png", "Cache-Control": "max-age=3600" },
-  });
+  try {
+    log.info("qr-serve", { url });
+    const buf = await QRCode.toBuffer(url, { type: "png", width: 240, margin: 2 });
+    return new Response(new Uint8Array(buf), {
+      headers: { "Content-Type": "image/png", "Cache-Control": "max-age=3600" },
+    });
+  } catch (err) {
+    log.warn("qr-error", { reason: err instanceof Error ? err.message : String(err) });
+    return new Response("QR generation failed", { status: 500 });
+  }
 }
 
 function html(body: string): Response {
