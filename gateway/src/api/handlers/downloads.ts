@@ -1,4 +1,5 @@
 import { join, resolve } from "node:path";
+import QRCode from "qrcode";
 import { getLog } from "../../logging/logger.js";
 
 const log = getLog(["sentient", "api", "downloads"]);
@@ -44,6 +45,7 @@ export function createDownloadsHandler(deps: DownloadsHandlerDeps): DownloadsHan
     if (ENCODED_TRAVERSAL.test(pathname)) return notFound(pathname);
 
     if (pathname === PREFIX) return html(deps.renderLandingPage());
+    if (pathname === "/download/qr.png") return await serveQr(deps.publicBaseUrl);
     if (pathname === "/download/ios/manifest.plist") return await servePlist(deps);
 
     const route = ARTIFACT_ROUTES[pathname];
@@ -51,6 +53,15 @@ export function createDownloadsHandler(deps: DownloadsHandlerDeps): DownloadsHan
 
     return await serveFile(join(deps.artifactsDir, route.file), route.mime, pathname, artifactsDirResolved);
   };
+}
+
+async function serveQr(publicBaseUrl: string): Promise<Response> {
+  const url = `${publicBaseUrl.replace(/\/$/, "")}/download`;
+  log.debug("qr-serve", { url });
+  const buf = await QRCode.toBuffer(url, { type: "png", width: 240, margin: 2 });
+  return new Response(new Uint8Array(buf), {
+    headers: { "Content-Type": "image/png", "Cache-Control": "max-age=3600" },
+  });
 }
 
 function html(body: string): Response {

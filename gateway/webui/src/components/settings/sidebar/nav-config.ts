@@ -12,7 +12,8 @@ export type SidebarKey =
   | "account"
   | "members"
   | "devices"
-  | "secrets";
+  | "secrets"
+  | "getApp";
 
 export interface NavItem {
   key: SidebarKey;
@@ -44,6 +45,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     items: [
       { key: "account", label: "Account", icon: "user-circle" },
       { key: "devices", label: "Devices", icon: "phone" },
+      { key: "getApp", label: "Get the app", icon: "phone" },
     ],
   },
   {
