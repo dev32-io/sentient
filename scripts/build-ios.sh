@@ -24,4 +24,9 @@ IPA="$REPO/ios/build/ipa/SentientApp.ipa"
 [ -f "$IPA" ] || { echo "ERROR: ipa not produced at $IPA"; exit 1; }
 echo "✓ built $IPA"
 
-[ "$DEPLOY" = "1" ] && "$REPO/scripts/deploy-mobile.sh" "$IPA"
+if [ "$DEPLOY" = "1" ]; then
+  IOS_SHORT_VERSION="$(grep -E 'CFBundleShortVersionString:' "$REPO/ios/project.yml" | head -1 | sed -E 's/.*: *//')"
+  IOS_BUNDLE_VERSION="$(grep -E 'CFBundleVersion:' "$REPO/ios/project.yml" | head -1 | sed -E 's/.*"?([0-9]+)"?.*/\1/')"
+  export IOS_SHORT_VERSION IOS_BUNDLE_VERSION
+  "$REPO/scripts/deploy-mobile.sh" "$IPA"
+fi
