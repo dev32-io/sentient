@@ -11,6 +11,7 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 private const val MANIFEST = """
@@ -50,6 +51,22 @@ class UpdateCheckerTest {
     val c = UpdateChecker("https://h", client(HttpStatusCode.InternalServerError, ""),
       UpdatePlatform.ANDROID, InstalledVersion(7, "0.1.5"))
     assertTrue(c.check() is UpdateStatus.CheckFailed)
+  }
+
+  @Test fun returns_check_failed_when_http_throws() = runTest {
+    val c = UpdateChecker("https://h",
+      HttpClient(MockEngine { throw RuntimeException("timeout") }) { install(ContentNegotiation) { json() } },
+      UpdatePlatform.ANDROID, InstalledVersion(7, "0.1.5"))
+    assertTrue(c.check() is UpdateStatus.CheckFailed)
+  }
+
+  @Test fun does_not_send_authorization_header() = runTest {
+    val c = UpdateChecker("https://h", HttpClient(MockEngine { request ->
+      assertNull(request.headers[HttpHeaders.Authorization])
+      respond(MANIFEST, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+    }) { install(ContentNegotiation) { json() } },
+      UpdatePlatform.ANDROID, InstalledVersion(7, "0.1.5"))
+    c.check()
   }
 }
 
