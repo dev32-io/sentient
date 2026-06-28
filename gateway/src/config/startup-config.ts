@@ -4,6 +4,7 @@ import type {
   AuthConfig as AuthYaml,
   CerebrumConfig as CerebrumYaml,
   CompanionsConfig as CompanionsYaml,
+  DownloadsConfig as DownloadsYaml,
   HermesBuiltinTools,
   HermesConfig as HermesYaml,
   LLMConfig as LLMYaml,
@@ -77,6 +78,9 @@ export interface StartupConfig {
   /** Optional managed-services map forwarded verbatim from YAML.
    *  Validated by the system orchestrator's own schema at runtime. */
   managedServices: Record<string, unknown> | undefined;
+  /** Public /download page + mobile OTA artifact serving. Undefined when the
+   *  downloads section is absent from config.yaml (route not registered). */
+  downloads: DownloadsYaml | undefined;
 }
 
 export function loadLoggingConfig(): LoggingConfig {
@@ -149,5 +153,6 @@ export function loadStartupConfig(): StartupConfig {
     mcpCatalog: cfg.mcp_catalog,
     hermesBuiltinTools: cfg.hermes_builtin_tools,
     managedServices: cfg.managed_services,
+    downloads: cfg.downloads,
   };
 }

@@ -369,6 +369,33 @@ describe("applyConfigSchema", () => {
 // sessionConfigSchema — WS-resilience knobs (Slice 3, Task 3.1)
 // ---------------------------------------------------------------------------
 
+describe("gatewayConfigSchema downloads field", () => {
+  const minimalWithDownloads = {
+    stt: { provider: "local-stt" },
+    llm: {},
+    tts: { provider: "fish-audio" },
+    session: wsResilienceSession,
+    downloads: {
+      artifacts_dir: "/app/releases",
+      public_base_url: "https://sentient.dev32.io",
+    },
+  };
+
+  it("parses the downloads section", () => {
+    const result = gatewayConfigSchema.parse(minimalWithDownloads);
+    expect(result.downloads?.artifacts_dir).toBe("/app/releases");
+    expect(result.downloads?.public_base_url).toBe("https://sentient.dev32.io");
+  });
+
+  it("rejects an invalid public_base_url", () => {
+    const invalid = {
+      ...minimalWithDownloads,
+      downloads: { artifacts_dir: "/app/releases", public_base_url: "not-a-url" },
+    };
+    expect(gatewayConfigSchema.safeParse(invalid).success).toBe(false);
+  });
+});
+
 describe("sessionConfigSchema — WS-resilience fields", () => {
   const validSession = {
     ws_idle_timeout_ms: 255000,

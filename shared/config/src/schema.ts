@@ -380,6 +380,19 @@ export const companionsConfigSchema = z.object({
 export type CompanionsConfig = z.output<typeof companionsConfigSchema>;
 
 // ---------------------------------------------------------------------------
+// Downloads — public /download page + mobile artifact serving (OTA root)
+// ---------------------------------------------------------------------------
+
+export const downloadsConfigSchema = z.object({
+  // Container path to the mounted release dir holding apk/ipa/manifest.json.
+  artifacts_dir: z.string(),
+  // Absolute HTTPS origin used to build itms-services plist URLs (must be HTTPS).
+  public_base_url: z.string().url(),
+});
+
+export type DownloadsConfig = z.output<typeof downloadsConfigSchema>;
+
+// ---------------------------------------------------------------------------
 // Root
 // ---------------------------------------------------------------------------
 
@@ -423,6 +436,10 @@ export const gatewayConfigSchema = z.object({
   // Each key is a service name; values are ManagedServiceConfig records
   // validated by the orchestrator's own schema at runtime.
   managed_services: z.record(z.string(), z.unknown()).optional(),
+  // Public /download page + mobile OTA artifact serving. When absent the
+  // download route is not registered. Provide this section whenever the
+  // gateway serves mobile release artifacts.
+  downloads: downloadsConfigSchema.optional(),
 });
 
 export type GatewayConfig = z.output<typeof gatewayConfigSchema>;
