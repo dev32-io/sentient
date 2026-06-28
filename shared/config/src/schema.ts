@@ -385,9 +385,11 @@ export type CompanionsConfig = z.output<typeof companionsConfigSchema>;
 
 export const downloadsConfigSchema = z.object({
   // Container path to the mounted release dir holding apk/ipa/manifest.json.
-  artifacts_dir: z.string(),
+  // Mounted read-only from ~/.sentient/releases via the docker-compose volumes stanza.
+  artifacts_dir: z.string().default("/app/releases"),
   // Absolute HTTPS origin used to build itms-services plist URLs (must be HTTPS).
-  public_base_url: z.string().url(),
+  // Must match the gateway's externally reachable HTTPS hostname.
+  public_base_url: z.string().url().default("https://sentient.dev32.io"),
 });
 
 export type DownloadsConfig = z.output<typeof downloadsConfigSchema>;
@@ -436,10 +438,10 @@ export const gatewayConfigSchema = z.object({
   // Each key is a service name; values are ManagedServiceConfig records
   // validated by the orchestrator's own schema at runtime.
   managed_services: z.record(z.string(), z.unknown()).optional(),
-  // Public /download page + mobile OTA artifact serving. When absent the
-  // download route is not registered. Provide this section whenever the
-  // gateway serves mobile release artifacts.
-  downloads: downloadsConfigSchema.optional(),
+  // Public /download page + mobile OTA artifact serving. Always present;
+  // defaults match the standard docker-compose volume layout. Override
+  // artifacts_dir and public_base_url in config.yaml for your deployment.
+  downloads: downloadsConfigSchema.default({}),
 });
 
 export type GatewayConfig = z.output<typeof gatewayConfigSchema>;

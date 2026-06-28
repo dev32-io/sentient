@@ -95,7 +95,7 @@ export interface GatewayServices {
   readonly language: "en" | "zh";
   readonly tls: GatewayTlsMaterial | undefined;
   readonly webDistDir: string | undefined;
-  readonly downloads: { artifactsDir: string; publicBaseUrl: string } | undefined;
+  readonly downloads: { artifactsDir: string; publicBaseUrl: string };
   readonly cerebrum: CerebrumConfig;
   readonly hermes: HermesConfig | null;
   readonly session: SessionConfig;
@@ -204,9 +204,7 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     language: cfg.language,
     tls: services.tls,
     webDistDir: cfg.webDistDir,
-    downloads: cfg.downloads
-      ? { artifactsDir: cfg.downloads.artifacts_dir, publicBaseUrl: cfg.downloads.public_base_url }
-      : undefined,
+    downloads: { artifactsDir: cfg.downloads.artifacts_dir, publicBaseUrl: cfg.downloads.public_base_url },
     cerebrum: services.cerebrumServices.cerebrumConfig,
     hermes: cfg.hermes ?? null,
     session: cfg.session,

@@ -383,8 +383,9 @@ describe("gatewayConfigSchema downloads field", () => {
 
   it("parses the downloads section", () => {
     const result = gatewayConfigSchema.parse(minimalWithDownloads);
-    expect(result.downloads?.artifacts_dir).toBe("/app/releases");
-    expect(result.downloads?.public_base_url).toBe("https://sentient.dev32.io");
+    expect(result.downloads).toBeDefined();
+    expect(result.downloads.artifacts_dir).toBe("/app/releases");
+    expect(result.downloads.public_base_url).toBe("https://sentient.dev32.io");
   });
 
   it("rejects an invalid public_base_url", () => {

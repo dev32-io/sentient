@@ -78,9 +78,9 @@ export interface StartupConfig {
   /** Optional managed-services map forwarded verbatim from YAML.
    *  Validated by the system orchestrator's own schema at runtime. */
   managedServices: Record<string, unknown> | undefined;
-  /** Public /download page + mobile OTA artifact serving. Undefined when the
-   *  downloads section is absent from config.yaml (route not registered). */
-  downloads: DownloadsYaml | undefined;
+  /** Public /download page + mobile OTA artifact serving. Always present;
+   *  defaults to the standard docker-compose layout when not overridden. */
+  downloads: DownloadsYaml;
 }
 
 export function loadLoggingConfig(): LoggingConfig {
