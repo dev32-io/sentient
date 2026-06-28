@@ -28,6 +28,7 @@ import { AccountPane } from "./panes/account-pane.tsx";
 import { MembersPane } from "./panes/members-pane.tsx";
 import { DevicesPane } from "./panes/devices-pane.tsx";
 import { SecretsPane } from "./panes/secrets-pane.tsx";
+import { GetAppPane } from "./panes/get-app-pane.tsx";
 
 const log = createLogger(["sentient", "webui", "settings", "view"]);
 
@@ -289,6 +290,7 @@ export function SettingsView({ initialTab = "memory", onAudioApplied }: Settings
           {tab === "members" && <MembersPane />}
           {tab === "devices" && <DevicesPane />}
           {tab === "secrets" && <SecretsPane onMark={markImperative} />}
+          {tab === "getApp" && <GetAppPane />}
         </div>
       </main>
 

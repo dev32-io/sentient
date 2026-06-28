@@ -5,18 +5,18 @@
 //   - App version (settings-version): read from BuildConfig.VERSION_NAME (+ code).
 //   - Logout (settings-logout): clears the token + disconnects → login.
 //
-// Stateless screen: it takes a hoisted version string + plain callbacks and
-// reads nothing from a ViewModel directly (MainActivity wires the callbacks to
-// SettingsViewModel). A title bar with a back chevron (settings-back) gives the
-// one defined back target per the mobile-navigation rule. The version-check hook
-// is a STUB only — spec §12.2 P2 carry — no networking in v1.
+// Stateless screen: it takes hoisted state + plain callbacks and reads nothing from
+// a ViewModel directly (the host wires the callbacks to SettingsViewModel +
+// UpdateViewModel). A title bar with a back chevron (settings-back) gives the one
+// defined back target per the mobile-navigation rule. The update row is a real
+// OTA check/install hook (B5): status text + a context action (Check / Update).
 //
 // The diagnostics "Send diagnostic log" two-lane section lives in
 // SettingsDiagnostics.kt (hoisted state from SettingsViewModel).
 //
-// testTags: settings-screen, settings-version, settings-logout, settings-back,
-// settings-send-logs (+ the per-row diagnostics tags in SettingsDiagnostics).
-// The settings-open entry point lives in the chat top bar (ChatContent).
+// testTags: settings-screen, settings-version, settings-update, settings-update-action,
+// settings-logout, settings-back, settings-send-logs (+ the per-row diagnostics tags
+// in SettingsDiagnostics). The settings-open entry point lives in the chat top bar.
 // ---------------------------------------------------------------------------
 package io.sentient.android.settings
 
@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -44,14 +45,18 @@ import androidx.compose.ui.text.font.FontWeight
 import io.sentient.android.BuildConfig
 import io.sentient.android.theme.LocalTokens
 import io.sentient.mobilesdk.design.Colors
-import io.sentient.mobilesdk.log.createLogger
+import io.sentient.mobilesdk.update.UpdateStatus
 import io.sentient.mobilesdk.vitals.VitalsSessionInfo
 
 private const val TITLE = "Settings"
 private const val VERSION_LABEL = "App version"
 private const val LOGOUT_LABEL = "Log out"
-
-private val log = createLogger("android", "settings-screen")
+private const val UPDATES_LABEL = "Updates"
+private const val UP_TO_DATE_TEXT = "Up to date"
+private const val CHECK_FAILED_TEXT = "Check failed"
+private const val CHECK_ACTION = "Check for updates"
+private const val UPDATE_ACTION = "Update"
+private const val AVAILABLE_PREFIX = "Update available — v"
 
 /**
  * The human-readable build identifier, e.g. "0.0.1 (1)". Single source: the
@@ -60,16 +65,11 @@ private val log = createLogger("android", "settings-screen")
 private val versionText: String
     get() = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
 
-/**
- * Version-check hook STUB (spec §12.2 P2 carry). A future "check for updates"
- * call lands here — it will query an operator-configured release endpoint and
- * surface an "update available" affordance. v1 does NO networking; this is a
- * placeholder so the call site already exists when P2 is picked up.
- */
-private fun checkForUpdatesStub() {
-    // P2: replace with a real release-manifest fetch + compare against
-    // BuildConfig.VERSION_CODE. Intentionally a no-op in v1.
-    log.debug("check-for-updates.stub", mapOf("version" to versionText))
+/** Human status line for the update row, derived from the hoisted [UpdateStatus]. */
+private fun updateStatusText(status: UpdateStatus): String = when (status) {
+    is UpdateStatus.UpToDate -> UP_TO_DATE_TEXT
+    is UpdateStatus.Available -> "$AVAILABLE_PREFIX${status.versionName}"
+    is UpdateStatus.CheckFailed -> CHECK_FAILED_TEXT
 }
 
 /**
@@ -86,6 +86,9 @@ fun SettingsScreen(
     progress: Float?,
     outcome: UploadOutcome?,
     onUpload: (String) -> Unit,
+    updateStatus: UpdateStatus,
+    onCheckUpdate: () -> Unit,
+    onInstallUpdate: () -> Unit,
     modifier: Modifier = Modifier,
     nowMs: Long = System.currentTimeMillis(),
 ) {
@@ -106,6 +109,11 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(tokens.space.md),
         ) {
             VersionRow()
+            UpdateRow(
+                status = updateStatus,
+                onCheck = onCheckUpdate,
+                onInstall = onInstallUpdate,
+            )
             SettingsDiagnostics(
                 sessions = sessions,
                 nowMs = nowMs,
@@ -157,6 +165,53 @@ private fun VersionRow() {
             color = Color(Colors.ink),
             fontSize = tokens.type.base,
         )
+    }
+}
+
+/**
+ * The OTA update row. Status text + ONE context action: when an update is available
+ * the action installs it ([UPDATE_ACTION]); otherwise it re-runs the manual check
+ * ([CHECK_ACTION]). All state/callbacks are hoisted from [UpdateViewModel] via the host.
+ */
+@Composable
+private fun UpdateRow(
+    status: UpdateStatus,
+    onCheck: () -> Unit,
+    onInstall: () -> Unit,
+) {
+    val tokens = LocalTokens.current
+    val available = status as? UpdateStatus.Available
+    Column(
+        modifier = Modifier.fillMaxWidth().testTag("settings-update"),
+        verticalArrangement = Arrangement.spacedBy(tokens.space.xs),
+    ) {
+        Text(
+            text = UPDATES_LABEL,
+            color = Color(Colors.ink3),
+            fontSize = tokens.type.xs,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(tokens.space.sm),
+        ) {
+            Text(
+                text = updateStatusText(status),
+                modifier = Modifier.weight(1f),
+                color = Color(Colors.ink),
+                fontSize = tokens.type.base,
+            )
+            if (available != null) {
+                Button(onClick = onInstall, modifier = Modifier.testTag("settings-update-action")) {
+                    Text(UPDATE_ACTION)
+                }
+            } else {
+                OutlinedButton(onClick = onCheck, modifier = Modifier.testTag("settings-update-action")) {
+                    Text(CHECK_ACTION)
+                }
+            }
+        }
     }
 }
 

@@ -96,6 +96,9 @@ services:
       - ../../profiles:/sentient-host-profiles
       - ${HOME}/.sentient:/sentient
       - /var/run/docker.sock:/var/run/docker.sock
+      # Mobile release artifacts (apk/ipa/manifest.json/icons) served at /download.
+      # Read-only — the gateway only serves them; deploy-mobile.sh writes the host dir.
+      - ${HOME}/.sentient/releases:/app/releases:ro
     healthcheck:
       test:
         [

@@ -104,3 +104,28 @@
   background: var(--color-ok);
   box-shadow: 0 0 0 3px rgba(95, 138, 91, 0.18);
 }
+
+@media (max-width: 880px) {
+  .settings-v2 .s-nav {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 6px;
+    padding: 10px 12px;
+    min-width: 0; /* allow the strip to shrink to the column so overflow-x clips, not expands */
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* groups flatten into one scroll row; hide the "User"/"Admin" headers */
+  .settings-v2 .s-nav-group { flex-direction: row; gap: 6px; }
+  .settings-v2 .s-nav-h { display: none; }
+  .settings-v2 .s-nav-i {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    padding: 8px 12px;
+    border: 1px solid var(--color-line-soft);
+  }
+  /* dirty dot would overlap the chip edge — re-anchor it */
+  .settings-v2 .s-nav-i .dot-dirty { right: 6px; top: 6px; }
+  /* the side footer/status block is desktop-only chrome */
+  .settings-v2 .s-side-foot { display: none; }
+}

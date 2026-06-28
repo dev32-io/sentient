@@ -18,6 +18,7 @@ import io.sentient.android.chat.ChatViewModel
 import io.sentient.android.history.HistoryViewModel
 import io.sentient.android.presence.PresenceCoordinator
 import io.sentient.android.settings.SettingsViewModel
+import io.sentient.android.update.UpdateViewModel
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.module
@@ -25,6 +26,16 @@ import org.koin.dsl.module
 val appModule = module {
     single { PresenceCoordinator() }
     single { UserSessionManager(appContext = androidContext(), presence = get()) }
+
+    // ONE shared update state holder: the force-update gate (AppNavHost), the Settings
+    // update row, and the foreground-trigger all observe the SAME UpdateViewModel. It
+    // extends ViewModel (viewModelScope) but is a process-lived single, resolved via
+    // koinInject — NOT a per-route koinViewModel — so its status is shared. Built lazily
+    // from the connection-scoped checker/installer (UserSessionManager).
+    single {
+        val userSession = get<UserSessionManager>()
+        UpdateViewModel(checker = userSession.updateChecker(), installer = userSession.updateInstaller())
+    }
 
     // sessionId comes from the chat route (null = new chat). A switch is a navigation
     // that recreates this VM → clean per-conversation state. The ChatComponent is

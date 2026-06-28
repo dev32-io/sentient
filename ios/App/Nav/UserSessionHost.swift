@@ -14,7 +14,9 @@
 //     gate then routes to login (the UserSession @StateObject deinits here).
 //
 // Presence: scenePhase drives userSession.pause()/resume() with a cold-start-skip
-// (init already connected) — the first .active after launch is skipped.
+// (init already connected) — the first .active after launch is skipped. The OTA
+// re-check (updateModel.check()) rides the same resume signal so it inherits that
+// skip; the launch-time check is UpdateGate's one-shot .task.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
@@ -22,6 +24,10 @@ import MobileData
 struct UserSessionHost: View {
     /// User/Connection scope: the SDK + ChatComponent live here, above the stack.
     @StateObject private var userSession: UserSession
+
+    /// Shared OTA-update state (owned by UpdateGate above). Forwarded to Settings
+    /// and re-checked on real foregrounds, riding the same scenePhase resume signal.
+    private let updateModel: UpdateModel
 
     let userName: String
     /// Clears the token via AppConfig → RootView re-routes to login.
@@ -48,9 +54,10 @@ struct UserSessionHost: View {
     @State private var hasBackgrounded = false
     private let sceneLog = AppLog("nav", "scene")
 
-    init(appConfig: AppConfig) {
+    init(appConfig: AppConfig, updateModel: UpdateModel) {
         userName = appConfig.displayName
         onLogout = { appConfig.logout() }
+        self.updateModel = updateModel
         _userSession = StateObject(wrappedValue: UserSession(
             gatewayWsUrl: appConfig.gatewayWsUrl,
             allowSelfSignedDevHost: appConfig.allowSelfSignedDevHost
@@ -70,6 +77,7 @@ struct UserSessionHost: View {
                 makeVM: { userSession.makeChatVM(sessionId: activeSessionId) },
                 makeHistoryVM: { userSession.makeHistoryVM() },
                 userName: userName,
+                updateModel: updateModel,
                 onSelectSession: { id in
                     activeSessionId = id
                     path.removeAll()
@@ -87,6 +95,7 @@ struct UserSessionHost: View {
                 switch route {
                 case .settings:
                     SettingsSheet(
+                        updateModel: updateModel,
                         onLogout: logout,
                         onDismiss: { path.removeAll() }
                     )
@@ -111,6 +120,10 @@ struct UserSessionHost: View {
                 if hasBackgrounded {
                     sceneLog.info("foreground")
                     userSession.resume()
+                    // OTA re-check rides the SAME foreground signal as resume, so it
+                    // inherits the cold-start-skip (the launch check is UpdateGate's
+                    // one-shot .task) — only on a REAL resume after a background.
+                    Task { await updateModel.check() }
                 } else {
                     sceneLog.info("cold-start-skip")
                 }

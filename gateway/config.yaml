@@ -176,6 +176,16 @@ webui:
     preempt_fadeout_ms: 30
 
 # ---------------------------------------------------------------------------
+# Downloads — public /download page + mobile artifact serving (OTA root)
+# ---------------------------------------------------------------------------
+downloads:
+  # Container path to the mounted host release dir (apk/ipa/manifest.json/icons).
+  # Mounted read-only from ~/.sentient/releases via the docker-compose volumes stanza.
+  artifacts_dir: /app/releases
+  # Absolute HTTPS origin. iOS itms-services plist REQUIRES absolute HTTPS URLs.
+  public_base_url: https://sentient.dev32.io
+
+# ---------------------------------------------------------------------------
 # Cerebrum — cognitive cycle orchestration
 # ---------------------------------------------------------------------------
 cerebrum:

@@ -2,6 +2,9 @@ const HTTP_NOT_FOUND = 404;
 const API_V1 = "/api/v1";
 
 export interface ApiRouterDeps {
+  /** Serves the public /download/* page + artifacts. Returns null when the
+   *  path is not under /download so normal routing proceeds. Public — no gate. */
+  handleDownloads: (request: Request) => Promise<Response | null>;
   handleHealth: (request: Request) => Promise<Response>;
   handleReady: (request: Request) => Promise<Response>;
   /** Attempts WebSocket upgrade. Returns undefined on success — Bun's
@@ -47,6 +50,9 @@ export function createApiRouter(deps: ApiRouterDeps): ApiRouter {
   return async (request) => {
     const url = new URL(request.url);
     const pathname = url.pathname;
+
+    const downloadResponse = await deps.handleDownloads(request);
+    if (downloadResponse) return downloadResponse;
 
     if (pathname.startsWith(`${API_V1}/admin/secrets`)) return deps.handleSecrets(request);
     if (pathname.startsWith(`${API_V1}/admin/`)) return deps.handleAdmin(request);
