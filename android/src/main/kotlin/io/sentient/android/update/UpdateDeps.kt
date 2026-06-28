@@ -17,6 +17,8 @@ import io.sentient.mobilesdk.update.UpdateChecker
 import io.sentient.mobilesdk.update.UpdatePlatform
 import io.sentient.mobilesdk.update.deriveHostRoot
 
+private val log = createLogger("android", "update-deps")
+
 /** The OTA pair: the manifest [checker] (B2) + the platform apk [installer] (B4). */
 data class UpdateDeps(val checker: UpdateChecker, val installer: AppUpdateInstaller)
 
@@ -34,7 +36,7 @@ fun buildUpdateDeps(
     installedVersionName: String,
 ): UpdateDeps {
     val hostRoot = deriveHostRoot(gatewayWsUrl)
-    createLogger("android", "update-deps").info("build", mapOf("host" to hostRoot))
+    log.info("build", mapOf("host" to hostRoot))
     return UpdateDeps(
         checker = UpdateChecker(
             hostRootUrl = hostRoot,

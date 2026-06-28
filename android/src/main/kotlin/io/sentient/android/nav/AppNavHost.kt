@@ -107,6 +107,10 @@ private fun BoxScope.UpdateOverlay(nav: NavHostController) {
     val status by updateVm.status.collectAsStateWithLifecycle()
     var dismissed by remember { mutableStateOf(false) }
 
+    // One-shot authed check on first composition. Pure HTTP GET, independent of
+    // the WS connect path — no double-connect risk, so cold-start-skip doesn't apply.
+    LaunchedEffect(Unit) { updateVm.check() }
+
     LaunchedEffect(status) {
         val s = status
         if (s is UpdateStatus.Available && s.mandatory) {
