@@ -20,6 +20,7 @@ echo "✓ built $APK"
 if [ "$DEPLOY" = "1" ]; then
   ANDROID_VERSION_CODE="$(cd "$REPO" && ./gradlew -q :android:printVersionCode 2>/dev/null || grep -oE 'versionCode = [0-9]+' android/build.gradle.kts | grep -oE '[0-9]+')"
   ANDROID_VERSION_NAME="$(grep -oE 'versionName = "[^"]+"' "$REPO/android/build.gradle.kts" | sed -E 's/.*"([^"]+)"/\1/')"
+  [ -n "$ANDROID_VERSION_CODE" ] && [ -n "$ANDROID_VERSION_NAME" ] || { echo "ERROR: could not extract Android version from android/build.gradle.kts"; exit 1; }
   export ANDROID_VERSION_CODE ANDROID_VERSION_NAME
   "$REPO/scripts/deploy-mobile.sh" "$APK"
 fi
