@@ -24,8 +24,8 @@ data class IosRelease(
 
 @Serializable
 data class UpdateManifest(
-    val android: AndroidRelease,
-    val ios: IosRelease,
+    val android: AndroidRelease? = null,
+    val ios: IosRelease? = null,
 )
 
 enum class UpdatePlatform { ANDROID, IOS }
@@ -57,19 +57,23 @@ data class ReleaseInfo(
     val itmsPath: String?,
 )
 
-fun UpdateManifest.forPlatform(p: UpdatePlatform): ReleaseInfo = when (p) {
-    UpdatePlatform.ANDROID -> ReleaseInfo(
-        build = android.versionCode,
-        versionName = android.versionName,
-        minSupportedBuild = android.minSupportedBuild,
-        downloadPath = android.url,
-        itmsPath = null,
-    )
-    UpdatePlatform.IOS -> ReleaseInfo(
-        build = ios.bundleVersion,
-        versionName = ios.shortVersion,
-        minSupportedBuild = ios.minSupportedBuild,
-        downloadPath = ios.url,
-        itmsPath = ios.manifestUrl,
-    )
+fun UpdateManifest.forPlatform(p: UpdatePlatform): ReleaseInfo? = when (p) {
+    UpdatePlatform.ANDROID -> android?.let {
+        ReleaseInfo(
+            build = it.versionCode,
+            versionName = it.versionName,
+            minSupportedBuild = it.minSupportedBuild,
+            downloadPath = it.url,
+            itmsPath = null,
+        )
+    }
+    UpdatePlatform.IOS -> ios?.let {
+        ReleaseInfo(
+            build = it.bundleVersion,
+            versionName = it.shortVersion,
+            minSupportedBuild = it.minSupportedBuild,
+            downloadPath = it.url,
+            itmsPath = it.manifestUrl,
+        )
+    }
 }

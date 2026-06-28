@@ -19,6 +19,10 @@ private const val MANIFEST = """
  "ios":{"bundleVersion":3,"shortVersion":"0.1.5","minSupportedBuild":2,"bundleId":"io.dev32.sentient","url":"/download/ios/latest.ipa","manifestUrl":"/download/ios/manifest.plist","notes":""}}
 """
 
+private const val ANDROID_ONLY_MANIFEST = """
+{"android":{"versionCode":7,"versionName":"0.1.5","minSupportedBuild":0,"url":"/download/android/latest.apk","notes":""}}
+"""
+
 private fun client(status: HttpStatusCode, body: String) = HttpClient(MockEngine { _ ->
   respond(body, status, headersOf(HttpHeaders.ContentType, "application/json"))
 }) { install(ContentNegotiation) { json() } }
@@ -58,6 +62,14 @@ class UpdateCheckerTest {
       HttpClient(MockEngine { throw RuntimeException("timeout") }) { install(ContentNegotiation) { json() } },
       UpdatePlatform.ANDROID, InstalledVersion(7, "0.1.5"))
     assertTrue(c.check() is UpdateStatus.CheckFailed)
+  }
+
+  @Test fun returns_check_failed_no_platform_block_when_ios_absent() = runTest {
+    val c = UpdateChecker("https://h", client(HttpStatusCode.OK, ANDROID_ONLY_MANIFEST),
+      UpdatePlatform.IOS, InstalledVersion(3, "0.1.5"))
+    val s = c.check()
+    assertTrue(s is UpdateStatus.CheckFailed)
+    assertEquals("no-platform-block", (s as UpdateStatus.CheckFailed).reason)
   }
 
   @Test fun does_not_send_authorization_header() = runTest {

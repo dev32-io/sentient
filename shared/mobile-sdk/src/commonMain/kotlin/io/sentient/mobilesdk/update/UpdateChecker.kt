@@ -32,7 +32,8 @@ class UpdateChecker(
     private val log: Log = createLogger("update", "checker"),
 ) {
     suspend fun check(): UpdateStatus {
-        val release = fetchRelease() ?: return UpdateStatus.CheckFailed("fetch-failed")
+        val manifest = fetchManifest() ?: return UpdateStatus.CheckFailed("fetch-failed")
+        val release = manifest.forPlatform(platform) ?: return UpdateStatus.CheckFailed("no-platform-block")
         val mandatory = installed.build < release.minSupportedBuild
         val available = release.build > installed.build
         log.info(
@@ -49,13 +50,13 @@ class UpdateChecker(
         )
     }
 
-    private suspend fun fetchRelease(): ReleaseInfo? = try {
+    private suspend fun fetchManifest(): UpdateManifest? = try {
         val resp: HttpResponse = httpClient.get("$hostRootUrl$MANIFEST_PATH")
         if (!resp.status.isSuccess()) {
             log.warn("check.http", mapOf("status" to resp.status.value))
             null
         } else {
-            resp.body<UpdateManifest>().forPlatform(platform)
+            resp.body<UpdateManifest>()
         }
     } catch (e: Exception) {
         log.warn("check.error", mapOf("type" to (e::class.simpleName ?: "Exception")))
