@@ -43,6 +43,11 @@
   .settings-v2 .s-side {
     border-right: 0;
     border-bottom: 1px solid var(--color-line-soft);
+    /* keep the strip pinned + scrollable on narrow screens */
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--color-bg);
   }
-  .settings-v2 .s-main { padding: 24px 20px 140px; }
+  .settings-v2 .s-main { padding: 20px 16px 140px; }
 }
