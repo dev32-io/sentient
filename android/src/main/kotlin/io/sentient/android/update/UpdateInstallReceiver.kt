@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
+import android.os.Build
 import io.sentient.mobilesdk.log.createLogger
 
 private val log = createLogger("android", "update-install-receiver")
@@ -29,8 +30,12 @@ class UpdateInstallReceiver : BroadcastReceiver() {
     }
 
     private fun launchConfirm(context: Context, intent: Intent) {
-        @Suppress("DEPRECATION")
-        val confirmIntent = intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)
+        val confirmIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(Intent.EXTRA_INTENT)
+        }
         if (confirmIntent == null) {
             log.warn("install.status.pending-user-action.no-intent")
             return

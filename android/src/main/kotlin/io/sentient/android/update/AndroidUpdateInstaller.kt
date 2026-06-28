@@ -56,14 +56,20 @@ class AndroidUpdateInstaller(
     private fun commitSession(apk: ByteArray) {
         val installer = context.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+        params.setAppPackageName(context.packageName)
         val sessionId = installer.createSession(params)
-        installer.openSession(sessionId).use { session ->
+        val session = installer.openSession(sessionId)
+        try {
             session.openWrite(SESSION_NAME, 0, apk.size.toLong()).use { out ->
                 out.write(apk)
                 session.fsync(out)
             }
             log.debug("session.commit", mapOf("sessionId" to sessionId, "bytes" to apk.size))
             session.commit(buildStatusPendingIntent(sessionId).intentSender)
+            session.close()
+        } catch (e: Exception) {
+            session.abandon()
+            throw e
         }
     }
 
