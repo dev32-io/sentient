@@ -1,0 +1,65 @@
+package io.sentient.mobilesdk.voice
+
+import io.sentient.mobilesdk.audio.opus.OpusEncoderPort
+import io.sentient.mobilesdk.log.createLogger
+import io.sentient.mobilesdk.voice.io.MicSource
+import io.sentient.mobilesdk.voice.uplink.Framer
+import io.sentient.mobilesdk.voice.uplink.OnsetDetector
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
+
+private const val TRACE_FIRST = 5
+private const val TRACE_EVERY = 50
+
+/**
+ * Real-time uplink: mic.frames (16k PCM16) → Framer (20ms) → OnsetDetector (barge-in edge)
+ * → Opus encode → sendPacket 1:1. Runs on [dispatcher] (a dedicated single thread), NEVER
+ * the SDK orchestrator. sendPacket is the WS binary sink (paced by the capture clock).
+ */
+class VoiceUplinkPipeline(
+    private val mic: MicSource,
+    private val encoder: OpusEncoderPort,
+    private val sendPacket: (ByteArray) -> Unit,
+    private val onOnset: () -> Unit,
+    private val scope: CoroutineScope,
+    private val dispatcher: CoroutineDispatcher,
+    private val framer: Framer,
+    private val onset: OnsetDetector,
+) {
+    private val log = createLogger("voice", "uplink")
+    private var job: Job? = null
+    private var framesIn = 0
+    private var packetsOut = 0
+
+    suspend fun start() {
+        if (job?.isActive == true) return
+        framer.reset(); onset.reset(); encoder.reset(); framesIn = 0; packetsOut = 0
+        mic.start()
+        job = scope.launch(dispatcher) {
+            mic.frames.collect { pcm -> onPcm(pcm) }
+        }
+    }
+
+    suspend fun stop() {
+        job?.cancel(); job = null
+        encoder.reset()
+        mic.stop()
+    }
+
+    private fun onPcm(pcm: ShortArray) {
+        for (frame in framer.push(pcm)) {
+            framesIn += 1
+            if (onset.observe(frame)) onOnset()
+            for (packet in encoder.encode(frame)) {
+                sendPacket(packet)
+                packetsOut += 1
+            }
+        }
+        if (framesIn <= TRACE_FIRST || framesIn % TRACE_EVERY == 0) {
+            log.debug("uplink", mapOf("framesIn" to framesIn, "packetsOut" to packetsOut))
+        }
+    }
+}
