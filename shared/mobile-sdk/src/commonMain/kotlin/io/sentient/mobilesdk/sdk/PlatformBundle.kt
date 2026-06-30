@@ -7,12 +7,12 @@
 // (FakeWebSocketEngine / InMemoryTokenStore / FixedClock), so the orchestrator
 // runs with zero platform / hardware.
 //
-// Audio adapters are NULLABLE for the P-text path: E1 (capture) and E2
-// (playback) supply the real `actual` adapters later. Until then the
-// androidMain/iosMain actuals pass null and the orchestrator wires the text
-// path without touching audio hardware. startMic/stopMic still flip voiceMode
-// + send audio.start/audio.end control frames (the capture→gate→uplink Flow is
-// E3) — they no-op the (absent) capture adapter for now.
+// Audio adapters are NULLABLE for the P-text path. The androidMain/iosMain
+// actuals supply the real capture/playback/mic adapters; tests pass null and the
+// orchestrator wires the text path without touching audio hardware. When [mic] is
+// null, startMic/stopMic still flip voiceMode + send audio.start/audio.end control
+// frames with NO uplink — the VoiceUplinkPipeline (Task 9) only runs when a real
+// MicSource is wired.
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.sdk
 
@@ -22,6 +22,7 @@ import io.sentient.mobilesdk.secure.DeviceIdStore
 import io.sentient.mobilesdk.secure.SecureTokenStore
 import io.sentient.mobilesdk.transport.WebSocketEngine
 import io.sentient.mobilesdk.util.Clock
+import io.sentient.mobilesdk.voice.io.MicSource
 
 /**
  * The platform capabilities [SentientSdk] depends on, all behind commonMain
@@ -32,8 +33,11 @@ import io.sentient.mobilesdk.util.Clock
  * @param deviceIdStore Stable per-install device-id store (Task 3.10 actuals:
  *   SharedPreferences / NSUserDefaults). Tests pass an in-memory fake.
  * @param clock Injected wall-clock (B1). Tests pass FixedClock.
- * @param capture Mic capture adapter. NULL until E1 — text path does not need it.
- * @param playback Audio playback adapter. NULL until E2 — text path does not need it.
+ * @param capture Mic capture adapter (legacy uplink path). NULL on the text path.
+ * @param playback Audio playback adapter. NULL on the text path.
+ * @param mic Real-time voice-uplink mic primitive (Task 7). The orchestrator builds
+ *   the VoiceUplinkPipeline only when this is non-null; NULL on the text/test path
+ *   leaves startMic/stopMic as audio.start/audio.end with no uplink.
  */
 data class PlatformBundle(
     val engine: WebSocketEngine,
@@ -42,6 +46,7 @@ data class PlatformBundle(
     val clock: Clock,
     val capture: AudioCaptureAdapter? = null,
     val playback: AudioPlaybackAdapter? = null,
+    val mic: MicSource? = null,
 )
 
 /**
@@ -49,7 +54,6 @@ data class PlatformBundle(
  *
  * androidMain reads the application Context from AndroidContextHolder (set via
  * `MobileSdk.initAndroid(context)`); iosMain constructs the actuals directly.
- * Both pass `capture = null` / `playback = null` for the P-text path — E1/E2
- * will supply the real audio adapters.
+ * Both wire the real capture/playback/mic adapters; only tests pass null.
  */
 expect fun createPlatformBundle(): PlatformBundle

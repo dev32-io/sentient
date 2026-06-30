@@ -38,6 +38,14 @@ private const val SPEECH_PREROLL_FRAMES = 24
 private const val SPEECH_MAX_OPEN_MS = 20_000L
 
 /**
+ * Consecutive above-threshold 20 ms frames required before the OnsetDetector fires
+ * the speech-onset edge (Task 9 uplink). Small by design — the onset is a barge-in
+ * EDGE flag, not endpointing (the server owns VAD). Valid range ~1–4: 1 fires on the
+ * first loud frame (twitchy), >4 adds latency to the local barge-in duck.
+ */
+private const val ONSET_SUSTAIN_FRAMES = 2
+
+/**
  * Default window (ms) collapsing rapid new-chat taps into a single ACP mint.
  * The gateway's session.new pre-warm is deliberately slow; without a client-side
  * debounce a double-tap mints two phantom sessions. Valid range ~1000–5000ms:
@@ -90,6 +98,9 @@ private const val DEFAULT_PLAYBACK_DRAIN_SETTLE_MS = 250L
  * @param inputSampleRate Mic capture / STT uplink rate (Hz). session.ready may override.
  * @param outputSampleRate Assistant playback rate (Hz). session.ready may override.
  * @param frameDurationMs Duration of one captured frame (ms).
+ * @param onsetSustainFrames Consecutive loud frames before the uplink OnsetDetector
+ *   fires the barge-in edge (Task 9). The RMS threshold it compares against reuses
+ *   [echoGate]'s baselineThreshold — no separate tunable.
  */
 data class AudioPipelineConfig(
     val echoGate: EchoGateConfig = EchoGateConfig(
@@ -108,6 +119,7 @@ data class AudioPipelineConfig(
     val outputSampleRate: Int = DEFAULT_OUTPUT_SAMPLE_RATE,
     val frameDurationMs: Int = DEFAULT_FRAME_DURATION_MS,
     val playbackDrainSettleMs: Long = DEFAULT_PLAYBACK_DRAIN_SETTLE_MS,
+    val onsetSustainFrames: Int = ONSET_SUSTAIN_FRAMES,
 )
 
 /**

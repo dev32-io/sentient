@@ -30,6 +30,7 @@ import io.sentient.mobilesdk.transport.ResumeCursor
 import io.sentient.mobilesdk.transport.ResumeCursorPersistence
 import io.sentient.mobilesdk.transport.ResumeCursorStore
 import io.sentient.mobilesdk.transport.SdkStatus
+import io.sentient.mobilesdk.voice.MicState
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.BufferOverflow
@@ -170,6 +171,20 @@ class SentientSdk(
         onStateChanged = ::onAudioStateChanged,
         onBargeIn = { cycleId -> connectors.cycleError.noteBargeIn(cycleId) },
     )
+
+    // Real-time voice-uplink pipeline (Task 9). Built like SdkAudio — BEFORE the
+    // connector set, reaching connectors.audioInput via a lazy lambda. Null mic
+    // (text/test path) → no pipeline; startMic/stopMic still send audio.start/end.
+    private val voice: SdkVoice = SdkVoice(
+        mic = bundle.mic,
+        audioConfig = config.audio,
+        audioInput = { connectors.audioInput },
+        scope = scope,
+    )
+
+    /** Reactive mic-engine state (Idle → Initializing → Live / Error). The UI shows
+     *  the init spinner off this; Idle unless a real MicSource is wired. */
+    val micState: StateFlow<MicState> = voice.micState
 
     private val connectors = SdkConnectors(
         deriver = deriver,
@@ -334,28 +349,35 @@ class SentientSdk(
     }
 
     /**
-     * Start the voice uplink (E3): flip voiceMode ACTIVE, send audio.start, run the
-     * capture→EchoGate→pre-roll→uplink pipeline on the scope. Mirrors webui
-     * startVoiceMode — stream continuously, gate out echo, let the server VAD.
+     * Start the voice uplink (Task 9): flip voiceMode ACTIVE, send audio.start FIRST,
+     * then launch the VoiceUplinkPipeline (mic → Framer → Opus → WS binary) off the
+     * orchestrator. audio.start is sent BEFORE the pipeline starts so the wire order
+     * is audio.start → binary frames; the pipeline only emits frames once the mic
+     * delivers them (after start), so no frame can precede audio.start. With a null
+     * mic (text/test path) voice.start() is a no-op and only audio.start is sent.
      */
     fun startMic() {
-        log.info("startMic", mapOf("captureWired" to (bundle.capture != null)))
+        log.info("startMic", mapOf("micWired" to (bundle.mic != null)))
         markInteraction()
         deriver.voiceMode = VoiceMode.ACTIVE
         connectors.audioInput.startStreaming()
-        audio.startUplink()
+        scope.launch { voice.start() }
         emit()
     }
 
     /**
-     * Stop the voice uplink (E3): send audio.end, stop the pipeline (cancel collect
-     * + capture.stop + reset onset; FSM → INACTIVE), flip voiceMode OFF.
+     * Stop the voice uplink (Task 9): flip voiceMode OFF, then in ONE launched
+     * coroutine stop the pipeline FIRST (cancelAndJoin the collect + release mic) and
+     * send audio.end LAST — so no late frame can race past audio.end. Sequencing both
+     * in the same coroutine keeps audio.start → frames → audio.end deterministic.
      */
     fun stopMic() {
         log.info("stopMic")
         deriver.voiceMode = VoiceMode.OFF
-        connectors.audioInput.stopStreaming()
-        audio.stopUplink()
+        scope.launch {
+            voice.stop()
+            connectors.audioInput.stopStreaming()
+        }
         emit()
     }
 

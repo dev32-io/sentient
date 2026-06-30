@@ -8,6 +8,7 @@ import io.sentient.mobilesdk.voice.uplink.OnsetDetector
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
@@ -44,7 +45,10 @@ class VoiceUplinkPipeline(
     }
 
     suspend fun stop() {
-        job?.cancel(); job = null
+        // cancelAndJoin (not cancel): wait for any in-flight onPcm encode on the
+        // dispatcher thread to finish before encoder.reset(), so reset() can never
+        // race a concurrent encode of the non-thread-safe encoder/Framer.
+        job?.cancelAndJoin(); job = null
         encoder.reset()
         mic.stop()
     }
