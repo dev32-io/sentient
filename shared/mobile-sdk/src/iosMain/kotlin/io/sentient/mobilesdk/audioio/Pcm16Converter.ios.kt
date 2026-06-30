@@ -20,6 +20,7 @@
 
 package io.sentient.mobilesdk.audioio
 
+import io.sentient.mobilesdk.log.createLogger
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.get
@@ -28,12 +29,14 @@ import kotlinx.cinterop.pointed
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.value
 import platform.AVFAudio.AVAudioConverter
-import platform.AVFAudio.AVAudioConverterInputStatus_EndOfStream
 import platform.AVFAudio.AVAudioConverterInputStatus_HaveData
+import platform.AVFAudio.AVAudioConverterInputStatus_NoDataNow
 import platform.AVFAudio.AVAudioFormat
 import platform.AVFAudio.AVAudioFrameCount
 import platform.AVFAudio.AVAudioPCMBuffer
 import platform.AVFAudio.AVAudioPCMFormatInt16
+
+private val log = createLogger("audioio", "converter", "ios")
 
 private const val BYTES_PER_PCM16_SAMPLE = 2
 private const val BYTE_MASK = 0xFF
@@ -64,35 +67,64 @@ internal class Pcm16Converter(
     /** True when the converter was constructed (format pair was acceptable). */
     val isReady: Boolean get() = converter != null
 
+    // Throttle for the per-call convert trace: log the first few + every Nth (failures
+    // and the first success are what matter — this keeps the vitals ring from flooding).
+    private var callCount = 0
+
     /**
      * Convert one input [buffer] to a PCM16 LE [ByteArray], or null on failure /
      * empty output. Drives the converter's pull block with the single tap buffer.
+     * Logs the outcome (throttled) so the uplink trace shows convert ok/fail+reason.
      */
     fun convert(buffer: AVAudioPCMBuffer): ByteArray? {
-        val conv = converter ?: return null
+        callCount += 1
+        val conv = converter ?: return logFail("no-converter", buffer.frameLength)
         val capacity = estimateOutputFrames(buffer.frameLength)
-        if (capacity == 0u) return null
+        if (capacity == 0u) return logFail("zero-capacity", buffer.frameLength)
         val out = AVAudioPCMBuffer(pCMFormat = outputFormat, frameCapacity = capacity)
-
-        var delivered = false
-        val ok = memScoped {
-            val errVar = alloc<kotlinx.cinterop.ObjCObjectVar<platform.Foundation.NSError?>>()
-            conv.convertToBuffer(out, error = errVar.ptr) { _, statusPtr ->
-                val status = statusPtr ?: return@convertToBuffer null
-                if (delivered) {
-                    status.pointed.value = AVAudioConverterInputStatus_EndOfStream
-                    null
-                } else {
-                    delivered = true
-                    status.pointed.value = AVAudioConverterInputStatus_HaveData
-                    buffer
-                }
-            }
-            errVar.value == null
+        val err = runConvert(conv, out, buffer)
+        if (err != null) return logFail("converter-error: $err", buffer.frameLength)
+        val bytes = extractPcm16Le(out) ?: return logFail("empty-output outFrames=${out.frameLength}", buffer.frameLength)
+        if (shouldTrace()) {
+            log.debug(
+                "convert-ok",
+                mapOf("inFrames" to buffer.frameLength.toLong(), "outFrames" to out.frameLength.toLong(), "bytes" to bytes.size),
+            )
         }
-        if (!ok) return null
-        return extractPcm16Le(out)
+        return bytes
     }
+
+    /** Drives the converter's single-buffer pull; returns the NSError description or null. */
+    private fun runConvert(conv: AVAudioConverter, out: AVAudioPCMBuffer, buffer: AVAudioPCMBuffer): String? = memScoped {
+        val errVar = alloc<kotlinx.cinterop.ObjCObjectVar<platform.Foundation.NSError?>>()
+        var delivered = false
+        conv.convertToBuffer(out, error = errVar.ptr) { _, statusPtr ->
+            val status = statusPtr ?: return@convertToBuffer null
+            if (delivered) {
+                // NoDataNow — NOT EndOfStream. This converter instance is REUSED across
+                // every tap buffer; EndOfStream is terminal — it permanently marks the
+                // input stream finished, so the first convert() works and every later one
+                // emits 0 frames forever. NoDataNow means "no more input this call": the
+                // converter returns its resampled output (InputRanDry) and stays alive.
+                status.pointed.value = AVAudioConverterInputStatus_NoDataNow
+                null
+            } else {
+                delivered = true
+                status.pointed.value = AVAudioConverterInputStatus_HaveData
+                buffer
+            }
+        }
+        errVar.value?.localizedDescription
+    }
+
+    /** Logs a convert failure with its reason (always — failures are rare + critical) and returns null. */
+    private fun logFail(reason: String, inFrames: AVAudioFrameCount): ByteArray? {
+        log.warn("convert-fail", mapOf("reason" to reason, "inFrames" to inFrames.toLong(), "call" to callCount))
+        return null
+    }
+
+    /** First few calls + every Nth: keeps the success trace visible without flooding. */
+    private fun shouldTrace(): Boolean = callCount <= TRACE_FIRST_CALLS || callCount % TRACE_EVERY == 0
 
     /** Output frame budget for a tap buffer of [inputFrames] (ratio + slack for rounding). */
     private fun estimateOutputFrames(inputFrames: AVAudioFrameCount): AVAudioFrameCount {
@@ -123,5 +155,9 @@ internal class Pcm16Converter(
 
         // Extra output frames so resample rounding never overflows the buffer.
         const val CAPACITY_SLACK_FRAMES = 16L
+
+        // convert() success-trace throttle: log the first N calls + every Nth after.
+        const val TRACE_FIRST_CALLS = 3
+        const val TRACE_EVERY = 100
     }
 }

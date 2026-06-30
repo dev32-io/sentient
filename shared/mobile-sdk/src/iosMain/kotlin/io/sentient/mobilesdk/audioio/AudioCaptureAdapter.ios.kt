@@ -66,8 +66,20 @@ import kotlin.concurrent.Volatile
 private val log = createLogger("audioio", "capture", "ios")
 
 private const val INPUT_BUS = 0uL
+private const val OUTPUT_BUS = 0uL
 private const val TAP_BUFFER_FRAMES = 1024u
 private const val FRAME_CHANNEL_CAPACITY = 64
+
+// EXPERIMENT: capture-side voice processing (AEC+NS+AGC). The VP I/O unit is the coupled
+// full-duplex unit behind the real-device cascade (empty-graph prepare throw → vpio render
+// -1 → dead input tap). Disabled to confirm it's the cause and get reliable plain-input
+// capture (also the Whisper less-DSP direction). Flip to true to restore the always-on AEC.
+private const val ENABLE_CAPTURE_VOICE_PROCESSING = false
+
+// Tap-buffer trace throttle: log the first N buffers + every Nth after (keeps the
+// uplink trace visible without flooding the vitals ring at ~10 buffers/sec).
+private const val CAPTURE_TRACE_FIRST = 5
+private const val CAPTURE_TRACE_EVERY = 25
 
 /**
  * iOS [AudioCaptureAdapter] backed by the shared [AVAudioEngine].
@@ -85,6 +97,14 @@ class IosAudioCaptureAdapter : AudioCaptureAdapter {
 
     @Volatile
     private var frameChannel: Channel<ByteArray>? = null
+
+    // Diagnostic: logs only the FIRST tap buffer per capture session, so logs tell
+    // "tap never fired" (no line) apart from "tap fired but frames gated downstream".
+    @Volatile
+    private var tapFiredOnce = false
+
+    // Running count of tap buffers this session (audio-thread only — set serially).
+    private var capturedCount = 0
 
     override fun frames(sampleRate: Int): Flow<ByteArray> {
         val channel = frameChannel
@@ -106,6 +126,8 @@ class IosAudioCaptureAdapter : AudioCaptureAdapter {
             onBufferOverflow = BufferOverflow.DROP_OLDEST,
         )
         frameChannel = channel
+        tapFiredOnce = false
+        capturedCount = 0
         val started = runCatching { startEngine(sampleRate, channel) }.getOrElse { e ->
             log.error("start-failed", mapOf("reason" to "exception", "cause" to (e.message ?: "unknown")))
             false
@@ -149,18 +171,38 @@ class IosAudioCaptureAdapter : AudioCaptureAdapter {
         val avEngine = shared.retainForCapture() ?: return false
         val input: AVAudioInputNode = avEngine.inputNode
 
-        // Validate the input format BEFORE setVoiceProcessing / installTap (those
-        // raise an NSException on a zero format — sim with no mic / no input route).
-        val inputFormat = input.inputFormatForBus(INPUT_BUS)
-        if (!isValidInputFormat(inputFormat)) {
+        // Guard against a zero format (sim with no mic / no input route) BEFORE any
+        // throwing AV call — setVoiceProcessing / installTap raise an NSException on a
+        // zero format that runCatching cannot catch (→ SIGABRT).
+        val preVpFormat = input.inputFormatForBus(INPUT_BUS)
+        if (!isValidInputFormat(preVpFormat)) {
             log.warn(
                 "mic-unavailable",
                 mapOf(
                     "reason" to "invalid input format, capture not started",
-                    "inputRate" to inputFormat.sampleRate,
-                    "channels" to inputFormat.channelCount.toLong(),
+                    "inputRate" to preVpFormat.sampleRate,
+                    "channels" to preVpFormat.channelCount.toLong(),
                 ),
             )
+            shared.releaseForCapture()
+            return false
+        }
+
+        // Enabling voice processing CHANGES the input node's format. Read the EFFECTIVE
+        // format AFTER the (optional) VP toggle and bind BOTH the converter and the tap to
+        // it — a tap installed with a stale format silently never delivers buffers.
+        if (ENABLE_CAPTURE_VOICE_PROCESSING) enableVoiceProcessing(input)
+        val inputFormat = input.inputFormatForBus(INPUT_BUS)
+        log.info(
+            "input-format",
+            mapOf(
+                "preVpRate" to preVpFormat.sampleRate,
+                "postVpRate" to inputFormat.sampleRate,
+                "channels" to inputFormat.channelCount.toLong(),
+            ),
+        )
+        if (!isValidInputFormat(inputFormat)) {
+            log.warn("mic-unavailable", mapOf("reason" to "invalid post-VP format", "rate" to inputFormat.sampleRate))
             shared.releaseForCapture()
             return false
         }
@@ -172,10 +214,18 @@ class IosAudioCaptureAdapter : AudioCaptureAdapter {
             return false
         }
 
-        // Format is valid → safe to enable VP + install the tap.
-        enableVoiceProcessing(input)
         input.installTapOnBus(INPUT_BUS, bufferSize = TAP_BUFFER_FRAMES, format = inputFormat) { buffer, _ ->
             forwardBuffer(buffer, converter, channel)
+        }
+
+        // The voice-processing I/O unit is a COUPLED mic+speaker unit: it needs a live
+        // OUTPUT render or it fails every cycle ("auou/vpio render err -1"). So ONLY when VP
+        // is on, reference mainMixerNode to establish the mainMixer→outputNode link before
+        // prepare/start (renders silence until E2 playback connects its player to this SAME
+        // mixer; outputVolume untouched). A plain (VP-off) input tap needs no output graph.
+        if (ENABLE_CAPTURE_VOICE_PROCESSING) {
+            val outputMixer = avEngine.mainMixerNode
+            log.debug("output-graph-ensured", mapOf("outputRate" to outputMixer.outputFormatForBus(OUTPUT_BUS).sampleRate))
         }
 
         // Installing a tap can restart the engine graph; ensure it is running.
@@ -201,8 +251,20 @@ class IosAudioCaptureAdapter : AudioCaptureAdapter {
     /** Pushes one converted PCM16 LE frame into [channel] (audio-thread safe). */
     private fun forwardBuffer(buffer: AVAudioPCMBuffer?, converter: Pcm16Converter, channel: Channel<ByteArray>) {
         if (buffer == null) return
-        val pcm = converter.convert(buffer) ?: return
-        channel.trySend(pcm)
+        capturedCount += 1
+        val trace = capturedCount <= CAPTURE_TRACE_FIRST || capturedCount % CAPTURE_TRACE_EVERY == 0
+        if (!tapFiredOnce) {
+            tapFiredOnce = true
+            log.info("tap-first-buffer", mapOf("frames" to buffer.frameLength.toLong()))
+        }
+        if (trace) log.debug("tap-buffer", mapOf("frames" to buffer.frameLength.toLong(), "count" to capturedCount))
+        val pcm = converter.convert(buffer)
+        if (pcm == null) {
+            if (trace) log.debug("tap-frame-dropped", mapOf("reason" to "convert-null", "count" to capturedCount))
+            return
+        }
+        val queued = channel.trySend(pcm).isSuccess
+        if (trace) log.debug("tap-frame-queued", mapOf("bytes" to pcm.size, "queued" to queued, "count" to capturedCount))
     }
 
     /** Enables voice-processing IO (platform AEC) on the input node; logs availability. */

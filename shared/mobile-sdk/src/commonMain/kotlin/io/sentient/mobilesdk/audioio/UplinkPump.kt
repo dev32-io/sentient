@@ -30,6 +30,10 @@ import kotlinx.coroutines.launch
 /** DEBUG log throttle for buffered (gate-rejected) frames during silence. */
 private const val GATE_REJECT_LOG_EVERY = 50
 
+/** Uplink trace throttle: log the first N frames/packets + every Nth after. */
+private const val PUMP_TRACE_FIRST = 5
+private const val PUMP_TRACE_EVERY = 50
+
 /** Hangover frames the uplink ring keeps emitting after a reject — 0: server end-points. */
 private const val UPLINK_HANGOVER_FRAMES = 0
 
@@ -71,6 +75,8 @@ class UplinkPump(
     private var captureJob: Job? = null
     private var ringActive = false
     private var rejectCount = 0
+    private var framesIn = 0
+    private var framesSent = 0
 
     /** True while the capture-collect job is live — start() is a no-op when true. */
     fun isRunning(): Boolean = captureJob?.isActive == true
@@ -100,6 +106,8 @@ class UplinkPump(
         ring.reset()
         ringActive = false
         rejectCount = 0
+        framesIn = 0
+        framesSent = 0
         // Mic-session end: drop the sub-frame remainder so it never leaks into the
         // next utterance (which reset()s again on start, this is the symmetric guard).
         encoder.reset()
@@ -113,6 +121,10 @@ class UplinkPump(
     }
 
     private fun onCaptureFrame(frame: ByteArray) {
+        framesIn += 1
+        if (framesIn <= PUMP_TRACE_FIRST || framesIn % PUMP_TRACE_EVERY == 0) {
+            log.debug("pump-frame-in", mapOf("bytes" to frame.size, "count" to framesIn))
+        }
         val pcm = pcm16LeToShorts(frame)
         val nowMs = clock.nowMs()
         val accepted = echoGate.acceptFrame(pcm, nowMs)
@@ -140,9 +152,17 @@ class UplinkPump(
     private fun encodeAndSend(forward: List<ByteArray>) {
         if (forward.isEmpty()) return
         val connector = audioInput()
+        var packets = 0
         for (frame in forward) {
-            val packets = encoder.encode(pcm16LeToShorts(frame))
-            for (packet in packets) connector.sendAudioFrame(packet)
+            val encoded = encoder.encode(pcm16LeToShorts(frame))
+            for (packet in encoded) {
+                connector.sendAudioFrame(packet)
+                packets += 1
+            }
+        }
+        framesSent += packets
+        if (packets > 0 && (framesSent <= PUMP_TRACE_FIRST || framesSent % PUMP_TRACE_EVERY == 0)) {
+            log.debug("pump-encoded", mapOf("packets" to packets, "totalSent" to framesSent))
         }
     }
 
