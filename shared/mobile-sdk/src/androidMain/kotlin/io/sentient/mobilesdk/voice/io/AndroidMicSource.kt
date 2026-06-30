@@ -21,9 +21,7 @@ package io.sentient.mobilesdk.voice.io
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
-import android.media.AudioFormat
 import android.media.AudioRecord
-import android.media.MediaRecorder
 import io.sentient.mobilesdk.AndroidContextHolder
 import io.sentient.mobilesdk.audio.pcm16LeToShorts
 import io.sentient.mobilesdk.audioio.Pcm16Resampler
@@ -42,11 +40,7 @@ import kotlin.concurrent.Volatile
 private val log = createLogger("voice", "mic", "android")
 
 private const val TARGET_SAMPLE_RATE_HZ = 16_000
-private const val FALLBACK_CAPTURE_RATE = 48_000 // device rate when the hardware rejects 16k
 private const val FRAME_DURATION_MS = 20
-private const val MS_PER_SECOND = 1000
-private const val BYTES_PER_PCM16_SAMPLE = 2
-private const val BUFFER_SIZE_MULTIPLIER = 4
 
 // Bounded SUSPEND frames channel: trySend on a FULL buffer fails → newest frame dropped +
 // counted. Small — a backlog past this many ~20ms frames means downstream stalled.
@@ -107,7 +101,7 @@ class AndroidMicSource(
             failSoft("record-permission-denied")
             return
         }
-        when (val result = withContext(Dispatchers.Default) { openSession() }) {
+        when (val result = withContext(Dispatchers.Default) { openMicAudioRecord(TARGET_SAMPLE_RATE_HZ, FRAME_DURATION_MS) }) {
             is Acquisition.Ready -> {
                 active = result.config
                 startReaderThread(result.config)
@@ -139,7 +133,9 @@ class AndroidMicSource(
         }
         log.info("stop", mapOf("captured" to capturedCount, "dropped" to droppedCount))
         running = false // signal the read loop to exit
-        withContext(Dispatchers.Default) {
+        // record.stop() + thread.join() + record.release() all block — run on Dispatchers.IO,
+        // the canonical dispatcher for blocking platform calls (NOT Default's CPU-bound pool).
+        withContext(Dispatchers.IO) {
             runCatching { config.record.stop() } // unblocks the in-flight read()
                 .onFailure { log.warn("stop-record-failed", mapOf("cause" to (it.message ?: "unknown"))) }
             joinReader(thread)
@@ -150,51 +146,8 @@ class AndroidMicSource(
         _state.value = MicState.Idle
     }
 
-    // --- Acquisition (runs on Dispatchers.Default, off the main thread) ---
-
-    /** Acquires AudioRecord (16k-native or device-rate fallback); typed result, never throws. */
-    private fun openSession(): Acquisition {
-        val captureRate = resolveCaptureRate()
-        val minBuffer = AudioRecord.getMinBufferSize(captureRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-        if (minBuffer <= 0) return Acquisition.Failed("min-buffer-$minBuffer")
-        val frameSamples = (captureRate * FRAME_DURATION_MS) / MS_PER_SECOND
-        val bufferBytes = maxOf(minBuffer, frameSamples * BYTES_PER_PCM16_SAMPLE * BUFFER_SIZE_MULTIPLIER)
-        val record = runCatching { buildRecord(captureRate, bufferBytes) }
-            .getOrElse { e ->
-                log.error("record-construct-failed", mapOf("cause" to (e.message ?: "unknown")))
-                return Acquisition.Failed("construct-exception")
-            }
-        if (record.state != AudioRecord.STATE_INITIALIZED) {
-            record.release()
-            return Acquisition.Failed("init-state-${record.state}")
-        }
-        record.startRecording()
-        if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
-            record.release()
-            return Acquisition.Failed("record-state-${record.recordingState}")
-        }
-        val resampler = if (captureRate == TARGET_SAMPLE_RATE_HZ) null else Pcm16Resampler(captureRate, TARGET_SAMPLE_RATE_HZ)
-        log.info("session-open", mapOf("captureRate" to captureRate, "frameSamples" to frameSamples, "resampling" to (resampler != null)))
-        return Acquisition.Ready(ReaderConfig(record, frameSamples, resampler))
-    }
-
-    @Suppress("MissingPermission") // guarded by hasRecordPermission() in start()
-    private fun buildRecord(captureRate: Int, bufferBytes: Int): AudioRecord =
-        AudioRecord(
-            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-            captureRate,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-            bufferBytes,
-        )
-
-    /** Returns 16k if the device accepts it, else the device fallback rate (resampled). */
-    private fun resolveCaptureRate(): Int {
-        val ok = AudioRecord.getMinBufferSize(TARGET_SAMPLE_RATE_HZ, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-        if (ok > 0) return TARGET_SAMPLE_RATE_HZ
-        log.warn("rate-fallback", mapOf("reason" to "16k rejected", "fallbackRate" to FALLBACK_CAPTURE_RATE))
-        return FALLBACK_CAPTURE_RATE
-    }
+    // Acquisition (openMicAudioRecord + ReaderConfig/Acquisition) lives in
+    // MicAudioRecordSession.android.kt; start() invokes it off-main on Dispatchers.Default.
 
     // --- Reader thread (blocking read loop — trySend only, no coroutines) ---
 
@@ -253,7 +206,16 @@ class AndroidMicSource(
         log.info("mic-live", mapOf("samples" to samples))
     }
 
-    /** Fatal mid-run read error → surface Error + close channel; recovery is stop()/start(). */
+    /**
+     * Fatal mid-run read error → surface Error + close channel. `started` is intentionally LEFT
+     * `true` here (unlike [failSoft], which resets it): resetting the latch + releasing the dead
+     * record from THIS reader thread would race stop()'s release on the orchestrator thread →
+     * double-release. So after a fatal read the session enters Error with the (dead) record STILL
+     * HELD; recovery REQUIRES the orchestrator to call stop() (releases the dead record + clears
+     * the latch) before the next start(). A bare start() after Error is therefore intentionally a
+     * no-op ("start-already") to avoid the double-release race — the SDK's user-driven
+     * stopMic→startMic toggle satisfies this contract (Task 9 guarantees it).
+     */
     private fun onFatalRead(read: Int) {
         log.error("reader-fatal", mapOf("read" to read))
         running = false
@@ -283,13 +245,4 @@ class AndroidMicSource(
 
     private fun hasRecordPermission(): Boolean =
         context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-
-    /** One acquired AudioRecord run: live record + read sizing + (fallback) resampler. */
-    private class ReaderConfig(val record: AudioRecord, val frameSamples: Int, val resampler: Pcm16Resampler?)
-
-    /** Typed acquisition outcome — never throws across the start() boundary. */
-    private sealed interface Acquisition {
-        data class Ready(val config: ReaderConfig) : Acquisition
-        data class Failed(val reason: String) : Acquisition
-    }
 }
