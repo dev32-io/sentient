@@ -13,7 +13,10 @@ plugins {
 // Bumped to 0.1.2: SentientMobileVitals (Task 14).
 // Bumped to 0.1.3: surface-isolation (per-tab/per-app surfaceId in session.configure).
 // Bumped to 0.1.4: cycleId render-key fix (committed-history entryId dedup).
-version = "0.1.4"
+// Bumped to 0.1.6: iOS mic-dead fix (defer SharedAudioEngine prepare/start off the
+// empty render graph — eager prepare() threw "no I/O route" on real devices).
+// Skips 0.1.5 to re-align with the app versionName lockstep (app was already 0.1.5).
+version = "0.1.6"
 
 kotlin {
     androidTarget {

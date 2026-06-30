@@ -11,9 +11,12 @@
 // playAndRecord/voiceChat AVAudioSession. E1's capture was refactored from its
 // own private AVAudioEngine() to this holder.
 //
-// Lifecycle: capture and playback are independent users of the engine. The
-// engine starts on first use and stays running while EITHER side is active;
-// stop() from one side does NOT tear the engine down while the other holds it.
+// Lifecycle: capture and playback are independent users of the engine. retain()
+// configures+activates the session but does NOT start the engine — the caller
+// attaches its node (input tap / player) then calls ensureRunning(), which is the
+// single prepare/start path (a prepare on an EMPTY graph throws on a real device).
+// The engine stays running while EITHER side is active; stop() from one side does
+// NOT tear the engine down while the other holds it.
 // retain()/release() reference-count the two users; the engine + session are
 // stopped only when the count reaches zero. The .playAndRecord category is set
 // once, but setActive(true) is RE-ASSERTED on every retain so an external
@@ -83,31 +86,34 @@ internal class SharedAudioEngine private constructor() {
     val isCaptureActive: Boolean get() = captureUsers > 0
 
     /**
-     * Ensures the session is configured + the engine is running, then returns the
-     * engine. Returns null on any configuration / start failure (no throw).
-     *
-     * `prepare()` / `startAndReturnError` raise an uncatchable ObjC NSException on a
-     * simulator with no audio I/O route ("inputNode != nullptr || outputNode !=
-     * nullptr") — guarded via [enginePrepareGuarded] / [engineStartGuarded] so they
-     * degrade to a null return instead of SIGABRT. `users` is bumped ONLY after a
-     * clean start, so a soft-fail before the increment leaves the refcount consistent
-     * (no leaked retain to release).
+     * Configures + activates the shared session and returns the engine WITHOUT
+     * preparing/starting it — the render graph is EMPTY at retain (see [retainInternal]).
+     * The caller attaches its node (player) then calls [ensureRunning], the single
+     * prepare/start path on a non-empty graph. Returns null only on session-config
+     * failure (no throw).
      */
     fun retain(): AVAudioEngine? = retainInternal(isCapture = false)
 
     /**
      * CAPTURE-side retain: same engine acquisition as [retain] but also bumps the
      * capture counter so [isCaptureActive] reads true while the mic holds the engine.
-     * The capture counter is bumped ONLY after a clean start (with the total count),
-     * so a soft-fail leaves BOTH counters consistent.
+     * Both counters bump only after [ensureSession] succeeds (no eager start), so a
+     * session-config soft-fail leaves BOTH counters consistent. The capture adapter
+     * installs its input tap, then calls [ensureRunning] to prepare/start the graph.
      */
     fun retainForCapture(): AVAudioEngine? = retainInternal(isCapture = true)
 
     private fun retainInternal(isCapture: Boolean): AVAudioEngine? {
         if (!ensureSession()) return null
-        if (!engine.running) {
-            if (!enginePrepareGuarded(engine) || !startEngine()) return null
-        }
+        // DO NOT prepare()/start() here. The render graph is still EMPTY at retain — the
+        // input tap (capture) / player node (playback) is attached by the caller AFTER
+        // this returns. prepare()/start() on an empty graph trips the AVAudioEngine
+        // precondition on a REAL device → an NSException the ObjC guard swallows → the
+        // shared engine silently never runs → mic dead / TTS silent. Both callers invoke
+        // [ensureRunning] after attaching their node (tap install / player connect), which
+        // is the single prepare/start path on a NON-empty graph — mirroring
+        // [StandalonePlaybackEngine.acquire]. (Same NSException the E5 sim fix guarded;
+        // the real-device empty-graph case was the live mic-not-capturing bug.)
         users += 1
         if (isCapture) captureUsers += 1
         log.debug(
