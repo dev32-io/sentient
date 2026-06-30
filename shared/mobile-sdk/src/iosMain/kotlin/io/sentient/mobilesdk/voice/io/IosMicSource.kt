@@ -18,7 +18,11 @@
 //  3. state is a StateFlow<MicState> for the UI: Idle → Initializing (start) → Live
 //     (first delivered frame, set from the render thread) → Error(reason) on any
 //     failure → Idle (stop).
-//  4. start() runs the AV setup OFF the main thread (withContext(setupDispatcher)).
+//  4. start() runs the AV setup OFF the main thread (withContext(setupDispatcher)). Tap
+//     install (start) + removal (stop) are render-graph mutations; they are safe NOT from
+//     sharing a thread (setupDispatcher = Dispatchers.Default is a POOL — "same dispatcher"
+//     is NOT "same thread") but because the SDK drives start()/stop() SERIALLY on the
+//     orchestrator coroutine, so the graph is never mutated concurrently (SharedAudioEngine).
 //
 // VP stays OFF (mirrors ENABLE_CAPTURE_VOICE_PROCESSING = false): no voice processing,
 // no mainMixerNode reference — the proven plain-input capture path.
@@ -54,6 +58,7 @@ import platform.AVFAudio.AVAudioFormat
 import platform.AVFAudio.AVAudioInputNode
 import platform.AVFAudio.AVAudioPCMBuffer
 import kotlin.concurrent.Volatile
+import kotlin.coroutines.cancellation.CancellationException
 
 private val log = createLogger("voice", "mic", "ios")
 
@@ -77,11 +82,14 @@ private const val DROP_WARN_EVERY = 50
 /**
  * iOS [MicSource] backed by the shared full-duplex [AVAudioEngine].
  *
- * Single-use: the frames channel is created at construction and closed on stop()/failure
- * (mirroring the old adapter); a fresh instance is created per capture session by the
- * factory. The AV setup runs on [setupDispatcher] (default [Dispatchers.Default]) so the
- * main thread is never blocked. The tap callback runs on the audio render thread; it does
- * a non-blocking convert + [Channel.trySend] only.
+ * Re-startable: the SDK holds ONE instance and toggles start()/stop() repeatedly. Each
+ * start() mints a FRESH frames channel (see [resetSession]) and resets the latch/counters;
+ * stop() clears the latch + closes the (now-old) channel — so no frames leak across sessions
+ * and the 2nd start() is not blocked by the [started] guard. [frames] is a getter over the
+ * CURRENT channel; the pipeline calls start() (→ fresh channel) BEFORE it reads frames. The
+ * AV setup runs on [setupDispatcher] (default [Dispatchers.Default]) so the main thread is
+ * never blocked. The tap callback runs on the audio render thread; non-blocking convert +
+ * trySend only.
  */
 class IosMicSource(
     private val setupDispatcher: CoroutineDispatcher = Dispatchers.Default,
@@ -91,8 +99,11 @@ class IosMicSource(
 
     // Default single-arg Channel = BufferOverflow.SUSPEND → trySend fails when full (the
     // drop-newest contract). Do NOT pass DROP_OLDEST (silent old-frame eviction) / DROP_LATEST.
-    private val channel = Channel<ShortArray>(FRAME_CHANNEL_CAPACITY)
-    override val frames: Flow<ShortArray> = channel.receiveAsFlow()
+    // Recreated FRESH per start() (resetSession) so one instance is re-startable; frames is a
+    // getter over the CURRENT channel (pipeline calls start() before reading frames).
+    @Volatile
+    private var currentChannel = Channel<ShortArray>(FRAME_CHANNEL_CAPACITY)
+    override val frames: Flow<ShortArray> get() = currentChannel.receiveAsFlow()
 
     private val _state = MutableStateFlow<MicState>(MicState.Idle)
     override val state: StateFlow<MicState> = _state.asStateFlow()
@@ -106,7 +117,8 @@ class IosMicSource(
     @Volatile
     private var tapFiredOnce = false
 
-    // Audio-thread-only counters (mutated serially in the tap — no @Volatile needed).
+    // Reset in resetSession() (before the tap installs), then mutated serially in the tap —
+    // no @Volatile needed (the reset happens-before tap callbacks via the engine-start path).
     private var capturedCount = 0
     private var droppedCount = 0
 
@@ -116,22 +128,36 @@ class IosMicSource(
             return
         }
         started = true
+        resetSession()
         log.info("start", mapOf("targetRate" to TARGET_SAMPLE_RATE_HZ))
         _state.value = MicState.Initializing
         val ok = withContext(setupDispatcher) {
             runCatching { startEngine() }.getOrElse { e ->
+                if (e is CancellationException) throw e // structured concurrency — never swallow
+                // A throw AFTER retainForCapture() leaves the capture retain held; release it
+                // (releaseForCapture is noop-safe when none) so the refcount stays consistent.
                 log.error("start-exception", mapOf("cause" to (e.message ?: "unknown")))
-                failSoft("setup-exception")
+                releaseAndFail("setup-exception")
             }
         }
         if (ok) log.info("started")
     }
 
+    /** Fresh per-session state so the single instance is re-startable across start/stop/start. */
+    private fun resetSession() {
+        currentChannel = Channel(FRAME_CHANNEL_CAPACITY)
+        tapFiredOnce = false
+        capturedCount = 0
+        droppedCount = 0
+    }
+
     override suspend fun stop() {
+        started = false // clear the latch so the NEXT start() is not no-op'd
         val active = engine
         engine = null
         if (active == null) {
             log.debug("stop-noop")
+            currentChannel.close()
             _state.value = MicState.Idle
             return
         }
@@ -141,7 +167,7 @@ class IosMicSource(
                 .onFailure { log.warn("stop-teardown-failed", mapOf("cause" to (it.message ?: "unknown"))) }
             shared.releaseForCapture()
         }
-        channel.close()
+        currentChannel.close()
         _state.value = MicState.Idle
     }
 
@@ -204,7 +230,7 @@ class IosMicSource(
 
     /** trySend the frame; on a full buffer drop the NEWEST + count it (throttled WARN). */
     private fun deliver(shorts: ShortArray, trace: Boolean) {
-        if (channel.trySend(shorts).isSuccess) {
+        if (currentChannel.trySend(shorts).isSuccess) {
             if (!tapFiredOnce) markLive(shorts.size)
             if (trace) log.debug("tap-frame-queued", mapOf("samples" to shorts.size, "count" to capturedCount))
             return
@@ -232,11 +258,15 @@ class IosMicSource(
         return failSoft(reason)
     }
 
-    /** Terminal soft fail: MicState.Error + close frames channel (idempotent). No engine release. */
+    /**
+     * Terminal soft fail: MicState.Error + close frames channel + clear the [started] latch so a
+     * retry start() is not blocked (idempotent). No engine release (caller's job).
+     */
     private fun failSoft(reason: String): Boolean {
         log.warn("start-failed", mapOf("reason" to reason))
+        started = false
         _state.value = MicState.Error(reason)
-        channel.close()
+        currentChannel.close()
         return false
     }
 }
