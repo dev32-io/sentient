@@ -16,7 +16,7 @@
 - Hot path: no per-frame allocation beyond the frame buffer; no logging at INFO per-frame (throttle first-N + every-Nth); lengths/counts/RMS only, never content (PrivacyGuard stays green).
 - Files <300 lines (split at 250); functions <40 lines (extract at 30); max nesting 3.
 - Audio NEVER runs on the SDK orchestrator coroutine. Platform capture on a dedicated realtime thread; `VoiceUplinkPipeline` on its own single-thread dispatcher.
-- Backpressure = bounded channel + drop-NEWEST (`BufferOverflow.DROP_LATEST`), never a large drop-oldest backlog. Emit a throttled WARN with dropped count.
+- Backpressure = bounded channel, drop-NEWEST, never a large drop-oldest backlog. Implement drop-newest at the PRODUCER: `trySend` into a bounded SUSPEND channel and, when `ChannelResult.isSuccess == false`, drop that frame + bump a dropped counter (throttled WARN with the count). Do NOT use `BufferOverflow.DROP_LATEST` — it makes `trySend` always succeed, drops silently, and defeats the dropped-count WARN this constraint requires.
 - Tests: `bun run test` is irrelevant here; use Gradle. commonMain pure units are TDD'd in `commonTest` with fakes (no device). Platform `actual`s are device-verified (sim has no mic).
 - Logger tag root `["sentient","mobile-sdk",...]`; tagged logger only, no bare prints.
 
@@ -381,20 +381,25 @@ interface MicSource {
 // FakeMicSource.kt (commonTest)
 package io.sentient.mobilesdk.voice.io
 import io.sentient.mobilesdk.voice.MicState
-import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 
+/**
+ * Test double. Bounded SUSPEND channel models the real producer-side drop-newest:
+ * emit() == trySend(), which returns false when the buffer is full (frame dropped).
+ * A DROP_LATEST channel would make trySend ALWAYS succeed and hide the drop — see
+ * the Global Constraints backpressure note.
+ */
 class FakeMicSource(channelCapacity: Int = 8) : MicSource {
-    private val ch = Channel<ShortArray>(capacity = channelCapacity, onBufferOverflow = BufferOverflow.DROP_LATEST)
+    private val ch = Channel<ShortArray>(capacity = channelCapacity)
     private val _state = MutableStateFlow<MicState>(MicState.Idle)
     override val frames = ch.receiveAsFlow()
     override val state: StateFlow<MicState> = _state
     override suspend fun start() { _state.value = MicState.Live }
     override suspend fun stop() { _state.value = MicState.Idle }
-    /** Push a frame; returns false if dropped (channel full). */
+    /** Push a frame; returns false if dropped (channel full) — drop-newest. */
     fun emit(pcm: ShortArray): Boolean = ch.trySend(pcm).isSuccess
 }
 ```
@@ -559,7 +564,7 @@ git commit -m "feat(mobile-sdk): VoiceUplinkPipeline (decoupled 1:1 real-time se
 - Modify (or replace): `SharedAudioEngine.ios.kt` — keep ONE engine, VPIO always-on, output graph present (the playerNode is added in Slice 2; for Slice 1 reference `mainMixerNode` so VPIO has its output half, as proven in `aa44502`).
 
 **Interfaces:**
-- Produces: `class IosMicSource(clock, scope) : MicSource` per Task 5. `start()` (off main): set `MicState.Initializing` → activate session + start engine + install tap on a dedicated consumer → on first delivered frame set `MicState.Live`. Tap callback does **only** copy float samples into a pre-allocated ring + signal; the consumer (a `DispatchQueue`/dedicated thread) runs `Pcm16Converter.convert` (48k→16k) and `trySend`s 16k `ShortArray` into the bounded frames channel (`BufferOverflow.DROP_LATEST`).
+- Produces: `class IosMicSource(clock, scope) : MicSource` per Task 5. `start()` (off main): set `MicState.Initializing` → activate session + start engine + install tap on a dedicated consumer → on first delivered frame set `MicState.Live`. Tap callback does **only** copy float samples into a pre-allocated ring + signal; the consumer (a `DispatchQueue`/dedicated thread) runs `Pcm16Converter.convert` (48k→16k) and `trySend`s 16k `ShortArray` into a bounded SUSPEND frames channel — on `trySend` failure, drop the frame (drop-newest) + bump a dropped counter (throttled WARN). NOT `BufferOverflow.DROP_LATEST` (silent; defeats the dropped-count WARN).
 
 This task is **device-verified**, not unit-tested (sim has no mic). Key constraints baked in from the saga:
 - VPIO is enabled ONCE for the session; the engine has a live output graph (`mainMixerNode` referenced) so VPIO renders — never capture-only-VP.
@@ -597,7 +602,7 @@ git commit -m "feat(mobile-sdk): iOS MicSource (shared full-duplex engine, tap�
 
 This task is **device/emulator-verified** (emulator mic via host).
 
-- [ ] **Step 1: Implement `AndroidMicSource`** per above; read loop on the dedicated thread, hand off via bounded `Channel` (`DROP_LATEST`); no per-frame allocation beyond the read buffer + emitted copy.
+- [ ] **Step 1: Implement `AndroidMicSource`** per above; read loop on the dedicated thread, hand off via a bounded SUSPEND `Channel` — `trySend`, drop-newest + dropped-count WARN on failure (NOT `BufferOverflow.DROP_LATEST`, which drops silently); no per-frame allocation beyond the read buffer + emitted copy.
 
 - [ ] **Step 2: Build** — Run: `./gradlew :shared:mobile-sdk:assembleDebug` — Expected: BUILD SUCCESSFUL.
 
