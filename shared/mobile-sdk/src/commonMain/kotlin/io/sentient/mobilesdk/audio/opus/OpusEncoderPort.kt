@@ -1,10 +1,10 @@
 package io.sentient.mobilesdk.audio.opus
 
 // ---------------------------------------------------------------------------
-// OpusEncoderPort — the mic-uplink encode boundary the UplinkPump depends on.
+// OpusEncoderPort — the mic-uplink encode boundary the VoiceUplinkPipeline depends on.
 //
 // The concrete OpusUplinkEncoder wraps kopus, whose native libopus code does
-// NOT load under the host-JVM testDebugUnitTest target. The pump therefore
+// NOT load under the host-JVM testDebugUnitTest target. The pipeline therefore
 // depends on THIS port (arbitrary-length PCM16 ShortArray in → zero or more raw
 // opus packets out), so commonTest can substitute a pure fake and pin the
 // encode/send wiring contract without touching native code. See

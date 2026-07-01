@@ -126,7 +126,14 @@ class SdkConnectors(
 
     val preferences = PreferencesConnector(
         send = send,
-        onChange = { prefs -> deriver.prefs = prefs; emit() },
+        // Fold a server-driven prefs change into the deriver + re-emit for the UI toggle
+        // state. The downlink engine is LAZY-ARMED on connector.audio.start (mirrors
+        // web-sdk), not from the preference flag — the gateway only sends audio.* when TTS
+        // is on, so arming follows the actual audio, no preference→configure coupling.
+        onChange = { prefs ->
+            deriver.prefs = prefs
+            emit()
+        },
     )
 
     val tasks = TaskStatusConnector(

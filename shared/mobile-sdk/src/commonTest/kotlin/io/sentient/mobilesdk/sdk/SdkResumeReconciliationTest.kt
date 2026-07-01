@@ -254,8 +254,6 @@ class SdkResumeReconciliationTest {
             tokenStore = InMemoryTokenStore().apply { save("tok-abc") },
             deviceIdStore = InMemoryDeviceIdStore("dev-test"),
             clock = FixedClock(0L),
-            capture = null,
-            playback = null,
         )
         return SentientSdk(
             config = SdkConfig(

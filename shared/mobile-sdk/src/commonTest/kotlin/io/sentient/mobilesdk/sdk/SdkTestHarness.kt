@@ -46,8 +46,6 @@ internal fun TestScope.buildSdk(
         tokenStore = tokenStore,
         deviceIdStore = InMemoryDeviceIdStore("dev-test"),
         clock = FixedClock(0L),
-        capture = null,
-        playback = null,
     )
     return SentientSdk(
         config = SdkConfig(

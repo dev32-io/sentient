@@ -26,8 +26,8 @@
 // latch path as playback.stop here — mobile-sdk drives the latch through the
 // playback.stop frame, which is the wire signal for barge-in / interrupt.
 //
-// No coroutines here — the E3 pipeline routes onAudioFrame → AudioPlaybackAdapter
-// .enqueue and onPlaybackStop → .clear. This connector owns ONLY the flag FSM.
+// No coroutines here — the E3 pipeline routes onAudioFrame → VoicePlaybackSink
+// .playFrame and onPlaybackStop → .flushPlayback. This connector owns ONLY the flag FSM.
 //
 // Threading: single-threaded; the router drives handle/handleBinary on the
 // orchestrator's dispatcher. The flag/cycleId state is owned here.

@@ -20,14 +20,4 @@ class FaultHooksTest {
         assertEquals(true, h.consumeMalformedFrame())
         assertEquals(false, h.consumeMalformedFrame())
     }
-
-    @Test
-    fun fixture_utterance_is_taken_once() {
-        val h = FaultHooks()
-        assertEquals(null, h.takeFixtureUtterance())
-        h.loadFixtureUtterance(byteArrayOf(1, 2, 3))
-        val taken = h.takeFixtureUtterance()
-        assertEquals(3, taken?.size)
-        assertEquals(null, h.takeFixtureUtterance())
-    }
 }

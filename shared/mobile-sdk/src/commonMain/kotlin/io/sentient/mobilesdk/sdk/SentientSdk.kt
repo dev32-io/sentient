@@ -9,7 +9,6 @@
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.sdk
 
-import io.sentient.mobilesdk.audioio.FaultAwareCaptureAdapter
 import io.sentient.mobilesdk.connectors.CognitionState
 import io.sentient.mobilesdk.connectors.SessionsListPage
 import io.sentient.mobilesdk.connectors.SessionsRequestException
@@ -30,6 +29,7 @@ import io.sentient.mobilesdk.transport.ResumeCursor
 import io.sentient.mobilesdk.transport.ResumeCursorPersistence
 import io.sentient.mobilesdk.transport.ResumeCursorStore
 import io.sentient.mobilesdk.transport.SdkStatus
+import io.sentient.mobilesdk.voice.io.VoiceAudioState
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.BufferOverflow
@@ -125,7 +125,7 @@ class SentientSdk(
     // anchored session was revoked → drop the anchor (see onSessionForbidden).
     private var reestablishingSessionId: String? = null
 
-    // FaultHooks declared early so effectiveCapture + lifecycle can both reference it.
+    // FaultHooks declared early so the lifecycle can reference it (network/transport faults).
     private val faultHooks = FaultHooks()
 
     // Resume cursor (Task 3.10): tracks seq/epoch so replayed frames dedup and the
@@ -147,29 +147,41 @@ class SentientSdk(
     // it in session.configure and keys the per-device replay buffer by it.
     private val deviceId: String = DeviceIdProvider(bundle.deviceIdStore).getOrCreate()
 
-    // Voice pipeline (E3). Built BEFORE connectors so the downlink hooks exist
-    // when the connector set reads them; the pipeline reaches connectors.audioInput
-    // via a lazy lambda to break the construction cycle. See SdkAudio.
-    //
-    // In debug builds, wrap the real capture adapter with FaultAwareCaptureAdapter
-    // so loadFixtureUtterance() can inject a pre-recorded PCM utterance instead of
-    // live mic audio. Null capture passes through unchanged (text-only path).
-    private val effectiveCapture = if (config.devFaultsEnabled && bundle.capture != null) {
-        FaultAwareCaptureAdapter(real = bundle.capture, faultHooks = faultHooks)
-    } else {
-        bundle.capture
-    }
-
+    // Downlink voice pipeline (E3). Built BEFORE connectors so the downlink hooks
+    // exist when the connector set reads them. The real-time mic UPLINK lives in the
+    // voice/ package (SdkVoice) — SdkAudio is downlink-only. See SdkAudio.
     private val audio: SdkAudio = SdkAudio(
         audioConfig = config.audio,
-        capture = effectiveCapture,
-        playback = bundle.playback,
-        audioInput = { connectors.audioInput },
-        clock = bundle.clock,
+        voiceAudio = bundle.voiceAudio,
         scope = scope,
         onStateChanged = ::onAudioStateChanged,
-        onBargeIn = { cycleId -> connectors.cycleError.noteBargeIn(cycleId) },
+        // Lazy-arm the downlink engine on the first TTS cycle (mirrors web-sdk's
+        // arm-on-audio.start model). Deferred accessors — `voice` is constructed AFTER
+        // `audio`, but these only fire at audio.start / drain, long after construction.
+        armPlayback = { voice.armPlayback() },
+        disarmPlayback = { voice.requestPlayback(false) },
     )
+
+    // Real-time voice-uplink pipeline (Task 9). Built like SdkAudio — BEFORE the
+    // connector set, reaching connectors.audioInput via a lazy lambda. Null voiceAudio
+    // (text/test path) → no pipeline; startMic/stopMic still send audio.start/end.
+    private val voice: SdkVoice = SdkVoice(
+        voiceAudio = bundle.voiceAudio,
+        audioConfig = config.audio,
+        audioInput = { connectors.audioInput },
+        // Control-frame senders ride the SAME serialized lane as pipeline start/stop
+        // (audio.start before frames, audio.end after). Lazy/cycle-safe — connectors
+        // is only deref'd when the consumer invokes these, exactly like audioInput.
+        onUplinkStart = { connectors.audioInput.startStreaming() },
+        onUplinkStop = { connectors.audioInput.stopStreaming() },
+        scope = scope,
+    )
+
+    /** Reactive engine readiness (Idle → Configuring → Ready / Error). UI spinner off
+     *  this. Idle unless a real VoiceAudio is wired (text/test path). Engine readiness
+     *  surface exposed by [SdkVoice.audioState] — the single source of truth
+     *  for the UI spinner + the SDK reconfig decision. */
+    val audioState: StateFlow<VoiceAudioState> = voice.audioState
 
     private val connectors = SdkConnectors(
         deriver = deriver,
@@ -185,6 +197,10 @@ class SentientSdk(
         scope = scope,
         audioHooks = { audio.downlinkHooks },
         onCognitionChanged = ::onCognitionChanged,
+        // Lazy-arm model: the downlink engine is armed on connector.audio.start, not from
+        // the preference flag. The gateway only sends audio.* when TTS is on, so arming
+        // follows the actual audio — no preference→configure coupling needed. The prefs
+        // change still folds into the deriver (UI toggle state) inside PreferencesConnector.
     )
 
     private val router = MessageRouter(connectors.all, audioConnector = connectors.audioOutput)
@@ -333,33 +349,32 @@ class SentientSdk(
         sendControl(ClientMessage.Interrupt) // best-effort; null-safe if transport is dead
     }
 
-    /**
-     * Start the voice uplink (E3): flip voiceMode ACTIVE, send audio.start, run the
-     * capture→EchoGate→pre-roll→uplink pipeline on the scope. Mirrors webui
-     * startVoiceMode — stream continuously, gate out echo, let the server VAD.
-     */
+    /** Start the voice uplink: flip voiceMode ACTIVE, then request the serialized
+     *  configure(mic=true, playback=<current tts>) on [SdkVoice]'s single lane. The lane
+     *  emits audio.start, runs VoiceAudio.configure (mic tap up), and starts the uplink
+     *  collect — in that order, serialized with stopMic and setTtsEnabled. */
     fun startMic() {
-        log.info("startMic", mapOf("captureWired" to (bundle.capture != null)))
+        log.info("startMic", mapOf("voiceAudioWired" to (bundle.voiceAudio != null)))
         markInteraction()
         deriver.voiceMode = VoiceMode.ACTIVE
-        connectors.audioInput.startStreaming()
-        audio.startUplink()
+        voice.requestStart()
         emit()
     }
 
-    /**
-     * Stop the voice uplink (E3): send audio.end, stop the pipeline (cancel collect
-     * + capture.stop + reset onset; FSM → INACTIVE), flip voiceMode OFF.
-     */
+    /** Stop the voice uplink: flip voiceMode OFF, request configure(mic=false, ...).
+     *  The lane stops the uplink collect, runs VoiceAudio.configure (mic tap down), and
+     *  emits audio.end LAST — so no late frame can race past audio.end. */
     fun stopMic() {
         log.info("stopMic")
         deriver.voiceMode = VoiceMode.OFF
-        connectors.audioInput.stopStreaming()
-        audio.stopUplink()
+        voice.requestStop()
         emit()
     }
 
-    /** Patch TTS on/off; server echoes via session.preferences.changed. */
+    /** Patch TTS on/off; the server echoes via session.preferences.changed and starts /
+     *  stops sending connector.audio.* accordingly. The downlink engine is LAZY-ARMED on
+     *  audio.start (mirrors web-sdk), so no local configure is needed here — arming
+     *  follows the actual audio, not the preference flag. */
     suspend fun setTtsEnabled(enabled: Boolean) {
         log.info("setTtsEnabled", mapOf("enabled" to enabled))
         connectors.preferences.patch(AudioPreferencesPatch(ttsEnabled = enabled))

@@ -21,8 +21,8 @@ targets:
         # Version is the SPEC's source of truth (xcodegen regenerates Info.plist
         # on every generate; a hand-edit there is clobbered). Keep in lockstep
         # with the Android versionName + the mobile-sdk/data module versions.
-        CFBundleShortVersionString: 0.1.5
-        CFBundleVersion: "3"
+        CFBundleShortVersionString: 0.1.6
+        CFBundleVersion: "4"
         # Register bundled custom fonts so UIKit can load them by family name.
         # Filenames MUST match the .ttf files in App/Resources/Fonts/ exactly.
         UIAppFonts:

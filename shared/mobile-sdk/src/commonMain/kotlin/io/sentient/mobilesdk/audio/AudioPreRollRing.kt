@@ -1,5 +1,6 @@
 package io.sentient.mobilesdk.audio
 
+// Retained for Slice 2 (downlink playback-window reuse); not wired into the current uplink.
 // ---------------------------------------------------------------------------
 // AudioPreRollRing — capture-side pre-roll + hangover buffer.
 //
