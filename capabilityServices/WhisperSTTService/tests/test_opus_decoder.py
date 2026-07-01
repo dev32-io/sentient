@@ -8,7 +8,7 @@ import struct
 
 import pytest
 
-from stt_service.opus_decoder import OpusStreamDecoder
+from whisper_stt.opus_decoder import OpusStreamDecoder
 
 
 def _encode_test_frame_silence_16k() -> bytes:

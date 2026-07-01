@@ -11,7 +11,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from stt_service.config import ConfigError, load_config
+from whisper_stt.config import ConfigError, load_config
 
 
 class _Omit:

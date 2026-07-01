@@ -16,7 +16,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from stt_service.event_logger import (
+from whisper_stt.event_logger import (
     ONE_DAY_SECONDS,
     RotatingJsonlLogger,
     prune_old_logs,
