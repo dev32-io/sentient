@@ -2,27 +2,32 @@
 // SdkVoice — builds + holds the real-time voice UPLINK pipeline (Task 9).
 //
 // Extracted from SentientSdk (mirrors SdkAudio) so the orchestrator stays lean.
-// Owns the VoiceUplinkPipeline (mic → Framer → OnsetDetector → Opus → WS binary)
-// plus the dedicated SERIAL dispatcher it runs on — OFF the orchestrator scope so
-// the non-thread-safe Framer/encoder are never touched concurrently. The
+// Owns the VoiceUplinkPipeline (micFrames → Framer → OnsetDetector → Opus → WS
+// binary) plus the dedicated SERIAL dispatcher it runs on — OFF the orchestrator
+// scope so the non-thread-safe Framer/encoder are never touched concurrently. The
 // audioInput connector is supplied lazily (a () -> connector lambda) to break the
 // construction cycle, exactly as SdkAudio does.
 //
-// SERIALIZATION (toggle-race fix): mic start/stop are NOT launched as two
-// independent coroutines. They are submitted as ordered [Cmd]s onto a single
-// UNLIMITED command channel drained by ONE consumer coroutine. The consumer runs
-// each command to completion (engine up + collect job assigned for Start; job
-// cancelled + mic released for Stop) BEFORE pulling the next — so a rapid
-// start→stop (or Error-recovery stop→start) can never interleave, and Start's
-// suspending mic.start() can never leave the mic live after a Stop. This is the
-// only correct fix: a bare Mutex would let two independent launches acquire the
-// lock out of submission order; a single FIFO consumer preserves exact order.
+// Mic activation is NOT owned here — [VoiceAudio.configure] (driven by T9's
+// configure lane) is the only path that flips micActive. The pipeline's collect
+// job simply forwards what the engine emits, so it is dormant until a caller
+// drives configure(mic=true). The legacy start/stop [Cmd] lane below still
+// serializes pipeline.start/stop + the audio.start/audio.end control frames; T9
+// will replace it with the configure call.
+//
+// SERIALIZATION (toggle-race fix): start/stop are NOT launched as two independent
+// coroutines. They are submitted as ordered [Cmd]s onto a single UNLIMITED
+// command channel drained by ONE consumer coroutine. The consumer runs each
+// command to completion BEFORE pulling the next — so a rapid start→stop (or
+// Error-recovery stop→start) can never interleave. This is the only correct fix:
+// a bare Mutex would let two independent launches acquire the lock out of
+// submission order; a single FIFO consumer preserves exact order.
 //
 // Control frames (audio.start / audio.end) ride the SAME lane: the consumer emits
 // audio.start BEFORE pipeline.start and audio.end AFTER pipeline.stop, so the wire
 // order audio.start → binary frames → audio.end is preserved and serialized too.
 //
-// When the platform bundle ships NO MicSource (text-only path / host tests), the
+// When the platform bundle ships NO VoiceAudio (text-only path / host tests), the
 // pipeline is null: Start/Stop only fire the control-frame callbacks and [micState]
 // stays Idle — so startMic/stopMic still send audio.start/audio.end with no uplink,
 // matching the pre-mic behavior.
@@ -35,7 +40,9 @@ import io.sentient.mobilesdk.connectors.UserAudioInputConnector
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.voice.MicState
 import io.sentient.mobilesdk.voice.VoiceUplinkPipeline
-import io.sentient.mobilesdk.voice.io.MicSource
+import io.sentient.mobilesdk.voice.io.VoiceAudio
+import io.sentient.mobilesdk.voice.io.VoiceAudioState
+import io.sentient.mobilesdk.voice.io.VoiceAudioState.Phase
 import io.sentient.mobilesdk.voice.uplink.Framer
 import io.sentient.mobilesdk.voice.uplink.OnsetDetector
 import kotlinx.coroutines.CoroutineDispatcher
@@ -51,7 +58,8 @@ import kotlin.coroutines.cancellation.CancellationException
  * Constructs and owns the voice-uplink pipeline (Task 9), serializing mic start/stop
  * through a single ordered command consumer (kills the start→stop toggle race).
  *
- * @param mic Platform mic primitive; null on the text-only / test path.
+ * @param voiceAudio Platform audio engine; null on the text-only / test path. The
+ *   pipeline is built from [VoiceAudio.micFrames], which is hot ONLY while micActive.
  * @param audioConfig Tuned thresholds (operator config) — the OnsetDetector reuses
  *   echoGate.baselineThreshold + onsetSustainFrames.
  * @param audioInput Lazy accessor for the uplink connector (cycle-break, frame sink).
@@ -62,7 +70,7 @@ import kotlin.coroutines.cancellation.CancellationException
  *   consumer are launched from it, so terminal teardown is scope-cancel.
  */
 class SdkVoice(
-    mic: MicSource?,
+    voiceAudio: VoiceAudio?,
     audioConfig: AudioPipelineConfig,
     audioInput: () -> UserAudioInputConnector,
     private val onUplinkStart: () -> Unit,
@@ -78,14 +86,20 @@ class SdkVoice(
 ) {
     private val log = createLogger("sdk", "voice")
 
-    /** Reactive mic-engine state for the UI (Idle until/unless a real mic is wired). */
-    val micState: StateFlow<MicState> = mic?.state ?: MutableStateFlow(MicState.Idle)
+    /** Reactive engine state for the UI (Idle unless a real VoiceAudio is wired). */
+    val audioState: StateFlow<VoiceAudioState> =
+        voiceAudio?.state
+            ?: MutableStateFlow(VoiceAudioState(Phase.Idle, micActive = false, playbackActive = false))
 
-    // Null on the text-only path (no MicSource): Start/Stop only fire the control
+    // Legacy mic-state surface kept for the UI until T10 rebinds SentientSdk.micState to
+    // [audioState]. Idle by default — the configure lane (T9) will drive transitions.
+    val micState: StateFlow<MicState> = MutableStateFlow(MicState.Idle)
+
+    // Null on the text-only path (no VoiceAudio): Start/Stop only fire the control
     // callbacks so the wire still carries audio.start/audio.end with no uplink frames.
-    private val pipeline: VoiceUplinkPipeline? = mic?.let { source ->
+    private val pipeline: VoiceUplinkPipeline? = voiceAudio?.let { va ->
         VoiceUplinkPipeline(
-            mic = source,
+            micFrames = va.micFrames,
             // FRESH lazy uplink encoder for the voice path; native kopus only
             // allocates once a real frame encodes (on a device), so host-JVM tests
             // never load libopus.

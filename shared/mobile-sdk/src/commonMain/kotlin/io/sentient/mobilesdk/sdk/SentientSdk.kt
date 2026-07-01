@@ -158,10 +158,10 @@ class SentientSdk(
     )
 
     // Real-time voice-uplink pipeline (Task 9). Built like SdkAudio — BEFORE the
-    // connector set, reaching connectors.audioInput via a lazy lambda. Null mic
+    // connector set, reaching connectors.audioInput via a lazy lambda. Null voiceAudio
     // (text/test path) → no pipeline; startMic/stopMic still send audio.start/end.
     private val voice: SdkVoice = SdkVoice(
-        mic = bundle.mic,
+        voiceAudio = bundle.voiceAudio,
         audioConfig = config.audio,
         audioInput = { connectors.audioInput },
         // Control-frame senders ride the SAME serialized lane as pipeline start/stop

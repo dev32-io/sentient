@@ -1,12 +1,13 @@
 package io.sentient.mobilesdk.voice
 
 import io.sentient.mobilesdk.audio.opus.OpusEncoderPort
-import io.sentient.mobilesdk.voice.io.FakeMicSource
+import io.sentient.mobilesdk.voice.io.FakeVoiceAudio
 import io.sentient.mobilesdk.voice.uplink.Framer
 import io.sentient.mobilesdk.voice.uplink.OnsetDetector
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 // FakeEncoder returns 1 packet per drained frame (no kopus → runs on the JVM host).
@@ -18,27 +19,50 @@ private class FakeEncoder : OpusEncoderPort {
 }
 
 class VoiceUplinkPipelineTest {
-    @Test fun frames_become_packets_sent_1_to_1() = runTest {
-        val mic = FakeMicSource()
+    @Test fun emitted_frames_are_encoded_and_sent() = runTest {
+        val mic = FakeVoiceAudio()
+        mic.configure(mic = true, playback = false) // micActive → micFrames hot
         val sent = mutableListOf<ByteArray>()
         val d = UnconfinedTestDispatcher(testScheduler)
         val pipe = VoiceUplinkPipeline(
-            mic = mic, encoder = FakeEncoder(), sendPacket = { sent.add(it) }, onOnset = {},
-            scope = this, dispatcher = d, framer = Framer(4), onset = OnsetDetector(0.05, 1),
+            micFrames = mic.micFrames,
+            encoder = FakeEncoder(),
+            sendPacket = { sent.add(it) },
+            onOnset = {},
+            scope = this,
+            dispatcher = d,
+            framer = Framer(),
+            onset = OnsetDetector(0.05, 1),
         )
         pipe.start()
-        mic.start()
-        mic.emit(ShortArray(8) { 8000 }) // 8 samples → 2 frames of 4 → 2 packets
+        // 3 emits of exactly FRAME_SAMPLES_16K → 3 frames → 3 packets (1:1 encoder).
+        repeat(3) { mic.emit(ShortArray(FRAME_SAMPLES_16K) { 100 }) }
         testScheduler.advanceUntilIdle()
-        assertTrue(sent.size == 2)
+        assertEquals(3, sent.size, "expected one encoded packet per 20ms frame")
         pipe.stop()
+        // After stop() the collect job is cancelled — late emits produce no more packets.
+        repeat(2) { mic.emit(ShortArray(FRAME_SAMPLES_16K) { 100 }) }
+        testScheduler.advanceUntilIdle()
+        assertEquals(3, sent.size, "collect job must be cancelled after stop()")
     }
 
-    @Test fun mic_channel_drops_newest_not_oldest_under_flood() = runTest {
-        val mic = FakeMicSource(channelCapacity = 2)
-        mic.start()
-        val ok = (1..5).map { mic.emit(shortArrayOf(it.toShort(), 0, 0, 0)) }
-        // first 2 buffered, rest dropped-newest while unconsumed
-        assertTrue(ok.take(2).all { it } && ok.drop(2).any { !it })
+    @Test fun stop_before_start_is_noop() = runTest {
+        val mic = FakeVoiceAudio()
+        mic.configure(mic = true, playback = false)
+        val sent = mutableListOf<ByteArray>()
+        val d = UnconfinedTestDispatcher(testScheduler)
+        val pipe = VoiceUplinkPipeline(
+            micFrames = mic.micFrames,
+            encoder = FakeEncoder(),
+            sendPacket = { sent.add(it) },
+            onOnset = {},
+            scope = this,
+            dispatcher = d,
+            framer = Framer(),
+            onset = OnsetDetector(0.05, 1),
+        )
+        // stop() with no active job must not throw and leaves sent empty.
+        pipe.stop()
+        assertTrue(sent.isEmpty())
     }
 }

@@ -2,13 +2,13 @@ package io.sentient.mobilesdk.voice
 
 import io.sentient.mobilesdk.audio.opus.OpusEncoderPort
 import io.sentient.mobilesdk.log.createLogger
-import io.sentient.mobilesdk.voice.io.MicSource
 import io.sentient.mobilesdk.voice.uplink.Framer
 import io.sentient.mobilesdk.voice.uplink.OnsetDetector
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
@@ -16,12 +16,16 @@ private const val TRACE_FIRST = 5
 private const val TRACE_EVERY = 50
 
 /**
- * Real-time uplink: mic.frames (16k PCM16) → Framer (20ms) → OnsetDetector (barge-in edge)
+ * Real-time uplink: micFrames (16k PCM16) → Framer (20ms) → OnsetDetector (barge-in edge)
  * → Opus encode → sendPacket 1:1. Runs on [dispatcher] (a dedicated single thread), NEVER
  * the SDK orchestrator. sendPacket is the WS binary sink (paced by the capture clock).
+ *
+ * The pipeline does NOT own mic activation — [VoiceAudio.configure] does. [micFrames] is
+ * hot ONLY while micActive, so the collect job simply forwards what the engine emits; the
+ * pipeline is dormant until a caller drives configure(mic=true) (Task 9).
  */
 class VoiceUplinkPipeline(
-    private val mic: MicSource,
+    private val micFrames: Flow<ShortArray>,
     private val encoder: OpusEncoderPort,
     private val sendPacket: (ByteArray) -> Unit,
     private val onOnset: () -> Unit,
@@ -38,9 +42,10 @@ class VoiceUplinkPipeline(
     suspend fun start() {
         if (job?.isActive == true) return
         framer.reset(); onset.reset(); encoder.reset(); framesIn = 0; packetsOut = 0
-        mic.start()
+        // No mic.start() — VoiceAudio.configure owns mic activation; micFrames is hot
+        // ONLY while micActive, so the collect job simply forwards what the engine emits.
         job = scope.launch(dispatcher) {
-            mic.frames.collect { pcm -> onPcm(pcm) }
+            micFrames.collect { pcm -> onPcm(pcm) }
         }
     }
 
@@ -50,7 +55,7 @@ class VoiceUplinkPipeline(
         // race a concurrent encode of the non-thread-safe encoder/Framer.
         job?.cancelAndJoin(); job = null
         encoder.reset()
-        mic.stop()
+        // No mic.stop() — configure(mic=false) owns teardown.
     }
 
     private fun onPcm(pcm: ShortArray) {

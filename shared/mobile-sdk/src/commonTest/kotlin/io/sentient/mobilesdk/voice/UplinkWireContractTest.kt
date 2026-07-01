@@ -1,7 +1,7 @@
 package io.sentient.mobilesdk.voice
 
 import io.sentient.mobilesdk.audio.opus.OpusEncoderPort
-import io.sentient.mobilesdk.voice.io.FakeMicSource
+import io.sentient.mobilesdk.voice.io.FakeVoiceAudio
 import io.sentient.mobilesdk.voice.uplink.Framer
 import io.sentient.mobilesdk.voice.uplink.OnsetDetector
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -48,9 +48,10 @@ class UplinkWireContractTest {
     @Test
     fun start_then_n_frames_then_end_in_order() = runTest {
         val rec = WireRecorder()
-        val mic = FakeMicSource()
+        val mic = FakeVoiceAudio()
+        mic.configure(mic = true, playback = false) // micActive → micFrames hot
         val pipe = VoiceUplinkPipeline(
-            mic = mic,
+            micFrames = mic.micFrames,
             encoder = StubUplinkEncoder(),
             sendPacket = { rec.sendAudioFrame(it) },
             onOnset = {},
