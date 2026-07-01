@@ -13,12 +13,14 @@ import io.sentient.mobilesdk.secure.AndroidSecureTokenStore
 import io.sentient.mobilesdk.transport.AndroidWebSocketEngine
 import io.sentient.mobilesdk.util.Clock
 import io.sentient.mobilesdk.voice.io.AndroidMicSource
+import io.sentient.mobilesdk.voice.io.AndroidVoiceAudio
 
 actual fun createPlatformBundle(): PlatformBundle = PlatformBundle(
     engine = AndroidWebSocketEngine(),
     tokenStore = AndroidSecureTokenStore(),
     deviceIdStore = AndroidDeviceIdStore(),
     clock = Clock { System.currentTimeMillis() },
+    voiceAudio = AndroidVoiceAudio(),
     playback = AndroidAudioPlaybackAdapter(), // E2: AudioTrack VOICE_COMMUNICATION streaming
     mic = AndroidMicSource(), // Task 7: real-time voice-uplink mic on a realtime thread
 )

@@ -14,6 +14,7 @@ import io.sentient.mobilesdk.secure.IosSecureTokenStore
 import io.sentient.mobilesdk.transport.IosWebSocketEngine
 import io.sentient.mobilesdk.util.Clock
 import io.sentient.mobilesdk.voice.io.IosMicSource
+import io.sentient.mobilesdk.voice.io.IosVoiceAudio
 import platform.Foundation.NSDate
 import platform.Foundation.timeIntervalSince1970
 
@@ -24,6 +25,7 @@ actual fun createPlatformBundle(): PlatformBundle = PlatformBundle(
     tokenStore = IosSecureTokenStore(),
     deviceIdStore = IosDeviceIdStore(),
     clock = Clock { (NSDate().timeIntervalSince1970 * MS_PER_SECOND).toLong() },
+    voiceAudio = IosVoiceAudio(),
     playback = IosAudioPlaybackAdapter(), // E2: AVAudioPlayerNode on the shared engine
     mic = IosMicSource(), // Task 7: real-time voice-uplink mic on the shared engine
 )

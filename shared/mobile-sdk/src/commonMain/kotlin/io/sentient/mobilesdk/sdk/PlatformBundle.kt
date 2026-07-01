@@ -22,6 +22,7 @@ import io.sentient.mobilesdk.secure.SecureTokenStore
 import io.sentient.mobilesdk.transport.WebSocketEngine
 import io.sentient.mobilesdk.util.Clock
 import io.sentient.mobilesdk.voice.io.MicSource
+import io.sentient.mobilesdk.voice.io.VoiceAudio
 
 /**
  * The platform capabilities [SentientSdk] depends on, all behind commonMain
@@ -42,6 +43,7 @@ data class PlatformBundle(
     val tokenStore: SecureTokenStore,
     val deviceIdStore: DeviceIdStore,
     val clock: Clock,
+    val voiceAudio: VoiceAudio? = null,
     val playback: AudioPlaybackAdapter? = null,
     val mic: MicSource? = null,
 )
