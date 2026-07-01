@@ -16,9 +16,9 @@ plugins {
 // Bumped to 0.1.6: iOS mic-dead fix (defer SharedAudioEngine prepare/start off the
 // empty render graph — eager prepare() threw "no I/O route" on real devices).
 // Skips 0.1.5 to re-align with the app versionName lockstep (app was already 0.1.5).
-// Bumped to 0.1.7: voice uplink refactor (real-time decoupled `voice/` pipeline —
-// MicSource + VoiceUplinkPipeline off-orchestrator, drop-newest; deletes UplinkPump).
-version = "0.1.7"
+// 0.1.6 also carries the voice-uplink refactor + the VoiceAudio one-engine
+// consolidation / full-duplex lazy-arm downlink (same feature branch, no bump).
+version = "0.1.6"
 
 kotlin {
     androidTarget {
