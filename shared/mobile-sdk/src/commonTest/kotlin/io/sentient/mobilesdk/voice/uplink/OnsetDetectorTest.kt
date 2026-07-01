@@ -1,7 +1,6 @@
 package io.sentient.mobilesdk.voice.uplink
 
 import kotlin.test.Test
-import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 

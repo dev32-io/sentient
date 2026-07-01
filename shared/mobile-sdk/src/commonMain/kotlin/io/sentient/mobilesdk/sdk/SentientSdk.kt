@@ -345,7 +345,8 @@ class SentientSdk(
      * SAME serialized lane as stopMic, so a rapid start→stop toggle can never
      * interleave (the toggle-race fix). audio.start precedes any binary frame because
      * the pipeline only emits once the mic delivers (after start). With a null mic
-     * (text/test path) SdkVoice is unwired → the else branch sends audio.start directly.
+     * (text/test path) SdkVoice's pipeline is null, so the consumer fires the
+     * audio.start/audio.end control-frame callbacks only, with no uplink.
      */
     fun startMic() {
         log.info("startMic", mapOf("micWired" to (bundle.mic != null)))

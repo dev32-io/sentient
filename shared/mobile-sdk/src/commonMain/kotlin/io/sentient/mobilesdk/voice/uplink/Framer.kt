@@ -9,6 +9,8 @@ import io.sentient.mobilesdk.voice.FRAME_SAMPLES_16K
  * (the pipeline dispatcher); not thread-safe by design.
  */
 class Framer(val frameSamples: Int = FRAME_SAMPLES_16K) {
+    init { require(frameSamples > 0) { "frameSamples must be positive, was $frameSamples" } }
+
     private var carry = ShortArray(0)
 
     fun push(pcm: ShortArray): List<ShortArray> {
