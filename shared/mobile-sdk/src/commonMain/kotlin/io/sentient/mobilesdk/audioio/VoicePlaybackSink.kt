@@ -9,9 +9,10 @@ package io.sentient.mobilesdk.audioio
  * interface structurally, and the iOS/Android actuals + `FakeVoiceAudio` inherit that
  * satisfaction with no further changes.
  *
- * The player is PRE-STARTED by `VoiceAudio.configure(playback = true)` at 48 kHz (the
- * gateway is end-to-end Opus). Callers therefore feed PCM16 frames straight to
- * [playFrame]; there is no async `start(rate)` race to gate on.
+ * The player is LAZY-ARMED on `connector.audio.start` (mirrors web-sdk): AudioPipeline
+ * drives `VoiceAudio.configure(playback = true)` on the first TTS cycle, buffering frames
+ * until the engine reports playback-active, then flushing to [playFrame]. No-op frames
+ * (before arm / after the null-playback guard) are dropped, never queued.
  */
 interface VoicePlaybackSink {
     /** Downlink sink: one PCM16 LE frame → playback. No-op if playback is not active. */

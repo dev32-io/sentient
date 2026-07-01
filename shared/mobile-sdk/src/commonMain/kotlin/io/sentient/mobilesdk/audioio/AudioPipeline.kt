@@ -105,13 +105,14 @@ class AudioPipeline(
     // ── Downlink ────────────────────────────────────────────────────────────────
 
     /**
-     * connector.audio.start: mark speaking + arm the decoder for the cycle. The player
-     * is PRE-STARTED by `VoiceAudio.configure(playback = true)` at 48 kHz, so there is
-     * no async `start(rate)` to await — [playbackReady] flips true synchronously and
-     * frames route straight to [VoicePlaybackSink.playFrame]. [encoding]/[sampleRate]
-     * come from the wire frame: opus mode decodes binary frames through opusDecoder
-     * (libopus always decodes to 48 kHz, ignoring the announced rate); pcm16 mode passes
-     * bytes through at the announced rate (or [outputSampleRate] fallback — logging only).
+     * connector.audio.start: mark speaking + arm the decoder + LAZY-ARM the engine for
+     * this cycle ([armPlaybackOnce] → [armPlayback] → configure(playback=true)). The arm
+     * is async, so frames that arrive before it settles buffer in [pendingFrames] and
+     * flush once [playbackReady] flips true — the TTS onset is never clipped.
+     * [encoding]/[sampleRate] come from the wire frame: opus mode decodes binary frames
+     * through opusDecoder (libopus always decodes to 48 kHz, ignoring the announced rate);
+     * pcm16 mode passes bytes through at the announced rate ([outputSampleRate] fallback —
+     * logging only).
      */
     fun onAudioStart(cycleId: String, encoding: String? = null, sampleRate: Int? = null) {
         // A NEWER cycle's audio arriving while a prior cycle is still playing/queued →
@@ -196,17 +197,15 @@ class AudioPipeline(
         for (pcm in decoded) enqueueOrBuffer(pcm, cycleId)
     }
 
-    /** Feed [bytes] straight to the player (pre-started); buffer only if not yet ready. */
+    /** Feed [bytes] to the player once armed; buffer until the lazy arm settles. */
     private fun enqueueOrBuffer(bytes: ByteArray, cycleId: String) {
         if (playbackReady) {
             log.debug("downlink-frame", mapOf("bytes" to bytes.size, "cycleId" to cycleId))
             playback?.playFrame(bytes)
         } else {
-            // M2: defensive latch — in the pre-start model playbackReady flips true
-            // synchronously in onAudioStart and is only reset by onPlaybackStop /
-            // suspendPlayback (both clear pendingFrames), so this branch is not hit in
-            // production. Kept as a guard against a future regress where playbackReady
-            // is reset without clearing pendingFrames (frames would otherwise be lost).
+            // Lazy-arm buffer: frames that arrive between audio.start and the async arm
+            // settling (armPlaybackOnce flips playbackReady true + flushes) queue here so
+            // the TTS onset is never clipped. Cleared on flush / barge-in / suspend.
             pendingFrames.add(bytes)
             log.debug(
                 "downlink-frame-buffered",
