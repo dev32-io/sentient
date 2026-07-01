@@ -38,7 +38,7 @@ private class WireRecorder {
 /**
  * Pins the uplink WIRE SHAPE after the VoiceUplinkPipeline takes over the mic
  * uplink (Task 9): audio.start → N binary frames (N≥1) → audio.end, with the
- * pipeline (not the old UplinkPump) driving the binary sends. Drives the SAME
+ * pipeline (not the retired capture-path uplink) driving the binary sends. Drives the SAME
  * call sequence startMic/stopMic perform — startStreaming FIRST, pipeline.start,
  * frames flow, then pipeline.stop BEFORE stopStreaming — and asserts the recorded
  * order is exactly [start, frame…, end]. Wire shape unchanged is the whole point.

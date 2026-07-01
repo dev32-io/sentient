@@ -9,7 +9,6 @@
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.sdk
 
-import io.sentient.mobilesdk.audioio.FaultAwareCaptureAdapter
 import io.sentient.mobilesdk.connectors.CognitionState
 import io.sentient.mobilesdk.connectors.SessionsListPage
 import io.sentient.mobilesdk.connectors.SessionsRequestException
@@ -126,7 +125,7 @@ class SentientSdk(
     // anchored session was revoked → drop the anchor (see onSessionForbidden).
     private var reestablishingSessionId: String? = null
 
-    // FaultHooks declared early so effectiveCapture + lifecycle can both reference it.
+    // FaultHooks declared early so the lifecycle can reference it (network/transport faults).
     private val faultHooks = FaultHooks()
 
     // Resume cursor (Task 3.10): tracks seq/epoch so replayed frames dedup and the
@@ -148,28 +147,14 @@ class SentientSdk(
     // it in session.configure and keys the per-device replay buffer by it.
     private val deviceId: String = DeviceIdProvider(bundle.deviceIdStore).getOrCreate()
 
-    // Voice pipeline (E3). Built BEFORE connectors so the downlink hooks exist
-    // when the connector set reads them; the pipeline reaches connectors.audioInput
-    // via a lazy lambda to break the construction cycle. See SdkAudio.
-    //
-    // In debug builds, wrap the real capture adapter with FaultAwareCaptureAdapter
-    // so loadFixtureUtterance() can inject a pre-recorded PCM utterance instead of
-    // live mic audio. Null capture passes through unchanged (text-only path).
-    private val effectiveCapture = if (config.devFaultsEnabled && bundle.capture != null) {
-        FaultAwareCaptureAdapter(real = bundle.capture, faultHooks = faultHooks)
-    } else {
-        bundle.capture
-    }
-
+    // Downlink voice pipeline (E3). Built BEFORE connectors so the downlink hooks
+    // exist when the connector set reads them. The real-time mic UPLINK lives in the
+    // voice/ package (SdkVoice) — SdkAudio is downlink-only. See SdkAudio.
     private val audio: SdkAudio = SdkAudio(
         audioConfig = config.audio,
-        capture = effectiveCapture,
         playback = bundle.playback,
-        audioInput = { connectors.audioInput },
-        clock = bundle.clock,
         scope = scope,
         onStateChanged = ::onAudioStateChanged,
-        onBargeIn = { cycleId -> connectors.cycleError.noteBargeIn(cycleId) },
     )
 
     // Real-time voice-uplink pipeline (Task 9). Built like SdkAudio — BEFORE the

@@ -2,13 +2,12 @@
 // PlatformBundle.ios — iOS actual for createPlatformBundle().
 //
 // Constructs the Darwin-backed WS engine + Keychain token store directly (no
-// Context needed on iOS). The capture adapter is the AVAudioEngine-backed E1
-// actual; playback is the AVAudioPlayerNode-backed E2 actual (both on the shared
-// engine). The Clock uses NSDate epoch ms.
+// Context needed on iOS). Playback is the AVAudioPlayerNode-backed E2 actual; the
+// mic is the AVAudioEngine-backed voice-uplink actual (both on the shared engine).
+// The Clock uses NSDate epoch ms.
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.sdk
 
-import io.sentient.mobilesdk.audioio.IosAudioCaptureAdapter
 import io.sentient.mobilesdk.audioio.IosAudioPlaybackAdapter
 import io.sentient.mobilesdk.secure.IosDeviceIdStore
 import io.sentient.mobilesdk.secure.IosSecureTokenStore
@@ -25,7 +24,6 @@ actual fun createPlatformBundle(): PlatformBundle = PlatformBundle(
     tokenStore = IosSecureTokenStore(),
     deviceIdStore = IosDeviceIdStore(),
     clock = Clock { (NSDate().timeIntervalSince1970 * MS_PER_SECOND).toLong() },
-    capture = IosAudioCaptureAdapter(), // E1: AVAudioEngine voice-processing capture
     playback = IosAudioPlaybackAdapter(), // E2: AVAudioPlayerNode on the shared engine
     mic = IosMicSource(), // Task 7: real-time voice-uplink mic on the shared engine
 )

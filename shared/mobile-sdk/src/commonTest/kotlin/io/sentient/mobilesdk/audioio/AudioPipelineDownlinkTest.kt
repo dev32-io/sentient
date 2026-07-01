@@ -14,18 +14,9 @@
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.audioio
 
-import io.sentient.mobilesdk.audio.EchoGate
-import io.sentient.mobilesdk.audio.EchoGateConfig
-import io.sentient.mobilesdk.connectors.UserAudioInputConnector
 import io.sentient.mobilesdk.fakes.FakeOpusDecoderPort
-import io.sentient.mobilesdk.fakes.FakeOpusEncoderPort
-import io.sentient.mobilesdk.fakes.FixedClock
-import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.sdk.AudioFsm
-import io.sentient.mobilesdk.sdk.AudioState
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
@@ -35,8 +26,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class AudioPipelineDownlinkTest {
-
-    private val echoCfg = EchoGateConfig(baselineThreshold = 0.03, playbackThreshold = 0.2, tailHoldMs = 800)
 
     // ── Fakes ───────────────────────────────────────────────────────────────────
 
@@ -64,35 +53,18 @@ class AudioPipelineDownlinkTest {
         override val isPlaybackIdle: Boolean get() = playbackIdle
     }
 
-    private class FakeCapture : AudioCaptureAdapter {
-        override fun frames(sampleRate: Int): Flow<ByteArray> = emptyFlow()
-        override suspend fun start(sampleRate: Int) {}
-        override suspend fun stop() {}
-    }
-
     private fun pipeline(
         playback: AudioPlaybackAdapter?,
         scope: kotlinx.coroutines.CoroutineScope,
         opusDecoder: io.sentient.mobilesdk.audio.opus.OpusDecoderPort = FakeOpusDecoderPort(),
-    ): AudioPipeline {
-        val connector = UserAudioInputConnector(send = {}, sendBinary = {})
-        connector.startStreaming()
-        return AudioPipeline(
-            capture = FakeCapture(),
-            playback = playback,
-            opusDecoder = opusDecoder,
-            opusEncoder = FakeOpusEncoderPort(),
-            audioInput = { connector },
-            echoGate = EchoGate(echoCfg),
-            fsm = AudioFsm(),
-            clock = FixedClock(0L),
-            scope = scope,
-            inputSampleRate = 16000,
-            outputSampleRate = 24000,
-            preRollFrames = 24,
-            onStateChanged = { _, _ -> },
-        )
-    }
+    ): AudioPipeline = AudioPipeline(
+        playback = playback,
+        opusDecoder = opusDecoder,
+        fsm = AudioFsm(),
+        scope = scope,
+        outputSampleRate = 24000,
+        onStateChanged = { _, _ -> },
+    )
 
     // ── Tests ───────────────────────────────────────────────────────────────────
 
@@ -336,21 +308,12 @@ class AudioPipelineDownlinkTest {
         var speaking = false
         val pb = FakeInstantPlayback()
         pb.playbackIdle = false // player still draining its tail
-        val connector = UserAudioInputConnector(send = {}, sendBinary = {})
-        connector.startStreaming()
         val p = AudioPipeline(
-            capture = FakeCapture(),
             playback = pb,
             opusDecoder = FakeOpusDecoderPort(),
-            opusEncoder = FakeOpusEncoderPort(),
-            audioInput = { connector },
-            echoGate = EchoGate(echoCfg),
             fsm = AudioFsm(),
-            clock = FixedClock(0L),
             scope = this,
-            inputSampleRate = 16000,
             outputSampleRate = 24000,
-            preRollFrames = 24,
             onStateChanged = { sp, _ -> speaking = sp },
             playbackDrainSettleMs = 100,
         )

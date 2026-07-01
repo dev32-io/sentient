@@ -24,7 +24,6 @@ import android.content.Context
 import android.content.Intent
 import io.sentient.android.sdk.SdkFaultHolder
 import io.sentient.mobilesdk.log.createLogger
-import java.io.File
 
 private val log = createLogger("android", "debug", "fault-receiver")
 
@@ -51,31 +50,6 @@ class DebugFaultReceiver : BroadcastReceiver() {
             "malformed" -> {
                 faults.armMalformedFrame()
                 log.info("fault.arm", mapOf("kind" to "malformed-frame"))
-            }
-            "fixture" -> {
-                // Load a PCM fixture file and arm it as the fixture utterance.
-                // The filename is supplied via --es name sentient-fixture.pcm.
-                // Place the file in the app's cache dir first:
-                //   adb push qa/mobile/fixtures/silence-500ms.pcm \
-                //     $(adb shell run-as io.dev32.sentient.debug pwd)/cache/sentient-fixture.pcm
-                // Or use the shorthand accepted here: just the name, resolved against
-                // context.cacheDir (internal cache dir, always accessible to the app).
-                // Arm via: adb shell am broadcast -a io.sentient.debug.FAULT \
-                //           -p io.dev32.sentient.debug --es kind fixture --es name sentient-fixture.pcm
-                val name = intent.getStringExtra("name") ?: intent.getStringExtra("path")?.let {
-                    File(it).name
-                } ?: run {
-                    log.warn("fault.broadcast.fixture.missing-name", emptyMap())
-                    return
-                }
-                val file = File(context.cacheDir, name)
-                if (!file.exists()) {
-                    log.warn("fault.broadcast.fixture.not-found", mapOf("cacheDir" to context.cacheDir.path, "name" to name))
-                    return
-                }
-                val pcm = file.readBytes()
-                faults.loadFixtureUtterance(pcm)
-                log.info("fault.arm", mapOf("kind" to "fixture", "name" to name, "bytes" to pcm.size))
             }
             else -> log.warn("fault.broadcast.unknown-kind", mapOf("kind" to kind))
         }
