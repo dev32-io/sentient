@@ -120,11 +120,16 @@ class SmartTurnConfig:
 
 
 @dataclass(frozen=True)
-class SenseVoiceConfig:
-    """SenseVoice-Small — the STT model."""
+class WhisperConfig:
+    """MLX Whisper — the STT model. Hallucination guards are decode-time
+    thresholds passed straight to mlx_whisper.transcribe."""
 
-    num_threads: int
-    use_itn: bool
+    model: str  # HuggingFace repo id for the MLX weights
+    language: str  # decode hint: "auto" | "en" | "zh"
+    no_speech_threshold: float  # 0.0–1.0; drop segment above this P(no-speech)
+    logprob_threshold: float  # drop segment below this avg token logprob
+    compression_ratio_threshold: float  # drop segment above this gzip ratio
+    initial_prompt: str  # optional domain-vocab bias; "" = none
 
 
 @dataclass(frozen=True)
@@ -157,7 +162,7 @@ class Config:
     server: ServerConfig
     vad: VadConfig
     smart_turn: SmartTurnConfig
-    sense_voice: SenseVoiceConfig
+    whisper: WhisperConfig
     recordings: RecordingsConfig
     logging: LoggingConfig
     model_dir: Path
@@ -232,7 +237,7 @@ def _parse(
     server_raw = _require_section(raw, "server")
     vad_raw = _require_section(raw, "vad")
     smart_turn_raw = _require_section(raw, "smart_turn")
-    sense_voice_raw = _require_section(raw, "sense_voice")
+    whisper_raw = _require_section(raw, "whisper")
     recordings_raw = _require_section(raw, "recordings")
     logging_raw = _require_section(raw, "logging")
 
@@ -255,9 +260,15 @@ def _parse(
             decision_threshold=_require(smart_turn_raw, "smart_turn.decision_threshold", float),
             intra_op_threads=_require(smart_turn_raw, "smart_turn.intra_op_threads", int),
         ),
-        sense_voice=SenseVoiceConfig(
-            num_threads=_require(sense_voice_raw, "sense_voice.num_threads", int),
-            use_itn=_require(sense_voice_raw, "sense_voice.use_itn", bool),
+        whisper=WhisperConfig(
+            model=_require(whisper_raw, "whisper.model", str),
+            language=_require(whisper_raw, "whisper.language", str),
+            no_speech_threshold=_require(whisper_raw, "whisper.no_speech_threshold", float),
+            logprob_threshold=_require(whisper_raw, "whisper.logprob_threshold", float),
+            compression_ratio_threshold=_require(
+                whisper_raw, "whisper.compression_ratio_threshold", float
+            ),
+            initial_prompt=_require(whisper_raw, "whisper.initial_prompt", str),
         ),
         recordings=RecordingsConfig(
             enabled=_require(recordings_raw, "recordings.enabled", bool),

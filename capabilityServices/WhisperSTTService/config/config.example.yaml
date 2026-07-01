@@ -112,17 +112,33 @@ smart_turn:
   intra_op_threads: 4
 
 # =============================================================================
-# SenseVoice-Small — the STT model. Runs once per finalized turn (or
-# once per speech segment when the turn has mid-turn pauses).
+# Whisper — the STT model (MLX, Apple Silicon / Metal). Runs once per finalized
+# turn (or once per speech segment when the turn has mid-turn pauses).
 # =============================================================================
-sense_voice:
-  # sherpa-onnx thread count. Same reasoning as Smart-Turn: 4 = one per
-  # Cortex-A76 core, good balance for the Pi.
-  num_threads: 4
+whisper:
+  # HuggingFace repo id for the MLX Whisper weights. Fetched + cached on first
+  # run under ~/.cache/huggingface. Swap to benchmark or trade RAM for quality
+  # (e.g. -q4) without a code change.
+  model: "mlx-community/whisper-large-v3-turbo-8bit"
 
-  # Inverse Text Normalization: "twenty twenty four" -> "2024",
-  # "five dollars" -> "$5". Ships with SenseVoice. Default on.
-  use_itn: true
+  # Decode language hint: "auto" | "en" | "zh". "auto" lets Whisper detect;
+  # pin en/zh for higher accuracy on short utterances that confuse autodetect.
+  language: "auto"
+
+  # Hallucination guards — passed straight to mlx_whisper.transcribe. Segments
+  # failing any of these decode to "" instead of invented text.
+  #   no_speech_threshold (0.0-1.0): drop a segment whose P(no-speech) exceeds
+  #     this. Raise toward 0.8 if silence produces phantom words.
+  no_speech_threshold: 0.6
+  #   logprob_threshold: drop a segment whose average token logprob is below
+  #     this. Less negative (-0.5) = stricter; more negative (-1.5) = laxer.
+  logprob_threshold: -1.0
+  #   compression_ratio_threshold: drop a segment whose gzip compression ratio
+  #     exceeds this (catches repetition loops). 2.4 is Whisper's default.
+  compression_ratio_threshold: 2.4
+
+  # Optional domain-vocabulary bias prompt prepended to decoding. "" = none.
+  initial_prompt: ""
 
 # =============================================================================
 # Turn recording — persist finalized turns as WAVs on disk for debugging.

@@ -15,13 +15,14 @@ silero-vad>=5.1,<7
 # ONNX runtime for Smart-Turn v3 (used directly by smart_turn.py).
 onnxruntime>=1.18
 
+# MLX Whisper backend (Apple Silicon / Metal). Apple-Silicon only — this
+# service does not run on Linux/x86. mlx-whisper pulls mlx transitively but
+# we pin both for clarity.
+mlx>=0.18
+mlx-whisper>=0.4
+
 # Smart-Turn v3 uses WhisperFeatureExtractor from transformers for mel feats.
 transformers>=4.48,<5
-
-# sherpa-onnx: SenseVoice-Small runtime. Ships aarch64 wheels on PyPI and
-# includes its own ONNX Runtime — coexists cleanly with the top-level
-# onnxruntime that smart_turn.py uses.
-sherpa-onnx>=1.10
 
 # WebSocket server (binary + text frames, async, minimal footprint).
 websockets>=13,<14
