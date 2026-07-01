@@ -82,4 +82,52 @@ class SdkVoiceTest {
         // audio.end on the final mic-off. No spurious audio.start/audio.end between.
         assertEquals(3, va.configureCalls.size)
     }
+
+    @Test
+    fun armPlayback_returns_true_and_arms_the_playback_axis() = runTest {
+        val va = FakeVoiceAudio()
+        val voice = SdkVoice(
+            voiceAudio = va,
+            audioConfig = AudioPipelineConfig(),
+            audioInput = { throw IllegalStateException("not used here") },
+            onUplinkStart = {},
+            onUplinkStop = {},
+            scope = CoroutineScope(Dispatchers.Unconfined),
+            uplinkDispatcher = Dispatchers.Unconfined,
+        )
+        // Lazy arm from idle: the ack resolves to THIS command's result (Ready+playbackActive).
+        val armed = voice.armPlayback()
+        assertEquals(true, armed, "armPlayback returns true once the engine is playback-active")
+        assertEquals(1, va.configureCalls.size, "arm drove exactly one configure(playback=true)")
+        val (mic, playback, _) = va.configureCalls.single()
+        assertEquals(false, mic, "arm keeps the mic axis (off here)")
+        assertEquals(true, playback, "arm turned playback on")
+    }
+
+    @Test
+    fun armPlayback_while_mic_on_keeps_mic_and_flips_vpio_cell() = runTest {
+        val va = FakeVoiceAudio()
+        val voice = SdkVoice(
+            voiceAudio = va,
+            audioConfig = AudioPipelineConfig(),
+            audioInput = { throw IllegalStateException("not used here") },
+            onUplinkStart = {},
+            onUplinkStop = {},
+            scope = CoroutineScope(Dispatchers.Unconfined),
+            uplinkDispatcher = Dispatchers.Unconfined,
+        )
+        voice.requestStart(); advanceUntilIdle() // mic on, playback off (mic-only cell)
+        val armed = voice.armPlayback()          // TTS reply starts while mic is live
+        assertEquals(true, armed, "arm succeeds in the full-duplex cell")
+        // Arm composed with the live mic → the (mic=true, playback=true) VPIO cell.
+        val last = va.configureCalls.last()
+        assertEquals(true, last.first, "arm preserved the live mic axis")
+        assertEquals(true, last.second, "arm turned playback on → full-duplex VPIO cell")
+
+        // Disarm after the reply drains: mic stays on → mic-only cell (engine stays up).
+        voice.requestPlayback(false); advanceUntilIdle()
+        val afterDisarm = va.configureCalls.last()
+        assertEquals(true, afterDisarm.first, "disarm keeps the mic on (no per-reply teardown in voice mode)")
+        assertEquals(false, afterDisarm.second, "disarm dropped playback back to the mic-only cell")
+    }
 }

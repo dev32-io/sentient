@@ -46,6 +46,7 @@ import io.sentient.mobilesdk.voice.io.VoiceAudioState
 import io.sentient.mobilesdk.voice.io.VoiceAudioState.Phase
 import io.sentient.mobilesdk.voice.uplink.Framer
 import io.sentient.mobilesdk.voice.uplink.OnsetDetector
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -116,9 +117,16 @@ class SdkVoice(
 
     /** One ordered configure command. Drained FIFO by the single consumer — the
      *  only path that touches VoiceAudio.configure + the uplink collect + the
-     *  audio.start/audio.end control frames, so mic + TTS reconfigs NEVER race. */
+     *  audio.start/audio.end control frames, so mic + TTS reconfigs NEVER race.
+     *  [ack] (when non-null) is completed AFTER this exact command settles, carrying
+     *  whether the engine reached playback-active Ready — so the downlink lazy-arm can
+     *  await THIS command's result without racing a stale state-flow value. */
     private sealed interface Cmd {
-        data class Configure(val mic: Boolean, val playback: Boolean) : Cmd
+        data class Configure(
+            val mic: Boolean,
+            val playback: Boolean,
+            val ack: CompletableDeferred<Boolean>? = null,
+        ) : Cmd
     }
 
     // UNLIMITED (never CONFLATED): every toggle is preserved FIFO. A CONFLATED
@@ -150,6 +158,30 @@ class SdkVoice(
     /** Convenience for stopMic (mic axis only; keeps current playback). */
     fun requestStop() = requestConfigure(mic = false, playback = playbackOn)
 
+    /**
+     * Playback axis only (keeps the current mic axis) — the disarm entry the downlink
+     * pipeline drives on drain/interrupt (enabled=false). Enqueues on the SAME serialized
+     * lane as mic, so it composes with VPIO. Disarming while mic is on is a mic-only cell
+     * (engine stays up, no per-reply churn); disarming while mic is off tears the engine
+     * to idle (battery). Fire-and-forget — no ack needed for a release.
+     */
+    fun requestPlayback(enabled: Boolean) = requestConfigure(mic = micOn, playback = enabled)
+
+    /**
+     * LAZY-ARM the playback axis and suspend until THIS reconfig settles. Enqueues a
+     * Configure(mic=micOn, playback=true) carrying a completion ack, so the caller learns
+     * the result of exactly this command — never a stale state-flow value from a prior
+     * reconfig. Returns true iff the engine reached playback-active Ready. Null engine
+     * (text/test path) → true (frames drop at the pipeline's null-playback guard).
+     * The downlink pipeline awaits this on audio.start before flushing buffered frames.
+     */
+    suspend fun armPlayback(): Boolean {
+        if (voiceAudio == null) return true
+        val ack = CompletableDeferred<Boolean>()
+        commands.trySend(Cmd.Configure(mic = micOn, playback = true, ack = ack))
+        return ack.await()
+    }
+
     // Runs on the single consumer coroutine. Idempotent: a configure that matches
     // the last-applied (mic, playback) collapses to a no-op (no engine call, no
     // audio edge) so the 5×(true) hammer records exactly one configure + one start.
@@ -158,7 +190,13 @@ class SdkVoice(
     // onUplinkStop (audio.end after uplink down + configure settled — no late frame).
     private suspend fun handle(cmd: Cmd) {
         val c = cmd as Cmd.Configure
-        if (c.mic == micOn && c.playback == playbackOn) return // idempotent collapse
+        if (c.mic == micOn && c.playback == playbackOn) {
+            // Idempotent collapse: the engine is genuinely in (mic, playback) — micOn/
+            // playbackOn only advance on a Ready configure — so an arm ack resolves to
+            // whether playback is on (no re-configure needed; the player is already armed).
+            c.ack?.complete(c.playback)
+            return
+        }
         runCatching {
             val micRising = c.mic && !micOn
             val micFalling = !c.mic && micOn
@@ -168,19 +206,18 @@ class SdkVoice(
             if (micFalling) pipeline?.stop()
             // THE single engine reconfig — VPIO flips iff the (mic,playback) cell changes.
             voiceAudio?.configure(c.mic, c.playback)
-            // M1: configure never throws (failures become Phase.Error inside), so
-            // runCatching completes normally even on a failure. If the engine landed in
-            // Phase.Error, do NOT advance micOn/playbackOn — leaving them at the prior
-            // values means a same-state retry (user toggles off/on, or the SAME configure
-            // resubmits) is NOT collapsed as idempotent and re-attempts the configure.
-            // Advancing here would make the lane think the engine is in the requested
-            // state and a same-state retry would no-op → user must toggle off/on.
+            // configure never throws (failures become Phase.Error inside), so runCatching
+            // completes normally even on a failure. On Phase.Error the actual reset the
+            // engine graph to idle (failReset/failConfigure) — so RECONCILE the lane to
+            // the same idle baseline (micOn=playbackOn=false), NOT the requested values.
+            // Keeping the requested values would let a later arm(playback=true) collapse
+            // as "already armed" against a torn-down engine → silent dropped TTS. Idle
+            // baseline means any non-idle retry differs → re-attempts (M1's goal).
             val phase = voiceAudio?.state?.value?.phase
             if (phase == Phase.Error) {
-                log.warn("configure-error-skip-state-advance", mapOf("mic" to c.mic, "playback" to c.playback, "reason" to (voiceAudio?.state?.value?.errorReason ?: "unknown")))
-                // audio.end was NOT sent (micRising path sent audio.start; on a failure
-                // the uplink never started so no audio.end is owed — the engine never
-                // armed). Abort the command without advancing the lane state.
+                log.warn("configure-error-reset-lane", mapOf("mic" to c.mic, "playback" to c.playback, "reason" to (voiceAudio?.state?.value?.errorReason ?: "unknown")))
+                micOn = false; playbackOn = false
+                c.ack?.complete(false)
                 return@runCatching
             }
             // Start the uplink collect once the mic tap is live.
@@ -188,9 +225,11 @@ class SdkVoice(
             micOn = c.mic; playbackOn = c.playback
             // audio.end AFTER the uplink is down + configure settled (no late frame past end).
             if (micFalling) onUplinkStop()
+            c.ack?.complete(c.playback)
         }.onFailure { err ->
-            if (err is CancellationException) throw err
+            if (err is CancellationException) { c.ack?.complete(false); throw err }
             log.warn("command-failed", mapOf("cmd" to "Configure", "error" to (err.message ?: "unknown")))
+            c.ack?.complete(false)
         }
     }
 }

@@ -7,16 +7,17 @@
 // now downlink-only. This file pins the downlink playback + FSM contracts NOT
 // already covered by AudioPipelineDownlinkTest:
 //
-//   - audio.start marks speaking (isSpeaking latch); the player is PRE-STARTED by
-//     VoiceAudio.configure() so a frame routes straight to playFrame (no async start).
-//   - a binary frame is fed to the player via playFrame.
+//   - audio.start marks speaking (isSpeaking latch) + LAZY-ARMS the engine; frames that
+//     arrive before the arm settles buffer, then flush once armed (no clipped onset).
+//   - a binary frame reaches the player via playFrame once armed.
 //   - playback.stop (barge-in / interrupt) flushes the player (flushPlayback) + routes
 //     the FSM ASSISTANT_SPEAKING → INTERRUPTING.
 //   - TEXT path: TTS still flips isSpeaking even though the FSM stays INACTIVE
 //     (voiceMode OFF) — the isSpeaking/FSM decoupling (webui isAudioPlaying).
 //
-// Drives a FakeVoiceAudio (configured for playback, mirroring the real pre-start)
-// + a real AudioFsm under runTest virtual time. No hardware, no real clock.
+// Drives a FakeVoiceAudio via an armPlayback lambda that configures it (mirrors the real
+// SdkVoice.armPlayback → engine.configure(playback=true)) + a real AudioFsm under runTest
+// virtual time. No hardware, no real clock.
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.audioio
 
@@ -35,58 +36,58 @@ class AudioPipelineTest {
 
     // ── Fakes ───────────────────────────────────────────────────────────────────
 
+    /**
+     * Build a pipeline whose lazy-arm actually configures [sink] for playback — mirrors
+     * production (SdkVoice.armPlayback → VoiceAudio.configure(playback=true)). The arm
+     * runs on [scope] (the test scheduler), so a test must advanceUntilIdle() before
+     * asserting a frame reached the player.
+     */
     private fun pipeline(
-        playback: VoicePlaybackSink?,
+        sink: FakeVoiceAudio?,
         scope: CoroutineScope,
         fsm: AudioFsm = AudioFsm(),
         onStateChanged: (Boolean, AudioState) -> Unit = { _, _ -> },
     ): AudioPipeline = AudioPipeline(
-        playback = playback,
+        playback = sink,
         opusDecoder = FakeOpusDecoderPort(),
         fsm = fsm,
         scope = scope,
         outputSampleRate = 24000,
         onStateChanged = onStateChanged,
+        armPlayback = { sink?.configure(mic = false, playback = true); true },
+        disarmPlayback = { },
     )
-
-    /**
-     * A FakeVoiceAudio pre-configured for playback — mirrors the real engine being
-     * pre-started by SdkVoice.configure(playback = true) before the downlink runs.
-     * Required because FakeVoiceAudio.playFrame is a no-op while playbackActive is false.
-     */
-    private suspend fun playbackSink(): FakeVoiceAudio {
-        val v = FakeVoiceAudio()
-        v.configure(mic = false, playback = true)
-        return v
-    }
 
     // ── DOWNLINK: playback + isSpeaking ───────────────────────────────────────────
 
     @Test
-    fun audioStart_marks_speaking_and_player_is_pre_started() = runTest {
+    fun audioStart_marks_speaking_and_lazy_arms_then_delivers_frame() = runTest {
         var speaking = false
-        val sink = playbackSink()
+        val sink = FakeVoiceAudio()
         val p = pipeline(sink, this, onStateChanged = { sp, _ -> speaking = sp })
         p.onAudioStart("c1")
-        assertTrue(speaking, "isSpeaking=true on audio.start")
-        // No async start() — a frame routes straight to playFrame.
+        assertTrue(speaking, "isSpeaking=true synchronously on audio.start")
+        // Frame arrives before the async arm settles → buffered, not dropped.
         p.onAudioFrame(byteArrayOf(1, 2, 3, 4), "c1")
-        assertEquals(1, sink.playedFrames.size, "frame delivered straight to playFrame (player pre-started)")
+        assertEquals(0, sink.playedFrames.size, "frame buffered until the engine is armed")
+        advanceUntilIdle() // run the arm job → configure(playback=true) → flush buffered
+        assertEquals(1, sink.playedFrames.size, "buffered frame flushed to playFrame once armed")
     }
 
     @Test
-    fun audioFrame_isFed_to_playFrame() = runTest {
-        val sink = playbackSink()
+    fun audioFrame_isFed_to_playFrame_after_arm() = runTest {
+        val sink = FakeVoiceAudio()
         val p = pipeline(sink, this)
         p.onAudioStart("c1")
+        advanceUntilIdle() // arm settles
         p.onAudioFrame(byteArrayOf(1, 2, 3, 4), "c1")
-        assertEquals(1, sink.playedFrames.size, "frame delivered via playFrame")
+        assertEquals(1, sink.playedFrames.size, "frame delivered via playFrame once armed")
     }
 
     @Test
     fun playbackStop_flushes_playback_and_routes_to_interrupting() = runTest {
         val states = mutableListOf<AudioState>()
-        val sink = playbackSink()
+        val sink = FakeVoiceAudio()
         // Voice-mode barge-in: FSM already in ASSISTANT_SPEAKING when playback.stop lands.
         val p = pipeline(
             sink, this,
@@ -94,6 +95,7 @@ class AudioPipelineTest {
             onStateChanged = { _, s -> states += s },
         )
         p.onAudioStart("c1")
+        advanceUntilIdle()
         p.onPlaybackStop("barge-in", "c1")
         assertEquals(1, sink.flushCount, "playback flushed (flushPlayback) on barge-in")
         assertEquals(AudioState.INTERRUPTING, states.last(), "FSM → interrupting on playback.stop")
@@ -105,11 +107,12 @@ class AudioPipelineTest {
         // isSpeaking must flip (mirrors webui isAudioPlaying). Pins the decoupling.
         var speaking = false
         var lastState = AudioState.LISTENING
-        val sink = playbackSink()
+        val sink = FakeVoiceAudio()
         val p = pipeline(sink, this, onStateChanged = { sp, s -> speaking = sp; lastState = s })
         p.onAudioStart("c1")
         assertTrue(speaking, "isSpeaking=true on text-path audio.start")
         assertEquals(AudioState.INACTIVE, lastState, "FSM stays INACTIVE on the text path")
+        advanceUntilIdle() // arm settles
         p.onAudioDone("c1")
         // Held past audio.done while the player drains its tail (mirrors webui isAudioPlaying);
         // clears once the player reports idle + the settle elapses.

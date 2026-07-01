@@ -2,9 +2,9 @@
 // AudioPipelineDownlinkTest — KEEPER (per .claude/rules/testing.md): pins E3
 // DOWNLINK invariants that would only surface in E5/E6 real-audio smoke.
 //
-// The player is PRE-STARTED by VoiceAudio.configure(playback = true) at 48 kHz, so
-// the async-start buffering contract (frames buffering until start() resolved) is
-// GONE — those test cases were deleted with this rewrite. What remains:
+// The engine is LAZY-ARMED on audio.start (mirrors web-sdk): frames buffer until the
+// async arm settles, then flush in order. Tests advanceUntilIdle() after onAudioStart to
+// run the arm. What this pins:
 //
 //   - opus decode wiring (chunk → PCM → playFrame, in order).
 //   - pcm16 passthrough (decoder NOT called).
@@ -12,8 +12,8 @@
 //   - cycle supersede flushes playback + stale frames from the prior cycle are dropped.
 //   - drain-watch holds speaking while the player reports busy, clears once idle + settle.
 //
-// Drives a FakeVoiceAudio (configured for playback, mirroring the real pre-start)
-// under runTest virtual time. No hardware, no real clock.
+// Drives a FakeVoiceAudio via an armPlayback lambda that configures it (mirrors the real
+// SdkVoice.armPlayback → engine.configure(playback=true)) under runTest virtual time.
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.audioio
 
@@ -32,25 +32,21 @@ class AudioPipelineDownlinkTest {
 
     // ── Fakes ───────────────────────────────────────────────────────────────────
 
+    /** Pipeline whose lazy-arm configures [sink] for playback (mirrors production). */
     private fun pipeline(
-        playback: VoicePlaybackSink?,
+        sink: FakeVoiceAudio?,
         scope: kotlinx.coroutines.CoroutineScope,
         opusDecoder: io.sentient.mobilesdk.audio.opus.OpusDecoderPort = FakeOpusDecoderPort(),
     ): AudioPipeline = AudioPipeline(
-        playback = playback,
+        playback = sink,
         opusDecoder = opusDecoder,
         fsm = AudioFsm(),
         scope = scope,
         outputSampleRate = 24000,
         onStateChanged = { _, _ -> },
+        armPlayback = { sink?.configure(mic = false, playback = true); true },
+        disarmPlayback = { },
     )
-
-    /** FakeVoiceAudio pre-configured for playback (mirrors the real pre-start). */
-    private suspend fun playbackSink(initialPlaybackIdle: Boolean = true): FakeVoiceAudio {
-        val v = FakeVoiceAudio(initialPlaybackIdle = initialPlaybackIdle)
-        v.configure(mic = false, playback = true)
-        return v
-    }
 
     // ── A4: opus-decode downlink wiring ───────────────────────────────────────────
 
@@ -60,11 +56,12 @@ class AudioPipelineDownlinkTest {
 
     @Test
     fun opusMode_decodesEachChunk_andFeedsPlayFrameInOrder() = runTest {
-        val sink = playbackSink()
+        val sink = FakeVoiceAudio()
         val dec = cannedDecoder()
         val p = pipeline(sink, this, dec)
 
         p.onAudioStart("c1", encoding = "opus", sampleRate = 24000)
+        advanceUntilIdle() // arm settles
         p.onAudioFrame(byteArrayOf(1), "c1")
         p.onAudioFrame(byteArrayOf(2), "c1")
 
@@ -76,11 +73,12 @@ class AudioPipelineDownlinkTest {
 
     @Test
     fun pcm16Mode_passesBytesThrough_withoutCallingDecoder() = runTest {
-        val sink = playbackSink()
+        val sink = FakeVoiceAudio()
         val dec = FakeOpusDecoderPort()
         val p = pipeline(sink, this, dec)
 
         p.onAudioStart("c1", encoding = "pcm16", sampleRate = 24000)
+        advanceUntilIdle() // arm settles
         val raw = byteArrayOf(7, 8, 9, 10)
         p.onAudioFrame(raw, "c1")
 
@@ -91,11 +89,12 @@ class AudioPipelineDownlinkTest {
 
     @Test
     fun opusDone_resetsDecoder() = runTest {
-        val sink = playbackSink()
+        val sink = FakeVoiceAudio()
         val dec = cannedDecoder()
         val p = pipeline(sink, this, dec)
 
         p.onAudioStart("c1", encoding = "opus", sampleRate = 48000)
+        advanceUntilIdle() // arm settles
         val afterStart = dec.resetCount
         p.onAudioDone("c1")
 
@@ -106,15 +105,17 @@ class AudioPipelineDownlinkTest {
 
     @Test
     fun newerCycle_supersedesOld_flushesPlayback_andDropsStaleFrames() = runTest {
-        val sink = playbackSink()
+        val sink = FakeVoiceAudio()
         val p = pipeline(sink, this)
 
         p.onAudioStart("c1", encoding = "pcm16", sampleRate = 24000)
+        advanceUntilIdle() // c1 arm settles
         p.onAudioFrame(byteArrayOf(1), "c1")
         assertEquals(1, sink.playedFrames.size, "c1 frame played")
 
         // A newer cycle's audio arrives while c1 is still active → flush c1's audio.
         p.onAudioStart("c2", encoding = "pcm16", sampleRate = 24000)
+        advanceUntilIdle() // c2 arm settles (already armed → configure no-op, still armed)
         assertTrue(sink.flushCount >= 1, "flushPlayback called when c2 supersedes c1")
 
         // A late c1 frame is stale → dropped; only the newer c2 frame plays.
@@ -128,7 +129,7 @@ class AudioPipelineDownlinkTest {
     fun speaking_heldWhilePlayerBusy_clearedOnceIdleAndSettled() = runTest {
         var speaking = false
         // Player still draining its tail — start NOT idle.
-        val sink = playbackSink(initialPlaybackIdle = false)
+        val sink = FakeVoiceAudio(initialPlaybackIdle = false)
         val p = AudioPipeline(
             playback = sink,
             opusDecoder = FakeOpusDecoderPort(),
@@ -137,9 +138,12 @@ class AudioPipelineDownlinkTest {
             outputSampleRate = 24000,
             onStateChanged = { sp, _ -> speaking = sp },
             playbackDrainSettleMs = 100,
+            armPlayback = { sink.configure(mic = false, playback = true); true },
+            disarmPlayback = { },
         )
 
         p.onAudioStart("c1", encoding = "pcm16", sampleRate = 24000)
+        runCurrent() // arm settles (playback active), but player still not idle
         p.onAudioDone("c1")
         // Player still reports busy → speaking is HELD past audio.done.
         advanceTimeBy(500)

@@ -155,6 +155,11 @@ class SentientSdk(
         voiceAudio = bundle.voiceAudio,
         scope = scope,
         onStateChanged = ::onAudioStateChanged,
+        // Lazy-arm the downlink engine on the first TTS cycle (mirrors web-sdk's
+        // arm-on-audio.start model). Deferred accessors — `voice` is constructed AFTER
+        // `audio`, but these only fire at audio.start / drain, long after construction.
+        armPlayback = { voice.armPlayback() },
+        disarmPlayback = { voice.requestPlayback(false) },
     )
 
     // Real-time voice-uplink pipeline (Task 9). Built like SdkAudio — BEFORE the
@@ -192,14 +197,10 @@ class SentientSdk(
         scope = scope,
         audioHooks = { audio.downlinkHooks },
         onCognitionChanged = ::onCognitionChanged,
-        // C1: a server-driven session.preferences.changed (TTS on by default) must arm
-        // the engine for playback — not just the app's setTtsEnabled toggle. Drive the
-        // SAME serialized configure lane as mic/TTS so the player is pre-started whenever
-        // the server says TTS is on. mic follows the current voiceMode (OFF on a fresh
-        // connect). voice is constructed BEFORE connectors, so it is in scope here.
-        onPreferencesChanged = { prefs ->
-            voice.requestConfigure(mic = (deriver.voiceMode == VoiceMode.ACTIVE), playback = prefs.ttsEnabled)
-        },
+        // Lazy-arm model: the downlink engine is armed on connector.audio.start, not from
+        // the preference flag. The gateway only sends audio.* when TTS is on, so arming
+        // follows the actual audio — no preference→configure coupling needed. The prefs
+        // change still folds into the deriver (UI toggle state) inside PreferencesConnector.
     )
 
     private val router = MessageRouter(connectors.all, audioConnector = connectors.audioOutput)
@@ -370,12 +371,12 @@ class SentientSdk(
         emit()
     }
 
-    /** Patch TTS on/off (server echoes via session.preferences.changed) AND drive a
-     *  local optimistic configure(playback=enabled) on the SAME serialized lane as mic —
-     *  so a TTS-while-mic-on toggle flips VPIO on/off without racing a mic reconfig. */
+    /** Patch TTS on/off; the server echoes via session.preferences.changed and starts /
+     *  stops sending connector.audio.* accordingly. The downlink engine is LAZY-ARMED on
+     *  audio.start (mirrors web-sdk), so no local configure is needed here — arming
+     *  follows the actual audio, not the preference flag. */
     suspend fun setTtsEnabled(enabled: Boolean) {
         log.info("setTtsEnabled", mapOf("enabled" to enabled))
-        voice.requestConfigure(mic = (deriver.voiceMode == VoiceMode.ACTIVE), playback = enabled)
         connectors.preferences.patch(AudioPreferencesPatch(ttsEnabled = enabled))
     }
 

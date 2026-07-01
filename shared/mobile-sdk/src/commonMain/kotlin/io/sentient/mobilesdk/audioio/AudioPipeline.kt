@@ -49,6 +49,16 @@ private const val DEFAULT_DRAIN_SETTLE_MS = 250L
  * @param onStateChanged Pushes isSpeaking + FSM state into the orchestrator's StateDeriver.
  * @param playbackDrainSettleMs Settle (ms) after the player reports idle before speaking
  *   clears — keeps the interrupt affordance through the speaker tail.
+ * @param armPlayback LAZY-ARM the downlink engine on the first TTS cycle. Suspends until
+ *   the engine reports playback-active (Ready) — returns true — or fails (false). Routed
+ *   through SdkVoice's serialized configure lane so it composes with the mic axis (VPIO).
+ *   Default `{ true }` for the text/test path (no real engine; frames drop at the null
+ *   [playback] guard anyway). Mirrors web-sdk's arm-on-audio.start model: the engine only
+ *   runs while there is actually audio to play, not for the whole connection.
+ * @param disarmPlayback Release the downlink engine once a TTS cycle has drained / been
+ *   interrupted. A no-op in voice mode (mic on → full-duplex engine stays up, no per-reply
+ *   VPIO churn); a teardown-to-idle in text mode (mic off → releases the .playAndRecord
+ *   mic reservation → battery + no idle mic indicator). Default no-op for text/test.
  */
 class AudioPipeline(
     private val playback: VoicePlaybackSink?,
@@ -58,16 +68,19 @@ class AudioPipeline(
     private val outputSampleRate: Int,
     private val onStateChanged: (isSpeaking: Boolean, fsmState: AudioState) -> Unit,
     private val playbackDrainSettleMs: Long = DEFAULT_DRAIN_SETTLE_MS,
+    private val armPlayback: suspend () -> Boolean = { true },
+    private val disarmPlayback: () -> Unit = {},
 ) {
     private val log = createLogger("audio", "pipeline")
 
-    // The player is PRE-STARTED by VoiceAudio.configure(playback = true) at 48 kHz, so
-    // there is no async start() race. playbackStarted/playbackReady are kept as latch
-    // state for the supersede/buffer path; playbackReady flips true synchronously in
-    // onAudioStart, so frames route straight to playFrame.
+    // Lazy-arm latch. playbackStarted flips true when a cycle requests the engine; the
+    // async arm job flips playbackReady true once the engine reports playback-active,
+    // then flushes pendingFrames. Frames that arrive before the engine is armed buffer
+    // in pendingFrames (arm latency ~ one configure) so the TTS onset is never clipped.
     private var playbackStarted = false
     private var playbackReady = false
     private val pendingFrames = mutableListOf<ByteArray>()
+    private var armJob: Job? = null
 
     // true when the active TTS stream is OGG-Opus (encoding="opus") → each binary
     // frame is decoded to PCM16-LE via opusDecoder before enqueue. false → pcm16
@@ -120,13 +133,40 @@ class AudioPipeline(
             mapOf("cycleId" to cycleId, "opusMode" to opusMode, "playbackRate" to playbackRate),
         )
         if (opusMode) opusDecoder.reset()
-        // The player is pre-started by VoiceAudio.configure() at 48 kHz — no async
-        // start() to await. Latch ready synchronously so frames route straight to playFrame.
-        playbackStarted = true
-        playbackReady = true
         isSpeaking = true
         activeCycleId = cycleId
+        armPlaybackOnce()
         transition(AudioInput.AudioStart, cycleId)
+    }
+
+    /**
+     * Arm the downlink engine for this cycle if not already armed. Idempotent across
+     * frames of the same cycle. [armPlayback] suspends through SdkVoice's serialized
+     * configure lane; frames buffer in [pendingFrames] until it resolves, then flush in
+     * order. A barge-in/supersede that resets [playbackStarted] while the arm is in
+     * flight makes the post-arm guard skip the flush (those frames were dropped on
+     * purpose) — mirrors the proven pre-consolidation startPlaybackOnce buffering.
+     */
+    private fun armPlaybackOnce() {
+        if (playbackStarted || playback == null) {
+            playbackReady = playbackStarted // text/test path (null playback): treat as ready-noop
+            return
+        }
+        playbackStarted = true
+        playbackReady = false
+        armJob?.cancel()
+        armJob = scope.launch {
+            val armed = armPlayback()
+            if (playbackStarted && armed) {
+                val flushed = pendingFrames.size
+                playbackReady = true
+                for (f in pendingFrames) playback.playFrame(f)
+                pendingFrames.clear()
+                log.debug("downlink-armed", mapOf("flushed" to flushed))
+            } else {
+                log.warn("downlink-arm-skipped", mapOf("armed" to armed, "started" to playbackStarted))
+            }
+        }
     }
 
     /**
@@ -211,14 +251,31 @@ class AudioPipeline(
         }
     }
 
-    /** Clear the speaking latch + advance the FSM once the speaker has truly drained. */
+    /** Clear the speaking latch + advance the FSM once the speaker has truly drained,
+     *  then RELEASE the downlink engine (lazy model: it only runs while there is audio). */
     private fun finalizeDrain(cycleId: String) {
         if (!framesDone) return
         framesDone = false
         isSpeaking = false
         activeCycleId = ""
         log.info("downlink-drained", mapOf("cycleId" to cycleId))
+        releasePlaybackEngine()
         transition(AudioInput.AudioDone, cycleId)
+    }
+
+    /**
+     * Release the downlink engine after a cycle ends (drain / interrupt). Cancels any
+     * in-flight arm, drops the latch, and disarms — a no-op in voice mode (mic keeps the
+     * full-duplex engine up), a teardown-to-idle in text mode (frees the .playAndRecord
+     * mic reservation → battery). Gated on [playbackStarted] so a spurious call (never
+     * armed) does not spam the configure lane.
+     */
+    private fun releasePlaybackEngine() {
+        armJob?.cancel()
+        if (!playbackStarted) return
+        playbackStarted = false
+        playbackReady = false
+        disarmPlayback()
     }
 
     /** Local Stop (UI/escape): force-stop playback for the active cycle without a server frame. */
@@ -235,10 +292,11 @@ class AudioPipeline(
         framesDone = false
         playback?.flushPlayback()
         if (opusMode) opusDecoder.reset()
-        // Discard any frames buffered before the player was ready — barge-in drops pending audio.
-        playbackStarted = false
-        playbackReady = false
+        // Discard any frames buffered before the player was ready — barge-in drops pending
+        // audio. releasePlaybackEngine cancels a pending arm + disarms the engine (lazy
+        // model) — a no-op in voice mode, a teardown in text mode.
         pendingFrames.clear()
+        releasePlaybackEngine()
         isSpeaking = false
         activeCycleId = ""
         transition(AudioInput.Interrupt, cycleId)
@@ -254,13 +312,15 @@ class AudioPipeline(
     fun suspendPlayback() {
         log.info("suspend")
         drainJob?.cancel()
+        armJob?.cancel() // a pending arm must not fire + flush into a suspended pipeline
         framesDone = false
         playbackReady = false
         pendingFrames.clear()
         opusDecoder.reset()
-        // The VoiceAudio engine stays configured across a transient disconnect (the
-        // next reconnect resumes playback without re-arming). Just drop queued audio
-        // so the user doesn't hear stale TTS after reconnect.
+        // Lazy model: the engine is only armed during a cycle. Drop queued audio + reset
+        // the latch so the next audio.start (post-reconnect) re-arms from scratch. The
+        // engine's own teardown is owned by the SDK lifecycle, not driven from here (a
+        // configure on the teardown path could race the reconnect).
         if (playbackStarted) {
             playbackStarted = false
             playback?.flushPlayback()

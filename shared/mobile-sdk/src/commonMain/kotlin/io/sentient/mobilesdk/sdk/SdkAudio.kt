@@ -30,12 +30,19 @@ import kotlinx.coroutines.CoroutineScope
  *   depends only on its [io.sentient.mobilesdk.audioio.VoicePlaybackSink] slice.
  * @param scope Orchestrator scope the downlink coroutines run on.
  * @param onStateChanged Pushes isSpeaking + FSM state into the StateDeriver.
+ * @param armPlayback LAZY-ARM the engine for playback on the first TTS cycle; suspends
+ *   until playback-active Ready (true) or fail (false). Cycle-safe lambda — [SdkVoice] is
+ *   constructed AFTER SdkAudio, so the orchestrator passes a deferred accessor.
+ * @param disarmPlayback Release the engine after a TTS cycle drains/interrupts (no-op in
+ *   voice mode, teardown-to-idle in text mode).
  */
 class SdkAudio(
     audioConfig: AudioPipelineConfig,
     voiceAudio: VoiceAudio?,
     scope: CoroutineScope,
     private val onStateChanged: (isSpeaking: Boolean, fsmState: AudioState) -> Unit,
+    armPlayback: suspend () -> Boolean = { true },
+    disarmPlayback: () -> Unit = {},
 ) {
     private val fsm = AudioFsm()
 
@@ -54,6 +61,8 @@ class SdkAudio(
         outputSampleRate = audioConfig.outputSampleRate,
         onStateChanged = onStateChanged,
         playbackDrainSettleMs = audioConfig.playbackDrainSettleMs,
+        armPlayback = armPlayback,
+        disarmPlayback = disarmPlayback,
     )
 
     /** Downlink side-effect hooks the connector set routes audio frames into. */
