@@ -1,0 +1,157 @@
+# STT Service — runtime tuning
+# ==============================
+#
+# Copy this file to ~/.sentient/stt-service/config/config.yaml on your
+# Raspberry Pi (or wherever you mount it in docker-compose.yml). The
+# container loads it ONCE at startup. To change a value, edit and run:
+#
+#     docker compose restart stt-service
+#
+# Every key below is required — the service fails loud at startup if
+# anything is missing or the wrong type. There are no silent defaults.
+#
+# Container-internal paths (/app/models, /app/logs, /app/data/recordings)
+# are fixed in the Dockerfile and mounted from the host. Change the
+# HOST paths in deploy/mac-prod/docker-compose.yml if you want the data
+# somewhere other than ~/.sentient/stt-service/.
+
+# =============================================================================
+# Schema version — bumped by deploy/setup.py migrations. Do not hand-edit.
+# =============================================================================
+schema_version: "0.1.0"
+
+# =============================================================================
+# WebSocket server
+# =============================================================================
+server:
+  # Bind address inside the container. 0.0.0.0 = all interfaces, which
+  # Docker needs in order to route traffic from the host. Don't touch
+  # unless you have a specific networking reason.
+  host: "0.0.0.0"
+
+  # WebSocket port inside the container. If you ever move this, update
+  # the host->container port mapping in deploy/mac-prod/docker-compose.yml too.
+  port: 8766
+
+  # Maximum accepted WebSocket frame size in bytes. 16 MiB ≈ 8 minutes
+  # of 16 kHz PCM16 per frame — far more than any sane client sends.
+  # Lower to harden against bad actors on an untrusted network.
+  max_frame_bytes: 16777216  # 16 * 1024 * 1024
+
+# =============================================================================
+# Silero VAD — cheap first-pass voice activity detection. Every incoming
+# audio chunk goes through this before the pipeline decides whether to
+# open a turn.
+# =============================================================================
+vad:
+  # Probability cutoff (0.0-1.0) above which Silero declares "this is
+  # speech".
+  #   Higher -> more conservative, misses soft speech, fewer false alarms.
+  #   Lower  -> more aggressive, catches whispers, more noise triggers.
+  # 0.5 is Silero's published default and works well for household rooms.
+  threshold: 0.5
+
+  # How much silence (milliseconds) Silero must see AFTER speech ends
+  # before firing `vad_end`. Too low = chatter between every word.
+  # Too high = sluggish. 200 ms is tight and bridges normal inter-word gaps.
+  min_silence_ms: 200
+
+  # Audio padding (milliseconds) Silero includes on either side of the
+  # detected speech boundary. Small = cleaner; larger = safer against
+  # clipping the first/last phoneme.
+  speech_pad_ms: 30
+
+  # Pre-speech ring-buffer size, counted in 512-sample (=32 ms @ 16 kHz)
+  # Silero chunks. When `vad_start` fires, buffer contents are prepended
+  # retroactively so the first word isn't clipped by Silero's LSTM
+  # cold-start latency. 10 chunks ≈ 320 ms pre-roll — enough for a
+  # fast "hey" at turn start.
+  pre_speech_chunks: 10
+
+  # Watchdog: if Smart-Turn said "keep listening" but no new speech
+  # arrives for this long, force the turn closed. Without this, a
+  # single Smart-Turn misfire could hold a turn open forever.
+  # 2000 ms has never false-triggered in PoC testing.
+  silent_timeout_ms: 2000
+
+  # Hard upper bound on a single turn, measured from VAD start. When a
+  # turn has been open this long the service force-finalizes it: it runs
+  # SenseVoice on whatever audio has accumulated and emits the normal
+  # turn_complete / transcript_ready pair. Guards against runaway
+  # growth of the per-turn audio buffer (~64 KB/s of float32) when
+  # speech-like audio keeps arriving with no gap long enough for the
+  # silent_timeout watchdog to trip — e.g. a TV playing in the room with
+  # the mic open, or a very long uninterrupted monologue.
+  # 600_000 ms = 10 min; if you normally dictate longer than that in one
+  # breath, raise it — but note the Pi only has 8 GB of RAM.
+  max_turn_duration_ms: 600000
+
+  # Hard floor on accepted turn audio length (ms). Turns whose total
+  # speech duration is below this are rejected before SenseVoice runs,
+  # via a `turn_rejected` event with reason `short_burst`. Defends
+  # against echo bursts / acoustic transients (knocks, taps, sub-200 ms
+  # speaker leak through AEC) that fool Silero into firing a turn.
+  # Real human commands run 250–500 ms ("no", "yes", "stop") so 200
+  # threads the needle. Set to 0 to disable. Range 0–1000.
+  # Optional — defaults to 200 when omitted.
+  min_speech_duration_ms: 200
+
+# =============================================================================
+# Smart-Turn v3 — end-of-turn classifier. Runs on the last 8 s of audio
+# after every vad_end. Answers "is the user actually done, or just pausing?"
+# =============================================================================
+smart_turn:
+  # Sigmoid output threshold. Above -> "turn complete"; below -> "keep listening".
+  # 0.5 = the model's trained midpoint. Nudge higher (0.6) if turns end
+  # prematurely; lower if the service waits too long after clearly-done speech.
+  decision_threshold: 0.5
+
+  # ONNX Runtime intra-op threads per inference. 4 matches the RPi5's
+  # four Cortex-A76 cores -> ~80 ms per turn. Drop to 2 if you're
+  # sharing the Pi with heavy other workloads.
+  intra_op_threads: 4
+
+# =============================================================================
+# SenseVoice-Small — the STT model. Runs once per finalized turn (or
+# once per speech segment when the turn has mid-turn pauses).
+# =============================================================================
+sense_voice:
+  # sherpa-onnx thread count. Same reasoning as Smart-Turn: 4 = one per
+  # Cortex-A76 core, good balance for the Pi.
+  num_threads: 4
+
+  # Inverse Text Normalization: "twenty twenty four" -> "2024",
+  # "five dollars" -> "$5". Ships with SenseVoice. Default on.
+  use_itn: true
+
+# =============================================================================
+# Turn recording — persist finalized turns as WAVs on disk for debugging.
+# =============================================================================
+recordings:
+  # When true, every accepted turn is written to the recordings dir as
+  # turn_<connId>_<idx>.wav. The WAV is still sent over the WebSocket
+  # regardless — turning this off only skips the on-disk write. Set to
+  # false if disk fills up on long-running deployments.
+  enabled: false
+
+# =============================================================================
+# Logging + in-process metrics
+# =============================================================================
+logging:
+  # stdout log level — what `docker logs stt-service` shows.
+  # One of: debug | info | warning | error.
+  # JSONL log files always capture everything regardless of this setting.
+  level: "info"
+
+  # CPU/RSS sampling cadence in milliseconds. Each sample writes one line
+  # to logs/<date>-metrics.jsonl. 1000 ms is cheap (~0.1% CPU overhead)
+  # and gives per-second resolution for latency investigations.
+  # Set to 0 to disable.
+  metrics_interval_ms: 1000
+
+  # Days to retain rotated jsonl files in the logs dir. Files older
+  # than this are deleted at startup and at each UTC-midnight rollover.
+  # Applies to <date>-service.jsonl, <date>-metrics.jsonl, and
+  # conn_<id>.jsonl alike (all matched by mtime). Set to 0 to disable
+  # pruning. Range: 0-365.
+  retention_days: 7
