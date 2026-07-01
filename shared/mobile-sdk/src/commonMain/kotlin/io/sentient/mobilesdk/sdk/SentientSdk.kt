@@ -152,7 +152,7 @@ class SentientSdk(
     // voice/ package (SdkVoice) — SdkAudio is downlink-only. See SdkAudio.
     private val audio: SdkAudio = SdkAudio(
         audioConfig = config.audio,
-        playback = bundle.playback,
+        voiceAudio = bundle.voiceAudio,
         scope = scope,
         onStateChanged = ::onAudioStateChanged,
     )

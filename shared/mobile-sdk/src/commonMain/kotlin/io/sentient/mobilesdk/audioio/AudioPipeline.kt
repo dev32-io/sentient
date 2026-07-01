@@ -40,7 +40,7 @@ private const val DEFAULT_DRAIN_SETTLE_MS = 250L
 /**
  * The downlink voice flow manager. One per orchestrator; reusable across cycles.
  *
- * @param playback Assistant playback adapter (E2). null → downlink frames are dropped.
+ * @param playback Playback sink (the downlink slice of VoiceAudio). null → frames dropped.
  * @param opusDecoder Long-lived OGG-Opus → PCM16-LE decoder (A4); one instance, reset
  *   between cycles. Only invoked in opus mode; pcm16 passes through untouched.
  * @param fsm Voice-status FSM (drives ConnectionState.audioState display).
@@ -51,7 +51,7 @@ private const val DEFAULT_DRAIN_SETTLE_MS = 250L
  *   clears — keeps the interrupt affordance through the speaker tail.
  */
 class AudioPipeline(
-    private val playback: AudioPlaybackAdapter?,
+    private val playback: VoicePlaybackSink?,
     private val opusDecoder: OpusDecoderPort,
     private val fsm: AudioFsm,
     private val scope: CoroutineScope,
@@ -61,8 +61,11 @@ class AudioPipeline(
 ) {
     private val log = createLogger("audio", "pipeline")
 
+    // The player is PRE-STARTED by VoiceAudio.configure(playback = true) at 48 kHz, so
+    // there is no async start() race. playbackStarted/playbackReady are kept as latch
+    // state for the supersede/buffer path; playbackReady flips true synchronously in
+    // onAudioStart, so frames route straight to playFrame.
     private var playbackStarted = false
-    // true once playback.start() has resolved — frames buffer in pendingFrames until then.
     private var playbackReady = false
     private val pendingFrames = mutableListOf<ByteArray>()
 
@@ -89,10 +92,13 @@ class AudioPipeline(
     // ── Downlink ────────────────────────────────────────────────────────────────
 
     /**
-     * connector.audio.start: open playback once, mark speaking. [encoding]/[sampleRate]
-     * come from the wire frame: opus mode decodes binary frames through opusDecoder and
-     * MUST play at 48 kHz (libopus always decodes there, ignoring the announced rate);
-     * pcm16 mode passes bytes through at the announced rate (or outputSampleRate fallback).
+     * connector.audio.start: mark speaking + arm the decoder for the cycle. The player
+     * is PRE-STARTED by `VoiceAudio.configure(playback = true)` at 48 kHz, so there is
+     * no async `start(rate)` to await — [playbackReady] flips true synchronously and
+     * frames route straight to [VoicePlaybackSink.playFrame]. [encoding]/[sampleRate]
+     * come from the wire frame: opus mode decodes binary frames through opusDecoder
+     * (libopus always decodes to 48 kHz, ignoring the announced rate); pcm16 mode passes
+     * bytes through at the announced rate (or [outputSampleRate] fallback — logging only).
      */
     fun onAudioStart(cycleId: String, encoding: String? = null, sampleRate: Int? = null) {
         // A NEWER cycle's audio arriving while a prior cycle is still playing/queued →
@@ -101,7 +107,7 @@ class AudioPipeline(
         // any late frames/done still in flight for the superseded cycle.
         if (activeCycleId.isNotEmpty() && activeCycleId != cycleId) {
             log.info("downlink-supersede", mapOf("superseded" to activeCycleId, "next" to cycleId))
-            playback?.clear()
+            playback?.flushPlayback()
             pendingFrames.clear()
         }
         // A new cycle supersedes any pending drain-watch from the prior cycle.
@@ -114,28 +120,13 @@ class AudioPipeline(
             mapOf("cycleId" to cycleId, "opusMode" to opusMode, "playbackRate" to playbackRate),
         )
         if (opusMode) opusDecoder.reset()
-        startPlaybackOnce(playbackRate)
+        // The player is pre-started by VoiceAudio.configure() at 48 kHz — no async
+        // start() to await. Latch ready synchronously so frames route straight to playFrame.
+        playbackStarted = true
+        playbackReady = true
         isSpeaking = true
         activeCycleId = cycleId
         transition(AudioInput.AudioStart, cycleId)
-    }
-
-    /** Open the player once at [rate]; flush any pre-ready buffered frames in order. */
-    private fun startPlaybackOnce(rate: Int) {
-        if (playbackStarted || playback == null) return
-        playbackStarted = true
-        playbackReady = false
-        pendingFrames.clear()
-        scope.launch {
-            playback.start(rate)
-            // Guard: if a barge-in/stop reset playbackStarted while start() was
-            // suspended, do NOT flush — those frames were discarded on purpose.
-            if (playbackStarted) {
-                playbackReady = true
-                for (f in pendingFrames) playback.enqueue(f)
-                pendingFrames.clear()
-            }
-        }
     }
 
     /**
@@ -165,11 +156,11 @@ class AudioPipeline(
         for (pcm in decoded) enqueueOrBuffer(pcm, cycleId)
     }
 
-    /** Enqueue [bytes] if the player is ready; else buffer for the post-start flush. */
+    /** Feed [bytes] straight to the player (pre-started); buffer only if not yet ready. */
     private fun enqueueOrBuffer(bytes: ByteArray, cycleId: String) {
         if (playbackReady) {
             log.debug("downlink-frame", mapOf("bytes" to bytes.size, "cycleId" to cycleId))
-            playback?.enqueue(bytes)
+            playback?.playFrame(bytes)
         } else {
             pendingFrames.add(bytes)
             log.debug(
@@ -237,7 +228,7 @@ class AudioPipeline(
         // Interrupt/barge-in clears speaking immediately — cancel any pending drain-watch.
         drainJob?.cancel()
         framesDone = false
-        playback?.clear()
+        playback?.flushPlayback()
         if (opusMode) opusDecoder.reset()
         // Discard any frames buffered before the player was ready — barge-in drops pending audio.
         playbackStarted = false
@@ -262,9 +253,12 @@ class AudioPipeline(
         playbackReady = false
         pendingFrames.clear()
         opusDecoder.reset()
+        // The VoiceAudio engine stays configured across a transient disconnect (the
+        // next reconnect resumes playback without re-arming). Just drop queued audio
+        // so the user doesn't hear stale TTS after reconnect.
         if (playbackStarted) {
             playbackStarted = false
-            scope.launch { playback?.stop() }
+            playback?.flushPlayback()
         }
     }
 

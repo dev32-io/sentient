@@ -19,19 +19,21 @@ package io.sentient.mobilesdk.sdk
 import io.sentient.mobilesdk.audio.opus.LazyOpusDecoderPort
 import io.sentient.mobilesdk.audio.opus.OpusDownlinkDecoder
 import io.sentient.mobilesdk.audioio.AudioPipeline
+import io.sentient.mobilesdk.voice.io.VoiceAudio
 import kotlinx.coroutines.CoroutineScope
 
 /**
  * Constructs and owns the downlink voice pipeline (E3).
  *
  * @param audioConfig Tuned sample rates + settle timing (operator config).
- * @param playback Assistant playback adapter (null on the text-only test path).
+ * @param voiceAudio Voice engine (null on the text-only test path). AudioPipeline
+ *   depends only on its [io.sentient.mobilesdk.audioio.VoicePlaybackSink] slice.
  * @param scope Orchestrator scope the downlink coroutines run on.
  * @param onStateChanged Pushes isSpeaking + FSM state into the StateDeriver.
  */
 class SdkAudio(
     audioConfig: AudioPipelineConfig,
-    playback: io.sentient.mobilesdk.audioio.AudioPlaybackAdapter?,
+    voiceAudio: VoiceAudio?,
     scope: CoroutineScope,
     private val onStateChanged: (isSpeaking: Boolean, fsmState: AudioState) -> Unit,
 ) {
@@ -45,7 +47,7 @@ class SdkAudio(
 
     /** The downlink voice flow manager (connector → decode → playback). */
     val pipeline: AudioPipeline = AudioPipeline(
-        playback = playback,
+        playback = voiceAudio, // VoiceAudio : VoicePlaybackSink
         opusDecoder = opusDecoder,
         fsm = fsm,
         scope = scope,

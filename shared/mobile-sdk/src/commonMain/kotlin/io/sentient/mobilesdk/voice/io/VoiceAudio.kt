@@ -1,5 +1,6 @@
 package io.sentient.mobilesdk.voice.io
 
+import io.sentient.mobilesdk.audioio.VoicePlaybackSink
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -14,7 +15,7 @@ import kotlinx.coroutines.flow.StateFlow
  * No second engine, no AVAudioSession handoff — the StartIO-on-dirty-session bug
  * class is deleted by construction.
  */
-interface VoiceAudio {
+interface VoiceAudio : VoicePlaybackSink {
     /** Continuous readiness state (StateFlow — conflation fine). UI: spinner on Configuring. */
     val state: StateFlow<VoiceAudioState>
 
@@ -33,13 +34,13 @@ interface VoiceAudio {
     suspend fun configure(mic: Boolean, playback: Boolean, playbackRateHz: Int = 48_000)
 
     /** Downlink sink: one PCM16 LE frame → playback. No-op if playbackActive is false. */
-    fun playFrame(pcm16: ByteArray)
+    override fun playFrame(pcm16: ByteArray)
 
     /** Flush queued playback (barge-in / interrupt drop-guard). */
-    fun flushPlayback()
+    override fun flushPlayback()
 
     /** Idle when no scheduled buffer remains (pipeline holds "speaking" until the tail drains). */
-    val isPlaybackIdle: Boolean
+    override val isPlaybackIdle: Boolean
 
     /** Terminal teardown: stop engine + deactivate session + release. */
     suspend fun shutdown()
