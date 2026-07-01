@@ -4,7 +4,7 @@
 // Wires the downlink codec (A4) + playback adapter (E2) into the assistant-audio
 // path (connector → decode → playback + isSpeaking latch + FSM). Constructed +
 // run by the orchestrator (SdkAudio → SentientSdk) on its injected scope. The
-// real-time mic UPLINK now lives entirely in the voice/ package (MicSource →
+// real-time mic UPLINK now lives entirely in the voice/ package (VoiceAudio.micFrames →
 // VoiceUplinkPipeline, driven by SdkVoice); this class is downlink-only. All downlink
 // callbacks run on the single orchestrator coroutine so no synchronization is needed.
 // LOGGING: the pipeline logs every FSM transition + per-frame buffering event.

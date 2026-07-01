@@ -96,7 +96,6 @@ private fun buildSdkWithHistory(
         tokenStore = InMemoryTokenStore().apply { save("tok-abc") },
         deviceIdStore = InMemoryDeviceIdStore("dev-test"),
         clock = FixedClock(0L),
-        playback = null,
     )
     return SentientSdk(
         config = SdkConfig(

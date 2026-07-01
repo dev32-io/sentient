@@ -7,7 +7,7 @@
 // downlink hooks the connector set routes binary/audio frames into, plus the
 // lifecycle (suspend/dispose/stopLocal) the orchestrator drives.
 //
-// The real-time mic UPLINK lives entirely in the voice/ package (MicSource →
+// The real-time mic UPLINK lives entirely in the voice/ package (VoiceAudio.micFrames →
 // VoiceUplinkPipeline, driven by SdkVoice) — SdkAudio no longer touches capture,
 // the uplink encoder, or the EchoGate.
 //

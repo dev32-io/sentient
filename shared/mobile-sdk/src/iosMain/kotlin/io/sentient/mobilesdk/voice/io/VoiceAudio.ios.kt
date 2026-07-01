@@ -1,9 +1,8 @@
 // ---------------------------------------------------------------------------
 // VoiceAudio.ios.kt — ONE AVAudioEngine serving every (mic, playback) state.
 //
-// Consolidates the proven snippets from the soon-deleted iOS files
-// (IosMicSource / AudioPlaybackAdapter / SharedAudioEngine / ObjCExceptionGuard)
-// into one engine. configure(mic, playback, rate) diffs voiceAudioGraph against
+// Consolidates the proven iOS audio snippets (mic tap, playback player, full-duplex
+// session, ObjCExceptionGuard) into one engine. configure(mic, playback, rate) diffs voiceAudioGraph against
 // the last-applied graph, then stop → reconfigure (tap/player/VPIO) → start.
 // VPIO toggled ONLY in the mic+playback cell, only inside a stop → always starts
 // on a clean session (kills StartIO-on-dirty-session). Player always connected to
@@ -74,7 +73,7 @@ class IosVoiceAudio : VoiceAudio {
     private val _state = MutableStateFlow(VoiceAudioState(Phase.Idle, micActive = false, playbackActive = false))
     override val state: StateFlow<VoiceAudioState> = _state
 
-    // Bounded SUSPEND channel; drop-newest via trySend (mirrors IosMicSource).
+    // Bounded SUSPEND channel; drop-newest via trySend (mirrors the prior iOS mic tap).
     private val micCh = Channel<ShortArray>(capacity = FRAME_CHANNEL_CAPACITY)
     override val micFrames: Flow<ShortArray> = micCh.receiveAsFlow()
 

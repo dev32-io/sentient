@@ -3,7 +3,7 @@
 // invariants that would only surface in E5/E6 real-audio smoke — late + expensive.
 //
 // The mic UPLINK (continuous-minus-echo capture → gate → encode) moved to the
-// voice/ package in Task 10 (MicSource → VoiceUplinkPipeline); AudioPipeline is
+// voice/ package (VoiceAudio.micFrames → VoiceUplinkPipeline); AudioPipeline is
 // now downlink-only. This file pins the downlink playback + FSM contracts NOT
 // already covered by AudioPipelineDownlinkTest:
 //

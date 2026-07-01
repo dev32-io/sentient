@@ -1,6 +1,5 @@
 package io.sentient.mobilesdk.voice.io
 
-import io.sentient.mobilesdk.voice.MicState
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,8 +26,6 @@ class FakeVoiceAudio(
     private val micCh = Channel<ShortArray>(capacity = micChannelCapacity)
     override val micFrames = micCh.receiveAsFlow()
 
-    private val _micState = MutableStateFlow<MicState>(MicState.Idle)
-
     val configureCalls = mutableListOf<Triple<Boolean, Boolean, Int>>()
     val playedFrames = mutableListOf<ByteArray>()
     var flushCount = 0
@@ -49,7 +46,6 @@ class FakeVoiceAudio(
         // fake mirrors the real engine's vpio/running behavior without a device.
         voiceAudioGraph(mic, playback)
         _state.value = VoiceAudioState(Phase.Ready, micActive = mic, playbackActive = playback)
-        _micState.value = if (mic) MicState.Live else MicState.Idle
     }
 
     override fun playFrame(pcm16: ByteArray) {
@@ -68,7 +64,6 @@ class FakeVoiceAudio(
 
     override suspend fun shutdown() {
         _state.value = VoiceAudioState(Phase.Idle, micActive = false, playbackActive = false)
-        _micState.value = MicState.Idle
         micCh.close()
     }
 }
