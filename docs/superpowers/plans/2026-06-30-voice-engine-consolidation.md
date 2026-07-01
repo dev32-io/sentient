@@ -1,5 +1,7 @@
 # Voice Engine Consolidation — `VoiceAudio` one-engine Implementation Plan
 
+> **POST-COMPLETION NOTE (2026-07-01):** The slice landed, but device testing found silent TTS: the **pre-start** downlink model this plan assumed (player prepared at `configure(playback=true)` at connect) had no reliable trigger — the server echoes the default TTS-on preference, which `PreferencesConnector` dedups, so nothing armed the player. **Superseded by the LAZY-ARM model** (commit `4c36f6c`): the downlink engine is armed on the first `connector.audio.start` and released on drain (mirrors web-sdk). So the **"Accepted narrowing"** below (player prepared at configure time) and any Task-8/-10 text describing a pre-started player or a server-preference→configure arming path are historical — the live code arms on audio.start. Everything else (the one-engine `VoiceAudio`, the graph diff, VPIO-in-mic+TTS-cell, the serialized lane) stands.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the split iOS two-engine audio design (`SharedAudioEngine` + `StandalonePlaybackEngine`, `MicSource` + `AudioPlaybackAdapter`) with one boundary interface `VoiceAudio` whose single `configure(mic, playback)` reconfigures one engine graph — killing the `StartIO`-on-dirty-session, disconnected-player, and no-AEC echo bug classes by construction.
