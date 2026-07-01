@@ -108,7 +108,11 @@ class IosVoiceAudio : VoiceAudio {
             engine.stop()
             if (desired.running) activateSession() else deactivateSession()
             applyGraph(desired, playbackRateHz)
-            if (desired.running) ensureRunning()
+            if (desired.running && !ensureRunning()) {
+                _state.value = VoiceAudioState(Phase.Error, micActive = mic, playbackActive = playback, errorReason = "engine start failed")
+                log.warn("configure-failed", mapOf("reason" to "engine-start-failed"))
+                return
+            }
             current = desired
         }.onFailure { err ->
             _state.value = VoiceAudioState(Phase.Error, micActive = mic, playbackActive = playback, errorReason = err.message)
@@ -284,13 +288,12 @@ class IosVoiceAudio : VoiceAudio {
 
     private fun setInputVoiceProcessing(enabled: Boolean) {
         val input = engine.inputNode
-        val ok = memScoped {
+        memScoped {
             val errVar = alloc<kotlinx.cinterop.ObjCObjectVar<NSError?>>()
-            input.setVoiceProcessingEnabled(enabled, errVar.ptr).also {
-                if (!it) log.warn("vpio-set-failed", mapOf("enabled" to enabled, "error" to (errVar.value?.localizedDescription ?: "unknown")))
-            }
+            val ok = input.setVoiceProcessingEnabled(enabled, errVar.ptr)
+            if (!ok) throw IllegalStateException("vpio enable failed")
         }
-        log.info("vpio", mapOf("enabled" to enabled, "ok" to ok))
+        log.info("vpio", mapOf("enabled" to enabled))
     }
 
     private companion object {
