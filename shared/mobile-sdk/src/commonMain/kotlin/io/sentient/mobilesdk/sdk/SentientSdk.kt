@@ -192,6 +192,14 @@ class SentientSdk(
         scope = scope,
         audioHooks = { audio.downlinkHooks },
         onCognitionChanged = ::onCognitionChanged,
+        // C1: a server-driven session.preferences.changed (TTS on by default) must arm
+        // the engine for playback — not just the app's setTtsEnabled toggle. Drive the
+        // SAME serialized configure lane as mic/TTS so the player is pre-started whenever
+        // the server says TTS is on. mic follows the current voiceMode (OFF on a fresh
+        // connect). voice is constructed BEFORE connectors, so it is in scope here.
+        onPreferencesChanged = { prefs ->
+            voice.requestConfigure(mic = (deriver.voiceMode == VoiceMode.ACTIVE), playback = prefs.ttsEnabled)
+        },
     )
 
     private val router = MessageRouter(connectors.all, audioConnector = connectors.audioOutput)

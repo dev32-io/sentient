@@ -162,6 +162,11 @@ class AudioPipeline(
             log.debug("downlink-frame", mapOf("bytes" to bytes.size, "cycleId" to cycleId))
             playback?.playFrame(bytes)
         } else {
+            // M2: defensive latch — in the pre-start model playbackReady flips true
+            // synchronously in onAudioStart and is only reset by onPlaybackStop /
+            // suspendPlayback (both clear pendingFrames), so this branch is not hit in
+            // production. Kept as a guard against a future regress where playbackReady
+            // is reset without clearing pendingFrames (frames would otherwise be lost).
             pendingFrames.add(bytes)
             log.debug(
                 "downlink-frame-buffered",

@@ -168,6 +168,21 @@ class SdkVoice(
             if (micFalling) pipeline?.stop()
             // THE single engine reconfig — VPIO flips iff the (mic,playback) cell changes.
             voiceAudio?.configure(c.mic, c.playback)
+            // M1: configure never throws (failures become Phase.Error inside), so
+            // runCatching completes normally even on a failure. If the engine landed in
+            // Phase.Error, do NOT advance micOn/playbackOn — leaving them at the prior
+            // values means a same-state retry (user toggles off/on, or the SAME configure
+            // resubmits) is NOT collapsed as idempotent and re-attempts the configure.
+            // Advancing here would make the lane think the engine is in the requested
+            // state and a same-state retry would no-op → user must toggle off/on.
+            val phase = voiceAudio?.state?.value?.phase
+            if (phase == Phase.Error) {
+                log.warn("configure-error-skip-state-advance", mapOf("mic" to c.mic, "playback" to c.playback, "reason" to (voiceAudio?.state?.value?.errorReason ?: "unknown")))
+                // audio.end was NOT sent (micRising path sent audio.start; on a failure
+                // the uplink never started so no audio.end is owed — the engine never
+                // armed). Abort the command without advancing the lane state.
+                return@runCatching
+            }
             // Start the uplink collect once the mic tap is live.
             if (micRising) pipeline?.start()
             micOn = c.mic; playbackOn = c.playback

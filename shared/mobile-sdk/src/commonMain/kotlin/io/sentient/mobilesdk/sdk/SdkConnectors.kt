@@ -36,6 +36,7 @@ import io.sentient.mobilesdk.connectors.TaskStatusConnector
 import io.sentient.mobilesdk.connectors.UserAudioInputConnector
 import io.sentient.mobilesdk.connectors.UserTextInputConnector
 import io.sentient.mobilesdk.log.createLogger
+import io.sentient.mobilesdk.protocol.AudioPreferences
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.sessions.SessionsHttpClient
@@ -77,6 +78,12 @@ class AudioDownlinkHooks(
  *   factory; null in text-only / test paths where REST is not exercised.
  * @param scope SDK coroutine scope; used to launch REST history fetches on switch.
  * @param audioHooks Downlink side-effect hooks wired to the AudioPipeline (E3).
+ * @param onPreferencesChanged Fired AFTER a server-driven preferences change is folded
+ *   into [deriver]. Wired by [SentientSdk] to `voice.requestConfigure(...)` so the
+ *   engine arms playback whenever the server says TTS is on (C1: the server-preference
+ *   sync path — session.preferences.changed + the seed path — must drive the engine,
+ *   not just the app's setTtsEnabled toggle). Non-suspend (trySend) → safe from the
+ *   connector callback.
  */
 class SdkConnectors(
     private val deriver: StateDeriver,
@@ -92,6 +99,7 @@ class SdkConnectors(
     private val scope: CoroutineScope? = null,
     private val audioHooks: () -> AudioDownlinkHooks = { AudioDownlinkHooks() },
     private val onCognitionChanged: (CognitionState) -> Unit = { state -> deriver.cognition = state; emit() },
+    private val onPreferencesChanged: (AudioPreferences) -> Unit = {},
 ) {
     private val log = createLogger("sdk", "connectors")
 
@@ -126,7 +134,16 @@ class SdkConnectors(
 
     val preferences = PreferencesConnector(
         send = send,
-        onChange = { prefs -> deriver.prefs = prefs; emit() },
+        // C1: a server-driven prefs change (session.preferences.changed, AND the seed
+        // path which routes through onChange) must arm the engine for playback — not
+        // just the app's setTtsEnabled toggle. Fold into the deriver, re-emit, THEN
+        // drive voice.requestConfigure so the player is pre-started whenever the
+        // server says TTS is on (default true). requestConfigure is non-suspend.
+        onChange = { prefs ->
+            deriver.prefs = prefs
+            emit()
+            onPreferencesChanged(prefs)
+        },
     )
 
     val tasks = TaskStatusConnector(

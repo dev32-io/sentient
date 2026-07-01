@@ -105,7 +105,19 @@ class IosVoiceAudio : VoiceAudio {
         _state.value = _state.value.copy(phase = Phase.Configuring, micActive = mic, playbackActive = playback)
         runCatching {
             engine.stop()
-            if (desired.running) activateSession() else deactivateSession()
+            if (desired.running) {
+                // I1: a session-activate failure (setCategory/setActive) must abort
+                // configure BEFORE applyGraph/ensureRunning run on an un-activated
+                // session — otherwise the engine proceeds to Phase.Ready with no audio
+                // route, silently dead. Match the ensureRunning()-check pattern (T4).
+                if (!activateSession()) {
+                    _state.value = VoiceAudioState(Phase.Error, micActive = mic, playbackActive = playback, errorReason = "session-activate-failed")
+                    log.warn("configure-failed", mapOf("reason" to "session-activate-failed"))
+                    return
+                }
+            } else {
+                deactivateSession()
+            }
             applyGraph(desired, playbackRateHz)
             if (desired.running && !ensureRunning()) {
                 _state.value = VoiceAudioState(Phase.Error, micActive = mic, playbackActive = playback, errorReason = "engine start failed")
@@ -121,7 +133,11 @@ class IosVoiceAudio : VoiceAudio {
         _state.value = VoiceAudioState(Phase.Ready, micActive = mic, playbackActive = playback)
     }
 
-    private fun activateSession() = memScoped {
+    /** Activate the .playAndRecord + .voiceChat session. Returns true only when BOTH
+     *  setCategory + setActive succeed (I1: a failure here must abort configure, not
+     *  silently proceed). Speaker override is best-effort — a failure there does NOT
+     *  fail activation (audio still routes through the default route). */
+    private fun activateSession(): Boolean = memScoped {
         val s = AVAudioSession.sharedInstance()
         val errVar = alloc<kotlinx.cinterop.ObjCObjectVar<NSError?>>()
         val categorySet = s.setCategory(
@@ -132,18 +148,19 @@ class IosVoiceAudio : VoiceAudio {
         )
         if (!categorySet) {
             log.warn("session-category-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
-            return@memScoped
+            return@memScoped false
         }
         val activated = s.setActive(true, errVar.ptr)
         if (!activated) {
             log.warn("session-activate-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
-            return@memScoped
+            return@memScoped false
         }
         // Force the LOUD bottom speaker (.voiceChat mode otherwise routes to the earpiece).
         // Canonical speakerphone toggle; keeps voice-processing AEC intact for barge-in.
         val routed = s.overrideOutputAudioPort(AVAudioSessionPortOverrideSpeaker, errVar.ptr)
         if (!routed) log.warn("session-speaker-override-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
         log.debug("session-active", mapOf("category" to "playAndRecord", "mode" to "voiceChat", "override" to "speaker"))
+        true
     }
 
     private fun deactivateSession() {
@@ -175,13 +192,16 @@ class IosVoiceAudio : VoiceAudio {
         val input = engine.inputNode
         val inputFormat = input.inputFormatForBus(INPUT_BUS)
         if (inputFormat.sampleRate <= 0.0 || inputFormat.channelCount <= 0u) {
+            // I2: throw so the outer runCatching in configure catches it → Phase.Error.
+            // A silent return left current.inputTap=true + Phase.Ready with micFrames
+            // cold → uplink silently dead. Match the T4 VPIO-failure pattern.
             log.warn("mic-unavailable", mapOf("inputRate" to inputFormat.sampleRate, "channels" to inputFormat.channelCount.toLong()))
-            return
+            throw IllegalStateException("mic-unavailable")
         }
         val conv = Pcm16Converter(inputFormat, TARGET_SAMPLE_RATE_HZ)
         if (!conv.isReady) {
             log.warn("converter-init-failed", mapOf("inputRate" to inputFormat.sampleRate))
-            return
+            throw IllegalStateException("converter-init-failed")
         }
         capturedCount = 0
         droppedCount = 0
