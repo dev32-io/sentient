@@ -179,6 +179,11 @@ class SentientSdk(
         mic = bundle.mic,
         audioConfig = config.audio,
         audioInput = { connectors.audioInput },
+        // Control-frame senders ride the SAME serialized lane as pipeline start/stop
+        // (audio.start before frames, audio.end after). Lazy/cycle-safe — connectors
+        // is only deref'd when the consumer invokes these, exactly like audioInput.
+        onUplinkStart = { connectors.audioInput.startStreaming() },
+        onUplinkStop = { connectors.audioInput.stopStreaming() },
         scope = scope,
     )
 
@@ -349,35 +354,34 @@ class SentientSdk(
     }
 
     /**
-     * Start the voice uplink (Task 9): flip voiceMode ACTIVE, send audio.start FIRST,
-     * then launch the VoiceUplinkPipeline (mic → Framer → Opus → WS binary) off the
-     * orchestrator. audio.start is sent BEFORE the pipeline starts so the wire order
-     * is audio.start → binary frames; the pipeline only emits frames once the mic
-     * delivers them (after start), so no frame can precede audio.start. With a null
-     * mic (text/test path) voice.start() is a no-op and only audio.start is sent.
+     * Start the voice uplink (Task 9): flip voiceMode ACTIVE, then delegate the
+     * control-frame + pipeline start to [SdkVoice]'s ordered command consumer. The
+     * consumer sends audio.start FIRST, then starts the VoiceUplinkPipeline — on the
+     * SAME serialized lane as stopMic, so a rapid start→stop toggle can never
+     * interleave (the toggle-race fix). audio.start precedes any binary frame because
+     * the pipeline only emits once the mic delivers (after start). With a null mic
+     * (text/test path) SdkVoice is unwired → the else branch sends audio.start directly.
      */
     fun startMic() {
         log.info("startMic", mapOf("micWired" to (bundle.mic != null)))
         markInteraction()
         deriver.voiceMode = VoiceMode.ACTIVE
-        connectors.audioInput.startStreaming()
-        scope.launch { voice.start() }
+        voice.requestStart()
         emit()
     }
 
     /**
-     * Stop the voice uplink (Task 9): flip voiceMode OFF, then in ONE launched
-     * coroutine stop the pipeline FIRST (cancelAndJoin the collect + release mic) and
-     * send audio.end LAST — so no late frame can race past audio.end. Sequencing both
-     * in the same coroutine keeps audio.start → frames → audio.end deterministic.
+     * Stop the voice uplink (Task 9): flip voiceMode OFF, then delegate to
+     * [SdkVoice]'s ordered command consumer. The consumer stops the pipeline FIRST
+     * (cancelAndJoin the collect + release mic), then sends audio.end LAST — so no
+     * late frame can race past audio.end. Because Start and Stop share one FIFO
+     * consumer, a preceding Start fully completes before this Stop runs: the mic is
+     * never left live after a stop, and start/stop graph mutations never overlap.
      */
     fun stopMic() {
         log.info("stopMic")
         deriver.voiceMode = VoiceMode.OFF
-        scope.launch {
-            voice.stop()
-            connectors.audioInput.stopStreaming()
-        }
+        voice.requestStop()
         emit()
     }
 
