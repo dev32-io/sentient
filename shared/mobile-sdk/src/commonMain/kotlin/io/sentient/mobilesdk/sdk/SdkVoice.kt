@@ -30,7 +30,7 @@
 // serialized too (no late frame past audio.end).
 //
 // When the platform bundle ships NO VoiceAudio (text-only path / host tests), the
-// pipeline is null: Configure still fires the control-frame callbacks and [micState]
+// pipeline is null: Configure still fires the control-frame callbacks and [audioState]
 // stays Idle — so startMic/stopMic still send audio.start/audio.end with no uplink,
 // matching the pre-mic behavior.
 // ---------------------------------------------------------------------------
@@ -40,7 +40,6 @@ import io.sentient.mobilesdk.audio.opus.LazyOpusEncoderPort
 import io.sentient.mobilesdk.audio.opus.OpusUplinkEncoder
 import io.sentient.mobilesdk.connectors.UserAudioInputConnector
 import io.sentient.mobilesdk.log.createLogger
-import io.sentient.mobilesdk.voice.MicState
 import io.sentient.mobilesdk.voice.VoiceUplinkPipeline
 import io.sentient.mobilesdk.voice.io.VoiceAudio
 import io.sentient.mobilesdk.voice.io.VoiceAudioState
@@ -92,10 +91,6 @@ class SdkVoice(
     val audioState: StateFlow<VoiceAudioState> =
         voiceAudio?.state
             ?: MutableStateFlow(VoiceAudioState(Phase.Idle, micActive = false, playbackActive = false))
-
-    // Legacy mic-state surface kept for the UI until T10 rebinds SentientSdk.micState to
-    // [audioState]. Idle by default — the configure lane (T9) will drive transitions.
-    val micState: StateFlow<MicState> = MutableStateFlow(MicState.Idle)
 
     // Null on the text-only path (no VoiceAudio): Start/Stop only fire the control
     // callbacks so the wire still carries audio.start/audio.end with no uplink frames.

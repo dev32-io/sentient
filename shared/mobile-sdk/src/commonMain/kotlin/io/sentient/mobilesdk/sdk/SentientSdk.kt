@@ -29,7 +29,7 @@ import io.sentient.mobilesdk.transport.ResumeCursor
 import io.sentient.mobilesdk.transport.ResumeCursorPersistence
 import io.sentient.mobilesdk.transport.ResumeCursorStore
 import io.sentient.mobilesdk.transport.SdkStatus
-import io.sentient.mobilesdk.voice.MicState
+import io.sentient.mobilesdk.voice.io.VoiceAudioState
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.BufferOverflow
@@ -172,9 +172,12 @@ class SentientSdk(
         scope = scope,
     )
 
-    /** Reactive mic-engine state (Idle → Initializing → Live / Error). The UI shows
-     *  the init spinner off this; Idle unless a real MicSource is wired. */
-    val micState: StateFlow<MicState> = voice.micState
+    /** Reactive engine readiness (Idle → Configuring → Ready / Error). UI spinner off
+     *  this. Idle unless a real VoiceAudio is wired (text/test path). Task 10 rebound
+     *  this from the legacy [io.sentient.mobilesdk.voice.MicState] to the engine
+     *  readiness surface exposed by [SdkVoice.audioState] — the single source of truth
+     *  for the UI spinner + the SDK reconfig decision. */
+    val audioState: StateFlow<VoiceAudioState> = voice.audioState
 
     private val connectors = SdkConnectors(
         deriver = deriver,
@@ -338,32 +341,21 @@ class SentientSdk(
         sendControl(ClientMessage.Interrupt) // best-effort; null-safe if transport is dead
     }
 
-    /**
-     * Start the voice uplink (Task 9): flip voiceMode ACTIVE, then delegate the
-     * control-frame + pipeline start to [SdkVoice]'s ordered command consumer. The
-     * consumer sends audio.start FIRST, then starts the VoiceUplinkPipeline — on the
-     * SAME serialized lane as stopMic, so a rapid start→stop toggle can never
-     * interleave (the toggle-race fix). audio.start precedes any binary frame because
-     * the pipeline only emits once the mic delivers (after start). With a null mic
-     * (text/test path) SdkVoice's pipeline is null, so the consumer fires the
-     * audio.start/audio.end control-frame callbacks only, with no uplink.
-     */
+    /** Start the voice uplink: flip voiceMode ACTIVE, then request the serialized
+     *  configure(mic=true, playback=<current tts>) on [SdkVoice]'s single lane. The lane
+     *  emits audio.start, runs VoiceAudio.configure (mic tap up), and starts the uplink
+     *  collect — in that order, serialized with stopMic and setTtsEnabled. */
     fun startMic() {
-        log.info("startMic", mapOf("micWired" to (bundle.mic != null)))
+        log.info("startMic", mapOf("voiceAudioWired" to (bundle.voiceAudio != null)))
         markInteraction()
         deriver.voiceMode = VoiceMode.ACTIVE
         voice.requestStart()
         emit()
     }
 
-    /**
-     * Stop the voice uplink (Task 9): flip voiceMode OFF, then delegate to
-     * [SdkVoice]'s ordered command consumer. The consumer stops the pipeline FIRST
-     * (cancelAndJoin the collect + release mic), then sends audio.end LAST — so no
-     * late frame can race past audio.end. Because Start and Stop share one FIFO
-     * consumer, a preceding Start fully completes before this Stop runs: the mic is
-     * never left live after a stop, and start/stop graph mutations never overlap.
-     */
+    /** Stop the voice uplink: flip voiceMode OFF, request configure(mic=false, ...).
+     *  The lane stops the uplink collect, runs VoiceAudio.configure (mic tap down), and
+     *  emits audio.end LAST — so no late frame can race past audio.end. */
     fun stopMic() {
         log.info("stopMic")
         deriver.voiceMode = VoiceMode.OFF
@@ -371,9 +363,12 @@ class SentientSdk(
         emit()
     }
 
-    /** Patch TTS on/off; server echoes via session.preferences.changed. */
+    /** Patch TTS on/off (server echoes via session.preferences.changed) AND drive a
+     *  local optimistic configure(playback=enabled) on the SAME serialized lane as mic —
+     *  so a TTS-while-mic-on toggle flips VPIO on/off without racing a mic reconfig. */
     suspend fun setTtsEnabled(enabled: Boolean) {
         log.info("setTtsEnabled", mapOf("enabled" to enabled))
+        voice.requestConfigure(mic = (deriver.voiceMode == VoiceMode.ACTIVE), playback = enabled)
         connectors.preferences.patch(AudioPreferencesPatch(ttsEnabled = enabled))
     }
 
