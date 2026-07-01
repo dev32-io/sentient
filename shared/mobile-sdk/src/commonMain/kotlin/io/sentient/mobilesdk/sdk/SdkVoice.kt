@@ -8,27 +8,29 @@
 // audioInput connector is supplied lazily (a () -> connector lambda) to break the
 // construction cycle, exactly as SdkAudio does.
 //
-// Mic activation is NOT owned here — [VoiceAudio.configure] (driven by T9's
-// configure lane) is the only path that flips micActive. The pipeline's collect
-// job simply forwards what the engine emits, so it is dormant until a caller
-// drives configure(mic=true). The legacy start/stop [Cmd] lane below still
-// serializes pipeline.start/stop + the audio.start/audio.end control frames; T9
-// will replace it with the configure call.
+// Mic activation + TTS reconfig are NOT owned by the pipeline — [VoiceAudio.configure]
+// (driven by the configure lane below) is the only path that flips micActive /
+// playbackActive. The pipeline's collect job simply forwards what the engine emits,
+// so it is dormant until a caller drives configure(mic=true).
 //
-// SERIALIZATION (toggle-race fix): start/stop are NOT launched as two independent
-// coroutines. They are submitted as ordered [Cmd]s onto a single UNLIMITED
-// command channel drained by ONE consumer coroutine. The consumer runs each
-// command to completion BEFORE pulling the next — so a rapid start→stop (or
-// Error-recovery stop→start) can never interleave. This is the only correct fix:
-// a bare Mutex would let two independent launches acquire the lock out of
-// submission order; a single FIFO consumer preserves exact order.
+// SERIALIZATION (mic+TTS reconfig never race): every reconfig is submitted as an
+// ordered [Cmd.Configure] onto a single UNLIMITED command channel drained by ONE
+// consumer coroutine. The consumer runs each command to completion BEFORE pulling
+// the next — so a rapid mic-on→mic-off (or a TTS toggle mid-mic) can never
+// interleave. This is the only correct fix: a bare Mutex would let two independent
+// callers acquire the lock out of submission order; a single FIFO consumer
+// preserves exact order.
 //
-// Control frames (audio.start / audio.end) ride the SAME lane: the consumer emits
-// audio.start BEFORE pipeline.start and audio.end AFTER pipeline.stop, so the wire
-// order audio.start → binary frames → audio.end is preserved and serialized too.
+// The consumer diffs each [Cmd.Configure] against the last-applied (mic, playback)
+// and collapses identical configures (idempotent) — so a 5×(true) hammer records
+// exactly one configure + one audio.start. Control frames (audio.start / audio.end)
+// ride the SAME lane: the consumer emits audio.start BEFORE [voiceAudio.configure]
+// + [pipeline.start] and audio.end AFTER [pipeline.stop] + configure settled, so
+// the wire order audio.start → binary frames → audio.end is preserved and
+// serialized too (no late frame past audio.end).
 //
 // When the platform bundle ships NO VoiceAudio (text-only path / host tests), the
-// pipeline is null: Start/Stop only fire the control-frame callbacks and [micState]
+// pipeline is null: Configure still fires the control-frame callbacks and [micState]
 // stays Idle — so startMic/stopMic still send audio.start/audio.end with no uplink,
 // matching the pre-mic behavior.
 // ---------------------------------------------------------------------------
@@ -70,7 +72,7 @@ import kotlin.coroutines.cancellation.CancellationException
  *   consumer are launched from it, so terminal teardown is scope-cancel.
  */
 class SdkVoice(
-    voiceAudio: VoiceAudio?,
+    private val voiceAudio: VoiceAudio?,
     audioConfig: AudioPipelineConfig,
     audioInput: () -> UserAudioInputConnector,
     private val onUplinkStart: () -> Unit,
@@ -117,10 +119,11 @@ class SdkVoice(
         )
     }
 
-    /** One ordered mic command. Start/Stop are drained FIFO by the single consumer. */
+    /** One ordered configure command. Drained FIFO by the single consumer — the
+     *  only path that touches VoiceAudio.configure + the uplink collect + the
+     *  audio.start/audio.end control frames, so mic + TTS reconfigs NEVER race. */
     private sealed interface Cmd {
-        data object Start : Cmd
-        data object Stop : Cmd
+        data class Configure(val mic: Boolean, val playback: Boolean) : Cmd
     }
 
     // UNLIMITED (never CONFLATED): every toggle is preserved FIFO. A CONFLATED
@@ -128,37 +131,56 @@ class SdkVoice(
     // rapid start→stop → exactly the bug this class exists to kill.
     private val commands = Channel<Cmd>(Channel.UNLIMITED)
 
+    // Last-applied (mic, playback); the consumer diffs against this so consecutive
+    // identical configures are a no-op (idempotent) — collapse the 5×(true) hammer.
+    private var micOn = false
+    private var playbackOn = false
+
     init {
-        // ONE consumer on the orchestrator scope: pulls commands sequentially, so
-        // Start fully completes (engine up, collect job assigned) before Stop runs
-        // — serial + ordered, satisfying the MicSource crash-safety contract.
+        // ONE consumer on the orchestrator scope: pulls commands sequentially, so a
+        // Configure fully completes (engine reconfigured, collect job started or
+        // stopped, control frames sent) before the next runs — serial + ordered.
         scope.launch { for (cmd in commands) handle(cmd) }
     }
 
-    /** Enqueue a mic-start. Non-suspend; runs FIFO on the single consumer. */
-    fun requestStart() {
-        log.info("requestStart", mapOf("wired" to (pipeline != null)))
-        commands.trySend(Cmd.Start)
+    /** THE serialized reconfig entry. Non-suspend; runs FIFO on the single consumer. */
+    fun requestConfigure(mic: Boolean, playback: Boolean) {
+        log.info("requestConfigure", mapOf("mic" to mic, "playback" to playback))
+        commands.trySend(Cmd.Configure(mic, playback))
     }
 
-    /** Enqueue a mic-stop. Non-suspend; runs FIFO on the single consumer. */
-    fun requestStop() {
-        log.info("requestStop")
-        commands.trySend(Cmd.Stop)
-    }
+    /** Convenience for startMic (mic axis only; keeps current playback). */
+    fun requestStart() = requestConfigure(mic = true, playback = playbackOn)
 
-    // Runs on the single consumer coroutine. Start = audio.start THEN pipeline.start;
-    // Stop = pipeline.stop THEN audio.end. runCatching keeps one failed command from
-    // killing the consumer; cancellation still propagates so scope teardown works.
+    /** Convenience for stopMic (mic axis only; keeps current playback). */
+    fun requestStop() = requestConfigure(mic = false, playback = playbackOn)
+
+    // Runs on the single consumer coroutine. Idempotent: a configure that matches
+    // the last-applied (mic, playback) collapses to a no-op (no engine call, no
+    // audio edge) so the 5×(true) hammer records exactly one configure + one start.
+    // Edge ordering: mic false→true → onUplinkStart → configure → pipeline.start
+    // (audio.start before frames); mic true→false → pipeline.stop → configure →
+    // onUplinkStop (audio.end after uplink down + configure settled — no late frame).
     private suspend fun handle(cmd: Cmd) {
+        val c = cmd as Cmd.Configure
+        if (c.mic == micOn && c.playback == playbackOn) return // idempotent collapse
         runCatching {
-            when (cmd) {
-                Cmd.Start -> { onUplinkStart(); pipeline?.start() }
-                Cmd.Stop -> { pipeline?.stop(); onUplinkStop() }
-            }
+            val micRising = c.mic && !micOn
+            val micFalling = !c.mic && micOn
+            // audio.start BEFORE the engine + uplink come up (wire order: start→frames→end).
+            if (micRising) onUplinkStart()
+            // Stop the uplink collect when mic goes away (before configure tears the tap).
+            if (micFalling) pipeline?.stop()
+            // THE single engine reconfig — VPIO flips iff the (mic,playback) cell changes.
+            voiceAudio?.configure(c.mic, c.playback)
+            // Start the uplink collect once the mic tap is live.
+            if (micRising) pipeline?.start()
+            micOn = c.mic; playbackOn = c.playback
+            // audio.end AFTER the uplink is down + configure settled (no late frame past end).
+            if (micFalling) onUplinkStop()
         }.onFailure { err ->
             if (err is CancellationException) throw err
-            log.warn("command-failed", mapOf("cmd" to (cmd::class.simpleName ?: "?"), "error" to (err.message ?: "unknown")))
+            log.warn("command-failed", mapOf("cmd" to "Configure", "error" to (err.message ?: "unknown")))
         }
     }
 }
