@@ -7,23 +7,16 @@
 // HW AEC source (VOICE_COMMUNICATION) is enabled EXACTLY in the mic+playback
 // cell (the VPIO-equivalent); mic-only cells use VOICE_RECOGNITION (no echo to
 // cancel, no platform AEC/NS double-processing).
-//
 // PROVEN SNIPPETS LIFTED (T11 deletes the sources; assemble here):
 //   - Record acquisition + read loop + drop-newest channel + soft-fail →
-//     AndroidMicSource.kt + MicAudioRecordSession.android.kt (openMicAudioRecord,
-//     ReaderConfig/Acquisition, THREAD_PRIORITY_URGENT_AUDIO reader thread,
-//     trySend drop-newest, onFatalRead).
+//     AndroidMicSource.kt + MicAudioRecordSession.android.kt.
 //   - Playback track build + non-blocking write + drop-oldest overflow ring +
 //     head-position idle check → AudioPlaybackAdapter.android.kt (extracted to
 //     VoiceAudioPlayback.android.kt to keep this file under the 300-line cap).
-//
-// NO-CRASH CONTRACT (T4 lesson applied): every open/start return that can fail
-// is checked; on failure → Phase.Error(reason) + return BEFORE current = desired.
-// Never silently report Ready on a failed open. Typed returns across the
-// boundary — never throws. Logs lengths/counts/ids ONLY (PrivacyGuard).
-//
-// DEVICE-VERIFIED (sim has no mic → no unit test). Compile GREEN is the agent
-// gate; device mic run is user-owned.
+// NO-CRASH CONTRACT (T4): every open/start failure → Phase.Error(reason) + return
+// BEFORE current = desired. Typed returns — never throws. Logs lengths/counts/ids
+// ONLY (PrivacyGuard). DEVICE-VERIFIED (sim has no mic); compile GREEN is the agent
+// gate, device mic run is user-owned.
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.voice.io
 
@@ -116,31 +109,39 @@ class AndroidVoiceAudio(
         if (inputChanged && !desired.inputTap) stopRecord()
         if (playerChanged && !desired.player) this.playback.stop()
 
-        // Start components turning ON. On ANY failure: set Phase.Error + return BEFORE
-        // current = desired (T4 lesson — never silent Ready on a failed open). Roll back
-        // partial starts so `current` stays accurate for the next configure.
+        // Start components turning ON. On failure startComponents sets Phase.Error via
+        // failConfigure + returns false BEFORE current = desired (T4 — no silent Ready).
+        if (!startComponents(desired, inputChanged, playerChanged, playbackRateHz)) return
+
+        current = desired
+        _state.value = VoiceAudioState(Phase.Ready, micActive = mic, playbackActive = playback)
+    }
+
+    /** Starts ON-components; returns false (after [failConfigure] → [Phase.Error]) on any failure. */
+    private suspend fun startComponents(
+        desired: VoiceAudioGraph,
+        inputChanged: Boolean,
+        playerChanged: Boolean,
+        playbackRateHz: Int,
+    ): Boolean {
         if (inputChanged && desired.inputTap) {
-            val source =
-                if (desired.vpio) MediaRecorder.AudioSource.VOICE_COMMUNICATION
-                else MediaRecorder.AudioSource.VOICE_RECOGNITION
+            val source = if (desired.vpio) MediaRecorder.AudioSource.VOICE_COMMUNICATION else MediaRecorder.AudioSource.VOICE_RECOGNITION
             when (val r = startRecord(source)) {
                 is Acquisition.Ready -> Unit
                 is Acquisition.Failed -> {
-                    failConfigure(mic, playback, "record", r.reason)
-                    return
+                    failConfigure(desired.inputTap, desired.player, "record", r.reason)
+                    return false
                 }
             }
         }
         if (playerChanged && desired.player) {
             if (!this.playback.start(playbackRateHz)) {
                 if (inputChanged && desired.inputTap) stopRecord() // roll back the record start
-                failConfigure(mic, playback, "track", "track-build-failed")
-                return
+                failConfigure(desired.inputTap, desired.player, "track", "track-build-failed")
+                return false
             }
         }
-
-        current = desired
-        _state.value = VoiceAudioState(Phase.Ready, micActive = mic, playbackActive = playback)
+        return true
     }
 
     private fun failConfigure(mic: Boolean, playback: Boolean, step: String, reason: String) {

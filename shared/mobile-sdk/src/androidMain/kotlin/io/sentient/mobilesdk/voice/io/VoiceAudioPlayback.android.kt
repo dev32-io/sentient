@@ -151,17 +151,8 @@ internal class VoiceAudioPlayback {
         require(minBuffer > 0) { "getMinBufferSize rejected rate=$sampleRate (err=$minBuffer)" }
         val bufferBytes =
             maxOf(minBuffer, (sampleRate * TRACK_BUFFER_SECONDS).toInt() * BYTES_PER_PCM16_SAMPLE)
-        val attributes =
-            AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                .build()
-        val format =
-            AudioFormat.Builder()
-                .setSampleRate(sampleRate)
-                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                .build()
+        val attributes = buildAudioAttributes()
+        val format = buildAudioFormat(sampleRate)
         val built =
             AudioTrack(
                 attributes,
@@ -183,6 +174,21 @@ internal class VoiceAudioPlayback {
             }
         return built
     }
+
+    /** Voice-comms usage + speech content type — the AEC-friendly attribute pair. */
+    private fun buildAudioAttributes(): AudioAttributes =
+        AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build()
+
+    /** Mono PCM16 at [sampleRate] — the track's data format. */
+    private fun buildAudioFormat(sampleRate: Int): AudioFormat =
+        AudioFormat.Builder()
+            .setSampleRate(sampleRate)
+            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+            .build()
 
     private fun teardown(active: AudioTrack) {
         runCatching { active.stop() }
