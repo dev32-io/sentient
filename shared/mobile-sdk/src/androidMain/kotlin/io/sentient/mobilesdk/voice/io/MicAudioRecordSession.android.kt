@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
-// MicAudioRecordSession.android.kt — AudioRecord ACQUISITION for AndroidMicSource.
+// MicAudioRecordSession.android.kt — AudioRecord ACQUISITION for VoiceAudio.android.
 //
-// The acquisition concern split out of AndroidMicSource (mirrors the
+// The acquisition concern split out of the prior Android mic adapter (mirrors the
 // CaptureSession.android.kt split): resolve the capture rate (target-native or
 // device-rate fallback), size the buffer from getMinBufferSize, construct the
 // 5-arg VOICE_COMMUNICATION AudioRecord, verify STATE_INITIALIZED /
@@ -41,7 +41,7 @@ internal sealed interface Acquisition {
  * [source] defaults to [MediaRecorder.AudioSource.VOICE_COMMUNICATION] (platform AEC+NS) —
  * the legacy capture shape. T5 (VoiceAudio.android) passes [MediaRecorder.AudioSource.VOICE_RECOGNITION]
  * for the mic-only cells (no echo to cancel) and reserves VOICE_COMMUNICATION for the mic+playback
- * full-duplex cell (the VPIO-equivalent). Default keeps the existing AndroidMicSource caller working.
+ * full-duplex cell (the VPIO-equivalent). Default preserves the prior caller contract (now VoiceAudio.android).
  */
 internal fun openMicAudioRecord(
     targetRate: Int,

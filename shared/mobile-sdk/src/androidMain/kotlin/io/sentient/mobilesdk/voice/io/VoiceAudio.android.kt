@@ -7,11 +7,12 @@
 // HW AEC source (VOICE_COMMUNICATION) is enabled EXACTLY in the mic+playback
 // cell (the VPIO-equivalent); mic-only cells use VOICE_RECOGNITION (no echo to
 // cancel, no platform AEC/NS double-processing).
-// PROVEN SNIPPETS LIFTED (T11 deletes the sources; assemble here):
+// PROVEN SNIPPETS (assembled from the retired two-engine audio path; sources live
+// in git history):
 //   - Record acquisition + read loop + drop-newest channel + soft-fail →
-//     AndroidMicSource.kt + MicAudioRecordSession.android.kt.
+//     the prior Android mic adapter + MicAudioRecordSession.android.kt.
 //   - Playback track build + non-blocking write + drop-oldest overflow ring +
-//     head-position idle check → AudioPlaybackAdapter.android.kt (extracted to
+//     head-position idle check → the prior Android playback adapter (extracted to
 //     VoiceAudioPlayback.android.kt to keep this file under the 300-line cap).
 // NO-CRASH CONTRACT (T4): every open/start failure → Phase.Error(reason) + return
 // BEFORE current = desired. Typed returns — never throws. Logs lengths/counts/ids
@@ -47,7 +48,7 @@ private const val FRAME_DURATION_MS = 20
 // dropped + counted (drop-NEWEST, NOT DROP_OLDEST). Tuned constant — copy exact.
 private const val FRAME_CHANNEL_CAPACITY = 16
 
-// Reader-thread lifecycle (lifted from AndroidMicSource.kt).
+// Reader-thread lifecycle (lifted from the prior Android mic adapter).
 private const val READER_THREAD_NAME = "sentient-mic-reader"
 private const val READER_JOIN_TIMEOUT_MS = 500L
 
@@ -72,7 +73,7 @@ class AndroidVoiceAudio(
         MutableStateFlow(VoiceAudioState(Phase.Idle, micActive = false, playbackActive = false))
     override val state: StateFlow<VoiceAudioState> = _state
 
-    // Bounded SUSPEND channel; drop-newest via trySend (mirrors AndroidMicSource).
+    // Bounded SUSPEND channel; drop-newest via trySend (mirrors the prior Android mic adapter).
     private val micCh = Channel<ShortArray>(capacity = FRAME_CHANNEL_CAPACITY)
     override val micFrames: Flow<ShortArray> = micCh.receiveAsFlow()
 
@@ -82,7 +83,7 @@ class AndroidVoiceAudio(
     // The AudioTrack half — extracted to VoiceAudioPlayback.android.kt.
     private val playback = VoiceAudioPlayback()
 
-    // --- Record state (lifted from AndroidMicSource.kt) ---
+    // --- Record state (lifted from the prior Android mic adapter) ---
     @Volatile private var record: AudioRecord? = null
     @Volatile private var readerThread: Thread? = null
     @Volatile private var running = false
@@ -150,7 +151,7 @@ class AndroidVoiceAudio(
         log.warn("configure-failed", mapOf("step" to step, "reason" to reason))
     }
 
-    // --- Record (openMicAudioRecord + read loop lifted from AndroidMicSource) ---
+    // --- Record (openMicAudioRecord + read loop lifted from the prior Android mic adapter) ---
 
     /** Typed acquisition — never throws. Caller checks Ready/Failed → Phase.Error on Failed. */
     private suspend fun startRecord(source: Int): Acquisition {

@@ -14,7 +14,7 @@ import io.sentient.mobilesdk.voice.io.VoiceAudioState.Phase
  *  - isPlaybackIdle flips false on the first playFrame, true again after flushPlayback or
  *    when the test drains via setPlaybackIdle(true) to advance the downlink drain-watch.
  *
- * No device, no real clock. Replaces FakeMicSource + the per-test FakePlayback classes.
+ * No device, no real clock. Replaces the prior per-test mic + playback fakes.
  */
 class FakeVoiceAudio(
     private val micChannelCapacity: Int = 8,

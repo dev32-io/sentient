@@ -2,7 +2,7 @@
 // VoiceAudioPlayback.android.kt — the AudioTrack half of [AndroidVoiceAudio].
 //
 // Split out of VoiceAudio.android.kt to stay under the 300-line file cap. Lifts
-// the proven AudioTrack snippets from AudioPlaybackAdapter.android.kt verbatim:
+// the proven AudioTrack snippets from the retired Android playback adapter verbatim:
 // streaming track build (USAGE_VOICE_COMMUNICATION + CONTENT_TYPE_SPEECH, mono
 // PCM16, WRITE_NON_BLOCKING), drop-oldest [ByteRing] overflow, [PlaybackResampler]
 // when the device rate differs, head-position idle check, flush() = track.flush()
@@ -112,7 +112,7 @@ internal class VoiceAudioPlayback {
             return head >= framesWritten
         }
 
-    // --- Internals (lifted verbatim from AudioPlaybackAdapter.android.kt) ---
+    // --- Internals (lifted verbatim from the retired Android playback adapter) ---
 
     /** Flushes any pending overflow, then writes [bytes]; unaccepted tail spills to the ring. */
     private fun writeToTrack(active: AudioTrack, bytes: ByteArray) {

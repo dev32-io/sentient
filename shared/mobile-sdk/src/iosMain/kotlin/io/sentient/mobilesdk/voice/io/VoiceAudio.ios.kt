@@ -86,7 +86,7 @@ class IosVoiceAudio : VoiceAudio {
     private var droppedCount = 0
 
     // Playback drain tracking — outstanding scheduled buffers + generation guard
-    // (mirrors AudioPlaybackAdapter). AtomicInt: completion fires on the audio
+    // (mirrors the prior iOS playback adapter). AtomicInt: completion fires on the audio
     // render thread; the counter is read here on the orchestrator coroutine.
     private val outstanding = AtomicInt(0)
     private val playbackEpoch = AtomicInt(0)

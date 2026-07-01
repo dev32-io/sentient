@@ -173,9 +173,8 @@ class SentientSdk(
     )
 
     /** Reactive engine readiness (Idle → Configuring → Ready / Error). UI spinner off
-     *  this. Idle unless a real VoiceAudio is wired (text/test path). Task 10 rebound
-     *  this from the legacy [io.sentient.mobilesdk.voice.MicState] to the engine
-     *  readiness surface exposed by [SdkVoice.audioState] — the single source of truth
+     *  this. Idle unless a real VoiceAudio is wired (text/test path). Engine readiness
+     *  surface exposed by [SdkVoice.audioState] — the single source of truth
      *  for the UI spinner + the SDK reconfig decision. */
     val audioState: StateFlow<VoiceAudioState> = voice.audioState
 
