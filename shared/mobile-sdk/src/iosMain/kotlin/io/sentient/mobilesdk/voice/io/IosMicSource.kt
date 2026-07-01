@@ -24,8 +24,15 @@
 //     is NOT "same thread") but because the SDK drives start()/stop() SERIALLY on the
 //     orchestrator coroutine, so the graph is never mutated concurrently (SharedAudioEngine).
 //
-// VP stays OFF (mirrors ENABLE_CAPTURE_VOICE_PROCESSING = false): no voice processing,
-// no mainMixerNode reference — the proven plain-input capture path.
+// OUTPUT GRAPH (always) vs VP (currently off) — two SEPARATE things:
+//  • We ALWAYS reference mainMixerNode to establish mainMixer→outputNode. That output half of
+//    the graph is what E2 playback needs: it attaches its player to this SAME shared engine +
+//    mixer, and WITHOUT the output graph the player start()s "in a disconnected state" → crash
+//    + silent TTS. This is the real full-duplex-playback fix and does NOT need VP.
+//  • VP (voice-processing IO = AEC+NS+AGC) is CURRENTLY OFF. It would cancel the TTS echo from
+//    the uplink, but VPIO has stricter session requirements that broke mic-start on the
+//    .playback→.playAndRecord handoff after TTS (AUIOClient_StartIO failed), so it is disabled.
+//    Echo (mic hearing TTS) is a separate concern handled later without VPIO.
 //
 // NO-CRASH CONTRACT (error-handling rule): every failure path fails SOFT — sets
 // MicState.Error + closes the frames channel — never throws across the @ObjCExport
@@ -44,6 +51,10 @@ import io.sentient.mobilesdk.audioio.SharedAudioEngine
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.voice.MicState
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.alloc
+import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.ptr
+import kotlinx.cinterop.value
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -57,14 +68,23 @@ import platform.AVFAudio.AVAudioEngine
 import platform.AVFAudio.AVAudioFormat
 import platform.AVFAudio.AVAudioInputNode
 import platform.AVFAudio.AVAudioPCMBuffer
+import platform.Foundation.NSError
 import kotlin.concurrent.Volatile
 import kotlin.coroutines.cancellation.CancellationException
 
 private val log = createLogger("voice", "mic", "ios")
 
 private const val INPUT_BUS = 0uL
+private const val OUTPUT_BUS = 0uL
 private const val TAP_BUFFER_FRAMES = 1024u
 private const val TARGET_SAMPLE_RATE_HZ = 16_000
+
+// Voice processing (AEC+NS+AGC) on the shared capture engine. OFF: VPIO regressed mic-start on
+// the .playback→.playAndRecord handoff after TTS (AUIOClient_StartIO failed) and is NOT needed
+// for the crash fix (the mainMixerNode output-graph reference below handles that independently).
+// VP only buys echo cancellation — deferred, to be solved without VPIO. Do NOT flip to true
+// without also resolving the post-TTS session-handoff StartIO failure.
+private const val ENABLE_CAPTURE_VOICE_PROCESSING = false
 
 // Bounded SUSPEND frames channel. trySend on a FULL buffer fails → the newest frame is
 // dropped (drop-newest) + counted. Small: the consumer (uplink pipeline) drains in real
@@ -183,22 +203,35 @@ class IosMicSource(
     private fun startEngine(): Boolean {
         val avEngine = shared.retainForCapture() ?: return failSoft("engine-null")
         val input: AVAudioInputNode = avEngine.inputNode
-        val inputFormat = input.inputFormatForBus(INPUT_BUS)
-        if (!isValidInputFormat(inputFormat)) {
-            log.warn("mic-unavailable", mapOf("inputRate" to inputFormat.sampleRate, "channels" to inputFormat.channelCount.toLong()))
+
+        // Guard the PRE-VP format before any throwing AV call (a zero format → NSException that
+        // runCatching cannot catch). Enabling VP below CHANGES the format; re-read it after.
+        val preVpFormat = input.inputFormatForBus(INPUT_BUS)
+        if (!isValidInputFormat(preVpFormat)) {
+            log.warn("mic-unavailable", mapOf("inputRate" to preVpFormat.sampleRate, "channels" to preVpFormat.channelCount.toLong()))
             return releaseAndFail("invalid-input-format")
         }
+        if (ENABLE_CAPTURE_VOICE_PROCESSING) enableVoiceProcessing(input)
+        val inputFormat = input.inputFormatForBus(INPUT_BUS)
+        if (!isValidInputFormat(inputFormat)) return releaseAndFail("invalid-post-vp-format")
+
         val converter = Pcm16Converter(inputFormat, TARGET_SAMPLE_RATE_HZ)
         if (!converter.isReady) return releaseAndFail("converter-init")
         input.installTapOnBus(INPUT_BUS, bufferSize = TAP_BUFFER_FRAMES, format = inputFormat) { buffer, _ ->
             forwardBuffer(buffer, converter)
         }
+        // Establish the OUTPUT graph (mainMixer→outputNode) BEFORE start — ALWAYS, independent of
+        // VP. E2 playback attaches its player to this SAME mixer; without the output half of the
+        // graph the player start()s "in a disconnected state" (crash + silent TTS). Renders silence
+        // until playback connects its player.
+        val outputMixer = avEngine.mainMixerNode
+        log.debug("output-graph-ensured", mapOf("outputRate" to outputMixer.outputFormatForBus(OUTPUT_BUS).sampleRate))
         if (!shared.ensureRunning()) {
             input.removeTapOnBus(INPUT_BUS)
             return releaseAndFail("engine-start")
         }
         engine = avEngine
-        log.info("session-open", mapOf("inputRate" to inputFormat.sampleRate, "targetRate" to TARGET_SAMPLE_RATE_HZ))
+        log.info("session-open", mapOf("inputRate" to inputFormat.sampleRate, "targetRate" to TARGET_SAMPLE_RATE_HZ, "vp" to ENABLE_CAPTURE_VOICE_PROCESSING))
         return true
     }
 
@@ -209,6 +242,17 @@ class IosMicSource(
      */
     private fun isValidInputFormat(format: AVAudioFormat): Boolean =
         format.sampleRate > 0.0 && format.channelCount > 0u
+
+    /** Enables the voice-processing IO unit (AEC+NS+AGC) on [input]; logs availability (non-fatal). */
+    private fun enableVoiceProcessing(input: AVAudioInputNode) {
+        val enabled = memScoped {
+            val errVar = alloc<kotlinx.cinterop.ObjCObjectVar<NSError?>>()
+            val ok = input.setVoiceProcessingEnabled(true, errVar.ptr)
+            if (!ok) log.warn("voice-processing-unavailable", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
+            ok
+        }
+        log.info("voice-processing", mapOf("enabled" to enabled))
+    }
 
     // -----------------------------------------------------------------------
     // Tap callback (runs on the audio render thread — convert + trySend only)
