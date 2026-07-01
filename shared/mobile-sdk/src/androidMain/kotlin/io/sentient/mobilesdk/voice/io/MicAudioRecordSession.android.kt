@@ -37,14 +37,23 @@ internal sealed interface Acquisition {
 /**
  * Acquires AudioRecord ([targetRate]-native or device-rate fallback resampled to [targetRate]);
  * typed result, never throws. Releases the record on EVERY failure branch (release symmetry).
+ *
+ * [source] defaults to [MediaRecorder.AudioSource.VOICE_COMMUNICATION] (platform AEC+NS) —
+ * the legacy capture shape. T5 (VoiceAudio.android) passes [MediaRecorder.AudioSource.VOICE_RECOGNITION]
+ * for the mic-only cells (no echo to cancel) and reserves VOICE_COMMUNICATION for the mic+playback
+ * full-duplex cell (the VPIO-equivalent). Default keeps the existing AndroidMicSource caller working.
  */
-internal fun openMicAudioRecord(targetRate: Int, frameDurationMs: Int): Acquisition {
+internal fun openMicAudioRecord(
+    targetRate: Int,
+    frameDurationMs: Int,
+    source: Int = MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+): Acquisition {
     val captureRate = resolveCaptureRate(targetRate)
     val minBuffer = AudioRecord.getMinBufferSize(captureRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
     if (minBuffer <= 0) return Acquisition.Failed("min-buffer-$minBuffer")
     val frameSamples = (captureRate * frameDurationMs) / MS_PER_SECOND
     val bufferBytes = maxOf(minBuffer, frameSamples * BYTES_PER_PCM16_SAMPLE * BUFFER_SIZE_MULTIPLIER)
-    val record = runCatching { buildRecord(captureRate, bufferBytes) }
+    val record = runCatching { buildRecord(captureRate, bufferBytes, source) }
         .getOrElse { e ->
             log.error("record-construct-failed", mapOf("cause" to (e.message ?: "unknown")))
             return Acquisition.Failed("construct-exception")
@@ -63,10 +72,10 @@ internal fun openMicAudioRecord(targetRate: Int, frameDurationMs: Int): Acquisit
     return Acquisition.Ready(ReaderConfig(record, frameSamples, resampler))
 }
 
-@Suppress("MissingPermission") // guarded by hasRecordPermission() in AndroidMicSource.start()
-private fun buildRecord(captureRate: Int, bufferBytes: Int): AudioRecord =
+@Suppress("MissingPermission") // guarded by hasRecordPermission() in callers
+private fun buildRecord(captureRate: Int, bufferBytes: Int, source: Int): AudioRecord =
     AudioRecord(
-        MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+        source,
         captureRate,
         AudioFormat.CHANNEL_IN_MONO,
         AudioFormat.ENCODING_PCM_16BIT,
