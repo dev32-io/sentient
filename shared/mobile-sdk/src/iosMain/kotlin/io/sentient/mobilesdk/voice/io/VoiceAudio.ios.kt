@@ -111,8 +111,7 @@ class IosVoiceAudio : VoiceAudio {
                 // session — otherwise the engine proceeds to Phase.Ready with no audio
                 // route, silently dead. Match the ensureRunning()-check pattern (T4).
                 if (!activateSession()) {
-                    _state.value = VoiceAudioState(Phase.Error, micActive = mic, playbackActive = playback, errorReason = "session-activate-failed")
-                    log.warn("configure-failed", mapOf("reason" to "session-activate-failed"))
+                    failReset(mic, playback, "session-activate-failed")
                     return
                 }
             } else {
@@ -120,17 +119,41 @@ class IosVoiceAudio : VoiceAudio {
             }
             applyGraph(desired, playbackRateHz)
             if (desired.running && !ensureRunning()) {
-                _state.value = VoiceAudioState(Phase.Error, micActive = mic, playbackActive = playback, errorReason = "engine start failed")
-                log.warn("configure-failed", mapOf("reason" to "engine-start-failed"))
+                failReset(mic, playback, "engine-start-failed")
                 return
             }
             current = desired
         }.onFailure { err ->
-            _state.value = VoiceAudioState(Phase.Error, micActive = mic, playbackActive = playback, errorReason = err.message)
-            log.warn("configure-failed", mapOf("reason" to (err.message ?: "unknown")))
+            // Partial-failure state desync fix: applyGraph may have attached the player /
+            // installed the tap before a later step threw. Leaving `current` at the old
+            // graph while the engine holds a half-built graph desyncs the next configure
+            // (it re-runs attachPlayer → double-attach + resets outstanding/epoch → the
+            // drain counter corrupts → isPlaybackIdle sticks). Hard-reset to a clean idle
+            // baseline so the next configure rebuilds from scratch.
+            failReset(mic, playback, err.message ?: "unknown")
             return
         }
         _state.value = VoiceAudioState(Phase.Ready, micActive = mic, playbackActive = playback)
+    }
+
+    /**
+     * A configure failure: force the engine + [current] back to a clean idle baseline so
+     * the next configure never diffs against a half-built graph. Tears down any
+     * partially-applied tap/player, deactivates the session, and resets the drain
+     * counters. [current] becomes graph(false,false); the caller retries from scratch.
+     */
+    private fun failReset(mic: Boolean, playback: Boolean, reason: String) {
+        runCatching { engine.stop() }
+        runCatching { engine.inputNode.removeTapOnBus(INPUT_BUS) }
+        runCatching { if (current.player) { player.stop(); engine.detachNode(player) } }
+        deactivateSession()
+        converter = null
+        playerFormat = null
+        outstanding.value = 0
+        playbackEpoch.incrementAndGet()
+        current = voiceAudioGraph(mic = false, playback = false)
+        _state.value = VoiceAudioState(Phase.Error, micActive = mic, playbackActive = playback, errorReason = reason)
+        log.warn("configure-failed", mapOf("reason" to reason))
     }
 
     /** Activate the .playAndRecord + .voiceChat session. Returns true only when BOTH

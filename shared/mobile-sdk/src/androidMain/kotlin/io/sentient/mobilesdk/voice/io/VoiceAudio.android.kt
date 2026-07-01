@@ -137,7 +137,7 @@ class AndroidVoiceAudio(
         }
         if (playerChanged && desired.player) {
             if (!this.playback.start(playbackRateHz)) {
-                if (inputChanged && desired.inputTap) stopRecord() // roll back the record start
+                // failConfigure tears down BOTH objects (incl. the just-started record).
                 failConfigure(desired.inputTap, desired.player, "track", "track-build-failed")
                 return false
             }
@@ -145,7 +145,18 @@ class AndroidVoiceAudio(
         return true
     }
 
-    private fun failConfigure(mic: Boolean, playback: Boolean, step: String, reason: String) {
+    /**
+     * A configure failure. Partial-failure state desync fix: the OFF-components were
+     * already stopped (before startComponents) and startComponents rolls back its own
+     * record start, but [current] still points at the OLD graph — so the next configure
+     * would diff against a graph that no longer matches the (now torn-down) engine and
+     * re-open/re-close the wrong objects. Hard-reset both objects + [current] to a clean
+     * idle baseline so the next configure rebuilds from scratch.
+     */
+    private suspend fun failConfigure(mic: Boolean, playback: Boolean, step: String, reason: String) {
+        stopRecord()
+        this.playback.stop()
+        current = voiceAudioGraph(mic = false, playback = false)
         _state.value =
             VoiceAudioState(Phase.Error, micActive = mic, playbackActive = playback, errorReason = reason)
         log.warn("configure-failed", mapOf("step" to step, "reason" to reason))
