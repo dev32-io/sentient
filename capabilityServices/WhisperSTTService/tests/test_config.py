@@ -51,6 +51,11 @@ def _write_yaml(dir_path: Path, retention_value: object) -> Path:
           logprob_threshold: -1.0
           compression_ratio_threshold: 2.4
           initial_prompt: ""
+          min_pause_ms: 2000
+          rms_energy_floor: 0.005
+          hallucination_phrases: []
+          hallucination_max_duration_ms: 1500
+          phrase_energy_multiplier: 2.0
         recordings:
           enabled: false
         logging:

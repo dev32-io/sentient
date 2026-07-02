@@ -130,6 +130,11 @@ class WhisperConfig:
     logprob_threshold: float  # drop segment below this avg token logprob
     compression_ratio_threshold: float  # drop segment above this gzip ratio
     initial_prompt: str  # optional domain-vocab bias; "" = none
+    min_pause_ms: int  # min silence (ms) counting as a mid-turn pause; shorter gaps merge
+    rms_energy_floor: float  # RMS amplitude floor (0.0-1.0); quieter super-segments dropped
+    hallucination_phrases: tuple[str, ...]  # normalized filler phrases; dropped only if short/quiet
+    hallucination_max_duration_ms: int  # phrase gate applies only below this super-segment length (ms)
+    phrase_energy_multiplier: float  # phrase gate low-energy branch: rms < rms_energy_floor * this
 
 
 @dataclass(frozen=True)
@@ -269,6 +274,15 @@ def _parse(
                 whisper_raw, "whisper.compression_ratio_threshold", float
             ),
             initial_prompt=_require(whisper_raw, "whisper.initial_prompt", str),
+            min_pause_ms=_require(whisper_raw, "whisper.min_pause_ms", int),
+            rms_energy_floor=_require(whisper_raw, "whisper.rms_energy_floor", float),
+            hallucination_phrases=_require_str_list(whisper_raw, "whisper.hallucination_phrases"),
+            hallucination_max_duration_ms=_require(
+                whisper_raw, "whisper.hallucination_max_duration_ms", int
+            ),
+            phrase_energy_multiplier=_require(
+                whisper_raw, "whisper.phrase_energy_multiplier", float
+            ),
         ),
         recordings=RecordingsConfig(
             enabled=_require(recordings_raw, "recordings.enabled", bool),
@@ -350,6 +364,19 @@ def _require(section: dict[str, Any], path: str, expected_type: type) -> Any:
     raise ConfigError(
         f"config.py internal error: unsupported expected type {expected_type}"
     )
+
+
+def _require_str_list(section: dict[str, Any], path: str) -> tuple[str, ...]:
+    """Pull a required list-of-strings leaf at ``path`` as a tuple."""
+    key = path.rsplit(".", 1)[-1]
+    if key not in section:
+        raise ConfigError(f"config.yaml: missing required key '{path}'")
+    value = section[key]
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise ConfigError(
+            f"config.yaml: '{path}' must be a list of strings, got {type(value).__name__}"
+        )
+    return tuple(value)
 
 
 def _require_min_speech_duration_ms(section: dict[str, Any]) -> int:

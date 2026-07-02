@@ -26,6 +26,11 @@ whisper:
   logprob_threshold: -1.0
   compression_ratio_threshold: 2.4
   initial_prompt: ""
+  min_pause_ms: 2000
+  rms_energy_floor: 0.005
+  hallucination_phrases: ["thank you", "bye"]
+  hallucination_max_duration_ms: 1500
+  phrase_energy_multiplier: 2.0
 recordings: {enabled: false}
 logging: {level: "info", metrics_interval_ms: 1000, retention_days: 7}
 """
@@ -36,3 +41,8 @@ logging: {level: "info", metrics_interval_ms: 1000, retention_days: 7}
     assert cfg.whisper.language == "auto"
     assert cfg.whisper.no_speech_threshold == 0.6
     assert cfg.whisper.compression_ratio_threshold == 2.4
+    assert cfg.whisper.min_pause_ms == 2000
+    assert cfg.whisper.rms_energy_floor == 0.005
+    assert cfg.whisper.hallucination_phrases == ("thank you", "bye")
+    assert cfg.whisper.hallucination_max_duration_ms == 1500
+    assert cfg.whisper.phrase_energy_multiplier == 2.0

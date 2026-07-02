@@ -140,6 +140,46 @@ whisper:
   # Optional domain-vocabulary bias prompt prepended to decoding. "" = none.
   initial_prompt: ""
 
+  # Minimum silence (ms) that counts as a mid-turn [pause.N]. Gaps shorter than
+  # this merge into one super-segment (continuous speech). Prevents "pauses
+  # everywhere". Whisper decodes one super-segment per span between >= this gap.
+  min_pause_ms: 2000
+  # RMS amplitude floor (0.0-1.0, float32 [-1,1] audio). A super-segment quieter
+  # than this is treated as non-speech noise and dropped (phrase-agnostic anti-
+  # hallucination backstop). rms = 10^(dBFS/20): 0.010=-40dBFS (aggressive),
+  # 0.0056=-45dBFS, 0.0032=-50dBFS (conservative). Literature puts the speech/
+  # silence line ~-40dBFS but pure energy fails under moderate noise, so start
+  # conservative and tune UP from logged real-vs-phantom rms clusters.
+  rms_energy_floor: 0.005   # ~-46 dBFS starting point; tune from logs
+  # Known Whisper filler-hallucination phrases (normalized: lowercase, punctuation
+  # stripped). Seeded from the HF sachaarbonel/whisper-hallucinations blocklist +
+  # research "Bag of Hallucinations" — YouTube-subtitle training artifacts Whisper
+  # emits on noise. Dropped ONLY when the segment is ALSO short or quiet, so a
+  # real, clearly-spoken phrase survives. ("you"/"the"/"so" are borderline real
+  # words — kept only because the short+quiet guard protects loud real ones.)
+  # Generic conversational phantoms (Yeah/Hmm/All right) are NOT artifacts — the
+  # rms_energy_floor catches those, not this list.
+  hallucination_phrases:
+    - "thank you"
+    - "thank you for watching"
+    - "thanks for watching"
+    - "please subscribe"
+    - "thanks for watching please subscribe"
+    - "you"
+    - "the"
+    - "so"
+    - "bye"
+    - "see ya"
+    - "subtitles by the amara.org community"
+    - "谢谢观看"
+    - "谢谢观看 下集再见"
+    - "请订阅"
+    - "字幕"
+  # Phrase gate applies only to super-segments shorter than this (ms).
+  hallucination_max_duration_ms: 1500
+  # Phrase gate's low-energy branch: rms < rms_energy_floor * this multiplier.
+  phrase_energy_multiplier: 2.0
+
 # =============================================================================
 # Turn recording — persist finalized turns as WAVs on disk for debugging.
 # =============================================================================
