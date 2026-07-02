@@ -29,7 +29,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .config import RecordingsConfig
+from .config import RecordingsConfig, WhisperConfig
 from .event_logger import JsonlLogger
 from .pause_tracker import PauseTracker
 from .pipeline_events import (
@@ -38,7 +38,7 @@ from .pipeline_events import (
     TurnComplete,
     TurnRejected,
 )
-from .segment_decoder import decode_segments_and_stitch
+from .turn_decoder import decode_turn
 from .whisper_mlx import WhisperMlx
 from .wav_codec import f32_to_pcm16_bytes, pcm16_to_wav_bytes
 
@@ -80,6 +80,7 @@ def finalize_turn(
     speech_segments: list[np.ndarray],
     pauses: PauseTracker,
     min_speech_duration_ms: int,
+    config_whisper: WhisperConfig,
 ) -> None:
     """Decode, gate on content, then either emit or reject.
 
@@ -114,24 +115,27 @@ def finalize_turn(
         )
         return
 
-    # --- Step 1: STT decode (we need text before we can gate) ---
-    pauses_ms = pauses.durations_ms()
-    stitched = decode_segments_and_stitch(
+    # --- Step 1: STT decode (super-segment group + gate) ---
+    gaps_ms = pauses.durations_ms()
+    stitched = decode_turn(
         stt,
         speech_segments,
-        pause_count=len(pauses_ms),
+        gaps_ms,
+        cfg=config_whisper,
         logger=logger,
         turn_idx=turn_idx,
     )
+    pauses_ms = stitched.pauses   # only >= min_pause_ms gaps survive as pauses
     transcript_ns = time.monotonic_ns()
 
     # --- Step 2: Content gate — drop noise-only turns ---
     if not _has_content(stitched.text):
+        reason = "hallucination" if speech_segments else "empty_transcript"
         events.append(
             TurnRejected(
                 t_mono_ns=transcript_ns,
                 turn_idx=turn_idx,
-                reason="empty_transcript",
+                reason=reason,
                 text=stitched.text,
                 audio_event=stitched.event,
                 decode_ms=stitched.total_decode_ms,
@@ -141,12 +145,12 @@ def finalize_turn(
         logger.log(
             "turn.rejected",
             turn_idx=turn_idx,
-            reason="empty_transcript",
+            reason=reason,
             text=stitched.text,
             audio_event=stitched.event,
             decode_ms=round(stitched.total_decode_ms, 3),
             audio_seconds=round(stitched.total_audio_seconds, 3),
-            segment_count=len(stitched.segments),
+            segment_count=len(speech_segments),
             vad_end_to_rejected_ms=round((transcript_ns - vad_end_ns) / 1e6, 3),
         )
         return
@@ -205,7 +209,7 @@ def finalize_turn(
         audio_event=stitched.event,
         decode_ms=round(stitched.total_decode_ms, 3),
         audio_seconds=round(stitched.total_audio_seconds, 3),
-        segment_count=len(stitched.segments),
+        segment_count=len(speech_segments),
         pause_count=len(pauses_ms),
         pause_durations_ms=pauses_ms,
         vad_end_to_transcript_ms=round((transcript_ns - vad_end_ns) / 1e6, 3),

@@ -350,6 +350,7 @@ class TurnPipeline:
             speech_segments=self._speech_segments,
             pauses=self._pauses,
             min_speech_duration_ms=self._config.vad.min_speech_duration_ms,
+            config_whisper=self._config.whisper,
         )
         self._reset_turn_state()
 
