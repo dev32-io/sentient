@@ -389,9 +389,12 @@ it wants to audit/count false positives. No `turn_complete`, no WAV,
 no `transcript_ready` are emitted for rejected turns.
 
 `reason` values currently: `"empty_transcript"` (text had no
-letter/digit content) and `"short_burst"` (turn shorter than the
-configured minimum speech duration). More may be added in the future;
-gateways should treat unknown reasons as "ignore this turn".
+letter/digit content), `"short_burst"` (turn shorter than the
+configured minimum speech duration), and `"hallucination"` (all
+super-segments were dropped by the safety-net gate — energy floor,
+no_speech/logprob, or a known filler phrase — so nothing survived to
+emit). More may be added in the future; gateways should treat unknown
+reasons as "ignore this turn".
 
 ---
 
