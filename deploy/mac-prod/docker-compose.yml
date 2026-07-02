@@ -28,6 +28,8 @@
 #
 # First-boot:
 #   cp deploy/mac-prod/.env.example deploy/mac-prod/.env   # set HOST_DOCKER_GID
+#   mkdir -p ~/.sentient/gateway/config                          # operator config dir
+#   cp gateway/config.yaml ~/.sentient/gateway/config/config.yaml # seed the mounted config
 #   docker compose -f deploy/mac-prod/docker-compose.yml --profile build-only build
 #   docker compose -f deploy/mac-prod/docker-compose.yml build gateway
 #   docker compose -f deploy/mac-prod/docker-compose.yml up -d
@@ -103,6 +105,14 @@ services:
       # an HTTP→HTTPS redirect would need a separate listener.)
       - "443:8888"
     volumes:
+      # Operator config, sourced from ~/.sentient like all other state.
+      # Overrides the image-baked /app/config/config.yaml so operators edit ONE
+      # host file — e.g. flip the STT backend to native Whisper via
+      # deploy/mac-prod/native/stt-backend.py. Seed it on first boot:
+      #   mkdir -p ~/.sentient/gateway/config
+      #   cp gateway/config.yaml ~/.sentient/gateway/config/config.yaml
+      # (salience_map.yaml stays baked at /app/config/salience_map.yaml.)
+      - ${HOME}/.sentient/gateway/config/config.yaml:/app/config/config.yaml
       - ${HOME}/.sentient/gateway/logs:/app/logs
       - ${HOME}/.sentient/gateway/clientLogs:/app/clientLogs
       - ${HOME}/.sentient/gateway/data:/app/gateway-data
