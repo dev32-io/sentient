@@ -4,7 +4,7 @@
 # ---------------------------------------------------------------------------
 # Schema version — bumped by deploy/setup.py migrations. Do not hand-edit.
 # ---------------------------------------------------------------------------
-schema_version: "0.1.1"
+schema_version: "0.1.2"
 
 # ---------------------------------------------------------------------------
 # Server
@@ -94,7 +94,7 @@ stt:
 
   # Language drives the pause-renderer template and the system-prompt
   # language hint file (gateway/system_prompts/language-prompt-<lang>.md).
-  language: en                         # "en" | "zh"
+  language: auto                       # "auto" | "en" | "zh" — auto = Whisper autodetects (bilingual en/zh)
 
   # Client capture rate. Adapter downsamples to 16 kHz before sending to STT.
   input_sample_rate: 48000

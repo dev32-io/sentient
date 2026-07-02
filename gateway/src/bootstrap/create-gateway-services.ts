@@ -201,7 +201,9 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     tts: services.tts,
     createSynthesizerFor: services.createSynthesizerFor,
     chatModel: cfg.llm?.chat_model ?? DEFAULT_CHAT_MODEL,
-    language: cfg.language,
+    // "auto" is a decode-only sentinel; UX/prompt language needs a concrete
+    // value, so fall back to "en" when the operator chose autodetect.
+    language: cfg.language === "auto" ? "en" : cfg.language,
     tls: services.tls,
     webDistDir: cfg.webDistDir,
     downloads: { artifactsDir: cfg.downloads.artifacts_dir, publicBaseUrl: cfg.downloads.public_base_url },
