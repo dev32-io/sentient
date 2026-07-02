@@ -38,6 +38,7 @@ import {
   CAPTURE_SAMPLE_RATE,
   DEFAULT_MIN_EAGER_END_MS,
   DEFAULT_PREEMPT_FADEOUT_MS,
+  DENOISE_BYPASS,
   ECHO_GATE_BASELINE_THRESHOLD,
   ECHO_GATE_PLAYBACK_THRESHOLD,
   ECHO_GATE_TAIL_HOLD_MS,
@@ -304,6 +305,7 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     }
 
     const denoiser = createRnNoiseDenoiser({
+      bypass: DENOISE_BYPASS,
       onFrame: ({ samples, speechProb }) => {
         handleDenoisedFrame(samples, speechProb);
       },

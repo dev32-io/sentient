@@ -13,8 +13,23 @@ export const WS_RECONNECT_JITTER_MS = 500;
  */
 export const CAPTURE_SAMPLE_RATE = 48_000;
 
-/** Mic gain boost — amplifies quiet speech before STT. 1.0 = no boost. */
-export const CAPTURE_GAIN = 3.0;
+/**
+ * Mic gain boost. 1.0 = no boost — send at NATURAL device level so the browser
+ * and mobile clients arrive at comparable loudness and one server-side rms floor
+ * fits all (no per-client calibration, no server volume normalizer). A boost >1
+ * also clips at the worklet's [-1,1] clamp AND amplifies noise, so keep it at 1.
+ */
+export const CAPTURE_GAIN = 1.0;
+
+/**
+ * Bypass RNNoise denoising (keep its speech-prob for the gate, send RAW audio to
+ * Whisper). 2025 research says denoise-before-Whisper can hurt WER — BUT here
+ * RNNoise also serves as the second-pass echo suppressor for TTS leak the
+ * getUserMedia AEC misses. Bypassing it re-introduced echo (assistant speech
+ * transcribed as a user turn). Kept OFF until echo is handled by AEC alone; the
+ * toggle stays for when that's fixed.
+ */
+export const DENOISE_BYPASS = false;
 
 /**
  * Opus encoder bitrate (bps) for mic uplink. Speech sits in the 16-32 kbps
