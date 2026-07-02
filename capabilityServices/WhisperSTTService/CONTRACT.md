@@ -1,13 +1,14 @@
-# localSTT — Service Contract
+# Whisper STT — Service Contract
 
 A WebSocket service that consumes streamed microphone audio and emits
-structured turn events. Wraps Silero VAD + Smart-Turn v3 + SenseVoice-Small
-on the server side; to the caller it looks like a single black-box "STT
-with VAD" component that speaks one turn at a time.
+structured turn events. Wraps Silero VAD + Smart-Turn v3 + MLX Whisper
+(`whisper-large-v3-turbo-8bit`) on the server side; to the caller it looks
+like a single black-box "STT with VAD" component that speaks one turn at a
+time.
 
 This document specifies the wire contract a gateway client must honor
 to integrate. Stage-specific implementation details (Silero, Smart-Turn,
-SenseVoice, the language allowlist, the pre-speech buffer) are deliberately
+Whisper, the language allowlist, the pre-speech buffer) are deliberately
 left out — they are internal and may change without breaking this contract.
 
 ---
@@ -17,40 +18,38 @@ left out — they are internal and may change without breaking this contract.
 | Property               | Value                                     |
 | ---------------------- | ----------------------------------------- |
 | Protocol               | WebSocket (RFC 6455), binary + text frames |
-| Default endpoint       | `ws://<host>:8766`                        |
+| Default endpoint       | `ws://<host>:8768`                        |
 | Path                   | root (`/`); optional query params `?language=auto\|en\|zh` (§1.1) and `?audioFormat=pcm16\|opus` (§1.2) |
-| Authentication         | None — internal docker network only; gateway is the sole consumer |
+| Authentication         | None — trusted local deployment; gateway is the sole consumer |
 | Max message size       | 16 MiB (server cap on inbound)            |
 | Concurrent connections | Unbounded in principle; each holds per-connection VAD state (~20 MB) |
 
 ### 1.1 Language selection — per-connection
 
-Clients MAY specify the SenseVoice recognizer language via a URL query
+Clients MAY specify the Whisper decode language via a URL query
 string on the WebSocket connect URL:
 
-    ws://<host>:8766/?language=en
-    ws://<host>:8766/?language=zh
-    ws://<host>:8766/?language=auto
+    ws://<host>:8768/?language=en
+    ws://<host>:8768/?language=zh
+    ws://<host>:8768/?language=auto
 
 Accepted values: `auto` (default), `en`, `zh`. Unknown values are
 accepted by the handshake but silently fall back to `auto`; the server
 logs a `conn.language_invalid` warning. No query param is equivalent to
 `?language=auto`.
 
-Runtime cost: each distinct language the server is asked to serve
-triggers a one-time ~450 MB RSS cold-load of a language-specific ONNX
-recognizer (the first such request pays a ~200 ms latency bump too).
-Subsequent connections reuse the cached instance. The server currently
-keeps cached recognizers alive for the process lifetime; there is no
-eviction.
+Runtime cost: negligible. `language` is a per-connection **decode hint**
+on a single shared MLX Whisper model — there is no per-language weight
+reload or cold-load. All language views share the same cached model
+weights (loaded once at startup); only the decode-time language differs.
 
 The chosen language is echoed back on the `ready` frame (see §5.2) so
-the client can confirm which recognizer is active.
+the client can confirm which decode language is active.
 
 The service accepts and processes one WebSocket connection as a single
 logical "session". Multiple sessions can run in parallel; per-session
 state (VAD LSTM, per-turn buffers) is isolated, while the underlying
-models (Silero, Smart-Turn, SenseVoice) are shared read-only and stateless
+models (Silero, Smart-Turn, Whisper) are shared read-only and stateless
 across sessions.
 
 ### 1.2 Audio format selection — per-connection
@@ -58,8 +57,8 @@ across sessions.
 Clients MAY select the wire encoding for the binary audio frames via a
 URL query string on the WebSocket connect URL:
 
-    ws://<host>:8766/?audioFormat=pcm16
-    ws://<host>:8766/?audioFormat=opus
+    ws://<host>:8768/?audioFormat=pcm16
+    ws://<host>:8768/?audioFormat=opus
 
 Accepted values: `pcm16` (default), `opus`. Unknown values are accepted
 by the handshake but silently fall back to `pcm16`; the server logs a
@@ -77,7 +76,7 @@ Wire framing per format:
 - **`opus`** — every binary WS frame is **one complete opus packet**
   (not OGG-containerized, no header, no length prefix). The server
   decodes packet-by-packet to PCM16 LE mono 16 kHz before feeding the
-  unchanged downstream VAD / Smart-Turn / SenseVoice pipeline. Typical
+  unchanged downstream VAD / Smart-Turn / Whisper pipeline. Typical
   packet size is 60–200 bytes for 16–32 kbps speech at 20 ms frame
   duration. The opus decoder is **stateful across packets within a
   single connection**: reusing one connection for many turns benefits
@@ -86,7 +85,7 @@ Wire framing per format:
 
 Example connect URL combining both params:
 
-    ws://<host>:8766/?language=en&audioFormat=opus
+    ws://<host>:8768/?language=en&audioFormat=opus
 
 Connect URL parameters compose freely; absence of either param yields
 its default.
@@ -101,7 +100,7 @@ its default.
 > decodes opus packets internally to PCM16 of the shape below before
 > the (unchanged) downstream pipeline runs. The sample-rate / channel /
 > int16_le requirements still describe the post-decode shape that VAD
-> and SenseVoice see.
+> and Whisper see.
 
 The server expects **all binary WebSocket frames to be raw PCM16 audio
 of the following format**:
@@ -217,7 +216,7 @@ The server replies with `{"type": "pong"}`. Useful for idle-connection
 keepalive if any intermediary closes idle WebSockets.
 
 > **Note on language handling**: the service exposes a `language` hint
-> at connect time (see §1.1). The hint is decode-only — SenseVoice still
+> at connect time (see §1.1). The hint is decode-only — Whisper still
 > transcribes code-switched speech — but forcing `en` or `zh` sharpens
 > accuracy on short utterances that confuse auto-detect.
 
@@ -264,7 +263,7 @@ companion binary payload.
   "sampleRate": 16000,
   "sileroChunkSamples": 512,
   "pcmFormat": "int16_le_mono",
-  "stt": "sense-voice-small-int8",
+  "stt": "whisper-large-v3-turbo-8bit",
   "language": "auto",
   "audioFormat": "pcm16"
 }
@@ -276,7 +275,8 @@ are informational; the gateway can log them for observability.
 
 | Field         | Type   | Meaning                                                                                                         |
 | ------------- | ------ | --------------------------------------------------------------------------------------------------------------- |
-| `language`    | string | Echoes the recognizer language this connection is using — may differ from what the client requested if the request was invalid (see §1.1). |
+| `stt`         | string | The active STT model; always `"whisper-large-v3-turbo-8bit"`.                                                    |
+| `language`    | string | Echoes the decode language this connection is using — may differ from what the client requested if the request was invalid (see §1.1). |
 | `audioFormat` | string | `"pcm16"` or `"opus"` — echoes the binary-frame format the server negotiated for this connection (see §1.2). Differs from the request only if the client sent an unknown value, in which case the server fell back to `"pcm16"`. |
 | `pcmFormat`   | string | Post-decode PCM shape the pipeline sees; always `"int16_le_mono"` at 16 kHz regardless of `audioFormat`.        |
 
@@ -287,8 +287,8 @@ are informational; the gateway can log them for observability.
   "type": "transcript_ready",
   "turnIdx": 5,
   "text": "How about this. [pause.0] If I pause [pause.1] with a lot of [pause.2] how's that going work.",
-  "emotion": "<|NEUTRAL|>",
-  "event": "<|Speech|>",
+  "emotion": "",
+  "event": "",
   "decodeMs": 720.4,
   "audioSeconds": 7.8,
   "pauses": [1240, 870, 1530]
@@ -301,10 +301,10 @@ are informational; the gateway can log them for observability.
 | ----------------- | ------------ | -------------------------------------------------------------------------------------------------- |
 | `type`            | string       | Always `"transcript_ready"`.                                                                       |
 | `turnIdx`         | integer ≥ 1  | Monotonic per connection. Paired with the preceding `turn_complete.turnIdx`.                       |
-| `text`            | string       | Contains exactly `len(pauses)` occurrences of `[pause.N]` tokens, indices 0..N-1 once each, in order. Always has ≥1 letter/digit character, OR the `event` is non-Speech (laughter, etc.). |
-| `emotion`         | string       | SenseVoice tag form, typically `<\|NEUTRAL\|>` or `<\|EMO_UNKNOWN\|>`; occasionally other labels on exaggerated prosody. |
-| `event`           | string       | SenseVoice tag form, typically `<\|Speech\|>`; other values include `<\|Laughter\|>`, `<\|BGM\|>`, `<\|Applause\|>`, `<\|Cough\|>`, `<\|Sneeze\|>`. |
-| `decodeMs`        | float        | Total SenseVoice inference wall time for the turn, milliseconds.                                   |
+| `text`            | string       | Contains exactly `len(pauses)` occurrences of `[pause.N]` tokens, indices 0..N-1 once each, in order. Always has ≥1 letter/digit character (content-free turns are rejected — see `turn_rejected`). |
+| `emotion`         | string       | **Always `""`.** Whisper produces no acoustic-emotion tag. Field is retained for wire back-compat; do not switch on it. |
+| `event`           | string       | **Always `""`.** Whisper produces no acoustic-event tag (no `<\|Speech\|>` / `<\|Laughter\|>` / etc.). Field is retained for wire back-compat; do not switch on it. |
+| `decodeMs`        | float        | Total Whisper inference wall time for the turn, milliseconds.                                      |
 | `audioSeconds`    | float        | Sum of speech-segment audio durations in seconds (excludes silence between segments).              |
 | `pauses`          | int[] (ms)   | Durations of mid-turn silences, in order. Empty array when the turn had no mid-turn pauses.        |
 
@@ -323,9 +323,8 @@ for each i in 0..len(pauses)-1: `[pause.i]` appears exactly once, and only in or
 
 Gateway's recommended processing:
 
-1. Strip SenseVoice tag wrapper from `emotion`/`event` if displaying
-   (e.g. `<\|HAPPY\|>` → `HAPPY`). A regex of `/<\|([^|]*)\|>/` captures
-   the inner code.
+1. Ignore `emotion`/`event` — they are always `""` on this service
+   (Whisper emits no acoustic tags). No tag-stripping is needed.
 2. Pick a language-aware renderer for the pause placeholders. Since
    the service doesn't tell you the language, this is either a fixed
    rule for your household's primary language or inferred from the
@@ -344,7 +343,7 @@ Gateway's recommended processing:
   "smartTurnProbability": 0.8732,
   "smartTurnEvalMs": 87.3,
   "wavBytesLen": 250368,
-  "wavPath": "/app/recordings/turn_1a6614dab748_005.wav"
+  "wavPath": "~/.sentient/whisper-stt/recordings/turn_1a6614dab748_005.wav"
 }
 ```
 
@@ -372,26 +371,27 @@ remote clients and should be treated as opaque metadata.
   "turnIdx": 5,
   "reason": "empty_transcript",
   "text": ".",
-  "audioEvent": "<|Speech|>",
+  "audioEvent": "",
   "decodeMs": 83.4,
   "audioSeconds": 0.64
 }
 ```
 
 Emitted when the pipeline finalized a turn internally but decided the
-transcript contained no actual letter/digit content AND the audio
-event was plain `Speech` (e.g. a desk knock that fooled VAD). Turns
-with meaningful non-speech events like `<|Laughter|>` or `<|BGM|>`
-are NOT rejected even with empty text — the non-speech signal is
-preserved via a normal `transcript_ready`.
+transcript contained no actual letter/digit content (e.g. a desk knock
+that fooled VAD). The content gate is now **text-only**: Whisper emits
+no acoustic-event tag, so `audioEvent` is always `""` and there is no
+non-Speech exception — a turn is rejected purely on whether its text
+has any letter/digit character.
 
 **The gateway should silently ignore `turn_rejected` events** unless
 it wants to audit/count false positives. No `turn_complete`, no WAV,
 no `transcript_ready` are emitted for rejected turns.
 
-`reason` values currently: `"empty_transcript"`. More may be added in
-the future; gateways should treat unknown reasons as "ignore this
-turn".
+`reason` values currently: `"empty_transcript"` (text had no
+letter/digit content) and `"short_burst"` (turn shorter than the
+configured minimum speech duration). More may be added in the future;
+gateways should treat unknown reasons as "ignore this turn".
 
 ---
 
@@ -448,7 +448,7 @@ smart_turn_eval (1 or more; once per vad_end)
 **Non-guarantees**:
 
 - No latency bound between events. `transcript_ready` may arrive up to
-  ~1 second after `turn_complete` depending on SenseVoice decode time.
+  ~1 second after `turn_complete` depending on Whisper decode time.
 - No clock synchronization. The server's `t_mono_ns` (not exposed on
   the wire) is server-local; wall-clock drift between client and server
   is out of scope.
@@ -466,7 +466,7 @@ implementation:
 - **Model load failures**: the service doesn't accept connections if
   models fail to load (fails closed at startup).
 - **Per-turn decode failures**: would surface as a `turn_rejected`
-  with an unspecified reason (not implemented; SenseVoice rarely
+  with an unspecified reason (not implemented; Whisper rarely
   errors).
 - **Internal exceptions**: the server logs them and closes the
   connection. The gateway sees a normal WebSocket close.
@@ -493,13 +493,13 @@ implementation:
 
 | Constraint                         | Value                         | Notes                             |
 | ---------------------------------- | ----------------------------- | --------------------------------- |
-| Max audio per turn                 | 10 min hard cap (configurable via `vad.max_turn_duration_ms`) | At the cap the service force-finalizes: runs SenseVoice on the accumulated audio and emits the normal `turn_complete` → WAV → `transcript_ready` sequence. If the cap fires mid-speech, a synthetic `vad_end` is emitted first so §5.4 ordering holds. Smart-Turn only ever sees the last 8 s regardless of cap. |
+| Max audio per turn                 | 10 min hard cap (configurable via `vad.max_turn_duration_ms`) | At the cap the service force-finalizes: runs Whisper on the accumulated audio and emits the normal `turn_complete` → WAV → `transcript_ready` sequence. If the cap fires mid-speech, a synthetic `vad_end` is emitted first so §5.4 ordering holds. Smart-Turn only ever sees the last 8 s regardless of cap. |
 | Max silence before force-finalize  | 2000 ms                       | After a `turn_continuing`, the turn is force-closed if no new speech arrives. |
 | Typical end-to-end tail latency    | 200–800 ms                    | VAD end → `transcript_ready`. Lower for short turns, higher for 8+ s monologues. |
 | Concurrent connections             | Tested to 1; designed for 1–4 | Each connection holds ~20 MB of state; models are shared. |
-| Server RAM (steady state)          | ~1.15 GB                      | With Silero (torch) + Smart-Turn + SenseVoice loaded. |
-| Server CPU during active turn      | 1–2 cores briefly             | Burst during Smart-Turn + SenseVoice inference. |
-| Target hardware                    | Raspberry Pi 5 (ARM64)        | Also runs on x86_64 linux/arm64.  |
+| Server RAM (steady state)          | Whisper weights ~0.8 GB       | With Silero (torch) + Smart-Turn (onnx) + MLX Whisper loaded; Whisper decodes on the Metal GPU. |
+| Server CPU during active turn      | brief burst                   | Silero + Smart-Turn run on CPU; Whisper runs on the GPU. |
+| Target hardware                    | Apple Silicon (Mac mini)      | Apple-Silicon only — MLX has no Linux/x86 backend. |
 
 ---
 
@@ -513,7 +513,7 @@ import json
 import websockets
 
 async def run():
-    async with websockets.connect("ws://raspberrypi.local:8766") as ws:
+    async with websockets.connect("ws://localhost:8768") as ws:
         # 1. Wait for ready (required before sending audio).
         ready = json.loads(await ws.recv())
         assert ready["type"] == "ready"

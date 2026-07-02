@@ -1,73 +1,93 @@
-# STT Service
+# Whisper STT Service
 
-Local speech-to-text on Raspberry Pi 5. Wraps Silero VAD + Smart-Turn v3 + SenseVoice-Small into a WebSocket service that consumes streamed PCM16 audio and emits structured turn events.
+Local speech-to-text as a **native Apple-Silicon service** (Mac mini prod). Wraps Silero VAD + Smart-Turn v3 + MLX Whisper (`mlx-community/whisper-large-v3-turbo-8bit`) into a WebSocket service that consumes streamed PCM16 (or opus) audio and emits structured turn events. MLX runs on the Metal GPU, so this service is **Apple-Silicon only** — it does not run on Linux/x86.
 
 The gateway connects to this service over a WebSocket, sends raw mic audio, and gets back `transcript_ready` events with the user's speech as text. The gateway never needs to know about VAD, turn detection, or STT internals — this service is a black box governed entirely by [CONTRACT.md](./CONTRACT.md).
 
 ```
-  gateway (Bun/TS)                    STT service (Python)
+  gateway (Bun/TS)                    Whisper STT service (Python, MLX)
        │                                     │
        ├─── binary PCM16 frames ────────────►│ Silero VAD
        │                                     │   ↓
        │                                     │ Smart-Turn v3
        │                                     │   ↓
-       │◄── {"type":"transcript_ready"} ─────┤ SenseVoice-Small
+       │◄── {"type":"transcript_ready"} ─────┤ Whisper (whisper-large-v3-turbo-8bit)
        │                                     │
 ```
 
 ---
 
-## Quick start — deploying to the Pi
+## Quick start — native launcher (Apple Silicon)
 
-### 1. First-boot setup (one time only)
-
-```bash
-# On the Pi, create the host directories the container mounts into.
-# CHANGE ~/.sentient/stt-service/ if you prefer a different location —
-# then update the volume paths in deploy/mac-prod/docker-compose.yml to match.
-mkdir -p ~/.sentient/stt-service/config
-mkdir -p ~/.sentient/stt-service/logs
-mkdir -p ~/.sentient/stt-service/recordings
-
-# Copy the example config. This is the ONE file you'll edit to tune behavior.
-cp capabilityServices/STTService/config/config.example.yaml \
-   ~/.sentient/stt-service/config/config.yaml
-```
-
-### 2. Start the stack
+The service runs as a launchd LaunchAgent, not a container. One script
+drives its whole lifecycle:
 
 ```bash
-cd deploy/mac-prod
-docker compose up -d
+deploy/mac-prod/native/whisper-stt.sh {install|start|stop|status|logs}
 ```
 
-The STT service image is pulled from the private GitLab registry. Watchtower auto-updates it every 5 minutes alongside the gateway.
+### 1. Install (one time)
+
+```bash
+deploy/mac-prod/native/whisper-stt.sh install
+```
+
+This is idempotent and does everything needed to boot:
+
+- `brew install opus ffmpeg` — libopus is required by `opuslib`, which
+  loads it via ctypes **at import time** (so it's needed even for the
+  PCM16-only path); ffmpeg backs the smoke tooling. Skipped if already
+  present; warns (does not fail) if Homebrew is missing.
+- Creates a venv at `capabilityServices/WhisperSTTService/.venv` and
+  `pip install -r requirements.txt`.
+- Seeds `~/.sentient/whisper-stt/config/config.yaml` from the example.
+- **Pre-downloads Smart-Turn v3** into `~/.sentient/whisper-stt/models/`.
+  The Whisper weights are NOT baked or pre-fetched here — mlx pulls
+  `mlx-community/whisper-large-v3-turbo-8bit` from Hugging Face on first
+  boot (cached under `~/.cache/huggingface` thereafter).
+- Writes the LaunchAgent plist to
+  `~/Library/LaunchAgents/io.dev32.sentient.whisper-stt.plist`.
+
+### 2. Start / stop
+
+```bash
+deploy/mac-prod/native/whisper-stt.sh start
+deploy/mac-prod/native/whisper-stt.sh stop
+```
+
+`start` (re)loads the LaunchAgent; `RunAtLoad` + `KeepAlive` mean the
+service survives reboots and restarts on crash.
 
 ### 3. Verify
 
 ```bash
-docker logs stt-service
+deploy/mac-prod/native/whisper-stt.sh status   # launchctl state + /health
+deploy/mac-prod/native/whisper-stt.sh logs     # tail launchd stderr
 ```
 
-You should see:
+You should see (in `~/.sentient/whisper-stt/logs/`):
 ```
 INFO stt-service loading Silero VAD (torch JIT)...
 INFO stt-service Silero VAD ready
-INFO stt-service loading Smart-Turn v3 ONNX from /app/models/smart-turn
-INFO stt-service Smart-Turn ready: /app/models/smart-turn/smart-turn-v3.2-cpu.onnx
-INFO stt-service loading SenseVoice-Small int8 ONNX from /app/models/sense-voice
-INFO stt-service SenseVoice ready: /app/models/sense-voice/model.int8.onnx
-INFO stt-service listening on ws://0.0.0.0:8766
+INFO stt-service loading Smart-Turn v3 ONNX from .../models/smart-turn
+INFO stt-service Smart-Turn ready: .../models/smart-turn/smart-turn-v3.2-cpu.onnx
+INFO stt-service loading MLX Whisper (mlx-community/whisper-large-v3-turbo-8bit, language=auto)...
+INFO stt-service Whisper ready: mlx-community/whisper-large-v3-turbo-8bit
+INFO stt-service listening on ws://127.0.0.1:8768
+INFO stt-service health endpoint listening on http://127.0.0.1:8769/health
 ```
+
+The WebSocket serves on **`ws://<host>:8768`**; the plain-HTTP health
+endpoint on **`http://<host>:8769/health`**.
 
 ### 4. Test with the PoC browser client
 
-The browser client at `pocs/localSTT/client/` works against a prod
-instance. Paste the Pi URL (`ws://raspberrypi.local:8766`) and an
-inbound bearer token from the Pi's `~/.sentient/auth/tokens.yaml` into
-the two input fields, then click Connect. Under the hood the token
-rides on `Sec-WebSocket-Protocol: bearer, <token>` because browser
-`WebSocket` cannot set custom headers — see
+The browser client at `pocs/localSTT/client/` works against a running
+instance. Paste the service URL (`ws://<host>:8768`) and an inbound
+bearer token from `~/.sentient/auth/tokens.yaml` into the two input
+fields, then click Connect. Under the hood the token rides on
+`Sec-WebSocket-Protocol: bearer, <token>` because browser `WebSocket`
+cannot set custom headers — see
 [CONTRACT.md §1.1](./CONTRACT.md#11-authentication--two-channels-for-one-token).
 The URL + token persist in `localStorage` so reloading the tab doesn't
 wipe them.
@@ -87,7 +107,7 @@ A minimal gateway only needs to handle `ready` (gate audio sending) and `transcr
 
 ## Configuration — `config.yaml`
 
-Every tunable constant lives in `~/.sentient/stt-service/config/config.yaml`. There are zero hardcoded magic numbers in the source code. The file is read once at startup; edit and `docker compose restart stt-service` to apply changes.
+Every tunable constant lives in `~/.sentient/whisper-stt/config/config.yaml` (pointed at by the `WHISPER_STT_CONFIG_PATH` env var in the LaunchAgent plist). There are zero hardcoded magic numbers in the source code. The file is read once at startup; edit and `deploy/mac-prod/native/whisper-stt.sh stop && deploy/mac-prod/native/whisper-stt.sh start` to apply changes.
 
 See [config/config.example.yaml](./config/config.example.yaml) for the full file with inline documentation on every value.
 
@@ -100,15 +120,24 @@ See [config/config.example.yaml](./config/config.example.yaml) for the full file
 | Turns end mid-sentence | `smart_turn.decision_threshold` | Raise to 0.6 |
 | Service waits too long after user finishes | `smart_turn.decision_threshold` | Lower to 0.4 |
 | Response feels sluggish | `vad.min_silence_ms` | Lower to 150 |
-| Pi is overheating under load | `smart_turn.intra_op_threads` / `sense_voice.num_threads` | Drop to 2 |
+| CPU pinned under load | `smart_turn.intra_op_threads` | Drop to 2 (Whisper itself runs on the Metal GPU, not CPU threads) |
+| Whisper invents words on silence | `whisper.no_speech_threshold` | Raise toward 0.8 |
+| Want a faster / smaller model | `whisper.model` | Swap the HF repo (e.g. a `-q4` build) |
 | Disk filling up with WAVs | `recordings.enabled` | Set to `false` |
 
 ---
 
-## Local development (without Docker)
+## Local development (without the launcher)
+
+The `whisper-stt.sh install` script does all of this for you; run it by hand
+only when iterating on the service itself. Apple Silicon required — MLX has no
+Linux/x86 backend.
 
 ```bash
-cd capabilityServices/STTService
+cd capabilityServices/WhisperSTTService
+
+# libopus is required at import time by opuslib (ctypes). One-time:
+brew install opus ffmpeg
 
 # Create a virtual environment (Python's project-level dependency isolation —
 # like Gradle's per-project classpath but for the entire Python runtime).
@@ -118,15 +147,17 @@ source .venv/bin/activate    # Activates the venv — your shell now uses its Py
 # Install dependencies into the venv.
 pip install -r requirements.txt
 
-# Download models to a local directory.
-python scripts/download_models.py ./models
+# Pre-download Smart-Turn to a local directory (Whisper weights are fetched
+# by mlx from Hugging Face on first run — nothing to download here for it).
+PYTHONPATH=src python scripts/download_models.py ./models
 
 # Run with environment variables pointing at local paths.
-STT_CONFIG_PATH=./config/config.example.yaml \
-STT_MODEL_DIR=./models \
-STT_LOG_DIR=./logs \
-STT_RECORDING_DIR=./recordings \
-python -m stt_service
+PYTHONPATH=src \
+WHISPER_STT_CONFIG_PATH=./config/config.example.yaml \
+WHISPER_STT_MODEL_DIR=./models \
+WHISPER_STT_LOG_DIR=./logs \
+WHISPER_STT_RECORDING_DIR=./recordings \
+python -m whisper_stt
 ```
 
 ---
@@ -136,10 +167,12 @@ python -m stt_service
 ### Log files
 
 ```
-~/.sentient/stt-service/logs/
+~/.sentient/whisper-stt/logs/
 ├── <YYYY-MM-DD>-service.jsonl   # Startup, shutdown, connection open/close
 ├── <YYYY-MM-DD>-metrics.jsonl  # 1 line/sec: RSS MB, CPU%, thread count
-└── conn_<id>.jsonl     # Per-connection: every chunk, VAD event, decode
+├── conn_<id>.jsonl     # Per-connection: every chunk, VAD event, decode
+├── launchd.out.log     # LaunchAgent stdout
+└── launchd.err.log     # LaunchAgent stderr (what `whisper-stt.sh logs` tails)
 ```
 
 All files are JSONL (one JSON object per line). Use `jq` to filter:
@@ -160,20 +193,23 @@ cat *-metrics.jsonl | jq '{ts: .ts, rss_mb: .rss_mb, cpu: .cpu_percent}'
 1. Find the connection ID: `grep conn.open *-service.jsonl | jq .conn_id`
 2. Open that connection's log: `cat conn_<id>.jsonl`
 3. Filter by turn: `jq 'select(.turn_idx == 3)'`
-4. You'll see the full lifecycle: `vad.start` → `vad.end` → `smart_turn.eval` → `turn.complete` → `sensevoice.decode`
+4. You'll see the full lifecycle: `vad.start` → `vad.end` → `smart_turn.eval` → `turn.complete` → `whisper.decode`
 
 ---
 
 ## Updating the service
 
-Models are baked into the Docker image. To update:
+There is no image to pull — the service runs from the checked-out repo in a
+local venv. To update:
 
-1. Edit `scripts/download_models.py` to point at a new model revision.
-2. Commit, push to `develop`, merge to `main`.
-3. CI builds a new image and pushes to the GitLab registry.
-4. Watchtower on the Pi pulls the new image within 5 minutes and restarts the container automatically.
+1. `git pull` the repo on the Mac mini.
+2. Re-run `deploy/mac-prod/native/whisper-stt.sh install` (re-installs deps,
+   re-downloads Smart-Turn, rewrites the plist) — it's idempotent.
+3. `deploy/mac-prod/native/whisper-stt.sh stop && deploy/mac-prod/native/whisper-stt.sh start`.
 
-No Pi-side maintenance required.
+To change the Whisper model, edit `whisper.model` in
+`~/.sentient/whisper-stt/config/config.yaml` (mlx fetches the new repo from
+Hugging Face on next boot) — no code change or reinstall needed.
 
 ---
 
@@ -183,9 +219,9 @@ If you're a senior developer coming from Kotlin/Java/Android, this section maps 
 
 ## Project structure
 
-### Why `src/stt_service/` and not just `stt_service/`
+### Why `src/whisper_stt/` and not just `whisper_stt/`
 
-Modern Python convention puts the importable package inside a `src/` directory. This prevents a subtle bug: without `src/`, running `python` from the project root would let you `import stt_service` from the local directory even when testing against the *installed* version. The `src/` layer forces you to install the package (or set `PYTHONPATH`) before you can import it.
+Modern Python convention puts the importable package inside a `src/` directory. This prevents a subtle bug: without `src/`, running `python` from the project root would let you `import whisper_stt` from the local directory even when testing against the *installed* version. The `src/` layer forces you to install the package (or set `PYTHONPATH`) before you can import it.
 
 Android equivalent: it's like the `src/main/kotlin/` directory — you wouldn't put Kotlin files at the project root.
 
@@ -195,7 +231,7 @@ Every directory that should be importable as a Python package needs an `__init__
 
 ### `__main__.py` — "I am the entry point"
 
-When you run `python -m stt_service`, Python looks for `stt_service/__main__.py` and executes it. It's the equivalent of declaring `fun main()` in Kotlin, except the filename is what matters, not a function annotation.
+When you run `python -m whisper_stt`, Python looks for `whisper_stt/__main__.py` and executes it. It's the equivalent of declaring `fun main()` in Kotlin, except the filename is what matters, not a function annotation.
 
 ### `pyproject.toml` — "I am build.gradle.kts"
 
@@ -349,7 +385,7 @@ Each file teaches one or two Python concepts. Read them in this order for the sm
 | 6 | `event_logger.py` | JSONL writer | `threading.Lock`, `with`, `@property`, `**kwargs` |
 | 7 | `wire_protocol.py` | Event serialization | `isinstance()` dispatch |
 | 8 | `segment_decoder.py` | Multi-segment STT | `TYPE_CHECKING` guard, f-strings |
-| 9 | `sense_voice.py` | SenseVoice wrapper | `getattr()` defensive access |
+| 9 | `whisper_mlx.py` | MLX Whisper wrapper | `getattr()` defensive access |
 | 10 | `smart_turn.py` | Smart-Turn wrapper | ONNX session management |
 | 11 | `turn_finalizer.py` | Turn content gating | `unicodedata`, regex, `re.compile` |
 | 12 | `turn_pipeline.py` | Core state machine | `global`, `deque(maxlen=N)`, `bytearray` |
@@ -365,7 +401,7 @@ Each file teaches one or two Python concepts. Read them in this order for the sm
 | Lock file | `pip freeze > requirements.txt` | `gradle.lockfile` |
 | Local isolation | `python -m venv .venv` | Gradle does this automatically |
 | Install deps | `pip install -r requirements.txt` | `./gradlew build` |
-| Run | `python -m stt_service` | `./gradlew run` |
+| Run | `python -m whisper_stt` | `./gradlew run` |
 | Package format | `.whl` (wheel) | `.aar` / `.jar` |
 | Registry | PyPI (pypi.org) | Maven Central / Google Maven |
 
@@ -375,40 +411,45 @@ The biggest cultural difference: Python's ecosystem assumes you manage a virtual
 
 ## Operational reference
 
-### Resource usage (Raspberry Pi 5, 8 GB)
+### Resource usage (Apple Silicon)
+
+Runs as a single native Python process (no container). Whisper decodes on the
+Metal GPU; Silero (torch) + Smart-Turn (onnx) run on CPU. The
+`whisper-large-v3-turbo-8bit` weights are ~0.8 GB on disk and are cached under
+`~/.cache/huggingface` after first boot.
 
 | Metric | Value |
 |--------|-------|
-| Steady-state RAM | ~1.15 GB |
-| Peak RAM (during decode) | ~1.3 GB |
-| CPU during active turn | 1-2 cores briefly |
+| CPU during active turn | brief burst (Silero + Smart-Turn); Whisper is GPU |
 | CPU idle | <1% |
-| Disk (image) | ~600 MB |
-| Disk (logs, 24h active use) | ~50-100 MB |
+| Whisper weights (cached) | ~0.8 GB under `~/.cache/huggingface` |
+| Disk (logs, 24h active use) | ~50-100 MB under `~/.sentient/whisper-stt/logs/` |
 
-### Container-internal paths
+### Data layout (host paths)
 
-These are set in the Dockerfile and should NOT be changed:
+The service reads/writes under `~/.sentient/whisper-stt/`. The LaunchAgent
+plist points each path at these via `WHISPER_STT_*` env vars:
 
-| Path | Purpose | Mounted from host |
-|------|---------|-------------------|
-| `/app/config/config.yaml` | Runtime config | `~/.sentient/stt-service/config/config.yaml` |
-| `/app/logs/` | JSONL log files | `~/.sentient/stt-service/logs/` |
-| `/app/recordings/` | Turn WAV files | `~/.sentient/stt-service/recordings/` |
-| `/app/models/` | ML model weights | Baked into image (not mounted) |
+| Path | Purpose | Env var |
+|------|---------|---------|
+| `~/.sentient/whisper-stt/config/config.yaml` | Runtime config | `WHISPER_STT_CONFIG_PATH` |
+| `~/.sentient/whisper-stt/logs/` | JSONL + launchd logs | `WHISPER_STT_LOG_DIR` |
+| `~/.sentient/whisper-stt/recordings/` | Turn WAV files | `WHISPER_STT_RECORDING_DIR` |
+| `~/.sentient/whisper-stt/models/` | Smart-Turn weights (Whisper is cached separately by mlx) | `WHISPER_STT_MODEL_DIR` |
 
-To change the **host** paths, edit `deploy/mac-prod/docker-compose.yml`. The container-side paths are fixed.
+To change these, edit the env vars in the plist (regenerated by
+`whisper-stt.sh install`).
 
 ### Clearing disk space
 
 ```bash
 # Delete all recordings (service doesn't care — stateless on this dir)
-rm -rf ~/.sentient/stt-service/recordings/*
+rm -rf ~/.sentient/whisper-stt/recordings/*
 
 # As of the logging-rotation-retention branch, the service auto-prunes conn_*.jsonl
 # files via logging.retention_days (default 7). The manual find below is only needed
 # for emergency cleanup or if auto-pruning is disabled.
 # (Dated service/metrics logs — <YYYY-MM-DD>-service.jsonl, <YYYY-MM-DD>-metrics.jsonl
 #  — are also auto-pruned by the same retention policy.)
-find ~/.sentient/stt-service/logs -name 'conn_*.jsonl' -mtime +7 -delete
+find ~/.sentient/whisper-stt/logs -name 'conn_*.jsonl' -mtime +7 -delete
 ```
