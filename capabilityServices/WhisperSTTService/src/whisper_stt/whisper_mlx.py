@@ -27,9 +27,12 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+import mlx.core as mx
 import mlx_whisper
 import numpy as np
 from huggingface_hub import snapshot_download
+from mlx_whisper.audio import N_FRAMES, N_SAMPLES, log_mel_spectrogram, pad_or_trim
+from mlx_whisper.transcribe import ModelHolder
 
 from .config import WhisperConfig
 
@@ -38,6 +41,12 @@ log = logging.getLogger("stt-service.whisper")
 SAMPLE_RATE = 16_000
 AUTO_LANGUAGE = "auto"
 VALID_LANGUAGES: tuple[str, ...] = ("auto", "en", "zh")
+# When language is "auto", constrain detection to the concrete supported set
+# (not Whisper's full ~99 languages). Full autodetect mislabels short clips —
+# e.g. "Halo?" (English "Hello?") → Indonesian. Derived from VALID_LANGUAGES.
+AUTO_CANDIDATE_LANGUAGES: tuple[str, ...] = tuple(
+    lang for lang in VALID_LANGUAGES if lang != AUTO_LANGUAGE
+)
 
 # mlx_whisper 0.4.x's model loader (mlx_whisper.load_models.load_model) resolves
 # the quantized weights by the legacy filenames below and crashes with
@@ -111,11 +120,22 @@ class TranscriptResult:
 def _whisper_language(language: str) -> str | None:
     """Map the service language sentinel to a whisper decode language.
 
-    "auto" -> None (whisper autodetects). "en"/"zh" pass through unchanged.
+    "auto" -> None (constrained detection resolves it per decode). "en"/"zh"
+    pass through unchanged (forced, no detection pass — faster).
     """
     if language == AUTO_LANGUAGE:
         return None
     return language
+
+
+def _pick_constrained_language(probs: dict, candidates: tuple[str, ...]) -> str:
+    """Argmax the Whisper language-probability dict over ONLY ``candidates``.
+
+    Whisper's ``probs`` keys are language codes ("en", "zh", ...). Restricting
+    the argmax to the household's supported set keeps short-clip detection
+    honest (full autodetect ranges over ~99 languages and mislabels).
+    """
+    return max(candidates, key=lambda code: float(probs.get(code, 0.0)))
 
 
 class WhisperMlx:
@@ -149,6 +169,23 @@ class WhisperMlx:
         """Force the model to load now by decoding 100 ms of silence."""
         self.transcribe(np.zeros(SAMPLE_RATE // 10, dtype=np.float32))
 
+    def _resolve_language(self, audio: np.ndarray) -> str:
+        """Detect the language constrained to AUTO_CANDIDATE_LANGUAGES (en/zh).
+
+        Reuses the same cached model instance ``mlx_whisper.transcribe`` uses
+        (ModelHolder), so no extra model load — one detection encoder pass,
+        then the caller forces the resolved language (skipping mlx_whisper's
+        own unconstrained full-99 autodetect).
+        """
+        _ensure_mlx_weight_alias(self._config.model)
+        model = ModelHolder.get_model(self._config.model, mx.float16)
+        mel = log_mel_spectrogram(audio, n_mels=model.dims.n_mels, padding=N_SAMPLES)
+        mel_segment = pad_or_trim(mel, N_FRAMES, axis=-2).astype(mx.float16)
+        _, probs = model.detect_language(mel_segment)
+        chosen = _pick_constrained_language(probs, AUTO_CANDIDATE_LANGUAGES)
+        log.debug("whisper.lang_detect resolved=%s", chosen)
+        return chosen
+
     def transcribe(self, audio: np.ndarray) -> TranscriptResult:
         """Decode a finalized utterance. ``audio`` = 1-D float32 @ 16 kHz."""
         if audio.ndim != 1:
@@ -159,10 +196,15 @@ class WhisperMlx:
         _ensure_mlx_weight_alias(self._config.model)
         audio_seconds = audio.size / SAMPLE_RATE
         t0 = time.monotonic()
+        # Resolve "auto" (self._decode_language is None) to a concrete language
+        # constrained to en/zh; forced languages pass straight through.
+        decode_language = self._decode_language
+        if decode_language is None:
+            decode_language = self._resolve_language(audio)
         result = mlx_whisper.transcribe(
             audio,
             path_or_hf_repo=self._config.model,
-            language=self._decode_language,
+            language=decode_language,
             condition_on_previous_text=False,
             no_speech_threshold=self._config.no_speech_threshold,
             logprob_threshold=self._config.logprob_threshold,
