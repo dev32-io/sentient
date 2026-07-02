@@ -86,7 +86,7 @@ hermes:
 `;
 
 const ALREADY_MIGRATED_YAML = `\
-schema_version: "0.1.1"
+schema_version: "0.1.2"
 hermes:
   web_tools:
     provider: searxng
@@ -95,7 +95,7 @@ hermes:
 `;
 
 const NO_WEB_TOOLS_YAML = `\
-schema_version: "0.1.1"
+schema_version: "0.1.2"
 hermes:
   worker:
     container_name: sentient-hermes
@@ -126,6 +126,16 @@ logging:
   level: info
   retention_days: 7
   level_overrides: {}
+`;
+
+// A 0.1.1 config carrying the old stt.language: en — the 0.1.2 migration must
+// flip it to auto and bump the version.
+const V011_STT_EN_YAML = `\
+schema_version: "0.1.1"
+stt:
+  provider: local-stt
+  url: ws://stt-service:8766
+  language: en
 `;
 
 // ---------------------------------------------------------------------------
@@ -278,7 +288,7 @@ describe("migrateOperatorConfigYamlSync — schema 0.1.0 → 0.1.1", () => {
   it("bumps schema_version to 0.1.1 on a 0.1.0 host config", () => {
     const p = writeTmp(dir, HOST_CONFIG_v010);
     migrateOperatorConfigYamlSync(p);
-    expect(readTmp(p)).toContain('schema_version: "0.1.1"');
+    expect(readTmp(p)).toContain('schema_version: "0.1.2"');
   });
 
   it("removes all dead session keys", () => {
@@ -353,11 +363,33 @@ describe("migrateOperatorConfigYamlSync — schema 0.1.0 → 0.1.1", () => {
     expect(result).toContain("max_output_tokens: 512");
   });
 
-  it("is a no-op when schema_version is already 0.1.1", () => {
+  it("is a no-op when schema_version is already 0.1.2", () => {
     const p = writeTmp(dir, ALREADY_MIGRATED_YAML);
     const statBefore = statSync(p);
     migrateOperatorConfigYamlSync(p);
     const statAfter = statSync(p);
     expect(statAfter.mtimeMs).toBe(statBefore.mtimeMs);
+  });
+
+  it("migrates 0.1.1 stt.language en -> auto and bumps to 0.1.2", () => {
+    const p = writeTmp(dir, V011_STT_EN_YAML);
+    migrateOperatorConfigYamlSync(p);
+    const result = readTmp(p);
+    expect(result).toContain("language: auto");
+    expect(result).not.toMatch(/language:\s*en\b/);
+    expect(result).toContain('schema_version: "0.1.2"');
+  });
+
+  it("is a no-op when stt.language already auto at 0.1.2", () => {
+    const yaml = `\
+schema_version: "0.1.2"
+stt:
+  provider: local-stt
+  language: auto
+`;
+    const p = writeTmp(dir, yaml);
+    const statBefore = statSync(p);
+    migrateOperatorConfigYamlSync(p);
+    expect(statSync(p).mtimeMs).toBe(statBefore.mtimeMs);
   });
 });

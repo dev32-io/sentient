@@ -60,6 +60,12 @@ export interface RnNoiseDenoiserOptions {
   onFrame: (result: RnNoiseFrameResult) => void;
   /** Called once if WASM init fails. Caller falls back to no-denoise path. */
   onUnsupported?: () => void;
+  /**
+   * Test toggle: still run RNNoise to compute `speechProb` (for the gate) but
+   * emit the RAW input frame instead of the denoised output — so Whisper sees
+   * un-enhanced audio. See constants.DENOISE_BYPASS.
+   */
+  bypass?: boolean;
 }
 
 /**
@@ -120,7 +126,14 @@ export function createRnNoiseDenoiser(options: RnNoiseDenoiserOptions): RnNoiseD
     for (let i = 0; i < FRAME_SAMPLES; i++) {
       module.HEAPF32[heapInIdx + i] = (samples[i] ?? 0) * SCALE_TO_INT16;
     }
+    // Always run RNNoise — even when bypassing — so `speechProb` stays valid
+    // for the gate. In bypass mode the denoised output is simply discarded.
     const speechProb = module._rnnoise_process_frame(state, outPtr, inPtr);
+    if (options.bypass) {
+      // Emit RAW input (caller copies synchronously; frameBuf is reused).
+      options.onFrame({ samples, speechProb });
+      return;
+    }
     // Reverse scale → expose Float32 [-1, 1] to the caller.
     for (let i = 0; i < FRAME_SAMPLES; i++) {
       outSamples[i] = (module.HEAPF32[heapOutIdx + i] ?? 0) * SCALE_FROM_INT16;

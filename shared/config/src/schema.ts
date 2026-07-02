@@ -42,7 +42,7 @@ export type SessionConfig = z.output<typeof sessionConfigSchema>;
 export const sttConfigSchema = z.object({
   provider: z.literal("local-stt"),
   url: z.string().default("ws://stt-service:8766"),
-  language: z.enum(["en", "zh"]).default("en"),
+  language: z.enum(["en", "zh", "auto"]).default("auto"),
   input_sample_rate: z.number().int().min(8000).default(48000),
   silence_idle_gap_ms: z.number().int().min(0).max(10000).default(200),
   tts_echo_cooldown_ms: z.number().int().min(0).max(5000).default(2500),

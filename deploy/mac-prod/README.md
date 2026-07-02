@@ -19,10 +19,12 @@ This folder simply targets the common case: everything on one macOS host.
 
 ## Layout
 
-Only the **gateway** is a long-running compose service. `hermes`,
-`stt-service`, the MCPs and `signal-cli` are `build-only` — the gateway's
-orchestrator creates/starts/recreates them at runtime over
-`/var/run/docker.sock`. Compose only builds their images.
+Only the **gateway** is a long-running compose service. `hermes`, the MCPs
+and `signal-cli` are `build-only` — the gateway's orchestrator
+creates/starts/recreates them at runtime over `/var/run/docker.sock`. Compose
+only builds their images. `stt-service` (SenseVoice) is gated behind the
+`stt-docker` profile: built/managed **only** when the docker-sensevoice STT
+backend is selected (see [STT backend](#stt-backend-deployconf)).
 
 ### State lives under `~/.sentient/`
 Every piece of persistent state — gateway data, profiles, secrets, and the
@@ -38,21 +40,41 @@ Two deliberate exceptions, both non-state:
   `acme.sh` (DNS-01 via Route53) on the LAN, renewed + rsynced in. Infra,
   re-derivable on renewal, not app state.
 
-## First boot
+## STT backend (`deploy.conf`)
+
+`deploy/mac-prod/deploy.conf` is the single source of truth for which STT
+service the gateway dials. `setup-prod.py` reads it and reconciles the three
+parts that must agree:
+
+| `STT_BACKEND` | STT service | gateway config | compose |
+|---------------|-------------|----------------|---------|
+| `native-whisper` (default) | host MLX Whisper on `:8768`, launchd (`native/whisper-stt.sh`) | `stt.url` → `host.docker.internal:8768`; `managed_services.stt-service` removed | SenseVoice image **not** built |
+| `docker-sensevoice` | orchestrator-managed SenseVoice container on `:8766` | `stt.url` → `sentient-stt-service:8766`; `managed_services.stt-service` present | SenseVoice built via `--profile stt-docker` |
+
+Switching backend = edit `STT_BACKEND` in `deploy.conf`, re-run
+`setup-prod.py`, `compose up`. The run is idempotent — it installs a fresh
+host or **migrates** an existing stack between backends (patches the config in
+place, installs/stops the native service, and clears the old STT container as
+part of the normal container reset).
+
+The default is **native-whisper**, matching the `deploy/macos/` dev stack.
+
+## First boot / migrate
 
 ```bash
 cp deploy/mac-prod/.env.example deploy/mac-prod/.env
 # set HOST_DOCKER_GID — detect with:
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock alpine stat -c '%g' /var/run/docker.sock
 
-# build sibling images, then the gateway
-docker compose -f deploy/mac-prod/docker-compose.yml --profile build-only build
-docker compose -f deploy/mac-prod/docker-compose.yml build gateway
+# Reconcile STT backend (deploy.conf), build images, clear stale containers.
+# Idempotent — same command installs a new host or migrates an existing one.
+python3 deploy/setup-prod.py
 
 docker compose -f deploy/mac-prod/docker-compose.yml up -d
 ```
 Then visit `https://sentient.dev32.io:8888` — the wizard handles secrets,
-voice, and MCP setup.
+voice, and MCP setup. For `native-whisper`, verify the host service first with
+`bash deploy/mac-prod/native/whisper-stt.sh status`.
 
 ## Headless 24×7 host notes
 

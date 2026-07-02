@@ -1,0 +1,238 @@
+# STT Service — runtime tuning
+# ==============================
+#
+# Copy this file to ~/.sentient/stt-service/config/config.yaml on your
+# Raspberry Pi (or wherever you mount it in docker-compose.yml). The
+# container loads it ONCE at startup. To change a value, edit and run:
+#
+#     docker compose restart stt-service
+#
+# Every key below is required — the service fails loud at startup if
+# anything is missing or the wrong type. There are no silent defaults.
+#
+# Container-internal paths (/app/models, /app/logs, /app/data/recordings)
+# are fixed in the Dockerfile and mounted from the host. Change the
+# HOST paths in deploy/mac-prod/docker-compose.yml if you want the data
+# somewhere other than ~/.sentient/stt-service/.
+
+# =============================================================================
+# Schema version — bumped by deploy/setup.py migrations. Do not hand-edit.
+# =============================================================================
+schema_version: "0.1.0"
+
+# =============================================================================
+# WebSocket server
+# =============================================================================
+server:
+  # Bind address inside the container. 0.0.0.0 = all interfaces, which
+  # Docker needs in order to route traffic from the host. Don't touch
+  # unless you have a specific networking reason.
+  host: "0.0.0.0"
+
+  # WebSocket port inside the container. If you ever move this, update
+  # the host->container port mapping in deploy/mac-prod/docker-compose.yml too.
+  port: 8768
+
+  # Maximum accepted WebSocket frame size in bytes. 16 MiB ≈ 8 minutes
+  # of 16 kHz PCM16 per frame — far more than any sane client sends.
+  # Lower to harden against bad actors on an untrusted network.
+  max_frame_bytes: 16777216  # 16 * 1024 * 1024
+
+# =============================================================================
+# Silero VAD — cheap first-pass voice activity detection. Every incoming
+# audio chunk goes through this before the pipeline decides whether to
+# open a turn.
+# =============================================================================
+vad:
+  # Probability cutoff (0.0-1.0) above which Silero declares "this is
+  # speech".
+  #   Higher -> more conservative, misses soft speech, fewer false alarms.
+  #   Lower  -> more aggressive, catches whispers, more noise triggers.
+  # 0.5 is Silero's published default and works well for household rooms.
+  threshold: 0.5
+
+  # How much silence (milliseconds) Silero must see AFTER speech ends
+  # before firing `vad_end`. Too low = chatter between every word.
+  # Too high = sluggish. 200 ms is tight and bridges normal inter-word gaps.
+  min_silence_ms: 200
+
+  # Audio padding (milliseconds) Silero includes on either side of the
+  # detected speech boundary. Small = cleaner; larger = safer against
+  # clipping the first/last phoneme.
+  speech_pad_ms: 30
+
+  # Pre-speech ring-buffer size, counted in 512-sample (=32 ms @ 16 kHz)
+  # Silero chunks. When `vad_start` fires, buffer contents are prepended
+  # retroactively so the first word isn't clipped by Silero's LSTM
+  # cold-start latency. 10 chunks ≈ 320 ms pre-roll — enough for a
+  # fast "hey" at turn start.
+  pre_speech_chunks: 10
+
+  # Watchdog: if Smart-Turn said "keep listening" but no new speech
+  # arrives for this long, force the turn closed. Without this, a
+  # single Smart-Turn misfire could hold a turn open forever.
+  # 2000 ms has never false-triggered in PoC testing.
+  silent_timeout_ms: 2000
+
+  # Hard upper bound on a single turn, measured from VAD start. When a
+  # turn has been open this long the service force-finalizes it: it runs
+  # SenseVoice on whatever audio has accumulated and emits the normal
+  # turn_complete / transcript_ready pair. Guards against runaway
+  # growth of the per-turn audio buffer (~64 KB/s of float32) when
+  # speech-like audio keeps arriving with no gap long enough for the
+  # silent_timeout watchdog to trip — e.g. a TV playing in the room with
+  # the mic open, or a very long uninterrupted monologue.
+  # 600_000 ms = 10 min; if you normally dictate longer than that in one
+  # breath, raise it — but note the Pi only has 8 GB of RAM.
+  max_turn_duration_ms: 600000
+
+  # Hard floor on accepted turn audio length (ms). Turns whose total
+  # speech duration is below this are rejected before SenseVoice runs,
+  # via a `turn_rejected` event with reason `short_burst`. Defends
+  # against echo bursts / acoustic transients (knocks, taps, sub-200 ms
+  # speaker leak through AEC) that fool Silero into firing a turn.
+  # Real human commands run 250–500 ms ("no", "yes", "stop") so 200
+  # threads the needle. Set to 0 to disable. Range 0–1000.
+  # Optional — defaults to 200 when omitted.
+  min_speech_duration_ms: 200
+
+# =============================================================================
+# Smart-Turn v3 — end-of-turn classifier. Runs on the last 8 s of audio
+# after every vad_end. Answers "is the user actually done, or just pausing?"
+# =============================================================================
+smart_turn:
+  # Sigmoid output threshold. Above -> "turn complete"; below -> "keep listening".
+  # 0.5 = the model's trained midpoint. Nudge higher (0.6) if turns end
+  # prematurely; lower if the service waits too long after clearly-done speech.
+  decision_threshold: 0.5
+
+  # ONNX Runtime intra-op threads per inference. 4 matches the RPi5's
+  # four Cortex-A76 cores -> ~80 ms per turn. Drop to 2 if you're
+  # sharing the Pi with heavy other workloads.
+  intra_op_threads: 4
+
+# =============================================================================
+# Whisper — the STT model (MLX, Apple Silicon / Metal). Runs once per finalized
+# turn (or once per speech segment when the turn has mid-turn pauses).
+# =============================================================================
+whisper:
+  # HuggingFace repo id for the MLX Whisper weights. Fetched + cached on first
+  # run under ~/.cache/huggingface. Swap to benchmark or trade RAM for quality
+  # (e.g. -q4) without a code change.
+  model: "mlx-community/whisper-large-v3-turbo-8bit"
+
+  # Decode language hint: "auto" | "en" | "zh". "auto" runs constrained
+  # detection (argmax over ONLY en/zh) reusing the decode's encoder features —
+  # one encoder pass total. Pin en/zh to skip detection entirely.
+  language: "auto"
+  # Auto-detect confidence floor (0.0-1.0): when the winning language's prob is
+  # below this, the clip is too short/ambiguous to trust — reuse the connection's
+  # sticky prior (last confident detection) instead. "Halo?" (~0.2 for en) sits
+  # below; a clear phrase is 0.8+. Raise to lean harder on the prior.
+  language_min_confidence: 0.5
+  # Encode-length buckets (seconds). Whisper normally pads every clip to 30s and
+  # runs the (super-linear) encoder on mostly silence. Instead we pad to the
+  # SMALLEST bucket that holds the real audio and crop the encoder's sinusoidal
+  # positional embedding to match — a 2s "hello" uses the 10s bucket. Ascending;
+  # rounded to even mel frames, capped at 30s. Smaller minimum = faster but more
+  # out-of-distribution: a 5s floor made a 2.8s clip REPEAT its transcript
+  # (Whisper trained on 30s), so the floor is 10s. A compression-ratio safety net
+  # re-decodes at 30s if a bucket still degenerates. Raise the floor if you see
+  # repeated text; lower it (watching WER) to chase more speed.
+  encode_buckets_s: [10, 20, 30]
+
+  # Hallucination guards — surfaced from decode for the downstream gate. The
+  # primary near-silence defense is rms_energy_floor (checked BEFORE decode).
+  #   no_speech_threshold (0.0-1.0): drop a segment whose P(no-speech) exceeds
+  #     this. Raise toward 0.8 if silence produces phantom words.
+  no_speech_threshold: 0.6
+  #   logprob_threshold: drop a segment whose average token logprob is below
+  #     this. Less negative (-0.5) = stricter; more negative (-1.5) = laxer.
+  logprob_threshold: -1.0
+  #   compression_ratio_threshold: drop a segment whose gzip compression ratio
+  #     exceeds this (catches repetition loops). 2.4 is Whisper's default.
+  compression_ratio_threshold: 2.4
+
+  # Optional domain-vocabulary bias prompt prepended to decoding. "" = none.
+  initial_prompt: ""
+
+  # Minimum silence (ms) that counts as a mid-turn [pause.N]. Gaps shorter than
+  # this merge into one super-segment (continuous speech). Prevents "pauses
+  # everywhere". Whisper decodes one super-segment per span between >= this gap.
+  min_pause_ms: 2000
+  # RMS amplitude floor (0.0-1.0, float32 [-1,1] audio). A super-segment quieter
+  # than this is treated as non-speech noise and dropped (phrase-agnostic anti-
+  # hallucination backstop). rms = 10^(dBFS/20): 0.010=-40dBFS (aggressive),
+  # 0.0056=-45dBFS, 0.0032=-50dBFS (conservative). Literature puts the speech/
+  # silence line ~-40dBFS but pure energy fails under moderate noise, so start
+  # conservative and tune UP from logged real-vs-phantom rms clusters.
+  rms_energy_floor: 0.008   # pure near-silence backstop (Silero VAD does the real gating). Clients send natural level (no boost) → one floor fits webui+mobile. If distant mobile speech still drops as low_energy, go lower (~0.005).
+  # Known Whisper filler-hallucination phrases (normalized: lowercase, punctuation
+  # stripped). Dropped ONLY when the segment is ALSO short or quiet. INTENTIONALLY
+  # EMPTY — a listed phrase can never be recognized as real speech, so it burns a
+  # word of recognition. Last resort only: tune rms_energy_floor + the decode
+  # thresholds first, add phrases here only if a specific artifact survives them.
+  hallucination_phrases: []
+  # Phrase gate applies only to super-segments shorter than this (ms).
+  hallucination_max_duration_ms: 1500
+  # Phrase gate's low-energy branch: rms < rms_energy_floor * this multiplier.
+  phrase_energy_multiplier: 2.0
+  # Backchannel forms (en + zh). A turn whose transcript is ENTIRELY these —
+  # listening noise the user didn't mean as a message ("hmm", "嗯") — is dropped
+  # (never reaches the assistant). WHOLE-TURN only: "hmm, what's the weather?"
+  # keeps the "hmm" and passes through, so nothing is burned from recognition.
+  # Matching is token-level + language-neutral: "uh-huh" -> {uh, huh}, "嗯嗯" one
+  # CJK token. NOTE: some of these double as affirmations ("mm-hmm"/"嗯" ~ yes) —
+  # trim the list if you want those to count as real replies. Add a language by
+  # adding its forms here — no code change.
+  backchannel_phrases:
+    - "hmm"
+    - "hm"
+    - "mm"
+    - "mmm"
+    - "mhm"
+    - "mm-hmm"
+    - "uh-huh"
+    - "uh"
+    - "uhh"
+    - "um"
+    - "umm"
+    - "huh"
+    - "er"
+    - "嗯"
+    - "嗯嗯"
+    - "呃"
+    - "唔"
+    - "额"
+
+# =============================================================================
+# Turn recording — persist finalized turns as WAVs on disk for debugging.
+# =============================================================================
+recordings:
+  # When true, every accepted turn is written to the recordings dir as
+  # turn_<connId>_<idx>.wav. The WAV is still sent over the WebSocket
+  # regardless — turning this off only skips the on-disk write. Set to
+  # false if disk fills up on long-running deployments.
+  enabled: false
+
+# =============================================================================
+# Logging + in-process metrics
+# =============================================================================
+logging:
+  # stdout log level — what `docker logs stt-service` shows.
+  # One of: debug | info | warning | error.
+  # JSONL log files always capture everything regardless of this setting.
+  level: "info"
+
+  # CPU/RSS sampling cadence in milliseconds. Each sample writes one line
+  # to logs/<date>-metrics.jsonl. 1000 ms is cheap (~0.1% CPU overhead)
+  # and gives per-second resolution for latency investigations.
+  # Set to 0 to disable.
+  metrics_interval_ms: 1000
+
+  # Days to retain rotated jsonl files in the logs dir. Files older
+  # than this are deleted at startup and at each UTC-midnight rollover.
+  # Applies to <date>-service.jsonl, <date>-metrics.jsonl, and
+  # conn_<id>.jsonl alike (all matched by mtime). Set to 0 to disable
+  # pruning. Range: 0-365.
+  retention_days: 7

@@ -26,7 +26,10 @@ export function createTextStreamSynthesizer(
 
   const { utterance_aggregator: aggregator, emotion_tags: emotionCfg } = cfg.tts;
   const runtimeDir = process.env.GATEWAY_RUNTIME_DIR ?? join(import.meta.dir, "..", "..");
-  const tagSetPath = join(runtimeDir, "prompts", `fish-audio-emotion-tags-${cfg.language}.md`);
+  // "auto" is a decode-only STT sentinel; the emotion-tag set needs a concrete
+  // language (only -en/-zh prompt files exist), so fall back to "en".
+  const emotionLang = cfg.language === "auto" ? "en" : cfg.language;
+  const tagSetPath = join(runtimeDir, "prompts", `fish-audio-emotion-tags-${emotionLang}.md`);
 
   let emotionTags: EmotionTaggerOptions | undefined;
   if (emotionCfg.enabled && llmProvider) {

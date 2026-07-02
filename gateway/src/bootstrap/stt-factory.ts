@@ -31,7 +31,9 @@ export function createSttService(cfg: StartupConfig): SttService {
   const adapterConfig: STTAdapterConfig = {
     url: cfg.stt.url,
     language: cfg.language,
-    pauseRenderLanguage: cfg.language,
+    // Pause renderer needs a concrete language; when decode is "auto" (Whisper
+    // autodetect) fall back to "en" for the human-readable pause strings.
+    pauseRenderLanguage: cfg.language === "auto" ? "en" : cfg.language,
     inputSampleRate: cfg.stt.input_sample_rate,
     ttsEchoCooldownMs: cfg.stt.tts_echo_cooldown_ms,
     connectTimeoutMs: cfg.stt.connect_timeout_ms,

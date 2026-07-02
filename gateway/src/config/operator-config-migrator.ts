@@ -27,6 +27,11 @@ const log = getLog(["sentient", "config", "migration", "operator-config"]);
 //             hermes.resource_management (whole block)
 //     SET:    schema_version: "0.1.1"
 //
+//   0.1.1 → 0.1.2 (whisper-stt native — bilingual STT):
+//     SET:    stt.language: "auto"   (Whisper autodetects en/zh; the old "en"
+//             default forced English and dropped Chinese input)
+//             schema_version: "0.1.2"
+//
 // Uses yaml's Document API to preserve comments and unrelated keys.
 // ---------------------------------------------------------------------------
 
@@ -174,12 +179,50 @@ function applySchema011Migration(doc: Document): Schema011MigrationResult | null
 }
 
 // ---------------------------------------------------------------------------
+// 0.1.1 → 0.1.2: STT decode language en → auto (bilingual autodetect)
+// ---------------------------------------------------------------------------
+
+const SCHEMA_012_VERSION = "0.1.2";
+
+interface Schema012MigrationResult {
+  languagePrev: string | null;
+  languageSetToAuto: boolean;
+}
+
+function applySchema012Migration(doc: Document): Schema012MigrationResult | null {
+  const root = doc.contents;
+  if (!isMap(root)) return null;
+
+  const versionNode = root.get("schema_version", true);
+  const currentVersion = isScalar(versionNode) ? String(versionNode.value) : null;
+  if (currentVersion === SCHEMA_012_VERSION) return null; // already migrated
+  // Runs only at 0.1.1 — reached fresh, or via the 0.1.0→0.1.1 step in the same
+  // pass (that step sets schema_version to TARGET_VERSION = "0.1.1" first).
+  if (currentVersion !== TARGET_VERSION) return null;
+
+  const result: Schema012MigrationResult = { languagePrev: null, languageSetToAuto: false };
+
+  const sttNode = root.get("stt", true);
+  if (isMap(sttNode)) {
+    const stt = sttNode as YAMLMap;
+    const langNode = stt.get("language", true);
+    result.languagePrev = isScalar(langNode) ? String(langNode.value) : null;
+    stt.set("language", "auto");
+    result.languageSetToAuto = result.languagePrev !== "auto";
+  }
+
+  root.set("schema_version", SCHEMA_012_VERSION);
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Public API — sync (used by loadStartupConfig) + async (tests, future use)
 // ---------------------------------------------------------------------------
 
 function applyAllMigrations(doc: Document): boolean {
   const webToolsResult = applyWebToolsMigration(doc);
   const schema011Result = applySchema011Migration(doc);
+  const schema012Result = applySchema012Migration(doc);
 
   if (webToolsResult !== null) {
     log.info("migration:web-tools", {
@@ -197,7 +240,14 @@ function applyAllMigrations(doc: Document): boolean {
     });
   }
 
-  return webToolsResult !== null || schema011Result !== null;
+  if (schema012Result !== null) {
+    log.info("migration:0.1.2", {
+      languagePrev: schema012Result.languagePrev,
+      languageSetToAuto: schema012Result.languageSetToAuto,
+    });
+  }
+
+  return webToolsResult !== null || schema011Result !== null || schema012Result !== null;
 }
 
 /**

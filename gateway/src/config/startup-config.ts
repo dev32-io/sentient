@@ -42,8 +42,9 @@ export interface StartupConfig {
 
   session: SessionYaml;
 
-  /** Top-level language ("en" | "zh") mirrored from stt.language for ergonomics. */
-  language: "en" | "zh";
+  /** Top-level language ("auto" | "en" | "zh") mirrored from stt.language for
+   * ergonomics. "auto" = Whisper autodetects (bilingual households). */
+  language: "auto" | "en" | "zh";
 
   /** `undefined` when no stt block — voice STT disabled. Always defined in
    *  current config.yaml schema (stt is required), but kept optional for
