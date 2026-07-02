@@ -29,6 +29,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .backchannel import BackchannelClassifier
 from .config import RecordingsConfig, WhisperConfig
 from .event_logger import JsonlLogger
 from .pause_tracker import PauseTracker
@@ -81,6 +82,7 @@ def finalize_turn(
     pauses: PauseTracker,
     min_speech_duration_ms: int,
     config_whisper: WhisperConfig,
+    backchannel: BackchannelClassifier,
 ) -> None:
     """Decode, gate on content, then either emit or reject.
 
@@ -148,6 +150,34 @@ def finalize_turn(
             reason=reason,
             text=stitched.text,
             audio_event=stitched.event,
+            decode_ms=round(stitched.total_decode_ms, 3),
+            audio_seconds=round(stitched.total_audio_seconds, 3),
+            segment_count=len(speech_segments),
+            vad_end_to_rejected_ms=round((transcript_ns - vad_end_ns) / 1e6, 3),
+        )
+        return
+
+    # --- Step 2.5: Backchannel gate — drop turns that are ONLY listening noise ---
+    # Has real content (passed Step 2) but every token is backchannel ("hmm",
+    # "嗯", "uh-huh"). Reuses the TurnRejected path so the client never sees it —
+    # no gateway change. Whole-turn only: "hmm, what's the weather?" survives.
+    if backchannel.is_backchannel(stitched.text):
+        events.append(
+            TurnRejected(
+                t_mono_ns=transcript_ns,
+                turn_idx=turn_idx,
+                reason="backchannel",
+                text=stitched.text,
+                audio_event=stitched.event,
+                decode_ms=stitched.total_decode_ms,
+                audio_seconds=stitched.total_audio_seconds,
+            )
+        )
+        logger.log(
+            "turn.rejected",
+            turn_idx=turn_idx,
+            reason="backchannel",
+            text=stitched.text,
             decode_ms=round(stitched.total_decode_ms, 3),
             audio_seconds=round(stitched.total_audio_seconds, 3),
             segment_count=len(speech_segments),

@@ -44,6 +44,7 @@ import numpy as np
 import torch
 from silero_vad import VADIterator, load_silero_vad
 
+from .backchannel import BackchannelClassifier
 from .config import Config
 from .event_logger import JsonlLogger
 from .pause_tracker import PauseTracker
@@ -113,6 +114,9 @@ class TurnPipeline:
         self._stt = stt
         self._recording_dir = recording_dir
         self._logger = logger
+        # Injected turn-level unit (flow manager owns the dep). Swap point for a
+        # future acoustic backchannel model — pipeline only calls is_backchannel.
+        self._backchannel = BackchannelClassifier(config.whisper.backchannel_phrases)
 
         # Derived from config — pre-computed once at construction time
         # so we don't do nanosecond math on every chunk.
@@ -351,6 +355,7 @@ class TurnPipeline:
             pauses=self._pauses,
             min_speech_duration_ms=self._config.vad.min_speech_duration_ms,
             config_whisper=self._config.whisper,
+            backchannel=self._backchannel,
         )
         self._reset_turn_state()
 

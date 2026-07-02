@@ -28,8 +28,17 @@ def test_drop_low_energy() -> None:
     assert r.drop and r.reason == "low_energy"
 
 
-def test_drop_no_speech() -> None:
-    r = evaluate("noise", rms=0.05, no_speech_prob=0.9, avg_logprob=-2.0,
+def test_drop_low_confidence() -> None:
+    # Low avg_logprob ALONE drops — the "You" (-1.99) case. Hallucinations keep
+    # no_speech_prob ~0.0, so this must not depend on the no_speech signal.
+    r = evaluate("You", rms=0.05, no_speech_prob=0.0, avg_logprob=-1.99,
+                 duration_ms=450, cfg=_Cfg())
+    assert r.drop and r.reason == "low_confidence"
+
+
+def test_drop_high_no_speech() -> None:
+    # High no_speech_prob ALONE drops, even with an acceptable logprob.
+    r = evaluate("noise", rms=0.05, no_speech_prob=0.9, avg_logprob=-0.2,
                  duration_ms=1000, cfg=_Cfg())
     assert r.drop and r.reason == "no_speech"
 

@@ -126,6 +126,8 @@ class WhisperConfig:
 
     model: str  # HuggingFace repo id for the MLX weights
     language: str  # decode hint: "auto" | "en" | "zh"
+    language_min_confidence: float  # auto-detect: below this winner prob, reuse the sticky prior
+    encode_buckets_s: tuple[int, ...]  # pad short clips to the smallest of these (s) not 30s — cuts encoder cost
     no_speech_threshold: float  # 0.0–1.0; drop segment above this P(no-speech)
     logprob_threshold: float  # drop segment below this avg token logprob
     compression_ratio_threshold: float  # drop segment above this gzip ratio
@@ -135,6 +137,7 @@ class WhisperConfig:
     hallucination_phrases: tuple[str, ...]  # normalized filler phrases; dropped only if short/quiet
     hallucination_max_duration_ms: int  # phrase gate applies only below this super-segment length (ms)
     phrase_energy_multiplier: float  # phrase gate low-energy branch: rms < rms_energy_floor * this
+    backchannel_phrases: tuple[str, ...]  # whole-turn backchannel forms (en+zh); a turn that is ONLY these drops
 
 
 @dataclass(frozen=True)
@@ -268,6 +271,10 @@ def _parse(
         whisper=WhisperConfig(
             model=_require(whisper_raw, "whisper.model", str),
             language=_require(whisper_raw, "whisper.language", str),
+            language_min_confidence=_require(
+                whisper_raw, "whisper.language_min_confidence", float
+            ),
+            encode_buckets_s=_require_int_list(whisper_raw, "whisper.encode_buckets_s"),
             no_speech_threshold=_require(whisper_raw, "whisper.no_speech_threshold", float),
             logprob_threshold=_require(whisper_raw, "whisper.logprob_threshold", float),
             compression_ratio_threshold=_require(
@@ -282,6 +289,9 @@ def _parse(
             ),
             phrase_energy_multiplier=_require(
                 whisper_raw, "whisper.phrase_energy_multiplier", float
+            ),
+            backchannel_phrases=_require_str_list(
+                whisper_raw, "whisper.backchannel_phrases"
             ),
         ),
         recordings=RecordingsConfig(
@@ -375,6 +385,29 @@ def _require_str_list(section: dict[str, Any], path: str) -> tuple[str, ...]:
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
         raise ConfigError(
             f"config.yaml: '{path}' must be a list of strings, got {type(value).__name__}"
+        )
+    return tuple(value)
+
+
+def _require_int_list(section: dict[str, Any], path: str) -> tuple[int, ...]:
+    """Pull a required non-empty list-of-ints leaf at ``path`` as a tuple.
+
+    Rejects bools (``True`` is an ``int`` subclass) and empties — an empty bucket
+    list would leave the encoder with no fallback length.
+    """
+    key = path.rsplit(".", 1)[-1]
+    if key not in section:
+        raise ConfigError(f"config.yaml: missing required key '{path}'")
+    value = section[key]
+    ok = (
+        isinstance(value, list)
+        and len(value) > 0
+        and all(isinstance(v, int) and not isinstance(v, bool) for v in value)
+    )
+    if not ok:
+        raise ConfigError(
+            f"config.yaml: '{path}' must be a non-empty list of integers, "
+            f"got {type(value).__name__}"
         )
     return tuple(value)
 

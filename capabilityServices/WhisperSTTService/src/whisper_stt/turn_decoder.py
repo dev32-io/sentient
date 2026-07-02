@@ -77,9 +77,31 @@ def decode_turn(
     total_audio_seconds = 0.0
 
     for idx, audio in enumerate(supers):
-        r = stt.transcribe(audio)
         rms = rms_of(audio)
         duration_ms = (audio.size / SAMPLE_RATE) * 1000.0
+
+        # Pre-decode energy gate: near-silence never reaches Whisper. This is
+        # the primary defense against noise/silence hallucination (Whisper loops
+        # into "W W W ..." on near-silent audio, costing 6-7s per decode). Cheap
+        # RMS check skips the whole 30s-window decode.
+        if rms < cfg.rms_energy_floor:
+            kept.append(False)
+            kept_texts.append("")
+            if logger is not None:
+                logger.log(
+                    "whisper.super_decode",
+                    turn_idx=turn_idx,
+                    super_idx=idx,
+                    text="",
+                    rms=round(rms, 5),
+                    duration_ms=round(duration_ms, 1),
+                    decode_ms=0.0,
+                    dropped=True,
+                    reason="low_energy_predecode",
+                )
+            continue
+
+        r = stt.transcribe(audio)
         gate = evaluate(
             r.text, rms=rms, no_speech_prob=r.no_speech_prob,
             avg_logprob=r.avg_logprob, duration_ms=duration_ms, cfg=cfg,

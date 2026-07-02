@@ -142,10 +142,11 @@ class Server:
         )
 
     def _get_whisper(self, language: str) -> WhisperMlx:
-        """Return a Whisper view for ``language``. Cheap — shares the cached
-        model; only the per-call decode language differs."""
-        if language == DEFAULT_LANGUAGE and self._whisper_default is not None:
-            return self._whisper_default
+        """Fresh per-connection Whisper view. Cheap — the model stays warm in
+        ModelHolder (loaded once by ``_whisper_default`` at startup), so only
+        per-connection state (the auto-detect sticky-language prior) is new.
+        Per-connection isolation keeps one speaker's detected language from
+        leaking into another's session."""
         return WhisperMlx(config=self._config.whisper, language=language)
 
     def start_background(self) -> None:

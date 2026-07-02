@@ -47,6 +47,8 @@ def _write_yaml(dir_path: Path, retention_value: object) -> Path:
         whisper:
           model: "mlx-community/whisper-large-v3-turbo-8bit"
           language: "auto"
+          language_min_confidence: 0.5
+          encode_buckets_s: [5, 10, 20, 30]
           no_speech_threshold: 0.6
           logprob_threshold: -1.0
           compression_ratio_threshold: 2.4
@@ -56,6 +58,7 @@ def _write_yaml(dir_path: Path, retention_value: object) -> Path:
           hallucination_phrases: []
           hallucination_max_duration_ms: 1500
           phrase_energy_multiplier: 2.0
+          backchannel_phrases: ["hmm", "嗯"]
         recordings:
           enabled: false
         logging:

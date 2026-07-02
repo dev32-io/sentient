@@ -51,7 +51,14 @@ def evaluate(
     """Decide whether to drop this super-segment as a hallucination/noise."""
     if rms < cfg.rms_energy_floor:
         return GateResult(True, "low_energy")
-    if no_speech_prob > cfg.no_speech_threshold and avg_logprob < cfg.logprob_threshold:
+    # Independent decode-signal gates. These were previously AND-ed, but on
+    # hallucinations no_speech_prob stays ~0.0 (Whisper is sure it's speech), so
+    # the AND never fired and low-confidence junk like "You" (avg_logprob -1.99)
+    # slipped through. Whisper's own transcribe applies logprob_threshold
+    # independently — so do we now: a low-confidence decode drops on its own.
+    if avg_logprob < cfg.logprob_threshold:
+        return GateResult(True, "low_confidence")
+    if no_speech_prob > cfg.no_speech_threshold:
         return GateResult(True, "no_speech")
     norm = _normalize(text)
     phrases = {_normalize(p) for p in cfg.hallucination_phrases}

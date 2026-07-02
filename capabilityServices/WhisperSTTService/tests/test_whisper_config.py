@@ -22,6 +22,8 @@ smart_turn: {decision_threshold: 0.5, intra_op_threads: 4}
 whisper:
   model: "mlx-community/whisper-large-v3-turbo-8bit"
   language: "auto"
+  language_min_confidence: 0.5
+  encode_buckets_s: [5, 10, 20, 30]
   no_speech_threshold: 0.6
   logprob_threshold: -1.0
   compression_ratio_threshold: 2.4
@@ -31,6 +33,7 @@ whisper:
   hallucination_phrases: ["thank you", "bye"]
   hallucination_max_duration_ms: 1500
   phrase_energy_multiplier: 2.0
+  backchannel_phrases: ["hmm", "嗯"]
 recordings: {enabled: false}
 logging: {level: "info", metrics_interval_ms: 1000, retention_days: 7}
 """
@@ -39,6 +42,8 @@ logging: {level: "info", metrics_interval_ms: 1000, retention_days: 7}
     cfg = load_config(p, model_dir=tmp_path, log_dir=tmp_path, recording_dir=tmp_path)
     assert cfg.whisper.model == "mlx-community/whisper-large-v3-turbo-8bit"
     assert cfg.whisper.language == "auto"
+    assert cfg.whisper.language_min_confidence == 0.5
+    assert cfg.whisper.encode_buckets_s == (5, 10, 20, 30)
     assert cfg.whisper.no_speech_threshold == 0.6
     assert cfg.whisper.compression_ratio_threshold == 2.4
     assert cfg.whisper.min_pause_ms == 2000
@@ -46,3 +51,4 @@ logging: {level: "info", metrics_interval_ms: 1000, retention_days: 7}
     assert cfg.whisper.hallucination_phrases == ("thank you", "bye")
     assert cfg.whisper.hallucination_max_duration_ms == 1500
     assert cfg.whisper.phrase_energy_multiplier == 2.0
+    assert cfg.whisper.backchannel_phrases == ("hmm", "嗯")

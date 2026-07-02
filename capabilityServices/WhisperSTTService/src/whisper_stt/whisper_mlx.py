@@ -4,19 +4,23 @@ Drop-in replacement for the SenseVoice backend. Same call shape
 (``transcribe(audio_f32) -> TranscriptResult``) so the segment decoder and
 turn finalizer are unchanged except that ``emotion``/``event`` are always "".
 
-Language: mlx_whisper takes the language as a decode-time kwarg (unlike
-SenseVoice, which baked it per-recognizer). We map the service "auto" sentinel
-to ``None`` (whisper autodetects); "en"/"zh" pass through.
+Language: "en"/"zh" force the decode language (no detection). "auto" runs
+constrained detection — argmax over ONLY en/zh (full 99-language autodetect
+mislabels short clips, e.g. "Halo?" -> Indonesian). Short/low-confidence clips
+fall back to a per-connection sticky prior (last confident detection).
 
-Hallucination guards: Whisper invents text on short/near-silent clips. We pass
-``no_speech_threshold`` / ``logprob_threshold`` / ``compression_ratio_threshold``
-to ``transcribe`` (it internally blanks failing segments) and rely on the
-finalizer's existing min-duration + text-content gate.
+Speed: short clips are padded to the smallest configured bucket (e.g. 5s), not
+30s, and the encoder's sinusoidal positional embedding is cropped to match (via
+a one-time monkeypatch, _install_flexible_encoder). The encoder cost scales
+super-linearly with context, so a 5s bucket is a large win over the 30s default.
 
-Model loading: ``mlx_whisper.transcribe`` caches the loaded model per repo id
-(``functools.lru_cache`` on its internal ``load_models``), so a per-connection
-``WhisperMlx`` for the same repo shares one in-memory model. Weights are fetched
-from HuggingFace on first use and cached under ~/.cache/huggingface.
+Hallucination guards: the near-silence RMS gate now lives BEFORE decode
+(turn_decoder skips Whisper on quiet super-segments), so this backend just
+surfaces raw ``no_speech_prob`` / ``avg_logprob`` for the downstream gate.
+
+Model loading: ``ModelHolder`` caches the loaded model per repo id, so fresh
+per-connection ``WhisperMlx`` instances share one warm in-memory model. Weights
+are fetched from HuggingFace on first use and cached under ~/.cache/huggingface.
 """
 
 from __future__ import annotations
@@ -28,10 +32,19 @@ from functools import lru_cache
 from pathlib import Path
 
 import mlx.core as mx
+import mlx.nn as nn
 import mlx_whisper
 import numpy as np
 from huggingface_hub import snapshot_download
-from mlx_whisper.audio import N_FRAMES, N_SAMPLES, log_mel_spectrogram, pad_or_trim
+from mlx_whisper.audio import (
+    FRAMES_PER_SECOND,
+    HOP_LENGTH,
+    N_FRAMES,
+    N_SAMPLES,
+    log_mel_spectrogram,
+    pad_or_trim,
+)
+from mlx_whisper.decoding import DecodingOptions, decode, detect_language
 from mlx_whisper.transcribe import ModelHolder
 
 from .config import WhisperConfig
@@ -39,6 +52,11 @@ from .config import WhisperConfig
 log = logging.getLogger("stt-service.whisper")
 
 SAMPLE_RATE = 16_000
+# MLX compute dtype for the encoder + decode. large-v3-turbo's encoder is the
+# full large-v3 encoder (expensive); its decoder is tiny (4 layers). Running the
+# encoder ONCE and reusing the features for both language detection and decode
+# is what keeps turbo fast — see WhisperMlx._single_pass.
+_DTYPE = mx.float16
 AUTO_LANGUAGE = "auto"
 VALID_LANGUAGES: tuple[str, ...] = ("auto", "en", "zh")
 # When language is "auto", constrain detection to the concrete supported set
@@ -138,6 +156,53 @@ def _pick_constrained_language(probs: dict, candidates: tuple[str, ...]) -> str:
     return max(candidates, key=lambda code: float(probs.get(code, 0.0)))
 
 
+def _pick_bucket_frames(n_samples: int, buckets: tuple[int, ...]) -> int:
+    """Smallest bucket (in mel frames) that fits ``n_samples`` of audio.
+
+    Whisper pads every clip to 30s (N_FRAMES) — wasteful for short turns, since
+    the encoder's cost is ~O(ctx^2). We instead pad to the smallest configured
+    bucket that still holds the real audio (see _install_flexible_encoder for the
+    matching pos-embedding crop). ``buckets`` is ascending, each <= N_FRAMES.
+    Falls back to N_FRAMES if the audio exceeds every bucket.
+    """
+    content_frames = -(-n_samples // HOP_LENGTH)  # ceil: real mel frames needed
+    for frames in buckets:
+        if frames >= content_frames:
+            return frames
+    return N_FRAMES
+
+
+_ENCODER_PATCHED = False
+
+
+def _install_flexible_encoder() -> None:
+    """Monkeypatch AudioEncoder.__call__ to crop the positional embedding to the
+    input length. Idempotent; safe to call per-decode.
+
+    mlx's ``AudioEncoder.__call__`` hard-asserts the full 30s ctx. Whisper's
+    encoder uses SINUSOIDAL (fixed, not learned) positional embeddings — row k is
+    position k regardless of total length — so a K-row slice is exactly the
+    embedding for a K-length sequence, and convolutions are length-agnostic. This
+    lets detect_language / decode encode a sub-30s (bucketed) mel for a large
+    speedup. No-op for full 30s inputs (crop [:1500] == the whole thing).
+    """
+    global _ENCODER_PATCHED
+    if _ENCODER_PATCHED:
+        return
+    from mlx_whisper.whisper import AudioEncoder
+
+    def _flexible_call(self, x: mx.array) -> mx.array:
+        x = nn.gelu(self.conv1(x))
+        x = nn.gelu(self.conv2(x))
+        x = x + self._positional_embedding[: x.shape[1]]
+        for block in self.blocks:
+            x, _, _ = block(x)
+        return self.ln_post(x)
+
+    AudioEncoder.__call__ = _flexible_call
+    _ENCODER_PATCHED = True
+
+
 class WhisperMlx:
     """One decode-language view over the MLX Whisper model.
 
@@ -156,6 +221,16 @@ class WhisperMlx:
         self._config = config
         self._language = language
         self._decode_language = _whisper_language(language)
+        # Ascending, even (s*100), capped at N_FRAMES. Even → conv2 (stride 2)
+        # yields an integer ctx that the sinusoidal pos-embedding crop matches.
+        self._encode_buckets: tuple[int, ...] = tuple(
+            sorted({min(s * FRAMES_PER_SECOND, N_FRAMES) for s in config.encode_buckets_s})
+        )
+        # Per-connection sticky prior: last confidently-detected language. Used
+        # as the fallback for short / low-confidence auto-detect clips. Must NOT
+        # be shared across connections (server hands each connection its own
+        # WhisperMlx) — otherwise one speaker's language leaks into another's.
+        self._sticky_lang: str | None = None
 
     @property
     def language(self) -> str:
@@ -169,22 +244,98 @@ class WhisperMlx:
         """Force the model to load now by decoding 100 ms of silence."""
         self.transcribe(np.zeros(SAMPLE_RATE // 10, dtype=np.float32))
 
-    def _resolve_language(self, audio: np.ndarray) -> str:
-        """Detect the language constrained to AUTO_CANDIDATE_LANGUAGES (en/zh).
+    def _bucketed_mel(self, model, audio: np.ndarray) -> mx.array:
+        """Log-mel padded to the smallest bucket that holds the audio (not 30s).
 
-        Reuses the same cached model instance ``mlx_whisper.transcribe`` uses
-        (ModelHolder), so no extra model load — one detection encoder pass,
-        then the caller forces the resolved language (skipping mlx_whisper's
-        own unconstrained full-99 autodetect).
+        Fed to detect_language / decode; the flexible encoder crops the
+        positional embedding to match (see _install_flexible_encoder). For >30s
+        audio the bucket falls back to N_FRAMES (first 30s window).
         """
-        _ensure_mlx_weight_alias(self._config.model)
-        model = ModelHolder.get_model(self._config.model, mx.float16)
         mel = log_mel_spectrogram(audio, n_mels=model.dims.n_mels, padding=N_SAMPLES)
-        mel_segment = pad_or_trim(mel, N_FRAMES, axis=-2).astype(mx.float16)
-        _, probs = model.detect_language(mel_segment)
-        chosen = _pick_constrained_language(probs, AUTO_CANDIDATE_LANGUAGES)
-        log.debug("whisper.lang_detect resolved=%s", chosen)
-        return chosen
+        n_frames = _pick_bucket_frames(int(audio.size), self._encode_buckets)
+        return pad_or_trim(mel, n_frames, axis=-2).astype(_DTYPE)
+
+    def _detect_constrained(self, model, mel: mx.array) -> str:
+        """Detect language (constrained to en/zh) from a bucketed mel.
+
+        Below ``language_min_confidence`` the winner prob is untrustworthy
+        (short clip) — fall back to the sticky prior. On a confident pick,
+        update the prior.
+        """
+        _, probs = detect_language(model, mel)
+        winner = _pick_constrained_language(probs, AUTO_CANDIDATE_LANGUAGES)
+        confidence = float(probs.get(winner, 0.0))
+        if confidence < self._config.language_min_confidence and self._sticky_lang:
+            log.debug(
+                "whisper.lang_detect low_conf winner=%s conf=%.3f sticky=%s",
+                winner, confidence, self._sticky_lang,
+            )
+            return self._sticky_lang
+        self._sticky_lang = winner
+        log.debug("whisper.lang_detect winner=%s conf=%.3f", winner, confidence)
+        return winner
+
+    def _single_pass(self, model, audio: np.ndarray) -> tuple[str, float, float]:
+        """≤30s decode on a bucketed mel: (auto) detect + decode.
+
+        detect_language and decode each re-encode the bucketed mel via the
+        flexible encoder — two SHORT passes, still far cheaper than one full 30s
+        pass because the encoder cost scales super-linearly with context length.
+        """
+        _install_flexible_encoder()
+        mel = log_mel_spectrogram(audio, n_mels=model.dims.n_mels, padding=N_SAMPLES)
+        n_frames = _pick_bucket_frames(int(audio.size), self._encode_buckets)
+        bucket_mel = pad_or_trim(mel, n_frames, axis=-2).astype(_DTYPE)
+        language = self._decode_language
+        if language is None:
+            language = self._detect_constrained(model, bucket_mel)
+        options = DecodingOptions(
+            task="transcribe",
+            language=language,
+            temperature=0.0,
+            without_timestamps=True,
+            fp16=True,
+            prompt=(self._config.initial_prompt or None),
+        )
+        result = decode(model, bucket_mel, options)
+        # Short-context (bucketed) decode can repeat on out-of-distribution
+        # lengths. Whisper's own degeneracy signal is a high gzip
+        # compression_ratio — fall back to the full 30s window for correctness on
+        # the rare degenerate case (no-op when already at N_FRAMES; nan-safe).
+        if n_frames < N_FRAMES and result.compression_ratio > self._config.compression_ratio_threshold:
+            log.debug(
+                "whisper.bucket_fallback ratio=%.2f n_frames=%d -> 30s",
+                result.compression_ratio, n_frames,
+            )
+            full_mel = pad_or_trim(mel, N_FRAMES, axis=-2).astype(_DTYPE)
+            result = decode(model, full_mel, options)
+        return result.text.strip(), float(result.no_speech_prob), float(result.avg_logprob)
+
+    def _windowed(self, audio: np.ndarray) -> tuple[str, float, float]:
+        """>30s fallback: high-level transcribe with multi-window seek.
+
+        Rare (a super-segment with no >=min_pause_ms gap for 30s+). Correctness
+        over speed. Auto detection is constrained to en/zh via the first window.
+        """
+        _install_flexible_encoder()
+        language = self._decode_language
+        if language is None:
+            model = ModelHolder.get_model(self._config.model, _DTYPE)
+            language = self._detect_constrained(model, self._bucketed_mel(model, audio))
+        result = mlx_whisper.transcribe(
+            audio,
+            path_or_hf_repo=self._config.model,
+            language=language,
+            condition_on_previous_text=False,
+            no_speech_threshold=self._config.no_speech_threshold,
+            logprob_threshold=self._config.logprob_threshold,
+            compression_ratio_threshold=self._config.compression_ratio_threshold,
+            initial_prompt=(self._config.initial_prompt or None),
+            word_timestamps=False,
+            verbose=None,
+        )
+        no_speech_prob, avg_logprob = _extract_signals(result)
+        return (result.get("text") or "").strip(), no_speech_prob, avg_logprob
 
     def transcribe(self, audio: np.ndarray) -> TranscriptResult:
         """Decode a finalized utterance. ``audio`` = 1-D float32 @ 16 kHz."""
@@ -196,27 +347,14 @@ class WhisperMlx:
         _ensure_mlx_weight_alias(self._config.model)
         audio_seconds = audio.size / SAMPLE_RATE
         t0 = time.monotonic()
-        # Resolve "auto" (self._decode_language is None) to a concrete language
-        # constrained to en/zh; forced languages pass straight through.
-        decode_language = self._decode_language
-        if decode_language is None:
-            decode_language = self._resolve_language(audio)
-        result = mlx_whisper.transcribe(
-            audio,
-            path_or_hf_repo=self._config.model,
-            language=decode_language,
-            condition_on_previous_text=False,
-            no_speech_threshold=self._config.no_speech_threshold,
-            logprob_threshold=self._config.logprob_threshold,
-            compression_ratio_threshold=self._config.compression_ratio_threshold,
-            initial_prompt=(self._config.initial_prompt or None),
-            word_timestamps=False,
-            verbose=None,
-        )
+        if audio.size > N_SAMPLES:
+            text, no_speech_prob, avg_logprob = self._windowed(audio)
+        else:
+            model = ModelHolder.get_model(self._config.model, _DTYPE)
+            text, no_speech_prob, avg_logprob = self._single_pass(model, audio)
         decode_ms = (time.monotonic() - t0) * 1000.0
-        no_speech_prob, avg_logprob = _extract_signals(result)
         return TranscriptResult(
-            text=(result.get("text") or "").strip(),
+            text=text,
             emotion="",
             event="",
             decode_ms=decode_ms,
