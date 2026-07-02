@@ -21,17 +21,58 @@ from HuggingFace on first use and cached under ~/.cache/huggingface.
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 
 import mlx_whisper
 import numpy as np
+from huggingface_hub import snapshot_download
 
 from .config import WhisperConfig
+
+log = logging.getLogger("stt-service.whisper")
 
 SAMPLE_RATE = 16_000
 AUTO_LANGUAGE = "auto"
 VALID_LANGUAGES: tuple[str, ...] = ("auto", "en", "zh")
+
+# mlx_whisper 0.4.x's model loader (mlx_whisper.load_models.load_model) resolves
+# the quantized weights by the legacy filenames below and crashes with
+# "[load_npz] Input must be a zip file" if neither is present. Several current
+# mlx-community repos (e.g. whisper-large-v3-turbo-8bit) ship the weights as
+# ``model.safetensors`` instead, which the loader does not recognize. We bridge
+# the gap by aliasing the modern name to the legacy one in the snapshot dir
+# before load. Internal loader detail — code constant, not user config.
+_LEGACY_WEIGHT_NAMES: tuple[str, ...] = ("weights.safetensors", "weights.npz")
+_MODERN_WEIGHT_NAME = "model.safetensors"
+
+
+@lru_cache(maxsize=None)
+def _ensure_mlx_weight_alias(model_repo: str) -> None:
+    """Make an mlx-community ``model.safetensors`` repo loadable by mlx_whisper.
+
+    Idempotent and cached (runs once per repo id). No-op when the repo already
+    ships a legacy-named weights file, or when neither layout is present (let
+    mlx_whisper raise its own clear error in that case).
+    """
+    snapshot = Path(snapshot_download(model_repo))
+    if any((snapshot / name).exists() for name in _LEGACY_WEIGHT_NAMES):
+        return
+    modern = snapshot / _MODERN_WEIGHT_NAME
+    if not modern.exists():
+        return
+    alias = snapshot / _LEGACY_WEIGHT_NAMES[0]
+    try:
+        alias.symlink_to(modern.name)  # relative link within the snapshot dir
+    except FileExistsError:
+        return
+    log.info(
+        "whisper.weights_alias created %s -> %s in %s",
+        alias.name, modern.name, snapshot,
+    )
 
 
 @dataclass
@@ -95,6 +136,7 @@ class WhisperMlx:
         if audio.dtype != np.float32:
             audio = audio.astype(np.float32, copy=False)
 
+        _ensure_mlx_weight_alias(self._config.model)
         audio_seconds = audio.size / SAMPLE_RATE
         t0 = time.monotonic()
         result = mlx_whisper.transcribe(
