@@ -124,7 +124,7 @@ describe("sttConfigSchema", () => {
   it("applies defaults", () => {
     const result = sttConfigSchema.parse({ provider: "local-stt" });
     expect(result.url).toBe("ws://stt-service:8766");
-    expect(result.language).toBe("en");
+    expect(result.language).toBe("auto");
     expect(result.input_sample_rate).toBe(48000);
     expect(result.silence_idle_gap_ms).toBe(200);
     expect(result.tts_echo_cooldown_ms).toBe(2500);

@@ -58,7 +58,7 @@ tts:
 `;
     const config = loadGatewayConfigFromString(minimalYaml);
     expect(config.stt.url).toBe("ws://stt-service:8766");
-    expect(config.stt.language).toBe("en");
+    expect(config.stt.language).toBe("auto");
     expect(config.stt.connect_timeout_ms).toBe(10000);
   });
 
