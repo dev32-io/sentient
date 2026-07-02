@@ -15,6 +15,17 @@ DATA="$HOME/.sentient/whisper-stt"
 cmd_install() {
   mkdir -p "$DATA/config" "$DATA/logs" "$DATA/recordings" "$DATA/models" "$HOME/Library/LaunchAgents"
   [ -f "$DATA/config/config.yaml" ] || cp "$SVC_DIR/config/config.example.yaml" "$DATA/config/config.yaml"
+  # Homebrew preflight — opuslib loads native libopus via ctypes at import
+  # time, so `python -m whisper_stt` crashes at import if libopus is absent
+  # (even for PCM16-only use). ffmpeg is used by the Phase-2 smoke. Idempotent:
+  # no-op when already installed, and a soft warning (not a hard fail) when
+  # Homebrew is missing so the operator can install the libs by hand.
+  if command -v brew >/dev/null 2>&1; then
+    brew list opus   >/dev/null 2>&1 || brew install opus
+    brew list ffmpeg >/dev/null 2>&1 || brew install ffmpeg
+  else
+    echo "WARN: Homebrew not found — install libopus + ffmpeg manually (opuslib needs libopus at import)." >&2
+  fi
   [ -d "$VENV" ] || python3 -m venv "$VENV"
   "$VENV/bin/pip" install -q -r "$SVC_DIR/requirements.txt"
   PYTHONPATH="$SVC_DIR/src" "$VENV/bin/python" "$SVC_DIR/scripts/download_models.py" "$DATA/models"

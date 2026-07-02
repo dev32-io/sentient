@@ -41,5 +41,8 @@ pyyaml>=6
 huggingface_hub>=0.24
 
 # Opus decoder for ESP32 cube uplink (pure-Python ctypes wrapper around
-# libopus; system libopus0 must be installed — see Dockerfile apt step).
+# libopus). opuslib loads native libopus via ctypes AT IMPORT TIME, so the
+# system libopus must be present or `import opuslib` crashes — even for
+# PCM16-only use. On the native Apple-Silicon deploy this is `brew install
+# opus`, done by the launcher preflight in deploy/mac-prod/native/whisper-stt.sh.
 opuslib>=3.0.1
