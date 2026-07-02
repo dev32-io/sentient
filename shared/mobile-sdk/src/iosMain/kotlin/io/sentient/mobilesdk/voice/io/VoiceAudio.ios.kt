@@ -42,7 +42,7 @@ import platform.AVFAudio.AVAudioPlayerNode
 import platform.AVFAudio.AVAudioSession
 import platform.AVFAudio.AVAudioSessionCategoryOptionDefaultToSpeaker
 import platform.AVFAudio.AVAudioSessionCategoryPlayAndRecord
-import platform.AVFAudio.AVAudioSessionModeVoiceChat
+import platform.AVFAudio.AVAudioSessionModeVideoChat
 import platform.AVFAudio.AVAudioSessionPortOverrideSpeaker
 import platform.AVFAudio.setActive
 import platform.Foundation.NSError
@@ -56,9 +56,20 @@ private const val OUTPUT_BUS = 0uL
 private const val TAP_BUFFER_FRAMES = 1024u
 private const val MONO_CHANNELS = 1u
 
+// Software mic gain applied to captured PCM16 in the tap. iOS delivers far-field
+// speech quiet (measured server rms 0.003–0.08 vs webui 0.03–0.2), so we boost
+// deterministically here instead of fighting iOS's session-mode processing.
+// Start ×4 (far-field ~0.01→0.04, close speech stays under hard-clip); tune from
+// the "capture-level" log below. 1.0f = no boost.
+private const val MIC_CAPTURE_GAIN = 4.0f
+// Throttle the capture-level meter log — the tap fires ~10×/s, so every 50 ≈ 5s.
+private const val METER_LOG_EVERY = 50
+
 /**
  * ONE AVAudioEngine serving every (mic, playback) state. session = .playAndRecord +
- * .voiceChat, activated on first non-idle configure, deactivated at idle/shutdown.
+ * .videoChat (one stable VoIP mode that survives reconfigure; capture level handled by
+ * MIC_CAPTURE_GAIN in the tap, AEC by the per-cell VPIO toggle — see activateSession).
+ * Activated on first non-idle configure, deactivated at idle/shutdown.
  * configure() diffs [voiceAudioGraph] against the current graph: stop → reconfigure
  * (tap/player/VPIO) → ensureRunning. VPIO enabled ONLY in the mic+playback cell, and
  * only inside a stop→reconfigure→start (never on a live engine) → always starts on a
@@ -156,16 +167,21 @@ class IosVoiceAudio : VoiceAudio {
         log.warn("configure-failed", mapOf("reason" to reason))
     }
 
-    /** Activate the .playAndRecord + .voiceChat session. Returns true only when BOTH
-     *  setCategory + setActive succeed (I1: a failure here must abort configure, not
-     *  silently proceed). Speaker override is best-effort — a failure there does NOT
-     *  fail activation (audio still routes through the default route). */
+    /** Activate .playAndRecord + .videoChat — ONE stable VoIP mode (no fragile per-cell
+     *  mode switching). NOTE: .measurement was tried for its raw far-field capture but
+     *  it does NOT survive the engine stop→reconfigure→start — after one TTS turn the
+     *  tap AND playback went dead (round 2 silent). .videoChat is a VoIP mode (like the
+     *  original .voiceChat) that reconfigures cleanly, is hands-free-tuned for far-field,
+     *  and is VPIO-compatible for barge-in AEC. iOS still delivers far-field quiet, so
+     *  the CAPTURE LEVEL is handled deterministically by MIC_CAPTURE_GAIN in the tap.
+     *  Returns true only when BOTH setCategory + setActive succeed (I1 abort); speaker
+     *  override is best-effort. */
     private fun activateSession(): Boolean = memScoped {
         val s = AVAudioSession.sharedInstance()
         val errVar = alloc<kotlinx.cinterop.ObjCObjectVar<NSError?>>()
         val categorySet = s.setCategory(
             AVAudioSessionCategoryPlayAndRecord,
-            mode = AVAudioSessionModeVoiceChat,
+            mode = AVAudioSessionModeVideoChat,
             options = AVAudioSessionCategoryOptionDefaultToSpeaker,
             error = errVar.ptr,
         )
@@ -178,11 +194,11 @@ class IosVoiceAudio : VoiceAudio {
             log.warn("session-activate-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
             return@memScoped false
         }
-        // Force the LOUD bottom speaker (.voiceChat mode otherwise routes to the earpiece).
-        // Canonical speakerphone toggle; keeps voice-processing AEC intact for barge-in.
+        // Force the LOUD speaker route. Canonical speakerphone toggle; keeps
+        // voice-processing AEC intact for barge-in.
         val routed = s.overrideOutputAudioPort(AVAudioSessionPortOverrideSpeaker, errVar.ptr)
         if (!routed) log.warn("session-speaker-override-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
-        log.debug("session-active", mapOf("category" to "playAndRecord", "mode" to "voiceChat", "override" to "speaker"))
+        log.debug("session-active", mapOf("category" to "playAndRecord", "mode" to "videoChat", "override" to "speaker"))
         true
     }
 
@@ -195,11 +211,21 @@ class IosVoiceAudio : VoiceAudio {
      * Apply the graph diff to the ONE engine. VPIO toggled ONLY here (engine is
      * stopped above), so it always starts on a clean session. Player is always
      * connected to mainMixerNode so it never starts "disconnected" (interim 2633b4e).
+     *
+     * ``setInputVoiceProcessing`` REBUILDS the input audio unit, which invalidates any
+     * live mic tap — so a mic that STAYS on across a VPIO toggle needs its tap
+     * re-installed. The plain "install only when newly mic" check missed this (inputTap
+     * stays true), which left the mic silently dead after the first TTS round (VPIO
+     * flips on for mic+playback, then off again → tap killed twice, never re-added).
      */
     private fun applyGraph(g: VoiceAudioGraph, rate: Int) {
-        if (g.vpio != current.vpio) setInputVoiceProcessing(g.vpio)
-        if (g.inputTap && !current.inputTap) installTap()
-        if (!g.inputTap && current.inputTap) removeTap()
+        val vpioChanged = g.vpio != current.vpio
+        if (vpioChanged) setInputVoiceProcessing(g.vpio)
+        when {
+            g.inputTap && !current.inputTap -> installTap()
+            g.inputTap && vpioChanged -> { removeTap(); installTap() }  // VPIO rebuilt the unit → re-tap
+            !g.inputTap && current.inputTap -> removeTap()
+        }
         if (g.player && !current.player) attachPlayer(rate)
         if (!g.player && current.player) detachPlayer()
     }
@@ -253,7 +279,32 @@ class IosVoiceAudio : VoiceAudio {
         if (buffer == null) return
         capturedCount += 1
         val bytes = conv.convert(buffer) ?: return
-        deliver(pcm16LeToShorts(bytes))
+        val shorts = pcm16LeToShorts(bytes)
+        meterAndGain(shorts)
+        deliver(shorts)
+    }
+
+    /** Log the RAW capture RMS (throttled — for gain tuning), then apply
+     *  MIC_CAPTURE_GAIN in-place, clamped to Int16. iOS delivers far-field speech
+     *  quiet; this normalizes it up to webui's level so one server rms floor fits
+     *  both. rmsRaw is an aggregate energy level, not content — safe to log. */
+    private fun meterAndGain(shorts: ShortArray) {
+        if (shorts.isEmpty()) return
+        if (capturedCount == 1 || capturedCount % METER_LOG_EVERY == 0) {
+            var sum = 0.0
+            for (s in shorts) { val f = s / 32768.0; sum += f * f }
+            val rmsRaw = kotlin.math.sqrt(sum / shorts.size)
+            log.debug("capture-level", mapOf("rmsRaw" to rmsRaw, "gain" to MIC_CAPTURE_GAIN, "frames" to shorts.size))
+        }
+        if (MIC_CAPTURE_GAIN == 1.0f) return
+        for (i in shorts.indices) {
+            val v = (shorts[i] * MIC_CAPTURE_GAIN).toInt()
+            shorts[i] = when {
+                v > Short.MAX_VALUE.toInt() -> Short.MAX_VALUE
+                v < Short.MIN_VALUE.toInt() -> Short.MIN_VALUE
+                else -> v.toShort()
+            }
+        }
     }
 
     /** trySend the frame; on a full buffer drop the NEWEST + count it (throttled WARN). */
