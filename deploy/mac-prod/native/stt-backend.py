@@ -7,7 +7,8 @@ native-whisper:
 docker-sensevoice:
   - stt.url                    -> ws://sentient-stt-service:8766
   - companions.stt_health_url  -> http://sentient-stt-service:8767/health
-  - (does NOT re-add the stt-service block; restore it from git if it was removed)
+  - re-add managed_services.stt-service (canonical block) if it was removed,
+    so a native-whisper -> docker-sensevoice migration is fully reversible
 
 Dry-run by default (prints a unified diff). Pass --apply to write.
 
@@ -31,6 +32,23 @@ URLS = {
     NATIVE: ("ws://host.docker.internal:8768", "http://host.docker.internal:8769/health"),
     DOCKER: ("ws://sentient-stt-service:8766", "http://sentient-stt-service:8767/health"),
 }
+
+# Canonical managed_services.stt-service block — the SenseVoice sibling the
+# orchestrator spawns for the docker backend. MUST stay in sync with the seed
+# gateway/config.yaml. Kept as a YAML snippet (not a dict) so ruamel emits it
+# with the same flow-list style as the rest of the config, keeping the diff
+# surgical when re-adding it on a native -> docker migration.
+STT_SERVICE_SNIPPET = """\
+stt-service:
+  template: stt-service.yaml
+  allowed_images: ["sentient/stt-service:local"]
+  networks: ["sentient-internal"]
+  healthcheck:
+    url: "http://sentient-stt-service:8767/health"
+    timeout_ms: 60000
+  depends_on: []
+  optional: false
+"""
 
 
 def _load_yaml():
@@ -64,10 +82,17 @@ def transform(backend: str, text: str) -> str:
     if "companions" in doc and "stt_health_url" in doc["companions"]:
         doc["companions"]["stt_health_url"] = health_url
 
+    ms = doc.get("managed_services")
     if backend == NATIVE:
-        ms = doc.get("managed_services")
+        # Host launchd service owns STT — the orchestrator must NOT manage a
+        # SenseVoice container.
         if ms is not None and "stt-service" in ms:
             del ms["stt-service"]
+    elif backend == DOCKER:
+        # Re-add the SenseVoice sibling so the orchestrator spawns it. Idempotent:
+        # no-op when already present (leaves any operator edits untouched).
+        if ms is not None and "stt-service" not in ms:
+            ms["stt-service"] = yaml.load(STT_SERVICE_SNIPPET)["stt-service"]
 
     buf = io.StringIO()
     yaml.dump(doc, buf)

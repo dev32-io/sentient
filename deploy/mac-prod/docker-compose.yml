@@ -8,9 +8,13 @@
 #
 # Structure mirrors the old Pi prod model:
 #   - gateway is the only long-running compose service.
-#   - hermes / stt-service / MCPs / signal-cli are `build-only` siblings;
-#     the gateway's orchestrator creates/starts/recreates them at runtime
-#     via /var/run/docker.sock. Compose only needs their images present.
+#   - hermes / MCPs / signal-cli are `build-only` siblings; the gateway's
+#     orchestrator creates/starts/recreates them at runtime via
+#     /var/run/docker.sock. Compose only needs their images present.
+#   - stt-service (SenseVoice) is gated behind the `stt-docker` profile — it is
+#     built/managed ONLY when deploy.conf selects the docker-sensevoice backend.
+#     The default (native-whisper) runs STT as a host launchd service instead;
+#     see deploy.conf + native/ + deploy/setup-prod.py.
 #
 # macOS-specific vs the old Pi compose:
 #   - /data/supervisor is a NAMED VOLUME, not a bind. Docker Desktop's
@@ -160,12 +164,18 @@ services:
   # compose services. `profiles: build-only` keeps them out of `up` while
   # `docker compose --profile build-only build` produces them.
   # ---------------------------------------------------------------------------
+  # SenseVoice STT — only relevant to the docker-sensevoice backend. Gated
+  # behind its own `stt-docker` profile (NOT `build-only`) so the ~10-min
+  # image bake is skipped when deploy.conf selects native-whisper. setup-prod.py
+  # adds `--profile stt-docker` to the build only for the docker backend; with
+  # native-whisper the gateway config drops managed_services.stt-service, so the
+  # orchestrator never spawns this container even if the image happens to exist.
   stt-service:
     build:
       context: ../../capabilityServices/STTService
     image: sentient/stt-service:local
     pull_policy: never
-    profiles: ["build-only"]
+    profiles: ["stt-docker"]
 
   hermes:
     build:

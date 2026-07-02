@@ -3,12 +3,25 @@
 Sentient — production setup helper.
 
 Walks the operator through the manual host steps (docker access, hermes
-host user, .env), then offers to build all images locally and clear out
-old orchestrator-managed containers. Stops short of `docker compose up`
-on purpose — the operator decides when to bring services online.
+host user, .env), reconciles the STT backend selected in deploy.conf
+(native-whisper | docker-sensevoice), then offers to build images locally
+and clear out old orchestrator-managed containers. Stops short of
+`docker compose up` on purpose — the operator decides when to bring
+services online.
 
-Idempotent: re-run any time after `git pull` to refresh images. Existing
-state (~/.sentient/, secrets, gateway-data) is never touched.
+STT reconcile (deploy.conf-driven, idempotent — installs a fresh host OR
+migrates an existing one between backends):
+  - seeds the mounted gateway config from gateway/config.yaml only if absent;
+    an existing config is patched surgically (comment-preserving), never
+    clobbered from the template.
+  - patches stt.url / stt_health_url / managed_services.stt-service to match.
+  - native-whisper: installs + starts the host Whisper launchd service and
+    skips the SenseVoice image bake; docker-sensevoice: builds the SenseVoice
+    image and stops any lingering native service.
+
+Idempotent: re-run any time after `git pull` to refresh images / re-sync the
+backend. Persistent state under ~/.sentient/ (secrets, gateway-data, brain)
+is never wiped — only the gateway config is patched in place.
 
 Usage:
     python3 deploy/setup-prod.py            # targets deploy/mac-prod (production)
@@ -37,6 +50,27 @@ COMPOSE_FILE = DEPLOY_DIR / "docker-compose.yml"
 ENV_FILE = DEPLOY_DIR / ".env"
 ENV_EXAMPLE = DEPLOY_DIR / ".env.example"
 SENTIENT_CERT_DIR = Path.home() / ".sentient" / "certs"
+
+# --- STT backend selection (deploy.conf-driven) -----------------------------
+# deploy.conf is the single source of truth for which STT backend the gateway
+# dials. setup-prod.py reconciles all three moving parts to match it:
+#   1. the mounted gateway config (stt.url / stt_health_url / managed_services)
+#   2. the native Whisper launchd service
+#   3. which STT image compose builds
+NATIVE_BACKEND = "native-whisper"
+DOCKER_BACKEND = "docker-sensevoice"
+VALID_BACKENDS = (NATIVE_BACKEND, DOCKER_BACKEND)
+DEPLOY_CONF = DEPLOY_DIR / "deploy.conf"
+STT_BACKEND_SCRIPT = DEPLOY_DIR / "native" / "stt-backend.py"
+WHISPER_LAUNCHER = DEPLOY_DIR / "native" / "whisper-stt.sh"
+# Tooling venv for the config patcher (stt-backend.py needs ruamel.yaml). Kept
+# out of system python to avoid PEP 668 externally-managed-environment errors.
+TOOLING_VENV = DEPLOY_DIR / "native" / ".venv"
+# The gateway reads its config from this host path (bind-mounted into the
+# container at /app/config/config.yaml). Seeded from the repo default on a
+# fresh host, then patched in place to match the selected backend.
+MOUNTED_CONFIG = Path.home() / ".sentient" / "gateway" / "config" / "config.yaml"
+SEED_CONFIG = REPO_ROOT / "gateway" / "config.yaml"
 
 # ANSI colors — works in any modern terminal; degrades gracefully if piped.
 RESET = "\033[0m"
@@ -185,29 +219,180 @@ def check_env() -> bool:
     return True
 
 
+# --- STT backend reconcile (deploy.conf-driven) -----------------------------
+#
+# deploy.conf's STT_BACKEND drives three things that must agree:
+#   1. the mounted gateway config (stt.url / stt_health_url / managed_services)
+#   2. the native Whisper launchd service (running iff native-whisper)
+#   3. which STT image compose builds (SenseVoice iff docker-sensevoice)
+# Each helper is idempotent, so the same run installs a fresh host or migrates
+# an existing one between backends.
+
+
+def read_backend() -> Optional[str]:
+    """Parse STT_BACKEND from deploy.conf. Returns None on missing/invalid."""
+    if not DEPLOY_CONF.exists():
+        fail(f"{DEPLOY_CONF.relative_to(REPO_ROOT)} missing — cannot select STT backend")
+        return None
+    backend: Optional[str] = None
+    for line in DEPLOY_CONF.read_text().splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        if key.strip() == "STT_BACKEND":
+            backend = value.strip().strip("\"'")
+    if backend not in VALID_BACKENDS:
+        fail(
+            f"STT_BACKEND={backend!r} invalid in {DEPLOY_CONF.relative_to(REPO_ROOT)}; "
+            f"expected one of {VALID_BACKENDS}"
+        )
+        return None
+    ok(f"STT backend: {backend}")
+    return backend
+
+
+def _module_present(python: str, module: str) -> bool:
+    return run([python, "-c", f"import {module}"], check=False).returncode == 0
+
+
+def ensure_ruamel_python() -> Optional[str]:
+    """Return a python interpreter with ruamel.yaml available (for stt-backend.py).
+
+    Prefers the interpreter running us; falls back to a dedicated tooling venv
+    so we never touch the system site-packages (PEP 668 externally-managed).
+    """
+    if _module_present(sys.executable, "ruamel.yaml"):
+        return sys.executable
+    venv_python = TOOLING_VENV / "bin" / "python"
+    if not venv_python.exists():
+        info("Creating deploy tooling venv (ruamel.yaml for the config patcher)")
+        try:
+            run([sys.executable, "-m", "venv", str(TOOLING_VENV)])
+        except subprocess.CalledProcessError as e:
+            fail(f"could not create tooling venv: {e.stderr.strip()}")
+            return None
+    if not _module_present(str(venv_python), "ruamel.yaml"):
+        try:
+            run([str(venv_python), "-m", "pip", "install", "-q", "ruamel.yaml"])
+        except subprocess.CalledProcessError as e:
+            fail(f"could not install ruamel.yaml: {e.stderr.strip()}")
+            return None
+    return str(venv_python)
+
+
+def seed_config_if_absent() -> bool:
+    """Seed the mounted gateway config from the repo default on a fresh host.
+
+    Never overwrites an existing config — an operator's live config is edited
+    surgically (by stt-backend.py), never clobbered from the template.
+    """
+    if MOUNTED_CONFIG.exists():
+        ok(f"mounted gateway config present ({MOUNTED_CONFIG}) — left in place")
+        return True
+    if not SEED_CONFIG.exists():
+        fail(f"seed config {SEED_CONFIG.relative_to(REPO_ROOT)} not found")
+        return False
+    MOUNTED_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(SEED_CONFIG, MOUNTED_CONFIG)
+    ok(f"seeded {MOUNTED_CONFIG} from gateway/config.yaml")
+    return True
+
+
+def apply_stt_backend(backend: str, ruamel_python: str) -> bool:
+    """Patch the mounted gateway config to match the selected backend.
+
+    Shows the surgical diff and confirms before writing. A no-op when the
+    config already matches (idempotent).
+    """
+    base = [ruamel_python, str(STT_BACKEND_SCRIPT),
+            "--backend", backend, "--config", str(MOUNTED_CONFIG)]
+    dry = run(base, check=False)
+    if dry.returncode != 0:
+        fail(f"stt-backend.py failed:\n  {dry.stderr.strip()}")
+        return False
+    if "no change needed" in dry.stdout:
+        ok(f"gateway config already set to {backend}")
+        return True
+    print(dry.stdout)
+    if not confirm(f"Apply {backend} to {MOUNTED_CONFIG.name} (patch above)?"):
+        warn("Skipped STT config patch — gateway config may not match STT_BACKEND.")
+        return True
+    applied = run(base + ["--apply"], check=False)
+    if applied.returncode != 0:
+        fail(f"stt-backend.py --apply failed:\n  {applied.stderr.strip()}")
+        return False
+    ok(f"patched gateway config → {backend}")
+    return True
+
+
+def configure_native_stt(backend: str) -> bool:
+    """Reconcile the native Whisper launchd service with the selected backend.
+
+    native-whisper: install (venv + models + launchd plist) and start it.
+    docker-sensevoice: stop it if it happens to be loaded (migration cleanup).
+    """
+    if backend == NATIVE_BACKEND:
+        if platform.system() != "Darwin":
+            fail(f"native-whisper needs macOS launchd; host is {platform.system()}")
+            return False
+        if not confirm(
+            "Install + start the native Whisper-STT launchd service now? "
+            "(venv + model download, ~few min)"
+        ):
+            warn("Skipped native STT install — the gateway will have no STT backend to dial.")
+            return True
+        info("Installing native Whisper-STT (launchd). First run downloads models.")
+        rc = subprocess.call(["bash", str(WHISPER_LAUNCHER), "install"], cwd=REPO_ROOT)
+        if rc != 0:
+            fail(f"whisper-stt.sh install exited with code {rc}")
+            return False
+        rc = subprocess.call(["bash", str(WHISPER_LAUNCHER), "start"], cwd=REPO_ROOT)
+        if rc != 0:
+            fail(f"whisper-stt.sh start exited with code {rc}")
+            return False
+        ok("native Whisper-STT installed + started (health: :8769/health)")
+        return True
+
+    # docker-sensevoice — ensure no native service lingers from a prior native run.
+    subprocess.call(["bash", str(WHISPER_LAUNCHER), "stop"], cwd=REPO_ROOT)
+    ok("native Whisper-STT stopped (docker-sensevoice owns STT)")
+    return True
+
+
 # --- Step 4: build images ----------------------------------------------------
 
 
-def build_images() -> bool:
-    if not confirm(
-        "Build all sibling images now? (gateway, stt-service, hermes, ma-mcp, searxng-mcp, fetch-mcp)"
-    ):
+def build_images(backend: Optional[str]) -> bool:
+    # SenseVoice image is skipped ONLY for native-whisper (~10 min saved). For
+    # docker-sensevoice it is profile-gated in the mac-prod compose (stt-docker);
+    # for legacy targets with no deploy.conf (backend is None) it stays under the
+    # build-only profile, so build it there too.
+    services = ["gateway", "hermes", "ma-mcp", "searxng-mcp", "fetch-mcp"]
+    profiles = ["build-only"]
+    if backend != NATIVE_BACKEND:
+        services.insert(1, "stt-service")
+        if backend == DOCKER_BACKEND:
+            profiles.append("stt-docker")
+
+    if not confirm(f"Build sibling images now? ({', '.join(services)})"):
+        profile_flags = " ".join(f"--profile {p}" for p in profiles)
         info("Skipped image build — run later with:")
         print(
             f"    {DIM}docker compose -f {COMPOSE_FILE.relative_to(REPO_ROOT)} "
-            f"--profile build-only build{RESET}"
+            f"{profile_flags} build {' '.join(services)}{RESET}"
         )
         return True
 
-    info("Building images. First run takes ~10-20 min (STT + Hermes images bake).")
+    info("Building images. First run takes ~10-20 min (Hermes image bakes).")
     # Explicit working set — skip signal-cli (optional Signal bridge): its
     # upstream Dockerfile currently fails on a libsignal-client jar version
     # mismatch and it's not part of the core voice/chat path. Add it back here
     # once that pin is fixed.
+    profile_args = [arg for p in profiles for arg in ("--profile", p)]
     cmd = [
         "docker", "compose", "-f", str(COMPOSE_FILE),
-        "--profile", "build-only", "build",
-        "gateway", "stt-service", "hermes", "ma-mcp", "searxng-mcp", "fetch-mcp",
+        *profile_args, "build", *services,
     ]
     # Stream output directly — buildx already renders its own progress UI.
     rc = subprocess.call(cmd, cwd=REPO_ROOT)
@@ -427,11 +612,24 @@ def current_cert_state() -> Optional[list[str]]:
 # --- Final guidance ----------------------------------------------------------
 
 
-def print_next_steps() -> None:
+def print_next_steps(backend: Optional[str]) -> None:
+    stt_note = ""
+    if backend == NATIVE_BACKEND:
+        stt_note = (
+            f"\n  STT backend is {BOLD}native-whisper{RESET} — verify the host "
+            f"service is up before the gateway dials it:\n\n"
+            f"    {DIM}bash {WHISPER_LAUNCHER.relative_to(REPO_ROOT)} status{RESET}\n"
+        )
+    elif backend == DOCKER_BACKEND:
+        stt_note = (
+            f"\n  STT backend is {BOLD}docker-sensevoice{RESET} — the orchestrator "
+            f"spawns sentient-stt-service from the built image at `compose up`.\n"
+        )
     print(
         f"\n{BOLD}Setup complete.{RESET} Bring the stack up when you're ready:\n\n"
         f"    {GREEN}docker compose -f {COMPOSE_FILE.relative_to(REPO_ROOT)} "
-        f"up -d{RESET}\n\n"
+        f"up -d{RESET}\n"
+        f"{stt_note}\n"
         f"  All persistent state lives at {DIM}~/.sentient/{RESET} — "
         f"`rm -rf ~/.sentient` is the only wipe needed for a fresh start.\n\n"
         "  Then open the wizard:\n\n"
@@ -462,19 +660,49 @@ def main() -> int:
     if not check_env():
         return 1
 
+    # STT backend reconcile only applies to deploys that ship the selector
+    # (mac-prod: deploy.conf + native/). Generic targets (e.g. deploy/docker)
+    # have no deploy.conf — skip the reconcile and fall back to legacy behavior
+    # (build the full image set incl. SenseVoice, no config patch).
+    backend: Optional[str] = None
+    if DEPLOY_CONF.exists():
+        info(f"Reading STT backend from {DEPLOY_CONF.relative_to(REPO_ROOT)}")
+        backend = read_backend()
+        if backend is None:  # present but invalid — fail loudly
+            return 1
+    else:
+        ok(f"no {DEPLOY_CONF.relative_to(REPO_ROOT)} — STT backend reconcile skipped")
+
     info("Configuring TLS cert (optional)")
     if not configure_tls_cert():
         return 1
 
+    if backend is not None:
+        info("Seeding mounted gateway config (if absent)")
+        if not seed_config_if_absent():
+            return 1
+
+        info(f"Reconciling gateway config → {backend}")
+        ruamel_python = ensure_ruamel_python()
+        if ruamel_python is None:
+            return 1
+        if not apply_stt_backend(backend, ruamel_python):
+            return 1
+
     info("Building images")
-    if not build_images():
+    if not build_images(backend):
         return 1
+
+    if backend is not None:
+        info(f"Configuring native Whisper-STT service ({backend})")
+        if not configure_native_stt(backend):
+            return 1
 
     info("Clearing old sentient containers (gateway + orchestrator-managed)")
     if not clear_old_containers():
         return 1
 
-    print_next_steps()
+    print_next_steps(backend)
     return 0
 
 
