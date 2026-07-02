@@ -130,6 +130,12 @@ services:
       timeout: 3s
       retries: 5
       start_period: 5s
+    # Resolve host.docker.internal to the host on Colima/OrbStack as well as
+    # Docker Desktop, so the gateway can dial a native (host-side) STT backend
+    # (native-whisper: ws://host.docker.internal:8768). No effect when the
+    # STT backend is the containerized sentient-stt-service.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks: [sentient-internal, sentient-external]
     logging:
       driver: json-file
