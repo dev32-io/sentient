@@ -38,7 +38,6 @@ import asyncio
 import json
 import logging
 import signal
-import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -53,7 +52,7 @@ from .event_logger import JsonlLogger, RotatingJsonlLogger, prune_old_logs
 from .metrics import MetricsSampler
 from .opus_decoder import OpusStreamDecoder
 from .pipeline_events import PipelineEvent
-from .sense_voice import VALID_LANGUAGES, SenseVoice
+from .whisper_mlx import VALID_LANGUAGES, WhisperMlx
 from .smart_turn import SmartTurn
 from .turn_pipeline import TurnPipeline, get_silero_model
 from .wire_protocol import event_to_wire
@@ -102,16 +101,10 @@ class Server:
             interval_ms=config.logging.metrics_interval_ms,
         )
         self._smart_turn: SmartTurn | None = None
-        # Per-language recognizer cache. The ``auto`` entry loads at
-        # startup (see ``load_models``). Other languages are lazily
-        # constructed on first connection that asks for them — each
-        # additional language eats ~450 MB RSS for its own ONNX session,
-        # so the cache is intentionally small (max 3: auto | en | zh).
-        self._sense_voice_cache: dict[str, SenseVoice] = {}
-        # Guards lazy-construction of extra language recognizers. Several
-        # connections opening simultaneously with the same language must
-        # not each build their own instance.
-        self._sense_voice_lock = threading.Lock()
+        # One decode-language view is built per connection (cheap — all views
+        # share the lru-cached MLX model for the same repo). No per-language
+        # weight reload, so no cache/lock needed.
+        self._whisper_default: WhisperMlx | None = None
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -128,67 +121,32 @@ class Server:
         )
         log.info("Smart-Turn ready: %s", self._smart_turn.model_path)
 
-        sense_voice_dir = self._config.model_dir / "sense-voice"
         log.info(
-            "loading SenseVoice-Small int8 ONNX (language=%s) from %s",
+            "loading MLX Whisper (%s, language=%s)...",
+            self._config.whisper.model,
             DEFAULT_LANGUAGE,
-            sense_voice_dir,
         )
-        default_recognizer = SenseVoice(
-            sense_voice_dir,
-            config=self._config.sense_voice,
+        self._whisper_default = WhisperMlx(
+            config=self._config.whisper,
             language=DEFAULT_LANGUAGE,
         )
-        self._sense_voice_cache[DEFAULT_LANGUAGE] = default_recognizer
-        log.info(
-            "SenseVoice ready (language=%s): %s",
-            DEFAULT_LANGUAGE,
-            default_recognizer.model_path,
-        )
+        self._whisper_default.warm()
+        log.info("Whisper ready: %s", self._whisper_default.model_repo)
 
         self._service_log.log(
             "models.loaded",
             silero_backend="torch_jit",
             smart_turn_path=str(self._smart_turn.model_path),
-            sense_voice_path=str(default_recognizer.model_path),
-            sense_voice_default_language=DEFAULT_LANGUAGE,
+            whisper_model=self._whisper_default.model_repo,
+            whisper_default_language=DEFAULT_LANGUAGE,
         )
 
-    def _get_or_load_sense_voice(self, language: str) -> SenseVoice:
-        """Return the recognizer for ``language``, building one if cached miss.
-
-        Extra-language recognizers add ~450 MB RSS each — the service
-        logs a warning on every cold load so the operator notices if a
-        client is churning through languages unexpectedly.
-        """
-        cached = self._sense_voice_cache.get(language)
-        if cached is not None:
-            return cached
-
-        with self._sense_voice_lock:
-            cached = self._sense_voice_cache.get(language)
-            if cached is not None:
-                return cached
-
-            sense_voice_dir = self._config.model_dir / "sense-voice"
-            log.warning(
-                "sense-voice.cold-load language=%s — first request for this "
-                "language; loading a new recognizer (~450 MB RSS). Subsequent "
-                "requests will reuse it.",
-                language,
-            )
-            recognizer = SenseVoice(
-                sense_voice_dir,
-                config=self._config.sense_voice,
-                language=language,
-            )
-            self._sense_voice_cache[language] = recognizer
-            self._service_log.log(
-                "sense_voice.loaded_language",
-                language=language,
-                total_cached=len(self._sense_voice_cache),
-            )
-            return recognizer
+    def _get_whisper(self, language: str) -> WhisperMlx:
+        """Return a Whisper view for ``language``. Cheap — shares the cached
+        model; only the per-call decode language differs."""
+        if language == DEFAULT_LANGUAGE and self._whisper_default is not None:
+            return self._whisper_default
+        return WhisperMlx(config=self._config.whisper, language=language)
 
     def start_background(self) -> None:
         """Start metrics sampler and log service readiness."""
@@ -216,7 +174,7 @@ class Server:
     async def handle(self, ws: ServerConnection) -> None:
         """Handle one WebSocket connection from open to close."""
         assert self._smart_turn is not None, "load_models() must run before serve()"
-        assert DEFAULT_LANGUAGE in self._sense_voice_cache, (
+        assert self._whisper_default is not None, (
             "load_models() must run before serve()"
         )
 
@@ -237,7 +195,7 @@ class Server:
             "conn.audio_format conn_id=%s audio_format=%s source=%s",
             conn_id, audio_format, audio_format_source,
         )
-        sense_voice = self._get_or_load_sense_voice(language)
+        stt = self._get_whisper(language)
 
         self._service_log.log(
             "conn.open",
@@ -262,7 +220,7 @@ class Server:
             conn_id,
             config=self._config,
             smart_turn=self._smart_turn,
-            sense_voice=sense_voice,
+            stt=stt,
             recording_dir=self._config.recording_dir,
             logger=conn_log,
         )
@@ -287,7 +245,7 @@ class Server:
                     "sileroChunkSamples": 512,
                     "pcmFormat": "int16_le_mono",
                     "audioFormat": audio_format,
-                    "stt": "sense-voice-small-int8",
+                    "stt": "whisper-large-v3-turbo-8bit",
                     "language": language,
                 })
             )
@@ -511,9 +469,9 @@ async def _daily_prune_loop(log_dir: Path, retention_days: int) -> None:
 # HTTP health server — GET /health returns {"status":"ok","version":"..."}
 # ---------------------------------------------------------------------------
 
-# HTTP health port — separate from the WebSocket port (8766) so the gateway
+# HTTP health port — separate from the WebSocket port (8768) so the gateway
 # can query it with a plain HTTP GET without any WS upgrade handshake.
-HEALTH_HTTP_PORT = 8767
+HEALTH_HTTP_PORT = 8769
 
 _HEALTH_RESPONSE_HEADERS = (
     "HTTP/1.1 200 OK\r\n"
@@ -576,8 +534,8 @@ async def _handle_health_connection(
 async def _run_health_server(host: str, version: str) -> None:
     """Start the HTTP health server and run until cancelled.
 
-    Binds on ``HEALTH_HTTP_PORT`` (8767). The gateway fetches
-    ``http://sentient-stt-service:8767/health`` at boot to discover the
+    Binds on ``HEALTH_HTTP_PORT`` (8769). The gateway fetches
+    ``http://sentient-stt-service:8769/health`` at boot to discover the
     STT service version without needing a full WebSocket upgrade.
     """
     server = await asyncio.start_server(
@@ -639,7 +597,7 @@ async def run_server(config: Config) -> None:
     port = config.server.port
     max_size = config.server.max_frame_bytes
     # Health server runs alongside the WebSocket server. It binds on
-    # HEALTH_HTTP_PORT (8767) and answers GET /health with the version
+    # HEALTH_HTTP_PORT (8769) and answers GET /health with the version
     # imported directly from stt_service.__init__:__version__ — single
     # source of truth, no Dockerfile ARG drift.
     health_task = asyncio.create_task(

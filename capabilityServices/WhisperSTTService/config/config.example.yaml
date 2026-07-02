@@ -31,7 +31,7 @@ server:
 
   # WebSocket port inside the container. If you ever move this, update
   # the host->container port mapping in deploy/mac-prod/docker-compose.yml too.
-  port: 8766
+  port: 8768
 
   # Maximum accepted WebSocket frame size in bytes. 16 MiB ≈ 8 minutes
   # of 16 kHz PCM16 per frame — far more than any sane client sends.

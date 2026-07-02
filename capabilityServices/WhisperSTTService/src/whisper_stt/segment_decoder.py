@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .sense_voice import SenseVoice
+from .whisper_mlx import WhisperMlx
 
 if TYPE_CHECKING:
     from .event_logger import JsonlLogger
@@ -58,7 +58,7 @@ class StitchedResult:
 
 
 def decode_segments_and_stitch(
-    sense_voice: SenseVoice,
+    stt: WhisperMlx,
     segments: list[np.ndarray],
     *,
     pause_count: int,
@@ -73,7 +73,7 @@ def decode_segments_and_stitch(
     """
     results: list[SegmentResult] = []
     for idx, audio in enumerate(segments):
-        r = sense_voice.transcribe(audio)
+        r = stt.transcribe(audio)
         results.append(
             SegmentResult(
                 text=(r.text or "").strip(),
@@ -86,7 +86,7 @@ def decode_segments_and_stitch(
         if logger is not None:
             last = results[-1]
             logger.log(
-                "sensevoice.segment_decode",
+                "whisper.segment_decode",
                 turn_idx=turn_idx,
                 segment_idx=idx,
                 text=last.text,

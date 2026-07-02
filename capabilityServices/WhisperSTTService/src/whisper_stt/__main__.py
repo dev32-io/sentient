@@ -40,10 +40,12 @@ def main() -> None:
     # Read container-internal paths from environment variables set in
     # the Dockerfile. These are NOT in config.yaml — see config.py
     # docstring for the rationale.
-    config_path = Path(os.environ.get("STT_CONFIG_PATH", "/app/config/config.yaml"))
-    model_dir = Path(os.environ.get("STT_MODEL_DIR", "/app/models"))
-    log_dir = Path(os.environ.get("STT_LOG_DIR", "/app/logs"))
-    recording_dir = Path(os.environ.get("STT_RECORDING_DIR", "/app/data/recordings"))
+    home = Path.home()
+    data = home / ".sentient" / "whisper-stt"
+    config_path = Path(os.environ.get("WHISPER_STT_CONFIG_PATH", str(data / "config" / "config.yaml")))
+    model_dir = Path(os.environ.get("WHISPER_STT_MODEL_DIR", str(data / "models")))
+    log_dir = Path(os.environ.get("WHISPER_STT_LOG_DIR", str(data / "logs")))
+    recording_dir = Path(os.environ.get("WHISPER_STT_RECORDING_DIR", str(data / "recordings")))
 
     config = load_config(
         config_path,

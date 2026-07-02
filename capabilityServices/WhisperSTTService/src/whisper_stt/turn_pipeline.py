@@ -54,7 +54,7 @@ from .pipeline_events import (
     VadEnd,
     VadStart,
 )
-from .sense_voice import SenseVoice
+from .whisper_mlx import WhisperMlx
 from .smart_turn import SmartTurn, SmartTurnResult
 from .turn_finalizer import finalize_turn
 
@@ -103,14 +103,14 @@ class TurnPipeline:
         *,
         config: Config,
         smart_turn: SmartTurn,
-        sense_voice: SenseVoice,
+        stt: WhisperMlx,
         recording_dir: Path,
         logger: JsonlLogger,
     ) -> None:
         self._conn_id = connection_id
         self._config = config
         self._smart_turn = smart_turn
-        self._sense_voice = sense_voice
+        self._stt = stt
         self._recording_dir = recording_dir
         self._logger = logger
 
@@ -346,7 +346,7 @@ class TurnPipeline:
             recording_dir=self._recording_dir,
             recordings_config=self._config.recordings,
             logger=self._logger,
-            sense_voice=self._sense_voice,
+            stt=self._stt,
             speech_segments=self._speech_segments,
             pauses=self._pauses,
             min_speech_duration_ms=self._config.vad.min_speech_duration_ms,

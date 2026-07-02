@@ -39,7 +39,7 @@ from .pipeline_events import (
     TurnRejected,
 )
 from .segment_decoder import decode_segments_and_stitch
-from .sense_voice import SenseVoice
+from .whisper_mlx import WhisperMlx
 from .wav_codec import f32_to_pcm16_bytes, pcm16_to_wav_bytes
 
 SAMPLE_RATE = 16_000
@@ -65,19 +65,6 @@ def _has_content(text: str) -> bool:
     return False
 
 
-def _is_meaningful_event(audio_event: str) -> bool:
-    """True if the audio event tag is anything other than plain speech.
-
-    Laughter / BGM / applause / etc. turns are kept even when the text
-    content is empty, because the non-speech classification itself is
-    useful signal for the downstream LLM.
-    """
-    if not audio_event:
-        return False
-    code = _TAG_RE.sub("", audio_event).strip().lower()
-    return bool(code) and code != "speech"
-
-
 def finalize_turn(
     audio_f32: np.ndarray,
     smart_turn_result,
@@ -89,7 +76,7 @@ def finalize_turn(
     recording_dir: Path,
     recordings_config: RecordingsConfig,
     logger: JsonlLogger,
-    sense_voice: SenseVoice,
+    stt: WhisperMlx,
     speech_segments: list[np.ndarray],
     pauses: PauseTracker,
     min_speech_duration_ms: int,
@@ -130,7 +117,7 @@ def finalize_turn(
     # --- Step 1: STT decode (we need text before we can gate) ---
     pauses_ms = pauses.durations_ms()
     stitched = decode_segments_and_stitch(
-        sense_voice,
+        stt,
         speech_segments,
         pause_count=len(pauses_ms),
         logger=logger,
@@ -139,7 +126,7 @@ def finalize_turn(
     transcript_ns = time.monotonic_ns()
 
     # --- Step 2: Content gate — drop noise-only turns ---
-    if not _has_content(stitched.text) and not _is_meaningful_event(stitched.event):
+    if not _has_content(stitched.text):
         events.append(
             TurnRejected(
                 t_mono_ns=transcript_ns,
@@ -211,7 +198,7 @@ def finalize_turn(
         )
     )
     logger.log(
-        "sensevoice.decode",
+        "whisper.decode",
         turn_idx=turn_idx,
         text=stitched.text,
         emotion=stitched.emotion,

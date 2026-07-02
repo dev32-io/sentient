@@ -44,9 +44,13 @@ def _write_yaml(dir_path: Path, retention_value: object) -> Path:
         smart_turn:
           decision_threshold: 0.5
           intra_op_threads: 4
-        sense_voice:
-          num_threads: 4
-          use_itn: true
+        whisper:
+          model: "mlx-community/whisper-large-v3-turbo-8bit"
+          language: "auto"
+          no_speech_threshold: 0.6
+          logprob_threshold: -1.0
+          compression_ratio_threshold: 2.4
+          initial_prompt: ""
         recordings:
           enabled: false
         logging:
