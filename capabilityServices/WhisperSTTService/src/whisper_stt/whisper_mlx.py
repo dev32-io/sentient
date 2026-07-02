@@ -75,6 +75,24 @@ def _ensure_mlx_weight_alias(model_repo: str) -> None:
     )
 
 
+_EMPTY_NO_SPEECH_PROB = 1.0   # no segments → treat as certain non-speech
+_EMPTY_AVG_LOGPROB = -10.0    # no segments → treat as worst confidence
+
+
+def _extract_signals(result: dict) -> tuple[float, float]:
+    """Worst-case (no_speech_prob, avg_logprob) across Whisper's segments.
+
+    max(no_speech_prob) and min(avg_logprob) are the pessimistic picks used by
+    the hallucination gate. Empty/absent segments → treated as non-speech.
+    """
+    segs = result.get("segments") or []
+    if not segs:
+        return _EMPTY_NO_SPEECH_PROB, _EMPTY_AVG_LOGPROB
+    no_speech = max(float(s.get("no_speech_prob", 0.0)) for s in segs)
+    logprob = min(float(s.get("avg_logprob", 0.0)) for s in segs)
+    return no_speech, logprob
+
+
 @dataclass
 class TranscriptResult:
     """Outcome of one Whisper decode. emotion/event are always "" (Whisper
@@ -86,6 +104,8 @@ class TranscriptResult:
     event: str
     decode_ms: float
     audio_seconds: float
+    no_speech_prob: float
+    avg_logprob: float
 
 
 def _whisper_language(language: str) -> str | None:
@@ -152,10 +172,13 @@ class WhisperMlx:
             verbose=None,
         )
         decode_ms = (time.monotonic() - t0) * 1000.0
+        no_speech_prob, avg_logprob = _extract_signals(result)
         return TranscriptResult(
             text=(result.get("text") or "").strip(),
             emotion="",
             event="",
             decode_ms=decode_ms,
             audio_seconds=audio_seconds,
+            no_speech_prob=no_speech_prob,
+            avg_logprob=avg_logprob,
         )
