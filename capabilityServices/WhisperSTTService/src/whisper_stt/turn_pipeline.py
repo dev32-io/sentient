@@ -93,8 +93,9 @@ def get_silero_model() -> torch.nn.Module:
 class TurnPipeline:
     """State machine for a single WebSocket connection.
 
-    Public interface is exactly two methods:
+    Public interface is exactly three methods:
     - ``process(pcm16_bytes)`` — feed audio, get events back.
+    - ``flush()`` — client end-of-stream: force-finalize any open turn.
     - ``close()`` — clean up when the connection ends.
     """
 
@@ -174,6 +175,27 @@ class TurnPipeline:
         """Release per-connection state. Called when the WebSocket closes."""
         self._rechunk_buf.clear()
         self._vad_iter.reset_states()
+
+    def flush(self) -> list[PipelineEvent]:
+        """Force-finalize any open turn immediately. No-op when idle.
+
+        Driven by the client's explicit end-of-stream control message
+        (``{"type": "flush"}`` — sent by the gateway on ``audio.end``,
+        i.e. push-to-talk release / mic off). The duration watchdogs in
+        ``_process_chunk`` are frame-clocked: they only run when audio
+        arrives. When the client stops sending frames with a turn still
+        open (released right after speaking), nothing ticks the pipeline
+        and the turn would otherwise finalize at the NEXT mic hold —
+        delivering the transcript one session late.
+        """
+        events: list[PipelineEvent] = []
+        if not self._turn_active:
+            return events
+        # Drop the <one-Silero-chunk remainder (≤32 ms) — not worth a
+        # zero-padded decode, and _force_finalize resets the buffer state.
+        self._rechunk_buf.clear()
+        self._force_finalize(events, reason="client_flush")
+        return events
 
     # -- internal chunk processing -------------------------------------------
 
@@ -365,11 +387,13 @@ class TurnPipeline:
         """Safety-net: close the turn with a synthetic Smart-Turn result.
 
         ``reason`` distinguishes why the pipeline gave up waiting for
-        Smart-Turn to fire naturally. Two values today:
+        Smart-Turn to fire naturally. Three values today:
           - ``silent_timeout`` — stuck in "continuing" past
             ``vad.silent_timeout_ms`` with no new speech.
           - ``max_turn_duration`` — turn exceeded ``vad.max_turn_duration_ms``
             regardless of speech state.
+          - ``client_flush`` — the client signalled end-of-stream (PTT
+            release) while a turn was open. See ``flush()``.
 
         When the max-duration cap fires mid-speech we emit a synthetic
         ``VadEnd`` and fold the open speech segment into ``speech_segments``

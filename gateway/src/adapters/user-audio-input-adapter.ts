@@ -16,6 +16,10 @@ export interface UserAudioInputAdapter extends Adapter {
   /** Drop mic frames for `ms` ms — used to mute the mic while TTS plays
    *  so the browser's WebRTC AEC has time to converge. `ms=0` clears it. */
   suppressInputFor(ms: number): void;
+  /** Client ended the audio stream (`audio.end`). Forwards a flush to STT
+   *  so an open turn finalizes immediately instead of hanging until the
+   *  next mic hold delivers frames to the frame-clocked watchdogs. */
+  endUtterance(): void;
   /** Swap the STT adapter to a new config mid-session (e.g., language
    *  preference change). Closes the current STT connection and opens a
    *  fresh one. Safe to call with a fully-identical config (no-op branch
@@ -295,6 +299,10 @@ export function createUserAudioInputAdapter(
 
     suppressInputFor(ms: number): void {
       sttAdapter?.suppressInputFor(ms);
+    },
+
+    endUtterance(): void {
+      sttAdapter?.endUtterance();
     },
 
     setOnSpeechOnset(cb: (() => void) | null): void {

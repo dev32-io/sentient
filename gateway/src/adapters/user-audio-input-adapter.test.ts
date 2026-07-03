@@ -28,6 +28,7 @@ function makeFakeSttAdapter(): FakeSTTAdapter {
       listeners.length = 0;
     }),
     suppressInputFor: vi.fn(),
+    endUtterance: vi.fn(),
 
     async *events(signal: AbortSignal): AsyncGenerator<STTEvent> {
       while (true) {
@@ -237,6 +238,20 @@ describe("UserAudioInputAdapter", () => {
     await adapter.stop("done");
   });
 
+  it("forwards endUtterance to the active STT adapter (audio.end flush)", async () => {
+    const fake = makeFakeSttAdapter();
+    const adapter = createUserAudioInputAdapter(makeSttFactory(fake), BASE_STT_CONFIG);
+    const { ctx } = makeCtxWithInject();
+
+    await adapter.start(ctx);
+    adapter.endUtterance();
+    expect(fake.endUtterance).toHaveBeenCalledOnce();
+
+    await adapter.stop("done");
+    adapter.endUtterance(); // no active adapter — must not throw
+    expect(fake.endUtterance).toHaveBeenCalledOnce();
+  });
+
   it("closes STT adapter on stop", async () => {
     const fake = makeFakeSttAdapter();
     const adapter = createUserAudioInputAdapter(makeSttFactory(fake), BASE_STT_CONFIG);
@@ -262,6 +277,7 @@ describe("UserAudioInputAdapter", () => {
       send: vi.fn(),
       close: vi.fn().mockResolvedValue(undefined),
       suppressInputFor: vi.fn(),
+      endUtterance: vi.fn(),
       async *events(): AsyncGenerator<STTEvent> {
         /* never yields */
       },

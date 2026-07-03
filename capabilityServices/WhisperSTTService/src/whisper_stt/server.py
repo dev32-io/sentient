@@ -341,6 +341,14 @@ class Server:
                     )
             elif kind == "ping":
                 await ws.send(json.dumps({"type": "pong"}))
+            elif kind == "flush":
+                # Client end-of-stream (gateway audio.end → PTT release /
+                # mic off). Force-finalize any open turn now — the
+                # pipeline's watchdogs are frame-clocked and won't fire
+                # again until the next mic hold delivers audio.
+                events = pipeline.flush()
+                for event in events:
+                    await self._send_event(ws, event, conn_log)
 
     async def _send_event(
         self,

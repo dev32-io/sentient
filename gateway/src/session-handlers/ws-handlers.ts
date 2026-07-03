@@ -129,6 +129,10 @@ export async function handleWebSocketMessage(
 
     case "audio.end":
       ws.data.isStreaming = false;
+      // PTT release / mic off: flush STT so an open turn finalizes now.
+      // The service's watchdogs are frame-clocked — without this, a turn
+      // left open here would only complete at the next mic hold.
+      ws.data.audioAdapter?.endUtterance();
       return;
 
     case "session.end":

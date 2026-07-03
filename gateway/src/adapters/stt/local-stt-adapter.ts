@@ -234,6 +234,12 @@ export function createLocalSttAdapter(config: STTAdapterConfig): STTAdapter {
       ws.send(downsampled);
     },
 
+    endUtterance(): void {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      log.debug("flush-sent", { reason: "client audio.end" });
+      ws.send(JSON.stringify({ type: "flush" }));
+    },
+
     async *events(signal: AbortSignal): AsyncGenerator<STTEvent> {
       while (true) {
         const next = await queue.waitForEvent(signal);
