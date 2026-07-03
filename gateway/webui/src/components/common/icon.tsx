@@ -1,6 +1,5 @@
 import type { JSX } from "preact";
 import { MicIcon } from "./icons/mic.tsx";
-import { MicOffIcon } from "./icons/mic-off.tsx";
 import { SendIcon } from "./icons/send.tsx";
 import { ChatIcon } from "./icons/chat.tsx";
 import { BellIcon } from "./icons/bell.tsx";
@@ -37,7 +36,7 @@ import { Volume2Icon } from "./icons/volume-2.tsx";
 import { VolumeXIcon } from "./icons/volume-x.tsx";
 
 export type IconName =
-  | "mic" | "mic-off" | "send" | "chat" | "bell" | "settings"
+  | "mic" | "send" | "chat" | "bell" | "settings"
   | "x" | "sliders" | "chevron" | "lamp" | "thermo" | "spark"
   | "globe" | "music" | "check" | "phone" | "plus"
   | "key" | "play" | "pause" | "trash"
@@ -53,7 +52,6 @@ export interface IconProps {
 
 const REGISTRY: Record<IconName, (props: { size: number }) => JSX.Element> = {
   mic: MicIcon,
-  "mic-off": MicOffIcon,
   send: SendIcon,
   chat: ChatIcon,
   bell: BellIcon,

@@ -19,7 +19,6 @@ import io.sentient.mobiledata.di.ChatComponent
 import io.sentient.mobiledata.outbox.OutboundCache
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.sdk.ConnectionState
-import io.sentient.mobilesdk.sdk.VoiceMode
 import io.sentient.mobilesdk.transport.SdkStatus
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -124,8 +123,16 @@ class ChatViewModel(
         component.sendMessage.flushIfReady(cache, connection.value.status)
     }
 
-    fun toggleMic() {
-        if (connection.value.voiceMode == VoiceMode.ACTIVE) component.stopMic() else component.startMic()
+    /** Corner mic pressed/locked — start the voice uplink (fire-and-forget). */
+    fun startMic() {
+        log.info("startMic")
+        component.startMic()
+    }
+
+    /** Corner mic released/unlocked — stop the voice uplink. */
+    fun stopMic() {
+        log.info("stopMic")
+        component.stopMic()
     }
 
     fun toggleTts() {

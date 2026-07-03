@@ -287,6 +287,34 @@ describe("createLocalSttAdapter — send()", () => {
   });
 });
 
+describe("createLocalSttAdapter — endUtterance()", () => {
+  it("sends {type:'flush'} on the open socket", async () => {
+    const adapter = createLocalSttAdapter(BASE_CONFIG);
+    const openPromise = adapter.open(new AbortController().signal);
+    await Promise.resolve();
+    currentWs?._openHandshake();
+    currentWs?._receiveText({ type: "ready" });
+    await openPromise;
+    adapter.endUtterance();
+    expect(currentWs?.send).toHaveBeenCalledTimes(1);
+    const [sent] = currentWs?.send.mock.calls[0] ?? [];
+    expect(JSON.parse(sent as string)).toEqual({ type: "flush" });
+    await adapter.close();
+  });
+
+  it("is a no-op when the socket is closed", async () => {
+    const adapter = createLocalSttAdapter(BASE_CONFIG);
+    const openPromise = adapter.open(new AbortController().signal);
+    await Promise.resolve();
+    currentWs?._openHandshake();
+    currentWs?._receiveText({ type: "ready" });
+    await openPromise;
+    await adapter.close();
+    adapter.endUtterance(); // must not throw
+    expect(currentWs?.send).not.toHaveBeenCalled();
+  });
+});
+
 describe("createLocalSttAdapter — close()", () => {
   it("is idempotent", async () => {
     const adapter = createLocalSttAdapter(BASE_CONFIG);

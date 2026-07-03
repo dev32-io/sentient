@@ -3,34 +3,42 @@
 // (android/.../chat/Composer.kt) and the webui Composer
 // (gateway/webui/src/components/dock/composer.tsx).
 //
-// A paper-surface rounded card holding a text field over a button row: mic
-// toggle, TTS toggle, a spacer, optional interrupt, and send. Send is enabled
-// whenever the draft is non-empty; a send issued before READY is queued by
-// the outbox and flushed on the READY edge (web-sdk parity, always-typeable).
-// Interrupt is shown only when
-// cognition != .idle || isSpeaking (a cycle is in flight or audio is playing).
-// TTS toggle flips the server-of-record preference via setTtsEnabled.
+// A paper-surface rounded card holding a text field over a button row: TTS
+// toggle, attach, a spacer, optional interrupt, and send — plus the MicCorner
+// hold-to-talk / drag-to-lock control welded onto the card's top-right edge
+// (half overhanging, webui parity). Send is enabled whenever the draft is
+// non-empty; a send issued before READY is queued by the outbox and flushed
+// on the READY edge (web-sdk parity, always-typeable). Interrupt is shown
+// only when cognition != .idle || isSpeaking. TTS toggle flips the
+// server-of-record preference via setTtsEnabled.
 //
-// Mic button (E5): permission gate lives in Composer+Mic.swift (onMicTap +
-// MicPermission). When voiceMode .active the mic button wears the accent
-// "mic-on" styling.
+// MicCorner: press → hold (mic on), drag left ≥40% travel → locked
+// hands-free, drag back from locked ≤50% → off. While hold/locked the
+// composer "takes over": the text field hides (draft PRESERVED), PttBigWave
+// overlays the FULL card (background layer — zero layout impact, so the
+// composer height is identical idle vs live), and TTS/attach/send hide —
+// interrupt stays on top while a cycle is in flight. The permission gate
+// lives in Composer+Mic.swift
+// (onMicPressGate + MicPermission): a press without record permission
+// requests it and does NOT enter hold; a grant does NOT auto-start. The
+// listening glow stays keyed on micActive.
 //
 // Send is optimistic — it returns immediately and the outbox renders the
 // pending bubble, so the composer NEVER spins on the socket (no in-flight
 // spinner). The send button is always the paper-plane action, enabled on a
 // non-empty draft.
 //
-// The composer owns only the draft text + the mic-denied flag (local @State);
-// everything else is read from SdkState and dispatched up through callbacks.
-// The host docks it via .safeAreaInset(edge:.bottom); SwiftUI lifts it above
-// the keyboard.
+// The composer owns only the draft text, the mic-denied flag, and the corner
+// mic's reported mode (local @State); everything else is read from SdkState
+// and dispatched up through callbacks. The host docks it via
+// .safeAreaInset(edge:.bottom); SwiftUI lifts it above the keyboard.
 //
-// Mic/preview extracted to Composer+Mic.swift (line-limit compliance).
+// Mic gate/previews live in Composer+Mic.swift (line-limit compliance).
 //
 // accessibilityIdentifiers: composer-input (TextField, matches Android tag),
-// chat-send, chat-interrupt, chat-tts-toggle, chat-mic, mic-denied-notice.
+// chat-send, chat-interrupt, chat-tts-toggle, chat-attach, chat-mic
+// (MicCorner), mic-denied-notice.
 // ---------------------------------------------------------------------------
-import AVFoundation
 import SwiftUI
 import MobileData
 
@@ -40,12 +48,16 @@ struct Composer: View {
     let canSend: Bool
     /// Server-of-record TTS preference (mirrored, not owned).
     let ttsEnabled: Bool
-    /// True while voiceMode == .active.
+    /// True while voiceMode == .active — drives the listening glow and the
+    /// MicCorner external sync (a true→false teardown resets the control).
     let micActive: Bool
     /// True when a cycle is in flight or audio is playing.
     let canInterrupt: Bool
     let onSend: (String) -> Void
-    let onMicToggle: () -> Void
+    /// Corner mic pressed/locked — start the voice uplink.
+    let onMicStart: () -> Void
+    /// Corner mic released/unlocked — stop the voice uplink.
+    let onMicStop: () -> Void
     let onTtsToggle: () -> Void
     let onInterrupt: () -> Void
     /// Composer gained keyboard focus — the host ensures the connection is live so the
@@ -54,6 +66,8 @@ struct Composer: View {
 
     @State var draft = ""
     @State var micDenied = false
+    /// Corner-mic mode as reported by MicCorner — drives the recording takeover.
+    @State private var micMode: MicCornerMode = .idle
     @FocusState private var inputFocused: Bool
 
     let log = AppLog("composer")
@@ -63,28 +77,14 @@ struct Composer: View {
         !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && canSend
     }
 
+    /// True while the corner mic holds the composer (hold or locked).
+    private var isRecording: Bool { micMode != .idle }
+
     var body: some View {
-        VStack(spacing: Space.sm) {
-            if micDenied { micDeniedRow }
-            draftField
-            buttonRow
+        ZStack(alignment: .topTrailing) {
+            card
+            micCorner
         }
-        .padding(Space.md)
-        .background(DuskColors.paper, in: RoundedRectangle(cornerRadius: ComposerLayout.radius))
-        .shadow(
-            // Soft amber halo — mirrors the webui composer glow; intensifies while
-            // the mic is active (listening state). Color from DuskColors.amber token.
-            color: DuskColors.amber.opacity(
-                micActive ? ComposerLayout.glowListeningOpacity : ComposerLayout.glowOpacity
-            ),
-            radius: ComposerLayout.glowRadius
-        )
-        .overlay(
-            // Listening glow: the whole composer card borders accent while the mic
-            // is active (mirrors webui .composer--listening).
-            RoundedRectangle(cornerRadius: ComposerLayout.radius)
-                .stroke(micActive ? DuskColors.accent : DuskColors.line, lineWidth: 1)
-        )
         .padding(.horizontal, Space.lg)
         .padding(.vertical, Space.md)
         .simultaneousGesture(
@@ -108,30 +108,87 @@ struct Composer: View {
         }
     }
 
-    // ── Derived state ───────────────────────────────────────────────────────
+    // ── Card ─────────────────────────────────────────────────────────────────
 
-    private var showWave: Bool { micActive && draft.isEmpty }
+    private var card: some View {
+        VStack(spacing: Space.sm) {
+            if micDenied { micDeniedRow }
+            draftField
+            buttonRow
+        }
+        .padding(Space.md)
+        .background {
+            // Recording takeover wave — webui parity (absolute inset-0 overlay
+            // across the whole card): spans the FULL card width with symmetric
+            // horizontal padding matching the card padding, vertically centered
+            // over the whole composer content. A background layer NEVER affects
+            // layout (composer height is identical idle vs live) and draws
+            // behind the content, so interrupt stays visible + tappable on top.
+            // Background layers stack back-to-front: paper (below) → wave → content.
+            if isRecording {
+                PttBigWave()
+                    .padding(.horizontal, Space.md)
+                    .transition(.opacity.combined(with: .offset(y: 5)))
+            }
+        }
+        .background(DuskColors.paper, in: RoundedRectangle(cornerRadius: ComposerLayout.radius))
+        .shadow(
+            // Soft amber halo — mirrors the webui composer glow; intensifies while
+            // the mic is active (listening state). Color from DuskColors.amber token.
+            color: DuskColors.amber.opacity(
+                micActive ? ComposerLayout.glowListeningOpacity : ComposerLayout.glowOpacity
+            ),
+            radius: ComposerLayout.glowRadius
+        )
+        .overlay(
+            // Listening glow: the whole composer card borders accent while the mic
+            // is active (mirrors webui .composer--listening).
+            RoundedRectangle(cornerRadius: ComposerLayout.radius)
+                .stroke(micActive ? DuskColors.accent : DuskColors.line, lineWidth: 1)
+        )
+    }
+
+    // ── Corner mic ────────────────────────────────────────────────────────────
+    //
+    // Welded onto the card's top-right edge, half overhanging (offset, no
+    // clipping — SwiftUI doesn't clip out-of-bounds children).
+
+    private var micCorner: some View {
+        MicCorner(
+            micActive: micActive,
+            beginPress: onMicPressGate,
+            onModeChange: { mode in
+                withAnimation(.easeOut(duration: 0.25)) { micMode = mode }
+            },
+            onStart: onMicStart,
+            onStop: onMicStop
+        )
+        .padding(.trailing, MicCornerLayout.trailingInset)
+        .offset(y: -MicCornerLayout.overhang)
+    }
 
     // ── Draft field ─────────────────────────────────────────────────────────
 
     private var draftField: some View {
-        ZStack(alignment: .leading) {
-            TextField(
-                showWave ? "" : (canInterrupt ? "Type to interrupt…" : "Message Sentient"),
-                text: $draft,
-                axis: .vertical
-            )
-            .lineLimit(1...6)
-            .font(Typo.ui(TypeScale.base))
-            .foregroundStyle(DuskColors.ink)
-            .tint(DuskColors.accent)
-            .focused($inputFocused)
-            .padding(.vertical, Space.xs)
-            // "composer-input" matches the Android Compose testTag for cross-platform
-            // Maestro flows. "chat-input" is kept as an accessibility label alias.
-            .accessibilityIdentifier("composer-input")
-            if showWave { ListeningWaveform() }
-        }
+        TextField(
+            canInterrupt ? "Type to interrupt…" : "Message Sentient",
+            text: $draft,
+            axis: .vertical
+        )
+        .lineLimit(1...6)
+        .font(Typo.ui(TypeScale.base))
+        .foregroundStyle(DuskColors.ink)
+        .tint(DuskColors.accent)
+        .focused($inputFocused)
+        .padding(.vertical, Space.xs)
+        // "composer-input" matches the Android Compose testTag for cross-platform
+        // Maestro flows. "chat-input" is kept as an accessibility label alias.
+        .accessibilityIdentifier("composer-input")
+        // Recording takeover: hide, don't remove — opacity keeps the field's
+        // measured size (and the draft), so the composer height is IDENTICAL
+        // idle vs live. The wave draws in the card's background overlay.
+        .opacity(isRecording ? 0 : 1)
+        .allowsHitTesting(!isRecording)
     }
 
     // ── Mic-denied notice ─────────────────────────────────────────────────────
@@ -148,37 +205,39 @@ struct Composer: View {
 
     private var buttonRow: some View {
         HStack(spacing: Space.sm) {
-            // mic + TTS are toggles: rounded-square, slashed glyph + sunk bg when
-            // off, accent glyph + accent-tint bg + accent border when on (webui
-            // icon-btn--mic-on/off, tts-on/off).
-            ComposerToggle(systemName: micActive ? "mic" : "mic.slash", on: micActive, action: onMicTap)
-                .accessibilityLabel("Microphone")
-                .accessibilityIdentifier("chat-mic")
-            ComposerToggle(
-                systemName: ttsEnabled ? "speaker.wave.2" : "speaker.slash",
-                on: ttsEnabled,
-                action: onTtsToggle
-            )
-            .accessibilityLabel("Toggle speech")
-            .accessibilityIdentifier("chat-tts-toggle")
-            ComposerToggle(systemName: "paperclip", on: false, action: {})
-                .accessibilityLabel("Attach")
-                .accessibilityIdentifier("chat-attach")
-            Spacer()
-            if canInterrupt {
-                Button(action: onInterrupt) {
-                    RoundedRectangle(cornerRadius: ComposerLayout.stopGlyphRadius).fill(DuskColors.stop)
-                        .frame(width: ComposerLayout.stopIconSize, height: ComposerLayout.stopIconSize)
-                        .frame(width: ComposerLayout.buttonSize, height: ComposerLayout.buttonSize)
-                        .background(DuskColors.stop.opacity(0.16), in: RoundedRectangle(cornerRadius: Radii.sm))
-                        .overlay(RoundedRectangle(cornerRadius: Radii.sm).stroke(DuskColors.stop.opacity(0.35), lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Stop")
-                .accessibilityIdentifier("chat-interrupt")
+            // TTS/attach/send hide during the recording takeover (the corner
+            // control + waveform own the composer); interrupt stays reachable
+            // mid-cycle. minHeight keeps the card from jumping when they hide.
+            if !isRecording {
+                ComposerToggle(
+                    systemName: ttsEnabled ? "speaker.wave.2" : "speaker.slash",
+                    on: ttsEnabled,
+                    action: onTtsToggle
+                )
+                .accessibilityLabel("Toggle speech")
+                .accessibilityIdentifier("chat-tts-toggle")
+                ComposerToggle(systemName: "paperclip", on: false, action: {})
+                    .accessibilityLabel("Attach")
+                    .accessibilityIdentifier("chat-attach")
             }
-            sendButton
+            Spacer()
+            if canInterrupt { interruptButton }
+            if !isRecording { sendButton }
         }
+        .frame(minHeight: ComposerLayout.buttonSize)
+    }
+
+    private var interruptButton: some View {
+        Button(action: onInterrupt) {
+            RoundedRectangle(cornerRadius: ComposerLayout.stopGlyphRadius).fill(DuskColors.stop)
+                .frame(width: ComposerLayout.stopIconSize, height: ComposerLayout.stopIconSize)
+                .frame(width: ComposerLayout.buttonSize, height: ComposerLayout.buttonSize)
+                .background(DuskColors.stop.opacity(0.16), in: RoundedRectangle(cornerRadius: Radii.sm))
+                .overlay(RoundedRectangle(cornerRadius: Radii.sm).stroke(DuskColors.stop.opacity(0.35), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Stop")
+        .accessibilityIdentifier("chat-interrupt")
     }
 
     // ── Send button ───────────────────────────────────────────────────────────

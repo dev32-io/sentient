@@ -780,9 +780,242 @@ html.is-paused *::after {
 }
 .composer__spacer { flex: 1 1 auto; }
 
-/* ─── MicButton / SendButton / InterruptButton — composer dock variants ─── */
+/* ─── MicCorner — hold-to-talk / drag-to-lock corner mic ───
+   A squircle tab welded onto the composer's top-right edge. Hold → mic on
+   (composer becomes a waveform), slide left past the detent to lock
+   hands-free, drag back to disengage. Ember colorway: the body stays dark,
+   the icon burns accent, a gradient trail follows the drag. */
+.composer-shell {
+  position: relative;
+  isolation: isolate;
+}
+.mic-corner-wrap {
+  position: absolute;
+  top: -18px;
+  right: 10px;
+  width: 96px;
+  height: 34px;
+  z-index: 3;
+  pointer-events: none;
+  --mic-detent-color: color-mix(in oklab, var(--color-accent) 85%, white);
+}
 
-/* MicButton wraps IconButton; when variant="mic-on" or "mic-off" sized down for the composer row. */
+/* the button shell — transparent, positioned; visuals live on __body */
+.mic-corner {
+  pointer-events: auto;
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--color-ink-3);
+  cursor: pointer;
+  will-change: transform;
+  touch-action: none;
+  /* springy settle on release */
+  transition: transform 0.5s cubic-bezier(0.3, 1.75, 0.45, 1), color 0.2s;
+}
+.mic-corner:hover { color: var(--color-ink-2); }
+/* while dragging — track the finger raw */
+.mic-corner-wrap--dragging .mic-corner {
+  transition: color 0.2s;
+  cursor: grabbing;
+}
+
+.mic-corner__body {
+  position: absolute;
+  inset: 0;
+  background: var(--color-bg-sunk);
+  border: 1px solid var(--color-line-soft);
+  border-radius: 11px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28);
+  transition: background 0.22s, border-color 0.22s, box-shadow 0.22s;
+}
+.mic-corner__face {
+  position: relative;
+  display: inline-flex;
+}
+
+/* press ripple */
+.mic-corner__ripple {
+  position: absolute;
+  inset: -2px;
+  border-radius: 14px;
+  pointer-events: none;
+  opacity: 0;
+}
+.mic-corner-wrap--hold .mic-corner__ripple {
+  border: 2px solid color-mix(in oklab, var(--color-accent) 70%, transparent);
+  animation: mic-ripple 0.5s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+@keyframes mic-ripple {
+  0%   { opacity: 0.9; transform: scale(0.9); }
+  100% { opacity: 0; transform: scale(1.7); }
+}
+
+/* live (dragging or locked) — ember: dark body, accent icon + glow */
+.mic-corner-wrap--rail .mic-corner { color: var(--color-accent); }
+.mic-corner-wrap--rail .mic-corner__body {
+  border-color: color-mix(in oklab, var(--color-accent) 45%, var(--color-line));
+  box-shadow: 0 2px 10px 0 color-mix(in oklab, var(--color-accent) 30%, transparent);
+}
+/* armed: past the lock threshold — ring flares, detent lights */
+.mic-corner-wrap--armed .mic-corner__body {
+  box-shadow:
+    0 0 0 4px var(--color-accent-50),
+    0 2px 10px 0 color-mix(in oklab, var(--color-accent) 30%, transparent);
+}
+.mic-corner-wrap--locked .mic-corner__body {
+  background: linear-gradient(
+    150deg,
+    color-mix(in oklab, var(--color-accent) 45%, var(--color-bg-sunk)),
+    color-mix(in oklab, var(--color-accent) 20%, var(--color-bg-sunk))
+  );
+  animation: mic-settle 0.5s cubic-bezier(0.3, 1.75, 0.45, 1);
+}
+@keyframes mic-settle {
+  0%   { transform: scale(0.88); }
+  60%  { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+
+/* drag trail — grows with progress along the travel axis */
+.mic-corner-wrap__trail {
+  position: absolute;
+  top: 50%;
+  right: 17px;
+  height: 4px;
+  margin-top: -2px;
+  width: calc(var(--mic-drag-progress, 0) * (100% - 34px));
+  opacity: calc(var(--mic-drag-progress, 0) * 0.9);
+  border-radius: 999px;
+  background: linear-gradient(to left, var(--color-accent), transparent);
+  pointer-events: none;
+}
+
+/* lock detent: a dot at the far end that lights when armed */
+.mic-corner-wrap__detent {
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  margin-top: -2.5px;
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--color-ink) 22%, transparent);
+  opacity: 0;
+  transition: opacity 0.2s, background 0.2s, transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  pointer-events: none;
+}
+.mic-corner-wrap--rail .mic-corner-wrap__detent { opacity: 1; }
+.mic-corner-wrap--armed .mic-corner-wrap__detent {
+  background: var(--mic-detent-color);
+  transform: scale(1.7);
+}
+.mic-corner-wrap--locked .mic-corner-wrap__detent { opacity: 0; }
+
+/* glyph bounce as it locks */
+.mic-corner-wrap--locked .mic-corner__face {
+  animation: mic-snap 0.44s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes mic-snap {
+  0%   { transform: scale(0.62); }
+  55%  { transform: scale(1.2); }
+  100% { transform: scale(1); }
+}
+
+/* rest hint: faint breathing on the idle mic glyph */
+@media (prefers-reduced-motion: no-preference) {
+  .mic-corner-wrap--idle .mic-corner__face {
+    animation: mic-corner-breathe 3s ease-in-out infinite;
+  }
+}
+@keyframes mic-corner-breathe {
+  0%, 100% { opacity: 0.85; }
+  50%      { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mic-corner-wrap--hold .mic-corner__ripple,
+  .mic-corner-wrap--locked .mic-corner__face,
+  .mic-corner-wrap--locked .mic-corner__body {
+    animation: none;
+  }
+}
+
+/* ─── Recording takeover — the field becomes a waveform while live ─── */
+.composer__textarea--hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+/* absolute overlay centered across the composer so it never resizes —
+   full card width, symmetric padding matching the card's own padding.
+   Draws under the bottom row, so Interrupt stays on top and tappable. */
+.composer__wave-field {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  pointer-events: none;
+  animation: wave-in 0.32s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+@keyframes wave-in {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.ptt-bigwave {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 40px;
+  width: 100%;
+  overflow: hidden;
+}
+.ptt-bigwave i {
+  flex: 1 1 0;
+  min-width: 2px;
+  max-width: 5px;
+  border-radius: 2px;
+  background: color-mix(in oklab, var(--color-accent) 70%, var(--color-ink));
+  transform: scaleY(0.32);
+  transform-origin: center;
+  animation: ptt-wave 1s ease-in-out infinite;
+}
+@keyframes ptt-wave {
+  0%, 100% { transform: scaleY(0.24); opacity: 0.5; }
+  50%      { transform: scaleY(1); opacity: 1; }
+}
+/* keep the row height when TTS/Send unmount so the composer doesn't jump */
+.composer--live .composer__bottom-row { min-height: 32px; }
+/* live composer: gentle breathing glow while listening */
+@media (prefers-reduced-motion: no-preference) {
+  .composer--live { animation: composer-breathe 2.8s ease-in-out infinite; }
+}
+@keyframes composer-breathe {
+  0%, 100% {
+    box-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.2),
+      0 10px 30px -8px color-mix(in oklab, var(--color-accent) 30%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.2),
+      0 10px 34px -6px color-mix(in oklab, var(--color-accent) 48%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .composer__wave-field { animation: none; }
+  .ptt-bigwave i { animation: none; transform: scaleY(0.6); }
+}
+
+/* ─── TtsButton / SendButton / InterruptButton — composer dock variants ─── */
+
 .composer__bottom-row .icon-btn {
   width: 32px;
   height: 32px;
@@ -793,16 +1026,6 @@ html.is-paused *::after {
 .composer__bottom-row .icon-btn:hover {
   background: var(--color-bg-elev);
   color: var(--color-ink);
-}
-.composer__bottom-row .icon-btn--mic-on {
-  color: var(--color-accent);
-  background: color-mix(in oklab, var(--color-accent) 14%, var(--color-paper));
-  border-color: color-mix(in oklab, var(--color-accent) 35%, var(--color-line));
-}
-.composer__bottom-row .icon-btn--mic-off {
-  color: var(--color-ink-3);
-  background: var(--color-bg-sunk);
-  border-color: var(--color-line);
 }
 .composer__bottom-row .icon-btn--tts-on {
   color: var(--color-accent);
@@ -1007,6 +1230,13 @@ html.is-paused *::after {
   .composer__bottom-row .icon-btn { width: 28px; height: 28px; border-radius: 7px; }
   .send-btn,
   .interrupt-btn { width: 28px; height: 28px; border-radius: 7px; }
+  .composer--live .composer__bottom-row { min-height: 28px; }
+
+  /* Corner mic: smaller tab, tighter travel on narrow screens. */
+  .mic-corner-wrap { top: -16px; right: 8px; width: 84px; height: 32px; }
+  .mic-corner { width: 32px; height: 32px; }
+  .mic-corner-wrap__trail { width: calc(var(--mic-drag-progress, 0) * (100% - 32px)); }
+  .composer__wave-field { padding: 0 10px; }
 
   /* Suggestion chips: single horizontal scroll row instead of wrapping
      into 2–3 lines that eat half the keyboard-less viewport. */

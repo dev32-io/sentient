@@ -1,16 +1,16 @@
 // ---------------------------------------------------------------------------
 // ComposerButtons — reusable icon-button primitives used in the Composer dock.
 //
-// ComposerToggle — a rounded-square on/off button (mic, TTS, attach). When on:
+// ComposerToggle — a rounded-square on/off button (TTS, attach). When on:
 //   accent glyph + tinted fill + accent border. When off: ink-3 glyph + sunk
-//   surface + line border.
+//   surface + line border. (The mic is the MicCorner control, not a toggle.)
 //
 // ComposerAction — an icon-only action button (send). Tint carries meaning:
 //   accent when active, ink-4 when disabled.
 //
 // These are private to the `chat` package; both are referenced only by
-// ButtonRow in Composer.kt. The stop button is rendered inline in ButtonRow
-// as a custom tinted-square shape (see Composer.kt).
+// ButtonRow in ComposerRow.kt, which also renders the stop button as a
+// custom tinted-square shape.
 // ---------------------------------------------------------------------------
 package io.sentient.android.chat.composer
 
@@ -40,9 +40,9 @@ internal const val ON_TINT_ALPHA = 0.14f
 internal const val ON_BORDER_ALPHA = 0.4f
 
 /**
- * A composer on/off toggle (mic, TTS, attach) — a rounded-square icon button.
+ * A composer on/off toggle (TTS, attach) — a rounded-square icon button.
  * Off: ink-3 glyph on the sunk surface with a line border. On: accent glyph +
- * border over an accent-tinted fill. Mirrors the webui icon-btn--mic-on/off + tts variants.
+ * border over an accent-tinted fill. Mirrors the webui icon-btn--tts variants.
  */
 @Composable
 internal fun ComposerToggle(

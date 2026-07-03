@@ -191,6 +191,7 @@ contiguous stream and rechunks internally.
 | --------- | --------- | ----------------------------------------------- | --------- |
 | `hello`   | C → S     | Optional handshake; logged for debugging.       | No        |
 | `ping`    | C → S     | Liveness probe; server replies `pong`.          | No        |
+| `flush`   | C → S     | End-of-stream: force-finalize any open turn.    | No        |
 
 #### `hello`
 
@@ -214,6 +215,21 @@ a `hello` has no functional impact.
 
 The server replies with `{"type": "pong"}`. Useful for idle-connection
 keepalive if any intermediary closes idle WebSockets.
+
+#### `flush`
+
+```json
+{ "type": "flush" }
+```
+
+Client end-of-stream signal — send when the audio source stops while a
+turn may still be open (push-to-talk release, mic toggled off). The
+server force-finalizes any open turn immediately (`turn.force_finalize`
+with `reason: "client_flush"`, synthetic `vad_end` if mid-speech) and
+emits the normal `turn_complete` / `transcript_ready` pair. No-op when
+no turn is active. Without a `flush`, an open turn only finalizes when
+audio frames resume — the §6 watchdogs are evaluated on frame arrival,
+not on a wall clock.
 
 > **Note on language handling**: the service exposes a `language` hint
 > at connect time (see §1.1). The hint is decode-only — Whisper still

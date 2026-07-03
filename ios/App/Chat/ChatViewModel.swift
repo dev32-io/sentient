@@ -97,13 +97,18 @@ final class ChatViewModel: ObservableObject {
         component.sendMessage.flushIfReady(cache: cache, status: connection.status)
     }
 
-    /// Toggle the voice uplink (mic on/off) through the component passthroughs.
-    func toggleMic() {
-        if connection.voiceMode == .active {
-            component.stopMic()
-        } else {
-            component.startMic()
-        }
+    /// Start the voice uplink (corner mic pressed/locked) via the component
+    /// passthrough. Fire-and-forget: the SDK flips voiceMode optimistically; a
+    /// downstream failure drops it back to off, which resets the control.
+    func startMic() {
+        log.info("mic.start")
+        component.startMic()
+    }
+
+    /// Stop the voice uplink (corner mic released/unlocked).
+    func stopMic() {
+        log.info("mic.stop")
+        component.stopMic()
     }
 
     /// Toggle TTS through the component passthrough (gateway echoes via prefs).

@@ -43,6 +43,12 @@ export interface STTAdapter {
    *  assistant starts producing audio so WebRTC AEC can converge. A call
    *  with `ms=0` clears any active suppression window immediately. */
   suppressInputFor(ms: number): void;
+  /** Client signalled end-of-stream (`audio.end` — PTT release / mic off).
+   *  Sends `{"type":"flush"}` so the service force-finalizes any open turn
+   *  NOW. Without it the turn-pipeline watchdogs only run on frame arrival,
+   *  so a turn left open when frames stop would finalize at the NEXT mic
+   *  hold — the transcript would ride the next session. */
+  endUtterance(): void;
 }
 
 export type STTAdapterFactory = (config: STTAdapterConfig) => STTAdapter;
