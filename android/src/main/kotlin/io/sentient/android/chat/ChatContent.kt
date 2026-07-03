@@ -24,7 +24,8 @@
 // testTags added in this file:
 //   - composer-input   → wired through Composer via "composer-input" (new tag)
 //   - composer-send    → wired through Composer via "chat-send" (existing tag)
-//   - mic-toggle       → wired through Composer via "chat-mic" (existing tag)
+//   - mic control      → wired through Composer via "chat-mic" on the MicCorner
+//                        button ("mic-corner-locked" wrap tag while LOCKED)
 //   - banner-connection → the connection-state banner pill (lost / reconnecting)
 //   - banner-chat       → the chat-side error banner
 //   - content-screen    → the root Column (Maestro scoping)
@@ -69,7 +70,8 @@ import io.sentient.mobilesdk.transport.SdkStatus
  * @param uiState       Chat model (committed + pending + live + tasks) + banner.
  * @param connection    Transport + voice state from the KMP SDK.
  * @param onSend        User submitted a text message (called unconditionally; repo queues).
- * @param onMicToggle   Mic button tapped.
+ * @param onMicStart    Corner mic pressed/locked — start voice mode.
+ * @param onMicStop     Corner mic released/unlocked — stop voice mode.
  * @param onTtsToggle   TTS toggle tapped.
  * @param onInterrupt   Stop button tapped (cycle/audio abort).
  * @param onOpenHistory History drawer opened.
@@ -85,7 +87,8 @@ fun ChatContent(
     uiState: ChatUiState,
     connection: ConnectionState,
     onSend: (String) -> Unit,
-    onMicToggle: () -> Unit,
+    onMicStart: () -> Unit,
+    onMicStop: () -> Unit,
     onTtsToggle: () -> Unit,
     onInterrupt: () -> Unit,
     onOpenHistory: () -> Unit,
@@ -181,7 +184,8 @@ fun ChatContent(
                 micActive = voiceActive,
                 canInterrupt = canInterrupt,
                 onSend = onSend,
-                onMicToggle = onMicToggle,
+                onMicStart = onMicStart,
+                onMicStop = onMicStop,
                 onTtsToggle = onTtsToggle,
                 onInterrupt = onInterrupt,
                 onFocus = onComposerFocus,
