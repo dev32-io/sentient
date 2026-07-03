@@ -214,7 +214,8 @@ struct ChatView: View {
                 micActive: voiceActive,
                 canInterrupt: canInterrupt,
                 onSend: { vm.send($0) },
-                onMicToggle: { vm.toggleMic() },
+                onMicStart: { vm.startMic() },
+                onMicStop: { vm.stopMic() },
                 onTtsToggle: { vm.toggleTts() },
                 onInterrupt: { vm.interrupt() },
                 onFocusGained: { vm.onComposerFocus() }

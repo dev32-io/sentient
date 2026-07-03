@@ -54,6 +54,16 @@ enum DuskColors {
     // `lerp(paper, sage, 0.16)`. Lerped on the raw ARGB tokens so the iOS-17
     // deployment target holds (Color.mix is iOS 18+).
     static let userBubble = lerpColor(Colors.shared.paper, Colors.shared.sage, 0.16)
+
+    // MicCorner ember colorway (webui components.css "MicCorner" section) —
+    // color-mix values lerped on the raw ARGB tokens, like userBubble above.
+    /// Live control border: color-mix(accent 45%, line).
+    static let micLiveBorder = lerpColor(Colors.shared.line, Colors.shared.accent, 0.45)
+    /// Locked body gradient stops: color-mix(accent 45% / 20%, bg-sunk).
+    static let micLockedHi = lerpColor(Colors.shared.bgSunk, Colors.shared.accent, 0.45)
+    static let micLockedLo = lerpColor(Colors.shared.bgSunk, Colors.shared.accent, 0.20)
+    /// PTT takeover wave bars: color-mix(accent 70%, ink).
+    static let waveBar = lerpColor(Colors.shared.ink, Colors.shared.accent, 0.70)
 }
 
 private let argbByteMask: Int64 = 0xFF
