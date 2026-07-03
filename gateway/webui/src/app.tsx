@@ -295,9 +295,18 @@ function AppInner() {
               ttsEnabled={client.prefs.value.ttsEnabled}
               suggestions={SUGGESTIONS}
               onSendText={client.sendText}
-              onMicToggle={() =>
-                client.voiceMode.value === "active" ? client.stopVoiceMode() : client.startVoiceMode()
-              }
+              onMicStart={async () => {
+                try {
+                  await client.startVoiceMode();
+                } catch (err) {
+                  // Surface the reason (old browser, mic failure) and rethrow so
+                  // the corner mic control resets itself to idle.
+                  const message = err instanceof Error ? err.message : "Couldn't start the microphone.";
+                  toast.show(message, "error");
+                  throw err;
+                }
+              }}
+              onMicStop={() => client.stopVoiceMode()}
               onTtsToggle={() => {
                 if (togglingRef.current) return;
                 togglingRef.current = true;

@@ -5,7 +5,7 @@ export interface IconButtonProps {
   iconName: IconName;
   title: string;
   active?: boolean;
-  variant?: "default" | "interrupt" | "mic-on" | "mic-off" | "tts-on" | "tts-off";
+  variant?: "default" | "interrupt" | "tts-on" | "tts-off";
   onClick(): void;
 }
 

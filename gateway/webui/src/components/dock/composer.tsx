@@ -2,7 +2,9 @@ import type { JSX } from "preact";
 import { useRef, useState } from "preact/hooks";
 import type { CycleStatus } from "../../hooks/cycle-helpers.ts";
 import { InterruptButton } from "./interrupt-button.tsx";
-import { MicButton } from "./mic-button.tsx";
+import { MicCorner } from "./mic-corner.tsx";
+import type { MicCornerMode } from "./mic-corner-gesture.ts";
+import { PttWave } from "./ptt-wave.tsx";
 import { SendButton } from "./send-button.tsx";
 import { SuggestionChips } from "./suggestion-chips.tsx";
 import { TtsButton } from "./tts-button.tsx";
@@ -21,7 +23,10 @@ export interface ComposerProps {
   ttsEnabled: boolean;
   suggestions: readonly string[];
   onSendText(text: string): void;
-  onMicToggle(): void;
+  /** Corner mic pressed/locked — start voice mode. Rejection resets the control. */
+  onMicStart(): Promise<void>;
+  /** Corner mic released/unlocked — stop voice mode. */
+  onMicStop(): void;
   /** Optimistic flip + persist via profile PUT + WS preference patch. */
   onTtsToggle(): void;
   onInterrupt(): void;
@@ -61,10 +66,13 @@ function isNarrowViewport(): boolean {
 
 export function Composer(props: ComposerProps): JSX.Element {
   const { cycleStatus, voiceMode, canInterrupt, connectionReady, ttsEnabled, suggestions } = props;
-  const { onSendText, onMicToggle, onTtsToggle, onInterrupt, onSuggestionClick } = props;
+  const { onSendText, onMicStart, onMicStop, onTtsToggle, onInterrupt, onSuggestionClick } = props;
 
   const [text, setText] = useState("");
   const [submitBlockedFlash, setSubmitBlockedFlash] = useState(false);
+  // Corner-mic mode drives the recording takeover: waveform overlays the
+  // (hidden, draft-preserving) textarea and the row keeps only Interrupt.
+  const [micMode, setMicMode] = useState<MicCornerMode>("idle");
   const areaRef = useRef<HTMLTextAreaElement>(null);
   // Touch devices: blur after send to dismiss the on-screen keyboard so the
   // freshly streaming reply isn't hidden behind it. Desktop keeps focus.
@@ -73,10 +81,12 @@ export function Composer(props: ComposerProps): JSX.Element {
 
   const voiceActive = voiceMode === "active";
   const isStreaming = cycleStatus !== "idle";
+  const isLive = micMode !== "idle";
 
   const composerClasses = [
     "composer",
     voiceActive ? "composer--listening" : "",
+    isLive ? "composer--live" : "",
     isStreaming ? "composer--streaming" : "",
     !connectionReady ? "composer--reconnecting" : "",
   ]
@@ -111,26 +121,33 @@ export function Composer(props: ComposerProps): JSX.Element {
   return (
     <div class="dock">
       <div class="dock-inner">
-        <div class={composerClasses}>
-          {!connectionReady && (
-            <div class={`composer__connection-pill${submitBlockedFlash ? " composer__connection-pill--flash" : ""}`}>
-              Reconnecting…
+        <div class="composer-shell">
+          <MicCorner active={voiceActive} onModeChange={setMicMode} onStart={onMicStart} onStop={onMicStop} />
+          <div class={composerClasses}>
+            {!connectionReady && (
+              <div class={`composer__connection-pill${submitBlockedFlash ? " composer__connection-pill--flash" : ""}`}>
+                Reconnecting…
+              </div>
+            )}
+            <textarea
+              ref={areaRef}
+              class={`composer__textarea${isLive ? " composer__textarea--hidden" : ""}`}
+              placeholder={placeholderFor(voiceMode, shortPlaceholder.current)}
+              value={text}
+              onInput={(e) => setText((e.target as HTMLTextAreaElement).value)}
+              onKeyDown={handleKeyDown}
+            />
+            {isLive && (
+              <div class="composer__wave-field">
+                <PttWave />
+              </div>
+            )}
+            <div class="composer__bottom-row">
+              {!isLive && <TtsButton enabled={ttsEnabled} onToggle={onTtsToggle} />}
+              <span class="composer__spacer" />
+              {!isLive && <SendButton disabled={sendDisabled} onSend={submit} />}
+              {canInterrupt && <InterruptButton onInterrupt={onInterrupt} />}
             </div>
-          )}
-          <textarea
-            ref={areaRef}
-            class="composer__textarea"
-            placeholder={placeholderFor(voiceMode, shortPlaceholder.current)}
-            value={text}
-            onInput={(e) => setText((e.target as HTMLTextAreaElement).value)}
-            onKeyDown={handleKeyDown}
-          />
-          <div class="composer__bottom-row">
-            <MicButton active={voiceActive} onToggle={onMicToggle} />
-            <TtsButton enabled={ttsEnabled} onToggle={onTtsToggle} />
-            <span class="composer__spacer" />
-            <SendButton disabled={sendDisabled} onSend={submit} />
-            {canInterrupt && <InterruptButton onInterrupt={onInterrupt} />}
           </div>
         </div>
         <SuggestionChips suggestions={suggestions} onClick={onSuggestionClick} />
