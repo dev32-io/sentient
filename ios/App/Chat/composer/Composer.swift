@@ -15,8 +15,10 @@
 // MicCorner: press → hold (mic on), drag left ≥40% travel → locked
 // hands-free, drag back from locked ≤50% → off. While hold/locked the
 // composer "takes over": the text field hides (draft PRESERVED), PttBigWave
-// fills the field zone, and TTS/attach/send hide — interrupt stays while a
-// cycle is in flight. The permission gate lives in Composer+Mic.swift
+// overlays the FULL card (background layer — zero layout impact, so the
+// composer height is identical idle vs live), and TTS/attach/send hide —
+// interrupt stays on top while a cycle is in flight. The permission gate
+// lives in Composer+Mic.swift
 // (onMicPressGate + MicPermission): a press without record permission
 // requests it and does NOT enter hold; a grant does NOT auto-start. The
 // listening glow stays keyed on micActive.
@@ -115,6 +117,20 @@ struct Composer: View {
             buttonRow
         }
         .padding(Space.md)
+        .background {
+            // Recording takeover wave — webui parity (absolute inset-0 overlay
+            // across the whole card): spans the FULL card width with symmetric
+            // horizontal padding matching the card padding, vertically centered
+            // over the whole composer content. A background layer NEVER affects
+            // layout (composer height is identical idle vs live) and draws
+            // behind the content, so interrupt stays visible + tappable on top.
+            // Background layers stack back-to-front: paper (below) → wave → content.
+            if isRecording {
+                PttBigWave()
+                    .padding(.horizontal, Space.md)
+                    .transition(.opacity.combined(with: .offset(y: 5)))
+            }
+        }
         .background(DuskColors.paper, in: RoundedRectangle(cornerRadius: ComposerLayout.radius))
         .shadow(
             // Soft amber halo — mirrors the webui composer glow; intensifies while
@@ -154,30 +170,25 @@ struct Composer: View {
     // ── Draft field ─────────────────────────────────────────────────────────
 
     private var draftField: some View {
-        ZStack(alignment: .leading) {
-            TextField(
-                canInterrupt ? "Type to interrupt…" : "Message Sentient",
-                text: $draft,
-                axis: .vertical
-            )
-            .lineLimit(1...6)
-            .font(Typo.ui(TypeScale.base))
-            .foregroundStyle(DuskColors.ink)
-            .tint(DuskColors.accent)
-            .focused($inputFocused)
-            .padding(.vertical, Space.xs)
-            // "composer-input" matches the Android Compose testTag for cross-platform
-            // Maestro flows. "chat-input" is kept as an accessibility label alias.
-            .accessibilityIdentifier("composer-input")
-            // Recording takeover: hide, don't remove — the draft (and field
-            // layout) is preserved for when the mic disengages.
-            .opacity(isRecording ? 0 : 1)
-            .allowsHitTesting(!isRecording)
-            if isRecording {
-                PttBigWave()
-                    .transition(.opacity.combined(with: .offset(y: 5)))
-            }
-        }
+        TextField(
+            canInterrupt ? "Type to interrupt…" : "Message Sentient",
+            text: $draft,
+            axis: .vertical
+        )
+        .lineLimit(1...6)
+        .font(Typo.ui(TypeScale.base))
+        .foregroundStyle(DuskColors.ink)
+        .tint(DuskColors.accent)
+        .focused($inputFocused)
+        .padding(.vertical, Space.xs)
+        // "composer-input" matches the Android Compose testTag for cross-platform
+        // Maestro flows. "chat-input" is kept as an accessibility label alias.
+        .accessibilityIdentifier("composer-input")
+        // Recording takeover: hide, don't remove — opacity keeps the field's
+        // measured size (and the draft), so the composer height is IDENTICAL
+        // idle vs live. The wave draws in the card's background overlay.
+        .opacity(isRecording ? 0 : 1)
+        .allowsHitTesting(!isRecording)
     }
 
     // ── Mic-denied notice ─────────────────────────────────────────────────────

@@ -14,9 +14,12 @@
 // queue). Interrupt is shown only when cognition != IDLE || isSpeaking.
 //
 // Recording takeover: while the MicCorner is HOLD or LOCKED the text field is
-// hidden (draft PRESERVED), the PttWave waveform overlays the field zone, and
-// TTS / attach / send hide from the row (interrupt stays). The composer glow
-// keeps keying on micActive (server-confirmed voiceMode), webui parity.
+// hidden (alpha only — draft, focus/IME, and measured height all PRESERVED),
+// the PttWave waveform overlays the WHOLE card as an inset-0 layer (drawn
+// behind the content, so the interrupt button stays on top), and TTS / attach /
+// send hide from the row (row min-height pinned — the composer's measured size
+// is identical between idle and live). The composer glow keeps keying on
+// micActive (server-confirmed voiceMode), webui parity.
 //
 // Mic permission (E5, adapted): the corner control's press gates on
 // RECORD_AUDIO. Granted → HOLD + onMicStart. Not granted → system prompt,
@@ -36,12 +39,18 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
@@ -67,6 +76,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import io.sentient.android.chat.voice.PttWave
 import io.sentient.android.theme.LocalTokens
 import io.sentient.android.theme.SentientTokens
 import io.sentient.mobilesdk.design.Colors
@@ -82,6 +92,9 @@ private val MIC_OVERHANG = MIC_CORNER_BUTTON / 2
 private val MIC_END_INSET = 10.dp
 
 private const val MIC_DENIED_NOTICE = "Microphone permission is needed for voice."
+private const val WAVE_IN_MS = 320
+private const val WAVE_OUT_MS = 150
+private const val WAVE_SLIDE_FRACTION = 12 // entrance slide = height / this (≈ webui 5px)
 private val composerLog = createLogger("android", "composer")
 
 /**
@@ -155,7 +168,7 @@ fun Composer(
             .padding(horizontal = tokens.space.lg)
             .padding(bottom = tokens.space.md),
     ) {
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = MIC_OVERHANG)
@@ -174,35 +187,55 @@ fun Composer(
                             }
                         },
                     )
-                }
-                .padding(tokens.space.md),
-            verticalArrangement = Arrangement.spacedBy(tokens.space.sm),
+                },
         ) {
-            if (micDenied) {
-                Text(
-                    MIC_DENIED_NOTICE,
-                    color = Color(Colors.stop),
-                    fontSize = tokens.type.sm,
-                    modifier = Modifier.testTag("mic-denied-notice"),
+            // Recording takeover — an inset-0 overlay spanning the WHOLE card,
+            // vertically centered, composed BEFORE the content so buttons stay on
+            // top (webui .composer__wave-field parity). matchParentSize keeps it
+            // out of the card's measurement: the composer never changes size.
+            AnimatedVisibility(
+                visible = micLive,
+                enter = fadeIn(tween(WAVE_IN_MS)) + slideInVertically(tween(WAVE_IN_MS)) { it / WAVE_SLIDE_FRACTION },
+                exit = fadeOut(tween(WAVE_OUT_MS)),
+                modifier = Modifier.matchParentSize(),
+            ) {
+                Box(
+                    Modifier.fillMaxSize().padding(horizontal = tokens.space.md),
+                    contentAlignment = Alignment.Center,
+                ) { PttWave() }
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(tokens.space.md),
+                verticalArrangement = Arrangement.spacedBy(tokens.space.sm),
+            ) {
+                if (micDenied) {
+                    Text(
+                        MIC_DENIED_NOTICE,
+                        color = Color(Colors.stop),
+                        fontSize = tokens.type.sm,
+                        modifier = Modifier.testTag("mic-denied-notice"),
+                    )
+                }
+                DraftField(
+                    draft = draft,
+                    live = micLive,
+                    streaming = canInterrupt,
+                    onChange = { draft = it },
+                    onFocus = onFocus,
+                )
+                ButtonRow(
+                    sendEnabled = sendEnabled,
+                    canSend = canSend,
+                    ttsEnabled = ttsEnabled,
+                    live = micLive,
+                    canInterrupt = canInterrupt,
+                    onSend = { submit() },
+                    onTtsToggle = onTtsToggle,
+                    onInterrupt = onInterrupt,
                 )
             }
-            DraftField(
-                draft = draft,
-                live = micLive,
-                streaming = canInterrupt,
-                onChange = { draft = it },
-                onFocus = onFocus,
-            )
-            ButtonRow(
-                sendEnabled = sendEnabled,
-                canSend = canSend,
-                ttsEnabled = ttsEnabled,
-                live = micLive,
-                canInterrupt = canInterrupt,
-                onSend = { submit() },
-                onTtsToggle = onTtsToggle,
-                onInterrupt = onInterrupt,
-            )
         }
         MicCorner(
             micActive = micActive,

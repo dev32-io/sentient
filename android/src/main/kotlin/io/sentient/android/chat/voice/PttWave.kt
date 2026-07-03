@@ -1,10 +1,11 @@
 // ---------------------------------------------------------------------------
-// PttWave — the recording-takeover waveform shown across the composer's field
-// zone while the corner mic is live (HOLD or LOCKED). Mirrors the webui
+// PttWave — the recording-takeover waveform overlaid across the WHOLE composer
+// card while the corner mic is live (HOLD or LOCKED). Mirrors the webui
 // .ptt-bigwave (gateway/webui/src/styles/components.css + PttWave component):
 // 32 bars (narrow-viewport count) whose heights follow a fixed sine contour,
-// with a staggered scaleY + alpha pulse. Decorative — not driven by real mic
-// levels.
+// with a staggered scaleY + alpha pulse. Bars are weighted so the row spans the
+// full available width edge to edge (webui flex: 1 1 0). Decorative — not
+// driven by real mic levels.
 // ---------------------------------------------------------------------------
 package io.sentient.android.chat.voice
 
@@ -19,7 +20,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -50,7 +50,6 @@ private const val PULSE_MIN_ALPHA = 0.5f
 private const val PULSE_ALPHA_RANGE = 0.5f
 private const val BAR_ACCENT_MIX = 0.7f          // color-mix(accent 70%, ink)
 private val WAVE_HEIGHT = 40.dp
-private val BAR_WIDTH = 3.dp
 private val BAR_GAP = 3.dp
 private val BAR_RADIUS = 2.dp
 
@@ -65,7 +64,7 @@ internal fun PttWave(modifier: Modifier = Modifier) {
     val barColor = lerp(Color(Colors.ink), Color(Colors.accent), BAR_ACCENT_MIX)
     Row(
         modifier = modifier.fillMaxWidth().height(WAVE_HEIGHT),
-        horizontalArrangement = Arrangement.spacedBy(BAR_GAP, Alignment.CenterHorizontally),
+        horizontalArrangement = Arrangement.spacedBy(BAR_GAP),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         repeat(BAR_COUNT) { i ->
@@ -73,7 +72,7 @@ internal fun PttWave(modifier: Modifier = Modifier) {
             val delay = (i % BAR_DELAY_CYCLE) * BAR_DELAY_STEP
             Box(
                 Modifier
-                    .width(BAR_WIDTH)
+                    .weight(1f)
                     .height(WAVE_HEIGHT * contour)
                     .graphicsLayer {
                         // Delayed local phase → sinusoidal pulse ≈ CSS ease-in-out keyframes.

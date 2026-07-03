@@ -1,10 +1,12 @@
 // ---------------------------------------------------------------------------
 // PttBigWave — the recording-takeover waveform: 32 flexible bars with a sine
-// contour filling the composer's field zone while the corner mic is held or
-// locked. Mirrors the webui .ptt-bigwave (components.css): bar heights are
-// (20 + 64·|sin(i·0.7)|)% of a 40pt lane, pulsing scaleY .24↔1 on a 1s cycle
-// with a staggered (i mod 13)·0.06s delay. TimelineView-driven (same pattern
-// the retired ListeningWaveform used); reduced-motion → static bars at 0.6.
+// contour, overlaid across the FULL composer card while the corner mic is
+// held or locked. Mirrors the webui .ptt-bigwave (components.css): bar
+// heights are (20 + 64·|sin(i·0.7)|)% of a 40pt lane, pulsing scaleY .24↔1 on
+// a 1s cycle with a staggered (i mod 13)·0.06s delay. Bars share the lane
+// width evenly (no max-width cap — the overlay must span the card with no
+// side gaps). TimelineView-driven (same pattern the retired ListeningWaveform
+// used); reduced-motion → static bars at 0.6.
 // ---------------------------------------------------------------------------
 import Foundation
 import SwiftUI
@@ -21,7 +23,7 @@ struct PttBigWave: View {
             }
         }
         .frame(height: PttWaveLayout.laneHeight)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity)
         .allowsHitTesting(false)
     }
 
@@ -47,7 +49,7 @@ struct PttBigWave: View {
             ForEach(0..<PttWaveLayout.barCount, id: \.self) { i in
                 Capsule()
                     .fill(DuskColors.waveBar)
-                    .frame(minWidth: PttWaveLayout.barMinWidth, maxWidth: PttWaveLayout.barMaxWidth)
+                    .frame(minWidth: PttWaveLayout.barMinWidth, maxWidth: .infinity)
                     .frame(height: contourHeight(i) * CGFloat(scale(i)))
             }
         }
@@ -68,9 +70,9 @@ private enum PttWaveLayout {
     static let laneHeight: CGFloat = 40
     /// Horizontal gap between bars.
     static let barSpacing: CGFloat = 3
-    /// Bars flex between these widths (webui min-width 2 / max-width 5).
+    /// Bar width floor; bars grow evenly to fill the lane (full-card overlay,
+    /// no side gaps — supersedes the webui max-width 5px cap).
     static let barMinWidth: CGFloat = 2
-    static let barMaxWidth: CGFloat = 5
     /// One pulse cycle (webui ptt-wave 1s ease-in-out infinite).
     static let cycleDuration: Double = 1.0
     /// Stagger: delay = (i mod 13) · 0.06 s.

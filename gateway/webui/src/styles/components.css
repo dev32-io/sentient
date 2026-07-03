@@ -953,13 +953,15 @@ html.is-paused *::after {
   opacity: 0;
   pointer-events: none;
 }
-/* absolute overlay centered across the composer so it never resizes */
+/* absolute overlay centered across the composer so it never resizes —
+   full card width, symmetric padding matching the card's own padding.
+   Draws under the bottom row, so Interrupt stays on top and tappable. */
 .composer__wave-field {
   position: absolute;
   inset: 0;
   display: flex;
   align-items: center;
-  padding: 0 52px 0 16px; /* clear interrupt on the right */
+  padding: 0 14px;
   pointer-events: none;
   animation: wave-in 0.32s cubic-bezier(0.2, 0.9, 0.3, 1) both;
 }
@@ -1234,7 +1236,7 @@ html.is-paused *::after {
   .mic-corner-wrap { top: -16px; right: 8px; width: 84px; height: 32px; }
   .mic-corner { width: 32px; height: 32px; }
   .mic-corner-wrap__trail { width: calc(var(--mic-drag-progress, 0) * (100% - 32px)); }
-  .composer__wave-field { padding: 0 44px 0 12px; }
+  .composer__wave-field { padding: 0 10px; }
 
   /* Suggestion chips: single horizontal scroll row instead of wrapping
      into 2–3 lines that eat half the keyboard-less viewport. */
