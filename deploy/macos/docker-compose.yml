@@ -42,6 +42,12 @@ volumes:
   # Docker Desktop VM. See file header for why.
   sentient-supervisor:
     name: sentient-supervisor
+  # Gateway-hosted MCP per-user unix sockets (mcp-<userId>.sock). Named volume
+  # on macOS for the same virtiofs reason as sentient-supervisor — bind-mounts
+  # reject AF_UNIX bind()/unlink()/chmod(), so stale sockets from a
+  # force-killed container brick the next boot's listen() with ENOTSUP.
+  sentient-run:
+    name: sentient-run
 
 services:
   # ---------------------------------------------------------------------------
@@ -73,7 +79,6 @@ services:
       - SENTIENT_GATEWAY_ROOT=/app/gateway-data
       - SENTIENT_PROJECT_PROFILES_DIR=/sentient-host-profiles
       - SENTIENT_HOST_GATEWAY_DATA_DIR=${HOME}/.sentient/gateway/data
-      - SENTIENT_HOST_MCP_SOCKET_DIR=${HOME}/.sentient/run/sentient
       - SENTIENT_SUPERVISORD_SOCKET=/data/supervisor/supervisor.sock
       - SENTIENT_HOME=/sentient
       - HOST_HOME=${HOME}
@@ -83,6 +88,8 @@ services:
       # source-without-slash as a docker volume reference, so the orchestrator
       # spawns hermes with the same shared volume mount.
       - SUPERVISOR_DIR=sentient-supervisor
+      # Same pattern for the gateway's per-user mcp-<userId>.sock sockets.
+      - MCP_SOCKET_DIR=sentient-run
     ports:
       - "8888:8888"
     volumes:
@@ -98,7 +105,8 @@ services:
       - ~/.sentient/gateway/clientLogs:/app/clientLogs
       - ~/.sentient/gateway/data:/app/gateway-data
       - ${HOME}/.sentient/gateway/data:${HOME}/.sentient/gateway/data
-      - ~/.sentient/run/sentient:/run/sentient
+      # MCP host sockets — named volume on macOS (see sentient-run above).
+      - sentient-run:/run/sentient
       - ~/.sentient/certs:/app/certs
       # Supervisord state — see file header for why this is a named volume
       # on macOS instead of a bind under ~/.sentient/.

@@ -61,7 +61,6 @@ services:
       - SENTIENT_GATEWAY_ROOT=/app/gateway-data
       - SENTIENT_PROJECT_PROFILES_DIR=/sentient-host-profiles
       - SENTIENT_HOST_GATEWAY_DATA_DIR=${HOME}/.sentient/gateway/data
-      - SENTIENT_HOST_MCP_SOCKET_DIR=${HOME}/.sentient/run/sentient
       # supervisord socket path inside the gateway container — must match
       # the path inside sentient-hermes since both mount the same volume.
       - SENTIENT_SUPERVISORD_SOCKET=/data/supervisor/supervisor.sock
@@ -83,6 +82,10 @@ services:
       # supervisord can create its unix socket on ext4. macOS uses a named
       # volume instead; see deploy/macos/docker-compose.yml.
       - SUPERVISOR_DIR=${HOME}/.sentient/supervisor
+      # Source for the hermes /run/sentient mount (gateway's per-user
+      # mcp-<userId>.sock unix sockets). Bind path on Linux — ext4 supports
+      # AF_UNIX bind()/unlink()/chmod(). macOS uses a named volume instead.
+      - MCP_SOCKET_DIR=${HOME}/.sentient/run/sentient
     ports:
       - "8888:8888"
     volumes:
@@ -101,7 +104,9 @@ services:
       # same root at the same path; gateway needs it too because it
       # creates the per-user dir before supervisord reread/update.)
       - ${HOME}/.sentient/gateway/data:${HOME}/.sentient/gateway/data
-      # MCP host socket — hermes containers dial /run/sentient/mcp.sock via nc -U.
+      # MCP host sockets — hermes dials /run/sentient/mcp-<userId>.sock. Bind
+      # on Linux (ext4 supports AF_UNIX); macOS uses the sentient-run named
+      # volume. Source must match MCP_SOCKET_DIR so hermes mounts the same path.
       - ~/.sentient/run/sentient:/run/sentient
       # Cert dir — gateway writes cert.pem + key.pem on first boot.
       # Persists across restarts so the browser's accepted exception keeps working.

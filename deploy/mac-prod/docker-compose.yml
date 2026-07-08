@@ -21,6 +21,13 @@
 #     virtiofs bind-mounts reject AF_UNIX bind() (EINVAL), which kills
 #     supervisord. A named volume (ext4 inside the VM) lets it bind its
 #     socket. Both gateway and orchestrator-spawned hermes mount it.
+#   - /run/sentient is a NAMED VOLUME (sentient-run) for the same reason.
+#     The gateway binds per-user mcp-<userId>.sock unix sockets here for
+#     Hermes to dial. On a bind-mount, listen() succeeds once but unlink()
+#     and chmod() fail (EINVAL/ENOTSUP), so a force-killed container leaves
+#     stale socket files that brick the next boot's listen() with ENOTSUP.
+#     A named volume makes bind/unlink/chmod all work. Both gateway and
+#     orchestrator-spawned hermes mount it (via MCP_SOCKET_DIR).
 #   - The TLS cert lives at ~/.data/certs/sentient.dev32.io (acme.sh on the
 #     LAN renews + rsyncs it there). This is the ONE state path outside
 #     ~/.sentient by design — it is externally managed infra, re-derivable
@@ -60,6 +67,13 @@ volumes:
   # (runtime socket + regenerated .conf only).
   sentient-supervisor:
     name: sentient-supervisor
+  # Gateway-hosted MCP per-user unix sockets (mcp-<userId>.sock). Named volume
+  # on macOS for the same virtiofs reason as sentient-supervisor — bind-mounts
+  # reject AF_UNIX bind()/unlink()/chmod(), so a force-killed container's
+  # stale socket files brick the next boot's listen() with ENOTSUP. Holds no
+  # migratable data (runtime sockets only, regenerated each boot).
+  sentient-run:
+    name: sentient-run
 
 services:
   gateway:
@@ -83,7 +97,6 @@ services:
       - TZ=${TZ:-America/Vancouver}
       - SENTIENT_GATEWAY_ROOT=/app/gateway-data
       - SENTIENT_HOST_GATEWAY_DATA_DIR=${HOME}/.sentient/gateway/data
-      - SENTIENT_HOST_MCP_SOCKET_DIR=${HOME}/.sentient/run/sentient
       - SENTIENT_SUPERVISORD_SOCKET=/data/supervisor/supervisor.sock
       - SENTIENT_HOME=/sentient
       - HOST_HOME=${HOME}
@@ -93,6 +106,11 @@ services:
       # source-without-slash as a docker volume reference, so the orchestrator
       # spawns hermes with the same shared supervisor volume.
       - SUPERVISOR_DIR=sentient-supervisor
+      # Named-volume name for the gateway's per-user mcp-<userId>.sock unix
+      # sockets — same macOS-virtiofs reason as SUPERVISOR_DIR. The orchestrator
+      # forwards this to the spawned hermes container so both sides mount the
+      # same volume at /run/sentient and hermes can dial the gateway's socket.
+      - MCP_SOCKET_DIR=sentient-run
       # Hermes container runs as uid:gid 10000 (USER hermes). The gateway
       # (root) chowns per-user data dirs to this before supervisord spawns.
       # Best-effort on Docker Desktop (virtiofs remaps ownership anyway).
@@ -121,7 +139,7 @@ services:
       - ${HOME}/.sentient/gateway/clientLogs:/app/clientLogs
       - ${HOME}/.sentient/gateway/data:/app/gateway-data
       - ${HOME}/.sentient/gateway/data:${HOME}/.sentient/gateway/data
-      - ${HOME}/.sentient/run/sentient:/run/sentient
+      - sentient-run:/run/sentient
       # Externally-managed TLS cert (acme.sh renews + rsyncs here). The one
       # state path outside ~/.sentient by design — see file header.
       - ${HOME}/.data/certs/sentient.dev32.io:/app/certs

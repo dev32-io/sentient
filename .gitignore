@@ -57,6 +57,7 @@ __pycache__/
 
 # Worktrees
 .worktrees/
+.claude/worktrees/
 
 # Playwright MCP browser session artifacts
 .playwright-mcp/
