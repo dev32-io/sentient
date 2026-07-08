@@ -21,7 +21,15 @@ volumes:
   - ${SUPERVISOR_DIR}:/data/supervisor
   - ${HOST_HOME}/.sentient/gateway/data:${HOST_HOME}/.sentient/gateway/data
   - /var/run/docker.sock:/var/run/docker.sock
-  - ${HOST_HOME}/.sentient/run/sentient:/run/sentient
+  # MCP_SOCKET_DIR is set by the gateway compose file. Same portability rule
+  # as SUPERVISOR_DIR above: Linux/Pi pass a host path (bind-mount, ext4 —
+  # the gateway binds its per-user mcp-<userId>.sock unix sockets there);
+  # macOS passes a named-volume name (e.g. `sentient-run`) because Docker
+  # Desktop's virtiofs bind-mounts reject AF_UNIX bind()/unlink()/chmod()
+  # (EINVAL/ENOTSUP), which bricks the next boot on stale socket files. Both
+  # the gateway and this hermes container must mount the SAME source so the
+  # socket the gateway binds is the one hermes dials.
+  - ${MCP_SOCKET_DIR}:/run/sentient
   # The Hermes "brain" — the image declares `VOLUME /opt/data` (the hermes
   # user's home: sessions/chat history, memories, SOUL.md, config.yaml,
   # skills, plans, hooks). WITHOUT this bind Docker creates an ANONYMOUS

@@ -97,6 +97,10 @@ export async function runPhaseOrchestrator(input: PhaseOrchestratorInput): Promi
           // Linux/Pi (bind-mount), a docker named-volume name on macOS.
           // See gateway/templates/services/sentient-hermes.yaml for context.
           SUPERVISOR_DIR: process.env.SUPERVISOR_DIR ?? "",
+          // Source for the hermes /run/sentient mount (gateway's per-user
+          // mcp-<userId>.sock unix sockets). Same portability rule as
+          // SUPERVISOR_DIR — host path on Linux, named-volume name on macOS.
+          MCP_SOCKET_DIR: process.env.MCP_SOCKET_DIR ?? "",
         },
       }).catch((err: unknown) => {
         log.warn("system-orchestrator.init-failed", {
