@@ -61,9 +61,11 @@ def transform(text: str) -> str:
     yaml = _load_yaml()
     doc = yaml.load(text)
 
-    if "tts" in doc and "url" in doc["tts"]:
+    # null-safe: a present-but-empty `tts:`/`companions:` (a plausible transient
+    # state while an operator edits the config) yields None, not a dict.
+    if "url" in (doc.get("tts") or {}):
         doc["tts"]["url"] = TTS_URL
-    if "companions" in doc and "tts_health_url" in doc["companions"]:
+    if "tts_health_url" in (doc.get("companions") or {}):
         doc["companions"]["tts_health_url"] = TTS_HEALTH_URL
 
     buf = io.StringIO()
