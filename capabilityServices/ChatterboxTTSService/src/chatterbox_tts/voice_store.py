@@ -124,6 +124,22 @@ class VoiceStore:
         log.info("voice_store.get loaded voice_id=%s path=%s", voice_id, conds_path)
         return conds
 
+    def get_or_default(self, voice_id: str | None) -> Any:
+        """Like ``get``, but never raises: a malformed ``voice_id`` (fails
+        ``get``'s traversal/format validation) falls back to the default
+        voice with a warning — same outcome as an unknown-but-valid-format
+        one. Callers that must reject a bad id (e.g. ``voice.select``)
+        should call ``get`` directly instead.
+        """
+        try:
+            return self.get(voice_id)
+        except ValueError:
+            log.warning(
+                "voice_store.get_or_default fallback=default reason=invalid_voice_id voice_id=%r",
+                voice_id,
+            )
+            return self.get(None)
+
     def create(self, ref_wav: np.ndarray, sr: int, name: str) -> dict:
         """Build conditioning from ``ref_wav`` and persist a new voice pack.
 

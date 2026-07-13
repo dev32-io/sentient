@@ -49,6 +49,9 @@ class _StubVoiceStore:
     def get(self, voice_id):
         return _SENTINEL_CONDS
 
+    def get_or_default(self, voice_id):
+        return _SENTINEL_CONDS
+
     def list(self) -> list[dict]:
         return list(self._voices)
 
