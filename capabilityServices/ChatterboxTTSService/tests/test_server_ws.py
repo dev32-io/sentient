@@ -1,12 +1,15 @@
-"""WS server tests for the Chatterbox-TTS service.
+"""Core WS server tests for the Chatterbox-TTS service.
 
 Non-live: builds a ``Server`` against a lightweight stub engine/voice
 store (no MLX, no model load) and drives it over a real WebSocket on an
-ephemeral loopback port — connect negotiation, ping/pong, empty
-``voice.list``. The real synthesis roundtrip (``text`` -> ``end`` ->
-``started`` -> binary -> ``done``) needs the actual model and is
-``@pytest.mark.live`` (excluded from the default run, see
-``pyproject.toml``'s ``addopts``).
+ephemeral loopback port — connect negotiation, ping/pong, ``voice.list``/
+``voice.delete``, malformed-message handling. See ``conftest.py`` for the
+shared stubs, and the sibling ``test_server_ws_voice_create.py`` /
+``test_server_ws_concurrency.py`` for the ``voice.create`` and
+disconnect/serialization coverage split out for file-size hygiene. The
+real synthesis roundtrip (``text`` -> ``end`` -> ``started`` -> binary ->
+``done``) needs the actual model and is ``@pytest.mark.live`` (excluded
+from the default run, see ``pyproject.toml``'s ``addopts``).
 
 No ``pytest-asyncio`` dependency: each test is a plain sync function
 whose body drives an inner async function via ``asyncio.run(...)`` —
@@ -22,67 +25,10 @@ from pathlib import Path
 
 import pytest
 from websockets.asyncio.client import connect
-from websockets.asyncio.server import Server as WsServer
-from websockets.asyncio.server import serve
 
-from chatterbox_tts.config import Config, HealthConfig, ServerConfig
 from chatterbox_tts.server import Server
 
-_SENTINEL_CONDS = object()
-
-
-class _StubEngine:
-    """Fake ``ChatterboxEngine``: no MLX model, satisfies the shape ``server.py`` needs."""
-
-    def default_conditionals(self) -> object:
-        return _SENTINEL_CONDS
-
-    def synthesize(self, text, conds, streaming_interval, cancel):
-        return iter(())  # not exercised by the non-live cases
-
-
-class _StubVoiceStore:
-    """Fake ``VoiceStore``: in-memory, no filesystem, no model."""
-
-    def __init__(self) -> None:
-        self._voices: list[dict] = []
-
-    def get(self, voice_id):
-        return _SENTINEL_CONDS
-
-    def list(self) -> list[dict]:
-        return list(self._voices)
-
-    def create(self, ref_wav, sr, name):
-        raise NotImplementedError("not exercised by the non-live tests")
-
-    def delete(self, voice_id) -> bool:
-        return False
-
-
-def _make_config(tmp_path: Path) -> Config:
-    return Config(
-        schema_version=1,
-        model="stub-model",
-        server=ServerConfig(host="127.0.0.1", port=0, max_message_bytes=16_000_000),
-        health=HealthConfig(port=0),
-        default_format="opus",
-        default_sample_rate=48000,
-        streaming_interval=0.5,
-        exaggeration=0.5,
-        cfg_weight=0.5,
-        voice_dir=str(tmp_path / "voices"),
-        log_dir=str(tmp_path / "logs"),
-        retention_days=7,
-        metrics_interval_ms=0,  # disable the background psutil sampler for tests
-    )
-
-
-async def _serve(server: Server) -> tuple[WsServer, int]:
-    """Start ``server.handle`` on an ephemeral loopback port; returns ``(ws_server, port)``."""
-    ws_server = await serve(server.handle, "127.0.0.1", 0)
-    port = ws_server.sockets[0].getsockname()[1]
-    return ws_server, port
+from .conftest import _make_config, _serve, _StubEngine, _StubVoiceStore
 
 
 def test_ready_echoes_negotiated_params(tmp_path):

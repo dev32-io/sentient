@@ -102,7 +102,9 @@ class ConnectionSession:
         try:
             msg = parse_client_message(raw)
         except WireProtocolError as exc:
-            self._conn_log.log("control.recv_invalid", raw=raw[:200], error=str(exc))
+            self._conn_log.log(
+                "control.recv_invalid", raw_len=len(raw), msg_type=_type_hint(raw), error=str(exc),
+            )
             await send_server_event(self._ws, ErrorEvent(reason=str(exc)), self._conn_log)
             return
         self._conn_log.log("control.recv", kind=type(msg).__name__)
@@ -172,6 +174,23 @@ class ConnectionSession:
             voice_id=result["voiceId"], name=result["name"], created_at=result["createdAt"],
         )
         await send_server_event(self._ws, evt, self._conn_log)
+
+
+def _type_hint(raw: str) -> str | None:
+    """Best-effort, structure-agnostic extraction of a malformed client
+    message's ``type`` field for error-log context — never the raw
+    content itself (see ``logging.md``: lengths/ids/types only, never
+    text/transcript content). Only called after ``parse_client_message``
+    already failed, so this must not raise on any input.
+    """
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    kind = parsed.get("type")
+    return kind if isinstance(kind, str) else None
 
 
 def _decode_wav(wav_bytes: bytes) -> tuple[np.ndarray, int]:

@@ -21,7 +21,7 @@ thread half) follow, verbatim from the task brief:
    early and the worker thread unwinds. ``_drain_to_ws`` keeps consuming
    the chunk queue until the worker's ``QUEUE_STOP`` sentinel even after
    a send failure — otherwise the worker thread could block forever on a
-   queue nobody is draining anymore.
+   queue nobody is draining anymore (``close()``: same rule, below).
 
 One ``SynthesisRunner`` is constructed per WebSocket connection. Buffered
 text (``add_text``) accumulates until ``flush()`` (sentence boundary) or
@@ -79,6 +79,22 @@ _CHUNK_QUEUE_MAXSIZE = 8
 # confirm the worker fully exited before moving on.
 _WORKER_JOIN_TIMEOUT_S = 2.0
 
+# close() teardown: how long to drain the in-flight chunk_queue while
+# waiting for its worker thread to exit before hard-cancelling anyway
+# (the thread is daemon and gets reaped on process exit regardless).
+_CLOSE_WORKER_TIMEOUT_S = 3.0
+_CLOSE_DRAIN_POLL_S = 0.02  # poll interval for that drain-while-waiting loop
+
+
+def _safe_log(logger: Any, event: str, **fields: Any) -> None:
+    """Best-effort log call — an I/O failure here must never kill the
+    request loop with no ``error`` frame sent (``error-handling.md``).
+    """
+    try:
+        logger.log(event, **fields)
+    except Exception:
+        log.warning("synth.log_failed event=%s", event, exc_info=True)
+
 
 class SynthesisRunner:
     """Owns one connection's text buffer, request queue, and worker task."""
@@ -112,6 +128,10 @@ class SynthesisRunner:
         self._text_buffer: list[str] = []
         self._queue: "asyncio.Queue[str]" = asyncio.Queue()
         self._cancel_event = threading.Event()
+        # In-flight request's chunk queue + worker thread, if any — lets
+        # `close()` reach + drain them on an abrupt disconnect.
+        self._active_chunk_queue: "asyncio.Queue[Any] | None" = None
+        self._active_worker_thread: threading.Thread | None = None
         self._worker_task = asyncio.create_task(
             self._run_queue(), name=f"tts-synth-{conn_id}"
         )
@@ -133,13 +153,37 @@ class SynthesisRunner:
         drain_queue_nowait(self._queue)
 
     async def close(self) -> None:
-        """Stop the worker task; called from the connection's ``finally`` block."""
+        """Stop the worker task; called from the connection's ``finally`` block.
+
+        Graceful-first: hard-cancelling ``_worker_task`` immediately (the
+        old behavior) can land while ``_drain_to_ws`` is awaiting
+        ``chunk_queue.get()`` — the cancel stops it calling ``.get()``
+        again, so a producer stuck on (or later filling) a bounded
+        ``queue.put()`` blocks forever: a leaked daemon thread. So: set
+        ``cancel_event``, keep the active queue drained until its worker
+        THREAD actually exits, and only then hard-cancel.
+        """
         self._cancel_event.set()
+        thread = self._active_worker_thread
+        deadline = time.monotonic() + _CLOSE_WORKER_TIMEOUT_S
+        while thread is not None and thread.is_alive() and time.monotonic() < deadline:
+            self._drain_active_queue_nowait()
+            await asyncio.sleep(_CLOSE_DRAIN_POLL_S)
+        self._drain_active_queue_nowait()  # final sweep
+        if thread is not None and thread.is_alive():
+            log.warning(
+                "synth.close_worker_thread_stuck thread=%s timeout_s=%.1f",
+                thread.name, _CLOSE_WORKER_TIMEOUT_S,
+            )
         self._worker_task.cancel()
         try:
             await self._worker_task
         except (asyncio.CancelledError, Exception):
             pass
+
+    def _drain_active_queue_nowait(self) -> None:
+        if self._active_chunk_queue is not None:
+            drain_queue_nowait(self._active_chunk_queue)
 
     async def _run_queue(self) -> None:
         while True:
@@ -154,8 +198,8 @@ class SynthesisRunner:
         request_id = uuid.uuid4().hex[:12]
         t0 = time.monotonic()
         cancel_event = self._cancel_event
-        self._conn_log.log(
-            "synth.request_start", request_id=request_id, text_len=len(text),
+        _safe_log(
+            self._conn_log, "synth.request_start", request_id=request_id, text_len=len(text),
             format=self._format, sample_rate=self._sample_rate, voice=self._voice,
         )
         try:
@@ -187,6 +231,10 @@ class SynthesisRunner:
             daemon=True,
             name=f"tts-worker-{request_id}",
         )
+        # `close()` reaches this via `_active_*` on an abrupt disconnect;
+        # overwritten fresh next request, so a stale ref is harmless.
+        self._active_chunk_queue = chunk_queue
+        self._active_worker_thread = worker
         worker.start()
 
         initial_error: BaseException | None = None
@@ -261,7 +309,8 @@ class SynthesisRunner:
                 audio_seconds=round(metrics.audio_seconds, 3),
             )
         )
-        self._metrics_log.log(
+        _safe_log(
+            self._metrics_log,
             "chatterbox.synthesize",
             request_id=metrics.request_id,
             ttfa_ms=round(metrics.ttfa_ms, 2),
