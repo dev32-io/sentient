@@ -79,12 +79,40 @@ def _chunk_to_pcm(audio: mx.array) -> np.ndarray:
     return np.asarray(audio, dtype=np.float32).reshape(-1)
 
 
+def _prepare_chunk(result, chunk_index: int, model_id: str) -> np.ndarray:
+    """Convert one ``GenerationResult`` to PCM and log the per-chunk decision.
+
+    Isolates the convert+log step so ``synthesize()`` stays a thin
+    control-flow loop; mirrors how ``_chunk_to_pcm`` isolates the pure
+    MLX->numpy conversion.
+    """
+    pcm = _chunk_to_pcm(result.audio)
+    log.debug(
+        "chatterbox_mlx.synthesize chunk model_id=%s chunk_idx=%d samples=%d "
+        "is_final_chunk=%s",
+        model_id, chunk_index, pcm.size, result.is_final_chunk,
+    )
+    return pcm
+
+
 class ChatterboxEngine:
     """One (model_id, exaggeration, cfg_weight) view over the MLX Chatterbox model.
 
     Construction is cheap — the actual model load is deferred to first
     use (``warm()`` or ``synthesize()``) and shared across instances via
     ``_load_model``'s cache.
+
+    Thread-safety hazard: ``_load_model`` is an ``lru_cache``'d module-level
+    singleton, so every ``ChatterboxEngine`` for a given ``model_id`` shares
+    one underlying model object. ``synthesize()`` honors a caller-supplied
+    ``conds`` by mutating that shared model's ``model._conds`` in place
+    before calling ``generate()``. Two concurrent ``synthesize()`` calls on
+    the same ``model_id`` with different ``conds`` therefore race on
+    ``model._conds`` — one call's conditioning can silently leak into or
+    override another's, producing wrong-voice output with no error. This
+    class does not serialize itself; callers (the WS server) MUST serialize
+    synthesis per ``model_id`` — e.g. one worker/lock per model — or hold
+    the engine for the full duration of a request.
     """
 
     def __init__(self, model_id: str, exaggeration: float, cfg_weight: float) -> None:
@@ -115,19 +143,15 @@ class ChatterboxEngine:
         streaming_interval: float,
         cancel: threading.Event,
     ) -> Iterator[np.ndarray]:
-        """Stream 24 kHz float32 PCM chunks for ``text``.
-
-        ``conds`` overrides the model's built-in voice conditioning for
-        this call when given (``None`` = use whatever ``model._conds``
-        already holds — the built-in default voice on a freshly loaded
-        model). Checked against ``cancel`` between chunks; returns early
-        (no exception) once ``cancel`` is set, without yielding the
-        chunk that was already generated at cancellation time.
+        """Stream 24 kHz float32 PCM chunks for ``text``. ``conds`` overrides
+        the model's built-in voice conditioning when given (``None`` keeps
+        the model's current conds). Checks ``cancel`` between chunks,
+        returning early without yielding the in-flight chunk.
         """
         model = _load_model(self._model_id)
         if conds is not None:
+            # NOT thread-safe: mutates the shared lru_cache'd model singleton — see class docstring.
             model._conds = conds
-
         chunk_count = 0
         total_samples = 0
         for result in model.generate(
@@ -143,16 +167,10 @@ class ChatterboxEngine:
                     self._model_id, chunk_count,
                 )
                 return
-            pcm = _chunk_to_pcm(result.audio)
             chunk_count += 1
+            pcm = _prepare_chunk(result, chunk_count, self._model_id)
             total_samples += pcm.size
-            log.debug(
-                "chatterbox_mlx.synthesize chunk model_id=%s chunk_idx=%d samples=%d "
-                "is_final_chunk=%s",
-                self._model_id, chunk_count, pcm.size, result.is_final_chunk,
-            )
             yield pcm
-
         log.debug(
             "chatterbox_mlx.synthesize done model_id=%s chunk_count=%d total_samples=%d",
             self._model_id, chunk_count, total_samples,

@@ -24,11 +24,10 @@ import threading
 import numpy as np
 import pytest
 
-from chatterbox_tts.chatterbox_mlx import ChatterboxEngine
+from chatterbox_tts.chatterbox_mlx import SAMPLE_RATE, ChatterboxEngine
 
 _MODEL_ID = "mlx-community/Chatterbox-Turbo-TTS-8bit"
 _MIN_AUDIO_SECONDS = 0.5
-_STREAM_SAMPLE_RATE = 24_000
 
 
 @pytest.mark.live
@@ -48,7 +47,7 @@ def test_streams_pcm_chunks():
     assert len(chunks) >= 1
     audio = np.concatenate(chunks)
     assert audio.dtype == np.float32
-    assert len(audio) / _STREAM_SAMPLE_RATE > _MIN_AUDIO_SECONDS  # produced real audio
+    assert len(audio) / SAMPLE_RATE > _MIN_AUDIO_SECONDS  # produced real audio
 
 
 @pytest.mark.live
