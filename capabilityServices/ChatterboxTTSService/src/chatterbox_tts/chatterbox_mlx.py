@@ -136,6 +136,28 @@ class ChatterboxEngine:
         model = _load_model(self._model_id)
         return getattr(model, "_conds", None)
 
+    def prepare_conditionals(self, ref_wav: np.ndarray, sr: int) -> object:
+        """Build voice conditioning ``Conditionals`` from a reference clip.
+
+        NOT thread-safe: like ``synthesize()``'s caller-supplied-``conds``
+        path, this calls the shared ``_load_model``-cached model's own
+        ``prepare_conditionals()``, which sets ``model._conds`` as a side
+        effect (see the class docstring). Returns that same object so
+        callers (``VoiceStore.create()``) can persist it without reaching
+        into ``model._conds`` themselves.
+        """
+        log.debug(
+            "chatterbox_mlx.prepare_conditionals start model_id=%s samples=%d sr=%d",
+            self._model_id, ref_wav.size, sr,
+        )
+        model = _load_model(self._model_id)
+        model.prepare_conditionals(ref_wav, sample_rate=sr)
+        log.info(
+            "chatterbox_mlx.prepare_conditionals done model_id=%s samples=%d sr=%d",
+            self._model_id, ref_wav.size, sr,
+        )
+        return model._conds
+
     def synthesize(
         self,
         text: str,
