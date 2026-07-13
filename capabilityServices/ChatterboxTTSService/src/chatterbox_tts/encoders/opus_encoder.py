@@ -101,8 +101,18 @@ def _drain_new_bytes(buf: io.BytesIO, since: int) -> tuple[int, bytes]:
     by ``write()`` calls) rather than seeking — seeking the buffer
     between writes would desync libsndfile's own notion of where the
     stream's write cursor is.
+
+    Slices via ``getbuffer()`` (zero-copy ``memoryview``) instead of
+    ``getvalue()``, which copies the ENTIRE buffer on every call — with
+    ``getvalue()`` this function was O(n^2) CPU and O(total emitted) peak
+    memory over a long stream. The memoryview is released (via ``with``)
+    before returning: an exported buffer export locks the ``BytesIO``
+    against resize, and the next ``sf.write()`` call would raise
+    ``BufferError`` if the view were still held open.
     """
     current = buf.tell()
     if current <= since:
         return since, b""
-    return current, buf.getvalue()[since:current]
+    with buf.getbuffer() as view:
+        new_bytes = bytes(view[since:current])
+    return current, new_bytes

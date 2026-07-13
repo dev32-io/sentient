@@ -9,10 +9,13 @@ chunk to ``target_rate`` and convert straight to little-endian signed
 
 from __future__ import annotations
 
+import logging
 from typing import Iterable, Iterator
 
 import numpy as np
 import soxr
+
+log = logging.getLogger("chatterbox_tts.encoders.pcm_encoder")
 
 # Chatterbox-Turbo engine output rate (Task 2's ``chatterbox_mlx.SAMPLE_RATE``).
 # Duplicated as a plain constant here (rather than importing the engine
@@ -42,8 +45,16 @@ class PcmEncoder:
         One output chunk per input chunk — no cross-chunk buffering is
         needed for raw PCM, so this is fully streaming.
         """
+        chunk_count = 0
+        total_bytes = 0
         for chunk in pcm24k_chunks:
             resampled = soxr.resample(chunk, _SOURCE_RATE, self._target_rate)
             clipped = np.clip(resampled, -1.0, 1.0)
             pcm16_bytes = (clipped * _PCM16_SCALE).astype(_PCM16_DTYPE).tobytes()
+            chunk_count += 1
+            total_bytes += len(pcm16_bytes)
             yield pcm16_bytes
+        log.debug(
+            "pcm_encoder.encode done chunk_count=%d total_bytes=%d",
+            chunk_count, total_bytes,
+        )
