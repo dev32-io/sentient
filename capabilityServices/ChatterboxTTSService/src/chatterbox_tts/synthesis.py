@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING, Any
 from websockets.exceptions import ConnectionClosed
 
 from .encoders import make_encoder
-from .event_sender import send_error_event, send_server_event, send_server_event_safe
+from .event_sender import _safe_log, send_error_event, send_server_event, send_server_event_safe
 from .pipeline_events import Done, Started
 from .synth_metrics import build_done_fields, build_synth_record, compute_metrics
 from .synth_worker import (
@@ -80,16 +80,6 @@ _CLOSE_WORKER_TIMEOUT_S = 3.0
 _CLOSE_DRAIN_POLL_S = 0.02  # poll interval for that drain-while-waiting loop
 
 
-def _safe_log(logger: Any, event: str, **fields: Any) -> None:
-    """Best-effort log call — an I/O failure here must never kill the
-    request loop with no ``error`` frame sent (``error-handling.md``).
-    """
-    try:
-        logger.log(event, **fields)
-    except Exception:
-        log.warning("synth.log_failed event=%s", event, exc_info=True)
-
-
 class SynthesisRunner:
     """Owns one connection's text buffer, request queue, and worker task."""
 
@@ -122,6 +112,8 @@ class SynthesisRunner:
         self._text_buffer: list[str] = []
         self._queue: "asyncio.Queue[str]" = asyncio.Queue()
         self._cancel_event = threading.Event()
+        # Set once `close()` begins; blocks `_run_queue` from starting more.
+        self._closing = False
         # In-flight request's chunk queue + worker thread, if any — lets
         # `close()` reach + drain them on an abrupt disconnect.
         self._active_chunk_queue: "asyncio.Queue[Any] | None" = None
@@ -156,7 +148,15 @@ class SynthesisRunner:
         ``queue.put()`` blocks forever: a leaked daemon thread. So: set
         ``cancel_event``, keep the active queue drained until its worker
         THREAD actually exits, and only then hard-cancel.
+
+        ``_closing`` is set FIRST (before any ``await`` here) so
+        ``_run_queue`` can't start a further request once teardown begins —
+        else a second queued request starts against a fresh worker thread
+        while this polls the FIRST (now-stale) one, and the hard-cancel
+        below lands on that second, un-cancelled request instead.
         """
+        self._closing = True
+        drain_queue_nowait(self._queue)
         self._cancel_event.set()
         thread = self._active_worker_thread
         deadline = time.monotonic() + _CLOSE_WORKER_TIMEOUT_S
@@ -181,7 +181,11 @@ class SynthesisRunner:
 
     async def _run_queue(self) -> None:
         while True:
+            if self._closing:
+                return
             text = await self._queue.get()
+            if self._closing:
+                return
             self._cancel_event = threading.Event()
             try:
                 await self._handle_one_request(text)

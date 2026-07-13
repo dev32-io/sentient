@@ -12,12 +12,15 @@ don't need their own test).
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Protocol
 
 from websockets.exceptions import ConnectionClosed
 
 from .pipeline_events import ErrorEvent, ServerEvent
 from .wire_protocol import encode_server_event
+
+log = logging.getLogger("chatterbox_tts.event_sender")
 
 
 class _SendsFrames(Protocol):
@@ -31,16 +34,29 @@ class _SendsFrames(Protocol):
     async def send(self, data: str | bytes) -> None: ...
 
 
+def _safe_log(logger: Any, event: str, **fields: Any) -> None:
+    """Best-effort log call — an I/O failure here must never propagate and
+    kill the caller (``error-handling.md``); a missing/failing ``logger``
+    degrades to a module-level warning instead of raising. Shared by
+    ``send_server_event`` (below) and ``synthesis.py``'s request-lifecycle
+    logging so both sides guard the same way instead of duplicating it.
+    """
+    if logger is None:
+        return
+    try:
+        logger.log(event, **fields)
+    except Exception:
+        log.warning("event_sender.log_failed event=%s", event, exc_info=True)
+
+
 async def send_server_event(ws: _SendsFrames, evt: ServerEvent, conn_log: Any = None) -> None:
     """Encode ``evt`` and send it over ``ws`` (text frame, + binary follow-up if any)."""
     payload, binary = encode_server_event(evt)
     await ws.send(json.dumps(payload, ensure_ascii=False))
-    if conn_log is not None:
-        conn_log.log("ws.send_text", payload=payload)
+    _safe_log(conn_log, "ws.send_text", payload=payload)
     if binary is not None:
         await ws.send(binary)
-        if conn_log is not None:
-            conn_log.log("ws.send_binary", bytes=len(binary))
+        _safe_log(conn_log, "ws.send_binary", bytes=len(binary))
 
 
 async def send_server_event_safe(ws: _SendsFrames, evt: ServerEvent, conn_log: Any = None) -> None:

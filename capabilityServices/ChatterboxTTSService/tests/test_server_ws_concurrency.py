@@ -1,5 +1,5 @@
 """Synth-concurrency tests (Task 5 review findings: a deadlock fix + a
-previously-untested FSM/invariant).
+previously-untested FSM/invariant + a fix-pass-3 teardown regression).
 
 1. ``test_synthesis_requests_serialize_across_connections`` (WS-level,
    through the full ``Server``) pins the single-shared-``asyncio.Lock``
@@ -9,6 +9,10 @@ previously-untested FSM/invariant).
    regression for the disconnect-mid-synthesis deadlock, tested directly
    against ``SynthesisRunner`` (white-box) rather than through the full
    WS stack — see that test's docstring for why.
+3. ``test_close_blocks_second_queued_request_from_starting`` is the
+   regression for the fix-pass-3 finding: ``close()`` must stop a
+   SECOND, already-queued request from starting once teardown begins,
+   not just cancel the first in-flight one — see that test's docstring.
 """
 
 from __future__ import annotations
@@ -173,5 +177,97 @@ def test_close_unblocks_worker_thread_stuck_on_full_queue():
 
         assert not worker.is_alive(), "worker thread still stuck on put() after close()"
         assert put_completed.is_set()
+
+    asyncio.run(run())
+
+
+class _CancelAwareEngine:
+    """Fake engine that blocks in ``synthesize()`` until ``cancel_event`` is
+    set, then returns with zero chunks — mirrors ``synthesize()`` checking
+    ``cancel`` between chunks in production (``synthesis.py``'s module
+    docstring, rule 3), which is exactly what lets ``close()``'s own
+    ``cancel_event.set()`` unblock an in-flight request unassisted.
+
+    ``started`` is set the moment ``synthesize()`` is entered — the test's
+    deterministic (event-gated) signal that request 1 is genuinely
+    in-flight before it enqueues request 2 and calls ``close()``.
+    ``start_count`` tallies how many times ``synthesize()`` is entered, so
+    the test can assert the second (queued) request never starts one.
+    """
+
+    def __init__(self, started: threading.Event) -> None:
+        self._started = started
+        self.start_count = 0
+        self._lock = threading.Lock()
+
+    def default_conditionals(self) -> object:
+        return _SENTINEL_CONDS
+
+    def synthesize(self, text, conds, streaming_interval, cancel):
+        with self._lock:
+            self.start_count += 1
+        self._started.set()
+        while not cancel.is_set():
+            cancel.wait(timeout=0.01)
+        return
+        yield  # pragma: no cover - unreachable; keeps this a generator function
+
+
+def test_close_blocks_second_queued_request_from_starting():
+    """Regression for the fix-pass-3 review finding: the old ``close()``
+    snapshotted ``_active_worker_thread``/``cancel_event`` ONCE, but
+    ``_run_queue`` could dequeue + start the NEXT queued request during
+    ``close()``'s poll window (once the first finished cancelling) —
+    reassigning ``_active_worker_thread`` to a fresh, un-cancelled worker
+    that ``close()`` never waits for or cancels, leaving it to run to
+    completion while holding the shared synth lock. Fixed by a
+    ``self._closing`` flag set (and the pending queue drained) FIRST, and
+    checked by ``_run_queue`` before it will start any further request.
+
+    Reproduces the real race through the actual ``_run_queue`` background
+    task (not a manually-wired stand-in): request 1 is driven genuinely
+    in-flight with a real worker thread; request 2 is queued on the same
+    connection exactly as ``ConnectionSession._route`` would (``add_text``
+    + ``flush``) while request 1 is still running; ``close()`` is invoked
+    concurrently. Deterministic throughout — synchronized on
+    ``threading.Event``s and ``asyncio.wait_for`` bounds, no fixed sleeps
+    used as the sync mechanism.
+    """
+
+    async def run() -> None:
+        started = threading.Event()
+        engine = _CancelAwareEngine(started)
+        runner = SynthesisRunner(
+            engine=engine, voice_store=_StubVoiceStore(), synth_lock=asyncio.Lock(),
+            ws=_NoopWs(), conn_id="test-conn-2", format_="pcm", sample_rate=24000,
+            voice=None, streaming_interval=0.5, conn_log=_NoopLog(), metrics_log=_NoopLog(),
+        )
+
+        runner.add_text("first")
+        runner.flush()  # request 1 onto this connection's request queue
+
+        # Deterministic: block until request 1's worker thread has actually
+        # entered `synthesize()` — it is now genuinely in-flight.
+        await asyncio.to_thread(started.wait, 2.0)
+        assert started.is_set(), "request 1 never started"
+        thread_1 = runner._active_worker_thread
+        assert thread_1 is not None and thread_1.is_alive()
+
+        # Request 2 lands on the SAME connection's queue while request 1 is
+        # still running — the exact pre-condition the bug hits: a second,
+        # already-queued-but-unstarted request present when close() begins.
+        runner.add_text("second")
+        runner.flush()
+        assert runner._queue.qsize() == 1
+
+        await asyncio.wait_for(runner.close(), timeout=_CLOSE_WORKER_TIMEOUT_S + 2.0)
+
+        # (a) the second (queued) request never started a worker.
+        assert engine.start_count == 1, "second queued request must not start during/after teardown"
+        assert runner._active_worker_thread is thread_1, "no second worker was ever assigned"
+        assert runner._queue.empty(), "queued-but-unstarted request must be dropped, not deferred"
+        # (b) no worker thread left alive after close() returns.
+        assert not thread_1.is_alive(), "request 1's worker thread still alive after close()"
+        assert runner._closing is True
 
     asyncio.run(run())

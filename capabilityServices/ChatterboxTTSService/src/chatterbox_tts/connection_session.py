@@ -52,6 +52,11 @@ log = logging.getLogger("chatterbox_tts.connection_session")
 
 _PONG_PAYLOAD = json.dumps({"type": "pong"})
 
+# Cap on the logged `type` hint pulled from a malformed client message —
+# a client could put an arbitrarily long string there; keep log lines
+# bounded (`logging.md`: truncate string previews to <=120 chars).
+_TYPE_HINT_MAX_LEN = 120
+
 
 class ConnectionSession:
     """Routes one WebSocket connection's messages; owns its ``SynthesisRunner``."""
@@ -181,7 +186,8 @@ def _type_hint(raw: str) -> str | None:
     message's ``type`` field for error-log context — never the raw
     content itself (see ``logging.md``: lengths/ids/types only, never
     text/transcript content). Only called after ``parse_client_message``
-    already failed, so this must not raise on any input.
+    already failed, so this must not raise on any input. Truncated to
+    ``_TYPE_HINT_MAX_LEN`` — a client controls this string's length.
     """
     try:
         parsed = json.loads(raw)
@@ -190,7 +196,9 @@ def _type_hint(raw: str) -> str | None:
     if not isinstance(parsed, dict):
         return None
     kind = parsed.get("type")
-    return kind if isinstance(kind, str) else None
+    if not isinstance(kind, str):
+        return None
+    return kind[:_TYPE_HINT_MAX_LEN]
 
 
 def _decode_wav(wav_bytes: bytes) -> tuple[np.ndarray, int]:
