@@ -1,0 +1,182 @@
+"""Per-connection message router for the Chatterbox-TTS WS server.
+
+Owns the ``ready`` handshake, routing parsed client messages
+(text/flush/end/cancel/ping/voice.*) to the right handler, the
+``voice.create`` binary-upload buffering, and this connection's
+``SynthesisRunner``. Kept separate from ``server.py`` (which owns
+connection *lifecycle*: accept, health endpoint, signals) so each file
+stays under the project's line cap.
+
+Locking note: ``voice.list``/``voice.delete`` never touch the shared
+model singleton, so they run without the synth lock. ``voice.create``
+DOES mutate it (via ``ChatterboxEngine.prepare_conditionals`` — see that
+method's docstring), so it's serialized under the same ``synth_lock``
+``SynthesisRunner`` uses for text synthesis, per the task brief. It runs
+via ``asyncio.to_thread`` (like the synth worker thread) rather than
+inline, so a multi-second ``prepare_conditionals`` pass doesn't stall
+the event loop for every other connection waiting on that same lock.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import io
+import json
+import logging
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+import soundfile as sf
+
+from .event_sender import send_server_event
+from .pipeline_events import ErrorEvent, Ready, VoiceCreated, VoiceDeleted, VoiceListResult, WarningEvent
+from .synthesis import SynthesisRunner
+from .wire_protocol import (
+    CancelMessage,
+    EndMessage,
+    FlushMessage,
+    PingMessage,
+    TextMessage,
+    VoiceCreateMessage,
+    VoiceDeleteMessage,
+    VoiceListMessage,
+    WireProtocolError,
+    parse_client_message,
+)
+
+if TYPE_CHECKING:  # pragma: no cover - import-time-only, avoids the MLX/mlx_audio
+    from .chatterbox_mlx import ChatterboxEngine  # heavy import cost for non-live tests.
+    from .voice_store import VoiceStore
+
+log = logging.getLogger("chatterbox_tts.connection_session")
+
+_PONG_PAYLOAD = json.dumps({"type": "pong"})
+
+
+class ConnectionSession:
+    """Routes one WebSocket connection's messages; owns its ``SynthesisRunner``."""
+
+    def __init__(
+        self,
+        *,
+        ws: Any,
+        conn_id: str,
+        engine: "ChatterboxEngine",
+        voice_store: "VoiceStore",
+        synth_lock: asyncio.Lock,
+        format_: str,
+        sample_rate: int,
+        voice: str | None,
+        streaming_interval: float,
+        conn_log: Any,
+        metrics_log: Any,
+    ) -> None:
+        self._ws = ws
+        self._voice_store = voice_store
+        self._synth_lock = synth_lock
+        self._format = format_
+        self._sample_rate = sample_rate
+        self._voice = voice
+        self._conn_log = conn_log
+        self._pending_voice_create_name: str | None = None
+        self._synth = SynthesisRunner(
+            engine=engine, voice_store=voice_store, synth_lock=synth_lock, ws=ws,
+            conn_id=conn_id, format_=format_, sample_rate=sample_rate, voice=voice,
+            streaming_interval=streaming_interval, conn_log=conn_log, metrics_log=metrics_log,
+        )
+
+    async def send_ready(self) -> None:
+        evt = Ready(format=self._format, sample_rate=self._sample_rate, voice=self._voice)
+        await send_server_event(self._ws, evt, self._conn_log)
+
+    async def close(self) -> None:
+        await self._synth.close()
+
+    async def handle_message(self, message: str | bytes) -> None:
+        if isinstance(message, bytes):
+            await self._handle_binary(message)
+        else:
+            await self._handle_text(message)
+
+    async def _handle_text(self, raw: str) -> None:
+        try:
+            msg = parse_client_message(raw)
+        except WireProtocolError as exc:
+            self._conn_log.log("control.recv_invalid", raw=raw[:200], error=str(exc))
+            await send_server_event(self._ws, ErrorEvent(reason=str(exc)), self._conn_log)
+            return
+        self._conn_log.log("control.recv", kind=type(msg).__name__)
+        await self._route(msg)
+
+    async def _route(self, msg: Any) -> None:
+        if isinstance(msg, TextMessage):
+            self._synth.add_text(msg.text)
+        elif isinstance(msg, (FlushMessage, EndMessage)):
+            self._synth.flush()
+        elif isinstance(msg, CancelMessage):
+            self._synth.cancel_current()
+        elif isinstance(msg, PingMessage):
+            await self._ws.send(_PONG_PAYLOAD)
+        elif isinstance(msg, VoiceCreateMessage):
+            self._pending_voice_create_name = msg.name
+        elif isinstance(msg, VoiceListMessage):
+            await send_server_event(
+                self._ws, VoiceListResult(voices=self._voice_store.list()), self._conn_log,
+            )
+        elif isinstance(msg, VoiceDeleteMessage):
+            await self._handle_voice_delete(msg.voice_id)
+
+    async def _handle_voice_delete(self, voice_id: str) -> None:
+        try:
+            deleted = self._voice_store.delete(voice_id)
+        except ValueError as exc:
+            await send_server_event(self._ws, ErrorEvent(reason=str(exc)), self._conn_log)
+            return
+        if not deleted:
+            log.info("voice.delete missing voice_id=%s", voice_id)
+        await send_server_event(self._ws, VoiceDeleted(voice_id=voice_id), self._conn_log)
+
+    async def _handle_binary(self, data: bytes) -> None:
+        if self._pending_voice_create_name is None:
+            self._conn_log.log("binary.unexpected", bytes=len(data))
+            await send_server_event(
+                self._ws, WarningEvent(reason="unexpected_binary_frame"), self._conn_log,
+            )
+            return
+        name = self._pending_voice_create_name
+        self._pending_voice_create_name = None
+        await self._create_voice(name, data)
+
+    async def _create_voice(self, name: str, wav_bytes: bytes) -> None:
+        try:
+            array, sr = _decode_wav(wav_bytes)
+        except Exception as exc:
+            log.warning("voice.create decode_failed error=%r", exc)
+            await send_server_event(
+                self._ws, ErrorEvent(reason=f"invalid wav data: {exc}"), self._conn_log,
+            )
+            return
+        try:
+            async with self._synth_lock:
+                result = await asyncio.to_thread(self._voice_store.create, array, sr, name)
+        except ValueError as exc:
+            await send_server_event(self._ws, ErrorEvent(reason=str(exc)), self._conn_log)
+            return
+        except Exception:
+            log.exception("voice.create failed name=%s", name)
+            await send_server_event(
+                self._ws, ErrorEvent(reason="voice creation failed"), self._conn_log,
+            )
+            return
+        evt = VoiceCreated(
+            voice_id=result["voiceId"], name=result["name"], created_at=result["createdAt"],
+        )
+        await send_server_event(self._ws, evt, self._conn_log)
+
+
+def _decode_wav(wav_bytes: bytes) -> tuple[np.ndarray, int]:
+    """Decode an uploaded reference clip to mono float32 PCM + its sample rate."""
+    array, sr = sf.read(io.BytesIO(wav_bytes), dtype="float32")
+    if array.ndim > 1:
+        array = array.mean(axis=1).astype(np.float32)
+    return array, sr
