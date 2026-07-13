@@ -1,0 +1,11 @@
+# mlx-audio: unified MLX TTS runtime. Pulls mlx; model weights fetch from HF on first run.
+mlx-audio
+# Pin: mlx-audio 0.4.4 needs transformers 5.5-5.12; 5.13 breaks mlx-lm 0.31 tokenizer registration.
+transformers>=5.5,<5.13
+# Kokoro's grapheme->phoneme frontend (English). Required by mlx-audio's Kokoro backend.
+misaki[en]
+# Audio I/O + numerics for the shared bench harness.
+soundfile>=0.12
+numpy>=1.26
+# Process RSS sampling.
+psutil>=7
