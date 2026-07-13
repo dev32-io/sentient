@@ -35,7 +35,8 @@ def test_list_empty(tmp_path: Path) -> None:
 
 def test_delete_missing_returns_false(tmp_path: Path) -> None:
     store = VoiceStore(_StubEngine(), tmp_path / "voices")
-    assert store.delete("does-not-exist") is False
+    # Well-formed (32 hex chars) but never created — "not found", not "invalid".
+    assert store.delete("a" * 32) is False
 
 
 def test_get_default_when_none(tmp_path: Path) -> None:
@@ -45,7 +46,46 @@ def test_get_default_when_none(tmp_path: Path) -> None:
 
 def test_get_default_when_unknown_voice_id(tmp_path: Path) -> None:
     store = VoiceStore(_StubEngine(), tmp_path / "voices")
-    assert store.get("nonexistent-voice-id") is _SENTINEL_DEFAULT
+    # Well-formed (32 hex chars) but never created — "not found", not "invalid".
+    assert store.get("b" * 32) is _SENTINEL_DEFAULT
+
+
+@pytest.mark.parametrize(
+    "bad_voice_id",
+    [
+        "../../etc/passwd",
+        "..%2f..%2f",
+        "/abs/path",
+        "a" * 31,  # too short
+        "g" * 32,  # right length, non-hex alphabet
+    ],
+)
+def test_get_rejects_traversal_voice_id(tmp_path: Path, bad_voice_id: str) -> None:
+    store = VoiceStore(_StubEngine(), tmp_path / "voices")
+    with pytest.raises(ValueError):
+        store.get(bad_voice_id)
+
+
+@pytest.mark.parametrize(
+    "bad_voice_id",
+    [
+        "../../etc/passwd",
+        "..%2f..%2f",
+        "/abs/path",
+        "a" * 31,  # too short
+        "g" * 32,  # right length, non-hex alphabet
+    ],
+)
+def test_delete_rejects_traversal(tmp_path: Path, bad_voice_id: str) -> None:
+    store = VoiceStore(_StubEngine(), tmp_path / "voices")
+    with pytest.raises(ValueError):
+        store.delete(bad_voice_id)
+
+
+def test_get_accepts_well_formed_voice_id(tmp_path: Path) -> None:
+    """A normal uuid4().hex id passes validation (falls back since it's unknown)."""
+    store = VoiceStore(_StubEngine(), tmp_path / "voices")
+    assert store.get("0123456789abcdef0123456789abcdef") is _SENTINEL_DEFAULT
 
 
 @pytest.mark.live

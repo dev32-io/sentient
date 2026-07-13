@@ -18,6 +18,26 @@ methods as-is; the filename is just a label.
 model's built-in default conditioning via
 ``ChatterboxEngine.default_conditionals()`` — callers never need to
 special-case "no voice selected".
+
+Security notes (``voiceId`` arrives from an external boundary: webui ->
+gateway -> WS ``voice.delete``/``voice.select`` -> this store):
+
+- **Path traversal.** Every public method that takes a caller-supplied
+  ``voice_id`` (``get``, ``delete``) validates it against the
+  ``uuid4().hex`` shape (``^[0-9a-f]{32}$``, the exact format ``create()``
+  itself generates) before it ever reaches a filesystem path, plus a
+  belt-and-suspenders check that the resolved pack dir is still inside
+  ``voice_dir``. ``create()`` does not need the check — it mints the id
+  itself.
+- **Unsafe deserialization.** ``Conditionals.load()`` below unpickles
+  ``conds.safetensors``. That's only safe because the traversal guard
+  above means the path is always ``<voice_dir>/<validated-uuid-hex>/...``,
+  and ``voice_dir`` is created 0700 (service-user-only) in ``__init__``.
+  Every pack under it is service-produced (the clone flow uploads a WAV;
+  this store builds the pickle itself via ``prepare_conditionals`` — an
+  attacker never supplies pickle bytes directly). A real fix is migrating
+  ``Conditionals`` to the actual safetensors format upstream in
+  mlx-audio; that's a larger follow-up, not done here.
 """
 
 from __future__ import annotations
@@ -25,6 +45,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import time
 import uuid
@@ -43,6 +64,11 @@ _CONDS_FILENAME = "conds.safetensors"
 _META_FILENAME = "meta.json"
 _TMP_SUFFIX = ".tmp"
 
+# uuid.uuid4().hex shape — exactly what create() generates. Anything else
+# (path separators, "..", absolute paths, wrong length/alphabet) is rejected
+# before it can reach a filesystem path; see _validate_voice_id.
+_VOICE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+
 
 class VoiceStore:
     """Create/list/get/delete voice packs under ``voice_dir``."""
@@ -51,6 +77,14 @@ class VoiceStore:
         self._model = model
         self._voice_dir = Path(voice_dir)
         self._cache: dict[str, Any] = {}  # voiceId -> loaded Conditionals
+
+        # Voice packs are unpickled on load (see module docstring). Lock the
+        # directory to service-user-only so nothing else on the host can
+        # plant or tamper with a pack. mode= on makedirs is subject to
+        # umask, so chmod explicitly for both the fresh- and already-exists
+        # cases.
+        os.makedirs(self._voice_dir, mode=0o700, exist_ok=True)
+        os.chmod(self._voice_dir, 0o700)
 
     def get(self, voice_id: str | None) -> Any:
         """Return conditioning for ``voice_id``, or the model's built-in default."""
@@ -62,7 +96,8 @@ class VoiceStore:
             log.debug("voice_store.get cache_hit voice_id=%s", voice_id)
             return self._cache[voice_id]
 
-        conds_path = self._pack_dir(voice_id) / _CONDS_FILENAME
+        pack_dir = self._validated_pack_dir(voice_id)
+        conds_path = pack_dir / _CONDS_FILENAME
         if not conds_path.is_file():
             log.warning(
                 "voice_store.get fallback=default reason=unknown_voice voice_id=%s",
@@ -70,6 +105,10 @@ class VoiceStore:
             )
             return self._model.default_conditionals()
 
+        # SECURITY: unpickles. Safe only because _validated_pack_dir() above
+        # guarantees conds_path resolves under the 0700 service-owned
+        # voice_dir, and every pack there is service-produced — see the
+        # "Unsafe deserialization" note in the module docstring.
         conds = Conditionals.load(conds_path)
         self._cache[voice_id] = conds
         log.info("voice_store.get loaded voice_id=%s path=%s", voice_id, conds_path)
@@ -120,7 +159,7 @@ class VoiceStore:
 
     def delete(self, voice_id: str) -> bool:
         """Remove a voice pack. Returns ``False`` if it didn't exist."""
-        pack_dir = self._pack_dir(voice_id)
+        pack_dir = self._validated_pack_dir(voice_id)
         if not pack_dir.is_dir():
             log.debug("voice_store.delete missing voice_id=%s", voice_id)
             return False
@@ -131,6 +170,31 @@ class VoiceStore:
 
     def _pack_dir(self, voice_id: str) -> Path:
         return self._voice_dir / voice_id
+
+    def _validated_pack_dir(self, voice_id: str) -> Path:
+        """Resolve ``voice_id`` to its pack dir, rejecting path traversal.
+
+        Called at the start of every public method that takes a
+        caller-supplied ``voice_id`` (``get``, ``delete``) — NOT ``create``,
+        which mints the id itself and never receives caller input. Raises
+        ``ValueError`` for anything that isn't a bare ``uuid4().hex`` (e.g.
+        ``"../../etc/passwd"``, an absolute path, wrong length/alphabet).
+
+        Belt-and-suspenders: after building the path, also asserts the
+        resolved dir is still inside ``voice_dir`` before any read/delete —
+        so even a future bug in the regex can't turn into a traversal.
+        """
+        self._validate_voice_id(voice_id)
+        pack_dir = self._pack_dir(voice_id)
+        if not pack_dir.resolve().is_relative_to(self._voice_dir.resolve()):
+            raise ValueError("invalid voice_id")
+        return pack_dir
+
+    @staticmethod
+    def _validate_voice_id(voice_id: str) -> None:
+        """Reject any ``voice_id`` that isn't a bare ``uuid4().hex`` string."""
+        if not _VOICE_ID_RE.match(voice_id):
+            raise ValueError("invalid voice_id")
 
     def _read_pack_meta(self, entry: Path) -> dict | None:
         """Load one pack's ``meta.json``, tagged with its ``voiceId``; ``None`` if unreadable."""
