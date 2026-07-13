@@ -34,3 +34,12 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+# "live" tests touch a real dependency (here: download + load real MLX
+# model weights, multi-GB on first run). Excluded from the default
+# `uv run pytest` run via addopts; run explicitly with `-m live`.
+markers = [
+    "live: exercises a real network/model dependency; run explicitly with `-m live`",
+]
+addopts = "-m \"not live\""
