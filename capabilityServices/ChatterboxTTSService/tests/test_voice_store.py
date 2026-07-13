@@ -88,6 +88,44 @@ def test_get_accepts_well_formed_voice_id(tmp_path: Path) -> None:
     assert store.get("0123456789abcdef0123456789abcdef") is _SENTINEL_DEFAULT
 
 
+def test_create_rejects_short_clip(tmp_path: Path) -> None:
+    """A <=5s reference clip is rejected before any filesystem work."""
+    voice_dir = tmp_path / "voices"
+    store = VoiceStore(_StubEngine(), voice_dir)
+
+    sr = 24_000
+    short_clip = np.zeros(int(2 * sr), dtype=np.float32)  # 2s, well under the 5s floor
+
+    with pytest.raises(ValueError):
+        store.create(short_clip, sr, "Too Short")
+
+    # No pack dir (not even voice_dir itself) should have been created.
+    assert not voice_dir.exists() or list(voice_dir.iterdir()) == []
+
+
+class _FailingPrepareEngine(_StubEngine):
+    """Fake ``ChatterboxEngine`` whose ``prepare_conditionals`` always blows up."""
+
+    def prepare_conditionals(self, ref_wav: np.ndarray, sr: int) -> object:
+        raise RuntimeError("boom")
+
+
+def test_create_cleans_up_on_failure(tmp_path: Path) -> None:
+    """A failure mid-create leaves no orphaned ``<voice_dir>/<uuid>/`` behind."""
+    voice_dir = tmp_path / "voices"
+    store = VoiceStore(_FailingPrepareEngine(), voice_dir)
+
+    sr = 24_000
+    long_clip = np.zeros(int(6 * sr), dtype=np.float32)  # 6s, passes the length pre-check
+
+    with pytest.raises(RuntimeError):
+        store.create(long_clip, sr, "Ill-Fated Voice")
+
+    # voice_dir itself is created in __init__, but no per-voice subdirectory
+    # should survive the failed create().
+    assert list(voice_dir.iterdir()) == []
+
+
 @pytest.mark.live
 def test_create_then_get_roundtrip(tmp_path: Path) -> None:
     """Live: needs the real model to build conditioning from a reference clip."""

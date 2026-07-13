@@ -63,6 +63,13 @@ log = logging.getLogger("chatterbox_tts.voice_store")
 _CONDS_FILENAME = "conds.safetensors"
 _META_FILENAME = "meta.json"
 _TMP_SUFFIX = ".tmp"
+_DIR_MODE = 0o700  # service-user-only; voice packs are unpickled on load (see module docstring)
+
+# mlx-audio's ChatterboxEngine.prepare_conditionals() (chatterbox_turbo.py)
+# hard-asserts `len(ref_wav_24k) / S3GEN_SR > 5.0` and raises a raw
+# AssertionError otherwise. We reject short clips ourselves, before any
+# filesystem work, so the caller gets a typed ValueError instead.
+_MIN_REF_SECONDS = 5.0
 
 # uuid.uuid4().hex shape — exactly what create() generates. Anything else
 # (path separators, "..", absolute paths, wrong length/alphabet) is rejected
@@ -83,8 +90,8 @@ class VoiceStore:
         # plant or tamper with a pack. mode= on makedirs is subject to
         # umask, so chmod explicitly for both the fresh- and already-exists
         # cases.
-        os.makedirs(self._voice_dir, mode=0o700, exist_ok=True)
-        os.chmod(self._voice_dir, 0o700)
+        os.makedirs(self._voice_dir, mode=_DIR_MODE, exist_ok=True)
+        os.chmod(self._voice_dir, _DIR_MODE)
 
     def get(self, voice_id: str | None) -> Any:
         """Return conditioning for ``voice_id``, or the model's built-in default."""
@@ -92,11 +99,14 @@ class VoiceStore:
             log.debug("voice_store.get default reason=voice_id_none")
             return self._model.default_conditionals()
 
+        # Validate untrusted input before consulting any keyed state (cache
+        # included) — see module docstring's "Path traversal" note.
+        pack_dir = self._validated_pack_dir(voice_id)
+
         if voice_id in self._cache:
             log.debug("voice_store.get cache_hit voice_id=%s", voice_id)
             return self._cache[voice_id]
 
-        pack_dir = self._validated_pack_dir(voice_id)
         conds_path = pack_dir / _CONDS_FILENAME
         if not conds_path.is_file():
             log.warning(
@@ -115,26 +125,30 @@ class VoiceStore:
         return conds
 
     def create(self, ref_wav: np.ndarray, sr: int, name: str) -> dict:
-        """Build conditioning from ``ref_wav`` and persist a new voice pack."""
+        """Build conditioning from ``ref_wav`` and persist a new voice pack.
+
+        Rejects a too-short clip with a typed ``ValueError`` before any
+        filesystem work, and leaves no orphaned pack dir if pack-building
+        fails partway through (see ``_build_pack``).
+        """
+        duration_s = ref_wav.size / sr if sr > 0 else 0.0
+        if not duration_s > _MIN_REF_SECONDS:
+            log.warning(
+                "voice_store.create reject reason=clip_too_short duration_s=%.2f min_s=%.1f",
+                duration_s, _MIN_REF_SECONDS,
+            )
+            raise ValueError(
+                f"reference clip too short: need >{_MIN_REF_SECONDS:.0f}s, got {duration_s:.2f}s"
+            )
+
         voice_id = uuid.uuid4().hex
-        pack_dir = self._pack_dir(voice_id)
-        pack_dir.mkdir(parents=True, exist_ok=True)
         log.info(
             "voice_store.create start voice_id=%s name=%s samples=%d sr=%d",
             voice_id, name, ref_wav.size, sr,
         )
-
-        # Mutates the shared lru_cache'd model singleton's `_conds` as a
-        # side effect of ChatterboxEngine.prepare_conditionals() (see that
-        # method's docstring in chatterbox_mlx.py) — not made thread-safe
-        # here; the WS server task is expected to serialize calls.
-        conds = self._model.prepare_conditionals(ref_wav, sr)
-        self._save_atomic(pack_dir / _CONDS_FILENAME, conds)
-
-        created_at = time.time()
-        ref_duration_ms = round((ref_wav.size / sr) * 1000.0) if sr > 0 else 0
-        meta = {"name": name, "createdAt": created_at, "refDurationMs": ref_duration_ms}
-        self._write_meta_atomic(pack_dir / _META_FILENAME, meta)
+        conds, created_at, ref_duration_ms = self._build_pack(
+            voice_id, ref_wav, sr, name, duration_s
+        )
 
         self._cache[voice_id] = conds
         log.info(
@@ -142,6 +156,40 @@ class VoiceStore:
             voice_id, ref_duration_ms,
         )
         return {"voiceId": voice_id, "name": name, "createdAt": created_at}
+
+    def _build_pack(
+        self, voice_id: str, ref_wav: np.ndarray, sr: int, name: str, duration_s: float
+    ) -> tuple[Any, float, int]:
+        """mkdir -> prepare_conditionals -> save conds -> write meta, all-or-nothing.
+
+        On any exception mid-sequence, removes the (possibly partial) pack
+        dir before re-raising, so a failed ``create()`` never leaves an
+        orphaned ``<voice_dir>/<uuid>/`` behind.
+        """
+        pack_dir = self._pack_dir(voice_id)
+        try:
+            pack_dir.mkdir(parents=True, exist_ok=True)
+
+            # Mutates the shared lru_cache'd model singleton's `_conds` as a
+            # side effect of ChatterboxEngine.prepare_conditionals() (see
+            # that method's docstring in chatterbox_mlx.py) — not made
+            # thread-safe here; the WS server task is expected to
+            # serialize calls.
+            conds = self._model.prepare_conditionals(ref_wav, sr)
+            self._save_atomic(pack_dir / _CONDS_FILENAME, conds)
+
+            created_at = time.time()
+            ref_duration_ms = round(duration_s * 1000.0)
+            meta = {"name": name, "createdAt": created_at, "refDurationMs": ref_duration_ms}
+            self._write_meta_atomic(pack_dir / _META_FILENAME, meta)
+        except Exception:
+            log.warning(
+                "voice_store.create failed voice_id=%s — removing orphaned pack dir",
+                voice_id,
+            )
+            shutil.rmtree(pack_dir, ignore_errors=True)
+            raise
+        return conds, created_at, ref_duration_ms
 
     def list(self) -> list[dict]:
         """Return metadata (incl. ``voiceId``) for every persisted voice pack."""
