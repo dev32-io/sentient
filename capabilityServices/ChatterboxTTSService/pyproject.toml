@@ -1,0 +1,36 @@
+# pyproject.toml — the modern Python project manifest.
+#
+# Mirrors the sibling WhisperSTTService/pyproject.toml structure. If you
+# add a new dependency, add it both here AND in requirements.txt (see
+# requirements.txt header for why both exist).
+
+[project]
+name = "chatterbox-tts"
+version = "0.1.0"
+description = "Local TTS service — Chatterbox-Turbo (MLX) on Apple Silicon"
+requires-python = ">=3.11"
+dependencies = [
+    "mlx-audio",
+    "transformers>=5.5,<5.13",
+    "mlx",
+    "websockets>=13,<14",
+    "soundfile",
+    "soxr",
+    "opuslib",
+    "numpy",
+    "psutil",
+    "pyyaml",
+    "huggingface_hub",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

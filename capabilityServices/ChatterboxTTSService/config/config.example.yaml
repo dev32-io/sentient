@@ -1,0 +1,105 @@
+# Chatterbox-TTS Service — runtime tuning
+# ==========================================
+#
+# Copy this file to ~/.sentient/chatterbox-tts/config/config.yaml on the
+# Mac mini (or wherever CHATTERBOX_TTS_CONFIG_PATH points). The service
+# loads it ONCE at startup. To change a value, edit and restart the
+# LaunchAgent.
+#
+# Every key below is required — the service fails loud at startup if
+# anything is missing or the wrong type. There are no silent defaults.
+#
+# Host paths (model cache, voice reference clips, logs) come from
+# CHATTERBOX_TTS_* environment variables — see README.md — except
+# voice_dir/log_dir below, which let an operator pin an absolute path
+# in this file instead of the environment.
+
+# =============================================================================
+# Schema version — bumped on breaking config-shape changes. Do not hand-edit.
+# =============================================================================
+schema_version: 1
+
+# =============================================================================
+# Model — HuggingFace repo id for the MLX Chatterbox weights. Fetched +
+# cached on first run under ~/.cache/huggingface. The Turbo variant
+# (mlx-community/Chatterbox-Turbo-TTS-8bit) is the deployed default, set
+# via the launchd env (see deploy Task 6) — this example keeps a valid,
+# loadable non-Turbo id so config parsing never needs network access.
+# =============================================================================
+model: mlx-community/Chatterbox-TTS-8bit
+
+# =============================================================================
+# WebSocket server
+# =============================================================================
+server:
+  # Bind address. 127.0.0.1 = loopback only — this service is not exposed
+  # off-host; the gateway dials it locally on the same Mac.
+  host: 127.0.0.1
+
+  # WebSocket port. If you move this, update the gateway's TTS provider
+  # config (gateway/config.yaml) to match.
+  port: 8770
+
+  # Maximum accepted WebSocket message size in bytes. 16 MiB is far more
+  # than any single synthesis request needs (request text is tiny; audio
+  # streams back in chunks, not as one message).
+  max_message_bytes: 16777216  # 16 * 1024 * 1024
+
+# =============================================================================
+# Health endpoint — plain HTTP, polled by the launchd supervisor / operator.
+# =============================================================================
+health:
+  port: 8771
+
+# =============================================================================
+# Synthesis defaults
+# =============================================================================
+# Audio container for streamed output. opus = compressed (default, matches
+# the gateway's Opus-everywhere audio pipeline); pcm = raw PCM16, useful
+# for local debugging only.
+default_format: opus
+
+# Output sample rate in Hz. 48000 matches the gateway's Opus pipeline and
+# WebRTC loopback AEC expectations.
+default_sample_rate: 48000
+
+# Target seconds of audio per streamed chunk. Smaller = lower latency to
+# first audio, more per-chunk overhead. 0.5s balances both for voice chat.
+streaming_interval: 0.5
+
+# Chatterbox exaggeration knob (0.0-1.0+, higher = more room to push).
+# Higher = more expressive/emotive delivery; 0.5 is the model's neutral
+# default.
+exaggeration: 0.5
+
+# Chatterbox classifier-free-guidance weight (0.0-1.0+, higher = more
+# room to push). Higher = stronger adherence to the reference voice at
+# some cost to naturalness; 0.5 is the model's neutral default.
+cfg_weight: 0.5
+
+# =============================================================================
+# Paths — empty string means "fall back to the CHATTERBOX_TTS_* env var
+# at startup" (see __main__.py). Kept as explicit YAML keys (not just env
+# vars) so an operator can pin an absolute path here without touching the
+# LaunchAgent plist.
+# =============================================================================
+# Directory holding reference voice audio clips for cloning.
+# "" = read CHATTERBOX_TTS_VOICE_DIR at startup.
+voice_dir: ""
+
+# Directory for rotated JSONL logs (service + metrics).
+# "" = read CHATTERBOX_TTS_LOG_DIR at startup.
+log_dir: ""
+
+# =============================================================================
+# Logging + in-process metrics
+# =============================================================================
+# Days to retain rotated jsonl log files. Files older than this are
+# deleted at startup and at each UTC-midnight rollover. Set to 0 to
+# disable pruning. Range: 0-365.
+retention_days: 7
+
+# CPU/RSS sampling cadence in milliseconds. Each sample writes one line
+# to logs/<date>-metrics.jsonl. 1000 ms is cheap and gives per-second
+# resolution for latency investigations. Set to 0 to disable.
+metrics_interval_ms: 1000
