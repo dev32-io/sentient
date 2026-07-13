@@ -33,11 +33,13 @@ import numpy as np
 import soundfile as sf
 import soxr
 
+from ..audio_constants import SOURCE_SAMPLE_RATE
+
 log = logging.getLogger("chatterbox_tts.encoders.opus_encoder")
 
 # Opus is only defined for mono/stereo at 8/12/16/24/48 kHz; the gateway's
 # Opus-everywhere pipeline (see requirements.txt) always terminates at 48 kHz.
-_SOURCE_RATE = 24_000
+_SOURCE_RATE = SOURCE_SAMPLE_RATE
 _CHANNELS = 1  # mono voice output
 
 # soundfile/libsndfile format + subtype identifiers for OGG-Opus.

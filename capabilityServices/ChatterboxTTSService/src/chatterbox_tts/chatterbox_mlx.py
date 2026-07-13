@@ -40,12 +40,16 @@ import mlx.core as mx
 import numpy as np
 from mlx_audio.tts.utils import load_model
 
+from .audio_constants import SOURCE_SAMPLE_RATE
+
 log = logging.getLogger("chatterbox_tts.chatterbox_mlx")
 
 # Output sample rate of Chatterbox-Turbo's S3Gen vocoder. Matches
 # ``ChatterboxTurboTTS.sr`` (see chatterbox_turbo.py) — not configurable,
 # it's a property of the model architecture, not a service tunable.
-SAMPLE_RATE = 24_000
+# Re-exported from ``audio_constants`` (the single source of truth) so
+# existing ``from .chatterbox_mlx import SAMPLE_RATE`` imports keep working.
+SAMPLE_RATE = SOURCE_SAMPLE_RATE
 
 # Short, fixed text used by warm() to force a real end-to-end pass
 # (tokenizer -> T3 -> S3Gen) once at startup, so the first real request
@@ -77,6 +81,28 @@ def _chunk_to_pcm(audio: mx.array) -> np.ndarray:
     """Evaluate one generated chunk and convert it to 1-D float32 PCM."""
     mx.eval(audio)
     return np.asarray(audio, dtype=np.float32).reshape(-1)
+
+
+def _assert_source_rate(model, model_id: str) -> None:
+    """Fail loud if the loaded model's real output rate isn't 24 kHz.
+
+    ``model.sr`` (see ``ChatterboxTurboTTS.sr`` / its ``sample_rate``
+    property in ``chatterbox_turbo.py``) is the model's own report of
+    its vocoder's native output rate. Every downstream consumer
+    (encoders, ``synthesis.py``) hardcodes ``SOURCE_SAMPLE_RATE`` —
+    if a future ``config.model`` pointed at a variant with a different
+    vocoder rate, that mismatch would otherwise surface only as
+    silently wrong-pitch audio at synthesis time, not as an error.
+    Called once from ``warm()`` so drift fails at boot instead.
+    """
+    model_rate = getattr(model, "sr", None)
+    if model_rate != SOURCE_SAMPLE_RATE:
+        raise RuntimeError(
+            f"chatterbox_mlx: model {model_id!r} reports sr={model_rate!r}, "
+            f"expected {SOURCE_SAMPLE_RATE} (audio_constants.SOURCE_SAMPLE_RATE). "
+            "The encoders and synthesis pipeline assume this rate; a mismatch "
+            "would silently produce wrong-pitch audio. Refusing to start."
+        )
 
 
 def _prepare_chunk(result, chunk_index: int, model_id: str) -> np.ndarray:
@@ -121,7 +147,10 @@ class ChatterboxEngine:
         self._cfg_weight = cfg_weight
 
     def warm(self) -> None:
-        """Force the model to load and run one short synthesis end-to-end."""
+        """Force the model to load, verify its output rate, then run one
+        short synthesis end-to-end.
+        """
+        _assert_source_rate(_load_model(self._model_id), self._model_id)
         for _ in self.synthesize(
             _WARM_TEXT,
             self.default_conditionals(),

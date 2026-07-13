@@ -32,16 +32,20 @@ cmd_install() {
     # survive re-running install.
     sed -i '' "s#^model: .*#model: ${MODEL_ID}#" "$DATA/config/config.yaml"
   fi
-  # Homebrew preflight — opuslib loads native libopus via ctypes at import
-  # time, so `python -m chatterbox_tts` crashes at import if libopus is
-  # absent. ffmpeg backs soundfile's broader format support. Idempotent:
-  # no-op when already installed, and a soft warning (not a hard fail) when
+  # Homebrew preflight — `opuslib` is a declared-but-unused fallback dep
+  # (OpusEncoder actually writes OGG-Opus via soundfile/libsndfile, not
+  # opuslib's ctypes bindings); libopus is still required because
+  # libsndfile's OGG container writer needs it to support the OPUS
+  # subtype — without it, `soundfile.SoundFile(..., format="OGG",
+  # subtype="OPUS")` raises at synthesis time, not at import time.
+  # ffmpeg backs soundfile's broader format support. Idempotent: no-op
+  # when already installed, and a soft warning (not a hard fail) when
   # Homebrew is missing so the operator can install the libs by hand.
   if command -v brew >/dev/null 2>&1; then
     brew list opus   >/dev/null 2>&1 || brew install opus
     brew list ffmpeg >/dev/null 2>&1 || brew install ffmpeg
   else
-    echo "WARN: Homebrew not found — install libopus + ffmpeg manually (opuslib needs libopus at import)." >&2
+    echo "WARN: Homebrew not found — install libopus + ffmpeg manually (libsndfile's OGG/Opus writer needs libopus)." >&2
   fi
   [ -d "$VENV" ] || python3 -m venv "$VENV"
   "$VENV/bin/pip" install -q -r "$SVC_DIR/requirements.txt"

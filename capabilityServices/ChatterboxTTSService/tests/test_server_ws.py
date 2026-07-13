@@ -66,6 +66,29 @@ def test_ready_falls_back_when_no_query_params(tmp_path):
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("invalid_sample_rate", ["0", "-1", "-48000"])
+def test_ready_falls_back_on_non_positive_sample_rate(tmp_path, invalid_sample_rate):
+    """A ``0`` or negative ``?sample_rate=`` must fall back to the default
+    at negotiation time (CONTRACT.md §1.1: "any positive integer"),
+    rather than passing through and only failing later inside the worker.
+    """
+
+    async def run() -> None:
+        config = _make_config(tmp_path)
+        server = Server(config, _StubEngine(), _StubVoiceStore())
+        ws_server, port = await _serve(server)
+        try:
+            url = f"ws://127.0.0.1:{port}/?sample_rate={invalid_sample_rate}"
+            async with connect(url) as ws:
+                ready = json.loads(await ws.recv())
+                assert ready["sample_rate"] == config.default_sample_rate
+        finally:
+            ws_server.close()
+            await ws_server.wait_closed()
+
+    asyncio.run(run())
+
+
 def test_ping_pong(tmp_path):
     async def run() -> None:
         server = Server(_make_config(tmp_path), _StubEngine(), _StubVoiceStore())

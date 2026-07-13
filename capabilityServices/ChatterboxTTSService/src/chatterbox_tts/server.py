@@ -152,10 +152,14 @@ def _parse_sample_rate(candidate: str | None, default: int) -> int:
     if candidate is None:
         return default
     try:
-        return int(candidate)
+        parsed = int(candidate)
     except ValueError:
         log.warning("conn.sample_rate_invalid candidate=%r falling back to %d", candidate, default)
         return default
+    if parsed <= 0:
+        log.warning("conn.sample_rate_invalid candidate=%r falling back to %d", candidate, default)
+        return default
+    return parsed
 
 
 def _first(query: dict[str, list[str]], key: str) -> str | None:

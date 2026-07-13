@@ -1,12 +1,12 @@
 """Structured JSONL logging for the Chatterbox-TTS service.
 
-Two log streams, both persisted to the mounted logs volume:
+Two log streams, both persisted under ``config.log_dir``:
 
 - ``service.jsonl`` — coarse service events (startup, connection
   open/close, errors). One JSON object per line.
 - ``conn_<id>.jsonl`` — per-connection fine-grained event trace (every
-  VAD transition, every Smart-Turn evaluation, every frame delivery
-  back to the client). One JSON object per line.
+  synthesis request start/done, every audio frame delivery back to the
+  client). One JSON object per line.
 
 Each event carries both a monotonic timestamp (``t_mono_ns``) for
 computing latency deltas and a wall-clock ISO-8601 timestamp (``ts``)
@@ -85,10 +85,11 @@ class JsonlLogger:
 
         ``**fields`` is Python's "keyword arguments" syntax — the caller
         can pass any number of ``key=value`` pairs and they arrive as a
-        dictionary. Example: ``logger.log("vad.start", turn_idx=5)``
-        puts ``{"turn_idx": 5}`` into ``fields``. Kotlin's closest
-        equivalent is ``vararg`` but for named params you'd typically
-        pass a ``Map<String, Any>``.
+        dictionary. Example: ``logger.log("synth.request_start",
+        request_id="a1b2c3d4e5f6")`` puts ``{"request_id":
+        "a1b2c3d4e5f6"}`` into ``fields``. Kotlin's closest equivalent
+        is ``vararg`` but for named params you'd typically pass a
+        ``Map<String, Any>``.
         """
         ts, mono = _now()
         record: dict[str, Any] = {

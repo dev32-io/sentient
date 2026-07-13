@@ -1,10 +1,10 @@
 """Live CPU / memory sampler for the Chatterbox-TTS service.
 
 Samples the process (not the host) at a fixed cadence and writes one
-JSONL record per sample to ``metrics.jsonl`` on the mounted logs volume.
-These numbers let you benchmark the Silero + Smart-Turn + SenseVoice
-impact on an RPi5 — ``psutil.Process()`` reads ``/proc/self/*``, which
-reports this container's own usage regardless of cgroup visibility.
+JSONL record per sample to ``metrics.jsonl`` under ``config.log_dir``.
+These numbers let you benchmark the MLX/Metal synthesis workload's
+resource footprint on the Mac mini — ``psutil.Process()`` reads
+``/proc/self/*``, which reports this process's own usage.
 
 Python note — ``asyncio.create_task``:
   This is how you launch a "background coroutine" that runs concurrently
@@ -86,7 +86,7 @@ class MetricsSampler:
             # ``oneshot()`` is a context manager that batches the
             # /proc reads into a single system call. Without it,
             # each ``memory_info()``, ``cpu_percent()``, etc. would
-            # be a separate read — measurably slower on the Pi.
+            # be a separate read — measurably slower under load.
             with self._proc.oneshot():
                 rss_mb = self._proc.memory_info().rss / (1024 * 1024)
                 cpu_pct = self._proc.cpu_percent(None)

@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Any
 
 from websockets.exceptions import ConnectionClosed
 
+from .audio_constants import SOURCE_SAMPLE_RATE
 from .encoders import make_encoder
 from .event_sender import _safe_log, send_error_event, send_server_event, send_server_event_safe
 from .pipeline_events import Done, Started
@@ -59,10 +60,11 @@ if TYPE_CHECKING:  # pragma: no cover - import-time-only, avoids the MLX/mlx_aud
 
 log = logging.getLogger("chatterbox_tts.synthesis")
 
-# Chatterbox-Turbo engine output rate (``chatterbox_mlx.SAMPLE_RATE``),
-# duplicated as a plain constant (not imported) to keep this module's
-# non-TYPE_CHECKING imports MLX-free — see ``encoders/pcm_encoder.py``.
-_SOURCE_SAMPLE_RATE = 24_000
+# Chatterbox-Turbo engine output rate — imported from ``audio_constants``
+# (the single source of truth, MLX-free) rather than ``chatterbox_mlx``
+# itself, to keep this module's non-TYPE_CHECKING imports MLX-free —
+# see ``encoders/pcm_encoder.py``.
+_SOURCE_SAMPLE_RATE = SOURCE_SAMPLE_RATE
 
 # Bounds a slow WS send to backpressuring the worker thread (blocked on
 # ``queue.put``) instead of buffering unbounded audio. Internal detail,

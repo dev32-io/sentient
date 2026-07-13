@@ -15,13 +15,15 @@ from typing import Iterable, Iterator
 import numpy as np
 import soxr
 
+from ..audio_constants import SOURCE_SAMPLE_RATE
+
 log = logging.getLogger("chatterbox_tts.encoders.pcm_encoder")
 
-# Chatterbox-Turbo engine output rate (Task 2's ``chatterbox_mlx.SAMPLE_RATE``).
-# Duplicated as a plain constant here (rather than importing the engine
-# module) to keep this encoder's only external dependencies numeric
+# Chatterbox-Turbo engine output rate — imported from ``audio_constants``
+# (the single source of truth, MLX-free) rather than ``chatterbox_mlx``
+# itself, to keep this encoder's only external dependencies numeric
 # (numpy, soxr) — it never needs to know about the MLX/model layer.
-_SOURCE_RATE = 24_000
+_SOURCE_RATE = SOURCE_SAMPLE_RATE
 
 # float32 [-1, 1] -> int16 [-32767, 32767] scale factor. One below the
 # full int16 range (32768) so a sample exactly at +1.0 never overflows
