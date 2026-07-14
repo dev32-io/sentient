@@ -50,10 +50,16 @@ export function createUseVoicePreview(token: string, onError: () => void): UseVo
       return;
     }
     url = URL.createObjectURL(r.value);
-    audio = new Audio(url);
+    const el = new Audio(url); // the element created for THIS play()
+    audio = el;
     previewId.value = voiceId;
-    audio.addEventListener("ended", stop, { once: true });
-    audio.play().catch((e) => {
+    el.addEventListener("ended", stop, { once: true });
+    el.play().catch((e) => {
+      // A superseding play() pauses this element, rejecting its pending
+      // play-promise (AbortError). If a newer play() already owns the
+      // module-level `audio`, this stale rejection must NOT clear the newer
+      // request's loadingId/previewId — otherwise the guard above drops it.
+      if (audio !== el) return;
       log.warn("preview.audio-failed", { voiceId, error: String(e) });
       stop();
     });
