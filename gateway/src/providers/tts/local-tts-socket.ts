@@ -18,7 +18,7 @@ export interface LocalTtsSocketConfig {
 export interface LocalTtsSocketHandlers {
   /** Fired for every parsed server frame, including binary `audio` frames. */
   readonly onFrame: (frame: LocalTtsFrame) => void;
-  /** Fired on connect timeout or a WS-level error. */
+  /** Fired on connect timeout, a WS-level error, or a synchronous socket-open failure. */
   readonly onError: (err: Error) => void;
   /** Fired when the WS closes, for any reason (local close() or remote). */
   readonly onClose: () => void;
@@ -48,25 +48,78 @@ export function openLocalTtsSocket(cfg: LocalTtsSocketConfig, handlers: LocalTts
     ...(cfg.voice !== undefined ? { voice: cfg.voice } : {}),
   });
 
-  const socket = socketFactory(connectUrl);
-  socket.binaryType = "arraybuffer";
-  log.info("ws-open-requested", { url: connectUrl });
+  const socket = openRawSocket(socketFactory, connectUrl);
+  if (!socket) {
+    // cfg.url is operator-supplied (config.yaml, wired by a later task) — a
+    // malformed value throws SYNCHRONOUSLY out of `new WebSocket(url)`.
+    // error-handling.md requires warmup()/adapter-open to resolve without
+    // throwing on a transient/malformed dependency failure, so we degrade
+    // instead of propagating: report through the same onError() path used
+    // for connect-timeout/WS-error, which the provider wires to
+    // rejectReadyIfPending() — a pending ready() rejects immediately rather
+    // than hanging until the connect-timeout elapses.
+    handlers.onError(new Error(`local-tts socket open failed for ${connectUrl}`));
+    return deadSocket();
+  }
 
+  log.info("ws-open-requested", { url: connectUrl });
+  return wireSocket(socket, cfg, handlers);
+}
+
+/** Attempts the synchronous socket construction/setup; returns null (never throws) on failure. */
+function openRawSocket(factory: LocalTtsSocketFactory, url: string): WebSocket | null {
+  try {
+    const socket = factory(url);
+    socket.binaryType = "arraybuffer";
+    return socket;
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    log.warn("ws-open-failed", { url, reason });
+    return null;
+  }
+}
+
+/** No-op socket returned when construction failed — keeps send()/close() callers crash-free. */
+function deadSocket(): LocalTtsSocket {
+  return {
+    send(): void {
+      log.debug("send-skipped-dead-socket");
+    },
+    close(): void {
+      // Nothing was ever opened — nothing to close.
+    },
+  };
+}
+
+function wireSocket(socket: WebSocket, cfg: LocalTtsSocketConfig, handlers: LocalTtsSocketHandlers): LocalTtsSocket {
+  const clearConnectTimer = armConnectTimeoutGuard(socket, cfg.connectTimeoutMs, handlers);
+  attachSocketHandlers(socket, handlers, clearConnectTimer);
+  return buildSocketApi(socket, clearConnectTimer);
+}
+
+/** Starts the connect-timeout guard; returns a function that clears it (called on open/close). */
+function armConnectTimeoutGuard(socket: WebSocket, timeoutMs: number, handlers: LocalTtsSocketHandlers): () => void {
   let connectTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
     if (socket.readyState === WebSocket.CONNECTING) {
-      log.error("ws-connect-timeout", { timeoutMs: cfg.connectTimeoutMs });
+      log.error("ws-connect-timeout", { timeoutMs });
       socket.close();
-      handlers.onError(new Error(`local-tts connect timeout after ${cfg.connectTimeoutMs}ms`));
+      handlers.onError(new Error(`local-tts connect timeout after ${timeoutMs}ms`));
     }
-  }, cfg.connectTimeoutMs);
+  }, timeoutMs);
 
-  function clearConnectTimer(): void {
+  return () => {
     if (connectTimer) {
       clearTimeout(connectTimer);
       connectTimer = null;
     }
-  }
+  };
+}
 
+function attachSocketHandlers(
+  socket: WebSocket,
+  handlers: LocalTtsSocketHandlers,
+  clearConnectTimer: () => void,
+): void {
   socket.onopen = () => {
     clearConnectTimer();
     log.info("ws-opened");
@@ -89,7 +142,9 @@ export function openLocalTtsSocket(cfg: LocalTtsSocketConfig, handlers: LocalTts
     log.error("ws-error", { message: msg });
     handlers.onError(new Error(msg));
   };
+}
 
+function buildSocketApi(socket: WebSocket, clearConnectTimer: () => void): LocalTtsSocket {
   return {
     send(payload: string): void {
       if (socket.readyState === WebSocket.OPEN) {

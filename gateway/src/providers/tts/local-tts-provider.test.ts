@@ -96,6 +96,21 @@ describe("createLocalTtsProvider — warmup()", () => {
     provider.warmup();
     expect(getWs()?._url).toBe("ws://host.docker.internal:8770/?format=opus&sample_rate=48000&voice=dad-voice");
   });
+
+  it("does not throw when socketFactory throws synchronously, and ready() then rejects cleanly", async () => {
+    const provider = createLocalTtsProvider({
+      url: "ws://[malformed",
+      format: "opus",
+      sampleRate: 48000,
+      connectTimeoutMs: 1000,
+      socketFactory: () => {
+        throw new Error("Invalid URL");
+      },
+    });
+
+    expect(() => provider.warmup()).not.toThrow();
+    await expect(provider.ready(new AbortController().signal)).rejects.toThrow();
+  });
 });
 
 describe("createLocalTtsProvider — ready()", () => {
@@ -158,6 +173,30 @@ describe("createLocalTtsProvider — audioFrames()", () => {
       })(),
     ).resolves.toBeUndefined();
   });
+
+  it("returns cleanly through the inner between-yields abort check (Fix 3 coverage)", async () => {
+    // Unlike "aborted mid-drain" above (which aborts BEFORE the generator's
+    // first .next(), short-circuiting on the outer `while (!signal.aborted)`
+    // guard), this test genuinely interleaves: consume one chunk, THEN
+    // abort, THEN resume — with a second chunk still buffered so the inner
+    // `while (!queue.isEmpty())` loop is re-entered and hits its own
+    // `if (signal.aborted)` check, not the outer one.
+    const { provider, getWs } = await readyProvider();
+    const controller = new AbortController();
+    const gen = provider.audioFrames(controller.signal);
+    getWs()?._receiveBinary(new Uint8Array([1]).buffer);
+    getWs()?._receiveBinary(new Uint8Array([2]).buffer);
+
+    const r1 = await gen.next();
+    expect(r1.done).toBe(false);
+    expect(r1.value).toEqual({ data: new Uint8Array([1]), encoding: "opus", sampleRate: 48000, isFinal: false });
+
+    controller.abort();
+
+    const r2 = await gen.next();
+    expect(r2.done).toBe(true);
+    expect(r2.value).toBeUndefined();
+  });
 });
 
 describe("createLocalTtsProvider — endInput()", () => {
@@ -180,5 +219,67 @@ describe("createLocalTtsProvider — dispose()", () => {
     const { provider } = await readyProvider();
     provider.dispose();
     expect(() => provider.dispose()).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sad-path FSM exits (Fix 4) — fake-WS driven, no real service. Each test
+// asserts the CURRENT implemented behavior (no throw; reject/return per the
+// existing contract) — coverage of these exits, not a behavior redesign.
+// ---------------------------------------------------------------------------
+
+describe("createLocalTtsProvider — sad paths", () => {
+  it("rejects ready() when the server sends an error frame before the ready frame", async () => {
+    const { provider, getWs } = setup();
+    provider.warmup();
+    await Promise.resolve();
+    getWs()?._openHandshake();
+
+    const readyRejection = provider.ready(new AbortController().signal);
+    getWs()?._receiveText({ type: "error", reason: "synth-engine-unavailable" });
+
+    await expect(readyRejection).rejects.toThrow("synth-engine-unavailable");
+  });
+
+  it("ends audioFrames cleanly (no throw) when the server sends an error frame mid-stream", async () => {
+    const { provider, getWs } = await readyProvider();
+    const controller = new AbortController();
+    const gen = provider.audioFrames(controller.signal);
+
+    // No chunks buffered yet — the generator is parked on queue.waitForItem().
+    const nextPromise = gen.next();
+    getWs()?._receiveText({ type: "error", reason: "synth-failed" });
+
+    await expect(nextPromise).resolves.toEqual({ done: true, value: undefined });
+  });
+
+  it("degrades without an unhandled crash when the WS fires onerror", async () => {
+    const { provider, getWs } = setup();
+    provider.warmup();
+    await Promise.resolve();
+    getWs()?._openHandshake();
+
+    const readyRejection = provider.ready(new AbortController().signal);
+    expect(() => getWs()?.onerror?.({ message: "ECONNRESET" } as unknown as Event)).not.toThrow();
+
+    await expect(readyRejection).rejects.toThrow("ECONNRESET");
+  });
+
+  it("rejects ready() when the connect timeout elapses before the ready frame arrives", async () => {
+    // Small real connectTimeoutMs — the fake WS never calls _openHandshake(),
+    // so it stays CONNECTING and the socket-layer timer fires for real.
+    const { provider, getWs } = setup({ connectTimeoutMs: 5 });
+    provider.warmup();
+
+    await expect(provider.ready(new AbortController().signal)).rejects.toThrow(/connect timeout/);
+    expect(getWs()?.close).toHaveBeenCalled();
+  });
+
+  it("rejects ready() immediately when called with an already-aborted signal", async () => {
+    const { provider } = setup();
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(provider.ready(controller.signal)).rejects.toThrow("aborted");
   });
 });

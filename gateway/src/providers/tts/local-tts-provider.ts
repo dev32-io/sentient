@@ -54,6 +54,20 @@ export interface LocalTtsProviderConfig {
 //   5. the connection is NOT closed by `end` — it's reusable for further
 //      requests (§1.2) — so this provider (one WS per synthesis run) drives
 //      the close itself, via dispose().
+//
+// CONTRACT — dispose-after-completion (cross-task leak prevention):
+//   Unlike Fish Audio (whose server closes the WS itself once synthesis
+//   completes — see fish-audio-provider.ts's TTSProvider docstring, step 6),
+//   the ChatterboxTTSService NEVER closes the connection on its own
+//   initiative, on `done` or otherwise (§1.2/§5 above). The consumer MUST
+//   call dispose() once it is done pulling from audioFrames() — after the
+//   loop completes normally, NOT only on abort — or the socket leaks for the
+//   lifetime of the process. audioFrames() deliberately does NOT auto-close
+//   on the `done` frame: a single run may push multiple text/end request
+//   cycles (multiple `done` frames) before the consumer is actually
+//   finished, so a premature close on the first `done` would break a
+//   multi-block run. See audioFrames()'s docstring below for the exact exit
+//   points this applies to.
 // ---------------------------------------------------------------------------
 
 export function createLocalTtsProvider(cfg: LocalTtsProviderConfig, overrides?: TTSProviderOverrides): TTSProvider {
@@ -219,6 +233,17 @@ export function createLocalTtsProvider(cfg: LocalTtsProviderConfig, overrides?: 
     queue.finish();
   }
 
+  /**
+   * Streams synthesized audio chunks until the queue drains past a `done`
+   * frame, the signal aborts, or the underlying wait returns no item (e.g.
+   * the socket closed/errored out from under the run).
+   *
+   * CONTRACT: none of these exits close the WS — see the module-level
+   * "dispose-after-completion" note above. The caller MUST call dispose()
+   * once this generator is done (return or throw-free completion alike),
+   * not only on abort, or the connection leaks — this service does not
+   * self-close.
+   */
   async function* audioFrames(signal: AbortSignal): AsyncGenerator<TTSAudioChunk> {
     log.debug("audio-frames-start");
     let emitted = 0;
