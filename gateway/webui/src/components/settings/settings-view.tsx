@@ -19,7 +19,7 @@ import { APPLY_BAR_KEYS, type SidebarKey } from "./sidebar/nav-config.ts";
 import { MemoryPane } from "./panes/memory-pane.tsx";
 import { SystemPromptPane } from "./panes/system-prompt-pane.tsx";
 import { PersonalitiesPane } from "./panes/personalities-pane.tsx";
-import { VoicePane } from "./panes/voice-pane.tsx";
+import { VoicesPanel } from "../voices/VoicesPanel.tsx";
 import { AudioPane } from "./panes/audio-pane.tsx";
 import { ModelPane } from "./panes/model-pane.tsx";
 import { ToolsPane } from "./panes/tools-pane.tsx";
@@ -83,10 +83,9 @@ export function SettingsView({ initialTab = "memory", onAudioApplied }: Settings
 
   const profileDiff = useMemo(() => {
     if (!profileDraft || !profileOriginal) {
-      return { voice: false, audio: false, model: false, tools: false, advanced: false };
+      return { audio: false, model: false, tools: false, advanced: false };
     }
     return {
-      voice: !eq(profileDraft.voice, profileOriginal.voice),
       audio: !eq(profileDraft.audio, profileOriginal.audio),
       model: !eq(profileDraft.model, profileOriginal.model),
       tools: !eq(profileDraft.tools, profileOriginal.tools),
@@ -116,15 +115,9 @@ export function SettingsView({ initialTab = "memory", onAudioApplied }: Settings
   // Profile sub-trees coalesce into one op so Apply does a single PUT.
   const derivedOps = useMemo<PendingOpWithPayload[]>(() => {
     const ops: PendingOpWithPayload[] = [];
-    if (
-      profileDraft &&
-      (profileDiff.voice ||
-        profileDiff.audio ||
-        profileDiff.model ||
-        profileDiff.tools ||
-        profileDiff.advanced)
-    ) {
-      // Voice + audio are gateway-side — no Hermes restart needed.
+    if (profileDraft && (profileDiff.audio || profileDiff.model || profileDiff.tools || profileDiff.advanced)) {
+      // Audio is gateway-side — no Hermes restart needed. Voice is no longer
+      // part of this draft/apply flow at all (see VoicesPanel — immediate ops).
       const needsRestart = profileDiff.model || profileDiff.tools || profileDiff.advanced;
       ops.push({ key: "profile", kind: needsRestart ? "slow" : "fast", payload: profileDraft });
     }
@@ -147,7 +140,6 @@ export function SettingsView({ initialTab = "memory", onAudioApplied }: Settings
 
   const dirtyKeys = useMemo<Set<SidebarKey>>(() => {
     const s = new Set<SidebarKey>();
-    if (profileDiff.voice) s.add("voice");
     if (profileDiff.audio) s.add("audio");
     if (profileDiff.model) s.add("model");
     if (profileDiff.tools) s.add("tools");
@@ -210,6 +202,16 @@ export function SettingsView({ initialTab = "memory", onAudioApplied }: Settings
     setMemoryDrafts((prev) => ({ ...prev, [slot]: content }));
   };
 
+  // Sync-only — voice is an immediate op (VoicesPanel persists it itself via
+  // the voices REST API / profile PUT). This does NOT PUT anything; it only
+  // keeps profileDraft/profileOriginal.voice in step so a later model/tools
+  // Apply (which PUTs the whole profile) doesn't revert the user's pick back
+  // to whatever voice.id happened to be in the draft at page-load time.
+  const onActiveVoiceChanged = (voiceId: string) => {
+    setProfileDraft((d) => d && { ...d, voice: { provider: "local-tts", id: voiceId } });
+    setProfileOriginal((o) => o && { ...o, voice: { provider: "local-tts", id: voiceId } });
+  };
+
   const deps = makeApplyDeps(profileApi, token, onAudioApplied);
 
   return (
@@ -245,13 +247,11 @@ export function SettingsView({ initialTab = "memory", onAudioApplied }: Settings
           {tab === "personalities" && (
             <PersonalitiesPane api={profileApi} token={token} onMark={markImperative} />
           )}
-          {tab === "voice" && profileDraft && (
-            <VoicePane
-              api={providersApi}
+          {tab === "voice" && (
+            <VoicesPanel
               token={token}
-              draft={profileDraft}
-              savedVoice={profileOriginal?.voice ?? null}
-              onDraftVoice={(voice) => setProfileDraft({ ...profileDraft, voice })}
+              activeVoiceId={profileOriginal?.voice.id ?? "default"}
+              onActiveVoiceChanged={onActiveVoiceChanged}
             />
           )}
           {tab === "audio" && profileDraft && (
@@ -302,8 +302,8 @@ export function SettingsView({ initialTab = "memory", onAudioApplied }: Settings
 }
 
 // Referential fast-path skips stringify when callers spread an updated draft
-// (`{ ...profileDraft, voice }`): only the touched sub-tree gets a new
-// reference, so the other four sub-trees short-circuit.
+// (`{ ...profileDraft, audio }`): only the touched sub-tree gets a new
+// reference, so the other sub-trees short-circuit.
 function eq<T>(a: T, b: T): boolean {
   if (a === b) return true;
   return JSON.stringify(a) === JSON.stringify(b);
