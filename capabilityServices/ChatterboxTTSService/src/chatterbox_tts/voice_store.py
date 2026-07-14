@@ -5,7 +5,7 @@ S3Gen conditioning derived from a reference clip) plus a small metadata
 record. Packs live one-per-directory under ``voice_dir``::
 
     <voice_dir>/<voiceId>/conds.safetensors   # Conditionals.save()/.load()
-    <voice_dir>/<voiceId>/meta.json           # {name, createdAt, refDurationMs}
+    <voice_dir>/<voiceId>/meta.json           # {name, description, tags, createdAt, refDurationMs}
 
 Despite the ``.safetensors`` name (kept for readability/consistency with
 the model's own built-in-voice file), ``Conditionals.save``/``.load``
@@ -140,7 +140,9 @@ class VoiceStore:
             )
             return self.get(None)
 
-    def create(self, ref_wav: np.ndarray, sr: int, name: str) -> dict:
+    def create(
+        self, ref_wav: np.ndarray, sr: int, name: str, description: str = "", tags: list[str] | None = None
+    ) -> dict:
         """Build conditioning from ``ref_wav`` and persist a new voice pack.
 
         Rejects a too-short clip with a typed ``ValueError`` before any
@@ -163,7 +165,7 @@ class VoiceStore:
             voice_id, name, ref_wav.size, sr,
         )
         conds, created_at, ref_duration_ms = self._build_pack(
-            voice_id, ref_wav, sr, name, duration_s
+            voice_id, ref_wav, sr, name, duration_s, description, tags
         )
 
         self._cache[voice_id] = conds
@@ -174,7 +176,8 @@ class VoiceStore:
         return {"voiceId": voice_id, "name": name, "createdAt": created_at}
 
     def _build_pack(
-        self, voice_id: str, ref_wav: np.ndarray, sr: int, name: str, duration_s: float
+        self, voice_id: str, ref_wav: np.ndarray, sr: int, name: str, duration_s: float,
+        description: str, tags: list[str] | None,
     ) -> tuple[Any, float, int]:
         """mkdir -> prepare_conditionals -> save conds -> write meta, all-or-nothing.
 
@@ -196,7 +199,10 @@ class VoiceStore:
 
             created_at = time.time()
             ref_duration_ms = round(duration_s * 1000.0)
-            meta = {"name": name, "createdAt": created_at, "refDurationMs": ref_duration_ms}
+            meta = {
+                "name": name, "description": description, "tags": list(tags or []),
+                "createdAt": created_at, "refDurationMs": ref_duration_ms,
+            }
             self._write_meta_atomic(pack_dir / _META_FILENAME, meta)
         except Exception:
             log.warning(
@@ -272,7 +278,11 @@ class VoiceStore:
                 "voice_store.list bad_meta voice_id=%s error=%s", entry.name, exc
             )
             return None
-        return {"voiceId": entry.name, **meta}
+        return {
+            "voiceId": entry.name, "name": meta.get("name", ""),
+            "description": meta.get("description", ""), "tags": meta.get("tags", []),
+            "createdAt": meta.get("createdAt", 0.0), "refDurationMs": meta.get("refDurationMs", 0),
+        }
 
     @staticmethod
     def _save_atomic(path: Path, conds: Any) -> None:

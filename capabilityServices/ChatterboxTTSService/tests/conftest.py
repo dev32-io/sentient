@@ -55,7 +55,7 @@ class _StubVoiceStore:
     def list(self) -> list[dict]:
         return list(self._voices)
 
-    def create(self, ref_wav, sr, name):
+    def create(self, ref_wav, sr, name, description="", tags=None):
         result = {"voiceId": _FAKE_VOICE_ID, "name": name, "createdAt": _FAKE_CREATED_AT}
         self._voices.append(result)
         return result
@@ -67,7 +67,7 @@ class _StubVoiceStore:
 class _RaisingVoiceStore(_StubVoiceStore):
     """``create()`` always rejects — simulates a too-short reference clip."""
 
-    def create(self, ref_wav, sr, name):
+    def create(self, ref_wav, sr, name, description="", tags=None):
         raise ValueError("too short")
 
 

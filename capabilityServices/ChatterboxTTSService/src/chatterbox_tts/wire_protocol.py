@@ -24,7 +24,7 @@ kept separate so this file stays focused and under the project's line cap.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Union
 
 from .pipeline_events import (
@@ -86,6 +86,8 @@ class VoiceCreateMessage:
     """Start a voice-pack upload; the next binary frame is the reference wav."""
 
     name: str
+    description: str = ""
+    tags: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -158,7 +160,11 @@ def parse_client_message(raw: str) -> ClientMessage:
     if kind == _TYPE_PING:
         return PingMessage()
     if kind == _TYPE_VOICE_CREATE:
-        return VoiceCreateMessage(name=_require_str(parsed, "name", kind))
+        return VoiceCreateMessage(
+            name=_require_str(parsed, "name", kind),
+            description=_optional_str(parsed, "description"),
+            tags=_optional_str_list(parsed, "tags", kind),
+        )
     if kind == _TYPE_VOICE_LIST:
         return VoiceListMessage()
     if kind == _TYPE_VOICE_DELETE:
@@ -174,6 +180,22 @@ def _require_str(parsed: dict[str, Any], field_name: str, kind: str) -> str:
         raise WireProtocolError(
             f"'{kind}' message requires a non-empty string '{field_name}' field"
         )
+    return value
+
+
+def _optional_str(parsed: dict[str, Any], field_name: str) -> str:
+    """Pull an optional string field; missing/empty/non-string -> ''."""
+    value = parsed.get(field_name)
+    return value if isinstance(value, str) else ""
+
+
+def _optional_str_list(parsed: dict[str, Any], field_name: str, kind: str) -> list[str]:
+    """Pull an optional list-of-strings field; missing -> []. Non-string items reject."""
+    value = parsed.get(field_name)
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise WireProtocolError(f"'{kind}' message field '{field_name}' must be a list of strings")
     return value
 
 

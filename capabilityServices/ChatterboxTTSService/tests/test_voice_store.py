@@ -126,6 +126,32 @@ def test_create_cleans_up_on_failure(tmp_path: Path) -> None:
     assert list(voice_dir.iterdir()) == []
 
 
+def test_list_returns_description_and_tags(tmp_path: Path) -> None:
+    import json
+    store = VoiceStore(_StubEngine(), tmp_path / "voices")
+    pack = (tmp_path / "voices" / ("a" * 32))
+    pack.mkdir(parents=True)
+    (pack / "conds.safetensors").write_bytes(b"stub")
+    (pack / "meta.json").write_text(
+        json.dumps({"name": "Nova", "description": "Warm", "tags": ["warm"], "createdAt": 1.0, "refDurationMs": 6000})
+    )
+    [entry] = store.list()
+    assert entry["description"] == "Warm"
+    assert entry["tags"] == ["warm"]
+
+
+def test_list_defaults_missing_description_and_tags(tmp_path: Path) -> None:
+    import json
+    store = VoiceStore(_StubEngine(), tmp_path / "voices")
+    pack = (tmp_path / "voices" / ("a" * 32))
+    pack.mkdir(parents=True)
+    (pack / "conds.safetensors").write_bytes(b"stub")
+    (pack / "meta.json").write_text(json.dumps({"name": "Old", "createdAt": 1.0, "refDurationMs": 6000}))
+    [entry] = store.list()
+    assert entry["description"] == ""
+    assert entry["tags"] == []
+
+
 @pytest.mark.live
 def test_create_then_get_roundtrip(tmp_path: Path) -> None:
     """Live: needs the real model to build conditioning from a reference clip."""

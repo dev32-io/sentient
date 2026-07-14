@@ -83,7 +83,7 @@ class ConnectionSession:
         self._sample_rate = sample_rate
         self._voice = voice
         self._conn_log = conn_log
-        self._pending_voice_create_name: str | None = None
+        self._pending_voice_create: VoiceCreateMessage | None = None
         self._synth = SynthesisRunner(
             engine=engine, voice_store=voice_store, synth_lock=synth_lock, ws=ws,
             conn_id=conn_id, format_=format_, sample_rate=sample_rate, voice=voice,
@@ -125,7 +125,7 @@ class ConnectionSession:
         elif isinstance(msg, PingMessage):
             await self._ws.send(_PONG_PAYLOAD)
         elif isinstance(msg, VoiceCreateMessage):
-            self._pending_voice_create_name = msg.name
+            self._pending_voice_create = msg
         elif isinstance(msg, VoiceListMessage):
             await send_server_event(
                 self._ws, VoiceListResult(voices=self._voice_store.list()), self._conn_log,
@@ -144,17 +144,15 @@ class ConnectionSession:
         await send_server_event(self._ws, VoiceDeleted(voice_id=voice_id), self._conn_log)
 
     async def _handle_binary(self, data: bytes) -> None:
-        if self._pending_voice_create_name is None:
+        pending = self._pending_voice_create
+        if pending is None:
             self._conn_log.log("binary.unexpected", bytes=len(data))
-            await send_server_event(
-                self._ws, WarningEvent(reason="unexpected_binary_frame"), self._conn_log,
-            )
+            await send_server_event(self._ws, WarningEvent(reason="unexpected_binary_frame"), self._conn_log)
             return
-        name = self._pending_voice_create_name
-        self._pending_voice_create_name = None
-        await self._create_voice(name, data)
+        self._pending_voice_create = None
+        await self._create_voice(pending, data)
 
-    async def _create_voice(self, name: str, wav_bytes: bytes) -> None:
+    async def _create_voice(self, pending: VoiceCreateMessage, wav_bytes: bytes) -> None:
         try:
             array, sr = _decode_wav(wav_bytes)
         except Exception as exc:
@@ -165,12 +163,14 @@ class ConnectionSession:
             return
         try:
             async with self._synth_lock:
-                result = await asyncio.to_thread(self._voice_store.create, array, sr, name)
+                result = await asyncio.to_thread(
+                    self._voice_store.create, array, sr, pending.name, pending.description, pending.tags
+                )
         except ValueError as exc:
             await send_server_event(self._ws, ErrorEvent(reason=str(exc)), self._conn_log)
             return
         except Exception:
-            log.exception("voice.create failed name=%s", name)
+            log.exception("voice.create failed name=%s", pending.name)
             await send_server_event(
                 self._ws, ErrorEvent(reason="voice creation failed"), self._conn_log,
             )

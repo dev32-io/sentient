@@ -68,6 +68,28 @@ def test_parse_voice_create_message():
     assert msg == VoiceCreateMessage(name="Alice")
 
 
+def test_parse_voice_create_with_description_and_tags() -> None:
+    msg = parse_client_message(
+        json.dumps({"type": "voice.create", "name": "Nova", "description": "Warm", "tags": ["warm", "calm"]})
+    )
+    assert isinstance(msg, VoiceCreateMessage)
+    assert msg.name == "Nova"
+    assert msg.description == "Warm"
+    assert msg.tags == ["warm", "calm"]
+
+
+def test_parse_voice_create_defaults_description_and_tags() -> None:
+    msg = parse_client_message(json.dumps({"type": "voice.create", "name": "Nova"}))
+    assert isinstance(msg, VoiceCreateMessage)
+    assert msg.description == ""
+    assert msg.tags == []
+
+
+def test_parse_voice_create_rejects_non_string_tags() -> None:
+    with pytest.raises(WireProtocolError):
+        parse_client_message(json.dumps({"type": "voice.create", "name": "Nova", "tags": [1, 2]}))
+
+
 def test_parse_voice_list_message():
     assert parse_client_message(json.dumps({"type": "voice.list"})) == VoiceListMessage()
 
