@@ -978,3 +978,16 @@
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
 }
+
+/* ---- Add-voice modal (record/upload + metadata form) ---- */
+.settings-v2 .voices-add-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.settings-v2 .voices-tag-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
