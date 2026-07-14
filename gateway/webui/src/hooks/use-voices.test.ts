@@ -80,6 +80,21 @@ describe("createUseVoices", () => {
     expect(onActiveVoiceChanged).toHaveBeenCalledWith("v-new");
   });
 
+  it("createVoice leaves the list unchanged and reports failure on a rejected clip", async () => {
+    stub(async (_url, init) => {
+      if (init?.method === "POST") return Response.json({ error: "clip-too-short" }, { status: 422 });
+      throw new Error("load should not be called after a failed create");
+    });
+    const onActiveVoiceChanged = vi.fn();
+    const hook = createUseVoices({ token: "t", initialActiveId: "v-old", onActiveVoiceChanged });
+    const result = await hook.createVoice(new Blob(), "Dad");
+
+    expect(result.ok).toBe(false);
+    expect(hook.voices.value).toBeNull();
+    expect(hook.activeId.value).toBe("v-old");
+    expect(onActiveVoiceChanged).not.toHaveBeenCalled();
+  });
+
   it("createVoice surfaces a non-fatal warning without failing", async () => {
     stub(async (_url, init) => {
       if (init?.method === "POST") return Response.json({ voiceId: "v-new", name: "Dad", warning: "not-activated" });
@@ -150,6 +165,20 @@ describe("createUseVoices", () => {
 
     expect(result.ok).toBe(false);
     expect(hook.activeId.value).toBe("v-old");
+    expect(onActiveVoiceChanged).not.toHaveBeenCalled();
+  });
+
+  it("syncActiveId updates the local active id without fetching or notifying the caller", () => {
+    stub(async () => {
+      throw new Error("syncActiveId must not touch the network");
+    });
+    const onActiveVoiceChanged = vi.fn();
+    const hook = createUseVoices({ token: "t", initialActiveId: "default", onActiveVoiceChanged });
+
+    hook.syncActiveId("v-resolved");
+
+    expect(hook.activeId.value).toBe("v-resolved");
+    expect(calls).toHaveLength(0);
     expect(onActiveVoiceChanged).not.toHaveBeenCalled();
   });
 });

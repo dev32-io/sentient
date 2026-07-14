@@ -18,7 +18,10 @@ const TIMER_TICK_MS = 200;
 const MS_PER_SECOND = 1000;
 
 export interface VoiceRecorderProps {
-  onCreate: (audio: Blob, name: string) => Promise<void>;
+  /** Resolves `true` on a successful create, `false` on any failure (already
+   *  toasted by the caller). The recorder only clears its blob/name on `true`
+   *  so a transient failure (502/504/422) leaves the clip ready to retry. */
+  onCreate: (audio: Blob, name: string) => Promise<boolean>;
   /** True while a create/delete/set-active op is in flight elsewhere in the panel. */
   busy: boolean;
 }
@@ -84,8 +87,12 @@ export function VoiceRecorder({ onCreate, busy }: VoiceRecorderProps): JSX.Eleme
     const audio = blobRef.current;
     const trimmedName = name.trim();
     if (!audio || !trimmedName) return;
-    await onCreate(audio, trimmedName);
-    reset();
+    const ok = await onCreate(audio, trimmedName);
+    if (ok) {
+      reset();
+    } else {
+      log.warn("create.failed", { keptBlob: true });
+    }
   }
 
   function reset(): void {

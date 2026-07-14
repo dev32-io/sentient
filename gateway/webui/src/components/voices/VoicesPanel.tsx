@@ -39,19 +39,29 @@ export function VoicesPanel({ token, activeVoiceId, onActiveVoiceChanged }: Voic
     void hook.load();
   }, [hook]);
 
-  async function handleCreate(audio: Blob, name: string): Promise<void> {
+  // profileOriginal (the source of activeVoiceId) resolves async and can
+  // arrive after this pane's first render (or first mutation) — re-sync the
+  // hook's local active id whenever the prop settles to its true value.
+  // Sync only: never fetches, never PUTs, never calls onActiveVoiceChanged.
+  useEffect(() => {
+    hook.syncActiveId(activeVoiceId);
+  }, [hook, activeVoiceId]);
+
+  async function handleCreate(audio: Blob, name: string): Promise<boolean> {
     log.debug("create.requested", { audioBytes: audio.size, nameLength: name.length });
     setBusy(true);
     const r = await hook.createVoice(audio, name);
     setBusy(false);
     if (!r.ok) {
       toast.show("Couldn't create voice", "error");
-      return;
+      return false;
     }
     toast.show(
       r.warning === "not-activated" ? "Voice saved, but activation failed — try selecting it below." : "Voice created",
       r.warning ? "error" : "success",
     );
+    // A `warning` still means the pack exists server-side — success.
+    return true;
   }
 
   async function handleDelete(voiceId: string): Promise<void> {

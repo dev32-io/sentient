@@ -28,6 +28,11 @@ export interface UseVoices {
   createVoice(audio: Blob, name: string): Promise<VoiceMutationResult>;
   deleteVoice(voiceId: string): Promise<VoiceMutationResult>;
   setActiveVoice(voiceId: string): Promise<VoiceMutationResult>;
+  /** Sync-only: mirrors an externally-resolved active id (e.g. the caller's
+   *  profile fetch settling after this hook's own seed) into local state.
+   *  Never fetches, never PUTs, never calls `onActiveVoiceChanged` — the
+   *  value is already the server's truth flowing IN, not a user action. */
+  syncActiveId(voiceId: string): void;
 }
 
 export interface UseVoicesDeps {
@@ -126,5 +131,11 @@ export function createUseVoices(deps: UseVoicesDeps): UseVoices {
     return { ok: true };
   }
 
-  return { voices, activeId, loading, error, load, createVoice, deleteVoice, setActiveVoice };
+  function syncActiveId(voiceId: string): void {
+    if (activeId.value === voiceId) return;
+    log.debug("syncActiveId", { voiceId });
+    activeId.value = voiceId;
+  }
+
+  return { voices, activeId, loading, error, load, createVoice, deleteVoice, setActiveVoice, syncActiveId };
 }
