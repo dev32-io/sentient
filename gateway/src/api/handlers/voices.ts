@@ -130,7 +130,9 @@ async function handleVoicesPost(deps: VoicesHandlerDeps, userId: string, request
   }
 
   const audio = await parsed.value.audio.arrayBuffer();
-  const result = await createVoice(buildCfg(deps), parsed.value.name, audio, request.signal);
+  // Stopgap: description/tags multipart parsing lands in Task 7. For now
+  // every gateway-created voice pack gets an empty description/tags.
+  const result = await createVoice(buildCfg(deps), parsed.value.name, audio, request.signal, "", []);
   if (!result.ok) return mapVoiceOpError(result.error);
 
   const { voiceId, name } = result.value;

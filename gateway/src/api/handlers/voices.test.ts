@@ -209,14 +209,34 @@ describe("GET /api/v1/voices", () => {
     const responsePromise = handler(makeGetRequest());
     await autoReply(getWs, {
       type: "voice.list",
-      voices: [{ voiceId: VALID_VOICE_ID, name: "Dad", createdAt: 1752400000.0, refDurationMs: 12000 }],
+      voices: [
+        {
+          voiceId: VALID_VOICE_ID,
+          name: "Dad",
+          description: "Warm, low register",
+          tags: ["family", "warm"],
+          source: "user",
+          createdAt: 1752400000.0,
+          refDurationMs: 12000,
+        },
+      ],
     });
     const response = await responsePromise;
 
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body).toEqual({
-      voices: [{ voiceId: VALID_VOICE_ID, name: "Dad", createdAt: 1752400000.0, refDurationMs: 12000 }],
+      voices: [
+        {
+          voiceId: VALID_VOICE_ID,
+          name: "Dad",
+          description: "Warm, low register",
+          tags: ["family", "warm"],
+          source: "user",
+          createdAt: 1752400000.0,
+          refDurationMs: 12000,
+        },
+      ],
     });
   });
 
@@ -252,8 +272,15 @@ describe("POST /api/v1/voices", () => {
     expect(body).toEqual({ voiceId: VALID_VOICE_ID, name: "Dad" });
 
     // First send is the JSON voice.create control frame, second is the raw binary WAV.
+    // description/tags are stopgap empty placeholders here — real multipart
+    // parsing lands in Task 7.
     expect(ws.send).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(ws.send.mock.calls[0]?.[0])).toEqual({ type: "voice.create", name: "Dad" });
+    expect(JSON.parse(ws.send.mock.calls[0]?.[0])).toEqual({
+      type: "voice.create",
+      name: "Dad",
+      description: "",
+      tags: [],
+    });
     expect(ws.send.mock.calls[1]?.[0]).toBeInstanceOf(ArrayBuffer);
 
     expect(profileStore.save).toHaveBeenCalledWith(

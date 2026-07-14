@@ -47,6 +47,9 @@ export interface LocalTtsConnectOptions {
 export interface LocalTtsVoiceInfo {
   readonly voiceId: string;
   readonly name: string;
+  readonly description: string;
+  readonly tags: readonly string[];
+  readonly source: "builtin" | "user";
   readonly createdAt: number;
   readonly refDurationMs: number;
 }
@@ -110,9 +113,11 @@ export function pingMsg(): string {
 /**
  * CONTRACT.md §4.1 — MUST be followed by exactly one binary WS frame (the
  * reference WAV) sent separately by the caller. Not part of this builder.
+ * `description`/`tags` are optional on the wire (CONTRACT.md §4.1) but
+ * required here — callers pass `""`/`[]` explicitly for a bare-name pack.
  */
-export function voiceCreateMsg(name: string): string {
-  return JSON.stringify({ type: CLIENT_MSG_TYPE.VOICE_CREATE, name });
+export function voiceCreateMsg(name: string, description: string, tags: readonly string[]): string {
+  return JSON.stringify({ type: CLIENT_MSG_TYPE.VOICE_CREATE, name, description, tags });
 }
 
 /** CONTRACT.md §4.2. */
@@ -240,6 +245,9 @@ function parseVoiceListFrame(record: Record<string, unknown>): LocalTtsFrame | n
   return { kind: "voiceList", voices };
 }
 
+/** `description`/`tags`/`source` are defensively defaulted (never required) so a
+ *  legacy pack predating Task 1 (CONTRACT.md §4.2) still parses instead of
+ *  degrading the whole frame to `unknown`. */
 function parseVoiceInfo(entry: unknown): LocalTtsVoiceInfo | null {
   if (!entry || typeof entry !== "object") return null;
   const record = entry as Record<string, unknown>;
@@ -249,6 +257,9 @@ function parseVoiceInfo(entry: unknown): LocalTtsVoiceInfo | null {
   return {
     voiceId,
     name,
+    description: typeof record.description === "string" ? record.description : "",
+    tags: Array.isArray(record.tags) ? record.tags.map(String) : [],
+    source: record.source === "builtin" ? "builtin" : "user",
     createdAt: asNumber(record.createdAt),
     refDurationMs: asNumber(record.refDurationMs),
   };

@@ -7,6 +7,7 @@ import {
   parseServerFrame,
   pingMsg,
   textMsg,
+  voiceCreateMsg,
 } from "./local-tts-protocol.ts";
 
 describe("buildConnectUrl", () => {
@@ -55,6 +56,11 @@ describe("client message builders", () => {
 
   it("pingMsg produces {type:ping}", () => {
     expect(pingMsg()).toBe(JSON.stringify({ type: "ping" }));
+  });
+
+  it("voiceCreateMsg includes description and tags", () => {
+    const parsed = JSON.parse(voiceCreateMsg("Nova", "Warm", ["warm", "calm"]));
+    expect(parsed).toEqual({ type: "voice.create", name: "Nova", description: "Warm", tags: ["warm", "calm"] });
   });
 });
 
@@ -107,12 +113,79 @@ describe("parseServerFrame", () => {
     const frame = parseServerFrame(
       JSON.stringify({
         type: "voice.list",
+        voices: [
+          {
+            voiceId: "3f9b",
+            name: "Dad",
+            description: "Warm, low register",
+            tags: ["family", "warm"],
+            source: "user",
+            createdAt: 1752400000.0,
+            refDurationMs: 12000,
+          },
+        ],
+      }),
+    );
+    expect(frame).toEqual({
+      kind: "voiceList",
+      voices: [
+        {
+          voiceId: "3f9b",
+          name: "Dad",
+          description: "Warm, low register",
+          tags: ["family", "warm"],
+          source: "user",
+          createdAt: 1752400000.0,
+          refDurationMs: 12000,
+        },
+      ],
+    });
+  });
+
+  it("parses a voiceList frame with source/description/tags", () => {
+    const frame = parseServerFrame(
+      JSON.stringify({
+        type: "voice.list",
+        voices: [
+          {
+            voiceId: "nova",
+            name: "Nova",
+            description: "Warm",
+            tags: ["warm"],
+            source: "builtin",
+            createdAt: 0,
+            refDurationMs: 0,
+          },
+        ],
+      }),
+    );
+    expect(frame.kind).toBe("voiceList");
+    if (frame.kind === "voiceList") {
+      expect(frame.voices[0]?.source).toBe("builtin");
+      expect(frame.voices[0]?.tags).toEqual(["warm"]);
+    }
+  });
+
+  it("defaults description/tags/source for a legacy voice.list entry missing those fields", () => {
+    const frame = parseServerFrame(
+      JSON.stringify({
+        type: "voice.list",
         voices: [{ voiceId: "3f9b", name: "Dad", createdAt: 1752400000.0, refDurationMs: 12000 }],
       }),
     );
     expect(frame).toEqual({
       kind: "voiceList",
-      voices: [{ voiceId: "3f9b", name: "Dad", createdAt: 1752400000.0, refDurationMs: 12000 }],
+      voices: [
+        {
+          voiceId: "3f9b",
+          name: "Dad",
+          description: "",
+          tags: [],
+          source: "user",
+          createdAt: 1752400000.0,
+          refDurationMs: 12000,
+        },
+      ],
     });
   });
 
@@ -219,7 +292,17 @@ describe("parseServerFrame — malformed/adversarial input degrades to unknown, 
     );
     expect(frame).toEqual({
       kind: "voiceList",
-      voices: [{ voiceId: "3f9b", name: "Dad", createdAt: 1752400000.0, refDurationMs: 12000 }],
+      voices: [
+        {
+          voiceId: "3f9b",
+          name: "Dad",
+          description: "",
+          tags: [],
+          source: "user",
+          createdAt: 1752400000.0,
+          refDurationMs: 12000,
+        },
+      ],
     });
   });
 

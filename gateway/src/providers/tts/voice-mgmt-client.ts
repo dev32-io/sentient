@@ -176,13 +176,15 @@ export async function createVoice(
   name: string,
   audio: ArrayBuffer,
   signal: AbortSignal,
+  description: string,
+  tags: readonly string[],
 ): Promise<Result<VoiceCreated, VoiceOpError>> {
-  log.info("create.request", { nameLength: name.length, byteLength: audio.byteLength });
+  log.info("create.request", { nameLength: name.length, byteLength: audio.byteLength, tagCount: tags.length });
   const started = Date.now();
   const result = await requestReply<VoiceCreated>(
     cfg,
     (socket) => {
-      socket.send(voiceCreateMsg(name));
+      socket.send(voiceCreateMsg(name, description, tags));
       socket.send(audio);
     },
     (frame) => (frame.kind === "voiceCreated" ? { voiceId: frame.voiceId, name: frame.name } : null),
