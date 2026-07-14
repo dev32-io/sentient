@@ -25,7 +25,7 @@ export interface UseVoices {
   readonly loading: Signal<boolean>;
   readonly error: Signal<string | null>;
   load(): Promise<void>;
-  createVoice(audio: Blob, name: string): Promise<VoiceMutationResult>;
+  createVoice(audio: Blob, name: string, description: string, tags: string[]): Promise<VoiceMutationResult>;
   deleteVoice(voiceId: string): Promise<VoiceMutationResult>;
   setActiveVoice(voiceId: string): Promise<VoiceMutationResult>;
   /** Sync-only: mirrors an externally-resolved active id (e.g. the caller's
@@ -75,10 +75,15 @@ export function createUseVoices(deps: UseVoicesDeps): UseVoices {
     log.debug("load.success", { count: r.value.voices.length });
   }
 
-  async function createVoice(audio: Blob, name: string): Promise<VoiceMutationResult> {
+  async function createVoice(
+    audio: Blob,
+    name: string,
+    description: string,
+    tags: string[],
+  ): Promise<VoiceMutationResult> {
     // NEVER log audio bytes/content — byteLength + name length only.
-    log.debug("createVoice.request", { audioBytes: audio.size, nameLength: name.length });
-    const r = await api.createVoice(token, name, audio);
+    log.debug("createVoice.request", { audioBytes: audio.size, nameLength: name.length, tagCount: tags.length });
+    const r = await api.createVoice(token, name, audio, description, tags);
     if (!r.ok) {
       log.warn("createVoice.failed", { code: r.error.code });
       return { ok: false, errorCode: r.error.code };

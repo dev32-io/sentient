@@ -72,3 +72,17 @@ export async function handleFetch<T>(fetchPromise: Promise<Response>): Promise<R
   }
   return parseJsonOrError<T>(response);
 }
+
+export async function handleBlobFetch(fetchPromise: Promise<Response>): Promise<Result<Blob>> {
+  let response: Response;
+  try {
+    response = await fetchPromise;
+  } catch (err: unknown) {
+    log.warn("network-error", { error: String(err) });
+    return { ok: false, error: NETWORK_ERROR };
+  }
+  if (!response.ok) {
+    return { ok: false, error: { status: response.status, code: `http-${response.status}` } };
+  }
+  return { ok: true, value: await response.blob() };
+}

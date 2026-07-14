@@ -24,8 +24,8 @@ describe("VoiceList", () => {
     render(
       <VoiceList
         voices={[
-          { voiceId: "v-1", name: "Dad", createdAt: 1, refDurationMs: 12000 },
-          { voiceId: "v-2", name: "Mom", createdAt: 2, refDurationMs: 15000 },
+          { voiceId: "v-1", name: "Dad", description: "", tags: [], source: "user", createdAt: 1, refDurationMs: 12000 },
+          { voiceId: "v-2", name: "Mom", description: "", tags: [], source: "user", createdAt: 2, refDurationMs: 15000 },
         ]}
         loading={false}
         error={null}

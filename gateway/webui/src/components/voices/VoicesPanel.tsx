@@ -50,7 +50,9 @@ export function VoicesPanel({ token, activeVoiceId, onActiveVoiceChanged }: Voic
   async function handleCreate(audio: Blob, name: string): Promise<boolean> {
     log.debug("create.requested", { audioBytes: audio.size, nameLength: name.length });
     setBusy(true);
-    const r = await hook.createVoice(audio, name);
+    // TODO(Task 11-12): stopgap args — description/tags UI lands in the
+    // VoicesPanel rewrite; this panel doesn't collect them yet.
+    const r = await hook.createVoice(audio, name, "", []);
     setBusy(false);
     if (!r.ok) {
       toast.show("Couldn't create voice", "error");

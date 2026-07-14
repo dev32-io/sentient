@@ -1,6 +1,6 @@
 // gateway/webui/src/services/voices-api.ts
 import { createLogger } from "@sentient/web-sdk";
-import { type ApiHttpError, bearerHeaders, handleFetch } from "./_helpers";
+import { type ApiHttpError, bearerHeaders, handleBlobFetch, handleFetch } from "./_helpers";
 
 const log = createLogger(["sentient", "webui", "voices", "api"]);
 
@@ -14,6 +14,9 @@ const log = createLogger(["sentient", "webui", "voices", "api"]);
 export interface VoiceSummary {
   voiceId: string;
   name: string;
+  description: string;
+  tags: string[];
+  source: "builtin" | "user";
   /** Unix epoch SECONDS (float) — the TTS service's `time.time()`. Not ms. */
   createdAt: number;
   refDurationMs: number;
@@ -50,10 +53,20 @@ export interface VoicesApiConfig {
 
 export interface VoicesApi {
   listVoices(token: string): Promise<Result<{ voices: VoiceSummary[] }>>;
-  /** POSTs multipart/form-data (`name` + `audio`). Creating a voice
-   *  ACTIVATES it server-side — see CreateVoiceResult.warning. */
-  createVoice(token: string, name: string, audio: Blob): Promise<Result<CreateVoiceResult>>;
+  /** POSTs multipart/form-data (`name` + `description` + repeated `tags` +
+   *  `audio`). Creating a voice ACTIVATES it server-side — see
+   *  CreateVoiceResult.warning. */
+  createVoice(
+    token: string,
+    name: string,
+    audio: Blob,
+    description: string,
+    tags: string[],
+  ): Promise<Result<CreateVoiceResult>>;
   deleteVoice(token: string, voiceId: string): Promise<Result<DeleteVoiceResult>>;
+  /** POSTs to `/api/v1/voices/:id/preview` — returns synthesized preview audio
+   *  as a raw WAV blob (200 audio/wav), or a typed error on 502/504/etc. */
+  previewVoice(token: string, voiceId: string): Promise<Result<Blob>>;
 }
 
 export function createVoicesApi(config?: VoicesApiConfig): VoicesApi {
@@ -65,11 +78,13 @@ export function createVoicesApi(config?: VoicesApiConfig): VoicesApi {
       return handleFetch<{ voices: VoiceSummary[] }>(fetch(`${base}/api/v1/voices`, { headers: bearerHeaders(token) }));
     },
 
-    createVoice(token, name, audio) {
+    createVoice(token, name, audio, description, tags) {
       // NEVER log audio bytes/content — byteLength + name length only.
-      log.debug("createVoice", { nameLength: name.length, audioBytes: audio.size });
+      log.debug("createVoice", { nameLength: name.length, audioBytes: audio.size, tagCount: tags.length });
       const form = new FormData();
       form.set("name", name);
+      form.set("description", description);
+      for (const t of tags) form.append("tags", t);
       form.set("audio", audio, "reference.wav");
       return handleFetch<CreateVoiceResult>(
         fetch(`${base}/api/v1/voices`, {
@@ -86,6 +101,16 @@ export function createVoicesApi(config?: VoicesApiConfig): VoicesApi {
       return handleFetch<DeleteVoiceResult>(
         fetch(`${base}/api/v1/voices/${encodeURIComponent(voiceId)}`, {
           method: "DELETE",
+          headers: bearerHeaders(token),
+        }),
+      );
+    },
+
+    previewVoice(token, voiceId) {
+      log.debug("previewVoice", { voiceId });
+      return handleBlobFetch(
+        fetch(`${base}/api/v1/voices/${encodeURIComponent(voiceId)}/preview`, {
+          method: "POST",
           headers: bearerHeaders(token),
         }),
       );
