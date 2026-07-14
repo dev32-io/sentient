@@ -7,7 +7,6 @@ import type {
   DownloadsConfig as DownloadsYaml,
   HermesBuiltinTools,
   HermesConfig as HermesYaml,
-  LLMConfig as LLMYaml,
   McpCatalog,
   ProvidersConfig as ProvidersYaml,
   STTConfig as STTYaml,
@@ -50,10 +49,6 @@ export interface StartupConfig {
    *  current config.yaml schema (stt is required), but kept optional for
    *  forward compatibility. */
   stt: STTYaml | undefined;
-
-  /** `undefined` when no api key matches the configured `llm.provider`
-   *  (OPENROUTER_API_KEY for openrouter, OLLAMA_API_KEY for ollama-cloud). */
-  llm: (LLMYaml & { apiKey: string }) | undefined;
 
   /** TTS yaml block — always defined. tts-factory builds a local-tts
    *  (ChatterboxTTSService) provider from `tts.url` — no API key needed, so
@@ -108,10 +103,6 @@ export function loadStartupConfig(): StartupConfig {
   const cfg = loadGatewayConfig(configPath);
   log.info("config-loaded", { path: configPath });
 
-  const openrouterApiKey = process.env.OPENROUTER_API_KEY ?? "";
-  const ollamaApiKey = process.env.OLLAMA_API_KEY ?? "";
-  const llmApiKey = cfg.llm.provider === "ollama-cloud" ? ollamaApiKey : openrouterApiKey;
-
   return {
     logging: {
       logLevel: cfg.logging.level,
@@ -134,8 +125,6 @@ export function loadStartupConfig(): StartupConfig {
     language: cfg.stt.language,
 
     stt: cfg.stt,
-
-    llm: llmApiKey ? { ...cfg.llm, apiKey: llmApiKey } : undefined,
 
     // TTS is always wired to the local-tts (ChatterboxTTSService) provider —
     // no API key required, so nothing here gates on secret presence. A

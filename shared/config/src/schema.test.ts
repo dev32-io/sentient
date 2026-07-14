@@ -21,7 +21,6 @@ const wsResilienceSession = {
 describe("gatewayConfigSchema", () => {
   const minimalValidConfig = {
     stt: { provider: "local-stt" },
-    llm: {},
     tts: { provider: "fish-audio" },
     session: wsResilienceSession,
   };
@@ -53,14 +52,6 @@ describe("gatewayConfigSchema", () => {
   it("rejects tts_drain_grace_ms above max", () => {
     const invalid = { ...minimalValidConfig, session: { ...wsResilienceSession, tts_drain_grace_ms: 6000 } };
     expect(gatewayConfigSchema.safeParse(invalid).success).toBe(false);
-  });
-
-  it("applies LLM defaults", () => {
-    const result = gatewayConfigSchema.parse(minimalValidConfig);
-    expect(result.llm.provider).toBe("openrouter");
-    expect(result.llm.chat_model).toBe("google/gemini-2.5-flash");
-    expect(result.llm.max_tokens).toBe(1024);
-    expect(result.llm.timeout_ms).toBe(30000);
   });
 
   it("applies TTS defaults including utterance_aggregator and emotion_tags", () => {
@@ -263,7 +254,6 @@ describe("gatewayConfigSchema logging field", () => {
   it("includes a default logging section when omitted", () => {
     const minimal = {
       stt: { provider: "local-stt" },
-      llm: { provider: "openrouter" },
       tts: { provider: "fish-audio" },
       session: wsResilienceSession,
     };
@@ -275,7 +265,6 @@ describe("gatewayConfigSchema logging field", () => {
 describe("gatewayConfigSchema webui field", () => {
   const minimalValidConfig = {
     stt: { provider: "local-stt" },
-    llm: {},
     tts: { provider: "fish-audio" },
     session: wsResilienceSession,
   };
@@ -307,7 +296,6 @@ describe("gatewayConfigSchema webui field", () => {
 describe("gateway config — auth/apply/providers sections", () => {
   const minimal = {
     stt: { provider: "local-stt" },
-    llm: { provider: "openrouter" },
     tts: { provider: "fish-audio" },
     session: wsResilienceSession,
   };
@@ -398,7 +386,6 @@ describe("applyConfigSchema", () => {
 describe("gatewayConfigSchema downloads field", () => {
   const minimalWithDownloads = {
     stt: { provider: "local-stt" },
-    llm: {},
     tts: { provider: "fish-audio" },
     session: wsResilienceSession,
     downloads: {

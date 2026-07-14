@@ -48,7 +48,6 @@ import type { SttService } from "./stt-factory.ts";
 import type { TtsService } from "./tts-factory.ts";
 
 const log = getLog(["sentient", "bootstrap"]);
-const DEFAULT_CHAT_MODEL = "google/gemini-2.5-flash";
 const TEST_PROVIDER_TIMEOUT_MS = 5000;
 
 export async function testProviderImpl(
@@ -91,7 +90,6 @@ export interface GatewayServices {
   readonly stt: SttService | null;
   readonly tts: TtsService | null;
   readonly createSynthesizerFor: (getVoiceId: () => string | null) => TextStreamSynthesizer | null;
-  readonly chatModel: string;
   readonly language: "en" | "zh";
   readonly tls: GatewayTlsMaterial | undefined;
   readonly webDistDir: string | undefined;
@@ -200,7 +198,6 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     stt: services.stt,
     tts: services.tts,
     createSynthesizerFor: services.createSynthesizerFor,
-    chatModel: cfg.llm?.chat_model ?? DEFAULT_CHAT_MODEL,
     // "auto" is a decode-only sentinel; UX/prompt language needs a concrete
     // value, so fall back to "en" when the operator chose autodetect.
     language: cfg.language === "auto" ? "en" : cfg.language,

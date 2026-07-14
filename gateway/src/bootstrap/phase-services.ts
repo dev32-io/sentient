@@ -47,7 +47,6 @@ import { hashPin } from "../user-auth/pin-service.js";
 import { createCerebrumServices } from "./cerebrum-factory.ts";
 import type { CerebrumServices } from "./cerebrum-factory.ts";
 import { createTextStreamSynthesizer } from "./content-tts-factory.ts";
-import { createLlmService } from "./llm-factory.ts";
 import type { SttService } from "./stt-factory.ts";
 import { createSttService } from "./stt-factory.ts";
 import type { TtsService } from "./tts-factory.ts";
@@ -92,7 +91,6 @@ export interface PhaseServicesOutput {
 export async function runPhaseServices(input: PhaseServicesInput): Promise<PhaseServicesOutput> {
   const { cfg, auth, secretsStore, internalSecretsStore, userPortStore, supervisordControl } = input;
 
-  const llmProvider = createLlmService(cfg);
   const stt = cfg.stt ? createSttService(cfg) : null;
   const tts = createTtsService({ cfg });
   const tls = cfg.tls.enabled
@@ -248,7 +246,6 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
   );
 
   log.info("phase-services-complete", {
-    llm: llmProvider !== null,
     stt: stt !== null,
     tts: tts !== null,
     tls: tls !== undefined,

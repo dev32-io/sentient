@@ -15,8 +15,6 @@ session:
 stt:
   provider: local-stt
   url: ws://stt-service:8766
-llm:
-  provider: openrouter
 tts:
   provider: fish-audio
   voice_id: my-voice-id
@@ -34,7 +32,6 @@ tts:
   it("applies default values for optional fields", () => {
     const config = loadGatewayConfigFromString(validYaml);
 
-    expect(config.llm.chat_model).toBe("google/gemini-2.5-flash");
     expect(config.tts.latency).toBe("balanced");
   });
 
@@ -51,8 +48,6 @@ session:
   idle_timeout_ms: 900000
 stt:
   provider: local-stt
-llm:
-  provider: openrouter
 tts:
   provider: fish-audio
 `;
@@ -75,8 +70,6 @@ session:
   idle_timeout_ms: 900000
 stt:
   provider: local-stt
-llm:
-  provider: openrouter
 tts:
   provider: fish-audio
 `;
@@ -89,8 +82,6 @@ tts:
 port: "not-a-number"
 stt:
   provider: local-stt
-llm:
-  provider: openrouter
 tts:
   provider: fish-audio
 `;
@@ -110,8 +101,6 @@ session:
   idle_timeout_ms: 900000
 stt:
   provider: local-stt
-llm:
-  provider: openrouter
 tts:
   provider: fish-audio
 `;
@@ -134,8 +123,6 @@ session:
   idle_timeout_ms: 900000
 stt:
   provider: local-stt
-llm:
-  provider: openrouter
 tts:
   provider: fish-audio
 `;

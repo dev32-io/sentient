@@ -111,23 +111,6 @@ stt:
   connect_timeout_ms: 10000
 
 # ---------------------------------------------------------------------------
-# LLM — OpenRouter (language model)
-# ---------------------------------------------------------------------------
-llm:
-  # Gateway-side LLM client. ONLY used by the emotion-tagger today (Hermes
-  # owns chat). `provider` selects api-key env (OPENROUTER_API_KEY for
-  # openrouter, OLLAMA_API_KEY for ollama-cloud) and the default base_url.
-  # ollama-cloud needs a local ollama daemon sidecar (Task 82) — until
-  # then keep openrouter as the working default.
-  provider: openrouter
-  chat_model: google/gemini-2.5-flash
-  max_tokens: 1024
-  timeout_ms: 30000
-
-  use_tool_calling: true              # must be true for cerebrum arch
-  stream: true                        # switch from non-streaming to SSE streaming
-
-# ---------------------------------------------------------------------------
 # TTS — local-tts (ChatterboxTTSService) is now the wired provider.
 #
 # The speak effect is a mini-pipeline: LLM text deltas → UtteranceAggregator

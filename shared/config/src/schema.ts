@@ -52,32 +52,6 @@ export const sttConfigSchema = z.object({
 export type STTConfig = z.output<typeof sttConfigSchema>;
 
 // ---------------------------------------------------------------------------
-// LLM — OpenRouter
-// ---------------------------------------------------------------------------
-
-export const llmConfigSchema = z.object({
-  // Gateway-side LLM client. ONLY used for the emotion-tagger pass today
-  // (Hermes owns the chat LLM). Both `openrouter` and `ollama-cloud` speak
-  // OpenAI-compatible REST; provider selects api-key env + default base_url.
-  // ollama-cloud requires a local ollama daemon sidecar (see Task 82); the
-  // hosted https://ollama.com endpoint rejects auth on completions even
-  // with a valid key. Keep openrouter as the working default until the
-  // sidecar lands.
-  provider: z.enum(["openrouter", "ollama-cloud"]).default("openrouter"),
-  // Optional override; when omitted the factory uses the canonical base_url
-  // for the chosen provider (openrouter → openrouter.ai/api/v1,
-  // ollama-cloud → ollama.com/v1).
-  base_url: z.string().optional(),
-  chat_model: z.string().default("google/gemini-2.5-flash"),
-  max_tokens: z.number().int().min(1).default(1024),
-  timeout_ms: z.number().int().min(1000).default(30000),
-  use_tool_calling: z.boolean().default(true),
-  stream: z.boolean().default(true),
-});
-
-export type LLMConfig = z.output<typeof llmConfigSchema>;
-
-// ---------------------------------------------------------------------------
 // TTS — Fish Audio
 //
 // Note: emotion_tags + utterance_aggregator live here because they are
@@ -419,7 +393,6 @@ export const gatewayConfigSchema = z.object({
   session: sessionConfigSchema,
   logging: loggingConfigSchema.default({}),
   stt: sttConfigSchema,
-  llm: llmConfigSchema,
   tts: ttsConfigSchema,
   cerebrum: cerebrumConfigSchema.default({}),
   webui: webuiConfigSchema.default({}),

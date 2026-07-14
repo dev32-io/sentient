@@ -27,7 +27,6 @@
     "cockatiel": "^3.2.1",
     "dockerode": "^5.0.0",
     "emoji-regex": "^10.6.0",
-    "openai": "^6.33.0",
     "paseto-ts": "^2.0.5",
     "qrcode": "^1.5.4",
     "streaming-markdown": "^0.2.15",
