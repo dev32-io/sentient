@@ -123,6 +123,28 @@ function makeProfileStore(profile: ProfileV1 = sampleProfile()): ProfileStore {
   };
 }
 
+/** A profileStore whose `get` succeeds (so callers can determine what would be
+ *  written) but whose `save` fails — pins the partial-failure invariant: the TTS
+ *  service already committed the primary op, so a save failure must degrade to a
+ *  200+warning, never a 500 or a dropped voiceId. */
+function makeProfileStoreWithFailingSave(profile: ProfileV1, error: ProfileStoreError = "io-error"): ProfileStore {
+  return {
+    get: vi.fn(async (): Promise<Result<ProfileV1, ProfileStoreError>> => ({ ok: true, value: profile })),
+    save: vi.fn(async (): Promise<Result<void, ProfileStoreError>> => ({ ok: false, error })),
+    remove: vi.fn(async (): Promise<Result<void, ProfileStoreError>> => ({ ok: true, value: undefined })),
+  };
+}
+
+/** A profileStore whose `get` always fails — used to pin the "can't tell whether a
+ *  reset is owed" DELETE path, which stays a plain 200 (no warning, no save call). */
+function makeProfileStoreWithFailingGet(error: ProfileStoreError = "io-error"): ProfileStore {
+  return {
+    get: vi.fn(async (): Promise<Result<ProfileV1, ProfileStoreError>> => ({ ok: false, error })),
+    save: vi.fn(async (): Promise<Result<void, ProfileStoreError>> => ({ ok: true, value: undefined })),
+    remove: vi.fn(async (): Promise<Result<void, ProfileStoreError>> => ({ ok: true, value: undefined })),
+  };
+}
+
 function makeDeps(overrides: Partial<VoicesHandlerDeps> = {}): {
   deps: VoicesHandlerDeps;
   getWs: () => FakeWebSocket | null;
@@ -299,6 +321,26 @@ describe("POST /api/v1/voices", () => {
     const response = await createVoicesHandler(deps)(makePostRequest(makeCreateForm(), null));
     expect(response.status).toBe(401);
   });
+
+  it("returns 200 voiceId + not-activated warning when the service create succeeds but the profile save fails", async () => {
+    const profile = sampleProfile("alice", "old-voice");
+    const profileStore = makeProfileStoreWithFailingSave(profile);
+    const { deps, getWs } = makeDeps({ profileStore });
+
+    const responsePromise = createVoicesHandler(deps)(makePostRequest(makeCreateForm("Dad")));
+    await autoReply(getWs, {
+      type: "voice.created",
+      voiceId: VALID_VOICE_ID,
+      name: "Dad",
+      createdAt: 1752400000.0,
+    });
+    const response = await responsePromise;
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toEqual({ voiceId: VALID_VOICE_ID, name: "Dad", warning: "not-activated" });
+    expect(deps.refreshVoice).not.toHaveBeenCalled();
+  });
 });
 
 describe("DELETE /api/v1/voices/:id", () => {
@@ -362,5 +404,35 @@ describe("DELETE /api/v1/voices/:id", () => {
     const { deps } = makeDeps({ tokens: makeInvalidTokens() });
     const response = await createVoicesHandler(deps)(makeDeleteRequest(VALID_VOICE_ID, "bad-token"));
     expect(response.status).toBe(401);
+  });
+
+  it("returns 200 voiceId + profile-not-updated warning when deleting the active voice but the reset save fails", async () => {
+    const profile = sampleProfile("alice", VALID_VOICE_ID);
+    const profileStore = makeProfileStoreWithFailingSave(profile);
+    const { deps, getWs } = makeDeps({ profileStore });
+
+    const responsePromise = createVoicesHandler(deps)(makeDeleteRequest(VALID_VOICE_ID));
+    await autoReply(getWs, { type: "voice.deleted", voiceId: VALID_VOICE_ID });
+    const response = await responsePromise;
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toEqual({ voiceId: VALID_VOICE_ID, warning: "profile-not-updated" });
+    expect(deps.refreshVoice).not.toHaveBeenCalled();
+  });
+
+  it("returns 200 voiceId (no warning) when the service delete succeeds but the profile read fails", async () => {
+    const profileStore = makeProfileStoreWithFailingGet();
+    const { deps, getWs } = makeDeps({ profileStore });
+
+    const responsePromise = createVoicesHandler(deps)(makeDeleteRequest(VALID_VOICE_ID));
+    await autoReply(getWs, { type: "voice.deleted", voiceId: VALID_VOICE_ID });
+    const response = await responsePromise;
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toEqual({ voiceId: VALID_VOICE_ID });
+    expect(profileStore.save).not.toHaveBeenCalled();
+    expect(deps.refreshVoice).not.toHaveBeenCalled();
   });
 });

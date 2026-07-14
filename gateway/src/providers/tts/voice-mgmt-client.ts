@@ -46,6 +46,16 @@ export interface VoiceDeleted {
   readonly voiceId: string;
 }
 
+/** Mutable handles for the connect/op timers, shared between `wireOpSocket` (which
+ *  arms them) and `makeSettler` (which clears both on every settle path — see
+ *  Fix #3: a real WS's `close()` fires `onclose` asynchronously, so clearing timers
+ *  only via the `onclose` side-effect leaves a stale timer armed for up to
+ *  `opTimeoutMs` after the caller already has a response). */
+interface TimerHandles {
+  connectTimer?: ReturnType<typeof setTimeout> | undefined;
+  opTimer?: ReturnType<typeof setTimeout> | undefined;
+}
+
 /** One short-lived WS: connect -> send request [+ binary] -> await the one matching
  *  reply -> close. `sendRequest` fires on open; `extract` returns non-null for the
  *  frame kind this op is waiting on (all other non-error/ready frames are ignored). */
@@ -63,9 +73,10 @@ async function requestReply<T>(
   if (!socket) return { ok: false, error: { kind: "transport" } };
 
   return new Promise((resolve) => {
-    const settle = makeSettler(socket, resolve);
+    const timers: TimerHandles = {};
+    const settle = makeSettler(socket, timers, resolve);
     signal.addEventListener("abort", () => settle({ ok: false, error: { kind: "transport" } }), { once: true });
-    wireOpSocket(socket, cfg, sendRequest, extract, settle);
+    wireOpSocket(socket, cfg, timers, sendRequest, extract, settle);
   });
 }
 
@@ -81,15 +92,19 @@ function openSocket(factory: VoiceMgmtSocketFactory, url: string): WebSocket | n
   }
 }
 
-/** Builds a settle-once function: clears timers, closes the socket, resolves. */
+/** Builds a settle-once function: clears BOTH timers directly (never relying on the
+ *  async `onclose` side-effect — see Fix #3), closes the socket, resolves. */
 function makeSettler<T>(
   socket: WebSocket,
+  timers: TimerHandles,
   resolve: (result: Result<T, VoiceOpError>) => void,
 ): (result: Result<T, VoiceOpError>) => void {
   let settled = false;
   return (result) => {
     if (settled) return;
     settled = true;
+    clearTimeout(timers.connectTimer);
+    clearTimeout(timers.opTimer);
     if (socket.readyState === READY_STATE_OPEN || socket.readyState === WebSocket.CONNECTING) {
       socket.close();
     }
@@ -100,48 +115,60 @@ function makeSettler<T>(
 function wireOpSocket<T>(
   socket: WebSocket,
   cfg: VoiceMgmtConfig,
+  timers: TimerHandles,
   sendRequest: (socket: WebSocket) => void,
   extract: (frame: LocalTtsFrame) => T | null,
   settle: (result: Result<T, VoiceOpError>) => void,
 ): void {
-  const connectTimer = setTimeout(() => {
+  timers.connectTimer = setTimeout(() => {
     log.warn("connect-timeout", { timeoutMs: cfg.connectTimeoutMs });
     settle({ ok: false, error: { kind: "transport" } });
   }, cfg.connectTimeoutMs);
 
-  socket.onopen = () => {
-    clearTimeout(connectTimer);
-    const opTimer = setTimeout(() => {
-      log.warn("op-timeout", { timeoutMs: cfg.opTimeoutMs });
-      settle({ ok: false, error: { kind: "timeout" } });
-    }, cfg.opTimeoutMs);
-    socket.onclose = () => {
-      clearTimeout(opTimer);
-      settle({ ok: false, error: { kind: "transport" } });
-    };
-    sendRequest(socket);
-  };
-
-  socket.onmessage = (event: MessageEvent) => {
-    const frame = parseServerFrame(event.data as string | ArrayBuffer);
-    if (frame.kind === "ready") return; // connect-time frame, not the op reply
-    if (frame.kind === "error") {
-      settle({ ok: false, error: { kind: "service-error", reason: frame.reason } });
-      return;
-    }
-    const value = extract(frame);
-    if (value !== null) settle({ ok: true, value });
-  };
-
+  socket.onopen = () => onSocketOpen(socket, cfg, timers, sendRequest, settle);
+  socket.onmessage = (event: MessageEvent) => onSocketMessage(event, extract, settle);
   socket.onerror = () => {
     log.warn("ws-error");
     settle({ ok: false, error: { kind: "transport" } });
   };
+  // `settle` clears both timers itself now, so a single handler covers close
+  // whether it lands before or after `onopen` armed the op timer.
+  socket.onclose = () => settle({ ok: false, error: { kind: "transport" } });
+}
 
-  socket.onclose = () => {
-    clearTimeout(connectTimer);
-    settle({ ok: false, error: { kind: "transport" } });
-  };
+/** `onopen`: the connect deadline no longer applies once the socket is live, so
+ *  clear it immediately (not deferred to `settle`) — otherwise it would fire
+ *  spuriously mid-op on a fast-connect/slow-reply run. Arm the op timer and send
+ *  the request now that the socket is open. */
+function onSocketOpen<T>(
+  socket: WebSocket,
+  cfg: VoiceMgmtConfig,
+  timers: TimerHandles,
+  sendRequest: (socket: WebSocket) => void,
+  settle: (result: Result<T, VoiceOpError>) => void,
+): void {
+  clearTimeout(timers.connectTimer);
+  timers.connectTimer = undefined;
+  timers.opTimer = setTimeout(() => {
+    log.warn("op-timeout", { timeoutMs: cfg.opTimeoutMs });
+    settle({ ok: false, error: { kind: "timeout" } });
+  }, cfg.opTimeoutMs);
+  sendRequest(socket);
+}
+
+function onSocketMessage<T>(
+  event: MessageEvent,
+  extract: (frame: LocalTtsFrame) => T | null,
+  settle: (result: Result<T, VoiceOpError>) => void,
+): void {
+  const frame = parseServerFrame(event.data as string | ArrayBuffer);
+  if (frame.kind === "ready") return; // connect-time frame, not the op reply
+  if (frame.kind === "error") {
+    settle({ ok: false, error: { kind: "service-error", reason: frame.reason } });
+    return;
+  }
+  const value = extract(frame);
+  if (value !== null) settle({ ok: true, value });
 }
 
 export async function createVoice(

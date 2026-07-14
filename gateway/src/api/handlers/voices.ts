@@ -19,9 +19,15 @@ const HTTP_UNAUTHORIZED = 401;
 const HTTP_NOT_FOUND = 404;
 const HTTP_METHOD = 405;
 const HTTP_UNPROCESSABLE = 422;
-const HTTP_INTERNAL = 500;
 const HTTP_BAD_GATEWAY = 502;
 const HTTP_TIMEOUT = 504;
+
+// Warning codes surfaced on an otherwise-200 body when the TTS service already
+// committed the irreversible primary op (create under the synth lock / delete)
+// but a secondary LOCAL profile read/save failed. The voiceId is never dropped
+// in this case — see handleVoicesPost / handleVoicesDelete.
+const WARNING_NOT_ACTIVATED = "not-activated";
+const WARNING_PROFILE_NOT_UPDATED = "profile-not-updated";
 
 // Reset target when the deleted voice was the caller's active pick — mirrors
 // cfg.tts.voice_id's "default" sentinel (falls back to the model's built-in
@@ -108,8 +114,12 @@ async function handleVoicesPost(deps: VoicesHandlerDeps, userId: string, request
   const { voiceId, name } = result.value;
   const activated = await activateVoice(deps, userId, voiceId);
   if (!activated.ok) {
+    // The pack already exists on the service (storage consumed under the synth
+    // lock) — a failed local activation write must never drop the voiceId or
+    // report total failure. The id still surfaces via GET and can be activated
+    // later through PUT /api/v1/profile/me.
     log.warn("create.activate-failed", { userId, voiceId, reason: activated.error });
-    return jsonError(HTTP_INTERNAL, activated.error);
+    return Response.json({ voiceId, name, warning: WARNING_NOT_ACTIVATED }, { status: HTTP_OK });
   }
   log.info("create.success", { userId, voiceId });
   return Response.json({ voiceId, name }, { status: HTTP_OK });
@@ -131,8 +141,12 @@ async function handleVoicesDelete(
 
   const deactivated = await deactivateIfActive(deps, userId, voiceId);
   if (!deactivated.ok) {
+    // The service-side delete already committed (and is idempotent) — a failed
+    // local profile reset must never surface as a 500. The dangling
+    // profile.voice.id is a future-webui prompt-to-fix concern, not a request
+    // failure.
     log.warn("delete.deactivate-save-failed", { userId, voiceId, reason: deactivated.error });
-    return jsonError(HTTP_INTERNAL, deactivated.error);
+    return Response.json({ voiceId, warning: WARNING_PROFILE_NOT_UPDATED }, { status: HTTP_OK });
   }
   log.info("delete.success", { userId, voiceId });
   return Response.json({ voiceId }, { status: HTTP_OK });
