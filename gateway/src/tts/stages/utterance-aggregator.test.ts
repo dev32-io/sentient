@@ -71,7 +71,7 @@ describe("aggregateUtterances", () => {
     }
   });
 
-  it("keeps multi-sentence paragraphs intact so Fish Audio's prosody spans them", async () => {
+  it("keeps multi-sentence paragraphs intact so the TTS provider's prosody spans them", async () => {
     const paragraph =
       "I'll tell you a joke. Why did the scarecrow win an award? Because he was outstanding in his field! Ha ha.";
     const out = await collect([paragraph], DEFAULT_OPTS);

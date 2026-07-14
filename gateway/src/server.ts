@@ -112,8 +112,6 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
   const handleProviders = createProvidersHandler({
     tokens: services.auth.tokens,
     listModels: providersDeps.listModels,
-    listVoices: providersDeps.listVoices,
-    getVoice: providersDeps.getVoice,
   });
   const handleMcpCatalog = createMcpCatalogHandler({
     tokens: services.auth.tokens,
@@ -141,7 +139,6 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
     secretsStore: services.secretsStore ?? makeThrowProxy("SecretsStore"),
     testProvider: testProviderImpl,
     listModels: providersDeps.listModels,
-    listVoices: providersDeps.listVoices,
     systemOrchestrator: services.systemOrchestrator,
   });
   const handleSystemStatus = createSystemStatusHandler({

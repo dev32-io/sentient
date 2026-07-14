@@ -131,14 +131,6 @@ describe("SecretsStore", () => {
     expect(sync?.provider).toBe("ollama-cloud");
   });
 
-  it("getFishAudioKeySync returns null before load, value after setFishAudioKey", async () => {
-    const store = makeStore(dir);
-    expect(store.getFishAudioKeySync()).toBeNull();
-    await store.load();
-    await store.setFishAudioKey("fish-key");
-    expect(store.getFishAudioKeySync()).toBe("fish-key");
-  });
-
   // --- Admin token is injected from generateAdminToken -----------------------
 
   it("admin_token is the value from generateAdminToken", async () => {

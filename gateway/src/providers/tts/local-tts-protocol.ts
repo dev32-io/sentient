@@ -1,10 +1,9 @@
 // ---------------------------------------------------------------------------
 // local-tts-protocol — WS message codec for the native ChatterboxTTSService.
 //
-// Wire contract: capabilityServices/ChatterboxTTSService/CONTRACT.md. Unlike
-// Fish Audio (MessagePack, see fish-audio-protocol.ts), this service speaks
-// JSON text frames for control messages and raw binary frames for audio —
-// no MessagePack.
+// Wire contract: capabilityServices/ChatterboxTTSService/CONTRACT.md. This
+// service speaks JSON text frames for control messages and raw binary
+// frames for audio — no MessagePack.
 //
 // The service's JSON field names are a mix of camelCase (`requestId`,
 // `voiceId`, `createdAt`) and snake_case (`sample_rate`, `ttfa_ms`,
@@ -126,10 +125,9 @@ export function parseServerFrame(data: string | ArrayBuffer): LocalTtsFrame {
 type ServerMsgType = (typeof SERVER_MSG_TYPE)[keyof typeof SERVER_MSG_TYPE];
 
 /**
- * Returns `null` when a required field is absent or the wrong wire type — never a
- * frame with a fabricated/coerced value. Mirrors fish-audio-protocol.ts's pattern of
- * returning `null` on a failed type check rather than defaulting. The caller
- * (`parseJsonFrame`) turns a `null` result into `{kind:"unknown"}`.
+ * Returns `null` when a required field is absent or the wrong wire type —
+ * never a frame with a fabricated/coerced value. The caller (`parseJsonFrame`)
+ * turns a `null` result into `{kind:"unknown"}`.
  */
 type FrameParser = (record: Record<string, unknown>) => LocalTtsFrame | null;
 

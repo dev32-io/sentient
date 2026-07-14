@@ -114,7 +114,7 @@ describe("createApplyDeps", () => {
         schemaVersion: 1,
         userId: ALICE,
         model: { provider, id: "test-model" },
-        voice: { provider: "fish-audio", id: "voice-x" },
+        voice: { provider: "local-tts", id: "voice-x" },
         audio: { ttsEnabled: true, channel: "voice" },
         persona: { template: "default", overrides: "" },
         tools: { enabled: {} },

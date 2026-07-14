@@ -20,10 +20,8 @@ const LIVE_SAMPLE_RATE = 48000;
 export type { LocalTtsSocketFactory };
 
 /**
- * Small, self-contained config this provider consumes. Deliberately NOT the
- * shared `TTSConfig` (Fish Audio's shape) — T10 introduces a local-tts config
- * section with its own keys; this interface is what T11's bootstrap factory
- * will map into.
+ * Small, self-contained config this provider consumes — a local-tts config
+ * section with its own keys, mapped in by the bootstrap tts-factory.
  */
 export interface LocalTtsProviderConfig {
   /** e.g. "ws://host.docker.internal:8770" */
@@ -39,11 +37,10 @@ export interface LocalTtsProviderConfig {
 }
 
 // ---------------------------------------------------------------------------
-// createLocalTtsProvider — isolated per-synthesis-run TTS provider, mirroring
-// fish-audio-provider.ts's lifecycle but speaking T7's JSON+binary codec
-// (local-tts-protocol.ts) instead of Fish's MessagePack frames. Raw WS
-// plumbing lives in local-tts-socket.ts; this module owns only synthesis
-// lifecycle bookkeeping (ready/pushText/audioFrames/dispose).
+// createLocalTtsProvider — isolated per-synthesis-run TTS provider, speaking
+// T7's JSON+binary codec (local-tts-protocol.ts). Raw WS plumbing lives in
+// local-tts-socket.ts; this module owns only synthesis lifecycle bookkeeping
+// (ready/pushText/audioFrames/dispose).
 //
 // Protocol (capabilityServices/ChatterboxTTSService/CONTRACT.md):
 //   1. open WS with format/sample_rate/voice as connect-time query params
@@ -56,9 +53,7 @@ export interface LocalTtsProviderConfig {
 //      the close itself, via dispose().
 //
 // CONTRACT — dispose-after-completion (cross-task leak prevention):
-//   Unlike Fish Audio (whose server closes the WS itself once synthesis
-//   completes — see fish-audio-provider.ts's TTSProvider docstring, step 6),
-//   the ChatterboxTTSService NEVER closes the connection on its own
+//   The ChatterboxTTSService NEVER closes the connection on its own
 //   initiative, on `done` or otherwise (§1.2/§5 above). The consumer MUST
 //   call dispose() once it is done pulling from audioFrames() — after the
 //   loop completes normally, NOT only on abort — or the socket leaks for the

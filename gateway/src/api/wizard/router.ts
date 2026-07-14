@@ -1,7 +1,7 @@
 import { type WizardStepId, findStep } from "@sentient/wizard";
 import { getLog } from "../../logging/logger.js";
 import { handleBack } from "./meta/back.js";
-import { handleActiveLlm, handleModels, handleVoices } from "./meta/catalog.js";
+import { handleActiveLlm, handleModels } from "./meta/catalog.js";
 import { handleTestProvider } from "./meta/test-provider.js";
 import { handleUnlock } from "./meta/unlock.js";
 import { type StepHandler, type WizardDeps, jsonResponse, runStep } from "./step-pipeline.js";
@@ -34,7 +34,6 @@ export function createWizardRouter(deps: WizardDeps): (req: Request) => Promise<
     if (req.method === "GET") {
       if (path === "/api/v1/wizard/active-llm") return handleActiveLlm(deps);
       if (path === "/api/v1/wizard/providers/models") return handleModels(deps);
-      if (path === "/api/v1/wizard/providers/voices") return handleVoices(deps, url);
       return jsonResponse(HTTP_NOT_FOUND, { error: "not-found" });
     }
 

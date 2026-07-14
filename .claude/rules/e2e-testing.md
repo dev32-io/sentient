@@ -9,7 +9,7 @@ E2E smoke is part of feature development, not a follow-up step. A feature is not
 - Native mobile E2E is Maestro against a simulator/emulator (`android` CLI / `adb`, `xcrun simctl`) — NEVER Playwright. Driver, selectors, log trail, and fault-arming live in the details + mobile-testing rules.
 - Web run covers the viewport matrix: desktop (1280×900) + mobile-sized (390×844) via `browser_resize` — web responsive only. Native app behavior is the Maestro suites, not a resized browser.
 - Cover happy AND sad / edge paths — empty states, error fallbacks, concurrent actions, reconnect, cross-tab where applicable.
-- Use the project's free credentials (HA, MA, Ollama, web search) for setup. Never burn paid services (Fish Audio, paid LLMs) in smoke unless the feature specifically depends on them.
+- Use the project's free credentials (HA, MA, Ollama, web search) for setup. Never burn paid services (paid LLMs) in smoke unless the feature specifically depends on them. TTS is local-tts — free and local, no key to guard.
 - Capture evidence at decision points. Web → screenshots / console / network under the Playwright output dir. Native → Maestro output + simulator/emulator screenshots + the `logcat`/`os_log` trail under the mobile QA dir.
 - A case is green only when the user-visible behavior AND the underlying log trail (no unexpected WARN / ERROR) match the spec.
 - Every spec AND every implementation plan MUST contain a concrete e2e matrix INLINE — one row per feature/area touched. A doc with no matrix is a wish, not a spec/plan. Never scatter the matrix into separate files.

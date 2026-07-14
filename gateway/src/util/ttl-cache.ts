@@ -1,8 +1,8 @@
 /**
  * TTL cache with stale-on-miss accessor.
  *
- * Used by catalog endpoints (OpenRouter models, Fish voices, Ollama models)
- * to keep slow / rate-limited upstream responses warm. `get` returns the
+ * Used by catalog endpoints (OpenRouter models, Ollama models) to keep
+ * slow / rate-limited upstream responses warm. `get` returns the
  * value only within the TTL window; `getStale` returns the last value ever
  * stored regardless of expiry, so callers can prefer fresh and fall back
  * to stale on upstream error.

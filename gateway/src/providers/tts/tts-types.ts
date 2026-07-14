@@ -1,28 +1,6 @@
-export interface TTSConfig {
-  readonly apiKey: string;
-  readonly voiceId: string;
-  readonly modelId: string;
-  readonly format: "opus" | "pcm" | "mp3";
-  readonly bitrate: number;
-  readonly sampleRate: number;
-  readonly latency: "normal" | "balanced";
-  readonly chunkLengthMs: number;
-  readonly connectTimeoutMs: number;
-}
-
-export const TTS_DEFAULTS = {
-  modelId: "speech-1.6",
-  format: "opus" as const,
-  bitrate: 48000,
-  sampleRate: 48000,
-  latency: "balanced" as const,
-  chunkLengthMs: 200,
-  connectTimeoutMs: 10000,
-} as const;
-
 export interface TTSAudioChunk {
   readonly data: Uint8Array;
-  readonly encoding: "opus" | "pcm" | "mp3";
+  readonly encoding: "opus" | "pcm";
   readonly sampleRate: number;
   readonly isFinal: boolean;
 }
@@ -31,9 +9,9 @@ export interface TTSAudioChunk {
 // TTSProvider — per-task isolated TTS session.
 //
 // Each `TTSProviderFactory(...)` call produces a fresh provider bound to a
-// single upstream WebSocket (Fish Audio, or the native local-tts service). One
-// synthesis run owns one provider end-to-end; no sharing between tasks (no race
-// on session state).
+// single upstream WebSocket (the local-tts / ChatterboxTTSService provider).
+// One synthesis run owns one provider end-to-end; no sharing between tasks
+// (no race on session state).
 //
 // Lifecycle:
 //   1. `warmup()`       — fire-and-forget; opens WS + sends the start handshake.
@@ -48,9 +26,8 @@ export interface TTSAudioChunk {
 //     flag). The synthesizer may dispose on an error/abort path AND again in its
 //     cleanup `finally`.
 //   - The consumer MUST call `dispose()` after the `audioFrames` loop completes
-//     NORMALLY as well as on abort. Some servers (the local-tts ChatterboxTTS
-//     service) never self-close the WS, so skipping dispose-on-completion LEAKS
-//     the socket. (Fish's server self-closes, but disposing anyway is harmless.)
+//     NORMALLY as well as on abort. The local-tts ChatterboxTTS service never
+//     self-closes the WS, so skipping dispose-on-completion LEAKS the socket.
 //
 // Typical flow:
 //   provider.warmup();                // kick off handshake ASAP

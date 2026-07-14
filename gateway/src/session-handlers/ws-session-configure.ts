@@ -469,7 +469,8 @@ export async function handleSessionConfigure(
   ws.data.bargeInController = bargeInController;
   ws.data.interruptController = interruptController;
 
-  // Build Hermes dispatcher deps. TTS is optional (null when no Fish Audio key).
+  // Build Hermes dispatcher deps. TTS is optional (null when the `tts` config
+  // block is absent — see content-tts-factory.ts).
   // The cycle's AbortController is owned by `onCycle` below; `startTts` uses a
   // LOCAL controller so barge-in can cut audio without aborting the Hermes
   // fetch (cycle survives a barge-in per spec v4 §5.9). Interrupt cancels the

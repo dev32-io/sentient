@@ -54,9 +54,7 @@ export interface StartupConfig {
    *  (ChatterboxTTSService) provider from `tts.url` — no API key needed, so
    *  a provider is always constructed (no boot-time or key-presence gate).
    *  Per-cycle voice_id comes from PersonSession.voiceId; cfg.tts.voice_id
-   *  is the fallback default for sessions with no profile-supplied voice.
-   *  (Fish Audio keys on this block are unused-but-present until a later
-   *  task removes the Fish provider entirely.) */
+   *  is the fallback default for sessions with no profile-supplied voice. */
   tts: TTSYaml;
 
   cerebrum: CerebrumYaml;

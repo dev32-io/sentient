@@ -71,13 +71,13 @@ describe("update_user_settings", () => {
     });
     await t.run(
       {
-        voice: { provider: "fish-audio", id: "v123" },
+        voice: { provider: "local-tts", id: "v123" },
         model: { provider: "openrouter", id: "anthropic/claude-sonnet-4" },
       },
       ctx,
     );
     expect(updateUserSettings).toHaveBeenCalledWith("s1", "alice", {
-      voice: { provider: "fish-audio", id: "v123" },
+      voice: { provider: "local-tts", id: "v123" },
       model: { provider: "openrouter", id: "anthropic/claude-sonnet-4" },
     });
   });

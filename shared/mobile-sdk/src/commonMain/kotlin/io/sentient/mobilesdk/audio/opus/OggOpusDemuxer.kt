@@ -5,8 +5,8 @@ import io.sentient.mobilesdk.log.createLogger
 // ---------------------------------------------------------------------------
 // OggOpusDemuxer — streaming OGG-page demuxer for OGG-Opus (RFC 7845).
 //
-// Turns chunked OGG-Opus bytes (Fish Audio TTS downlink, arbitrary-length WS
-// frames) into raw opus AUDIO packets ready for libopus decode, plus the
+// Turns chunked OGG-Opus bytes (TTS downlink, arbitrary-length WS frames)
+// into raw opus AUDIO packets ready for libopus decode, plus the
 // parsed pre-skip count. Header packets (OpusHead, OpusTags) are consumed
 // internally and never returned.
 //

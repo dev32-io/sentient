@@ -7,12 +7,12 @@ describe("satelliteDeviceSchema", () => {
       device_id: "sat-kitchen-001",
       default_user: "family",
       location: "kitchen",
-      speak_voice: "fish_family_default",
+      speak_voice: "family_default_voice",
     });
     expect(result.device_id).toBe("sat-kitchen-001");
     expect(result.default_user).toBe("family");
     expect(result.location).toBe("kitchen");
-    expect(result.speak_voice).toBe("fish_family_default");
+    expect(result.speak_voice).toBe("family_default_voice");
   });
 
   it("rejects empty device_id", () => {
@@ -21,7 +21,7 @@ describe("satelliteDeviceSchema", () => {
         device_id: "",
         default_user: "family",
         location: "kitchen",
-        speak_voice: "fish_family_default",
+        speak_voice: "family_default_voice",
       }),
     ).toThrow();
   });

@@ -9,17 +9,17 @@ Every file that does any logging must use the structured logger, never bare cons
 ```typescript
 import { getLogger } from "../logging/logger.ts";
 
-const logger = getLogger(["sentient", "tts", "fish-audio"]);
+const logger = getLogger(["sentient", "tts", "local-tts"]);
 
 logger.debug("text-event-sent", { utteranceId, responseId, text, queueSize: queue.size() });
-logger.info("ws-connected", { url: FISH_AUDIO_URL, latency: "balanced" });
+logger.info("ws-connected", { url: LOCAL_TTS_URL, format: "opus" });
 logger.error("ws-error", { message: error.message, readyState: ws.readyState });
 ```
 
 ### Bad
 
 ```typescript
-console.log("Sent text to Fish Audio:", text); // WRONG: no structure, no tag, no sanitizer
+console.log("Sent text to TTS:", text); // WRONG: no structure, no tag, no sanitizer
 console.error(error); // WRONG: may leak sensitive data, no context
 ```
 
@@ -61,11 +61,11 @@ function setAssistantSpeaking(speaking: boolean): void {
 ### Good — Service call logging
 
 ```typescript
-const logger = getLogger(["sentient", "tts", "fish-audio"]);
+const logger = getLogger(["sentient", "tts", "local-tts"]);
 
 socket.onopen = () => {
-  logger.info("ws-opened", { url: FISH_AUDIO_URL });
-  socket.send(buildFishAudioStartMessage(config));
+  logger.info("ws-opened", { url: LOCAL_TTS_URL });
+  socket.send(textMsg(text));
   logger.debug("start-sent", { voiceId: config.voiceId, format: config.format });
   resolve();
 };

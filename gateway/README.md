@@ -23,9 +23,9 @@ What the gateway IS responsible for:
   Silero VAD → Smart-Turn v3 → SenseVoice-Small and emits structured
   turn events back. The gateway is its client and never knows about
   the VAD / turn / STT internals.
-- **TTS**: streams text per cycle to Fish Audio via msgpack WebSocket;
-  serializes overlapping cycles' audio with a small fade for clean
-  preempts.
+- **TTS**: streams text per cycle to the local-tts (ChatterboxTTSService)
+  provider via a JSON+binary WebSocket; serializes overlapping cycles'
+  audio with a small fade for clean preempts.
 - **MCP host**: per-user unix sockets exposing gateway-side tools
   (`identify_user`, `pause_audio`, `resume_audio`, `update_user_settings`).
   Hermes calls them via standard MCP transport.
@@ -55,7 +55,7 @@ Mic audio ─► STT adapter ─► (text)             ▲
                          hermes-adapter-client ┘ (per cycle, suffixed \n
                                 │                for utterance flush)
                                 ▼
-                       utterance-aggregator ─► content-tts ─► Fish Audio
+                       utterance-aggregator ─► content-tts ─► local-tts
                                                                   │
                                                                   ▼
                                                            audio frames ─► client
@@ -105,10 +105,13 @@ payload). Full wire contract: [`../shared/protocol/WIRE.md`](../shared/protocol/
 
 ## TTS
 
-Live WebSocket streaming to `wss://api.fish.audio/v1/tts/live` using
-the msgpack binary protocol. One TTS run per cycle: opens, streams
-the per-cycle text, finishes when the cycle's `\n` boundary is hit,
-closes. New cycle = new connection.
+Live WebSocket streaming to the native local-tts (ChatterboxTTSService)
+provider running on the host (Metal/MLX), reached via
+`ws://host.docker.internal:8770`. JSON text frames for control, raw
+binary frames for audio — see `local-tts-protocol.ts` and
+`capabilityServices/ChatterboxTTSService/CONTRACT.md`. One TTS run per
+cycle: opens, streams the per-cycle text, finishes when the cycle's
+`\n` boundary is hit, closes. New cycle = new connection.
 
 ## Configuration
 
@@ -119,7 +122,7 @@ Tunables live in [`config.yaml`](config.yaml). Key sections:
 | `server` | port, host, TLS hostnames |
 | `session.barge_in` | barge-in policy |
 | `stt` | STTService URL, language, energy gate, sample rates |
-| `tts` | Fish Audio voice, format, chunk size, timeouts |
+| `tts` | local-tts URL, voice, format, sample rate, connect timeout |
 | `webui` | server-authoritative client tunables (e.g. playback) |
 | `providers` | catalog cache TTLs, external fetch timeout |
 | `mcp_catalog` | operator-managed MCP server inventory + per-server `tools.include` curation |
@@ -137,7 +140,7 @@ this file.
 - WebSocket: Bun built-in
 - LLM: Hermes worker (per user, dialed over WebSocket)
 - STT: local STTService (Python: Silero VAD + Smart-Turn v3 + SenseVoice-Small)
-- TTS: Fish Audio
+- TTS: local-tts (ChatterboxTTSService, native Metal/MLX)
 - Validation: zod
 
 ## Commands

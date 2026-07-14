@@ -142,8 +142,8 @@ Cases the agent cannot reach in chromium MUST be flagged in handover:
 
 - iOS Safari audio-session quirks (transient activation, AC ghost state).
 - Real-device sensors (camera, mic permissions on physical hardware).
-- Paid-service-dependent flows (Fish Audio TTS playback when no key is
-  available).
+- Paid-service-dependent flows (a paid LLM provider when no key is
+  available — TTS is local-tts, free, and always available).
 - Real LAN multicast / mDNS discovery from outside the docker network.
 
 Format: a `## Operator follow-up` section in the handover note, listing

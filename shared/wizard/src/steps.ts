@@ -11,7 +11,11 @@ export const ProviderBody = z.object({
 });
 export type ProviderBody = z.infer<typeof ProviderBody>;
 
-export const VoiceBody = z.union([z.object({ skip: z.literal(true) }), z.object({ api_key: z.string().min(1) })]);
+// local-tts needs no API key and has a single default voice today — the
+// voice step is an acknowledge-and-advance step. Unknown fields (e.g. a
+// legacy client still posting {skip:true}) are silently stripped by zod's
+// default non-strict object parsing.
+export const VoiceBody = z.object({});
 export type VoiceBody = z.infer<typeof VoiceBody>;
 
 const optionalString = z

@@ -166,12 +166,6 @@ export function createSecretsStore(cfg: SecretsStoreConfig): SecretsStore {
       return { ok: true, value: resolveActiveLlm(r.value) };
     },
 
-    async getFishAudioKey() {
-      const r = await loadOrBootstrap();
-      if (!r.ok) throw new Error(`secrets-store load failed: ${JSON.stringify(r.error)}`);
-      return r.value.tts.fish_audio.api_key;
-    },
-
     getActiveLlmSync() {
       if (!cache) return null;
       return resolveActiveLlm(cache);
@@ -186,10 +180,6 @@ export function createSecretsStore(cfg: SecretsStoreConfig): SecretsStore {
     getProviderSecretsSync(provider) {
       if (!cache) return null;
       return resolveProviderLlm(cache, provider);
-    },
-
-    getFishAudioKeySync() {
-      return cache?.tts.fish_audio.api_key ?? null;
     },
 
     async setLlmProviderKey(provider, patch) {
@@ -223,14 +213,6 @@ export function createSecretsStore(cfg: SecretsStoreConfig): SecretsStore {
         "secrets-store.setActiveLlmProvider",
         { provider },
       );
-    },
-
-    async setFishAudioKey(key) {
-      const r = await loadOrBootstrap();
-      if (!r.ok) return r;
-      return applyWrite({ ...r.value, tts: { fish_audio: { api_key: key } } }, "secrets-store.setFishAudioKey", {
-        hasKey: key !== null,
-      });
     },
 
     async setHomeAssistantToken(kind, token) {
@@ -324,7 +306,6 @@ export function createSecretsStore(cfg: SecretsStoreConfig): SecretsStore {
           schemaVersion: result.value.schema_version,
           hasFile,
           activeLlmProvider: result.value.llm.active,
-          hasFishAudioKey: result.value.tts.fish_audio.api_key !== null,
         },
       };
     },

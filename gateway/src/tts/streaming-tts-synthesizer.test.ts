@@ -6,8 +6,8 @@ import type { AudioFrame } from "./text-stream-synthesizer.ts";
 
 // ---------------------------------------------------------------------------
 // FakeTtsProvider — minimal scriptable TTSProvider. Deliberately has NO
-// Fish Audio / local-tts specifics, to prove the synthesizer is driven
-// entirely by the abstract TTSProvider interface (provider-neutral core).
+// local-tts specifics, to prove the synthesizer is driven entirely by the
+// abstract TTSProvider interface (provider-neutral core).
 // ---------------------------------------------------------------------------
 
 interface FakeCalls {

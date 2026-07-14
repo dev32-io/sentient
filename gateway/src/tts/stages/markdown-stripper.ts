@@ -47,8 +47,8 @@ const log = getLog(["sentient", "tts", "markdown-stripper"]);
 //                                 and reading 50 lines of TS source is bad UX)
 //   - Links [text](url)        — read the visible text; drop the URL
 //   - Images ![alt](src)       — skipped entirely (no useful audio rendering)
-//   - Raw URLs (https://...)   — skipped (Fish reading "https colon slash..."
-//                                 is brutal)
+//   - Raw URLs (https://...)   — skipped (a TTS engine reading "https colon
+//                                 slash slash..." is brutal)
 //   - Equations ($...$ / $$$$) — skipped (latex source isn't speakable)
 //   - Headings / paragraphs /  — read text, then emit a `\n` so the downstream
 //     list items / blockquotes /  UtteranceAggregator splits at that boundary

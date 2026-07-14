@@ -119,41 +119,22 @@ stt:
 #
 # `url` is the native local-tts service. It needs Metal/MLX GPU access, so
 # it runs on the host (not containerized) — reached via host.docker.internal,
-# same pattern as native-whisper STT. The Fish Audio keys below (provider,
-# model_id, bitrate, latency, chunk_length_ms, emotion_tags, ...) stay
-# present — Fish's code path is unused-but-uncompiled-out until it is
-# deleted in a later task; voice_id/format/sample_rate/connect_timeout_ms
-# are shared and now also feed local-tts (format=opus @ 48000 is exactly
-# the local-tts live-path contract).
+# same pattern as native-whisper STT. format=opus @ 48000 is the local-tts
+# live-path contract (see local-tts-provider.ts's LIVE_ENCODING/LIVE_SAMPLE_RATE).
 # ---------------------------------------------------------------------------
 tts:
-  provider: fish-audio
   url: ws://host.docker.internal:8770 # local-tts (ChatterboxTTSService) WS endpoint
-  voice_id: default                  # gateway-wide fallback voice — Fish reference_id AND local-tts default voice. Per-user voice from profile.json#voice.id wins.
-  model_id: s2
-  format: opus                       # End-to-end opus pivot landed Phase 5.5. Fish opus → OGG-Opus container → ogg-opus-decoder WASM in webui.
-  bitrate: 32000                     # Fish opus_bitrate (BPS at the live WS endpoint despite kbps in HTTP docs). Accepted: -1000, 24000, 32000, 48000, 64000.
-  sample_rate: 48000                 # Opus standard rate. Fish silently rejects 44100 with format=opus.
-  latency: balanced
-  chunk_length_ms: 200               # Fish Audio text buffer segment size (100–300)
+  voice_id: default                  # gateway-wide fallback voice. Per-user voice from profile.json#voice.id wins.
+  format: opus                       # local-tts live-path contract; also the end-to-end opus pivot (OGG-Opus → ogg-opus-decoder WASM in webui).
+  sample_rate: 48000                 # Opus standard rate.
   connect_timeout_ms: 10000
-  stop_timeout_ms: 10000             # wait for Fish Audio finish event on session reset
-  idle_timeout_ms: 10000             # TTS queue idle — settle turn if no audio arrives
 
   # Block-boundary detection on the LLM text stream feeding TTS. Splits
-  # only on paragraph breaks (\n) — Fish Audio handles sentence-level
+  # only on paragraph breaks (\n) — the TTS provider handles sentence-level
   # prosody on its own, and splitting mid-paragraph fragments natural tone.
   # max_block_chars is a safety valve for run-on paragraphs with no break.
   utterance_aggregator:
     max_block_chars: 600             # force-flush on run-on paragraphs
-
-  # Per-block emotion-tag pass that enriches text with [pause], [happy] etc.
-  # Runs in critical path of first-byte latency, so prefer fast models.
-  # Multi-turn message shape benefits from provider prompt caching.
-  emotion_tags:
-    enabled: true
-    model: google/gemini-2.5-flash
-    timeout_ms: 2000                 # fall through to raw text on timeout
 
 # ---------------------------------------------------------------------------
 # WebUI — client-side playback tuning sent to the browser via session.ready.
@@ -310,7 +291,6 @@ providers:
   openrouter_cache_ttl_ms: 3600000
   ollama_cloud_base_url: https://ollama.com/v1
   ollama_cache_ttl_ms: 3600000
-  fish_cache_ttl_ms: 600000       # Fish rate limits undocumented — keep short.
   external_fetch_timeout_ms: 5000
 
 # ---------------------------------------------------------------------------

@@ -190,7 +190,7 @@ the wizard handler. Wizard rejections look like `wizard.unlock.failed`,
 1. Tear down: `docker compose down -v && rm -rf ~/.sentient`
 2. Bring up: `docker compose up -d`
 3. Open `https://localhost:8888`. Wizard renders.
-4. Walk: unlock → provider (LLM key) → voice (Fish key) → secrets (HA URL+tokens, MA URL+token; or skip).
+4. Walk: unlock → provider (LLM key) → voice (acknowledge-and-advance — local-tts needs no key) → secrets (HA URL+tokens, MA URL+token; or skip).
 5. Click Continue on the secrets step. Page transitions to "Starting up services…".
 6. Per-service rows tick from "Queued" → "Starting…" → "Checking health…" → "Ready ✓" in dependency order. Required first; optional services last.
 7. When all required are Ready, page auto-advances to step-admin (account creation). Continue through admin → "All set" → reload into chat.

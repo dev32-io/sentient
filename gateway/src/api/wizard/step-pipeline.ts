@@ -6,7 +6,7 @@ import type { UnlockCode } from "../../admin/unlock-code.js";
 import { getLog } from "../../logging/logger.js";
 import type { ModelEntry } from "../../providers/catalogs/types.js";
 import type { OrchestratorStatus } from "../../system-orchestrator/types.js";
-import type { ProvidersListResult, VoicePage } from "../handlers/providers.js";
+import type { ProvidersListResult } from "../handlers/providers.js";
 
 const log = getLog(["sentient", "gateway", "api", "wizard", "pipeline"]);
 
@@ -22,11 +22,6 @@ export interface SystemOrchestratorHandle {
   applyAll(): Promise<OrchestratorStatus>;
 }
 
-export interface ListVoicesOptions {
-  title?: string;
-  page?: number;
-}
-
 export interface TestProviderResult {
   ok: boolean;
   modelCount?: number;
@@ -40,7 +35,6 @@ export interface WizardDeps {
   secretsStore: SecretsStore;
   testProvider: (provider: LlmProvider, apiKey: string | null, baseUrl: string | null) => Promise<TestProviderResult>;
   listModels?: () => Promise<ProvidersListResult<ModelEntry[]>>;
-  listVoices?: (opts?: ListVoicesOptions) => Promise<ProvidersListResult<VoicePage>>;
   systemOrchestrator?: SystemOrchestratorHandle | null;
 }
 

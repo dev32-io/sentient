@@ -16,7 +16,6 @@
       "dependencies": {
         "@logtape/file": "^2.0.5",
         "@logtape/logtape": "^2.0.5",
-        "@msgpack/msgpack": "^3.0.0",
         "@sentient/audio-prefs": "workspace:*",
         "@sentient/config": "workspace:*",
         "@sentient/protocol": "workspace:*",
@@ -308,8 +307,6 @@
     "@logtape/file": ["@logtape/file@2.0.5", "", { "peerDependencies": { "@logtape/logtape": "^2.0.5" } }, "sha512-SJ2UZ00IJptilqDMFwPIGmZLMTYNZbP7k4+7aBfP5DoLVifSmQoaxP2HtXMdExXhGP4/JrFepLE86ryPBUKB/Q=="],
 
     "@logtape/logtape": ["@logtape/logtape@2.0.5", "", {}, "sha512-UizDkh20ZPJVOddRxG1F77WhHdlNl/sbQgoO8T534R7XvUBMAJ9En9f35u+meW2tRsNLvjz6R87Zanwf53tspQ=="],
-
-    "@msgpack/msgpack": ["@msgpack/msgpack@3.1.3", "", {}, "sha512-47XIizs9XZXvuJgoaJUIE2lFoID8ugvc0jzSHP+Ptfk8nTbnR8g788wv48N03Kx0UkAv559HWRQ3yzOgzlRNUA=="],
 
     "@pkgjs/parseargs": ["@pkgjs/parseargs@0.11.0", "", {}, "sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg=="],
 

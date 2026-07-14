@@ -14,10 +14,10 @@ const log = getLog(["sentient", "tts", "streaming-tts-synthesizer"]);
 // Concurrent: provider.audioFrames(signal) drains as frames are produced.
 //
 // Depends only on the abstract TTSProvider (tts-types.ts), so it drives ANY
-// provider behind that interface — Fish Audio today, the local ChatterboxTTS
-// service tomorrow. The handler (speak-effect.ts) sees only frames in /
-// frames out. Aggregation, paragraph separators, and provider-specific
-// session management live entirely in this file.
+// provider behind that interface — the local ChatterboxTTS service today.
+// The handler (speak-effect.ts) sees only frames in / frames out.
+// Aggregation, paragraph separators, and provider-specific session
+// management live entirely in this file.
 // ---------------------------------------------------------------------------
 
 export interface StreamingTtsSynthesizerDeps {
@@ -124,12 +124,11 @@ async function* synthesizeImpl(
       log.info("synthesize-done", { frameCount, blocksFed });
     }
     // Dispose after the drain loop completes — on abort AND on normal
-    // completion alike. Some providers (e.g. the local ChatterboxTTS
-    // service — see local-tts-provider.ts's "dispose-after-completion"
-    // CONTRACT) never self-close their connection; skipping dispose() on
-    // the normal-completion path leaks the session for the process
-    // lifetime. Providers whose server does self-close (Fish Audio) treat
-    // dispose() as idempotent, so calling it here is always safe.
+    // completion alike. The local ChatterboxTTS service — see
+    // local-tts-provider.ts's "dispose-after-completion" CONTRACT — never
+    // self-closes its connection; skipping dispose() on the
+    // normal-completion path leaks the session for the process lifetime.
+    // dispose() is idempotent, so calling it here is always safe.
     session.dispose();
     // Make sure producer exits. It listens to signal too.
     await producer.catch(() => {

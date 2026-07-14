@@ -6,7 +6,7 @@ export const PROFILE_SCHEMA_VERSION = 1;
 export const modelProviderSchema = z.enum(["openrouter", "ollama-cloud", "custom"]);
 export type ModelProvider = z.output<typeof modelProviderSchema>;
 
-export const voiceProviderSchema = z.enum(["fish-audio"]);
+export const voiceProviderSchema = z.literal("local-tts");
 export type VoiceProvider = z.output<typeof voiceProviderSchema>;
 
 // Matches the Hermes `agent.reasoning_effort` enum

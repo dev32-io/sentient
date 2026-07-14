@@ -52,12 +52,12 @@ export const sttConfigSchema = z.object({
 export type STTConfig = z.output<typeof sttConfigSchema>;
 
 // ---------------------------------------------------------------------------
-// TTS — Fish Audio
+// TTS — local-tts (ChatterboxTTSService)
 //
-// Note: emotion_tags + utterance_aggregator live here because they are
-// internal stages of the speak effect's text→audio pipeline, not general
-// LLM configuration. The speak effect streams LLM text deltas through
-// UtteranceAggregator → EmotionTagger → Fish Audio as one mini-pipeline.
+// Note: utterance_aggregator lives here because it is an internal stage of
+// the speak effect's text→audio pipeline, not general LLM configuration.
+// The speak effect streams LLM text deltas through UtteranceAggregator →
+// the local-tts provider as one mini-pipeline.
 // ---------------------------------------------------------------------------
 
 export const utteranceAggregatorConfigSchema = z.object({
@@ -70,44 +70,20 @@ export const utteranceAggregatorConfigSchema = z.object({
 
 export type UtteranceAggregatorConfig = z.output<typeof utteranceAggregatorConfigSchema>;
 
-export const emotionTagsConfigSchema = z.object({
-  enabled: z.boolean().default(true),
-  // Model used for the per-block emotion-tagging LLM call. Cheap +
-  // fast is preferable since this runs in the critical path of first
-  // audio byte. Multi-turn message shape benefits from prompt caching.
-  // Routed through `llm.provider` (default ollama-cloud).
-  model: z.string().default("google/gemini-2.5-flash"),
-  // Per-call budget. On timeout, falls through with the raw (untagged)
-  // block so TTS still gets audio.
-  timeout_ms: z.number().int().min(100).max(30000).default(2000),
-});
-
-export type EmotionTagsConfig = z.output<typeof emotionTagsConfigSchema>;
-
 export const ttsConfigSchema = z.object({
-  provider: z.literal("fish-audio"),
   // WS endpoint for the native local-tts (ChatterboxTTSService) provider.
   // The service needs Metal/MLX GPU access, so it runs on the host, not in
   // a container — reachable from the gateway container via
-  // host.docker.internal (same pattern as native-whisper STT). Wired in as
-  // the ADDITIVE local-tts key; Fish keys below stay until Fish is removed.
+  // host.docker.internal (same pattern as native-whisper STT).
   url: z.string().default("ws://host.docker.internal:8770"),
   voice_id: z.string().default("default"),
-  model_id: z.string().default("speech-1.6"),
-  // Defaults match the pre-refactor runtime: index.ts used to spread
-  // TTS_DEFAULTS (opus/48000) then override to "pcm" + 44100. PCM is what
-  // the Fish Audio stream + WebRTC loopback expect; opus/48000 produces
-  // static. Keep these defaults stable — they are the working combination.
-  format: z.enum(["opus", "pcm", "mp3"]).default("pcm"),
-  bitrate: z.number().int().min(1).default(48000),
-  sample_rate: z.number().int().min(1).default(44100),
-  latency: z.enum(["normal", "balanced"]).default("balanced"),
-  chunk_length_ms: z.number().int().min(50).default(200),
+  // opus/48000 is the local-tts live-path contract — see
+  // local-tts-provider.ts's LIVE_ENCODING/LIVE_SAMPLE_RATE. These fields
+  // shape the connect-time negotiation query string only.
+  format: z.enum(["opus", "pcm"]).default("opus"),
+  sample_rate: z.number().int().min(1).default(48000),
   connect_timeout_ms: z.number().int().min(1000).default(10000),
-  stop_timeout_ms: z.number().int().min(1000).default(10000),
-  idle_timeout_ms: z.number().int().min(1000).default(10000),
   utterance_aggregator: utteranceAggregatorConfigSchema.default({}),
-  emotion_tags: emotionTagsConfigSchema.default({}),
 });
 
 export type TTSConfig = z.output<typeof ttsConfigSchema>;
@@ -285,7 +261,6 @@ export const providersConfigSchema = z.object({
   openrouter_cache_ttl_ms: z.number().int().min(10_000).default(3_600_000),
   ollama_cloud_base_url: z.string().url().default("https://ollama.com/v1"),
   ollama_cache_ttl_ms: z.number().int().min(10_000).default(3_600_000),
-  fish_cache_ttl_ms: z.number().int().min(10_000).default(600_000),
   external_fetch_timeout_ms: z.number().int().min(1000).default(5000),
 });
 

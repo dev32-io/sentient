@@ -41,7 +41,7 @@ export interface LogEntryInput {
 
 /**
  * Joins category elements into a tag string, skipping the root element.
- * `["sentient", "tts", "fish-audio"]` becomes `"tts:fish-audio"`.
+ * `["sentient", "tts", "local-tts"]` becomes `"tts:local-tts"`.
  * Single element returns as-is.
  */
 export function formatTag(category: readonly string[]): string {

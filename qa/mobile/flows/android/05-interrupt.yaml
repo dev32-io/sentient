@@ -5,18 +5,18 @@ appId: io.dev32.sentient.debug
 # ⚠ FLAG (Android + iOS): The chat-interrupt button is gated on TTS audio state
 # (canInterrupt = connection.isSpeaking || audioState == PROCESSING/ASSISTANT_SPEAKING/
 # INTERRUPTING) — NOT on text-streaming cognition state. In a TTS-disabled session
-# (default emulator/sim setup without Fish Audio credentials), the interrupt button
-# NEVER appears during text streaming. It only appears when TTS is actively playing.
+# (default emulator/sim setup without a reachable local-tts service), the interrupt
+# button NEVER appears during text streaming. It only appears when TTS is actively playing.
 #
 # This makes the interrupt flow NOT driveable on the emulator/simulator without:
-#   (a) TTS enabled (requires Fish Audio credentials and a working audio pipeline), OR
+#   (a) TTS enabled (requires a reachable local-tts service and a working audio pipeline), OR
 #   (b) Modifying canInterrupt to also include cognition != IDLE.
 #
 # Current outcome: assistant-bubble appears (streaming confirmed), chat-interrupt
 # is NOT visible (TTS off → canInterrupt=false), flow ends with a no-crash check.
 #
-# For full interrupt E2E: run with TTS enabled on a device with valid Fish Audio
-# credentials. The interrupt button will appear during TTS playback.
+# For full interrupt E2E: run with TTS enabled on a device with a reachable
+# local-tts service. The interrupt button will appear during TTS playback.
 #
 # tags: [android, emulator-ok, FLAGGED-interrupt-requires-tts]
 - launchApp
