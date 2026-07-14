@@ -94,6 +94,21 @@ export const ttsConfigSchema = z.object({
   // service; create can block behind an in-flight synthesis, so keep
   // generous.
   voice_op_timeout_ms: z.number().int().min(1).default(30000),
+  // Preview greetings — one is chosen at random per Play preview and synthesized
+  // live in the target voice. Kept short (~2s of speech).
+  preview_greetings: z
+    .array(z.string())
+    .default([
+      "Hi, I'm your family's Sentient assistant. How can I help?",
+      "Hello there — Sentient here, ready when you are.",
+      "Hey! I'm Sentient. Ask me anything.",
+      "Good to see you. I'm your family assistant.",
+      "Hi! What can I do for the family today?",
+    ]),
+  preview_timeout_ms: z.number().int().min(1).default(8000), // max wait for a preview synth
+  voice_description_max_len: z.number().int().min(1).default(240), // create/edit description cap
+  voice_tag_max_len: z.number().int().min(1).default(24), // per-tag char cap
+  voice_max_tags: z.number().int().min(0).default(8), // max tags per voice
   utterance_aggregator: utteranceAggregatorConfigSchema.default({}),
 });
 

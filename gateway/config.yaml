@@ -132,6 +132,19 @@ tts:
   # service; create can block behind an in-flight synthesis, so keep generous.
   voice_op_timeout_ms: 30000
 
+  # Preview greetings — one is chosen at random per Play preview and
+  # synthesized live in the target voice. Kept short (~2s of speech).
+  preview_greetings:
+    - "Hi, I'm your family's Sentient assistant. How can I help?"
+    - "Hello there — Sentient here, ready when you are."
+    - "Hey! I'm Sentient. Ask me anything."
+    - "Good to see you. I'm your family assistant."
+    - "Hi! What can I do for the family today?"
+  preview_timeout_ms: 8000           # max wait (ms) for a preview synth. Range: >=1.
+  voice_description_max_len: 240     # create/edit description char cap. Range: >=1.
+  voice_tag_max_len: 24              # per-tag char cap. Range: >=1.
+  voice_max_tags: 8                  # max tags per voice. Range: >=0.
+
   # Block-boundary detection on the LLM text stream feeding TTS. Splits
   # only on paragraph breaks (\n) — the TTS provider handles sentence-level
   # prosody on its own, and splitting mid-paragraph fragments natural tone.

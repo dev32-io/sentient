@@ -7,6 +7,7 @@ import {
   sessionConfigSchema,
   sessionsConfigSchema,
   sttConfigSchema,
+  ttsConfigSchema,
 } from "./schema.ts";
 
 // Shared WS-resilience session fields required in every gateway config
@@ -97,6 +98,14 @@ describe("gatewayConfigSchema", () => {
   it("rejects tts.format: pcm — gateway live path is opus-only", () => {
     const invalid = { ...minimalValidConfig, tts: { format: "pcm" } };
     expect(gatewayConfigSchema.safeParse(invalid).success).toBe(false);
+  });
+
+  it("defaults preview greetings and voice caps", () => {
+    const cfg = ttsConfigSchema.parse({});
+    expect(cfg.preview_greetings.length).toBeGreaterThan(0);
+    expect(cfg.preview_timeout_ms).toBe(8000);
+    expect(cfg.voice_description_max_len).toBe(240);
+    expect(cfg.voice_max_tags).toBe(8);
   });
 
   it("applies TLS defaults (enabled, loopback hostname)", () => {
