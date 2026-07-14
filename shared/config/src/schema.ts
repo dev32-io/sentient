@@ -112,6 +112,12 @@ export type EmotionTagsConfig = z.output<typeof emotionTagsConfigSchema>;
 
 export const ttsConfigSchema = z.object({
   provider: z.literal("fish-audio"),
+  // WS endpoint for the native local-tts (ChatterboxTTSService) provider.
+  // The service needs Metal/MLX GPU access, so it runs on the host, not in
+  // a container — reachable from the gateway container via
+  // host.docker.internal (same pattern as native-whisper STT). Wired in as
+  // the ADDITIVE local-tts key; Fish keys below stay until Fish is removed.
+  url: z.string().default("ws://host.docker.internal:8770"),
   voice_id: z.string().default("default"),
   model_id: z.string().default("speech-1.6"),
   // Defaults match the pre-refactor runtime: index.ts used to spread
@@ -366,6 +372,10 @@ export const companionsConfigSchema = z.object({
   // HTTP endpoint for the STT service health check. Returns {"version":"..."}.
   // Override if your compose setup uses a different service name or port.
   stt_health_url: z.string().url().default("http://sentient-stt-service:8767/health"),
+  // HTTP endpoint for the local-tts (ChatterboxTTSService) health check.
+  // Returns {"version":"..."}. The service runs on the host (Metal/MLX),
+  // reachable via host.docker.internal — mirrors stt_health_url's shape.
+  tts_health_url: z.string().url().default("http://host.docker.internal:8771/health"),
   // Absolute path to the file the hermes container writes on every boot.
   // Both containers mount the sentient-supervisor volume at /data/supervisor.
   hermes_version_path: z.string().default("/data/supervisor/.versions/hermes"),

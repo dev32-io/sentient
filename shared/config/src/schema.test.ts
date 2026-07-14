@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyConfigSchema,
+  companionsConfigSchema,
   gatewayConfigSchema,
   loggingConfigSchema,
   sessionConfigSchema,
@@ -64,6 +65,7 @@ describe("gatewayConfigSchema", () => {
 
   it("applies TTS defaults including utterance_aggregator and emotion_tags", () => {
     const result = gatewayConfigSchema.parse(minimalValidConfig);
+    expect(result.tts.url).toBe("ws://host.docker.internal:8770");
     expect(result.tts.voice_id).toBe("default");
     expect(result.tts.model_id).toBe("speech-1.6");
     expect(result.tts.format).toBe("pcm");
@@ -84,10 +86,17 @@ describe("gatewayConfigSchema", () => {
     const result = gatewayConfigSchema.parse({
       ...minimalValidConfig,
       stt: { provider: "local-stt", language: "zh" },
-      tts: { provider: "fish-audio", voice_id: "custom", format: "pcm", sample_rate: 44100 },
+      tts: {
+        provider: "fish-audio",
+        url: "ws://localhost:8770",
+        voice_id: "custom",
+        format: "pcm",
+        sample_rate: 44100,
+      },
       session: { ...wsResilienceSession, barge_in: { no_interrupt_ms: 300 } },
     });
     expect(result.stt.language).toBe("zh");
+    expect(result.tts.url).toBe("ws://localhost:8770");
     expect(result.tts.voice_id).toBe("custom");
     expect(result.tts.format).toBe("pcm");
     expect(result.tts.sample_rate).toBe(44100);
@@ -163,6 +172,23 @@ describe("sttConfigSchema", () => {
 
   it("rejects unknown language", () => {
     const result = sttConfigSchema.safeParse({ provider: "local-stt", language: "fr" });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("companionsConfigSchema", () => {
+  it("defaults tts_health_url to the host-run local-tts health endpoint", () => {
+    const result = companionsConfigSchema.parse({});
+    expect(result.tts_health_url).toBe("http://host.docker.internal:8771/health");
+  });
+
+  it("accepts a tts_health_url override", () => {
+    const result = companionsConfigSchema.parse({ tts_health_url: "http://localhost:8771/health" });
+    expect(result.tts_health_url).toBe("http://localhost:8771/health");
+  });
+
+  it("rejects an invalid tts_health_url", () => {
+    const result = companionsConfigSchema.safeParse({ tts_health_url: "not-a-url" });
     expect(result.success).toBe(false);
   });
 });

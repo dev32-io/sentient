@@ -94,7 +94,7 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
 
   const llmProvider = createLlmService(cfg);
   const stt = cfg.stt ? createSttService(cfg) : null;
-  const tts = createTtsService({ cfg, secretsStore });
+  const tts = createTtsService({ cfg });
   const tls = cfg.tls.enabled
     ? ensureTlsMaterial({ hostnames: cfg.tls.hostnames, certsDir: cfg.tls.certsDir, logTag: "gateway" })
     : undefined;

@@ -128,15 +128,25 @@ llm:
   stream: true                        # switch from non-streaming to SSE streaming
 
 # ---------------------------------------------------------------------------
-# TTS — Fish Audio (text-to-speech)
+# TTS — local-tts (ChatterboxTTSService) is now the wired provider.
 #
 # The speak effect is a mini-pipeline: LLM text deltas → UtteranceAggregator
-# → EmotionTagger → Fish Audio. The aggregator and tagger knobs live here
-# because they are internal stages of TTS rendering, not general LLM config.
+# → local-tts. The aggregator knobs live here because they are internal
+# stages of TTS rendering, not general LLM config.
+#
+# `url` is the native local-tts service. It needs Metal/MLX GPU access, so
+# it runs on the host (not containerized) — reached via host.docker.internal,
+# same pattern as native-whisper STT. The Fish Audio keys below (provider,
+# model_id, bitrate, latency, chunk_length_ms, emotion_tags, ...) stay
+# present — Fish's code path is unused-but-uncompiled-out until it is
+# deleted in a later task; voice_id/format/sample_rate/connect_timeout_ms
+# are shared and now also feed local-tts (format=opus @ 48000 is exactly
+# the local-tts live-path contract).
 # ---------------------------------------------------------------------------
 tts:
   provider: fish-audio
-  voice_id: default                  # Fish Audio reference_id — gateway-wide fallback. Per-user voice from profile.json#voice.id wins.
+  url: ws://host.docker.internal:8770 # local-tts (ChatterboxTTSService) WS endpoint
+  voice_id: default                  # gateway-wide fallback voice — Fish reference_id AND local-tts default voice. Per-user voice from profile.json#voice.id wins.
   model_id: s2
   format: opus                       # End-to-end opus pivot landed Phase 5.5. Fish opus → OGG-Opus container → ogg-opus-decoder WASM in webui.
   bitrate: 32000                     # Fish opus_bitrate (BPS at the live WS endpoint despite kbps in HTTP docs). Accepted: -1000, 24000, 32000, 48000, 64000.
@@ -348,6 +358,7 @@ sessions:
 # ---------------------------------------------------------------------------
 companions:
   stt_health_url: http://sentient-stt-service:8767/health   # STT /health endpoint; returns {"version":"..."}
+  tts_health_url: http://host.docker.internal:8771/health   # local-tts /health endpoint (host-run service); returns {"version":"..."}
   hermes_version_path: /data/supervisor/.versions/hermes    # file hermes writes on boot into the shared volume
   version_cache_ttl_ms: 300000    # cache resolved versions for 5 min; 10000–3600000
   version_fetch_timeout_ms: 3000  # per-source HTTP timeout for STT health fetch; 500–30000

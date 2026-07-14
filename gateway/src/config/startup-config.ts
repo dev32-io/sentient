@@ -55,12 +55,13 @@ export interface StartupConfig {
    *  (OPENROUTER_API_KEY for openrouter, OLLAMA_API_KEY for ollama-cloud). */
   llm: (LLMYaml & { apiKey: string }) | undefined;
 
-  /** TTS yaml block — always defined. The Fish Audio API key resolves
-   *  lazily inside tts-factory from the wizard's SecretsStore (with the
-   *  FISH_AUDIO_API_KEY env as a dev-only fallback), so we no longer gate
-   *  service-enabled on a boot-time env presence. Per-cycle voice_id
-   *  comes from PersonSession.voiceId; cfg.tts.voice_id is the fallback
-   *  default for sessions with no profile-supplied voice. */
+  /** TTS yaml block — always defined. tts-factory builds a local-tts
+   *  (ChatterboxTTSService) provider from `tts.url` — no API key needed, so
+   *  a provider is always constructed (no boot-time or key-presence gate).
+   *  Per-cycle voice_id comes from PersonSession.voiceId; cfg.tts.voice_id
+   *  is the fallback default for sessions with no profile-supplied voice.
+   *  (Fish Audio keys on this block are unused-but-present until a later
+   *  task removes the Fish provider entirely.) */
   tts: TTSYaml;
 
   cerebrum: CerebrumYaml;
@@ -136,11 +137,9 @@ export function loadStartupConfig(): StartupConfig {
 
     llm: llmApiKey ? { ...cfg.llm, apiKey: llmApiKey } : undefined,
 
-    // TTS is always wired; the Fish Audio API key resolves lazily inside
-    // tts-factory at synthesis time. SecretsStore (populated by the
-    // wizard's voice step) is the source of truth; FISH_AUDIO_API_KEY env
-    // is a dev-only fallback. A missing key only fails the synth call,
-    // not boot.
+    // TTS is always wired to the local-tts (ChatterboxTTSService) provider —
+    // no API key required, so nothing here gates on secret presence. A
+    // down/unreachable service degrades gracefully at synth time, not boot.
     tts: cfg.tts,
 
     cerebrum: cfg.cerebrum,
