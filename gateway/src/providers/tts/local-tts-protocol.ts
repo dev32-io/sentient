@@ -13,13 +13,16 @@
 // (see TTSAudioChunk.sampleRate in tts-types.ts).
 // ---------------------------------------------------------------------------
 
-/** Client -> server JSON message `type` values (CONTRACT.md §3.1). */
+/** Client -> server JSON message `type` values (CONTRACT.md §3.1, §4). */
 const CLIENT_MSG_TYPE = {
   TEXT: "text",
   FLUSH: "flush",
   END: "end",
   CANCEL: "cancel",
   PING: "ping",
+  VOICE_CREATE: "voice.create",
+  VOICE_LIST: "voice.list",
+  VOICE_DELETE: "voice.delete",
 } as const;
 
 /** Server -> client JSON frame `type` values (CONTRACT.md §5.1). */
@@ -102,6 +105,24 @@ export function cancelMsg(): string {
 
 export function pingMsg(): string {
   return JSON.stringify({ type: CLIENT_MSG_TYPE.PING });
+}
+
+/**
+ * CONTRACT.md §4.1 — MUST be followed by exactly one binary WS frame (the
+ * reference WAV) sent separately by the caller. Not part of this builder.
+ */
+export function voiceCreateMsg(name: string): string {
+  return JSON.stringify({ type: CLIENT_MSG_TYPE.VOICE_CREATE, name });
+}
+
+/** CONTRACT.md §4.2. */
+export function voiceListMsg(): string {
+  return JSON.stringify({ type: CLIENT_MSG_TYPE.VOICE_LIST });
+}
+
+/** CONTRACT.md §4.3. */
+export function voiceDeleteMsg(voiceId: string): string {
+  return JSON.stringify({ type: CLIENT_MSG_TYPE.VOICE_DELETE, voiceId });
 }
 
 /**

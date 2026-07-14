@@ -128,6 +128,9 @@ tts:
   format: opus                       # local-tts live-path contract; also the end-to-end opus pivot (OGG-Opus → ogg-opus-decoder WASM in webui).
   sample_rate: 48000                 # Opus standard rate.
   connect_timeout_ms: 10000
+  # Max ms to await a voice.create/list/delete reply from the local TTS
+  # service; create can block behind an in-flight synthesis, so keep generous.
+  voice_op_timeout_ms: 30000
 
   # Block-boundary detection on the LLM text stream feeding TTS. Splits
   # only on paragraph breaks (\n) — the TTS provider handles sentence-level

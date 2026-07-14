@@ -20,6 +20,7 @@ import { createSecretsHandler } from "./api/handlers/secrets.ts";
 import { createServicesVersionsHandler } from "./api/handlers/services-versions.ts";
 import { createSessionsHttpHandler } from "./api/handlers/sessions.ts";
 import { createSystemStatusHandler } from "./api/handlers/system-status.ts";
+import { createVoicesHandler } from "./api/handlers/voices.ts";
 import { createWebuiHandler } from "./api/handlers/webui.ts";
 import { createWsUpgradeHandler } from "./api/handlers/ws.ts";
 import { createProvidersDeps } from "./api/providers-deps.ts";
@@ -149,6 +150,14 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
     ? createDevicesHandler({ tokens: services.auth.tokens, ...services.devicesHandlerDeps })
     : async (_req: Request) => new Response("Service Unavailable", { status: 503 });
   const handleSessions = buildSessionsHandler(services);
+  const handleVoices = createVoicesHandler({
+    tokens: services.auth.tokens,
+    profileStore: services.profileStore,
+    refreshVoice: (userId) => services.personSessions.refreshVoice(userId),
+    ttsUrl: services.ttsConfig.url,
+    connectTimeoutMs: services.ttsConfig.connect_timeout_ms,
+    opTimeoutMs: services.ttsConfig.voice_op_timeout_ms,
+  });
   const handleDiagnostics = createDiagnosticsHandler({ tokens: services.auth.tokens });
 
   return Bun.serve<ClientData>({
@@ -183,6 +192,7 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
         handleApply,
         handleDevices,
         handleSessions,
+        handleVoices,
         handleDiagnostics,
         handleStatic,
       });

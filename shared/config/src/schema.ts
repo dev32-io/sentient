@@ -83,6 +83,10 @@ export const ttsConfigSchema = z.object({
   format: z.enum(["opus", "pcm"]).default("opus"),
   sample_rate: z.number().int().min(1).default(48000),
   connect_timeout_ms: z.number().int().min(1000).default(10000),
+  // Max ms to await a voice.create/list/delete reply from the local TTS
+  // service; create can block behind an in-flight synthesis, so keep
+  // generous.
+  voice_op_timeout_ms: z.number().int().min(1).default(30000),
   utterance_aggregator: utteranceAggregatorConfigSchema.default({}),
 });
 

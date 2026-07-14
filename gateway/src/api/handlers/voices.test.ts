@@ -1,0 +1,366 @@
+import type { Result } from "@sentient/protocol";
+import { describe, expect, it, vi } from "vitest";
+import type { ProfileStore, ProfileStoreError } from "../../profile-store/profile-store.js";
+import type { ProfileV1 } from "../../profile-store/profile-types.js";
+import type { VoiceMgmtSocketFactory } from "../../providers/tts/voice-mgmt-client.js";
+import type { TokenPayload, TokenResult } from "../../user-auth/types.js";
+import { type VoicesHandlerDeps, createVoicesHandler } from "./voices.js";
+
+// ---------------------------------------------------------------------------
+// FakeWebSocket — minimal scriptable WS for the mock ChatterboxTTSService.
+// Mirrors the pattern used in local-tts-provider.test.ts. Injected via
+// deps.socketFactory — the handler (through voice-mgmt-client) never calls
+// `new WebSocket()` itself, so no real socket or filesystem is touched.
+// ---------------------------------------------------------------------------
+
+interface FakeWebSocket {
+  readyState: number;
+  binaryType?: string;
+  onopen: ((ev: Event) => void) | null;
+  onmessage: ((ev: MessageEvent<string | ArrayBuffer>) => void) | null;
+  onclose: ((ev: CloseEvent) => void) | null;
+  onerror: ((ev: Event) => void) | null;
+  send: ReturnType<typeof vi.fn>;
+  close: ReturnType<typeof vi.fn>;
+  _openHandshake(): void;
+  _receiveText(msg: object): void;
+}
+
+function makeFakeWebSocket(): FakeWebSocket {
+  const ws: FakeWebSocket = {
+    readyState: 0, // CONNECTING
+    onopen: null,
+    onmessage: null,
+    onclose: null,
+    onerror: null,
+    send: vi.fn(),
+    close: vi.fn(() => {
+      ws.readyState = 3; // CLOSED
+      ws.onclose?.({ code: 1000, reason: "", wasClean: true } as CloseEvent);
+    }),
+    _openHandshake() {
+      ws.readyState = 1; // OPEN
+      ws.onopen?.({} as Event);
+    },
+    _receiveText(msg: object) {
+      ws.onmessage?.({ data: JSON.stringify(msg) } as MessageEvent<string>);
+    },
+  };
+  return ws;
+}
+
+function makeSocketFactory(): { factory: VoiceMgmtSocketFactory; getWs: () => FakeWebSocket | null } {
+  let ws: FakeWebSocket | null = null;
+  const factory = (_url: string) => {
+    ws = makeFakeWebSocket();
+    return ws as unknown as WebSocket;
+  };
+  return { factory, getWs: () => ws };
+}
+
+/** Polls the microtask queue until the handler has opened a socket (formData /
+ *  blob.arrayBuffer() parsing takes a few ticks before voice-mgmt-client
+ *  constructs the WS) — bounded so a genuine "never opens" bug fails fast
+ *  instead of hanging. */
+async function waitForSocket(getWs: () => FakeWebSocket | null): Promise<FakeWebSocket> {
+  for (let i = 0; i < 50; i++) {
+    const ws = getWs();
+    if (ws) return ws;
+    await Promise.resolve();
+  }
+  throw new Error("socket was never created");
+}
+
+/** Opens the fake socket and immediately replies with `msg` — the sequence
+ *  every handler op follows once connected (connect -> send -> one reply). */
+async function autoReply(getWs: () => FakeWebSocket | null, msg: object): Promise<FakeWebSocket> {
+  const ws = await waitForSocket(getWs);
+  ws._openHandshake();
+  ws._receiveText(msg);
+  return ws;
+}
+
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
+
+function sampleProfile(userId = "alice", voiceId = "voice-abc"): ProfileV1 {
+  return {
+    schemaVersion: 1,
+    userId,
+    model: { provider: "openrouter", id: "google/gemini-2.5-flash" },
+    voice: { provider: "local-tts", id: voiceId },
+    audio: { ttsEnabled: true, channel: "voice" as const },
+    persona: { template: "default", overrides: "" },
+    tools: { enabled: {} },
+    compression: { threshold: 0.5 },
+    advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" },
+  };
+}
+
+function makeTokens(userId = "alice") {
+  return {
+    validate: vi.fn(
+      async (): Promise<TokenResult<TokenPayload>> => ({
+        ok: true,
+        value: { userId, isAdmin: false, issuedAt: 0, expiresAt: 9999999999 },
+      }),
+    ),
+  };
+}
+
+function makeInvalidTokens() {
+  return {
+    validate: vi.fn(async (): Promise<TokenResult<TokenPayload>> => ({ ok: false, error: "signature-invalid" })),
+  };
+}
+
+function makeProfileStore(profile: ProfileV1 = sampleProfile()): ProfileStore {
+  return {
+    get: vi.fn(async (): Promise<Result<ProfileV1, ProfileStoreError>> => ({ ok: true, value: profile })),
+    save: vi.fn(async (): Promise<Result<void, ProfileStoreError>> => ({ ok: true, value: undefined })),
+    remove: vi.fn(async (): Promise<Result<void, ProfileStoreError>> => ({ ok: true, value: undefined })),
+  };
+}
+
+function makeDeps(overrides: Partial<VoicesHandlerDeps> = {}): {
+  deps: VoicesHandlerDeps;
+  getWs: () => FakeWebSocket | null;
+} {
+  const { factory, getWs } = makeSocketFactory();
+  const deps: VoicesHandlerDeps = {
+    tokens: makeTokens(),
+    profileStore: makeProfileStore(),
+    refreshVoice: vi.fn(async () => undefined),
+    ttsUrl: "ws://host.docker.internal:8770",
+    connectTimeoutMs: 1000,
+    opTimeoutMs: 1000,
+    socketFactory: factory,
+    ...overrides,
+  };
+  return { deps, getWs };
+}
+
+// `null` (never `undefined`) means "omit the header" — a default *parameter*
+// can't distinguish an explicit `undefined` argument from an omitted one, so
+// callers that want the happy-path token rely on the default and callers
+// testing the missing-token path pass `null` explicitly.
+function authHeaders(bearerToken: string | null = "valid-token"): Headers {
+  const headers = new Headers();
+  if (bearerToken !== null) headers.set("authorization", `Bearer ${bearerToken}`);
+  return headers;
+}
+
+function makeGetRequest(bearerToken?: string | null): Request {
+  return new Request("http://localhost/api/v1/voices", { method: "GET", headers: authHeaders(bearerToken) });
+}
+
+function makePostRequest(form: FormData, bearerToken?: string | null): Request {
+  return new Request("http://localhost/api/v1/voices", {
+    method: "POST",
+    headers: authHeaders(bearerToken),
+    body: form,
+  });
+}
+
+function makeCreateForm(name = "Dad", audioBytes = new Uint8Array([1, 2, 3, 4])): FormData {
+  const form = new FormData();
+  form.set("name", name);
+  form.set("audio", new Blob([audioBytes], { type: "audio/wav" }), "ref.wav");
+  return form;
+}
+
+function makeDeleteRequest(voiceId: string, bearerToken?: string | null): Request {
+  return new Request(`http://localhost/api/v1/voices/${voiceId}`, {
+    method: "DELETE",
+    headers: authHeaders(bearerToken),
+  });
+}
+
+const VALID_VOICE_ID = "3f9bd0e1a2b3c4d5e6f7081920313243";
+
+describe("GET /api/v1/voices", () => {
+  it("returns the service's voice.list reply as {voices:[...]}", async () => {
+    const { deps, getWs } = makeDeps();
+    const handler = createVoicesHandler(deps);
+
+    const responsePromise = handler(makeGetRequest());
+    await autoReply(getWs, {
+      type: "voice.list",
+      voices: [{ voiceId: VALID_VOICE_ID, name: "Dad", createdAt: 1752400000.0, refDurationMs: 12000 }],
+    });
+    const response = await responsePromise;
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toEqual({
+      voices: [{ voiceId: VALID_VOICE_ID, name: "Dad", createdAt: 1752400000.0, refDurationMs: 12000 }],
+    });
+  });
+
+  it("returns 401 when the bearer token is missing or invalid", async () => {
+    const { deps: missingDeps } = makeDeps();
+    const missingResponse = await createVoicesHandler(missingDeps)(makeGetRequest(null));
+    expect(missingResponse.status).toBe(401);
+
+    const { deps: invalidDeps } = makeDeps({ tokens: makeInvalidTokens() });
+    const invalidResponse = await createVoicesHandler(invalidDeps)(makeGetRequest("bad-token"));
+    expect(invalidResponse.status).toBe(401);
+  });
+});
+
+describe("POST /api/v1/voices", () => {
+  it("sends a voice.create JSON frame plus a following binary frame, activates the voice on success", async () => {
+    const profile = sampleProfile("alice", "old-voice");
+    const profileStore = makeProfileStore(profile);
+    const { deps, getWs } = makeDeps({ profileStore });
+    const handler = createVoicesHandler(deps);
+
+    const responsePromise = handler(makePostRequest(makeCreateForm("Dad")));
+    const ws = await autoReply(getWs, {
+      type: "voice.created",
+      voiceId: VALID_VOICE_ID,
+      name: "Dad",
+      createdAt: 1752400000.0,
+    });
+    const response = await responsePromise;
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toEqual({ voiceId: VALID_VOICE_ID, name: "Dad" });
+
+    // First send is the JSON voice.create control frame, second is the raw binary WAV.
+    expect(ws.send).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(ws.send.mock.calls[0]?.[0])).toEqual({ type: "voice.create", name: "Dad" });
+    expect(ws.send.mock.calls[1]?.[0]).toBeInstanceOf(ArrayBuffer);
+
+    expect(profileStore.save).toHaveBeenCalledWith(
+      expect.objectContaining({ voice: { provider: "local-tts", id: VALID_VOICE_ID } }),
+    );
+    expect(deps.refreshVoice).toHaveBeenCalledWith("alice");
+  });
+
+  it("returns 422 invalid-request when name is missing/empty, without opening a WS", async () => {
+    const { deps, getWs } = makeDeps();
+    const form = new FormData();
+    form.set("name", "   ");
+    form.set("audio", new Blob([new Uint8Array([1, 2])]));
+
+    const response = await createVoicesHandler(deps)(makePostRequest(form));
+
+    expect(response.status).toBe(422);
+    const body = await response.json();
+    expect(body.error).toBe("invalid-request");
+    expect(getWs()).toBeNull();
+  });
+
+  it("returns 422 invalid-request when audio is missing, without opening a WS", async () => {
+    const { deps, getWs } = makeDeps();
+    const form = new FormData();
+    form.set("name", "Dad");
+
+    const response = await createVoicesHandler(deps)(makePostRequest(form));
+
+    expect(response.status).toBe(422);
+    expect(getWs()).toBeNull();
+  });
+
+  it("returns 422 voice-op-failed when the service replies error (bad/short clip)", async () => {
+    const { deps, getWs } = makeDeps();
+    const responsePromise = createVoicesHandler(deps)(makePostRequest(makeCreateForm()));
+    await autoReply(getWs, { type: "error", reason: "clip too short" });
+    const response = await responsePromise;
+
+    expect(response.status).toBe(422);
+    const body = await response.json();
+    expect(body).toEqual({ error: "voice-op-failed", reason: "clip too short" });
+  });
+
+  it("returns 504 voice-op-timeout when the service never replies", async () => {
+    vi.useFakeTimers();
+    try {
+      const { deps, getWs } = makeDeps({ opTimeoutMs: 50 });
+      const responsePromise = createVoicesHandler(deps)(makePostRequest(makeCreateForm()));
+      const ws = await waitForSocket(getWs);
+      ws._openHandshake(); // cancels the connect timer, arms the 50ms op timer
+      vi.advanceTimersByTime(60);
+      const response = await responsePromise;
+
+      expect(response.status).toBe(504);
+      const body = await response.json();
+      expect(body.error).toBe("voice-op-timeout");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns 401 when bearer token is missing", async () => {
+    const { deps } = makeDeps();
+    const response = await createVoicesHandler(deps)(makePostRequest(makeCreateForm(), null));
+    expect(response.status).toBe(401);
+  });
+});
+
+describe("DELETE /api/v1/voices/:id", () => {
+  it("resets profile.voice.id to 'default' when deleting the active voice", async () => {
+    const profile = sampleProfile("alice", VALID_VOICE_ID);
+    const profileStore = makeProfileStore(profile);
+    const { deps, getWs } = makeDeps({ profileStore });
+
+    const responsePromise = createVoicesHandler(deps)(makeDeleteRequest(VALID_VOICE_ID));
+    await autoReply(getWs, { type: "voice.deleted", voiceId: VALID_VOICE_ID });
+    const response = await responsePromise;
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toEqual({ voiceId: VALID_VOICE_ID });
+    expect(profileStore.save).toHaveBeenCalledWith(
+      expect.objectContaining({ voice: { provider: "local-tts", id: "default" } }),
+    );
+    expect(deps.refreshVoice).toHaveBeenCalledWith("alice");
+  });
+
+  it("leaves the profile unchanged when deleting a non-active voice", async () => {
+    const profile = sampleProfile("alice", "some-other-voice");
+    const profileStore = makeProfileStore(profile);
+    const { deps, getWs } = makeDeps({ profileStore });
+
+    const responsePromise = createVoicesHandler(deps)(makeDeleteRequest(VALID_VOICE_ID));
+    await autoReply(getWs, { type: "voice.deleted", voiceId: VALID_VOICE_ID });
+    const response = await responsePromise;
+
+    expect(response.status).toBe(200);
+    expect(profileStore.save).not.toHaveBeenCalled();
+    expect(deps.refreshVoice).not.toHaveBeenCalled();
+  });
+
+  it("returns 422 invalid-voice-id for a structurally-invalid id, without opening a WS", async () => {
+    const { deps, getWs } = makeDeps();
+
+    const response = await createVoicesHandler(deps)(makeDeleteRequest("not-32-hex"));
+
+    expect(response.status).toBe(422);
+    const body = await response.json();
+    expect(body.error).toBe("invalid-voice-id");
+    expect(getWs()).toBeNull();
+  });
+
+  it("returns 502 tts-unreachable on a transport failure (connect refused)", async () => {
+    const failingFactory: VoiceMgmtSocketFactory = () => {
+      throw new Error("ECONNREFUSED");
+    };
+    const { deps } = makeDeps({ socketFactory: failingFactory });
+
+    const response = await createVoicesHandler(deps)(makeDeleteRequest(VALID_VOICE_ID));
+
+    expect(response.status).toBe(502);
+    const body = await response.json();
+    expect(body.error).toBe("tts-unreachable");
+  });
+
+  it("returns 401 when bearer token is invalid", async () => {
+    const { deps } = makeDeps({ tokens: makeInvalidTokens() });
+    const response = await createVoicesHandler(deps)(makeDeleteRequest(VALID_VOICE_ID, "bad-token"));
+    expect(response.status).toBe(401);
+  });
+});

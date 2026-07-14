@@ -8,6 +8,7 @@ import type {
   ProvidersConfig,
   SessionConfig,
   SessionsConfig,
+  TTSConfig,
   WebuiConfig,
 } from "@sentient/config";
 import type { InstallState } from "../admin/install-state.js";
@@ -90,6 +91,10 @@ export interface GatewayServices {
   readonly stt: SttService | null;
   readonly tts: TtsService | null;
   readonly createSynthesizerFor: (getVoiceId: () => string | null) => TextStreamSynthesizer | null;
+  /** Raw `tts:` config block — needed by the voices handler (Fix C) for its
+   *  own short-lived voice-mgmt WS ops, which bypass the TtsService/provider
+   *  abstraction entirely. */
+  readonly ttsConfig: TTSConfig;
   readonly language: "en" | "zh";
   readonly tls: GatewayTlsMaterial | undefined;
   readonly webDistDir: string | undefined;
@@ -198,6 +203,7 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     stt: services.stt,
     tts: services.tts,
     createSynthesizerFor: services.createSynthesizerFor,
+    ttsConfig: cfg.tts,
     // "auto" is a decode-only sentinel; UX/prompt language needs a concrete
     // value, so fall back to "en" when the operator chose autodetect.
     language: cfg.language === "auto" ? "en" : cfg.language,
