@@ -218,7 +218,7 @@ export function VoicePane({ api, token, draft, savedVoice, onDraftVoice, hideHea
 
   const handleSelect = (v: VoiceEntry) => {
     if (draft.voice?.id === v.id) return;
-    onDraftVoice({ provider: "fish-audio", id: v.id });
+    onDraftVoice({ provider: "local-tts", id: v.id });
   };
 
   const handleVibeTagClick = (t: string) => {

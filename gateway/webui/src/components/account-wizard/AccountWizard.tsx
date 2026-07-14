@@ -67,7 +67,7 @@ const INITIAL_DRAFT: Omit<DraftAccount, "isAdmin"> = {
   pinConfirm: "",
   profile: {
     model: { provider: "ollama-cloud", id: "" },
-    voice: { provider: "fish-audio", id: "" },
+    voice: { provider: "local-tts", id: "default" },
     audio: { ttsEnabled: true, channel: "voice" },
     persona: { template: "default", overrides: "" },
     tools: {
@@ -252,11 +252,8 @@ export function AccountWizard({
         {step === "voice" && (
           <StepVoice
             draft={draft.profile as ProfileV1}
-            onDraftVoice={(voice) => patchProfile({ voice })}
             onNext={advance}
             onBack={retreat}
-            catalogToken={catalogToken}
-            providersApi={activeProvidersApi}
             {...(onCancel ? { onCancel } : {})}
           />
         )}
