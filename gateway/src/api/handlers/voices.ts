@@ -110,7 +110,16 @@ async function handleVoices(deps: VoicesHandlerDeps, request: Request): Promise<
   const previewMatch = VOICE_PREVIEW_PATH_RE.exec(pathname);
   if (previewMatch) {
     if (request.method !== "POST") return new Response("Method Not Allowed", { status: HTTP_METHOD });
-    return handleVoicesPreview(deps, decodeURIComponent(previewMatch[1] ?? ""), request.signal);
+    // Same shape guard the DELETE path enforces — the `([^/]+)` group can match
+    // an encoded-traversal shape (`..%2Fsecret`), so decode-then-validate BEFORE
+    // reaching the service. A malformed percent-encoding (`%ZZ`) throws in
+    // decodeURIComponent — catch it to a clean 422 rather than an unhandled 500.
+    const voiceId = safeDecode(previewMatch[1] ?? "");
+    if (voiceId === null || !VOICE_ID_SHAPE_RE.test(voiceId)) {
+      log.warn("preview.invalid-id-shape", {});
+      return jsonError(HTTP_UNPROCESSABLE, "invalid-voice-id");
+    }
+    return handleVoicesPreview(deps, voiceId, request.signal);
   }
 
   const idMatch = VOICE_ID_PATH_RE.exec(pathname);
@@ -218,4 +227,14 @@ function readBearer(request: Request): string | null {
   const parts = h.split(" ");
   if (parts.length !== 2 || parts[0]?.toLowerCase() !== "bearer") return null;
   return parts[1] ?? null;
+}
+
+/** decodeURIComponent throws on malformed percent-encoding (e.g. `%ZZ`) — return
+ *  null instead so the caller degrades to a clean 422 rather than an unhandled 500. */
+function safeDecode(raw: string): string | null {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
 }

@@ -580,4 +580,53 @@ describe("POST /api/v1/voices/:id/preview", () => {
     const response = await createVoicesHandler(deps)(makePreviewRequest("nova", null));
     expect(response.status).toBe(401);
   });
+
+  it("rejects an encoded-traversal id with 422 before dialing the service", async () => {
+    const { deps, getWs } = makeDeps();
+
+    // `..%2Fsecret` matches the `([^/]+)` path group, decodes to `../secret` —
+    // must be caught by the shape guard (same as DELETE), never reaching synth.
+    const request = new Request("http://localhost/api/v1/voices/..%2Fsecret/preview", {
+      method: "POST",
+      headers: authHeaders(),
+    });
+    const response = await createVoicesHandler(deps)(request);
+
+    expect(response.status).toBe(422);
+    const body = await response.json();
+    expect(body.error).toBe("invalid-voice-id");
+    expect(getWs()).toBeNull();
+  });
+
+  it("rejects a malformed percent-encoding with 422 (not 500)", async () => {
+    const { deps, getWs } = makeDeps();
+
+    // `%ZZ` is invalid percent-encoding — decodeURIComponent throws; the handler
+    // must degrade to a clean 422, never surface an unhandled 500.
+    const request = new Request("http://localhost/api/v1/voices/%ZZ/preview", {
+      method: "POST",
+      headers: authHeaders(),
+    });
+    const response = await createVoicesHandler(deps)(request);
+
+    expect(response.status).toBe(422);
+    const body = await response.json();
+    expect(body.error).toBe("invalid-voice-id");
+    expect(getWs()).toBeNull();
+  });
+
+  it("accepts a 32-hex id and reaches the service", async () => {
+    const { deps, getWs } = makeDeps();
+
+    const responsePromise = createVoicesHandler(deps)(makePreviewRequest(VALID_VOICE_ID));
+    const ws = await waitForSocket(getWs);
+    ws._openHandshake();
+    ws._receiveText({ type: "ready", format: "pcm", sample_rate: 24000, voice: VALID_VOICE_ID });
+    ws._receiveBinary(new Uint8Array([1, 2, 3, 4]));
+    ws._receiveText({ type: "done", requestId: "r1", ttfa_ms: 0, rtf: 0, audio_seconds: 0 });
+    const response = await responsePromise;
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("audio/wav");
+  });
 });
