@@ -84,9 +84,15 @@ export function createUseVoices(deps: UseVoicesDeps): UseVoices {
       return { ok: false, errorCode: r.error.code };
     }
     await load();
-    // Creating a voice ACTIVATES it server-side (Task-15 contract).
-    activeId.value = r.value.voiceId;
-    onActiveVoiceChanged(r.value.voiceId);
+    // Creating a voice ACTIVATES it server-side (Task-15 contract) — but only
+    // when the profile write actually persisted. A `not-activated` warning means
+    // the pack exists yet profile.voice.id was NOT updated (server still
+    // synthesizes in the prior voice), so mirroring it as active locally would
+    // contradict the server AND the "activation failed" toast. Leave activeId.
+    if (!r.value.warning) {
+      activeId.value = r.value.voiceId;
+      onActiveVoiceChanged(r.value.voiceId);
+    }
     log.info("createVoice.success", { voiceId: r.value.voiceId, warning: r.value.warning ?? null });
     return { ok: true, ...(r.value.warning ? { warning: r.value.warning } : {}) };
   }
@@ -100,9 +106,12 @@ export function createUseVoices(deps: UseVoicesDeps): UseVoices {
       return { ok: false, errorCode: r.error.code };
     }
     await load();
-    // The server only resets profile.voice.id when the deleted pack was the
-    // caller's active pick — mirror that exactly so we don't sync a no-op.
-    if (wasActive) {
+    // The server resets profile.voice.id to the default ONLY when the deleted
+    // pack was the caller's active pick AND the reset write persisted. A
+    // `profile-not-updated` warning means the reset did NOT persist (the profile
+    // still points at the now-deleted id), so don't optimistically show
+    // "default" as active — mirror only a confirmed reset.
+    if (wasActive && !r.value.warning) {
       activeId.value = DEFAULT_VOICE_ID;
       onActiveVoiceChanged(DEFAULT_VOICE_ID);
     }

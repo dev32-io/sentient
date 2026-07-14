@@ -95,15 +95,37 @@ describe("createUseVoices", () => {
     expect(onActiveVoiceChanged).not.toHaveBeenCalled();
   });
 
-  it("createVoice surfaces a non-fatal warning without failing", async () => {
+  it("createVoice with a not-activated warning does NOT mark the pack active", async () => {
+    // The pack exists but the server did not persist profile.voice.id, so the
+    // server still synthesizes in the prior voice. Optimistically marking it
+    // active would contradict the server and the "activation failed" toast.
     stub(async (_url, init) => {
       if (init?.method === "POST") return Response.json({ voiceId: "v-new", name: "Dad", warning: "not-activated" });
-      return Response.json({ voices: [] });
+      return Response.json({ voices: [{ voiceId: "v-new", name: "Dad", createdAt: 2, refDurationMs: 15000 }] });
     });
-    const hook = createUseVoices({ token: "t", initialActiveId: "default", onActiveVoiceChanged: vi.fn() });
+    const onActiveVoiceChanged = vi.fn();
+    const hook = createUseVoices({ token: "t", initialActiveId: "v-old", onActiveVoiceChanged });
     const result = await hook.createVoice(new Blob(), "Dad");
     expect(result.ok).toBe(true);
     expect(result.warning).toBe("not-activated");
+    expect(hook.activeId.value).toBe("v-old");
+    expect(onActiveVoiceChanged).not.toHaveBeenCalled();
+  });
+
+  it("deleteVoice of the active pack with a profile-not-updated warning does NOT reset to default", async () => {
+    // The pack is gone but the server did not persist the reset, so its profile
+    // still points at the now-deleted id. Showing "default" active would be a lie.
+    stub(async (_url, init) => {
+      if (init?.method === "DELETE") return Response.json({ voiceId: "v-1", warning: "profile-not-updated" });
+      return Response.json({ voices: [] });
+    });
+    const onActiveVoiceChanged = vi.fn();
+    const hook = createUseVoices({ token: "t", initialActiveId: "v-1", onActiveVoiceChanged });
+    const result = await hook.deleteVoice("v-1");
+    expect(result.ok).toBe(true);
+    expect(result.warning).toBe("profile-not-updated");
+    expect(hook.activeId.value).toBe("v-1");
+    expect(onActiveVoiceChanged).not.toHaveBeenCalled();
   });
 
   it("deleteVoice removes the pack and falls back to default when it was active", async () => {
