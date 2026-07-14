@@ -1,0 +1,5 @@
+# Raw source audio for scripts/build_builtin_voices.py. NEVER commit these —
+# only the derived conds.safetensors + meta.json under
+# src/chatterbox_tts/voices_library/ are committed. See that directory's
+# LICENSES.md for the license/provenance of every clip that ever lived here.
+scripts/clips/
