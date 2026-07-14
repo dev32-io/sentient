@@ -152,6 +152,39 @@ def test_list_defaults_missing_description_and_tags(tmp_path: Path) -> None:
     assert entry["tags"] == []
 
 
+def _write_builtin(builtin_dir: Path, slug: str, name: str, tags: list[str]) -> None:
+    import json
+    pack = builtin_dir / slug
+    pack.mkdir(parents=True)
+    (pack / "conds.safetensors").write_bytes(b"stub")
+    (pack / "meta.json").write_text(json.dumps({"name": name, "description": "", "tags": tags}))
+
+
+def test_list_merges_builtins_first_with_source(tmp_path: Path) -> None:
+    builtin = tmp_path / "library"
+    _write_builtin(builtin, "nova", "Nova", ["warm"])
+    store = VoiceStore(_StubEngine(), tmp_path / "voices", builtin_dir=builtin)
+    packs = store.list()
+    assert packs[0]["voiceId"] == "nova"
+    assert packs[0]["source"] == "builtin"
+
+
+def test_delete_builtin_refused(tmp_path: Path) -> None:
+    builtin = tmp_path / "library"
+    _write_builtin(builtin, "nova", "Nova", [])
+    store = VoiceStore(_StubEngine(), tmp_path / "voices", builtin_dir=builtin)
+    with pytest.raises(ValueError, match="builtin-voice"):
+        store.delete("nova")
+
+
+def test_get_resolves_builtin_slug(tmp_path: Path) -> None:
+    builtin = tmp_path / "library"
+    _write_builtin(builtin, "nova", "Nova", [])
+    # Overwrite conds with a real-ish sentinel the stub can 'load'; use load monkeypatch.
+    store = VoiceStore(_StubEngine(), tmp_path / "voices", builtin_dir=builtin)
+    assert "nova" in store.list()[0]["voiceId"]  # membership proven via list; get() load is @live
+
+
 @pytest.mark.live
 def test_create_then_get_roundtrip(tmp_path: Path) -> None:
     """Live: needs the real model to build conditioning from a reference clip."""

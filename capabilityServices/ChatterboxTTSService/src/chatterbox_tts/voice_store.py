@@ -2,10 +2,16 @@
 
 A "voice pack" is a persisted Chatterbox ``Conditionals`` object (T3 +
 S3Gen conditioning derived from a reference clip) plus a small metadata
-record. Packs live one-per-directory under ``voice_dir``::
+record. User-created packs live one-per-directory under ``voice_dir``::
 
     <voice_dir>/<voiceId>/conds.safetensors   # Conditionals.save()/.load()
     <voice_dir>/<voiceId>/meta.json           # {name, description, tags, createdAt, refDurationMs}
+
+(see ``pack_meta.py`` for the shared on-disk shape). A second, read-only
+``builtin_dir`` holds packaged voice packs in the same shape, addressed
+by a short slug (e.g. ``nova``) instead of a ``uuid4().hex`` — resolved
+via the ``BuiltinLibrary`` collaborator (``builtin_library.py``), which
+``VoiceStore`` composes and checks first in ``get``/``delete``/``list``.
 
 Despite the ``.safetensors`` name (kept for readability/consistency with
 the model's own built-in-voice file), ``Conditionals.save``/``.load``
@@ -22,22 +28,20 @@ special-case "no voice selected".
 Security notes (``voiceId`` arrives from an external boundary: webui ->
 gateway -> WS ``voice.delete``/``voice.select`` -> this store):
 
-- **Path traversal.** Every public method that takes a caller-supplied
-  ``voice_id`` (``get``, ``delete``) validates it against the
-  ``uuid4().hex`` shape (``^[0-9a-f]{32}$``, the exact format ``create()``
-  itself generates) before it ever reaches a filesystem path, plus a
-  belt-and-suspenders check that the resolved pack dir is still inside
-  ``voice_dir``. ``create()`` does not need the check — it mints the id
-  itself.
-- **Unsafe deserialization.** ``Conditionals.load()`` below unpickles
-  ``conds.safetensors``. That's only safe because the traversal guard
-  above means the path is always ``<voice_dir>/<validated-uuid-hex>/...``,
-  and ``voice_dir`` is created 0700 (service-user-only) in ``__init__``.
-  Every pack under it is service-produced (the clone flow uploads a WAV;
-  this store builds the pickle itself via ``prepare_conditionals`` — an
-  attacker never supplies pickle bytes directly). A real fix is migrating
-  ``Conditionals`` to the actual safetensors format upstream in
-  mlx-audio; that's a larger follow-up, not done here.
+- **Path traversal.** Every caller-supplied ``voice_id`` (``get``,
+  ``delete``) is checked against the ``BuiltinLibrary`` slug set (exact
+  membership) or the ``uuid4().hex`` shape (``^[0-9a-f]{32}$``, the
+  format ``create()`` generates) before it ever reaches a filesystem
+  path, plus a belt-and-suspenders resolved-path check. ``create()``
+  mints its own id, so it skips validation.
+- **Unsafe deserialization.** ``Conditionals.load()`` unpickles
+  ``conds.safetensors``. Safe for user packs because the traversal
+  guard pins the path under the 0700 ``voice_dir``, and every pack
+  there is service-produced (an attacker never supplies pickle bytes
+  directly). Safe for built-in packs because ``builtin_dir`` is
+  packaged read-only content we ship, not attacker-writable. A real
+  fix is migrating ``Conditionals`` to the actual safetensors format
+  upstream in mlx-audio; that's a larger follow-up, not done here.
 """
 
 from __future__ import annotations
@@ -55,13 +59,14 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from mlx_audio.tts.models.chatterbox_turbo import Conditionals
 
+from .builtin_library import BuiltinLibrary
+from .pack_meta import CONDS_FILENAME, META_FILENAME, read_pack_meta
+
 if TYPE_CHECKING:
     from .chatterbox_mlx import ChatterboxEngine
 
 log = logging.getLogger("chatterbox_tts.voice_store")
 
-_CONDS_FILENAME = "conds.safetensors"
-_META_FILENAME = "meta.json"
 _TMP_SUFFIX = ".tmp"
 _DIR_MODE = 0o700  # service-user-only; voice packs are unpickled on load (see module docstring)
 
@@ -78,12 +83,16 @@ _VOICE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
 class VoiceStore:
-    """Create/list/get/delete voice packs under ``voice_dir``."""
+    """Create/list/get/delete voice packs under ``voice_dir``, plus a
+    read-only ``builtin_dir`` merged in ahead of them (see module docstring)."""
 
-    def __init__(self, model: "ChatterboxEngine", voice_dir: Path) -> None:
+    def __init__(
+        self, model: "ChatterboxEngine", voice_dir: Path, builtin_dir: Path | None = None
+    ) -> None:
         self._model = model
         self._voice_dir = Path(voice_dir)
         self._cache: dict[str, Any] = {}  # voiceId -> loaded Conditionals
+        self._builtin = BuiltinLibrary(builtin_dir)
 
         # Voice packs are unpickled on load (see module docstring). Lock the
         # directory to service-user-only so nothing else on the host can
@@ -99,15 +108,21 @@ class VoiceStore:
             log.debug("voice_store.get default reason=voice_id_none")
             return self._model.default_conditionals()
 
+        if self._builtin.has(voice_id):
+            return self._get_from_dir(voice_id, self._builtin.pack_dir(voice_id))
+
         # Validate untrusted input before consulting any keyed state (cache
         # included) — see module docstring's "Path traversal" note.
         pack_dir = self._validated_pack_dir(voice_id)
+        return self._get_from_dir(voice_id, pack_dir)
 
+    def _get_from_dir(self, voice_id: str, pack_dir: Path) -> Any:
+        """Cache/load body shared by both the built-in and user-pack paths."""
         if voice_id in self._cache:
             log.debug("voice_store.get cache_hit voice_id=%s", voice_id)
             return self._cache[voice_id]
 
-        conds_path = pack_dir / _CONDS_FILENAME
+        conds_path = pack_dir / CONDS_FILENAME
         if not conds_path.is_file():
             log.warning(
                 "voice_store.get fallback=default reason=unknown_voice voice_id=%s",
@@ -115,10 +130,9 @@ class VoiceStore:
             )
             return self._model.default_conditionals()
 
-        # SECURITY: unpickles. Safe only because _validated_pack_dir() above
-        # guarantees conds_path resolves under the 0700 service-owned
-        # voice_dir, and every pack there is service-produced — see the
-        # "Unsafe deserialization" note in the module docstring.
+        # SECURITY: unpickles. Safe only because callers only reach here via a
+        # validated pack_dir (traversal-checked, or a membership-checked
+        # built-in slug) — see the "Unsafe deserialization" module docstring note.
         conds = Conditionals.load(conds_path)
         self._cache[voice_id] = conds
         log.info("voice_store.get loaded voice_id=%s path=%s", voice_id, conds_path)
@@ -195,7 +209,7 @@ class VoiceStore:
             # thread-safe here; the WS server task is expected to
             # serialize calls.
             conds = self._model.prepare_conditionals(ref_wav, sr)
-            self._save_atomic(pack_dir / _CONDS_FILENAME, conds)
+            self._save_atomic(pack_dir / CONDS_FILENAME, conds)
 
             created_at = time.time()
             ref_duration_ms = round(duration_s * 1000.0)
@@ -203,7 +217,7 @@ class VoiceStore:
                 "name": name, "description": description, "tags": list(tags or []),
                 "createdAt": created_at, "refDurationMs": ref_duration_ms,
             }
-            self._write_meta_atomic(pack_dir / _META_FILENAME, meta)
+            self._write_meta_atomic(pack_dir / META_FILENAME, meta)
         except Exception:
             log.warning(
                 "voice_store.create failed voice_id=%s — removing orphaned pack dir",
@@ -214,21 +228,28 @@ class VoiceStore:
         return conds, created_at, ref_duration_ms
 
     def list(self) -> list[dict]:
-        """Return metadata (incl. ``voiceId``) for every persisted voice pack."""
-        if not self._voice_dir.is_dir():
-            return []
-        packs: list[dict] = []
-        for entry in sorted(self._voice_dir.iterdir()):
-            if not entry.is_dir():
-                continue
-            pack = self._read_pack_meta(entry)
-            if pack is not None:
-                packs.append(pack)
-        log.debug("voice_store.list count=%d", len(packs))
+        """Return metadata for every voice pack, built-ins first, each tagged ``source``."""
+        builtin_packs = self._builtin.list_metas()
+        packs: list[dict] = list(builtin_packs)
+        if self._voice_dir.is_dir():
+            for entry in sorted(self._voice_dir.iterdir()):
+                if not entry.is_dir():
+                    continue
+                meta = read_pack_meta(entry)
+                if meta is not None:
+                    packs.append({**meta, "source": "user"})
+        log.debug("voice_store.list count=%d builtin=%d", len(packs), len(builtin_packs))
         return packs
 
     def delete(self, voice_id: str) -> bool:
-        """Remove a voice pack. Returns ``False`` if it didn't exist."""
+        """Remove a voice pack; ``False`` if it didn't exist.
+
+        Raises ``ValueError("builtin-voice")`` for a built-in slug — the
+        library is read-only, by design.
+        """
+        if self._builtin.has(voice_id):
+            log.warning("voice_store.delete refused reason=builtin voice_id=%s", voice_id)
+            raise ValueError("builtin-voice")
         pack_dir = self._validated_pack_dir(voice_id)
         if not pack_dir.is_dir():
             log.debug("voice_store.delete missing voice_id=%s", voice_id)
@@ -244,15 +265,12 @@ class VoiceStore:
     def _validated_pack_dir(self, voice_id: str) -> Path:
         """Resolve ``voice_id`` to its pack dir, rejecting path traversal.
 
-        Called at the start of every public method that takes a
-        caller-supplied ``voice_id`` (``get``, ``delete``) — NOT ``create``,
-        which mints the id itself and never receives caller input. Raises
-        ``ValueError`` for anything that isn't a bare ``uuid4().hex`` (e.g.
-        ``"../../etc/passwd"``, an absolute path, wrong length/alphabet).
-
-        Belt-and-suspenders: after building the path, also asserts the
-        resolved dir is still inside ``voice_dir`` before any read/delete —
-        so even a future bug in the regex can't turn into a traversal.
+        Called for every non-built-in ``voice_id`` in ``get``/``delete`` —
+        NOT ``create``, which mints the id itself. Raises ``ValueError``
+        for anything that isn't a bare ``uuid4().hex`` (e.g.
+        ``"../../etc/passwd"``, wrong length/alphabet), plus a
+        belt-and-suspenders resolved-path check so a future regex bug
+        can't turn into a traversal.
         """
         self._validate_voice_id(voice_id)
         pack_dir = self._pack_dir(voice_id)
@@ -265,24 +283,6 @@ class VoiceStore:
         """Reject any ``voice_id`` that isn't a bare ``uuid4().hex`` string."""
         if not _VOICE_ID_RE.match(voice_id):
             raise ValueError("invalid voice_id")
-
-    def _read_pack_meta(self, entry: Path) -> dict | None:
-        """Load one pack's ``meta.json``, tagged with its ``voiceId``; ``None`` if unreadable."""
-        meta_path = entry / _META_FILENAME
-        if not meta_path.is_file():
-            return None
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            log.warning(
-                "voice_store.list bad_meta voice_id=%s error=%s", entry.name, exc
-            )
-            return None
-        return {
-            "voiceId": entry.name, "name": meta.get("name", ""),
-            "description": meta.get("description", ""), "tags": meta.get("tags", []),
-            "createdAt": meta.get("createdAt", 0.0), "refDurationMs": meta.get("refDurationMs", 0),
-        }
 
     @staticmethod
     def _save_atomic(path: Path, conds: Any) -> None:

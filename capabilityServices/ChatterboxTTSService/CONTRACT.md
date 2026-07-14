@@ -181,12 +181,20 @@ and is otherwise ignored.
 ### 4.1 `voice.create`
 
 ```json
-{ "type": "voice.create", "name": "Dad" }
+{ "type": "voice.create", "name": "Dad", "description": "Warm, low register", "tags": ["family", "warm"] }
 ```
 
-followed by one binary WebSocket frame containing a WAV file (any
-sample rate/channel count `soundfile` can decode — multi-channel is
-mixed down to mono). Rejected with `{"type":"error", reason:"..."}` if:
+`description` and `tags` are both optional — omit either (or send
+`description: ""` / `tags: []`) for a bare-name pack. `description` is
+a plain string; `tags` is a list of strings. Neither is currently
+length/count-validated at the wire layer (limits exist in
+`config.yaml` as `voice_description_max_len` / `voice_tag_max_len` /
+`voice_max_tags` for a future enforcement pass — not yet wired up).
+
+The `voice.create` message is followed by one binary WebSocket frame
+containing a WAV file (any sample rate/channel count `soundfile` can
+decode — multi-channel is mixed down to mono). Rejected with
+`{"type":"error", reason:"..."}` if:
 
 - the clip decodes to ≤5 seconds of audio (voice-pack quality floor,
   enforced by `VoiceStore.create` — see its docstring for the exact
@@ -198,6 +206,9 @@ On success:
 ```json
 { "type": "voice.created", "voiceId": "3f9b...", "name": "Dad", "createdAt": 1752400000.0 }
 ```
+
+A voice created this way always lands in the user-created set — see
+§4.4 for how it relates to the read-only built-in library.
 
 `voice.create` mutates the shared model's internal conditioning state
 (see `chatterbox_mlx.py`) and is therefore serialized under the same
@@ -214,10 +225,18 @@ blocked by) every synthesis request on every connection, and vice versa.
 {
   "type": "voice.list",
   "voices": [
-    { "voiceId": "3f9b...", "name": "Dad", "createdAt": 1752400000.0, "refDurationMs": 12000 }
+    { "voiceId": "nova", "name": "Nova", "description": "", "tags": ["warm"], "createdAt": 0.0, "refDurationMs": 0, "source": "builtin" },
+    { "voiceId": "3f9b...", "name": "Dad", "description": "Warm, low register", "tags": ["family", "warm"], "createdAt": 1752400000.0, "refDurationMs": 12000, "source": "user" }
   ]
 }
 ```
+
+Every item carries `source`: `"builtin"` for a read-only, service-packaged
+voice pack, or `"user"` for one created via `voice.create` on this host.
+Built-in packs are always listed first (see §4.4), each sorted by
+`voiceId`; user packs follow, sorted by `voiceId`. `description`/`tags`
+default to `""`/`[]` for older packs created before those fields
+existed (Task 1).
 
 Does not touch the synthesis lock — safe to call while a request is in
 flight.
@@ -237,6 +256,31 @@ deleted) still replies `voice.deleted` — deletion is a "make it not
 exist" operation, not an existence assertion. A structurally invalid
 `voiceId` (path-traversal shape, wrong length/alphabet — see
 `voice_store.py`'s security notes) replies `error` instead.
+
+Deleting a **built-in** voice (`source: "builtin"` in `voice.list`)
+always replies `{"type":"error", "reason":"builtin-voice"}` instead of
+`voice.deleted` — the built-in library is read-only by design; see §4.4.
+
+### 4.4 Built-in voice library
+
+Alongside user-created packs, the service ships a small, read-only set
+of built-in voice packs (`config.yaml`'s `builtin_voice_dir`, default:
+a `voices_library/` directory packaged with the service). Built-in
+voices are addressed by a short slug (e.g. `"nova"`) rather than the
+`uuid4().hex` shape `voice.create` mints — both id shapes are valid
+`voiceId` values everywhere a `voiceId` is accepted (`?voice=` query
+param, `voice.delete`).
+
+Client-visible differences from a user-created pack:
+
+- `voice.list` tags it `"source": "builtin"` and lists it ahead of
+  every `"source": "user"` pack.
+- `voice.delete` on a built-in `voiceId` always fails with
+  `{"type":"error", "reason":"builtin-voice"}` — never succeeds, never
+  falls into the idempotent "already deleted" path described in §4.3.
+- Selecting one via `?voice=<slug>` and synthesizing works exactly like
+  a user-created pack — the built-in/user distinction is invisible to
+  synthesis.
 
 ---
 

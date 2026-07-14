@@ -97,6 +97,10 @@ def _make_config(tmp_path: Path) -> Config:
         log_dir=str(tmp_path / "logs"),
         retention_days=7,
         metrics_interval_ms=0,  # disable the background psutil sampler for tests
+        builtin_voice_dir=str(tmp_path / "builtin_voices"),
+        voice_description_max_len=240,
+        voice_tag_max_len=24,
+        voice_max_tags=8,
     )
 
 

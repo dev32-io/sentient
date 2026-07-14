@@ -67,13 +67,13 @@ class Config:
     """Root configuration — every field is required; no silent defaults.
 
     Unlike the STT service, host paths that make sense to override per-
-    deployment (``voice_dir``, ``log_dir``) are plain strings here, not
-    pre-resolved ``Path`` objects: an empty string is a valid value
-    meaning "the caller (``__main__.py``) should fall back to the
-    matching ``CHATTERBOX_TTS_*`` environment variable". Resolving that
-    fallback is deliberately NOT this module's job — this module's only
-    job is "does config.yaml have every required key, of the right
-    type". Path resolution happens once, at process startup.
+    deployment (``voice_dir``, ``log_dir``, ``builtin_voice_dir``) are
+    plain strings here, not pre-resolved ``Path`` objects: an empty
+    string is a valid value meaning "the caller (``__main__.py``) should
+    fall back to the matching ``CHATTERBOX_TTS_*`` environment variable".
+    Resolving that fallback is deliberately NOT this module's job — this
+    module's only job is "does config.yaml have every required key, of
+    the right type". Path resolution happens once, at process startup.
     """
 
     schema_version: int
@@ -89,6 +89,10 @@ class Config:
     log_dir: str
     retention_days: int
     metrics_interval_ms: int
+    builtin_voice_dir: str
+    voice_description_max_len: int
+    voice_tag_max_len: int
+    voice_max_tags: int
 
 
 # -----------------------------------------------------------------------------
@@ -156,6 +160,10 @@ def _parse(raw: dict[str, Any]) -> Config:
         log_dir=_require(raw, "log_dir", str),
         retention_days=_require(raw, "retention_days", int),
         metrics_interval_ms=_require(raw, "metrics_interval_ms", int),
+        builtin_voice_dir=_require(raw, "builtin_voice_dir", str),
+        voice_description_max_len=_require(raw, "voice_description_max_len", int),
+        voice_tag_max_len=_require(raw, "voice_tag_max_len", int),
+        voice_max_tags=_require(raw, "voice_max_tags", int),
     )
 
 

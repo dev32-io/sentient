@@ -28,6 +28,10 @@ _LOG = logging.getLogger("chatterbox_tts")
 # Default data root when no CHATTERBOX_TTS_* env var overrides it.
 _DEFAULT_DATA_DIR = Path.home() / ".sentient" / "chatterbox-tts"
 
+# Read-only built-in voice library shipped inside the package itself
+# (not under _DEFAULT_DATA_DIR — it's packaged content, not host state).
+_PACKAGED_BUILTIN_DIR = Path(__file__).parent / "voices_library"
+
 
 def _resolve_dir(configured: str, env_var: str, default: Path) -> Path:
     """Resolve a path field that may be empty in config.yaml.
@@ -53,22 +57,28 @@ def _load_startup_config() -> Config:
 
 
 def _resolve_and_freshen_config(config: Config) -> Config:
-    """Resolve ``voice_dir``/``log_dir`` env fallbacks and prune old logs.
+    """Resolve ``voice_dir``/``log_dir``/``builtin_voice_dir`` env fallbacks and prune old logs.
 
-    ``load_config`` keeps these two fields as the raw (possibly empty)
-    YAML strings — resolving the ``CHATTERBOX_TTS_*`` env fallback is
+    ``load_config`` keeps these fields as the raw (possibly empty) YAML
+    strings — resolving the ``CHATTERBOX_TTS_*`` env fallback is
     deliberately this module's job, not ``config.py``'s (see that
-    module's docstring). Returns a new ``Config`` with both fields
-    replaced by their resolved absolute paths so every downstream
-    consumer (engine, voice store, servers) sees a ready-to-use path.
+    module's docstring). Returns a new ``Config`` with each field
+    replaced by its resolved absolute path so every downstream consumer
+    (engine, voice store, servers) sees a ready-to-use path.
     """
     log_dir = _resolve_dir(config.log_dir, "CHATTERBOX_TTS_LOG_DIR", _DEFAULT_DATA_DIR / "logs")
     voice_dir = _resolve_dir(
         config.voice_dir, "CHATTERBOX_TTS_VOICE_DIR", _DEFAULT_DATA_DIR / "voices"
     )
+    builtin_voice_dir = _resolve_dir(
+        config.builtin_voice_dir, "CHATTERBOX_TTS_BUILTIN_VOICE_DIR", _PACKAGED_BUILTIN_DIR
+    )
     log_dir.mkdir(parents=True, exist_ok=True)
     prune_old_logs(log_dir, config.retention_days)
-    return replace(config, log_dir=str(log_dir), voice_dir=str(voice_dir))
+    return replace(
+        config, log_dir=str(log_dir), voice_dir=str(voice_dir),
+        builtin_voice_dir=str(builtin_voice_dir),
+    )
 
 
 def main() -> None:
@@ -80,9 +90,10 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     _LOG.info(
-        "chatterbox-tts starting: model=%s server=%s:%s health_port=%s log_dir=%s voice_dir=%s",
+        "chatterbox-tts starting: model=%s server=%s:%s health_port=%s log_dir=%s "
+        "voice_dir=%s builtin_voice_dir=%s",
         config.model, config.server.host, config.server.port, config.health.port,
-        config.log_dir, config.voice_dir,
+        config.log_dir, config.voice_dir, config.builtin_voice_dir,
     )
 
     engine = ChatterboxEngine(config.model, config.exaggeration, config.cfg_weight)
@@ -90,7 +101,7 @@ def main() -> None:
     engine.warm()
     _LOG.info("model warm; ready to accept connections")
 
-    voice_store = VoiceStore(engine, Path(config.voice_dir))
+    voice_store = VoiceStore(engine, Path(config.voice_dir), builtin_dir=Path(config.builtin_voice_dir))
 
     asyncio.run(run_server(config, engine, voice_store))
 

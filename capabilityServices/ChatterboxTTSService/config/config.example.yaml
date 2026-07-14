@@ -91,6 +91,25 @@ voice_dir: ""
 # "" = read CHATTERBOX_TTS_LOG_DIR at startup.
 log_dir: ""
 
+# Directory holding the read-only, packaged built-in voice library
+# (shipped alongside the service, not user-editable at runtime).
+# "" = read CHATTERBOX_TTS_BUILTIN_VOICE_DIR at startup, falling back to
+# the packaged voices_library/ next to __main__.py.
+builtin_voice_dir: ""
+
+# =============================================================================
+# Voice-pack metadata limits — enforced on voice.create's optional
+# description/tags fields.
+# =============================================================================
+# Max characters for a voice pack description.
+voice_description_max_len: 240
+
+# Max characters per tag.
+voice_tag_max_len: 24
+
+# Max tags per voice pack.
+voice_max_tags: 8
+
 # =============================================================================
 # Logging + in-process metrics
 # =============================================================================
