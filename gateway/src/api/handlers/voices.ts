@@ -160,6 +160,13 @@ async function handleVoicesPost(deps: VoicesHandlerDeps, userId: string, request
     return jsonError(HTTP_UNPROCESSABLE, "invalid-request", parsed.error);
   }
 
+  // Boundary log for the request about to be dispatched to the TTS service —
+  // sizes/counts only, never the name/description/tag content (log-sanitizer
+  // rule). Placed post-parse (mirrors preview.request's placement after its
+  // own local greeting pick) so it carries real byteLength/tagCount instead
+  // of firing blind before the body is even read.
+  log.info("create.request", { userId, audioBytes: parsed.value.audio.size, tagCount: parsed.value.tags.length });
+
   const audio = await parsed.value.audio.arrayBuffer();
   const result = await createVoice(
     buildCfg(deps),
@@ -169,7 +176,11 @@ async function handleVoicesPost(deps: VoicesHandlerDeps, userId: string, request
     parsed.value.description,
     parsed.value.tags,
   );
-  if (!result.ok) return mapVoiceOpError(result.error);
+  if (!result.ok) {
+    const reason = result.error.kind === "service-error" ? result.error.reason : undefined;
+    log.warn("create.failed", { userId, kind: result.error.kind, ...(reason !== undefined ? { reason } : {}) });
+    return mapVoiceOpError(result.error);
+  }
 
   const { voiceId, name } = result.value;
   const activated = await activateVoice(deps, userId, voiceId);
