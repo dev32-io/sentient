@@ -151,3 +151,92 @@ describe("parseServerFrame", () => {
     expect(frame.kind).toBe("unknown");
   });
 });
+
+describe("parseServerFrame — malformed/adversarial input degrades to unknown, never coerces", () => {
+  it("degrades a started frame missing requestId to unknown instead of fabricating requestId:''", () => {
+    const frame = parseServerFrame(JSON.stringify({ type: "started" }));
+    expect(frame).toEqual({ kind: "unknown", raw: { type: "started" } });
+  });
+
+  it("degrades a started frame with a non-string requestId to unknown", () => {
+    const frame = parseServerFrame(JSON.stringify({ type: "started", requestId: 123 }));
+    expect(frame.kind).toBe("unknown");
+  });
+
+  it("degrades a done frame with a non-numeric ttfa_ms to unknown", () => {
+    const frame = parseServerFrame(
+      JSON.stringify({ type: "done", requestId: "a1b2c3", ttfa_ms: "not-a-number", rtf: 0.31, audio_seconds: 2.75 }),
+    );
+    expect(frame.kind).toBe("unknown");
+  });
+
+  it("degrades a done frame missing requestId to unknown instead of fabricating requestId:''", () => {
+    const frame = parseServerFrame(JSON.stringify({ type: "done", ttfa_ms: 187.42, rtf: 0.31, audio_seconds: 2.75 }));
+    expect(frame.kind).toBe("unknown");
+  });
+
+  it("degrades a ready frame missing sampleRate to unknown", () => {
+    const frame = parseServerFrame(JSON.stringify({ type: "ready", format: "opus", voice: null }));
+    expect(frame.kind).toBe("unknown");
+  });
+
+  it("degrades a ready frame missing format to unknown", () => {
+    const frame = parseServerFrame(JSON.stringify({ type: "ready", sample_rate: 48000, voice: null }));
+    expect(frame.kind).toBe("unknown");
+  });
+
+  it("degrades a warning frame missing reason to unknown", () => {
+    const frame = parseServerFrame(JSON.stringify({ type: "warning" }));
+    expect(frame.kind).toBe("unknown");
+  });
+
+  it("degrades an error frame missing reason to unknown", () => {
+    const frame = parseServerFrame(JSON.stringify({ type: "error" }));
+    expect(frame.kind).toBe("unknown");
+  });
+
+  it("degrades a voice.created frame missing voiceId to unknown instead of fabricating voiceId:''", () => {
+    const frame = parseServerFrame(JSON.stringify({ type: "voice.created", name: "Dad", createdAt: 1752400000.0 }));
+    expect(frame.kind).toBe("unknown");
+  });
+
+  it("degrades a voice.deleted frame missing voiceId to unknown instead of fabricating voiceId:''", () => {
+    const frame = parseServerFrame(JSON.stringify({ type: "voice.deleted" }));
+    expect(frame.kind).toBe("unknown");
+  });
+
+  it("degrades a voice.list frame whose voices field is not an array to unknown", () => {
+    const frame = parseServerFrame(JSON.stringify({ type: "voice.list", voices: "not-an-array" }));
+    expect(frame.kind).toBe("unknown");
+  });
+
+  it("drops (never fabricates) a voice.list entry missing voiceId, keeping well-formed entries", () => {
+    const frame = parseServerFrame(
+      JSON.stringify({
+        type: "voice.list",
+        voices: [{ name: "no-id" }, { voiceId: "3f9b", name: "Dad", createdAt: 1752400000.0, refDurationMs: 12000 }],
+      }),
+    );
+    expect(frame).toEqual({
+      kind: "voiceList",
+      voices: [{ voiceId: "3f9b", name: "Dad", createdAt: 1752400000.0, refDurationMs: 12000 }],
+    });
+  });
+
+  it("degrades a type of '__proto__' to unknown without throwing", () => {
+    const frame = parseServerFrame(JSON.stringify({ type: "__proto__" }));
+    expect(frame).toEqual({ kind: "unknown", raw: { type: "__proto__" } });
+  });
+
+  it("degrades a type of 'constructor' to unknown without throwing or invoking Object's constructor", () => {
+    const frame = parseServerFrame(JSON.stringify({ type: "constructor" }));
+    expect(frame).toEqual({ kind: "unknown", raw: { type: "constructor" } });
+  });
+
+  it("still parses a well-formed done frame identically (regression)", () => {
+    const frame = parseServerFrame(
+      JSON.stringify({ type: "done", requestId: "a1b2c3", ttfa_ms: 187.42, rtf: 0.31, audio_seconds: 2.75 }),
+    );
+    expect(frame).toEqual({ kind: "done", requestId: "a1b2c3", ttfaMs: 187.42, rtf: 0.31, audioSeconds: 2.75 });
+  });
+});

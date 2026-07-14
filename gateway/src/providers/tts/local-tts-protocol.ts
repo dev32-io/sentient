@@ -120,18 +120,29 @@ export function parseServerFrame(data: string | ArrayBuffer): LocalTtsFrame {
   return parseJsonFrame(data);
 }
 
-type FrameParser = (record: Record<string, unknown>) => LocalTtsFrame;
+/** The full `SERVER_MSG_TYPE` value union — keying `FRAME_PARSERS` on this (Fix 3) makes a
+ *  new `SERVER_MSG_TYPE` entry without a matching parser a compile error, not a silent
+ *  runtime fall-through to `unknown`. */
+type ServerMsgType = (typeof SERVER_MSG_TYPE)[keyof typeof SERVER_MSG_TYPE];
 
-const FRAME_PARSERS: Record<string, FrameParser> = {
+/**
+ * Returns `null` when a required field is absent or the wrong wire type — never a
+ * frame with a fabricated/coerced value. Mirrors fish-audio-protocol.ts's pattern of
+ * returning `null` on a failed type check rather than defaulting. The caller
+ * (`parseJsonFrame`) turns a `null` result into `{kind:"unknown"}`.
+ */
+type FrameParser = (record: Record<string, unknown>) => LocalTtsFrame | null;
+
+const FRAME_PARSERS: Record<ServerMsgType, FrameParser> = {
   [SERVER_MSG_TYPE.READY]: parseReadyFrame,
-  [SERVER_MSG_TYPE.STARTED]: (r) => ({ kind: "started", requestId: asString(r.requestId) }),
+  [SERVER_MSG_TYPE.STARTED]: parseStartedFrame,
   [SERVER_MSG_TYPE.DONE]: parseDoneFrame,
-  [SERVER_MSG_TYPE.WARNING]: (r) => ({ kind: "warning", reason: asString(r.reason) }),
-  [SERVER_MSG_TYPE.ERROR]: (r) => ({ kind: "error", reason: asString(r.reason) }),
+  [SERVER_MSG_TYPE.WARNING]: (r) => parseReasonFrame("warning", r),
+  [SERVER_MSG_TYPE.ERROR]: (r) => parseReasonFrame("error", r),
   [SERVER_MSG_TYPE.PONG]: () => ({ kind: "pong" }),
   [SERVER_MSG_TYPE.VOICE_CREATED]: parseVoiceCreatedFrame,
   [SERVER_MSG_TYPE.VOICE_LIST]: parseVoiceListFrame,
-  [SERVER_MSG_TYPE.VOICE_DELETED]: (r) => ({ kind: "voiceDeleted", voiceId: asString(r.voiceId) }),
+  [SERVER_MSG_TYPE.VOICE_DELETED]: parseVoiceDeletedFrame,
 };
 
 function parseJsonFrame(text: string): LocalTtsFrame {
@@ -144,57 +155,101 @@ function parseJsonFrame(text: string): LocalTtsFrame {
   if (!msg || typeof msg !== "object") return { kind: "unknown", raw: msg };
 
   const record = msg as Record<string, unknown>;
-  const parser = typeof record.type === "string" ? FRAME_PARSERS[record.type] : undefined;
-  return parser ? parser(record) : { kind: "unknown", raw: record };
+  const { type } = record;
+  // Object.hasOwn guards a plain-object lookup table against a server-supplied `type`
+  // of "__proto__" (resolves to Object.prototype — truthy, non-function, throws when
+  // called) or "constructor"/"toString" (resolve to real inherited functions) (Fix 2).
+  if (typeof type !== "string" || !Object.hasOwn(FRAME_PARSERS, type)) {
+    return { kind: "unknown", raw: record };
+  }
+  const parsed = FRAME_PARSERS[type as ServerMsgType](record);
+  return parsed ?? { kind: "unknown", raw: record };
 }
 
-function parseReadyFrame(record: Record<string, unknown>): LocalTtsFrame {
+function parseReadyFrame(record: Record<string, unknown>): LocalTtsFrame | null {
+  const format = requireString(record.format);
+  const sampleRate = requireNumber(record.sample_rate);
+  if (format === undefined || sampleRate === undefined) return null;
   return {
     kind: "ready",
-    format: asString(record.format),
-    sampleRate: asNumber(record.sample_rate),
+    format,
+    sampleRate,
     voice: typeof record.voice === "string" ? record.voice : null,
   };
 }
 
-function parseDoneFrame(record: Record<string, unknown>): LocalTtsFrame {
-  return {
-    kind: "done",
-    requestId: asString(record.requestId),
-    ttfaMs: asNumber(record.ttfa_ms),
-    rtf: asNumber(record.rtf),
-    audioSeconds: asNumber(record.audio_seconds),
-  };
+function parseStartedFrame(record: Record<string, unknown>): LocalTtsFrame | null {
+  const requestId = requireString(record.requestId);
+  return requestId === undefined ? null : { kind: "started", requestId };
 }
 
-function parseVoiceCreatedFrame(record: Record<string, unknown>): LocalTtsFrame {
-  return {
-    kind: "voiceCreated",
-    voiceId: asString(record.voiceId),
-    name: asString(record.name),
-    createdAt: asNumber(record.createdAt),
-  };
+function parseDoneFrame(record: Record<string, unknown>): LocalTtsFrame | null {
+  const requestId = requireString(record.requestId);
+  const ttfaMs = requireNumber(record.ttfa_ms);
+  const rtf = requireNumber(record.rtf);
+  const audioSeconds = requireNumber(record.audio_seconds);
+  if (requestId === undefined || ttfaMs === undefined || rtf === undefined || audioSeconds === undefined) {
+    return null;
+  }
+  return { kind: "done", requestId, ttfaMs, rtf, audioSeconds };
 }
 
-function parseVoiceListFrame(record: Record<string, unknown>): LocalTtsFrame {
-  const rawVoices = Array.isArray(record.voices) ? record.voices : [];
-  return { kind: "voiceList", voices: rawVoices.map(parseVoiceInfo) };
+function parseReasonFrame(kind: "warning" | "error", record: Record<string, unknown>): LocalTtsFrame | null {
+  const reason = requireString(record.reason);
+  return reason === undefined ? null : { kind, reason };
 }
 
-function parseVoiceInfo(entry: unknown): LocalTtsVoiceInfo {
-  const record = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {};
+function parseVoiceCreatedFrame(record: Record<string, unknown>): LocalTtsFrame | null {
+  const voiceId = requireString(record.voiceId);
+  const name = requireString(record.name);
+  if (voiceId === undefined || name === undefined) return null;
+  return { kind: "voiceCreated", voiceId, name, createdAt: asNumber(record.createdAt) };
+}
+
+function parseVoiceDeletedFrame(record: Record<string, unknown>): LocalTtsFrame | null {
+  const voiceId = requireString(record.voiceId);
+  return voiceId === undefined ? null : { kind: "voiceDeleted", voiceId };
+}
+
+function parseVoiceListFrame(record: Record<string, unknown>): LocalTtsFrame | null {
+  if (!Array.isArray(record.voices)) return null;
+  const voices: LocalTtsVoiceInfo[] = [];
+  for (const entry of record.voices) {
+    const info = parseVoiceInfo(entry);
+    if (info) voices.push(info);
+  }
+  return { kind: "voiceList", voices };
+}
+
+function parseVoiceInfo(entry: unknown): LocalTtsVoiceInfo | null {
+  if (!entry || typeof entry !== "object") return null;
+  const record = entry as Record<string, unknown>;
+  const voiceId = requireString(record.voiceId);
+  const name = requireString(record.name);
+  if (voiceId === undefined || name === undefined) return null;
   return {
-    voiceId: asString(record.voiceId),
-    name: asString(record.name),
+    voiceId,
+    name,
     createdAt: asNumber(record.createdAt),
     refDurationMs: asNumber(record.refDurationMs),
   };
 }
 
-function asString(value: unknown): string {
-  return typeof value === "string" ? value : "";
-}
-
+/** Optional-field default: absent/wrong-typed -> 0. Never use for a field CONTRACT.md
+ *  marks required — see `requireNumber`. */
 function asNumber(value: unknown): number {
   return typeof value === "number" ? value : 0;
+}
+
+/** Required-field validator: absent/wrong-typed -> `undefined`, signaling the caller to
+ *  degrade the whole frame to `{kind:"unknown"}` rather than fabricate a value. Never
+ *  defaults — in particular, never fabricates an id (see module-level id-correlation
+ *  contract for `requestId`/`voiceId`). */
+function requireString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+/** Required-field validator: absent/wrong-typed -> `undefined`. See `requireString`. */
+function requireNumber(value: unknown): number | undefined {
+  return typeof value === "number" ? value : undefined;
 }
