@@ -14,6 +14,28 @@ import type { TokenService } from "../../user-auth/token-service.js";
 
 const log = getLog(["sentient", "gateway", "api", "voices"]);
 
+// ---------------------------------------------------------------------------
+// AUTHORIZATION MODEL — intentional shared household voice library.
+//
+// Voice packs live in the single, gateway-wide ChatterboxTTS voice store; they
+// are NOT scoped per user. Any authenticated household member can create, list,
+// select, and delete any voice. This is a deliberate product decision, not an
+// IDOR oversight: a family shares one gateway, and a voice one member clones is
+// meant to be usable by everyone ("Dad adds his voice, the kids can pick it").
+// The trust boundary is the household (all members are authenticated family),
+// not the individual user.
+//
+// Consequence of shared delete: deleting a pack that ANOTHER member had active
+// leaves that member's profile.voice.id pointing at a now-gone id. This
+// degrades gracefully — the service's get_or_default() resolves an unknown id
+// to the built-in default voice (no error), so their next reply simply uses the
+// default until they pick again. Only the CALLER's own profile is reset on
+// delete (see handleVoicesDelete); other members are not rewritten.
+//
+// A push security sweep flagged the missing per-user ownership check (MEDIUM
+// IDOR); resolved as by-design after confirming the shared-library intent.
+// ---------------------------------------------------------------------------
+
 const HTTP_OK = 200;
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_NOT_FOUND = 404;
