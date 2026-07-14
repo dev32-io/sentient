@@ -78,3 +78,30 @@ describe("audio defaults", () => {
     expect(withDefaults.audio).toEqual({ ttsEnabled: false, channel: "text" });
   });
 });
+
+describe("voice provider migration (fish-audio → local-tts)", () => {
+  const base = {
+    schemaVersion: 1,
+    userId: "alice",
+    model: { provider: "openrouter", id: "anthropic/claude-sonnet-4" },
+    persona: { template: "default", overrides: "" },
+    tools: { enabled: {} },
+    compression: { threshold: 0.8 },
+    advanced: { extraSystemPrompt: "", maxTokens: 4096 },
+  };
+
+  it("migrates a legacy fish-audio voice to the local-tts default (upgrade path)", () => {
+    // Pre-cutover profiles on disk carry provider:"fish-audio" + a Fish
+    // reference_id. Without the preprocess migration these fail schema
+    // validation on upgrade (corrupt-file) and lock the user out.
+    const legacy = { ...base, voice: { provider: "fish-audio", id: "3ad4d432023c47ee9e6c7805b973630a" } };
+    const parsed = profileV1Schema.parse(legacy);
+    expect(parsed.voice).toEqual({ provider: "local-tts", id: "default" });
+  });
+
+  it("leaves a valid local-tts voice untouched", () => {
+    const current = { ...base, voice: { provider: "local-tts", id: "a".repeat(32) } };
+    const parsed = profileV1Schema.parse(current);
+    expect(parsed.voice).toEqual({ provider: "local-tts", id: "a".repeat(32) });
+  });
+});
