@@ -18,7 +18,7 @@ export interface CycleStatusInputs {
   cognition: string;
   /**
    * True while the audio playback queue is physically running (chunk-level).
-   * Caller is expected to debounce `false` transitions upstream so Fish
+   * Caller is expected to debounce `false` transitions upstream so TTS
    * prosody gaps that briefly drain the WebAudio queue don't strobe the
    * speaking state.
    */
@@ -44,7 +44,7 @@ export interface CycleStatusInputs {
  * pulse and interrupt button respond to actual audio activity, not the
  * cycle boundary. `audioPlaying` is fed by the playback adapter with a
  * short debounce upstream (use-voice-client.ts) — long enough to bridge
- * Fish prosody gaps, short enough to feel snappy when the stream
+ * TTS prosody gaps, short enough to feel snappy when the stream
  * actually stops.
  */
 export function deriveCycleStatus(inputs: CycleStatusInputs): CycleStatus {

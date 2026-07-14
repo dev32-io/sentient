@@ -1,7 +1,7 @@
 /**
  * OGG-Opus streaming decoder running in a Web Worker.
  *
- * Decodes Fish Audio TTS opus output (OGG-Opus framed) to Float32 samples
+ * Decodes the local-tts service's OGG-Opus TTS output to Float32 samples
  * at 48 kHz, then linearly downsamples to the playback adapter's target rate.
  * Off-main-thread to avoid blocking UI on each chunk decode (~10-30 ms).
  *

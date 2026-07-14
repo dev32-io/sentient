@@ -45,7 +45,7 @@ const DRAIN_DEBOUNCE_MS = 23;
 /**
  * Initial jitter-buffer headroom — schedule the very first frame of a
  * playback session this many ms in the future. Absorbs sub-INITIAL_BUFFER_MS
- * Fish Audio jitter without stuttering.
+ * local-tts stream jitter without stuttering.
  */
 const INITIAL_BUFFER_MS = 250;
 

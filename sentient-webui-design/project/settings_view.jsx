@@ -348,7 +348,7 @@ const PaneSoulVoice = ({ mark }) => {
   React.useEffect(() => {setPage(0);}, [q, lang]);
   return (
     <>
-      <PaneHead title="Voice" sub="The voice Sentient uses for replies. Powered by Fish Audio." />
+      <PaneHead title="Voice" sub="The voice Sentient uses for replies. Record or upload a clip to clone your own." />
       <Card title="Library" sub={`${list.length} voices · selected: ${sel}`}>
         <div className="filterbar">
           <SearchField value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search voices…" />
@@ -730,8 +730,7 @@ const PaneSecrets = () => {
   const [reveal, setReveal] = React.useState({});
   const secrets = [
   ["OpenRouter", "openrouter", "sk-or-v1-···7f3a", "4 models in use"],
-  ["Ollama Cloud", "ollama", "ocld-···9a2b", "idle"],
-  ["Fish Audio", "fishaudio", "fa-tts-···c104", "TTS active"]];
+  ["Ollama Cloud", "ollama", "ocld-···9a2b", "idle"]];
 
   return (
     <>

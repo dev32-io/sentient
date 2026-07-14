@@ -11,11 +11,12 @@ endpoints:
   companions.tts_health_url  -> http://host.docker.internal:8771/health
 
 Both keys are missing-key-guarded: if a target key isn't present in the
-config (e.g. today's gateway/config.yaml still runs the pre-Phase-2 Fish
-Audio schema, which has no tts.url/companions.tts_health_url at all), that
+config (e.g. a legacy gateway/config.yaml written before the local-tts
+cutover, with no tts.url/companions.tts_health_url at all), that
 replacement is silently skipped rather than inventing new keys — this
-script only ever rewrites values, never adds config shape. The Phase-2
-gateway-integration task is what changes the schema itself.
+script only ever rewrites values, never adds config shape. The gateway
+config schema ships these keys with correct defaults, so a freshly-seeded
+config already has the right values and this is a no-op.
 
 Dry-run by default (prints a unified diff). Pass --apply to write.
 
