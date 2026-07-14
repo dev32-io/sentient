@@ -59,10 +59,16 @@ function makeRequest(opts: { method?: string; token?: string | null } = {}): Req
   return new Request("http://localhost/api/v1/services/versions", { method, headers });
 }
 
-const DEFAULT_VERSIONS: ServiceVersionRecord = { gateway: "1.2.3", hermes: "v2026.4.23", stt_service: "0.9.0" };
+const DEFAULT_VERSIONS: ServiceVersionRecord = {
+  gateway: "1.2.3",
+  hermes: "v2026.4.23",
+  stt_service: "0.9.0",
+  tts_service: "1.0.0",
+};
 const GATEWAY_VERSION = "1.2.3";
 const HERMES_VERSION_PATH = "/data/supervisor/.versions/hermes";
 const STT_HEALTH_URL = "http://sentient-stt-service:8767/health";
+const TTS_HEALTH_URL = "http://host.docker.internal:8771/health";
 
 describe("services-versions handler", () => {
   it("rejects request with no Authorization header", async () => {
@@ -72,6 +78,7 @@ describe("services-versions handler", () => {
       gatewayVersion: GATEWAY_VERSION,
       hermesVersionPath: HERMES_VERSION_PATH,
       sttHealthUrl: STT_HEALTH_URL,
+      ttsHealthUrl: TTS_HEALTH_URL,
       tokens: makeTokens(),
     });
     const res = await handler(makeRequest({ token: null }));
@@ -87,6 +94,7 @@ describe("services-versions handler", () => {
       gatewayVersion: GATEWAY_VERSION,
       hermesVersionPath: HERMES_VERSION_PATH,
       sttHealthUrl: STT_HEALTH_URL,
+      ttsHealthUrl: TTS_HEALTH_URL,
       tokens: makeTokens(),
     });
     const res = await handler(makeRequest({ token: INVALID_TOKEN }));
@@ -102,6 +110,7 @@ describe("services-versions handler", () => {
       gatewayVersion: GATEWAY_VERSION,
       hermesVersionPath: HERMES_VERSION_PATH,
       sttHealthUrl: STT_HEALTH_URL,
+      ttsHealthUrl: TTS_HEALTH_URL,
       tokens: makeTokens(),
     });
     const res = await handler(makeRequest({ token: VALID_TOKEN }));
@@ -117,12 +126,13 @@ describe("services-versions handler", () => {
       gatewayVersion: GATEWAY_VERSION,
       hermesVersionPath: HERMES_VERSION_PATH,
       sttHealthUrl: STT_HEALTH_URL,
+      ttsHealthUrl: TTS_HEALTH_URL,
       tokens: makeTokens(),
     });
     const res = await handler(makeRequest({ token: VALID_TOKEN }));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toEqual({ gateway: "1.2.3", hermes: "v2026.4.23", stt_service: "0.9.0" });
+    expect(body).toEqual({ gateway: "1.2.3", hermes: "v2026.4.23", stt_service: "0.9.0", tts_service: "1.0.0" });
   });
 
   it("returns fallback versions with gateway-only when orchestrator is null", async () => {
@@ -132,12 +142,13 @@ describe("services-versions handler", () => {
       gatewayVersion: GATEWAY_VERSION,
       hermesVersionPath: HERMES_VERSION_PATH,
       sttHealthUrl: STT_HEALTH_URL,
+      ttsHealthUrl: TTS_HEALTH_URL,
       tokens: makeTokens(),
     });
     const res = await handler(makeRequest({ token: VALID_TOKEN }));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toEqual({ gateway: "1.2.3", hermes: "unknown", stt_service: "unknown" });
+    expect(body).toEqual({ gateway: "1.2.3", hermes: "unknown", stt_service: "unknown", tts_service: "unknown" });
   });
 
   it("rejects non-GET requests with 405", async () => {
@@ -147,6 +158,7 @@ describe("services-versions handler", () => {
       gatewayVersion: GATEWAY_VERSION,
       hermesVersionPath: HERMES_VERSION_PATH,
       sttHealthUrl: STT_HEALTH_URL,
+      ttsHealthUrl: TTS_HEALTH_URL,
       tokens: makeTokens(),
     });
     const res = await handler(makeRequest({ method: "POST", token: VALID_TOKEN }));

@@ -22,6 +22,7 @@ export function SidebarStatus({ token }: SidebarStatusProps): JSX.Element {
         <li><span>Sentient</span> <code>{v ? fmt(v.gateway) : "…"}</code></li>
         <li><span>Hermes</span> <code>{v ? fmt(v.hermes) : "…"}</code></li>
         <li><span>STT</span> <code>{v ? fmt(v.stt_service) : "…"}</code></li>
+        <li><span>TTS</span> <code>{v ? fmt(v.tts_service) : "…"}</code></li>
       </ul>
     </div>
   );

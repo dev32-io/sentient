@@ -125,6 +125,7 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
     gatewayVersion: services.gatewayVersion,
     hermesVersionPath: services.hermesVersionPath,
     sttHealthUrl: services.sttHealthUrl,
+    ttsHealthUrl: services.ttsHealthUrl,
     tokens: services.auth.tokens,
   });
   const handleStatic = createWebuiHandler({ distDir: services.webDistDir });

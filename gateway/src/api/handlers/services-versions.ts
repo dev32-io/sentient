@@ -17,6 +17,7 @@ export interface ServicesVersionsDeps {
   gatewayVersion: string;
   hermesVersionPath: string;
   sttHealthUrl: string;
+  ttsHealthUrl: string;
   tokens: Pick<TokenService, "validate">;
 }
 
@@ -60,6 +61,7 @@ export function createServicesVersionsHandler(deps: ServicesVersionsDeps): Servi
         gateway: deps.gatewayVersion,
         hermes: "unknown",
         stt_service: "unknown",
+        tts_service: "unknown",
       };
       log.warn("services-versions.no-orchestrator", { userId: valid.value.userId });
       return Response.json(fallback, { status: HTTP_OK });
@@ -71,6 +73,7 @@ export function createServicesVersionsHandler(deps: ServicesVersionsDeps): Servi
         deps.gatewayVersion,
         deps.hermesVersionPath,
         deps.sttHealthUrl,
+        deps.ttsHealthUrl,
       );
     } catch (err: unknown) {
       const reason = err instanceof Error ? err.message : String(err);

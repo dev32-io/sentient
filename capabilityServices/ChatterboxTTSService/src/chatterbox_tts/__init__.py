@@ -7,4 +7,4 @@ JSONL event/metrics logging), independent process and dependency set.
 The wire protocol lands in a later task.
 """
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"

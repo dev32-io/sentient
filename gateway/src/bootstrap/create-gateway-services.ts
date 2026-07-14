@@ -77,6 +77,7 @@ export interface GatewayServices {
   readonly installState: InstallState;
   readonly hermesVersionPath: string;
   readonly sttHealthUrl: string;
+  readonly ttsHealthUrl: string;
   readonly unlockCode: UnlockCode;
   readonly unlockCodePath: string;
   readonly gatewayVersion: string;
@@ -191,6 +192,7 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     installState,
     hermesVersionPath,
     sttHealthUrl: cfg.companions.stt_health_url,
+    ttsHealthUrl: cfg.companions.tts_health_url,
     unlockCode,
     unlockCodePath,
     gatewayVersion,

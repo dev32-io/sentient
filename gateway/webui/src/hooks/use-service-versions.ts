@@ -4,6 +4,7 @@ export interface ServiceVersions {
   gateway: string;
   hermes: string;
   stt_service: string;
+  tts_service: string;
 }
 
 export function useServiceVersions(token: string | null): ServiceVersions | null {
