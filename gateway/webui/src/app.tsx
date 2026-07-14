@@ -1,5 +1,6 @@
 import { createContext } from "preact";
 import type { ComponentChildren } from "preact";
+import { useComputed } from "@preact/signals";
 import { useContext, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
 import { AuthProvider, useAuth } from "./hooks/use-auth.tsx";
@@ -167,6 +168,10 @@ function AppInner() {
   // Gate against double-click: skip if a TTS toggle PUT is already in flight.
   const togglingRef = useRef(false);
   const cycleStatus = client.cycleStatus.value;
+  // Reactive (not `.value`-unwrapped) — passed down as a signal so the
+  // settings pane's voice-preview gate can subscribe without SettingsView
+  // itself re-rendering on every cycle-status change.
+  const assistantSpeaking = useComputed(() => client.cycleStatus.value === "speaking");
   const voiceMode = client.voiceMode.value;
   const tasks = client.tasks.value;
   const runningTasks = tasks.filter((t) => t.status === "running").length;
@@ -282,6 +287,7 @@ function AppInner() {
               initialTab={settingsTab}
               key={settingsNonce}
               onAudioApplied={client.patchPreferences}
+              assistantSpeaking={assistantSpeaking}
             />
           )
         }

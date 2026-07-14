@@ -1,7 +1,7 @@
 // gateway/webui/src/audio/wav-encoder.ts
 //
 // Minimal 16-bit PCM mono WAV encoder for the voice-cloning recorder
-// (components/voices/VoiceRecorder.tsx). The Task-15 voices service decodes
+// (components/voices/VoiceCapture.tsx). The Task-15 voices service decodes
 // uploaded reference clips with libsndfile/soundfile, which reads WAV/FLAC/
 // OGG but NOT audio/webm — Chrome MediaRecorder's default container. So the
 // recorder captures raw PCM via the existing capture-worklet primitive and

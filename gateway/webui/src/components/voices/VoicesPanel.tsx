@@ -1,17 +1,18 @@
 // gateway/webui/src/components/voices/VoicesPanel.tsx
 import type { JSX } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
-import { createLogger } from "@sentient/web-sdk";
+import type { ReadonlySignal } from "@preact/signals";
 import { createUseVoices } from "../../hooks/use-voices.ts";
+import { createUseVoicePreview } from "../../hooks/use-voice-preview.ts";
 import { useToast } from "../../hooks/use-toast.tsx";
-import { Card } from "../settings/primitives/card.tsx";
 import { PaneHead } from "../settings/primitives/pane-head.tsx";
+import { Btn } from "../settings/primitives/btn.tsx";
 import { Icon } from "../common/icon.tsx";
-import { VoiceRecorder } from "./VoiceRecorder.tsx";
-import { VoiceList } from "./VoiceList.tsx";
-
-const log = createLogger(["sentient", "webui", "voices", "panel"]);
-const ACCEPTED_UPLOAD_TYPES = ".wav,.flac,.ogg";
+import { VoiceFilterBar } from "./VoiceFilterBar.tsx";
+import { VoicePackGrid } from "./VoicePackGrid.tsx";
+import { AddVoiceModal } from "./AddVoiceModal.tsx";
+import { deriveTagOptions, filterPacks, type VoiceSource } from "./voice-filter.ts";
+import { createVoicesPanelHandlers } from "./voices-panel-handlers.ts";
 
 export interface VoicesPanelProps {
   token: string;
@@ -21,11 +22,19 @@ export interface VoicesPanelProps {
   /** Sync-only: settings-view mirrors this into profileDraft/profileOriginal
    *  so a later Apply on another tab doesn't revert the voice pick. */
   onActiveVoiceChanged: (voiceId: string) => void;
+  /** True while the assistant is mid-TTS playback — gates preview play so a
+   *  sample and the live reply never fight over the one audio output. */
+  assistantSpeaking?: ReadonlySignal<boolean>;
 }
 
-export function VoicesPanel({ token, activeVoiceId, onActiveVoiceChanged }: VoicesPanelProps): JSX.Element {
+export function VoicesPanel(props: VoicesPanelProps): JSX.Element {
+  const { token, activeVoiceId, onActiveVoiceChanged, assistantSpeaking } = props;
   const toast = useToast();
   const [busy, setBusy] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [source, setSource] = useState<VoiceSource>("all");
+  const [tags, setTags] = useState<string[]>([]);
 
   // Stable per token identity — onActiveVoiceChanged is a functional-setState
   // sync callback from settings-view (safe to close over the first instance).
@@ -33,6 +42,15 @@ export function VoicesPanel({ token, activeVoiceId, onActiveVoiceChanged }: Voic
     () => createUseVoices({ token, initialActiveId: activeVoiceId, onActiveVoiceChanged }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [token],
+  );
+  const preview = useMemo(
+    () => createUseVoicePreview(token, () => toast.show("Couldn't play preview", "error")),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [token],
+  );
+  const handlers = useMemo(
+    () => createVoicesPanelHandlers({ hook, preview, toast, setBusy }),
+    [hook, preview, toast],
   );
 
   useEffect(() => {
@@ -47,84 +65,56 @@ export function VoicesPanel({ token, activeVoiceId, onActiveVoiceChanged }: Voic
     hook.syncActiveId(activeVoiceId);
   }, [hook, activeVoiceId]);
 
-  async function handleCreate(audio: Blob, name: string): Promise<boolean> {
-    log.debug("create.requested", { audioBytes: audio.size, nameLength: name.length });
-    setBusy(true);
-    // TODO(Task 11-12): stopgap args — description/tags UI lands in the
-    // VoicesPanel rewrite; this panel doesn't collect them yet.
-    const r = await hook.createVoice(audio, name, "", []);
-    setBusy(false);
-    if (!r.ok) {
-      toast.show("Couldn't create voice", "error");
-      return false;
-    }
-    toast.show(
-      r.warning === "not-activated" ? "Voice saved, but activation failed — try selecting it below." : "Voice created",
-      r.warning ? "error" : "success",
-    );
-    // A `warning` still means the pack exists server-side — success.
-    return true;
-  }
+  // Preview audio must never outlive the pane — tab switch or unmount stops
+  // and revokes it, same as an explicit stop().
+  useEffect(() => () => preview.stop(), [preview]);
 
-  async function handleDelete(voiceId: string): Promise<void> {
-    log.debug("delete.requested", { voiceId });
-    setBusy(true);
-    const r = await hook.deleteVoice(voiceId);
-    setBusy(false);
-    if (!r.ok) {
-      toast.show("Couldn't delete voice", "error");
-      return;
-    }
-    toast.show(
-      r.warning === "profile-not-updated" ? "Voice deleted, but the active pick may be stale." : "Voice deleted",
-      r.warning ? "error" : "success",
-    );
-  }
+  const all = hook.voices.value ?? [];
+  const shown = filterPacks(all, { q, source, tags });
+  const allTags = deriveTagOptions(all);
+  const previewDisabled = assistantSpeaking?.value ?? false;
 
-  async function handleSetActive(voiceId: string): Promise<void> {
-    log.debug("setActive.requested", { voiceId });
-    setBusy(true);
-    const r = await hook.setActiveVoice(voiceId);
-    setBusy(false);
-    if (!r.ok) toast.show("Couldn't switch voice", "error");
-  }
-
-  async function handleUpload(e: Event): Promise<void> {
-    const input = e.target as HTMLInputElement;
-    const file = input.files?.[0] ?? null;
-    input.value = "";
-    if (!file) return;
-    const name = file.name.replace(/\.[^.]+$/, "") || "My voice";
-    await handleCreate(file, name);
+  function toggleTag(tag: string): void {
+    setTags((cur) => (cur.includes(tag) ? cur.filter((t) => t !== tag) : [...cur, tag]));
   }
 
   return (
     <>
-      <PaneHead title="Voices" sub="Record or upload a clip to clone a voice for Sentient's replies." />
+      <PaneHead
+        title="Voices"
+        sub="Record or upload a clip to clone a voice for Sentient's replies."
+        action={
+          <Btn kind="ghost" size="sm" icon={<Icon name="plus" size={11} />} onClick={() => setAddOpen(true)}>
+            Add voice
+          </Btn>
+        }
+      />
 
-      <Card title="Add a voice">
-        <VoiceRecorder onCreate={handleCreate} busy={busy} />
-        <div class="voices-upload">
-          <span class="voices-upload-hint">Or upload a WAV / FLAC / OGG clip:</span>
-          <label class="voices-upload-btn">
-            <Icon name="plus" size={12} />
-            Upload
-            <input type="file" accept={ACCEPTED_UPLOAD_TYPES} disabled={busy} onChange={(e) => void handleUpload(e)} />
-          </label>
-        </div>
-      </Card>
+      <VoiceFilterBar
+        q={q}
+        source={source}
+        activeTags={tags}
+        allTags={allTags}
+        onQ={setQ}
+        onSource={setSource}
+        onToggleTag={toggleTag}
+      />
 
-      <Card title="Your voices" padding={false}>
-        <VoiceList
-          voices={hook.voices.value}
-          loading={hook.loading.value}
-          error={hook.error.value}
-          activeId={hook.activeId.value}
-          busy={busy}
-          onSetActive={(id) => void handleSetActive(id)}
-          onDelete={(id) => void handleDelete(id)}
-        />
-      </Card>
+      <VoicePackGrid
+        packs={shown}
+        loading={hook.loading.value}
+        error={hook.error.value}
+        activeId={hook.activeId.value}
+        previewId={preview.previewId.value}
+        previewLoadingId={preview.loadingId.value}
+        previewDisabled={previewDisabled}
+        busy={busy}
+        onPlay={(id) => handlers.handlePlay(id, previewDisabled)}
+        onPick={(id) => void handlers.handlePick(id)}
+        onDelete={(id) => void handlers.handleDelete(id)}
+      />
+
+      <AddVoiceModal open={addOpen} busy={busy} onClose={() => setAddOpen(false)} onCreate={handlers.handleCreate} />
     </>
   );
 }

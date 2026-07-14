@@ -941,18 +941,8 @@
 }
 .settings-v2 .voices-rec-row .tf { flex: 1 1 auto; }
 
-.settings-v2 .voices-upload {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--color-line-soft);
-}
-.settings-v2 .voices-upload-hint {
-  font-size: 12px;
-  color: var(--color-ink-3);
-}
+/* Upload trigger — pill-shaped label wrapping a visually-hidden file input.
+ * Used by AddVoiceModal's "upload" capture mode. */
 .settings-v2 .voices-upload-btn {
   position: relative;
   display: inline-flex;
@@ -978,6 +968,116 @@
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
 }
+
+/* ---- Voice filter bar (search + source segmented + tag chips) ---- */
+.settings-v2 .voice-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.settings-v2 .voice-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.settings-v2 .voice-filter-row > .srch { flex: 1 1 220px; }
+.settings-v2 .voice-filter-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* ---- Voice pack grid — responsive cards, one per built-in/cloned voice ---- */
+.settings-v2 .vp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.settings-v2 .vp-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  background: var(--color-paper);
+  border: 1px solid var(--color-line-soft);
+  border-radius: 12px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.settings-v2 .vp-tile:hover { border-color: var(--color-line); }
+/* Active pick — same accent-tint treatment as .mod.is-sel for visual parity
+ * across the settings surface's selectable-card patterns. */
+.settings-v2 .vp-tile.on {
+  border-color: color-mix(in oklab, var(--color-accent) 60%, var(--color-line));
+  background: color-mix(in oklab, var(--color-accent) 5%, var(--color-paper));
+}
+
+.settings-v2 .vp-tile-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.settings-v2 .vp-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--color-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Built-in vs cloned — the badge is the primary visual distinguisher the
+ * spec calls for, so it gets its own accent (sage) vs. neutral pairing. */
+.settings-v2 .vp-badge {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  line-height: 1.5;
+}
+.settings-v2 .vp-badge-builtin {
+  background: var(--color-bg-sunk);
+  color: var(--color-ink-3);
+}
+.settings-v2 .vp-badge-user {
+  background: var(--color-sage-soft);
+  color: var(--color-sage);
+}
+
+.settings-v2 .vp-desc {
+  font-size: 12px;
+  color: var(--color-ink-2);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.settings-v2 .vp-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.settings-v2 .vp-tag {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--color-ink-3);
+}
+
+.settings-v2 .vp-acts {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 6px;
+}
+/* Pick/Active is always the 2nd action (Play first, optional Delete last) —
+ * let it grow to fill the row so the icon-only buttons stay compact. */
+.settings-v2 .vp-acts > .btn:nth-child(2) { flex: 1 1 auto; }
 
 /* ---- Add-voice modal (record/upload + metadata form) ---- */
 .settings-v2 .voices-add-body {

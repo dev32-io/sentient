@@ -1,6 +1,7 @@
 // gateway/webui/src/components/settings/settings-view.tsx
 import type { JSX } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
+import type { ReadonlySignal } from "@preact/signals";
 import { createLogger } from "@sentient/web-sdk";
 import { useAuth } from "../../hooks/use-auth.tsx";
 import {
@@ -41,9 +42,16 @@ export interface SettingsViewProps {
    * new values without waiting for reconnect.
    */
   onAudioApplied?: (patch: { ttsEnabled: boolean; channel: "voice" | "text" }) => void;
+  /** True while the assistant is mid-TTS playback — forwarded to the Voices
+   *  pane so it can gate sample preview against the live reply's audio. */
+  assistantSpeaking?: ReadonlySignal<boolean>;
 }
 
-export function SettingsView({ initialTab = "memory", onAudioApplied }: SettingsViewProps = {}): JSX.Element {
+export function SettingsView({
+  initialTab = "memory",
+  onAudioApplied,
+  assistantSpeaking,
+}: SettingsViewProps = {}): JSX.Element {
   const auth = useAuth();
   const profileApi = useMemo(() => createProfileApi(), []);
   const providersApi = useMemo(() => createProvidersApi(), []);
@@ -252,6 +260,7 @@ export function SettingsView({ initialTab = "memory", onAudioApplied }: Settings
               token={token}
               activeVoiceId={profileOriginal?.voice.id ?? "default"}
               onActiveVoiceChanged={onActiveVoiceChanged}
+              {...(assistantSpeaking ? { assistantSpeaking } : {})}
             />
           )}
           {tab === "audio" && profileDraft && (
