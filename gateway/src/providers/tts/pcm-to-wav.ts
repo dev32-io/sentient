@@ -6,8 +6,13 @@ const BYTES_PER_SAMPLE = 2;
 const FMT_CHUNK_SIZE = 16;
 const RIFF_TAIL_BYTES = 36;
 
-/** Wrap raw PCM16-LE mono bytes in a WAV container (44-byte header). */
-export function pcmToWav(pcm: Uint8Array, sampleRate: number): Uint8Array {
+/** Wrap raw PCM16-LE mono bytes in a WAV container (44-byte header). Return
+ *  type is pinned to the concrete `Uint8Array<ArrayBuffer>` (not the
+ *  default-generic `Uint8Array<ArrayBufferLike>`) — TS 5.7+ generic
+ *  TypedArrays otherwise make this unassignable to `BodyInit` at the
+ *  `new Response(wav, ...)` call site (SharedArrayBuffer is a valid
+ *  ArrayBufferLike but not a valid Response body backing). */
+export function pcmToWav(pcm: Uint8Array, sampleRate: number): Uint8Array<ArrayBuffer> {
   const out = new Uint8Array(HEADER_BYTES + pcm.length);
   const dv = new DataView(out.buffer);
   writeAscii(out, 0, "RIFF");

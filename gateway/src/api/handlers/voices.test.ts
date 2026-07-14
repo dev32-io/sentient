@@ -24,6 +24,7 @@ interface FakeWebSocket {
   close: ReturnType<typeof vi.fn>;
   _openHandshake(): void;
   _receiveText(msg: object): void;
+  _receiveBinary(bytes: Uint8Array): void;
 }
 
 function makeFakeWebSocket(): FakeWebSocket {
@@ -44,6 +45,9 @@ function makeFakeWebSocket(): FakeWebSocket {
     },
     _receiveText(msg: object) {
       ws.onmessage?.({ data: JSON.stringify(msg) } as MessageEvent<string>);
+    },
+    _receiveBinary(bytes: Uint8Array) {
+      ws.onmessage?.({ data: bytes.buffer } as MessageEvent<ArrayBuffer>);
     },
   };
   return ws;
@@ -157,6 +161,11 @@ function makeDeps(overrides: Partial<VoicesHandlerDeps> = {}): {
     ttsUrl: "ws://host.docker.internal:8770",
     connectTimeoutMs: 1000,
     opTimeoutMs: 1000,
+    previewGreetings: ["Hi, I'm your family's Sentient assistant."],
+    previewTimeoutMs: 1000,
+    descriptionMaxLen: 240,
+    tagMaxLen: 24,
+    maxTags: 8,
     socketFactory: factory,
     ...overrides,
   };
@@ -195,6 +204,13 @@ function makeCreateForm(name = "Dad", audioBytes = new Uint8Array([1, 2, 3, 4]))
 function makeDeleteRequest(voiceId: string, bearerToken?: string | null): Request {
   return new Request(`http://localhost/api/v1/voices/${voiceId}`, {
     method: "DELETE",
+    headers: authHeaders(bearerToken),
+  });
+}
+
+function makePreviewRequest(voiceId: string, bearerToken?: string | null): Request {
+  return new Request(`http://localhost/api/v1/voices/${voiceId}/preview`, {
+    method: "POST",
     headers: authHeaders(bearerToken),
   });
 }
@@ -272,8 +288,7 @@ describe("POST /api/v1/voices", () => {
     expect(body).toEqual({ voiceId: VALID_VOICE_ID, name: "Dad" });
 
     // First send is the JSON voice.create control frame, second is the raw binary WAV.
-    // description/tags are stopgap empty placeholders here — real multipart
-    // parsing lands in Task 7.
+    // No description/tags were set on the form, so both go through as empty defaults.
     expect(ws.send).toHaveBeenCalledTimes(2);
     expect(JSON.parse(ws.send.mock.calls[0]?.[0])).toEqual({
       type: "voice.create",
@@ -287,6 +302,45 @@ describe("POST /api/v1/voices", () => {
       expect.objectContaining({ voice: { provider: "local-tts", id: VALID_VOICE_ID } }),
     );
     expect(deps.refreshVoice).toHaveBeenCalledWith("alice");
+  });
+
+  it("POST create forwards description and tags", async () => {
+    const { deps, getWs } = makeDeps();
+    const form = makeCreateForm("Dad");
+    form.set("description", "Warm, low register");
+    form.append("tags", "family");
+    form.append("tags", "warm");
+
+    const responsePromise = createVoicesHandler(deps)(makePostRequest(form));
+    const ws = await autoReply(getWs, {
+      type: "voice.created",
+      voiceId: VALID_VOICE_ID,
+      name: "Dad",
+      createdAt: 1752400000.0,
+    });
+    await responsePromise;
+
+    expect(JSON.parse(ws.send.mock.calls[0]?.[0])).toEqual({
+      type: "voice.create",
+      name: "Dad",
+      description: "Warm, low register",
+      tags: ["family", "warm"],
+    });
+  });
+
+  it("POST create rejects over-cap tags with 422", async () => {
+    const { deps, getWs } = makeDeps({ maxTags: 2 });
+    const form = makeCreateForm("Dad");
+    form.append("tags", "a");
+    form.append("tags", "b");
+    form.append("tags", "c");
+
+    const response = await createVoicesHandler(deps)(makePostRequest(form));
+
+    expect(response.status).toBe(422);
+    const body = await response.json();
+    expect(body.error).toBe("invalid-request");
+    expect(getWs()).toBeNull();
   });
 
   it("returns 422 invalid-request when name is missing/empty, without opening a WS", async () => {
@@ -406,12 +460,38 @@ describe("DELETE /api/v1/voices/:id", () => {
   it("returns 422 invalid-voice-id for a structurally-invalid id, without opening a WS", async () => {
     const { deps, getWs } = makeDeps();
 
-    const response = await createVoicesHandler(deps)(makeDeleteRequest("not-32-hex"));
+    // Uppercase + underscore fall outside the widened [a-z0-9-]{1,32} shape
+    // (hex OR built-in slug) — still rejected pre-service, same as an
+    // over-length id or a traversal-shaped one.
+    const response = await createVoicesHandler(deps)(makeDeleteRequest("Not_A_Valid-ID"));
 
     expect(response.status).toBe(422);
     const body = await response.json();
     expect(body.error).toBe("invalid-voice-id");
     expect(getWs()).toBeNull();
+  });
+
+  it("DELETE accepts a slug id shape", async () => {
+    const { deps, getWs } = makeDeps();
+
+    const responsePromise = createVoicesHandler(deps)(makeDeleteRequest("nova"));
+    const ws = await autoReply(getWs, { type: "voice.deleted", voiceId: "nova" });
+    const response = await responsePromise;
+
+    expect(response.status).toBe(200);
+    expect(ws.send).toHaveBeenCalledWith(JSON.stringify({ type: "voice.delete", voiceId: "nova" }));
+  });
+
+  it("maps service builtin-voice error to 409", async () => {
+    const { deps, getWs } = makeDeps();
+
+    const responsePromise = createVoicesHandler(deps)(makeDeleteRequest("nova"));
+    await autoReply(getWs, { type: "error", reason: "builtin-voice" });
+    const response = await responsePromise;
+
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body).toEqual({ error: "builtin-voice" });
   });
 
   it("returns 502 tts-unreachable on a transport failure (connect refused)", async () => {
@@ -461,5 +541,43 @@ describe("DELETE /api/v1/voices/:id", () => {
     expect(body).toEqual({ voiceId: VALID_VOICE_ID });
     expect(profileStore.save).not.toHaveBeenCalled();
     expect(deps.refreshVoice).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/v1/voices/:id/preview", () => {
+  it("returns 200 audio/wav after a ready -> audio -> done synth sequence", async () => {
+    const { deps, getWs } = makeDeps();
+    const handler = createVoicesHandler(deps);
+
+    const responsePromise = handler(makePreviewRequest("nova"));
+    const ws = await waitForSocket(getWs);
+    ws._openHandshake();
+    ws._receiveText({ type: "ready", format: "pcm", sample_rate: 24000, voice: "nova" });
+    ws._receiveBinary(new Uint8Array([1, 2, 3, 4]));
+    ws._receiveText({ type: "done", requestId: "r1", ttfa_ms: 0, rtf: 0, audio_seconds: 0 });
+    const response = await responsePromise;
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("audio/wav");
+    expect((await response.arrayBuffer()).byteLength).toBeGreaterThan(44);
+  });
+
+  it("maps tts-unreachable to 502 when the socket closes before ready", async () => {
+    const { deps, getWs } = makeDeps();
+
+    const responsePromise = createVoicesHandler(deps)(makePreviewRequest("nova"));
+    const ws = await waitForSocket(getWs);
+    ws.close();
+    const response = await responsePromise;
+
+    expect(response.status).toBe(502);
+    const body = await response.json();
+    expect(body.error).toBe("tts-unreachable");
+  });
+
+  it("returns 401 when the bearer token is missing", async () => {
+    const { deps } = makeDeps();
+    const response = await createVoicesHandler(deps)(makePreviewRequest("nova", null));
+    expect(response.status).toBe(401);
   });
 });

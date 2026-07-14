@@ -1,16 +1,26 @@
 import type { Result } from "@sentient/protocol";
 import { getLog } from "../../logging/logger.js";
-import type { ProfileStore, ProfileStoreError } from "../../profile-store/profile-store.js";
-import type { ProfileV1 } from "../../profile-store/profile-types.js";
+import type { ProfileStore } from "../../profile-store/profile-store.js";
 import {
   type VoiceMgmtConfig,
   type VoiceMgmtSocketFactory,
-  type VoiceOpError,
   createVoice,
   deleteVoice,
   listVoices,
 } from "../../providers/tts/voice-mgmt-client.js";
 import type { TokenService } from "../../user-auth/token-service.js";
+import { type CreateFormInput, parseCreateForm } from "./voices-create-form.js";
+import {
+  HTTP_METHOD,
+  HTTP_NOT_FOUND,
+  HTTP_OK,
+  HTTP_UNAUTHORIZED,
+  HTTP_UNPROCESSABLE,
+  jsonError,
+  mapVoiceOpError,
+} from "./voices-http.js";
+import { handleVoicesPreview } from "./voices-preview.js";
+import { activateVoice, deactivateIfActive } from "./voices-profile-sync.js";
 
 const log = getLog(["sentient", "gateway", "api", "voices"]);
 
@@ -36,14 +46,6 @@ const log = getLog(["sentient", "gateway", "api", "voices"]);
 // IDOR); resolved as by-design after confirming the shared-library intent.
 // ---------------------------------------------------------------------------
 
-const HTTP_OK = 200;
-const HTTP_UNAUTHORIZED = 401;
-const HTTP_NOT_FOUND = 404;
-const HTTP_METHOD = 405;
-const HTTP_UNPROCESSABLE = 422;
-const HTTP_BAD_GATEWAY = 502;
-const HTTP_TIMEOUT = 504;
-
 // Warning codes surfaced on an otherwise-200 body when the TTS service already
 // committed the irreversible primary op (create under the synth lock / delete)
 // but a secondary LOCAL profile read/save failed. The voiceId is never dropped
@@ -51,13 +53,14 @@ const HTTP_TIMEOUT = 504;
 const WARNING_NOT_ACTIVATED = "not-activated";
 const WARNING_PROFILE_NOT_UPDATED = "profile-not-updated";
 
-// Reset target when the deleted voice was the caller's active pick — mirrors
-// cfg.tts.voice_id's "default" sentinel (falls back to the model's built-in
-// default voice at synthesis time; see local-tts-protocol's connect-URL doc).
-const DEFAULT_VOICE_ID = "default";
-const VOICE_NAME_MAX_LEN = 64;
-const VOICE_ID_SHAPE_RE = /^[0-9a-f]{32}$/;
+// Hex (a service-generated user voiceId, 32 chars) OR a lowercase slug (a
+// built-in voice's id, e.g. "nova") — widened from hex-only so DELETE can
+// reach a built-in id and mapVoiceOpError can surface the service's real
+// 409 builtin-voice rejection instead of a pre-service 422. Still blocks
+// traversal / injection shapes: no ".", "/", uppercase, or unicode.
+const VOICE_ID_SHAPE_RE = /^[a-z0-9-]{1,32}$/;
 const VOICE_ID_PATH_RE = /^\/api\/v1\/voices\/([^/]+)$/;
+const VOICE_PREVIEW_PATH_RE = /^\/api\/v1\/voices\/([^/]+)\/preview$/;
 
 export interface VoicesHandlerDeps {
   tokens: Pick<TokenService, "validate">;
@@ -69,6 +72,19 @@ export interface VoicesHandlerDeps {
   ttsUrl: string;
   connectTimeoutMs: number;
   opTimeoutMs: number;
+  /** Configured pool of short greeting lines — POST .../preview picks one at
+   *  random and synthesizes it live in the target voice. */
+  previewGreetings: readonly string[];
+  /** Max ms to await a preview synth reply. Separate from opTimeoutMs: a full
+   *  TTS render legitimately runs longer than a voice.create/list/delete
+   *  control round-trip. */
+  previewTimeoutMs: number;
+  /** create/edit description char cap (services.ttsConfig.voice_description_max_len). */
+  descriptionMaxLen: number;
+  /** Per-tag char cap (services.ttsConfig.voice_tag_max_len). */
+  tagMaxLen: number;
+  /** Max tag count per voice (services.ttsConfig.voice_max_tags). */
+  maxTags: number;
   /** Production uses the global WebSocket; tests inject a fake. */
   socketFactory?: VoiceMgmtSocketFactory;
 }
@@ -90,6 +106,12 @@ async function handleVoices(deps: VoicesHandlerDeps, request: Request): Promise<
   const { pathname } = new URL(request.url);
 
   if (pathname === "/api/v1/voices") return dispatchCollection(deps, request, userId);
+
+  const previewMatch = VOICE_PREVIEW_PATH_RE.exec(pathname);
+  if (previewMatch) {
+    if (request.method !== "POST") return new Response("Method Not Allowed", { status: HTTP_METHOD });
+    return handleVoicesPreview(deps, decodeURIComponent(previewMatch[1] ?? ""), request.signal);
+  }
 
   const idMatch = VOICE_ID_PATH_RE.exec(pathname);
   if (idMatch) return dispatchVoiceId(deps, request, userId, decodeURIComponent(idMatch[1] ?? ""));
@@ -123,16 +145,21 @@ async function handleVoicesGet(deps: VoicesHandlerDeps, userId: string, signal: 
 }
 
 async function handleVoicesPost(deps: VoicesHandlerDeps, userId: string, request: Request): Promise<Response> {
-  const parsed = await parseCreateForm(request);
+  const parsed: Result<CreateFormInput, string> = await parseCreateForm(deps, request);
   if (!parsed.ok) {
     log.warn("create.invalid-request", { userId, reason: parsed.error });
     return jsonError(HTTP_UNPROCESSABLE, "invalid-request", parsed.error);
   }
 
   const audio = await parsed.value.audio.arrayBuffer();
-  // Stopgap: description/tags multipart parsing lands in Task 7. For now
-  // every gateway-created voice pack gets an empty description/tags.
-  const result = await createVoice(buildCfg(deps), parsed.value.name, audio, request.signal, "", []);
+  const result = await createVoice(
+    buildCfg(deps),
+    parsed.value.name,
+    audio,
+    request.signal,
+    parsed.value.description,
+    parsed.value.tags,
+  );
   if (!result.ok) return mapVoiceOpError(result.error);
 
   const { voiceId, name } = result.value;
@@ -176,72 +203,6 @@ async function handleVoicesDelete(
   return Response.json({ voiceId }, { status: HTTP_OK });
 }
 
-/** Sets `profile.voice = {provider:"local-tts", id: voiceId}` and live-propagates it.
- *  Creating a voice activates it — the plan's stated contract. */
-async function activateVoice(deps: VoicesHandlerDeps, userId: string, voiceId: string): Promise<Result<void, string>> {
-  return writeVoiceId(deps, userId, voiceId);
-}
-
-/** Resets `profile.voice.id` to "default" ONLY when the deleted id was the
- *  caller's current active voice. No profile write otherwise — deleting an
- *  inactive pack must not disturb the active pick. */
-async function deactivateIfActive(
-  deps: VoicesHandlerDeps,
-  userId: string,
-  deletedVoiceId: string,
-): Promise<Result<void, string>> {
-  const got = await deps.profileStore.get(userId);
-  if (!got.ok) {
-    // The service-side deletion already succeeded (idempotent op); a failed
-    // profile read here means we can't tell whether a reset is owed, not
-    // that the delete itself failed. Log and don't fail the whole request.
-    log.warn("delete.profile-read-failed", { userId, reason: got.error });
-    return { ok: true, value: undefined };
-  }
-  if (got.value.voice.id !== deletedVoiceId) return { ok: true, value: undefined };
-  return writeVoiceId(deps, userId, DEFAULT_VOICE_ID);
-}
-
-async function writeVoiceId(deps: VoicesHandlerDeps, userId: string, voiceId: string): Promise<Result<void, string>> {
-  const got = await deps.profileStore.get(userId);
-  if (!got.ok) return mapProfileStoreError(got.error);
-
-  const updated: ProfileV1 = { ...got.value, voice: { provider: "local-tts", id: voiceId } };
-  const saved = await deps.profileStore.save(updated);
-  if (!saved.ok) return mapProfileStoreError(saved.error);
-
-  await deps.refreshVoice(userId);
-  return { ok: true, value: undefined };
-}
-
-function mapProfileStoreError(error: ProfileStoreError): Result<void, string> {
-  return { ok: false, error };
-}
-
-interface CreateFormInput {
-  readonly name: string;
-  readonly audio: Blob;
-}
-
-async function parseCreateForm(request: Request): Promise<Result<CreateFormInput, string>> {
-  let form: FormData;
-  try {
-    form = await request.formData();
-  } catch {
-    return { ok: false, error: "malformed multipart body" };
-  }
-
-  const nameRaw = form.get("name");
-  const name = typeof nameRaw === "string" ? nameRaw.trim() : "";
-  if (!name) return { ok: false, error: "name is required" };
-  if (name.length > VOICE_NAME_MAX_LEN) return { ok: false, error: `name exceeds ${VOICE_NAME_MAX_LEN} chars` };
-
-  const audio = form.get("audio");
-  if (!(audio instanceof Blob)) return { ok: false, error: "audio file is required" };
-
-  return { ok: true, value: { name, audio } };
-}
-
 function buildCfg(deps: VoicesHandlerDeps): VoiceMgmtConfig {
   return {
     url: deps.ttsUrl,
@@ -251,31 +212,10 @@ function buildCfg(deps: VoicesHandlerDeps): VoiceMgmtConfig {
   };
 }
 
-function mapVoiceOpError(error: VoiceOpError): Response {
-  switch (error.kind) {
-    case "service-error":
-      return Response.json({ error: "voice-op-failed", reason: error.reason }, { status: HTTP_UNPROCESSABLE });
-    case "timeout":
-      return jsonError(HTTP_TIMEOUT, "voice-op-timeout");
-    case "transport":
-      return jsonError(HTTP_BAD_GATEWAY, "tts-unreachable");
-    default:
-      return assertNever(error);
-  }
-}
-
-function assertNever(value: never): never {
-  throw new Error(`unreachable: ${JSON.stringify(value)}`);
-}
-
 function readBearer(request: Request): string | null {
   const h = request.headers.get("authorization");
   if (!h) return null;
   const parts = h.split(" ");
   if (parts.length !== 2 || parts[0]?.toLowerCase() !== "bearer") return null;
   return parts[1] ?? null;
-}
-
-function jsonError(status: number, code: string, reason?: string): Response {
-  return Response.json(reason !== undefined ? { error: code, reason } : { error: code }, { status });
 }

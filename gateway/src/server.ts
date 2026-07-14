@@ -158,6 +158,11 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
     ttsUrl: services.ttsConfig.url,
     connectTimeoutMs: services.ttsConfig.connect_timeout_ms,
     opTimeoutMs: services.ttsConfig.voice_op_timeout_ms,
+    previewGreetings: services.ttsConfig.preview_greetings,
+    previewTimeoutMs: services.ttsConfig.preview_timeout_ms,
+    descriptionMaxLen: services.ttsConfig.voice_description_max_len,
+    tagMaxLen: services.ttsConfig.voice_tag_max_len,
+    maxTags: services.ttsConfig.voice_max_tags,
   });
   const handleDiagnostics = createDiagnosticsHandler({ tokens: services.auth.tokens });
 
