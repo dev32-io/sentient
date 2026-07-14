@@ -77,10 +77,17 @@ export const ttsConfigSchema = z.object({
   // host.docker.internal (same pattern as native-whisper STT).
   url: z.string().default("ws://host.docker.internal:8770"),
   voice_id: z.string().default("default"),
-  // opus/48000 is the local-tts live-path contract — see
-  // local-tts-provider.ts's LIVE_ENCODING/LIVE_SAMPLE_RATE. These fields
-  // shape the connect-time negotiation query string only.
-  format: z.enum(["opus", "pcm"]).default("opus"),
+  // The gateway live path is opus-only: webui + mobile decoders only
+  // understand OGG-Opus, and local-tts-provider.ts's LIVE_ENCODING/
+  // LIVE_SAMPLE_RATE hardcode the "opus" tag on every TTSAudioChunk
+  // regardless of what's requested here. "pcm" is a real, tested wire
+  // format the ChatterboxTTSService SUPPORTS (see
+  // capabilityServices/ChatterboxTTSService's `?format=pcm` negotiation)
+  // for direct, non-gateway consumers (e.g. audiobook generation) — but
+  // the gateway itself never requests it, so the enum only offers the
+  // value the gateway can actually decode. These fields shape the
+  // connect-time negotiation query string only.
+  format: z.enum(["opus"]).default("opus"),
   sample_rate: z.number().int().min(1).default(48000),
   connect_timeout_ms: z.number().int().min(1000).default(10000),
   // Max ms to await a voice.create/list/delete reply from the local TTS

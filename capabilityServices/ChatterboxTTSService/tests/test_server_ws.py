@@ -23,12 +23,25 @@ import asyncio
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 from websockets.asyncio.client import connect
 
 from chatterbox_tts.server import Server
 
 from .conftest import _make_config, _serve, _StubEngine, _StubVoiceStore
+
+# Negotiated PCM contract values (CONTRACT.md §1.1 / audio_constants.py's
+# SOURCE_SAMPLE_RATE) — literals per this file's sibling live test above;
+# named here only because the tolerance check below reuses the rate twice.
+_PCM_CONTRACT_SAMPLE_RATE = 24000
+_PCM16_BYTES_PER_SAMPLE = 2
+# Relative slack for the decoded-sample-count vs. audio_seconds*rate check:
+# requesting the engine's native SOURCE_SAMPLE_RATE (24000) is an identity
+# resample, so this should track tightly, but per-chunk soxr calls (no
+# cross-chunk resampler state, see PcmEncoder.encode) can shift by a few
+# samples at each chunk boundary.
+_SAMPLE_COUNT_TOLERANCE = 0.05
 
 
 def test_ready_echoes_negotiated_params(tmp_path):
@@ -201,6 +214,80 @@ def test_real_synthesis_roundtrip(tmp_path):
                 assert done["requestId"] == started["requestId"]
                 assert done["ttfa_ms"] > 0
                 assert done["audio_seconds"] > 0
+        finally:
+            ws_server.close()
+            await ws_server.wait_closed()
+
+    asyncio.run(run())
+
+
+@pytest.mark.live
+def test_real_synthesis_pcm_negotiation_roundtrip(tmp_path):
+    """Live: ``?format=pcm&sample_rate=24000`` negotiation streams
+    decodable PCM16 audio end-to-end with the real model — the
+    audiobook-reuse guarantee (Task 17). The SERVICE stays
+    codec-negotiable for direct consumers like this even though the
+    gateway's live path only ever requests opus (see
+    ``shared/config/src/schema.ts``'s ``ttsConfigSchema``, opus-only by
+    schema as of Task 17).
+
+    The wire ``done`` event carries no ``sample_rate`` field (only
+    ``requestId``/``ttfa_ms``/``rtf``/``audio_seconds`` —
+    ``wire_protocol.py``'s ``_done_payload``, matching CONTRACT.md's
+    ``done`` field table), so the negotiated rate is checked two ways
+    instead: the ``ready`` echo (mirrors
+    ``test_ready_echoes_negotiated_params``'s stub coverage, now against
+    the real engine), and at the data level — 24000 is also the engine's
+    native ``SOURCE_SAMPLE_RATE`` (``audio_constants.py``), so requesting
+    it is an identity resample and the decoded PCM16 sample count must
+    track ``done["audio_seconds"] * 24000`` closely.
+    """
+    from chatterbox_tts.chatterbox_mlx import ChatterboxEngine
+    from chatterbox_tts.voice_store import VoiceStore
+
+    async def run() -> None:
+        config = _make_config(tmp_path)
+        engine = ChatterboxEngine("mlx-community/Chatterbox-Turbo-TTS-8bit", 0.5, 0.5)
+        engine.warm()
+        voice_store = VoiceStore(engine, Path(config.voice_dir))
+        server = Server(config, engine, voice_store)
+        ws_server, port = await _serve(server)
+        try:
+            url = f"ws://127.0.0.1:{port}/?format=pcm&sample_rate={_PCM_CONTRACT_SAMPLE_RATE}"
+            async with connect(url) as ws:
+                ready = json.loads(await ws.recv())
+                assert ready == {
+                    "type": "ready", "format": "pcm",
+                    "sample_rate": _PCM_CONTRACT_SAMPLE_RATE, "voice": None,
+                }
+
+                await ws.send(json.dumps({"type": "text", "text": "Hello."}))
+                await ws.send(json.dumps({"type": "end"}))
+
+                started = json.loads(await ws.recv())
+                assert started["type"] == "started"
+
+                frames: list[bytes] = []
+                done = None
+                while done is None:
+                    frame = await ws.recv()
+                    if isinstance(frame, bytes):
+                        frames.append(frame)
+                    else:
+                        done = json.loads(frame)
+                        assert done["type"] == "done"
+
+                assert len(frames) >= 1
+                audio = b"".join(frames)
+                assert len(audio) % _PCM16_BYTES_PER_SAMPLE == 0
+
+                samples = np.frombuffer(audio, dtype="<i2")
+                assert samples.size > 0
+                assert np.any(samples != 0)  # plausible (non-silent) content
+
+                assert done["requestId"] == started["requestId"]
+                expected_samples = done["audio_seconds"] * _PCM_CONTRACT_SAMPLE_RATE
+                assert abs(samples.size - expected_samples) <= expected_samples * _SAMPLE_COUNT_TOLERANCE
         finally:
             ws_server.close()
             await ws_server.wait_closed()

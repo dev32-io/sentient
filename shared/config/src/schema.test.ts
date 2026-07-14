@@ -71,7 +71,7 @@ describe("gatewayConfigSchema", () => {
       tts: {
         url: "ws://localhost:8770",
         voice_id: "custom",
-        format: "pcm",
+        format: "opus",
         sample_rate: 44100,
       },
       session: { ...wsResilienceSession, barge_in: { no_interrupt_ms: 300 } },
@@ -79,7 +79,7 @@ describe("gatewayConfigSchema", () => {
     expect(result.stt.language).toBe("zh");
     expect(result.tts.url).toBe("ws://localhost:8770");
     expect(result.tts.voice_id).toBe("custom");
-    expect(result.tts.format).toBe("pcm");
+    expect(result.tts.format).toBe("opus");
     expect(result.tts.sample_rate).toBe(44100);
     expect(result.session.barge_in.no_interrupt_ms).toBe(300);
   });
@@ -91,6 +91,11 @@ describe("gatewayConfigSchema", () => {
 
   it("rejects invalid TTS format", () => {
     const invalid = { ...minimalValidConfig, tts: { format: "wav" } };
+    expect(gatewayConfigSchema.safeParse(invalid).success).toBe(false);
+  });
+
+  it("rejects tts.format: pcm — gateway live path is opus-only", () => {
+    const invalid = { ...minimalValidConfig, tts: { format: "pcm" } };
     expect(gatewayConfigSchema.safeParse(invalid).success).toBe(false);
   });
 

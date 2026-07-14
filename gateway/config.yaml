@@ -125,7 +125,7 @@ stt:
 tts:
   url: ws://host.docker.internal:8770 # local-tts (ChatterboxTTSService) WS endpoint
   voice_id: default                  # gateway-wide fallback voice. Per-user voice from profile.json#voice.id wins.
-  format: opus                       # local-tts live-path contract; also the end-to-end opus pivot (OGG-Opus → ogg-opus-decoder WASM in webui).
+  format: opus                       # ONLY valid value (schema-enforced) — gateway live path is opus-only; end-to-end opus pivot (OGG-Opus → ogg-opus-decoder WASM in webui).
   sample_rate: 48000                 # Opus standard rate.
   connect_timeout_ms: 10000
   # Max ms to await a voice.create/list/delete reply from the local TTS
