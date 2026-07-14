@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { endMsg, textMsg } from "./local-tts-protocol.ts";
 import { type PreviewSynthConfig, synthesizePreview } from "./preview-synth-client.ts";
 
 // ---------------------------------------------------------------------------
@@ -47,6 +48,10 @@ async function waitForSocket(getWs: () => FakeWebSocket | null): Promise<FakeWeb
 
 interface FakeSynth {
   cfg: PreviewSynthConfig;
+  /** The URL `synthesizePreview` passed to `socketFactory`, captured on construct. */
+  getConnectUrl: () => string | null;
+  /** The wrapped fake socket, so tests can inspect recorded `send(...)` args in order. */
+  getWs: () => FakeWebSocket | null;
   emit: {
     open: () => Promise<void>;
     ready: () => void;
@@ -59,11 +64,13 @@ interface FakeSynth {
 
 function makeFakeSynth(): FakeSynth {
   let ws: FakeWebSocket | null = null;
+  let connectUrl: string | null = null;
   const cfg: PreviewSynthConfig = {
     url: "ws://host.docker.internal:8770",
     connectTimeoutMs: 1000,
     opTimeoutMs: 1000,
-    socketFactory: (_url: string) => {
+    socketFactory: (url: string) => {
+      connectUrl = url;
       ws = makeFakeWebSocket();
       return ws as unknown as WebSocket;
     },
@@ -72,6 +79,8 @@ function makeFakeSynth(): FakeSynth {
   const receiveBinary = (bytes: Uint8Array) => ws?.onmessage?.({ data: bytes.buffer } as MessageEvent<ArrayBuffer>);
   return {
     cfg,
+    getConnectUrl: () => connectUrl,
+    getWs: () => ws,
     emit: {
       open: async () => {
         const socket = await waitForSocket(() => ws);
@@ -107,14 +116,24 @@ describe("synthesizePreview", () => {
     }
   });
 
-  it("sends text + end on open, targeting the requested voice via the connect URL", async () => {
-    const { cfg, emit } = makeFakeSynth();
+  it("connects with format=pcm + sample_rate=24000 + the requested voice, then sends text before end on open", async () => {
+    const { cfg, emit, getConnectUrl, getWs } = makeFakeSynth();
     const p = synthesizePreview(cfg, "nova", "hello", new AbortController().signal);
     await emit.open();
     emit.ready();
     emit.done();
     await p;
-    expect(cfg.socketFactory).toBeDefined();
+
+    const url = getConnectUrl();
+    expect(url).not.toBeNull();
+    expect(url).toContain("format=pcm");
+    expect(url).toContain("sample_rate=24000");
+    expect(url).toContain("voice=nova");
+
+    const ws = getWs();
+    expect(ws).not.toBeNull();
+    expect(ws?.send).toHaveBeenNthCalledWith(1, textMsg("hello"));
+    expect(ws?.send).toHaveBeenNthCalledWith(2, endMsg());
   });
 
   it("maps a transport failure (socket closes before done) to VoiceOpError transport", async () => {
