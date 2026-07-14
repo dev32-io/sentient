@@ -99,7 +99,7 @@ export function VoiceCapture({ onBlob, disabled = false }: VoiceCaptureProps): J
     return (
       <div class="voices-rec voices-rec--denied">
         <p class="pane-error">
-          {deniedMessage ?? "Microphone access denied."} Use the upload option below instead.
+          {deniedMessage ?? "Microphone access denied."} Use the Upload tab instead.
         </p>
       </div>
     );

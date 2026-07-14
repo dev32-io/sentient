@@ -168,7 +168,9 @@ interface TagEditorProps {
 function TagEditor({ tags, onChange, disabled = false }: TagEditorProps): JSX.Element {
   const [draft, setDraft] = useState("");
   const atCap = tags.length >= MAX_TAGS;
-  const suggestions = SUGGESTED_TAGS.filter((t) => !tags.includes(t));
+  // Case-insensitive to match addTag's dedup — a shown chip is always actionable.
+  const lowerTags = tags.map((t) => t.toLowerCase());
+  const suggestions = SUGGESTED_TAGS.filter((t) => !lowerTags.includes(t.toLowerCase()));
 
   function addTag(raw: string): void {
     const value = raw.trim().slice(0, TAG_MAX_LEN);
