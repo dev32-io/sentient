@@ -102,7 +102,7 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
 
   const createSynthesizerFor = (getVoiceId: () => string | null): TextStreamSynthesizer | null => {
     const sessionFactory: TTSProviderFactory = asStrictFactory(tts, getVoiceId);
-    return createTextStreamSynthesizer(cfg, llmProvider, sessionFactory);
+    return createTextStreamSynthesizer(cfg, sessionFactory);
   };
 
   const profileStore = createProfileStore();
