@@ -471,6 +471,23 @@ describe("DELETE /api/v1/voices/:id", () => {
     expect(getWs()).toBeNull();
   });
 
+  it("rejects a malformed percent-encoding with 422 (not 500), without opening a WS", async () => {
+    const { deps, getWs } = makeDeps();
+
+    // `%ZZ` is invalid percent-encoding — decodeURIComponent throws; the handler
+    // must degrade to a clean 422, never let a URIError bubble to a 500.
+    const request = new Request("http://localhost/api/v1/voices/%ZZ", {
+      method: "DELETE",
+      headers: authHeaders(),
+    });
+    const response = await createVoicesHandler(deps)(request);
+
+    expect(response.status).toBe(422);
+    const body = await response.json();
+    expect(body.error).toBe("invalid-voice-id");
+    expect(getWs()).toBeNull();
+  });
+
   it("DELETE accepts a slug id shape", async () => {
     const { deps, getWs } = makeDeps();
 

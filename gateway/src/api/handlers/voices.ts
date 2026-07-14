@@ -123,7 +123,18 @@ async function handleVoices(deps: VoicesHandlerDeps, request: Request): Promise<
   }
 
   const idMatch = VOICE_ID_PATH_RE.exec(pathname);
-  if (idMatch) return dispatchVoiceId(deps, request, userId, decodeURIComponent(idMatch[1] ?? ""));
+  if (idMatch) {
+    // Symmetry with the preview branch: a malformed percent-encoding (`%ZZ`)
+    // throws in decodeURIComponent — degrade to a clean 422 rather than let it
+    // bubble to Bun.serve's top-level handler as a generic 500. The
+    // VOICE_ID_SHAPE_RE check still runs downstream in handleVoicesDelete.
+    const voiceId = safeDecode(idMatch[1] ?? "");
+    if (voiceId === null) {
+      log.warn("delete.invalid-id-encoding", {});
+      return jsonError(HTTP_UNPROCESSABLE, "invalid-voice-id");
+    }
+    return dispatchVoiceId(deps, request, userId, voiceId);
+  }
 
   return new Response("Not Found", { status: HTTP_NOT_FOUND });
 }
