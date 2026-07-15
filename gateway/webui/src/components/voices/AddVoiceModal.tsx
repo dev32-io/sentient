@@ -2,10 +2,12 @@
 import type { JSX } from "preact";
 import { useRef, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
+import { LANGUAGE_DISPLAY, SUPPORTED_LANGUAGES } from "@sentient/config";
 import { Modal } from "../settings/primitives/modal.tsx";
 import { Segmented } from "../settings/primitives/segmented.tsx";
 import { TextField } from "../settings/primitives/text-field.tsx";
 import { Textarea } from "../settings/primitives/textarea.tsx";
+import { Select } from "../settings/primitives/select.tsx";
 import { Btn } from "../settings/primitives/btn.tsx";
 import { Icon } from "../common/icon.tsx";
 import { VoiceCapture } from "./VoiceCapture.tsx";
@@ -34,6 +36,19 @@ const MODAL_WIDTH = 640;
 // parseCreateForm); this just fails fast in the UI. Tag caps live in TagEditor.tsx.
 const DESCRIPTION_MAX_LEN = 240;
 
+// "" = unset (matches the gateway's documented default — see normalizeLanguage).
+// Sorted alphabetically by code for a stable, scannable dropdown order.
+// noUncheckedIndexedAccess makes LANGUAGE_DISPLAY[code] possibly-undefined at
+// the type level even though every SUPPORTED_LANGUAGES entry has a display —
+// this local lookup keeps the fallback local instead of asserting past it.
+const LANG_OPTIONS = [
+  { value: "", label: "No language" },
+  ...[...SUPPORTED_LANGUAGES].sort().map((code) => {
+    const d = LANGUAGE_DISPLAY[code] ?? { flag: "🌐", name: code.toUpperCase() };
+    return { value: code, label: `${d.flag} ${d.name}` };
+  }),
+];
+
 type CaptureMode = "record" | "upload" | "fish";
 
 export interface AddVoiceModalProps {
@@ -46,13 +61,19 @@ export interface AddVoiceModalProps {
   onClose: () => void;
   /** Resolves `true` on a successful create (caller already toasted). The modal
    *  only resets + closes on `true`, so a transient failure leaves the form intact. */
-  onCreate: (audio: Blob, name: string, description: string, tags: string[]) => Promise<boolean>;
+  onCreate: (audio: Blob, name: string, description: string, tags: string[], language: string) => Promise<boolean>;
   /** Gates the third "Clone from Fish Audio" mode. Absent/false hides it entirely. */
   fishBrowseEnabled?: boolean;
   /** Resolves `true` on a successful clone (caller already toasted) — same
    *  contract as `onCreate`, but for a picked Fish voice instead of captured
    *  audio. Only invoked once a Fish voice has been picked. */
-  onCloneFromFish: (fishVoiceId: string, name: string, description: string, tags: string[]) => Promise<boolean>;
+  onCloneFromFish: (
+    fishVoiceId: string,
+    name: string,
+    description: string,
+    tags: string[],
+    language: string,
+  ) => Promise<boolean>;
 }
 
 export function AddVoiceModal({
@@ -68,6 +89,7 @@ export function AddVoiceModal({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [tags, setTags] = useState<string[]>([]);
+  const [language, setLanguage] = useState("");
   const [audio, setAudio] = useState<Blob | null>(null);
   const [audioDurationMs, setAudioDurationMs] = useState<number | null>(null);
   const [fishVoiceId, setFishVoiceId] = useState<string | null>(null);
@@ -83,6 +105,7 @@ export function AddVoiceModal({
     setName("");
     setDescription("");
     setTags([]);
+    setLanguage("");
     setAudio(null);
     setAudioDurationMs(null);
     setFishVoiceId(null);
@@ -111,11 +134,21 @@ export function AddVoiceModal({
     setAudioDurationMs(null);
   }
 
-  function handleFishPick({ fishVoiceId: id, suggestedName, suggestedTags }: FishClonePickInput): void {
-    log.debug("fish.picked", { fishVoiceIdLength: id.length, suggestedTagCount: suggestedTags.length });
+  function handleFishPick({
+    fishVoiceId: id,
+    suggestedName,
+    suggestedTags,
+    suggestedLanguage,
+  }: FishClonePickInput): void {
+    log.debug("fish.picked", {
+      fishVoiceIdLength: id.length,
+      suggestedTagCount: suggestedTags.length,
+      suggestedLanguage,
+    });
     setFishVoiceId(id);
     setName(suggestedName);
     setTags(suggestedTags.slice(0, MAX_TAGS));
+    setLanguage(suggestedLanguage);
   }
 
   async function handleSubmit(): Promise<void> {
@@ -123,8 +156,8 @@ export function AddVoiceModal({
     if (!trimmedName) return;
     if (mode === "fish") {
       if (!fishVoiceId) return;
-      log.debug("cloneFromFish.requested", { nameLength: trimmedName.length, tagCount: tags.length });
-      const ok = await onCloneFromFish(fishVoiceId, trimmedName, description.trim(), tags);
+      log.debug("cloneFromFish.requested", { nameLength: trimmedName.length, tagCount: tags.length, language });
+      const ok = await onCloneFromFish(fishVoiceId, trimmedName, description.trim(), tags, language);
       if (ok) resetAndClose();
       return;
     }
@@ -133,8 +166,9 @@ export function AddVoiceModal({
       nameLength: trimmedName.length,
       tagCount: tags.length,
       hasDescription: description.trim().length > 0,
+      language,
     });
-    const ok = await onCreate(audio, trimmedName, description.trim(), tags);
+    const ok = await onCreate(audio, trimmedName, description.trim(), tags, language);
     if (ok) resetAndClose();
   }
 
@@ -223,6 +257,11 @@ export function AddVoiceModal({
                 maxLength={DESCRIPTION_MAX_LEN}
                 disabled={busy}
               />
+            </label>
+
+            <label class="lst-field">
+              <span class="lst-field-l">Language</span>
+              <Select value={language} onChange={setLanguage} options={LANG_OPTIONS} disabled={busy} />
             </label>
 
             <TagEditor tags={tags} onChange={setTags} disabled={busy} />

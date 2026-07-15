@@ -25,7 +25,13 @@ export interface UseVoices {
   readonly loading: Signal<boolean>;
   readonly error: Signal<string | null>;
   load(): Promise<void>;
-  createVoice(audio: Blob, name: string, description: string, tags: string[]): Promise<VoiceMutationResult>;
+  createVoice(
+    audio: Blob,
+    name: string,
+    description: string,
+    tags: string[],
+    language: string,
+  ): Promise<VoiceMutationResult>;
   deleteVoice(voiceId: string): Promise<VoiceMutationResult>;
   setActiveVoice(voiceId: string): Promise<VoiceMutationResult>;
   /** Sync-only: mirrors an externally-resolved active id (e.g. the caller's
@@ -88,13 +94,16 @@ export function createUseVoices(deps: UseVoicesDeps): UseVoices {
     name: string,
     description: string,
     tags: string[],
+    language: string,
   ): Promise<VoiceMutationResult> {
     // NEVER log audio bytes/content — byteLength + name length only.
-    log.debug("createVoice.request", { audioBytes: audio.size, nameLength: name.length, tagCount: tags.length });
-    // TODO(Task 8, voice-pack-language plan): thread a real `language` value
-    // from the caller once AddVoiceModal grows the language picker. "" is the
-    // documented unset default and matches today's pre-language behavior.
-    const r = await api.createVoice(token, name, audio, description, tags, "");
+    log.debug("createVoice.request", {
+      audioBytes: audio.size,
+      nameLength: name.length,
+      tagCount: tags.length,
+      language,
+    });
+    const r = await api.createVoice(token, name, audio, description, tags, language);
     if (!r.ok) {
       log.warn("createVoice.failed", { code: r.error.code });
       return { ok: false, errorCode: r.error.code };

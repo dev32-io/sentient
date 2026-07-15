@@ -31,8 +31,14 @@ export interface VoicesPanelHandlersDeps {
 }
 
 export interface VoicesPanelHandlers {
-  handleCreate(audio: Blob, name: string, description: string, tags: string[]): Promise<boolean>;
-  handleCloneFromFish(fishVoiceId: string, name: string, description: string, tags: string[]): Promise<boolean>;
+  handleCreate(audio: Blob, name: string, description: string, tags: string[], language: string): Promise<boolean>;
+  handleCloneFromFish(
+    fishVoiceId: string,
+    name: string,
+    description: string,
+    tags: string[],
+    language: string,
+  ): Promise<boolean>;
   handleDelete(voiceId: string): Promise<void>;
   handlePick(voiceId: string): Promise<void>;
   /** `disabled` is read at click time from the panel's `previewDisabled`
@@ -47,10 +53,21 @@ export interface VoicesPanelHandlers {
 export function createVoicesPanelHandlers(deps: VoicesPanelHandlersDeps): VoicesPanelHandlers {
   const { hook, preview, toast, setBusy, fishApi, token } = deps;
 
-  async function handleCreate(audio: Blob, name: string, description: string, tags: string[]): Promise<boolean> {
-    log.debug("create.requested", { audioBytes: audio.size, nameLength: name.length, tagCount: tags.length });
+  async function handleCreate(
+    audio: Blob,
+    name: string,
+    description: string,
+    tags: string[],
+    language: string,
+  ): Promise<boolean> {
+    log.debug("create.requested", {
+      audioBytes: audio.size,
+      nameLength: name.length,
+      tagCount: tags.length,
+      language,
+    });
     setBusy(true);
-    const r = await hook.createVoice(audio, name, description, tags);
+    const r = await hook.createVoice(audio, name, description, tags, language);
     setBusy(false);
     if (!r.ok) {
       toast.show("Couldn't create voice", "error");
@@ -69,17 +86,16 @@ export function createVoicesPanelHandlers(deps: VoicesPanelHandlersDeps): Voices
     name: string,
     description: string,
     tags: string[],
+    language: string,
   ): Promise<boolean> {
     log.debug("cloneFromFish.requested", {
       fishVoiceIdLength: fishVoiceId.length,
       nameLength: name.length,
       tagCount: tags.length,
+      language,
     });
     setBusy(true);
-    // TODO(Task 8, voice-pack-language plan): thread the Fish-suggested
-    // language once AddVoiceModal/FishClonePanel grow `suggestedLanguage`.
-    // "" is the documented unset default and matches today's pre-language behavior.
-    const r = await fishApi.cloneFromFish(token, { fishVoiceId, name, description, tags, language: "" });
+    const r = await fishApi.cloneFromFish(token, { fishVoiceId, name, description, tags, language });
     setBusy(false);
     if (!r.ok) {
       log.warn("cloneFromFish.failed", { status: r.error.status, code: r.error.code });

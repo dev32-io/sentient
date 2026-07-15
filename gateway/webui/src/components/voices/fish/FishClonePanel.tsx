@@ -12,6 +12,7 @@
 import type { JSX } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
+import { normalizeLanguage } from "@sentient/config";
 import { createFishApi, type FishVoiceEntry } from "../../../services/fish-api.ts";
 import { Btn } from "../../settings/primitives/btn.tsx";
 import { Icon } from "../../common/icon.tsx";
@@ -49,6 +50,9 @@ export interface FishClonePickInput {
   fishVoiceId: string;
   suggestedName: string;
   suggestedTags: string[];
+  /** Fish's first listed language, normalized to a Qwen3-TTS-supported code
+   *  (or "" when Fish's language isn't one we support — see normalizeLanguage). */
+  suggestedLanguage: string;
 }
 
 export interface FishClonePanelProps {
@@ -195,6 +199,7 @@ export function FishClonePanel({ token, busy, onClone }: FishClonePanelProps): J
       fishVoiceId: v.id,
       suggestedName: v.title,
       suggestedTags: v.tags.slice(0, SUGGESTED_TAG_LIMIT),
+      suggestedLanguage: normalizeLanguage(v.languages[0] ?? ""),
     });
   };
 

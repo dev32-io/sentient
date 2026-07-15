@@ -88,7 +88,7 @@ describe("createUseVoices", () => {
     const onActiveVoiceChanged = vi.fn();
     const hook = createUseVoices({ token: "t", initialActiveId: "default", onActiveVoiceChanged });
     const blob = new Blob([new Uint8Array([1, 2, 3])], { type: "audio/wav" });
-    const result = await hook.createVoice(blob, "Dad", "Warm and calm", ["calm", "warm"]);
+    const result = await hook.createVoice(blob, "Dad", "Warm and calm", ["calm", "warm"], "en");
 
     expect(postSeen).toBe(true);
     expect(capturedDescription).toBe("Warm and calm");
@@ -116,7 +116,7 @@ describe("createUseVoices", () => {
     });
     const onActiveVoiceChanged = vi.fn();
     const hook = createUseVoices({ token: "t", initialActiveId: "v-old", onActiveVoiceChanged });
-    const result = await hook.createVoice(new Blob(), "Dad", "", []);
+    const result = await hook.createVoice(new Blob(), "Dad", "", [], "");
 
     expect(result.ok).toBe(false);
     expect(hook.voices.value).toBeNull();
@@ -134,7 +134,7 @@ describe("createUseVoices", () => {
     });
     const onActiveVoiceChanged = vi.fn();
     const hook = createUseVoices({ token: "t", initialActiveId: "v-old", onActiveVoiceChanged });
-    const result = await hook.createVoice(new Blob(), "Dad", "", []);
+    const result = await hook.createVoice(new Blob(), "Dad", "", [], "");
     expect(result.ok).toBe(true);
     expect(result.warning).toBe("not-activated");
     expect(hook.activeId.value).toBe("v-old");

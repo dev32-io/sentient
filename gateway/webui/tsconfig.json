@@ -4,7 +4,8 @@
     "jsx": "react-jsx",
     "jsxImportSource": "preact",
     "paths": {
-      "@sentient/protocol": ["../../shared/protocol/src"]
+      "@sentient/protocol": ["../../shared/protocol/src"],
+      "@sentient/config": ["../../shared/config/src"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"]
