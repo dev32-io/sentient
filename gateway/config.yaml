@@ -132,14 +132,40 @@ tts:
   # service; create can block behind an in-flight synthesis, so keep generous.
   voice_op_timeout_ms: 30000
 
-  # Preview greetings — one is chosen at random per Play preview and
-  # synthesized live in the target voice. Kept short (~2s of speech).
+  # Preview greetings by language — one is chosen at random per Play preview and
+  # synthesized live in the target voice, in the voice pack's language (the
+  # service auto-detects the language from the text). Keep each short (~2s).
   preview_greetings:
-    - "Hi, I'm your family's Sentient assistant. How can I help?"
-    - "Hello there — Sentient here, ready when you are."
-    - "Hey! I'm Sentient. Ask me anything."
-    - "Good to see you. I'm your family assistant."
-    - "Hi! What can I do for the family today?"
+    en:
+      - "Hi, I'm your family's Sentient assistant. How can I help?"
+      - "Hello there — Sentient here, ready when you are."
+    zh:
+      - "你好，我是你们家的 Sentient 助手，有什么可以帮忙的吗？"
+      - "嗨，我是 Sentient，随时为你服务。"
+    ja:
+      - "こんにちは、ご家族の Sentient アシスタントです。ご用件は何でしょう？"
+      - "やあ、Sentient です。いつでもお手伝いします。"
+    ko:
+      - "안녕하세요, 가족의 Sentient 비서예요. 무엇을 도와드릴까요?"
+      - "안녕하세요, Sentient입니다. 언제든 도와드릴게요."
+    de:
+      - "Hallo, ich bin euer Sentient-Assistent für die Familie. Wie kann ich helfen?"
+      - "Hi, hier ist Sentient — bereit, wenn du es bist."
+    fr:
+      - "Bonjour, je suis l'assistant Sentient de votre famille. Comment puis-je aider ?"
+      - "Salut, ici Sentient — prêt quand vous voulez."
+    ru:
+      - "Здравствуйте, я — ваш семейный ассистент Sentient. Чем могу помочь?"
+      - "Привет, это Sentient. Готов помочь в любой момент."
+    pt:
+      - "Olá, sou o assistente Sentient da sua família. Como posso ajudar?"
+      - "Oi, aqui é o Sentient — pronto quando você estiver."
+    es:
+      - "Hola, soy el asistente Sentient de tu familia. ¿En qué puedo ayudarte?"
+      - "Hola, soy Sentient — listo cuando quieras."
+    it:
+      - "Ciao, sono l'assistente Sentient della tua famiglia. Come posso aiutarti?"
+      - "Ciao, sono Sentient — pronto quando vuoi."
   preview_timeout_ms: 8000           # max wait (ms) for a preview synth. Range: >=1.
   voice_description_max_len: 240     # create/edit description char cap. Range: >=1.
   voice_tag_max_len: 24              # per-tag char cap. Range: >=1.

@@ -161,7 +161,7 @@ function makeDeps(overrides: Partial<VoicesHandlerDeps> = {}): {
     ttsUrl: "ws://host.docker.internal:8770",
     connectTimeoutMs: 1000,
     opTimeoutMs: 1000,
-    previewGreetings: ["Hi, I'm your family's Sentient assistant."],
+    previewGreetings: { en: ["Hi, I'm your family's Sentient assistant."] },
     previewTimeoutMs: 1000,
     descriptionMaxLen: 240,
     tagMaxLen: 24,

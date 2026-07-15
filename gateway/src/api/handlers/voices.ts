@@ -9,6 +9,7 @@ import {
   listVoices,
 } from "../../providers/tts/voice-mgmt-client.js";
 import type { TokenService } from "../../user-auth/token-service.js";
+import type { PreviewGreetings } from "./preview-greeting.js";
 import { type CreateFormInput, parseCreateForm } from "./voices-create-form.js";
 import {
   HTTP_METHOD,
@@ -72,9 +73,10 @@ export interface VoicesHandlerDeps {
   ttsUrl: string;
   connectTimeoutMs: number;
   opTimeoutMs: number;
-  /** Configured pool of short greeting lines — POST .../preview picks one at
-   *  random and synthesizes it live in the target voice. */
-  previewGreetings: readonly string[];
+  /** Configured pool of short greeting lines, by language — POST .../preview
+   *  picks one at random in the requested language and synthesizes it live
+   *  in the target voice. */
+  previewGreetings: PreviewGreetings;
   /** Max ms to await a preview synth reply. Separate from opTimeoutMs: a full
    *  TTS render legitimately runs longer than a voice.create/list/delete
    *  control round-trip. */
@@ -119,7 +121,8 @@ async function handleVoices(deps: VoicesHandlerDeps, request: Request): Promise<
       log.warn("preview.invalid-id-shape", {});
       return jsonError(HTTP_UNPROCESSABLE, "invalid-voice-id");
     }
-    return handleVoicesPreview(deps, voiceId, request.signal);
+    const lang = new URL(request.url).searchParams.get("lang") ?? "";
+    return handleVoicesPreview(deps, voiceId, lang, request.signal);
   }
 
   const idMatch = VOICE_ID_PATH_RE.exec(pathname);
