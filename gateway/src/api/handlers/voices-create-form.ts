@@ -1,6 +1,7 @@
 import type { Result } from "@sentient/protocol";
 
-const VOICE_NAME_MAX_LEN = 64;
+/** Also reused by fish-clone.ts, whose JSON body has the same `name` cap. */
+export const VOICE_NAME_MAX_LEN = 64;
 
 export interface CreateFormInput {
   readonly name: string;

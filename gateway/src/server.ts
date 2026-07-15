@@ -120,6 +120,19 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
       timeoutMs: services.providersConfig.external_fetch_timeout_ms,
       cacheTtlMs: services.providersConfig.fish_cache_ttl_ms,
     },
+    fishCloneDeps: {
+      fishBrowseEnabled: services.providersConfig.fish_browse_enabled,
+      fishApiKey: services.fishApiKey,
+      externalFetchTimeoutMs: services.providersConfig.external_fetch_timeout_ms,
+      profileStore: services.profileStore,
+      refreshVoice: (userId) => services.personSessions.refreshVoice(userId),
+      ttsUrl: services.ttsConfig.url,
+      connectTimeoutMs: services.ttsConfig.connect_timeout_ms,
+      opTimeoutMs: services.ttsConfig.voice_op_timeout_ms,
+      descriptionMaxLen: services.ttsConfig.voice_description_max_len,
+      tagMaxLen: services.ttsConfig.voice_tag_max_len,
+      maxTags: services.ttsConfig.voice_max_tags,
+    },
   });
   const handleMcpCatalog = createMcpCatalogHandler({
     tokens: services.auth.tokens,
