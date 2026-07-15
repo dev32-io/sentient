@@ -21,11 +21,13 @@ const BASE_MODE_OPTIONS = [
 const FISH_MODE_OPTION = { value: "fish", label: "Clone from Fish Audio" };
 const UPLOAD_TYPES = ".wav,.flac,.ogg,.mp3";
 const MS_PER_SECOND = 1000;
-// The Fish browse grid + toolbar (search + 2 selects) needs materially more
-// room than the plain metadata form — widen the modal only in that mode
-// (Modal's `width` prop already exists for exactly this).
-const RECORD_UPLOAD_MODAL_WIDTH = 440;
-const FISH_MODAL_WIDTH = 640;
+// ONE width for every tab so the dialog never resizes when the user switches
+// modes. Sized for the widest content (the Fish browse grid + toolbar); the
+// Record/Upload forms are simply roomier at this width. The mode-switcher tab
+// row fits "Clone from Fish Audio" on one line here at desktop, and wraps to a
+// second row (never truncates) on a narrow mobile modal — see .voices-add-body
+// .seg2 in panes.css.
+const MODAL_WIDTH = 640;
 
 // Client-side UX hint only — mirrors services.ttsConfig.voice_description_max_len
 // (gateway/config.yaml). The gateway re-enforces this cap server-side (see
@@ -141,7 +143,7 @@ export function AddVoiceModal({
   return (
     <Modal
       title="Add a voice"
-      width={mode === "fish" ? FISH_MODAL_WIDTH : RECORD_UPLOAD_MODAL_WIDTH}
+      width={MODAL_WIDTH}
       onClose={resetAndClose}
       footer={
         <>

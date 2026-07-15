@@ -1089,18 +1089,20 @@
  * labels, but AddVoiceModal's mode switcher can carry a 3rd, much longer
  * "Clone from Fish Audio" option once Fish is enabled. Scoped to this modal
  * (not the shared .seg2 rule, which other Segmented instances rely on being
- * content-sized) so the row stretches + truncates instead of overflowing a
- * narrow mobile modal. */
+ * content-sized) so the row fills the modal width and, when the three labels
+ * can't fit one line on a narrow mobile modal, WRAPS to a second row with the
+ * full label text — never truncating. At desktop width all three fit one row. */
 .settings-v2 .voices-add-body .seg2 {
   display: flex;
+  flex-wrap: wrap;
   width: 100%;
+  height: auto; /* override the primitive's fixed 34px so a wrapped 2nd row fits */
 }
 .settings-v2 .voices-add-body .seg2 button {
-  flex: 1 1 0;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  flex: 1 1 auto;
+  min-height: 28px;
   text-align: center;
+  white-space: normal; /* allow a long label to break rather than overflow */
 }
 .settings-v2 .voices-tag-row {
   display: flex;
@@ -1116,7 +1118,9 @@
    verbatim here except: (1) `.v-toolbar` gains `flex-wrap` — the modal is
    materially narrower than a settings pane, so the search+language+sort row
    must wrap instead of overflowing; (2) `.voice-grid`'s track minimum drops
-   280px (from 320px) so two columns still fit the modal's content width.
+   to `min(280px, 100%)` (from a fixed 320px) so two columns fit at desktop and
+   the single column collapses to fit a narrow mobile modal instead of
+   overflowing.
    ============================================================ */
 
 /* ---- Toolbar (search + language + sort) ---- */
@@ -1127,7 +1131,12 @@
   flex-wrap: wrap;
   margin-bottom: 12px;
 }
-.settings-v2 .v-toolbar .srch { flex: 1 1 auto; min-width: 220px; }
+/* min-width:0 (overriding the .srch primitive's 220px floor) lets the search
+ * field shrink to fit a narrow mobile modal (~214px content at 390px) instead
+ * of forcing a 6px horizontal overflow. flex:1 1 auto still grows it to fill
+ * the toolbar row at wider widths. .v-toolbar only ever renders inside this
+ * modal (FishClonePanel), so scoping it here is exhaustive. */
+.settings-v2 .v-toolbar .srch { flex: 1 1 auto; min-width: 0; }
 .settings-v2 .v-toolbar .sel {
   flex: 0 0 auto;
   width: 168px;
@@ -1213,9 +1222,13 @@
 .settings-v2 .v-loadmore .btn { gap: 6px; }
 
 /* ---- Voice grid — responsive tiles, one per Fish voice ---- */
+/* min(280px, 100%) clamps the track floor to the container width so on a
+ * narrow mobile modal (~214px of content at 390px viewport) the single column
+ * shrinks to fit instead of overflowing its 280px minimum. Above ~280px it
+ * behaves as a normal auto-fill 280px-min responsive grid. */
 .settings-v2 .voice-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
   gap: 10px;
 }
 .settings-v2 .voice {
