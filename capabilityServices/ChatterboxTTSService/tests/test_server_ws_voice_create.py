@@ -12,10 +12,14 @@ crashing the connection.
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 
+import numpy as np
+import soundfile as sf
 from websockets.asyncio.client import connect
 
+from chatterbox_tts.connection_session import _decode_audio
 from chatterbox_tts.server import Server
 
 from .conftest import (
@@ -51,6 +55,30 @@ def test_voice_create_replies_voice_created(tmp_path):
             await ws_server.wait_closed()
 
     asyncio.run(run())
+
+
+def test_decode_audio_reads_compressed_mono():
+    # 6s mono tone at 24k, encoded to OGG/Vorbis (libsndfile-native), decoded back.
+    sr = 24000
+    tone = (0.1 * np.sin(2 * np.pi * 180 * np.arange(sr * 6) / sr)).astype("float32")
+    buf = io.BytesIO()
+    sf.write(buf, tone, sr, format="OGG")
+    buf.seek(0)
+    arr, out_sr = _decode_audio(buf.read())
+    assert out_sr == sr
+    assert arr.ndim == 1
+    assert arr.size > sr * 5  # > 5s → clone-viable
+
+
+def test_decode_audio_downmixes_stereo():
+    sr = 24000
+    stereo = np.zeros((sr, 2), dtype="float32")
+    stereo[:, 0] = 0.2
+    buf = io.BytesIO()
+    sf.write(buf, stereo, sr, format="WAV")
+    buf.seek(0)
+    arr, _ = _decode_audio(buf.read())
+    assert arr.ndim == 1  # mono after downmix
 
 
 def test_voice_create_rejects_without_crashing(tmp_path):

@@ -119,7 +119,7 @@ Client                                        Server
 | `end`            | No more text is coming for this request; same as `flush`.   | —                        |
 | `cancel`         | Abort the in-flight request immediately; drop queued-but-unstarted ones. | — |
 | `ping`           | Liveness probe; server replies `pong`.                      | —                        |
-| `voice.create`   | Start a voice-pack upload; **must be followed by exactly one binary frame** (the reference wav, 10-15s recommended, hard floor >5s). | `name` (string) |
+| `voice.create`   | Start a voice-pack upload; **must be followed by exactly one binary frame** (the reference clip — wav / flac / ogg / mp3, content-sniffed; 10-15s recommended, hard floor >5s). | `name` (string) |
 | `voice.list`     | List every persisted voice pack.                             | —                        |
 | `voice.delete`   | Delete a voice pack by id.                                    | `voiceId` (string)       |
 
@@ -169,10 +169,11 @@ needed).
 
 ### 3.2 Binary frames
 
-The **only** binary frame the server expects from a client is the wav
-upload immediately following a `voice.create` message. Any other binary
-frame produces a `{"type":"warning", reason:"unexpected_binary_frame"}`
-and is otherwise ignored.
+The **only** binary frame the server expects from a client is the
+reference-clip upload immediately following a `voice.create` message.
+Any other binary frame produces a
+`{"type":"warning", reason:"unexpected_binary_frame"}` and is otherwise
+ignored.
 
 ---
 
@@ -192,9 +193,10 @@ length/count-validated at the wire layer (limits exist in
 `voice_max_tags` for a future enforcement pass — not yet wired up).
 
 The `voice.create` message is followed by one binary WebSocket frame
-containing a WAV file (any sample rate/channel count `soundfile` can
-decode — multi-channel is mixed down to mono). Rejected with
-`{"type":"error", reason:"..."}` if:
+containing a reference clip in wav / flac / ogg / mp3 — any container
+`soundfile` (libsndfile >=1.1) can decode, content-sniffed so the client
+need not declare the format (any sample rate/channel count; multi-channel
+is mixed down to mono). Rejected with `{"type":"error", reason:"..."}` if:
 
 - the clip decodes to ≤5 seconds of audio (voice-pack quality floor,
   enforced by `VoiceStore.create` — see its docstring for the exact

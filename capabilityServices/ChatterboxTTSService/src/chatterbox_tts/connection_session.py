@@ -152,9 +152,9 @@ class ConnectionSession:
         self._pending_voice_create = None
         await self._create_voice(pending, data)
 
-    async def _create_voice(self, pending: VoiceCreateMessage, wav_bytes: bytes) -> None:
+    async def _create_voice(self, pending: VoiceCreateMessage, audio_bytes: bytes) -> None:
         try:
-            array, sr = _decode_wav(wav_bytes)
+            array, sr = _decode_audio(audio_bytes)
         except Exception as exc:
             log.warning("voice.create decode_failed error=%r", exc)
             await send_server_event(
@@ -201,9 +201,14 @@ def _type_hint(raw: str) -> str | None:
     return kind[:_TYPE_HINT_MAX_LEN]
 
 
-def _decode_wav(wav_bytes: bytes) -> tuple[np.ndarray, int]:
-    """Decode an uploaded reference clip to mono float32 PCM + its sample rate."""
-    array, sr = sf.read(io.BytesIO(wav_bytes), dtype="float32")
+def _decode_audio(audio_bytes: bytes) -> tuple[np.ndarray, int]:
+    """Decode an uploaded reference clip to mono float32 PCM + its sample rate.
+
+    Accepts any container libsndfile can read — wav / flac / ogg / **mp3**
+    (libsndfile >=1.1). Content-sniffed by soundfile, so the caller need not
+    declare the format. Multi-channel input is downmixed to mono.
+    """
+    array, sr = sf.read(io.BytesIO(audio_bytes), dtype="float32")
     if array.ndim > 1:
         array = array.mean(axis=1).astype(np.float32)
     return array, sr

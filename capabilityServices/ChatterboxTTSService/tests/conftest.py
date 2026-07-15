@@ -72,7 +72,7 @@ class _RaisingVoiceStore(_StubVoiceStore):
 
 
 def _tiny_wav_bytes(seconds: float = 0.05, sr: int = 24000) -> bytes:
-    """A small, real, decodable WAV — enough to pass ``_decode_wav``, whose
+    """A small, real, decodable WAV — enough to pass ``_decode_audio``, whose
     correctness (not clip-duration policy, which is ``VoiceStore``'s job)
     is all these tests need.
     """
