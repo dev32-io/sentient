@@ -8,7 +8,7 @@ User-created packs live
 one-per-directory under ``voice_dir``::
 
     <voice_dir>/<voiceId>/ref.wav    # mono float32, soundfile.write()/.read()
-    <voice_dir>/<voiceId>/meta.json  # {name, description, tags, createdAt, refDurationMs}
+    <voice_dir>/<voiceId>/meta.json  # {name, description, tags, language, createdAt, refDurationMs}
 
 (see ``pack_meta.py`` for the shared on-disk shape). A second, read-only
 ``builtin_dir`` holds packaged voice packs in the same shape, addressed
@@ -131,7 +131,8 @@ class VoiceStore:
             return self.get(None)
 
     def create(
-        self, ref_wav: np.ndarray, sr: int, name: str, description: str = "", tags: list[str] | None = None
+        self, ref_wav: np.ndarray, sr: int, name: str, description: str = "",
+        tags: list[str] | None = None, language: str = "",
     ) -> dict:
         """Persist ``ref_wav`` as a new voice pack's reference clip.
 
@@ -155,7 +156,7 @@ class VoiceStore:
             voice_id, name, ref_wav.size, sr,
         )
         created_at, ref_duration_ms = self._build_pack(
-            voice_id, ref_wav, sr, name, duration_s, description, tags
+            voice_id, ref_wav, sr, name, duration_s, description, tags, language
         )
 
         log.info(
@@ -166,7 +167,7 @@ class VoiceStore:
 
     def _build_pack(
         self, voice_id: str, ref_wav: np.ndarray, sr: int, name: str, duration_s: float,
-        description: str, tags: list[str] | None,
+        description: str, tags: list[str] | None, language: str,
     ) -> tuple[float, int]:
         """mkdir -> write ref.wav -> write meta, all-or-nothing.
 
@@ -183,6 +184,7 @@ class VoiceStore:
             ref_duration_ms = round(duration_s * 1000.0)
             meta = {
                 "name": name, "description": description, "tags": list(tags or []),
+                "language": language,
                 "createdAt": created_at, "refDurationMs": ref_duration_ms,
             }
             self._write_meta_atomic(pack_dir / META_FILENAME, meta)

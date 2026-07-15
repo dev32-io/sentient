@@ -90,6 +90,17 @@ def test_parse_voice_create_rejects_non_string_tags() -> None:
         parse_client_message(json.dumps({"type": "voice.create", "name": "Nova", "tags": [1, 2]}))
 
 
+def test_voice_create_parses_optional_language():
+    msg = parse_client_message('{"type":"voice.create","name":"Nova","language":"zh"}')
+    assert msg.name == "Nova"
+    assert msg.language == "zh"
+
+
+def test_voice_create_language_defaults_empty():
+    msg = parse_client_message('{"type":"voice.create","name":"Nova"}')
+    assert msg.language == ""
+
+
 def test_parse_voice_list_message():
     assert parse_client_message(json.dumps({"type": "voice.list"})) == VoiceListMessage()
 

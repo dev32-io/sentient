@@ -159,6 +159,14 @@ def test_create_then_get_returns_ref_path(tmp_path: Path) -> None:
     assert store.get(voice_id) == str(voice_dir / voice_id / "ref.wav")
 
 
+def test_create_stores_and_lists_language(tmp_path: Path) -> None:
+    store = VoiceStore(_StubEngine(), tmp_path / "voices")
+    ref = np.zeros(int(24000 * 4), dtype=np.float32)  # >3s
+    store.create(ref, 24000, "Nova", language="ja")
+    listed = [v for v in store.list() if v.get("source") == "user"]
+    assert listed and listed[0]["language"] == "ja"
+
+
 def test_list_returns_description_and_tags(tmp_path: Path) -> None:
     store = VoiceStore(_StubEngine(), tmp_path / "voices")
     pack = tmp_path / "voices" / ("a" * 32)

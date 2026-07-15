@@ -167,7 +167,8 @@ class ConnectionSession:
         try:
             async with self._synth_lock:
                 result = await asyncio.to_thread(
-                    self._voice_store.create, array, sr, pending.name, pending.description, pending.tags
+                    self._voice_store.create, array, sr, pending.name,
+                    pending.description, pending.tags, pending.language,
                 )
         except ValueError as exc:
             await send_server_event(self._ws, ErrorEvent(reason=str(exc)), self._conn_log)

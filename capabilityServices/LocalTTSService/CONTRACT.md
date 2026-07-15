@@ -182,15 +182,20 @@ ignored.
 ### 4.1 `voice.create`
 
 ```json
-{ "type": "voice.create", "name": "Dad", "description": "Warm, low register", "tags": ["family", "warm"] }
+{ "type": "voice.create", "name": "Dad", "description": "Warm, low register", "tags": ["family", "warm"], "language": "en" }
 ```
 
-`description` and `tags` are both optional — omit either (or send
-`description: ""` / `tags: []`) for a bare-name pack. `description` is
-a plain string; `tags` is a list of strings. Neither is currently
-length/count-validated at the wire layer (limits exist in
-`config.yaml` as `voice_description_max_len` / `voice_tag_max_len` /
-`voice_max_tags` for a future enforcement pass — not yet wired up).
+`description`, `tags`, and `language` are all optional — omit any (or
+send `description: ""` / `tags: []` / `language: ""`) for a bare-name
+pack. `description` is a plain string; `tags` is a list of strings;
+`language` is a single string, one of the ten Qwen3-TTS codes
+(`zh`/`en`/`ja`/`ko`/`de`/`fr`/`ru`/`pt`/`es`/`it`) or omitted — never
+an array. The service stores `language` verbatim; the gateway is
+responsible for validating it against the canonical list before the
+message reaches here. None of the three is currently length/count-
+validated at the wire layer (limits exist in `config.yaml` as
+`voice_description_max_len` / `voice_tag_max_len` / `voice_max_tags`
+for a future enforcement pass — not yet wired up).
 
 The `voice.create` message is followed by one binary WebSocket frame
 containing a reference clip in wav / flac / ogg / mp3 — any container
@@ -228,8 +233,8 @@ connection, and vice versa.
 {
   "type": "voice.list",
   "voices": [
-    { "voiceId": "nova", "name": "Nova", "description": "", "tags": ["warm"], "createdAt": 0.0, "refDurationMs": 0, "source": "builtin" },
-    { "voiceId": "3f9b...", "name": "Dad", "description": "Warm, low register", "tags": ["family", "warm"], "createdAt": 1752400000.0, "refDurationMs": 12000, "source": "user" }
+    { "voiceId": "nova", "name": "Nova", "description": "", "tags": ["warm"], "language": "", "createdAt": 0.0, "refDurationMs": 0, "source": "builtin" },
+    { "voiceId": "3f9b...", "name": "Dad", "description": "Warm, low register", "tags": ["family", "warm"], "language": "en", "createdAt": 1752400000.0, "refDurationMs": 12000, "source": "user" }
   ]
 }
 ```
@@ -237,9 +242,10 @@ connection, and vice versa.
 Every item carries `source`: `"builtin"` for a read-only, service-packaged
 voice pack, or `"user"` for one created via `voice.create` on this host.
 Built-in packs are always listed first (see §4.4), each sorted by
-`voiceId`; user packs follow, sorted by `voiceId`. `description`/`tags`
-default to `""`/`[]` for older packs created before those fields
-existed (Task 1).
+`voiceId`; user packs follow, sorted by `voiceId`. `description`/`tags`/
+`language` default to `""`/`[]`/`""` for older packs created before
+those fields existed (Task 1 for `description`/`tags`; this task for
+`language`).
 
 Does not touch the synthesis lock — safe to call while a request is in
 flight.

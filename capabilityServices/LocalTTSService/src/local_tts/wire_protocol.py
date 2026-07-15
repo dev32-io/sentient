@@ -88,6 +88,7 @@ class VoiceCreateMessage:
     name: str
     description: str = ""
     tags: list[str] = field(default_factory=list)
+    language: str = ""
 
 
 @dataclass
@@ -164,6 +165,7 @@ def parse_client_message(raw: str) -> ClientMessage:
             name=_require_str(parsed, "name", kind),
             description=_optional_str(parsed, "description"),
             tags=_optional_str_list(parsed, "tags", kind),
+            language=_optional_str(parsed, "language"),
         )
     if kind == _TYPE_VOICE_LIST:
         return VoiceListMessage()

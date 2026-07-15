@@ -6,7 +6,7 @@ precomputed conditioning) plus a small JSON metadata record
 (``meta.json``):
 
     <pack_dir>/ref.wav    # mono float32 reference clip (soundfile.write/.read)
-    <pack_dir>/meta.json  # {name, description, tags, createdAt, refDurationMs}
+    <pack_dir>/meta.json  # {name, description, tags, language, createdAt, refDurationMs}
 
 Both ``VoiceStore`` (user-created packs under ``voice_dir``) and
 ``BuiltinLibrary`` (read-only shipped packs under ``builtin_dir``) read
@@ -41,6 +41,7 @@ def read_pack_meta(entry: Path) -> dict | None:
         "name": meta.get("name", ""),
         "description": meta.get("description", ""),
         "tags": meta.get("tags", []),
+        "language": meta.get("language", ""),
         "createdAt": meta.get("createdAt", 0.0),
         "refDurationMs": meta.get("refDurationMs", 0),
     }
