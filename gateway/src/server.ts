@@ -113,6 +113,13 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
   const handleProviders = createProvidersHandler({
     tokens: services.auth.tokens,
     listModels: providersDeps.listModels,
+    fishDeps: {
+      tokens: services.auth.tokens,
+      fishBrowseEnabled: services.providersConfig.fish_browse_enabled,
+      fishApiKey: services.fishApiKey,
+      timeoutMs: services.providersConfig.external_fetch_timeout_ms,
+      cacheTtlMs: services.providersConfig.fish_cache_ttl_ms,
+    },
   });
   const handleMcpCatalog = createMcpCatalogHandler({
     tokens: services.auth.tokens,

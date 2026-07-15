@@ -116,6 +116,10 @@ export interface GatewayServices {
   readonly applyConfig: ApplyConfig;
   readonly applyDeps: ApplyDeps;
   readonly providersConfig: ProvidersConfig;
+  /** Fish Audio API key for the voice-browse proxy. Plain env var (not
+   *  secretsStore) — never hardcode; resolves to null when unset, which the
+   *  Fish fetcher treats as "send no Authorization header" (public browsing). */
+  readonly fishApiKey: string | null;
   readonly mcpCatalog: McpCatalog;
   readonly hermesBuiltinTools: HermesBuiltinTools;
   readonly userPortStore: UserPortStore | null;
@@ -228,6 +232,7 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     applyDeps: services.applyDeps,
     applyConfig: cfg.apply,
     providersConfig: cfg.providers,
+    fishApiKey: process.env.FISH_AUDIO_API_KEY ?? null,
     mcpCatalog: cfg.mcpCatalog,
     hermesBuiltinTools: cfg.hermesBuiltinTools,
     userPortStore,

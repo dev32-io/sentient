@@ -1,6 +1,11 @@
 import { getLog } from "../../logging/logger.js";
 import type { ModelEntry } from "../../providers/catalogs/types.js";
 import type { TokenService } from "../../user-auth/token-service.js";
+// Fish voice-library browse routes — self-contained, removable module. The
+// mount block below (guarded by fishDeps presence) is the ONLY reference to
+// it from this core handler; deleting handlers/fish/ + this block fully
+// removes the feature.
+import { FISH_VOICES_PATH, type FishBrowseDeps, VOICE_ID_SUBPATH, handleFishBrowse } from "./fish/fish-browse.js";
 
 const log = getLog(["sentient", "gateway", "api", "providers"]);
 
@@ -17,6 +22,10 @@ export type ProvidersListResult<T> = { ok: true; value: T; stale?: boolean } | {
 export interface ProvidersHandlerDeps {
   tokens: Pick<TokenService, "validate">;
   listModels: () => Promise<ProvidersListResult<ModelEntry[]>>;
+  /** Fish voice-library browse deps. Omit entirely to keep the feature dark
+   *  (e.g. headless / CI builds) — every /providers/voices* route 404s the
+   *  same way it does when fishBrowseEnabled is false. */
+  fishDeps?: FishBrowseDeps;
 }
 
 export function createProvidersHandler(deps: ProvidersHandlerDeps): (request: Request) => Promise<Response> {
@@ -33,6 +42,10 @@ async function handleProviders(deps: ProvidersHandlerDeps, request: Request): Pr
   const url = new URL(request.url);
   if (url.pathname === PATH_MODELS) {
     return respondModels(await deps.listModels());
+  }
+  // Fish voice-library browse — self-contained mount, trivially removable.
+  if (deps.fishDeps && (url.pathname === FISH_VOICES_PATH || VOICE_ID_SUBPATH.test(url.pathname))) {
+    return handleFishBrowse(deps.fishDeps, request);
   }
   return new Response("Not Found", { status: HTTP_NOT_FOUND });
 }
