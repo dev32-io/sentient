@@ -391,3 +391,21 @@ public (no Fish API key needed). Gateway log tags: `[api:fish:browse]`,
 4. `fetch('/api/v1/services/versions', ...)` and inspect `body.features`.
 **Expected user-visible:** only Record / Upload tabs — no Fish tab. `GET /api/v1/providers/voices` with a valid token → `404`.
 **Expected log trail / response:** `services/versions` response body has `features.fish_browse_enabled: false` (DEBUG-level `[services-versions] services-versions.fetched` log line exists but won't print at the default `info` log level — assert via the response body, not the log). Revert the config key and restart to re-enable after this case.
+
+## local-tts service (WS probe) — engine-level smoke
+
+Direct WebSocket smoke against the native local-tts service (`ws://127.0.0.1:8770`), bypassing the gateway. Re-run whenever the TTS **engine** changes (this is how the Chatterbox→Qwen3-TTS swap was validated). Drive with the service venv python + the `websockets` lib; the wire contract is `CONTRACT.md` (`text`→`flush`→`ready`/`started`→binary PCM frames→`done`; `voice.create`+one binary ref clip; `voice.list`/`voice.delete`). Connect with `?format=pcm` so frame bytes → samples is trivial (`<i2`/32768, duration = samples ÷ ready.sample_rate). The agent can't audition audio — assert non-empty audio of plausible duration + `started`/`done` + the `local_tts.*` log trail; **save the zh wav for the user to audition quality**.
+
+### tts-multilingual (en + zh synth, default voice)
+**Scenario:** Synthesize an English line and a Mandarin line through the default voice; both must return non-empty PCM. This is the Qwen-swap headline (Chatterbox-Turbo was English-only → Mandarin was nonsense).
+**Expected:** en ≈ text-length-appropriate seconds, zh non-empty (~5s for a short sentence). Log: `local_tts local-tts starting: model=…Qwen3-TTS… default_lang=auto`, `engine.warm done`, no `chatterbox` in the live logs. `@live` unit equivalent: `test_local_tts_engine.py::test_streams_pcm_chunks_default_voice_zh`.
+
+### tts-builtin-voice + clone-roundtrip
+**Scenario:** `voice.list` returns the 5 built-ins (nova/wren/flint/briar/ember, all `ref.wav`); synth with `?voice=wren` renders; `voice.create` (upload a >5s wav/mp3) → `voice.list` shows it → synth in it → `voice.delete`.
+**Expected:** `voice_store.get resolved voice_id=wren path=…/wren/ref.wav`; `voice_store.create done … ref_duration_ms=<n>`; synth non-empty in the cloned voice; `voice.deleted`.
+
+### tts-stale-voice-degrades (sad path — migration edge)
+**Scenario:** A user voice pack created under the OLD Chatterbox engine holds `conds.safetensors` (no `ref.wav`). Under Qwen, synth with that voiceId must degrade to the default voice, never crash.
+**Expected:** `local_tts.voice_store voice_store.get fallback=default reason=unknown_voice voice_id=<id>` (WARNING) → normal `done` with default-voice audio. Pre-swap clones need re-cloning to sound like themselves; the service never errors on them.
+
+> **Webui UI rows** (chat→en/zh reply→TTS audio; fish-clone-zh through the Add-voice modal; record/upload+mp3/preview/pick/delete on qwen; mobile 390 viewport) exercise the gateway↔local-tts wire through the real product but require the profile **PIN** to pass the login gate — hand to the operator to run, or supply the PIN. The wire itself is engine-neutral (unchanged port/protocol across the swap) and is proven at the service level by the probe cases above.
