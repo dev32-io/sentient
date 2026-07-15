@@ -941,26 +941,10 @@
 }
 .settings-v2 .voices-rec-row .tf { flex: 1 1 auto; }
 
-/* Upload trigger — pill-shaped label wrapping a visually-hidden file input.
- * Used by AddVoiceModal's "upload" capture mode. */
-.settings-v2 .voices-upload-btn {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12.5px;
-  color: var(--color-accent);
-  cursor: pointer;
-  padding: 4px 10px;
-  border: 1px solid var(--color-line-soft);
-  border-radius: 999px;
-  transition: border-color 0.15s, background 0.15s;
-}
-.settings-v2 .voices-upload-btn:hover {
-  border-color: var(--color-accent);
-  background: color-mix(in oklab, var(--color-accent) 6%, transparent);
-}
-.settings-v2 .voices-upload-btn input[type="file"] {
+/* Visually-hidden file input for AddVoiceModal's "upload" capture mode — a
+ * standard Btn primitive triggers it via a ref (.click()), so the input itself
+ * never renders. */
+.settings-v2 .voices-upload-input {
   position: absolute;
   width: 1px;
   height: 1px;

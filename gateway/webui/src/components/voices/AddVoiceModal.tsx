@@ -1,6 +1,6 @@
 // gateway/webui/src/components/voices/AddVoiceModal.tsx
 import type { JSX } from "preact";
-import { useState } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
 import { Modal } from "../settings/primitives/modal.tsx";
 import { Segmented } from "../settings/primitives/segmented.tsx";
@@ -71,6 +71,7 @@ export function AddVoiceModal({
   const [audio, setAudio] = useState<Blob | null>(null);
   const [audioDurationMs, setAudioDurationMs] = useState<number | null>(null);
   const [fishVoiceId, setFishVoiceId] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!open) return null;
 
@@ -165,11 +166,23 @@ export function AddVoiceModal({
 
         {mode === "upload" && (
           <div class="voices-rec">
-            <label class="voices-upload-btn">
-              <Icon name="plus" size={12} />
+            <Btn
+              kind="secondary"
+              size="sm"
+              icon={<Icon name="plus" size={12} />}
+              disabled={busy}
+              onClick={() => fileInputRef.current?.click()}
+            >
               {audio ? "Replace file" : "Choose file"}
-              <input type="file" accept={UPLOAD_TYPES} disabled={busy} onChange={handleUpload} />
-            </label>
+            </Btn>
+            <input
+              ref={fileInputRef}
+              class="voices-upload-input"
+              type="file"
+              accept={UPLOAD_TYPES}
+              disabled={busy}
+              onChange={handleUpload}
+            />
             <span class="voices-rec-hint">WAV, FLAC, OGG, or MP3.</span>
           </div>
         )}
