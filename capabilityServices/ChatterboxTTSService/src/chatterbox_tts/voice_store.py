@@ -1,11 +1,14 @@
-"""Per-``voiceId`` voice-pack store for Chatterbox TTS.
+"""Per-``voiceId`` voice-pack store for Qwen3-TTS speaker-encoder cloning.
 
-A "voice pack" is a persisted Chatterbox ``Conditionals`` object (T3 +
-S3Gen conditioning derived from a reference clip) plus a small metadata
-record. User-created packs live one-per-directory under ``voice_dir``::
+A "voice pack" is a persisted raw reference clip (a mono float32 wav)
+plus a small metadata record. Qwen3-TTS clones a voice directly from
+that reference wav at synth time (its speaker encoder runs per-call) —
+unlike the retired Chatterbox engine, there is no precomputed
+conditioning object to build or cache here. User-created packs live
+one-per-directory under ``voice_dir``::
 
-    <voice_dir>/<voiceId>/conds.safetensors   # Conditionals.save()/.load()
-    <voice_dir>/<voiceId>/meta.json           # {name, description, tags, createdAt, refDurationMs}
+    <voice_dir>/<voiceId>/ref.wav    # mono float32, soundfile.write()/.read()
+    <voice_dir>/<voiceId>/meta.json  # {name, description, tags, createdAt, refDurationMs}
 
 (see ``pack_meta.py`` for the shared on-disk shape). A second, read-only
 ``builtin_dir`` holds packaged voice packs in the same shape, addressed
@@ -13,17 +16,10 @@ by a short slug (e.g. ``nova``) instead of a ``uuid4().hex`` — resolved
 via the ``BuiltinLibrary`` collaborator (``builtin_library.py``), which
 ``VoiceStore`` composes and checks first in ``get``/``delete``/``list``.
 
-Despite the ``.safetensors`` name (kept for readability/consistency with
-the model's own built-in-voice file), ``Conditionals.save``/``.load``
-(``mlx_audio.tts.models.chatterbox_turbo.chatterbox_turbo.Conditionals``)
-pickle the ``{t3, gen}`` pair rather than using the real safetensors
-format — confirmed by reading the installed venv source. We use those
-methods as-is; the filename is just a label.
-
-``get(None)`` (or an unknown/deleted ``voiceId``) falls back to the
-model's built-in default conditioning via
-``ChatterboxEngine.default_conditionals()`` — callers never need to
-special-case "no voice selected".
+``get(None)`` (or an unknown/deleted ``voiceId``) returns ``None`` — the
+engine's own default-voice path, which the Qwen synth call handles by
+passing ``ref_audio=None``. Callers never need to special-case "no voice
+selected".
 
 Security notes (``voiceId`` arrives from an external boundary: webui ->
 gateway -> WS ``voice.delete``/``voice.select`` -> this store):
@@ -34,14 +30,6 @@ gateway -> WS ``voice.delete``/``voice.select`` -> this store):
   format ``create()`` generates) before it ever reaches a filesystem
   path, plus a belt-and-suspenders resolved-path check. ``create()``
   mints its own id, so it skips validation.
-- **Unsafe deserialization.** ``Conditionals.load()`` unpickles
-  ``conds.safetensors``. Safe for user packs because the traversal
-  guard pins the path under the 0700 ``voice_dir``, and every pack
-  there is service-produced (an attacker never supplies pickle bytes
-  directly). Safe for built-in packs because ``builtin_dir`` is
-  packaged read-only content we ship, not attacker-writable. A real
-  fix is migrating ``Conditionals`` to the actual safetensors format
-  upstream in mlx-audio; that's a larger follow-up, not done here.
 """
 
 from __future__ import annotations
@@ -54,27 +42,29 @@ import shutil
 import time
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import numpy as np
-from mlx_audio.tts.models.chatterbox_turbo import Conditionals
+import soundfile as sf
 
 from .builtin_library import BuiltinLibrary
-from .pack_meta import CONDS_FILENAME, META_FILENAME, read_pack_meta
-
-if TYPE_CHECKING:
-    from .chatterbox_mlx import ChatterboxEngine
+from .pack_meta import META_FILENAME, REF_FILENAME, read_pack_meta
 
 log = logging.getLogger("chatterbox_tts.voice_store")
 
 _TMP_SUFFIX = ".tmp"
-_DIR_MODE = 0o700  # service-user-only; voice packs are unpickled on load (see module docstring)
+_DIR_MODE = 0o700  # service-user-only
 
-# mlx-audio's ChatterboxEngine.prepare_conditionals() (chatterbox_turbo.py)
-# hard-asserts `len(ref_wav_24k) / S3GEN_SR > 5.0` and raises a raw
-# AssertionError otherwise. We reject short clips ourselves, before any
-# filesystem work, so the caller gets a typed ValueError instead.
-_MIN_REF_SECONDS = 5.0
+# soundfile can't infer a format from a "ref.wav.tmp" extension (the
+# atomic-write temp path), so the format is passed explicitly.
+_REF_SF_FORMAT = "WAV"
+
+# A practical floor for usable speaker-embedding extraction — short of a
+# hard model-side assertion (Qwen3-TTS's speaker encoder has none), but
+# clips at or under this length produce unreliable clones in bench
+# testing. Reject before any filesystem work so the caller gets a typed
+# ValueError instead of a bad-quality clone downstream.
+_MIN_REF_SECONDS = 3.0
 
 # uuid.uuid4().hex shape — exactly what create() generates. Anything else
 # (path separators, "..", absolute paths, wrong length/alphabet) is rejected
@@ -86,59 +76,45 @@ class VoiceStore:
     """Create/list/get/delete voice packs under ``voice_dir``, plus a
     read-only ``builtin_dir`` merged in ahead of them (see module docstring)."""
 
-    def __init__(
-        self, model: "ChatterboxEngine", voice_dir: Path, builtin_dir: Path | None = None
-    ) -> None:
+    def __init__(self, model: Any, voice_dir: Path, builtin_dir: Path | None = None) -> None:
+        # `model` is unused by create()/get() — Qwen3-TTS clones from the
+        # raw ref wav at synth time, no engine-side "prepare" step. Kept
+        # for constructor-signature compatibility with callers
+        # (server.py/__main__.py); a later task drops this parameter.
         self._model = model
         self._voice_dir = Path(voice_dir)
-        self._cache: dict[str, Any] = {}  # voiceId -> loaded Conditionals
         self._builtin = BuiltinLibrary(builtin_dir)
 
-        # Voice packs are unpickled on load (see module docstring). Lock the
-        # directory to service-user-only so nothing else on the host can
-        # plant or tamper with a pack. mode= on makedirs is subject to
-        # umask, so chmod explicitly for both the fresh- and already-exists
-        # cases.
         os.makedirs(self._voice_dir, mode=_DIR_MODE, exist_ok=True)
         os.chmod(self._voice_dir, _DIR_MODE)
 
-    def get(self, voice_id: str | None) -> Any:
-        """Return conditioning for ``voice_id``, or the model's built-in default."""
+    def get(self, voice_id: str | None) -> str | None:
+        """Return the ref.wav path for ``voice_id``, or ``None`` (engine default)."""
         if voice_id is None:
             log.debug("voice_store.get default reason=voice_id_none")
-            return self._model.default_conditionals()
+            return None
 
         if self._builtin.has(voice_id):
-            return self._get_from_dir(voice_id, self._builtin.pack_dir(voice_id))
+            return self._ref_path(voice_id, self._builtin.pack_dir(voice_id))
 
-        # Validate untrusted input before consulting any keyed state (cache
-        # included) — see module docstring's "Path traversal" note.
+        # Validate untrusted input before it reaches any filesystem path —
+        # see module docstring's "Path traversal" note.
         pack_dir = self._validated_pack_dir(voice_id)
-        return self._get_from_dir(voice_id, pack_dir)
+        return self._ref_path(voice_id, pack_dir)
 
-    def _get_from_dir(self, voice_id: str, pack_dir: Path) -> Any:
-        """Cache/load body shared by both the built-in and user-pack paths."""
-        if voice_id in self._cache:
-            log.debug("voice_store.get cache_hit voice_id=%s", voice_id)
-            return self._cache[voice_id]
-
-        conds_path = pack_dir / CONDS_FILENAME
-        if not conds_path.is_file():
+    def _ref_path(self, voice_id: str, pack_dir: Path) -> str | None:
+        """Resolve a validated ``pack_dir`` to its ref.wav path, or ``None`` if missing."""
+        ref_path = pack_dir / REF_FILENAME
+        if not ref_path.is_file():
             log.warning(
                 "voice_store.get fallback=default reason=unknown_voice voice_id=%s",
                 voice_id,
             )
-            return self._model.default_conditionals()
+            return None
+        log.info("voice_store.get resolved voice_id=%s path=%s", voice_id, ref_path)
+        return str(ref_path)
 
-        # SECURITY: unpickles. Safe only because callers only reach here via a
-        # validated pack_dir (traversal-checked, or a membership-checked
-        # built-in slug) — see the "Unsafe deserialization" module docstring note.
-        conds = Conditionals.load(conds_path)
-        self._cache[voice_id] = conds
-        log.info("voice_store.get loaded voice_id=%s path=%s", voice_id, conds_path)
-        return conds
-
-    def get_or_default(self, voice_id: str | None) -> Any:
+    def get_or_default(self, voice_id: str | None) -> str | None:
         """Like ``get``, but never raises: a malformed ``voice_id`` (fails
         ``get``'s traversal/format validation) falls back to the default
         voice with a warning — same outcome as an unknown-but-valid-format
@@ -157,7 +133,7 @@ class VoiceStore:
     def create(
         self, ref_wav: np.ndarray, sr: int, name: str, description: str = "", tags: list[str] | None = None
     ) -> dict:
-        """Build conditioning from ``ref_wav`` and persist a new voice pack.
+        """Persist ``ref_wav`` as a new voice pack's reference clip.
 
         Rejects a too-short clip with a typed ``ValueError`` before any
         filesystem work, and leaves no orphaned pack dir if pack-building
@@ -178,11 +154,10 @@ class VoiceStore:
             "voice_store.create start voice_id=%s name=%s samples=%d sr=%d",
             voice_id, name, ref_wav.size, sr,
         )
-        conds, created_at, ref_duration_ms = self._build_pack(
+        created_at, ref_duration_ms = self._build_pack(
             voice_id, ref_wav, sr, name, duration_s, description, tags
         )
 
-        self._cache[voice_id] = conds
         log.info(
             "voice_store.create done voice_id=%s ref_duration_ms=%d",
             voice_id, ref_duration_ms,
@@ -192,8 +167,8 @@ class VoiceStore:
     def _build_pack(
         self, voice_id: str, ref_wav: np.ndarray, sr: int, name: str, duration_s: float,
         description: str, tags: list[str] | None,
-    ) -> tuple[Any, float, int]:
-        """mkdir -> prepare_conditionals -> save conds -> write meta, all-or-nothing.
+    ) -> tuple[float, int]:
+        """mkdir -> write ref.wav -> write meta, all-or-nothing.
 
         On any exception mid-sequence, removes the (possibly partial) pack
         dir before re-raising, so a failed ``create()`` never leaves an
@@ -202,14 +177,7 @@ class VoiceStore:
         pack_dir = self._pack_dir(voice_id)
         try:
             pack_dir.mkdir(parents=True, exist_ok=True)
-
-            # Mutates the shared lru_cache'd model singleton's `_conds` as a
-            # side effect of ChatterboxEngine.prepare_conditionals() (see
-            # that method's docstring in chatterbox_mlx.py) — not made
-            # thread-safe here; the WS server task is expected to
-            # serialize calls.
-            conds = self._model.prepare_conditionals(ref_wav, sr)
-            self._save_atomic(pack_dir / CONDS_FILENAME, conds)
+            self._write_ref_atomic(pack_dir / REF_FILENAME, ref_wav, sr)
 
             created_at = time.time()
             ref_duration_ms = round(duration_s * 1000.0)
@@ -225,7 +193,7 @@ class VoiceStore:
             )
             shutil.rmtree(pack_dir, ignore_errors=True)
             raise
-        return conds, created_at, ref_duration_ms
+        return created_at, ref_duration_ms
 
     def list(self) -> list[dict]:
         """Return metadata for every voice pack, built-ins first, each tagged ``source``."""
@@ -255,7 +223,6 @@ class VoiceStore:
             log.debug("voice_store.delete missing voice_id=%s", voice_id)
             return False
         shutil.rmtree(pack_dir)
-        self._cache.pop(voice_id, None)
         log.info("voice_store.delete done voice_id=%s", voice_id)
         return True
 
@@ -285,10 +252,10 @@ class VoiceStore:
             raise ValueError("invalid voice_id")
 
     @staticmethod
-    def _save_atomic(path: Path, conds: Any) -> None:
-        """Write ``conds`` via ``Conditionals.save`` to a temp file, then atomically rename."""
+    def _write_ref_atomic(path: Path, ref_wav: np.ndarray, sr: int) -> None:
+        """Write ``ref_wav`` via ``soundfile.write`` to a temp file, then atomically rename."""
         tmp_path = Path(f"{path}{_TMP_SUFFIX}")
-        conds.save(tmp_path)
+        sf.write(tmp_path, ref_wav, sr, format=_REF_SF_FORMAT)
         os.replace(tmp_path, path)
 
     @staticmethod

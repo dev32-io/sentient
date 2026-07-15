@@ -1,11 +1,12 @@
 """Shared voice-pack metadata reader for ``VoiceStore`` and ``BuiltinLibrary``.
 
-A "voice pack" is a directory containing a persisted Chatterbox
-``Conditionals`` (``conds.safetensors``) plus a small JSON metadata
-record (``meta.json``):
+A "voice pack" is a directory containing a raw reference wav (used by
+Qwen3-TTS's speaker encoder to clone a voice at synth time — no
+precomputed conditioning) plus a small JSON metadata record
+(``meta.json``):
 
-    <pack_dir>/conds.safetensors   # Conditionals.save()/.load()
-    <pack_dir>/meta.json           # {name, description, tags, createdAt, refDurationMs}
+    <pack_dir>/ref.wav    # mono float32 reference clip (soundfile.write/.read)
+    <pack_dir>/meta.json  # {name, description, tags, createdAt, refDurationMs}
 
 Both ``VoiceStore`` (user-created packs under ``voice_dir``) and
 ``BuiltinLibrary`` (read-only shipped packs under ``builtin_dir``) read
@@ -21,7 +22,7 @@ from pathlib import Path
 
 log = logging.getLogger("chatterbox_tts.pack_meta")
 
-CONDS_FILENAME = "conds.safetensors"
+REF_FILENAME = "ref.wav"
 META_FILENAME = "meta.json"
 
 

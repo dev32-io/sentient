@@ -1,7 +1,7 @@
 """Read-only built-in voice library — packs shipped alongside the service.
 
 A built-in pack lives in the same on-disk shape as a user pack
-(``conds.safetensors`` + ``meta.json``, see ``pack_meta.py``) but under a
+(``ref.wav`` + ``meta.json``, see ``pack_meta.py``) but under a
 separate ``builtin_dir``, addressed by a short human-readable slug (e.g.
 ``nova``) instead of a ``uuid4().hex``. Built-ins are read-only from the
 service's point of view — there is no create/delete path, only
@@ -20,7 +20,7 @@ import logging
 import re
 from pathlib import Path
 
-from .pack_meta import CONDS_FILENAME, read_pack_meta
+from .pack_meta import REF_FILENAME, read_pack_meta
 
 log = logging.getLogger("chatterbox_tts.builtin_library")
 
@@ -70,11 +70,11 @@ class BuiltinLibrary:
         return metas
 
     def _scan_slugs(self) -> set[str]:
-        """Slug set = subdirs of builtin_dir matching the slug shape, holding a conds file."""
+        """Slug set = subdirs of builtin_dir matching the slug shape, holding a ref wav."""
         if self._builtin_dir is None or not self._builtin_dir.is_dir():
             return set()
         slugs: set[str] = set()
         for entry in self._builtin_dir.iterdir():
-            if entry.is_dir() and _BUILTIN_SLUG_RE.match(entry.name) and (entry / CONDS_FILENAME).is_file():
+            if entry.is_dir() and _BUILTIN_SLUG_RE.match(entry.name) and (entry / REF_FILENAME).is_file():
                 slugs.add(entry.name)
         return slugs
