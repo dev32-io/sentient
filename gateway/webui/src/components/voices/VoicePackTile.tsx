@@ -1,5 +1,6 @@
 // gateway/webui/src/components/voices/VoicePackTile.tsx
 import type { JSX } from "preact";
+import { LANGUAGE_DISPLAY } from "@sentient/config";
 import type { VoiceSummary } from "../../services/voices-api.ts";
 import { Btn } from "../settings/primitives/btn.tsx";
 import { Icon } from "../common/icon.tsx";
@@ -22,6 +23,11 @@ export function VoicePackTile(props: VoicePackTileProps): JSX.Element {
     <div class={["vp-tile", isActive && "on", `vp-${pack.source}`].filter(Boolean).join(" ")}>
       <div class="vp-tile-head">
         <span class="vp-name">{pack.name}</span>
+        {pack.language ? (
+          <span class="lang-badge" title={LANGUAGE_DISPLAY[pack.language]?.name ?? pack.language}>
+            {LANGUAGE_DISPLAY[pack.language]?.flag ?? "🌐"}
+          </span>
+        ) : null}
         <span class={`vp-badge vp-badge-${pack.source}`}>{pack.source === "builtin" ? "Built-in" : "Yours"}</span>
       </div>
       {pack.description && <div class="vp-desc">{pack.description}</div>}

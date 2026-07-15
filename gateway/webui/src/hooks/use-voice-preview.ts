@@ -8,7 +8,9 @@ const log = createLogger(["sentient", "webui", "voices", "preview"]);
 export interface UseVoicePreview {
   readonly previewId: ReadonlySignal<string | null>;
   readonly loadingId: ReadonlySignal<string | null>;
-  play(voiceId: string): Promise<void>;
+  /** `language` is the pack's `VoiceSummary.language` — "" (unset) falls
+   *  back to the server's default English greeting. */
+  play(voiceId: string, language: string): Promise<void>;
   stop(): void;
 }
 
@@ -37,15 +39,11 @@ export function createUseVoicePreview(token: string, onError: () => void): UseVo
     loadingId.value = null;
   }
 
-  async function play(voiceId: string): Promise<void> {
+  async function play(voiceId: string, language: string): Promise<void> {
     stop();
     loadingId.value = voiceId;
-    log.debug("preview.play", { voiceId });
-    // TODO(Task 8/9, voice-pack-language plan): look up this pack's
-    // VoiceSummary.language and pass it here so preview picks a matching
-    // greeting. "" is the documented unset default and matches today's
-    // pre-language behavior (server picks the English greeting).
-    const r = await api.previewVoice(token, voiceId, "");
+    log.debug("preview.play", { voiceId, language });
+    const r = await api.previewVoice(token, voiceId, language);
     if (loadingId.value !== voiceId) return; // superseded by a later play()/stop()
     loadingId.value = null;
     if (!r.ok) {

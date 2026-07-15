@@ -1011,6 +1011,12 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Language flag badge — sits between the name and the source badge. */
+.settings-v2 .lang-badge {
+  flex-shrink: 0;
+  font-size: 13px;
+  line-height: 1;
+}
 
 /* Built-in vs cloned — the badge is the primary visual distinguisher the
  * spec calls for, so it gets its own accent (sage) vs. neutral pairing. */

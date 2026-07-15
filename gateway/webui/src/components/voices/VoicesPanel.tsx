@@ -13,7 +13,7 @@ import { Icon } from "../common/icon.tsx";
 import { VoiceFilterBar } from "./VoiceFilterBar.tsx";
 import { VoicePackGrid } from "./VoicePackGrid.tsx";
 import { AddVoiceModal } from "./AddVoiceModal.tsx";
-import { deriveTagOptions, filterPacks, type VoiceSource } from "./voice-filter.ts";
+import { deriveLanguageOptions, deriveTagOptions, filterPacks, type VoiceSource } from "./voice-filter.ts";
 import { createVoicesPanelHandlers } from "./voices-panel-handlers.ts";
 
 const fishApi = createFishApi();
@@ -39,6 +39,7 @@ export function VoicesPanel(props: VoicesPanelProps): JSX.Element {
   const [q, setQ] = useState("");
   const [source, setSource] = useState<VoiceSource>("all");
   const [tags, setTags] = useState<string[]>([]);
+  const [language, setLanguage] = useState("");
 
   // Stable per token identity — onActiveVoiceChanged is a functional-setState
   // sync callback from settings-view (safe to close over the first instance).
@@ -76,8 +77,9 @@ export function VoicesPanel(props: VoicesPanelProps): JSX.Element {
   useEffect(() => () => preview.stop(), [preview]);
 
   const all = hook.voices.value ?? [];
-  const shown = filterPacks(all, { q, source, tags });
+  const shown = filterPacks(all, { q, source, tags, language });
   const allTags = deriveTagOptions(all);
+  const allLanguages = deriveLanguageOptions(all);
   const previewDisabled = assistantSpeaking?.value ?? false;
 
   function toggleTag(tag: string): void {
@@ -101,9 +103,12 @@ export function VoicesPanel(props: VoicesPanelProps): JSX.Element {
         source={source}
         activeTags={tags}
         allTags={allTags}
+        language={language}
+        allLanguages={allLanguages}
         onQ={setQ}
         onSource={setSource}
         onToggleTag={toggleTag}
+        onLanguage={setLanguage}
       />
 
       <VoicePackGrid
@@ -115,7 +120,7 @@ export function VoicesPanel(props: VoicesPanelProps): JSX.Element {
         previewLoadingId={preview.loadingId.value}
         previewDisabled={previewDisabled}
         busy={busy}
-        onPlay={(id) => handlers.handlePlay(id, previewDisabled)}
+        onPlay={(id, lang) => handlers.handlePlay(id, lang, previewDisabled)}
         onPick={(id) => void handlers.handlePick(id)}
         onDelete={(id) => void handlers.handleDelete(id)}
       />

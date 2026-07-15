@@ -7,6 +7,8 @@ export interface VoiceFilterState {
   q: string;
   source: VoiceSource;
   tags: string[];
+  /** Exact-match language code; "" means no language filter. */
+  language: string;
 }
 
 /** Sorted union of every tag across packs. */
@@ -16,11 +18,19 @@ export function deriveTagOptions(packs: VoiceSummary[]): string[] {
   return [...set].sort((a, b) => a.localeCompare(b));
 }
 
-/** Source filter + all-selected-tags-present + case-insensitive search over name+description+tags. */
+/** Sorted union of every non-empty language code across packs. */
+export function deriveLanguageOptions(packs: VoiceSummary[]): string[] {
+  const set = new Set<string>();
+  for (const p of packs) if (p.language) set.add(p.language);
+  return [...set].sort((a, b) => a.localeCompare(b));
+}
+
+/** Source filter + language filter + all-selected-tags-present + case-insensitive search over name+description+tags. */
 export function filterPacks(packs: VoiceSummary[], f: VoiceFilterState): VoiceSummary[] {
   const q = f.q.trim().toLowerCase();
   return packs.filter((p) => {
     if (f.source !== "all" && p.source !== f.source) return false;
+    if (f.language !== "" && p.language !== f.language) return false;
     if (f.tags.length > 0 && !f.tags.every((t) => p.tags.includes(t))) return false;
     if (q === "") return true;
     const hay = [p.name, p.description, ...p.tags].join(" ").toLowerCase();

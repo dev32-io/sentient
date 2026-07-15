@@ -15,7 +15,9 @@ export interface VoicePackGridProps {
   previewLoadingId: string | null;
   previewDisabled: boolean;
   busy: boolean;
-  onPlay: (id: string) => void;
+  /** `language` is the pack's `VoiceSummary.language` — threaded through so
+   *  the preview plays in the pack's own language. */
+  onPlay: (id: string, language: string) => void;
   onPick: (id: string) => void;
   onDelete: (id: string) => void;
 }
@@ -63,7 +65,7 @@ function renderTiles(props: VoicePackGridProps, setConfirmId: (id: string | null
         previewState={previewState}
         previewDisabled={props.previewDisabled}
         busy={props.busy}
-        onPlay={() => props.onPlay(pack.voiceId)}
+        onPlay={() => props.onPlay(pack.voiceId, pack.language)}
         onPick={() => props.onPick(pack.voiceId)}
         {...(pack.source === "user" ? { onDelete: () => setConfirmId(pack.voiceId) } : {})}
       />

@@ -43,8 +43,10 @@ export interface VoicesPanelHandlers {
   handlePick(voiceId: string): Promise<void>;
   /** `disabled` is read at click time from the panel's `previewDisabled`
    *  derivation (assistantSpeaking signal) — the panel owns that read so this
-   *  module stays signal-free and easy to reason about. */
-  handlePlay(voiceId: string, disabled: boolean): void;
+   *  module stays signal-free and easy to reason about. `language` is the
+   *  pack's `VoiceSummary.language` so the preview plays in the pack's
+   *  language rather than always the server's default greeting. */
+  handlePlay(voiceId: string, language: string, disabled: boolean): void;
 }
 
 /** Imperative create/delete/pick/play handlers for VoicesPanel, extracted so
@@ -136,7 +138,7 @@ export function createVoicesPanelHandlers(deps: VoicesPanelHandlersDeps): Voices
     if (!r.ok) toast.show("Couldn't switch voice", "error");
   }
 
-  function handlePlay(voiceId: string, disabled: boolean): void {
+  function handlePlay(voiceId: string, language: string, disabled: boolean): void {
     if (disabled) {
       toast.show("Can't preview while Sentient is speaking", "error");
       return;
@@ -145,7 +147,7 @@ export function createVoicesPanelHandlers(deps: VoicesPanelHandlersDeps): Voices
       preview.stop();
       return;
     }
-    void preview.play(voiceId);
+    void preview.play(voiceId, language);
   }
 
   return { handleCreate, handleCloneFromFish, handleDelete, handlePick, handlePlay };
