@@ -4,7 +4,9 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 import type { ReadonlySignal } from "@preact/signals";
 import { createUseVoices } from "../../hooks/use-voices.ts";
 import { createUseVoicePreview } from "../../hooks/use-voice-preview.ts";
+import { useServiceVersions } from "../../hooks/use-service-versions.ts";
 import { useToast } from "../../hooks/use-toast.tsx";
+import { createFishApi } from "../../services/fish-api.ts";
 import { PaneHead } from "../settings/primitives/pane-head.tsx";
 import { Btn } from "../settings/primitives/btn.tsx";
 import { Icon } from "../common/icon.tsx";
@@ -13,6 +15,8 @@ import { VoicePackGrid } from "./VoicePackGrid.tsx";
 import { AddVoiceModal } from "./AddVoiceModal.tsx";
 import { deriveTagOptions, filterPacks, type VoiceSource } from "./voice-filter.ts";
 import { createVoicesPanelHandlers } from "./voices-panel-handlers.ts";
+
+const fishApi = createFishApi();
 
 export interface VoicesPanelProps {
   token: string;
@@ -49,9 +53,11 @@ export function VoicesPanel(props: VoicesPanelProps): JSX.Element {
     [token],
   );
   const handlers = useMemo(
-    () => createVoicesPanelHandlers({ hook, preview, toast, setBusy }),
-    [hook, preview, toast],
+    () => createVoicesPanelHandlers({ hook, preview, toast, setBusy, fishApi, token }),
+    [hook, preview, toast, token],
   );
+  const versions = useServiceVersions(token);
+  const fishBrowseEnabled = versions?.features.fish_browse_enabled ?? false;
 
   useEffect(() => {
     void hook.load();
@@ -114,7 +120,15 @@ export function VoicesPanel(props: VoicesPanelProps): JSX.Element {
         onDelete={(id) => void handlers.handleDelete(id)}
       />
 
-      <AddVoiceModal open={addOpen} busy={busy} onClose={() => setAddOpen(false)} onCreate={handlers.handleCreate} />
+      <AddVoiceModal
+        open={addOpen}
+        busy={busy}
+        token={token}
+        onClose={() => setAddOpen(false)}
+        onCreate={handlers.handleCreate}
+        fishBrowseEnabled={fishBrowseEnabled}
+        onCloneFromFish={handlers.handleCloneFromFish}
+      />
     </>
   );
 }

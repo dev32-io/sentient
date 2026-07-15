@@ -232,4 +232,18 @@ describe("createUseVoices", () => {
     expect(calls).toHaveLength(0);
     expect(onActiveVoiceChanged).not.toHaveBeenCalled();
   });
+
+  it("activateVoiceLocally updates the active id AND notifies the caller, without fetching", () => {
+    stub(async () => {
+      throw new Error("activateVoiceLocally must not touch the network");
+    });
+    const onActiveVoiceChanged = vi.fn();
+    const hook = createUseVoices({ token: "t", initialActiveId: "default", onActiveVoiceChanged });
+
+    hook.activateVoiceLocally("v-fish-cloned");
+
+    expect(hook.activeId.value).toBe("v-fish-cloned");
+    expect(calls).toHaveLength(0);
+    expect(onActiveVoiceChanged).toHaveBeenCalledWith("v-fish-cloned");
+  });
 });

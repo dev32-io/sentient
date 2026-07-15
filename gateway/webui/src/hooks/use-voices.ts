@@ -33,6 +33,14 @@ export interface UseVoices {
    *  Never fetches, never PUTs, never calls `onActiveVoiceChanged` — the
    *  value is already the server's truth flowing IN, not a user action. */
   syncActiveId(voiceId: string): void;
+  /** Mirrors an activation that already happened server-side as a side effect
+   *  of a call this hook didn't make itself (e.g. clone-from-Fish's atomic
+   *  create+activate) into local state. Unlike `syncActiveId`, this IS a
+   *  user-triggered change, so — like `createVoice`'s own activation — it
+   *  DOES call `onActiveVoiceChanged` so a later Apply on another tab doesn't
+   *  revert the pick. Callers must only invoke this after confirming their
+   *  own request succeeded WITHOUT an activation warning. */
+  activateVoiceLocally(voiceId: string): void;
 }
 
 export interface UseVoicesDeps {
@@ -151,5 +159,22 @@ export function createUseVoices(deps: UseVoicesDeps): UseVoices {
     activeId.value = voiceId;
   }
 
-  return { voices, activeId, loading, error, load, createVoice, deleteVoice, setActiveVoice, syncActiveId };
+  function activateVoiceLocally(voiceId: string): void {
+    log.debug("activateVoiceLocally", { voiceId });
+    activeId.value = voiceId;
+    onActiveVoiceChanged(voiceId);
+  }
+
+  return {
+    voices,
+    activeId,
+    loading,
+    error,
+    load,
+    createVoice,
+    deleteVoice,
+    setActiveVoice,
+    syncActiveId,
+    activateVoiceLocally,
+  };
 }
