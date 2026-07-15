@@ -8,13 +8,15 @@ connection *lifecycle*: accept, health endpoint, signals) so each file
 stays under the project's line cap.
 
 Locking note: ``voice.list``/``voice.delete`` never touch the shared
-model singleton, so they run without the synth lock. ``voice.create``
-DOES mutate it (via ``ChatterboxEngine.prepare_conditionals`` — see that
-method's docstring), so it's serialized under the same ``synth_lock``
-``SynthesisRunner`` uses for text synthesis, per the task brief. It runs
-via ``asyncio.to_thread`` (like the synth worker thread) rather than
-inline, so a multi-second ``prepare_conditionals`` pass doesn't stall
-the event loop for every other connection waiting on that same lock.
+model singleton, so they run without the synth lock. Qwen3-TTS's
+``VoiceStore.create`` only writes a reference wav to disk — it doesn't
+touch the shared model the way the retired Chatterbox engine's
+``prepare_conditionals`` did — but ``voice.create`` still runs under the
+same ``synth_lock`` ``SynthesisRunner`` uses for text synthesis, kept
+for simplicity rather than because it's still load-bearing. It runs via
+``asyncio.to_thread`` (like the synth worker thread) rather than inline,
+so the file write doesn't stall the event loop for every other
+connection waiting on that same lock.
 """
 
 from __future__ import annotations
@@ -45,7 +47,7 @@ from .wire_protocol import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - import-time-only, avoids the MLX/mlx_audio
-    from .chatterbox_mlx import ChatterboxEngine  # heavy import cost for non-live tests.
+    from .qwen_engine import QwenEngine  # heavy import cost for non-live tests.
     from .voice_store import VoiceStore
 
 log = logging.getLogger("chatterbox_tts.connection_session")
@@ -66,13 +68,14 @@ class ConnectionSession:
         *,
         ws: Any,
         conn_id: str,
-        engine: "ChatterboxEngine",
+        engine: "QwenEngine",
         voice_store: "VoiceStore",
         synth_lock: asyncio.Lock,
         format_: str,
         sample_rate: int,
         voice: str | None,
         streaming_interval: float,
+        default_lang: str,
         conn_log: Any,
         metrics_log: Any,
     ) -> None:
@@ -87,7 +90,8 @@ class ConnectionSession:
         self._synth = SynthesisRunner(
             engine=engine, voice_store=voice_store, synth_lock=synth_lock, ws=ws,
             conn_id=conn_id, format_=format_, sample_rate=sample_rate, voice=voice,
-            streaming_interval=streaming_interval, conn_log=conn_log, metrics_log=metrics_log,
+            streaming_interval=streaming_interval, default_lang=default_lang,
+            conn_log=conn_log, metrics_log=metrics_log,
         )
 
     async def send_ready(self) -> None:

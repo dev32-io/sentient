@@ -1,32 +1,29 @@
 """Per-connection text-buffer -> synth-request queue -> worker task.
 
-Owns this service's one real concurrency hazard (see ``chatterbox_mlx
-.py``'s class docstring): ``ChatterboxEngine.synthesize()`` mutates the
-shared ``lru_cache``'d model singleton's ``model._conds`` and is a
-**blocking, synchronous** MLX generator on a single GPU. Rules below,
-verbatim from the task brief, span this file plus two thin siblings —
+``QwenEngine.synthesize()`` takes its reference audio as a plain per-call
+argument, so — unlike the retired Chatterbox engine — it no longer races
+concurrent calls over shared model state. It's still a **blocking,
+synchronous** MLX generator on a single GPU/model, so this file keeps
+the single-lock design below to avoid two requests fighting over the
+same Metal device. Spans this file plus two thin siblings —
 ``synth_worker.py`` (worker-thread half) and ``synth_metrics.py`` (pure
 post-request metrics half):
 
-1. A single injected ``asyncio.Lock`` (one per server process) is held
-   for the FULL duration of each request — ``voice_store.get(voice)``
-   through the last emitted chunk — so at most one synthesis runs at a
-   time across the whole service.
+1. A single injected ``asyncio.Lock`` (one per server process) is held for the FULL
+   duration of each request — ``voice_store.get(voice)`` through the last emitted
+   chunk — so at most one synthesis runs at a time across the whole service.
 2. The blocking generator runs OFF the event loop on a worker thread
-   (``synth_worker.produce_chunks``); encoded chunks cross back via a
-   bounded ``asyncio.Queue`` (cross-thread ``run_coroutine_threadsafe``
-   puts). Only the event loop ever calls ``ws.send``.
-3. ``{"type":"cancel"}`` or a WS close sets a ``threading.Event`` that
-   ``synthesize()`` checks between chunks, so the generator returns
-   early. ``_drain_to_ws`` keeps consuming to ``QUEUE_STOP`` even after
-   a send failure, so the worker thread never blocks forever on an
-   undrained queue (``close()`` follows the same rule).
+   (``synth_worker.produce_chunks``); chunks cross back via a bounded ``asyncio.Queue``
+   (cross-thread ``run_coroutine_threadsafe`` puts). Only the event loop calls ``ws.send``.
+3. ``{"type":"cancel"}`` or a WS close sets a ``threading.Event`` that ``synthesize()``
+   checks between chunks, returning early. ``_drain_to_ws`` keeps consuming to
+   ``QUEUE_STOP`` even after a send failure, so the worker thread never blocks
+   forever on an undrained queue (``close()`` follows the same rule).
 
-One ``SynthesisRunner`` per WebSocket connection: buffered text
-(``add_text``) moves onto this connection's own request queue at
-``flush()``/``end``; a single background task drains it sequentially,
-so flushes on one connection never race locally, and the shared lock
-serializes across every other connection's requests too.
+One ``SynthesisRunner`` per WebSocket connection: buffered text (``add_text``) moves
+onto this connection's own request queue at ``flush()``/``end``; a single background
+task drains it sequentially, so flushes on one connection never race locally, and
+the shared lock serializes across every other connection's requests too.
 """
 
 from __future__ import annotations
@@ -55,24 +52,23 @@ from .synth_worker import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - import-time-only, avoids the MLX/mlx_audio
-    from .chatterbox_mlx import ChatterboxEngine  # heavy import cost for non-live tests.
+    from .qwen_engine import QwenEngine  # heavy import cost for non-live tests.
     from .voice_store import VoiceStore
 
 log = logging.getLogger("chatterbox_tts.synthesis")
 
-# Chatterbox-Turbo engine output rate — imported from ``audio_constants``
-# (the single source of truth, MLX-free) rather than ``chatterbox_mlx``
-# itself, to keep this module's non-TYPE_CHECKING imports MLX-free —
-# see ``encoders/pcm_encoder.py``.
+# Engine output rate — imported from ``audio_constants`` (the single
+# source of truth, MLX-free) to keep this module's non-TYPE_CHECKING
+# imports MLX-free — see ``encoders/pcm_encoder.py``.
 _SOURCE_SAMPLE_RATE = SOURCE_SAMPLE_RATE
 
 # Bounds a slow WS send to backpressuring the worker thread (blocked on
-# ``queue.put``) instead of buffering unbounded audio. Internal detail,
-# not an operator tunable — see ``config.md``'s "NOT config" carve-out.
+# ``queue.put``) instead of buffering unbounded audio — not an operator
+# tunable, see ``config.md``'s "NOT config" carve-out.
 _CHUNK_QUEUE_MAXSIZE = 8
 
 # Non-fatal: an over-timeout daemon thread is still reaped on exit; this
-# only bounds how long a request "waits" to confirm it fully exited.
+# only bounds how long a request waits to confirm it fully exited.
 _WORKER_JOIN_TIMEOUT_S = 2.0
 
 # close() teardown: how long to drain the in-flight chunk_queue while
@@ -88,7 +84,7 @@ class SynthesisRunner:
     def __init__(
         self,
         *,
-        engine: "ChatterboxEngine",
+        engine: "QwenEngine",
         voice_store: "VoiceStore",
         synth_lock: asyncio.Lock,
         ws: Any,
@@ -97,6 +93,7 @@ class SynthesisRunner:
         sample_rate: int,
         voice: str | None,
         streaming_interval: float,
+        default_lang: str,
         conn_log: Any,
         metrics_log: Any,
     ) -> None:
@@ -109,6 +106,7 @@ class SynthesisRunner:
         self._sample_rate = sample_rate
         self._voice = voice
         self._streaming_interval = streaming_interval
+        self._default_lang = default_lang
         self._conn_log = conn_log
         self._metrics_log = metrics_log
         self._text_buffer: list[str] = []
@@ -217,7 +215,7 @@ class SynthesisRunner:
     async def _run_and_drain(
         self, text: str, request_id: str, cancel_event: threading.Event, t0: float,
     ) -> Metrics:
-        conds = self._voice_store.get_or_default(self._voice)
+        ref_audio_path = self._voice_store.get_or_default(self._voice)
         encoder = make_encoder(self._format, self._sample_rate)
         counter = SampleCounter()
         loop = asyncio.get_running_loop()
@@ -225,8 +223,8 @@ class SynthesisRunner:
         worker = threading.Thread(
             target=produce_chunks,
             args=(
-                self._engine, text, conds, self._streaming_interval, cancel_event,
-                encoder, counter, loop, chunk_queue,
+                self._engine, text, ref_audio_path, self._default_lang,
+                self._streaming_interval, cancel_event, encoder, counter, loop, chunk_queue,
             ),
             daemon=True,
             name=f"tts-worker-{request_id}",

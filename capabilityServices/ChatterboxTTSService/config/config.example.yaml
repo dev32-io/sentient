@@ -20,13 +20,11 @@
 schema_version: 1
 
 # =============================================================================
-# Model — HuggingFace repo id for the MLX Chatterbox weights. Fetched +
-# cached on first run under ~/.cache/huggingface. The Turbo variant
-# (mlx-community/Chatterbox-Turbo-TTS-8bit) is the deployed default, set
-# via the launchd env (see deploy Task 6) — this example keeps a valid,
-# loadable non-Turbo id so config parsing never needs network access.
+# Model — HuggingFace repo id for the MLX Qwen3-TTS weights. Fetched +
+# cached on first run under ~/.cache/huggingface. This is also the
+# deployed default, set via the launchd env (see deploy Task 6).
 # =============================================================================
-model: mlx-community/Chatterbox-TTS-8bit
+model: mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit
 
 # =============================================================================
 # WebSocket server
@@ -63,21 +61,18 @@ default_format: opus
 # WebRTC loopback AEC expectations.
 default_sample_rate: 48000
 
-# Target seconds of audio per streamed chunk. Chatterbox runs the S3 vocoder
-# once PER CHUNK, so small values thrash it: at 0.5 a ~500-char block became
-# 57 vocoder passes -> RTF 2.59 (2.6x slower than realtime, audible lag). 2.0
-# keeps time-to-first-audio low (~0.9s) while RTF stays safely <1.0 (~0.74).
+# Target seconds of audio per streamed chunk. Unlike the retired Chatterbox
+# engine (which re-ran its S3 vocoder once PER CHUNK, so small values
+# thrashed it), Qwen3-TTS doesn't pay that per-chunk vocoder cost the same
+# way — 2.0 keeps time-to-first-audio low while staying safely realtime;
+# lower values are fine too if you want smaller/more-frequent chunks.
 streaming_interval: 2.0
 
-# Chatterbox exaggeration knob (0.0-1.0+, higher = more room to push).
-# Higher = more expressive/emotive delivery; 0.5 is the model's neutral
-# default.
-exaggeration: 0.5
-
-# Chatterbox classifier-free-guidance weight (0.0-1.0+, higher = more
-# room to push). Higher = stronger adherence to the reference voice at
-# some cost to naturalness; 0.5 is the model's neutral default.
-cfg_weight: 0.5
+# Language code passed to Qwen3-TTS on every synthesis call. "auto" lets
+# the model auto-detect the spoken language per request (en/zh/... — see
+# mlx_audio's qwen3_tts model for the supported set); force a specific
+# code (e.g. "en", "zh") to skip detection.
+default_lang: "auto"
 
 # =============================================================================
 # Paths — empty string means "fall back to the CHATTERBOX_TTS_* env var

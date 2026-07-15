@@ -83,8 +83,7 @@ class Config:
     default_format: str
     default_sample_rate: int
     streaming_interval: float
-    exaggeration: float
-    cfg_weight: float
+    default_lang: str
     voice_dir: str
     log_dir: str
     retention_days: int
@@ -154,8 +153,7 @@ def _parse(raw: dict[str, Any]) -> Config:
         default_format=_require(raw, "default_format", str),
         default_sample_rate=_require(raw, "default_sample_rate", int),
         streaming_interval=_require(raw, "streaming_interval", float),
-        exaggeration=_require(raw, "exaggeration", float),
-        cfg_weight=_require(raw, "cfg_weight", float),
+        default_lang=_require(raw, "default_lang", str),
         voice_dir=_require(raw, "voice_dir", str),
         log_dir=_require(raw, "log_dir", str),
         retention_days=_require(raw, "retention_days", int),
@@ -212,7 +210,7 @@ def _coerce(path: str, value: Any, expected_type: type) -> Any:
     ``true``/``false`` can never slip through as a number. We accept
     ``int`` where ``float`` is expected because YAML writes ``0.5`` as
     float and ``1`` as int, and a config author who writes
-    ``cfg_weight: 1`` shouldn't have to know to write ``1.0``.
+    ``streaming_interval: 1`` shouldn't have to know to write ``1.0``.
     """
     if expected_type is bool and isinstance(value, bool):
         return value

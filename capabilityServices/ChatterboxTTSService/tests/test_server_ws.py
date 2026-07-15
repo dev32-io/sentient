@@ -14,7 +14,7 @@ from the default run, see ``pyproject.toml``'s ``addopts``).
 No ``pytest-asyncio`` dependency: each test is a plain sync function
 whose body drives an inner async function via ``asyncio.run(...)`` —
 matches this service's existing dependency-light test style (see
-``test_chatterbox_mlx.py``/``test_voice_store.py``'s ``@live`` split).
+``test_qwen_engine.py``/``test_voice_store.py``'s ``@live`` split).
 """
 
 from __future__ import annotations
@@ -178,12 +178,12 @@ def test_malformed_message_replies_error_not_crash(tmp_path):
 @pytest.mark.live
 def test_real_synthesis_roundtrip(tmp_path):
     """Live: ``text`` -> ``end`` -> ``started`` -> >=1 binary frame -> ``done`` (``ttfa_ms>0``)."""
-    from chatterbox_tts.chatterbox_mlx import ChatterboxEngine
+    from chatterbox_tts.qwen_engine import QwenEngine
     from chatterbox_tts.voice_store import VoiceStore
 
     async def run() -> None:
         config = _make_config(tmp_path)
-        engine = ChatterboxEngine("mlx-community/Chatterbox-Turbo-TTS-8bit", 0.5, 0.5)
+        engine = QwenEngine("mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit", default_lang="auto")
         engine.warm()
         voice_store = VoiceStore(engine, Path(config.voice_dir))
         server = Server(config, engine, voice_store)
@@ -242,12 +242,12 @@ def test_real_synthesis_pcm_negotiation_roundtrip(tmp_path):
     it is an identity resample and the decoded PCM16 sample count must
     track ``done["audio_seconds"] * 24000`` closely.
     """
-    from chatterbox_tts.chatterbox_mlx import ChatterboxEngine
+    from chatterbox_tts.qwen_engine import QwenEngine
     from chatterbox_tts.voice_store import VoiceStore
 
     async def run() -> None:
         config = _make_config(tmp_path)
-        engine = ChatterboxEngine("mlx-community/Chatterbox-Turbo-TTS-8bit", 0.5, 0.5)
+        engine = QwenEngine("mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit", default_lang="auto")
         engine.warm()
         voice_store = VoiceStore(engine, Path(config.voice_dir))
         server = Server(config, engine, voice_store)

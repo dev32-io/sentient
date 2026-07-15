@@ -47,7 +47,7 @@ from .health_server import run_health_server
 from .metrics import MetricsSampler
 
 if TYPE_CHECKING:  # pragma: no cover - import-time-only, avoids the MLX/mlx_audio
-    from .chatterbox_mlx import ChatterboxEngine  # heavy import cost for non-live tests.
+    from .qwen_engine import QwenEngine  # heavy import cost for non-live tests.
     from .voice_store import VoiceStore
 
 log = logging.getLogger("chatterbox-tts-service")
@@ -61,7 +61,7 @@ VALID_FORMATS = ("opus", "pcm")
 class Server:
     """Owns the shared engine/voice-store/lock; creates per-connection sessions."""
 
-    def __init__(self, config: Config, engine: "ChatterboxEngine", voice_store: "VoiceStore") -> None:
+    def __init__(self, config: Config, engine: "QwenEngine", voice_store: "VoiceStore") -> None:
         self._config = config
         self._engine = engine
         self._voice_store = voice_store
@@ -102,8 +102,8 @@ class Server:
         session = ConnectionSession(
             ws=ws, conn_id=conn_id, engine=self._engine, voice_store=self._voice_store,
             synth_lock=self._synth_lock, format_=fmt, sample_rate=sample_rate, voice=voice,
-            streaming_interval=self._config.streaming_interval, conn_log=conn_log,
-            metrics_log=self._metrics_log,
+            streaming_interval=self._config.streaming_interval, default_lang=self._config.default_lang,
+            conn_log=conn_log, metrics_log=self._metrics_log,
         )
         try:
             await session.send_ready()
@@ -212,7 +212,7 @@ async def _cancel_and_wait(*tasks: "asyncio.Task[None]") -> None:
             pass
 
 
-async def run_server(config: Config, engine: "ChatterboxEngine", voice_store: "VoiceStore") -> None:
+async def run_server(config: Config, engine: "QwenEngine", voice_store: "VoiceStore") -> None:
     """Start the WebSocket + health servers, wait for a shutdown signal."""
     Path(config.log_dir).mkdir(parents=True, exist_ok=True)
 

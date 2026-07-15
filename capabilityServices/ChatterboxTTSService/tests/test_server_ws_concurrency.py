@@ -29,7 +29,7 @@ from chatterbox_tts.server import Server
 from chatterbox_tts.synth_worker import QUEUE_STOP
 from chatterbox_tts.synthesis import _CLOSE_WORKER_TIMEOUT_S, SynthesisRunner
 
-from .conftest import _make_config, _serve, _SENTINEL_CONDS, _StubVoiceStore
+from .conftest import _make_config, _serve, _StubVoiceStore
 
 
 class _GatedEngine:
@@ -41,10 +41,7 @@ class _GatedEngine:
     def __init__(self, gate: threading.Event) -> None:
         self._gate = gate
 
-    def default_conditionals(self) -> object:
-        return _SENTINEL_CONDS
-
-    def synthesize(self, text, conds, streaming_interval, cancel):
+    def synthesize(self, text, ref_audio_path, lang_code, streaming_interval, cancel):
         self._gate.wait(timeout=5.0)
         yield np.zeros(100, dtype=np.float32)
 
@@ -143,7 +140,7 @@ def test_close_unblocks_worker_thread_stuck_on_full_queue():
         runner = SynthesisRunner(
             engine=None, voice_store=None, synth_lock=asyncio.Lock(), ws=_NoopWs(),
             conn_id="test-conn", format_="pcm", sample_rate=24000, voice=None,
-            streaming_interval=0.5, conn_log=_NoopLog(), metrics_log=_NoopLog(),
+            streaming_interval=0.5, default_lang="auto", conn_log=_NoopLog(), metrics_log=_NoopLog(),
         )
         chunk_queue: "asyncio.Queue[object]" = asyncio.Queue(maxsize=2)
         chunk_queue.put_nowait(b"chunk-1")
@@ -200,10 +197,7 @@ class _CancelAwareEngine:
         self.start_count = 0
         self._lock = threading.Lock()
 
-    def default_conditionals(self) -> object:
-        return _SENTINEL_CONDS
-
-    def synthesize(self, text, conds, streaming_interval, cancel):
+    def synthesize(self, text, ref_audio_path, lang_code, streaming_interval, cancel):
         with self._lock:
             self.start_count += 1
         self._started.set()
@@ -240,7 +234,8 @@ def test_close_blocks_second_queued_request_from_starting():
         runner = SynthesisRunner(
             engine=engine, voice_store=_StubVoiceStore(), synth_lock=asyncio.Lock(),
             ws=_NoopWs(), conn_id="test-conn-2", format_="pcm", sample_rate=24000,
-            voice=None, streaming_interval=0.5, conn_log=_NoopLog(), metrics_log=_NoopLog(),
+            voice=None, streaming_interval=0.5, default_lang="auto",
+            conn_log=_NoopLog(), metrics_log=_NoopLog(),
         )
 
         runner.add_text("first")

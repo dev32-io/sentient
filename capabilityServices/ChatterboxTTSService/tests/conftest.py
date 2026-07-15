@@ -22,7 +22,7 @@ from websockets.asyncio.server import serve
 from chatterbox_tts.config import Config, HealthConfig, ServerConfig
 from chatterbox_tts.server import Server
 
-_SENTINEL_CONDS = object()
+_SENTINEL_REF_PATH = object()
 
 # A fixed fake ``voiceId``/``createdAt`` pair, so ``_StubVoiceStore.create``
 # behaves deterministically without touching any real id/clock scheme.
@@ -31,12 +31,9 @@ _FAKE_CREATED_AT = 1_700_000_000.0
 
 
 class _StubEngine:
-    """Fake ``ChatterboxEngine``: no MLX model, satisfies the shape ``server.py`` needs."""
+    """Fake ``QwenEngine``: no MLX model, satisfies the shape ``server.py`` needs."""
 
-    def default_conditionals(self) -> object:
-        return _SENTINEL_CONDS
-
-    def synthesize(self, text, conds, streaming_interval, cancel):
+    def synthesize(self, text, ref_audio_path, lang_code, streaming_interval, cancel):
         return iter(())  # not exercised by the non-live cases
 
 
@@ -47,10 +44,10 @@ class _StubVoiceStore:
         self._voices: list[dict] = []
 
     def get(self, voice_id):
-        return _SENTINEL_CONDS
+        return _SENTINEL_REF_PATH
 
     def get_or_default(self, voice_id):
-        return _SENTINEL_CONDS
+        return _SENTINEL_REF_PATH
 
     def list(self) -> list[dict]:
         return list(self._voices)
@@ -91,8 +88,7 @@ def _make_config(tmp_path: Path) -> Config:
         default_format="opus",
         default_sample_rate=48000,
         streaming_interval=0.5,
-        exaggeration=0.5,
-        cfg_weight=0.5,
+        default_lang="auto",
         voice_dir=str(tmp_path / "voices"),
         log_dir=str(tmp_path / "logs"),
         retention_days=7,

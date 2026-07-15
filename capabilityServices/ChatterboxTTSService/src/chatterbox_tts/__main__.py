@@ -17,9 +17,9 @@ import os
 from dataclasses import replace
 from pathlib import Path
 
-from .chatterbox_mlx import ChatterboxEngine
 from .config import Config, load_config
 from .event_logger import prune_old_logs
+from .qwen_engine import QwenEngine
 from .server import run_server
 from .voice_store import VoiceStore
 
@@ -90,13 +90,13 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     _LOG.info(
-        "chatterbox-tts starting: model=%s server=%s:%s health_port=%s log_dir=%s "
-        "voice_dir=%s builtin_voice_dir=%s",
-        config.model, config.server.host, config.server.port, config.health.port,
-        config.log_dir, config.voice_dir, config.builtin_voice_dir,
+        "chatterbox-tts starting: model=%s default_lang=%s server=%s:%s health_port=%s "
+        "log_dir=%s voice_dir=%s builtin_voice_dir=%s",
+        config.model, config.default_lang, config.server.host, config.server.port,
+        config.health.port, config.log_dir, config.voice_dir, config.builtin_voice_dir,
     )
 
-    engine = ChatterboxEngine(config.model, config.exaggeration, config.cfg_weight)
+    engine = QwenEngine(config.model, default_lang=config.default_lang)
     _LOG.info("warming model (fail-closed: aborts startup on failure)...")
     engine.warm()
     _LOG.info("model warm; ready to accept connections")

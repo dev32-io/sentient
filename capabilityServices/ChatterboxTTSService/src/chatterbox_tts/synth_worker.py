@@ -18,7 +18,7 @@ import numpy as np
 from .encoders import AudioEncoder
 
 if TYPE_CHECKING:  # pragma: no cover - import-time-only, avoids the MLX/mlx_audio
-    from .chatterbox_mlx import ChatterboxEngine  # heavy import cost for non-live tests.
+    from .qwen_engine import QwenEngine  # heavy import cost for non-live tests.
 
 # Sentinel pushed onto the cross-thread chunk queue to mark "no more chunks".
 QUEUE_STOP = object()
@@ -61,9 +61,10 @@ def _count_chunks(pcm_iter, counter: SampleCounter):
 
 
 def produce_chunks(
-    engine: "ChatterboxEngine",
+    engine: "QwenEngine",
     text: str,
-    conds: object,
+    ref_audio_path: str | None,
+    lang_code: str,
     streaming_interval: float,
     cancel_event: threading.Event,
     encoder: AudioEncoder,
@@ -83,7 +84,7 @@ def produce_chunks(
     ``error`` frame instead of hanging on the sentinel forever.
     """
     try:
-        pcm_iter = engine.synthesize(text, conds, streaming_interval, cancel_event)
+        pcm_iter = engine.synthesize(text, ref_audio_path, lang_code, streaming_interval, cancel_event)
         for encoded in encoder.encode(_count_chunks(pcm_iter, counter)):
             if cancel_event.is_set():
                 break
