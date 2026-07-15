@@ -50,6 +50,16 @@ const WARNING_NOT_ACTIVATED = "not-activated";
 // self-hosted deploy.
 const ALLOWED_SAMPLE_HOST_SUFFIXES = ["fish.audio", "r2.cloudflarestorage.com"] as const;
 
+// Only https preview URLs are dialed — Fish's CDN is https, and cleartext
+// http would let a downgrade/MITM point the download elsewhere.
+const HTTPS_PROTOCOL = "https:";
+
+// 3xx status range — with `redirect: "manual"` a redirect is treated as a
+// download failure (never followed) so an allowlisted host can't bounce us to
+// an internal target.
+const HTTP_REDIRECT_MIN = 300;
+const HTTP_REDIRECT_MAX = 400;
+
 export interface FishCloneFetchers {
   /** Tests inject a fake; production uses fetchFishVoiceById directly. */
   fishById?: typeof fetchFishVoiceById;
@@ -136,6 +146,9 @@ function checkSampleHost(url: string): HostCheck {
     return { ok: false, host: "unparseable" };
   }
   const hostname = parsed.hostname.toLowerCase();
+  // Require https BEFORE the suffix check — a cleartext http URL is rejected
+  // even on an allowlisted host.
+  if (parsed.protocol !== HTTPS_PROTOCOL) return { ok: false, host: hostname };
   const allowed = ALLOWED_SAMPLE_HOST_SUFFIXES.some((s) => hostname === s || hostname.endsWith(`.${s}`));
   if (allowed) return { ok: true };
   return { ok: false, host: hostname.split(".").slice(-2).join(".") };
@@ -163,12 +176,23 @@ async function lookupFishVoice(deps: FishCloneDeps, fishVoiceId: string): Promis
 
 async function downloadSample(deps: FishCloneDeps, url: string): Promise<DownloadResult> {
   try {
-    const resp = await fetch(url, { signal: AbortSignal.timeout(deps.externalFetchTimeoutMs) });
-    if (!resp.ok) return { ok: false };
+    // `redirect: "manual"` so an allowlisted host can't 3xx-redirect us to an
+    // internal address behind checkSampleHost's back (SSRF). Fish's presigned
+    // R2 URLs are direct 200s, so any 3xx here is treated as a download
+    // failure rather than followed.
+    const resp = await fetch(url, {
+      signal: AbortSignal.timeout(deps.externalFetchTimeoutMs),
+      redirect: "manual",
+    });
+    if (isRedirect(resp.status) || !resp.ok) return { ok: false };
     return { ok: true, value: await resp.arrayBuffer() };
   } catch {
     return { ok: false };
   }
+}
+
+function isRedirect(status: number): boolean {
+  return status >= HTTP_REDIRECT_MIN && status < HTTP_REDIRECT_MAX;
 }
 
 async function createAndActivate(

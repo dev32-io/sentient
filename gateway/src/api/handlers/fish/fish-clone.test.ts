@@ -165,9 +165,10 @@ function makeRequest(body: unknown): Request {
 // biome-ignore lint/suspicious/noExplicitAny: vitest fetch spy generic (mirrors fish-fetcher.test.ts)
 let fetchSpy: any;
 
-function stubDownloadFetch(bytes: Uint8Array, ok = true): ReturnType<typeof vi.fn> {
+function stubDownloadFetch(bytes: Uint8Array, ok = true, status = ok ? 200 : 500): ReturnType<typeof vi.fn> {
   fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
     ok,
+    status,
     arrayBuffer: async () => bytes.buffer,
   } as Response);
   return fetchSpy;
@@ -303,8 +304,9 @@ describe("handleFishClone", () => {
   });
 
   it.each([
-    ["localhost loopback", "http://localhost/internal/secret"],
+    ["localhost loopback", "https://localhost/internal/secret"],
     ["an arbitrary non-listed host", "https://evil.example.com/x.mp3"],
+    ["a cleartext http URL on an allowlisted host", "http://cdn.fish.audio/samples/v1.mp3"],
   ])("rejects %s as a preview host (SSRF guard) without downloading it", async (_label, previewAudioUrl) => {
     const fetchFn = stubDownloadFetch(SAMPLE_BYTES);
     const { deps } = makeDeps({
@@ -318,6 +320,29 @@ describe("handleFishClone", () => {
     expect(response.status).toBe(502);
     expect(await response.json()).toEqual({ error: "preview-host-not-allowed" });
     expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("treats a 3xx redirect on an allowlisted host as a download failure (no follow)", async () => {
+    // redirect:"manual" means an allowlisted host that 302s toward an internal
+    // target is never followed — the 3xx surfaces as preview-download-failed.
+    const fetchFn = stubDownloadFetch(SAMPLE_BYTES, false, 302);
+    const { deps } = makeDeps({
+      fetchers: makeFetchers({
+        fishById: vi.fn(async () => ({
+          ok: true as const,
+          value: makeFishVoice({ previewAudioUrl: "https://abc123.r2.cloudflarestorage.com/samples/v1.mp3" }),
+        })),
+      }),
+    });
+
+    const response = await handleFishClone(deps, "alice", "v1", makeRequest({ name: "Dad" }));
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "preview-download-failed" });
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://abc123.r2.cloudflarestorage.com/samples/v1.mp3",
+      expect.objectContaining({ redirect: "manual" }),
+    );
   });
 
   it("returns 422 invalid-request when name is missing, without downloading anything", async () => {
