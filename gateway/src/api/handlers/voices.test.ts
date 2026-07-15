@@ -7,7 +7,7 @@ import type { TokenPayload, TokenResult } from "../../user-auth/types.js";
 import { type VoicesHandlerDeps, createVoicesHandler } from "./voices.js";
 
 // ---------------------------------------------------------------------------
-// FakeWebSocket — minimal scriptable WS for the mock ChatterboxTTSService.
+// FakeWebSocket — minimal scriptable WS for the mock LocalTTSService.
 // Mirrors the pattern used in local-tts-provider.test.ts. Injected via
 // deps.socketFactory — the handler (through voice-mgmt-client) never calls
 // `new WebSocket()` itself, so no real socket or filesystem is touched.

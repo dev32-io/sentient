@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
-// local-tts-protocol — WS message codec for the native ChatterboxTTSService.
+// local-tts-protocol — WS message codec for the native LocalTTSService.
 //
-// Wire contract: capabilityServices/ChatterboxTTSService/CONTRACT.md. This
+// Wire contract: capabilityServices/LocalTTSService/CONTRACT.md. This
 // service speaks JSON text frames for control messages and raw binary
 // frames for audio — no MessagePack.
 //

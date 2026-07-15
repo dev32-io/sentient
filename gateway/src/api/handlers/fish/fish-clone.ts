@@ -1,8 +1,8 @@
 /**
  * Clone-from-Fish endpoint.
  *
- * Downloads a Fish Audio voice's preview sample and creates a local
- * Chatterbox voice pack from it, then activates it for the caller.
+ * Downloads a Fish Audio voice's preview sample and creates a
+ * local-tts voice pack from it, then activates it for the caller.
  *
  * Self-contained, removable module — mirrors gateway/src/api/handlers/fish/
  * fish-browse.ts. `handleFishClone` is the only export the providers handler

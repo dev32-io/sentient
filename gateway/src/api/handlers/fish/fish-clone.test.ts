@@ -11,7 +11,7 @@ import type { FishCloneDeps, FishCloneFetchers } from "./fish-clone.js";
 import { handleFishClone } from "./fish-clone.js";
 
 // ---------------------------------------------------------------------------
-// FakeWebSocket — minimal scriptable WS for the mock ChatterboxTTSService,
+// FakeWebSocket — minimal scriptable WS for the mock LocalTTSService,
 // copied from voices.test.ts's pattern. Injected via deps.socketFactory — the
 // handler (through voice-mgmt-client) never calls `new WebSocket()` itself.
 // ---------------------------------------------------------------------------

@@ -27,7 +27,7 @@ const log = getLog(["sentient", "gateway", "api", "voices"]);
 // ---------------------------------------------------------------------------
 // AUTHORIZATION MODEL — intentional shared household voice library.
 //
-// Voice packs live in the single, gateway-wide ChatterboxTTS voice store; they
+// Voice packs live in the single, gateway-wide local-tts voice store; they
 // are NOT scoped per user. Any authenticated household member can create, list,
 // select, and delete any voice. This is a deliberate product decision, not an
 // IDOR oversight: a family shares one gateway, and a voice one member clones is

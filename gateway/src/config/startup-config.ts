@@ -51,7 +51,7 @@ export interface StartupConfig {
   stt: STTYaml | undefined;
 
   /** TTS yaml block — always defined. tts-factory builds a local-tts
-   *  (ChatterboxTTSService) provider from `tts.url` — no API key needed, so
+   *  (LocalTTSService) provider from `tts.url` — no API key needed, so
    *  a provider is always constructed (no boot-time or key-presence gate).
    *  Per-cycle voice_id comes from PersonSession.voiceId; cfg.tts.voice_id
    *  is the fallback default for sessions with no profile-supplied voice. */
@@ -124,7 +124,7 @@ export function loadStartupConfig(): StartupConfig {
 
     stt: cfg.stt,
 
-    // TTS is always wired to the local-tts (ChatterboxTTSService) provider —
+    // TTS is always wired to the local-tts (LocalTTSService) provider —
     // no API key required, so nothing here gates on secret presence. A
     // down/unreachable service degrades gracefully at synth time, not boot.
     tts: cfg.tts,

@@ -14,7 +14,7 @@ const log = getLog(["sentient", "tts", "streaming-tts-synthesizer"]);
 // Concurrent: provider.audioFrames(signal) drains as frames are produced.
 //
 // Depends only on the abstract TTSProvider (tts-types.ts), so it drives ANY
-// provider behind that interface — the local ChatterboxTTS service today.
+// provider behind that interface — the local LocalTTSService today.
 // The handler (speak-effect.ts) sees only frames in / frames out.
 // Aggregation, paragraph separators, and provider-specific session
 // management live entirely in this file.
@@ -124,7 +124,7 @@ async function* synthesizeImpl(
       log.info("synthesize-done", { frameCount, blocksFed });
     }
     // Dispose after the drain loop completes — on abort AND on normal
-    // completion alike. The local ChatterboxTTS service — see
+    // completion alike. The local LocalTTSService — see
     // local-tts-provider.ts's "dispose-after-completion" CONTRACT — never
     // self-closes its connection; skipping dispose() on the
     // normal-completion path leaks the session for the process lifetime.

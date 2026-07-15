@@ -111,7 +111,7 @@ stt:
   connect_timeout_ms: 10000
 
 # ---------------------------------------------------------------------------
-# TTS — local-tts (ChatterboxTTSService) is now the wired provider.
+# TTS — local-tts (LocalTTSService) is now the wired provider.
 #
 # The speak effect is a mini-pipeline: LLM text deltas → UtteranceAggregator
 # → local-tts. The aggregator knobs live here because they are internal
@@ -123,7 +123,7 @@ stt:
 # live-path contract (see local-tts-provider.ts's LIVE_ENCODING/LIVE_SAMPLE_RATE).
 # ---------------------------------------------------------------------------
 tts:
-  url: ws://host.docker.internal:8770 # local-tts (ChatterboxTTSService) WS endpoint
+  url: ws://host.docker.internal:8770 # local-tts (LocalTTSService) WS endpoint
   voice_id: default                  # gateway-wide fallback voice. Per-user voice from profile.json#voice.id wins.
   format: opus                       # ONLY valid value (schema-enforced) — gateway live path is opus-only; end-to-end opus pivot (OGG-Opus → ogg-opus-decoder WASM in webui).
   sample_rate: 48000                 # Opus standard rate.

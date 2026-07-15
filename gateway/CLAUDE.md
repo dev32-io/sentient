@@ -14,7 +14,7 @@ Rules live at the repo root: cross-cutting at `.claude/rules/*.md`, gateway-spec
 - WebSocket: Bun built-in
 - LLM: Hermes (per user, supervised by `sentient-hermes`); gateway dials it via ACP JSON-RPC over WebSocket (`hermes-adapter-client/`). The `sentient-plugin` dashboard sidecar covers the search / get / getMessages / delete surfaces ACP doesn't expose.
 - STT: local STTService (gateway dials over WS)
-- TTS: local-tts / ChatterboxTTSService (gateway dials over WS)
+- TTS: local-tts / LocalTTSService (gateway dials over WS)
 - Validation: zod
 
 ## Commands

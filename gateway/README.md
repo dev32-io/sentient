@@ -23,7 +23,7 @@ What the gateway IS responsible for:
   Silero VAD → Smart-Turn v3 → SenseVoice-Small and emits structured
   turn events back. The gateway is its client and never knows about
   the VAD / turn / STT internals.
-- **TTS**: streams text per cycle to the local-tts (ChatterboxTTSService)
+- **TTS**: streams text per cycle to the local-tts (LocalTTSService)
   provider via a JSON+binary WebSocket; serializes overlapping cycles'
   audio with a small fade for clean preempts.
 - **MCP host**: per-user unix sockets exposing gateway-side tools
@@ -105,11 +105,11 @@ payload). Full wire contract: [`../shared/protocol/WIRE.md`](../shared/protocol/
 
 ## TTS
 
-Live WebSocket streaming to the native local-tts (ChatterboxTTSService)
+Live WebSocket streaming to the native local-tts (LocalTTSService)
 provider running on the host (Metal/MLX), reached via
 `ws://host.docker.internal:8770`. JSON text frames for control, raw
 binary frames for audio — see `local-tts-protocol.ts` and
-`capabilityServices/ChatterboxTTSService/CONTRACT.md`. One TTS run per
+`capabilityServices/LocalTTSService/CONTRACT.md`. One TTS run per
 cycle: opens, streams the per-cycle text, finishes when the cycle's
 `\n` boundary is hit, closes. New cycle = new connection.
 
@@ -140,7 +140,7 @@ this file.
 - WebSocket: Bun built-in
 - LLM: Hermes worker (per user, dialed over WebSocket)
 - STT: local STTService (Python: Silero VAD + Smart-Turn v3 + SenseVoice-Small)
-- TTS: local-tts (ChatterboxTTSService, native Metal/MLX)
+- TTS: local-tts (LocalTTSService, native Metal/MLX)
 - Validation: zod
 
 ## Commands

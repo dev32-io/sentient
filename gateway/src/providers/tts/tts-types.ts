@@ -9,7 +9,7 @@ export interface TTSAudioChunk {
 // TTSProvider — per-task isolated TTS session.
 //
 // Each `TTSProviderFactory(...)` call produces a fresh provider bound to a
-// single upstream WebSocket (the local-tts / ChatterboxTTSService provider).
+// single upstream WebSocket (the local-tts / LocalTTSService provider).
 // One synthesis run owns one provider end-to-end; no sharing between tasks
 // (no race on session state).
 //
@@ -26,7 +26,7 @@ export interface TTSAudioChunk {
 //     flag). The synthesizer may dispose on an error/abort path AND again in its
 //     cleanup `finally`.
 //   - The consumer MUST call `dispose()` after the `audioFrames` loop completes
-//     NORMALLY as well as on abort. The local-tts ChatterboxTTS service never
+//     NORMALLY as well as on abort. The local-tts LocalTTSService never
 //     self-closes the WS, so skipping dispose-on-completion LEAKS the socket.
 //
 // Typical flow:

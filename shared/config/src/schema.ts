@@ -52,7 +52,7 @@ export const sttConfigSchema = z.object({
 export type STTConfig = z.output<typeof sttConfigSchema>;
 
 // ---------------------------------------------------------------------------
-// TTS — local-tts (ChatterboxTTSService)
+// TTS — local-tts (LocalTTSService)
 //
 // Note: utterance_aggregator lives here because it is an internal stage of
 // the speak effect's text→audio pipeline, not general LLM configuration.
@@ -71,7 +71,7 @@ export const utteranceAggregatorConfigSchema = z.object({
 export type UtteranceAggregatorConfig = z.output<typeof utteranceAggregatorConfigSchema>;
 
 export const ttsConfigSchema = z.object({
-  // WS endpoint for the native local-tts (ChatterboxTTSService) provider.
+  // WS endpoint for the native local-tts (LocalTTSService) provider.
   // The service needs Metal/MLX GPU access, so it runs on the host, not in
   // a container — reachable from the gateway container via
   // host.docker.internal (same pattern as native-whisper STT).
@@ -81,8 +81,8 @@ export const ttsConfigSchema = z.object({
   // understand OGG-Opus, and local-tts-provider.ts's LIVE_ENCODING/
   // LIVE_SAMPLE_RATE hardcode the "opus" tag on every TTSAudioChunk
   // regardless of what's requested here. "pcm" is a real, tested wire
-  // format the ChatterboxTTSService SUPPORTS (see
-  // capabilityServices/ChatterboxTTSService's `?format=pcm` negotiation)
+  // format the LocalTTSService SUPPORTS (see
+  // capabilityServices/LocalTTSService's `?format=pcm` negotiation)
   // for direct, non-gateway consumers (e.g. audiobook generation) — but
   // the gateway itself never requests it, so the enum only offers the
   // value the gateway can actually decode. These fields shape the
@@ -355,7 +355,7 @@ export const companionsConfigSchema = z.object({
   // HTTP endpoint for the STT service health check. Returns {"version":"..."}.
   // Override if your compose setup uses a different service name or port.
   stt_health_url: z.string().url().default("http://sentient-stt-service:8767/health"),
-  // HTTP endpoint for the local-tts (ChatterboxTTSService) health check.
+  // HTTP endpoint for the local-tts (LocalTTSService) health check.
   // Returns {"version":"..."}. The service runs on the host (Metal/MLX),
   // reachable via host.docker.internal — mirrors stt_health_url's shape.
   tts_health_url: z.string().url().default("http://host.docker.internal:8771/health"),

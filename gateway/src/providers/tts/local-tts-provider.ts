@@ -9,7 +9,7 @@ const log = getLog(["sentient", "tts", "local-tts"]);
 /** Fallback when `cfg.connectTimeoutMs` is omitted — real value is wired via config.yaml (T10/T11). */
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
 
-// Live-path audio contract: today the local ChatterboxTTSService's only
+// Live-path audio contract: today the local LocalTTSService's only
 // supported live streaming shape is opus @ 48kHz — these are fixed, not
 // derived from `cfg.sampleRate`/`cfg.format` (those only shape the
 // connect-time negotiation query string; the server always echoes back what
@@ -42,7 +42,7 @@ export interface LocalTtsProviderConfig {
 // local-tts-socket.ts; this module owns only synthesis lifecycle bookkeeping
 // (ready/pushText/audioFrames/dispose).
 //
-// Protocol (capabilityServices/ChatterboxTTSService/CONTRACT.md):
+// Protocol (capabilityServices/LocalTTSService/CONTRACT.md):
 //   1. open WS with format/sample_rate/voice as connect-time query params
 //   2. server sends `ready` as the first message
 //   3. client sends one or more `text` messages (buffered, not yet
@@ -53,7 +53,7 @@ export interface LocalTtsProviderConfig {
 //      the close itself, via dispose().
 //
 // CONTRACT — dispose-after-completion (cross-task leak prevention):
-//   The ChatterboxTTSService NEVER closes the connection on its own
+//   The LocalTTSService NEVER closes the connection on its own
 //   initiative, on `done` or otherwise (§1.2/§5 above). The consumer MUST
 //   call dispose() once it is done pulling from audioFrames() — after the
 //   loop completes normally, NOT only on abort — or the socket leaks for the
