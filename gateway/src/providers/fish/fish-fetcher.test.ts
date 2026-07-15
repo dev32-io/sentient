@@ -165,11 +165,13 @@ describe("fetchFishVoices", () => {
     }
   });
 
-  it("returns timeout when fetch aborts", async () => {
+  it("returns timeout when AbortSignal.timeout fires (DOMException 'TimeoutError')", async () => {
+    // AbortSignal.timeout() rejects with a DOMException named "TimeoutError"
+    // per the WHATWG spec — NOT "AbortError". Pin the real shape.
     fetchSpy.mockImplementation(
       () =>
         new Promise((_resolve, reject) => {
-          setTimeout(() => reject(new DOMException("aborted", "AbortError")), 5);
+          setTimeout(() => reject(new DOMException("The operation timed out.", "TimeoutError")), 5);
         }),
     );
 

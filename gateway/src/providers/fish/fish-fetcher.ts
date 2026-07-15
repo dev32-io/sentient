@@ -88,7 +88,10 @@ function authHeaders(apiKey: string | null): Record<string, string> {
 }
 
 function handleFetchException(err: unknown, timeoutMs: number, scope: string): Result<never, FishFetchError> {
-  if (err instanceof DOMException && err.name === "AbortError") {
+  // AbortSignal.timeout() fires a DOMException named "TimeoutError" (WHATWG
+  // spec); a manual controller.abort() would fire "AbortError". Both are
+  // abort-origin for this code path and map to the timeout error kind.
+  if (err instanceof DOMException && (err.name === "TimeoutError" || err.name === "AbortError")) {
     log.warn(`${scope}.timeout`, { afterMs: timeoutMs });
     return { ok: false, error: { kind: "timeout", afterMs: timeoutMs } };
   }
@@ -102,7 +105,7 @@ async function parseJsonBody(resp: Response, scope: string): Promise<Result<unkn
     return { ok: true, value: await resp.json() };
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    log.warn(`${scope}.parseFailed`, { reason });
+    log.warn(`${scope}.jsonParseFailed`, { reason });
     return { ok: false, error: { kind: "parse-error", reason } };
   }
 }
@@ -150,7 +153,7 @@ export async function fetchFishVoices(
 
   const parsed = listResponseSchema.safeParse(body.value);
   if (!parsed.success) {
-    log.warn("fetchFishVoices.parseFailed", { reason: parsed.error.message });
+    log.warn("fetchFishVoices.schemaParseFailed", { reason: parsed.error.message });
     return { ok: false, error: { kind: "parse-error", reason: parsed.error.message } };
   }
 
@@ -192,7 +195,7 @@ export async function fetchFishVoiceById(
 
   const parsed = voiceItemSchema.safeParse(body.value);
   if (!parsed.success) {
-    log.warn("fetchFishVoiceById.parseFailed", { id, reason: parsed.error.message });
+    log.warn("fetchFishVoiceById.schemaParseFailed", { id, reason: parsed.error.message });
     return { ok: false, error: { kind: "parse-error", reason: parsed.error.message } };
   }
 
