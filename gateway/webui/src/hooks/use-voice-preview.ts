@@ -41,7 +41,11 @@ export function createUseVoicePreview(token: string, onError: () => void): UseVo
     stop();
     loadingId.value = voiceId;
     log.debug("preview.play", { voiceId });
-    const r = await api.previewVoice(token, voiceId);
+    // TODO(Task 8/9, voice-pack-language plan): look up this pack's
+    // VoiceSummary.language and pass it here so preview picks a matching
+    // greeting. "" is the documented unset default and matches today's
+    // pre-language behavior (server picks the English greeting).
+    const r = await api.previewVoice(token, voiceId, "");
     if (loadingId.value !== voiceId) return; // superseded by a later play()/stop()
     loadingId.value = null;
     if (!r.ok) {

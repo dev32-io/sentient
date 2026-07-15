@@ -76,7 +76,10 @@ export function createVoicesPanelHandlers(deps: VoicesPanelHandlersDeps): Voices
       tagCount: tags.length,
     });
     setBusy(true);
-    const r = await fishApi.cloneFromFish(token, { fishVoiceId, name, description, tags });
+    // TODO(Task 8, voice-pack-language plan): thread the Fish-suggested
+    // language once AddVoiceModal/FishClonePanel grow `suggestedLanguage`.
+    // "" is the documented unset default and matches today's pre-language behavior.
+    const r = await fishApi.cloneFromFish(token, { fishVoiceId, name, description, tags, language: "" });
     setBusy(false);
     if (!r.ok) {
       log.warn("cloneFromFish.failed", { status: r.error.status, code: r.error.code });

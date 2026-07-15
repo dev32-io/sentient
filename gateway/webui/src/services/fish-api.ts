@@ -43,6 +43,7 @@ export interface CloneFromFishInput {
   name: string;
   description: string;
   tags: string[];
+  language: string;
 }
 
 export interface CloneFromFishResult {
@@ -107,7 +108,12 @@ export function createFishApi(config?: FishApiConfig): FishApi {
         fetch(`${prefix}/voices/${encodeURIComponent(input.fishVoiceId)}/clone`, {
           method: "POST",
           headers: jsonHeaders(bearerHeaders(token)),
-          body: JSON.stringify({ name: input.name, description: input.description, tags: input.tags }),
+          body: JSON.stringify({
+            name: input.name,
+            description: input.description,
+            tags: input.tags,
+            language: input.language,
+          }),
         }),
       );
     },

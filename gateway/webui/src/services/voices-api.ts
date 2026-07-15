@@ -16,6 +16,7 @@ export interface VoiceSummary {
   name: string;
   description: string;
   tags: string[];
+  language: string;
   source: "builtin" | "user";
   /** Unix epoch SECONDS (float) — the TTS service's `time.time()`. Not ms. */
   createdAt: number;
@@ -54,7 +55,7 @@ export interface VoicesApiConfig {
 export interface VoicesApi {
   listVoices(token: string): Promise<Result<{ voices: VoiceSummary[] }>>;
   /** POSTs multipart/form-data (`name` + `description` + repeated `tags` +
-   *  `audio`). Creating a voice ACTIVATES it server-side — see
+   *  `language` + `audio`). Creating a voice ACTIVATES it server-side — see
    *  CreateVoiceResult.warning. */
   createVoice(
     token: string,
@@ -62,11 +63,13 @@ export interface VoicesApi {
     audio: Blob,
     description: string,
     tags: string[],
+    language: string,
   ): Promise<Result<CreateVoiceResult>>;
   deleteVoice(token: string, voiceId: string): Promise<Result<DeleteVoiceResult>>;
-  /** POSTs to `/api/v1/voices/:id/preview` — returns synthesized preview audio
-   *  as a raw WAV blob (200 audio/wav), or a typed error on 502/504/etc. */
-  previewVoice(token: string, voiceId: string): Promise<Result<Blob>>;
+  /** POSTs to `/api/v1/voices/:id/preview?lang=<lang>` — returns synthesized
+   *  preview audio as a raw WAV blob (200 audio/wav), or a typed error on
+   *  502/504/etc. */
+  previewVoice(token: string, voiceId: string, lang: string): Promise<Result<Blob>>;
 }
 
 export function createVoicesApi(config?: VoicesApiConfig): VoicesApi {
@@ -78,13 +81,14 @@ export function createVoicesApi(config?: VoicesApiConfig): VoicesApi {
       return handleFetch<{ voices: VoiceSummary[] }>(fetch(`${base}/api/v1/voices`, { headers: bearerHeaders(token) }));
     },
 
-    createVoice(token, name, audio, description, tags) {
+    createVoice(token, name, audio, description, tags, language) {
       // NEVER log audio bytes/content — byteLength + name length only.
       log.debug("createVoice", { nameLength: name.length, audioBytes: audio.size, tagCount: tags.length });
       const form = new FormData();
       form.set("name", name);
       form.set("description", description);
       for (const t of tags) form.append("tags", t);
+      form.set("language", language);
       form.set("audio", audio, "reference.wav");
       return handleFetch<CreateVoiceResult>(
         fetch(`${base}/api/v1/voices`, {
@@ -106,10 +110,10 @@ export function createVoicesApi(config?: VoicesApiConfig): VoicesApi {
       );
     },
 
-    previewVoice(token, voiceId) {
+    previewVoice(token, voiceId, lang) {
       log.debug("previewVoice", { voiceId });
       return handleBlobFetch(
-        fetch(`${base}/api/v1/voices/${encodeURIComponent(voiceId)}/preview`, {
+        fetch(`${base}/api/v1/voices/${encodeURIComponent(voiceId)}/preview?lang=${encodeURIComponent(lang)}`, {
           method: "POST",
           headers: bearerHeaders(token),
         }),

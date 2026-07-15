@@ -91,7 +91,10 @@ export function createUseVoices(deps: UseVoicesDeps): UseVoices {
   ): Promise<VoiceMutationResult> {
     // NEVER log audio bytes/content — byteLength + name length only.
     log.debug("createVoice.request", { audioBytes: audio.size, nameLength: name.length, tagCount: tags.length });
-    const r = await api.createVoice(token, name, audio, description, tags);
+    // TODO(Task 8, voice-pack-language plan): thread a real `language` value
+    // from the caller once AddVoiceModal grows the language picker. "" is the
+    // documented unset default and matches today's pre-language behavior.
+    const r = await api.createVoice(token, name, audio, description, tags, "");
     if (!r.ok) {
       log.warn("createVoice.failed", { code: r.error.code });
       return { ok: false, errorCode: r.error.code };
