@@ -34,7 +34,7 @@ export function VoicePackGrid(props: VoicePackGridProps): JSX.Element {
   const confirmTarget = props.packs.find((p) => p.voiceId === confirmId) ?? null;
 
   return (
-    <div class="vp-grid">
+    <div class="voice-grid">
       {renderTiles(props, setConfirmId)}
       {confirmTarget && (
         <DeleteConfirmModal
