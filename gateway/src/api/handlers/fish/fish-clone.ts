@@ -41,9 +41,14 @@ const WARNING_NOT_ACTIVATED = "not-activated";
 // SSRF allowlist. A PUBLIC Fish voice's `samples[].audio` URL is
 // attacker-controllable, and the gateway fetches it server-side — so a
 // malicious voice could point it at an internal host (localhost, RFC-1918,
-// link-local metadata) to exfiltrate. Only fish.audio and its subdomains
-// may be dialed for a preview download.
-const ALLOWED_SAMPLE_HOST = "fish.audio";
+// link-local metadata) to exfiltrate. Fish serves preview samples from
+// Cloudflare R2 (`<hash>.r2.cloudflarestorage.com`, and browse uses
+// `platform.r2.fish.audio`) plus its own `*.fish.audio`, so a host is
+// accepted iff it equals or is a subdomain of one of these suffixes. Those
+// are public CDN domains — internal/loopback/link-local/RFC-1918 targets
+// never resolve under them, which is the SSRF protection that matters for a
+// self-hosted deploy.
+const ALLOWED_SAMPLE_HOST_SUFFIXES = ["fish.audio", "r2.cloudflarestorage.com"] as const;
 
 export interface FishCloneFetchers {
   /** Tests inject a fake; production uses fetchFishVoiceById directly. */
@@ -131,9 +136,8 @@ function checkSampleHost(url: string): HostCheck {
     return { ok: false, host: "unparseable" };
   }
   const hostname = parsed.hostname.toLowerCase();
-  if (hostname === ALLOWED_SAMPLE_HOST || hostname.endsWith(`.${ALLOWED_SAMPLE_HOST}`)) {
-    return { ok: true };
-  }
+  const allowed = ALLOWED_SAMPLE_HOST_SUFFIXES.some((s) => hostname === s || hostname.endsWith(`.${s}`));
+  if (allowed) return { ok: true };
   return { ok: false, host: hostname.split(".").slice(-2).join(".") };
 }
 

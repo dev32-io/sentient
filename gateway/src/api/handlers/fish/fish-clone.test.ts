@@ -279,14 +279,37 @@ describe("handleFishClone", () => {
     expect(await response.json()).toEqual({ error: "preview-download-failed" });
   });
 
-  it("rejects a non-fish.audio preview host (SSRF guard) without downloading it", async () => {
+  it("allows a Cloudflare R2 preview host (Fish's real CDN) and proceeds to download + create", async () => {
     const fetchFn = stubDownloadFetch(SAMPLE_BYTES);
-    const { deps } = makeDeps({
+    const { deps, getWs } = makeDeps({
       fetchers: makeFetchers({
         fishById: vi.fn(async () => ({
           ok: true as const,
-          value: makeFishVoice({ previewAudioUrl: "http://localhost/internal/secret" }),
+          value: makeFishVoice({ previewAudioUrl: "https://abc123.r2.cloudflarestorage.com/samples/v1.mp3" }),
         })),
+      }),
+    });
+
+    const responsePromise = handleFishClone(deps, "alice", "v1", makeRequest({ name: "Dad" }));
+    await autoReply(getWs, { type: "voice.created", voiceId: VALID_VOICE_ID, name: "Dad", createdAt: 1.0 });
+    const response = await responsePromise;
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ voiceId: VALID_VOICE_ID, name: "Dad" });
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://abc123.r2.cloudflarestorage.com/samples/v1.mp3",
+      expect.objectContaining({ signal: expect.anything() }),
+    );
+  });
+
+  it.each([
+    ["localhost loopback", "http://localhost/internal/secret"],
+    ["an arbitrary non-listed host", "https://evil.example.com/x.mp3"],
+  ])("rejects %s as a preview host (SSRF guard) without downloading it", async (_label, previewAudioUrl) => {
+    const fetchFn = stubDownloadFetch(SAMPLE_BYTES);
+    const { deps } = makeDeps({
+      fetchers: makeFetchers({
+        fishById: vi.fn(async () => ({ ok: true as const, value: makeFishVoice({ previewAudioUrl }) })),
       }),
     });
 
