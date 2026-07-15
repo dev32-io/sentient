@@ -143,9 +143,41 @@ describe("parseServerFrame", () => {
           source: "user",
           createdAt: 1752400000.0,
           refDurationMs: 12000,
+          language: "",
         },
       ],
     });
+  });
+
+  it("parses a voice.list frame with language on each entry", () => {
+    const frame = parseServerFrame(
+      JSON.stringify({
+        type: "voice.list",
+        voices: [
+          {
+            voiceId: "v1",
+            name: "Nova",
+            description: "",
+            tags: [],
+            source: "user",
+            createdAt: 1,
+            refDurationMs: 1000,
+            language: "es",
+          },
+        ],
+      }),
+    );
+    expect(frame.kind === "voiceList" && frame.voices[0]?.language).toBe("es");
+  });
+
+  it("defaults language to '' for a voice.list entry missing language", () => {
+    const frame = parseServerFrame(
+      JSON.stringify({
+        type: "voice.list",
+        voices: [{ voiceId: "3f9b", name: "Dad", createdAt: 1752400000.0, refDurationMs: 12000 }],
+      }),
+    );
+    expect(frame.kind === "voiceList" && frame.voices[0]?.language).toBe("");
   });
 
   it("parses a voiceList frame with source/description/tags", () => {
@@ -172,7 +204,7 @@ describe("parseServerFrame", () => {
     }
   });
 
-  it("defaults description/tags/source for a legacy voice.list entry missing those fields", () => {
+  it("defaults description/tags/source/language for a legacy voice.list entry missing those fields", () => {
     const frame = parseServerFrame(
       JSON.stringify({
         type: "voice.list",
@@ -190,6 +222,7 @@ describe("parseServerFrame", () => {
           source: "user",
           createdAt: 1752400000.0,
           refDurationMs: 12000,
+          language: "",
         },
       ],
     });
@@ -307,6 +340,7 @@ describe("parseServerFrame — malformed/adversarial input degrades to unknown, 
           source: "user",
           createdAt: 1752400000.0,
           refDurationMs: 12000,
+          language: "",
         },
       ],
     });

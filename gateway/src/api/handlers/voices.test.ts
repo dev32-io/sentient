@@ -251,6 +251,7 @@ describe("GET /api/v1/voices", () => {
           source: "user",
           createdAt: 1752400000.0,
           refDurationMs: 12000,
+          language: "",
         },
       ],
     });

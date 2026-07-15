@@ -152,6 +152,7 @@ describe("listVoices", () => {
           source: "builtin",
           createdAt: 0,
           refDurationMs: 0,
+          language: "",
         },
         {
           voiceId: "3f9b",
@@ -161,6 +162,7 @@ describe("listVoices", () => {
           source: "user",
           createdAt: 1752400000,
           refDurationMs: 12000,
+          language: "",
         },
       ]);
     }

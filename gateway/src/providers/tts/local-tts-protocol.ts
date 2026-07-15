@@ -52,6 +52,7 @@ export interface LocalTtsVoiceInfo {
   readonly source: "builtin" | "user";
   readonly createdAt: number;
   readonly refDurationMs: number;
+  readonly language: string;
 }
 
 export type LocalTtsFrame =
@@ -246,9 +247,9 @@ function parseVoiceListFrame(record: Record<string, unknown>): LocalTtsFrame | n
   return { kind: "voiceList", voices };
 }
 
-/** `description`/`tags`/`source` are defensively defaulted (never required) so a
- *  legacy pack predating Task 1 (CONTRACT.md §4.2) still parses instead of
- *  degrading the whole frame to `unknown`. */
+/** `description`/`tags`/`source`/`language` are defensively defaulted (never required)
+ *  so a legacy pack predating Task 1 (CONTRACT.md §4.2) or a pack predating the
+ *  `language` field still parses instead of degrading the whole frame to `unknown`. */
 function parseVoiceInfo(entry: unknown): LocalTtsVoiceInfo | null {
   if (!entry || typeof entry !== "object") return null;
   const record = entry as Record<string, unknown>;
@@ -263,6 +264,7 @@ function parseVoiceInfo(entry: unknown): LocalTtsVoiceInfo | null {
     source: record.source === "builtin" ? "builtin" : "user",
     createdAt: asNumber(record.createdAt),
     refDurationMs: asNumber(record.refDurationMs),
+    language: typeof record.language === "string" ? record.language : "",
   };
 }
 
