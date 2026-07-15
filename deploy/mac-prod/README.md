@@ -104,11 +104,17 @@ bash deploy/mac-prod/native/local-tts.sh start
 bash deploy/mac-prod/native/local-tts.sh status   # expect :8771/health OK
 ```
 
-User-created voice packs under `voices/` carry over unchanged — they were
-already `ref.wav`-format after the engine swap. The built-in voice packs
-ship with the service itself, so nothing to copy there. Once the agent is
-loaded and healthy, re-run `python3 deploy/setup-prod.py` as usual to
-reconcile the gateway config's `tts.url` / `companions.tts_health_url`.
+User-created voice packs under `voices/` are moved with the data dir, but
+any pack that was cloned under the **old Chatterbox** engine holds a
+`conds.safetensors` (no `ref.wav`), which Qwen cannot use — those packs
+silently resolve to the default voice at synth time (`voice_store.get`
+logs `fallback=default reason=unknown_voice`; the service never errors on
+them) and must be **re-cloned** to sound like themselves again. Packs
+cloned after the swap are already `ref.wav`-format and carry over as-is.
+The built-in voice packs ship with the service itself, so nothing to copy
+there. Once the agent is loaded and healthy, re-run
+`python3 deploy/setup-prod.py` as usual to reconcile the gateway config's
+`tts.url` / `companions.tts_health_url`.
 
 ## Headless 24×7 host notes
 

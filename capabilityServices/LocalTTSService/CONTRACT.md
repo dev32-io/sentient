@@ -119,7 +119,7 @@ Client                                        Server
 | `end`            | No more text is coming for this request; same as `flush`.   | —                        |
 | `cancel`         | Abort the in-flight request immediately; drop queued-but-unstarted ones. | — |
 | `ping`           | Liveness probe; server replies `pong`.                      | —                        |
-| `voice.create`   | Start a voice-pack upload; **must be followed by exactly one binary frame** (the reference clip — wav / flac / ogg / mp3, content-sniffed; 10-15s recommended, hard floor >5s). | `name` (string) |
+| `voice.create`   | Start a voice-pack upload; **must be followed by exactly one binary frame** (the reference clip — wav / flac / ogg / mp3, content-sniffed; 10-15s recommended, hard floor >3s). | `name` (string) |
 | `voice.list`     | List every persisted voice pack.                             | —                        |
 | `voice.delete`   | Delete a voice pack by id.                                    | `voiceId` (string)       |
 
@@ -198,7 +198,7 @@ containing a reference clip in wav / flac / ogg / mp3 — any container
 need not declare the format (any sample rate/channel count; multi-channel
 is mixed down to mono). Rejected with `{"type":"error", reason:"..."}` if:
 
-- the clip decodes to ≤5 seconds of audio (voice-pack quality floor,
+- the clip decodes to ≤3 seconds of audio (voice-pack quality floor,
   enforced by `VoiceStore.create` — see its docstring for the exact
   threshold), or
 - the bytes don't decode as audio at all.
@@ -349,7 +349,7 @@ partial `audio_seconds` it produced before stopping — see §6.2.
 
 ```json
 { "type": "warning", "reason": "unexpected_binary_frame" }
-{ "type": "error", "reason": "reference clip too short: need >5s, got 2.10s" }
+{ "type": "error", "reason": "reference clip too short: need >3s, got 2.10s" }
 ```
 
 `warning` never terminates a request; `error` means the request/upload
@@ -408,7 +408,7 @@ to send to).
 | Constraint                         | Value                                    | Notes |
 | ------------------------------------ | -------------------------------------------- | ------- |
 | Concurrent synthesis                | Exactly 1, globally                          | Enforced by the process-wide lock (§6.1); more connections do not add synthesis throughput. |
-| Reference clip floor (`voice.create`) | >5 seconds                                  | Enforced before any filesystem work; shorter clips are rejected with `error`, no partial pack persisted. |
+| Reference clip floor (`voice.create`) | >3 seconds                                  | Enforced before any filesystem work; shorter clips are rejected with `error`, no partial pack persisted. |
 | Target hardware                     | Apple Silicon (Mac mini)                     | MLX has no Linux/x86 backend. |
 | Server RAM (steady state)           | Qwen3-TTS-12Hz-0.6B-Base-8bit weights ≈ 1.9 GB | Plus warm voice-pack cache; coexists with native Whisper-STT + the Docker gateway stack on the same host. |
 
