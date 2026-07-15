@@ -1006,14 +1006,9 @@
 /* ============================================================
    Fish clone browse grid — AddVoiceModal's "fish" mode
    (FishClonePanel + fish-toolbar/fish-filter-section/fish-voice-tile).
-   Ported from the pre-retirement settings voice pane (git rev 115fb59^),
-   which rendered this same markup full-width inside a settings tab. Reused
-   verbatim here except: (1) `.v-toolbar` gains `flex-wrap` — the modal is
-   materially narrower than a settings pane, so the search+language+sort row
-   must wrap instead of overflowing; (2) `.voice-grid`'s track minimum drops
-   to `min(280px, 100%)` (from a fixed 320px) so two columns fit at desktop and
-   the single column collapses to fit a narrow mobile modal instead of
-   overflowing.
+   `.voice-grid`/`.voice` here are the same shared row also used by the
+   Voice-Packs tab (VoicePackTile.tsx via VoiceRow.tsx) — one full-width row
+   per voice, `.v-toolbar` wraps on a narrow modal instead of overflowing.
    ============================================================ */
 
 /* ---- Toolbar (search + language + sort) ---- */
@@ -1114,14 +1109,10 @@
 }
 .settings-v2 .v-loadmore .btn { gap: 6px; }
 
-/* ---- Voice grid — responsive tiles, one per Fish voice ---- */
-/* min(280px, 100%) clamps the track floor to the container width so on a
- * narrow mobile modal (~214px of content at 390px viewport) the single column
- * shrinks to fit instead of overflowing its 280px minimum. Above ~280px it
- * behaves as a normal auto-fill 280px-min responsive grid. */
+/* ---- Voice grid — one full-width row per voice ---- */
 .settings-v2 .voice-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
+  grid-template-columns: 1fr;
   gap: 10px;
 }
 .settings-v2 .voice {
@@ -1129,7 +1120,7 @@
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 12px 48px 12px 14px; /* right padding reserves room for v-check / v-del */
+  padding: 12px 14px; /* symmetric — delete overlays on hover instead of reserving space */
   background: var(--color-paper);
   border: 1px solid var(--color-line-soft);
   border-radius: 10px;
@@ -1182,10 +1173,6 @@
   border-color: var(--color-line-soft);
 }
 .settings-v2 .v-meta { flex: 1; min-width: 0; }
-/* On selected tiles the v-check icon (20px, right:14px → left edge at right:34px)
-   sits 10px past v-meta's right edge — reserve extra clearance so tag/desc
-   text never looks clipped by the circle. */
-.settings-v2 .voice.is-sel .v-meta { padding-right: 30px; }
 .settings-v2 .v-name {
   font-size: 14px;
   font-weight: 500;
@@ -1194,20 +1181,28 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Hover auto-scroll (marquee) viewport — .v-info/.v-tags are the fixed-width
+ * container-query context; the actual flex row of chips/text lives in the
+ * inner .v-scroll (below), which can overflow this box. A right-edge fade
+ * softens whatever's clipped while not hovered. */
+.settings-v2 .v-info,
+.settings-v2 .v-tags {
+  container-type: inline-size;
+  overflow: hidden;
+  mask-image: linear-gradient(to right, #000 90%, transparent);
+  -webkit-mask-image: linear-gradient(to right, #000 90%, transparent);
+}
 .settings-v2 .v-info {
   font-size: 11.5px;
   color: var(--color-ink-3);
   margin-top: 4px;
-  display: flex;
+}
+.settings-v2 .v-scroll {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-  overflow: hidden;
-}
-.settings-v2 .v-info > span:last-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
-  min-width: 0;
+  will-change: transform;
 }
 /* Source chip (Voice-Packs only) — quieter than .v-lang since built-in vs
  * cloned is a secondary fact, not a primary filterable dimension. */
@@ -1238,24 +1233,16 @@
   margin-right: 6px;
   color: var(--color-ink-3);
 }
-.settings-v2 .v-info > .v-desc {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-.settings-v2 .v-info > .v-desc::before {
+/* No ellipsis/clamp here — .v-desc can run long and overflows inside
+ * .v-scroll; the hover marquee (below) is what reveals the rest. */
+.settings-v2 .v-desc { flex-shrink: 0; }
+.settings-v2 .v-desc::before {
   content: "·";
   margin-right: 6px;
   color: var(--color-ink-3);
 }
 .settings-v2 .v-tags {
-  display: flex;
-  gap: 4px;
-  flex-wrap: nowrap;
-  overflow: hidden;
   height: 22px;
-  align-items: center;
   margin-top: 6px;
 }
 .settings-v2 .v-tag {
@@ -1275,31 +1262,23 @@
   background: color-mix(in oklab, var(--color-accent) 10%, var(--color-bg-sunk));
   color: var(--color-accent);
 }
-.settings-v2 .v-tag-more {
-  font-size: 10.5px;
-  color: var(--color-ink-3);
-  align-self: center;
+
+/* On row hover, slide .v-scroll to reveal whatever overflows its container
+ * exactly, then hold and ease back. 100cqw = the .v-info/.v-tags container
+ * width (container-query, set above); 100% = .v-scroll's own content width.
+ * `min(0px, 100cqw - 100%)` is the negative overflow distance, or 0 when
+ * the content already fits — so non-overflowing rows never move. */
+.settings-v2 .voice:hover .v-scroll {
+  animation: v-marquee 5s ease-in-out infinite alternate;
 }
-.settings-v2 .v-check {
-  position: absolute;
-  top: 50%;
-  right: 14px;
-  transform: translateY(-50%);
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--color-accent);
-  color: var(--color-paper);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  pointer-events: none;
+@keyframes v-marquee {
+  0%, 12%   { transform: translateX(0); }
+  88%, 100% { transform: translateX(min(0px, calc(100cqw - 100%))); }
 }
 
-/* Inline "Active" marker (Voice-Packs only) — an in-flow chip in .v-info
- * rather than the absolute .v-check circle, since that right-edge slot is
- * reserved for the hover-revealed delete button (.v-del below). */
+/* Inline "Active" marker (Voice-Packs only) — a plain flex sibling after
+ * .v-meta, not absolutely positioned, so it never has to reserve clearance
+ * the old absolute checkmark circle needed. */
 .settings-v2 .v-active {
   display: inline-flex;
   align-items: center;
@@ -1313,10 +1292,13 @@
   font-size: 10px;
 }
 
-/* Delete (Voice-Packs, user packs only) — sits in the same right-edge slot
- * as .v-check/.v-active but hidden until the row is hovered/focused so the
- * list reads calm by default. Wraps the shared danger-ghost .btn so it gets
- * the same styling as every other destructive action in this pane. */
+/* Delete (Voice-Packs, user packs only) — overlays the row's right edge on
+ * hover/focus instead of permanently reserving space (row padding is
+ * symmetric now — see .settings-v2 .voice above). The ::before backdrop
+ * fades from transparent to the row's own background so the icon button
+ * reads clearly over any tag/description text scrolling underneath it.
+ * Wraps the shared danger-ghost .btn so it gets the same styling as every
+ * other destructive action in this pane. */
 .settings-v2 .v-del {
   position: absolute;
   top: 50%;
@@ -1324,6 +1306,21 @@
   transform: translateY(-50%);
   opacity: 0;
   transition: opacity .15s;
+}
+.settings-v2 .v-del::before {
+  content: "";
+  position: absolute;
+  inset: -10px -10px -10px -22px;
+  background: linear-gradient(to right, transparent, var(--color-paper) 60%);
+  z-index: -1;
+  pointer-events: none;
+}
+.settings-v2 .voice.is-sel .v-del::before {
+  background: linear-gradient(
+    to right,
+    transparent,
+    color-mix(in oklab, var(--color-accent) 5%, var(--color-paper)) 60%
+  );
 }
 .settings-v2 .voice:hover .v-del,
 .settings-v2 .voice:focus-within .v-del {
