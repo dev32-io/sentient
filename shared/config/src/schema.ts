@@ -288,6 +288,14 @@ export const providersConfigSchema = z.object({
   ollama_cloud_base_url: z.string().url().default("https://ollama.com/v1"),
   ollama_cache_ttl_ms: z.number().int().min(10_000).default(3_600_000),
   external_fetch_timeout_ms: z.number().int().min(1000).default(5000),
+  // Feature flag for the self-contained Fish-Audio browse-and-clone module.
+  // When false, the gateway 404s every /providers/voices* route and the webui
+  // hides the "Clone from Fish Audio" tab. Set false (or delete the fish/
+  // modules) to fully disable the integration.
+  fish_browse_enabled: z.boolean().default(true),
+  // Cache TTL for the default (unfiltered, page-1) Fish voice listing. Fish
+  // rate limits are undocumented — keep short.
+  fish_cache_ttl_ms: z.number().int().min(10_000).default(600_000),
 });
 
 export type ProvidersConfig = z.output<typeof providersConfigSchema>;

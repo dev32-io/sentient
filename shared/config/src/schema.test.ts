@@ -340,6 +340,16 @@ describe("gateway config — auth/apply/providers sections", () => {
     const cfg = gatewayConfigSchema.parse(minimal);
     expect(cfg.providers.ollama_cloud_base_url).toBe("https://ollama.com/v1");
   });
+
+  it("defaults providers.fish_browse_enabled to true", () => {
+    const cfg = gatewayConfigSchema.parse(minimal);
+    expect(cfg.providers.fish_browse_enabled).toBe(true);
+  });
+
+  it("defaults providers.fish_cache_ttl_ms to 600000", () => {
+    const cfg = gatewayConfigSchema.parse(minimal);
+    expect(cfg.providers.fish_cache_ttl_ms).toBe(600000);
+  });
 });
 
 describe("applyConfigSchema", () => {
