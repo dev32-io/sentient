@@ -84,6 +84,22 @@ def _prepare_chunk(result) -> np.ndarray:
     return pcm
 
 
+def _log_synthesize_start(
+    model_id: str,
+    text: str,
+    ref_audio_path: str | None,
+    lang_code: str,
+    streaming_interval: float,
+) -> None:
+    """Log the synthesize entry decision — ids/lengths/booleans only, never text."""
+    log.debug(
+        "qwen_engine.synthesize start model_id=%s text_len=%d has_ref_audio=%s "
+        "lang_code=%s streaming_interval=%.2f",
+        model_id, len(text), ref_audio_path is not None, lang_code,
+        streaming_interval,
+    )
+
+
 class QwenEngine:
     """One (model_id, default_lang) view over the MLX Qwen3-TTS model.
 
@@ -123,19 +139,13 @@ class QwenEngine:
         streaming_interval: float,
         cancel: threading.Event,
     ) -> Iterator[np.ndarray]:
-        """Stream 24 kHz float32 PCM chunks for ``text``.
-
-        ``ref_audio_path=None`` uses the model's built-in default voice;
-        otherwise clones the voice found in ``ref_audio_path`` (a wav
-        file path). Checks ``cancel`` between chunks, returning early
-        without yielding the in-flight chunk.
+        """Stream 24 kHz float32 PCM chunks for ``text``. ``ref_audio_path=None``
+        uses the model's default voice; otherwise clones from that wav path.
+        Checks ``cancel`` between chunks, returning early without yielding it.
         """
         model = _load_model(self._model_id)
-        log.debug(
-            "qwen_engine.synthesize start model_id=%s text_len=%d has_ref_audio=%s "
-            "lang_code=%s streaming_interval=%.2f",
-            self._model_id, len(text), ref_audio_path is not None, lang_code,
-            streaming_interval,
+        _log_synthesize_start(
+            self._model_id, text, ref_audio_path, lang_code, streaming_interval
         )
         chunk_count = 0
         total_samples = 0
