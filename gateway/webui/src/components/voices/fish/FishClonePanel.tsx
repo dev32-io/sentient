@@ -53,6 +53,7 @@ export interface FishClonePickInput {
   /** Fish's first listed language, normalized to a Qwen3-TTS-supported code
    *  (or "" when Fish's language isn't one we support — see normalizeLanguage). */
   suggestedLanguage: string;
+  suggestedDescription: string;
 }
 
 export interface FishClonePanelProps {
@@ -200,6 +201,7 @@ export function FishClonePanel({ token, busy, onClone }: FishClonePanelProps): J
       suggestedName: v.title,
       suggestedTags: v.tags.slice(0, SUGGESTED_TAG_LIMIT),
       suggestedLanguage: normalizeLanguage(v.languages[0] ?? ""),
+      suggestedDescription: v.description ?? "",
     });
   };
 

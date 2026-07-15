@@ -81,6 +81,10 @@ class VoiceEntry:
     clip_filename: str
     offset_s: float | None = None
     window_s: float | None = None
+    # All five shipped packs are English (LibriVox English readings + the
+    # Nova default) — no non-English built-in exists yet, so "en" covers
+    # every current _ENTRIES row without needing a per-entry override.
+    language: str = "en"
 
 
 # All five packs are LibriVox solo-chapter readings, public domain in
@@ -98,6 +102,7 @@ _ENTRIES: list[VoiceEntry] = [
         clip_filename="miscellaneouspoe_06_poe_128kb.mp3",
         offset_s=40.5,
         window_s=18.0,
+        language="en",
     ),
     VoiceEntry(
         slug="wren",
@@ -108,6 +113,7 @@ _ENTRIES: list[VoiceEntry] = [
         ),
         tags=["public-domain"],
         clip_filename="helen_taylor_the_bells.wav",
+        language="en",
     ),
     VoiceEntry(
         slug="flint",
@@ -118,6 +124,7 @@ _ENTRIES: list[VoiceEntry] = [
         ),
         tags=["public-domain"],
         clip_filename="olivereading_alone.wav",
+        language="en",
     ),
     VoiceEntry(
         slug="briar",
@@ -128,6 +135,7 @@ _ENTRIES: list[VoiceEntry] = [
         ),
         tags=["public-domain"],
         clip_filename="bryony_ford_pit_and_pendulum.wav",
+        language="en",
     ),
     VoiceEntry(
         slug="ember",
@@ -138,6 +146,7 @@ _ENTRIES: list[VoiceEntry] = [
         ),
         tags=["public-domain"],
         clip_filename="roseanne_hoffman_the_raven.wav",
+        language="en",
     ),
 ]
 
@@ -191,6 +200,7 @@ def _write_pack(entry: VoiceEntry, pcm: np.ndarray, duration_s: float) -> Path:
         "name": entry.name,
         "description": entry.description,
         "tags": list(entry.tags),
+        "language": entry.language,
         "refDurationMs": int(duration_s * 1000),
     }
     (pack_dir / META_FILENAME).write_text(json.dumps(meta), encoding="utf-8")

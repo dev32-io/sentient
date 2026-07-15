@@ -139,16 +139,19 @@ export function AddVoiceModal({
     suggestedName,
     suggestedTags,
     suggestedLanguage,
+    suggestedDescription,
   }: FishClonePickInput): void {
     log.debug("fish.picked", {
       fishVoiceIdLength: id.length,
       suggestedTagCount: suggestedTags.length,
       suggestedLanguage,
+      suggestedDescriptionLength: suggestedDescription.length,
     });
     setFishVoiceId(id);
     setName(suggestedName);
     setTags(suggestedTags.slice(0, MAX_TAGS));
     setLanguage(suggestedLanguage);
+    setDescription(suggestedDescription);
   }
 
   async function handleSubmit(): Promise<void> {
