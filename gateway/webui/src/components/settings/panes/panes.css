@@ -1281,24 +1281,35 @@
  * the old absolute checkmark circle needed. */
 /* Delete (Voice-Packs, user packs only) — overlays the row's right edge on
  * hover/focus instead of permanently reserving space (row padding is
- * symmetric now — see .settings-v2 .voice above). The ::before backdrop
- * fades from transparent to the row's own background so the icon button
- * reads clearly over any tag/description text scrolling underneath it.
- * Wraps the shared danger-ghost .btn so it gets the same styling as every
- * other destructive action in this pane. */
+ * symmetric now — see .settings-v2 .voice above). A solid clay (danger)
+ * square, sized to match .v-play, so the destructive action is
+ * unmistakable and balances the row's leading play button. The ::before
+ * gradient fades the row's own background in just left of the button so
+ * tag/description text scrolling underneath fades out rather than hard-
+ * abutting the red square. */
 .settings-v2 .v-del {
   position: absolute;
   top: 50%;
-  right: 8px;
+  right: 10px;
   transform: translateY(-50%);
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-clay);
+  color: #fff;
+  border: 1px solid color-mix(in oklab, var(--color-clay) 72%, black);
+  cursor: pointer;
   opacity: 0;
-  transition: opacity .15s;
+  transition: opacity .15s, background .15s;
 }
 .settings-v2 .v-del::before {
   content: "";
   position: absolute;
-  inset: -10px -10px -10px -22px;
-  background: linear-gradient(to right, transparent, var(--color-paper) 60%);
+  inset: -8px 40px -8px -40px; /* fade zone to the LEFT of the button only */
+  background: linear-gradient(to right, transparent, var(--color-paper) 85%);
   z-index: -1;
   pointer-events: none;
 }
@@ -1306,10 +1317,17 @@
   background: linear-gradient(
     to right,
     transparent,
-    color-mix(in oklab, var(--color-accent) 5%, var(--color-paper)) 60%
+    color-mix(in oklab, var(--color-accent) 5%, var(--color-paper)) 85%
   );
 }
 .settings-v2 .voice:hover .v-del,
 .settings-v2 .voice:focus-within .v-del {
   opacity: 1;
+}
+.settings-v2 .v-del:hover {
+  background: color-mix(in oklab, var(--color-clay) 86%, white);
+}
+.settings-v2 .v-del:disabled {
+  opacity: .4;
+  cursor: not-allowed;
 }
