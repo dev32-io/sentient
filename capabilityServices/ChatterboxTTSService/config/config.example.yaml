@@ -63,9 +63,11 @@ default_format: opus
 # WebRTC loopback AEC expectations.
 default_sample_rate: 48000
 
-# Target seconds of audio per streamed chunk. Smaller = lower latency to
-# first audio, more per-chunk overhead. 0.5s balances both for voice chat.
-streaming_interval: 0.5
+# Target seconds of audio per streamed chunk. Chatterbox runs the S3 vocoder
+# once PER CHUNK, so small values thrash it: at 0.5 a ~500-char block became
+# 57 vocoder passes -> RTF 2.59 (2.6x slower than realtime, audible lag). 2.0
+# keeps time-to-first-audio low (~0.9s) while RTF stays safely <1.0 (~0.74).
+streaming_interval: 2.0
 
 # Chatterbox exaggeration knob (0.0-1.0+, higher = more room to push).
 # Higher = more expressive/emotive delivery; 0.5 is the model's neutral
