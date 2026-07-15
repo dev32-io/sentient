@@ -6,19 +6,30 @@ clone a picked voice into a local Chatterbox voice pack. It was built as a
 self-contained, removable module on both sides (gateway + webui) — this doc
 is the operator-facing note for turning it off or ripping it out entirely.
 
-## Known issue (as of this writing)
+## Sample-download SSRF guard (why clone is safe)
 
-Cloning is currently broken: Fish's public `GET /model/:id` endpoint (used to
-resolve a picked voice's sample audio) returns a **presigned URL on
-`<hash>.r2.cloudflarestorage.com`**, not on `fish.audio` or a subdomain of it.
-The clone route's SSRF host allowlist (`gateway/src/api/handlers/fish/fish-clone.ts`,
-`ALLOWED_SAMPLE_HOST = "fish.audio"`) rejects that host, so every clone
-attempt 502s with `preview-host-not-allowed` before a download is ever
-attempted. Browse, search, facet filters, and preview playback (which hits
-the list endpoint's `platform.r2.fish.audio` / `fish.audio` URLs directly from
-the browser, never through the gateway) are unaffected. Fixing this requires
-widening the allowlist to accept Fish's R2 storage host — track separately;
-this doc covers disable/removal, not the fix.
+Clone works end-to-end (E2E-verified: a picked Fish voice clones to a local
+pack, `POST /providers/voices/:id/clone` → 200, TTS `create.success`). The
+clone route resolves a picked voice's sample audio via Fish's public
+`GET /model/:id`, which returns the sample on one of Fish's CDN hosts: the
+browse listing serves `platform.r2.fish.audio` and single-voice lookups
+serve a presigned URL on `<hash>.r2.cloudflarestorage.com` (Fish stores
+samples in Cloudflare R2). Because the gateway fetches that URL server-side,
+`gateway/src/api/handlers/fish/fish-clone.ts` guards it against SSRF:
+
+- **Host allowlist** — `ALLOWED_SAMPLE_HOST_SUFFIXES = ["fish.audio", "r2.cloudflarestorage.com"]`; a preview host must be one of these or a
+  subdomain of one. Covers both of Fish's CDN hosts, nothing else.
+- **https-only** — the URL's protocol must be `https:`; a cleartext `http`
+  preview URL is rejected before the suffix check.
+- **No redirects** — the download uses `fetch(url, { redirect: "manual" })`
+  and treats any 3xx as a download failure, so an allowlisted host can't
+  30x-redirect the gateway to an internal address after passing the host
+  check.
+
+There is no known clone defect. (Historical note: an earlier point on this
+branch allowlisted only `fish.audio` and 502'd every clone; commits
+`8dadeca` + `0647cfe` widened the allowlist to the R2 CDN hosts and added the
+https + no-redirect hardening.)
 
 ## Option A — disable at runtime (no rebuild, no data loss)
 
@@ -36,8 +47,11 @@ docker compose -f deploy/macos/docker-compose.yml restart gateway
 ```
 
 Effects, verified end-to-end:
-- Every `/api/v1/providers/voices*` route 404s **before auth is checked** —
-  a disabled deploy leaks no information that the route ever existed.
+- Every `/api/v1/providers/voices*` route 404s when disabled. The clone
+  route 404s **before auth is checked**; the browse routes 404 for
+  authenticated callers (and are otherwise indistinguishable from any
+  auth-gated path — `handleProviders` is uniformly auth-gated, so a disabled
+  deploy leaks no route-existence signal either way).
 - The webui's `GET /api/v1/services/versions` response reports
   `features.fish_browse_enabled: false`, and the "Clone from Fish Audio" tab
   disappears from the ＋ Add voice modal (only Record / Upload remain).
@@ -61,6 +75,11 @@ Delete these directories/files:
 - `gateway/webui/src/components/voices/fish/` — the browse grid UI
   (`FishClonePanel.tsx`, `fish-toolbar.tsx`, `fish-filter-section.tsx`,
   `fish-voice-tile.tsx`, `fish-bucket.ts`, `fish-langs.ts`).
+- The **Fish CSS block in `gateway/webui/src/components/settings/panes/panes.css`** — the "Fish clone browse grid — AddVoiceModal's 'fish' mode"
+  fenced section (~288 lines: `.v-toolbar` / `.voice-grid` / `.v-play` /
+  `.v-tile` / `.v-tag` / `.v-check` / etc., running to the end of the file).
+  It lives in a shared stylesheet, so deleting the `fish/` components alone
+  leaves this as dead, orphaned CSS — remove the block too.
 
 Then remove the wiring that references those modules:
 
