@@ -10,7 +10,7 @@ root: `agents/docs/config-details.md`.
 | server (root) | Port, host, max sessions, auth |
 | session | Turn detection, barge-in, inactivity, channel |
 | stt | Local STTService URL, model, energy gate, EOT timeout |
-| tts | local-tts (ChatterboxTTSService) URL, voice, format, sample rate, connect timeout |
+| tts | local-tts (LocalTTSService) URL, voice, format, sample rate, connect timeout |
 | providers | Catalog cache TTLs, external fetch timeout |
 | mcp_catalog | Operator-managed MCP server inventory |
 | webui | Server-authoritative client tunables (e.g. playback). The `mobile` clientType reuses the webui playback fallback. |

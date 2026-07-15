@@ -2,7 +2,7 @@
 
 The "Clone from Fish Audio" feature lets a user browse Fish Audio's public
 voice library (`api.fish.audio`) inside Settings → Voice → ＋ Add voice, and
-clone a picked voice into a local Chatterbox voice pack. It was built as a
+clone a picked voice into a local-tts voice pack. It was built as a
 self-contained, removable module on both sides (gateway + webui) — this doc
 is the operator-facing note for turning it off or ripping it out entirely.
 
@@ -129,7 +129,7 @@ Then remove the wiring that references those modules:
 
 Fish Audio's public `/model` listing is intended for **playback preview**
 (the sample tiles you hear in the browse grid). Cloning — downloading a
-sample clip and feeding it into Chatterbox's voice-cloning pipeline to
+sample clip and feeding it into local-tts's voice-cloning pipeline to
 synthesize new speech in that voice — is a materially stronger form of reuse
 than playback and may not be covered by the same terms. No Fish API key is
 committed to this (public) repository; `FISH_AUDIO_API_KEY` is optional and

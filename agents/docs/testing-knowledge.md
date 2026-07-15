@@ -373,7 +373,7 @@ public (no Fish API key needed). Gateway log tags: `[api:fish:browse]`,
 **Expected log trail (gateway):** tab-open emits `[api:fish:browse] voices.begin hasTitleFilter=false` → `voices.done count=<n>`. Search emits a second `GET /api/v1/providers/voices?title=<q>` → `voices.begin hasTitleFilter=true` → `voices.done`. Facet click emits **no** new `/providers/voices` request (network tab confirms — purely client-side over the already-fetched page).
 
 ### fish-clone (pick a voice → clone → pack appears, auto-picked)
-**Scenario:** Picking a Fish voice with a sample ≥ ~6s, confirming name/tags, and clicking "Clone voice" downloads the sample server-side, creates a local Chatterbox pack, and auto-activates it — the new pack appears under "Yours" as Active.
+**Scenario:** Picking a Fish voice with a sample ≥ ~6s, confirming name/tags, and clicking "Clone voice" downloads the sample server-side, creates a local-tts voice pack, and auto-activates it — the new pack appears under "Yours" as Active.
 **Why added:** Regression guard for the full clone round-trip (gateway SSRF host-check → sample download → TTS `voice.create` → profile activation). The SSRF guard allowlists Fish's CDN hosts (`*.fish.audio` + `*.r2.cloudflarestorage.com` — single-voice `GET /model/:id` serves presigned R2 URLs), is https-only, and uses `redirect:"manual"` (3xx = download failure) so an allowlisted host can't redirect to an internal address. See `docs/fish-integration.md`.
 **Steps:**
 1. In the Fish tab, click a voice tile (not the ▶ preview) to select it — name/description/tags pre-fill from Fish metadata, "Clone voice" enables.
