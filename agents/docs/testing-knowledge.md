@@ -416,7 +416,7 @@ A voice pack carries a single optional `language` (one of Qwen's 10: zh/en/ja/ko
 
 ### lang-service-store (WS probe — agent-verifiable)
 **Scenario:** `voice.create` with `language` → `voice.list` returns it. Drive with the service venv python (see the WS-probe cases above); create a pack with `{"language":"ja"}`, list, assert the entry's `language == "ja"`; delete to clean up.
-**Expected:** service stores the string verbatim (`voice_store.create … language` is NOT logged as content — the code is fine to log). Built-in packs list `language: ""`.
+**Expected:** service stores the string verbatim + `voice.list` returns it. The service does NOT log the language on create (its create log carries `voice_id`/`name`/sizes only) — assert via the LIST output, not a log line. Built-in packs list `language: ""`.
 
 ### lang-preview-wire (agent-verifiable via log trail)
 **Scenario:** Click a pack's "Play a sample". The gateway picks a greeting in the pack's language.

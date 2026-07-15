@@ -11,4 +11,12 @@ describe("pickPreviewGreeting", () => {
     expect(pickPreviewGreeting(G, "th")).toBe("hi-en");
     expect(pickPreviewGreeting({ zh: ["只有中文"] }, "th")).toBe("只有中文"); // no en → any available
   });
+  it("falls through a present-but-empty en to another populated language", () => {
+    expect(pickPreviewGreeting({ en: [], zh: ["只有中文"] }, "th")).toBe("只有中文");
+    expect(pickPreviewGreeting({ en: [], zh: ["只有中文"] }, "en")).toBe("只有中文");
+  });
+  it("returns the bare fallback when everything is empty", () => {
+    expect(pickPreviewGreeting({ en: [], zh: [] }, "zh")).toBe("Hello.");
+    expect(pickPreviewGreeting({}, "en")).toBe("Hello.");
+  });
 });

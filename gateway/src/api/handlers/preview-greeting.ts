@@ -8,8 +8,13 @@ const FALLBACK = "Hello.";
  *  any non-empty list, else a bare "Hello." — never throws on empty config. */
 export function pickPreviewGreeting(greetings: PreviewGreetings, lang: string): string {
   const key = isSupportedLanguage(lang) ? lang.toLowerCase() : "en";
+  // Each step gates on a NON-EMPTY list — an empty `[]` is not nullish, so a
+  // present-but-empty `en` must still fall through to any populated language.
   const list =
-    (greetings[key]?.length ? greetings[key] : greetings.en) ?? Object.values(greetings).find((l) => l.length);
-  if (!list || list.length === 0) return FALLBACK;
+    (greetings[key]?.length ? greetings[key] : undefined) ??
+    (greetings.en?.length ? greetings.en : undefined) ??
+    Object.values(greetings).find((l) => l.length) ??
+    [];
+  if (list.length === 0) return FALLBACK;
   return list[Math.floor(Math.random() * list.length)] ?? FALLBACK;
 }
