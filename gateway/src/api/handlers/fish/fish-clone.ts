@@ -38,6 +38,13 @@ const log = getLog(["sentient", "api", "fish", "clone"]);
 
 const WARNING_NOT_ACTIVATED = "not-activated";
 
+// SSRF allowlist. A PUBLIC Fish voice's `samples[].audio` URL is
+// attacker-controllable, and the gateway fetches it server-side — so a
+// malicious voice could point it at an internal host (localhost, RFC-1918,
+// link-local metadata) to exfiltrate. Only fish.audio and its subdomains
+// may be dialed for a preview download.
+const ALLOWED_SAMPLE_HOST = "fish.audio";
+
 export interface FishCloneFetchers {
   /** Tests inject a fake; production uses fetchFishVoiceById directly. */
   fishById?: typeof fetchFishVoiceById;
@@ -74,6 +81,7 @@ interface CloneBody {
 type BodyResult = { ok: true; value: CloneBody } | { ok: false; error: string };
 type FishLookupResult = { ok: true; previewAudioUrl: string } | { ok: false; response: Response };
 type DownloadResult = { ok: true; value: ArrayBuffer } | { ok: false };
+type HostCheck = { ok: true } | { ok: false; host: string };
 
 export async function handleFishClone(
   deps: FishCloneDeps,
@@ -94,6 +102,15 @@ export async function handleFishClone(
   const fishVoice = await lookupFishVoice(deps, fishVoiceId);
   if (!fishVoice.ok) return fishVoice.response;
 
+  // SSRF guard BEFORE the download — reject any host outside the fish.audio
+  // allowlist so an attacker-controlled preview URL can't make the gateway
+  // dial an internal service.
+  const hostCheck = checkSampleHost(fishVoice.previewAudioUrl);
+  if (!hostCheck.ok) {
+    log.warn("clone.preview-host-not-allowed", { userId, fishVoiceId, host: hostCheck.host });
+    return jsonError(HTTP_BAD_GATEWAY, "preview-host-not-allowed");
+  }
+
   const sample = await downloadSample(deps, fishVoice.previewAudioUrl);
   if (!sample.ok) {
     log.warn("clone.preview-download-failed", { userId, fishVoiceId });
@@ -101,6 +118,23 @@ export async function handleFishClone(
   }
 
   return createAndActivate(deps, userId, fishVoiceId, body.value, sample.value, request.signal);
+}
+
+/** SSRF allowlist check: the preview host must be fish.audio or a subdomain.
+ *  On reject, returns the rejected host's registrable-ish part (last two
+ *  dot-labels) for the log — never the full attacker URL (path/query). */
+function checkSampleHost(url: string): HostCheck {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { ok: false, host: "unparseable" };
+  }
+  const hostname = parsed.hostname.toLowerCase();
+  if (hostname === ALLOWED_SAMPLE_HOST || hostname.endsWith(`.${ALLOWED_SAMPLE_HOST}`)) {
+    return { ok: true };
+  }
+  return { ok: false, host: hostname.split(".").slice(-2).join(".") };
 }
 
 async function lookupFishVoice(deps: FishCloneDeps, fishVoiceId: string): Promise<FishLookupResult> {

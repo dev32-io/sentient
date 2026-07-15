@@ -279,6 +279,24 @@ describe("handleFishClone", () => {
     expect(await response.json()).toEqual({ error: "preview-download-failed" });
   });
 
+  it("rejects a non-fish.audio preview host (SSRF guard) without downloading it", async () => {
+    const fetchFn = stubDownloadFetch(SAMPLE_BYTES);
+    const { deps } = makeDeps({
+      fetchers: makeFetchers({
+        fishById: vi.fn(async () => ({
+          ok: true as const,
+          value: makeFishVoice({ previewAudioUrl: "http://localhost/internal/secret" }),
+        })),
+      }),
+    });
+
+    const response = await handleFishClone(deps, "alice", "v1", makeRequest({ name: "Dad" }));
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "preview-host-not-allowed" });
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
   it("returns 422 invalid-request when name is missing, without downloading anything", async () => {
     const fetchFn = stubDownloadFetch(SAMPLE_BYTES);
     const { deps } = makeDeps();
@@ -318,7 +336,7 @@ describe("POST /api/v1/providers/voices/:id/clone (mount)", () => {
     });
   }
 
-  it("returns 401 when the bearer token is missing", async () => {
+  it("returns 401 when the bearer token is missing (enabled route)", async () => {
     const { deps } = makeDeps();
     const handler = createProvidersHandler({
       tokens: {
@@ -331,6 +349,21 @@ describe("POST /api/v1/providers/voices/:id/clone (mount)", () => {
     const response = await handler(makeCloneRequest(null));
 
     expect(response.status).toBe(401);
+  });
+
+  it("returns 404 (not 401) for a disabled clone route with no bearer — gate wins over auth", async () => {
+    const { deps } = makeDeps({ fishBrowseEnabled: false });
+    const handler = createProvidersHandler({
+      tokens: {
+        validate: vi.fn(async (): Promise<TokenResult<TokenPayload>> => ({ ok: false, error: "signature-invalid" })),
+      },
+      listModels: vi.fn(async () => ({ ok: true as const, value: [] })),
+      fishCloneDeps: deps,
+    });
+
+    const response = await handler(makeCloneRequest(null));
+
+    expect(response.status).toBe(404);
   });
 
   it("routes an authenticated request through to handleFishClone", async () => {

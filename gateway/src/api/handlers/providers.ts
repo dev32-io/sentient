@@ -50,7 +50,15 @@ async function handleProviders(deps: ProvidersHandlerDeps, request: Request): Pr
   const { fishCloneDeps } = deps;
   if (fishCloneDeps) {
     const cloneMatch = CLONE_PATH_RE.exec(url.pathname);
-    if (cloneMatch) return dispatchClone(deps, fishCloneDeps, cloneMatch[1] ?? "", request);
+    if (cloneMatch) {
+      // Gate FIRST — a disabled clone route goes dark (404) regardless of
+      // auth, matching the browse routes' behavior. Runs before authorize so
+      // an unauthenticated POST to a disabled route 404s, never 401.
+      if (!fishCloneDeps.fishBrowseEnabled) {
+        return new Response("Not Found", { status: HTTP_NOT_FOUND });
+      }
+      return dispatchClone(deps, fishCloneDeps, cloneMatch[1] ?? "", request);
+    }
   }
 
   if (request.method !== "GET") {
