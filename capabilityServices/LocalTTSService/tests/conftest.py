@@ -21,6 +21,7 @@ from websockets.asyncio.server import serve
 
 from local_tts.config import Config, HealthConfig, ServerConfig
 from local_tts.server import Server
+from local_tts.synth_executor import SynthExecutor
 
 _SENTINEL_REF_PATH = object()
 
@@ -32,6 +33,9 @@ _FAKE_CREATED_AT = 1_700_000_000.0
 
 class _StubEngine:
     """Fake ``QwenEngine``: no MLX model, satisfies the shape ``server.py`` needs."""
+
+    def warm(self) -> None:
+        pass  # no model to warm — the executor still calls this on its thread
 
     def synthesize(self, text, ref_audio_path, lang_code, streaming_interval, cancel):
         return iter(())  # not exercised by the non-live cases
@@ -98,6 +102,19 @@ def _make_config(tmp_path: Path) -> Config:
         voice_tag_max_len=24,
         voice_max_tags=8,
     )
+
+
+def _make_server(config: Config, engine, voice_store) -> Server:
+    """Build a ``Server`` wired to a warmed ``SynthExecutor`` around ``engine``.
+
+    The service now runs all MLX work on the executor's single thread (see
+    ``synth_executor.py``), so tests construct the server the same way
+    ``__main__`` does — the stub/live engine is warmed on that thread here.
+    The executor thread is a daemon, reaped when the test process exits.
+    """
+    executor = SynthExecutor(engine)
+    executor.start_and_warm()
+    return Server(config, executor, voice_store)
 
 
 async def _serve(server: Server) -> tuple[WsServer, int]:

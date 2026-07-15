@@ -27,9 +27,7 @@ import numpy as np
 import pytest
 from websockets.asyncio.client import connect
 
-from local_tts.server import Server
-
-from .conftest import _make_config, _serve, _StubEngine, _StubVoiceStore
+from .conftest import _make_config, _make_server, _serve, _StubEngine, _StubVoiceStore
 
 # Negotiated PCM contract values (CONTRACT.md §1.1 / audio_constants.py's
 # SOURCE_SAMPLE_RATE) — literals per this file's sibling live test above;
@@ -46,7 +44,7 @@ _SAMPLE_COUNT_TOLERANCE = 0.05
 
 def test_ready_echoes_negotiated_params(tmp_path):
     async def run() -> None:
-        server = Server(_make_config(tmp_path), _StubEngine(), _StubVoiceStore())
+        server = _make_server(_make_config(tmp_path), _StubEngine(), _StubVoiceStore())
         ws_server, port = await _serve(server)
         try:
             async with connect(f"ws://127.0.0.1:{port}/?format=pcm&sample_rate=24000") as ws:
@@ -64,7 +62,7 @@ def test_ready_echoes_negotiated_params(tmp_path):
 def test_ready_falls_back_when_no_query_params(tmp_path):
     async def run() -> None:
         config = _make_config(tmp_path)
-        server = Server(config, _StubEngine(), _StubVoiceStore())
+        server = _make_server(config, _StubEngine(), _StubVoiceStore())
         ws_server, port = await _serve(server)
         try:
             async with connect(f"ws://127.0.0.1:{port}/") as ws:
@@ -88,7 +86,7 @@ def test_ready_falls_back_on_non_positive_sample_rate(tmp_path, invalid_sample_r
 
     async def run() -> None:
         config = _make_config(tmp_path)
-        server = Server(config, _StubEngine(), _StubVoiceStore())
+        server = _make_server(config, _StubEngine(), _StubVoiceStore())
         ws_server, port = await _serve(server)
         try:
             url = f"ws://127.0.0.1:{port}/?sample_rate={invalid_sample_rate}"
@@ -104,7 +102,7 @@ def test_ready_falls_back_on_non_positive_sample_rate(tmp_path, invalid_sample_r
 
 def test_ping_pong(tmp_path):
     async def run() -> None:
-        server = Server(_make_config(tmp_path), _StubEngine(), _StubVoiceStore())
+        server = _make_server(_make_config(tmp_path), _StubEngine(), _StubVoiceStore())
         ws_server, port = await _serve(server)
         try:
             async with connect(f"ws://127.0.0.1:{port}/") as ws:
@@ -121,7 +119,7 @@ def test_ping_pong(tmp_path):
 
 def test_voice_list_empty(tmp_path):
     async def run() -> None:
-        server = Server(_make_config(tmp_path), _StubEngine(), _StubVoiceStore())
+        server = _make_server(_make_config(tmp_path), _StubEngine(), _StubVoiceStore())
         ws_server, port = await _serve(server)
         try:
             async with connect(f"ws://127.0.0.1:{port}/") as ws:
@@ -138,7 +136,7 @@ def test_voice_list_empty(tmp_path):
 
 def test_voice_delete_missing_is_idempotent(tmp_path):
     async def run() -> None:
-        server = Server(_make_config(tmp_path), _StubEngine(), _StubVoiceStore())
+        server = _make_server(_make_config(tmp_path), _StubEngine(), _StubVoiceStore())
         ws_server, port = await _serve(server)
         try:
             async with connect(f"ws://127.0.0.1:{port}/") as ws:
@@ -155,7 +153,7 @@ def test_voice_delete_missing_is_idempotent(tmp_path):
 
 def test_malformed_message_replies_error_not_crash(tmp_path):
     async def run() -> None:
-        server = Server(_make_config(tmp_path), _StubEngine(), _StubVoiceStore())
+        server = _make_server(_make_config(tmp_path), _StubEngine(), _StubVoiceStore())
         ws_server, port = await _serve(server)
         try:
             async with connect(f"ws://127.0.0.1:{port}/") as ws:
@@ -184,9 +182,8 @@ def test_real_synthesis_roundtrip(tmp_path):
     async def run() -> None:
         config = _make_config(tmp_path)
         engine = QwenEngine("mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit", default_lang="auto")
-        engine.warm()
         voice_store = VoiceStore(engine, Path(config.voice_dir))
-        server = Server(config, engine, voice_store)
+        server = _make_server(config, engine, voice_store)
         ws_server, port = await _serve(server)
         try:
             url = f"ws://127.0.0.1:{port}/?format=pcm&sample_rate=24000"
@@ -248,9 +245,8 @@ def test_real_synthesis_pcm_negotiation_roundtrip(tmp_path):
     async def run() -> None:
         config = _make_config(tmp_path)
         engine = QwenEngine("mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit", default_lang="auto")
-        engine.warm()
         voice_store = VoiceStore(engine, Path(config.voice_dir))
-        server = Server(config, engine, voice_store)
+        server = _make_server(config, engine, voice_store)
         ws_server, port = await _serve(server)
         try:
             url = f"ws://127.0.0.1:{port}/?format=pcm&sample_rate={_PCM_CONTRACT_SAMPLE_RATE}"

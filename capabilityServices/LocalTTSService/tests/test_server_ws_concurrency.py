@@ -25,11 +25,11 @@ import numpy as np
 import pytest
 from websockets.asyncio.client import connect
 
-from local_tts.server import Server
+from local_tts.synth_executor import SynthExecutor, SynthJob
 from local_tts.synth_worker import QUEUE_STOP
 from local_tts.synthesis import _CLOSE_WORKER_TIMEOUT_S, SynthesisRunner
 
-from .conftest import _make_config, _serve, _StubVoiceStore
+from .conftest import _make_config, _make_server, _serve, _StubVoiceStore
 
 
 class _GatedEngine:
@@ -40,6 +40,9 @@ class _GatedEngine:
 
     def __init__(self, gate: threading.Event) -> None:
         self._gate = gate
+
+    def warm(self) -> None:
+        pass
 
     def synthesize(self, text, ref_audio_path, lang_code, streaming_interval, cancel):
         self._gate.wait(timeout=5.0)
@@ -55,7 +58,7 @@ def test_synthesis_requests_serialize_across_connections(tmp_path):
 
     async def run() -> None:
         gate = threading.Event()
-        server = Server(_make_config(tmp_path), _GatedEngine(gate), _StubVoiceStore())
+        server = _make_server(_make_config(tmp_path), _GatedEngine(gate), _StubVoiceStore())
         ws_server, port = await _serve(server)
         try:
             async with (
@@ -122,23 +125,25 @@ def test_close_unblocks_worker_thread_stuck_on_full_queue():
     forever.
 
     Tested directly against ``SynthesisRunner`` (white-box: reaches into
-    ``_active_chunk_queue``/``_active_worker_thread``) rather than through
-    the full WS stack, deliberately: an earlier version of this test drove
-    it end-to-end through a real ``Server``/stub engine and an abrupt
+    ``_active_chunk_queue``/``_active_job``) rather than through the full WS
+    stack, deliberately: an earlier version of this test drove it
+    end-to-end through a real ``Server``/stub engine and an abrupt
     ``ws.close()``, but the exact race — a producer's ``put()`` already
     in flight against an already-full queue at the instant ``close()``
     runs — turned out to depend on real thread/event-loop scheduling
     order tightly enough that it passed even with the bug reintroduced
     (verified manually). This version manufactures that exact state
     deterministically: pre-fill the queue to its cap, then start a real
-    thread blocked on one more ``put()`` — the same cross-thread call
-    ``synth_worker.produce_chunks`` makes — before calling ``close()``.
+    thread blocked on one more ``put()`` — the same cross-thread call the
+    MLX thread makes in ``synth_worker.produce_chunks`` — with the job's
+    ``done`` set only after that put finally completes (exactly as the
+    executor sets it once ``produce_chunks`` returns), before ``close()``.
     """
 
     async def run() -> None:
         loop = asyncio.get_running_loop()
         runner = SynthesisRunner(
-            engine=None, voice_store=None, synth_lock=asyncio.Lock(), ws=_NoopWs(),
+            executor=None, voice_store=None, synth_lock=asyncio.Lock(), ws=_NoopWs(),
             conn_id="test-conn", format_="pcm", sample_rate=24000, voice=None,
             streaming_interval=0.5, default_lang="auto", conn_log=_NoopLog(), metrics_log=_NoopLog(),
         )
@@ -146,21 +151,28 @@ def test_close_unblocks_worker_thread_stuck_on_full_queue():
         chunk_queue.put_nowait(b"chunk-1")
         chunk_queue.put_nowait(b"chunk-2")  # queue now at its cap
 
+        job = SynthJob(
+            text="", ref_audio_path=None, lang_code="auto", streaming_interval=0.5,
+            cancel_event=threading.Event(), encoder=None, counter=None,
+            loop=loop, chunk_queue=chunk_queue, done=threading.Event(),
+        )
         put_completed = threading.Event()
 
         def blocked_producer() -> None:
-            # Mirrors `synth_worker.produce_chunks`'s cross-thread put:
-            # blocks until something drains the queue.
+            # Mirrors the MLX thread's blocking cross-thread put; the executor
+            # sets `job.done` once `produce_chunks` returns — modelled here by
+            # setting it right after the (finally-unblocked) put completes.
             asyncio.run_coroutine_threadsafe(
                 chunk_queue.put(QUEUE_STOP), loop,
             ).result(timeout=_CLOSE_WORKER_TIMEOUT_S + 5.0)
             put_completed.set()
+            job.done.set()
 
         worker = threading.Thread(
-            target=blocked_producer, daemon=True, name="tts-worker-test",
+            target=blocked_producer, daemon=True, name="tts-mlx-worker-test",
         )
         runner._active_chunk_queue = chunk_queue
-        runner._active_worker_thread = worker
+        runner._active_job = job
         worker.start()
 
         # Give the thread a beat to actually reach the blocking put(), and
@@ -169,11 +181,13 @@ def test_close_unblocks_worker_thread_stuck_on_full_queue():
         await asyncio.sleep(0.05)
         assert worker.is_alive()
         assert not put_completed.is_set()
+        assert not job.done.is_set()
 
         await asyncio.wait_for(runner.close(), timeout=_CLOSE_WORKER_TIMEOUT_S + 2.0)
 
-        assert not worker.is_alive(), "worker thread still stuck on put() after close()"
+        assert not worker.is_alive(), "producer still stuck on put() after close()"
         assert put_completed.is_set()
+        assert job.done.is_set()
 
     asyncio.run(run())
 
@@ -196,6 +210,9 @@ class _CancelAwareEngine:
         self._started = started
         self.start_count = 0
         self._lock = threading.Lock()
+
+    def warm(self) -> None:
+        pass
 
     def synthesize(self, text, ref_audio_path, lang_code, streaming_interval, cancel):
         with self._lock:
@@ -231,8 +248,10 @@ def test_close_blocks_second_queued_request_from_starting():
     async def run() -> None:
         started = threading.Event()
         engine = _CancelAwareEngine(started)
+        executor = SynthExecutor(engine)
+        executor.start_and_warm()
         runner = SynthesisRunner(
-            engine=engine, voice_store=_StubVoiceStore(), synth_lock=asyncio.Lock(),
+            executor=executor, voice_store=_StubVoiceStore(), synth_lock=asyncio.Lock(),
             ws=_NoopWs(), conn_id="test-conn-2", format_="pcm", sample_rate=24000,
             voice=None, streaming_interval=0.5, default_lang="auto",
             conn_log=_NoopLog(), metrics_log=_NoopLog(),
@@ -241,12 +260,12 @@ def test_close_blocks_second_queued_request_from_starting():
         runner.add_text("first")
         runner.flush()  # request 1 onto this connection's request queue
 
-        # Deterministic: block until request 1's worker thread has actually
-        # entered `synthesize()` — it is now genuinely in-flight.
+        # Deterministic: block until request 1 has actually entered
+        # `synthesize()` on the MLX thread — it is now genuinely in-flight.
         await asyncio.to_thread(started.wait, 2.0)
         assert started.is_set(), "request 1 never started"
-        thread_1 = runner._active_worker_thread
-        assert thread_1 is not None and thread_1.is_alive()
+        job_1 = runner._active_job
+        assert job_1 is not None and not job_1.done.is_set()
 
         # Request 2 lands on the SAME connection's queue while request 1 is
         # still running — the exact pre-condition the bug hits: a second,
@@ -257,12 +276,13 @@ def test_close_blocks_second_queued_request_from_starting():
 
         await asyncio.wait_for(runner.close(), timeout=_CLOSE_WORKER_TIMEOUT_S + 2.0)
 
-        # (a) the second (queued) request never started a worker.
+        # (a) the second (queued) request never started a synthesis.
         assert engine.start_count == 1, "second queued request must not start during/after teardown"
-        assert runner._active_worker_thread is thread_1, "no second worker was ever assigned"
+        assert runner._active_job is job_1, "no second job was ever assigned"
         assert runner._queue.empty(), "queued-but-unstarted request must be dropped, not deferred"
-        # (b) no worker thread left alive after close() returns.
-        assert not thread_1.is_alive(), "request 1's worker thread still alive after close()"
+        # (b) request 1's job finished (cancelled) by the time close() returns.
+        assert job_1.done.is_set(), "request 1's job still unfinished after close()"
         assert runner._closing is True
+        executor.shutdown()
 
     asyncio.run(run())

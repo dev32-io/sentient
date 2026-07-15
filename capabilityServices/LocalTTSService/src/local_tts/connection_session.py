@@ -46,7 +46,7 @@ from .wire_protocol import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - import-time-only, avoids the MLX/mlx_audio
-    from .engine import QwenEngine  # heavy import cost for non-live tests.
+    from .synth_executor import SynthExecutor
     from .voice_store import VoiceStore
 
 log = logging.getLogger("local_tts.connection_session")
@@ -67,7 +67,7 @@ class ConnectionSession:
         *,
         ws: Any,
         conn_id: str,
-        engine: "QwenEngine",
+        executor: "SynthExecutor",
         voice_store: "VoiceStore",
         synth_lock: asyncio.Lock,
         format_: str,
@@ -87,7 +87,7 @@ class ConnectionSession:
         self._conn_log = conn_log
         self._pending_voice_create: VoiceCreateMessage | None = None
         self._synth = SynthesisRunner(
-            engine=engine, voice_store=voice_store, synth_lock=synth_lock, ws=ws,
+            executor=executor, voice_store=voice_store, synth_lock=synth_lock, ws=ws,
             conn_id=conn_id, format_=format_, sample_rate=sample_rate, voice=voice,
             streaming_interval=streaming_interval, default_lang=default_lang,
             conn_log=conn_log, metrics_log=metrics_log,

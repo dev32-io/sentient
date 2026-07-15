@@ -47,7 +47,7 @@ from .health_server import run_health_server
 from .metrics import MetricsSampler
 
 if TYPE_CHECKING:  # pragma: no cover - import-time-only, avoids the MLX/mlx_audio
-    from .engine import QwenEngine  # heavy import cost for non-live tests.
+    from .synth_executor import SynthExecutor
     from .voice_store import VoiceStore
 
 log = logging.getLogger("local-tts-service")
@@ -61,9 +61,9 @@ VALID_FORMATS = ("opus", "pcm")
 class Server:
     """Owns the shared engine/voice-store/lock; creates per-connection sessions."""
 
-    def __init__(self, config: Config, engine: "QwenEngine", voice_store: "VoiceStore") -> None:
+    def __init__(self, config: Config, executor: "SynthExecutor", voice_store: "VoiceStore") -> None:
         self._config = config
-        self._engine = engine
+        self._executor = executor
         self._voice_store = voice_store
         # The one lock synthesis.py's module docstring requires: held for
         # the full duration of each synth request AND each voice.create,
@@ -85,6 +85,7 @@ class Server:
 
     async def stop(self) -> None:
         await self._metrics_sampler.stop()
+        self._executor.shutdown()
         self._service_log.log("service.stopping")
         self._service_log.close()
         self._metrics_log.close()
@@ -100,7 +101,7 @@ class Server:
         conn_log.log("conn.open", conn_id=conn_id, format=fmt, sample_rate=sample_rate, voice=voice)
 
         session = ConnectionSession(
-            ws=ws, conn_id=conn_id, engine=self._engine, voice_store=self._voice_store,
+            ws=ws, conn_id=conn_id, executor=self._executor, voice_store=self._voice_store,
             synth_lock=self._synth_lock, format_=fmt, sample_rate=sample_rate, voice=voice,
             streaming_interval=self._config.streaming_interval, default_lang=self._config.default_lang,
             conn_log=conn_log, metrics_log=self._metrics_log,
@@ -212,11 +213,11 @@ async def _cancel_and_wait(*tasks: "asyncio.Task[None]") -> None:
             pass
 
 
-async def run_server(config: Config, engine: "QwenEngine", voice_store: "VoiceStore") -> None:
+async def run_server(config: Config, executor: "SynthExecutor", voice_store: "VoiceStore") -> None:
     """Start the WebSocket + health servers, wait for a shutdown signal."""
     Path(config.log_dir).mkdir(parents=True, exist_ok=True)
 
-    server = Server(config, engine, voice_store)
+    server = Server(config, executor, voice_store)
     server.start_background()
     prune_task = asyncio.create_task(
         _daily_prune_loop(Path(config.log_dir), config.retention_days), name="daily-log-prune",

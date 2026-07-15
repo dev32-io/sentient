@@ -21,6 +21,7 @@ from .config import Config, load_config
 from .event_logger import prune_old_logs
 from .engine import QwenEngine
 from .server import run_server
+from .synth_executor import SynthExecutor
 from .voice_store import VoiceStore
 
 _LOG = logging.getLogger("local_tts")
@@ -97,13 +98,19 @@ def main() -> None:
     )
 
     engine = QwenEngine(config.model, default_lang=config.default_lang)
-    _LOG.info("warming model (fail-closed: aborts startup on failure)...")
-    engine.warm()
+    # All MLX work runs on the executor's single thread — including warm —
+    # because MLX binds array stream affinity per-thread (see
+    # synth_executor.py). start_and_warm() blocks here until warm completes
+    # ON that thread and re-raises any warm error (fail-closed: aborts
+    # startup before any connection is accepted).
+    executor = SynthExecutor(engine)
+    _LOG.info("warming model on the MLX thread (fail-closed: aborts startup on failure)...")
+    executor.start_and_warm()
     _LOG.info("model warm; ready to accept connections")
 
     voice_store = VoiceStore(engine, Path(config.voice_dir), builtin_dir=Path(config.builtin_voice_dir))
 
-    asyncio.run(run_server(config, engine, voice_store))
+    asyncio.run(run_server(config, executor, voice_store))
 
 
 if __name__ == "__main__":

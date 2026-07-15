@@ -20,12 +20,12 @@ import soundfile as sf
 from websockets.asyncio.client import connect
 
 from local_tts.connection_session import _decode_audio
-from local_tts.server import Server
 
 from .conftest import (
     _FAKE_CREATED_AT,
     _FAKE_VOICE_ID,
     _make_config,
+    _make_server,
     _RaisingVoiceStore,
     _serve,
     _StubEngine,
@@ -38,7 +38,7 @@ def test_voice_create_replies_voice_created(tmp_path):
     """``voice.create`` + a binary wav frame -> ``voice.created``."""
 
     async def run() -> None:
-        server = Server(_make_config(tmp_path), _StubEngine(), _StubVoiceStore())
+        server = _make_server(_make_config(tmp_path), _StubEngine(), _StubVoiceStore())
         ws_server, port = await _serve(server)
         try:
             async with connect(f"ws://127.0.0.1:{port}/") as ws:
@@ -87,7 +87,7 @@ def test_voice_create_rejects_without_crashing(tmp_path):
     """
 
     async def run() -> None:
-        server = Server(_make_config(tmp_path), _StubEngine(), _RaisingVoiceStore())
+        server = _make_server(_make_config(tmp_path), _StubEngine(), _RaisingVoiceStore())
         ws_server, port = await _serve(server)
         try:
             async with connect(f"ws://127.0.0.1:{port}/") as ws:

@@ -12,12 +12,16 @@ post-request metrics half):
 1. A single injected ``asyncio.Lock`` (one per server process) is held for the FULL
    duration of each request — ``voice_store.get(voice)`` through the last emitted
    chunk — so at most one synthesis runs at a time across the whole service.
-2. The blocking generator runs OFF the event loop on a worker thread
-   (``synth_worker.produce_chunks``); chunks cross back via a bounded ``asyncio.Queue``
-   (cross-thread ``run_coroutine_threadsafe`` puts). Only the event loop calls ``ws.send``.
+2. The blocking generator runs OFF the event loop on the ONE process-wide MLX
+   thread (``SynthExecutor``): each request is submitted as a ``SynthJob`` and
+   runs there via ``synth_worker.produce_chunks``. All MLX work (warm + every
+   ``generate``/``eval``) lives on that single thread because MLX binds array
+   stream affinity per-thread — see ``synth_executor.py``. Chunks cross back via a
+   bounded ``asyncio.Queue`` (cross-thread ``run_coroutine_threadsafe`` puts); only
+   the event loop calls ``ws.send``.
 3. ``{"type":"cancel"}`` or a WS close sets a ``threading.Event`` that ``synthesize()``
    checks between chunks, returning early. ``_drain_to_ws`` keeps consuming to
-   ``QUEUE_STOP`` even after a send failure, so the worker thread never blocks
+   ``QUEUE_STOP`` even after a send failure, so the MLX thread never blocks
    forever on an undrained queue (``close()`` follows the same rule).
 
 One ``SynthesisRunner`` per WebSocket connection: buffered text (``add_text``) moves
@@ -41,6 +45,7 @@ from .audio_constants import SOURCE_SAMPLE_RATE
 from .encoders import make_encoder
 from .event_sender import _safe_log, send_error_event, send_server_event, send_server_event_safe
 from .pipeline_events import Done, Started
+from .synth_executor import SynthJob
 from .synth_metrics import build_done_fields, build_synth_record, compute_metrics
 from .synth_worker import (
     QUEUE_STOP,
@@ -48,11 +53,10 @@ from .synth_worker import (
     SampleCounter,
     WorkerFailure,
     drain_queue_nowait,
-    produce_chunks,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - import-time-only, avoids the MLX/mlx_audio
-    from .engine import QwenEngine  # heavy import cost for non-live tests.
+    from .synth_executor import SynthExecutor
     from .voice_store import VoiceStore
 
 log = logging.getLogger("local_tts.synthesis")
@@ -67,13 +71,14 @@ _SOURCE_SAMPLE_RATE = SOURCE_SAMPLE_RATE
 # tunable, see ``config.md``'s "NOT config" carve-out.
 _CHUNK_QUEUE_MAXSIZE = 8
 
-# Non-fatal: an over-timeout daemon thread is still reaped on exit; this
-# only bounds how long a request waits to confirm it fully exited.
-_WORKER_JOIN_TIMEOUT_S = 2.0
+# Non-fatal bound on how long a request waits to confirm its job finished
+# on the shared MLX thread (``produce_chunks`` returned) after draining —
+# ``QUEUE_STOP`` is its last act, so ``done`` is set essentially at once.
+_JOB_DONE_TIMEOUT_S = 2.0
 
 # close() teardown: how long to drain the in-flight chunk_queue while
-# waiting for its worker thread to exit before hard-cancelling regardless
-# (daemon thread — reaped on process exit either way).
+# waiting for the active job to finish on the shared MLX thread before
+# giving up (the thread itself is process-wide and never joined here).
 _CLOSE_WORKER_TIMEOUT_S = 3.0
 _CLOSE_DRAIN_POLL_S = 0.02  # poll interval for that drain-while-waiting loop
 
@@ -84,7 +89,7 @@ class SynthesisRunner:
     def __init__(
         self,
         *,
-        engine: "QwenEngine",
+        executor: "SynthExecutor",
         voice_store: "VoiceStore",
         synth_lock: asyncio.Lock,
         ws: Any,
@@ -97,7 +102,7 @@ class SynthesisRunner:
         conn_log: Any,
         metrics_log: Any,
     ) -> None:
-        self._engine = engine
+        self._executor = executor
         self._voice_store = voice_store
         self._synth_lock = synth_lock
         self._ws = ws
@@ -114,10 +119,10 @@ class SynthesisRunner:
         self._cancel_event = threading.Event()
         # Set once `close()` begins; blocks `_run_queue` from starting more.
         self._closing = False
-        # In-flight request's chunk queue + worker thread, if any — lets
-        # `close()` reach + drain them on an abrupt disconnect.
+        # In-flight request's chunk queue + job, if any — lets `close()`
+        # reach + drain them on an abrupt disconnect.
         self._active_chunk_queue: "asyncio.Queue[Any] | None" = None
-        self._active_worker_thread: threading.Thread | None = None
+        self._active_job: SynthJob | None = None
         self._worker_task = asyncio.create_task(
             self._run_queue(), name=f"tts-synth-{conn_id}"
         )
@@ -144,30 +149,29 @@ class SynthesisRunner:
         Graceful-first: hard-cancelling ``_worker_task`` immediately (the
         old behavior) can land while ``_drain_to_ws`` is awaiting
         ``chunk_queue.get()`` — the cancel stops it calling ``.get()``
-        again, so a producer stuck on (or later filling) a bounded
-        ``queue.put()`` blocks forever: a leaked daemon thread. So: set
-        ``cancel_event``, keep the active queue drained until its worker
-        THREAD actually exits, and only then hard-cancel.
+        again, so the MLX thread stuck on (or later filling) a bounded
+        ``queue.put()`` blocks that job forever. So: set ``cancel_event``,
+        keep the active queue drained until the active JOB finishes on the
+        shared MLX thread (its ``done`` event), and only then hard-cancel.
 
         ``_closing`` is set FIRST (before any ``await`` here) so
         ``_run_queue`` can't start a further request once teardown begins —
-        else a second queued request starts against a fresh worker thread
-        while this polls the FIRST (now-stale) one, and the hard-cancel
-        below lands on that second, un-cancelled request instead.
+        else a second queued request submits a fresh job while this polls
+        the FIRST (now-stale) one, and the hard-cancel below lands on that
+        second, un-cancelled request instead.
         """
         self._closing = True
         drain_queue_nowait(self._queue)
         self._cancel_event.set()
-        thread = self._active_worker_thread
+        job = self._active_job
         deadline = time.monotonic() + _CLOSE_WORKER_TIMEOUT_S
-        while thread is not None and thread.is_alive() and time.monotonic() < deadline:
+        while job is not None and not job.done.is_set() and time.monotonic() < deadline:
             self._drain_active_queue_nowait()
             await asyncio.sleep(_CLOSE_DRAIN_POLL_S)
         self._drain_active_queue_nowait()  # final sweep
-        if thread is not None and thread.is_alive():
+        if job is not None and not job.done.is_set():
             log.warning(
-                "synth.close_worker_thread_stuck thread=%s timeout_s=%.1f",
-                thread.name, _CLOSE_WORKER_TIMEOUT_S,
+                "synth.close_job_stuck timeout_s=%.1f", _CLOSE_WORKER_TIMEOUT_S,
             )
         self._worker_task.cancel()
         try:
@@ -220,20 +224,17 @@ class SynthesisRunner:
         counter = SampleCounter()
         loop = asyncio.get_running_loop()
         chunk_queue: "asyncio.Queue[Any]" = asyncio.Queue(maxsize=_CHUNK_QUEUE_MAXSIZE)
-        worker = threading.Thread(
-            target=produce_chunks,
-            args=(
-                self._engine, text, ref_audio_path, self._default_lang,
-                self._streaming_interval, cancel_event, encoder, counter, loop, chunk_queue,
-            ),
-            daemon=True,
-            name=f"tts-worker-{request_id}",
+        job = SynthJob(
+            text=text, ref_audio_path=ref_audio_path, lang_code=self._default_lang,
+            streaming_interval=self._streaming_interval, cancel_event=cancel_event,
+            encoder=encoder, counter=counter, loop=loop, chunk_queue=chunk_queue,
+            done=threading.Event(),
         )
-        # `close()` reaches this via `_active_*` on an abrupt disconnect;
+        # `close()` reaches these via `_active_*` on an abrupt disconnect;
         # overwritten fresh next request, so a stale ref is harmless.
         self._active_chunk_queue = chunk_queue
-        self._active_worker_thread = worker
-        worker.start()
+        self._active_job = job
+        self._executor.submit(job)
 
         initial_error: BaseException | None = None
         try:
@@ -245,7 +246,7 @@ class SynthesisRunner:
         ttfa_ms, bytes_sent, error = await self._drain_to_ws(
             chunk_queue, t0, cancel_event, initial_error,
         )
-        await asyncio.to_thread(worker.join, _WORKER_JOIN_TIMEOUT_S)
+        await asyncio.to_thread(job.done.wait, _JOB_DONE_TIMEOUT_S)
         if error is not None:
             raise error
 
