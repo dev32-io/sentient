@@ -409,3 +409,18 @@ Direct WebSocket smoke against the native local-tts service (`ws://127.0.0.1:877
 **Expected:** `local_tts.voice_store voice_store.get fallback=default reason=unknown_voice voice_id=<id>` (WARNING) → normal `done` with default-voice audio. Pre-swap clones need re-cloning to sound like themselves; the service never errors on them.
 
 > **Webui UI rows** (chat→en/zh reply→TTS audio; fish-clone-zh through the Add-voice modal; record/upload+mp3/preview/pick/delete on qwen; mobile 390 viewport) exercise the gateway↔local-tts wire through the real product but require the profile **PIN** to pass the login gate — hand to the operator to run, or supply the PIN. The wire itself is engine-neutral (unchanged port/protocol across the swap) and is proven at the service level by the probe cases above.
+
+## Voice-pack language metadata (Settings → Voice)
+
+A voice pack carries a single optional `language` (one of Qwen's 10: zh/en/ja/ko/de/fr/ru/pt/es/it, or unset). Verified live on :8888 (hot-copied build) — filter Select + modal dropdown render, preview `?lang` wire fires, service stores/lists it. Rows needing the PIN + audio audition are the operator's.
+
+### lang-service-store (WS probe — agent-verifiable)
+**Scenario:** `voice.create` with `language` → `voice.list` returns it. Drive with the service venv python (see the WS-probe cases above); create a pack with `{"language":"ja"}`, list, assert the entry's `language == "ja"`; delete to clean up.
+**Expected:** service stores the string verbatim (`voice_store.create … language` is NOT logged as content — the code is fine to log). Built-in packs list `language: ""`.
+
+### lang-preview-wire (agent-verifiable via log trail)
+**Scenario:** Click a pack's "Play a sample". The gateway picks a greeting in the pack's language.
+**Expected log trail (gateway):** `[gateway:api:voices:preview] preview.request voiceId=<id> lang=<code-or-(unset)> greetingLen=<n>` → `preview.success`. Unset language → `lang="(unset)"` + the English greeting; a zh-tagged pack → `lang="zh"` + a Mandarin greeting (audition the audio to confirm the language — operator step).
+
+### lang-ui + lang-fish-import + lang-filter (operator — PIN + audio)
+**Scenario:** (a) Add-voice modal shows a **Language** single-select dropdown ("No language" default) next to Description; picking one + creating stores it → tile shows a flag badge. (b) Clone-from-Fish prefills the language from the Fish voice's `languages[0]` (∩ the 10; unsupported → unset). (c) The Voice-Packs **"All languages"** filter narrows the grid to packs whose `language` matches. (d) mobile 390 — filter + modal usable, no overflow. Reuses the Fish search `Select` + the shared `@sentient/config` LANGUAGE_DISPLAY map.
