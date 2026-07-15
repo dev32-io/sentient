@@ -1,0 +1,5 @@
+# Raw source audio for scripts/build_builtin_voices.py. NEVER commit these —
+# only the derived ref.wav + meta.json under
+# src/local_tts/voices_library/ are committed. See that directory's
+# LICENSES.md for the license/provenance of every clip that ever lived here.
+scripts/clips/
