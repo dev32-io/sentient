@@ -113,11 +113,12 @@ export function pingMsg(): string {
 /**
  * CONTRACT.md §4.1 — MUST be followed by exactly one binary WS frame (the
  * reference WAV) sent separately by the caller. Not part of this builder.
- * `description`/`tags` are optional on the wire (CONTRACT.md §4.1) but
- * required here — callers pass `""`/`[]` explicitly for a bare-name pack.
+ * `description`/`tags`/`language` are optional on the wire (CONTRACT.md
+ * §4.1) but required here — callers pass `""`/`[]`/`""` explicitly for a
+ * bare-name pack.
  */
-export function voiceCreateMsg(name: string, description: string, tags: readonly string[]): string {
-  return JSON.stringify({ type: CLIENT_MSG_TYPE.VOICE_CREATE, name, description, tags });
+export function voiceCreateMsg(name: string, description: string, tags: readonly string[], language: string): string {
+  return JSON.stringify({ type: CLIENT_MSG_TYPE.VOICE_CREATE, name, description, tags, language });
 }
 
 /** CONTRACT.md §4.2. */

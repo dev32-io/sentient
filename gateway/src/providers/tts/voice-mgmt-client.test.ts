@@ -68,10 +68,10 @@ async function waitForSocket(getWs: () => FakeWebSocket | null): Promise<FakeWeb
 }
 
 describe("createVoice", () => {
-  it("sends voiceCreateMsg with description and tags, followed by the binary audio frame", async () => {
+  it("sends voiceCreateMsg with description, tags, and language, followed by the binary audio frame", async () => {
     const { cfg, getWs } = setup();
     const audio = new Uint8Array([1, 2, 3]).buffer;
-    const pending = createVoice(cfg, "Nova", audio, new AbortController().signal, "Warm", ["warm", "calm"]);
+    const pending = createVoice(cfg, "Nova", audio, new AbortController().signal, "Warm", ["warm", "calm"], "zh");
 
     const ws = await waitForSocket(getWs);
     ws._openHandshake();
@@ -81,12 +81,18 @@ describe("createVoice", () => {
     expect(result).toEqual({ ok: true, value: { voiceId: "3f9b", name: "Nova" } });
     expect(ws.send).toHaveBeenNthCalledWith(
       1,
-      JSON.stringify({ type: "voice.create", name: "Nova", description: "Warm", tags: ["warm", "calm"] }),
+      JSON.stringify({
+        type: "voice.create",
+        name: "Nova",
+        description: "Warm",
+        tags: ["warm", "calm"],
+        language: "zh",
+      }),
     );
     expect(ws.send).toHaveBeenNthCalledWith(2, audio);
   });
 
-  it("sends empty description/tags as-is for a bare-name pack", async () => {
+  it("sends empty description/tags/language as-is for a bare-name pack", async () => {
     const { cfg, getWs } = setup();
     const audio = new Uint8Array([1]).buffer;
     const pending = createVoice(cfg, "Dad", audio, new AbortController().signal, "", []);
@@ -98,7 +104,7 @@ describe("createVoice", () => {
 
     expect(ws.send).toHaveBeenNthCalledWith(
       1,
-      JSON.stringify({ type: "voice.create", name: "Dad", description: "", tags: [] }),
+      JSON.stringify({ type: "voice.create", name: "Dad", description: "", tags: [], language: "" }),
     );
   });
 });

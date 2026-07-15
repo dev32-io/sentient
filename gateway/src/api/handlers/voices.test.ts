@@ -295,6 +295,7 @@ describe("POST /api/v1/voices", () => {
       name: "Dad",
       description: "",
       tags: [],
+      language: "",
     });
     expect(ws.send.mock.calls[1]?.[0]).toBeInstanceOf(ArrayBuffer);
 
@@ -325,6 +326,30 @@ describe("POST /api/v1/voices", () => {
       name: "Dad",
       description: "Warm, low register",
       tags: ["family", "warm"],
+      language: "",
+    });
+  });
+
+  it("POST create normalizes and forwards a supported language", async () => {
+    const { deps, getWs } = makeDeps();
+    const form = makeCreateForm("Dad");
+    form.set("language", "ZH");
+
+    const responsePromise = createVoicesHandler(deps)(makePostRequest(form));
+    const ws = await autoReply(getWs, {
+      type: "voice.created",
+      voiceId: VALID_VOICE_ID,
+      name: "Dad",
+      createdAt: 1752400000.0,
+    });
+    await responsePromise;
+
+    expect(JSON.parse(ws.send.mock.calls[0]?.[0])).toEqual({
+      type: "voice.create",
+      name: "Dad",
+      description: "",
+      tags: [],
+      language: "zh",
     });
   });
 

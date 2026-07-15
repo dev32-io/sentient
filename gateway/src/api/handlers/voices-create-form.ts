@@ -1,3 +1,4 @@
+import { normalizeLanguage } from "@sentient/config";
 import type { Result } from "@sentient/protocol";
 
 /** Also reused by fish-clone.ts, whose JSON body has the same `name` cap. */
@@ -8,6 +9,7 @@ export interface CreateFormInput {
   readonly audio: Blob;
   readonly description: string;
   readonly tags: readonly string[];
+  readonly language: string;
 }
 
 /** Char/count caps sourced from `services.ttsConfig.voice_*` — kept as a
@@ -23,8 +25,10 @@ export interface CreateFormCaps {
 /**
  * Parses + validates POST /api/v1/voices' multipart body: `name` (required,
  * capped), `audio` (required Blob), `description` (capped), repeated `tags`
- * fields (count- and per-tag-length-capped). All caps are operator-tunable
- * via config.yaml, threaded in through `caps` rather than hardcoded.
+ * fields (count- and per-tag-length-capped), optional `language` (normalized
+ * against the Qwen language list — unsupported/absent drops to `""`, never
+ * rejected). All caps are operator-tunable via config.yaml, threaded in
+ * through `caps` rather than hardcoded.
  */
 export async function parseCreateForm(
   caps: CreateFormCaps,
@@ -58,5 +62,8 @@ export async function parseCreateForm(
   if (tags.length > caps.maxTags) return { ok: false, error: `too many tags (max ${caps.maxTags})` };
   if (tags.some((t) => t.length > caps.tagMaxLen)) return { ok: false, error: `tag exceeds ${caps.tagMaxLen} chars` };
 
-  return { ok: true, value: { name, audio, description, tags } };
+  const languageRaw = typeof form.get("language") === "string" ? (form.get("language") as string).trim() : "";
+  const language = normalizeLanguage(languageRaw);
+
+  return { ok: true, value: { name, audio, description, tags, language } };
 }

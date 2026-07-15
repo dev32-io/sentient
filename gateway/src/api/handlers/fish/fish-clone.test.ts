@@ -201,11 +201,14 @@ describe("handleFishClone", () => {
     expect(await response.json()).toEqual({ voiceId: VALID_VOICE_ID, name: "Dad" });
 
     expect(fetchFn).toHaveBeenCalledWith(PREVIEW_URL, expect.objectContaining({ signal: expect.anything() }));
+    // language: "" here reflects createVoice's default (fish-clone.ts doesn't
+    // thread a language through yet — see plan Task 5).
     expect(JSON.parse(ws.send.mock.calls[0]?.[0])).toEqual({
       type: "voice.create",
       name: "Dad",
       description: "Warm",
       tags: ["family"],
+      language: "",
     });
     const sentBytes = new Uint8Array(ws.send.mock.calls[1]?.[0] as ArrayBuffer);
     expect(sentBytes).toEqual(SAMPLE_BYTES);

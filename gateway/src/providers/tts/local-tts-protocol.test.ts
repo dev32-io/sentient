@@ -58,9 +58,15 @@ describe("client message builders", () => {
     expect(pingMsg()).toBe(JSON.stringify({ type: "ping" }));
   });
 
-  it("voiceCreateMsg includes description and tags", () => {
-    const parsed = JSON.parse(voiceCreateMsg("Nova", "Warm", ["warm", "calm"]));
-    expect(parsed).toEqual({ type: "voice.create", name: "Nova", description: "Warm", tags: ["warm", "calm"] });
+  it("voiceCreateMsg includes description, tags, and language", () => {
+    const parsed = JSON.parse(voiceCreateMsg("Nova", "Warm", ["warm", "calm"], "zh"));
+    expect(parsed).toEqual({
+      type: "voice.create",
+      name: "Nova",
+      description: "Warm",
+      tags: ["warm", "calm"],
+      language: "zh",
+    });
   });
 });
 

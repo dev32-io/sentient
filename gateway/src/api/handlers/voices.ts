@@ -186,6 +186,7 @@ async function handleVoicesPost(deps: VoicesHandlerDeps, userId: string, request
     request.signal,
     parsed.value.description,
     parsed.value.tags,
+    parsed.value.language,
   );
   if (!result.ok) {
     const reason = result.error.kind === "service-error" ? result.error.reason : undefined;

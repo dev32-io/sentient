@@ -171,6 +171,9 @@ function onSocketMessage<T>(
   if (value !== null) settle({ ok: true, value });
 }
 
+// `language` defaults to "" (trailing param, added after `tags`) so the
+// pre-existing fish-clone.ts call site keeps compiling until it's threaded
+// through there too — see docs/superpowers/plans/2026-07-15-voice-pack-language.md Task 5.
 export async function createVoice(
   cfg: VoiceMgmtConfig,
   name: string,
@@ -178,13 +181,14 @@ export async function createVoice(
   signal: AbortSignal,
   description: string,
   tags: readonly string[],
+  language = "",
 ): Promise<Result<VoiceCreated, VoiceOpError>> {
   log.info("create.request", { nameLength: name.length, byteLength: audio.byteLength, tagCount: tags.length });
   const started = Date.now();
   const result = await requestReply<VoiceCreated>(
     cfg,
     (socket) => {
-      socket.send(voiceCreateMsg(name, description, tags));
+      socket.send(voiceCreateMsg(name, description, tags, language));
       socket.send(audio);
     },
     (frame) => (frame.kind === "voiceCreated" ? { voiceId: frame.voiceId, name: frame.name } : null),
