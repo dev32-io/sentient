@@ -1279,19 +1279,6 @@
 /* Inline "Active" marker (Voice-Packs only) — a plain flex sibling after
  * .v-meta, not absolutely positioned, so it never has to reserve clearance
  * the old absolute checkmark circle needed. */
-.settings-v2 .v-active {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  flex-shrink: 0;
-  background: color-mix(in oklab, var(--color-accent) 14%, transparent);
-  color: var(--color-accent);
-  font-weight: 600;
-  padding: 1px 6px;
-  border-radius: 999px;
-  font-size: 10px;
-}
-
 /* Delete (Voice-Packs, user packs only) — overlays the row's right edge on
  * hover/focus instead of permanently reserving space (row padding is
  * symmetric now — see .settings-v2 .voice above). The ::before backdrop

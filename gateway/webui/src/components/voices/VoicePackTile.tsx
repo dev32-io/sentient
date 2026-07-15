@@ -39,7 +39,7 @@ export function VoicePackTile(props: VoicePackTileProps): JSX.Element {
       playDisabled={props.previewDisabled}
       playLoading={previewState === "loading"}
       selected={isActive}
-      selectedMarker={isActive ? <span class="v-active">Active</span> : null}
+      selectedMarker={null}
       trailing={
         props.onDelete ? (
           <div class="v-del">
