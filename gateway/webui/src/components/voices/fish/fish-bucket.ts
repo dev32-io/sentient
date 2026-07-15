@@ -11,6 +11,7 @@
 // lowercase key and emit a single canonical display label per bucket so the
 // filter rows don't show ghost-duplicates.
 
+import { isSupportedLanguage } from "@sentient/config";
 import type { FishVoiceEntry } from "../../../services/fish-api.ts";
 
 export type TagBucket = "gender" | "age" | "vibe";
@@ -50,7 +51,11 @@ export function deriveFilterOptions(voices: FishVoiceEntry[]): FilterOptions {
   const ages = new Map<string, string>();
   const vibes = new Map<string, string>();
   for (const v of voices) {
-    for (const l of v.languages) languages.add(l);
+    // Fish returns codes outside Qwen's supported set (ar/hi/th/…) — those
+    // are dropped on clone anyway (normalizeLanguage), so exclude them from
+    // the filter dropdown too rather than offering a language that always
+    // clones to "".
+    for (const l of v.languages) if (isSupportedLanguage(l)) languages.add(l);
     for (const t of v.tags) {
       const k = t.trim().toLowerCase();
       const b = bucketTag(t);
