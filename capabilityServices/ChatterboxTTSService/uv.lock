@@ -163,7 +163,7 @@ dev = [
 requires-dist = [
     { name = "huggingface-hub" },
     { name = "mlx" },
-    { name = "mlx-audio" },
+    { name = "mlx-audio", specifier = ">=0.4.5" },
     { name = "numpy" },
     { name = "opuslib" },
     { name = "psutil" },

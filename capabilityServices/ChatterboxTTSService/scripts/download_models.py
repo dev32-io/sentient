@@ -38,6 +38,12 @@ from mlx_audio.utils import get_model_path
 # caller doesn't pass an explicit model_id override.
 DEFAULT_MODEL_ID = "mlx-community/Chatterbox-Turbo-TTS-8bit"
 
+# The multilingual Qwen3-TTS engine (qwen_engine.py, Task 1 of the TTS
+# engine swap) is not yet the deployed default — that cutover is a
+# later task in the swap plan. Until then, pre-fetch it explicitly:
+#   python scripts/download_models.py <destination_dir> \
+#       mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit
+
 
 def main() -> None:
     if len(sys.argv) not in (2, 3):
