@@ -14,6 +14,7 @@
  * `activateVoice` regardless, so the mount (providers.ts) authenticates once
  * and passes userId straight through.
  */
+import { normalizeLanguage } from "@sentient/config";
 import { getLog } from "../../../logging/logger.js";
 import type { ProfileStore } from "../../../profile-store/profile-store.js";
 import type { FishFetchConfig } from "../../../providers/fish/fish-fetcher.js";
@@ -91,6 +92,7 @@ interface CloneBody {
   name: string;
   description: string;
   tags: string[];
+  language: string;
 }
 
 type BodyResult = { ok: true; value: CloneBody } | { ok: false; error: string };
@@ -204,7 +206,15 @@ async function createAndActivate(
   signal: AbortSignal,
 ): Promise<Response> {
   log.info("clone.create.request", { userId, fishVoiceId, bytes: sample.byteLength, tagCount: body.tags.length });
-  const created = await createVoice(buildVoiceCfg(deps), body.name, sample, signal, body.description, body.tags);
+  const created = await createVoice(
+    buildVoiceCfg(deps),
+    body.name,
+    sample,
+    signal,
+    body.description,
+    body.tags,
+    body.language,
+  );
   if (!created.ok) {
     log.warn("clone.create.failed", { userId, fishVoiceId, kind: created.error.kind });
     return mapVoiceOpError(created.error);
@@ -223,7 +233,8 @@ async function createAndActivate(
   return Response.json({ voiceId, name }, { status: HTTP_OK });
 }
 
-async function parseBody(deps: FishCloneDeps, request: Request): Promise<BodyResult> {
+/** Exported for direct unit-testing of body validation (see fish-clone.test.ts). */
+export async function parseBody(deps: FishCloneDeps, request: Request): Promise<BodyResult> {
   let raw: unknown;
   try {
     raw = await request.json();
@@ -244,7 +255,11 @@ async function parseBody(deps: FishCloneDeps, request: Request): Promise<BodyRes
 
   const tags = parseTags(deps, input.tags);
   if (!tags.ok) return tags;
-  return { ok: true, value: { name, description, tags: tags.value } };
+
+  // Normalized against the Qwen language list — unsupported/absent drops to
+  // "" (never rejected), same treatment as parseCreateForm's `language`.
+  const language = normalizeLanguage(typeof input.language === "string" ? input.language.trim() : "");
+  return { ok: true, value: { name, description, tags: tags.value, language } };
 }
 
 function parseTags(deps: FishCloneDeps, raw: unknown): { ok: true; value: string[] } | { ok: false; error: string } {

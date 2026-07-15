@@ -8,7 +8,7 @@ import type { VoiceMgmtSocketFactory } from "../../../providers/tts/voice-mgmt-c
 import type { TokenPayload, TokenResult } from "../../../user-auth/types.js";
 import { createProvidersHandler } from "../providers.js";
 import type { FishCloneDeps, FishCloneFetchers } from "./fish-clone.js";
-import { handleFishClone } from "./fish-clone.js";
+import { handleFishClone, parseBody } from "./fish-clone.js";
 
 // ---------------------------------------------------------------------------
 // FakeWebSocket — minimal scriptable WS for the mock LocalTTSService,
@@ -201,8 +201,7 @@ describe("handleFishClone", () => {
     expect(await response.json()).toEqual({ voiceId: VALID_VOICE_ID, name: "Dad" });
 
     expect(fetchFn).toHaveBeenCalledWith(PREVIEW_URL, expect.objectContaining({ signal: expect.anything() }));
-    // language: "" here reflects createVoice's default (fish-clone.ts doesn't
-    // thread a language through yet — see plan Task 5).
+    // No language in the request body → parseBody defaults it to "".
     expect(JSON.parse(ws.send.mock.calls[0]?.[0])).toEqual({
       type: "voice.create",
       name: "Dad",
@@ -212,6 +211,23 @@ describe("handleFishClone", () => {
     });
     const sentBytes = new Uint8Array(ws.send.mock.calls[1]?.[0] as ArrayBuffer);
     expect(sentBytes).toEqual(SAMPLE_BYTES);
+  });
+
+  it("threads a supported body language through to the voice.create wire payload", async () => {
+    stubDownloadFetch(SAMPLE_BYTES);
+    const { deps, getWs } = makeDeps();
+
+    const responsePromise = handleFishClone(deps, "alice", "v1", makeRequest({ name: "Dad", language: "ja" }));
+    const ws = await autoReply(getWs, { type: "voice.created", voiceId: VALID_VOICE_ID, name: "Dad", createdAt: 1.0 });
+    await responsePromise;
+
+    expect(JSON.parse(ws.send.mock.calls[0]?.[0])).toEqual({
+      type: "voice.create",
+      name: "Dad",
+      description: "",
+      tags: [],
+      language: "ja",
+    });
   });
 
   it("returns 422 no-preview-sample when the Fish voice has no preview clip", async () => {
@@ -373,6 +389,26 @@ describe("handleFishClone", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ voiceId: VALID_VOICE_ID, name: "Dad", warning: "not-activated" });
+  });
+});
+
+describe("parseBody", () => {
+  it("keeps a supported language and drops an unsupported one to ''", async () => {
+    const { deps } = makeDeps();
+
+    const supported = await parseBody(deps, makeRequest({ name: "V", language: "ja" }));
+    const unsupported = await parseBody(deps, makeRequest({ name: "V", language: "th" }));
+
+    expect(supported.ok && supported.value.language).toBe("ja");
+    expect(unsupported.ok && unsupported.value.language).toBe("");
+  });
+
+  it("defaults language to '' when absent from the body", async () => {
+    const { deps } = makeDeps();
+
+    const result = await parseBody(deps, makeRequest({ name: "V" }));
+
+    expect(result.ok && result.value.language).toBe("");
   });
 });
 
