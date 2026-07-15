@@ -357,10 +357,20 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
         opusDecoder.decode(frame);
       },
       onAudioDone: (cycleId: string) => {
-        cycleQueue.onAudioDone(cycleId);
-        // isAudioPlaying stays true until playback physically drains (via onStateChange).
-        // echoGate moves to tail on playback adapter's onDrain — see `unsubPlaybackDrain`.
-        refreshStatus();
+        // Flush the decoder's final buffered frame(s) into the cycle queue
+        // BEFORE marking the cycle done. The OGG-Opus decoder holds the tail
+        // until end-of-stream (see opus-decoder.flush()), so without this the
+        // last ~word of every reply was cut. flush() emits via onFrame ->
+        // cycleQueue.onAudioFrame while the cycle is still active (playback has
+        // ~250ms buffered ahead, so it hasn't drained yet); only then mark the
+        // cycle done so playback drains the tail too. flush() never rejects
+        // (errors caught inside), so `.then` always marks done.
+        void opusDecoder.flush().then(() => {
+          cycleQueue.onAudioDone(cycleId);
+          // isAudioPlaying stays true until playback physically drains (via onStateChange).
+          // echoGate moves to tail on playback adapter's onDrain — see `unsubPlaybackDrain`.
+          refreshStatus();
+        });
       },
       onPlaybackStop: (reason, cycleId) => {
         log.debug("playback-stop", { reason, cycleId });

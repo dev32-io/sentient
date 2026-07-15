@@ -14,6 +14,16 @@ const log = createLogger(["sentient", "webui", "opus-decoder"]);
 
 export interface OpusDecoderAPI {
   decode(oggBytes: Uint8Array): void;
+  /**
+   * Emit any samples the decoder is still holding at end-of-stream. The
+   * OGG-Opus decoder buffers the final frame(s) until it sees the stream end
+   * (Opus end-trim uses the last page's granule position), so without a flush
+   * on `audio.done` the tail of every utterance (~a word) stays stuck in the
+   * decoder and is discarded by the next cycle's `reset()`. Await this BEFORE
+   * marking the cycle done so the flushed frames enqueue while the cycle is
+   * still active and playback drains them.
+   */
+  flush(): Promise<void>;
   /** Reset decoder state — call between cycles to clear any residual buffer. */
   reset(): Promise<void>;
   /** Free WASM memory + terminate worker. */
@@ -53,21 +63,30 @@ export function createOpusDecoder(options: OpusDecoderOptions): OpusDecoderAPI {
     });
   });
 
+  /** Convert one decode/flush result to resampled Float32 and emit it. */
+  function emitResult(result: {
+    errors: unknown[];
+    channelData: Float32Array[];
+    samplesDecoded: number;
+    sampleRate: number;
+  }): void {
+    if (result.errors.length > 0) {
+      log.warn("decode-warnings", { count: result.errors.length, first: result.errors[0] });
+    }
+    if (result.channelData.length === 0 || result.samplesDecoded === 0) return;
+    const samples = result.channelData[0]?.subarray(0, result.samplesDecoded);
+    if (samples === undefined) return;
+    const out =
+      options.targetSampleRate === result.sampleRate
+        ? new Float32Array(samples)
+        : linearResample(samples, result.sampleRate, options.targetSampleRate);
+    options.onFrame(out);
+  }
+
   async function flushOne(bytes: Uint8Array): Promise<void> {
     if (!decoder) return;
     try {
-      const result = await decoder.decode(bytes);
-      if (result.errors.length > 0) {
-        log.warn("decode-warnings", { count: result.errors.length, first: result.errors[0] });
-      }
-      if (result.channelData.length === 0 || result.samplesDecoded === 0) return;
-      const samples = result.channelData[0]?.subarray(0, result.samplesDecoded);
-      if (samples === undefined) return;
-      const out =
-        options.targetSampleRate === result.sampleRate
-          ? new Float32Array(samples)
-          : linearResample(samples, result.sampleRate, options.targetSampleRate);
-      options.onFrame(out);
+      emitResult(await decoder.decode(bytes));
     } catch (err) {
       log.error("decode-threw", { message: err instanceof Error ? err.message : String(err) });
     }
@@ -81,6 +100,14 @@ export function createOpusDecoder(options: OpusDecoderOptions): OpusDecoderAPI {
         return;
       }
       void flushOne(oggBytes);
+    },
+    async flush(): Promise<void> {
+      if (closed || !ready || !decoder) return;
+      try {
+        emitResult(await decoder.flush());
+      } catch (err) {
+        log.error("flush-threw", { message: err instanceof Error ? err.message : String(err) });
+      }
     },
     async reset(): Promise<void> {
       if (closed || !ready || !decoder) return;
