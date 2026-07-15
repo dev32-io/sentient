@@ -353,3 +353,41 @@ After upgrading across the v0.1.0 → v0.2.0 install-state schema bump:
 5. `assertVisible` the assistant reply (message flushes; gateway dedups by `pendingId`); Retry chip clears. If still showing Retry, tap it once and assert recovery (retry now verifies the socket).
 **Expected user-visible:** message recovers (no permanent Retry). **Expected log trail (logcat):** `net-change network-lost`/`network-available → ensureConnected` → `foreground.not-ready → reconnect` or probe-timeout → `transport.reconnect success` → `send-message flush count=1` → committed echo.
 **Platform notes:** **iOS — real-device/manual only (flagged gap):** the simulator shares the Mac's network, so a VPN half-open path change is not deterministically reproducible on-sim; verify on a real device (background → switch VPN→WiFi → foreground → send). os_log trail: `net-path-monitor path-changed → ensureConnected` → reconnect → flush. **No socket-drop fault exists** — `svc wifi` is the closest deterministic Android stand-in; a debug `armDropSocket` fault would tighten this (follow-up).
+
+## Fish voice browse & clone (Settings → Voice → ＋ Add voice, Playwright MCP)
+
+Self-contained, removable module — see `docs/fish-integration.md` for the
+disable/removal guide. `fish_browse_enabled` defaults `true`; browse is
+public (no Fish API key needed). Gateway log tags: `[api:fish:browse]`,
+`[api:fish:clone]`, `[providers:fish:fetcher]`.
+
+### fish-browse (grid loads + search + facet filter)
+**Scenario:** Opening the "Clone from Fish Audio" tab loads a grid of Fish voices with preview/tags; typing a name re-queries the server (`?title=`); clicking a language/gender/vibe chip narrows the already-loaded grid client-side (no new request).
+**Why added:** Regression guard for the Fish browse proxy (`gateway/src/api/handlers/fish/fish-browse.ts`) and the webui's split between server-side title search and client-side facet filtering.
+**Steps:**
+1. Settings → Voice → ＋ Add voice → click "Clone from Fish Audio" (3rd tab, only present when `fish_browse_enabled` is true).
+2. Observe the grid loads with tiles (name, language, gender/age, tags, preview ▶) and a total count.
+3. Type a common name into the search box.
+4. Clear it, then click a Gender/Age/Tag chip.
+**Expected user-visible:** grid loads on tab open; typing narrows the grid (server round-trip); clicking a facet chip narrows further with no visible reload.
+**Expected log trail (gateway):** tab-open emits `[api:fish:browse] voices.begin hasTitleFilter=false` → `voices.done count=<n>`. Search emits a second `GET /api/v1/providers/voices?title=<q>` → `voices.begin hasTitleFilter=true` → `voices.done`. Facet click emits **no** new `/providers/voices` request (network tab confirms — purely client-side over the already-fetched page).
+
+### fish-clone (pick a voice → clone → pack appears, auto-picked)
+**Scenario:** Picking a Fish voice with a sample ≥ ~6s, confirming name/tags, and clicking "Clone voice" downloads the sample server-side, creates a local Chatterbox pack, and auto-activates it — the new pack appears under "Yours" as Active.
+**Why added:** Regression guard for the full clone round-trip (gateway SSRF host-check → sample download → TTS `voice.create` → profile activation). **Known defect as of 2026-07-14 (see `docs/fish-integration.md`):** every clone currently 502s — Fish's `GET /model/:id` returns the sample URL on `<hash>.r2.cloudflarestorage.com`, which the clone route's SSRF allowlist (`ALLOWED_SAMPLE_HOST = "fish.audio"`) rejects. Verified reproducible directly against the live public Fish API (two different voice ids), not a flake. Re-run this case after the allowlist fix lands.
+**Steps:**
+1. In the Fish tab, click a voice tile (not the ▶ preview) to select it — name/description/tags pre-fill from Fish metadata, "Clone voice" enables.
+2. Click "Clone voice".
+**Expected user-visible:** a success toast ("Voice created") and the new pack appears under "Yours", auto-picked (Active). **Currently instead:** a `502 Bad Gateway` on `POST /api/v1/providers/voices/<id>/clone`, an error toast ("Couldn't clone this voice", auto-dismisses after 4s — check promptly or poll the DOM, don't rely on a screenshot taken >2s after the click), no pack created.
+**Expected log trail (gateway):** `[providers:fish:fetcher] fetchFishVoiceById.begin/done` → `[api:fish:clone] clone.create.request` → `[tts:voice-mgmt] create.success` → `[person-session] voiceId.update` → `[api:fish:clone] clone.success`. **Currently instead:** `fetchFishVoiceById.done` → `[api:fish:clone] clone.preview-host-not-allowed host="cloudflarestorage.com"`.
+
+### fish-tab-hidden (feature flag off)
+**Scenario:** With `providers.fish_browse_enabled: false` in the operator config, the "Clone from Fish Audio" tab never renders, and the browse/clone routes 404 even with a valid bearer token.
+**Why added:** Regression guard for the kill-switch — the route must 404 before auth is checked (no route-existence leak), and the webui must read the flag from `services/versions`, not hardcode the tab.
+**Steps:**
+1. Set `providers.fish_browse_enabled: false` in `~/.sentient/gateway/config/config.yaml` (`providers:` section), restart the gateway container (no rebuild — read at boot).
+2. Reload the webui, open Settings → Voice → ＋ Add voice.
+3. From the browser console (already-authenticated session), `fetch('/api/v1/providers/voices', { headers: { Authorization: 'Bearer ' + <token> } })`.
+4. `fetch('/api/v1/services/versions', ...)` and inspect `body.features`.
+**Expected user-visible:** only Record / Upload tabs — no Fish tab. `GET /api/v1/providers/voices` with a valid token → `404`.
+**Expected log trail / response:** `services/versions` response body has `features.fish_browse_enabled: false` (DEBUG-level `[services-versions] services-versions.fetched` log line exists but won't print at the default `info` log level — assert via the response body, not the log). Revert the config key and restart to re-enable after this case.
