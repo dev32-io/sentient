@@ -76,6 +76,40 @@ Then visit `https://sentient.dev32.io:8888` — the wizard handles secrets,
 voice, and MCP setup. For `native-whisper`, verify the host service first with
 `bash deploy/mac-prod/native/whisper-stt.sh status`.
 
+## Migrating an existing Chatterbox-TTS host to local-tts
+
+The TTS service was renamed `chatterbox-tts` → `local-tts` and its engine
+swapped from Chatterbox to Qwen3-TTS. A host that was set up before this
+change (launchd label `io.dev32.sentient.chatterbox-tts`, data dir
+`~/.sentient/chatterbox-tts`) needs a one-time migration — `setup-prod.py`
+does not do this automatically, since it never deletes or renames existing
+host state. Run these steps **on the Mac mini** once, before re-running
+`setup-prod.py`:
+
+```bash
+# stop + remove the old agent
+launchctl bootout gui/$(id -u)/io.dev32.sentient.chatterbox-tts 2>/dev/null || launchctl unload ~/Library/LaunchAgents/io.dev32.sentient.chatterbox-tts.plist
+rm -f ~/Library/LaunchAgents/io.dev32.sentient.chatterbox-tts.plist
+
+# migrate data dir (config + user voices + logs)
+mv ~/.sentient/chatterbox-tts ~/.sentient/local-tts
+
+# update the migrated config to the qwen engine
+#   model: mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit
+#   add: default_lang: "auto"   ;  remove: exaggeration, cfg_weight
+
+# reinstall + start under the new label
+bash deploy/mac-prod/native/local-tts.sh install
+bash deploy/mac-prod/native/local-tts.sh start
+bash deploy/mac-prod/native/local-tts.sh status   # expect :8771/health OK
+```
+
+User-created voice packs under `voices/` carry over unchanged — they were
+already `ref.wav`-format after the engine swap. The built-in voice packs
+ship with the service itself, so nothing to copy there. Once the agent is
+loaded and healthy, re-run `python3 deploy/setup-prod.py` as usual to
+reconcile the gateway config's `tts.url` / `companions.tts_health_url`.
+
 ## Headless 24×7 host notes
 
 The Mac mini runs headless. Required host setup (auto-login so Docker Desktop

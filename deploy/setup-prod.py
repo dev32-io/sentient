@@ -21,8 +21,8 @@ migrates an existing one between backends):
 
 TTS reconcile (native-only — Apple-silicon MLX/Metal, no docker fallback so no
 selector): canonicalizes tts.url / companions.tts_health_url and installs +
-starts the native Chatterbox-TTS launchd service. Declining the install leaves
-the gateway with no TTS backend (text-only replies).
+starts the native local-tts (Qwen3-TTS) launchd service. Declining the install
+leaves the gateway with no TTS backend (text-only replies).
 
 Idempotent: re-run any time after `git pull` to refresh images / re-sync the
 backend. Persistent state under ~/.sentient/ (secrets, gateway-data, brain)
@@ -70,10 +70,11 @@ STT_BACKEND_SCRIPT = DEPLOY_DIR / "native" / "stt-backend.py"
 WHISPER_LAUNCHER = DEPLOY_DIR / "native" / "whisper-stt.sh"
 # TTS is native-only (Apple-silicon MLX/Metal) — no docker fallback, hence no
 # selector like STT_BACKEND. When the deploy ships the native TTS pieces
-# (mac-prod), setup installs + starts the Chatterbox-TTS launchd service and
-# canonicalizes tts.url / companions.tts_health_url to the host service.
+# (mac-prod), setup installs + starts the local-tts (Qwen3-TTS) launchd
+# service and canonicalizes tts.url / companions.tts_health_url to the host
+# service.
 TTS_BACKEND_SCRIPT = DEPLOY_DIR / "native" / "tts-backend.py"
-CHATTERBOX_LAUNCHER = DEPLOY_DIR / "native" / "chatterbox-tts.sh"
+LOCAL_TTS_LAUNCHER = DEPLOY_DIR / "native" / "local-tts.sh"
 # Tooling venv for the config patcher (stt-backend.py needs ruamel.yaml). Kept
 # out of system python to avoid PEP 668 externally-managed-environment errors.
 TOOLING_VENV = DEPLOY_DIR / "native" / ".venv"
@@ -371,31 +372,32 @@ def configure_native_stt(backend: str) -> bool:
     return True
 
 
-# --- Native Chatterbox-TTS reconcile (always native, no selector) -----------
+# --- Native local-tts (Qwen3-TTS) reconcile (always native, no selector) ----
 #
-# TTS mirrors the STT native path but has no backend selector: Chatterbox-TTS
+# TTS mirrors the STT native path but has no backend selector: local-tts
 # runs on Apple-silicon MLX/Metal only, so there is no docker fallback to choose
 # between. Whenever the deploy ships the native TTS pieces (mac-prod), setup:
 #   1. canonicalizes the mounted gateway config's tts.url / tts_health_url
 #      (tts-backend.py — a VALUE rewriter; the tts block's SHAPE comes from the
 #      seed config, so this is a no-op on a freshly-seeded host and a value fixup
 #      on an already-shaped one).
-#   2. installs + starts the Chatterbox-TTS launchd service.
+#   2. installs + starts the local-tts launchd service.
 # A missing TTS backend is not fatal — the gateway degrades to text-only.
 
 
 def apply_tts_backend(ruamel_python: str) -> bool:
     """Point the mounted gateway config's tts.url + companions.tts_health_url at
-    the native Chatterbox-TTS host service. Shows the surgical diff, confirms,
-    and is a no-op when already matching (idempotent). tts-backend.py only
-    rewrites values that already exist (the seed owns the tts-block shape)."""
+    the native local-tts (Qwen3-TTS) host service. Shows the surgical diff,
+    confirms, and is a no-op when already matching (idempotent). tts-backend.py
+    only rewrites values that already exist (the seed owns the tts-block
+    shape)."""
     base = [ruamel_python, str(TTS_BACKEND_SCRIPT), "--config", str(MOUNTED_CONFIG)]
     dry = run(base, check=False)
     if dry.returncode != 0:
         fail(f"tts-backend.py failed:\n  {dry.stderr.strip()}")
         return False
     if "no change needed" in dry.stdout:
-        ok("gateway config already points at native Chatterbox-TTS")
+        ok("gateway config already points at native local-tts")
         return True
     print(dry.stdout)
     if not confirm(f"Apply native TTS endpoint to {MOUNTED_CONFIG.name} (patch above)?"):
@@ -405,12 +407,12 @@ def apply_tts_backend(ruamel_python: str) -> bool:
     if applied.returncode != 0:
         fail(f"tts-backend.py --apply failed:\n  {applied.stderr.strip()}")
         return False
-    ok("patched gateway config → native Chatterbox-TTS")
+    ok("patched gateway config → native local-tts")
     return True
 
 
 def configure_native_tts() -> bool:
-    """Install + start the native Chatterbox-TTS launchd service.
+    """Install + start the native local-tts (Qwen3-TTS) launchd service.
 
     Native-only (Apple-silicon MLX/Metal); there is no docker fallback, so this
     always installs+starts when the operator opts in. Idempotent — the launcher's
@@ -419,26 +421,26 @@ def configure_native_tts() -> bool:
     """
     if platform.system() != "Darwin":
         warn(
-            f"native Chatterbox-TTS needs macOS/Apple-silicon; host is "
+            f"native local-tts needs macOS/Apple-silicon; host is "
             f"{platform.system()} — skipping (gateway degrades to text-only)"
         )
         return True
     if not confirm(
-        "Install + start the native Chatterbox-TTS launchd service now? "
+        "Install + start the native local-tts launchd service now? "
         "(venv + model download, ~few min)"
     ):
         warn("Skipped native TTS install — the gateway will have no TTS backend (text-only replies).")
         return True
-    info("Installing native Chatterbox-TTS (launchd). First run downloads models.")
-    rc = subprocess.call(["bash", str(CHATTERBOX_LAUNCHER), "install"], cwd=REPO_ROOT)
+    info("Installing native local-tts (launchd). First run downloads models.")
+    rc = subprocess.call(["bash", str(LOCAL_TTS_LAUNCHER), "install"], cwd=REPO_ROOT)
     if rc != 0:
-        fail(f"chatterbox-tts.sh install exited with code {rc}")
+        fail(f"local-tts.sh install exited with code {rc}")
         return False
-    rc = subprocess.call(["bash", str(CHATTERBOX_LAUNCHER), "start"], cwd=REPO_ROOT)
+    rc = subprocess.call(["bash", str(LOCAL_TTS_LAUNCHER), "start"], cwd=REPO_ROOT)
     if rc != 0:
-        fail(f"chatterbox-tts.sh start exited with code {rc}")
+        fail(f"local-tts.sh start exited with code {rc}")
         return False
-    ok("native Chatterbox-TTS installed + started (health: :8771/health)")
+    ok("native local-tts installed + started (health: :8771/health)")
     return True
 
 
@@ -708,11 +710,11 @@ def print_next_steps(backend: Optional[str]) -> None:
             f"spawns sentient-stt-service from the built image at `compose up`.\n"
         )
     tts_note = ""
-    if CHATTERBOX_LAUNCHER.exists():
+    if LOCAL_TTS_LAUNCHER.exists():
         tts_note = (
-            f"\n  TTS is {BOLD}native Chatterbox-TTS{RESET} (Apple-silicon MLX) — "
+            f"\n  TTS is {BOLD}native local-tts{RESET} (Qwen3-TTS, Apple-silicon MLX) — "
             f"verify the host service is up before the gateway dials it:\n\n"
-            f"    {DIM}bash {CHATTERBOX_LAUNCHER.relative_to(REPO_ROOT)} status{RESET}\n"
+            f"    {DIM}bash {LOCAL_TTS_LAUNCHER.relative_to(REPO_ROOT)} status{RESET}\n"
         )
     print(
         f"\n{BOLD}Setup complete.{RESET} Bring the stack up when you're ready:\n\n"
@@ -783,7 +785,7 @@ def main() -> int:
         # the deploy ships the native TTS pieces (mac-prod). Reuses the ruamel
         # interpreter resolved above.
         if TTS_BACKEND_SCRIPT.exists():
-            info("Reconciling gateway config → native Chatterbox-TTS")
+            info("Reconciling gateway config → native local-tts")
             if not apply_tts_backend(ruamel_python):
                 return 1
 
@@ -796,10 +798,10 @@ def main() -> int:
         if not configure_native_stt(backend):
             return 1
 
-        # TTS is native-only — install/start the Chatterbox-TTS launchd service
+        # TTS is native-only — install/start the local-tts launchd service
         # whenever the deploy ships its launcher (mac-prod).
-        if CHATTERBOX_LAUNCHER.exists():
-            info("Configuring native Chatterbox-TTS service")
+        if LOCAL_TTS_LAUNCHER.exists():
+            info("Configuring native local-tts service")
             if not configure_native_tts():
                 return 1
 

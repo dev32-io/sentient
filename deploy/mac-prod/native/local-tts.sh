@@ -1,33 +1,33 @@
 #!/usr/bin/env bash
-# Native launcher for Chatterbox-TTS (Apple Silicon). Manages a launchd
+# Native launcher for local-tts (Qwen3-TTS, Apple Silicon). Manages a launchd
 # LaunchAgent so the service survives reboots and logs under
-# ~/.sentient/chatterbox-tts/logs/. Chatterbox weights are fetched by
-# mlx-audio from HuggingFace at runtime (cached under
-# ~/.cache/huggingface); this script pre-warms that cache at install time
-# via download_models.py so the first real synthesis request isn't the one
-# paying for the download. Native-only — Chatterbox-TTS has no docker
-# fallback (Apple-silicon MLX/Metal only), unlike STT's native-vs-docker
-# choice; see deploy.conf.
+# ~/.sentient/local-tts/logs/. Qwen3-TTS weights are fetched by mlx-audio
+# from HuggingFace at runtime (cached under ~/.cache/huggingface); this
+# script pre-warms that cache at install time via download_models.py so the
+# first real synthesis request isn't the one paying for the download.
+# Native-only — local-tts has no docker fallback (Apple-silicon MLX/Metal
+# only), unlike STT's native-vs-docker choice; see deploy.conf.
 set -euo pipefail
 
-LABEL="io.dev32.sentient.chatterbox-tts"
+LABEL="io.dev32.sentient.local-tts"
 PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-SVC_DIR="$REPO_ROOT/capabilityServices/ChatterboxTTSService"
+SVC_DIR="$REPO_ROOT/capabilityServices/LocalTTSService"
 VENV="$SVC_DIR/.venv"
-DATA="$HOME/.sentient/chatterbox-tts"
-# Deployed default model — the Turbo variant. Kept as one shell variable so
-# the config.yaml seed and the download_models.py warm-fetch can never drift
-# apart. config/config.example.yaml intentionally ships a non-Turbo id
-# instead (see that file's comment) so config-parsing tests never need
-# network access; this script overrides it at seed time.
-MODEL_ID="mlx-community/Chatterbox-Turbo-TTS-8bit"
+DATA="$HOME/.sentient/local-tts"
+# Deployed default model. Kept as one shell variable so the config.yaml seed
+# and the download_models.py warm-fetch can never drift apart.
+# config/config.example.yaml already ships this same qwen id — the seed
+# below isn't papering over a divergence, it's drift-safety: without it, an
+# operator's later edit to config.example.yaml (e.g. bumping to a newer
+# quant) would silently change the deployed model on the next fresh install.
+MODEL_ID="mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit"
 
 cmd_install() {
   mkdir -p "$DATA/config" "$DATA/logs" "$DATA/voices" "$DATA/models" "$HOME/Library/LaunchAgents"
   if [ ! -f "$DATA/config/config.yaml" ]; then
     cp "$SVC_DIR/config/config.example.yaml" "$DATA/config/config.yaml"
-    # Pin the deployed config to the Turbo model. `#` delimiter because
+    # Pin the deployed config to the qwen model. `#` delimiter because
     # MODEL_ID contains `/`. Only runs on first seed, so operator edits
     # survive re-running install.
     sed -i '' "s#^model: .*#model: ${MODEL_ID}#" "$DATA/config/config.yaml"
@@ -59,14 +59,14 @@ cmd_install() {
   <array>
     <string>${VENV}/bin/python</string>
     <string>-m</string>
-    <string>chatterbox_tts</string>
+    <string>local_tts</string>
   </array>
   <key>EnvironmentVariables</key><dict>
     <key>PYTHONPATH</key><string>${SVC_DIR}/src</string>
-    <key>CHATTERBOX_TTS_CONFIG_PATH</key><string>${DATA}/config/config.yaml</string>
-    <key>CHATTERBOX_TTS_MODEL_DIR</key><string>${DATA}/models</string>
-    <key>CHATTERBOX_TTS_LOG_DIR</key><string>${DATA}/logs</string>
-    <key>CHATTERBOX_TTS_VOICE_DIR</key><string>${DATA}/voices</string>
+    <key>LOCAL_TTS_CONFIG_PATH</key><string>${DATA}/config/config.yaml</string>
+    <key>LOCAL_TTS_MODEL_DIR</key><string>${DATA}/models</string>
+    <key>LOCAL_TTS_LOG_DIR</key><string>${DATA}/logs</string>
+    <key>LOCAL_TTS_VOICE_DIR</key><string>${DATA}/voices</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>

@@ -1,7 +1,7 @@
-"""Point the gateway's TTS backend at the native Chatterbox-TTS service in a
-gateway config.yaml (comment-preserving).
+"""Point the gateway's TTS backend at the native local-tts (Qwen3-TTS)
+service in a gateway config.yaml (comment-preserving).
 
-Chatterbox-TTS is native-only (Apple-silicon MLX/Metal) — unlike STT there
+local-tts is native-only (Apple-silicon MLX/Metal) — unlike STT there
 is no docker-fallback backend to select between, so unlike its
 stt-backend.py sibling this script takes no --backend flag; it always
 points the gateway at the native LaunchAgent's WebSocket + health
@@ -91,13 +91,13 @@ def main() -> None:
         original.splitlines(keepends=True),
         updated.splitlines(keepends=True),
         fromfile=str(args.config),
-        tofile=f"{args.config} (native-chatterbox)",
+        tofile=f"{args.config} (native-local-tts)",
     )
     sys.stdout.writelines(diff)
 
     if args.apply:
         args.config.write_text(updated, encoding="utf-8")
-        print(f"\n[tts-backend] applied native-chatterbox to {args.config}")
+        print(f"\n[tts-backend] applied native-local-tts to {args.config}")
     else:
         print("\n[tts-backend] dry-run — re-run with --apply to write")
 
