@@ -147,6 +147,7 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
     sttHealthUrl: services.sttHealthUrl,
     ttsHealthUrl: services.ttsHealthUrl,
     tokens: services.auth.tokens,
+    fishBrowseEnabled: services.providersConfig.fish_browse_enabled,
   });
   const handleStatic = createWebuiHandler({ distDir: services.webDistDir });
   const handleDownloads = createDownloadsHandler({

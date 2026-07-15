@@ -19,7 +19,19 @@ export interface ServicesVersionsDeps {
   sttHealthUrl: string;
   ttsHealthUrl: string;
   tokens: Pick<TokenService, "validate">;
+  /** Mirrors cfg.providers.fish_browse_enabled — surfaced so the webui can
+   *  show/hide the "Clone from Fish Audio" tab without a separate fetch. */
+  fishBrowseEnabled: boolean;
 }
+
+/** Namespaced, extensible feature-flag block appended to the versions
+ *  payload. Add future operator-toggleable flags here, not as top-level
+ *  fields, so the webui can extend `features` without a shape migration. */
+export interface ServicesVersionsFeatures {
+  fish_browse_enabled: boolean;
+}
+
+export type ServicesVersionsResponse = ServiceVersionRecord & { features: ServicesVersionsFeatures };
 
 export type ServicesVersionsHandler = (req: Request) => Promise<Response>;
 
@@ -54,14 +66,17 @@ export function createServicesVersionsHandler(deps: ServicesVersionsDeps): Servi
       return Response.json({ error: "bootstrap-incomplete" }, { status: HTTP_PRECONDITION_FAILED });
     }
 
+    const features: ServicesVersionsFeatures = { fish_browse_enabled: deps.fishBrowseEnabled };
+
     if (!deps.systemOrchestrator) {
       // Orchestrator not available — return gateway version only; other fields
       // degrade to "unknown" rather than crashing the webui version chips.
-      const fallback: ServiceVersionRecord = {
+      const fallback: ServicesVersionsResponse = {
         gateway: deps.gatewayVersion,
         hermes: "unknown",
         stt_service: "unknown",
         tts_service: "unknown",
+        features,
       };
       log.warn("services-versions.no-orchestrator", { userId: valid.value.userId });
       return Response.json(fallback, { status: HTTP_OK });
@@ -81,8 +96,9 @@ export function createServicesVersionsHandler(deps: ServicesVersionsDeps): Servi
       return Response.json({ error: "resolve-failed", reason }, { status: HTTP_INTERNAL_ERROR });
     }
 
-    log.debug("services-versions.fetched", { userId: valid.value.userId });
-    return Response.json(versions, { status: HTTP_OK });
+    const response: ServicesVersionsResponse = { ...versions, features };
+    log.debug("services-versions.fetched", { userId: valid.value.userId, fishBrowseEnabled: deps.fishBrowseEnabled });
+    return Response.json(response, { status: HTTP_OK });
   };
 }
 
