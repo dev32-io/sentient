@@ -104,7 +104,7 @@ describe("gatewayConfigSchema", () => {
     const cfg = ttsConfigSchema.parse({});
     expect(cfg.preview_greetings.en?.length).toBeGreaterThan(0);
     expect(cfg.preview_timeout_ms).toBe(8000);
-    expect(cfg.voice_description_max_len).toBe(240);
+    expect(cfg.voice_description_max_len).toBe(12000);
     expect(cfg.voice_max_tags).toBe(8);
   });
 

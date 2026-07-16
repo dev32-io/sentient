@@ -24,6 +24,7 @@ import {
   type VoiceMgmtSocketFactory,
   createVoice,
 } from "../../../providers/tts/voice-mgmt-client.js";
+import { clampTags, truncateField } from "../field-limits.js";
 import { VOICE_NAME_MAX_LEN } from "../voices-create-form.js";
 import {
   HTTP_BAD_GATEWAY,
@@ -244,25 +245,31 @@ export async function parseBody(deps: FishCloneDeps, request: Request): Promise<
   if (typeof raw !== "object" || raw === null) return { ok: false, error: "invalid body" };
   const input = raw as Record<string, unknown>;
 
-  const name = typeof input.name === "string" ? input.name.trim() : "";
-  if (!name) return { ok: false, error: "name is required" };
-  if (name.length > VOICE_NAME_MAX_LEN) return { ok: false, error: `name exceeds ${VOICE_NAME_MAX_LEN} chars` };
+  const nameTrimmed = typeof input.name === "string" ? input.name.trim() : "";
+  if (!nameTrimmed) return { ok: false, error: "name is required" };
+  const name = truncateField(nameTrimmed, VOICE_NAME_MAX_LEN);
 
-  const description = typeof input.description === "string" ? input.description.trim() : "";
-  if (description.length > deps.descriptionMaxLen) {
-    return { ok: false, error: `description exceeds ${deps.descriptionMaxLen} chars` };
-  }
+  // Auto-imported from the Fish voice — length-capped fields truncate rather
+  // than reject (see field-limits.ts) so a long Fish blurb or extra tags never
+  // block the clone. Only a malformed tags TYPE is a hard error.
+  const description = truncateField(
+    typeof input.description === "string" ? input.description.trim() : "",
+    deps.descriptionMaxLen,
+  );
 
-  const tags = parseTags(deps, input.tags);
-  if (!tags.ok) return tags;
+  const rawTags = extractTags(input.tags);
+  if (!rawTags.ok) return rawTags;
+  const tags = clampTags(rawTags.value, deps.maxTags, deps.tagMaxLen);
 
   // Normalized against the Qwen language list — unsupported/absent drops to
   // "" (never rejected), same treatment as parseCreateForm's `language`.
   const language = normalizeLanguage(typeof input.language === "string" ? input.language.trim() : "");
-  return { ok: true, value: { name, description, tags: tags.value, language } };
+  return { ok: true, value: { name, description, tags, language } };
 }
 
-function parseTags(deps: FishCloneDeps, raw: unknown): { ok: true; value: string[] } | { ok: false; error: string } {
+/** Extracts a string tag list from the raw body value — a wrong TYPE is a hard
+ *  error (structural), but count/length overflow is handled by clampTags. */
+function extractTags(raw: unknown): { ok: true; value: string[] } | { ok: false; error: string } {
   if (raw === undefined) return { ok: true, value: [] };
   if (!Array.isArray(raw)) return { ok: false, error: "tags must be an array" };
 
@@ -270,8 +277,6 @@ function parseTags(deps: FishCloneDeps, raw: unknown): { ok: true; value: string
     .filter((t): t is string => typeof t === "string")
     .map((t) => t.trim())
     .filter(Boolean);
-  if (tags.length > deps.maxTags) return { ok: false, error: `too many tags (max ${deps.maxTags})` };
-  if (tags.some((t) => t.length > deps.tagMaxLen)) return { ok: false, error: `tag exceeds ${deps.tagMaxLen} chars` };
   return { ok: true, value: tags };
 }
 

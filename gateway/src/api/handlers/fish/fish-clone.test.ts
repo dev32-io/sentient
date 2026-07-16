@@ -255,17 +255,6 @@ describe("handleFishClone", () => {
     expect(await response.json()).toEqual({ error: "voice-op-failed", reason: "clip too short" });
   });
 
-  it("rejects over-cap tags with 422 before any Fish fetch", async () => {
-    const fishById = vi.fn(async () => ({ ok: true as const, value: makeFishVoice() }));
-    const { deps } = makeDeps({ maxTags: 2, fetchers: makeFetchers({ fishById }) });
-
-    const response = await handleFishClone(deps, "alice", "v1", makeRequest({ name: "Dad", tags: ["a", "b", "c"] }));
-
-    expect(response.status).toBe(422);
-    expect((await response.json()).error).toBe("invalid-request");
-    expect(fishById).not.toHaveBeenCalled();
-  });
-
   it("returns 404 when fishBrowseEnabled is false, without reading the body", async () => {
     const fishById = vi.fn(async () => ({ ok: true as const, value: makeFishVoice() }));
     const { deps } = makeDeps({ fishBrowseEnabled: false, fetchers: makeFetchers({ fishById }) });
@@ -409,6 +398,30 @@ describe("parseBody", () => {
     const result = await parseBody(deps, makeRequest({ name: "V" }));
 
     expect(result.ok && result.value.language).toBe("");
+  });
+
+  it("truncates an over-cap description instead of rejecting", async () => {
+    const { deps } = makeDeps({ descriptionMaxLen: 10 });
+
+    const result = await parseBody(deps, makeRequest({ name: "V", description: "x".repeat(50) }));
+
+    expect(result.ok && result.value.description).toBe("x".repeat(10));
+  });
+
+  it("clamps tag count to maxTags and truncates each tag to tagMaxLen", async () => {
+    const { deps } = makeDeps({ maxTags: 2, tagMaxLen: 3 });
+
+    const result = await parseBody(deps, makeRequest({ name: "V", tags: ["abcde", "fghij", "klmno"] }));
+
+    expect(result.ok && result.value.tags).toEqual(["abc", "fgh"]);
+  });
+
+  it("still rejects a wrong tags TYPE (structural, not a length overflow)", async () => {
+    const { deps } = makeDeps();
+
+    const result = await parseBody(deps, makeRequest({ name: "V", tags: "not-an-array" }));
+
+    expect(result.ok).toBe(false);
   });
 });
 

@@ -34,7 +34,7 @@ const MODAL_WIDTH = 640;
 // Client-side UX hint only — mirrors services.ttsConfig.voice_description_max_len
 // (gateway/config.yaml). The gateway re-enforces this cap server-side (see
 // parseCreateForm); this just fails fast in the UI. Tag caps live in TagEditor.tsx.
-const DESCRIPTION_MAX_LEN = 240;
+const DESCRIPTION_MAX_LEN = 12000;
 
 // "" = unset (matches the gateway's documented default — see normalizeLanguage).
 // Sorted alphabetically by code for a stable, scannable dropdown order.

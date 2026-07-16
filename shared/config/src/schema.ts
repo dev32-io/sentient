@@ -103,7 +103,7 @@ export const ttsConfigSchema = z.object({
     .record(z.string(), z.array(z.string()))
     .default({ en: ["Hi, I'm your family's Sentient assistant. How can I help?"] }),
   preview_timeout_ms: z.number().int().min(1).default(8000), // max wait for a preview synth
-  voice_description_max_len: z.number().int().min(1).default(240), // create/edit description cap
+  voice_description_max_len: z.number().int().min(1).default(12000), // create/edit description cap (~2000 words)
   voice_tag_max_len: z.number().int().min(1).default(24), // per-tag char cap
   voice_max_tags: z.number().int().min(0).default(8), // max tags per voice
   utterance_aggregator: utteranceAggregatorConfigSchema.default({}),

@@ -6,7 +6,7 @@
 
 [project]
 name = "local-tts"
-version = "1.0.0"
+version = "1.0.1"
 description = "Local TTS service — Qwen3-TTS (MLX) on Apple Silicon"
 requires-python = ">=3.11"
 dependencies = [
