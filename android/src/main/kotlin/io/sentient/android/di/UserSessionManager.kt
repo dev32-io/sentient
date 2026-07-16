@@ -24,11 +24,14 @@ import io.sentient.android.backend.resolveBackend
 import io.sentient.android.presence.NetworkChangeObserver
 import io.sentient.android.presence.PresenceCoordinator
 import io.sentient.android.sdk.AppDependencies
+import io.sentient.android.sdk.DisplayNameHolder
 import io.sentient.android.sdk.SdkFaultHolder
 import io.sentient.android.sdk.buildAuthHttpClient
+import io.sentient.android.sdk.buildSettingsHttpClient
 import io.sentient.android.update.UpdateDeps
 import io.sentient.android.update.buildUpdateDeps
 import io.sentient.mobiledata.di.ChatComponent
+import io.sentient.mobiledata.di.SettingsComponent
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.sdk.SdkConfig
 import io.sentient.mobilesdk.sdk.SentientSdk
@@ -61,6 +64,7 @@ class UserSessionManager(
 
     private var scope: CoroutineScope? = null
     private var chatComponent: ChatComponent? = null
+    private var settingsComponent: SettingsComponent? = null
     private var networkObserver: NetworkChangeObserver? = null
     private var updateDeps: UpdateDeps? = null
 
@@ -99,6 +103,9 @@ class UserSessionManager(
 
         scope = sessionScope
         chatComponent = component
+        // Settings slice of the SAME connection scope, built beside chat: it binds its
+        // live audio-pref fast-save to the chat component and rolls the shared token store.
+        settingsComponent = buildSettingsComponent(component)
 
         // DEBUG-only: expose the live SDK to DebugFaultReceiver so Maestro can arm
         // faults via `adb shell am broadcast`. WeakReference — logout/GC unaffected.
@@ -132,6 +139,37 @@ class UserSessionManager(
         }.also { it.start() }
 
         return component
+    }
+
+    /**
+     * The active [SettingsComponent] (settings REST clients → repos → usecases), built
+     * beside the [ChatComponent] on the same connection scope. Per-route settings VMs
+     * resolve their usecases from here. Triggers the chat/SDK build if it hasn't run yet
+     * (the settings audio fast-save binds to the live chat component). Rebuilt across
+     * logout→login; never a process-wide singleton (would go stale after re-login).
+     */
+    fun settingsComponent(): SettingsComponent {
+        settingsComponent?.let { return it }
+        component() // builds SDK + chat + settings together
+        return checkNotNull(settingsComponent) { "settingsComponent build failed" }
+    }
+
+    /**
+     * Builds the settings slice: a DEDICATED long-timeout HttpClient (Hermes-restart
+     * apply blocks multi-seconds), the resolved host, the shared token store (read per
+     * request + rolled on rename), the live audio patch bound to [chat], and logout.
+     */
+    private fun buildSettingsComponent(chat: ChatComponent): SettingsComponent {
+        val r = resolveConfiguredBackend()
+        val tokenStore = AppDependencies.tokenStore
+        return SettingsComponent(
+            httpClient = buildSettingsHttpClient(r.allowSelfSignedDevHost),
+            gatewayWsUrl = r.gatewayWsUrl,
+            token = { tokenStore.load() ?: "" },
+            liveAudioPatch = chat::patchAudioPreferences,
+            onTokenRefreshed = { token -> tokenStore.save(token) },
+            onLoggedOut = { performLocalLogout() },
+        )
     }
 
     private fun buildSdk(sessionScope: CoroutineScope): SentientSdk {
@@ -227,8 +265,20 @@ class UserSessionManager(
     }
 
     /**
+     * Local logout teardown for the settings AccountUseCases `onLoggedOut` hook: clear
+     * the token + display name (flips the auth gate) then tear down via [shutdown].
+     * Mirrors the root-screen logout minus navigation (the screen observes the gate).
+     */
+    fun performLocalLogout() {
+        log.info("local-logout")
+        AppDependencies.tokenStore.clear()
+        DisplayNameHolder.store.clear()
+        shutdown()
+    }
+
+    /**
      * Logout teardown: disconnect (clearSession=true), cancel the session scope, and
-     * null the component so the next [component] call rebuilds a fresh SDK. Idempotent.
+     * null the components so the next [component] call rebuilds a fresh SDK. Idempotent.
      */
     fun shutdown() {
         log.info("shutdown")
@@ -240,6 +290,7 @@ class UserSessionManager(
         scope?.cancel()
         if (io.sentient.android.BuildConfig.DEBUG) SdkFaultHolder.clear()
         chatComponent = null
+        settingsComponent = null
         scope = null
         // Drop the update deps so a re-login rebuilds them against the current backend.
         updateDeps = null

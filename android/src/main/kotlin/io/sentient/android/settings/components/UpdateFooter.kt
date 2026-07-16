@@ -82,6 +82,8 @@ fun UpdateFooter(
     onInstall: () -> Unit,
     modifier: Modifier = Modifier,
     testTag: String = "update-footer",
+    actionTestTag: String = "update-footer-action",
+    versionTestTag: String = "update-footer-version",
 ) {
     val tokens = LocalTokens.current
     val visual = rememberFooterVisual(status, isChecking)
@@ -90,8 +92,13 @@ fun UpdateFooter(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(tokens.space.sm),
     ) {
-        FooterControl(visual = visual, onCheck = onCheck, onInstall = onInstall)
-        Text(text = versionText, color = Color(Colors.ink3), fontSize = tokens.type.xs)
+        FooterControl(visual = visual, onCheck = onCheck, onInstall = onInstall, actionTestTag = actionTestTag)
+        Text(
+            text = versionText,
+            modifier = Modifier.testTag(versionTestTag),
+            color = Color(Colors.ink3),
+            fontSize = tokens.type.xs,
+        )
     }
 }
 
@@ -126,34 +133,39 @@ private fun rememberFooterVisual(status: UpdateStatus, isChecking: Boolean): Foo
 }
 
 @Composable
-private fun FooterControl(visual: FooterVisual, onCheck: () -> Unit, onInstall: () -> Unit) {
+private fun FooterControl(
+    visual: FooterVisual,
+    onCheck: () -> Unit,
+    onInstall: () -> Unit,
+    actionTestTag: String,
+) {
     when (visual) {
-        is FooterVisual.Idle -> OutlinedButton(onClick = onCheck, modifier = Modifier.testTag("update-footer-action")) {
+        is FooterVisual.Idle -> OutlinedButton(onClick = onCheck, modifier = Modifier.testTag(actionTestTag)) {
             Text(CHECK_LABEL)
         }
-        is FooterVisual.Checking -> CheckingControl()
+        is FooterVisual.Checking -> CheckingControl(actionTestTag = actionTestTag)
         is FooterVisual.UpToDateTransient -> Text(
             text = UP_TO_DATE_LABEL,
-            modifier = Modifier.testTag("update-footer-action"),
+            modifier = Modifier.testTag(actionTestTag),
             color = Color(Colors.accent),
         )
         is FooterVisual.Available -> Button(
             onClick = onInstall,
-            modifier = Modifier.testTag("update-footer-action"),
+            modifier = Modifier.testTag(actionTestTag),
         ) { Text("$AVAILABLE_PREFIX${visual.versionName}") }
         is FooterVisual.Failed -> OutlinedButton(
             onClick = onCheck,
-            modifier = Modifier.testTag("update-footer-action"),
+            modifier = Modifier.testTag(actionTestTag),
             colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(Colors.stop)),
         ) { Text(FAILED_LABEL) }
     }
 }
 
 @Composable
-private fun CheckingControl() {
+private fun CheckingControl(actionTestTag: String) {
     val tokens = LocalTokens.current
     Row(
-        modifier = Modifier.testTag("update-footer-action"),
+        modifier = Modifier.testTag(actionTestTag),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(tokens.space.sm),
     ) {

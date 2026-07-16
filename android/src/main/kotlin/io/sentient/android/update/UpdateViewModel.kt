@@ -45,13 +45,27 @@ class UpdateViewModel(
     /** Latest known update status. Starts [UpdateStatus.UpToDate]; no check runs until requested. */
     val status: StateFlow<UpdateStatus> = _status.asStateFlow()
 
+    private val _isChecking = MutableStateFlow(false)
+
+    /**
+     * True while a manual [check] is in flight. There is no wire "checking" status
+     * (UpdateStatus is a manifest result), so the settings UpdateFooter reads this
+     * local flag to render its spinner + arm the up-to-date transient on completion.
+     */
+    val isChecking: StateFlow<Boolean> = _isChecking.asStateFlow()
+
     /** Fetch the manifest and fold the result into [status]. Never throws (checker is typed). */
     fun check() {
         viewModelScope.launch {
-            log.info("check.start")
-            val result = checker.check()
-            _status.value = result
-            log.info("check.result", mapOf("status" to result::class.simpleName.orEmpty()))
+            _isChecking.value = true
+            try {
+                log.info("check.start")
+                val result = checker.check()
+                _status.value = result
+                log.info("check.result", mapOf("status" to result::class.simpleName.orEmpty()))
+            } finally {
+                _isChecking.value = false
+            }
         }
     }
 

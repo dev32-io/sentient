@@ -21,6 +21,23 @@ object Routes {
 
     const val SETTINGS = "settings"
 
+    // ── Settings category pages (flat routes; one composable() each in AppNavHost) ──
+    const val SETTINGS_MEMORY = "settings/memory"
+    const val SETTINGS_PERSONALITIES = "settings/personalities"
+    const val SETTINGS_VOICE = "settings/voice"
+    const val SETTINGS_VOICE_ADD = "settings/voice/add"
+    const val SETTINGS_VOICE_FISH = "settings/voice/fish"
+    const val SETTINGS_AUDIO = "settings/audio"
+    const val SETTINGS_MODEL = "settings/model"
+    const val SETTINGS_TOOLS = "settings/tools"
+    const val SETTINGS_SYSTEM_PROMPT = "settings/system-prompt"
+    const val SETTINGS_ADVANCED = "settings/advanced"
+    const val SETTINGS_ACCOUNT = "settings/account"
+    const val SETTINGS_DEVICES = "settings/devices"
+    const val SETTINGS_MEMBERS = "settings/members"
+    const val SETTINGS_SECRETS = "settings/secrets"
+    const val SETTINGS_DIAGNOSTICS = "settings/diagnostics"
+
     /** Full-screen blocking gate routed AHEAD of the authed destination on a mandatory update. */
     const val FORCE_UPDATE = "force-update"
 
