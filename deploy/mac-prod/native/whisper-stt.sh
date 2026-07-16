@@ -21,12 +21,28 @@ cmd_install() {
   # no-op when already installed, and a soft warning (not a hard fail) when
   # Homebrew is missing so the operator can install the libs by hand.
   if command -v brew >/dev/null 2>&1; then
-    brew list opus   >/dev/null 2>&1 || brew install opus
-    brew list ffmpeg >/dev/null 2>&1 || brew install ffmpeg
+    brew list opus        >/dev/null 2>&1 || brew install opus
+    brew list ffmpeg      >/dev/null 2>&1 || brew install ffmpeg
+    # Python 3.14 is the validated interpreter for whisper-stt (its
+    # mlx-whisper / silero-vad / onnxruntime deps ship working wheels there and
+    # the service is developed + run on it). Pin it explicitly so a future bump
+    # of the host's unversioned `python3` can't silently rebuild this venv on an
+    # untested interpreter. The sibling local-tts pins 3.11 (mlx-audio lacks
+    # 3.14 wheels) — each service owns its own .venv, so the two coexist.
+    brew list python@3.14 >/dev/null 2>&1 || brew install python@3.14
   else
-    echo "WARN: Homebrew not found — install libopus + ffmpeg manually (opuslib needs libopus at import)." >&2
+    echo "WARN: Homebrew not found — install libopus + ffmpeg + python@3.14 manually (opuslib needs libopus at import; whisper-stt is validated on Python 3.14)." >&2
   fi
-  [ -d "$VENV" ] || python3 -m venv "$VENV"
+  # Resolve the pinned 3.14 interpreter: explicit override first, then a PATH
+  # python3.14, then the brew keg's versioned binary. Fail loudly rather than
+  # silently building the venv on a different system python.
+  PYTHON_BIN="${WHISPER_STT_PYTHON:-$(command -v python3.14 2>/dev/null || true)}"
+  [ -n "$PYTHON_BIN" ] || PYTHON_BIN="$(brew --prefix python@3.14 2>/dev/null)/bin/python3.14"
+  if ! command -v "$PYTHON_BIN" >/dev/null 2>&1 && [ ! -x "$PYTHON_BIN" ]; then
+    echo "ERROR: python3.14 not found — whisper-stt needs it for its venv (set WHISPER_STT_PYTHON or run 'brew install python@3.14')." >&2
+    exit 1
+  fi
+  [ -d "$VENV" ] || "$PYTHON_BIN" -m venv "$VENV"
   "$VENV/bin/pip" install -q -r "$SVC_DIR/requirements.txt"
   PYTHONPATH="$SVC_DIR/src" "$VENV/bin/python" "$SVC_DIR/scripts/download_models.py" "$DATA/models"
   cat > "$PLIST" <<PLIST

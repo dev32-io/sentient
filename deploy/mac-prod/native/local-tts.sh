@@ -42,12 +42,29 @@ cmd_install() {
   # when already installed, and a soft warning (not a hard fail) when
   # Homebrew is missing so the operator can install the libs by hand.
   if command -v brew >/dev/null 2>&1; then
-    brew list opus   >/dev/null 2>&1 || brew install opus
-    brew list ffmpeg >/dev/null 2>&1 || brew install ffmpeg
+    brew list opus        >/dev/null 2>&1 || brew install opus
+    brew list ffmpeg      >/dev/null 2>&1 || brew install ffmpeg
+    # Python 3.11 is the validated interpreter for local-tts (pyproject
+    # requires-python >=3.11; the mlx-audio / soxr / soundfile / opuslib deps
+    # are pinned + tested there). The host's system python3 may be newer — the
+    # sibling whisper-stt service runs on 3.14 — and newer Pythons lack working
+    # wheels for these native deps, breaking synthesis at import/runtime. Each
+    # service owns its own .venv, so a dedicated 3.11 here coexists with
+    # whatever interpreter the other native services use.
+    brew list python@3.11 >/dev/null 2>&1 || brew install python@3.11
   else
-    echo "WARN: Homebrew not found — install libopus + ffmpeg manually (libsndfile's OGG/Opus writer needs libopus)." >&2
+    echo "WARN: Homebrew not found — install libopus + ffmpeg + python@3.11 manually (libsndfile's OGG/Opus writer needs libopus; local-tts is validated on Python 3.11)." >&2
   fi
-  [ -d "$VENV" ] || python3 -m venv "$VENV"
+  # Resolve the pinned 3.11 interpreter: explicit override first, then a PATH
+  # python3.11, then the brew keg's versioned binary. Fail loudly rather than
+  # silently building the venv on a newer system python that breaks later.
+  PYTHON_BIN="${LOCAL_TTS_PYTHON:-$(command -v python3.11 2>/dev/null || true)}"
+  [ -n "$PYTHON_BIN" ] || PYTHON_BIN="$(brew --prefix python@3.11 2>/dev/null)/bin/python3.11"
+  if ! command -v "$PYTHON_BIN" >/dev/null 2>&1 && [ ! -x "$PYTHON_BIN" ]; then
+    echo "ERROR: python3.11 not found — local-tts needs it for its venv (set LOCAL_TTS_PYTHON or run 'brew install python@3.11')." >&2
+    exit 1
+  fi
+  [ -d "$VENV" ] || "$PYTHON_BIN" -m venv "$VENV"
   "$VENV/bin/pip" install -q -r "$SVC_DIR/requirements.txt"
   PYTHONPATH="$SVC_DIR/src" "$VENV/bin/python" "$SVC_DIR/scripts/download_models.py" "$DATA/models" "$MODEL_ID"
   cat > "$PLIST" <<PLIST
