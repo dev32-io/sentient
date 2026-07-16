@@ -6,13 +6,13 @@
 // a guard state, never the roster.
 //
 // Add-user needs a full valid ProfileBody, but mobile collects only name + PIN, so
-// the new member's profile is a STATIC template (defaultMemberProfile(), mirroring
-// android MemberDefaults.kt / webui AccountWizard INITIAL_DRAFT) — NOT the admin's
-// own live profile. This VM has no ProfileRepository dependency: seeding a new
-// member's profile from the admin's current settings would leak the admin's model/
-// voice/advanced choices onto every new member and is an architecture violation
-// (a page VM reaching past its usecases). Server `applyProfileDefaults` fills
-// tools/toolsets. PINs are NEVER logged. @MainActor @Observable.
+// AdminUseCases.createUser (shared mobile-data) TEMPLATES the new member's profile
+// off the admin's own live profile — keeps model/voice/audio/compression/advanced
+// (guarantees a valid model.id), resets persona + extraSystemPrompt to a clean
+// default. This VM has no ProfileRepository dependency: that combine belongs to the
+// usecase layer (architecture.md), not a page ViewModel reaching past its usecases.
+// Server `applyProfileDefaults` fills tools/toolsets on top. PINs are NEVER logged.
+// @MainActor @Observable.
 // ---------------------------------------------------------------------------
 import Foundation
 import MobileData
@@ -121,19 +121,13 @@ final class MembersViewModel {
     }
 
     /// Add a member (name + PIN). Returns true on success (caller closes the sheet).
-    /// Profile is a static template (defaultMemberProfile()) — never the admin's own.
+    /// The usecase templates the rest of the profile off the admin's own live profile.
     func addUser(displayName: String, pin: String) async -> Bool {
         isAdding = true
         addError = nil
         defer { isAdding = false }
-        let request = CreateUserRequest(
-            displayName: displayName,
-            pin: pin,
-            isAdmin: false,
-            profile: defaultMemberProfile()
-        )
         do {
-            let result = try await admin.createUser(request: request)
+            let result = try await admin.createUser(displayName: displayName, pin: pin, isAdmin: false)
             switch onEnum(of: result) {
             case .success:
                 log.info("member.added")

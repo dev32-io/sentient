@@ -1,8 +1,9 @@
 // ---------------------------------------------------------------------------
 // AddMemberSheet — the "Add user" modal for the Members page: display name + a
 // 4-digit PIN (reusing the masked PinBoxesField). Mobile collects only name +
-// PIN; the ViewModel templates the rest of the profile off the admin's own. On
-// success the sheet dismisses; a server failure surfaces inline. PIN NEVER logged.
+// PIN; AdminUseCases (shared mobile-data) templates the rest of the profile off
+// the admin's own. On success the sheet dismisses; a server failure surfaces
+// inline. PIN NEVER logged.
 //
 // Pure presentation: `adding` / `error` values + an async `onSubmit` returning
 // success. Drafts live in local @State. Previews render empty + error states.

@@ -16,7 +16,6 @@ import io.sentient.mobiledata.usecase.settings.AdminUseCases
 import io.sentient.mobiledata.usecase.settings.canAddUser
 import io.sentient.mobiledata.usecase.settings.householdSlotsFree
 import io.sentient.mobilesdk.log.createLogger
-import io.sentient.mobilesdk.settings.CreateUserRequest
 import io.sentient.mobilesdk.settings.UserSummary
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -135,19 +134,13 @@ class MembersViewModel(
     fun setAddPin(value: String) =
         updateAdd { it.copy(pin = value.filter { c -> c.isDigit() }.take(PIN_LENGTH), error = null) }
 
-    /** Create a member with default profile (see MemberDefaults), then refetch. */
+    /** Create a member (name + PIN); the usecase templates the rest of the profile off the caller's own. */
     fun submitAdd() {
         val dialog = _state.value.addDialog ?: return
         if (!dialog.submittable) return
         updateAdd { it.copy(saving = true, error = null) }
-        val request = CreateUserRequest(
-            displayName = dialog.displayName.trim(),
-            pin = dialog.pin,
-            isAdmin = false,
-            profile = defaultMemberProfile(),
-        )
         viewModelScope.launch {
-            when (admin.createUser(request)) {
+            when (admin.createUser(displayName = dialog.displayName.trim(), pin = dialog.pin, isAdmin = false)) {
                 is SentientResult.Success -> {
                     log.info("member.added")
                     _state.update { it.copy(addDialog = null) }

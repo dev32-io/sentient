@@ -1,7 +1,8 @@
 // ---------------------------------------------------------------------------
 // AddMemberDialog — the Members "Add user" modal: display name + 4-digit PIN. The
-// rest of the new member's profile is defaulted (see MemberDefaults); the member
-// tunes model/voice from their own settings after first login. Pure/stateless —
+// rest of the new member's profile is templated by AdminUseCases (shared
+// mobile-data) off the admin's own live profile; the member tunes model/voice
+// from their own settings after first login. Pure/stateless —
 // [state] + callbacks are hoisted from MembersViewModel; the PIN never leaves this
 // composable except into the VM. testTags: settings-members-add-{name,pin,submit,cancel}.
 // ---------------------------------------------------------------------------

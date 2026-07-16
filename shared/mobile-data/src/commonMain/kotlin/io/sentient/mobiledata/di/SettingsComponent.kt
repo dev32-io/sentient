@@ -100,7 +100,7 @@ class SettingsComponent(
     val voices = VoicesUseCases(voicesRepository, profileRepository)
     val account = AccountUseCases(accountRepository, onTokenRefreshed, onLoggedOut)
     val devices = DevicesUseCases(devicesRepository, delayFn)
-    val admin = AdminUseCases(adminRepository)
+    val admin = AdminUseCases(adminRepository, profileRepository)
 
     init {
         log.info("build")

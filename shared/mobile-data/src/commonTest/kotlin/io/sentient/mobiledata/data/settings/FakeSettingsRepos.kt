@@ -163,11 +163,17 @@ class FakeDevicesRepository(
     override suspend fun signalUnlink() = SentientResult.Success(Unit)
 }
 
-/** AdminRepository fake — thin, all-success. */
+/** AdminRepository fake — thin, all-success. Records the last createUser request for assertions. */
 class FakeAdminRepository : AdminRepository {
+    var lastCreateRequest: CreateUserRequest? = null
+    var createUserCalls = 0
+
     override suspend fun listUsers() = SentientResult.Success(emptyList<UserSummary>())
-    override suspend fun createUser(request: CreateUserRequest) =
-        SentientResult.Success(UserSummary(userId = "u", displayName = request.displayName, isAdmin = request.isAdmin))
+    override suspend fun createUser(request: CreateUserRequest): SentientResult<UserSummary> {
+        createUserCalls++
+        lastCreateRequest = request
+        return SentientResult.Success(UserSummary(userId = "u", displayName = request.displayName, isAdmin = request.isAdmin))
+    }
     override suspend fun setUserAdmin(userId: String, isAdmin: Boolean) =
         SentientResult.Success(UserSummary(userId = userId, displayName = "x", isAdmin = isAdmin))
     override suspend fun deleteUser(userId: String) = SentientResult.Success(Unit)
