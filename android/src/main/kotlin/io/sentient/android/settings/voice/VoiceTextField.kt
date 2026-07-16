@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
@@ -59,12 +60,11 @@ fun VoiceTextField(
             singleLine = singleLine,
             minLines = if (singleLine) 1 else minLines,
             placeholder = { Text(placeholder, color = Color(Colors.ink4), fontSize = tokens.type.base) },
+            textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = tokens.type.base, color = Color(Colors.ink)),
             colors = TextFieldDefaults.colors(
                 focusedContainerColor = Color(Colors.paper),
                 unfocusedContainerColor = Color(Colors.bgElev),
                 disabledContainerColor = Color(Colors.bgElev),
-                focusedTextColor = Color(Colors.ink),
-                unfocusedTextColor = Color(Colors.ink),
                 focusedIndicatorColor = Color.Transparent,
                 unfocusedIndicatorColor = Color.Transparent,
                 disabledIndicatorColor = Color.Transparent,

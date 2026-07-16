@@ -36,6 +36,8 @@ import io.sentient.android.settings.systemprompt.SystemPromptViewModel
 import io.sentient.android.settings.tools.ToolsViewModel
 import io.sentient.android.settings.voice.AddVoiceViewModel
 import io.sentient.android.settings.voice.FishCloneViewModel
+import io.sentient.android.settings.voice.VoicePreviewPlayer
+import io.sentient.android.settings.voice.VoiceRecorder
 import io.sentient.android.settings.voice.VoiceViewModel
 import io.sentient.android.update.UpdateViewModel
 import io.sentient.mobiledata.di.SettingsComponent
@@ -79,18 +81,43 @@ val appModule = module {
     viewModel { SettingsRootViewModel(get<SettingsComponent>().observeSettingsAccess) }
     // Per-category page VMs — scaffold placeholders (P3a). A page agent gives each a
     // real constructor (usecases off get<SettingsComponent>()) when it fills the page.
-    viewModel { MemoryViewModel() }
-    viewModel { PersonalitiesViewModel() }
-    viewModel { VoiceViewModel() }
-    viewModel { AddVoiceViewModel() }
-    viewModel { FishCloneViewModel() }
-    viewModel { AudioViewModel() }
-    viewModel { ModelViewModel() }
-    viewModel { ToolsViewModel() }
-    viewModel { SystemPromptViewModel() }
-    viewModel { AdvancedViewModel() }
-    viewModel { AccountViewModel() }
-    viewModel { DevicesViewModel() }
-    viewModel { MembersViewModel() }
-    viewModel { SecretsViewModel() }
+    viewModel { MemoryViewModel(get<SettingsComponent>()) }
+    viewModel { PersonalitiesViewModel(get<SettingsComponent>()) }
+    viewModel {
+        val settings = get<SettingsComponent>()
+        VoiceViewModel(
+            voices = settings.voices,
+            profile = settings.profileRepository,
+            observeAccess = settings.observeSettingsAccess,
+            player = VoicePreviewPlayer(androidContext()),
+        )
+    }
+    viewModel {
+        AddVoiceViewModel(
+            voices = get<SettingsComponent>().voices,
+            recorder = VoiceRecorder(),
+            player = VoicePreviewPlayer(androidContext()),
+        )
+    }
+    viewModel {
+        FishCloneViewModel(
+            voices = get<SettingsComponent>().voices,
+            player = VoicePreviewPlayer(androidContext()),
+        )
+    }
+    viewModel { AudioViewModel(get<SettingsComponent>()) }
+    viewModel { ModelViewModel(get<SettingsComponent>()) }
+    viewModel { ToolsViewModel(get<SettingsComponent>()) }
+    viewModel { SystemPromptViewModel(get<SettingsComponent>()) }
+    viewModel { AdvancedViewModel(get<SettingsComponent>()) }
+    viewModel { AccountViewModel(get<SettingsComponent>().account) }
+    viewModel { DevicesViewModel(get<SettingsComponent>().devices) }
+    viewModel {
+        val settings = get<SettingsComponent>()
+        MembersViewModel(admin = settings.admin, account = settings.account)
+    }
+    viewModel {
+        val settings = get<SettingsComponent>()
+        SecretsViewModel(admin = settings.admin, applyProfileChange = settings.applyProfileChange)
+    }
 }

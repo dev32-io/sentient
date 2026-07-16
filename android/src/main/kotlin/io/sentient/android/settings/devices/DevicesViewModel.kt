@@ -84,6 +84,7 @@ class DevicesViewModel(
                             } else {
                                 SignalCardState.Unlinked
                             },
+                            errorMessage = null,
                         )
                     }
                     log.info("devices.loaded", mapOf("paired" to signal.paired))
@@ -97,7 +98,7 @@ class DevicesViewModel(
     /** Begin linking: request the QR, then poll status until a terminal state. */
     fun startLink() {
         if (pollJob?.isActive == true) return
-        _state.update { it.copy(link = LinkFlowState.Starting) }
+        _state.update { it.copy(link = LinkFlowState.Starting, errorMessage = null) }
         pollJob = viewModelScope.launch {
             var linked = false
             try {
@@ -178,7 +179,7 @@ class DevicesViewModel(
                 }
                 is SentientResult.Failure -> {
                     log.warn("unlink.failed", mapOf("kind" to r.error.kind))
-                    _state.update { it.copy(busy = false, unlinkConfirmOpen = false, link = LinkFlowState.Error(ERR_UNLINK_FAILED)) }
+                    _state.update { it.copy(busy = false, unlinkConfirmOpen = false, errorMessage = ERR_UNLINK_FAILED) }
                 }
                 is SentientResult.Loading -> Unit
             }
