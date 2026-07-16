@@ -25,7 +25,8 @@ private const val MSG_UNAUTHORIZED = "Not authorised."
 private const val MSG_NETWORK = "Network unavailable. Check your connection and try again."
 private const val MSG_SERVER = "The server rejected the request. Please try again."
 private const val MSG_UNKNOWN = "Something went wrong. Please try again."
-private const val MSG_RESTART_FAILED = "Applying changes failed. Please try again."
+/** Shared with [io.sentient.mobiledata.usecase.settings.ApplyProfileChangeUseCase]'s elvis fallback. */
+internal const val MSG_RESTART_FAILED = "Applying changes failed. Please try again."
 
 /** AuthError → SentientError. `terminalAuth=false` maps a 401 to a recoverable auth error. */
 internal fun AuthError.toSentientError(terminalAuth: Boolean = true): SentientError = when (this) {

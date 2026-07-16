@@ -73,6 +73,23 @@ class ApplyProfileChangeUseCaseTest {
         assertEquals(listOf("text"), patches.map { it.channel }, "live patch carries the changed channel")
     }
 
+    @Test
+    fun `fast path with throwing liveAudioPatch still resolves Ready and does not throw`() = runTest {
+        val repo = FakeProfileRepository()
+        val useCase = ApplyProfileChangeUseCase(repo) { throw IllegalStateException("dead socket") }
+        val states = useCase
+            .invoke(ProfileMutation.PutProfile(sampleProfile(channel = "voice"), sampleProfile(channel = "text")))
+            .toList()
+
+        assertEquals(
+            listOf(ApplyState.Saving, ApplyState.Ready(0L)),
+            states,
+            "the profile PUT already committed — a dead live-sync socket must be best-effort, not a failure",
+        )
+        assertEquals(1, repo.putProfileCalls)
+        assertEquals(0, repo.applyCalls, "audio fast path must NOT call apply")
+    }
+
     // ── FSM: slow path ──
 
     @Test

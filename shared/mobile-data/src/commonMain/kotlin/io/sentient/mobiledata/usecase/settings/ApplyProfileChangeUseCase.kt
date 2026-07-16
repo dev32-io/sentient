@@ -22,6 +22,7 @@
 // ---------------------------------------------------------------------------
 package io.sentient.mobiledata.usecase.settings
 
+import io.sentient.mobiledata.data.settings.MSG_RESTART_FAILED
 import io.sentient.mobiledata.data.settings.ProfileRepository
 import io.sentient.mobiledata.data.settings.toSentientErrorOrNull
 import io.sentient.mobiledata.result.SentientResult
@@ -30,11 +31,10 @@ import io.sentient.mobilesdk.protocol.AudioPreferencesPatch
 import io.sentient.mobilesdk.result.SentientError
 import io.sentient.mobilesdk.settings.ApplyResult
 import io.sentient.mobilesdk.settings.ProfileV1
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.flow
-
-private const val MSG_RESTART_FAILED = "Applying changes failed. Please try again."
 
 class ApplyProfileChangeUseCase(
     private val profile: ProfileRepository,
@@ -66,9 +66,7 @@ class ApplyProfileChangeUseCase(
             is SentientResult.Failure -> go(ApplyState.Failed(put.error), ApplyState.Saving, "profile.put.failed")
             is SentientResult.Success -> {
                 if (isAudioOnlyProfileDiff(m.previous, m.next)) {
-                    val patch = diffToAudioPatch(m.previous, m.next)
-                    liveAudioPatch(patch)
-                    log.info("audio.fast-path", mapOf("tts" to patch.ttsEnabled, "channel" to patch.channel))
+                    applyLiveAudioPatch(diffToAudioPatch(m.previous, m.next))
                     go(ApplyState.Ready(0L), ApplyState.Saving, "audio-only")
                 } else {
                     go(ApplyState.Restarting, ApplyState.Saving, "needs-restart")
@@ -77,6 +75,29 @@ class ApplyProfileChangeUseCase(
             }
             is SentientResult.Loading -> Unit // one-shot ops never emit Loading
         }
+    }
+
+    /**
+     * Best-effort live WS preference push after a committed profile PUT. The write already
+     * persisted server-side, so a dead socket here must NOT surface as a failure — log and
+     * move on. CancellationException is rethrown; everything else is swallowed as a value.
+     */
+    private suspend fun applyLiveAudioPatch(patch: AudioPreferencesPatch) {
+        runCatching { liveAudioPatch(patch) }
+            .onSuccess {
+                log.info("audio.fast-path", mapOf("tts" to patch.ttsEnabled, "channel" to patch.channel))
+            }
+            .onFailure { e ->
+                if (e is CancellationException) throw e
+                log.warn(
+                    "audio.fast-path.live-sync-failed",
+                    mapOf(
+                        "reason" to (e.message ?: e::class.simpleName ?: "unknown"),
+                        "tts" to patch.ttsEnabled,
+                        "channel" to patch.channel,
+                    ),
+                )
+            }
     }
 
     /** Restart-on-write endpoints (soul / memory / personality CUD): one call does write + restart. */
