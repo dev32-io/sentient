@@ -5,6 +5,7 @@ import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
+import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
@@ -21,6 +22,8 @@ import io.sentient.mobilesdk.log.createLogger
 private const val PATH_LIST_USERS = "/auth/users"
 private const val PATH_LOGIN = "/auth/login"
 private const val PATH_ME = "/auth/me"
+private const val PATH_CHANGE_PIN = "/auth/me/pin"
+private const val PATH_LOGOUT = "/auth/logout"
 
 /**
  * Derives the HTTPS/HTTP base URL from the gateway WebSocket URL.
@@ -125,6 +128,69 @@ class AuthClient(
                 return@safeCall AuthResult.Failure(AuthError.InvalidCredentials)
             }
             mapResponse(response) { it.body<AuthResponse>() }
+        }
+    }
+
+    // ── updateMe ─────────────────────────────────────────────────────────────
+
+    /**
+     * PUT /api/v1/auth/me  body {displayName}. Returns a refreshed [AuthResponse]
+     * (same shape as [me]). On 401 → [AuthError.InvalidCredentials] (token expired).
+     * Sends Authorization: Bearer <token>. Token value is NEVER logged.
+     */
+    suspend fun updateMe(token: String, displayName: String): AuthResult<AuthResponse> {
+        log.info("updateMe.start", mapOf("displayNameLen" to displayName.length))
+        return safeCall {
+            val response = httpClient.put("$baseUrl$PATH_ME") {
+                header(HttpHeaders.Authorization, "Bearer $token")
+                contentType(ContentType.Application.Json)
+                setBody(UpdateMeRequest(displayName = displayName))
+            }
+            log.info("updateMe.result", mapOf("status" to response.status.value))
+            if (response.status == HttpStatusCode.Unauthorized) {
+                return@safeCall AuthResult.Failure(AuthError.InvalidCredentials)
+            }
+            mapResponse(response) { it.body<AuthResponse>() }
+        }
+    }
+
+    // ── changePin ────────────────────────────────────────────────────────────
+
+    /**
+     * PUT /api/v1/auth/me/pin  body {currentPin, newPin} → 200 {ok:true}.
+     * Wrong current pin → gateway 401 invalid-credentials → [AuthError.InvalidCredentials]
+     * (no token drop; the caller shows an inline error). Pin values are NEVER logged.
+     */
+    suspend fun changePin(token: String, currentPin: String, newPin: String): AuthResult<Unit> {
+        log.info("changePin.start")
+        return safeCall {
+            val response = httpClient.put("$baseUrl$PATH_CHANGE_PIN") {
+                header(HttpHeaders.Authorization, "Bearer $token")
+                contentType(ContentType.Application.Json)
+                setBody(ChangePinRequest(currentPin = currentPin, newPin = newPin))
+            }
+            log.info("changePin.result", mapOf("status" to response.status.value))
+            if (response.status == HttpStatusCode.Unauthorized) {
+                return@safeCall AuthResult.Failure(AuthError.InvalidCredentials)
+            }
+            mapResponse(response) { }
+        }
+    }
+
+    // ── logout ───────────────────────────────────────────────────────────────
+
+    /**
+     * POST /api/v1/auth/logout → 200 {ok:true}. Server-side logout is a noop today
+     * (token revocation deferred); the client still clears its stored token on success.
+     */
+    suspend fun logout(token: String): AuthResult<Unit> {
+        log.info("logout.start")
+        return safeCall {
+            val response = httpClient.post("$baseUrl$PATH_LOGOUT") {
+                header(HttpHeaders.Authorization, "Bearer $token")
+            }
+            log.info("logout.result", mapOf("status" to response.status.value))
+            mapResponse(response) { }
         }
     }
 
