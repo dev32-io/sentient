@@ -34,10 +34,26 @@ final class UserSession: ObservableObject {
     /// usecases / passthroughs from here — never the SDK directly.
     var component: ChatComponent { inner.component }
 
+    /// The settings slice of this connection scope (built beside `component` inside
+    /// the KMP `IosUserSession`). Per-screen settings ViewModels resolve their
+    /// usecases from here — `settings.observeSettingsAccess`, `settings.voices`,
+    /// `settings.applyProfileChange`, `settings.account`, `settings.devices`,
+    /// `settings.admin` — never the SDK or a repository directly.
+    var settings: SettingsComponent { inner.settings }
+
     /// Build the User session from a resolved backend (gateway URL + dev-TLS
     /// posture). FaultHooks are armed in debug builds (no adb-equivalent arming
     /// channel on iOS yet — fault flows stay Android-only; see ios-testing rule).
-    init(gatewayWsUrl: String, allowSelfSignedDevHost: Bool) {
+    ///
+    /// `onLoggedOut` is the settings Account-logout hook (KMP `AccountUseCases`
+    /// clears local session via it). Bound by the host to the AppConfig.logout path;
+    /// it is `@MainActor` (AppConfig is main-actor state) and the KMP scope may invoke
+    /// it off the main thread, so it is hopped onto the main actor here.
+    init(
+        gatewayWsUrl: String,
+        allowSelfSignedDevHost: Bool,
+        onLoggedOut: @escaping @MainActor () -> Void = {}
+    ) {
         self.inner = createUserSession(
             gatewayWsUrl: gatewayWsUrl,
             allowSelfSignedDevHost: allowSelfSignedDevHost,
@@ -48,7 +64,8 @@ final class UserSession: ObservableObject {
                 #else
                 return false
                 #endif
-            }()
+            }(),
+            onLoggedOut: { Task { @MainActor in onLoggedOut() } }
         )
         log.info("init — open")
         // Background connect: the chat UI is usable immediately; reconnect is the SDK's.

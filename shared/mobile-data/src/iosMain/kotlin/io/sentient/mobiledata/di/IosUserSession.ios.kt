@@ -28,6 +28,7 @@ import io.sentient.mobilesdk.sdk.SentientSdk
 import io.sentient.mobilesdk.sdk.createPlatformBundle
 import io.sentient.mobilesdk.sdk.isTerminalAuthError
 import io.sentient.mobilesdk.sessions.createSessionsHttpClient
+import io.sentient.mobilesdk.settings.createSettingsHttpClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -51,6 +52,12 @@ class IosUserSession(
     allowSelfSignedDevHost: Boolean,
     capabilities: List<String> = emptyList(),
     devFaultsEnabled: Boolean = false,
+    /**
+     * Clear-local-session hook for the settings Account logout. Bound by the Swift
+     * host to the AppConfig.logout path (drop token → RootView routes to login).
+     * Default no-op keeps host-less / test construction sound.
+     */
+    onLoggedOut: () -> Unit = {},
 ) {
     private val log = createLogger("data", "ios-user-session")
 
@@ -107,6 +114,29 @@ class IosUserSession(
 
     /** The single ChatComponent for this login — usecases + connection + passthroughs. */
     val component: ChatComponent = ChatComponent(sdk = sdk)
+
+    // Dedicated settings REST client: same Darwin engine + dev-TLS policy as the
+    // sessions client, but with a GENEROUS request timeout so a restart-blocking
+    // apply/soul/memory write is not mis-classified as a network failure.
+    private val settingsHttpClient = createSettingsHttpClient(allowSelfSignedDevHost)
+
+    /**
+     * Settings slice of this connection scope (built beside [component]). Wires the
+     * settings REST clients → repos → usecases over the dedicated HttpClient:
+     *  - token           — the SAME shared bundle token store the SDK/REST use.
+     *  - liveAudioPatch  — [component]'s live-WS audio-pref patch (Audio fast-save).
+     *  - onTokenRefreshed— persist the rolled token after me / rename (same store).
+     *  - onLoggedOut     — the Swift-host AppConfig.logout path.
+     * The Swift `UserSession` exposes this to the per-screen settings ViewModels.
+     */
+    val settings: SettingsComponent = SettingsComponent(
+        httpClient = settingsHttpClient,
+        gatewayWsUrl = gatewayWsUrl,
+        token = { bundle.tokenStore.load() ?: "" },
+        liveAudioPatch = component::patchAudioPreferences,
+        onTokenRefreshed = { bundle.tokenStore.save(it) },
+        onLoggedOut = onLoggedOut,
+    )
 
     /** Background connect: UI is usable immediately; reconnect is owned by the SDK. */
     fun open() {
@@ -172,9 +202,11 @@ fun createUserSession(
     allowSelfSignedDevHost: Boolean,
     capabilities: List<String> = emptyList(),
     devFaultsEnabled: Boolean = false,
+    onLoggedOut: () -> Unit = {},
 ): IosUserSession = IosUserSession(
     gatewayWsUrl = gatewayWsUrl,
     allowSelfSignedDevHost = allowSelfSignedDevHost,
     capabilities = capabilities,
     devFaultsEnabled = devFaultsEnabled,
+    onLoggedOut = onLoggedOut,
 )

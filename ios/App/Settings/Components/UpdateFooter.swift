@@ -41,6 +41,9 @@ struct UpdateFooter: View {
     let status: UpdateStatus
     let versionText: String
     let accessibilityId: String
+    /// Identifier for the version caption. Defaults to `\(accessibilityId)-version`;
+    /// the root Settings page overrides it to the canonical `settings-version` id.
+    var versionAccessibilityId: String? = nil
     /// Runs the check and returns the resolved status (e.g. `{ await
     /// updateModel.check(); return updateModel.status }`).
     let onCheck: () async -> UpdateStatus
@@ -55,7 +58,7 @@ struct UpdateFooter: View {
             Text(versionText)
                 .font(Typo.ui(TypeScale.xs))
                 .foregroundStyle(DuskColors.ink3)
-                .accessibilityIdentifier("\(accessibilityId)-version")
+                .accessibilityIdentifier(versionAccessibilityId ?? "\(accessibilityId)-version")
         }
     }
 

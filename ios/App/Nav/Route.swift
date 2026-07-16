@@ -16,7 +16,35 @@
 import Foundation
 
 /// Closed sum of pushable destinations above the root chat surface.
+///
+/// `settings` is the root category list; the `settings*` cases are its per-category
+/// detail pages (mobile-settings-parity leveled navigation: root list → page). Each
+/// is registered ONCE in `UserSessionHost.navigationDestination`; a page agent fills
+/// the page's own file and never touches this enum or the host again.
 enum Route: Hashable {
     case history
     case settings
+
+    // ── Settings · Soul group ──
+    case settingsMemory
+    case settingsPersonalities
+    case settingsVoice
+    case settingsVoiceAdd
+    case settingsVoiceFish
+    case settingsAudio
+    case settingsModel
+    case settingsTools
+    case settingsSystemPrompt
+    case settingsAdvanced
+
+    // ── Settings · User group ──
+    case settingsAccount
+    case settingsDevices
+
+    // ── Settings · Admin group (gated on me.isAdmin) ──
+    case settingsMembers
+    case settingsSecrets
+
+    // ── Settings · Support group ──
+    case settingsDiagnostics
 }

@@ -39,15 +39,13 @@ struct ChatView: View {
     /// User's display name for bubble avatars and drawer header.
     let userName: String
 
-    /// Shared OTA-update state (owned by UpdateGate); read by the Settings sheet.
-    let updateModel: UpdateModel
-
     /// History select → host flips activeSessionId (rebuilds the VM).
     let onSelectSession: (String) -> Void
     /// New chat → host sets activeSessionId = nil (a fresh conversation).
     let onNewChat: () -> Void
-    /// Open settings (host pushes the settings route). Unused by the keeper sheet
-    /// path but kept so the host owns the settings entry point.
+    /// Open settings → host pushes the `.settings` route onto the outer NavigationStack
+    /// (leveled nav: root category list → per-category pages). The shared UpdateModel
+    /// is owned by the host and threaded into the pushed SettingsSheet, not here.
     let onOpenSettings: () -> Void
     /// Logout → host shuts the UserSession down + clears the token.
     let onLogout: () -> Void
@@ -59,7 +57,6 @@ struct ChatView: View {
 
     // ── Sheet + alert state ───────────────────────────────────────────────────────
 
-    @State private var settingsPresented = false
     @State private var panelRenaming: PanelTarget?
     @State private var panelDeleting: PanelTarget?
     @State private var panelRenameText = ""
@@ -70,7 +67,6 @@ struct ChatView: View {
         makeVM: @escaping () -> ChatViewModel,
         makeHistoryVM: @escaping () -> HistoryViewModel,
         userName: String,
-        updateModel: UpdateModel,
         onSelectSession: @escaping (String) -> Void,
         onNewChat: @escaping () -> Void,
         onOpenSettings: @escaping () -> Void,
@@ -79,7 +75,6 @@ struct ChatView: View {
         _vm = StateObject(wrappedValue: makeVM())
         _historyModel = StateObject(wrappedValue: makeHistoryVM())
         self.userName = userName
-        self.updateModel = updateModel
         self.onSelectSession = onSelectSession
         self.onNewChat = onNewChat
         self.onOpenSettings = onOpenSettings
@@ -142,16 +137,6 @@ struct ChatView: View {
             authExpired: connection.authExpired,
             onAuthExpired: { onLogout() }
         )
-        .sheet(isPresented: $settingsPresented) {
-            SettingsSheet(
-                updateModel: updateModel,
-                onLogout: {
-                    onLogout()
-                    settingsPresented = false
-                },
-                onDismiss: { settingsPresented = false }
-            )
-        }
         .panelRenamePrompt($panelRenaming, text: $panelRenameText) { id, title in
             Task { await historyModel.renameSession(id, title: title) }
         }
@@ -242,8 +227,8 @@ struct ChatView: View {
                 onNewChat()
             },
             onSettings: {
-                settingsPresented = true
                 drawerOpen = false
+                onOpenSettings()
             },
             onAskRename: { row in
                 panelRenameText = row.title

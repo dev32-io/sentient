@@ -205,7 +205,7 @@ private struct PanelPreviewHost: View {
     @StateObject private var model = HistoryViewModel(
         component: createUserSession(gatewayWsUrl: "ws://localhost:8888/api/v1/ws",
                                      allowSelfSignedDevHost: true, capabilities: [],
-                                     devFaultsEnabled: true).component
+                                     devFaultsEnabled: true, onLoggedOut: {}).component
     )
     let seed: [SessionRow]
     var errorMessage: String? = nil

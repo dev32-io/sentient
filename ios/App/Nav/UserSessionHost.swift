@@ -60,7 +60,10 @@ struct UserSessionHost: View {
         self.updateModel = updateModel
         _userSession = StateObject(wrappedValue: UserSession(
             gatewayWsUrl: appConfig.gatewayWsUrl,
-            allowSelfSignedDevHost: appConfig.allowSelfSignedDevHost
+            allowSelfSignedDevHost: appConfig.allowSelfSignedDevHost,
+            // Settings Account-logout hook (KMP AccountUseCases): drop token →
+            // RootView routes to login. Root "Log out" stays the danger-row wiring below.
+            onLoggedOut: { appConfig.logout() }
         ))
         // Cold start mirrors Android's CURRENT behavior: enter at chat(nil) → a new
         // conversation. (A resume-vs-new refinement is a separate follow-up.)
@@ -77,7 +80,6 @@ struct UserSessionHost: View {
                 makeVM: { userSession.makeChatVM(sessionId: activeSessionId) },
                 makeHistoryVM: { userSession.makeHistoryVM() },
                 userName: userName,
-                updateModel: updateModel,
                 onSelectSession: { id in
                     activeSessionId = id
                     path.removeAll()
@@ -92,19 +94,7 @@ struct UserSessionHost: View {
             )
             .id(chatIdentity)
             .navigationDestination(for: Route.self) { route in
-                switch route {
-                case .settings:
-                    SettingsSheet(
-                        updateModel: updateModel,
-                        onLogout: logout,
-                        onDismiss: { path.removeAll() }
-                    )
-                    .navigationBarBackButtonHidden(true)
-                case .history:
-                    // History is presented as the in-chat keeper drawer, not a
-                    // stack page; this case exists for the typed graph completeness.
-                    EmptyView()
-                }
+                destination(for: route)
             }
         }
         .onChange(of: scenePhase) { _, phase in
@@ -137,5 +127,63 @@ struct UserSessionHost: View {
     private func logout() {
         userSession.shutdown()
         onLogout()
+    }
+
+    // ── Settings route graph ─────────────────────────────────────────────────────
+    // Every settings destination is registered HERE, once. A category page agent
+    // fills its own screen file (below) and never re-touches Route.swift or this
+    // host: the wiring (settings scope + push/pop closures) is already threaded in.
+
+    /// Pop one level off the stack (category page → settings root, or sub → parent).
+    private func popRoute() { if !path.isEmpty { path.removeLast() } }
+
+    @ViewBuilder
+    private func destination(for route: Route) -> some View {
+        let settings = userSession.settings
+        switch route {
+        case .settings:
+            SettingsSheet(
+                settings: settings,
+                updateModel: updateModel,
+                onLogout: logout,
+                onOpen: { path.append($0) },
+                onDismiss: { path.removeAll() }
+            )
+            .navigationBarBackButtonHidden(true)
+        case .settingsMemory:
+            MemoryScreen(settings: settings, onBack: popRoute)
+        case .settingsPersonalities:
+            PersonalitiesScreen(settings: settings, onBack: popRoute)
+        case .settingsVoice:
+            VoiceScreen(settings: settings, onOpen: { path.append($0) }, onBack: popRoute)
+        case .settingsVoiceAdd:
+            VoiceAddScreen(settings: settings, onBack: popRoute)
+        case .settingsVoiceFish:
+            VoiceFishScreen(settings: settings, onBack: popRoute)
+        case .settingsAudio:
+            AudioScreen(settings: settings, onBack: popRoute)
+        case .settingsModel:
+            ModelScreen(settings: settings, onBack: popRoute)
+        case .settingsTools:
+            ToolsScreen(settings: settings, onBack: popRoute)
+        case .settingsSystemPrompt:
+            SystemPromptScreen(settings: settings, onBack: popRoute)
+        case .settingsAdvanced:
+            AdvancedScreen(settings: settings, onBack: popRoute)
+        case .settingsAccount:
+            AccountScreen(settings: settings, onBack: popRoute)
+        case .settingsDevices:
+            DevicesScreen(settings: settings, onBack: popRoute)
+        case .settingsMembers:
+            MembersScreen(settings: settings, onBack: popRoute)
+        case .settingsSecrets:
+            SecretsScreen(settings: settings, onBack: popRoute)
+        case .settingsDiagnostics:
+            DiagnosticsScreen(onBack: popRoute)
+        case .history:
+            // History is presented as the in-chat keeper drawer, not a stack page;
+            // this case exists for the typed graph's completeness.
+            EmptyView()
+        }
     }
 }
