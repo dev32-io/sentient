@@ -12,8 +12,10 @@ Design language: existing `DesignTokens.kt` (webui-transcribed) tokens on both p
 
 ## Non-goals / deferred (flagged)
 
-- **QR rendering for Signal link on Android** — same-device linking uses a "Open in Signal" deep-link
-  button + copyable URI instead of QR (QR is pointless on the device that has Signal). iOS same.
+- ~~Signal deep-link instead of QR~~ **superseded by evidence**: the gateway wire exposes ONLY
+  `qrDataUrl` (PNG data-URL) — no raw `tsdevice:` URI exists client-side, and Signal linking
+  requires the primary device to scan. Both platforms render the QR natively with a
+  "scan from Signal on another device" note (webui parity).
 - **Get-the-app pane** — dropped on mobile (meaningless on device).
 - Webui visual Apply-bar (cross-tab op coalescing) — mobile uses per-page save (below).
 
