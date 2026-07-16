@@ -7,7 +7,40 @@
 // markups. Presentational only — no data fetching, no service calls.
 
 import type { JSX } from "preact";
+import { useLayoutEffect, useRef } from "preact/hooks";
 import { Icon } from "../common/icon.tsx";
+
+// Constant hover-marquee scroll speed (px/sec). The scroll DURATION is derived
+// per-row from the measured overflow (below) so a long description scrolls at
+// the SAME readable pace as a short one — a fixed duration would whip long text
+// past unreadably fast. Floor keeps a tiny overflow from blinking by in <1s.
+const MARQUEE_SPEED_PX_PER_S = 45;
+const MARQUEE_MIN_MS = 1200;
+
+/** Returns a ref for a `.v-scroll` element and keeps its `--v-marquee-ms`
+ *  (consumed by the `:hover` animation in panes.css) set to `overflow / speed`,
+ *  so the marquee runs at a constant px/sec regardless of content width.
+ *  Recomputes on container/content resize; 0ms when nothing overflows (the CSS
+ *  `min(0px, …)` clamp already holds non-overflowing rows still). */
+function useConstantSpeedMarquee() {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const scroller = ref.current;
+    const viewport = scroller?.parentElement;
+    if (!scroller || !viewport) return;
+    const apply = () => {
+      const overflow = scroller.scrollWidth - viewport.clientWidth;
+      const ms = overflow > 0 ? Math.max(MARQUEE_MIN_MS, Math.round((overflow / MARQUEE_SPEED_PX_PER_S) * 1000)) : 0;
+      scroller.style.setProperty("--v-marquee-ms", `${ms}ms`);
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(viewport);
+    ro.observe(scroller);
+    return () => ro.disconnect();
+  }, []);
+  return ref;
+}
 
 export interface VoiceRowProps {
   name: string;
@@ -53,6 +86,11 @@ export function VoiceRow(props: VoiceRowProps): JSX.Element {
     onTagClick,
   } = props;
 
+  // One measured scroller per marquee row (description line + tags line), each
+  // kept at a constant scroll speed independent of its content length.
+  const infoScrollRef = useConstantSpeedMarquee();
+  const tagsScrollRef = useConstantSpeedMarquee();
+
   const playIcon = playing ? "pause" : playLoading ? "waveform" : "play";
 
   return (
@@ -83,7 +121,7 @@ export function VoiceRow(props: VoiceRowProps): JSX.Element {
       <div class="v-meta">
         <div class="v-name">{name}</div>
         <div class="v-info">
-          <div class="v-scroll">
+          <div class="v-scroll" ref={infoScrollRef}>
             {lang && <span class="v-lang">{lang}</span>}
             {source && <span class="v-source">{source}</span>}
             {facts.map((f) => (
@@ -96,7 +134,7 @@ export function VoiceRow(props: VoiceRowProps): JSX.Element {
         </div>
         {tags.length > 0 && (
           <div class="v-tags">
-            <div class="v-scroll">
+            <div class="v-scroll" ref={tagsScrollRef}>
               {tags.map((t) =>
                 onTagClick ? (
                   <button

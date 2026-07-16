@@ -1268,8 +1268,12 @@
  * width (container-query, set above); 100% = .v-scroll's own content width.
  * `min(0px, 100cqw - 100%)` is the negative overflow distance, or 0 when
  * the content already fits — so non-overflowing rows never move. */
+/* Duration is set per-row by VoiceRow's useConstantSpeedMarquee (measured
+ * overflow ÷ fixed px/sec) so long and short content scroll at the SAME speed.
+ * Fallback 5s only applies before JS measures; 0ms rows don't visibly move
+ * because the keyframe's `min(0px, …)` clamp holds non-overflowing content. */
 .settings-v2 .voice:hover .v-scroll {
-  animation: v-marquee 5s ease-in-out infinite alternate;
+  animation: v-marquee var(--v-marquee-ms, 5s) ease-in-out infinite alternate;
 }
 @keyframes v-marquee {
   0%, 12%   { transform: translateX(0); }
