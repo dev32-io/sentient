@@ -12,8 +12,6 @@ Design language: existing `DesignTokens.kt` (webui-transcribed) tokens on both p
 
 ## Non-goals / deferred (flagged)
 
-- **Fish library browse-and-clone** from mobile — voice creation covers record + file upload;
-  the gated Fish clone flow stays webui-only for now.
 - **QR rendering for Signal link on Android** — same-device linking uses a "Open in Signal" deep-link
   button + copyable URI instead of QR (QR is pointless on the device that has Signal). iOS same.
 - **Get-the-app pane** — dropped on mobile (meaningless on device).
@@ -79,7 +77,7 @@ Design language: existing `DesignTokens.kt` (webui-transcribed) tokens on both p
 |---|---|---|
 | Memory | slot segmented (MEMORY.md/USER.md), edit/preview toggle, plain editor + server `charLimit` cap, char counter | GET/PUT `/profile/memory/{memory,user}` |
 | Personalities | list of expandable cards; activate / delete / create(name+instructions) | GET/POST/PUT/DELETE `/profile/personalities…`, POST `/profile/active-personality` |
-| Voice | filter (search/tags/language), pack grid/list, play preview, pick active, delete, **Add Voice** (record WAV in-app OR pick audio file; name/description/tags/language form; multipart create) | GET/POST/DELETE `/voices`, POST `/voices/:id/preview` (wav playback), active = profile.voice via PUT `/profile/me` |
+| Voice | filter (search/tags/language), pack grid/list, play preview, pick active, delete, **Add Voice** (record WAV in-app OR pick audio file; name/description/tags/language form; multipart create), **Clone from Fish** (gated on `features.fish_browse_enabled`: browse/search Fish library, play sample, one-tap clone; FeatureDisabled → entry hidden) | GET/POST/DELETE `/voices`, POST `/voices/:id/preview`, active = profile.voice via PUT `/profile/me`; Fish: GET `/providers/voices[?search…]`, GET `/providers/voices/:id`, POST `/providers/voices/:fishId/clone`; flag via GET `/services/versions` |
 | Audio | "Speak responses (TTS)" toggle, "Reply channel" segmented voice/text | PUT `/profile/me` (audio) + live `PreferencesConnector.patch` |
 | Model | provider segmented, model search, model card list (single-select) | GET `/providers/models`, PUT `/profile/me` (model) |
 | Tools | per-MCP-server toggle + per-tool toggles, Hermes built-in toolset toggles | GET `/mcp-catalog`, PUT `/profile/me` (tools) |
@@ -191,6 +189,9 @@ result types never throw across boundary):
 | Voice create via upload | both | audio file on device | Add Voice → pick file → form → submit | new pack in list | multipart POST 201 |
 | Voice create over-cap name | both | — | 100-char name | client-side cap blocks / inline error | no request or 422 logged |
 | Voice create mic denied | both | mic denied | Add Voice → record | rationale + settings-bounce fallback, no crash | permission-denied logged |
+| Fish clone happy | both | fish enabled + key | Clone from Fish → search → play sample → clone | progress → new pack in list (auto-active per server) | GET providers/voices 200; POST clone 200 |
+| Fish gated off | both | fish disabled | open Voice page | no Fish entry visible | features.fish_browse_enabled=false logged |
+| Fish upstream fail | both | fish enabled, bad key/offline | browse | inline error + retry, no crash | upstream-failed kind logged |
 | Tools toggle | both | server enabled | disable one MCP server → Save | toggle persists after re-open | PUT profile tools + apply |
 | Advanced sliders | both | defaults | set reasoning=high, threshold, maxTokens → Save | values persist | PUT profile advanced + apply |
 | Personalities create+activate | both | 1 personality | create new → activate | active pill moves | POST + activate + apply |
