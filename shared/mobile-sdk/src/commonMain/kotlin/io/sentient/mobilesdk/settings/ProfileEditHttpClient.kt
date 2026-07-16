@@ -101,7 +101,7 @@ open class ProfileEditHttpClient(
     }
 
     open suspend fun createPersonality(name: String, body: String): ApplyResult = safeApplyCall(log) {
-        log.info("createPersonality", mapOf("name" to name))
+        log.info("createPersonality", mapOf("nameLen" to name.length))
         val resp = httpClient.post("$baseUrl$PATH_PERSONALITIES") {
             bearer(); jsonBody(PersonalityAddRequest.serializer(), PersonalityAddRequest(name, body))
         }
@@ -109,7 +109,7 @@ open class ProfileEditHttpClient(
     }
 
     open suspend fun updatePersonality(name: String, body: String): ApplyResult = safeApplyCall(log) {
-        log.info("updatePersonality", mapOf("name" to name))
+        log.info("updatePersonality", mapOf("nameLen" to name.length))
         val resp = httpClient.put("$baseUrl$PATH_PERSONALITIES/${name.encodeURLPathPart()}") {
             bearer(); jsonBody(PersonalityBodyRequest.serializer(), PersonalityBodyRequest(body))
         }
@@ -117,14 +117,14 @@ open class ProfileEditHttpClient(
     }
 
     open suspend fun deletePersonality(name: String): ApplyResult = safeApplyCall(log) {
-        log.info("deletePersonality", mapOf("name" to name))
+        log.info("deletePersonality", mapOf("nameLen" to name.length))
         val resp = httpClient.delete("$baseUrl$PATH_PERSONALITIES/${name.encodeURLPathPart()}") { bearer() }
         mapApplyResponse(log, resp, settingsBodyJson)
     }
 
     /** POST /profile/active-personality → 204. Imperative (no restart). */
     open suspend fun setActivePersonality(name: String): AuthResult<Unit> = safeSettingsCall(log) {
-        log.info("setActivePersonality", mapOf("name" to name))
+        log.info("setActivePersonality", mapOf("nameLen" to name.length))
         val resp = httpClient.post("$baseUrl$PATH_ACTIVE_PERSONALITY") {
             bearer(); jsonBody(ActivePersonalityRequest.serializer(), ActivePersonalityRequest(name))
         }
