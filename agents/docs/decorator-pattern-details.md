@@ -132,7 +132,7 @@ interface TTSStageConfig {
 
 function createTTSStage(config: TTSStageConfig): AudioTransform {
   return async function* (input, signal) {
-    // uses config.ttsService — doesn't know if it's Fish Audio, Cartesia, or a mock
+    // uses config.ttsService — doesn't know if it's local-tts, Cartesia, or a mock
   };
 }
 ```

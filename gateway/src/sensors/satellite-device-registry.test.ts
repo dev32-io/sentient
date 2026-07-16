@@ -6,14 +6,14 @@ const kitchen: SatelliteDevice = {
   device_id: "sat-kitchen-001",
   default_user: "family",
   location: "kitchen",
-  speak_voice: "fish_family_default",
+  speak_voice: "family_default_voice",
 };
 
 const aliceBed: SatelliteDevice = {
   device_id: "sat-alice-bed-002",
   default_user: "alice",
   location: "alice-bed",
-  speak_voice: "fish_alice",
+  speak_voice: "alice_voice",
 };
 
 describe("SatelliteDeviceRegistry", () => {

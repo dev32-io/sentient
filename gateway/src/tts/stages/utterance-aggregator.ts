@@ -8,12 +8,13 @@ const log = getLog(["sentient", "tts", "utterance-aggregator"]);
 // "blocks" on paragraph boundaries.
 //
 // This is stage 1 of the speak effect's internal mini-pipeline:
-//   LLM text deltas → UtteranceAggregator → EmotionTagger → Fish Audio
+//   LLM text deltas → UtteranceAggregator → TTS provider
 //
-// Splitting at paragraph level (not sentence level) preserves Fish Audio's
-// built-in sentence-level prosody — it already handles inflection and
-// micro-pauses within a paragraph. Splitting too aggressively fragments
-// the audio and loses natural tone across the sentence arc.
+// Splitting at paragraph level (not sentence level) preserves the TTS
+// provider's built-in sentence-level prosody — it already handles
+// inflection and micro-pauses within a paragraph. Splitting too
+// aggressively fragments the audio and loses natural tone across the
+// sentence arc.
 //
 // Boundaries:
 //   1. Newline (\n)           — paragraph break / list marker, always splits.

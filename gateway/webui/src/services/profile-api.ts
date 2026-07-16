@@ -9,7 +9,7 @@ const log = createLogger(["sentient", "webui", "profile", "api"]);
 // ---------------------------------------------------------------------------
 
 export type ModelProvider = "openrouter" | "ollama-cloud" | "custom";
-export type VoiceProvider = "fish-audio";
+export type VoiceProvider = "local-tts";
 /** Mirrors gateway reasoningEffortSchema (Hermes `agent.reasoning_effort`). */
 export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 

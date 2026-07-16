@@ -11,7 +11,7 @@ const GENERIC_KEY_PLACEHOLDER = "••••••••••••";
 
 // --- Shared types ------------------------------------------------------------
 
-export type EditingKey = "openrouter" | "ollama-cloud" | "custom" | "custom-baseurl" | "fish-audio" | null;
+export type EditingKey = "openrouter" | "ollama-cloud" | "custom" | "custom-baseurl" | null;
 
 export interface RowStatus {
   has_key: boolean;

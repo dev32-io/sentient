@@ -63,13 +63,6 @@ export function SecretsPane({ onMark }: SecretsPaneProps): JSX.Element {
     onMark(RESTART_OP);
   }
 
-  async function saveFishKey(newKey: string) {
-    await api.setFishAudioKey(token, newKey);
-    setEditing(null);
-    await refresh();
-    onMark(RESTART_OP);
-  }
-
   async function setActive(provider: LlmProvider) {
     await api.setActiveLlmProvider(token, provider);
     await refresh();
@@ -79,7 +72,7 @@ export function SecretsPane({ onMark }: SecretsPaneProps): JSX.Element {
   if (!isAuthed) return <PaneHead title="Provider keys" sub="Sign in to manage keys." />;
   if (!data) return <PaneHead title="Provider keys" sub="Loading…" />;
 
-  const { llm, tts } = data;
+  const { llm } = data;
 
   return (
     <>
@@ -118,15 +111,6 @@ export function SecretsPane({ onMark }: SecretsPaneProps): JSX.Element {
             onCancel={() => setEditing(null)}
             onSaveKey={(k) => saveLlmKey("custom", k)}
             onSaveUrl={(u) => saveLlmBaseUrl("custom", u)}
-          />
-          <SecretRow
-            label="Fish Audio"
-            providerKey="fish-audio"
-            status={tts.fish_audio}
-            editing={editing === "fish-audio"}
-            onStartEdit={() => setEditing("fish-audio")}
-            onCancel={() => setEditing(null)}
-            onSave={(k) => saveFishKey(k)}
           />
         </div>
       </Card>

@@ -57,7 +57,7 @@ function stubProfile(userId: string): ProfileV1 {
     schemaVersion: PROFILE_SCHEMA_VERSION as 1,
     userId,
     model: { provider: "openrouter", id: "google/gemini-2.5-flash" },
-    voice: { provider: "fish-audio", id: "default" },
+    voice: { provider: "local-tts", id: "default" },
     audio: { ttsEnabled: true, channel: "voice" as const },
     persona: { template: "default", overrides: "" },
     tools: { enabled: {}, toolsets: [] },

@@ -6,7 +6,7 @@ export const PROFILE_SCHEMA_VERSION = 1;
 export const modelProviderSchema = z.enum(["openrouter", "ollama-cloud", "custom"]);
 export type ModelProvider = z.output<typeof modelProviderSchema>;
 
-export const voiceProviderSchema = z.enum(["fish-audio"]);
+export const voiceProviderSchema = z.literal("local-tts");
 export type VoiceProvider = z.output<typeof voiceProviderSchema>;
 
 // Matches the Hermes `agent.reasoning_effort` enum
@@ -23,10 +23,26 @@ export const profileV1Schema = z.object({
     provider: modelProviderSchema,
     id: z.string().min(1),
   }),
-  voice: z.object({
-    provider: voiceProviderSchema,
-    id: z.string().min(1),
-  }),
+  // Legacy migration (no schema-version bump, mirroring tools.enabled below):
+  // pre-local-tts profiles stored `voice.provider: "fish-audio"` with a Fish
+  // reference_id. Fish Audio is gone; rewrite such profiles to the local-tts
+  // built-in default voice so they still validate on load. The old Fish id maps
+  // to no local voice pack, so it is reset to the "default" sentinel — the user
+  // re-clones a voice in Settings → Voices if they want a custom one. Without
+  // this, every profile.json written before the Fish→local-tts cutover fails
+  // schema validation on upgrade (corrupt-file) and the user can't load.
+  voice: z.preprocess(
+    (v) => {
+      if (v && typeof v === "object" && (v as { provider?: unknown }).provider === "fish-audio") {
+        return { provider: "local-tts", id: "default" };
+      }
+      return v;
+    },
+    z.object({
+      provider: voiceProviderSchema,
+      id: z.string().min(1),
+    }),
+  ),
   audio: audioPrefsSchema.default({ ttsEnabled: true, channel: "voice" }),
   persona: z.object({
     template: z.string().min(1),

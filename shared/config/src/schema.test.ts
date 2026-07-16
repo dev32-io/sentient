@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   applyConfigSchema,
+  companionsConfigSchema,
   gatewayConfigSchema,
   loggingConfigSchema,
   sessionConfigSchema,
   sessionsConfigSchema,
   sttConfigSchema,
+  ttsConfigSchema,
 } from "./schema.ts";
 
 // Shared WS-resilience session fields required in every gateway config
@@ -20,8 +22,7 @@ const wsResilienceSession = {
 describe("gatewayConfigSchema", () => {
   const minimalValidConfig = {
     stt: { provider: "local-stt" },
-    llm: {},
-    tts: { provider: "fish-audio" },
+    tts: {},
     session: wsResilienceSession,
   };
 
@@ -54,42 +55,32 @@ describe("gatewayConfigSchema", () => {
     expect(gatewayConfigSchema.safeParse(invalid).success).toBe(false);
   });
 
-  it("applies LLM defaults", () => {
+  it("applies TTS defaults including utterance_aggregator", () => {
     const result = gatewayConfigSchema.parse(minimalValidConfig);
-    expect(result.llm.provider).toBe("openrouter");
-    expect(result.llm.chat_model).toBe("google/gemini-2.5-flash");
-    expect(result.llm.max_tokens).toBe(1024);
-    expect(result.llm.timeout_ms).toBe(30000);
-  });
-
-  it("applies TTS defaults including utterance_aggregator and emotion_tags", () => {
-    const result = gatewayConfigSchema.parse(minimalValidConfig);
+    expect(result.tts.url).toBe("ws://host.docker.internal:8770");
     expect(result.tts.voice_id).toBe("default");
-    expect(result.tts.model_id).toBe("speech-1.6");
-    expect(result.tts.format).toBe("pcm");
-    expect(result.tts.bitrate).toBe(48000);
-    expect(result.tts.sample_rate).toBe(44100);
-    expect(result.tts.latency).toBe("balanced");
-    expect(result.tts.chunk_length_ms).toBe(200);
+    expect(result.tts.format).toBe("opus");
+    expect(result.tts.sample_rate).toBe(48000);
     expect(result.tts.connect_timeout_ms).toBe(10000);
-    expect(result.tts.stop_timeout_ms).toBe(10000);
-    expect(result.tts.idle_timeout_ms).toBe(10000);
     expect(result.tts.utterance_aggregator.max_block_chars).toBe(600);
-    expect(result.tts.emotion_tags.enabled).toBe(true);
-    expect(result.tts.emotion_tags.model).toBe("google/gemini-2.5-flash");
-    expect(result.tts.emotion_tags.timeout_ms).toBe(2000);
   });
 
   it("honors overrides from YAML", () => {
     const result = gatewayConfigSchema.parse({
       ...minimalValidConfig,
       stt: { provider: "local-stt", language: "zh" },
-      tts: { provider: "fish-audio", voice_id: "custom", format: "pcm", sample_rate: 44100 },
+      tts: {
+        url: "ws://localhost:8770",
+        voice_id: "custom",
+        format: "opus",
+        sample_rate: 44100,
+      },
       session: { ...wsResilienceSession, barge_in: { no_interrupt_ms: 300 } },
     });
     expect(result.stt.language).toBe("zh");
+    expect(result.tts.url).toBe("ws://localhost:8770");
     expect(result.tts.voice_id).toBe("custom");
-    expect(result.tts.format).toBe("pcm");
+    expect(result.tts.format).toBe("opus");
     expect(result.tts.sample_rate).toBe(44100);
     expect(result.session.barge_in.no_interrupt_ms).toBe(300);
   });
@@ -100,8 +91,21 @@ describe("gatewayConfigSchema", () => {
   });
 
   it("rejects invalid TTS format", () => {
-    const invalid = { ...minimalValidConfig, tts: { provider: "fish-audio", format: "wav" } };
+    const invalid = { ...minimalValidConfig, tts: { format: "wav" } };
     expect(gatewayConfigSchema.safeParse(invalid).success).toBe(false);
+  });
+
+  it("rejects tts.format: pcm — gateway live path is opus-only", () => {
+    const invalid = { ...minimalValidConfig, tts: { format: "pcm" } };
+    expect(gatewayConfigSchema.safeParse(invalid).success).toBe(false);
+  });
+
+  it("defaults preview greetings and voice caps", () => {
+    const cfg = ttsConfigSchema.parse({});
+    expect(cfg.preview_greetings.en?.length).toBeGreaterThan(0);
+    expect(cfg.preview_timeout_ms).toBe(8000);
+    expect(cfg.voice_description_max_len).toBe(240);
+    expect(cfg.voice_max_tags).toBe(8);
   });
 
   it("applies TLS defaults (enabled, loopback hostname)", () => {
@@ -163,6 +167,23 @@ describe("sttConfigSchema", () => {
 
   it("rejects unknown language", () => {
     const result = sttConfigSchema.safeParse({ provider: "local-stt", language: "fr" });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("companionsConfigSchema", () => {
+  it("defaults tts_health_url to the host-run local-tts health endpoint", () => {
+    const result = companionsConfigSchema.parse({});
+    expect(result.tts_health_url).toBe("http://host.docker.internal:8771/health");
+  });
+
+  it("accepts a tts_health_url override", () => {
+    const result = companionsConfigSchema.parse({ tts_health_url: "http://localhost:8771/health" });
+    expect(result.tts_health_url).toBe("http://localhost:8771/health");
+  });
+
+  it("rejects an invalid tts_health_url", () => {
+    const result = companionsConfigSchema.safeParse({ tts_health_url: "not-a-url" });
     expect(result.success).toBe(false);
   });
 });
@@ -237,8 +258,7 @@ describe("gatewayConfigSchema logging field", () => {
   it("includes a default logging section when omitted", () => {
     const minimal = {
       stt: { provider: "local-stt" },
-      llm: { provider: "openrouter" },
-      tts: { provider: "fish-audio" },
+      tts: {},
       session: wsResilienceSession,
     };
     const parsed = gatewayConfigSchema.parse(minimal);
@@ -249,8 +269,7 @@ describe("gatewayConfigSchema logging field", () => {
 describe("gatewayConfigSchema webui field", () => {
   const minimalValidConfig = {
     stt: { provider: "local-stt" },
-    llm: {},
-    tts: { provider: "fish-audio" },
+    tts: {},
     session: wsResilienceSession,
   };
 
@@ -281,8 +300,7 @@ describe("gatewayConfigSchema webui field", () => {
 describe("gateway config — auth/apply/providers sections", () => {
   const minimal = {
     stt: { provider: "local-stt" },
-    llm: { provider: "openrouter" },
-    tts: { provider: "fish-audio" },
+    tts: {},
     session: wsResilienceSession,
   };
 
@@ -323,7 +341,12 @@ describe("gateway config — auth/apply/providers sections", () => {
     expect(cfg.providers.ollama_cloud_base_url).toBe("https://ollama.com/v1");
   });
 
-  it("defaults providers.fish_cache_ttl_ms to 600000 (10min)", () => {
+  it("defaults providers.fish_browse_enabled to true", () => {
+    const cfg = gatewayConfigSchema.parse(minimal);
+    expect(cfg.providers.fish_browse_enabled).toBe(true);
+  });
+
+  it("defaults providers.fish_cache_ttl_ms to 600000", () => {
     const cfg = gatewayConfigSchema.parse(minimal);
     expect(cfg.providers.fish_cache_ttl_ms).toBe(600000);
   });
@@ -372,8 +395,7 @@ describe("applyConfigSchema", () => {
 describe("gatewayConfigSchema downloads field", () => {
   const minimalWithDownloads = {
     stt: { provider: "local-stt" },
-    llm: {},
-    tts: { provider: "fish-audio" },
+    tts: {},
     session: wsResilienceSession,
     downloads: {
       artifacts_dir: "/app/releases",

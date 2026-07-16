@@ -9,6 +9,9 @@ const log = createLogger(["sentient", "webui", "api", "helpers"]);
 export interface ApiHttpError {
   status: number;
   code: string;
+  /** Server-supplied detail string, when the JSON error body carries one
+   *  (e.g. voices' `voice-op-failed` reason). Absent for most error shapes. */
+  reason?: string;
 }
 
 type Result<T> = { ok: true; value: T } | { ok: false; error: ApiHttpError };
@@ -30,7 +33,9 @@ function errorFromResponse(body: unknown, status: number): ApiHttpError {
     "error" in body &&
     typeof (body as Record<string, unknown>).error === "string"
   ) {
-    return { status, code: (body as Record<string, unknown>).error as string };
+    const code = (body as Record<string, unknown>).error as string;
+    const rawReason = (body as Record<string, unknown>).reason;
+    return typeof rawReason === "string" ? { status, code, reason: rawReason } : { status, code };
   }
   return { status, code: "unknown-error" };
 }
@@ -71,4 +76,18 @@ export async function handleFetch<T>(fetchPromise: Promise<Response>): Promise<R
     return { ok: false, error: NETWORK_ERROR };
   }
   return parseJsonOrError<T>(response);
+}
+
+export async function handleBlobFetch(fetchPromise: Promise<Response>): Promise<Result<Blob>> {
+  let response: Response;
+  try {
+    response = await fetchPromise;
+  } catch (err: unknown) {
+    log.warn("network-error", { error: String(err) });
+    return { ok: false, error: NETWORK_ERROR };
+  }
+  if (!response.ok) {
+    return { ok: false, error: { status: response.status, code: `http-${response.status}` } };
+  }
+  return { ok: true, value: await response.blob() };
 }

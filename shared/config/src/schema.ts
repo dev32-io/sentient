@@ -52,38 +52,12 @@ export const sttConfigSchema = z.object({
 export type STTConfig = z.output<typeof sttConfigSchema>;
 
 // ---------------------------------------------------------------------------
-// LLM — OpenRouter
-// ---------------------------------------------------------------------------
-
-export const llmConfigSchema = z.object({
-  // Gateway-side LLM client. ONLY used for the emotion-tagger pass today
-  // (Hermes owns the chat LLM). Both `openrouter` and `ollama-cloud` speak
-  // OpenAI-compatible REST; provider selects api-key env + default base_url.
-  // ollama-cloud requires a local ollama daemon sidecar (see Task 82); the
-  // hosted https://ollama.com endpoint rejects auth on completions even
-  // with a valid key. Keep openrouter as the working default until the
-  // sidecar lands.
-  provider: z.enum(["openrouter", "ollama-cloud"]).default("openrouter"),
-  // Optional override; when omitted the factory uses the canonical base_url
-  // for the chosen provider (openrouter → openrouter.ai/api/v1,
-  // ollama-cloud → ollama.com/v1).
-  base_url: z.string().optional(),
-  chat_model: z.string().default("google/gemini-2.5-flash"),
-  max_tokens: z.number().int().min(1).default(1024),
-  timeout_ms: z.number().int().min(1000).default(30000),
-  use_tool_calling: z.boolean().default(true),
-  stream: z.boolean().default(true),
-});
-
-export type LLMConfig = z.output<typeof llmConfigSchema>;
-
-// ---------------------------------------------------------------------------
-// TTS — Fish Audio
+// TTS — local-tts (LocalTTSService)
 //
-// Note: emotion_tags + utterance_aggregator live here because they are
-// internal stages of the speak effect's text→audio pipeline, not general
-// LLM configuration. The speak effect streams LLM text deltas through
-// UtteranceAggregator → EmotionTagger → Fish Audio as one mini-pipeline.
+// Note: utterance_aggregator lives here because it is an internal stage of
+// the speak effect's text→audio pipeline, not general LLM configuration.
+// The speak effect streams LLM text deltas through UtteranceAggregator →
+// the local-tts provider as one mini-pipeline.
 // ---------------------------------------------------------------------------
 
 export const utteranceAggregatorConfigSchema = z.object({
@@ -96,38 +70,43 @@ export const utteranceAggregatorConfigSchema = z.object({
 
 export type UtteranceAggregatorConfig = z.output<typeof utteranceAggregatorConfigSchema>;
 
-export const emotionTagsConfigSchema = z.object({
-  enabled: z.boolean().default(true),
-  // Model used for the per-block emotion-tagging LLM call. Cheap +
-  // fast is preferable since this runs in the critical path of first
-  // audio byte. Multi-turn message shape benefits from prompt caching.
-  // Routed through `llm.provider` (default ollama-cloud).
-  model: z.string().default("google/gemini-2.5-flash"),
-  // Per-call budget. On timeout, falls through with the raw (untagged)
-  // block so TTS still gets audio.
-  timeout_ms: z.number().int().min(100).max(30000).default(2000),
-});
-
-export type EmotionTagsConfig = z.output<typeof emotionTagsConfigSchema>;
-
 export const ttsConfigSchema = z.object({
-  provider: z.literal("fish-audio"),
+  // WS endpoint for the native local-tts (LocalTTSService) provider.
+  // The service needs Metal/MLX GPU access, so it runs on the host, not in
+  // a container — reachable from the gateway container via
+  // host.docker.internal (same pattern as native-whisper STT).
+  url: z.string().default("ws://host.docker.internal:8770"),
   voice_id: z.string().default("default"),
-  model_id: z.string().default("speech-1.6"),
-  // Defaults match the pre-refactor runtime: index.ts used to spread
-  // TTS_DEFAULTS (opus/48000) then override to "pcm" + 44100. PCM is what
-  // the Fish Audio stream + WebRTC loopback expect; opus/48000 produces
-  // static. Keep these defaults stable — they are the working combination.
-  format: z.enum(["opus", "pcm", "mp3"]).default("pcm"),
-  bitrate: z.number().int().min(1).default(48000),
-  sample_rate: z.number().int().min(1).default(44100),
-  latency: z.enum(["normal", "balanced"]).default("balanced"),
-  chunk_length_ms: z.number().int().min(50).default(200),
+  // The gateway live path is opus-only: webui + mobile decoders only
+  // understand OGG-Opus, and local-tts-provider.ts's LIVE_ENCODING/
+  // LIVE_SAMPLE_RATE hardcode the "opus" tag on every TTSAudioChunk
+  // regardless of what's requested here. "pcm" is a real, tested wire
+  // format the LocalTTSService SUPPORTS (see
+  // capabilityServices/LocalTTSService's `?format=pcm` negotiation)
+  // for direct, non-gateway consumers (e.g. audiobook generation) — but
+  // the gateway itself never requests it, so the enum only offers the
+  // value the gateway can actually decode. These fields shape the
+  // connect-time negotiation query string only.
+  format: z.enum(["opus"]).default("opus"),
+  sample_rate: z.number().int().min(1).default(48000),
   connect_timeout_ms: z.number().int().min(1000).default(10000),
-  stop_timeout_ms: z.number().int().min(1000).default(10000),
-  idle_timeout_ms: z.number().int().min(1000).default(10000),
+  // Max ms to await a voice.create/list/delete reply from the local TTS
+  // service; create can block behind an in-flight synthesis, so keep
+  // generous.
+  voice_op_timeout_ms: z.number().int().min(1).default(30000),
+  // Preview greetings by language — one is chosen at random per Play preview
+  // and synthesized live in the target voice, in the voice pack's language.
+  // Keyed by language code (e.g. "en", "zh"); each value is a short (~2s)
+  // greeting pool. The default covers English only — see gateway/config.yaml
+  // for the full per-language map.
+  preview_greetings: z
+    .record(z.string(), z.array(z.string()))
+    .default({ en: ["Hi, I'm your family's Sentient assistant. How can I help?"] }),
+  preview_timeout_ms: z.number().int().min(1).default(8000), // max wait for a preview synth
+  voice_description_max_len: z.number().int().min(1).default(240), // create/edit description cap
+  voice_tag_max_len: z.number().int().min(1).default(24), // per-tag char cap
+  voice_max_tags: z.number().int().min(0).default(8), // max tags per voice
   utterance_aggregator: utteranceAggregatorConfigSchema.default({}),
-  emotion_tags: emotionTagsConfigSchema.default({}),
 });
 
 export type TTSConfig = z.output<typeof ttsConfigSchema>;
@@ -305,8 +284,15 @@ export const providersConfigSchema = z.object({
   openrouter_cache_ttl_ms: z.number().int().min(10_000).default(3_600_000),
   ollama_cloud_base_url: z.string().url().default("https://ollama.com/v1"),
   ollama_cache_ttl_ms: z.number().int().min(10_000).default(3_600_000),
-  fish_cache_ttl_ms: z.number().int().min(10_000).default(600_000),
   external_fetch_timeout_ms: z.number().int().min(1000).default(5000),
+  // Feature flag for the self-contained Fish-Audio browse-and-clone module.
+  // When false, the gateway 404s every /providers/voices* route and the webui
+  // hides the "Clone from Fish Audio" tab. Set false (or delete the fish/
+  // modules) to fully disable the integration.
+  fish_browse_enabled: z.boolean().default(true),
+  // Cache TTL for the default (unfiltered, page-1) Fish voice listing. Fish
+  // rate limits are undocumented — keep short.
+  fish_cache_ttl_ms: z.number().int().min(10_000).default(600_000),
 });
 
 export type ProvidersConfig = z.output<typeof providersConfigSchema>;
@@ -366,6 +352,10 @@ export const companionsConfigSchema = z.object({
   // HTTP endpoint for the STT service health check. Returns {"version":"..."}.
   // Override if your compose setup uses a different service name or port.
   stt_health_url: z.string().url().default("http://sentient-stt-service:8767/health"),
+  // HTTP endpoint for the local-tts (LocalTTSService) health check.
+  // Returns {"version":"..."}. The service runs on the host (Metal/MLX),
+  // reachable via host.docker.internal — mirrors stt_health_url's shape.
+  tts_health_url: z.string().url().default("http://host.docker.internal:8771/health"),
   // Absolute path to the file the hermes container writes on every boot.
   // Both containers mount the sentient-supervisor volume at /data/supervisor.
   hermes_version_path: z.string().default("/data/supervisor/.versions/hermes"),
@@ -409,7 +399,6 @@ export const gatewayConfigSchema = z.object({
   session: sessionConfigSchema,
   logging: loggingConfigSchema.default({}),
   stt: sttConfigSchema,
-  llm: llmConfigSchema,
   tts: ttsConfigSchema,
   cerebrum: cerebrumConfigSchema.default({}),
   webui: webuiConfigSchema.default({}),

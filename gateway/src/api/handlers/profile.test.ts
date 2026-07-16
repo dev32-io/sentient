@@ -10,7 +10,7 @@ function sampleProfile(userId = "alice"): ProfileV1 {
     schemaVersion: 1,
     userId,
     model: { provider: "openrouter", id: "google/gemini-2.5-flash" },
-    voice: { provider: "fish-audio", id: "voice-abc" },
+    voice: { provider: "local-tts", id: "voice-abc" },
     audio: { ttsEnabled: true, channel: "voice" as const },
     persona: { template: "default", overrides: "" },
     tools: { enabled: {} },

@@ -327,7 +327,7 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
 
     const awaiting = createAwaitingTracker({ onChange: () => refreshStatus() });
 
-    // Phase 5b verify: Fish Audio ships opus packets in TTS frames. Decode via
+    // The local-tts service ships opus packets in TTS frames. Decode via
     // WebCodecs AudioDecoder; downsample 48kHz → playback's sample rate. The
     // decoder output is async, so we capture the active cycleId in a ref and
     // attribute each decoded chunk to the latest cycle. Acceptable for verify
@@ -347,7 +347,7 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
         cycleQueue.onAudioStart(cycleId);
         echoGate.onPlaybackStart(cycleId);
         refreshStatus();
-        // Each cycle is a fresh OGG-Opus stream from Fish — reset decoder so
+        // Each cycle is a fresh OGG-Opus stream from the TTS service — reset decoder so
         // the second cycle's OpusHead doesn't get interpreted as mid-stream
         // garbage (caused TTS to cut short after ~1 s on cycle 2+).
         void opusDecoder.reset();
@@ -357,10 +357,20 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
         opusDecoder.decode(frame);
       },
       onAudioDone: (cycleId: string) => {
-        cycleQueue.onAudioDone(cycleId);
-        // isAudioPlaying stays true until playback physically drains (via onStateChange).
-        // echoGate moves to tail on playback adapter's onDrain — see `unsubPlaybackDrain`.
-        refreshStatus();
+        // Flush the decoder's final buffered frame(s) into the cycle queue
+        // BEFORE marking the cycle done. The OGG-Opus decoder holds the tail
+        // until end-of-stream (see opus-decoder.flush()), so without this the
+        // last ~word of every reply was cut. flush() emits via onFrame ->
+        // cycleQueue.onAudioFrame while the cycle is still active (playback has
+        // ~250ms buffered ahead, so it hasn't drained yet); only then mark the
+        // cycle done so playback drains the tail too. flush() never rejects
+        // (errors caught inside), so `.then` always marks done.
+        void opusDecoder.flush().then(() => {
+          cycleQueue.onAudioDone(cycleId);
+          // isAudioPlaying stays true until playback physically drains (via onStateChange).
+          // echoGate moves to tail on playback adapter's onDrain — see `unsubPlaybackDrain`.
+          refreshStatus();
+        });
       },
       onPlaybackStop: (reason, cycleId) => {
         log.debug("playback-stop", { reason, cycleId });
@@ -585,7 +595,7 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       const pcm = new Int16Array(data);
       denoiser?.push(int16ToFloat32(pcm));
     });
-    // Debounce playing→false so Fish prosody gaps (WebAudio queue draining
+    // Debounce playing→false so TTS prosody gaps (WebAudio queue draining
     // for ~50-200ms between chunks) don't strobe the speaking state. Fast
     // path on playing→true so the avatar pulse + button respond as soon as
     // the next chunk arrives.

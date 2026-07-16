@@ -7,7 +7,6 @@ import type {
   DownloadsConfig as DownloadsYaml,
   HermesBuiltinTools,
   HermesConfig as HermesYaml,
-  LLMConfig as LLMYaml,
   McpCatalog,
   ProvidersConfig as ProvidersYaml,
   STTConfig as STTYaml,
@@ -51,16 +50,11 @@ export interface StartupConfig {
    *  forward compatibility. */
   stt: STTYaml | undefined;
 
-  /** `undefined` when no api key matches the configured `llm.provider`
-   *  (OPENROUTER_API_KEY for openrouter, OLLAMA_API_KEY for ollama-cloud). */
-  llm: (LLMYaml & { apiKey: string }) | undefined;
-
-  /** TTS yaml block — always defined. The Fish Audio API key resolves
-   *  lazily inside tts-factory from the wizard's SecretsStore (with the
-   *  FISH_AUDIO_API_KEY env as a dev-only fallback), so we no longer gate
-   *  service-enabled on a boot-time env presence. Per-cycle voice_id
-   *  comes from PersonSession.voiceId; cfg.tts.voice_id is the fallback
-   *  default for sessions with no profile-supplied voice. */
+  /** TTS yaml block — always defined. tts-factory builds a local-tts
+   *  (LocalTTSService) provider from `tts.url` — no API key needed, so
+   *  a provider is always constructed (no boot-time or key-presence gate).
+   *  Per-cycle voice_id comes from PersonSession.voiceId; cfg.tts.voice_id
+   *  is the fallback default for sessions with no profile-supplied voice. */
   tts: TTSYaml;
 
   cerebrum: CerebrumYaml;
@@ -107,10 +101,6 @@ export function loadStartupConfig(): StartupConfig {
   const cfg = loadGatewayConfig(configPath);
   log.info("config-loaded", { path: configPath });
 
-  const openrouterApiKey = process.env.OPENROUTER_API_KEY ?? "";
-  const ollamaApiKey = process.env.OLLAMA_API_KEY ?? "";
-  const llmApiKey = cfg.llm.provider === "ollama-cloud" ? ollamaApiKey : openrouterApiKey;
-
   return {
     logging: {
       logLevel: cfg.logging.level,
@@ -134,13 +124,9 @@ export function loadStartupConfig(): StartupConfig {
 
     stt: cfg.stt,
 
-    llm: llmApiKey ? { ...cfg.llm, apiKey: llmApiKey } : undefined,
-
-    // TTS is always wired; the Fish Audio API key resolves lazily inside
-    // tts-factory at synthesis time. SecretsStore (populated by the
-    // wizard's voice step) is the source of truth; FISH_AUDIO_API_KEY env
-    // is a dev-only fallback. A missing key only fails the synth call,
-    // not boot.
+    // TTS is always wired to the local-tts (LocalTTSService) provider —
+    // no API key required, so nothing here gates on secret presence. A
+    // down/unreachable service degrades gracefully at synth time, not boot.
     tts: cfg.tts,
 
     cerebrum: cfg.cerebrum,

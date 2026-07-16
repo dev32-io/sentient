@@ -17,9 +17,6 @@ export const KeysYamlSchema = z.object({
     openrouter: LlmProviderEntry,
     custom: LlmProviderEntry,
   }),
-  tts: z.object({
-    fish_audio: z.object({ api_key: z.string().nullable() }),
-  }),
   home_assistant: z.object({
     url: z.string().nullable().default(null),
     /** LAN IP for `homeassistant.local` (or the hostname inside `url`) —
@@ -67,7 +64,6 @@ export interface SecretsStatus {
   schemaVersion: string;
   hasFile: boolean;
   activeLlmProvider: LlmProvider;
-  hasFishAudioKey: boolean;
 }
 
 // --- Interface ---------------------------------------------------------------
@@ -82,9 +78,7 @@ export interface SecretsStore {
    *  `partial` is null/undefined or all values are identical. */
   diffPaths(partial: Record<string, Record<string, unknown>> | null | undefined): Promise<string[]>;
   getActiveLlm(): Promise<Result<ResolvedLlm, SecretsStoreError>>;
-  getFishAudioKey(): Promise<string | null>;
   getActiveLlmSync(): ResolvedLlm | null;
-  getFishAudioKeySync(): string | null;
   /** Returns secrets for a specific provider (async — loads from disk if cache cold). */
   getProviderSecrets(provider: LlmProvider): Promise<Result<ResolvedLlm, SecretsStoreError>>;
   /** Returns secrets for a specific provider from cache; null if cache not yet warm. */
@@ -94,7 +88,6 @@ export interface SecretsStore {
     patch: { api_key?: string | null; base_url?: string | null },
   ): Promise<Result<void, SecretsStoreError>>;
   setActiveLlmProvider(provider: LlmProvider): Promise<Result<void, SecretsStoreError>>;
-  setFishAudioKey(key: string | null): Promise<Result<void, SecretsStoreError>>;
   setHomeAssistantToken(
     kind: "observe_token" | "mcp_server_token",
     token: string | null,

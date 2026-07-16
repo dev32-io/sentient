@@ -247,7 +247,6 @@ docker compose -f deploy/docker/docker-compose.yml up -d
 # 3. Open https://localhost:8888/ (accept the self-signed cert once
 #    per browser). The setup wizard will collect:
 #      - OPENROUTER_API_KEY        (https://openrouter.ai/keys)
-#      - FISH_AUDIO_API_KEY        (https://fish.audio/developers)
 #      - admin token (auto-generated, copy it somewhere safe)
 #      - the first user account (a PIN you'll use to sign in)
 #    All collected secrets land in ~/.sentient/secrets/keys.yaml,

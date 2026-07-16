@@ -111,56 +111,72 @@ stt:
   connect_timeout_ms: 10000
 
 # ---------------------------------------------------------------------------
-# LLM — OpenRouter (language model)
-# ---------------------------------------------------------------------------
-llm:
-  # Gateway-side LLM client. ONLY used by the emotion-tagger today (Hermes
-  # owns chat). `provider` selects api-key env (OPENROUTER_API_KEY for
-  # openrouter, OLLAMA_API_KEY for ollama-cloud) and the default base_url.
-  # ollama-cloud needs a local ollama daemon sidecar (Task 82) — until
-  # then keep openrouter as the working default.
-  provider: openrouter
-  chat_model: google/gemini-2.5-flash
-  max_tokens: 1024
-  timeout_ms: 30000
-
-  use_tool_calling: true              # must be true for cerebrum arch
-  stream: true                        # switch from non-streaming to SSE streaming
-
-# ---------------------------------------------------------------------------
-# TTS — Fish Audio (text-to-speech)
+# TTS — local-tts (LocalTTSService) is now the wired provider.
 #
 # The speak effect is a mini-pipeline: LLM text deltas → UtteranceAggregator
-# → EmotionTagger → Fish Audio. The aggregator and tagger knobs live here
-# because they are internal stages of TTS rendering, not general LLM config.
+# → local-tts. The aggregator knobs live here because they are internal
+# stages of TTS rendering, not general LLM config.
+#
+# `url` is the native local-tts service. It needs Metal/MLX GPU access, so
+# it runs on the host (not containerized) — reached via host.docker.internal,
+# same pattern as native-whisper STT. format=opus @ 48000 is the local-tts
+# live-path contract (see local-tts-provider.ts's LIVE_ENCODING/LIVE_SAMPLE_RATE).
 # ---------------------------------------------------------------------------
 tts:
-  provider: fish-audio
-  voice_id: default                  # Fish Audio reference_id — gateway-wide fallback. Per-user voice from profile.json#voice.id wins.
-  model_id: s2
-  format: opus                       # End-to-end opus pivot landed Phase 5.5. Fish opus → OGG-Opus container → ogg-opus-decoder WASM in webui.
-  bitrate: 32000                     # Fish opus_bitrate (BPS at the live WS endpoint despite kbps in HTTP docs). Accepted: -1000, 24000, 32000, 48000, 64000.
-  sample_rate: 48000                 # Opus standard rate. Fish silently rejects 44100 with format=opus.
-  latency: balanced
-  chunk_length_ms: 200               # Fish Audio text buffer segment size (100–300)
+  url: ws://host.docker.internal:8770 # local-tts (LocalTTSService) WS endpoint
+  voice_id: default                  # gateway-wide fallback voice. Per-user voice from profile.json#voice.id wins.
+  format: opus                       # ONLY valid value (schema-enforced) — gateway live path is opus-only; end-to-end opus pivot (OGG-Opus → ogg-opus-decoder WASM in webui).
+  sample_rate: 48000                 # Opus standard rate.
   connect_timeout_ms: 10000
-  stop_timeout_ms: 10000             # wait for Fish Audio finish event on session reset
-  idle_timeout_ms: 10000             # TTS queue idle — settle turn if no audio arrives
+  # Max ms to await a voice.create/list/delete reply from the local TTS
+  # service; create can block behind an in-flight synthesis, so keep generous.
+  voice_op_timeout_ms: 30000
+
+  # Preview greetings by language — one is chosen at random per Play preview and
+  # synthesized live in the target voice, in the voice pack's language (the
+  # service auto-detects the language from the text). Keep each short (~2s).
+  preview_greetings:
+    en:
+      - "Hi, I'm your family's Sentient assistant. How can I help?"
+      - "Hello there — Sentient here, ready when you are."
+    zh:
+      - "你好，我是你们家的 Sentient 助手，有什么可以帮忙的吗？"
+      - "嗨，我是 Sentient，随时为你服务。"
+    ja:
+      - "こんにちは、ご家族の Sentient アシスタントです。ご用件は何でしょう？"
+      - "やあ、Sentient です。いつでもお手伝いします。"
+    ko:
+      - "안녕하세요, 가족의 Sentient 비서예요. 무엇을 도와드릴까요?"
+      - "안녕하세요, Sentient입니다. 언제든 도와드릴게요."
+    de:
+      - "Hallo, ich bin euer Sentient-Assistent für die Familie. Wie kann ich helfen?"
+      - "Hi, hier ist Sentient — bereit, wenn du es bist."
+    fr:
+      - "Bonjour, je suis l'assistant Sentient de votre famille. Comment puis-je aider ?"
+      - "Salut, ici Sentient — prêt quand vous voulez."
+    ru:
+      - "Здравствуйте, я — ваш семейный ассистент Sentient. Чем могу помочь?"
+      - "Привет, это Sentient. Готов помочь в любой момент."
+    pt:
+      - "Olá, sou o assistente Sentient da sua família. Como posso ajudar?"
+      - "Oi, aqui é o Sentient — pronto quando você estiver."
+    es:
+      - "Hola, soy el asistente Sentient de tu familia. ¿En qué puedo ayudarte?"
+      - "Hola, soy Sentient — listo cuando quieras."
+    it:
+      - "Ciao, sono l'assistente Sentient della tua famiglia. Come posso aiutarti?"
+      - "Ciao, sono Sentient — pronto quando vuoi."
+  preview_timeout_ms: 8000           # max wait (ms) for a preview synth. Range: >=1.
+  voice_description_max_len: 240     # create/edit description char cap. Range: >=1.
+  voice_tag_max_len: 24              # per-tag char cap. Range: >=1.
+  voice_max_tags: 8                  # max tags per voice. Range: >=0.
 
   # Block-boundary detection on the LLM text stream feeding TTS. Splits
-  # only on paragraph breaks (\n) — Fish Audio handles sentence-level
+  # only on paragraph breaks (\n) — the TTS provider handles sentence-level
   # prosody on its own, and splitting mid-paragraph fragments natural tone.
   # max_block_chars is a safety valve for run-on paragraphs with no break.
   utterance_aggregator:
     max_block_chars: 600             # force-flush on run-on paragraphs
-
-  # Per-block emotion-tag pass that enriches text with [pause], [happy] etc.
-  # Runs in critical path of first-byte latency, so prefer fast models.
-  # Multi-turn message shape benefits from provider prompt caching.
-  emotion_tags:
-    enabled: true
-    model: google/gemini-2.5-flash
-    timeout_ms: 2000                 # fall through to raw text on timeout
 
 # ---------------------------------------------------------------------------
 # WebUI — client-side playback tuning sent to the browser via session.ready.
@@ -317,7 +333,6 @@ providers:
   openrouter_cache_ttl_ms: 3600000
   ollama_cloud_base_url: https://ollama.com/v1
   ollama_cache_ttl_ms: 3600000
-  fish_cache_ttl_ms: 600000       # Fish rate limits undocumented — keep short.
   external_fetch_timeout_ms: 5000
 
 # ---------------------------------------------------------------------------
@@ -348,6 +363,7 @@ sessions:
 # ---------------------------------------------------------------------------
 companions:
   stt_health_url: http://sentient-stt-service:8767/health   # STT /health endpoint; returns {"version":"..."}
+  tts_health_url: http://host.docker.internal:8771/health   # local-tts /health endpoint (host-run service); returns {"version":"..."}
   hermes_version_path: /data/supervisor/.versions/hermes    # file hermes writes on boot into the shared volume
   version_cache_ttl_ms: 300000    # cache resolved versions for 5 min; 10000–3600000
   version_fetch_timeout_ms: 3000  # per-source HTTP timeout for STT health fetch; 500–30000

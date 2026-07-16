@@ -372,7 +372,7 @@ function makeSetupRequest(): Request {
       pin: "1234",
       profile: {
         model: { provider: "ollama-cloud", id: "deepseek-v4-flash:cloud" },
-        voice: { provider: "fish-audio", id: "placeholder" },
+        voice: { provider: "local-tts", id: "placeholder" },
         persona: { template: "default", overrides: "" },
         tools: { enabled: {}, toolsets: [] },
         compression: { threshold: 0.5 },

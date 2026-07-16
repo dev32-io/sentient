@@ -19,6 +19,11 @@ migrates an existing one between backends):
     skips the SenseVoice image bake; docker-sensevoice: builds the SenseVoice
     image and stops any lingering native service.
 
+TTS reconcile (native-only — Apple-silicon MLX/Metal, no docker fallback so no
+selector): canonicalizes tts.url / companions.tts_health_url and installs +
+starts the native local-tts (Qwen3-TTS) launchd service. Declining the install
+leaves the gateway with no TTS backend (text-only replies).
+
 Idempotent: re-run any time after `git pull` to refresh images / re-sync the
 backend. Persistent state under ~/.sentient/ (secrets, gateway-data, brain)
 is never wiped — only the gateway config is patched in place.
@@ -63,6 +68,13 @@ VALID_BACKENDS = (NATIVE_BACKEND, DOCKER_BACKEND)
 DEPLOY_CONF = DEPLOY_DIR / "deploy.conf"
 STT_BACKEND_SCRIPT = DEPLOY_DIR / "native" / "stt-backend.py"
 WHISPER_LAUNCHER = DEPLOY_DIR / "native" / "whisper-stt.sh"
+# TTS is native-only (Apple-silicon MLX/Metal) — no docker fallback, hence no
+# selector like STT_BACKEND. When the deploy ships the native TTS pieces
+# (mac-prod), setup installs + starts the local-tts (Qwen3-TTS) launchd
+# service and canonicalizes tts.url / companions.tts_health_url to the host
+# service.
+TTS_BACKEND_SCRIPT = DEPLOY_DIR / "native" / "tts-backend.py"
+LOCAL_TTS_LAUNCHER = DEPLOY_DIR / "native" / "local-tts.sh"
 # Tooling venv for the config patcher (stt-backend.py needs ruamel.yaml). Kept
 # out of system python to avoid PEP 668 externally-managed-environment errors.
 TOOLING_VENV = DEPLOY_DIR / "native" / ".venv"
@@ -360,6 +372,78 @@ def configure_native_stt(backend: str) -> bool:
     return True
 
 
+# --- Native local-tts (Qwen3-TTS) reconcile (always native, no selector) ----
+#
+# TTS mirrors the STT native path but has no backend selector: local-tts
+# runs on Apple-silicon MLX/Metal only, so there is no docker fallback to choose
+# between. Whenever the deploy ships the native TTS pieces (mac-prod), setup:
+#   1. canonicalizes the mounted gateway config's tts.url / tts_health_url
+#      (tts-backend.py — a VALUE rewriter; the tts block's SHAPE comes from the
+#      seed config, so this is a no-op on a freshly-seeded host and a value fixup
+#      on an already-shaped one).
+#   2. installs + starts the local-tts launchd service.
+# A missing TTS backend is not fatal — the gateway degrades to text-only.
+
+
+def apply_tts_backend(ruamel_python: str) -> bool:
+    """Point the mounted gateway config's tts.url + companions.tts_health_url at
+    the native local-tts (Qwen3-TTS) host service. Shows the surgical diff,
+    confirms, and is a no-op when already matching (idempotent). tts-backend.py
+    only rewrites values that already exist (the seed owns the tts-block
+    shape)."""
+    base = [ruamel_python, str(TTS_BACKEND_SCRIPT), "--config", str(MOUNTED_CONFIG)]
+    dry = run(base, check=False)
+    if dry.returncode != 0:
+        fail(f"tts-backend.py failed:\n  {dry.stderr.strip()}")
+        return False
+    if "no change needed" in dry.stdout:
+        ok("gateway config already points at native local-tts")
+        return True
+    print(dry.stdout)
+    if not confirm(f"Apply native TTS endpoint to {MOUNTED_CONFIG.name} (patch above)?"):
+        warn("Skipped TTS config patch — gateway config may not dial the local TTS service.")
+        return True
+    applied = run(base + ["--apply"], check=False)
+    if applied.returncode != 0:
+        fail(f"tts-backend.py --apply failed:\n  {applied.stderr.strip()}")
+        return False
+    ok("patched gateway config → native local-tts")
+    return True
+
+
+def configure_native_tts() -> bool:
+    """Install + start the native local-tts (Qwen3-TTS) launchd service.
+
+    Native-only (Apple-silicon MLX/Metal); there is no docker fallback, so this
+    always installs+starts when the operator opts in. Idempotent — the launcher's
+    install/start survive re-runs. Declining leaves the gateway with no TTS
+    backend, which degrades to text-only replies rather than failing.
+    """
+    if platform.system() != "Darwin":
+        warn(
+            f"native local-tts needs macOS/Apple-silicon; host is "
+            f"{platform.system()} — skipping (gateway degrades to text-only)"
+        )
+        return True
+    if not confirm(
+        "Install + start the native local-tts launchd service now? "
+        "(venv + model download, ~few min)"
+    ):
+        warn("Skipped native TTS install — the gateway will have no TTS backend (text-only replies).")
+        return True
+    info("Installing native local-tts (launchd). First run downloads models.")
+    rc = subprocess.call(["bash", str(LOCAL_TTS_LAUNCHER), "install"], cwd=REPO_ROOT)
+    if rc != 0:
+        fail(f"local-tts.sh install exited with code {rc}")
+        return False
+    rc = subprocess.call(["bash", str(LOCAL_TTS_LAUNCHER), "start"], cwd=REPO_ROOT)
+    if rc != 0:
+        fail(f"local-tts.sh start exited with code {rc}")
+        return False
+    ok("native local-tts installed + started (health: :8771/health)")
+    return True
+
+
 # --- Step 4: build images ----------------------------------------------------
 
 
@@ -625,11 +709,19 @@ def print_next_steps(backend: Optional[str]) -> None:
             f"\n  STT backend is {BOLD}docker-sensevoice{RESET} — the orchestrator "
             f"spawns sentient-stt-service from the built image at `compose up`.\n"
         )
+    tts_note = ""
+    if LOCAL_TTS_LAUNCHER.exists():
+        tts_note = (
+            f"\n  TTS is {BOLD}native local-tts{RESET} (Qwen3-TTS, Apple-silicon MLX) — "
+            f"verify the host service is up before the gateway dials it:\n\n"
+            f"    {DIM}bash {LOCAL_TTS_LAUNCHER.relative_to(REPO_ROOT)} status{RESET}\n"
+        )
     print(
         f"\n{BOLD}Setup complete.{RESET} Bring the stack up when you're ready:\n\n"
         f"    {GREEN}docker compose -f {COMPOSE_FILE.relative_to(REPO_ROOT)} "
         f"up -d{RESET}\n"
-        f"{stt_note}\n"
+        f"{stt_note}"
+        f"{tts_note}\n"
         f"  All persistent state lives at {DIM}~/.sentient/{RESET} — "
         f"`rm -rf ~/.sentient` is the only wipe needed for a fresh start.\n\n"
         "  Then open the wizard:\n\n"
@@ -689,6 +781,14 @@ def main() -> int:
         if not apply_stt_backend(backend, ruamel_python):
             return 1
 
+        # TTS is native-only (no selector); canonicalize its endpoint whenever
+        # the deploy ships the native TTS pieces (mac-prod). Reuses the ruamel
+        # interpreter resolved above.
+        if TTS_BACKEND_SCRIPT.exists():
+            info("Reconciling gateway config → native local-tts")
+            if not apply_tts_backend(ruamel_python):
+                return 1
+
     info("Building images")
     if not build_images(backend):
         return 1
@@ -697,6 +797,13 @@ def main() -> int:
         info(f"Configuring native Whisper-STT service ({backend})")
         if not configure_native_stt(backend):
             return 1
+
+        # TTS is native-only — install/start the local-tts launchd service
+        # whenever the deploy ships its launcher (mac-prod).
+        if LOCAL_TTS_LAUNCHER.exists():
+            info("Configuring native local-tts service")
+            if not configure_native_tts():
+                return 1
 
     info("Clearing old sentient containers (gateway + orchestrator-managed)")
     if not clear_old_containers():

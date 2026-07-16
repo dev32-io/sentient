@@ -8,8 +8,8 @@ import io.sentient.mobilesdk.log.createLogger
 // ---------------------------------------------------------------------------
 // OpusDownlinkDecoder — thin kopus wrapper for the TTS downlink path.
 //
-// Mirrors gateway/webui/src/audio/opus-decoder.ts: OGG-Opus chunks (Fish Audio
-// TTS) in → 48 kHz mono PCM16 LE bytes out. libopus always decodes to a fixed
+// Mirrors gateway/webui/src/audio/opus-decoder.ts: OGG-Opus chunks (TTS) in →
+// 48 kHz mono PCM16 LE bytes out. libopus always decodes to a fixed
 // internal rate; we run it at 48 kHz (the opus canonical rate) and let the
 // playback adapter resample. State is stateful across chunks and reset between
 // cycles.

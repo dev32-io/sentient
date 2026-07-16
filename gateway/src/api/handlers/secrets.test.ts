@@ -29,7 +29,6 @@ function makeKeys(overrides: Partial<KeysYaml> = {}): KeysYaml {
       openrouter: { api_key: "sk-or-abc123", base_url: null },
       custom: { api_key: null, base_url: "http://custom.local" },
     },
-    tts: { fish_audio: { api_key: "fa-xyz" } },
     home_assistant: { url: null, local_ip: null, observe_token: "ha-obs-tok", mcp_server_token: null },
     music_assistant: { url: null, local_ip: null, token: null },
     ...overrides,
@@ -49,14 +48,11 @@ function makeDeps(
       load: async () => keysData,
       loadSync: () => keysData,
       getActiveLlm: async () => ({ ok: true, value: { provider: keysData.llm.active, apiKey: "", baseUrl: "" } }),
-      getFishAudioKey: async () => keysData.tts.fish_audio.api_key,
       getActiveLlmSync: () => null,
-      getFishAudioKeySync: () => null,
       getProviderSecrets: async () => ({ ok: true, value: { provider: keysData.llm.active, apiKey: "", baseUrl: "" } }),
       getProviderSecretsSync: () => null,
       setLlmProviderKey: async () => ({ ok: true, value: undefined }),
       setActiveLlmProvider: async () => ({ ok: true, value: undefined }),
-      setFishAudioKey: async () => ({ ok: true, value: undefined }),
       setHomeAssistantToken: async () => ({ ok: true, value: undefined }),
       setHomeAssistantUrl: async () => ({ ok: true, value: undefined }),
       setHomeAssistantLocalIp: async () => ({ ok: true, value: undefined }),
@@ -72,7 +68,6 @@ function makeDeps(
           schemaVersion: "1",
           hasFile: true,
           activeLlmProvider: keysData.llm.active,
-          hasFishAudioKey: keysData.tts.fish_audio.api_key !== null,
         },
       }),
     },
@@ -95,7 +90,6 @@ describe("GET /api/v1/admin/secrets — never-echo contract", () => {
           openrouter: { api_key: realKey, base_url: null },
           custom: { api_key: null, base_url: "http://custom.local" },
         },
-        tts: { fish_audio: { api_key: "fa-xyz" } },
       },
     );
     const handler = createSecretsHandler(deps);
@@ -109,7 +103,6 @@ describe("GET /api/v1/admin/secrets — never-echo contract", () => {
     // No suffix (5+ chars)
     expect(text).not.toContain("1234567890");
     // No other real key values from fixtures
-    expect(text).not.toContain("fa-xyz");
     expect(text).not.toContain("ha-obs-tok");
     expect(text).not.toContain("admin-tok");
   });
@@ -124,7 +117,6 @@ describe("GET /api/v1/admin/secrets — never-echo contract", () => {
     expect(body.llm.ollama_cloud.has_key).toBe(false);
     expect(body.llm.custom.has_key).toBe(false);
     expect(body.llm.custom.has_base_url).toBe(true);
-    expect(body.tts.fish_audio.has_key).toBe(true);
     expect(body.home_assistant.url).toBeNull();
     expect(body.home_assistant.observe_token.has_token).toBe(true);
     expect(body.home_assistant.mcp_server_token.has_token).toBe(false);
@@ -132,25 +124,8 @@ describe("GET /api/v1/admin/secrets — never-echo contract", () => {
     expect(body.music_assistant.has_token).toBe(false);
     // masked field must not exist
     expect(body.llm.openrouter.masked).toBeUndefined();
-    expect(body.tts.fish_audio.masked).toBeUndefined();
     // LLM provider base_url must not appear in the response (it's a credential-adjacent field)
     expect(body.llm.custom.base_url).toBeUndefined();
-  });
-});
-
-describe("PUT /api/v1/admin/secrets — never-echo contract", () => {
-  it("PUT response body never contains submitted value", async () => {
-    const handler = createSecretsHandler(makeDeps());
-    const res = await handler(
-      new Request("http://localhost/api/v1/admin/secrets/tts/fish_audio", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ value: "fa-supersecret99" }),
-      }),
-    );
-    expect(res.status).toBe(200);
-    const text = await res.text();
-    expect(text).not.toContain("fa-supersecret99");
   });
 });
 

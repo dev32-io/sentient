@@ -204,11 +204,10 @@ function buildDefaultProfileBody(secretsStore?: SecretsStore): Omit<ProfileV1, "
   };
   return {
     model: { provider: activeProvider, id: defaultModelByProvider[activeProvider] ?? "google/gemini-2.5-flash" },
-    // voice.id is non-empty per schema; "placeholder" is stored when
-    // SetupScreen omits voice. TTS pipeline already disables itself when
-    // FISH_AUDIO_API_KEY is unset, so this id is never actually dispatched
-    // until the operator picks a real voice via Settings → Voice.
-    voice: { provider: "fish-audio", id: "placeholder" },
+    // local-tts's single shipped voice today — see shared/config's
+    // ttsConfigSchema#voice_id default. Settings → Voice can override once
+    // local-tts grows a multi-voice catalog.
+    voice: { provider: "local-tts", id: "default" },
     audio: AUDIO_PREFS_DEFAULT,
     persona: { template: "default", overrides: "" },
     tools: { enabled: {}, toolsets: [] },

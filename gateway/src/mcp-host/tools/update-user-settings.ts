@@ -44,7 +44,7 @@ export function createUpdateUserSettingsTool(deps: UpdateUserSettingsDeps): Tool
           voice: {
             type: "object",
             properties: {
-              provider: { type: "string", enum: ["fish-audio"] },
+              provider: { type: "string", enum: ["local-tts"] },
               id: { type: "string" },
             },
             required: ["provider", "id"],

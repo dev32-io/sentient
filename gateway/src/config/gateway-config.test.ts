@@ -15,10 +15,7 @@ session:
 stt:
   provider: local-stt
   url: ws://stt-service:8766
-llm:
-  provider: openrouter
 tts:
-  provider: fish-audio
   voice_id: my-voice-id
 `;
 
@@ -34,8 +31,7 @@ tts:
   it("applies default values for optional fields", () => {
     const config = loadGatewayConfigFromString(validYaml);
 
-    expect(config.llm.chat_model).toBe("google/gemini-2.5-flash");
-    expect(config.tts.latency).toBe("balanced");
+    expect(config.tts.format).toBe("opus");
   });
 
   it("applies default stt fields when only provider is specified", () => {
@@ -51,10 +47,7 @@ session:
   idle_timeout_ms: 900000
 stt:
   provider: local-stt
-llm:
-  provider: openrouter
-tts:
-  provider: fish-audio
+tts: {}
 `;
     const config = loadGatewayConfigFromString(minimalYaml);
     expect(config.stt.url).toBe("ws://stt-service:8766");
@@ -75,10 +68,7 @@ session:
   idle_timeout_ms: 900000
 stt:
   provider: local-stt
-llm:
-  provider: openrouter
-tts:
-  provider: fish-audio
+tts: {}
 `;
     const config = loadGatewayConfigFromString(yamlWithoutVoiceId);
     expect(config.tts.voice_id).toBe("default");
@@ -89,10 +79,7 @@ tts:
 port: "not-a-number"
 stt:
   provider: local-stt
-llm:
-  provider: openrouter
-tts:
-  provider: fish-audio
+tts: {}
 `;
     expect(() => loadGatewayConfigFromString(invalidYaml)).toThrow();
   });
@@ -110,10 +97,7 @@ session:
   idle_timeout_ms: 900000
 stt:
   provider: local-stt
-llm:
-  provider: openrouter
-tts:
-  provider: fish-audio
+tts: {}
 `;
 
     const config = loadGatewayConfigFromString(yamlWithPort);
@@ -134,10 +118,7 @@ session:
   idle_timeout_ms: 900000
 stt:
   provider: local-stt
-llm:
-  provider: openrouter
-tts:
-  provider: fish-audio
+tts: {}
 `;
 
     expect(() => loadGatewayConfigFromString(badPortYaml)).toThrow();

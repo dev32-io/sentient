@@ -3,7 +3,7 @@
 > When a rule is unclear, read `agents/docs/logging-details.md`.
 
 - Every new file MUST import and use a tagged logger. No bare `console.log`, `console.error`, or `console.warn`.
-- Logger tag MUST reflect the file's position in the hierarchy (e.g., `["sentient", "tts", "fish-audio"]`).
+- Logger tag MUST reflect the file's position in the hierarchy (e.g., `["sentient", "tts", "local-tts"]`).
 - Log every input and output at component boundaries: service calls, decorator units, WS messages, pipeline stages.
 - Log every state change with previous state, new state, and trigger event.
 - Log every boundary / classifier / fallback decision with the reason and the value(s) that triggered it.

@@ -107,7 +107,7 @@ function adminUrl(path: string): string {
 /** Minimal valid profile body (no userId / schemaVersion — those are server-stamped). */
 const SAMPLE_PROFILE = {
   model: { provider: "openrouter", id: "google/gemini-2.5-flash" },
-  voice: { provider: "fish-audio", id: "default" },
+  voice: { provider: "local-tts", id: "default" },
   persona: { template: "default", overrides: "" },
   tools: {
     enabled: { gateway: [] },

@@ -20,6 +20,7 @@ import { createSecretsHandler } from "./api/handlers/secrets.ts";
 import { createServicesVersionsHandler } from "./api/handlers/services-versions.ts";
 import { createSessionsHttpHandler } from "./api/handlers/sessions.ts";
 import { createSystemStatusHandler } from "./api/handlers/system-status.ts";
+import { createVoicesHandler } from "./api/handlers/voices.ts";
 import { createWebuiHandler } from "./api/handlers/webui.ts";
 import { createWsUpgradeHandler } from "./api/handlers/ws.ts";
 import { createProvidersDeps } from "./api/providers-deps.ts";
@@ -112,8 +113,26 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
   const handleProviders = createProvidersHandler({
     tokens: services.auth.tokens,
     listModels: providersDeps.listModels,
-    listVoices: providersDeps.listVoices,
-    getVoice: providersDeps.getVoice,
+    fishDeps: {
+      tokens: services.auth.tokens,
+      fishBrowseEnabled: services.providersConfig.fish_browse_enabled,
+      fishApiKey: services.fishApiKey,
+      timeoutMs: services.providersConfig.external_fetch_timeout_ms,
+      cacheTtlMs: services.providersConfig.fish_cache_ttl_ms,
+    },
+    fishCloneDeps: {
+      fishBrowseEnabled: services.providersConfig.fish_browse_enabled,
+      fishApiKey: services.fishApiKey,
+      externalFetchTimeoutMs: services.providersConfig.external_fetch_timeout_ms,
+      profileStore: services.profileStore,
+      refreshVoice: (userId) => services.personSessions.refreshVoice(userId),
+      ttsUrl: services.ttsConfig.url,
+      connectTimeoutMs: services.ttsConfig.connect_timeout_ms,
+      opTimeoutMs: services.ttsConfig.voice_op_timeout_ms,
+      descriptionMaxLen: services.ttsConfig.voice_description_max_len,
+      tagMaxLen: services.ttsConfig.voice_tag_max_len,
+      maxTags: services.ttsConfig.voice_max_tags,
+    },
   });
   const handleMcpCatalog = createMcpCatalogHandler({
     tokens: services.auth.tokens,
@@ -126,7 +145,9 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
     gatewayVersion: services.gatewayVersion,
     hermesVersionPath: services.hermesVersionPath,
     sttHealthUrl: services.sttHealthUrl,
+    ttsHealthUrl: services.ttsHealthUrl,
     tokens: services.auth.tokens,
+    fishBrowseEnabled: services.providersConfig.fish_browse_enabled,
   });
   const handleStatic = createWebuiHandler({ distDir: services.webDistDir });
   const handleDownloads = createDownloadsHandler({
@@ -141,7 +162,6 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
     secretsStore: services.secretsStore ?? makeThrowProxy("SecretsStore"),
     testProvider: testProviderImpl,
     listModels: providersDeps.listModels,
-    listVoices: providersDeps.listVoices,
     systemOrchestrator: services.systemOrchestrator,
   });
   const handleSystemStatus = createSystemStatusHandler({
@@ -152,6 +172,19 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
     ? createDevicesHandler({ tokens: services.auth.tokens, ...services.devicesHandlerDeps })
     : async (_req: Request) => new Response("Service Unavailable", { status: 503 });
   const handleSessions = buildSessionsHandler(services);
+  const handleVoices = createVoicesHandler({
+    tokens: services.auth.tokens,
+    profileStore: services.profileStore,
+    refreshVoice: (userId) => services.personSessions.refreshVoice(userId),
+    ttsUrl: services.ttsConfig.url,
+    connectTimeoutMs: services.ttsConfig.connect_timeout_ms,
+    opTimeoutMs: services.ttsConfig.voice_op_timeout_ms,
+    previewGreetings: services.ttsConfig.preview_greetings,
+    previewTimeoutMs: services.ttsConfig.preview_timeout_ms,
+    descriptionMaxLen: services.ttsConfig.voice_description_max_len,
+    tagMaxLen: services.ttsConfig.voice_tag_max_len,
+    maxTags: services.ttsConfig.voice_max_tags,
+  });
   const handleDiagnostics = createDiagnosticsHandler({ tokens: services.auth.tokens });
 
   return Bun.serve<ClientData>({
@@ -186,6 +219,7 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
         handleApply,
         handleDevices,
         handleSessions,
+        handleVoices,
         handleDiagnostics,
         handleStatic,
       });

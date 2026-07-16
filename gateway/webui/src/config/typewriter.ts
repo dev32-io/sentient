@@ -8,7 +8,7 @@
 export const TYPEWRITER = {
   /**
    * chars/sec at steady state. Tuned to roughly 2× TTS speaking speed
-   * (≈15 c/s for Fish Audio at default rate), so the bubble keeps a
+   * (≈15 c/s for the local-tts voice at default rate), so the bubble keeps a
    * slight lead on audio playback without racing ahead.
    */
   baseRate: 30,

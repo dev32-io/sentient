@@ -8,6 +8,7 @@ import type {
   ProvidersConfig,
   SessionConfig,
   SessionsConfig,
+  TTSConfig,
   WebuiConfig,
 } from "@sentient/config";
 import type { InstallState } from "../admin/install-state.js";
@@ -48,7 +49,6 @@ import type { SttService } from "./stt-factory.ts";
 import type { TtsService } from "./tts-factory.ts";
 
 const log = getLog(["sentient", "bootstrap"]);
-const DEFAULT_CHAT_MODEL = "google/gemini-2.5-flash";
 const TEST_PROVIDER_TIMEOUT_MS = 5000;
 
 export async function testProviderImpl(
@@ -77,6 +77,7 @@ export interface GatewayServices {
   readonly installState: InstallState;
   readonly hermesVersionPath: string;
   readonly sttHealthUrl: string;
+  readonly ttsHealthUrl: string;
   readonly unlockCode: UnlockCode;
   readonly unlockCodePath: string;
   readonly gatewayVersion: string;
@@ -91,7 +92,10 @@ export interface GatewayServices {
   readonly stt: SttService | null;
   readonly tts: TtsService | null;
   readonly createSynthesizerFor: (getVoiceId: () => string | null) => TextStreamSynthesizer | null;
-  readonly chatModel: string;
+  /** Raw `tts:` config block — needed by the voices handler (Fix C) for its
+   *  own short-lived voice-mgmt WS ops, which bypass the TtsService/provider
+   *  abstraction entirely. */
+  readonly ttsConfig: TTSConfig;
   readonly language: "en" | "zh";
   readonly tls: GatewayTlsMaterial | undefined;
   readonly webDistDir: string | undefined;
@@ -112,6 +116,10 @@ export interface GatewayServices {
   readonly applyConfig: ApplyConfig;
   readonly applyDeps: ApplyDeps;
   readonly providersConfig: ProvidersConfig;
+  /** Fish Audio API key for the voice-browse proxy. Plain env var (not
+   *  secretsStore) — never hardcode; resolves to null when unset, which the
+   *  Fish fetcher treats as "send no Authorization header" (public browsing). */
+  readonly fishApiKey: string | null;
   readonly mcpCatalog: McpCatalog;
   readonly hermesBuiltinTools: HermesBuiltinTools;
   readonly userPortStore: UserPortStore | null;
@@ -188,6 +196,7 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     installState,
     hermesVersionPath,
     sttHealthUrl: cfg.companions.stt_health_url,
+    ttsHealthUrl: cfg.companions.tts_health_url,
     unlockCode,
     unlockCodePath,
     gatewayVersion,
@@ -200,7 +209,7 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     stt: services.stt,
     tts: services.tts,
     createSynthesizerFor: services.createSynthesizerFor,
-    chatModel: cfg.llm?.chat_model ?? DEFAULT_CHAT_MODEL,
+    ttsConfig: cfg.tts,
     // "auto" is a decode-only sentinel; UX/prompt language needs a concrete
     // value, so fall back to "en" when the operator chose autodetect.
     language: cfg.language === "auto" ? "en" : cfg.language,
@@ -223,6 +232,7 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     applyDeps: services.applyDeps,
     applyConfig: cfg.apply,
     providersConfig: cfg.providers,
+    fishApiKey: process.env.FISH_AUDIO_API_KEY ?? null,
     mcpCatalog: cfg.mcpCatalog,
     hermesBuiltinTools: cfg.hermesBuiltinTools,
     userPortStore,

@@ -37,7 +37,7 @@ export const DENOISE_BYPASS = false;
  */
 export const OPUS_UPLINK_BITRATE_BPS = 24_000;
 
-/** Audio playback — must match gateway TTS output rate (Fish Audio PCM). */
+/** Audio playback sample rate. local-tts emits OGG-Opus @ 48k; the opus decoder downsamples to this rate. */
 export const AUDIO_SAMPLE_RATE = 44_100;
 
 /**

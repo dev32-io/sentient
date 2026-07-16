@@ -97,99 +97,6 @@
   margin: 16px 0;
 }
 
-/* ---- Voice toolbar (search + language + sort) ---- */
-/* Search is the primary affordance — give it most of the width. The two
- * dropdowns are secondary, each capped so they don't compete visually. */
-.settings-v2 .v-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-.settings-v2 .v-toolbar .srch { flex: 1 1 auto; min-width: 220px; }
-.settings-v2 .v-toolbar .sel {
-  flex: 0 0 auto;
-  width: 168px;
-  max-width: 168px;
-}
-.settings-v2 .v-toolbar .sel:last-child {
-  width: 116px;
-  max-width: 116px;
-}
-
-/* ---- Voice filter rows (label + chips) ---- */
-.settings-v2 .v-filters {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--color-line-soft);
-  margin-bottom: 12px;
-}
-.settings-v2 .v-filter-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 26px;
-}
-.settings-v2 .v-filter-label {
-  flex-shrink: 0;
-  width: 56px;
-  font-size: 12px;
-  color: var(--color-ink-3);
-}
-.settings-v2 .v-filter-chips {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-  flex: 1;
-  align-items: center;
-}
-.settings-v2 .v-tag-toggle {
-  appearance: none;
-  background: transparent;
-  border: 0;
-  font-family: inherit;
-  font-size: 12px;
-  color: var(--color-accent);
-  cursor: pointer;
-  padding: 4px 8px;
-}
-.settings-v2 .v-tag-toggle:hover { text-decoration: underline; }
-
-/* ---- Result count + clear-all ---- */
-.settings-v2 .v-results {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}
-.settings-v2 .v-result-count {
-  font-size: 12px;
-  color: var(--color-ink-3);
-  font-variant-numeric: tabular-nums;
-}
-.settings-v2 .v-clear {
-  appearance: none;
-  background: transparent;
-  border: 0;
-  font-family: inherit;
-  font-size: 12px;
-  color: var(--color-accent);
-  cursor: pointer;
-  padding: 0;
-}
-.settings-v2 .v-clear:hover { text-decoration: underline; }
-
-/* ---- Load-more ---- */
-.settings-v2 .v-loadmore {
-  display: flex;
-  justify-content: center;
-  padding-top: 14px;
-  margin-top: 4px;
-}
-.settings-v2 .v-loadmore .btn { gap: 6px; }
-
 /* ---- Generic list (lst) ---- */
 .settings-v2 .lst { display: flex; flex-direction: column; }
 .settings-v2 .lst-row {
@@ -328,240 +235,6 @@
   text-align: center;
   color: var(--color-ink-3);
   font-size: 13px;
-}
-
-/* ---- Voice grid ---- */
-.settings-v2 .voice-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 10px;
-}
-.settings-v2 .voice {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 12px 44px 12px 14px; /* right padding reserves room for v-check */
-  background: var(--color-paper);
-  border: 1px solid var(--color-line-soft);
-  border-radius: 10px;
-  cursor: pointer;
-  transition: border-color .15s, background .15s;
-  /* Fixed height so selection / content variation never reflows. The
-     interior is name (~22px) + 4px gap + info (~17px) + 6px gap + tags
-     (22px) = 71px content; + 24px vertical padding = 95px. Slight buffer
-     for descender clearance. */
-  height: 96px;
-  min-height: 96px;
-  max-height: 96px;
-  box-sizing: border-box;
-  overflow: hidden;
-}
-.settings-v2 .voice:hover { border-color: var(--color-line); }
-.settings-v2 .voice.is-sel {
-  border-color: color-mix(in oklab, var(--color-accent) 50%, var(--color-line));
-  background: color-mix(in oklab, var(--color-accent) 5%, var(--color-paper));
-}
-.settings-v2 .v-play {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--color-bg-sunk);
-  color: var(--color-ink-2);
-  border: 1px solid var(--color-line-soft);
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background .15s, color .15s, border-color .15s;
-}
-.settings-v2 .v-play:hover {
-  background: var(--color-accent);
-  color: var(--color-paper);
-  border-color: var(--color-accent);
-}
-.settings-v2 .v-play-on,
-.settings-v2 .v-play-on:hover {
-  background: var(--color-accent);
-  color: var(--color-paper);
-  border-color: var(--color-accent);
-}
-.settings-v2 .v-play:disabled {
-  opacity: .5;
-  cursor: not-allowed;
-}
-.settings-v2 .v-play:disabled:hover {
-  background: var(--color-bg-sunk);
-  color: var(--color-ink-2);
-  border-color: var(--color-line-soft);
-}
-.settings-v2 .v-meta { flex: 1; min-width: 0; }
-/* On selected tiles the v-check icon (20px, right:14px → left edge at right:34px)
-   sits 10px past v-meta's right edge. Without extra clearance, tags clip right where
-   the circle begins, making the icon look like it is cutting the tag text. Reserving
-   30px on the right of v-meta ensures the clip point is well clear of the icon. */
-.settings-v2 .voice.is-sel .v-meta { padding-right: 30px; }
-.settings-v2 .v-name {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--color-ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.settings-v2 .v-info {
-  font-size: 11.5px;
-  color: var(--color-ink-3);
-  margin-top: 4px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  overflow: hidden;
-}
-.settings-v2 .v-info > span:last-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-.settings-v2 .v-lang {
-  font-family: var(--font-mono);
-  background: var(--color-bg-sunk);
-  padding: 1px 5px;
-  border-radius: 3px;
-  color: var(--color-ink-2);
-  font-size: 10.5px;
-  flex-shrink: 0;
-}
-.settings-v2 .v-fact {
-  flex-shrink: 0;
-  text-transform: capitalize;
-}
-.settings-v2 .v-fact::before {
-  content: "·";
-  margin-right: 6px;
-  color: var(--color-ink-3);
-}
-.settings-v2 .v-info > .v-desc {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-.settings-v2 .v-info > .v-desc::before {
-  content: "·";
-  margin-right: 6px;
-  color: var(--color-ink-3);
-}
-.settings-v2 .v-tags {
-  display: flex;
-  gap: 4px;
-  flex-wrap: nowrap;
-  overflow: hidden;
-  height: 22px;
-  align-items: center;
-  margin-top: 6px;
-}
-.settings-v2 .v-tag {
-  flex-shrink: 0;
-}
-.settings-v2 .v-tag {
-  appearance: none;
-  background: var(--color-bg-sunk);
-  border: 0;
-  font-family: inherit;
-  font-size: 10.5px;
-  color: var(--color-ink-2);
-  padding: 2px 7px;
-  border-radius: 999px;
-  cursor: pointer;
-  transition: background .15s, color .15s;
-}
-.settings-v2 .v-tag:hover {
-  background: color-mix(in oklab, var(--color-accent) 10%, var(--color-bg-sunk));
-  color: var(--color-accent);
-}
-.settings-v2 .v-tag-more {
-  font-size: 10.5px;
-  color: var(--color-ink-3);
-  align-self: center;
-}
-.settings-v2 .v-check {
-  position: absolute;
-  top: 50%;
-  right: 14px;
-  transform: translateY(-50%);
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--color-accent);
-  color: var(--color-paper);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  pointer-events: none;
-}
-
-/* ---- Voice saved tile (Card action slot, "Currently using") ----
- * Reuses .voice DOM for visual parity with grid tiles below; orange-tinted
- * bg distinguishes it. Single fixed min-height across all four states
- * (loaded / loading / empty / unknown) so the Card header doesn't reflow
- * during the on-demand fetch-by-id round trip. */
-.settings-v2 .v-current {
-  width: 100%;
-}
-.settings-v2 .voice.voice-saved {
-  cursor: default;
-  width: 100%;
-  /* Fixed height — loaded content is naturally ~66px (10px padding + 40px
-   * play button + the two-line v-meta column with default line-heights).
-   * Locking it here means loading / empty / unknown states render at the
-   * same box size and the Card header doesn't reflow. */
-  height: 68px;
-  min-height: 68px;
-  padding: 10px 14px;
-  background: color-mix(in oklab, var(--color-accent) 8%, var(--color-paper));
-  border-color: color-mix(in oklab, var(--color-accent) 25%, var(--color-line-soft));
-  box-sizing: border-box;
-}
-.settings-v2 .voice.voice-saved:hover {
-  border-color: color-mix(in oklab, var(--color-accent) 25%, var(--color-line-soft));
-}
-.settings-v2 .voice-saved-empty,
-.settings-v2 .voice-saved-loading,
-.settings-v2 .voice-saved-unknown {
-  /* No padding/min-height override — inherit from .voice.voice-saved so all
-   * four states render in an identically sized box. */
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12.5px;
-  color: var(--color-ink-3);
-}
-.settings-v2 .voice-saved-empty { font-style: italic; }
-.settings-v2 .voice-saved-unknown code {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  color: var(--color-ink-2);
-  background: var(--color-bg-sunk);
-  padding: 1px 5px;
-  border-radius: 3px;
-}
-
-/* ---- Tiny inline spinner (used by voice-status-loading) ---- */
-.settings-v2 .spin {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  border: 1.5px solid color-mix(in oklab, var(--color-ink-3) 40%, transparent);
-  border-top-color: var(--color-accent);
-  animation: spin .8s linear infinite;
-  display: inline-block;
-}
-@keyframes spin {
-  to { transform: rotate(360deg); }
 }
 
 /* ---- Model "current selection" tile (in card body, full width) ---- */
@@ -1223,4 +896,438 @@
   font-size: 12px;
   color: var(--color-ink-3);
   word-break: break-all;
+}
+
+/* ============================================================
+   Voices panel — record/upload/manage voice-clone packs
+   ============================================================ */
+
+.settings-v2 .voices-rec {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.settings-v2 .voices-rec--live { padding: 2px 0; }
+.settings-v2 .voices-rec-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--color-clay);
+  animation: voices-rec-pulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes voices-rec-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.settings-v2 .voices-rec-time {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink);
+  min-width: 44px;
+}
+.settings-v2 .voices-rec-hint {
+  font-size: 12px;
+  color: var(--color-ink-3);
+  margin: 0;
+}
+.settings-v2 .voices-rec-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.settings-v2 .voices-rec-row .tf { flex: 1 1 auto; }
+
+/* Visually-hidden file input for AddVoiceModal's "upload" capture mode — a
+ * standard Btn primitive triggers it via a ref (.click()), so the input itself
+ * never renders. */
+.settings-v2 .voices-upload-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+/* ---- Voice filter bar (search + source segmented + tag chips) ---- */
+.settings-v2 .voice-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.settings-v2 .voice-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.settings-v2 .voice-filter-row > .srch { flex: 1 1 220px; }
+.settings-v2 .voice-filter-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* ---- Add-voice modal (record/upload + metadata form) ---- */
+.settings-v2 .voices-add-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+/* The shared .seg2 primitive is content-sized + nowrap — fine for two short
+ * labels, but AddVoiceModal's mode switcher can carry a 3rd, much longer
+ * "Clone from Fish Audio" option once Fish is enabled. Scoped to this modal
+ * (not the shared .seg2 rule, which other Segmented instances rely on being
+ * content-sized) so the row fills the modal width and, when the three labels
+ * can't fit one line on a narrow mobile modal, WRAPS to a second row with the
+ * full label text — never truncating. At desktop width all three fit one row. */
+.settings-v2 .voices-add-body .seg2 {
+  display: flex;
+  flex-wrap: wrap;
+  width: 100%;
+  height: auto; /* override the primitive's fixed 34px so a wrapped 2nd row fits */
+}
+.settings-v2 .voices-add-body .seg2 button {
+  flex: 1 1 auto;
+  min-height: 28px;
+  text-align: center;
+  white-space: normal; /* allow a long label to break rather than overflow */
+}
+.settings-v2 .voices-tag-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+/* ============================================================
+   Fish clone browse grid — AddVoiceModal's "fish" mode
+   (FishClonePanel + fish-toolbar/fish-filter-section/fish-voice-tile).
+   `.voice-grid`/`.voice` here are the same shared row also used by the
+   Voice-Packs tab (VoicePackTile.tsx via VoiceRow.tsx) — one full-width row
+   per voice, `.v-toolbar` wraps on a narrow modal instead of overflowing.
+   ============================================================ */
+
+/* ---- Toolbar (search + language + sort) ---- */
+.settings-v2 .v-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+/* min-width:0 (overriding the .srch primitive's 220px floor) lets the search
+ * field shrink to fit a narrow mobile modal (~214px content at 390px) instead
+ * of forcing a 6px horizontal overflow. flex:1 1 auto still grows it to fill
+ * the toolbar row at wider widths. .v-toolbar only ever renders inside this
+ * modal (FishClonePanel), so scoping it here is exhaustive. */
+.settings-v2 .v-toolbar .srch { flex: 1 1 auto; min-width: 0; }
+.settings-v2 .v-toolbar .sel {
+  flex: 0 0 auto;
+  width: 168px;
+  max-width: 168px;
+}
+.settings-v2 .v-toolbar .sel:last-child {
+  width: 116px;
+  max-width: 116px;
+}
+
+/* ---- Filter rows (label + chips) ---- */
+.settings-v2 .v-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--color-line-soft);
+  margin-bottom: 12px;
+}
+.settings-v2 .v-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 26px;
+  flex-wrap: wrap;
+}
+.settings-v2 .v-filter-label {
+  flex-shrink: 0;
+  width: 56px;
+  font-size: 12px;
+  color: var(--color-ink-3);
+}
+.settings-v2 .v-filter-chips {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  flex: 1;
+  align-items: center;
+}
+.settings-v2 .v-tag-toggle {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--color-accent);
+  cursor: pointer;
+  padding: 4px 8px;
+}
+.settings-v2 .v-tag-toggle:hover { text-decoration: underline; }
+
+/* ---- Result count + clear-all ---- */
+.settings-v2 .v-results {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.settings-v2 .v-result-count {
+  font-size: 12px;
+  color: var(--color-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.settings-v2 .v-clear {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--color-accent);
+  cursor: pointer;
+  padding: 0;
+}
+.settings-v2 .v-clear:hover { text-decoration: underline; }
+
+/* ---- Load-more ---- */
+.settings-v2 .v-loadmore {
+  display: flex;
+  justify-content: center;
+  padding-top: 14px;
+  margin-top: 4px;
+}
+.settings-v2 .v-loadmore .btn { gap: 6px; }
+
+/* ---- Voice grid — one full-width row per voice ---- */
+.settings-v2 .voice-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+.settings-v2 .voice {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px; /* symmetric — delete overlays on hover instead of reserving space */
+  background: var(--color-paper);
+  border: 1px solid var(--color-line-soft);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+  /* Fixed height so selection / content variation never reflows. */
+  height: 96px;
+  min-height: 96px;
+  max-height: 96px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.settings-v2 .voice:hover { border-color: var(--color-line); }
+.settings-v2 .voice.is-sel {
+  border-color: color-mix(in oklab, var(--color-accent) 50%, var(--color-line));
+  background: color-mix(in oklab, var(--color-accent) 5%, var(--color-paper));
+}
+.settings-v2 .v-play {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg-sunk);
+  color: var(--color-ink-2);
+  border: 1px solid var(--color-line-soft);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.settings-v2 .v-play:hover {
+  background: var(--color-accent);
+  color: var(--color-paper);
+  border-color: var(--color-accent);
+}
+.settings-v2 .v-play-on,
+.settings-v2 .v-play-on:hover {
+  background: var(--color-accent);
+  color: var(--color-paper);
+  border-color: var(--color-accent);
+}
+.settings-v2 .v-play:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+.settings-v2 .v-play:disabled:hover {
+  background: var(--color-bg-sunk);
+  color: var(--color-ink-2);
+  border-color: var(--color-line-soft);
+}
+.settings-v2 .v-meta { flex: 1; min-width: 0; }
+.settings-v2 .v-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Hover auto-scroll (marquee) viewport — .v-info/.v-tags are the fixed-width
+ * container-query context; the actual flex row of chips/text lives in the
+ * inner .v-scroll (below), which can overflow this box. A right-edge fade
+ * softens whatever's clipped while not hovered. */
+.settings-v2 .v-info,
+.settings-v2 .v-tags {
+  container-type: inline-size;
+  overflow: hidden;
+  mask-image: linear-gradient(to right, #000 90%, transparent);
+  -webkit-mask-image: linear-gradient(to right, #000 90%, transparent);
+}
+.settings-v2 .v-info {
+  font-size: 11.5px;
+  color: var(--color-ink-3);
+  margin-top: 4px;
+}
+.settings-v2 .v-scroll {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  will-change: transform;
+}
+/* Source chip (Voice-Packs only) — quieter than .v-lang since built-in vs
+ * cloned is a secondary fact, not a primary filterable dimension. */
+.settings-v2 .v-source {
+  font-family: var(--font-mono);
+  background: var(--color-bg-sunk);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--color-ink-3);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.settings-v2 .v-lang {
+  font-family: var(--font-mono);
+  background: var(--color-bg-sunk);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--color-ink-2);
+  font-size: 10.5px;
+  flex-shrink: 0;
+}
+.settings-v2 .v-fact {
+  flex-shrink: 0;
+  text-transform: capitalize;
+}
+.settings-v2 .v-fact::before {
+  content: "·";
+  margin-right: 6px;
+  color: var(--color-ink-3);
+}
+/* No ellipsis/clamp here — .v-desc can run long and overflows inside
+ * .v-scroll; the hover marquee (below) is what reveals the rest. */
+.settings-v2 .v-desc { flex-shrink: 0; }
+.settings-v2 .v-desc::before {
+  content: "·";
+  margin-right: 6px;
+  color: var(--color-ink-3);
+}
+.settings-v2 .v-tags {
+  height: 22px;
+  margin-top: 6px;
+}
+.settings-v2 .v-tag {
+  flex-shrink: 0;
+  appearance: none;
+  background: var(--color-bg-sunk);
+  border: 0;
+  font-family: inherit;
+  font-size: 10.5px;
+  color: var(--color-ink-2);
+  padding: 2px 7px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.settings-v2 .v-tag:hover {
+  background: color-mix(in oklab, var(--color-accent) 10%, var(--color-bg-sunk));
+  color: var(--color-accent);
+}
+
+/* On row hover, slide .v-scroll to reveal whatever overflows its container
+ * exactly, then hold and ease back. 100cqw = the .v-info/.v-tags container
+ * width (container-query, set above); 100% = .v-scroll's own content width.
+ * `min(0px, 100cqw - 100%)` is the negative overflow distance, or 0 when
+ * the content already fits — so non-overflowing rows never move. */
+.settings-v2 .voice:hover .v-scroll {
+  animation: v-marquee 5s ease-in-out infinite alternate;
+}
+@keyframes v-marquee {
+  0%, 12%   { transform: translateX(0); }
+  88%, 100% { transform: translateX(min(0px, calc(100cqw - 100%))); }
+}
+
+/* Inline "Active" marker (Voice-Packs only) — a plain flex sibling after
+ * .v-meta, not absolutely positioned, so it never has to reserve clearance
+ * the old absolute checkmark circle needed. */
+/* Delete (Voice-Packs, user packs only) — overlays the row's right edge on
+ * hover/focus instead of permanently reserving space (row padding is
+ * symmetric now — see .settings-v2 .voice above). A solid clay (danger)
+ * square, sized to match .v-play, so the destructive action is
+ * unmistakable and balances the row's leading play button. The ::before
+ * gradient fades the row's own background in just left of the button so
+ * tag/description text scrolling underneath fades out rather than hard-
+ * abutting the red square. */
+.settings-v2 .v-del {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-clay);
+  color: #fff;
+  border: 1px solid color-mix(in oklab, var(--color-clay) 72%, black);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .15s, background .15s;
+}
+.settings-v2 .v-del::before {
+  content: "";
+  position: absolute;
+  inset: -8px 40px -8px -40px; /* fade zone to the LEFT of the button only */
+  background: linear-gradient(to right, transparent, var(--color-paper) 85%);
+  z-index: -1;
+  pointer-events: none;
+}
+.settings-v2 .voice.is-sel .v-del::before {
+  background: linear-gradient(
+    to right,
+    transparent,
+    color-mix(in oklab, var(--color-accent) 5%, var(--color-paper)) 85%
+  );
+}
+.settings-v2 .voice:hover .v-del,
+.settings-v2 .voice:focus-within .v-del {
+  opacity: 1;
+}
+.settings-v2 .v-del:hover {
+  background: color-mix(in oklab, var(--color-clay) 86%, white);
+}
+.settings-v2 .v-del:disabled {
+  opacity: .4;
+  cursor: not-allowed;
 }

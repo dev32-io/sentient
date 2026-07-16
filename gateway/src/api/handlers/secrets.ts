@@ -21,7 +21,6 @@ const PATH_ROOT = "/api/v1/admin/secrets";
 const PATH_ROTATION = "/api/v1/admin/secrets/rotation-status";
 const PATH_LLM_ACTIVE = "/api/v1/admin/secrets/llm/active";
 const LLM_PROVIDER_RE = /^\/api\/v1\/admin\/secrets\/llm\/(ollama-cloud|openrouter|custom)$/;
-const PATH_TTS_FISH = "/api/v1/admin/secrets/tts/fish_audio";
 const HA_TOKEN_RE = /^\/api\/v1\/admin\/secrets\/home_assistant\/(observe_token|mcp_server_token)$/;
 const PATH_HA_URL = "/api/v1/admin/secrets/home_assistant/url";
 const PATH_HA_LOCAL_IP = "/api/v1/admin/secrets/home_assistant/local_ip";
@@ -88,7 +87,6 @@ export function createSecretsHandler(deps: SecretsDeps): (req: Request) => Promi
     if (path === PATH_ROOT && method === "GET") return handleGetSecrets(deps);
     if (path === PATH_ROTATION && method === "GET") return handleGetRotation();
     if (path === PATH_LLM_ACTIVE && method === "PUT") return handlePutLlmActive(deps, req);
-    if (path === PATH_TTS_FISH && method === "PUT") return handlePutFishKey(deps, req);
     if (path === PATH_HA_URL && method === "PUT") return handlePutHaUrl(deps, req);
     if (path === PATH_HA_LOCAL_IP && method === "PUT") return handlePutHaLocalIp(deps, req);
     if (path === PATH_MA_TOKEN && method === "PUT") return handlePutMaToken(deps, req);
@@ -127,11 +125,6 @@ async function handleGetSecrets(deps: SecretsDeps): Promise<Response> {
         has_base_url: keys.llm.custom.base_url !== null,
       },
     },
-    tts: {
-      fish_audio: {
-        has_key: keys.tts.fish_audio.api_key !== null,
-      },
-    },
     home_assistant: {
       url: keys.home_assistant.url,
       observe_token: { has_token: keys.home_assistant.observe_token !== null },
@@ -141,7 +134,6 @@ async function handleGetSecrets(deps: SecretsDeps): Promise<Response> {
   };
   log.debug("secrets.get", {
     activeLlm: keys.llm.active,
-    hasFish: keys.tts.fish_audio.api_key !== null,
     hasHaObserve: keys.home_assistant.observe_token !== null,
     hasMa: keys.music_assistant.token !== null,
   });
@@ -192,22 +184,6 @@ async function handlePutLlmProvider(deps: SecretsDeps, req: Request, provider: L
     provider,
     hasKey: patch.api_key !== undefined ? patch.api_key !== null : undefined,
   });
-  return Response.json({ ok: true }, { status: HTTP_OK });
-}
-
-// --- PUT /secrets/tts/fish_audio --------------------------------------------
-
-async function handlePutFishKey(deps: SecretsDeps, req: Request): Promise<Response> {
-  const body = await parseJsonBody(req);
-  if (!body) return jsonError(HTTP_UNPROCESSABLE, "schema", "Invalid JSON body");
-  const parsed = SecretValueSchema.safeParse(body);
-  if (!parsed.success) return jsonError(HTTP_UNPROCESSABLE, "schema", parsed.error.message);
-
-  const key = parsed.data.value === "" ? null : parsed.data.value;
-  const result = await deps.secretsStore.setFishAudioKey(key);
-  if (!result.ok) return jsonError(HTTP_INTERNAL_ERROR, "io-error", result.error.kind);
-
-  log.info("secrets.tts.fish-key-set", { hasKey: key !== null });
   return Response.json({ ok: true }, { status: HTTP_OK });
 }
 

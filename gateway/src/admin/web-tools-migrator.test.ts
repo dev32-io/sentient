@@ -7,7 +7,7 @@ function makeProfile(overrides: Partial<ProfileV1["tools"]["enabled"]>): Profile
     schemaVersion: 1,
     userId: "u1",
     model: { provider: "openrouter", id: "google/gemini-2.5-flash" },
-    voice: { provider: "fish-audio", id: "v1" },
+    voice: { provider: "local-tts", id: "v1" },
     audio: { ttsEnabled: true, channel: "voice" },
     persona: { template: "default", overrides: "" },
     tools: { enabled: overrides as Record<string, string[]>, toolsets: [] },

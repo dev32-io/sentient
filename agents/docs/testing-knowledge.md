@@ -190,7 +190,7 @@ the wizard handler. Wizard rejections look like `wizard.unlock.failed`,
 1. Tear down: `docker compose down -v && rm -rf ~/.sentient`
 2. Bring up: `docker compose up -d`
 3. Open `https://localhost:8888`. Wizard renders.
-4. Walk: unlock → provider (LLM key) → voice (Fish key) → secrets (HA URL+tokens, MA URL+token; or skip).
+4. Walk: unlock → provider (LLM key) → voice (acknowledge-and-advance — local-tts needs no key) → secrets (HA URL+tokens, MA URL+token; or skip).
 5. Click Continue on the secrets step. Page transitions to "Starting up services…".
 6. Per-service rows tick from "Queued" → "Starting…" → "Checking health…" → "Ready ✓" in dependency order. Required first; optional services last.
 7. When all required are Ready, page auto-advances to step-admin (account creation). Continue through admin → "All set" → reload into chat.
@@ -353,3 +353,74 @@ After upgrading across the v0.1.0 → v0.2.0 install-state schema bump:
 5. `assertVisible` the assistant reply (message flushes; gateway dedups by `pendingId`); Retry chip clears. If still showing Retry, tap it once and assert recovery (retry now verifies the socket).
 **Expected user-visible:** message recovers (no permanent Retry). **Expected log trail (logcat):** `net-change network-lost`/`network-available → ensureConnected` → `foreground.not-ready → reconnect` or probe-timeout → `transport.reconnect success` → `send-message flush count=1` → committed echo.
 **Platform notes:** **iOS — real-device/manual only (flagged gap):** the simulator shares the Mac's network, so a VPN half-open path change is not deterministically reproducible on-sim; verify on a real device (background → switch VPN→WiFi → foreground → send). os_log trail: `net-path-monitor path-changed → ensureConnected` → reconnect → flush. **No socket-drop fault exists** — `svc wifi` is the closest deterministic Android stand-in; a debug `armDropSocket` fault would tighten this (follow-up).
+
+## Fish voice browse & clone (Settings → Voice → ＋ Add voice, Playwright MCP)
+
+Self-contained, removable module — see `docs/fish-integration.md` for the
+disable/removal guide. `fish_browse_enabled` defaults `true`; browse is
+public (no Fish API key needed). Gateway log tags: `[api:fish:browse]`,
+`[api:fish:clone]`, `[providers:fish:fetcher]`.
+
+### fish-browse (grid loads + search + facet filter)
+**Scenario:** Opening the "Clone from Fish Audio" tab loads a grid of Fish voices with preview/tags; typing a name re-queries the server (`?title=`); clicking a language/gender/vibe chip narrows the already-loaded grid client-side (no new request).
+**Why added:** Regression guard for the Fish browse proxy (`gateway/src/api/handlers/fish/fish-browse.ts`) and the webui's split between server-side title search and client-side facet filtering.
+**Steps:**
+1. Settings → Voice → ＋ Add voice → click "Clone from Fish Audio" (3rd tab, only present when `fish_browse_enabled` is true).
+2. Observe the grid loads with tiles (name, language, gender/age, tags, preview ▶) and a total count.
+3. Type a common name into the search box.
+4. Clear it, then click a Gender/Age/Tag chip.
+**Expected user-visible:** grid loads on tab open; typing narrows the grid (server round-trip); clicking a facet chip narrows further with no visible reload.
+**Expected log trail (gateway):** tab-open emits `[api:fish:browse] voices.begin hasTitleFilter=false` → `voices.done count=<n>`. Search emits a second `GET /api/v1/providers/voices?title=<q>` → `voices.begin hasTitleFilter=true` → `voices.done`. Facet click emits **no** new `/providers/voices` request (network tab confirms — purely client-side over the already-fetched page).
+
+### fish-clone (pick a voice → clone → pack appears, auto-picked)
+**Scenario:** Picking a Fish voice with a sample ≥ ~6s, confirming name/tags, and clicking "Clone voice" downloads the sample server-side, creates a local-tts voice pack, and auto-activates it — the new pack appears under "Yours" as Active.
+**Why added:** Regression guard for the full clone round-trip (gateway SSRF host-check → sample download → TTS `voice.create` → profile activation). The SSRF guard allowlists Fish's CDN hosts (`*.fish.audio` + `*.r2.cloudflarestorage.com` — single-voice `GET /model/:id` serves presigned R2 URLs), is https-only, and uses `redirect:"manual"` (3xx = download failure) so an allowlisted host can't redirect to an internal address. See `docs/fish-integration.md`.
+**Steps:**
+1. In the Fish tab, click a voice tile (not the ▶ preview) to select it — name/description/tags pre-fill from Fish metadata, "Clone voice" enables.
+2. Click "Clone voice".
+**Expected user-visible:** a success toast ("Voice created") and the new pack appears under "Yours", auto-picked (Active). The success toast auto-dismisses after `TOAST_DISMISS_MS` (4s) — assert promptly or poll `.toast-host`, don't rely on a screenshot taken >2s after the click.
+**Expected log trail (gateway):** `[providers:fish:fetcher] fetchFishVoiceById.begin/done` → `[api:fish:clone] clone.create.request` → `[tts:voice-mgmt] create.success` → `[person-session] voiceId.update` → `[api:fish:clone] clone.success`, and `POST /api/v1/providers/voices/<id>/clone` → 200.
+
+### fish-tab-hidden (feature flag off)
+**Scenario:** With `providers.fish_browse_enabled: false` in the operator config, the "Clone from Fish Audio" tab never renders, and the browse/clone routes 404 even with a valid bearer token.
+**Why added:** Regression guard for the kill-switch — the route must 404 before auth is checked (no route-existence leak), and the webui must read the flag from `services/versions`, not hardcode the tab.
+**Steps:**
+1. Set `providers.fish_browse_enabled: false` in `~/.sentient/gateway/config/config.yaml` (`providers:` section), restart the gateway container (no rebuild — read at boot).
+2. Reload the webui, open Settings → Voice → ＋ Add voice.
+3. From the browser console (already-authenticated session), `fetch('/api/v1/providers/voices', { headers: { Authorization: 'Bearer ' + <token> } })`.
+4. `fetch('/api/v1/services/versions', ...)` and inspect `body.features`.
+**Expected user-visible:** only Record / Upload tabs — no Fish tab. `GET /api/v1/providers/voices` with a valid token → `404`.
+**Expected log trail / response:** `services/versions` response body has `features.fish_browse_enabled: false` (DEBUG-level `[services-versions] services-versions.fetched` log line exists but won't print at the default `info` log level — assert via the response body, not the log). Revert the config key and restart to re-enable after this case.
+
+## local-tts service (WS probe) — engine-level smoke
+
+Direct WebSocket smoke against the native local-tts service (`ws://127.0.0.1:8770`), bypassing the gateway. Re-run whenever the TTS **engine** changes (this is how the Chatterbox→Qwen3-TTS swap was validated). Drive with the service venv python + the `websockets` lib; the wire contract is `CONTRACT.md` (`text`→`flush`→`ready`/`started`→binary PCM frames→`done`; `voice.create`+one binary ref clip; `voice.list`/`voice.delete`). Connect with `?format=pcm` so frame bytes → samples is trivial (`<i2`/32768, duration = samples ÷ ready.sample_rate). The agent can't audition audio — assert non-empty audio of plausible duration + `started`/`done` + the `local_tts.*` log trail; **save the zh wav for the user to audition quality**.
+
+### tts-multilingual (en + zh synth, default voice)
+**Scenario:** Synthesize an English line and a Mandarin line through the default voice; both must return non-empty PCM. This is the Qwen-swap headline (Chatterbox-Turbo was English-only → Mandarin was nonsense).
+**Expected:** en ≈ text-length-appropriate seconds, zh non-empty (~5s for a short sentence). Log: `local_tts local-tts starting: model=…Qwen3-TTS… default_lang=auto`, `engine.warm done`, no `chatterbox` in the live logs. `@live` unit equivalent: `test_local_tts_engine.py::test_streams_pcm_chunks_default_voice_zh`.
+
+### tts-builtin-voice + clone-roundtrip
+**Scenario:** `voice.list` returns the 5 built-ins (nova/wren/flint/briar/ember, all `ref.wav`); synth with `?voice=wren` renders; `voice.create` (upload a >5s wav/mp3) → `voice.list` shows it → synth in it → `voice.delete`.
+**Expected:** `voice_store.get resolved voice_id=wren path=…/wren/ref.wav`; `voice_store.create done … ref_duration_ms=<n>`; synth non-empty in the cloned voice; `voice.deleted`.
+
+### tts-stale-voice-degrades (sad path — migration edge)
+**Scenario:** A user voice pack created under the OLD Chatterbox engine holds `conds.safetensors` (no `ref.wav`). Under Qwen, synth with that voiceId must degrade to the default voice, never crash.
+**Expected:** `local_tts.voice_store voice_store.get fallback=default reason=unknown_voice voice_id=<id>` (WARNING) → normal `done` with default-voice audio. Pre-swap clones need re-cloning to sound like themselves; the service never errors on them.
+
+> **Webui UI rows** (chat→en/zh reply→TTS audio; fish-clone-zh through the Add-voice modal; record/upload+mp3/preview/pick/delete on qwen; mobile 390 viewport) exercise the gateway↔local-tts wire through the real product but require the profile **PIN** to pass the login gate — hand to the operator to run, or supply the PIN. The wire itself is engine-neutral (unchanged port/protocol across the swap) and is proven at the service level by the probe cases above.
+
+## Voice-pack language metadata (Settings → Voice)
+
+A voice pack carries a single optional `language` (one of Qwen's 10: zh/en/ja/ko/de/fr/ru/pt/es/it, or unset). Verified live on :8888 (hot-copied build) — filter Select + modal dropdown render, preview `?lang` wire fires, service stores/lists it. Rows needing the PIN + audio audition are the operator's.
+
+### lang-service-store (WS probe — agent-verifiable)
+**Scenario:** `voice.create` with `language` → `voice.list` returns it. Drive with the service venv python (see the WS-probe cases above); create a pack with `{"language":"ja"}`, list, assert the entry's `language == "ja"`; delete to clean up.
+**Expected:** service stores the string verbatim + `voice.list` returns it. The service does NOT log the language on create (its create log carries `voice_id`/`name`/sizes only) — assert via the LIST output, not a log line. Built-in packs list `language: ""`.
+
+### lang-preview-wire (agent-verifiable via log trail)
+**Scenario:** Click a pack's "Play a sample". The gateway picks a greeting in the pack's language.
+**Expected log trail (gateway):** `[gateway:api:voices:preview] preview.request voiceId=<id> lang=<code-or-(unset)> greetingLen=<n>` → `preview.success`. Unset language → `lang="(unset)"` + the English greeting; a zh-tagged pack → `lang="zh"` + a Mandarin greeting (audition the audio to confirm the language — operator step).
+
+### lang-ui + lang-fish-import + lang-filter (operator — PIN + audio)
+**Scenario:** (a) Add-voice modal shows a **Language** single-select dropdown ("No language" default) next to Description; picking one + creating stores it → tile shows a flag badge. (b) Clone-from-Fish prefills the language from the Fish voice's `languages[0]` (∩ the 10; unsupported → unset). (c) The Voice-Packs **"All languages"** filter narrows the grid to packs whose `language` matches. (d) mobile 390 — filter + modal usable, no overflow. Reuses the Fish search `Select` + the shared `@sentient/config` LANGUAGE_DISPLAY map.

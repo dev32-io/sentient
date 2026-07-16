@@ -70,7 +70,6 @@ COPY --from=build  /app/gateway/dist        ./dist
 COPY --from=webui  /app/gateway/webui/dist  ./webui/dist
 
 COPY gateway/system_prompts/ ./system_prompts/
-COPY gateway/prompts/ ./prompts/
 COPY gateway/persona.md ./persona.md
 
 # Default config baked into image. Operator may override at runtime by

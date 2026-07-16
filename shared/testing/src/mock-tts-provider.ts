@@ -3,7 +3,7 @@
 
 export interface TTSAudioChunk {
   readonly data: Uint8Array;
-  readonly encoding: "opus" | "pcm" | "mp3";
+  readonly encoding: "opus" | "pcm";
   readonly sampleRate: number;
   readonly isFinal: boolean;
 }

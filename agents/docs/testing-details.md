@@ -100,4 +100,4 @@ it("emits transcript.final when speech ends");
 
 ## Mock providers, not internals
 
-When a test needs to simulate an external service (STTService, Hermes, Fish Audio, an MCP server), use a mock provider that mirrors the wire protocol — never mock the unit's own collaborators. Mocking internals re-encodes the structure you wanted freedom to refactor.
+When a test needs to simulate an external service (STTService, Hermes, local-tts, an MCP server), use a mock provider that mirrors the wire protocol — never mock the unit's own collaborators. Mocking internals re-encodes the structure you wanted freedom to refactor.

@@ -18,6 +18,7 @@ export interface ServiceVersionRecord {
   gateway: string;
   hermes: string;
   stt_service: string;
+  tts_service: string;
 }
 
 export interface SystemOrchestratorService {
@@ -30,6 +31,7 @@ export interface SystemOrchestratorService {
     gatewayVersion: string,
     hermesVersionPath: string,
     sttHealthUrl: string,
+    ttsHealthUrl: string,
   ): Promise<ServiceVersionRecord>;
 }
 
@@ -123,8 +125,8 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
           orchestrator: { applyAll: () => o.applyAll() },
         }),
       ),
-    getRequiredServicesStatus: (gatewayVersion, hermesVersionPath, sttHealthUrl) =>
-      resolveVersions(() => lastStatus, gatewayVersion, hermesVersionPath, sttHealthUrl),
+    getRequiredServicesStatus: (gatewayVersion, hermesVersionPath, sttHealthUrl, ttsHealthUrl) =>
+      resolveVersions(() => lastStatus, gatewayVersion, hermesVersionPath, sttHealthUrl, ttsHealthUrl),
   };
 }
 
@@ -141,28 +143,29 @@ async function readHermesVersion(hermesVersionPath: string): Promise<string> {
   }
 }
 
-const STT_HEALTH_TIMEOUT_MS = 3000;
+const SERVICE_HEALTH_TIMEOUT_MS = 3000;
 
-/** Fetch STT version from its /health endpoint. The orchestrator's
- *  service-status table never populates `version` (probes are tcp/http liveness
- *  checks, not version handshakes), so we hit the JSON health endpoint
- *  directly. Returns "unknown" on any error — the caller renders a dash. */
-async function resolveSttVersion(sttHealthUrl: string): Promise<string> {
+/** Fetch a companion service's version from its JSON `/health` endpoint. The
+ *  orchestrator's service-status table never populates `version` (probes are
+ *  tcp/http liveness checks, not version handshakes), so we hit the health
+ *  endpoint directly. `label` tags the log lines (e.g. "stt", "tts"). Returns
+ *  "unknown" on any error — the caller renders a dash. */
+async function resolveHealthVersion(healthUrl: string, label: string): Promise<string> {
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), STT_HEALTH_TIMEOUT_MS);
+  const timer = setTimeout(() => ctl.abort(), SERVICE_HEALTH_TIMEOUT_MS);
   try {
-    const res = await fetch(sttHealthUrl, { signal: ctl.signal });
+    const res = await fetch(healthUrl, { signal: ctl.signal });
     if (!res.ok) {
-      log.warn("versions.stt-health-non-ok", { url: sttHealthUrl, status: res.status });
+      log.warn(`versions.${label}-health-non-ok`, { url: healthUrl, status: res.status });
       return "unknown";
     }
     const body = (await res.json()) as { version?: string };
     const version = body.version ?? "unknown";
-    log.debug("versions.stt-fetched", { version, url: sttHealthUrl });
+    log.debug(`versions.${label}-fetched`, { version, url: healthUrl });
     return version;
   } catch (err: unknown) {
-    log.warn("versions.stt-fetch-failed", {
-      url: sttHealthUrl,
+    log.warn(`versions.${label}-fetch-failed`, {
+      url: healthUrl,
       reason: err instanceof Error ? err.message : String(err),
     });
     return "unknown";
@@ -176,11 +179,13 @@ async function resolveVersions(
   gatewayVersion: string,
   hermesVersionPath: string,
   sttHealthUrl: string,
+  ttsHealthUrl: string,
 ): Promise<ServiceVersionRecord> {
-  const [hermes, stt_service] = await Promise.all([
+  const [hermes, stt_service, tts_service] = await Promise.all([
     readHermesVersion(hermesVersionPath),
-    resolveSttVersion(sttHealthUrl),
+    resolveHealthVersion(sttHealthUrl, "stt"),
+    resolveHealthVersion(ttsHealthUrl, "tts"),
   ]);
-  log.debug("versions.resolved", { gateway: gatewayVersion, hermes, stt_service });
-  return { gateway: gatewayVersion, hermes, stt_service };
+  log.debug("versions.resolved", { gateway: gatewayVersion, hermes, stt_service, tts_service });
+  return { gateway: gatewayVersion, hermes, stt_service, tts_service };
 }

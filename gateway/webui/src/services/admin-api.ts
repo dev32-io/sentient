@@ -29,9 +29,6 @@ export interface SecretsStatus {
     openrouter: LlmProviderStatus;
     custom: LlmProviderStatus;
   };
-  tts: {
-    fish_audio: { has_key: boolean };
-  };
   home_assistant: {
     observe_token: { has_token: boolean };
     mcp_server_token: { has_token: boolean };
@@ -80,8 +77,6 @@ export interface AdminApi {
   ): Promise<Result<void>>;
   /** PUT /api/v1/admin/secrets/llm/active — sets the active LLM provider. */
   setActiveLlmProvider(token: string, provider: LlmProvider): Promise<Result<void>>;
-  /** PUT /api/v1/admin/secrets/tts/fish_audio — replaces the Fish Audio key. */
-  setFishAudioKey(token: string, value: string): Promise<Result<void>>;
   /**
    * POST /api/v1/auth/setup — first-admin bootstrap, no auth required.
    * Returns token + user on success so the wizard can immediately log in.
@@ -180,17 +175,6 @@ export function createAdminApi(config?: AdminApiConfig): AdminApi {
           method: "PUT",
           headers: jsonHeaders(bearerHeaders(token)),
           body: JSON.stringify({ provider }),
-        }),
-      );
-    },
-
-    setFishAudioKey(token, value) {
-      log.debug("setFishAudioKey", { hasKey: value !== "" });
-      return handleFetch<void>(
-        fetch(`${base}/api/v1/admin/secrets/tts/fish_audio`, {
-          method: "PUT",
-          headers: jsonHeaders(bearerHeaders(token)),
-          body: JSON.stringify({ value }),
         }),
       );
     },

@@ -54,7 +54,7 @@ export class PersonSession {
    */
   private _lastResponseId: string | null = null;
   /**
-   * Resolved Fish-Audio voice id for this person, hydrated from the user's
+   * Resolved local-tts voice id for this person, hydrated from the user's
    * profile.json#voice.id. `null` means "no per-user override resolved yet —
    * fall back to the gateway-wide default voiceId from cfg.tts.voice_id".
    * Mutated by the registry when profile.json is saved or first loaded.

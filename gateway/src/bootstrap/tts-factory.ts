@@ -1,79 +1,55 @@
-import type { SecretsStore } from "../admin/secrets-store-schema.ts";
 import type { StartupConfig } from "../config/startup-config.ts";
 import { getLog } from "../logging/logger.ts";
-import { createFishAudioProvider } from "../providers/tts/fish-audio-provider.ts";
-import type { TTSConfig, TTSProvider, TTSProviderFactory } from "../providers/tts/tts-types.ts";
+import { type LocalTtsProviderConfig, createLocalTtsProvider } from "../providers/tts/local-tts-provider.ts";
+import type { TTSProvider, TTSProviderFactory } from "../providers/tts/tts-types.ts";
 
 const log = getLog(["sentient", "bootstrap", "tts"]);
 
 export interface TtsService {
   /** Build a fresh, isolated TTSProvider for a single synthesis session.
-   *  Resolves the Fish Audio key lazily on each call from the wizard's
-   *  SecretsStore — so a key entered AFTER gateway boot (most prod
-   *  installs follow this path) is picked up by the next cycle without a
-   *  restart. The factory returns null when the key is still missing;
-   *  callers fall back to text-only. */
-  readonly createTTSProvider: (overrides?: { voiceId?: string }) => TTSProvider | null;
+   *  local-tts needs no API key, so a provider is ALWAYS built — there is no
+   *  "disabled" state at this layer. If the local-tts service is down or
+   *  unreachable, that surfaces at warmup()/ready() time inside the
+   *  provider; the streaming-tts-synthesizer already degrades gracefully
+   *  (falls back to text-only) on that failure. */
+  readonly createTTSProvider: TTSProviderFactory;
 }
 
 export interface CreateTtsServiceDeps {
   cfg: StartupConfig;
-  /** Wizard secrets — Fish Audio key lives here once the operator has
-   *  walked the Voice step. May be null on minimal deploys without
-   *  hermes config; falls back to FISH_AUDIO_API_KEY env in that case. */
-  secretsStore: Pick<SecretsStore, "getFishAudioKeySync"> | null;
 }
 
-function resolveFishKey(deps: CreateTtsServiceDeps): string | null {
-  const fromSecrets = deps.secretsStore?.getFishAudioKeySync();
-  if (fromSecrets) return fromSecrets;
-  const fromEnv = process.env.FISH_AUDIO_API_KEY;
-  return fromEnv && fromEnv.length > 0 ? fromEnv : null;
+function buildLocalTtsConfig(deps: CreateTtsServiceDeps, overrides?: { voiceId?: string }): LocalTtsProviderConfig {
+  return {
+    url: deps.cfg.tts.url,
+    format: deps.cfg.tts.format,
+    sampleRate: deps.cfg.tts.sample_rate,
+    defaultVoice: overrides?.voiceId ?? deps.cfg.tts.voice_id,
+    connectTimeoutMs: deps.cfg.tts.connect_timeout_ms,
+  };
 }
 
 export function createTtsService(deps: CreateTtsServiceDeps): TtsService {
-  const bootKey = resolveFishKey(deps);
   log.info("service-wired", {
-    haveKeyAtBoot: bootKey !== null,
+    url: deps.cfg.tts.url,
     voiceIdDefault: deps.cfg.tts.voice_id,
-    modelId: deps.cfg.tts.model_id,
-  });
-
-  const buildConfig = (apiKey: string, overrides?: { voiceId?: string }): TTSConfig => ({
-    apiKey,
-    voiceId: overrides?.voiceId ?? deps.cfg.tts.voice_id,
-    modelId: deps.cfg.tts.model_id,
     format: deps.cfg.tts.format,
-    bitrate: deps.cfg.tts.bitrate,
-    sampleRate: deps.cfg.tts.sample_rate,
-    latency: deps.cfg.tts.latency,
-    chunkLengthMs: deps.cfg.tts.chunk_length_ms,
-    connectTimeoutMs: deps.cfg.tts.connect_timeout_ms,
   });
 
-  const createTTSProvider = (overrides?: { voiceId?: string }): TTSProvider | null => {
-    const apiKey = resolveFishKey(deps);
-    if (!apiKey) {
-      log.warn("synth-skipped", { reason: "fish-key-not-set-in-secrets-or-env" });
-      return null;
-    }
-    return createFishAudioProvider(buildConfig(apiKey, overrides));
-  };
+  const createTTSProvider = (overrides?: { voiceId?: string }): TTSProvider =>
+    createLocalTtsProvider(buildLocalTtsConfig(deps, overrides));
 
   return { createTTSProvider };
 }
 
-/** Wrap the lazy `null`-returning factory into the strict TTSProviderFactory
- *  shape (non-null) used by callers that cannot tolerate a missing provider.
- *  The wrapper throws if the key still isn't configured at synth time —
- *  surfaces in a real cycle with a clear pointer to the wizard. */
+/** Adapts `TtsService.createTTSProvider` (which already returns the strict
+ *  non-null `TTSProviderFactory` shape) to resolve the per-session voiceId
+ *  from `getVoiceId` before building. Kept as its own function — callers
+ *  (phase-services.ts) close over a per-session `getVoiceId` at session-setup
+ *  time, separate from `TtsService` construction at boot time. */
 export function asStrictFactory(svc: TtsService, getVoiceId: () => string | null): TTSProviderFactory {
   return () => {
     const voiceId = getVoiceId();
-    const provider = voiceId ? svc.createTTSProvider({ voiceId }) : svc.createTTSProvider();
-    if (!provider) {
-      throw new Error("Fish Audio key not configured. Open the wizard's Voice step or set FISH_AUDIO_API_KEY.");
-    }
-    return provider;
+    return voiceId ? svc.createTTSProvider({ voiceId }) : svc.createTTSProvider();
   };
 }

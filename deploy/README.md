@@ -97,7 +97,7 @@ setup wizard walks through:
 - Admin password / PIN
 - LLM provider + key (Ollama Cloud — direct API to ollama.com — or
   OpenRouter, or Custom for a local LAN ollama daemon)
-- TTS provider + voice (Fish Audio)
+- Voice step (acknowledge-and-advance — local-tts needs no key)
 - Optional MCPs (Home Assistant, Music Assistant)
 
 Once finished, the gateway spawns the per-user Hermes worker and is
