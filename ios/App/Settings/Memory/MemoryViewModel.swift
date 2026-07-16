@@ -112,7 +112,10 @@ final class MemoryViewModel {
             case .saving: save = .saving
             case .restarting: save = .restarting
             case .ready:
-                await reload(slot)
+                if await reload(slot) == false {
+                    save = .failed("Saved, but couldn't refresh \(slot.label) — check your changes before saving again.")
+                    return false
+                }
             case .alreadyApplying:
                 save = .alreadyApplying
                 log.warn("save.already-applying slot=\(slot.rawValue)")
@@ -127,14 +130,28 @@ final class MemoryViewModel {
     }
 
     /// Refetch a slot's server truth into original + draft after a successful save.
-    private func reload(_ slot: Slot) async {
+    /// Returns false when the refetch itself failed — the save already succeeded
+    /// server-side, but a dropped refetch would leave `original` stale and the
+    /// slot would wrongly keep reporting dirty; the caller surfaces that instead
+    /// of silently continuing.
+    private func reload(_ slot: Slot) async -> Bool {
         do {
             let result = try await settings.profileRepository.getMemory(slot: slot.sdk)
-            if case .success(let s) = onEnum(of: result) {
+            switch onEnum(of: result) {
+            case .success(let s):
                 apply(s.data.content, charLimit: Int(s.data.charLimit), to: slot)
+                return true
+            case .failure(let f):
+                log.warn("reload.slot.failed slot=\(slot.rawValue) kind=\(f.error.kind)")
+                return false
+            case .loading:
+                return true
             }
+        } catch is CancellationError {
+            return true
         } catch {
             log.warn("reload.slot.threw slot=\(slot.rawValue)")
+            return false
         }
     }
 

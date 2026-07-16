@@ -114,7 +114,14 @@ class FishCloneViewModel(
                         cur.copy(loadingMore = false, voices = dedup(cur.voices, r.value.voices), hasMore = r.value.hasMore)
                     }
                 }
-                else -> _state.update { it.copy(loadingMore = false) }
+                FishResult.FeatureDisabled -> {
+                    log.warn("loadMore.feature-disabled")
+                    _state.update { it.copy(loadingMore = false, featureDisabled = true) }
+                }
+                is FishResult.Failure -> {
+                    log.warn("loadMore.failed", mapOf("kind" to (r.error::class.simpleName ?: "unknown")))
+                    _state.update { it.copy(loadingMore = false, errorMessage = "Couldn't load more voices.") }
+                }
             }
         }
     }

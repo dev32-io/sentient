@@ -98,6 +98,15 @@ private fun MembersContent(
                 .padding(horizontal = tokens.space.lg, vertical = tokens.space.md),
             verticalArrangement = Arrangement.spacedBy(tokens.space.md),
         ) {
+            if (state.accessError && state.loaded) {
+                Text(
+                    "Couldn't load members.",
+                    modifier = Modifier.testTag("settings-members-access-error"),
+                    color = Color(Colors.ink3),
+                    fontSize = tokens.type.base,
+                )
+                return@Column
+            }
             if (!state.isAdmin && state.loaded) {
                 Text(
                     "You need to be an admin to manage members.",
@@ -268,6 +277,7 @@ private fun MembersScreenPreview() {
                     UserSummary("u2", "Sam", isAdmin = false, avatarTint = "#3A4232"),
                 ),
                 selfUserId = "u1",
+                isAdmin = true,
                 loaded = true,
             ),
             onBack = {}, onAdd = {}, onToggleAdmin = {}, onDeleteClick = {}, onDeleteConfirm = {},

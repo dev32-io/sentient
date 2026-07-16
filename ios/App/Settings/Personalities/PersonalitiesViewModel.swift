@@ -52,7 +52,7 @@ final class PersonalitiesViewModel {
                 personalities = s.data.personalities
                 activeName = s.data.activeName
                 phase = .ready
-                log.info("load.ready count=\(personalities.count) active=\(activeName ?? "<none>")")
+                log.info("load.ready count=\(personalities.count)")
             case .failure(let f):
                 phase = .failed(f.error.userMessage)
                 log.warn("load.failed kind=\(f.error.kind)")
@@ -67,12 +67,12 @@ final class PersonalitiesViewModel {
     }
 
     func activate(_ name: String) async {
-        log.info("activate name=\(name)")
+        log.info("activate nameLen=\(name.count)")
         await run(ProfileMutationActivatePersonality(name: name), label: "activate")
     }
 
     func delete(_ name: String) async {
-        log.info("delete name=\(name)")
+        log.info("delete nameLen=\(name.count)")
         await run(ProfileMutationDeletePersonality(name: name), label: "delete")
     }
 
@@ -84,7 +84,7 @@ final class PersonalitiesViewModel {
             op = .failed("Name can't be empty.")
             return false
         }
-        log.info("create name=\(trimmed)")
+        log.info("create nameLen=\(trimmed.count)")
         await run(ProfileMutationCreatePersonality(name: trimmed, body: body), label: "create")
         return op == .idle
     }

@@ -103,14 +103,24 @@ final class VoiceFishViewModel {
                     title: title.isEmpty ? nil : title,
                     page: KotlinInt(int: Int32(next))
                 )
-                if case .success(let s) = onEnum(of: result), let page = s.value {
+                switch onEnum(of: result) {
+                case .success(let s):
+                    guard let page = s.value else { return }
                     let existing = Set(entries.map { $0.id })
                     entries += page.voices.filter { !existing.contains($0.id) }
                     hasMore = page.hasMore
                     currentPage = next
                     log.info("loadMore.ok page=\(next) total=\(entries.count)")
+                case .featureDisabled:
+                    phase = .disabled
+                    log.warn("loadMore.feature-disabled")
+                case .failure(let f):
+                    notice = "Couldn't load more voices"
+                    log.warn("loadMore.failed reason=\(fishFailure(f.error))")
                 }
+            } catch is CancellationError {
             } catch {
+                notice = "Couldn't load more voices"
                 log.warn("loadMore.threw reason=\(error.localizedDescription)")
             }
         }

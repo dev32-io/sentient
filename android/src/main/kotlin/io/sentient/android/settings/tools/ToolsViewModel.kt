@@ -27,6 +27,7 @@ import io.sentient.mobiledata.usecase.settings.ApplyState
 import io.sentient.mobiledata.usecase.settings.ProfileMutation
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.settings.McpCatalogView
+import io.sentient.mobilesdk.settings.ProfileTools
 import io.sentient.mobilesdk.settings.ProfileV1
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -46,9 +47,16 @@ data class ToolsUiState(
     val alreadyApplying: Boolean = false,
     val applyError: String? = null,
 ) {
-    val dirty: Boolean get() = original != null && draft != null && draft.tools != original.tools
+    /** Compares with `toolsets` normalized (null → empty) — the server can round-trip a
+     *  never-configured toolsets as either null or [], and those are semantically identical;
+     *  comparing raw would spuriously flag a save as dirty on a profile the user never touched. */
+    val dirty: Boolean
+        get() = original != null && draft != null && draft.tools.normalized() != original.tools.normalized()
+
     val applyActive: Boolean get() = saving || restarting
 }
+
+private fun ProfileTools.normalized(): ProfileTools = copy(toolsets = toolsets ?: emptyList())
 
 class ToolsViewModel(private val component: SettingsComponent) : ViewModel() {
     private val log = createLogger("android", "settings", "tools-vm")
@@ -104,7 +112,7 @@ class ToolsViewModel(private val component: SettingsComponent) : ViewModel() {
     }
 
     private inline fun editTools(
-        transform: (ProfileV1, McpCatalogView) -> io.sentient.mobilesdk.settings.ProfileTools,
+        transform: (ProfileV1, McpCatalogView) -> ProfileTools,
     ) {
         _ui.update { s ->
             val draft = s.draft ?: return@update s

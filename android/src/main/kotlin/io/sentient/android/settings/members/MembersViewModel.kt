@@ -43,13 +43,15 @@ data class AddMemberState(
 data class MembersUiState(
     val users: List<UserSummary> = emptyList(),
     val selfUserId: String = "",
-    /** True until me() proves otherwise — the root already gates the Admin group, so assume allowed. */
-    val isAdmin: Boolean = true,
+    /** Fail-safe: false until me() proves admin. An unresolved/failed me() must never grant access. */
+    val isAdmin: Boolean = false,
     val loaded: Boolean = false,
     val busy: Boolean = false,
     val addDialog: AddMemberState? = null,
     val deleteTarget: UserSummary? = null,
     val errorMessage: String? = null,
+    /** True when me() itself failed — distinct from a confirmed non-admin (mirrors iOS Access.error). */
+    val accessError: Boolean = false,
 ) {
     val slotsFree: Int get() = householdSlotsFree(users.size)
     val canAdd: Boolean get() = canAddUser(users.size)
@@ -68,11 +70,19 @@ class MembersViewModel(
         refresh()
     }
 
-    /** Load self id (for the self-guard) then the member list. */
+    /** Load self id (for the self-guard) then the member list. Fail-safe: a failed/loading
+     *  me() never falls through to the roster with a defeated (isAdmin=true) guard. */
     fun refresh() {
         viewModelScope.launch {
-            (account.me() as? SentientResult.Success)?.let { me ->
-                _state.update { it.copy(selfUserId = me.data.userId, isAdmin = me.data.isAdmin) }
+            when (val me = account.me()) {
+                is SentientResult.Success ->
+                    _state.update { it.copy(selfUserId = me.data.userId, isAdmin = me.data.isAdmin, accessError = false) }
+                is SentientResult.Failure -> {
+                    log.warn("me.failed", mapOf("kind" to me.error.kind))
+                    _state.update { it.copy(loaded = true, isAdmin = false, accessError = true) }
+                    return@launch
+                }
+                is SentientResult.Loading -> Unit
             }
             when (val r = admin.listUsers()) {
                 is SentientResult.Success -> {

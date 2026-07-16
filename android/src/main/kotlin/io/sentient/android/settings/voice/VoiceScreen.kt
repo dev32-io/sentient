@@ -28,13 +28,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.sentient.android.settings.components.SettingsTopBar
 import io.sentient.android.theme.LocalTokens
+import io.sentient.android.theme.SentientTheme
 import io.sentient.mobilesdk.design.Colors
+import io.sentient.mobilesdk.settings.VoiceSummary
 
 private const val TITLE = "Voice"
 private const val EMPTY_TEXT = "No voices match — clear filters or add your own."
@@ -50,6 +53,46 @@ fun VoiceScreen(
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     RefreshOnReturn(vm)
+    VoiceScreenContent(
+        state = state,
+        onBack = onBack,
+        onAddVoice = onAddVoice,
+        onCloneFish = onCloneFish,
+        onQuery = vm::setQuery,
+        onSource = vm::setSource,
+        onLanguage = vm::setLanguage,
+        onToggleTag = vm::toggleTag,
+        onRetry = vm::refresh,
+        onTogglePreview = vm::togglePreview,
+        onPick = vm::pick,
+        onRequestDelete = vm::requestDelete,
+        onDismissNotice = vm::clearNotice,
+        onCancelDelete = vm::cancelDelete,
+        onConfirmDelete = vm::confirmDelete,
+        modifier = modifier,
+    )
+}
+
+/** Stateless page body — no VM. Previewable per [VoiceUiState]. */
+@Composable
+private fun VoiceScreenContent(
+    state: VoiceUiState,
+    onBack: () -> Unit,
+    onAddVoice: () -> Unit,
+    onCloneFish: () -> Unit,
+    onQuery: (String) -> Unit,
+    onSource: (String) -> Unit,
+    onLanguage: (String) -> Unit,
+    onToggleTag: (String) -> Unit,
+    onRetry: () -> Unit,
+    onTogglePreview: (VoiceSummary) -> Unit,
+    onPick: (VoiceSummary) -> Unit,
+    onRequestDelete: (VoiceSummary) -> Unit,
+    onDismissNotice: () -> Unit,
+    onCancelDelete: () -> Unit,
+    onConfirmDelete: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val tokens = LocalTokens.current
     Column(
         modifier = modifier.fillMaxSize().safeDrawingPadding().testTag("settings-voice-screen"),
@@ -67,19 +110,19 @@ fun VoiceScreen(
                 activeTags = state.filter.tags,
                 allTags = state.allTags,
                 allLanguages = state.allLanguages,
-                onQuery = vm::setQuery,
-                onSource = vm::setSource,
-                onLanguage = vm::setLanguage,
-                onToggleTag = vm::toggleTag,
+                onQuery = onQuery,
+                onSource = onSource,
+                onLanguage = onLanguage,
+                onToggleTag = onToggleTag,
             )
         }
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            VoiceContent(state = state, vm = vm)
+            VoiceContent(state = state, onRetry = onRetry, onTogglePreview = onTogglePreview, onPick = onPick, onRequestDelete = onRequestDelete)
         }
-        if (state.notice != null) NoticeBanner(text = state.notice.orEmpty(), onDismiss = vm::clearNotice)
+        if (state.notice != null) NoticeBanner(text = state.notice.orEmpty(), onDismiss = onDismissNotice)
     }
     state.pendingDelete?.let { target ->
-        DeleteConfirmDialog(name = target.name, onCancel = vm::cancelDelete, onConfirm = vm::confirmDelete)
+        DeleteConfirmDialog(name = target.name, onCancel = onCancelDelete, onConfirm = onConfirmDelete)
     }
 }
 
@@ -119,17 +162,28 @@ private fun VoiceActions(fishEnabled: Boolean, onAddVoice: () -> Unit, onCloneFi
 }
 
 @Composable
-private fun VoiceContent(state: VoiceUiState, vm: VoiceViewModel) {
+private fun VoiceContent(
+    state: VoiceUiState,
+    onRetry: () -> Unit,
+    onTogglePreview: (VoiceSummary) -> Unit,
+    onPick: (VoiceSummary) -> Unit,
+    onRequestDelete: (VoiceSummary) -> Unit,
+) {
     when {
         state.loading -> CenteredProgress()
-        state.errorMessage != null -> ErrorRetry(message = state.errorMessage, onRetry = vm::refresh)
+        state.errorMessage != null -> ErrorRetry(message = state.errorMessage, onRetry = onRetry)
         state.shown.isEmpty() -> EmptyState()
-        else -> VoiceList(state = state, vm = vm)
+        else -> VoiceList(state = state, onTogglePreview = onTogglePreview, onPick = onPick, onRequestDelete = onRequestDelete)
     }
 }
 
 @Composable
-private fun VoiceList(state: VoiceUiState, vm: VoiceViewModel) {
+private fun VoiceList(
+    state: VoiceUiState,
+    onTogglePreview: (VoiceSummary) -> Unit,
+    onPick: (VoiceSummary) -> Unit,
+    onRequestDelete: (VoiceSummary) -> Unit,
+) {
     val tokens = LocalTokens.current
     LazyColumn(
         modifier = Modifier.fillMaxSize().testTag("voice-list"),
@@ -146,9 +200,9 @@ private fun VoiceList(state: VoiceUiState, vm: VoiceViewModel) {
                 isPlaying = voice.voiceId == state.previewPlayingId,
                 isLoading = voice.voiceId == state.previewLoadingId,
                 busy = voice.voiceId == state.busyId,
-                onPlay = { vm.togglePreview(voice) },
-                onPick = { vm.pick(voice) },
-                onDelete = { vm.requestDelete(voice) },
+                onPlay = { onTogglePreview(voice) },
+                onPick = { onPick(voice) },
+                onDelete = { onRequestDelete(voice) },
             )
         }
     }
@@ -215,3 +269,40 @@ private fun DeleteConfirmDialog(name: String, onCancel: () -> Unit, onConfirm: (
 }
 
 private const val NOTICE_MS: Long = 2_800L
+
+private val previewVoices = listOf(
+    VoiceSummary(
+        voiceId = "abc",
+        name = "Dad",
+        description = "Warm, calm narration voice for evening stories.",
+        tags = listOf("warm", "calm"),
+        language = "en",
+        source = "user",
+    ),
+)
+
+private val noopVoiceCallback: (VoiceSummary) -> Unit = {}
+
+@Preview
+@Composable
+private fun VoiceScreenPreview() {
+    SentientTheme {
+        VoiceScreenContent(
+            state = VoiceUiState(loading = false, allVoices = previewVoices, shown = previewVoices, activeVoiceId = "abc"),
+            onBack = {},
+            onAddVoice = {},
+            onCloneFish = {},
+            onQuery = {},
+            onSource = {},
+            onLanguage = {},
+            onToggleTag = {},
+            onRetry = {},
+            onTogglePreview = noopVoiceCallback,
+            onPick = noopVoiceCallback,
+            onRequestDelete = noopVoiceCallback,
+            onDismissNotice = {},
+            onCancelDelete = {},
+            onConfirmDelete = {},
+        )
+    }
+}

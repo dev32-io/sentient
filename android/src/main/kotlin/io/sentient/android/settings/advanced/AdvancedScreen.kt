@@ -26,18 +26,25 @@ import io.sentient.android.settings.components.SettingsPaneSub
 import io.sentient.android.settings.components.SettingsTopBar
 import io.sentient.android.theme.LocalTokens
 import io.sentient.android.theme.SentientTheme
+import io.sentient.mobilesdk.settings.ProfileEnums
 import kotlin.math.roundToInt
 
 private const val HEAD_SUB = "Power-user knobs. Defaults are sensible — only touch if you know why."
 
-private val REASONING_OPTIONS = listOf(
-    SelectOption("none", "None · fastest"),
-    SelectOption("minimal", "Minimal · default"),
-    SelectOption("low", "Low"),
-    SelectOption("medium", "Medium"),
-    SelectOption("high", "High"),
-    SelectOption("xhigh", "Extra high · slowest"),
+/** Human-readable labels for the SDK-canonical reasoning values (mirrors iOS AdvancedScreen). */
+private val REASONING_LABELS: Map<String, String> = mapOf(
+    "none" to "None · fastest",
+    "minimal" to "Minimal · default",
+    "low" to "Low",
+    "medium" to "Medium",
+    "high" to "High",
+    "xhigh" to "Extra high · slowest",
 )
+
+/** Values come from the SDK (ProfileEnums), not a hardcoded list, so a new server-added
+ *  level round-trips instead of drifting out of sync. */
+private val REASONING_OPTIONS: List<SelectOption> =
+    ProfileEnums.reasoningEfforts.map { SelectOption(it, REASONING_LABELS[it] ?: it) }
 
 @Composable
 fun AdvancedScreen(

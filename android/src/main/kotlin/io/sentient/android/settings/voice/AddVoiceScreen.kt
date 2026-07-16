@@ -31,11 +31,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.sentient.android.settings.components.RowSegmented
 import io.sentient.android.settings.components.SegmentOption
 import io.sentient.android.settings.components.SettingsTopBar
 import io.sentient.android.theme.LocalTokens
+import io.sentient.android.theme.SentientTheme
 import io.sentient.mobilesdk.design.Colors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -59,6 +61,48 @@ fun AddVoiceScreen(
     }
     LaunchedEffect(state.done) { if (state.done) onBack() }
 
+    AddVoiceContent(
+        state = state,
+        onBack = onBack,
+        onSetMode = vm::setMode,
+        onPickFile = { picker.launch(UPLOAD_MIME) },
+        onRecordStart = vm::startRecording,
+        onMicDenied = vm::onMicDenied,
+        onStop = vm::stopRecording,
+        onCancel = vm::cancelRecording,
+        onTogglePlayback = vm::togglePlayback,
+        onReRecord = vm::reRecord,
+        onName = vm::setName,
+        onDescription = vm::setDescription,
+        onAddTag = vm::addTag,
+        onRemoveTag = vm::removeTag,
+        onLanguage = vm::setLanguage,
+        onSubmit = vm::submit,
+        modifier = modifier,
+    )
+}
+
+/** Stateless page body — no VM. Previewable per [AddVoiceUiState]. */
+@Composable
+private fun AddVoiceContent(
+    state: AddVoiceUiState,
+    onBack: () -> Unit,
+    onSetMode: (AddVoiceMode) -> Unit,
+    onPickFile: () -> Unit,
+    onRecordStart: () -> Unit,
+    onMicDenied: () -> Unit,
+    onStop: () -> Unit,
+    onCancel: () -> Unit,
+    onTogglePlayback: () -> Unit,
+    onReRecord: () -> Unit,
+    onName: (String) -> Unit,
+    onDescription: (String) -> Unit,
+    onAddTag: (String) -> Unit,
+    onRemoveTag: (String) -> Unit,
+    onLanguage: (String) -> Unit,
+    onSubmit: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val tokens = LocalTokens.current
     Column(modifier = modifier.fillMaxSize().safeDrawingPadding().testTag("settings-voice-add-screen")) {
         SettingsTopBar(title = "Add Voice", onBack = onBack, backTestTag = "settings-voice-add-back")
@@ -72,33 +116,51 @@ fun AddVoiceScreen(
             RowSegmented(
                 options = MODE_OPTIONS,
                 selected = if (state.mode == AddVoiceMode.RECORD) "record" else "upload",
-                onSelect = { vm.setMode(if (it == "record") AddVoiceMode.RECORD else AddVoiceMode.UPLOAD) },
+                onSelect = { onSetMode(if (it == "record") AddVoiceMode.RECORD else AddVoiceMode.UPLOAD) },
                 enabled = !state.submitting,
                 modifier = Modifier.testTag("voice-add-mode"),
             )
-            CaptureArea(state = state, vm = vm, onPickFile = { picker.launch(UPLOAD_MIME) })
+            CaptureArea(
+                state = state,
+                onPickFile = onPickFile,
+                onRecordStart = onRecordStart,
+                onMicDenied = onMicDenied,
+                onStop = onStop,
+                onCancel = onCancel,
+                onTogglePlayback = onTogglePlayback,
+                onReRecord = onReRecord,
+            )
             VoiceMetaForm(
                 name = state.name,
                 description = state.description,
                 tags = state.tags,
                 language = state.language,
-                onName = vm::setName,
-                onDescription = vm::setDescription,
-                onAddTag = vm::addTag,
-                onRemoveTag = vm::removeTag,
-                onLanguage = vm::setLanguage,
+                onName = onName,
+                onDescription = onDescription,
+                onAddTag = onAddTag,
+                onRemoveTag = onRemoveTag,
+                onLanguage = onLanguage,
                 enabled = !state.submitting,
             )
             if (state.errorMessage != null) {
                 Text(text = state.errorMessage.orEmpty(), color = Color(Colors.stop), fontSize = tokens.type.sm)
             }
-            SubmitButton(state = state, onSubmit = vm::submit)
+            SubmitButton(state = state, onSubmit = onSubmit)
         }
     }
 }
 
 @Composable
-private fun CaptureArea(state: AddVoiceUiState, vm: AddVoiceViewModel, onPickFile: () -> Unit) {
+private fun CaptureArea(
+    state: AddVoiceUiState,
+    onPickFile: () -> Unit,
+    onRecordStart: () -> Unit,
+    onMicDenied: () -> Unit,
+    onStop: () -> Unit,
+    onCancel: () -> Unit,
+    onTogglePlayback: () -> Unit,
+    onReRecord: () -> Unit,
+) {
     when (state.mode) {
         AddVoiceMode.RECORD -> RecordPanel(
             recording = state.recording,
@@ -107,18 +169,18 @@ private fun CaptureArea(state: AddVoiceUiState, vm: AddVoiceViewModel, onPickFil
             audioDurationMs = state.audioDurationMs,
             previewPlaying = state.previewPlaying,
             micDenied = state.micDenied,
-            onRecordStart = vm::startRecording,
-            onMicDenied = vm::onMicDenied,
-            onStop = vm::stopRecording,
-            onCancel = vm::cancelRecording,
-            onTogglePlayback = vm::togglePlayback,
-            onReRecord = vm::reRecord,
+            onRecordStart = onRecordStart,
+            onMicDenied = onMicDenied,
+            onStop = onStop,
+            onCancel = onCancel,
+            onTogglePlayback = onTogglePlayback,
+            onReRecord = onReRecord,
         )
         AddVoiceMode.UPLOAD -> UploadPanel(
             hasAudio = state.hasAudio,
             previewPlaying = state.previewPlaying,
             onPickFile = onPickFile,
-            onTogglePlayback = vm::togglePlayback,
+            onTogglePlayback = onTogglePlayback,
         )
     }
 }
@@ -158,3 +220,34 @@ private suspend fun readUpload(context: Context, uri: Uri): ByteArray? =
     withContext(Dispatchers.IO) {
         runCatching { context.contentResolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()
     }
+
+@Preview
+@Composable
+private fun AddVoiceScreenPreview() {
+    SentientTheme {
+        AddVoiceContent(
+            state = AddVoiceUiState(
+                mode = AddVoiceMode.RECORD,
+                hasAudio = true,
+                audioDurationMs = 8_400L,
+                name = "Dad",
+                tags = listOf("warm"),
+            ),
+            onBack = {},
+            onSetMode = {},
+            onPickFile = {},
+            onRecordStart = {},
+            onMicDenied = {},
+            onStop = {},
+            onCancel = {},
+            onTogglePlayback = {},
+            onReRecord = {},
+            onName = {},
+            onDescription = {},
+            onAddTag = {},
+            onRemoveTag = {},
+            onLanguage = {},
+            onSubmit = {},
+        )
+    }
+}

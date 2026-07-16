@@ -6,16 +6,17 @@
 // a guard state, never the roster.
 //
 // Add-user needs a full valid ProfileBody, but mobile collects only name + PIN, so
-// the new member's profile is TEMPLATED off the admin's own current profile (a
-// sanctioned rare `profileRepository` read) — this guarantees a valid model.id
-// (required, min-1) that a blank default cannot. Server `applyProfileDefaults`
-// then fills tools/toolsets. PINs are NEVER logged. @MainActor @Observable.
+// the new member's profile is a STATIC template (defaultMemberProfile(), mirroring
+// android MemberDefaults.kt / webui AccountWizard INITIAL_DRAFT) — NOT the admin's
+// own live profile. This VM has no ProfileRepository dependency: seeding a new
+// member's profile from the admin's current settings would leak the admin's model/
+// voice/advanced choices onto every new member and is an architecture violation
+// (a page VM reaching past its usecases). Server `applyProfileDefaults` fills
+// tools/toolsets. PINs are NEVER logged. @MainActor @Observable.
 // ---------------------------------------------------------------------------
 import Foundation
 import MobileData
 
-private let defaultPersonaTemplate = "default"
-private let addPrepareFailure = "Couldn't prepare the new member"
 private let addGenericFailure = "Couldn't add member"
 
 @MainActor
@@ -40,13 +41,11 @@ final class MembersViewModel {
 
     private let account: AccountUseCases
     private let admin: AdminUseCases
-    private let profile: ProfileRepository
     private let log = AppLog("settings", "members-vm")
 
-    init(account: AccountUseCases, admin: AdminUseCases, profile: ProfileRepository) {
+    init(account: AccountUseCases, admin: AdminUseCases) {
         self.account = account
         self.admin = admin
-        self.profile = profile
     }
 
     /// True while another member can be added (client-side cosmetic; server enforces the cap).
@@ -122,19 +121,16 @@ final class MembersViewModel {
     }
 
     /// Add a member (name + PIN). Returns true on success (caller closes the sheet).
+    /// Profile is a static template (defaultMemberProfile()) — never the admin's own.
     func addUser(displayName: String, pin: String) async -> Bool {
         isAdding = true
         addError = nil
         defer { isAdding = false }
-        guard let template = await loadTemplate() else {
-            addError = addPrepareFailure
-            return false
-        }
         let request = CreateUserRequest(
             displayName: displayName,
             pin: pin,
             isAdmin: false,
-            profile: buildProfileBody(from: template)
+            profile: defaultMemberProfile()
         )
         do {
             let result = try await admin.createUser(request: request)
@@ -187,35 +183,5 @@ final class MembersViewModel {
         } catch {
             access = .error
         }
-    }
-
-    private func loadTemplate() async -> ProfileV1? {
-        do {
-            let result = try await profile.getProfile()
-            switch onEnum(of: result) {
-            case .success(let s): return s.data
-            case .failure, .loading: return nil
-            }
-        } catch {
-            return nil
-        }
-    }
-
-    /// Build the new member's profile from the admin's: keep valid model/voice/audio/
-    /// compression/advanced; reset persona + extra prompt to a clean default.
-    private func buildProfileBody(from template: ProfileV1) -> ProfileBody {
-        ProfileBody(
-            model: template.model,
-            voice: template.voice,
-            audio: template.audio,
-            persona: ProfilePersona(template: defaultPersonaTemplate, overrides: ""),
-            tools: ProfileTools(enabled: [:], toolsets: nil),
-            compression: template.compression,
-            advanced: ProfileAdvanced(
-                extraSystemPrompt: "",
-                maxTokens: template.advanced.maxTokens,
-                reasoningEffort: template.advanced.reasoningEffort
-            )
-        )
     }
 }

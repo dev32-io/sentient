@@ -18,8 +18,7 @@ struct MembersScreen: View {
         self.onBack = onBack
         _vm = State(initialValue: MembersViewModel(
             account: settings.account,
-            admin: settings.admin,
-            profile: settings.profileRepository
+            admin: settings.admin
         ))
     }
 

@@ -4,12 +4,9 @@
 // spinner, inline error / notice / applying banners, and the leading back +
 // trailing Save toolbar buttons.
 //
-// PLACEMENT NOTE: this is cross-cutting chrome that would naturally live in
-// `Settings/Components/`, but the mobile-settings-parity Soul-page task scopes
-// edits to the Soul page directories only (no Settings-root / Components edits,
-// which other agents own concurrently). It is parked here (the first Soul page)
-// and shared across the group. The `Soul` prefix keeps it collision-free with the
-// User/Admin/Support page files other agents build in parallel.
+// Cross-cutting chrome, shared across the Soul-page group — lives in
+// `Settings/Components/` alongside the other shared settings leaves. The `Soul`
+// prefix keeps it collision-free with the User/Admin/Support page files.
 //
 // All members are stateless leaves: value inputs + closures, no VM, no I/O.
 // ---------------------------------------------------------------------------

@@ -31,10 +31,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.sentient.android.settings.components.SettingsTopBar
 import io.sentient.android.theme.LocalTokens
+import io.sentient.android.theme.SentientTheme
 import io.sentient.mobilesdk.design.Colors
+import io.sentient.mobilesdk.settings.FishVoiceEntry
 
 private const val TITLE = "Clone from Fish"
 
@@ -50,29 +53,89 @@ fun FishCloneScreen(
     val inForm = state.selected != null
     BackHandler(enabled = inForm) { vm.backToList() }
 
+    FishCloneContent(
+        state = state,
+        inForm = inForm,
+        onBack = { if (inForm) vm.backToList() else onBack() },
+        onQuery = vm::setQuery,
+        onRetry = vm::retry,
+        onLoadMore = vm::loadMore,
+        onTogglePlay = vm::togglePlay,
+        onPickForClone = vm::pickForClone,
+        onName = vm::setName,
+        onDescription = vm::setDescription,
+        onAddTag = vm::addTag,
+        onRemoveTag = vm::removeTag,
+        onLanguage = vm::setLanguage,
+        onClone = vm::clone,
+        modifier = modifier,
+    )
+}
+
+/** Stateless page body — no VM. Previewable per [FishCloneUiState]. */
+@Composable
+private fun FishCloneContent(
+    state: FishCloneUiState,
+    inForm: Boolean,
+    onBack: () -> Unit,
+    onQuery: (String) -> Unit,
+    onRetry: () -> Unit,
+    onLoadMore: () -> Unit,
+    onTogglePlay: (FishVoiceEntry) -> Unit,
+    onPickForClone: (FishVoiceEntry) -> Unit,
+    onName: (String) -> Unit,
+    onDescription: (String) -> Unit,
+    onAddTag: (String) -> Unit,
+    onRemoveTag: (String) -> Unit,
+    onLanguage: (String) -> Unit,
+    onClone: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Column(modifier = modifier.fillMaxSize().safeDrawingPadding().testTag("settings-voice-fish-screen")) {
         SettingsTopBar(
             title = TITLE,
-            onBack = { if (inForm) vm.backToList() else onBack() },
+            onBack = onBack,
             backTestTag = "settings-voice-fish-back",
         )
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             when {
                 state.featureDisabled -> GateMessage()
-                inForm -> CloneForm(state = state, vm = vm)
-                else -> BrowseView(state = state, vm = vm)
+                inForm -> CloneForm(
+                    state = state,
+                    onName = onName,
+                    onDescription = onDescription,
+                    onAddTag = onAddTag,
+                    onRemoveTag = onRemoveTag,
+                    onLanguage = onLanguage,
+                    onClone = onClone,
+                )
+                else -> BrowseView(
+                    state = state,
+                    onQuery = onQuery,
+                    onRetry = onRetry,
+                    onLoadMore = onLoadMore,
+                    onTogglePlay = onTogglePlay,
+                    onPickForClone = onPickForClone,
+                )
             }
         }
     }
 }
 
 @Composable
-private fun BrowseView(state: FishCloneUiState, vm: FishCloneViewModel) {
+private fun BrowseView(
+    state: FishCloneUiState,
+    onQuery: (String) -> Unit,
+    onRetry: () -> Unit,
+    onLoadMore: () -> Unit,
+    onTogglePlay: (FishVoiceEntry) -> Unit,
+    onPickForClone: (FishVoiceEntry) -> Unit,
+) {
     val tokens = LocalTokens.current
     Column(modifier = Modifier.fillMaxSize()) {
         VoiceTextField(
             value = state.query,
-            onValueChange = vm::setQuery,
+            onValueChange = onQuery,
             placeholder = "Search Fish voices",
             modifier = Modifier.padding(horizontal = tokens.space.lg, vertical = tokens.space.md),
             testTag = "fish-search",
@@ -80,16 +143,21 @@ private fun BrowseView(state: FishCloneUiState, vm: FishCloneViewModel) {
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             when {
                 state.loading -> CenteredProgress()
-                state.errorMessage != null -> ErrorRetry(message = state.errorMessage, onRetry = vm::retry)
+                state.errorMessage != null -> ErrorRetry(message = state.errorMessage, onRetry = onRetry)
                 state.voices.isEmpty() -> Empty("No voices found.")
-                else -> FishList(state = state, vm = vm)
+                else -> FishList(state = state, onLoadMore = onLoadMore, onTogglePlay = onTogglePlay, onPickForClone = onPickForClone)
             }
         }
     }
 }
 
 @Composable
-private fun FishList(state: FishCloneUiState, vm: FishCloneViewModel) {
+private fun FishList(
+    state: FishCloneUiState,
+    onLoadMore: () -> Unit,
+    onTogglePlay: (FishVoiceEntry) -> Unit,
+    onPickForClone: (FishVoiceEntry) -> Unit,
+) {
     val tokens = LocalTokens.current
     LazyColumn(
         modifier = Modifier.fillMaxSize().testTag("fish-list"),
@@ -101,14 +169,14 @@ private fun FishList(state: FishCloneUiState, vm: FishCloneViewModel) {
                 entry = entry,
                 isPlaying = entry.id == state.playingId,
                 busy = state.cloning,
-                onPlay = { vm.togglePlay(entry) },
-                onClone = { vm.pickForClone(entry) },
+                onPlay = { onTogglePlay(entry) },
+                onClone = { onPickForClone(entry) },
             )
         }
         if (state.hasMore) {
             item {
                 OutlinedButton(
-                    onClick = vm::loadMore,
+                    onClick = onLoadMore,
                     enabled = !state.loadingMore,
                     modifier = Modifier.fillMaxWidth().testTag("fish-load-more"),
                 ) { Text(if (state.loadingMore) "Loading…" else "Load more") }
@@ -118,7 +186,15 @@ private fun FishList(state: FishCloneUiState, vm: FishCloneViewModel) {
 }
 
 @Composable
-private fun CloneForm(state: FishCloneUiState, vm: FishCloneViewModel) {
+private fun CloneForm(
+    state: FishCloneUiState,
+    onName: (String) -> Unit,
+    onDescription: (String) -> Unit,
+    onAddTag: (String) -> Unit,
+    onRemoveTag: (String) -> Unit,
+    onLanguage: (String) -> Unit,
+    onClone: () -> Unit,
+) {
     val tokens = LocalTokens.current
     Column(
         modifier = Modifier
@@ -138,18 +214,18 @@ private fun CloneForm(state: FishCloneUiState, vm: FishCloneViewModel) {
             description = state.description,
             tags = state.tags,
             language = state.language,
-            onName = vm::setName,
-            onDescription = vm::setDescription,
-            onAddTag = vm::addTag,
-            onRemoveTag = vm::removeTag,
-            onLanguage = vm::setLanguage,
+            onName = onName,
+            onDescription = onDescription,
+            onAddTag = onAddTag,
+            onRemoveTag = onRemoveTag,
+            onLanguage = onLanguage,
             enabled = !state.cloning,
         )
         if (state.errorMessage != null) {
             Text(text = state.errorMessage.orEmpty(), color = Color(Colors.stop), fontSize = tokens.type.sm)
         }
         Button(
-            onClick = vm::clone,
+            onClick = onClone,
             enabled = state.name.trim().isNotEmpty() && !state.cloning,
             modifier = Modifier.fillMaxWidth().testTag("fish-clone-submit"),
         ) { Text(if (state.cloning) "Cloning…" else "Clone voice") }
@@ -194,5 +270,65 @@ private fun ErrorRetry(message: String, onRetry: () -> Unit) {
     ) {
         Text(text = message, color = Color(Colors.stop), fontSize = tokens.type.base)
         OutlinedButton(onClick = onRetry, modifier = Modifier.testTag("fish-retry")) { Text("Retry") }
+    }
+}
+
+private val previewEntries = listOf(
+    FishVoiceEntry(
+        id = "fish1",
+        title = "Morgan Freeman",
+        description = "Deep, calm, authoritative narration.",
+        languages = listOf("en"),
+        tags = listOf("male", "deep"),
+        previewAudioUrl = "https://example.com/sample.mp3",
+        taskCount = 1200,
+    ),
+)
+
+private val noopFishCallbacks: (FishVoiceEntry) -> Unit = {}
+
+@Preview(name = "browse")
+@Composable
+private fun FishCloneScreenBrowsePreview() {
+    SentientTheme {
+        FishCloneContent(
+            state = FishCloneUiState(loading = false, voices = previewEntries, hasMore = true),
+            inForm = false,
+            onBack = {},
+            onQuery = {},
+            onRetry = {},
+            onLoadMore = {},
+            onTogglePlay = noopFishCallbacks,
+            onPickForClone = noopFishCallbacks,
+            onName = {},
+            onDescription = {},
+            onAddTag = {},
+            onRemoveTag = {},
+            onLanguage = {},
+            onClone = {},
+        )
+    }
+}
+
+@Preview(name = "clone-form")
+@Composable
+private fun FishCloneScreenFormPreview() {
+    SentientTheme {
+        FishCloneContent(
+            state = FishCloneUiState(loading = false, selected = previewEntries.first(), name = "Morgan Freeman"),
+            inForm = true,
+            onBack = {},
+            onQuery = {},
+            onRetry = {},
+            onLoadMore = {},
+            onTogglePlay = noopFishCallbacks,
+            onPickForClone = noopFishCallbacks,
+            onName = {},
+            onDescription = {},
+            onAddTag = {},
+            onRemoveTag = {},
+            onLanguage = {},
+            onClone = {},
+        )
     }
 }
