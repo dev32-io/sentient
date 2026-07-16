@@ -380,6 +380,15 @@ class SentientSdk(
         connectors.preferences.patch(AudioPreferencesPatch(ttsEnabled = enabled))
     }
 
+    /** Patch audio output preferences (TTS on/off and/or reply channel) live over the WS. Null
+     *  fields are left unchanged. The server echoes via session.preferences.changed. Used by the
+     *  settings Audio fast-save to reflect a saved audio-pref change on the running session with no
+     *  restart (superset of [setTtsEnabled], which stays for the chat TTS toggle). */
+    suspend fun patchAudioPreferences(patch: AudioPreferencesPatch) {
+        log.info("patchAudioPreferences", mapOf("ttsEnabled" to patch.ttsEnabled, "channel" to patch.channel))
+        connectors.preferences.patch(patch)
+    }
+
     /** Page the session list via REST GET /api/v1/sessions. */
     @Throws(kotlin.coroutines.cancellation.CancellationException::class)
     suspend fun listSessions(limit: Int, offset: Int): SessionsListPage =
