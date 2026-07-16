@@ -61,6 +61,19 @@ class ApplyProfileChangeUseCase(
         }
     }
 
+    /**
+     * Bare apply — POST /profile/apply with NO profile mutation. Restarts the Hermes
+     * worker so an out-of-band config change (e.g. a freshly-saved admin provider key)
+     * is picked up. Webui queues this via the apply-bar's "slow" op; mobile fires it
+     * directly from the Secrets page "Apply now" affordance. Emits Restarting then the
+     * apply outcome (Ready | AlreadyApplying | Failed). Collect once (apply runs once).
+     */
+    fun applyOnly(): Flow<ApplyState> = flow {
+        log.info("dispatch", mapOf("mutation" to "apply-only"))
+        go(ApplyState.Restarting, ApplyState.Idle, "apply-only")
+        emitApplyOutcome(profile.apply())
+    }
+
     private suspend fun FlowCollector<ApplyState>.runPutProfile(m: ProfileMutation.PutProfile) {
         when (val put = profile.putProfile(m.next)) {
             is SentientResult.Failure -> go(ApplyState.Failed(put.error), ApplyState.Saving, "profile.put.failed")

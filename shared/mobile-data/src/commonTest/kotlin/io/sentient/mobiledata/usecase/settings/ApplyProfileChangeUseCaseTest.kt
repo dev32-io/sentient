@@ -176,6 +176,35 @@ class ApplyProfileChangeUseCaseTest {
         assertTrue(states.last() is ApplyState.Ready)
     }
 
+    // ── FSM: bare apply (Secrets "Apply now") ──
+
+    @Test
+    fun `applyOnly is Restarting then Ready and calls apply once`() = runTest {
+        val repo = FakeProfileRepository().apply { applyResult = ApplyResult.Ready(500) }
+        val states = useCase(repo).applyOnly().toList()
+
+        assertEquals(listOf(ApplyState.Restarting, ApplyState.Ready(500)), states)
+        assertEquals(1, repo.applyCalls)
+        assertEquals(0, repo.putProfileCalls, "a bare apply must NOT write a profile")
+    }
+
+    @Test
+    fun `applyOnly 429 surfaces AlreadyApplying`() = runTest {
+        val repo = FakeProfileRepository().apply { applyResult = ApplyResult.InProgress }
+        val states = useCase(repo).applyOnly().toList()
+
+        assertEquals(listOf(ApplyState.Restarting, ApplyState.AlreadyApplying), states)
+    }
+
+    @Test
+    fun `applyOnly failure surfaces Failed`() = runTest {
+        val repo = FakeProfileRepository().apply { applyResult = ApplyResult.Failed(status = 502, code = "docker-restart") }
+        val states = useCase(repo).applyOnly().toList()
+
+        assertEquals(ApplyState.Restarting, states.first())
+        assertTrue(states.last() is ApplyState.Failed)
+    }
+
     // ── FSM: personality activate = setActive THEN apply ──
 
     @Test
