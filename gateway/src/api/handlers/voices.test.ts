@@ -354,19 +354,23 @@ describe("POST /api/v1/voices", () => {
     });
   });
 
-  it("POST create rejects over-cap tags with 422", async () => {
+  it("POST create clamps over-cap tags to maxTags instead of rejecting", async () => {
     const { deps, getWs } = makeDeps({ maxTags: 2 });
     const form = makeCreateForm("Dad");
     form.append("tags", "a");
     form.append("tags", "b");
     form.append("tags", "c");
 
-    const response = await createVoicesHandler(deps)(makePostRequest(form));
+    const responsePromise = createVoicesHandler(deps)(makePostRequest(form));
+    const ws = await autoReply(getWs, {
+      type: "voice.created",
+      voiceId: VALID_VOICE_ID,
+      name: "Dad",
+      createdAt: 1752400000.0,
+    });
+    await responsePromise;
 
-    expect(response.status).toBe(422);
-    const body = await response.json();
-    expect(body.error).toBe("invalid-request");
-    expect(getWs()).toBeNull();
+    expect(JSON.parse(ws.send.mock.calls[0]?.[0]).tags).toEqual(["a", "b"]);
   });
 
   it("returns 422 invalid-request when name is missing/empty, without opening a WS", async () => {

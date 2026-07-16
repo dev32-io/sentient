@@ -167,7 +167,7 @@ tts:
       - "Ciao, sono l'assistente Sentient della tua famiglia. Come posso aiutarti?"
       - "Ciao, sono Sentient — pronto quando vuoi."
   preview_timeout_ms: 8000           # max wait (ms) for a preview synth. Range: >=1.
-  voice_description_max_len: 240     # create/edit description char cap. Range: >=1.
+  voice_description_max_len: 12000   # create/edit description char cap (~2000 words). Range: >=1.
   voice_tag_max_len: 24              # per-tag char cap. Range: >=1.
   voice_max_tags: 8                  # max tags per voice. Range: >=0.
 

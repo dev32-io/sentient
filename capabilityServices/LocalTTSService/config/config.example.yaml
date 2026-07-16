@@ -99,7 +99,7 @@ builtin_voice_dir: ""
 # description/tags fields.
 # =============================================================================
 # Max characters for a voice pack description.
-voice_description_max_len: 240
+voice_description_max_len: 12000
 
 # Max characters per tag.
 voice_tag_max_len: 24
