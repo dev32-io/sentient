@@ -1,0 +1,14 @@
+2026-07-16T19:33:46.852 INFO  [gateway:api:profile] apply.request | userId="u_8c866990"
+2026-07-16T19:33:46.853 INFO  [apply:orchestrator] apply.begin | userId="u_8c866990"
+2026-07-16T19:33:47.075 INFO  [gateway:apply:apply-deps] apply.refreshProgramEnv.ok | userId="u_8c866990" provider="ollama-cloud"
+2026-07-16T19:34:00.083 INFO  [gateway:admin:supervisord] restartProfile.ok | userId="u_8c866990"
+2026-07-16T19:34:00.087 WARN  [apply:orchestrator] apply.reset-skipped-acp-no-equivalent | userId="u_8c866990" reason="ACP wire has no /reset equivalent — see acp-rewire-todo.md"
+2026-07-16T19:34:00.087 INFO  [apply:orchestrator] apply.ready | userId="u_8c866990" elapsedMs=13234
+2026-07-16T19:34:00.087 INFO  [gateway:api:profile] apply.ready | userId="u_8c866990" elapsedMs=13234
+2026-07-16T19:34:24.073 INFO  [gateway:api:profile] apply.request | userId="u_8c866990"
+2026-07-16T19:34:24.074 INFO  [apply:orchestrator] apply.begin | userId="u_8c866990"
+2026-07-16T19:34:24.235 INFO  [gateway:apply:apply-deps] apply.refreshProgramEnv.ok | userId="u_8c866990" provider="ollama-cloud"
+2026-07-16T19:34:27.045 INFO  [gateway:admin:supervisord] restartProfile.ok | userId="u_8c866990"
+2026-07-16T19:34:27.048 WARN  [apply:orchestrator] apply.reset-skipped-acp-no-equivalent | userId="u_8c866990" reason="ACP wire has no /reset equivalent — see acp-rewire-todo.md"
+2026-07-16T19:34:27.048 INFO  [apply:orchestrator] apply.ready | userId="u_8c866990" elapsedMs=2974
+2026-07-16T19:34:27.048 INFO  [gateway:api:profile] apply.ready | userId="u_8c866990" elapsedMs=2974

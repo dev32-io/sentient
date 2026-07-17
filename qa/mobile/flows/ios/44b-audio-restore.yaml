@@ -1,0 +1,17 @@
+appId: io.dev32.sentient.debug
+---
+# 44b-audio-restore — flips "Speak responses (TTS)" back ON and saves, restoring
+# the profile to its original state after 44-audio-fast-save.yaml. Run
+# immediately after 44 (same Audio screen still open — no re-navigation needed).
+#
+# tags: [ios, simulator-ok]
+- tapOn:
+    point: "85%,24%"
+- assertVisible:
+    id: "settings-audio-save"
+- tapOn:
+    id: "settings-audio-save"
+- extendedWaitUntil:
+    notVisible:
+      id: "settings-audio-save"
+    timeout: 8000

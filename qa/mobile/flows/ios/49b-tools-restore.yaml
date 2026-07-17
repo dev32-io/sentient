@@ -1,0 +1,21 @@
+appId: io.dev32.sentient.debug
+---
+# 49b-tools-restore — re-enables "fetch" after 49-tools-toggle.yaml. Run
+# immediately after 49 (same Tools screen still open).
+#
+# tags: [ios, simulator-ok]
+- tapOn:
+    id: "settings-tools-server-fetch"
+- assertVisible:
+    id: "settings-tools-save"
+- tapOn:
+    id: "settings-tools-save"
+- extendedWaitUntil:
+    visible:
+      id: "settings-applying"
+    timeout: 3000
+    optional: true
+- extendedWaitUntil:
+    notVisible:
+      id: "settings-applying"
+    timeout: 45000

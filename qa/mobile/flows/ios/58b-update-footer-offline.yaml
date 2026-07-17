@@ -1,0 +1,25 @@
+appId: io.dev32.sentient.debug
+---
+# 58b-update-footer-offline — Settings root footer, gateway DOWN (see
+# 60-model-offline-save.yaml header note re: the docker-stop-gateway
+# substitute for simulator airplane mode): tap "Check for updates" ->
+# "Checking…" -> resolves to "Check failed — Retry", app stays alive (no
+# crash). Run with the gateway container already stopped, on the Settings
+# root screen.
+#
+# tags: [ios, simulator-ok]
+- assertVisible:
+    id: "settings-update-action"
+- tapOn:
+    id: "settings-update-action"
+- extendedWaitUntil:
+    visible: "Checking…"
+    timeout: 3000
+    optional: true
+- extendedWaitUntil:
+    visible: "Check failed — Retry"
+    timeout: 20000
+- takeScreenshot: "58b-update-checkfailed"
+# app alive: settings screen still responsive
+- assertVisible:
+    id: "settings-screen"

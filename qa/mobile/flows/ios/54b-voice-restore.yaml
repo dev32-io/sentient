@@ -1,0 +1,26 @@
+appId: io.dev32.sentient.debug
+---
+# 54b-voice-restore — restores the original active voice ("Jarvis", id
+# c624a6ca980346ec9dc38bb434fec506) after 54-voice-preview-pick.yaml picks
+# Briar. Run immediately after 54 (same Voice screen still open). Filtering to
+# "Yours" first isolates Jarvis as the only row (avoids scrolling past all 5
+# builtins). NOTE the "Yours" tab inserts an extra tag-chip row above the list
+# vs the unfiltered view used in 54 — the row's on-screen y position differs;
+# recomputed here from a live hierarchy dump (row center ≈54% of screen
+# height) rather than reusing 54's y-position. Jarvis is a user pack (has a
+# delete icon near the row's right edge, ~89–92%) — tap the row's TEXT/meta
+# area at x=50% to avoid it, not x=90% as used for builtins (no delete icon)
+# in 54.
+#
+# tags: [ios, simulator-ok]
+- tapOn: "Yours"
+- extendedWaitUntil:
+    visible:
+      id: "settings-voice-row-c624a6ca980346ec9dc38bb434fec506"
+    timeout: 5000
+- tapOn:
+    point: "50%,54%"
+- extendedWaitUntil:
+    visible: "Active"
+    timeout: 10000
+- takeScreenshot: "54b-voice-restored-jarvis"

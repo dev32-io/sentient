@@ -1,0 +1,8 @@
+unitN2 (voice delete, user pack) is blocked by unitN (voice create via record),
+which is env-blocked on this pass: the iOS Simulator's audio-input bridge has
+zero enumerable devices in this sandboxed agent session (confirmed via
+`system_profiler SPAudioDataType` showing a working host microphone, but
+Simulator.app's own I/O > Audio Input menu enumerates empty — a macOS
+Automation/TCC permission gap for headless execution, not an app defect). No
+user-created voice pack exists to delete. See unitN/55-voice-create-record.yaml
+header comment for full root-cause detail.

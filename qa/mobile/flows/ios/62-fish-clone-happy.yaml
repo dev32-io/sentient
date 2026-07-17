@@ -1,0 +1,82 @@
+appId: io.dev32.sentient.debug
+---
+# 62-fish-clone-happy — Voice settings page: Clone from Fish (gated on
+# features.fish_browse_enabled, confirmed TRUE via GET /api/v1/services/
+# versions) -> search -> play sample -> pick a tile (opens the prefilled clone
+# form) -> Clone voice (real POST .../clone against a live working Fish key on
+# this stack). Targets a known-good Fish voice id
+# (98e364e9a41c465a9d4fdafc267f84ea, "Deep Voice English (Anthony)") confirmed
+# via GET /api/v1/providers/voices?title=... ahead of time. A successful clone
+# auto-activates the new pack; cleaned up by 62b-fish-clone-cleanup.yaml.
+# Run login.yaml immediately before this.
+#
+# ALSO exercises twin-check #3 (voice list refresh after Fish pop-back): the
+# assertion at the end confirms the new pack appears on VoiceScreen WITHOUT a
+# forced re-navigation (unlike Android's DEFECT-10 workaround) — CONFIRMED
+# PASS live: `.voiceLibraryChanged` NotificationCenter refresh works correctly.
+#
+# NOTE: same id-collision family as VoiceRowView (case 54) applies to Fish
+# rows too — point-tap by position, not by id, and DISMISS THE KEYBOARD first
+# (tap the search field and let results settle) before computing tap
+# percentages, since an open keyboard shifts the visible content area and a
+# stray tap can land back in the search field instead of the row.
+#
+# tags: [ios, simulator-ok]
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
+    timeout: 5000
+- tapOn:
+    id: "settings-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000
+- tapOn:
+    id: "settings-cat-voice"
+- extendedWaitUntil:
+    visible:
+      id: "settings-voice"
+    timeout: 5000
+- assertVisible:
+    id: "settings-voice-fish-nav"
+- tapOn:
+    id: "settings-voice-fish-nav"
+- extendedWaitUntil:
+    visible:
+      id: "settings-voice-fish"
+    timeout: 5000
+- tapOn:
+    id: "settings-voice-fish-search"
+- inputText: "Deep Voice English"
+- extendedWaitUntil:
+    visible:
+      id: "settings-voice-fish-row-98e364e9a41c465a9d4fdafc267f84ea"
+    timeout: 10000
+- takeScreenshot: "62-fish-search-results"
+# preview sample: play icon at the row's left edge (keyboard now dismissed —
+# results loaded, focus resigned)
+- tapOn:
+    point: "12%,22%"
+- takeScreenshot: "62-fish-playing-sample"
+# select the tile (not the play icon) to open the prefilled clone form
+- tapOn:
+    point: "90%,26%"
+- extendedWaitUntil:
+    visible: "Clone this voice"
+    timeout: 5000
+- takeScreenshot: "62-fish-clone-form-prefilled"
+- tapOn:
+    id: "settings-voice-fish-clone-submit"
+- extendedWaitUntil:
+    visible:
+      id: "settings-voice"
+    timeout: 25000
+- tapOn: "Yours"
+- extendedWaitUntil:
+    visible:
+      text: "Deep Voice English.*"
+    timeout: 5000
+- takeScreenshot: "62-fish-cloned-in-list"

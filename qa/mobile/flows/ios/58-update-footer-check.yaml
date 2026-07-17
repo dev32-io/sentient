@@ -1,0 +1,37 @@
+appId: io.dev32.sentient.debug
+---
+# 58-update-footer-check — Settings root footer: tap "Check for updates" ->
+# "Checking…" (spinner, disabled) -> resolves to "✓ Up to date" (transient
+# ~3s) -> back to "Check for updates". Run login.yaml immediately before this.
+#
+# tags: [ios, simulator-ok]
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
+    timeout: 5000
+- tapOn:
+    id: "settings-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000
+- assertVisible:
+    id: "settings-update-action"
+- takeScreenshot: "58-update-idle"
+- tapOn:
+    id: "settings-update-action"
+# NOTE: on a fast local stack the "Checking…" spinner + the "✓ Up to date"
+# transient (3s window) can both resolve between two Maestro commands —
+# assert on "✓ Up to date" immediately after the tap (not "Checking…" first)
+# to reliably catch a frame before it reverts to idle.
+- extendedWaitUntil:
+    visible: "✓ Up to date"
+    timeout: 8000
+- takeScreenshot: "58-update-uptodate"
+- extendedWaitUntil:
+    visible:
+      id: "settings-update-action"
+    timeout: 6000
+- takeScreenshot: "58-update-idle-again"
