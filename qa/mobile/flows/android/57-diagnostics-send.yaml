@@ -1,0 +1,58 @@
+appId: io.dev32.sentient.debug
+---
+# 57-diagnostics-send — Diagnostics settings page (moved off the old drawer
+# overlay into its own Support-group category page per the settings-parity
+# plan — supersedes the stale qa/mobile/flows/android/30-send-diagnostic.yaml,
+# which asserted settings-send-logs directly after settings-open with no
+# settings-cat-diagnostics hop). One chat turn first so the rolling vitals log
+# has content; then send "This session" (newest, default-selected) -> progress
+# -> "Sent". Run login.yaml immediately before this.
+#
+# tags: [android, emulator-ok, vitals, diagnostics]
+- tapOn:
+    id: "composer-input"
+- inputText: "hi"
+- tapOn:
+    id: "chat-send"
+- hideKeyboard
+- extendedWaitUntil:
+    visible:
+      id: "assistant-bubble"
+    timeout: 45000
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-open"
+    timeout: 5000
+- tapOn:
+    id: "settings-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000
+# DEFECT-7/8 (see 51-account-rename.yaml): scrollUntilVisible overshoots to
+# the settings-root footer, whose FIXED on-screen position also overlaps
+# rows near the bottom (Diagnostics sits right above it, in the SUPPORT
+# group). Plain scrolls clear it before tapping.
+- scroll
+- scroll
+- tapOn:
+    id: "settings-cat-diagnostics"
+- extendedWaitUntil:
+    visible:
+      id: "diagnostics-screen"
+    timeout: 5000
+- tapOn:
+    id: "settings-send-logs"
+- extendedWaitUntil:
+    visible:
+      id: "settings-log-send"
+    timeout: 5000
+- tapOn:
+    id: "settings-log-send"
+- extendedWaitUntil:
+    visible:
+      id: "settings-log-sent"
+    timeout: 20000
+- takeScreenshot: "57-diagnostics-sent"

@@ -1,0 +1,52 @@
+appId: io.dev32.sentient.debug
+---
+# 45-model-slow-save — Model settings page: pick a different ollama-cloud model,
+# Save triggers the SLOW path (PUT profile + POST /profile/apply, blocking
+# "Applying — restarting..." progress, then re-fetch server truth). This restarts
+# the user's Hermes worker — acceptable on the local dev stack. Original model
+# (deepseek-v4-flash:cloud) is restored by 45b-model-restore.yaml. Run login.yaml
+# immediately before this.
+#
+# tags: [android, emulator-ok]
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-open"
+    timeout: 5000
+- tapOn:
+    id: "settings-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000
+- tapOn:
+    id: "settings-cat-model"
+- extendedWaitUntil:
+    visible:
+      id: "settings-model-screen"
+    timeout: 5000
+- takeScreenshot: "45-model-before"
+- tapOn:
+    id: "settings-model-search"
+- inputText: "kimi-k2.5"
+- extendedWaitUntil:
+    visible:
+      id: "settings-model-card-kimi-k2.5:cloud"
+    timeout: 5000
+- tapOn:
+    id: "settings-model-card-kimi-k2.5:cloud"
+- assertVisible:
+    id: "settings-model-save"
+- tapOn:
+    id: "settings-model-save"
+- assertVisible:
+    id: "settings-apply-notice"
+- takeScreenshot: "45-model-applying"
+# blocking progress clears once the restart completes (generous timeout: full
+# supervisord restart + Hermes worker boot)
+- extendedWaitUntil:
+    notVisible:
+      id: "settings-apply-notice"
+    timeout: 45000
+- takeScreenshot: "45-model-after"

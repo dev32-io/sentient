@@ -1,0 +1,34 @@
+appId: io.dev32.sentient.debug
+---
+# 48b-advanced-restore — restores reasoning=minimal, compression=0.50, max
+# tokens=1024 after 48-advanced-sliders.yaml. Run immediately after 48 (same
+# Advanced screen still open). See DEFECT-6 in 48-advanced-sliders.yaml — the
+# dropdown option text is not in the accessibility tree; drive by fixed point.
+# The trigger-open tap uses the box's right edge (~88%), NOT a fixed
+# mid-box x — the box is content-width and currently shows the SHORT label
+# "High", so a tap that only worked against the longer "Minimal · default"
+# label (first-open state) misses once the box has shrunk (confirmed live:
+# a mid-box tap that opened the menu from "Minimal · default" missed
+# entirely once the box showed "High" — box bounds shrink from the left,
+# right edge is fixed). "Minimal · default" option sits at y~=46%, x~62%.
+#
+# tags: [android, emulator-ok]
+- tapOn:
+    point: "88%,34%"
+- waitForAnimationToEnd:
+    timeout: 2000
+- tapOn:
+    point: "62%,46%"
+- assertVisible: "Minimal · default"
+- tapOn:
+    point: "50%,56%"
+- tapOn:
+    point: "20%,71%"
+- assertVisible:
+    id: "settings-advanced-save"
+- tapOn:
+    id: "settings-advanced-save"
+- extendedWaitUntil:
+    notVisible:
+      id: "settings-apply-notice"
+    timeout: 45000

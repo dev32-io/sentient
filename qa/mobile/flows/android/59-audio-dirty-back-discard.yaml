@@ -1,0 +1,57 @@
+appId: io.dev32.sentient.debug
+---
+# 59-audio-dirty-back-discard — Audio settings page: toggle "Speak responses
+# (TTS)" off (dirty draft, NEVER saved), tap back -> "Discard changes?" confirm
+# (shared SettingsDiscardDialog, SettingsEditChrome.kt) -> Discard -> lands back
+# on settings-screen -> re-opening Audio shows TTS still ON (draft discarded,
+# no PUT fired). Run login.yaml immediately before this.
+#
+# tags: [android, emulator-ok]
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-open"
+    timeout: 5000
+- tapOn:
+    id: "settings-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000
+- tapOn:
+    id: "settings-cat-audio"
+- extendedWaitUntil:
+    visible:
+      id: "settings-audio-screen"
+    timeout: 5000
+- assertNotVisible:
+    id: "settings-audio-save"
+# same DEFECT-3 point-tap workaround as 44-audio-fast-save.yaml — the Switch is
+# the only clickable target, not the full testTag'd row.
+- tapOn:
+    point: "84%,36%"
+- assertVisible:
+    id: "settings-audio-save"
+- takeScreenshot: "59-audio-dirty-before-back"
+- tapOn:
+    id: "settings-audio-back"
+- extendedWaitUntil:
+    visible: "Discard changes?"
+    timeout: 5000
+- takeScreenshot: "59-audio-discard-dialog"
+- tapOn: "Discard"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000
+# re-open Audio: TTS toggle restored to ON (no PUT fired, draft discarded)
+- tapOn:
+    id: "settings-cat-audio"
+- extendedWaitUntil:
+    visible:
+      id: "settings-audio-screen"
+    timeout: 5000
+- assertNotVisible:
+    id: "settings-audio-save"
+- takeScreenshot: "59-audio-restored-no-save-fired"

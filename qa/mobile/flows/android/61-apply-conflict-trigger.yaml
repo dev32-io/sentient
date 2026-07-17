@@ -1,0 +1,36 @@
+appId: io.dev32.sentient.debug
+---
+# 61-apply-conflict-trigger — continuation-only (no launchApp): taps Save on the
+# already-dirty Model page from 61-apply-conflict-setup.yaml. Expect: "Another
+# change is already applying..." surfaced via settings-apply-notice
+# (SettingsEditChrome.kt ApplyState.AlreadyApplying), no crash, page stays
+# usable.
+#
+# TIMING NOTE (confirmed live, 2026-07-16): a `maestro test` CLI invocation
+# has enough startup latency (device attach + driver handshake, observed
+# ~15s+ from process spawn to the first actual tap) that racing it against a
+# backgrounded `curl -X POST /profile/apply` (apply windows run 3-13s
+# server-side) reliably LOSES — the curl finishes long before Maestro's tap
+# fires, so this flow run alone will NOT reproduce the conflict; it mainly
+# re-validates the ordinary (uncontested) save path. The conflict WAS
+# reproduced, repeatably, by replacing the final `tapOn` with a raw
+# `adb shell input tap <x> <y>` fired in the SAME shell invocation
+# immediately after backgrounding the curl call (near-zero CLI overhead) —
+# gateway log confirmed `apply.rejected-concurrent` and the UI showed the
+# exact "Another change is already applying. Try again in a moment." text.
+# See settings-model-save's live-dumped bounds for the tap coordinate if
+# re-driving this by hand.
+#
+# tags: [android, emulator-ok]
+- tapOn:
+    id: "settings-model-save"
+- extendedWaitUntil:
+    visible:
+      id: "settings-apply-notice"
+    timeout: 5000
+- takeScreenshot: "61-apply-conflict-notice"
+- extendedWaitUntil:
+    notVisible:
+      id: "settings-apply-notice"
+    timeout: 45000
+- takeScreenshot: "61-apply-conflict-cleared"

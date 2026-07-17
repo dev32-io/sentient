@@ -14,9 +14,11 @@ appId: io.dev32.sentient.debug
     visible:
       id: "login-backend-setup"
     timeout: 8000
-# Tap the first avatar (Kevin)
+# Tap Kevin's avatar specifically (userId u_8c866990) — the wildcard
+# ".*login-avatar-.*" is no longer safe once more than one user exists (it can
+# match any seeded user and enter the wrong PIN).
 - tapOn:
-    id: ".*login-avatar-.*"
+    id: "login-avatar-u_8c866990"
     optional: false
 # PIN pad should appear
 - extendedWaitUntil:

@@ -1,0 +1,54 @@
+appId: io.dev32.sentient.debug
+---
+# 51-account-rename — Account page: change display name, Save (imperative PUT
+# /auth/me), inline "Saved" result. Original name "Kevin" restored by
+# 51b-account-restore.yaml. Run login.yaml immediately before this.
+#
+# tags: [android, emulator-ok]
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-open"
+    timeout: 5000
+- tapOn:
+    id: "settings-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000
+# DEFECT-8 (confirmed live via uiautomator dump): the settings root's update
+# footer ("Check for updates" + version) is pinned at a FIXED on-screen
+# position ([306,1901]-[774,2033] px on this device) INDEPENDENT of scroll —
+# it overlaps the "USER" group's Account row when the page is at its initial
+# (unscrolled) position (Account row bounds [50,1859]-[1030,1991] overlapped
+# the footer's y-range by ~90px). A tap at Account's computed center
+# (~540,1925) lands ON the footer instead, silently no-op'ing navigation
+# (neither scrollUntilVisible — which separately overshoots to the footer,
+# DEFECT-7-style, since Account/Voice are otherwise near-top — nor a direct
+# unscrolled tap work). Fix: one small plain `scroll` (NOT scrollUntilVisible)
+# clears Account from the footer's fixed zone before tapping (confirmed live:
+# after one scroll, Account moved to [50,1175]-[1030,1329], fully clear).
+- scroll
+- tapOn:
+    id: "settings-cat-account"
+- extendedWaitUntil:
+    visible:
+      id: "settings-account-screen"
+    timeout: 5000
+- extendedWaitUntil:
+    visible: "Kevin"
+    timeout: 5000
+- takeScreenshot: "51-account-before"
+# field already holds "Kevin" — clear before typing the new name (same
+# stale-cursor caveat as the Model search field, see 45b-model-restore.yaml)
+- tapOn:
+    id: "settings-account-name-field"
+- eraseText: 20
+- inputText: "KevinTest"
+- tapOn:
+    id: "settings-account-name-save"
+- extendedWaitUntil:
+    visible: "Saved"
+    timeout: 10000
+- takeScreenshot: "51-account-saved"

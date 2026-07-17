@@ -1,0 +1,46 @@
+appId: io.dev32.sentient.debug
+---
+# 42-settings-non-admin-gate — logged in as a non-admin user (E2E Temp1), the
+# Settings root list must show Soul/User/Support groups but NEVER the Admin group
+# (Members/Secrets). Run login-temp1.yaml immediately before this.
+#
+# tags: [android, emulator-ok]
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-open"
+    timeout: 5000
+- tapOn:
+    id: "settings-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000
+- assertVisible:
+    id: "settings-cat-memory"
+- assertVisible:
+    id: "settings-cat-account"
+- takeScreenshot: "42-non-admin-top"
+- scrollUntilVisible:
+    element:
+      id: "settings-cat-devices"
+    direction: DOWN
+- assertVisible:
+    id: "settings-cat-devices"
+# Admin group must NOT render for a non-admin user
+- assertNotVisible:
+    id: "settings-cat-members"
+- assertNotVisible:
+    id: "settings-cat-secrets"
+- scrollUntilVisible:
+    element:
+      id: "settings-cat-diagnostics"
+    direction: DOWN
+- assertVisible:
+    id: "settings-cat-diagnostics"
+- assertNotVisible:
+    id: "settings-cat-members"
+- assertNotVisible:
+    id: "settings-cat-secrets"
+- takeScreenshot: "42-non-admin-bottom"

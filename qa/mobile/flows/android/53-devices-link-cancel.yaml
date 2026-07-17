@@ -1,0 +1,83 @@
+appId: io.dev32.sentient.debug
+---
+# 53-devices-link-cancel — Devices page: profile.devices.signal.paired is false
+# on this stack, so only the link-start/cancel path is reachable (per the plan's
+# own flagged gap: "real Signal link completion needs a Signal account").
+# Tap Link Signal -> dialog opens -> Cancel -> dialog closes cleanly, unlinked
+# state restored, no crash. Full pairing is additionally env-blocked here: the
+# local stack has no signal-cli sidecar running (matches project history —
+# "Signal-cli sidecar absent"). Run login.yaml immediately before this.
+#
+# CORRECTION (live, 2026-07-16): the prepare call does NOT sit in
+# "Preparing link…" for ~30s as originally assumed — it fails FAST (within
+# the flow's normal step timing) with "Network unavailable. Check your
+# connection and try again." (Cancel/Retry buttons), presumably the gateway's
+# generic client-facing label for the absent-sidecar failure. Tolerate either
+# sub-state instead of hard-asserting "Preparing link…", which is a narrow
+# race that may already have resolved to the error state by the time we check.
+#
+# tags: [android, emulator-ok]
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-open"
+    timeout: 5000
+- tapOn:
+    id: "settings-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000
+# DEFECT-7/8 (see 51-account-rename.yaml): scrollUntilVisible overshoots to
+# the settings-root footer, and the footer's fixed on-screen position also
+# overlaps the unscrolled USER-group rows (Account/Devices). One small plain
+# `scroll` clears the row before tapping.
+- scroll
+- tapOn:
+    id: "settings-cat-devices"
+- extendedWaitUntil:
+    visible:
+      id: "settings-devices-screen"
+    timeout: 5000
+- assertVisible:
+    id: "settings-devices-link"
+- takeScreenshot: "53-devices-unlinked"
+- tapOn:
+    id: "settings-devices-link"
+- extendedWaitUntil:
+    visible: "Link your Signal account"
+    timeout: 5000
+# DEFECT-9 (confirmed live, non-deterministic timing): the dialog GROWS when
+# it transitions from "Preparing…" (spinner, short) to the network-unavailable
+# error (adds a message line, seen as fast as a few hundred ms in some runs,
+# not observed within 10s in others) — this reflows Cancel/Retry further down.
+# A single tap right after the transition can land on the PRE-growth position
+# and silently miss (same failure shape as the ChangePinDialog keyboard-reflow
+# note in 52-pin-wrong-current.yaml). Since the exact timing isn't reliably
+# pinnable, tap Cancel (text-based — re-queries the live hierarchy each
+# attempt) TWICE with a settle wait between, tolerating a missed first attempt
+# rather than a single unretried tap.
+- takeScreenshot: "53-devices-preparing"
+- waitForAnimationToEnd:
+    timeout: 5000
+# DEFECT-2 note: SignalLinkDialog buttons aren't testTagsAsResourceId-covered.
+- tapOn:
+    text: "Cancel"
+    optional: true
+- extendedWaitUntil:
+    notVisible: "Link your Signal account"
+    timeout: 5000
+    optional: true
+- tapOn:
+    text: "Cancel"
+    optional: true
+# "Link your Signal account" is the dialog title only (the trigger button says
+# "Link Signal", a different string — no ambiguity, unlike the PIN dialog
+# case in 52-pin-wrong-current.yaml). This is the real, asserted check.
+- extendedWaitUntil:
+    notVisible: "Link your Signal account"
+    timeout: 10000
+- assertVisible:
+    id: "settings-devices-link"
+- takeScreenshot: "53-devices-cancelled"
