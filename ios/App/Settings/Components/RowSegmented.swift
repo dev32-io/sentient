@@ -34,6 +34,7 @@ struct RowSegmented: View {
         .padding(segmentTrackPadding)
         .background(DuskColors.bgElev, in: RoundedRectangle(cornerRadius: Radii.sm))
         .overlay(RoundedRectangle(cornerRadius: Radii.sm).stroke(DuskColors.lineSoft, lineWidth: 1))
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(accessibilityId)
     }
 

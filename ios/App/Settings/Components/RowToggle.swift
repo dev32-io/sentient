@@ -36,6 +36,7 @@ struct RowToggle: View {
                 .tint(DuskColors.accent)
         }
         .padding(.vertical, Space.sm)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(accessibilityId)
     }
 }

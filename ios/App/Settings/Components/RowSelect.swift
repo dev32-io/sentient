@@ -47,6 +47,13 @@ struct RowSelect: View {
                             Text(option.label)
                         }
                     }
+                    // Mirrors Android's settings-select-option-<value> testTag. SwiftUI
+                    // renders Menu options in a separate UIMenu presentation; verified live
+                    // via `maestro hierarchy` (iOS 18.3 sim) that these ids DO surface and
+                    // are independently tappable. If a future OS/Xcode combo regresses that
+                    // (Menu's separate-window a11y tree is a known soft spot), the option is
+                    // still addressable by its visible label text as a fallback.
+                    .accessibilityIdentifier("settings-select-option-\(option.id)")
                 }
             } label: {
                 menuLabel

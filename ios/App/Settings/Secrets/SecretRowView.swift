@@ -34,6 +34,7 @@ struct SecretKeyRow: View {
         }
         .padding(.vertical, Space.sm)
         .onChange(of: isEditing) { _, editing in if !editing { draft = "" } }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("settings-secret-\(idKey)")
     }
 

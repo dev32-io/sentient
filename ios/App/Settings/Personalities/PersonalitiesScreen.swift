@@ -106,6 +106,7 @@ struct PersonalitiesScreen: View {
                         .foregroundStyle(DuskColors.ink3)
                 }
                 .padding(.vertical, Space.sm)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("settings-personalities-card-\(personality.name)")

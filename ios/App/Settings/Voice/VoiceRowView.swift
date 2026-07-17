@@ -55,6 +55,7 @@ struct VoiceRowView: View {
         )
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(accessibilityId)
     }
 

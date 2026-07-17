@@ -165,6 +165,7 @@ private struct MemberRow: View {
             }
         }
         .padding(.vertical, Space.sm)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("settings-member-\(user.userId)")
     }
 
