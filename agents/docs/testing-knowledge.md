@@ -250,10 +250,57 @@ After upgrading across the v0.1.0 → v0.2.0 install-state schema bump:
 
 ## Mobile (Android emulator + iOS simulator via Maestro)
 
-**Tool:** Maestro CLI against a running Android emulator (`avd`) or iOS simulator (`xcrun simctl`).
-**When:** After any change to `android/`, `ios/`, or `shared/mobile-sdk/` that touches auth, chat UI, or WS transport — before merging.
-**How:** Write the Maestro YAML to `/tmp/<flow>.yaml` at run time (never commit it). Execute with `maestro test /tmp/<flow>.yaml`. Evidence screenshots → `qa/mobile/screens/` (gitignored).
-**testTags used:** `login-avatar-<userId>`, `pin-key-<n>`, `chat-screen`, `chat-input`, `chat-send`, `message-bubble-<index>`, `chat-message-list`, `login-error`.
+**Tool:** Maestro CLI against a running Android emulator (`avd`) or iOS simulator (`xcrun simctl`), driven through the committed flow library at `qa/mobile/flows/{android,ios}/*.yaml` (97 flows, refactored 2026-07-17, commit `204f728`) via `qa/mobile/run-e2e.sh`. The old "write to `/tmp/<flow>.yaml` at run time, never commit" convention is retired for this library — flows here ARE the committed artifact. Evidence screenshots → `qa/mobile/screens/` (gitignored).
+**When:** After any change to `android/`, `ios/`, or `shared/mobile-sdk/` that touches auth, chat UI, WS transport, or Settings — before merging.
+**How:** `./qa/mobile/run-e2e.sh android --tags <t1,t2>` for a targeted change; `./qa/mobile/run-e2e.sh all` for a full pre-merge pass. See "Runner usage" below.
+**testTags used:** `login-avatar-<userId>`, `pin-key-<n>`, `composer-input`, `chat-send`, `assistant-bubble`, `message-bubble-<index>`, `chat-message-list`, `login-error`, plus per-screen `settings-cat-*` / `settings-*` ids (see individual flow files).
+
+### Tag taxonomy
+
+Every flow's YAML frontmatter carries `tags:` from two orthogonal families. The runner's default batch always excludes `fault-armed`, `physical-only`, `helper`; `--no-slow` additionally drops `slow`.
+
+- **Surface** (what's exercised — matches `--tags` selection): `auth chat session reconnect outbox voice-loop settings-root settings-soul settings-user settings-admin settings-voice settings-diagnostics update logout`.
+- **Behavior** (orthogonal, controls execution regime):
+  - `fault-armed` — needs harness-side arming (adb broadcast / network kill / gateway stop); excluded from the default batch, run individually in the runner's dedicated fault phase.
+  - `physical-only` — needs a real device (emulator loopback masks the network drop being tested, e.g. WiFi toggle on `emulator-*`); flagged and skipped on emulator.
+  - `slow` — >2min flow; dropped by `--no-slow`.
+  - `destructive-profile` — mutates seeded server-side profile state (personalities, account, voice packs, members); always paired with a `restore` flow that runs immediately after it (the runner's `CANONICAL_ORDER` keeps every pair adjacent).
+  - `restore` — the paired cleanup/restore flow for a `destructive-profile` flow. `continueOnFailure: true` in `config.yaml` guarantees the restore still runs even if its primary failed.
+  - `helper` — reusable subflow under `_helpers/`; never run standalone. Three independent guards keep it out of batch runs: `_helpers/` isn't recursed into by a folder run, `config.yaml`'s `flows: ["*.yaml"]` scopes to top-level only, and the runner's `BASE_EXCLUDE` always excludes `helper`.
+
+### Runner usage
+
+```bash
+./qa/mobile/run-e2e.sh android --tags settings-voice,settings-soul   # targeted batch: one warm JVM, no fault phase
+./qa/mobile/run-e2e.sh android --no-slow                             # drop >2min flows from the default batch
+./qa/mobile/run-e2e.sh android --fault-only                          # only the harness-armed flows (with their arming)
+./qa/mobile/run-e2e.sh android --fresh-gateway                       # restart gateway first (clears the WS session cap)
+./qa/mobile/run-e2e.sh all                                           # full default batch, both platforms + fault phases
+```
+No `--tags` = default batch (every flow except `fault-armed`/`physical-only`/`helper`), followed automatically by the fault-armed phase. Any `--tags` = one `--include-tags`-equivalent batch only (still excludes fault-armed/physical-only/helper) — no fault phase, so targeted runs stay fast.
+
+### `_helpers/` subflow pattern
+
+Reusable subflows (`_helpers/login.yaml`, `_helpers/login-temp1.yaml`; iOS also `_helpers/open-settings.yaml`) are pulled in via `runFlow:`. Every authed flow conditionally logs in so it is safe mid-batch (a flow that lands mid-session, already authenticated, never re-triggers a fresh login):
+```yaml
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }   # Android; iOS checks visible: "Who's here?" text
+    file: "_helpers/login.yaml"
+```
+The standalone auth-smoke flow (`login.yaml` on Android, `00-login.yaml` on iOS) instead calls the helper unconditionally after a `clearState: true` launch, which forces the login screen.
+
+### Maestro gotchas (load-bearing)
+
+- **`--include-tags` is order-nondeterministic AND incompatible with `executionOrder.flowsOrder`** — `flowsOrder` requires every listed flow to be present in the run set, which breaks any `--include-tags` subset (verified: throws "Could not find flows needed for execution in order"). Fix: `run-e2e.sh` resolves the selected tags into an explicit, canonically-ordered file list and calls `maestro test f1 f2 ... fN` directly — Maestro DOES honor explicit multi-file arg order.
+- **Maestro's default folder order is non-deterministic** — never rely on filename sort for ordering; the runner's `CANONICAL_ORDER` array (restore pairs adjacent, `logout` last) is the single source of truth on both platforms.
+- **A folder/dir batch does not recurse into subdirectories** — `_helpers/` is invisible to `maestro test <dir>` by construction; the `helper` tag exclude is belt-and-braces, not load-bearing on its own.
+- **Gateway 40-session cap** — every `launchApp` opens a new WS session; the gateway caps a user at 40 concurrent and only archives idle sessions after ~30min. Repeated batches across a long day can exhaust the cap → new connects get `auth.reject code=session-limit` → WS/chat flows fail while REST-only settings flows keep passing (a confusing partial-failure signature). Fix: `--fresh-gateway` before a big run.
+- **iOS fault-armed = gateway-stop orchestration, no broadcast channel** — Android arms faults via `adb shell am broadcast -a io.sentient.debug.FAULT`; iOS has no equivalent, so its fault-armed flows (58b, 60, 04c) are driven by `docker stop`/`start`/`restart sentient-gateway` around the flow instead. 08-voice-loop / 18-auth-expired / 20-malformed-frame (broadcast-only faults) are Android-only and skipped on iOS.
+- **id-fragile flows need id re-sync**: 41/42/43 (members trio) and 55b/62b (voice/fish cleanup pairs) reference server-generated ids that change on every fresh run of the flow that creates them — e.g. `_helpers/login-temp1.yaml`'s Temp1 `userId` (currently `u_50104890`, created by 41's real "Add user" UI). Re-sync the id in the dependent flow(s) after any fresh run of the creating flow, or the dependent flow fails on a stale id.
+
+### Timing rationale
+
+Cold Maestro-CLI/JVM startup + device attach costs a fixed ~42-65s PER invocation, independent of flow content. The old per-flow loop (one `maestro test` call per `.yaml`) paid this cost on every single flow. Measured under the new batched model: a 13-flow targeted batch ran in 515s total wall time, vs ~650s of JVM startup ALONE under the old per-flow model for the same 13 flows — i.e. the entire batch's actual flow-execution time was cheaper than the old model paid in overhead before a single assertion ran. This is why `--tags` batching (one warm invocation per selected set), not per-flow invocation, is the mandatory execution model (`.claude/rules/e2e-testing.md`).
 
 ### T1 — Mobile login happy path
 **Scenario:** Avatar tap + correct 4-digit PIN lands the user on the chat screen.
