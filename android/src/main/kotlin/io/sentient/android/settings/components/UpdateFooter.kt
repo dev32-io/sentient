@@ -185,7 +185,7 @@ private fun UpdateFooterIdlePreview() {
         UpdateFooter(
             status = UpdateStatus.UpToDate,
             isChecking = false,
-            versionText = "Sentient 0.1.7 (108)",
+            versionText = "Sentient 1.1.0 (12)",
             onCheck = {},
             onInstall = {},
         )
@@ -205,7 +205,7 @@ private fun UpdateFooterAvailablePreview() {
                 target = UpdateTarget.AndroidApk("https://example.invalid/app.apk"),
             ),
             isChecking = false,
-            versionText = "Sentient 0.1.7 (108)",
+            versionText = "Sentient 1.1.0 (12)",
             onCheck = {},
             onInstall = {},
         )

@@ -18,7 +18,13 @@ plugins {
 // Skips 0.1.5 to re-align with the app versionName lockstep (app was already 0.1.5).
 // 0.1.6 also carries the voice-uplink refactor + the VoiceAudio one-engine
 // consolidation / full-duplex lazy-arm downlink (same feature branch, no bump).
-version = "0.1.6"
+// Bumped to 0.2.0: hold-to-talk / toggle-to-talk split (TalkModeController,
+// per-path audio engines, buffer-and-defer TTS). NOTE — the app versionName
+// (android/build.gradle.kts, ios/project.yml) jumped to its own 1.x OTA-trigger
+// release track (chore 0824423) and is no longer numerically equal to this
+// module's source version; "lockstep" from here on means bump-together cadence
+// on every mobile release, not equal digits.
+version = "0.2.0"
 
 kotlin {
     androidTarget {

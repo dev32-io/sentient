@@ -2,7 +2,7 @@
 
 - **Date:** 2026-07-17
 - **Branch:** `feature/mobile-tts-playback-gain` (continues from the makeup-gain commits; rename or fresh branch at implementation start is fine)
-- **Status:** Approved design, pre-implementation
+- **Status:** Executed 2026-07-17 (S1–S6 + S2b/S3b/S5b); device matrix pending (user loop)
 - **Scope:** WhisperSTTService, gateway, `shared/web-sdk` (schema parity only), `shared/mobile-sdk`, iOS app, Android app.
 
 ## 1. Why (problem statement)
@@ -144,7 +144,8 @@ Every mode transition: `talk-mode` INFO with `from`, `to`, `trigger`. Every path
 
 | Component | From | To |
 |---|---|---|
-| mobile (app + sdk lockstep) | 0.1.6/0.1.7 line | **0.2.0** (android versionCode +1, iOS bundle +1) |
+| mobile sdk + mobile-data | 0.1.x line | **0.2.0** |
+| mobile apps (android + iOS) | 1.0.0 (own OTA track since 0824423 — the "sdk lockstep" premise here was stale) | **1.1.0** (versionCode 12, iOS build 8) |
 | gateway | 1.12.1 | **1.13.0** |
 | WhisperSTTService | 1.2.0 | **1.3.0** |
 | web-sdk | current | minor bump (schema-only) |
@@ -186,3 +187,12 @@ Every mode transition: `talk-mode` INFO with `from`, `to`, `trigger`. Every path
 5. **S5 — Android paths:** per-mode attrs/source split. Emulator + device gate.
 6. **S6 — UI intents:** gesture → controller wiring both apps.
 7. **S7 — Versions + docs:** version bumps (§9), learnings/docs updates. Matrix execution = user device loop.
+
+## Residuals
+
+- TalkModeController reset from the SDK teardown path (clearActiveToIdle/disconnect) closing the pre-existing phantom-listening-after-reconnect window.
+- Dead `startMic`/`stopMic` SDK primitives cleanup once UI redesign settles.
+- iOS gain constants duplicated across engine files (lockstep comments only).
+- `SentientSdk.kt` ~955 lines / `SdkVoice.kt` 304 lines over split thresholds.
+- AudioPipeline hold-overflow WARN label appears on the (unreachable) non-hold lazy-arm overflow.
+- Encoded-wire assertion for omitted turnMode (defense-in-depth).
