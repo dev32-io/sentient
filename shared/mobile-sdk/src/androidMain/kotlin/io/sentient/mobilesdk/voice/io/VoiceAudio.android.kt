@@ -5,8 +5,12 @@
 // configure() opens/closes each per the [voiceAudioGraph] matrix.
 //
 // HW AEC source (VOICE_COMMUNICATION) is enabled EXACTLY in the mic+playback
-// cell (the VPIO-equivalent); mic-only cells use VOICE_RECOGNITION (no echo to
-// cancel, no platform AEC/NS double-processing).
+// cell (the VPIO-equivalent) on the Duplex path; mic-only cells use VOICE_RECOGNITION
+// (no echo to cancel, no platform AEC/NS double-processing). The Manual path (Hold)
+// always uses VOICE_RECOGNITION — mic and playback never overlap in Hold, so no AEC
+// is ever needed (S5; see [recordSource]). Playback's AudioAttributes usage also
+// switches by path (USAGE_ASSISTANT for Manual vs USAGE_VOICE_COMMUNICATION for
+// Duplex, unchanged) — see VoiceAudioPlayback.android.kt.
 // PROVEN SNIPPETS (assembled from the retired two-engine audio path; sources live
 // in git history):
 //   - Record acquisition + read loop + drop-newest channel + soft-fail →
@@ -80,6 +84,13 @@ class AndroidVoiceAudio(
     // The currently-applied graph; configure diffs against this.
     private var current: VoiceAudioGraph = voiceAudioGraph(mic = false, playback = false)
 
+    // The currently-applied routing hint, paired with [current]. [voiceAudioGraph] alone
+    // can't see this axis, so a path flip on an otherwise-unchanged (mic, playback) cell
+    // (e.g. lockMic(): Hold's MicCapture (T,F,Manual) → Continuous' mic-only Duplex cell
+    // (T,F,Duplex)) must still drive a real stop+rebuild of the affected component(s),
+    // never a silent no-op (S5).
+    private var currentPath: VoiceAudioPath = VoiceAudioPath.Duplex
+
     // The AudioTrack half — extracted to VoiceAudioPlayback.android.kt.
     private val playback = VoiceAudioPlayback()
 
@@ -91,42 +102,60 @@ class AndroidVoiceAudio(
     @Volatile private var droppedCount = 0L
     @Volatile private var firstFrameSeen = false
 
-    override suspend fun configure(mic: Boolean, playback: Boolean, playbackRateHz: Int) {
+    /** Legacy 3-arg entry point — delegates with [VoiceAudioPath.Duplex] (unchanged behavior). */
+    override suspend fun configure(mic: Boolean, playback: Boolean, playbackRateHz: Int) =
+        configure(mic, playback, VoiceAudioPath.Duplex, playbackRateHz)
+
+    override suspend fun configure(mic: Boolean, playback: Boolean, path: VoiceAudioPath, playbackRateHz: Int) {
         val desired = voiceAudioGraph(mic, playback)
-        if (desired == current) {
-            log.debug("configure-noop", mapOf("mic" to mic, "playback" to playback))
+        val pathChanged = path != currentPath
+        if (desired == current && !pathChanged) {
+            log.debug("configure-noop", mapOf("mic" to mic, "playback" to playback, "path" to path.name))
             return
         }
         log.info(
             "configure",
-            mapOf("mic" to mic, "playback" to playback, "aec" to desired.vpio, "rate" to playbackRateHz),
+            mapOf(
+                "mic" to mic,
+                "playback" to playback,
+                "path" to path.name,
+                "aec" to desired.vpio,
+                "rate" to playbackRateHz,
+            ),
         )
         _state.value = _state.value.copy(phase = Phase.Configuring, micActive = mic, playbackActive = playback)
 
-        val inputChanged = desired.inputTap != current.inputTap
-        val playerChanged = desired.player != current.player
+        // A component "changes" when its ON/OFF bool flips, OR (staying on) a path flip
+        // means its source/attrs may now differ — either way it must stop + rebuild.
+        val inputRebuild = desired.inputTap && current.inputTap && pathChanged
+        val playerRebuild = desired.player && current.player && pathChanged
+        val inputChanged = desired.inputTap != current.inputTap || inputRebuild
+        val playerChanged = desired.player != current.player || playerRebuild
 
-        // Stop components turning OFF first (free resources before alloc).
-        if (inputChanged && !desired.inputTap) stopRecord()
-        if (playerChanged && !desired.player) this.playback.stop()
+        // Stop components turning OFF (or rebuilding) first (free resources before alloc).
+        if (inputChanged && (!desired.inputTap || inputRebuild)) stopRecord()
+        if (playerChanged && (!desired.player || playerRebuild)) this.playback.stop()
 
-        // Start components turning ON. On failure startComponents sets Phase.Error via
-        // failConfigure + returns false BEFORE current = desired (T4 — no silent Ready).
-        if (!startComponents(desired, inputChanged, playerChanged, playbackRateHz)) return
+        // Start components turning ON (or rebuilding). On failure startComponents sets
+        // Phase.Error via failConfigure + returns false BEFORE current/currentPath = desired
+        // (T4 — no silent Ready).
+        if (!startComponents(desired, path, inputChanged, playerChanged, playbackRateHz)) return
 
         current = desired
+        currentPath = path
         _state.value = VoiceAudioState(Phase.Ready, micActive = mic, playbackActive = playback)
     }
 
-    /** Starts ON-components; returns false (after [failConfigure] → [Phase.Error]) on any failure. */
+    /** Starts ON-components (incl. rebuilds); returns false (after [failConfigure] → [Phase.Error]) on any failure. */
     private suspend fun startComponents(
         desired: VoiceAudioGraph,
+        path: VoiceAudioPath,
         inputChanged: Boolean,
         playerChanged: Boolean,
         playbackRateHz: Int,
     ): Boolean {
         if (inputChanged && desired.inputTap) {
-            val source = if (desired.vpio) MediaRecorder.AudioSource.VOICE_COMMUNICATION else MediaRecorder.AudioSource.VOICE_RECOGNITION
+            val source = recordSource(path, desired)
             when (val r = startRecord(source)) {
                 is Acquisition.Ready -> Unit
                 is Acquisition.Failed -> {
@@ -136,7 +165,7 @@ class AndroidVoiceAudio(
             }
         }
         if (playerChanged && desired.player) {
-            if (!this.playback.start(playbackRateHz)) {
+            if (!this.playback.start(playbackRateHz, path)) {
                 // failConfigure tears down BOTH objects (incl. the just-started record).
                 failConfigure(desired.inputTap, desired.player, "track", "track-build-failed")
                 return false
@@ -144,6 +173,28 @@ class AndroidVoiceAudio(
         }
         return true
     }
+
+    /**
+     * Record source by (path, cell). Duplex keeps the existing AEC rule: VOICE_COMMUNICATION
+     * exactly in the mic+playback cell, else VOICE_RECOGNITION. Manual never needs platform
+     * AEC — mic and playback never overlap in Hold — so it is always VOICE_RECOGNITION.
+     * (T,T,Manual) is unreachable from TalkModeController; if it arrives anyway, WARN + fall
+     * back to the Duplex rule rather than silently routing a genuine echo cell through a
+     * no-AEC source (defensive).
+     */
+    private fun recordSource(path: VoiceAudioPath, desired: VoiceAudioGraph): Int =
+        when {
+            path == VoiceAudioPath.Manual && desired.vpio -> {
+                log.warn(
+                    "manual-path-aec-cell",
+                    mapOf("reason" to "unreachable (mic+playback, Manual) — falling back to Duplex source rule"),
+                )
+                MediaRecorder.AudioSource.VOICE_COMMUNICATION
+            }
+            path == VoiceAudioPath.Manual -> MediaRecorder.AudioSource.VOICE_RECOGNITION
+            desired.vpio -> MediaRecorder.AudioSource.VOICE_COMMUNICATION
+            else -> MediaRecorder.AudioSource.VOICE_RECOGNITION
+        }
 
     /**
      * A configure failure. Partial-failure state desync fix: the OFF-components were
@@ -157,6 +208,7 @@ class AndroidVoiceAudio(
         stopRecord()
         this.playback.stop()
         current = voiceAudioGraph(mic = false, playback = false)
+        currentPath = VoiceAudioPath.Duplex
         _state.value =
             VoiceAudioState(Phase.Error, micActive = mic, playbackActive = playback, errorReason = reason)
         log.warn("configure-failed", mapOf("step" to step, "reason" to reason))
@@ -307,6 +359,7 @@ class AndroidVoiceAudio(
         playback.stop()
         micCh.close()
         current = voiceAudioGraph(mic = false, playback = false)
+        currentPath = VoiceAudioPath.Duplex
         _state.value = VoiceAudioState(Phase.Idle, micActive = false, playbackActive = false)
     }
 }
