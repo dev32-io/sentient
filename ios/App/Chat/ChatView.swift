@@ -199,8 +199,10 @@ struct ChatView: View {
                 micActive: voiceActive,
                 canInterrupt: canInterrupt,
                 onSend: { vm.send($0) },
-                onMicStart: { vm.startMic() },
-                onMicStop: { vm.stopMic() },
+                onMicPress: { vm.pressMic() },
+                onMicRelease: { vm.releaseMic() },
+                onMicLock: { vm.lockMic() },
+                onMicStopContinuous: { vm.stopContinuous() },
                 onTtsToggle: { vm.toggleTts() },
                 onInterrupt: { vm.interrupt() },
                 onFocusGained: { vm.onComposerFocus() }

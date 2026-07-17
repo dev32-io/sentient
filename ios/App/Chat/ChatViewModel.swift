@@ -97,18 +97,32 @@ final class ChatViewModel: ObservableObject {
         component.sendMessage.flushIfReady(cache: cache, status: connection.status)
     }
 
-    /// Start the voice uplink (corner mic pressed/locked) via the component
-    /// passthrough. Fire-and-forget: the SDK flips voiceMode optimistically; a
-    /// downstream failure drops it back to off, which resets the control.
-    func startMic() {
-        log.info("mic.start")
-        component.startMic()
+    // Talk-mode intents (design spec §3) — thin passthroughs to the component. All mode
+    // semantics live in the SDK's TalkModeController; the VM never decides anything here.
+    // Fire-and-forget: the SDK flips voiceMode optimistically off the resulting talk mode.
+
+    /// Corner mic pressed (idle→hold) — press-to-talk begins.
+    func pressMic() {
+        log.info("mic.press")
+        component.pressMic()
     }
 
-    /// Stop the voice uplink (corner mic released/unlocked).
-    func stopMic() {
-        log.info("mic.stop")
-        component.stopMic()
+    /// Corner mic released below the lock threshold (hold→idle).
+    func releaseMic() {
+        log.info("mic.release")
+        component.releaseMic()
+    }
+
+    /// Corner mic slid to lock (hold→locked) — continuous/hands-free begins.
+    func lockMic() {
+        log.info("mic.lock")
+        component.lockMic()
+    }
+
+    /// Locked control released to stop (locked→idle) — hands-free ends.
+    func stopContinuous() {
+        log.info("mic.stop-continuous")
+        component.stopContinuous()
     }
 
     /// Toggle TTS through the component passthrough (gateway echoes via prefs).

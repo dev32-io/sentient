@@ -70,8 +70,10 @@ import io.sentient.mobilesdk.transport.SdkStatus
  * @param uiState       Chat model (committed + pending + live + tasks) + banner.
  * @param connection    Transport + voice state from the KMP SDK.
  * @param onSend        User submitted a text message (called unconditionally; repo queues).
- * @param onMicStart    Corner mic pressed/locked — start voice mode.
- * @param onMicStop     Corner mic released/unlocked — stop voice mode.
+ * @param onMicPress    Corner mic pressed (idle→hold) — enter push-to-talk.
+ * @param onMicRelease  Corner mic released below the lock threshold (hold→idle).
+ * @param onMicLock     Corner mic slid to lock (hold→locked) — enter continuous.
+ * @param onMicStopContinuous  Locked control released to stop (locked→idle) — leave continuous.
  * @param onTtsToggle   TTS toggle tapped.
  * @param onInterrupt   Stop button tapped (cycle/audio abort).
  * @param onOpenHistory History drawer opened.
@@ -87,8 +89,10 @@ fun ChatContent(
     uiState: ChatUiState,
     connection: ConnectionState,
     onSend: (String) -> Unit,
-    onMicStart: () -> Unit,
-    onMicStop: () -> Unit,
+    onMicPress: () -> Unit,
+    onMicRelease: () -> Unit,
+    onMicLock: () -> Unit,
+    onMicStopContinuous: () -> Unit,
     onTtsToggle: () -> Unit,
     onInterrupt: () -> Unit,
     onOpenHistory: () -> Unit,
@@ -184,8 +188,10 @@ fun ChatContent(
                 micActive = voiceActive,
                 canInterrupt = canInterrupt,
                 onSend = onSend,
-                onMicStart = onMicStart,
-                onMicStop = onMicStop,
+                onMicPress = onMicPress,
+                onMicRelease = onMicRelease,
+                onMicLock = onMicLock,
+                onMicStopContinuous = onMicStopContinuous,
                 onTtsToggle = onTtsToggle,
                 onInterrupt = onInterrupt,
                 onFocus = onComposerFocus,

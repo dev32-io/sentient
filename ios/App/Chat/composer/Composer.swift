@@ -54,10 +54,14 @@ struct Composer: View {
     /// True when a cycle is in flight or audio is playing.
     let canInterrupt: Bool
     let onSend: (String) -> Void
-    /// Corner mic pressed/locked — start the voice uplink.
-    let onMicStart: () -> Void
-    /// Corner mic released/unlocked — stop the voice uplink.
-    let onMicStop: () -> Void
+    /// Corner mic pressed (idle→hold) — enter push-to-talk.
+    let onMicPress: () -> Void
+    /// Corner mic released below the lock threshold (hold→idle).
+    let onMicRelease: () -> Void
+    /// Corner mic slid to lock (hold→locked) — enter continuous.
+    let onMicLock: () -> Void
+    /// Locked control released to stop (locked→idle) — leave continuous.
+    let onMicStopContinuous: () -> Void
     let onTtsToggle: () -> Void
     let onInterrupt: () -> Void
     /// Composer gained keyboard focus — the host ensures the connection is live so the
@@ -160,8 +164,10 @@ struct Composer: View {
             onModeChange: { mode in
                 withAnimation(.easeOut(duration: 0.25)) { micMode = mode }
             },
-            onStart: onMicStart,
-            onStop: onMicStop
+            onPress: onMicPress,
+            onRelease: onMicRelease,
+            onLock: onMicLock,
+            onStopContinuous: onMicStopContinuous
         )
         .padding(.trailing, MicCornerLayout.trailingInset)
         .offset(y: -MicCornerLayout.overhang)

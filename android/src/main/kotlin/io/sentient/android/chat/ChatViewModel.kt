@@ -123,16 +123,31 @@ class ChatViewModel(
         component.sendMessage.flushIfReady(cache, connection.value.status)
     }
 
-    /** Corner mic pressed/locked — start the voice uplink (fire-and-forget). */
-    fun startMic() {
-        log.info("startMic")
-        component.startMic()
+    // Talk-mode intents (design spec §3) — thin passthroughs to the component. All mode
+    // semantics live in the SDK's TalkModeController; the VM never decides anything here.
+
+    /** Corner mic pressed (idle→hold) — press-to-talk begins (fire-and-forget). */
+    fun pressMic() {
+        log.info("pressMic")
+        component.pressMic()
     }
 
-    /** Corner mic released/unlocked — stop the voice uplink. */
-    fun stopMic() {
-        log.info("stopMic")
-        component.stopMic()
+    /** Corner mic released below the lock threshold (hold→idle). */
+    fun releaseMic() {
+        log.info("releaseMic")
+        component.releaseMic()
+    }
+
+    /** Corner mic slid to lock (hold→locked) — continuous/hands-free begins. */
+    fun lockMic() {
+        log.info("lockMic")
+        component.lockMic()
+    }
+
+    /** Locked control released to stop (locked→idle) — hands-free ends. */
+    fun stopContinuous() {
+        log.info("stopContinuous")
+        component.stopContinuous()
     }
 
     fun toggleTts() {

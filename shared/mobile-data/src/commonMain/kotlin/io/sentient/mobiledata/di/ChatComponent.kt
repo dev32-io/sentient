@@ -67,11 +67,21 @@ open class ChatComponent(
     // these thin delegates so it never holds an SDK reference. Mirrors the surface
     // the old ChatRoot/ChatContent called on `sdk` directly.
 
-    /** Start the voice uplink (mic ON). */
-    fun startMic() = sdk.startMic()
+    // ── Talk-mode intents (design spec §3) ────────────────────────────────────
+    // The corner-mic gesture layer emits ONLY these four; all mode semantics live in the
+    // SDK's TalkModeController. Thin passthroughs, mirroring the SDK's intent surface.
 
-    /** Stop the voice uplink (mic OFF). */
-    fun stopMic() = sdk.stopMic()
+    /** Idle → Hold: press-to-talk begins. */
+    fun pressMic() = sdk.pressMic()
+
+    /** Hold → Idle: release finalizes the manual turn. */
+    fun releaseMic() = sdk.releaseMic()
+
+    /** Hold → Continuous: slide-to-lock (manual segment finalizes, semantic turn opens). */
+    fun lockMic() = sdk.lockMic()
+
+    /** Continuous → Idle: tap-to-stop hands-free. */
+    fun stopContinuous() = sdk.stopContinuous()
 
     /** Patch TTS on/off; the gateway echoes the change via session preferences. */
     suspend fun setTtsEnabled(enabled: Boolean) = sdk.setTtsEnabled(enabled)

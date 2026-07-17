@@ -17,7 +17,7 @@
 //
 // External sync: when [micActive] flips true→false while the control is not
 // IDLE and not being dragged (disconnect, teardown, failed mic start), the
-// control resets to IDLE WITHOUT calling [onStop] again. Only the true→false
+// control resets to IDLE WITHOUT emitting an intent. Only the true→false
 // edge is observed so it never races the optimistic hold that begins before
 // micActive propagates.
 //
@@ -75,8 +75,10 @@ internal fun MicCorner(
     micActive: Boolean,
     onModeChange: (MicCornerMode) -> Unit,
     ensureMicPermission: () -> Boolean,
-    onStart: () -> Unit,
-    onStop: () -> Unit,
+    onPress: () -> Unit,
+    onRelease: () -> Unit,
+    onLock: () -> Unit,
+    onStopContinuous: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -92,22 +94,30 @@ internal fun MicCorner(
     val railShown = dragging || mode == MicCornerMode.LOCKED
 
     val currentOnModeChange by rememberUpdatedState(onModeChange)
-    val currentOnStart by rememberUpdatedState(onStart)
-    val currentOnStop by rememberUpdatedState(onStop)
+    val currentOnPress by rememberUpdatedState(onPress)
+    val currentOnRelease by rememberUpdatedState(onRelease)
+    val currentOnLock by rememberUpdatedState(onLock)
+    val currentOnStopContinuous by rememberUpdatedState(onStopContinuous)
     val currentEnsurePermission by rememberUpdatedState(ensureMicPermission)
 
-    // Mode transition with side effects: entering from IDLE starts the mic,
-    // returning to IDLE stops it. HOLD→LOCKED is a pure visual promotion.
+    // Mode transition → ONE SDK talk-mode intent. Pure gesture→intent translation with zero
+    // mode semantics (the SDK's TalkModeController owns them all): this only names which
+    // intent each FSM edge maps to. HOLD→LOCKED now emits onLock (audio.end + semantic
+    // audio.start) rather than staying a silent visual promotion.
     fun setMode(next: MicCornerMode, trigger: String) {
         val prev = mode
         if (prev == next) return
         mode = next
         currentOnModeChange(next)
         log.info("mode-change", mapOf("from" to prev.name, "to" to next.name, "trigger" to trigger))
-        if (prev == MicCornerMode.IDLE) {
-            currentOnStart()
-        } else if (next == MicCornerMode.IDLE) {
-            currentOnStop()
+        when {
+            prev == MicCornerMode.IDLE && next == MicCornerMode.HOLD -> currentOnPress()
+            prev == MicCornerMode.HOLD && next == MicCornerMode.IDLE -> currentOnRelease()
+            prev == MicCornerMode.HOLD && next == MicCornerMode.LOCKED -> currentOnLock()
+            prev == MicCornerMode.LOCKED && next == MicCornerMode.IDLE -> currentOnStopContinuous()
+            // Not reachable via pointer today, but keep the FSM total: a direct
+            // IDLE→LOCKED composes press+lock (Idle→Hold→Continuous).
+            prev == MicCornerMode.IDLE && next == MicCornerMode.LOCKED -> { currentOnPress(); currentOnLock() }
         }
     }
 
