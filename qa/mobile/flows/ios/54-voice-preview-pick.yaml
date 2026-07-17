@@ -1,0 +1,52 @@
+appId: io.dev32.sentient.debug
+---
+# 54-voice-preview-pick — Voice settings page: play preview on a builtin voice
+# (Briar), then pick it — active badge moves. Original active voice
+# (c624a6ca980346ec9dc38bb434fec506, "Jarvis", a user-source pack despite the
+# display name) is restored by 54b-voice-restore.yaml. Run login.yaml
+# immediately before this.
+#
+# DEFECT (iOS, confirmed live, SAME id-collision family as RowToggle/
+# MemberRow/RowSegmented): VoiceRowView's accessibilityIdentifier sits on the
+# outer HStack and propagates to EVERY descendant — the play button's OWN
+# "-play" suffix (VoiceRowView.swift) never reaches the tree; `maestro
+# hierarchy` shows every child (play icon, name text, tags, delete icon) under
+# the bare "settings-voice-row-<id>" id. Point-tap by on-screen position
+# instead: the row DOES correctly use `.contentShape(Rectangle())` +
+# `.onTapGesture(perform: onSelect)` (unlike the Personalities-card defect),
+# so a tap anywhere on the row except the nested play/delete icons reliably
+# selects it.
+#
+# tags: [ios, simulator-ok]
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
+    timeout: 5000
+- tapOn:
+    id: "settings-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000
+- tapOn:
+    id: "settings-cat-voice"
+- extendedWaitUntil:
+    visible:
+      id: "settings-voice"
+    timeout: 5000
+- assertVisible:
+    id: "settings-voice-add-nav"
+- takeScreenshot: "54-voice-before"
+# Briar is the first (alphabetically-sorted) builtin row; play icon ~x=12%.
+- tapOn:
+    point: "12%,50%"
+- takeScreenshot: "54-voice-previewing"
+# tap the row's text/meta area (not the play icon) to select/pick it
+- tapOn:
+    point: "90%,50%"
+- extendedWaitUntil:
+    visible: "Active"
+    timeout: 10000
+- takeScreenshot: "54-voice-active-briar"

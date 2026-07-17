@@ -1,0 +1,37 @@
+appId: io.dev32.sentient.debug
+---
+# 51-account-rename — Account page: change display name, Save (imperative PUT
+# /auth/me), inline "Saved" result. Original name "Kevin" restored by
+# 51b-account-restore.yaml. Run login.yaml immediately before this.
+#
+# tags: [ios, simulator-ok]
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
+    timeout: 5000
+- tapOn:
+    id: "settings-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000
+- tapOn:
+    id: "settings-cat-account"
+- extendedWaitUntil:
+    visible:
+      id: "settings-account-screen"
+    timeout: 5000
+- assertVisible: "Kevin"
+- takeScreenshot: "51-account-before"
+- tapOn:
+    id: "settings-account-name"
+- eraseText: 20
+- inputText: "KevinTest"
+- tapOn:
+    id: "settings-account-save"
+- extendedWaitUntil:
+    visible: "Saved"
+    timeout: 10000
+- takeScreenshot: "51-account-saved"

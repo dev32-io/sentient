@@ -1,0 +1,70 @@
+appId: io.dev32.sentient.debug
+---
+# 47-system-prompt-restore-default — System Prompt page: "Restore default" ->
+# confirm -> Save applies the canonical Soul.md template (SLOW path: PUT + POST
+# /profile/apply). Original soul content (with the "# <userId>" header) is
+# restored via direct API call after — restoring 1983 chars through the mono
+# editor UI would hit the same slow-typing issue documented in 46-memory-cap.
+# Run login.yaml immediately before this.
+#
+# DEFECT-5 (Android, confirmed live): the MonoEditor is a plain scrollable
+# EditText spanning nearly the full screen width/height; a center-point swipe
+# (Maestro's default scrollUntilVisible gesture) lands inside it and is
+# consumed by the EditText's own internal scroll instead of the outer page
+# scroll, and a tap fired immediately after the scroll can land a few px off
+# (fling not fully settled) — landing inside the editor instead of the
+# "Restore default" button below it, silently no-op'ing (first-run repro:
+# scrollUntilVisible+tapOn both "succeeded" per Maestro but no dialog opened).
+# Root-caused via uiautomator dump: a swipe at x>980 (outside the editor's
+# right edge) reliably reaches the outer scroll in one gesture. Workaround:
+# waitForAnimationToEnd after the scroll settles the fling before tapping.
+#
+# tags: [android, emulator-ok]
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-open"
+    timeout: 5000
+- tapOn:
+    id: "settings-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000
+- tapOn:
+    id: "settings-cat-system-prompt"
+- extendedWaitUntil:
+    visible:
+      id: "settings-system-prompt-screen"
+    timeout: 5000
+- takeScreenshot: "47-system-prompt-before"
+- scrollUntilVisible:
+    element:
+      id: "settings-system-prompt-restore"
+    direction: DOWN
+- waitForAnimationToEnd:
+    timeout: 2000
+- tapOn:
+    id: "settings-system-prompt-restore"
+# DEFECT-2: AlertDialog content isn't testTagsAsResourceId-covered — use text.
+- extendedWaitUntil:
+    visible: "Restore default Soul.md?"
+    timeout: 5000
+- tapOn: "Restore"
+- assertVisible:
+    id: "settings-system-prompt-save"
+- tapOn:
+    id: "settings-system-prompt-save"
+# the apply-notice window can be brief on a fast local stack — tolerate a short
+# race instead of asserting it's visible at the exact instant after the tap
+- extendedWaitUntil:
+    visible:
+      id: "settings-apply-notice"
+    timeout: 3000
+    optional: true
+- extendedWaitUntil:
+    notVisible:
+      id: "settings-apply-notice"
+    timeout: 45000
+- takeScreenshot: "47-system-prompt-after"

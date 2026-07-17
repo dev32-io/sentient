@@ -1,0 +1,15 @@
+appId: io.dev32.sentient.debug
+---
+# 51b-account-restore — restores display name to "Kevin" after
+# 51-account-rename.yaml. Run immediately after 51 (same Account screen open).
+#
+# tags: [android, emulator-ok]
+- tapOn:
+    id: "settings-account-name-field"
+- eraseText: 20
+- inputText: "Kevin"
+- tapOn:
+    id: "settings-account-name-save"
+- extendedWaitUntil:
+    visible: "Saved"
+    timeout: 10000

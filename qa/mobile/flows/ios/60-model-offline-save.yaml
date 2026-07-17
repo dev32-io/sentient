@@ -1,0 +1,34 @@
+appId: io.dev32.sentient.debug
+---
+# 60-model-offline-save — Model settings page: with the gateway container
+# stopped (simulator can't airplane-mode; a real connection-refused via
+# `docker compose stop gateway` is the practical LOCAL-network-down substitute
+# per task discipline — never faked), pick a different model and Save. Failure
+# surfaces inline; the draft is kept (not silently discarded), no crash. Run
+# login.yaml + navigate to the Model page WHILE the gateway is still up, THEN
+# stop the gateway, THEN run this flow (picks + saves against the dead
+# backend). Restart the gateway after and confirm recovery is a separate step.
+#
+# tags: [ios, simulator-ok]
+- tapOn:
+    id: "settings-model-search"
+- inputText: "kimi-k2.5"
+- extendedWaitUntil:
+    visible:
+      id: "settings-model-card-kimi-k2.5:cloud"
+    timeout: 5000
+- tapOn:
+    id: "settings-model-card-kimi-k2.5:cloud"
+- assertVisible:
+    id: "settings-model-save"
+- takeScreenshot: "60-model-offline-dirty"
+- tapOn:
+    id: "settings-model-save"
+- extendedWaitUntil:
+    visible:
+      id: "settings-error"
+    timeout: 20000
+- takeScreenshot: "60-model-offline-error"
+# draft kept: the picked model selection is still shown, not reverted
+- assertVisible:
+    id: "settings-model-save"

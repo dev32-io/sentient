@@ -1,0 +1,82 @@
+appId: io.dev32.sentient.debug
+---
+# 47-system-prompt-restore-default — System Prompt page: "Restore default" ->
+# confirm -> Save applies the canonical Soul.md template (SLOW path: PUT + POST
+# /profile/apply). Run login.yaml immediately before this.
+#
+# NOTE (iOS-specific discovery, confirmed live via GET /profile/soul and
+# GET /profile/soul/default): this seed profile's soul ALREADY equals the
+# canonical default byte-for-byte (persona.template="default", overrides="") —
+# so tapping Restore Default with no prior edit produces NO diff and Save never
+# appears. To exercise the matrix's "edited soul" pre-state for real, this flow
+# first appends a small marker line and Saves it (establishing a genuinely
+# non-default state), THEN does Restore Default -> Save (which now shows a real
+# diff and restart). Because default == the true original content here, this
+# converges back to the byte-exact original with NO extra API restore step
+# needed — verified live: GET /profile/soul before vs after this flow are
+# identical (1968 bytes). If a future profile's soul legitimately diverges from
+# default, add a direct `PUT /profile/soul` + `POST /profile/apply` restore step
+# after this flow using content captured via GET /profile/soul beforehand.
+#
+# tags: [ios, simulator-ok]
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
+    timeout: 5000
+- tapOn:
+    id: "settings-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000
+- tapOn:
+    id: "settings-cat-system-prompt"
+- extendedWaitUntil:
+    visible:
+      id: "settings-system-prompt-screen"
+    timeout: 5000
+- takeScreenshot: "47-system-prompt-before"
+# Establish a genuinely dirty, non-default pre-state (see NOTE above).
+- tapOn:
+    id: "settings-system-prompt-editor"
+- inputText: "
+
+## E2E marker (temporary — restored by Restore Default below)"
+- assertVisible:
+    id: "settings-system-prompt-save"
+- tapOn:
+    id: "settings-system-prompt-save"
+- extendedWaitUntil:
+    visible:
+      id: "settings-applying"
+    timeout: 3000
+    optional: true
+- extendedWaitUntil:
+    notVisible:
+      id: "settings-applying"
+    timeout: 45000
+- takeScreenshot: "47-system-prompt-edited-marker"
+# Restore default -> confirm -> Save (real diff now: marker vs canonical default).
+- tapOn:
+    id: "settings-system-prompt-restore"
+- extendedWaitUntil:
+    visible: "Restore default Soul.md?"
+    timeout: 5000
+- tapOn: "Restore"
+- assertVisible:
+    id: "settings-system-prompt-save"
+- takeScreenshot: "47-system-prompt-restored-dirty"
+- tapOn:
+    id: "settings-system-prompt-save"
+- extendedWaitUntil:
+    visible:
+      id: "settings-applying"
+    timeout: 3000
+    optional: true
+- extendedWaitUntil:
+    notVisible:
+      id: "settings-applying"
+    timeout: 45000
+- takeScreenshot: "47-system-prompt-after-default-applied"

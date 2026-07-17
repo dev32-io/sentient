@@ -11,6 +11,7 @@ import io.sentient.mobiledata.usecase.ObserveSessionsUseCase
 import io.sentient.mobiledata.usecase.RenameSessionUseCase
 import io.sentient.mobiledata.usecase.SendMessageUseCase
 import io.sentient.mobiledata.usecase.SwitchConversationUseCase
+import io.sentient.mobilesdk.protocol.AudioPreferencesPatch
 import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.sdk.SentientSdk
 import io.sentient.mobilesdk.util.Clock
@@ -74,6 +75,13 @@ open class ChatComponent(
 
     /** Patch TTS on/off; the gateway echoes the change via session preferences. */
     suspend fun setTtsEnabled(enabled: Boolean) = sdk.setTtsEnabled(enabled)
+
+    /**
+     * Patch audio output preferences (TTS on/off and/or reply channel) live over the WS.
+     * The connection-scope handle the settings layer binds as its `liveAudioPatch` so an Audio
+     * fast-save reflects on the running session with no restart. Superset of [setTtsEnabled].
+     */
+    suspend fun patchAudioPreferences(patch: AudioPreferencesPatch) = sdk.patchAudioPreferences(patch)
 
     /** UI Stop — idempotent hard interrupt of the active cycle + audio. */
     fun interrupt() = sdk.interrupt()

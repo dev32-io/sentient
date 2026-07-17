@@ -1,0 +1,52 @@
+appId: io.dev32.sentient.debug
+---
+# 48b-advanced-restore — restores reasoning=minimal, compression=0.50, max
+# tokens=1024 after 48-advanced-sliders.yaml. Run immediately after 48 (same
+# Advanced screen still open).
+#
+# IMPORTANT slider-math correction (confirmed live): the value the slider
+# DISPLAYS (e.g. "95%") is NOT the screen-x percentage to swipe from — the
+# track only spans screen x≈9%–91% (its 36–366pt bounds on a 402pt-wide
+# screen), so the thumb's screen-x fraction is `0.09 + value*0.82`, not
+# `value` directly. Using the raw displayed value as the screen-x swipe start
+# (e.g. "95%,29%") misses the thumb entirely and silently no-ops (confirmed:
+# compression stayed at 0.95 after a swipe from "95%,29%"). The corrected
+# start point below (~87%) grabs the real thumb; a drag also isn't pixel-exact
+# against a 0.05 step — expect ±1 step and nudge with a short follow-up swipe,
+# then re-check via `maestro hierarchy` (the slider's `value` attribute reads
+# back the exact percentage) before Save.
+- tapOn:
+    id: "settings-advanced-reasoning"
+- tapOn: "Minimal"
+- assertVisible: "Minimal"
+- swipe:
+    start: "87%,29%"
+    end: "50%,29%"
+    duration: 800
+- swipe:
+    start: "45%,29%"
+    end: "52%,29%"
+    duration: 500
+- swipe:
+    start: "55%,29%"
+    end: "51%,29%"
+    duration: 500
+- assertVisible:
+    text: "50%"
+- swipe:
+    start: "65%,38%"
+    end: "18%,38%"
+    duration: 800
+- assertVisible:
+    id: "settings-advanced-save"
+- tapOn:
+    id: "settings-advanced-save"
+- extendedWaitUntil:
+    visible:
+      id: "settings-applying"
+    timeout: 3000
+    optional: true
+- extendedWaitUntil:
+    notVisible:
+      id: "settings-applying"
+    timeout: 45000

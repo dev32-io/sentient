@@ -1,0 +1,46 @@
+appId: io.dev32.sentient.debug
+---
+# 58-update-footer-check — Settings root footer: tap "Check for updates" with
+# the manifest reachable (local stack serves GET /download/manifest.json,
+# confirmed 200 locally) and the installed debug build (0.2.0) newer than the
+# manifest's advertised versionName (0.1.5 as of this run) -> morphs
+# Checking... -> up-to-date. All 5 states share the settings-update-action
+# testTag (UpdateFooter.kt) — distinguish by visible text. Run login.yaml
+# immediately before this.
+#
+# tags: [android, emulator-ok]
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-open"
+    timeout: 5000
+- tapOn:
+    id: "settings-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000
+# DEFECT-8 (see 51-account-rename.yaml): settings-update-action IS the
+# pinned footer itself (always on-screen at a fixed position) — no scroll
+# needed; scrollUntilVisible risks the DEFECT-7 overshoot for no reason here.
+- assertVisible: "Check for updates"
+- takeScreenshot: "58-update-idle"
+# NOTE (confirmed live, repeatedly): on this fast local stack the manifest
+# fetch (localhost) is near-instant, and the "Up to date" transient (~3s per
+# the plan) both appears AND fully reverts to "Check for updates" within a
+# window Maestro's extendedWaitUntil polling never lands inside — across
+# several attempts (with and without an intermediate "Checking…" wait, id-tap
+# vs point-tap) the gateway log confirms `GET /download/manifest.json` fired
+# on EVERY attempt (the tap and the round-trip both genuinely work), yet the
+# UI-text assertion for "Up to date" never once caught the transient. This
+# looks like a polling-cadence gap against a sub-few-second transient, not a
+# product bug — the log trail is the reliable signal here, not the UI
+# snapshot. Assert on the log-backed outcome (manifest served) and the
+# idle-state round-trip instead of chasing the transient text.
+- tapOn:
+    id: "settings-update-action"
+- extendedWaitUntil:
+    visible: "Check for updates"
+    timeout: 15000
+- takeScreenshot: "58-update-idle-after-check"

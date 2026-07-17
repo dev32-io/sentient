@@ -1,0 +1,54 @@
+appId: io.dev32.sentient.debug
+---
+# 57-diagnostics-send — Diagnostics category page (moved off root per the
+# mobile-settings-parity plan): send one chat turn for content, open Settings ->
+# Diagnostics, tap Send diagnostic log, "This session" (newest) is
+# default-selected, tap its Send control -> progress -> "Sent ✓ — ref XXXX".
+# Reuses the T7 case pattern (testing-knowledge.md) adapted to the new
+# Diagnostics category page (was root-level). Run login.yaml immediately
+# before this.
+#
+# tags: [ios, simulator-ok, vitals, diagnostics]
+- tapOn:
+    id: "composer-input"
+- inputText: "hi"
+- tapOn:
+    id: "chat-send"
+- tapOn:
+    id: "chat-message-list"
+- extendedWaitUntil:
+    visible:
+      id: "assistant-bubble"
+    timeout: 60000
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
+    timeout: 5000
+- tapOn:
+    id: "settings-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000
+- tapOn:
+    id: "settings-cat-diagnostics"
+- extendedWaitUntil:
+    visible:
+      id: "settings-send-logs"
+    timeout: 5000
+- takeScreenshot: "57-diagnostics-before"
+- tapOn:
+    id: "settings-send-logs"
+- extendedWaitUntil:
+    visible:
+      text: "This session"
+    timeout: 5000
+- tapOn:
+    text: "Send"
+- extendedWaitUntil:
+    visible:
+      text: "Sent ✓.*"
+    timeout: 20000
+- takeScreenshot: "57-diagnostics-sent"

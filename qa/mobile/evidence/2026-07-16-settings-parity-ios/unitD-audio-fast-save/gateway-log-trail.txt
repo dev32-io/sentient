@@ -1,0 +1,22 @@
+2026-07-16T19:30:34.140 INFO  [gateway:api:profile] me.request | method="PUT" userId="u_8c866990"
+2026-07-16T19:30:34.148 INFO  [gateway:profile-store] save | userId="u_8c866990"
+2026-07-16T19:30:34.157 INFO  [gateway:api:profile] me.request | method="GET" userId="u_8c866990"
+--
+2026-07-16T19:30:46.605 INFO  [gateway:api:profile] me.request | method="PUT" userId="u_8c866990"
+2026-07-16T19:30:46.611 INFO  [gateway:profile-store] save | userId="u_8c866990"
+2026-07-16T19:30:46.618 INFO  [gateway:profile-store] save | userId="u_8c866990"
+2026-07-16T19:30:31.153 INFO  [gateway:api:profile] me.request | method="GET" userId="u_8c866990"
+2026-07-16T19:30:34.140 INFO  [gateway:api:profile] me.request | method="PUT" userId="u_8c866990"
+2026-07-16T19:30:34.148 INFO  [gateway:profile-store] save | userId="u_8c866990"
+2026-07-16T19:30:34.157 INFO  [gateway:api:profile] me.request | method="GET" userId="u_8c866990"
+2026-07-16T19:30:34.163 INFO  [gateway:profile-store] save | userId="u_8c866990"
+2026-07-16T19:30:34.164 INFO  [cerebrum:preferences] preferences-changed | changed=ttsEnabled prev=[object Object] next=[object Object]
+2026-07-16T19:30:34.165 INFO  [ws:session-configure] preference-change-received | sessionId="s-mrobjtdg-4pa8ecf2" prev=[object Object] next=[object Object] changed=ttsEnabled
+2026-07-16T19:30:34.165 INFO  [session-handlers:preferences-patch] applied | sessionId="s-mrobjtdg-4pa8ecf2" userId="u_8c866990" patch=[object Object]
+2026-07-16T19:30:46.605 INFO  [gateway:api:profile] me.request | method="PUT" userId="u_8c866990"
+2026-07-16T19:30:46.611 INFO  [gateway:profile-store] save | userId="u_8c866990"
+2026-07-16T19:30:46.618 INFO  [gateway:profile-store] save | userId="u_8c866990"
+2026-07-16T19:30:46.618 INFO  [cerebrum:preferences] preferences-changed | changed=ttsEnabled prev=[object Object] next=[object Object]
+2026-07-16T19:30:46.619 INFO  [ws:session-configure] preference-change-received | sessionId="s-mrobjtdg-4pa8ecf2" prev=[object Object] next=[object Object] changed=ttsEnabled
+2026-07-16T19:30:46.619 INFO  [session-handlers:preferences-patch] applied | sessionId="s-mrobjtdg-4pa8ecf2" userId="u_8c866990" patch=[object Object]
+2026-07-16T19:30:46.621 INFO  [gateway:api:profile] me.request | method="GET" userId="u_8c866990"

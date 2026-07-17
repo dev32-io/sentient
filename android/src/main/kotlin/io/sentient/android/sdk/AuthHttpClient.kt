@@ -22,9 +22,19 @@ import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
+import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
+
+/**
+ * Generous call/read/write timeout for the SETTINGS HttpClient. Settings writes
+ * (apply / soul / memory / personality) block multi-seconds through a Hermes worker
+ * restart; the shared settings REST clients set no per-request timeout, so this
+ * engine timeout MUST be large or a healthy slow restart resolves as a network
+ * failure. See SettingsComponent's constructor KDoc (~60-120s required).
+ */
+private const val SETTINGS_TIMEOUT_MS = 120_000L
 
 /**
  * Builds the auth HttpClient: OkHttp engine + JSON ContentNegotiation
@@ -33,6 +43,24 @@ import javax.net.ssl.X509TrustManager
  */
 internal fun buildAuthHttpClient(allowSelfSignedDevHost: Boolean): HttpClient {
     val okHttp = buildOkHttpClient(allowSelfSignedDevHost)
+    return HttpClient(OkHttp) {
+        engine { preconfigured = okHttp }
+        install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+    }
+}
+
+/**
+ * Builds the SETTINGS HttpClient — same OkHttp engine + TLS policy + JSON as the auth
+ * client, but with [SETTINGS_TIMEOUT_MS] call/read/write timeouts so a Hermes-restart
+ * apply (multi-second block) never surfaces as a spurious network failure. Dedicated
+ * client per the SettingsComponent contract (not the short-timeout auth client).
+ */
+internal fun buildSettingsHttpClient(allowSelfSignedDevHost: Boolean): HttpClient {
+    val okHttp = buildOkHttpClient(allowSelfSignedDevHost).newBuilder()
+        .callTimeout(SETTINGS_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .readTimeout(SETTINGS_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .writeTimeout(SETTINGS_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .build()
     return HttpClient(OkHttp) {
         engine { preconfigured = okHttp }
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }

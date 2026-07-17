@@ -1,0 +1,51 @@
+appId: io.dev32.sentient.debug
+---
+# 54-voice-preview-pick — Voice settings page: play preview on a builtin voice
+# (Briar), then Set active — active badge moves. Original active voice
+# (c624a6ca980346ec9dc38bb434fec506, "Jarvis") is restored by
+# 54b-voice-restore.yaml (a full-profile PUT — profile/me is a full-replace
+# endpoint, not a patch; see profile.ts handleMePut, which validates the
+# COMPLETE profileV1Schema including schemaVersion/userId). Run login.yaml
+# immediately before this.
+#
+# tags: [android, emulator-ok]
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-open"
+    timeout: 5000
+- tapOn:
+    id: "settings-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000
+# DEFECT-7 (see 51-account-rename.yaml): settings-cat-voice renders on the
+# FIRST screen of the settings root (3rd row, Soul group, no scroll needed —
+# 40-settings-root.yaml reaches it via plain assertVisible pre-scroll).
+# scrollUntilVisible on an already-visible target overshoots to the footer —
+# tap directly instead.
+- tapOn:
+    id: "settings-cat-voice"
+- extendedWaitUntil:
+    visible:
+      id: "settings-voice-screen"
+    timeout: 5000
+- assertVisible:
+    id: "settings-voice-fish-nav"
+- takeScreenshot: "54-voice-before"
+- tapOn:
+    id: "voice-play-briar"
+- extendedWaitUntil:
+    visible:
+      id: "voice-play-briar"
+    timeout: 5000
+- takeScreenshot: "54-voice-previewing"
+- tapOn:
+    id: "voice-pick-briar"
+- extendedWaitUntil:
+    visible:
+      id: "voice-active-briar"
+    timeout: 10000
+- takeScreenshot: "54-voice-active-briar"

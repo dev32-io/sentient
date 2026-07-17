@@ -1,0 +1,63 @@
+appId: io.dev32.sentient.debug
+---
+# 40-settings-root — history side panel -> Settings root list renders grouped
+# categories + Admin group gated on isAdmin + version footer at the bottom.
+# Assumes an already logged-in session (run login.yaml first).
+#
+# Selectors: history-open (chat top bar) -> settings-open (account header gear) ->
+# settings-screen, settings-cat-<key>, settings-version, settings-update-action.
+# Unlike Android, the whole root list (categories + logout + footer) fits in ONE
+# SwiftUI ScrollView on an iPhone 16 Pro without scrolling — see twin-check #1
+# (footer-in-scroll) in the handover notes.
+#
+# tags: [ios, simulator-ok]
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
+    timeout: 5000
+- tapOn:
+    id: "settings-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000
+# Soul group
+- assertVisible:
+    id: "settings-cat-memory"
+- assertVisible:
+    id: "settings-cat-personalities"
+- assertVisible:
+    id: "settings-cat-voice"
+- assertVisible:
+    id: "settings-cat-audio"
+- assertVisible:
+    id: "settings-cat-model"
+- assertVisible:
+    id: "settings-cat-tools"
+- assertVisible:
+    id: "settings-cat-system-prompt"
+- assertVisible:
+    id: "settings-cat-advanced"
+# User group
+- assertVisible:
+    id: "settings-cat-account"
+- assertVisible:
+    id: "settings-cat-devices"
+- takeScreenshot: "40-settings-root-admin"
+# Admin group (this test user IS admin)
+- assertVisible:
+    id: "settings-cat-members"
+- assertVisible:
+    id: "settings-cat-secrets"
+# Support group + footer
+- assertVisible:
+    id: "settings-cat-diagnostics"
+- assertVisible:
+    id: "settings-logout"
+- assertVisible:
+    id: "settings-version"
+- assertVisible:
+    id: "settings-update-action"
+- takeScreenshot: "40-settings-root-footer"

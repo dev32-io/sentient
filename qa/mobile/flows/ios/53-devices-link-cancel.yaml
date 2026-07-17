@@ -1,0 +1,48 @@
+appId: io.dev32.sentient.debug
+---
+# 53-devices-link-cancel — Devices page: Signal unlinked -> tap "Link Signal" ->
+# QR sheet opens (steps + QR/preparing/failed) -> Cancel dismisses the sheet and
+# stops the pairing (POST .../signal/cancel), leaving Signal unlinked. Run
+# login.yaml immediately before this.
+#
+# tags: [ios, simulator-ok]
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
+    timeout: 5000
+- tapOn:
+    id: "settings-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000
+- tapOn:
+    id: "settings-cat-devices"
+- extendedWaitUntil:
+    visible:
+      id: "settings-devices-screen"
+    timeout: 5000
+- assertVisible:
+    id: "settings-devices-link"
+- takeScreenshot: "53-devices-unlinked"
+- tapOn:
+    id: "settings-devices-link"
+- extendedWaitUntil:
+    visible: "Link your Signal account"
+    timeout: 5000
+- extendedWaitUntil:
+    visible:
+      id: "settings-devices-qr"
+    timeout: 15000
+    optional: true
+- takeScreenshot: "53-devices-qr-shown"
+- tapOn:
+    id: "settings-devices-link-cancel"
+- extendedWaitUntil:
+    notVisible: "Link your Signal account"
+    timeout: 5000
+- assertVisible:
+    id: "settings-devices-link"
+- takeScreenshot: "53-devices-cancelled"

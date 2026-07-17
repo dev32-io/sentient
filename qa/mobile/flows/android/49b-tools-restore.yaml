@@ -1,0 +1,16 @@
+appId: io.dev32.sentient.debug
+---
+# 49b-tools-restore — re-enables "fetch" after 49-tools-toggle.yaml. Run
+# immediately after 49 (same Tools screen still open).
+#
+# tags: [android, emulator-ok]
+- tapOn:
+    point: "84%,37%"
+- assertVisible:
+    id: "settings-tools-save"
+- tapOn:
+    id: "settings-tools-save"
+- extendedWaitUntil:
+    notVisible:
+      id: "settings-apply-notice"
+    timeout: 45000

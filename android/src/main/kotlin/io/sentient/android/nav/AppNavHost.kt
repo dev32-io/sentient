@@ -53,8 +53,6 @@ import io.sentient.android.backend.BackendSetupScreen
 import io.sentient.android.backend.BackendSetupViewModel
 import io.sentient.android.di.UserSessionManager
 import io.sentient.android.sdk.DisplayNameHolder
-import io.sentient.android.settings.SettingsScreen
-import io.sentient.android.settings.SettingsViewModel
 import io.sentient.android.splash.AppSplashOverlay
 import io.sentient.android.update.ForceUpdateScreen
 import io.sentient.android.update.UpdateBanner
@@ -83,7 +81,7 @@ fun AppNavHost() {
                 setupDestination(nav)
                 loginDestination(nav)
                 chatDestination(nav)
-                settingsDestination(nav)
+                settingsDestinations(nav)
                 forceUpdateDestination()
             }
             if (name != null && isBackendConfigured()) {
@@ -216,34 +214,8 @@ private fun NavGraphBuilder.chatDestination(nav: NavHostController) {
     }
 }
 
-private fun NavGraphBuilder.settingsDestination(nav: NavHostController) {
-    composable(Routes.SETTINGS) {
-        val settingsVm = koinViewModel<SettingsViewModel>()
-        val userSession = koinInject<UserSessionManager>()
-        val updateVm = koinInject<UpdateViewModel>()
-        val sessions by settingsVm.sessions.collectAsStateWithLifecycle()
-        val progress by settingsVm.progress.collectAsStateWithLifecycle()
-        val outcome by settingsVm.outcome.collectAsStateWithLifecycle()
-        val updateStatus by updateVm.status.collectAsStateWithLifecycle()
-        SettingsScreen(
-            onLogout = {
-                settingsVm.logout()
-                logoutTo(nav, userSession)
-            },
-            onBack = { nav.popBackStack() },
-            sessions = sessions,
-            progress = progress,
-            outcome = outcome,
-            onUpload = settingsVm::uploadSession,
-            updateStatus = updateStatus,
-            onCheckUpdate = updateVm::check,
-            onInstallUpdate = updateVm::install,
-        )
-    }
-}
-
 /** Tear down the SDK session and route to login (clears the whole back stack). */
-private fun logoutTo(nav: NavHostController, userSession: UserSessionManager) {
+internal fun logoutTo(nav: NavHostController, userSession: UserSessionManager) {
     userSession.shutdown()
     nav.navigate(Routes.LOGIN) { popUpTo(nav.graph.id) { inclusive = true } }
 }

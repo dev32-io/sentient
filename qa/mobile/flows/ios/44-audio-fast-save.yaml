@@ -1,0 +1,55 @@
+appId: io.dev32.sentient.debug
+---
+# 44-audio-fast-save — Audio settings page: toggle "Speak responses (TTS)" off,
+# Save appears on dirty, save completes WITHOUT the restart/apply notice (fast
+# path — PUT profile + live prefs patch, no /profile/apply). Run login.yaml
+# immediately before this. Original state (ttsEnabled=true) is restored by
+# 44b-audio-restore.yaml.
+#
+# DEFECT (iOS, confirmed live via hierarchy dump): RowToggle's
+# accessibilityIdentifier sits on the outer HStack, but ALL descendants (label
+# Text, sub Text, AND the native Toggle control) inherit the SAME identifier
+# "settings-audio-tts" instead of each keeping its own accessibility node
+# distinctly targetable — `tapOn: id: settings-audio-tts` lands on whichever
+# node Maestro resolves first (empirically: the label Text, which does not
+# respond to taps) and silently no-ops, leaving the switch unchanged. Same
+# root-cause family as the Members-row id-collision defect (43) and Android's
+# DEFECT-3 (different mechanism — Compose's testTag-vs-clickable-area gap —
+# same net effect). Point-tap the switch's actual on-screen position instead.
+#
+# tags: [ios, simulator-ok]
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
+    timeout: 5000
+- tapOn:
+    id: "settings-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000
+- tapOn:
+    id: "settings-cat-audio"
+- extendedWaitUntil:
+    visible:
+      id: "settings-audio-screen"
+    timeout: 5000
+- assertNotVisible:
+    id: "settings-audio-save"
+- takeScreenshot: "44-audio-before"
+- tapOn:
+    point: "85%,24%"
+- assertVisible:
+    id: "settings-audio-save"
+- tapOn:
+    id: "settings-audio-save"
+# fast save: must NOT show the restart/apply notice at any point
+- assertNotVisible:
+    id: "settings-applying"
+- extendedWaitUntil:
+    notVisible:
+      id: "settings-audio-save"
+    timeout: 8000
+- takeScreenshot: "44-audio-after-save"

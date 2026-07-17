@@ -1,0 +1,35 @@
+appId: io.dev32.sentient.debug
+---
+# 52-pin-wrong-current — Account page: Change PIN with a wrong current PIN
+# surfaces "Current PIN is wrong" inline (401 invalid-credentials — see
+# gateway/src/api/handlers/auth.ts handleChangePin), sheet stays open, no
+# logout, no lockout. Run immediately after 51b (already on Account screen).
+#
+# tags: [ios, simulator-ok]
+- tapOn:
+    id: "settings-account-changepin"
+- extendedWaitUntil:
+    visible:
+      id: "settings-account-pin-current"
+    timeout: 5000
+- tapOn:
+    id: "settings-account-pin-current"
+- inputText: "9999"
+- tapOn:
+    id: "settings-account-pin-new"
+- inputText: "5555"
+- tapOn:
+    id: "settings-account-pin-submit"
+- extendedWaitUntil:
+    visible: "Current PIN is wrong"
+    timeout: 5000
+- takeScreenshot: "52-pin-wrong-current"
+- tapOn:
+    id: "settings-account-pin-cancel"
+- extendedWaitUntil:
+    notVisible:
+      id: "settings-account-pin-current"
+    timeout: 5000
+# no lockout: still on Account, still logged in
+- assertVisible:
+    id: "settings-account-screen"

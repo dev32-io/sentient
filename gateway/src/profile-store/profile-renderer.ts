@@ -6,6 +6,7 @@ import { stringify as yamlStringify } from "yaml";
 import { getLog } from "../logging/logger.js";
 import { writeFileAtomic } from "../user-auth/atomic-write.js";
 import { getHermesProfileDir } from "../user-auth/paths.js";
+import { mergePreservedConfig } from "./preserve-agent-sections.js";
 import type { ModelProvider, ProfileV1 } from "./profile-types.js";
 
 const log = getLog(["sentient", "gateway", "profile-store", "renderer"]);
@@ -349,7 +350,14 @@ export interface WriteRenderedOpts {
 export async function writeRendered(userId: string, rendered: RenderedProfile, opts: WriteRenderedOpts): Promise<void> {
   const dir = getHermesProfileDir(userId);
   await mkdir(dir, { recursive: true });
-  await writeFileAtomic(join(dir, "config.yaml"), rendered.hermesConfigYaml, { mode: 0o644 });
+  // config.yaml is regenerated from profile.json, which does NOT carry the
+  // personality library (agent.personalities) or the active personality
+  // (agent.system_prompt) — those live only in config.yaml, written separately
+  // by the personality-store. Splice them back in so an apply / boot re-render
+  // never wipes the user's personalities.
+  const configPath = join(dir, "config.yaml");
+  const configYaml = await mergePreservedConfig(configPath, rendered.hermesConfigYaml);
+  await writeFileAtomic(configPath, configYaml, { mode: 0o644 });
   if (opts.writeSoul) {
     await writeFileAtomic(join(dir, "SOUL.md"), rendered.soulMarkdown, { mode: 0o644 });
   }

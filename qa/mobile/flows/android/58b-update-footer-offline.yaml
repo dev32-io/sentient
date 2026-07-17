@@ -1,0 +1,21 @@
+appId: io.dev32.sentient.debug
+---
+# 58b-update-footer-offline — Settings root footer: tap "Check for updates"
+# with emulator connectivity killed by the harness (adb shell svc wifi/data
+# disable) BEFORE running this flow, and restored AFTER — same two-invocation
+# pattern as 60-model-offline-save-*.yaml (Maestro 2.6.0 has no shell-exec
+# step). Expect: "Check failed — Retry" (UpdateFooter.kt FooterVisual.Failed),
+# no crash. Verified live 2026-07-16 via a direct point tap (see DEFECT-11 in
+# 58-update-footer-check.yaml re: id-based tapOn reliability on this node —
+# point tap used here for the same reason). Run login.yaml + a plain
+# navigation to settings-screen immediately before this, with the network
+# killed in between.
+#
+# tags: [android, emulator-ok]
+- assertVisible: "Check for updates"
+- tapOn:
+    point: "50%,89%"
+- extendedWaitUntil:
+    visible: "Check failed — Retry"
+    timeout: 15000
+- takeScreenshot: "58b-update-check-failed"

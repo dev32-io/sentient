@@ -1,0 +1,26 @@
+appId: io.dev32.sentient.debug
+---
+# 54b-voice-restore — restores the original active voice ("Jarvis",
+# id c624a6ca980346ec9dc38bb434fec506 — a user-source pack, NOT a built-in
+# despite the display name) after 54-voice-preview-pick.yaml picks Briar. Voice
+# tile testTags are keyed by the raw backend voiceId, not a display-name slug
+# (voice-pick-c624a6ca980346ec9dc38bb434fec506, NOT voice-pick-jarvis — see
+# VoiceCard.kt). Run immediately after 54 (same Voice screen still open).
+#
+# tags: [android, emulator-ok]
+# The "All" tab lists all 5 built-ins (each a tall multi-line card) BEFORE
+# Jarvis (the only "user"-source pack) — scrollUntilVisible's default attempt
+# budget isn't enough to page past all 5. Filter to "Yours" first so Jarvis is
+# the only (or first) entry, no long scroll needed.
+- tapOn: "Yours"
+- scrollUntilVisible:
+    element:
+      id: "voice-pick-c624a6ca980346ec9dc38bb434fec506"
+    direction: DOWN
+- tapOn:
+    id: "voice-pick-c624a6ca980346ec9dc38bb434fec506"
+- extendedWaitUntil:
+    visible:
+      id: "voice-active-c624a6ca980346ec9dc38bb434fec506"
+    timeout: 10000
+- takeScreenshot: "54b-voice-restored-jarvis"

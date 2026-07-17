@@ -8,6 +8,14 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class LoginRequest(val userId: String, val pin: String)
 
+/** PUT /api/v1/auth/me body — rename the caller's display name. */
+@Serializable
+data class UpdateMeRequest(val displayName: String)
+
+/** PUT /api/v1/auth/me/pin body — change PIN. Values are NEVER logged. */
+@Serializable
+data class ChangePinRequest(val currentPin: String, val newPin: String)
+
 // ── Response DTOs ──
 
 /**

@@ -1,0 +1,41 @@
+appId: io.dev32.sentient.debug
+---
+# 61-apply-conflict-setup — Model settings page: pick a different model (dirty
+# draft, NOT saved). Paired with a harness-driven concurrent
+# `POST /profile/apply` fired via curl just before the UI's own Save tap
+# (61-apply-conflict-trigger.yaml, run via a SEPARATE maestro invocation right
+# after a background curl apply is fired — Maestro 2.6.0 has no shell-exec step,
+# so the race is orchestrated by the harness, not this flow). Run login.yaml
+# immediately before this.
+#
+# tags: [android, emulator-ok]
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-open"
+    timeout: 5000
+- tapOn:
+    id: "settings-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000
+- tapOn:
+    id: "settings-cat-model"
+- extendedWaitUntil:
+    visible:
+      id: "settings-model-screen"
+    timeout: 5000
+- tapOn:
+    id: "settings-model-search"
+- inputText: "kimi-k2.5"
+- extendedWaitUntil:
+    visible:
+      id: "settings-model-card-kimi-k2.5:cloud"
+    timeout: 5000
+- tapOn:
+    id: "settings-model-card-kimi-k2.5:cloud"
+- assertVisible:
+    id: "settings-model-save"
+- takeScreenshot: "61-apply-conflict-dirty"

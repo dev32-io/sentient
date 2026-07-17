@@ -1,0 +1,27 @@
+appId: io.dev32.sentient.debug
+---
+# 63-logout — root Settings "Log out" -> back to login screen; token cleared.
+# LAST case in the pass (per task discipline — every other mutation must be
+# restored first). Run login.yaml immediately before this.
+#
+# tags: [ios, simulator-ok]
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible:
+      id: "history-new-chat"
+    timeout: 5000
+- tapOn:
+    id: "settings-open"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000
+- tapOn:
+    id: "settings-logout"
+- extendedWaitUntil:
+    visible: "Who's here?"
+    timeout: 10000
+- assertNotVisible:
+    id: "composer-input"
+- takeScreenshot: "63-logout-at-login"

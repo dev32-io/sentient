@@ -1,0 +1,36 @@
+appId: io.dev32.sentient.debug
+---
+# 55b-voice-delete-user-pack — Voice settings page: delete the "E2E RecordTest"
+# pack created by 55-voice-create-record.yaml (Delete testTag is
+# voice-delete-${voiceId}, only rendered for source=="user" packs — see
+# VoiceCard.kt), confirm via text (DEFECT-2: the confirm AlertDialog's
+# testTags don't resolve, "Delete"/"Cancel" text does), then restore the
+# active voice to Jarvis (creating auto-activates the new pack, same as Fish
+# clone — see DEFECT-10 note in 55-voice-create-record.yaml). Covers the
+# "Voice delete: deletable pack" matrix case. Run immediately after
+# 55-voice-create-record.yaml (already on Voice screen, "Yours" tab active).
+#
+# NOTE: id below is NOT deterministic (server-random) — re-sync via
+# GET /api/v1/voices after any fresh 55 run. Current as of the 2026-07-16
+# settings-parity E2E pass: 1db15a2889474efbb91c2ef397e4fe91.
+#
+# tags: [android, emulator-ok]
+- tapOn:
+    id: "voice-delete-1db15a2889474efbb91c2ef397e4fe91"
+- extendedWaitUntil:
+    visible: "Delete"
+    timeout: 5000
+- takeScreenshot: "55b-voice-delete-confirm"
+- tapOn: "Delete"
+- extendedWaitUntil:
+    notVisible: "E2E RecordTest"
+    timeout: 10000
+- takeScreenshot: "55b-voice-deleted"
+# restore active voice to Jarvis (create auto-activated the now-deleted pack)
+- tapOn:
+    id: "voice-pick-c624a6ca980346ec9dc38bb434fec506"
+- extendedWaitUntil:
+    visible:
+      id: "voice-active-c624a6ca980346ec9dc38bb434fec506"
+    timeout: 10000
+- takeScreenshot: "55b-voice-restored-jarvis"

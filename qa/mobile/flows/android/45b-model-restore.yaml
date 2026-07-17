@@ -1,0 +1,31 @@
+appId: io.dev32.sentient.debug
+---
+# 45b-model-restore — restores the original model (deepseek-v4-flash:cloud) after
+# 45-model-slow-save.yaml. Run immediately after 45 (same Model screen still open).
+#
+# tags: [android, emulator-ok]
+# The search field still holds "kimi-k2.5" from 45. tapOn: id: centers the tap,
+# which (for Compose OutlinedTextField) does NOT reliably place the cursor at the
+# end of existing text, so a plain eraseText+inputText can leave a stale tail
+# (observed: "kimi-k2.5deepseek-v4-flash"). Tap the field's right edge first so
+# the cursor snaps past the last character, then erase generously before typing.
+- tapOn:
+    point: "90%,28%"
+- eraseText: 60
+- inputText: "deepseek-v4-flash"
+- extendedWaitUntil:
+    visible:
+      id: "settings-model-card-deepseek-v4-flash:cloud"
+    timeout: 5000
+- tapOn:
+    id: "settings-model-card-deepseek-v4-flash:cloud"
+- assertVisible:
+    id: "settings-model-save"
+- tapOn:
+    id: "settings-model-save"
+- assertVisible:
+    id: "settings-apply-notice"
+- extendedWaitUntil:
+    notVisible:
+      id: "settings-apply-notice"
+    timeout: 45000
