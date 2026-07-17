@@ -1,39 +1,26 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-soul
+  - slow
+  - destructive-profile
 ---
-# 48-advanced-sliders — Advanced settings page: set reasoning, compression, and
-# max-tokens to non-default values, Save triggers the SLOW path (apply/restart).
+# 48-advanced-sliders — Advanced page: set reasoning, compression, and max-tokens
+# to non-default values, Save triggers the SLOW path (apply/restart).
+# Self-navigating. Restored by 48b-advanced-restore.yaml (adjacent).
 #
-# RowSelect's native SwiftUI Menu options ARE reachable by visible TEXT (see
-# twin-check #2 in the handover — unlike Android's DEFECT-6, the option text IS
-# present in the a11y tree; no dedicated per-option accessibilityIdentifier
-# exists, so text is the correct/only selector). RowSlider is a native SwiftUI
-# `Slider` — a plain tap on the track does NOT move it (confirmed live); it
-# needs a drag (`swipe`) starting AT the thumb's current on-screen position,
-# duration >=600ms so it registers as a continuous drag rather than a fling.
-# Baseline (confirmed via profile.json / GET /profile/me before this pass):
-# reasoning=minimal, compression=0.50 (thumb at screen x=50%), maxTokens=1024
-# (thumb at screen x≈18%, since (1024-128)/(8192-128)=11.1% along the 36–366pt
-# track ≈ 18% of the 402pt screen width).
-#
-# tags: [ios, simulator-ok]
-- tapOn:
-    id: "history-open"
-- extendedWaitUntil:
-    visible:
-      id: "history-new-chat"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
-- extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
+# RowSelect's native SwiftUI Menu options are reachable by visible TEXT (no
+# per-option accessibilityIdentifier — text is the correct selector). RowSlider
+# is a native SwiftUI Slider — a plain tap on the track does NOT move it; it needs
+# a drag (`swipe`) starting AT the thumb's current on-screen position, duration
+# >=600ms so it registers as a continuous drag. Baseline (GET /profile/me):
+# reasoning=minimal, compression=0.50 (thumb ≈50% screen-x), maxTokens=1024
+# (thumb ≈18% screen-x).
+- runFlow: _helpers/open-settings.yaml
 - tapOn:
     id: "settings-cat-advanced"
 - extendedWaitUntil:
-    visible:
-      id: "settings-advanced-screen"
-    timeout: 5000
+    visible: { id: "settings-advanced-screen" }
+    timeout: 3000
 - assertVisible:
     id: "settings-advanced-reasoning"
 - assertVisible:
@@ -41,33 +28,33 @@ appId: io.dev32.sentient.debug
 - assertVisible:
     id: "settings-advanced-max-tokens"
 - takeScreenshot: "48-advanced-before"
-# reasoning: minimal -> high
+# reasoning: minimal → high
 - tapOn:
     id: "settings-advanced-reasoning"
 - tapOn: "High"
 - assertVisible: "High"
-# compression: 50% -> ~90% (drag from the thumb's current screen position)
+# compression: 50% → ~90% (drag from the thumb's current screen position)
 - swipe:
     start: "50%,29%"
     end: "83%,29%"
     duration: 800
-# max tokens: 1024 (~18% along the track) -> a mid-high value (~65%)
+# max tokens: 1024 (~18% along the track) → a mid-high value (~65%)
 - swipe:
     start: "18%,38%"
     end: "65%,38%"
     duration: 800
-- assertVisible:
-    id: "settings-advanced-save"
+- extendedWaitUntil:
+    visible: { id: "settings-advanced-save" }
+    timeout: 3000
 - takeScreenshot: "48-advanced-dirty"
 - tapOn:
     id: "settings-advanced-save"
 - extendedWaitUntil:
-    visible:
-      id: "settings-applying"
+    visible: { id: "settings-applying" }
     timeout: 3000
     optional: true
+# apply/restart — full supervisord restart + Hermes worker boot, genuinely slow.
 - extendedWaitUntil:
-    notVisible:
-      id: "settings-applying"
+    notVisible: { id: "settings-applying" }
     timeout: 45000
 - takeScreenshot: "48-advanced-after"

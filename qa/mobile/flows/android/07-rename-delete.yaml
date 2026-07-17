@@ -1,72 +1,58 @@
 appId: io.dev32.sentient.debug
+tags:
+  - session
 ---
 # 07-rename-delete — long-press a session row to open the dropdown, rename it,
-# then delete it via the long-press menu.
+# then delete it. Self-cleaning (deletes the row it renamed → no leaked state).
+# Requires ≥1 committed session (present after the chat flows by execution order).
+# Batch-safe.
 #
-# The rename dialog prefills the current title. The dialog input is auto-focused;
-# we erase then type without needing to tap the field first.
-# After rename the drawer stays open; we swipe to close then re-open to delete.
-#
-# ⚠ LIMITATION: The rename input testTag (history-rename-input) is not visible
-# to Maestro when inside an AlertDialog — the Compose dialog accessibility tree
-# is partially flattened. We rely on auto-focus + eraseText instead.
-# The confirm-delete "Delete" text button also appears twice (menu item + dialog),
-# requiring careful sequencing.
-#
-# tags: [android, emulator-ok, requires-prior-session]
+# ⚠ LIMITATION: the rename input testTag (history-rename-input) is invisible to
+# Maestro inside an AlertDialog (Compose dialog a11y tree is partially flattened)
+# — rely on auto-focus + eraseText. The confirm "Delete" text appears twice
+# (menu item + dialog), so sequencing matters.
 - launchApp
-- tapOn:
-    id: "history-open"
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
 - extendedWaitUntil:
-    visible:
-      id: "history-new-chat"
-    timeout: 5000
-# Long-press the first history row to open the context menu
+    visible: { id: "history-new-chat" }
+    timeout: 3000
 - longPressOn:
     id: ".*history-row-.*"
-# Tap "Rename" from the DropdownMenu
 - tapOn:
     text: "Rename"
-# Wait for the Save button (proves dialog opened)
 - extendedWaitUntil:
-    visible:
-      text: "Save"
+    visible: "Save"
     timeout: 3000
-# Dialog input is auto-focused. Erase prefilled text then type new name.
+# dialog input is auto-focused; erase prefilled text then type the new name.
 - eraseText: 100
 - inputText: "E2E Renamed"
 - tapOn:
     text: "Save"
 - extendedWaitUntil:
-    notVisible:
-      text: "Save"
-    timeout: 5000
-# Drawer stays open after save. Close it by swiping left.
+    notVisible: "Save"
+    timeout: 3000
+# drawer stays open after save; close it by swiping left.
 - swipe:
     direction: LEFT
 - extendedWaitUntil:
-    visible:
-      id: "composer-input"
+    visible: { id: "composer-input" }
     timeout: 3000
-# Re-open drawer to delete
-- tapOn:
-    id: "history-open"
+# re-open drawer to delete the renamed session.
+- tapOn: { id: "history-open" }
 - extendedWaitUntil:
-    visible:
-      id: "history-new-chat"
-    timeout: 5000
-# Long-press the first row (now the renamed session)
+    visible: { id: "history-new-chat" }
+    timeout: 3000
 - longPressOn:
     id: ".*history-row-.*"
 - tapOn:
     text: "Delete"
-# Confirm delete AlertDialog — wait for the confirm dialog first
 - extendedWaitUntil:
-    visible:
-      text: "Delete chat?"
+    visible: "Delete chat?"
     timeout: 3000
 - tapOn:
     text: "Delete"
-# After delete, drawer still open — verify no crash
-- assertVisible:
-    id: "history-new-chat"
+# after delete the drawer stays open — verify no crash.
+- assertVisible: { id: "history-new-chat" }

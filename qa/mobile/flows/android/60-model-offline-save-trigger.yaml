@@ -1,22 +1,18 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-soul
+  - fault-armed
 ---
-# 60-model-offline-save-trigger — continuation-only (no launchApp): taps Save
-# on the already-dirty Model page from 60-model-offline-save-setup.yaml, with
-# emulator connectivity killed by the harness beforehand. Expect: failure
-# surfaced inline via settings-apply-notice (ApplyState.Failed -> applyError
-# userMessage), draft kept (page still shows the picked model, NOT reverted),
-# no crash. The harness restores connectivity + re-asserts recovery after this
-# flow (60-model-offline-save-recover.yaml).
-#
-# tags: [android, emulator-ok]
-- tapOn:
-    id: "settings-model-save"
+# 60-model-offline-save-trigger (part 2/3) — continuation (no launchApp): tap Save
+# on the already-dirty Model page from 60-...-setup, with emulator connectivity
+# killed by the runner beforehand. Expect: failure surfaced inline via
+# settings-apply-notice (ApplyState.Failed), draft KEPT (page still shows the
+# picked model, NOT reverted), no crash. The runner restores connectivity + runs
+# 60-...-recover after. fault-armed; excluded from the default batch.
+- tapOn: { id: "settings-model-save" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-apply-notice"
+    visible: { id: "settings-apply-notice" }
     timeout: 15000
 - takeScreenshot: "60-offline-save-failed-inline"
-# draft kept: the picked model card is still shown as selected (no refetch/
-# revert happened — refetch() only runs on ApplyState.Ready, never Failed)
-- assertVisible:
-    id: "settings-model-save"
+# draft kept: the picked model card is still selected (refetch runs only on Ready).
+- assertVisible: { id: "settings-model-save" }

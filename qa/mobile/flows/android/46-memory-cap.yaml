@@ -1,43 +1,39 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-soul
+  - slow
 ---
-# 46-memory-cap — Memory settings page: typing past the server charLimit (2200 for
-# MEMORY.md) truncates the input client-side and the counter reflects the cap.
-# Never saved (no PUT fired) so the real MEMORY.md content is untouched — no
-# restore needed. Run login.yaml immediately before this.
+# 46-memory-cap — Memory settings: typing past the server charLimit (2200 for
+# MEMORY.md) truncates client-side and the counter reflects the cap. Never saved
+# (no PUT) → real MEMORY.md is untouched, no restore needed. Batch-safe.
 #
-# NOTE: Maestro's inputText simulates individual keystrokes (~7 chars/sec) and
-# hits the 120s gRPC deadline well before ~900 chars in one call — chunk into
-# ~260-char steps instead of one long string.
-# NOTE 2: once the field is focused, a drag gesture is consumed by the
-# TextField's own text-selection handling, not the outer page scroll — hide the
-# keyboard (unfocuses the field) BEFORE scrolling to reach the counter below it.
+# SLOW: Maestro's inputText simulates individual keystrokes (~7 chars/sec) — this
+# types ~2200 chars in ~260-char chunks (one long call hits the 120s gRPC
+# deadline). Tagged `slow`; excluded when the runner is asked to skip slow flows.
 #
-# tags: [android, emulator-ok, slow]
-- tapOn:
-    id: "history-open"
+# NOTE: once the field is focused, a drag gesture is consumed by the TextField's
+# own text-selection, not the outer page scroll — hideKeyboard (unfocuses) BEFORE
+# scrolling to reach the counter below it.
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-open"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
+    visible: { id: "settings-open" }
+    timeout: 3000
+- tapOn: { id: "settings-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
-- tapOn:
-    id: "settings-cat-memory"
+    visible: { id: "settings-screen" }
+    timeout: 3000
+- tapOn: { id: "settings-cat-memory" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-memory-screen"
-    timeout: 5000
-- assertVisible:
-    text: "MEMORY.md"
+    visible: { id: "settings-memory-screen" }
+    timeout: 3000
+- assertVisible: { text: "MEMORY.md" }
 - takeScreenshot: "46-memory-before"
-- tapOn:
-    id: "settings-memory-editor"
+- tapOn: { id: "settings-memory-editor" }
 - inputText: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-- inputText: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 - inputText: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 - inputText: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 - inputText: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
@@ -51,14 +47,12 @@ appId: io.dev32.sentient.debug
 - scroll
 - assertVisible: "2200 / 2200"
 - takeScreenshot: "46-memory-capped"
-# discard without saving — real MEMORY.md content stays untouched
-- tapOn:
-    id: "settings-memory-back"
+# discard without saving — real MEMORY.md content stays untouched.
+- tapOn: { id: "settings-memory-back" }
 - extendedWaitUntil:
     visible: "Discard changes?"
-    timeout: 5000
+    timeout: 3000
 - tapOn: "Discard"
 - extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
+    visible: { id: "settings-screen" }
+    timeout: 3000

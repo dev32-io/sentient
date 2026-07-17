@@ -1,104 +1,75 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-voice
+  - destructive-profile
+  - slow
 ---
-# 55-voice-create-record — Voice settings page: Add Voice -> Record mode ->
-# capture >=6s (MIN_RECORDING_MS in RecordPanel.kt/AddVoiceViewModel.kt gates
-# "Use recording" until then) -> review/play-check -> name "E2E RecordTest" ->
-# Create voice (multipart submit). The emulator's virtual mic returns full
-# buffers of zero-valued PCM (silence), never a read failure — VoiceRecorder
-# never hangs or crashes on it (confirmed via source read), so this exercises
-# the REAL record -> encode -> multipart -> gateway voice.create pipeline
-# end-to-end; only the *audio content* is silent, which is a fidelity gap, not
-# a pipeline failure. RECORD_AUDIO permission is requested at point of use (mic
-# pre-granted by run-e2e.sh's grant_mic_permission, so no system dialog here).
-# The created pack is deleted by 55b-voice-delete-user-pack.yaml (id must be
-# re-synced via GET /api/v1/voices after each fresh run — ids are random, same
-# caveat as the Members flows). Run login.yaml immediately before this.
+# 55-voice-create-record — Voice settings → Add Voice → Record mode → capture ≥6s
+# (MIN_RECORDING_MS gates "Use recording") → name "E2E RecordTest" → Create voice
+# (multipart submit). The emulator mic returns zero-valued PCM (silence), never a
+# read failure, so this exercises the REAL record→encode→multipart→voice.create
+# pipeline; only the audio content is silent. RECORD_AUDIO pre-granted by
+# run-e2e.sh's setup. Deleted + active-voice restored by 55b (runs next). Batch-
+# safe. Tagged `slow` (record dwell + create + a re-navigation).
 #
-# DEFECT-10 (confirmed live): VoiceScreen does NOT refresh its list after
-# AddVoiceScreen pops back on success, despite the file header comment's
-# claim ("the screen pops back to VoiceScreen, which refetches on resume").
-# The new pack IS created server-side immediately (confirmed via
-# GET /api/v1/voices) and even auto-activates (same as Fish clone), but the
-# on-screen list still shows the PRE-creation snapshot until the screen is
-# torn down and rebuilt (back to Settings root, then re-enter Voice). Simply
-# switching the All/Built-in/Yours filter tabs does NOT trigger a refetch —
-# only a fresh navigation does. Worked around below; flagged as a real bug.
-#
-# tags: [android, emulator-ok, slow]
-- tapOn:
-    id: "history-open"
+# DEFECT-10: VoiceScreen does NOT refresh its list after AddVoiceScreen pops back
+# on success (the pack IS created + auto-activated server-side, but the on-screen
+# list shows the pre-creation snapshot until the screen is torn down + rebuilt).
+# Switching filter tabs does NOT refetch — only a fresh navigation does. Worked
+# around below (leave Voice, re-enter).
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-open"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
+    visible: { id: "settings-open" }
+    timeout: 3000
+- tapOn: { id: "settings-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
-# DEFECT-7 (see 51-account-rename.yaml): settings-cat-voice is above the
-# fold — tap directly, scrollUntilVisible overshoots to the footer.
-- tapOn:
-    id: "settings-cat-voice"
+    visible: { id: "settings-screen" }
+    timeout: 3000
+- tapOn: { id: "settings-cat-voice" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-voice-screen"
-    timeout: 5000
-- tapOn:
-    id: "settings-voice-add-nav"
+    visible: { id: "settings-voice-screen" }
+    timeout: 3000
+- tapOn: { id: "settings-voice-add-nav" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-voice-add-screen"
-    timeout: 5000
-- tapOn:
-    id: "segment-record"
+    visible: { id: "settings-voice-add-screen" }
+    timeout: 3000
+- tapOn: { id: "segment-record" }
 - takeScreenshot: "55-voice-add-record-idle"
-- tapOn:
-    id: "voice-record-start"
-# capture >=6s: poll until "Use recording" becomes enabled (MIN_RECORDING_MS)
+- tapOn: { id: "voice-record-start" }
+# capture ≥6s: poll until "Use recording"/stop becomes enabled (MIN_RECORDING_MS).
 - extendedWaitUntil:
     visible:
       id: "voice-record-stop"
       enabled: true
     timeout: 12000
 - takeScreenshot: "55-voice-recording"
-- tapOn:
-    id: "voice-record-stop"
+- tapOn: { id: "voice-record-stop" }
 - extendedWaitUntil:
-    visible:
-      id: "voice-record-play"
-    timeout: 5000
+    visible: { id: "voice-record-play" }
+    timeout: 3000
 - takeScreenshot: "55-voice-review"
-- tapOn:
-    id: "voice-name"
+- tapOn: { id: "voice-name" }
 - inputText: "E2E RecordTest"
-# the soft keyboard covers the "Create voice" submit button below the fold —
-# dismiss it first (same caveat as 46-memory-cap.yaml / 50-personalities).
+# the soft keyboard covers "Create voice" below the fold — dismiss it first.
 - hideKeyboard
-- tapOn:
-    id: "voice-add-submit"
+- tapOn: { id: "voice-add-submit" }
+# create round-trip (multipart upload + server create) — network budget.
 - extendedWaitUntil:
-    visible:
-      id: "settings-voice-screen"
+    visible: { id: "settings-voice-screen" }
     timeout: 20000
-# DEFECT-10 (see header note): force a fresh screen mount to pick up the new
-# pack — leave Voice and re-enter, rather than trusting an in-place refresh.
-- tapOn:
-    id: "settings-voice-back"
+# DEFECT-10: force a fresh mount to pick up the new pack — leave Voice, re-enter.
+- tapOn: { id: "settings-voice-back" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
-- tapOn:
-    id: "settings-cat-voice"
+    visible: { id: "settings-screen" }
+    timeout: 3000
+- tapOn: { id: "settings-cat-voice" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-voice-screen"
-    timeout: 5000
-# the new pack sorts after all 5 built-ins + Jarvis on the "All" tab — filter
-# to "Yours" (same trick as 54b-voice-restore.yaml) instead of scrolling past
-# 6 tall cards.
+    visible: { id: "settings-voice-screen" }
+    timeout: 3000
 - tapOn: "Yours"
 - extendedWaitUntil:
     visible: "E2E RecordTest"

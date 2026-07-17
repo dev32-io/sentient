@@ -1,50 +1,38 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-soul
+  - slow
+  - destructive-profile
 ---
-# 49-tools-toggle — Tools settings page: disable the "fetch" MCP server, Save
-# (slow path: apply/restart), persists (key removed from tools.enabled), then
-# re-enable + Save to restore the original state. Run login.yaml immediately
-# before this.
+# 49-tools-toggle — Tools page: disable the "fetch" MCP server, Save (slow path:
+# apply/restart), persists (key removed from tools.enabled). Self-navigating.
+# Re-enabled by 49b-tools-restore.yaml (adjacent).
 #
 # NOTE: unlike RowToggle (settings-audio-tts, see 44), ToolsServerCard's master
-# Toggle sets its accessibilityIdentifier DIRECTLY on the Toggle control itself
-# (no ancestor HStack claims the same id) — confirmed live, `id:` tap works
-# reliably here, no point-tap workaround needed.
-#
-# tags: [ios, simulator-ok]
-- tapOn:
-    id: "history-open"
-- extendedWaitUntil:
-    visible:
-      id: "history-new-chat"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
-- extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
+# Toggle sets its accessibilityIdentifier DIRECTLY on the Toggle control — `id:`
+# tap works reliably here, no point-tap workaround needed.
+- runFlow: _helpers/open-settings.yaml
 - tapOn:
     id: "settings-cat-tools"
 - extendedWaitUntil:
-    visible:
-      id: "settings-tools-screen"
-    timeout: 5000
+    visible: { id: "settings-tools-screen" }
+    timeout: 3000
 - assertVisible:
     id: "settings-tools-server-fetch"
 - takeScreenshot: "49-tools-before"
 - tapOn:
     id: "settings-tools-server-fetch"
-- assertVisible:
-    id: "settings-tools-save"
+- extendedWaitUntil:
+    visible: { id: "settings-tools-save" }
+    timeout: 3000
 - tapOn:
     id: "settings-tools-save"
 - extendedWaitUntil:
-    visible:
-      id: "settings-applying"
+    visible: { id: "settings-applying" }
     timeout: 3000
     optional: true
+# apply/restart — full supervisord restart + Hermes worker boot, genuinely slow.
 - extendedWaitUntil:
-    notVisible:
-      id: "settings-applying"
+    notVisible: { id: "settings-applying" }
     timeout: 45000
 - takeScreenshot: "49-tools-after"

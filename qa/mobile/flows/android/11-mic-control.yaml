@@ -1,39 +1,20 @@
 appId: io.dev32.sentient.debug
+tags:
+  - voice-loop
 ---
-# 11-mic-control — tap chat-mic to start voice, assert voiceMode is ACTIVE
-# (mic button changes to "on" styling, pulse/listening state), then tap again
-# to stop.
-#
-# Control-plane only: we verify the SDK voiceMode flip + audio uplink signal
-# in logs via the harness (adb logcat grep "startMic"/"stopMic"). The actual
-# STT→LLM→TTS round-trip requires the fixture-audio wiring (voice-loop flow).
-#
-# On the emulator the RECORD_AUDIO permission may pop a dialog on first run.
-# If the permission dialog appears Maestro cannot interact with system dialogs,
-# so the harness grants the permission via adb before this flow (handled in
-# run-e2e.sh). Alternatively the app is expected to already have permission
-# from prior runs.
-#
-# tags: [android, emulator-ok, requires-mic-permission]
+# 11-mic-control — tap chat-mic to start voice, assert the control stays present
+# (voiceMode flip), then tap again to stop. Control-plane only: run-e2e.sh greps
+# logcat for startMic/stopMic after the batch. The full STT→LLM→TTS round-trip is
+# 08-voice-loop (fault-armed). RECORD_AUDIO is pre-granted by run-e2e.sh's setup
+# phase so no system dialog pops (Maestro can't dismiss it). Batch-safe.
 - launchApp
-- assertVisible:
-    id: "composer-input"
-# Tap mic to activate
-- tapOn:
-    id: "chat-mic"
-# Mic is now "on": the compose toggle wears accent styling; the button stays
-# visible and tappable (it's always rendered in ButtonRow — it toggles state).
-# We assert it's still there (not disappeared) which confirms the tap landed.
-- assertVisible:
-    id: "chat-mic"
-# Brief settle for SDK to process startMic
-- extendedWaitUntil:
-    visible:
-      id: "chat-mic"
-    timeout: 2000
-# Tap mic again to deactivate
-- tapOn:
-    id: "chat-mic"
-# Mic off: button still visible (always shown), no crash, voice mode cleared
-- assertVisible:
-    id: "chat-mic"
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- assertVisible: { id: "composer-input" }
+- tapOn: { id: "chat-mic" }
+# chat-mic is always rendered (it toggles state) — assert it's still there to
+# confirm the tap landed without crashing.
+- assertVisible: { id: "chat-mic" }
+- tapOn: { id: "chat-mic" }
+- assertVisible: { id: "chat-mic" }

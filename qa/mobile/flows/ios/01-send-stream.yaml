@@ -1,26 +1,24 @@
 appId: io.dev32.sentient.debug
+tags:
+  - chat
 ---
-# 01-send-stream — type a message, send it, and verify the assistant replies.
-# Covers the full text-send → gateway → Hermes → streaming bubble path.
+# 01-send-stream — type a message, send it, verify the assistant replies. Covers
+# the full text-send → gateway → Hermes → streaming bubble path.
 #
 # iOS: composer-input (accessibilityIdentifier on the Composer TextField).
-# assistant-bubble appears once the gateway streams the first token.
-# After send, tap the message list to dismiss the keyboard (iOS hideKeyboard
-# is unreliable with custom composer; tapping the scroll area is more reliable).
-- runFlow: login.yaml
-- extendedWaitUntil:
-    visible:
-      id: "composer-input"
-    timeout: 15000
+# assistant-bubble appears once the gateway streams the first token. After send,
+# tap the message list to dismiss the keyboard (iOS hideKeyboard is unreliable
+# with the custom composer; tapping the scroll area is more reliable).
+- runFlow: _helpers/login.yaml
 - tapOn:
     id: "composer-input"
 - inputText: "what is 2 plus 2"
 - tapOn:
     id: "chat-send"
-# Dismiss keyboard by tapping the message list area so the assistant bubble is visible.
+# Dismiss keyboard by tapping the message list area so the assistant bubble shows.
 - tapOn:
     id: "chat-message-list"
+# assistant reply — Hermes LLM round-trip, genuinely slow.
 - extendedWaitUntil:
-    visible:
-      id: "assistant-bubble"
-    timeout: 40000
+    visible: { id: "assistant-bubble" }
+    timeout: 60000

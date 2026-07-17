@@ -1,36 +1,26 @@
 appId: io.dev32.sentient.debug
+tags:
+  - logout
 ---
 # 09-logout — open the history side panel, tap settings-open (gear), logout.
-#
-# iOS uses HistorySidePanel (not HistorySheet). The gear icon (settings-open)
-# lives in HistoryAccountHeader at the top of the side panel.
-#
-# After logout the app should route to the login screen. On iOS the login screen
-# shows the avatar grid and login-backend-setup button.
-#
-# tags: [ios, simulator-ok]
-- launchApp
-- extendedWaitUntil:
-    visible:
-      id: "composer-input"
-    timeout: 15000
+# The gear (settings-open) lives in HistoryAccountHeader at the top of the side
+# panel. After logout the app routes to the login screen (avatar grid +
+# login-backend-setup button). Self-navigating (login helper first).
+- runFlow: _helpers/login.yaml
 - tapOn:
     id: "history-open"
 - extendedWaitUntil:
-    visible:
-      id: "history-new-chat"
-    timeout: 5000
-# Tap settings gear in the account header
+    visible: { id: "history-new-chat" }
+    timeout: 3000
+# Tap settings gear in the account header.
 - tapOn:
     id: "settings-open"
 - extendedWaitUntil:
-    visible:
-      id: "settings-logout"
-    timeout: 10000
+    visible: { id: "settings-logout" }
+    timeout: 3000
 - tapOn:
     id: "settings-logout"
-# After logout: login screen appears
+# logout: WS teardown + route to login — allow a short settle.
 - extendedWaitUntil:
-    visible:
-      id: "login-backend-setup"
-    timeout: 10000
+    visible: { id: "login-backend-setup" }
+    timeout: 5000

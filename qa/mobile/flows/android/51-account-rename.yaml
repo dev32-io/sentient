@@ -1,54 +1,48 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-user
+  - destructive-profile
 ---
 # 51-account-rename — Account page: change display name, Save (imperative PUT
-# /auth/me), inline "Saved" result. Original name "Kevin" restored by
-# 51b-account-restore.yaml. Run login.yaml immediately before this.
+# /auth/me), inline "Saved". Original name "Kevin" restored by
+# 51b-account-restore.yaml (runs next via executionOrder). Batch-safe.
 #
-# tags: [android, emulator-ok]
-- tapOn:
-    id: "history-open"
+# DEFECT-8: the settings-root update footer is pinned at a FIXED on-screen
+# position INDEPENDENT of scroll and overlaps the USER-group Account row at the
+# initial (unscrolled) position — a direct tap on Account lands ON the footer and
+# no-ops. One small plain `scroll` (NOT scrollUntilVisible, which overshoots to
+# the footer) clears Account from the footer's zone before tapping.
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-open"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
+    visible: { id: "settings-open" }
+    timeout: 3000
+- tapOn: { id: "settings-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
-# DEFECT-8 (confirmed live via uiautomator dump): the settings root's update
-# footer ("Check for updates" + version) is pinned at a FIXED on-screen
-# position ([306,1901]-[774,2033] px on this device) INDEPENDENT of scroll —
-# it overlaps the "USER" group's Account row when the page is at its initial
-# (unscrolled) position (Account row bounds [50,1859]-[1030,1991] overlapped
-# the footer's y-range by ~90px). A tap at Account's computed center
-# (~540,1925) lands ON the footer instead, silently no-op'ing navigation
-# (neither scrollUntilVisible — which separately overshoots to the footer,
-# DEFECT-7-style, since Account/Voice are otherwise near-top — nor a direct
-# unscrolled tap work). Fix: one small plain `scroll` (NOT scrollUntilVisible)
-# clears Account from the footer's fixed zone before tapping (confirmed live:
-# after one scroll, Account moved to [50,1175]-[1030,1329], fully clear).
+    visible: { id: "settings-screen" }
+    timeout: 3000
 - scroll
-- tapOn:
-    id: "settings-cat-account"
+- tapOn: { id: "settings-cat-account" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-account-screen"
-    timeout: 5000
+    visible: { id: "settings-account-screen" }
+    timeout: 3000
+# wait for the name field to load (not a specific name text — baseline-agnostic, so
+# an interrupted prior run that left "KevinTest" can't wedge this pre-check; 51b
+# always restores to "Kevin").
 - extendedWaitUntil:
-    visible: "Kevin"
-    timeout: 5000
+    visible: { id: "settings-account-name-field" }
+    timeout: 3000
 - takeScreenshot: "51-account-before"
-# field already holds "Kevin" — clear before typing the new name (same
-# stale-cursor caveat as the Model search field, see 45b-model-restore.yaml)
-- tapOn:
-    id: "settings-account-name-field"
+# field prefills the current name — clear before typing (stale-cursor caveat, see 45b).
+- tapOn: { id: "settings-account-name-field" }
 - eraseText: 20
 - inputText: "KevinTest"
-- tapOn:
-    id: "settings-account-name-save"
+- tapOn: { id: "settings-account-name-save" }
+# "Saved" follows a PUT /auth/me round-trip — network budget.
 - extendedWaitUntil:
     visible: "Saved"
-    timeout: 10000
+    timeout: 8000
 - takeScreenshot: "51-account-saved"

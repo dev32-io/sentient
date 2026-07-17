@@ -1,24 +1,24 @@
 appId: io.dev32.sentient.debug
+tags:
+  - reconnect
+  - fault-armed
 ---
 # 04c (part 2/2) — warm-reconnect conversation continuity, FOLLOW-UP turn.
 #
 # Pre-state (set by the runner): 04c-...-login-send.yaml ran, then the WS was
 # dropped via airplane-mode and a WARM reconnect was triggered by tapping the
-# "Connection lost. Tap to reconnect" banner. The app is the SAME running
-# instance (NOT relaunched) so its in-memory cursor + current conversationId
-# survive — that is what makes the reconnect recovered:true.
-#
-# This sends a context-dependent follow-up. GREEN is asserted from the GATEWAY
-# LOG (not just the bubble): dispatch.end conversationId must equal the first
-# turn's, and there must be NO dispatch.session-new.lazy. The assistant reply
-# should reference "42".
-#
-# tags: [android, emulator-ok, reconnect, continuity]
+# "Connection lost. Tap to reconnect" banner. SAME running instance (NOT
+# relaunched) so the in-memory cursor + conversationId survive → recovered:true.
+# No launchApp here. GREEN is asserted from the GATEWAY LOG (dispatch.end
+# conversationId equals the first turn's, NO dispatch.session-new.lazy); the
+# assistant reply should reference "42". Excluded from the default batch
+# (fault-armed) — run by the runner's orchestration phase.
 - assertVisible: { id: "composer-input" }
 - tapOn: { id: "composer-input" }
 - inputText: "What is my favorite number?"
 - tapOn: { id: "chat-send" }
 - hideKeyboard
+# LLM round-trip — genuinely slow.
 - extendedWaitUntil:
     visible: { id: "assistant-bubble" }
     timeout: 45000

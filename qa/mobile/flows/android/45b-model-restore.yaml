@@ -1,31 +1,46 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-soul
+  - restore
 ---
-# 45b-model-restore — restores the original model (deepseek-v4-flash:cloud) after
-# 45-model-slow-save.yaml. Run immediately after 45 (same Model screen still open).
+# 45b-model-restore — restore pair for 45: sets the model back to
+# deepseek-v4-flash:cloud (SLOW apply/restart). Batch-safe: self-navigates from
+# chat root, so it is correct even if run alone or reordered. executionOrder runs
+# it right after 45.
 #
-# tags: [android, emulator-ok]
-# The search field still holds "kimi-k2.5" from 45. tapOn: id: centers the tap,
-# which (for Compose OutlinedTextField) does NOT reliably place the cursor at the
-# end of existing text, so a plain eraseText+inputText can leave a stale tail
-# (observed: "kimi-k2.5deepseek-v4-flash"). Tap the field's right edge first so
-# the cursor snaps past the last character, then erase generously before typing.
+# The Model search field: tapOn id centers the tap, which for a Compose
+# OutlinedTextField does NOT reliably place the cursor at the end of existing
+# text — a plain eraseText can leave a stale tail. Tap the field's right edge
+# first so the cursor snaps past the last char, then erase generously.
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
+- extendedWaitUntil:
+    visible: { id: "settings-open" }
+    timeout: 3000
+- tapOn: { id: "settings-open" }
+- extendedWaitUntil:
+    visible: { id: "settings-screen" }
+    timeout: 3000
+- tapOn: { id: "settings-cat-model" }
+- extendedWaitUntil:
+    visible: { id: "settings-model-screen" }
+    timeout: 3000
+- tapOn: { id: "settings-model-search" }
 - tapOn:
     point: "90%,28%"
 - eraseText: 60
 - inputText: "deepseek-v4-flash"
 - extendedWaitUntil:
-    visible:
-      id: "settings-model-card-deepseek-v4-flash:cloud"
-    timeout: 5000
-- tapOn:
-    id: "settings-model-card-deepseek-v4-flash:cloud"
-- assertVisible:
-    id: "settings-model-save"
-- tapOn:
-    id: "settings-model-save"
-- assertVisible:
-    id: "settings-apply-notice"
+    visible: { id: "settings-model-card-deepseek-v4-flash:cloud" }
+    timeout: 3000
+- tapOn: { id: "settings-model-card-deepseek-v4-flash:cloud" }
+- assertVisible: { id: "settings-model-save" }
+- tapOn: { id: "settings-model-save" }
+- assertVisible: { id: "settings-apply-notice" }
+# SLOW apply/restart budget.
 - extendedWaitUntil:
-    notVisible:
-      id: "settings-apply-notice"
+    notVisible: { id: "settings-apply-notice" }
     timeout: 45000

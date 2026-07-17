@@ -1,17 +1,22 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-user
 ---
 # 52-pin-wrong-current — Account page: Change PIN with a wrong current PIN
-# surfaces "Current PIN is wrong" inline (401 invalid-credentials — see
-# gateway/src/api/handlers/auth.ts handleChangePin), sheet stays open, no
-# logout, no lockout. Run immediately after 51b (already on Account screen).
-#
-# tags: [ios, simulator-ok]
+# surfaces "Current PIN is wrong" inline (401 invalid-credentials), sheet stays
+# open, no logout, no lockout. No mutation (rejected), so not destructive.
+# Self-navigating.
+- runFlow: _helpers/open-settings.yaml
+- tapOn:
+    id: "settings-cat-account"
+- extendedWaitUntil:
+    visible: { id: "settings-account-screen" }
+    timeout: 3000
 - tapOn:
     id: "settings-account-changepin"
 - extendedWaitUntil:
-    visible:
-      id: "settings-account-pin-current"
-    timeout: 5000
+    visible: { id: "settings-account-pin-current" }
+    timeout: 3000
 - tapOn:
     id: "settings-account-pin-current"
 - inputText: "9999"
@@ -20,6 +25,7 @@ appId: io.dev32.sentient.debug
 - inputText: "5555"
 - tapOn:
     id: "settings-account-pin-submit"
+# rejection — invalid-credentials round-trip, network op.
 - extendedWaitUntil:
     visible: "Current PIN is wrong"
     timeout: 5000
@@ -27,9 +33,8 @@ appId: io.dev32.sentient.debug
 - tapOn:
     id: "settings-account-pin-cancel"
 - extendedWaitUntil:
-    notVisible:
-      id: "settings-account-pin-current"
-    timeout: 5000
-# no lockout: still on Account, still logged in
+    notVisible: { id: "settings-account-pin-current" }
+    timeout: 3000
+# no lockout: still on Account, still logged in.
 - assertVisible:
     id: "settings-account-screen"

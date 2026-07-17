@@ -1,58 +1,49 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-diagnostics
 ---
-# 57-diagnostics-send — Diagnostics settings page (moved off the old drawer
-# overlay into its own Support-group category page per the settings-parity
-# plan — supersedes the stale qa/mobile/flows/android/30-send-diagnostic.yaml,
-# which asserted settings-send-logs directly after settings-open with no
-# settings-cat-diagnostics hop). One chat turn first so the rolling vitals log
-# has content; then send "This session" (newest, default-selected) -> progress
-# -> "Sent". Run login.yaml immediately before this.
-#
-# tags: [android, emulator-ok, vitals, diagnostics]
-- tapOn:
-    id: "composer-input"
+# 57-diagnostics-send — Diagnostics settings page (its own Support-group category
+# per the settings-parity plan). One chat turn first so the rolling vitals log has
+# content, then send "This session" (newest, default-selected) → progress → "Sent".
+# The real assertion (a new file under ~/.sentient/gateway/clientLogs/mobile/ with
+# a session-meta header, the gateway diagnostics.received log line, and ZERO chat
+# text) is verified out-of-band by run-e2e.sh. Batch-safe.
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- assertVisible: { id: "composer-input" }
+- tapOn: { id: "composer-input" }
 - inputText: "hi"
-- tapOn:
-    id: "chat-send"
+- tapOn: { id: "chat-send" }
 - hideKeyboard
+# LLM round-trip — genuinely slow.
 - extendedWaitUntil:
-    visible:
-      id: "assistant-bubble"
-    timeout: 45000
-- tapOn:
-    id: "history-open"
+    visible: { id: "assistant-bubble" }
+    timeout: 40000
+- tapOn: { id: "history-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-open"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
+    visible: { id: "settings-open" }
+    timeout: 3000
+- tapOn: { id: "settings-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
-# DEFECT-7/8 (see 51-account-rename.yaml): scrollUntilVisible overshoots to
-# the settings-root footer, whose FIXED on-screen position also overlaps
-# rows near the bottom (Diagnostics sits right above it, in the SUPPORT
-# group). Plain scrolls clear it before tapping.
+    visible: { id: "settings-screen" }
+    timeout: 3000
+# DEFECT-7/8 (see 51): Diagnostics sits just above the pinned footer — plain
+# scrolls clear it before tapping (scrollUntilVisible overshoots).
 - scroll
 - scroll
-- tapOn:
-    id: "settings-cat-diagnostics"
+- tapOn: { id: "settings-cat-diagnostics" }
 - extendedWaitUntil:
-    visible:
-      id: "diagnostics-screen"
-    timeout: 5000
-- tapOn:
-    id: "settings-send-logs"
+    visible: { id: "diagnostics-screen" }
+    timeout: 3000
+- tapOn: { id: "settings-send-logs" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-log-send"
-    timeout: 5000
-- tapOn:
-    id: "settings-log-send"
+    visible: { id: "settings-log-send" }
+    timeout: 3000
+- tapOn: { id: "settings-log-send" }
+# upload round-trip (authenticated POST) — network budget.
 - extendedWaitUntil:
-    visible:
-      id: "settings-log-sent"
+    visible: { id: "settings-log-sent" }
     timeout: 20000
 - takeScreenshot: "57-diagnostics-sent"

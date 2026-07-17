@@ -1,49 +1,41 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-soul
+  - destructive-profile
 ---
-# 44-audio-fast-save — Audio settings page: toggle "Speak responses (TTS)" off,
-# Save appears on dirty, save completes WITHOUT the restart/apply notice (fast
-# path — PUT profile + live prefs patch, no /profile/apply). Run login.yaml
-# immediately before this. Original state (ttsEnabled=true) is restored by
-# 44b-audio-restore.yaml.
-#
-# tags: [android, emulator-ok]
-- tapOn:
-    id: "history-open"
+# 44-audio-fast-save — Audio settings: toggle "Speak responses (TTS)" off; Save
+# appears on dirty and completes WITHOUT the restart/apply notice (fast path —
+# PUT profile + live prefs patch, no /profile/apply). Original state
+# (ttsEnabled=true) is restored by 44b-audio-restore.yaml (runs immediately after
+# via config.yaml executionOrder). Batch-safe: self-navigates from chat root.
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-open"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
+    visible: { id: "settings-open" }
+    timeout: 3000
+- tapOn: { id: "settings-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
-- tapOn:
-    id: "settings-cat-audio"
+    visible: { id: "settings-screen" }
+    timeout: 3000
+- tapOn: { id: "settings-cat-audio" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-audio-screen"
-    timeout: 5000
-- assertNotVisible:
-    id: "settings-audio-save"
+    visible: { id: "settings-audio-screen" }
+    timeout: 3000
+- assertNotVisible: { id: "settings-audio-save" }
 - takeScreenshot: "44-audio-before"
 # DEFECT-3 workaround: RowToggle's testTag sits on the whole row, but only the
-# inner Switch (~13% of row width, right-aligned) is clickable — the Row has no
-# .clickable despite the doc comment claiming full-row tap parity with webui.
-# tapOn: id: "settings-audio-tts" taps the row's CENTER (over the label text) and
-# silently no-ops. Tap the Switch's on-screen position directly instead.
+# inner Switch (~13% of row width, right-aligned) is clickable. Tap the Switch's
+# on-screen position directly instead of the row center (which no-ops).
 - tapOn:
     point: "84%,36%"
-- assertVisible:
-    id: "settings-audio-save"
-- tapOn:
-    id: "settings-audio-save"
-# fast save: must NOT show the restart/apply notice at any point
-- assertNotVisible:
-    id: "settings-apply-notice"
+- assertVisible: { id: "settings-audio-save" }
+- tapOn: { id: "settings-audio-save" }
+# fast save: the restart/apply notice must NEVER appear on this path.
+- assertNotVisible: { id: "settings-apply-notice" }
 - extendedWaitUntil:
-    notVisible:
-      id: "settings-audio-save"
+    notVisible: { id: "settings-audio-save" }
     timeout: 8000
 - takeScreenshot: "44-audio-after-save"

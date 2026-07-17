@@ -1,34 +1,47 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-voice
+  - slow
+  - destructive-profile
+  - restore
 ---
-# 62b-fish-clone-cleanup — Voice settings page: delete the Fish-cloned pack
-# from 62-fish-clone-happy.yaml (cloning auto-activates it) and restore the
-# active voice to Jarvis. Mirrors 54b-voice-restore.yaml. Run immediately
-# after 62 (already on Voice screen, "Yours" tab active).
+# 62b-fish-clone-cleanup — delete the Fish-cloned pack from 62-fish-clone-happy
+# (cloning auto-activates it) and restore the active voice to Jarvis.
+# Self-navigating to the Voice "Yours" filter. Tagged `slow` so an exclude-slow
+# batch drops it together with 62 (its primary) — this flow point-taps the first
+# "Yours" row and MUST only run when 62 created the clone above Jarvis; otherwise
+# the point-delete would hit Jarvis. Keep it adjacent to 62.
 #
-# NOTE: id below is server-random per clone — re-sync via GET /api/v1/voices
-# after any fresh 62 run. Current as of the 2026-07-16 settings-parity iOS
-# E2E pass: 5c207488c3064ea5b4ef9b3c454c4168. Point-tap positions computed
-# from a live `maestro hierarchy` dump on the "Yours" filter (2 rows: the
-# clone at y≈423-526, Jarvis at y≈559-663) — same id-collision workaround as
-# case 54/55.
-#
-# tags: [ios, simulator-ok]
+# NOTE: point-tap positions assume the 2-row "Yours" layout (clone at y≈49%,
+# Jarvis at y≈54% after the clone is deleted). Uses point-taps, not the
+# server-random clone id, so it is robust to id changes.
+- runFlow: _helpers/open-settings.yaml
+- tapOn:
+    id: "settings-cat-voice"
+- extendedWaitUntil:
+    visible: { id: "settings-voice" }
+    timeout: 3000
+- tapOn: "Yours"
+- extendedWaitUntil:
+    visible: { text: "Deep Voice English.*" }
+    timeout: 3000
+# delete the clone (trash icon at the row's right edge).
 - tapOn:
     point: "91%,49%"
 - extendedWaitUntil:
     visible: "Delete \"Deep Voice English (Anthony)\"?"
-    timeout: 5000
+    timeout: 3000
 - takeScreenshot: "62b-fish-delete-confirm"
 - tapOn: "Delete"
+# delete round-trip — voice.delete, network op.
 - extendedWaitUntil:
     notVisible: "Deep Voice English.*"
-    timeout: 10000
+    timeout: 8000
 - takeScreenshot: "62b-fish-deleted"
-# restore active voice to Jarvis (clone auto-activated the now-deleted pack) —
-# after delete, Jarvis is the only "Yours" row, shifted up to the first slot.
+# restore active voice to Jarvis (now the only "Yours" row, shifted to first).
 - tapOn:
     point: "50%,54%"
 - extendedWaitUntil:
     visible: "Active"
-    timeout: 10000
+    timeout: 5000
 - takeScreenshot: "62b-voice-restored-jarvis"

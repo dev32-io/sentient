@@ -1,51 +1,42 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-voice
+  - destructive-profile
 ---
-# 54-voice-preview-pick — Voice settings page: play preview on a builtin voice
-# (Briar), then Set active — active badge moves. Original active voice
-# (c624a6ca980346ec9dc38bb434fec506, "Jarvis") is restored by
-# 54b-voice-restore.yaml (a full-profile PUT — profile/me is a full-replace
-# endpoint, not a patch; see profile.ts handleMePut, which validates the
-# COMPLETE profileV1Schema including schemaVersion/userId). Run login.yaml
-# immediately before this.
+# 54-voice-preview-pick — Voice settings: play a preview on a built-in voice
+# (Briar), then Set active — the active badge moves. Original active voice
+# ("Jarvis", id c624a6ca980346ec9dc38bb434fec506, a user-source pack) is restored
+# by 54b-voice-restore.yaml (runs next via executionOrder). Batch-safe.
 #
-# tags: [android, emulator-ok]
-- tapOn:
-    id: "history-open"
+# DEFECT-7: settings-cat-voice is on the FIRST settings screen (Soul group, no
+# scroll) — tap directly; scrollUntilVisible on an already-visible target
+# overshoots to the footer.
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-open"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
+    visible: { id: "settings-open" }
+    timeout: 3000
+- tapOn: { id: "settings-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
-# DEFECT-7 (see 51-account-rename.yaml): settings-cat-voice renders on the
-# FIRST screen of the settings root (3rd row, Soul group, no scroll needed —
-# 40-settings-root.yaml reaches it via plain assertVisible pre-scroll).
-# scrollUntilVisible on an already-visible target overshoots to the footer —
-# tap directly instead.
-- tapOn:
-    id: "settings-cat-voice"
+    visible: { id: "settings-screen" }
+    timeout: 3000
+- tapOn: { id: "settings-cat-voice" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-voice-screen"
-    timeout: 5000
-- assertVisible:
-    id: "settings-voice-fish-nav"
+    visible: { id: "settings-voice-screen" }
+    timeout: 3000
+- assertVisible: { id: "settings-voice-fish-nav" }
 - takeScreenshot: "54-voice-before"
-- tapOn:
-    id: "voice-play-briar"
+- tapOn: { id: "voice-play-briar" }
 - extendedWaitUntil:
-    visible:
-      id: "voice-play-briar"
-    timeout: 5000
+    visible: { id: "voice-play-briar" }
+    timeout: 3000
 - takeScreenshot: "54-voice-previewing"
-- tapOn:
-    id: "voice-pick-briar"
+- tapOn: { id: "voice-pick-briar" }
+# active badge follows a full-profile PUT round-trip — network budget.
 - extendedWaitUntil:
-    visible:
-      id: "voice-active-briar"
+    visible: { id: "voice-active-briar" }
     timeout: 10000
 - takeScreenshot: "54-voice-active-briar"

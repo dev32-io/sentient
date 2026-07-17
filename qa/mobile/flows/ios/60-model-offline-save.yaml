@@ -1,22 +1,24 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-soul
+  - fault-armed
 ---
-# 60-model-offline-save — Model settings page: with the gateway container
-# stopped (simulator can't airplane-mode; a real connection-refused via
-# `docker compose stop gateway` is the practical LOCAL-network-down substitute
-# per task discipline — never faked), pick a different model and Save. Failure
-# surfaces inline; the draft is kept (not silently discarded), no crash. Run
-# login.yaml + navigate to the Model page WHILE the gateway is still up, THEN
-# stop the gateway, THEN run this flow (picks + saves against the dead
-# backend). Restart the gateway after and confirm recovery is a separate step.
+# 60-model-offline-save — Model page with the gateway container STOPPED: pick a
+# different model and Save. Failure surfaces inline; the draft is kept (not
+# silently discarded), no crash.
 #
-# tags: [ios, simulator-ok]
+# fault-armed (iOS): there is no sim broadcast fault channel — the runner
+# orchestrates the env fault. Because a stopped gateway can't populate the model
+# list, this flow does NOT self-navigate: the runner must login + open Settings →
+# Model WHILE the gateway is up, THEN `docker stop sentient-gateway`, THEN run
+# this flow. Restart the gateway + confirm recovery afterward (runner step). This
+# flow starts already on the Model screen with the list loaded.
 - tapOn:
     id: "settings-model-search"
 - inputText: "kimi-k2.5"
 - extendedWaitUntil:
-    visible:
-      id: "settings-model-card-kimi-k2.5:cloud"
-    timeout: 5000
+    visible: { id: "settings-model-card-kimi-k2.5:cloud" }
+    timeout: 3000
 - tapOn:
     id: "settings-model-card-kimi-k2.5:cloud"
 - assertVisible:
@@ -24,11 +26,12 @@ appId: io.dev32.sentient.debug
 - takeScreenshot: "60-model-offline-dirty"
 - tapOn:
     id: "settings-model-save"
+# save against a dead backend — connection-refused must time out to the inline
+# error, genuinely slow.
 - extendedWaitUntil:
-    visible:
-      id: "settings-error"
+    visible: { id: "settings-error" }
     timeout: 20000
 - takeScreenshot: "60-model-offline-error"
-# draft kept: the picked model selection is still shown, not reverted
+# draft kept: the picked model selection is still shown, not reverted.
 - assertVisible:
     id: "settings-model-save"

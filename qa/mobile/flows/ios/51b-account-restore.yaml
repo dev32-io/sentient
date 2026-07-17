@@ -1,15 +1,30 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-user
+  - destructive-profile
+  - restore
 ---
-# 51b-account-restore — restores display name to "Kevin" after
-# 51-account-rename.yaml. Run immediately after 51 (same Account screen open).
-#
-# tags: [ios, simulator-ok]
+# 51b-account-restore — ensures the display name is "Kevin". Self-navigating and
+# IDEMPOTENT: sets the name to "Kevin" and saves ONLY if dirty (optional), so it
+# passes whether or not a change is needed — safe to run before OR after 51 under
+# Maestro's non-deterministic single-invocation order. Kept as the tagged-restore
+# half of the 51 pair.
+- runFlow: _helpers/open-settings.yaml
+- tapOn:
+    id: "settings-cat-account"
+- extendedWaitUntil:
+    visible: { id: "settings-account-screen" }
+    timeout: 3000
 - tapOn:
     id: "settings-account-name"
 - eraseText: 20
 - inputText: "Kevin"
+# save only if the name was actually dirty (already "Kevin" → no save button).
 - tapOn:
     id: "settings-account-save"
+    optional: true
 - extendedWaitUntil:
     visible: "Saved"
-    timeout: 10000
+    timeout: 5000
+    optional: true
+- assertVisible: "Kevin"

@@ -1,93 +1,74 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-voice
+  - destructive-profile
 ---
-# 62-fish-clone-happy — Voice settings page: Clone from Fish (gated on
-# features.fish_browse_enabled, confirmed TRUE on this local stack via
-# GET /api/v1/services/versions) -> search -> play sample -> pick a tile
-# (opens the prefilled clone form, per FishCloneScreen.kt's onPickForClone,
-# NOT an immediate mutating call) -> Clone voice (real POST .../clone against
-# a live, working Fish API key on this stack). Targets a specific known-good
-# Fish voice id (98e364e9a41c465a9d4fdafc267f84ea, "Deep Voice English
-# (Anthony)") queried via GET /api/v1/providers/voices?title=english ahead of
-# time, since fish-tile/-play/-clone testTags are keyed by the Fish catalog id
-# (dynamic per search, but this one is stable across runs — Fish's own
-# catalog, not ours). Per-server behavior: a successful clone auto-activates
-# the new pack. The created pack + the resulting active-voice change are
-# cleaned up by 62b-fish-clone-cleanup.yaml (id re-synced via GET
-# /api/v1/voices diff — same random-id caveat as Members/voice-create).
-# Run login.yaml immediately before this.
+# 62-fish-clone-happy — Voice settings → Clone from Fish (gated on
+# features.fish_browse_enabled, TRUE on this local stack) → search → play sample →
+# pick a tile (opens the prefilled clone form, NOT an immediate mutating call) →
+# Clone voice (real POST .../clone against a live Fish API key). A successful clone
+# auto-activates the new pack. Cleaned up + active-voice restored by 62b (runs
+# next via executionOrder). Batch-safe.
 #
-# tags: [android, emulator-ok]
-- tapOn:
-    id: "history-open"
+# Targets a known-good, catalog-stable Fish voice id
+# (98e364e9a41c465a9d4fdafc267f84ea, "Deep Voice English (Anthony)") — fish-tile/
+# -play/-clone testTags are keyed by the Fish catalog id.
+#
+# DEFECT-7: settings-cat-voice is above the fold — tap directly.
+# DEFECT-10: VoiceScreen doesn't refresh after a sub-screen pops back — force a
+# fresh mount (leave Voice, re-enter).
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-open"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
+    visible: { id: "settings-open" }
+    timeout: 3000
+- tapOn: { id: "settings-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
-# DEFECT-7 (see 51-account-rename.yaml): settings-cat-voice is above the
-# fold — tap directly, scrollUntilVisible overshoots to the footer.
-- tapOn:
-    id: "settings-cat-voice"
+    visible: { id: "settings-screen" }
+    timeout: 3000
+- tapOn: { id: "settings-cat-voice" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-voice-screen"
-    timeout: 5000
-- tapOn:
-    id: "settings-voice-fish-nav"
+    visible: { id: "settings-voice-screen" }
+    timeout: 3000
+- tapOn: { id: "settings-voice-fish-nav" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-voice-fish-screen"
-    timeout: 5000
-- tapOn:
-    id: "fish-search"
+    visible: { id: "settings-voice-fish-screen" }
+    timeout: 3000
+- tapOn: { id: "fish-search" }
 - inputText: "Deep Voice English"
+# Fish catalog search round-trip — network budget.
 - extendedWaitUntil:
-    visible:
-      id: "fish-tile-98e364e9a41c465a9d4fdafc267f84ea"
+    visible: { id: "fish-tile-98e364e9a41c465a9d4fdafc267f84ea" }
     timeout: 10000
 - takeScreenshot: "62-fish-search-results"
-- tapOn:
-    id: "fish-play-98e364e9a41c465a9d4fdafc267f84ea"
+- tapOn: { id: "fish-play-98e364e9a41c465a9d4fdafc267f84ea" }
 - extendedWaitUntil:
-    visible:
-      id: "fish-play-98e364e9a41c465a9d4fdafc267f84ea"
-    timeout: 5000
+    visible: { id: "fish-play-98e364e9a41c465a9d4fdafc267f84ea" }
+    timeout: 3000
 - takeScreenshot: "62-fish-playing-sample"
-- tapOn:
-    id: "fish-clone-98e364e9a41c465a9d4fdafc267f84ea"
+- tapOn: { id: "fish-clone-98e364e9a41c465a9d4fdafc267f84ea" }
 - extendedWaitUntil:
-    visible:
-      id: "fish-clone-form"
-    timeout: 5000
+    visible: { id: "fish-clone-form" }
+    timeout: 3000
 - takeScreenshot: "62-fish-clone-form-prefilled"
-- tapOn:
-    id: "fish-clone-submit"
+- tapOn: { id: "fish-clone-submit" }
+# clone round-trip (sample download + voice.create) — network budget.
 - extendedWaitUntil:
-    visible:
-      id: "settings-voice-screen"
+    visible: { id: "settings-voice-screen" }
     timeout: 20000
-# DEFECT-10 (see 55-voice-create-record.yaml): VoiceScreen does not refresh
-# its list after a sub-screen pops back on success — force a fresh mount.
-- tapOn:
-    id: "settings-voice-back"
+# DEFECT-10: force a fresh mount to pick up the cloned pack.
+- tapOn: { id: "settings-voice-back" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
-- tapOn:
-    id: "settings-cat-voice"
+    visible: { id: "settings-screen" }
+    timeout: 3000
+- tapOn: { id: "settings-cat-voice" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-voice-screen"
-    timeout: 5000
+    visible: { id: "settings-voice-screen" }
+    timeout: 3000
 - tapOn: "Yours"
-# text match must cover the full rendered string, not a prefix (same lesson
-# as "No personalities yet." in 50-personalities-create-activate.yaml).
 - extendedWaitUntil:
     visible: "Deep Voice English \\(Anthony\\)"
     timeout: 5000

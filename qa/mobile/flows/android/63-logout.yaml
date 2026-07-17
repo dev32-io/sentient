@@ -1,40 +1,33 @@
 appId: io.dev32.sentient.debug
+tags:
+  - logout
 ---
-# 63-logout — Settings root: scroll to the danger row, tap Log out, land back
-# on the login screen (token cleared). Supersedes 09-logout.yaml against the
-# NEW settings root (that flow asserts settings-logout is visible immediately
-# after settings-open with no settings-screen wait / scroll — the new root is
-# a full scrollable page and settings-logout sits below all category rows, per
-# 40-settings-root.yaml). MUST run LAST in the matrix (clears the auth token).
-# Run login.yaml immediately before this.
+# 63-logout — Settings root: scroll to the danger row, tap Log out, land back on
+# the login screen (token cleared). MUST run LAST in the batch (clears the auth
+# token) — config.yaml executionOrder places it last. Batch-safe: self-navigates.
 #
-# tags: [android, emulator-ok]
-- tapOn:
-    id: "history-open"
+# DEFECT-7/8 (see 51 / 57): scrollUntilVisible overshoots to the footer, whose
+# fixed position overlaps rows near the bottom (Logout sits just above it) —
+# plain scrolls instead (Logout is further down than Diagnostics, use three).
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-open"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
+    visible: { id: "settings-open" }
+    timeout: 3000
+- tapOn: { id: "settings-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
-# DEFECT-7/8 (see 51-account-rename.yaml / 57-diagnostics-send.yaml):
-# scrollUntilVisible overshoots to the footer, whose fixed on-screen position
-# overlaps rows near the bottom (Logout sits right above it). Plain scrolls
-# instead — Logout is further down than Diagnostics, use three.
+    visible: { id: "settings-screen" }
+    timeout: 3000
 - scroll
 - scroll
 - scroll
 - takeScreenshot: "63-logout-row"
-- tapOn:
-    id: "settings-logout"
+- tapOn: { id: "settings-logout" }
 - extendedWaitUntil:
-    visible:
-      id: "login-backend-setup"
+    visible: { id: "login-backend-setup" }
     timeout: 10000
-- assertNotVisible:
-    id: "composer-input"
+- assertNotVisible: { id: "composer-input" }
 - takeScreenshot: "63-logged-out"

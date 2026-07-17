@@ -1,94 +1,48 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-admin
+  - destructive-profile
+  - restore
 ---
 # 43-members-delete-cleanup — admin Members page: delete both E2E Temp1/Temp2
-# seed users (created via the real UI "Add user" path by 41-members-add-cap.yaml),
-# restoring the household to 1/3 (Kevin only). First forces back to Kevin's
-# session via clearState (Temp1 is currently logged in from 42's non-admin-gate
-# check) + real avatar/PIN login — NOT the dedicated logout flow (reserved for
-# 63-logout.yaml).
+# seed users (created by 41), restoring the household to 1/3 (Kevin only). This
+# is the restore for the whole 41→42→43 trio: a leading clearState forces back
+# to Kevin's session (Temp1 is logged in from 42) via the login+settings helper,
+# then deletes both temps by point-tap.
 #
-# NOTE: ids below are NOT deterministic (server-random) — re-sync via
-# GET /api/v1/admin/users after any fresh 41-members-add-cap.yaml run. Current
-# as of the 2026-07-16 settings-parity iOS E2E pass: u_11d9ec21 (Temp1),
-# u_3327c25b (Temp2).
-#
-# tags: [ios, simulator-ok]
+# DEFECT (iOS, id-collision family): MemberRow's per-action ids (toggle/delete)
+# never reach the tree — every descendant reports the outer row's bare
+# "settings-member-<userId>". "Trash"/"Promote" text is also ambiguous. Point-tap
+# the trash icon; robust to the server-random user ids (no id dependency here).
 - launchApp:
     clearState: true
-- extendedWaitUntil:
-    visible: "Who's here?"
-    timeout: 8000
-- tapOn:
-    id: "login-avatar-u_8c866990"
-- extendedWaitUntil:
-    visible:
-      id: "pin-key-1"
-    timeout: 5000
-- tapOn:
-    id: "pin-key-1"
-- tapOn:
-    id: "pin-key-2"
-- tapOn:
-    id: "pin-key-3"
-- tapOn:
-    id: "pin-key-4"
-- extendedWaitUntil:
-    visible:
-      id: "composer-input"
-    timeout: 15000
-- tapOn:
-    id: "history-open"
-- extendedWaitUntil:
-    visible:
-      id: "history-new-chat"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
-- extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
+- runFlow: _helpers/open-settings.yaml
 - tapOn:
     id: "settings-cat-members"
 - extendedWaitUntil:
-    visible:
-      id: "settings-members-screen"
-    timeout: 5000
-# DEFECT (iOS, confirmed live via hierarchy dump): MemberRow sets a distinct
-# accessibilityIdentifier per action ("settings-member-toggle-<userId>",
-# "settings-member-delete-<userId>" in MembersScreen.swift), but the OUTER row
-# HStack ALSO carries "settings-member-<userId>" — and every descendant
-# (name text, role pill, Promote button, Trash button) inherits the ANCESTOR's
-# identifier instead of keeping its own (confirmed: `maestro hierarchy` shows
-# the Trash button's resource-id as "settings-member-u_11d9ec21", not
-# "settings-member-delete-u_11d9ec21"). Same root-cause family as the
-# RowToggle id-collision defect (settings-audio-tts) found earlier in this
-# pass — a SwiftUI accessibility-identifier propagation gap, not unique to
-# Members. "Trash"/"Promote" accessibilityText is ALSO ambiguous (both rows'
-# icon-only buttons infer the same SF Symbol name) — point taps are the only
-# reliable driver here, same workaround class as Android's DEFECT-3.
-# delete E2E Temp1 (first data row's trash icon)
+    visible: { id: "settings-members-screen" }
+    timeout: 3000
+# delete E2E Temp1 (first data row's trash icon).
 - tapOn:
     point: "89%,29%"
 - extendedWaitUntil:
     visible: "Remove"
-    timeout: 5000
+    timeout: 3000
 - tapOn: "Remove"
+# member delete POST + count update — network op.
 - extendedWaitUntil:
-    visible:
-      text: ".*2 active.*"
-    timeout: 10000
+    visible: { text: ".*2 active.*" }
+    timeout: 8000
 - takeScreenshot: "43-members-after-temp1"
-# delete E2E Temp2 — after Temp1's removal the list re-renders and Temp2 shifts
-# up into the row Temp1 occupied, so the same on-screen point works again.
+# delete E2E Temp2 — the list re-renders and Temp2 shifts into Temp1's slot, so
+# the same on-screen point works again.
 - tapOn:
     point: "89%,29%"
 - extendedWaitUntil:
     visible: "Remove"
-    timeout: 5000
+    timeout: 3000
 - tapOn: "Remove"
 - extendedWaitUntil:
-    visible:
-      text: ".*1 active.*"
-    timeout: 10000
+    visible: { text: ".*1 active.*" }
+    timeout: 8000
 - takeScreenshot: "43-members-restored"

@@ -1,13 +1,16 @@
 appId: io.dev32.sentient.debug
+tags:
+  - reconnect
+  - physical-only
 ---
-# 04b-reconnect-recover — assert the connection banner clears after WiFi restore.
+# 04b-reconnect-recover — restore pair for 04: assert the connection banner clears
+# after connectivity is restored and the composer is usable again.
 #
-# Pre-condition (set by harness): WiFi re-enabled on emulator-5554, app still
-# running from 04-reconnect.yaml. The SDK is retrying/reconnecting.
-# This flow asserts the banner clears and the composer is usable again.
+# Continuation of 04 (physical-only, runner-orchestrated): the runner re-enables
+# WiFi / restarts the gateway with the app still running from 04, then runs this.
+# No launchApp — the SDK is mid-reconnect on the same process. Excluded from the
+# default batch via physical-only.
 - extendedWaitUntil:
-    notVisible:
-      id: "connection-lost-banner"
+    notVisible: { id: "connection-lost-banner" }
     timeout: 40000
-- assertVisible:
-    id: "composer-input"
+- assertVisible: { id: "composer-input" }

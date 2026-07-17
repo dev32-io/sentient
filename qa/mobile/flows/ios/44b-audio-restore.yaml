@@ -1,17 +1,31 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-soul
+  - destructive-profile
+  - restore
 ---
 # 44b-audio-restore — flips "Speak responses (TTS)" back ON and saves, restoring
-# the profile to its original state after 44-audio-fast-save.yaml. Run
-# immediately after 44 (same Audio screen still open — no re-navigation needed).
-#
-# tags: [ios, simulator-ok]
+# the profile to its original state after 44-audio-fast-save.yaml. Self-navigating
+# (does not assume 44 left the Audio screen open), so it is batch-safe on its own.
+# Point-tap the switch (same RowToggle id-collision workaround as 44).
+- runFlow: _helpers/open-settings.yaml
+- tapOn:
+    id: "settings-cat-audio"
+- extendedWaitUntil:
+    visible: { id: "settings-audio-screen" }
+    timeout: 3000
+# wait for the toggle ROW to be data-bound before point-tapping the switch.
+- extendedWaitUntil:
+    visible: { id: "settings-audio-tts" }
+    timeout: 3000
 - tapOn:
     point: "85%,24%"
-- assertVisible:
-    id: "settings-audio-save"
+# Save appears after the toggle state-update — wait for it (avoid the race).
+- extendedWaitUntil:
+    visible: { id: "settings-audio-save" }
+    timeout: 3000
 - tapOn:
     id: "settings-audio-save"
 - extendedWaitUntil:
-    notVisible:
-      id: "settings-audio-save"
-    timeout: 8000
+    notVisible: { id: "settings-audio-save" }
+    timeout: 3000

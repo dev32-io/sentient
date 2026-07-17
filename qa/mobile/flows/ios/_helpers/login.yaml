@@ -1,0 +1,32 @@
+appId: io.dev32.sentient.debug
+tags:
+  - helper
+---
+# _helpers/login.yaml — reusable conditional login subflow (Kevin, PIN 1234).
+#
+# launchApp (no clearState): persisted token → chat directly; no token →
+# "Who's here?" login screen. The conditional block logs in ONLY when the login
+# screen is showing, so this is a no-op when already authenticated. Always ends
+# on the chat screen with composer-input visible.
+#
+# Lives in _helpers/ (untagged) so Maestro's root-only folder discovery never
+# runs it as a standalone flow. Reference from any auth-needing flow:
+#   - runFlow: _helpers/login.yaml
+- launchApp
+- runFlow:
+    when:
+      visible: "Who's here?"
+    commands:
+      - tapOn:
+          id: "login-avatar-u_8c866990"    # Kevin avatar (stable resource-id)
+      - extendedWaitUntil:
+          visible: { id: "pin-key-1" }
+          timeout: 3000
+      - tapOn: { id: "pin-key-1" }
+      - tapOn: { id: "pin-key-2" }
+      - tapOn: { id: "pin-key-3" }
+      - tapOn: { id: "pin-key-4" }          # PIN 1234
+# login → chat: WS connect + session.ready handshake — genuinely slow, allow 15s.
+- extendedWaitUntil:
+    visible: { id: "composer-input" }
+    timeout: 15000

@@ -1,45 +1,46 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-admin
+  - destructive-profile
 ---
-# 41-members-add-cap — admin Members page: add two temp users (household starts at
-# 1/3, ends at 3/3), then verify "Add user" is disabled at the 3-user cap. Temp
-# users are cleaned up by 43-members-delete-cleanup.yaml AFTER the non-admin-gate
-# case (42) uses one of them to log in. Run login.yaml immediately before this.
+# 41-members-add-cap — admin Members page: add two temp users (household 1/3 →
+# 3/3), then verify "Add user" is disabled at the 3-user cap. The temp users are
+# deleted by 43-members-delete-cleanup.yaml AFTER 42 uses one to log in.
+# executionOrder runs 41 → 42 → 43. Batch-safe (Kevin is admin via the standard
+# conditional login).
 #
-# tags: [android, emulator-ok]
-- tapOn:
-    id: "history-open"
+# ⚠️ NON-DETERMINISTIC IDS: the created users get server-random ids. 42 (Temp1
+# login) and 43 (delete-by-id) hardcode ids that MUST be re-synced via
+# `GET /api/v1/admin/users` after any fresh run of THIS flow.
+#
+# DEFECT-2: AddMemberDialog is a Material3 AlertDialog whose testTags are NOT
+# covered by testTagsAsResourceId — its nodes have resource-id="". Use text
+# selectors for the dialog fields/buttons.
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-open"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
+    visible: { id: "settings-open" }
+    timeout: 3000
+- tapOn: { id: "settings-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
+    visible: { id: "settings-screen" }
+    timeout: 3000
 - scrollUntilVisible:
-    element:
-      id: "settings-cat-members"
+    element: { id: "settings-cat-members" }
     direction: DOWN
-- tapOn:
-    id: "settings-cat-members"
+- tapOn: { id: "settings-cat-members" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-members-screen"
-    timeout: 5000
+    visible: { id: "settings-members-screen" }
+    timeout: 3000
 - takeScreenshot: "41-members-before"
-# NOTE: AddMemberDialog is a Material3 AlertDialog, rendered in a separate window
-# that does NOT inherit the testTagsAsResourceId semantics modifier applied only to
-# AppNavHost's outer Surface (nav/AppNavHost.kt:77). Its testTags are therefore
-# invisible to id: selectors here (confirmed via uiautomator dump — dialog nodes all
-# have resource-id=""). Flagged as a defect; text selectors are the workaround.
 # --- add temp1 ---
-- tapOn:
-    id: "settings-members-add"
+- tapOn: { id: "settings-members-add" }
 - extendedWaitUntil:
     visible: "Display name"
-    timeout: 5000
+    timeout: 3000
 - tapOn: "Display name"
 - inputText: "E2E Temp1"
 - tapOn: "PIN"
@@ -50,11 +51,10 @@ appId: io.dev32.sentient.debug
     timeout: 10000
 - assertVisible: "E2E Temp1"
 # --- add temp2 ---
-- tapOn:
-    id: "settings-members-add"
+- tapOn: { id: "settings-members-add" }
 - extendedWaitUntil:
     visible: "Display name"
-    timeout: 5000
+    timeout: 3000
 - tapOn: "Display name"
 - inputText: "E2E Temp2"
 - tapOn: "PIN"

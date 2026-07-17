@@ -1,0 +1,26 @@
+# Maestro workspace config for the iOS E2E flow library. Mirrors the Android
+# library's config (qa/mobile/flows/android/config.yaml).
+#
+# `flows: ["*.yaml"]` scopes folder runs (`maestro test qa/mobile/flows/ios`) to
+# TOP-LEVEL flows only — the reusable subflows in _helpers/ (login, login-temp1,
+# open-settings) are never run standalone (Maestro also does not recurse into
+# subdirectories; each helper additionally carries the `helper` tag as a third
+# guard the runner always excludes). Helpers are used via `runFlow: _helpers/…`.
+#
+# `continueOnFailure: true` keeps a folder run going after a failure so a restore
+# still executes even if its primary failed.
+#
+# NOTE ON ORDER: Maestro's `executionOrder.flowsOrder` is intentionally NOT set —
+# it requires every listed flow to be in the run set, which breaks --include-tags
+# (verified: throws "Could not find flows needed for execution in order"). Maestro's
+# default folder order is NON-DETERMINISTIC, so DETERMINISTIC ordering (restore
+# pairs adjacent, logout last, 04c login-send BEFORE followup) is enforced by
+# run-e2e.sh resolving the selected tags into an explicit, canonically-ordered file
+# list run as one warm invocation (Maestro honors explicit multi-file arg order —
+# verified). A bare `maestro test <dir> --include-tags=…` works but runs unordered;
+# 51/51b are made order-robust (51 self-restores, 51b is idempotent) so the
+# settings-user batch is green even unordered.
+flows:
+  - "*.yaml"
+executionOrder:
+  continueOnFailure: true

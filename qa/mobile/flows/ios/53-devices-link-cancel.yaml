@@ -1,29 +1,16 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-user
 ---
-# 53-devices-link-cancel — Devices page: Signal unlinked -> tap "Link Signal" ->
-# QR sheet opens (steps + QR/preparing/failed) -> Cancel dismisses the sheet and
-# stops the pairing (POST .../signal/cancel), leaving Signal unlinked. Run
-# login.yaml immediately before this.
-#
-# tags: [ios, simulator-ok]
-- tapOn:
-    id: "history-open"
-- extendedWaitUntil:
-    visible:
-      id: "history-new-chat"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
-- extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
+# 53-devices-link-cancel — Devices page: Signal unlinked → tap "Link Signal" → QR
+# sheet opens (steps + QR/preparing/failed) → Cancel dismisses the sheet and stops
+# the pairing (POST .../signal/cancel), leaving Signal unlinked. Self-navigating.
+- runFlow: _helpers/open-settings.yaml
 - tapOn:
     id: "settings-cat-devices"
 - extendedWaitUntil:
-    visible:
-      id: "settings-devices-screen"
-    timeout: 5000
+    visible: { id: "settings-devices-screen" }
+    timeout: 3000
 - assertVisible:
     id: "settings-devices-link"
 - takeScreenshot: "53-devices-unlinked"
@@ -31,10 +18,11 @@ appId: io.dev32.sentient.debug
     id: "settings-devices-link"
 - extendedWaitUntil:
     visible: "Link your Signal account"
-    timeout: 5000
+    timeout: 3000
+# QR generation — Signal pairing prep (signal-cli link), genuinely slow; optional
+# because a Signal sidecar may be absent on this stack (QR then never renders).
 - extendedWaitUntil:
-    visible:
-      id: "settings-devices-qr"
+    visible: { id: "settings-devices-qr" }
     timeout: 15000
     optional: true
 - takeScreenshot: "53-devices-qr-shown"
@@ -42,7 +30,7 @@ appId: io.dev32.sentient.debug
     id: "settings-devices-link-cancel"
 - extendedWaitUntil:
     notVisible: "Link your Signal account"
-    timeout: 5000
+    timeout: 3000
 - assertVisible:
     id: "settings-devices-link"
 - takeScreenshot: "53-devices-cancelled"

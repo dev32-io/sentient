@@ -1,26 +1,38 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-voice
+  - restore
 ---
-# 54b-voice-restore — restores the original active voice ("Jarvis",
-# id c624a6ca980346ec9dc38bb434fec506 — a user-source pack, NOT a built-in
-# despite the display name) after 54-voice-preview-pick.yaml picks Briar. Voice
-# tile testTags are keyed by the raw backend voiceId, not a display-name slug
-# (voice-pick-c624a6ca980346ec9dc38bb434fec506, NOT voice-pick-jarvis — see
-# VoiceCard.kt). Run immediately after 54 (same Voice screen still open).
+# 54b-voice-restore — restore pair for 54: active voice back to "Jarvis"
+# (id c624a6ca980346ec9dc38bb434fec506 — a user-source pack despite the display
+# name). Voice tile testTags are keyed by the raw backend voiceId, not a slug
+# (voice-pick-<id>, see VoiceCard.kt). Batch-safe: self-navigates from chat root.
+# executionOrder runs it right after 54.
 #
-# tags: [android, emulator-ok]
-# The "All" tab lists all 5 built-ins (each a tall multi-line card) BEFORE
-# Jarvis (the only "user"-source pack) — scrollUntilVisible's default attempt
-# budget isn't enough to page past all 5. Filter to "Yours" first so Jarvis is
-# the only (or first) entry, no long scroll needed.
+# Filter to "Yours" first so Jarvis is the only entry — the "All" tab lists 5 tall
+# built-in cards before it, past scrollUntilVisible's default budget.
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
+- extendedWaitUntil:
+    visible: { id: "settings-open" }
+    timeout: 3000
+- tapOn: { id: "settings-open" }
+- extendedWaitUntil:
+    visible: { id: "settings-screen" }
+    timeout: 3000
+- tapOn: { id: "settings-cat-voice" }
+- extendedWaitUntil:
+    visible: { id: "settings-voice-screen" }
+    timeout: 3000
 - tapOn: "Yours"
 - scrollUntilVisible:
-    element:
-      id: "voice-pick-c624a6ca980346ec9dc38bb434fec506"
+    element: { id: "voice-pick-c624a6ca980346ec9dc38bb434fec506" }
     direction: DOWN
-- tapOn:
-    id: "voice-pick-c624a6ca980346ec9dc38bb434fec506"
+- tapOn: { id: "voice-pick-c624a6ca980346ec9dc38bb434fec506" }
 - extendedWaitUntil:
-    visible:
-      id: "voice-active-c624a6ca980346ec9dc38bb434fec506"
+    visible: { id: "voice-active-c624a6ca980346ec9dc38bb434fec506" }
     timeout: 10000
 - takeScreenshot: "54b-voice-restored-jarvis"

@@ -1,45 +1,40 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-soul
+  - destructive-profile
 ---
-# 49-tools-toggle — Tools settings page: disable the "fetch" MCP server, Save
-# (slow path: apply/restart), persists (key removed from tools.enabled), then
-# re-enable + Save to restore the original state. DEFECT-3 applies to the
-# per-server Switch too (SectionHeaderRow wraps label+switch in one testTag'd
-# Row; the switch itself is the only clickable target) — use a point tap at the
-# switch's on-screen position. Run login.yaml immediately before this.
+# 49-tools-toggle — Tools settings: disable the "fetch" MCP server; Save (SLOW
+# apply/restart) removes the key from tools.enabled. Re-enabled by
+# 49b-tools-restore.yaml (runs next via executionOrder). Batch-safe.
 #
-# tags: [android, emulator-ok]
-- tapOn:
-    id: "history-open"
+# DEFECT-3 applies to the per-server Switch (SectionHeaderRow wraps label+switch
+# in one testTag'd Row; only the switch is clickable) — point tap at the switch's
+# on-screen position. "fetch" is the first (alphabetically-sorted) server row.
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-open"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
+    visible: { id: "settings-open" }
+    timeout: 3000
+- tapOn: { id: "settings-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
-- tapOn:
-    id: "settings-cat-tools"
+    visible: { id: "settings-screen" }
+    timeout: 3000
+- tapOn: { id: "settings-cat-tools" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-tools-screen"
-    timeout: 5000
-- assertVisible:
-    id: "settings-tools-server-fetch"
+    visible: { id: "settings-tools-screen" }
+    timeout: 3000
+- assertVisible: { id: "settings-tools-server-fetch" }
 - takeScreenshot: "49-tools-before"
-# fetch is the first (alphabetically-sorted) server row — its switch sits at
-# the row's right edge
 - tapOn:
     point: "84%,37%"
 - assertVisible: "off"
-- assertVisible:
-    id: "settings-tools-save"
-- tapOn:
-    id: "settings-tools-save"
+- assertVisible: { id: "settings-tools-save" }
+- tapOn: { id: "settings-tools-save" }
+# SLOW apply/restart budget.
 - extendedWaitUntil:
-    notVisible:
-      id: "settings-apply-notice"
+    notVisible: { id: "settings-apply-notice" }
     timeout: 45000
 - takeScreenshot: "49-tools-after"

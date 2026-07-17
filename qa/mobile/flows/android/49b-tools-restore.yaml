@@ -1,16 +1,32 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-soul
+  - restore
 ---
-# 49b-tools-restore — re-enables "fetch" after 49-tools-toggle.yaml. Run
-# immediately after 49 (same Tools screen still open).
-#
-# tags: [android, emulator-ok]
+# 49b-tools-restore — restore pair for 49: re-enables "fetch" (SLOW apply/restart).
+# Batch-safe: self-navigates from chat root. executionOrder runs it right after 49.
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
+- extendedWaitUntil:
+    visible: { id: "settings-open" }
+    timeout: 3000
+- tapOn: { id: "settings-open" }
+- extendedWaitUntil:
+    visible: { id: "settings-screen" }
+    timeout: 3000
+- tapOn: { id: "settings-cat-tools" }
+- extendedWaitUntil:
+    visible: { id: "settings-tools-screen" }
+    timeout: 3000
+- assertVisible: { id: "settings-tools-server-fetch" }
 - tapOn:
     point: "84%,37%"
-- assertVisible:
-    id: "settings-tools-save"
-- tapOn:
-    id: "settings-tools-save"
+- assertVisible: { id: "settings-tools-save" }
+- tapOn: { id: "settings-tools-save" }
+# SLOW apply/restart budget.
 - extendedWaitUntil:
-    notVisible:
-      id: "settings-apply-notice"
+    notVisible: { id: "settings-apply-notice" }
     timeout: 45000

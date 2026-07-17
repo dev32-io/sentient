@@ -1,55 +1,52 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-admin
+  - restore
 ---
-# 43-members-delete-cleanup — admin Members page: delete both E2E Temp1/Temp2
-# seed users (created via the real UI "Add user" path by 41-members-add-cap.yaml),
-# restoring the household to 1/3 (Kevin only). Confirm dialog is a Material3
-# AlertDialog (see DEFECT-2 testTagsAsResourceId note) — use text selectors for
-# its buttons. Run login.yaml (Kevin) immediately before this.
+# 43-members-delete-cleanup — restore pair for 41: delete both E2E Temp1/Temp2
+# users, restoring the household to 1/3 (Kevin only). Because 42 left the app
+# logged in as the non-admin Temp1, this force-clears state and logs back in AS
+# Kevin (admin) explicitly (clearState → unconditional Kevin login) rather than
+# the conditional pattern. executionOrder runs it right after 42.
 #
-# NOTE: ids below are NOT deterministic (server-random) — re-sync via
-# GET /api/v1/admin/users after any fresh 41-members-add-cap.yaml run. Current
-# as of the 2026-07-16 settings-parity E2E pass: u_50104890 (Temp1), u_da54f79b
-# (Temp2).
+# ⚠️ NON-DETERMINISTIC IDS: settings-members-delete-<userId> ids are server-random
+# — re-sync via `GET /api/v1/admin/users` after any fresh 41 run. As of the
+# 2026-07-16 pass: u_50104890 (Temp1), u_da54f79b (Temp2).
 #
-# tags: [android, emulator-ok]
-- tapOn:
-    id: "history-open"
+# DEFECT-2: the confirm AlertDialog's testTags don't resolve — use "Remove" text.
+- launchApp:
+    clearState: true
+- runFlow:
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-open"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
+    visible: { id: "settings-open" }
+    timeout: 3000
+- tapOn: { id: "settings-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
+    visible: { id: "settings-screen" }
+    timeout: 3000
 - scrollUntilVisible:
-    element:
-      id: "settings-cat-members"
+    element: { id: "settings-cat-members" }
     direction: DOWN
-- tapOn:
-    id: "settings-cat-members"
+- tapOn: { id: "settings-cat-members" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-members-screen"
-    timeout: 5000
+    visible: { id: "settings-members-screen" }
+    timeout: 3000
 # delete E2E Temp1
-- tapOn:
-    id: "settings-members-delete-u_50104890"
+- tapOn: { id: "settings-members-delete-u_50104890" }
 - extendedWaitUntil:
     visible: "Remove"
-    timeout: 5000
+    timeout: 3000
 - tapOn: "Remove"
 - extendedWaitUntil:
     visible: "2 active · 1 slot free"
     timeout: 10000
 # delete E2E Temp2
-- tapOn:
-    id: "settings-members-delete-u_da54f79b"
+- tapOn: { id: "settings-members-delete-u_da54f79b" }
 - extendedWaitUntil:
     visible: "Remove"
-    timeout: 5000
+    timeout: 3000
 - tapOn: "Remove"
 - extendedWaitUntil:
     visible: "1 active · 2 slots free"

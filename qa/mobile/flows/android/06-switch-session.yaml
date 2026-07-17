@@ -1,31 +1,23 @@
 appId: io.dev32.sentient.debug
+tags:
+  - session
 ---
-# 06-switch-session — open the history drawer, tap the first session row, and
-# assert the chat view reloads for that session.
-#
-# Pre-condition: the account has at least one committed session in history.
-# The flow opens the drawer, waits for the list to load (history-search visible
-# proves the drawer opened AND the list rendered), taps the first row whose tag
-# matches "history-row-" prefix (Maestro regex tap), then confirms the composer
-# is visible in the restored chat.
-#
-# tags: [android, emulator-ok, requires-prior-session]
+# 06-switch-session — open the history drawer, tap the first session row, assert
+# the chat view reloads for that session. Requires ≥1 committed session in
+# history (the batch runs chat flows 01/01-send-stream first, so at least one
+# exists by execution order). Taps the first history-row-<sessionId> via regex.
+# Batch-safe.
 - launchApp
-- tapOn:
-    id: "history-open"
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
 - extendedWaitUntil:
-    visible:
-      id: "history-new-chat"
-    timeout: 5000
-- assertVisible:
-    id: "history-search"
-# Tap the first row. history-row-<sessionId> — use text pattern to find any row.
-# If no sessions exist this will timeout and the flow will fail (expected — requires-prior-session).
+    visible: { id: "history-new-chat" }
+    timeout: 3000
+- assertVisible: { id: "history-search" }
 - tapOn:
     id: ".*history-row-.*"
-    optional: false
-# Drawer closes after switch; composer should re-appear
 - extendedWaitUntil:
-    visible:
-      id: "composer-input"
-    timeout: 8000
+    visible: { id: "composer-input" }
+    timeout: 3000

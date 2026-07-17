@@ -1,0 +1,20 @@
+appId: io.dev32.sentient.debug
+tags:
+  - helper
+---
+# _helpers/open-settings.yaml — login (via _helpers/login.yaml) then open the
+# Settings root: history drawer (history-open) → account-header gear
+# (settings-open) → Settings root list (settings-screen). Leaves the Settings
+# root visible so a caller can tap into a category. Untagged helper (root-only
+# discovery skips it). Reference:  - runFlow: _helpers/open-settings.yaml
+- runFlow: login.yaml
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible: { id: "history-new-chat" }
+    timeout: 3000
+- tapOn:
+    id: "settings-open"
+- extendedWaitUntil:
+    visible: { id: "settings-screen" }
+    timeout: 3000

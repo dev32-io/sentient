@@ -1,14 +1,16 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-diagnostics
 ---
 # 57-diagnostics-send — Diagnostics category page (moved off root per the
-# mobile-settings-parity plan): send one chat turn for content, open Settings ->
+# mobile-settings-parity plan): send one chat turn for content, open Settings →
 # Diagnostics, tap Send diagnostic log, "This session" (newest) is
-# default-selected, tap its Send control -> progress -> "Sent ✓ — ref XXXX".
-# Reuses the T7 case pattern (testing-knowledge.md) adapted to the new
-# Diagnostics category page (was root-level). Run login.yaml immediately
-# before this.
+# default-selected, tap its Send control → progress → "Sent ✓ — ref XXXX".
+# Reuses the T7 case pattern (testing-knowledge.md).
 #
-# tags: [ios, simulator-ok, vitals, diagnostics]
+# NOTE: this overlaps heavily with 30-send-diagnostic.yaml (same upload path via
+# the Diagnostics category) — both are kept, tagged settings-diagnostics.
+- runFlow: _helpers/login.yaml
 - tapOn:
     id: "composer-input"
 - inputText: "hi"
@@ -16,39 +18,35 @@ appId: io.dev32.sentient.debug
     id: "chat-send"
 - tapOn:
     id: "chat-message-list"
+# assistant reply — Hermes LLM round-trip, genuinely slow.
 - extendedWaitUntil:
-    visible:
-      id: "assistant-bubble"
+    visible: { id: "assistant-bubble" }
     timeout: 60000
 - tapOn:
     id: "history-open"
 - extendedWaitUntil:
-    visible:
-      id: "history-new-chat"
-    timeout: 5000
+    visible: { id: "history-new-chat" }
+    timeout: 3000
 - tapOn:
     id: "settings-open"
 - extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
+    visible: { id: "settings-screen" }
+    timeout: 3000
 - tapOn:
     id: "settings-cat-diagnostics"
 - extendedWaitUntil:
-    visible:
-      id: "settings-send-logs"
-    timeout: 5000
+    visible: { id: "settings-send-logs" }
+    timeout: 3000
 - takeScreenshot: "57-diagnostics-before"
 - tapOn:
     id: "settings-send-logs"
 - extendedWaitUntil:
-    visible:
-      text: "This session"
-    timeout: 5000
+    visible: { text: "This session" }
+    timeout: 3000
 - tapOn:
     text: "Send"
+# "Sent ✓" — diagnostic upload round-trip (POST /diagnostics/logs), genuinely slow.
 - extendedWaitUntil:
-    visible:
-      text: "Sent ✓.*"
+    visible: { text: "Sent ✓.*" }
     timeout: 20000
 - takeScreenshot: "57-diagnostics-sent"

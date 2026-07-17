@@ -1,80 +1,56 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-root
 ---
-# 40-settings-root — history drawer -> Settings root list renders grouped categories
-# + Admin group gated on isAdmin + version footer at bottom. Assumes an already
-# logged-in session (run login.yaml first).
-#
-# Selectors: history-open (chat top bar) -> settings-open (drawer header) ->
-# settings-screen, settings-cat-<key>, settings-version, settings-update-action.
-#
-# tags: [android, emulator-ok]
-- tapOn:
-    id: "history-open"
+# 40-settings-root — Settings root list renders grouped categories (Soul / User /
+# Admin / Support), the Admin group gated on isAdmin, and the version + update
+# footer at the bottom. Kevin is admin so the Admin group is present. Batch-safe.
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-open"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
+    visible: { id: "settings-open" }
+    timeout: 3000
+- tapOn: { id: "settings-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
+    visible: { id: "settings-screen" }
+    timeout: 3000
 # Soul group
-- assertVisible:
-    id: "settings-cat-memory"
-- assertVisible:
-    id: "settings-cat-personalities"
-- assertVisible:
-    id: "settings-cat-voice"
-- assertVisible:
-    id: "settings-cat-audio"
-- assertVisible:
-    id: "settings-cat-model"
-- assertVisible:
-    id: "settings-cat-tools"
-- assertVisible:
-    id: "settings-cat-system-prompt"
-- assertVisible:
-    id: "settings-cat-advanced"
+- assertVisible: { id: "settings-cat-memory" }
+- assertVisible: { id: "settings-cat-personalities" }
+- assertVisible: { id: "settings-cat-voice" }
+- assertVisible: { id: "settings-cat-audio" }
+- assertVisible: { id: "settings-cat-model" }
+- assertVisible: { id: "settings-cat-tools" }
+- assertVisible: { id: "settings-cat-system-prompt" }
+- assertVisible: { id: "settings-cat-advanced" }
 # User group
-- assertVisible:
-    id: "settings-cat-account"
+- assertVisible: { id: "settings-cat-account" }
 - takeScreenshot: "40-settings-root-admin"
 - scrollUntilVisible:
-    element:
-      id: "settings-cat-devices"
+    element: { id: "settings-cat-devices" }
     direction: DOWN
-- assertVisible:
-    id: "settings-cat-devices"
-# Admin group (this test user IS admin)
+- assertVisible: { id: "settings-cat-devices" }
+# Admin group (this user IS admin)
 - scrollUntilVisible:
-    element:
-      id: "settings-cat-members"
+    element: { id: "settings-cat-members" }
     direction: DOWN
-- assertVisible:
-    id: "settings-cat-members"
-- assertVisible:
-    id: "settings-cat-secrets"
+- assertVisible: { id: "settings-cat-members" }
+- assertVisible: { id: "settings-cat-secrets" }
 # Support group
 - scrollUntilVisible:
-    element:
-      id: "settings-cat-diagnostics"
+    element: { id: "settings-cat-diagnostics" }
     direction: DOWN
-- assertVisible:
-    id: "settings-cat-diagnostics"
+- assertVisible: { id: "settings-cat-diagnostics" }
 - scrollUntilVisible:
-    element:
-      id: "settings-logout"
+    element: { id: "settings-logout" }
     direction: DOWN
-- assertVisible:
-    id: "settings-logout"
+- assertVisible: { id: "settings-logout" }
 - scrollUntilVisible:
-    element:
-      id: "settings-version"
+    element: { id: "settings-version" }
     direction: DOWN
-- assertVisible:
-    id: "settings-version"
-- assertVisible:
-    id: "settings-update-action"
+- assertVisible: { id: "settings-version" }
+- assertVisible: { id: "settings-update-action" }
 - takeScreenshot: "40-settings-root-footer"
