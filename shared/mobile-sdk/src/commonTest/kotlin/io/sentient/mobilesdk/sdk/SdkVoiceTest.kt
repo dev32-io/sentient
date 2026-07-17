@@ -1,6 +1,7 @@
 package io.sentient.mobilesdk.sdk
 
 import io.sentient.mobilesdk.voice.io.FakeVoiceAudio
+import io.sentient.mobilesdk.voice.talk.TurnMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -81,6 +82,46 @@ class SdkVoiceTest {
         // Transitions applied: (F,F)->(T,F)->(T,T)->(F,F). audio.start on first mic-on,
         // audio.end on the final mic-off. No spurious audio.start/audio.end between.
         assertEquals(3, va.configureCalls.size)
+    }
+
+    @Test
+    fun requestStart_threads_turnMode_to_onUplinkStart() = runTest {
+        val va = FakeVoiceAudio()
+        val turnModes = mutableListOf<TurnMode?>()
+        val voice = SdkVoice(
+            voiceAudio = va,
+            audioConfig = AudioPipelineConfig(),
+            audioInput = { throw IllegalStateException("not used here") },
+            onUplinkStart = { turnModes += it }, // capture the mic-rising edge's TurnMode
+            onUplinkStop = {},
+            scope = CoroutineScope(Dispatchers.Unconfined),
+            uplinkDispatcher = Dispatchers.Unconfined,
+        )
+        // Hold entry: audio.start(turnMode=manual) rides the mic-rising edge.
+        voice.requestStart(TurnMode.Manual); advanceUntilIdle()
+        voice.requestStop(); advanceUntilIdle()
+        // Continuous entry: audio.start(turnMode=semantic).
+        voice.requestStart(TurnMode.Semantic); advanceUntilIdle()
+        assertEquals(listOf<TurnMode?>(TurnMode.Manual, TurnMode.Semantic), turnModes, "each mic-rising edge carries its TurnMode")
+    }
+
+    @Test
+    fun requestStart_default_turnMode_is_null_semantic() = runTest {
+        val va = FakeVoiceAudio()
+        val turnModes = mutableListOf<TurnMode?>()
+        val voice = SdkVoice(
+            voiceAudio = va,
+            audioConfig = AudioPipelineConfig(),
+            audioInput = { throw IllegalStateException("not used here") },
+            onUplinkStart = { turnModes += it },
+            onUplinkStop = {},
+            scope = CoroutineScope(Dispatchers.Unconfined),
+            uplinkDispatcher = Dispatchers.Unconfined,
+        )
+        // The pre-existing continuous path (startMic → requestStart()) is unchanged: null
+        // turnMode ⇒ audio.start omits the field ⇒ gateway defaults to semantic.
+        voice.requestStart(); advanceUntilIdle()
+        assertEquals(listOf<TurnMode?>(null), turnModes)
     }
 
     @Test

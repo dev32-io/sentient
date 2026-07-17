@@ -37,6 +37,19 @@ private const val DRAIN_POLL_MS = 50L
 /** Default settle (ms) after the player reports idle before clearing the speaking state. */
 private const val DEFAULT_DRAIN_SETTLE_MS = 250L
 
+/** PCM16 mono = 2 bytes per sample. Used to size the hold-defer buffer bound. */
+private const val PCM16_BYTES_PER_SAMPLE = 2
+
+/**
+ * Hold-defer buffer bound (design spec §7.3): ~30 s of 48 kHz mono PCM16. Proactive TTS
+ * arriving while [beginHold] is in effect accumulates in [pendingFrames] (FIFO, drop-OLDEST
+ * on overflow) and flushes on [endHold]. 30 * 48000 * 2 = 2_880_000 bytes. In the normal
+ * (non-hold) lazy-arm path the buffer is tiny (arm settles in ~one configure), so this bound
+ * only ever bites during a long hold.
+ */
+private const val HOLD_BUFFER_SECONDS = 30
+private const val DEFAULT_HOLD_BUFFER_MAX_BYTES = HOLD_BUFFER_SECONDS * OPUS_DECODE_RATE_HZ * PCM16_BYTES_PER_SAMPLE
+
 /**
  * The downlink voice flow manager. One per orchestrator; reusable across cycles.
  *
@@ -70,6 +83,7 @@ class AudioPipeline(
     private val playbackDrainSettleMs: Long = DEFAULT_DRAIN_SETTLE_MS,
     private val armPlayback: suspend () -> Boolean = { true },
     private val disarmPlayback: () -> Unit = {},
+    private val holdBufferMaxBytes: Int = DEFAULT_HOLD_BUFFER_MAX_BYTES,
 ) {
     private val log = createLogger("audio", "pipeline")
 
@@ -81,6 +95,15 @@ class AudioPipeline(
     private var playbackReady = false
     private val pendingFrames = mutableListOf<ByteArray>()
     private var armJob: Job? = null
+
+    // Hold-defer (design spec §7.3). While [holdDeferred] (TalkMode == Hold), downlink TTS
+    // must NEVER arm playback: onAudioStart buffers-only, frames accumulate in [pendingFrames]
+    // (bounded, drop-oldest) and flush on [endHold]. [holdStreamDone] remembers a cycle that
+    // finished SENDING during the hold so [endHold] can start the physical-drain watch AFTER
+    // the buffered reply flushes. [holdBufferedBytes] tracks the buffer size for the bound.
+    private var holdDeferred = false
+    private var holdStreamDone = false
+    private var holdBufferedBytes = 0
 
     // true when the active TTS stream is OGG-Opus (encoding="opus") → each binary
     // frame is decoded to PCM16-LE via opusDecoder before enqueue. false → pcm16
@@ -122,11 +145,14 @@ class AudioPipeline(
         if (activeCycleId.isNotEmpty() && activeCycleId != cycleId) {
             log.info("downlink-supersede", mapOf("superseded" to activeCycleId, "next" to cycleId))
             playback?.flushPlayback()
-            pendingFrames.clear()
+            clearPendingFrames()
         }
         // A new cycle supersedes any pending drain-watch from the prior cycle.
         drainJob?.cancel()
         framesDone = false
+        // Mid-hold supersede: c1 may have completed during the hold (holdStreamDone=true);
+        // c2 replacing it must not inherit that, or endHold would false-finalize c2.
+        holdStreamDone = false
         opusMode = encoding.equals(ENCODING_OPUS, ignoreCase = true)
         val playbackRate = if (opusMode) OPUS_DECODE_RATE_HZ else (sampleRate ?: outputSampleRate)
         log.info(
@@ -134,8 +160,14 @@ class AudioPipeline(
             mapOf("cycleId" to cycleId, "opusMode" to opusMode, "playbackRate" to playbackRate),
         )
         if (opusMode) opusDecoder.reset()
-        isSpeaking = true
         activeCycleId = cycleId
+        // HOLD (spec §7.3): buffer only — do NOT flip speaking, do NOT arm playback, do NOT
+        // transition the FSM. Frames accumulate in [pendingFrames] and flush on [endHold].
+        if (holdDeferred) {
+            log.info("downlink-hold-start", mapOf("cycleId" to cycleId, "opusMode" to opusMode))
+            return
+        }
+        isSpeaking = true
         armPlaybackOnce()
         transition(AudioInput.AudioStart, cycleId)
     }
@@ -162,8 +194,12 @@ class AudioPipeline(
                 val flushed = pendingFrames.size
                 playbackReady = true
                 for (f in pendingFrames) playback.playFrame(f)
-                pendingFrames.clear()
+                clearPendingFrames()
                 log.debug("downlink-armed", mapOf("flushed" to flushed))
+                // Hold release with an already-completed stream: the buffered reply has now
+                // flushed to the player, so start the physical-drain watch (the player is no
+                // longer idle) — deferred here to avoid a pre-flush idle=true false-finalize.
+                if (framesDone && activeCycleId.isNotEmpty()) armDrainWatch(activeCycleId)
             } else {
                 log.warn("downlink-arm-skipped", mapOf("armed" to armed, "started" to playbackStarted))
             }
@@ -197,21 +233,49 @@ class AudioPipeline(
         for (pcm in decoded) enqueueOrBuffer(pcm, cycleId)
     }
 
-    /** Feed [bytes] to the player once armed; buffer until the lazy arm settles. */
+    /** Feed [bytes] to the player once armed; buffer until the lazy arm settles (or, during a
+     *  hold, until [endHold]). [holdDeferred] forces buffering even if a stale ready latch
+     *  lingers — the invariant "in Hold, playback is NEVER armed" holds by construction. */
     private fun enqueueOrBuffer(bytes: ByteArray, cycleId: String) {
-        if (playbackReady) {
+        if (playbackReady && !holdDeferred) {
             log.debug("downlink-frame", mapOf("bytes" to bytes.size, "cycleId" to cycleId))
             playback?.playFrame(bytes)
         } else {
-            // Lazy-arm buffer: frames that arrive between audio.start and the async arm
-            // settling (armPlaybackOnce flips playbackReady true + flushes) queue here so
-            // the TTS onset is never clipped. Cleared on flush / barge-in / suspend.
+            // Lazy-arm / hold buffer: frames that arrive before the engine is armed queue here
+            // so the TTS onset is never clipped. Bounded (drop-OLDEST, FIFO) so a long hold can
+            // never grow the buffer without limit. Cleared on flush / barge-in / suspend.
             pendingFrames.add(bytes)
+            holdBufferedBytes += bytes.size
+            val dropped = trimHoldBufferToBound()
+            if (dropped > 0) {
+                log.warn(
+                    "hold-buffer-overflow",
+                    mapOf("reason" to "hold-buffer-overflow", "droppedBytes" to dropped, "depth" to pendingFrames.size, "bufferedBytes" to holdBufferedBytes),
+                )
+            }
             log.debug(
                 "downlink-frame-buffered",
                 mapOf("bytes" to bytes.size, "depth" to pendingFrames.size, "cycleId" to cycleId),
             )
         }
+    }
+
+    /** Drop OLDEST buffered frames (FIFO) until the buffer is within [holdBufferMaxBytes].
+     *  Never drops the just-added newest frame (keeps ≥1). Returns the bytes dropped. */
+    private fun trimHoldBufferToBound(): Int {
+        var dropped = 0
+        while (holdBufferedBytes > holdBufferMaxBytes && pendingFrames.size > 1) {
+            val old = pendingFrames.removeAt(0)
+            holdBufferedBytes -= old.size
+            dropped += old.size
+        }
+        return dropped
+    }
+
+    /** Clear the pending/hold buffer + reset its byte counter (single source of truth). */
+    private fun clearPendingFrames() {
+        pendingFrames.clear()
+        holdBufferedBytes = 0
     }
 
     /**
@@ -228,6 +292,13 @@ class AudioPipeline(
             return
         }
         if (opusMode) opusDecoder.reset()
+        // HOLD (spec §7.3): nothing is playing, so there is nothing to drain. Remember the
+        // stream completed; [endHold] arms + flushes, then starts the drain-watch post-flush.
+        if (holdDeferred) {
+            holdStreamDone = true
+            log.info("downlink-hold-done", mapOf("cycleId" to cycleId))
+            return
+        }
         framesDone = true
         armDrainWatch(cycleId)
     }
@@ -277,6 +348,53 @@ class AudioPipeline(
         disarmPlayback()
     }
 
+    // ── Hold-and-defer (design spec §7.3) ─────────────────────────────────────────
+
+    /**
+     * Enter Hold buffering (TalkMode == Hold). While held, downlink TTS must NEVER arm
+     * playback: [onAudioStart] buffers-only and frames accumulate in the bounded
+     * [pendingFrames] (drop-oldest on overflow), flushing on [endHold]. Cancels any in-flight
+     * arm and drops the ready latch so a lingering armed cycle can't play into the hold — the
+     * controller interrupts any active reply BEFORE entering Hold, so this is normally a no-op.
+     * Idempotent.
+     */
+    fun beginHold() {
+        if (holdDeferred) return
+        holdDeferred = true
+        holdStreamDone = false
+        armJob?.cancel()
+        playbackReady = false
+        playbackStarted = false
+        log.info("hold-begin", mapOf("bufferedFrames" to pendingFrames.size, "bufferedBytes" to holdBufferedBytes))
+    }
+
+    /**
+     * Exit Hold buffering (releaseMic / lockMic). If a proactive TTS was buffered during the
+     * hold, flip speaking + arm playback + flush the buffer IN ORDER, then continue live. From
+     * commonMain's view release AND lock are both "arm + flush"; the platform actual selects
+     * the media vs duplex path from the (mic, playback) cell. If nothing was buffered this is a
+     * clean no-op. Idempotent.
+     */
+    fun endHold() {
+        if (!holdDeferred) return
+        holdDeferred = false
+        val hadBuffered = pendingFrames.isNotEmpty()
+        val streamDone = holdStreamDone
+        holdStreamDone = false
+        log.info(
+            "hold-end",
+            mapOf("bufferedFrames" to pendingFrames.size, "bufferedBytes" to holdBufferedBytes, "streamDone" to streamDone, "cycleId" to activeCycleId),
+        )
+        if (activeCycleId.isEmpty() && !hadBuffered) return // nothing arrived during the hold
+        isSpeaking = true
+        // If the stream already finished SENDING during the hold, mark framesDone BEFORE the
+        // arm so armPlaybackOnce starts the physical-drain watch once the buffer has flushed
+        // (never before — a pre-flush idle=true would false-finalize + clear speaking early).
+        framesDone = streamDone
+        armPlaybackOnce()
+        transition(AudioInput.AudioStart, activeCycleId)
+    }
+
     /** Local Stop (UI/escape): force-stop playback for the active cycle without a server frame. */
     fun stopLocal() {
         if (activeCycleId.isEmpty() && !isSpeaking) return
@@ -294,7 +412,7 @@ class AudioPipeline(
         // Discard any frames buffered before the player was ready — barge-in drops pending
         // audio. releasePlaybackEngine cancels a pending arm + disarms the engine (lazy
         // model) — a no-op in voice mode, a teardown in text mode.
-        pendingFrames.clear()
+        clearPendingFrames()
         releasePlaybackEngine()
         isSpeaking = false
         activeCycleId = ""
@@ -314,7 +432,11 @@ class AudioPipeline(
         armJob?.cancel() // a pending arm must not fire + flush into a suspended pipeline
         framesDone = false
         playbackReady = false
-        pendingFrames.clear()
+        // A reconnect/idle mid-hold: reset the hold gate so the next audio.start re-arms from
+        // scratch (never strand the pipeline in defer mode across a transient teardown).
+        holdDeferred = false
+        holdStreamDone = false
+        clearPendingFrames()
         opusDecoder.reset()
         // Lazy model: the engine is only armed during a cycle. Drop queued audio + reset
         // the latch so the next audio.start (post-reconnect) re-arms from scratch. The

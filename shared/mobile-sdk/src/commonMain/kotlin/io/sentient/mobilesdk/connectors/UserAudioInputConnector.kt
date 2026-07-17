@@ -24,6 +24,7 @@ package io.sentient.mobilesdk.connectors
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.protocol.ServerMessage
+import io.sentient.mobilesdk.voice.talk.TurnMode
 
 class UserAudioInputConnector(
     private val send: (ClientMessage) -> Unit,
@@ -37,12 +38,20 @@ class UserAudioInputConnector(
     /** True while streaming uplink frames. Latch ported from web-sdk isStreaming. */
     private var isStreaming = false
 
-    /** Begin streaming audio to the gateway. Call after mic capture is started. */
-    fun startStreaming() {
+    /**
+     * Begin streaming audio to the gateway. Call after mic capture is started. [turnMode]
+     * (design spec §4) rides the `audio.start` frame: null ⇒ field omitted ⇒ gateway defaults
+     * to semantic (the continuous path + web parity, unchanged). Hold entry passes Manual,
+     * Continuous entry passes Semantic.
+     */
+    fun startStreaming(turnMode: TurnMode? = null) {
         if (isStreaming) return
         isStreaming = true
-        log.info("transition", mapOf("from" to "idle", "to" to "streaming", "trigger" to "startStreaming"))
-        send(ClientMessage.AudioStart)
+        log.info(
+            "transition",
+            mapOf("from" to "idle", "to" to "streaming", "trigger" to "startStreaming", "turnMode" to (turnMode?.wireValue ?: "absent")),
+        )
+        send(ClientMessage.AudioStart(turnMode = turnMode?.wireValue))
     }
 
     /** Stop streaming audio to the gateway. */

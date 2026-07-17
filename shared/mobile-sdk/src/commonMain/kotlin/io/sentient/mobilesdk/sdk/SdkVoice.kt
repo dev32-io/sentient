@@ -44,6 +44,7 @@ import io.sentient.mobilesdk.voice.VoiceUplinkPipeline
 import io.sentient.mobilesdk.voice.io.VoiceAudio
 import io.sentient.mobilesdk.voice.io.VoiceAudioState
 import io.sentient.mobilesdk.voice.io.VoiceAudioState.Phase
+import io.sentient.mobilesdk.voice.talk.TurnMode
 import io.sentient.mobilesdk.voice.uplink.Framer
 import io.sentient.mobilesdk.voice.uplink.OnsetDetector
 import kotlinx.coroutines.CompletableDeferred
@@ -65,8 +66,9 @@ import kotlin.coroutines.cancellation.CancellationException
  * @param audioConfig Tuned thresholds (operator config) — the OnsetDetector reuses
  *   echoGate.baselineThreshold + onsetSustainFrames.
  * @param audioInput Lazy accessor for the uplink connector (cycle-break, frame sink).
- * @param onUplinkStart Control-frame sender run BEFORE pipeline.start (audio.start).
- *   Lazy/cycle-safe — only deref the connector when invoked, same as [audioInput].
+ * @param onUplinkStart Control-frame sender run BEFORE pipeline.start (audio.start). Carries
+ *   the [TurnMode] for THIS mic-rising edge (design spec §4) — null ⇒ semantic (omitted on
+ *   the wire). Lazy/cycle-safe — only deref the connector when invoked, same as [audioInput].
  * @param onUplinkStop Control-frame sender run AFTER pipeline.stop (audio.end).
  * @param scope Orchestrator scope: the pipeline's collect job AND the single command
  *   consumer are launched from it, so terminal teardown is scope-cancel.
@@ -75,7 +77,7 @@ class SdkVoice(
     private val voiceAudio: VoiceAudio?,
     audioConfig: AudioPipelineConfig,
     audioInput: () -> UserAudioInputConnector,
-    private val onUplinkStart: () -> Unit,
+    private val onUplinkStart: (TurnMode?) -> Unit,
     private val onUplinkStop: () -> Unit,
     scope: CoroutineScope,
     // Dedicated SERIAL dispatcher OFF the orchestrator scope: guarantees the
@@ -125,6 +127,9 @@ class SdkVoice(
         data class Configure(
             val mic: Boolean,
             val playback: Boolean,
+            // TurnMode for a mic-RISING edge only (audio.start). Ignored on playback-axis /
+            // mic-falling configures. Null ⇒ semantic (omitted on the wire).
+            val turnMode: TurnMode? = null,
             val ack: CompletableDeferred<Boolean>? = null,
         ) : Cmd
     }
@@ -146,14 +151,16 @@ class SdkVoice(
         scope.launch { for (cmd in commands) handle(cmd) }
     }
 
-    /** THE serialized reconfig entry. Non-suspend; runs FIFO on the single consumer. */
-    fun requestConfigure(mic: Boolean, playback: Boolean) {
-        log.info("requestConfigure", mapOf("mic" to mic, "playback" to playback))
-        commands.trySend(Cmd.Configure(mic, playback))
+    /** THE serialized reconfig entry. Non-suspend; runs FIFO on the single consumer. [turnMode]
+     *  rides a mic-RISING edge only (audio.start); null ⇒ semantic. */
+    fun requestConfigure(mic: Boolean, playback: Boolean, turnMode: TurnMode? = null) {
+        log.info("requestConfigure", mapOf("mic" to mic, "playback" to playback, "turnMode" to (turnMode?.wireValue ?: "absent")))
+        commands.trySend(Cmd.Configure(mic, playback, turnMode))
     }
 
-    /** Convenience for startMic (mic axis only; keeps current playback). */
-    fun requestStart() = requestConfigure(mic = true, playback = playbackOn)
+    /** Convenience for startMic (mic axis only; keeps current playback). [turnMode] is carried
+     *  on the audio.start emitted for the mic-rising edge — Manual (hold) / Semantic (continuous). */
+    fun requestStart(turnMode: TurnMode? = null) = requestConfigure(mic = true, playback = playbackOn, turnMode = turnMode)
 
     /** Convenience for stopMic (mic axis only; keeps current playback). */
     fun requestStop() = requestConfigure(mic = false, playback = playbackOn)
@@ -201,7 +208,8 @@ class SdkVoice(
             val micRising = c.mic && !micOn
             val micFalling = !c.mic && micOn
             // audio.start BEFORE the engine + uplink come up (wire order: start→frames→end).
-            if (micRising) onUplinkStart()
+            // Carries this edge's TurnMode (Manual=hold / Semantic=continuous / null=semantic).
+            if (micRising) onUplinkStart(c.turnMode)
             // Stop the uplink collect when mic goes away (before configure tears the tap).
             if (micFalling) pipeline?.stop()
             // THE single engine reconfig — VPIO flips iff the (mic,playback) cell changes.

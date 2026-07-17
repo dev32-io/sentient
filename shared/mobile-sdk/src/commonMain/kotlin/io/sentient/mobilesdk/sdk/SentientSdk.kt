@@ -172,7 +172,7 @@ class SentientSdk(
         // Control-frame senders ride the SAME serialized lane as pipeline start/stop
         // (audio.start before frames, audio.end after). Lazy/cycle-safe — connectors
         // is only deref'd when the consumer invokes these, exactly like audioInput.
-        onUplinkStart = { connectors.audioInput.startStreaming() },
+        onUplinkStart = { turnMode -> connectors.audioInput.startStreaming(turnMode) },
         onUplinkStop = { connectors.audioInput.stopStreaming() },
         scope = scope,
     )

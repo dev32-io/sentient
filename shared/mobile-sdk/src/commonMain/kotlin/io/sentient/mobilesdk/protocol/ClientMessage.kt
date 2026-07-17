@@ -52,8 +52,14 @@ sealed class ClientMessage {
         val surfaceId: String? = null,
     ) : ClientMessage()
 
+    /**
+     * Starts an uplink audio stream. [turnMode] mirrors the OPTIONAL web-sdk field (design
+     * spec §4): `"manual"` = interaction defines the turn (hold-to-talk), `"semantic"` =
+     * Smart-Turn v3 defines it. Null ⇒ OMITTED from the wire (WireJson explicitNulls=false)
+     * ⇒ the gateway defaults to semantic, so old clients + the continuous path are unchanged.
+     */
     @Serializable @SerialName("audio.start")
-    data object AudioStart : ClientMessage()
+    data class AudioStart(val turnMode: String? = null) : ClientMessage()
 
     @Serializable @SerialName("audio.end")
     data object AudioEnd : ClientMessage()
