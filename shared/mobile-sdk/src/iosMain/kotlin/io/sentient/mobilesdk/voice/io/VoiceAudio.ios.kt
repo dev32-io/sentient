@@ -59,11 +59,21 @@ private const val MONO_CHANNELS = 1u
 // Software mic gain applied to captured PCM16 in the tap. iOS delivers far-field
 // speech quiet (measured server rms 0.003–0.08 vs webui 0.03–0.2), so we boost
 // deterministically here instead of fighting iOS's session-mode processing.
-// Start ×4 (far-field ~0.01→0.04, close speech stays under hard-clip); tune from
+// ×4.25 (far-field ~0.01→0.043, close speech stays under hard-clip); tune from
 // the "capture-level" log below. 1.0f = no boost.
-private const val MIC_CAPTURE_GAIN = 4.0f
+private const val MIC_CAPTURE_GAIN = 4.25f
 // Throttle the capture-level meter log — the tap fires ~10×/s, so every 50 ≈ 5s.
 private const val METER_LOG_EVERY = 50
+
+// Software playback makeup gain applied to the downlink PCM before the player. The
+// stable VoIP session (.playAndRecord + .videoChat — see activateSession) plays TTS on
+// the voice-tuned route, well below media-route loudness, and no route change is safe
+// (the one-stable-session design is load-bearing). This gain lifts the floor; peaks
+// hard-clamp to [-1,1] in pcm16ToFloatBuffer, so past ~×6 loud peaks clip audibly —
+// prefer the in-call volume slider (during playback) + VPIO ducking .min over pushing
+// this higher. Do NOT normalize per-voice — quiet voices are a character trait.
+// 1.0f = no boost.
+private const val PLAYBACK_MAKEUP_GAIN = 5.5f
 
 /**
  * ONE AVAudioEngine serving every (mic, playback) state. session = .playAndRecord +
@@ -170,10 +180,14 @@ class IosVoiceAudio : VoiceAudio {
     /** Activate .playAndRecord + .videoChat — ONE stable VoIP mode (no fragile per-cell
      *  mode switching). NOTE: .measurement was tried for its raw far-field capture but
      *  it does NOT survive the engine stop→reconfigure→start — after one TTS turn the
-     *  tap AND playback went dead (round 2 silent). .videoChat is a VoIP mode (like the
-     *  original .voiceChat) that reconfigures cleanly, is hands-free-tuned for far-field,
-     *  and is VPIO-compatible for barge-in AEC. iOS still delivers far-field quiet, so
-     *  the CAPTURE LEVEL is handled deterministically by MIC_CAPTURE_GAIN in the tap.
+     *  tap AND playback went dead (round 2 silent). A per-cell .playback↔.playAndRecord
+     *  CATEGORY split was tried TWICE (two-engine era per 2633b4e, and again 2026-07)
+     *  and BOTH times the handoff killed audio (no TTS + mic dead after round 1) —
+     *  the one-stable-session design is load-bearing; do NOT reintroduce route-by-
+     *  activity here. .videoChat is a VoIP mode (like the original .voiceChat) that
+     *  reconfigures cleanly, is hands-free-tuned for far-field, and is VPIO-compatible
+     *  for barge-in AEC. iOS still delivers far-field quiet, so the CAPTURE LEVEL is
+     *  handled deterministically by MIC_CAPTURE_GAIN in the tap.
      *  Returns true only when BOTH setCategory + setActive succeed (I1 abort); speaker
      *  override is best-effort. */
     private fun activateSession(): Boolean = memScoped {
@@ -340,7 +354,7 @@ class IosVoiceAudio : VoiceAudio {
     override fun playFrame(pcm16: ByteArray) {
         if (!current.player) return
         val format = playerFormat ?: return
-        val buffer = pcm16ToFloatBuffer(pcm16, format) ?: return
+        val buffer = pcm16ToFloatBuffer(pcm16, format, PLAYBACK_MAKEUP_GAIN) ?: return
         val epochAtSchedule = playbackEpoch.value
         outstanding.incrementAndGet()
         runCatching {

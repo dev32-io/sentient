@@ -23,6 +23,14 @@ import kotlin.concurrent.Volatile
 private const val BYTES_PER_PCM16_SAMPLE = 2
 private const val CHANNEL_COUNT = 1
 
+// Software playback makeup gain — the Android twin of iOS's PLAYBACK_MAKEUP_GAIN.
+// The track runs USAGE_VOICE_COMMUNICATION (→ STREAM_VOICE_CALL), so the media volume
+// rocker doesn't move it and it reads quiet even at max. A fixed PCM-domain gain lifts
+// the floor so the device's OWN volume control is meaningful (~1/3–1/2 comfortable,
+// near-max loud for noise). Peaks hard-clamp to Int16. Do NOT normalize per-voice —
+// quiet voices are character; this only offsets the route. Start ×3.0; tune on device.
+private const val PLAYBACK_MAKEUP_GAIN = 3.0f
+
 /** Track buffer = this many seconds of audio at the output rate (OS-side jitter buffer). */
 private const val TRACK_BUFFER_SECONDS = 0.5
 
@@ -71,13 +79,33 @@ internal class VoiceAudioPlayback {
         teardown(active)
     }
 
-    /** Downlink sink: resample (if needed) → non-blocking write → unaccepted tail to ring. */
+    /** Downlink sink: resample (if needed) → makeup gain → non-blocking write → tail to ring. */
     fun enqueue(pcm16: ByteArray) {
         val active = track ?: return
-        val bytes = resampler?.resampleLe(pcm16) ?: pcm16
+        val rs = resampler
+        // resampleLe returns a FRESH array; when null (native-rate, no resample) copy
+        // before gain so the makeup multiply never mutates the caller's downlink frame.
+        var bytes = rs?.resampleLe(pcm16) ?: pcm16
+        if (PLAYBACK_MAKEUP_GAIN != 1.0f) {
+            if (rs == null) bytes = pcm16.copyOf()
+            applyMakeupGainInPlace(bytes)
+        }
         enqueuedBytes += bytes.size
         runCatching { writeToTrack(active, bytes) }.onFailure {
             log.error("play-frame-failed", mapOf("cause" to (it.message ?: "unknown"), "bytes" to bytes.size))
+        }
+    }
+
+    /** Scale each LE PCM16 sample by [PLAYBACK_MAKEUP_GAIN] in place, clamped to Int16. */
+    private fun applyMakeupGainInPlace(bytes: ByteArray) {
+        var i = 0
+        while (i + 1 < bytes.size) {
+            val sample = ((bytes[i + 1].toInt() shl 8) or (bytes[i].toInt() and 0xFF)).toShort()
+            val boosted = (sample * PLAYBACK_MAKEUP_GAIN).toInt()
+                .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+            bytes[i] = (boosted and 0xFF).toByte()
+            bytes[i + 1] = ((boosted shr 8) and 0xFF).toByte()
+            i += 2
         }
     }
 
