@@ -1,57 +1,44 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-soul
+  - slow
+  - destructive-profile
 ---
-# 45-model-slow-save — Model settings page: pick a different ollama-cloud model,
-# Save triggers the SLOW path (PUT profile + POST /profile/apply, blocking
+# 45-model-slow-save — Model page: pick a different ollama-cloud model, Save
+# triggers the SLOW path (PUT profile + POST /profile/apply, blocking
 # "Applying — assistant restarting…" progress, then re-fetch server truth). This
-# restarts the user's Hermes worker — acceptable on the local dev stack. Original
-# model (deepseek-v4-flash:cloud) is restored by 45b-model-restore.yaml. Run
-# login.yaml immediately before this.
-#
-# tags: [ios, simulator-ok]
-- tapOn:
-    id: "history-open"
-- extendedWaitUntil:
-    visible:
-      id: "history-new-chat"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
-- extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
+# restarts the user's Hermes worker — acceptable on the local dev stack.
+# Self-navigating. Original model (deepseek-v4-flash:cloud) is restored by
+# 45b-model-restore.yaml (adjacent).
+- runFlow: _helpers/open-settings.yaml
 - tapOn:
     id: "settings-cat-model"
 - extendedWaitUntil:
-    visible:
-      id: "settings-model-screen"
-    timeout: 5000
+    visible: { id: "settings-model-screen" }
+    timeout: 3000
 - takeScreenshot: "45-model-before"
 - tapOn:
     id: "settings-model-search"
 - inputText: "kimi-k2.5"
 - extendedWaitUntil:
-    visible:
-      id: "settings-model-card-kimi-k2.5:cloud"
-    timeout: 5000
+    visible: { id: "settings-model-card-kimi-k2.5:cloud" }
+    timeout: 3000
 - tapOn:
     id: "settings-model-card-kimi-k2.5:cloud"
-- assertVisible:
-    id: "settings-model-save"
+- extendedWaitUntil:
+    visible: { id: "settings-model-save" }
+    timeout: 3000
 - tapOn:
     id: "settings-model-save"
-# the apply-notice window can be brief on a fast local stack — tolerate a short
-# race instead of asserting it's visible at the exact instant after the tap
+# apply-notice window can be brief on a fast local stack — tolerate a short race.
 - extendedWaitUntil:
-    visible:
-      id: "settings-applying"
+    visible: { id: "settings-applying" }
     timeout: 3000
     optional: true
 - takeScreenshot: "45-model-applying"
-# blocking progress clears once the restart completes (generous timeout: full
-# supervisord restart + Hermes worker boot)
+# blocking progress clears once the restart completes — full supervisord restart
+# + Hermes worker boot, genuinely slow.
 - extendedWaitUntil:
-    notVisible:
-      id: "settings-applying"
+    notVisible: { id: "settings-applying" }
     timeout: 45000
 - takeScreenshot: "45-model-after"

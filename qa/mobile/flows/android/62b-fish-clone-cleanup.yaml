@@ -1,32 +1,46 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-voice
+  - restore
 ---
-# 62b-fish-clone-cleanup — Voice settings page: delete the Fish-cloned pack
-# from 62-fish-clone-happy.yaml (cloning auto-activates it, same as record
-# create — see DEFECT-10 note) and restore the active voice to Jarvis.
-# Mirrors 55b-voice-delete-user-pack.yaml. Run immediately after
-# 62-fish-clone-happy.yaml (already on Voice screen, "Yours" tab active).
+# 62b-fish-clone-cleanup — restore pair for 62: delete the Fish-cloned pack
+# (cloning auto-activates it) and restore the active voice to Jarvis. Mirrors 55b.
+# Batch-safe: self-navigates from chat root, filters to "Yours". executionOrder
+# runs it right after 62.
 #
-# NOTE: id below is NOT deterministic (server-random per clone) — re-sync via
-# GET /api/v1/voices after any fresh 62 run. Current as of the 2026-07-16
-# settings-parity E2E pass: 169bed35cea54cd99662e5a5afb5799d.
-#
-# tags: [android, emulator-ok]
-- tapOn:
-    id: "voice-delete-169bed35cea54cd99662e5a5afb5799d"
+# ⚠️ NON-DETERMINISTIC ID: the cloned pack's voiceId is server-random per clone —
+# re-sync via `GET /api/v1/voices` after any fresh 62 run. As of the 2026-07-16
+# pass: 169bed35cea54cd99662e5a5afb5799d.
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
+- extendedWaitUntil:
+    visible: { id: "settings-open" }
+    timeout: 3000
+- tapOn: { id: "settings-open" }
+- extendedWaitUntil:
+    visible: { id: "settings-screen" }
+    timeout: 3000
+- tapOn: { id: "settings-cat-voice" }
+- extendedWaitUntil:
+    visible: { id: "settings-voice-screen" }
+    timeout: 3000
+- tapOn: "Yours"
+- tapOn: { id: "voice-delete-169bed35cea54cd99662e5a5afb5799d" }
 - extendedWaitUntil:
     visible: "Delete"
-    timeout: 5000
+    timeout: 3000
 - takeScreenshot: "62b-fish-delete-confirm"
 - tapOn: "Delete"
 - extendedWaitUntil:
     notVisible: "Deep Voice English"
     timeout: 10000
 - takeScreenshot: "62b-fish-deleted"
-# restore active voice to Jarvis (clone auto-activated the now-deleted pack)
-- tapOn:
-    id: "voice-pick-c624a6ca980346ec9dc38bb434fec506"
+# restore active voice to Jarvis (clone auto-activated the now-deleted pack).
+- tapOn: { id: "voice-pick-c624a6ca980346ec9dc38bb434fec506" }
 - extendedWaitUntil:
-    visible:
-      id: "voice-active-c624a6ca980346ec9dc38bb434fec506"
+    visible: { id: "voice-active-c624a6ca980346ec9dc38bb434fec506" }
     timeout: 10000
 - takeScreenshot: "62b-voice-restored-jarvis"

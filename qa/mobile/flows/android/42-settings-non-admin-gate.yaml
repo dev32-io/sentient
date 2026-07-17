@@ -1,46 +1,41 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-admin
 ---
-# 42-settings-non-admin-gate — logged in as a non-admin user (E2E Temp1), the
-# Settings root list must show Soul/User/Support groups but NEVER the Admin group
-# (Members/Secrets). Run login-temp1.yaml immediately before this.
-#
-# tags: [android, emulator-ok]
-- tapOn:
-    id: "history-open"
+# 42-settings-non-admin-gate — logged in as a NON-admin user (E2E Temp1), the
+# Settings root shows Soul/User/Support groups but NEVER the Admin group
+# (Members/Secrets). Requires a specific user identity, so — unlike the
+# conditional-login flows — this force-clears state and logs in AS Temp1
+# explicitly (clearState guarantees the avatar grid → unconditional temp1 login).
+# executionOrder runs it after 41 (which creates Temp1) and before 43 (which
+# deletes it + restores Kevin). See _helpers/login-temp1.yaml for the id re-sync
+# caveat.
+- launchApp:
+    clearState: true
+- runFlow:
+    file: "_helpers/login-temp1.yaml"
+- tapOn: { id: "history-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-open"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
+    visible: { id: "settings-open" }
+    timeout: 3000
+- tapOn: { id: "settings-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
-- assertVisible:
-    id: "settings-cat-memory"
-- assertVisible:
-    id: "settings-cat-account"
+    visible: { id: "settings-screen" }
+    timeout: 3000
+- assertVisible: { id: "settings-cat-memory" }
+- assertVisible: { id: "settings-cat-account" }
 - takeScreenshot: "42-non-admin-top"
 - scrollUntilVisible:
-    element:
-      id: "settings-cat-devices"
+    element: { id: "settings-cat-devices" }
     direction: DOWN
-- assertVisible:
-    id: "settings-cat-devices"
-# Admin group must NOT render for a non-admin user
-- assertNotVisible:
-    id: "settings-cat-members"
-- assertNotVisible:
-    id: "settings-cat-secrets"
+- assertVisible: { id: "settings-cat-devices" }
+# Admin group must NOT render for a non-admin user.
+- assertNotVisible: { id: "settings-cat-members" }
+- assertNotVisible: { id: "settings-cat-secrets" }
 - scrollUntilVisible:
-    element:
-      id: "settings-cat-diagnostics"
+    element: { id: "settings-cat-diagnostics" }
     direction: DOWN
-- assertVisible:
-    id: "settings-cat-diagnostics"
-- assertNotVisible:
-    id: "settings-cat-members"
-- assertNotVisible:
-    id: "settings-cat-secrets"
+- assertVisible: { id: "settings-cat-diagnostics" }
+- assertNotVisible: { id: "settings-cat-members" }
+- assertNotVisible: { id: "settings-cat-secrets" }
 - takeScreenshot: "42-non-admin-bottom"

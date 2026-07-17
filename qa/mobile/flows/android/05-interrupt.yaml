@@ -1,38 +1,29 @@
 appId: io.dev32.sentient.debug
+tags:
+  - chat
 ---
-# 05-interrupt — send a long-reply prompt, assert streaming starts, interrupt.
+# 05-interrupt — send a long-reply prompt, assert streaming starts, confirm no
+# crash. Batch-safe.
 #
-# ⚠ FLAG (Android + iOS): The chat-interrupt button is gated on TTS audio state
-# (canInterrupt = connection.isSpeaking || audioState == PROCESSING/ASSISTANT_SPEAKING/
-# INTERRUPTING) — NOT on text-streaming cognition state. In a TTS-disabled session
-# (default emulator/sim setup without a reachable local-tts service), the interrupt
-# button NEVER appears during text streaming. It only appears when TTS is actively playing.
-#
-# This makes the interrupt flow NOT driveable on the emulator/simulator without:
-#   (a) TTS enabled (requires a reachable local-tts service and a working audio pipeline), OR
-#   (b) Modifying canInterrupt to also include cognition != IDLE.
-#
-# Current outcome: assistant-bubble appears (streaming confirmed), chat-interrupt
-# is NOT visible (TTS off → canInterrupt=false), flow ends with a no-crash check.
-#
-# For full interrupt E2E: run with TTS enabled on a device with a reachable
-# local-tts service. The interrupt button will appear during TTS playback.
-#
-# tags: [android, emulator-ok, FLAGGED-interrupt-requires-tts]
+# ⚠ FLAG (Android + iOS): the chat-interrupt button is gated on TTS audio state
+# (canInterrupt = connection.isSpeaking || audioState PROCESSING/ASSISTANT_SPEAKING/
+# INTERRUPTING), NOT on text-streaming cognition state. In a TTS-disabled session
+# (default emulator setup without a reachable local-tts service) the interrupt
+# button never appears during text streaming — so this flow can only prove the
+# send→stream path + no-crash here, not the interrupt tap. Full interrupt E2E
+# needs TTS enabled on a device with a reachable local-tts service.
 - launchApp
-- assertVisible:
-    id: "composer-input"
-- tapOn:
-    id: "composer-input"
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- assertVisible: { id: "composer-input" }
+- tapOn: { id: "composer-input" }
 - inputText: "tell me a very long story about the history of computing in great detail"
-- tapOn:
-    id: "chat-send"
+- tapOn: { id: "chat-send" }
 - hideKeyboard
-# Wait for streaming bubble to appear (proves the send→gateway→Hermes path works)
+# streaming bubble proves send→gateway→Hermes works — LLM budget.
 - extendedWaitUntil:
-    visible:
-      id: "assistant-bubble"
-    timeout: 60000
-# App alive, streaming received — no crash. chat-interrupt not asserted (TTS off = not visible).
-- assertVisible:
-    id: "composer-input"
+    visible: { id: "assistant-bubble" }
+    timeout: 40000
+# app alive, streaming received — no crash. chat-interrupt not asserted (TTS off).
+- assertVisible: { id: "composer-input" }

@@ -1,41 +1,24 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-voice
+  - destructive-profile
 ---
-# 54-voice-preview-pick — Voice settings page: play preview on a builtin voice
-# (Briar), then pick it — active badge moves. Original active voice
-# (c624a6ca980346ec9dc38bb434fec506, "Jarvis", a user-source pack despite the
-# display name) is restored by 54b-voice-restore.yaml. Run login.yaml
-# immediately before this.
+# 54-voice-preview-pick — Voice page: play preview on a builtin voice (Briar),
+# then pick it — active badge moves. Self-navigating. Original active voice
+# ("Jarvis", c624a6ca980346ec9dc38bb434fec506, a user pack) is restored by
+# 54b-voice-restore.yaml (adjacent).
 #
-# DEFECT (iOS, confirmed live, SAME id-collision family as RowToggle/
-# MemberRow/RowSegmented): VoiceRowView's accessibilityIdentifier sits on the
-# outer HStack and propagates to EVERY descendant — the play button's OWN
-# "-play" suffix (VoiceRowView.swift) never reaches the tree; `maestro
-# hierarchy` shows every child (play icon, name text, tags, delete icon) under
-# the bare "settings-voice-row-<id>" id. Point-tap by on-screen position
-# instead: the row DOES correctly use `.contentShape(Rectangle())` +
-# `.onTapGesture(perform: onSelect)` (unlike the Personalities-card defect),
-# so a tap anywhere on the row except the nested play/delete icons reliably
-# selects it.
-#
-# tags: [ios, simulator-ok]
-- tapOn:
-    id: "history-open"
-- extendedWaitUntil:
-    visible:
-      id: "history-new-chat"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
-- extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
+# DEFECT (iOS, id-collision family): VoiceRowView's accessibilityIdentifier sits
+# on the outer HStack and propagates to every descendant — the play button's
+# "-play" suffix never reaches the tree. Point-tap by position: the row uses
+# .contentShape(Rectangle()) + .onTapGesture(onSelect), so a tap anywhere except
+# the nested play/delete icons reliably selects it.
+- runFlow: _helpers/open-settings.yaml
 - tapOn:
     id: "settings-cat-voice"
 - extendedWaitUntil:
-    visible:
-      id: "settings-voice"
-    timeout: 5000
+    visible: { id: "settings-voice" }
+    timeout: 3000
 - assertVisible:
     id: "settings-voice-add-nav"
 - takeScreenshot: "54-voice-before"
@@ -43,10 +26,11 @@ appId: io.dev32.sentient.debug
 - tapOn:
     point: "12%,50%"
 - takeScreenshot: "54-voice-previewing"
-# tap the row's text/meta area (not the play icon) to select/pick it
+# tap the row's text/meta area (not the play icon) to select/pick it.
 - tapOn:
     point: "90%,50%"
+# active badge moves — voiceId profile update (person-session voiceId.update).
 - extendedWaitUntil:
     visible: "Active"
-    timeout: 10000
+    timeout: 5000
 - takeScreenshot: "54-voice-active-briar"

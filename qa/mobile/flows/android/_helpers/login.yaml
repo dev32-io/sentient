@@ -1,0 +1,38 @@
+appId: io.dev32.sentient.debug
+tags:
+  - helper
+---
+# _helpers/login.yaml — reusable login SUBFLOW (Kevin / u_8c866990, PIN 1234).
+#
+# This is NOT a standalone test. It is invoked two ways:
+#   1. Conditionally, at the top of every authed flow:
+#        - runFlow:
+#            when: { visible: { id: "login-backend-setup" } }
+#            file: "_helpers/login.yaml"
+#      (fires only when the launch landed on the login screen — a no-op when the
+#      persisted token already routed straight to chat).
+#   2. Unconditionally, by the standalone `login.yaml` auth test after a
+#      clearState launch (which forces the login screen).
+#
+# It never launches or clears state itself — the caller owns launchApp. Helpers
+# live in _helpers/ so `maestro test <dir>` (which does NOT recurse into
+# subdirectories) never runs them standalone; config.yaml `flows: ["*.yaml"]`
+# reinforces this. The `helper` tag is a third belt: run-e2e.sh always excludes it.
+- extendedWaitUntil:
+    visible: { id: "login-backend-setup" }
+    timeout: 3000
+- tapOn:
+    id: "login-avatar-u_8c866990"
+- extendedWaitUntil:
+    visible: { id: "pin-key-1" }
+    timeout: 3000
+- tapOn: { id: "pin-key-1" }
+- tapOn: { id: "pin-key-2" }
+- tapOn: { id: "pin-key-3" }
+- tapOn: { id: "pin-key-4" }
+# composer-input renders as soon as the chat route mounts (before WS READY — the
+# composer shows a "Connecting…" pill meanwhile), so this is post-PIN nav + first
+# connect, not an LLM/apply wait. 6s covers a cold first-connect comfortably.
+- extendedWaitUntil:
+    visible: { id: "composer-input" }
+    timeout: 6000

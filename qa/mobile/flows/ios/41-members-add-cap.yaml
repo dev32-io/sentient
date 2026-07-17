@@ -1,29 +1,27 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-admin
+  - destructive-profile
 ---
-# 41-members-add-cap — admin Members page: add two temp users (household starts
-# at 1/3, ends at 3/3), then verify "Add user" is disabled at the 3-user cap.
-# Temp users are cleaned up by 43-members-delete-cleanup.yaml AFTER the
-# non-admin-gate case (42) uses one of them to log in. Run login.yaml
-# immediately before this. AddMemberSheet is a native SwiftUI .sheet with real
-# accessibilityIdentifiers (settings-members-add-name / -add-pin / -add-submit)
-# — unlike Android's Material3 AlertDialog gap, no text-selector workaround
-# needed here.
-#
-# tags: [ios, simulator-ok]
+# 41-members-add-cap — admin Members page: add two temp users (household 1/3 →
+# 3/3), then verify "Add user" is disabled at the 3-user cap. Self-navigating.
+# COUPLED TRIO: run adjacent + in order with 42 (non-admin gate, logs in as the
+# created Temp1) and 43 (deletes both temps, restores Kevin's admin session).
+# Requires a clean 1-user (Kevin-only) baseline; a leftover temp from a failed
+# prior run makes the cap assertion fail.
+- runFlow: _helpers/open-settings.yaml
 - tapOn:
     id: "settings-cat-members"
 - extendedWaitUntil:
-    visible:
-      id: "settings-members-screen"
-    timeout: 5000
+    visible: { id: "settings-members-screen" }
+    timeout: 3000
 - takeScreenshot: "41-members-before"
 # --- add temp1 ---
 - tapOn:
     id: "settings-members-add"
 - extendedWaitUntil:
-    visible:
-      id: "settings-members-add-name"
-    timeout: 5000
+    visible: { id: "settings-members-add-name" }
+    timeout: 3000
 - tapOn:
     id: "settings-members-add-name"
 - inputText: "E2E Temp1"
@@ -32,18 +30,17 @@ appId: io.dev32.sentient.debug
 - inputText: "1111"
 - tapOn:
     id: "settings-members-add-submit"
+# member add POST + sheet dismiss — network op.
 - extendedWaitUntil:
-    notVisible:
-      id: "settings-members-add-name"
-    timeout: 10000
+    notVisible: { id: "settings-members-add-name" }
+    timeout: 8000
 - assertVisible: "E2E Temp1"
 # --- add temp2 ---
 - tapOn:
     id: "settings-members-add"
 - extendedWaitUntil:
-    visible:
-      id: "settings-members-add-name"
-    timeout: 5000
+    visible: { id: "settings-members-add-name" }
+    timeout: 3000
 - tapOn:
     id: "settings-members-add-name"
 - inputText: "E2E Temp2"
@@ -53,9 +50,8 @@ appId: io.dev32.sentient.debug
 - tapOn:
     id: "settings-members-add-submit"
 - extendedWaitUntil:
-    notVisible:
-      id: "settings-members-add-name"
-    timeout: 10000
+    notVisible: { id: "settings-members-add-name" }
+    timeout: 8000
 - assertVisible: "E2E Temp2"
 - takeScreenshot: "41-members-at-cap"
 # --- cap enforcement: 3/3, Add user must now be disabled ---

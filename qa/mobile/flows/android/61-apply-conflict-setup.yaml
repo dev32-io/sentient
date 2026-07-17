@@ -1,41 +1,33 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-soul
+  - fault-armed
 ---
-# 61-apply-conflict-setup — Model settings page: pick a different model (dirty
-# draft, NOT saved). Paired with a harness-driven concurrent
-# `POST /profile/apply` fired via curl just before the UI's own Save tap
-# (61-apply-conflict-trigger.yaml, run via a SEPARATE maestro invocation right
-# after a background curl apply is fired — Maestro 2.6.0 has no shell-exec step,
-# so the race is orchestrated by the harness, not this flow). Run login.yaml
-# immediately before this.
-#
-# tags: [android, emulator-ok]
-- tapOn:
-    id: "history-open"
+# 61-apply-conflict-setup (part 1/2) — Model settings: pick a different model
+# (dirty draft, NOT saved). Self-navigating. Paired with a runner-driven
+# concurrent `POST /profile/apply` (curl) fired just before …-trigger's Save tap
+# to race the apply FSM. fault-armed; excluded from the default batch.
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-open"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
+    visible: { id: "settings-open" }
+    timeout: 3000
+- tapOn: { id: "settings-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
-- tapOn:
-    id: "settings-cat-model"
+    visible: { id: "settings-screen" }
+    timeout: 3000
+- tapOn: { id: "settings-cat-model" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-model-screen"
-    timeout: 5000
-- tapOn:
-    id: "settings-model-search"
+    visible: { id: "settings-model-screen" }
+    timeout: 3000
+- tapOn: { id: "settings-model-search" }
 - inputText: "kimi-k2.5"
 - extendedWaitUntil:
-    visible:
-      id: "settings-model-card-kimi-k2.5:cloud"
-    timeout: 5000
-- tapOn:
-    id: "settings-model-card-kimi-k2.5:cloud"
-- assertVisible:
-    id: "settings-model-save"
+    visible: { id: "settings-model-card-kimi-k2.5:cloud" }
+    timeout: 3000
+- tapOn: { id: "settings-model-card-kimi-k2.5:cloud" }
+- assertVisible: { id: "settings-model-save" }
 - takeScreenshot: "61-apply-conflict-dirty"

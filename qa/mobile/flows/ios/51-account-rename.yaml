@@ -1,29 +1,20 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-user
+  - destructive-profile
 ---
 # 51-account-rename — Account page: change display name, Save (imperative PUT
-# /auth/me), inline "Saved" result. Original name "Kevin" restored by
-# 51b-account-restore.yaml. Run login.yaml immediately before this.
-#
-# tags: [ios, simulator-ok]
-- tapOn:
-    id: "history-open"
-- extendedWaitUntil:
-    visible:
-      id: "history-new-chat"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
-- extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
+# /auth/me), inline "Saved" result. Self-navigating AND self-restoring: it renames
+# to "KevinTest", confirms Saved, then renames back to "Kevin" so it leaves a
+# clean baseline REGARDLESS of whether it runs before or after 51b (Maestro's
+# single-invocation directory order is non-deterministic — see config.yaml). No
+# fragile pre-state name assert (a leaked name would otherwise fail it).
+- runFlow: _helpers/open-settings.yaml
 - tapOn:
     id: "settings-cat-account"
 - extendedWaitUntil:
-    visible:
-      id: "settings-account-screen"
-    timeout: 5000
-- assertVisible: "Kevin"
+    visible: { id: "settings-account-screen" }
+    timeout: 3000
 - takeScreenshot: "51-account-before"
 - tapOn:
     id: "settings-account-name"
@@ -31,7 +22,19 @@ appId: io.dev32.sentient.debug
 - inputText: "KevinTest"
 - tapOn:
     id: "settings-account-save"
+# "Saved" — auth/me PUT round-trip, network op.
 - extendedWaitUntil:
     visible: "Saved"
-    timeout: 10000
+    timeout: 5000
 - takeScreenshot: "51-account-saved"
+# self-restore to the original name so this flow leaves a clean baseline.
+- tapOn:
+    id: "settings-account-name"
+- eraseText: 20
+- inputText: "Kevin"
+- tapOn:
+    id: "settings-account-save"
+- extendedWaitUntil:
+    visible: "Saved"
+    timeout: 5000
+- assertVisible: "Kevin"

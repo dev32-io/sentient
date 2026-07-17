@@ -1,43 +1,27 @@
 appId: io.dev32.sentient.debug
+tags:
+  - reconnect
+  - fault-armed
 ---
 # 04c (part 1/2) — warm-reconnect conversation continuity, FIRST turn.
 #
-# Validates the fix: on a WARM WS reconnect the next message CONTINUES the same
-# Hermes conversation (gateway logs `resume.reanchor source=configure`,
-# dispatch.end conversationId unchanged, NO dispatch.session-new.lazy).
-#
-# This flow only establishes the conversation (login + one turn that the
-# follow-up will reference). The reconnect is forced BETWEEN this flow and
-# 04c-...-followup.yaml by the runner (NOT a Maestro step) — see
-# qa/mobile/evidence/2026-06-12-resume-continuity/results.md for the procedure:
-#   1. run this flow
-#   2. adb shell cmd connectivity airplane-mode enable ; sleep 12 ; ... disable
-#   3. tap the "Connection lost. Tap to reconnect" banner to trigger the warm
-#      reconnect (gateway stays alive → recovered:true, buffer warm)
-#   4. run 04c-...-followup.yaml
-#
-# tags: [android, emulator-ok, reconnect, continuity]
+# Validates: on a WARM WS reconnect the next message CONTINUES the same Hermes
+# conversation (gateway logs `resume.reanchor source=configure`, dispatch.end
+# conversationId unchanged, NO dispatch.session-new.lazy). This flow only
+# establishes the conversation (login + one turn the follow-up references). The
+# reconnect is forced BETWEEN this flow and 04c-...-followup.yaml by the runner
+# (airplane-mode toggle + tap the "Connection lost. Tap to reconnect" banner) —
+# hence `fault-armed`, excluded from the default batch and run by the runner's
+# orchestration phase.
 - launchApp:
     clearState: true
-- extendedWaitUntil:
-    visible: { id: "login-backend-setup" }
-    timeout: 8000
-- tapOn:
-    id: ".*login-avatar-.*"
-- extendedWaitUntil:
-    visible: { id: "pin-key-1" }
-    timeout: 5000
-- tapOn: { id: "pin-key-1" }
-- tapOn: { id: "pin-key-2" }
-- tapOn: { id: "pin-key-3" }
-- tapOn: { id: "pin-key-4" }
-- extendedWaitUntil:
-    visible: { id: "composer-input" }
-    timeout: 15000
+- runFlow:
+    file: "_helpers/login.yaml"
 - tapOn: { id: "composer-input" }
 - inputText: "My favorite number is 42. Please remember it."
 - tapOn: { id: "chat-send" }
 - hideKeyboard
+# LLM round-trip — genuinely slow.
 - extendedWaitUntil:
     visible: { id: "assistant-bubble" }
     timeout: 45000

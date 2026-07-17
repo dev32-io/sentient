@@ -1,9 +1,29 @@
 appId: io.dev32.sentient.debug
+tags:
+  - chat
 ---
+# verify-newchat — new-chat round-trip smoke: start a fresh chat, send, get a reply.
+# Asserts the DURABLE assistant reply (not the transient user text): the first send
+# in a brand-new conversation triggers a lazy session-create + a brief WS re-sync
+# that re-keys the optimistic user bubble (message-bubble-0 -> committed entryId),
+# so the exact user-text bubble is only briefly present. The assistant-bubble is
+# the stable end-state and proves the whole new-chat -> send -> Hermes path.
+# Batch-safe.
 - launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
 - assertVisible: { id: "composer-input" }
 - tapOn: { id: "new-chat" }
+# wait for the fresh composer to mount before typing (new-chat resets the view).
+- extendedWaitUntil:
+    visible: { id: "composer-input" }
+    timeout: 3000
 - tapOn: { id: "composer-input" }
 - inputText: "what is 30 plus 12"
 - tapOn: { id: "chat-send" }
-- assertVisible: { text: "what is 30 plus 12" }
+- hideKeyboard
+# LLM round-trip in the new conversation - genuinely slow.
+- extendedWaitUntil:
+    visible: { id: "assistant-bubble" }
+    timeout: 40000

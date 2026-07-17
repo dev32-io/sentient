@@ -1,112 +1,85 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-soul
+  - slow
+  - destructive-profile
 ---
 # 50-personalities-create-activate — Personalities page starting empty: create
-# "e2e-test", then Activate. Run login.yaml immediately before this.
+# "e2e-test", then Activate. Self-navigating + self-cleaning (deletes the entry
+# at the end regardless of outcome), so it leaves no net profile mutation.
 #
-# DEFECT-4 REPRODUCED on iOS (confirmed live via GET /profile/personalities +
-# GET /profile/me): this is Android's confirmed BACKEND bug (writeRendered() in
-# gateway/src/profile-store/profile-renderer.ts overwrites config.yaml from
-# ProfileV1 fields only, racing the personality-store's read-modify-write on
-# the same restart cycle) — NOT mobile-specific. create() persists the entry;
-# activate() silently no-ops (`activeName` stays null, `persona.template` stays
-# "default"). On this run the "e2e-test" ENTRY itself survived (unlike some
-# Android runs where the entry vanished too) — this flow deletes it at the end
-# to restore the empty baseline regardless of which failure shape occurs.
+# DEFECT-4 (backend, confirmed live, NOT mobile-specific): writeRendered()
+# overwrites config.yaml from ProfileV1 fields only, racing the personality-store
+# read-modify-write on the same restart cycle — create() persists, activate()
+# silently no-ops (activeName stays null). The end-of-flow delete restores the
+# empty baseline regardless of which failure shape occurs.
 #
-# DEFECT (iOS, confirmed live, distinct from the id-collision family): the
-# personality card's Button has NO `.contentShape(Rectangle())` (unlike
-# CategoryRow, which does) — only the actual glyph content (the "e2e-test"
-# text and the chevron icon) is tap-hittable, NOT the row's transparent middle
-# region. `tapOn: id: settings-personalities-card-<name>` resolves to the
-# element's BOUNDS CENTER, which lands in that dead zone and silently no-ops
-# (confirmed: 3 separate attempts — id tap, point tap at the row's visual
-# center, all failed to expand; a point tap directly on the chevron icon at
-# the row's right edge worked). Point-tap the chevron, not the row center.
-#
-# NOTE (also confirmed live): iOS shows NO "No personalities yet." placeholder
-# copy for the empty state (Android has this text; iOS's `ready` case just
-# renders an empty list) — flagged as a minor UX parity gap, not asserted here.
-#
-# tags: [ios, simulator-ok]
-- tapOn:
-    id: "history-open"
-- extendedWaitUntil:
-    visible:
-      id: "history-new-chat"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
-- extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
+# DEFECT (iOS): the personality card's Button has NO .contentShape(Rectangle())
+# — only the glyph content (text + chevron) is tap-hittable, not the row's
+# transparent middle. `tapOn: id:` resolves to the bounds CENTER (dead zone) and
+# no-ops. Point-tap the chevron at the row's right edge to expand.
+- runFlow: _helpers/open-settings.yaml
 - tapOn:
     id: "settings-cat-personalities"
 - extendedWaitUntil:
-    visible:
-      id: "settings-personalities-screen"
-    timeout: 5000
+    visible: { id: "settings-personalities-screen" }
+    timeout: 3000
 - takeScreenshot: "50-personalities-empty"
 - tapOn:
     id: "settings-personalities-create"
 - extendedWaitUntil:
-    visible:
-      id: "settings-personalities-create-sheet"
-    timeout: 5000
+    visible: { id: "settings-personalities-create-sheet" }
+    timeout: 3000
 - tapOn:
     id: "settings-personalities-new-name"
 - inputText: "e2e-test"
 - tapOn:
     id: "settings-personalities-new-submit"
 - extendedWaitUntil:
-    visible:
-      id: "settings-applying"
-    timeout: 5000
+    visible: { id: "settings-applying" }
+    timeout: 3000
     optional: true
+# personality create → store apply, genuinely slow.
 - extendedWaitUntil:
-    notVisible:
-      id: "settings-applying"
+    notVisible: { id: "settings-applying" }
     timeout: 20000
     optional: true
 - takeScreenshot: "50-personalities-after-create"
-# expand the card: tap the CHEVRON, not the row id/center (see DEFECT above)
+# expand the card: tap the CHEVRON, not the row id/center (see DEFECT above).
 - tapOn:
     point: "89%,21%"
 - extendedWaitUntil:
-    visible:
-      id: "settings-personalities-activate-e2e-test"
-    timeout: 5000
+    visible: { id: "settings-personalities-activate-e2e-test" }
+    timeout: 3000
 - takeScreenshot: "50-personalities-expanded"
 - tapOn:
     id: "settings-personalities-activate-e2e-test"
 - extendedWaitUntil:
-    visible:
-      id: "settings-applying"
-    timeout: 5000
+    visible: { id: "settings-applying" }
+    timeout: 3000
     optional: true
+# activate → apply/restart, genuinely slow.
 - extendedWaitUntil:
-    notVisible:
-      id: "settings-applying"
+    notVisible: { id: "settings-applying" }
     timeout: 20000
 - takeScreenshot: "50-personalities-defect4-check"
-# cleanup: delete the entry regardless of whether activate wiped it or not
+# cleanup: delete the entry regardless of whether activate wiped it or not.
 - tapOn:
     id: "settings-personalities-delete-e2e-test"
     optional: true
 - extendedWaitUntil:
     visible: "Delete this personality?"
-    timeout: 5000
+    timeout: 3000
     optional: true
 - tapOn:
     text: "Delete"
     optional: true
 - extendedWaitUntil:
-    visible:
-      id: "settings-applying"
-    timeout: 5000
+    visible: { id: "settings-applying" }
+    timeout: 3000
     optional: true
+# delete → apply/restart, genuinely slow.
 - extendedWaitUntil:
-    notVisible:
-      id: "settings-applying"
+    notVisible: { id: "settings-applying" }
     timeout: 20000
 - takeScreenshot: "50-personalities-cleanup-final"

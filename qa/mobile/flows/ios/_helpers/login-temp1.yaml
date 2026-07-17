@@ -1,0 +1,30 @@
+appId: io.dev32.sentient.debug
+tags:
+  - helper
+---
+# _helpers/login-temp1.yaml — force-login as the non-admin E2E Temp1 seed user
+# (created by 41-members-add-cap.yaml). clearState wipes any persisted token so
+# this always lands on "Who's here?" regardless of who was logged in, then
+# selects Temp1 + PIN 1111. Used only by 42-settings-non-admin-gate.yaml.
+#
+# NOTE: Temp1's user id is SERVER-RANDOM (not deterministic) — re-sync via
+# GET /api/v1/admin/users after any fresh 41 run. Current as of 2026-07-16:
+# u_11d9ec21.
+- launchApp:
+    clearState: true
+# cold clearState launch + avatar-grid fetch from the gateway.
+- extendedWaitUntil:
+    visible: "Who's here?"
+    timeout: 5000
+- tapOn:
+    id: "login-avatar-u_11d9ec21"
+- extendedWaitUntil:
+    visible: { id: "pin-key-1" }
+    timeout: 3000
+- tapOn: { id: "pin-key-1" }
+- tapOn: { id: "pin-key-1" }
+- tapOn: { id: "pin-key-1" }
+- tapOn: { id: "pin-key-1" }                # PIN 1111
+- extendedWaitUntil:
+    visible: { id: "composer-input" }
+    timeout: 15000

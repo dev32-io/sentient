@@ -1,21 +1,30 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-soul
+  - slow
+  - destructive-profile
+  - restore
 ---
-# 49b-tools-restore — re-enables "fetch" after 49-tools-toggle.yaml. Run
-# immediately after 49 (same Tools screen still open).
-#
-# tags: [ios, simulator-ok]
+# 49b-tools-restore — re-enables "fetch" after 49-tools-toggle.yaml.
+# Self-navigating (does not assume 49 left the Tools screen open).
+- runFlow: _helpers/open-settings.yaml
+- tapOn:
+    id: "settings-cat-tools"
+- extendedWaitUntil:
+    visible: { id: "settings-tools-screen" }
+    timeout: 3000
 - tapOn:
     id: "settings-tools-server-fetch"
-- assertVisible:
-    id: "settings-tools-save"
+- extendedWaitUntil:
+    visible: { id: "settings-tools-save" }
+    timeout: 3000
 - tapOn:
     id: "settings-tools-save"
 - extendedWaitUntil:
-    visible:
-      id: "settings-applying"
+    visible: { id: "settings-applying" }
     timeout: 3000
     optional: true
+# apply/restart — genuinely slow.
 - extendedWaitUntil:
-    notVisible:
-      id: "settings-applying"
+    notVisible: { id: "settings-applying" }
     timeout: 45000

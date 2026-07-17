@@ -1,28 +1,14 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-root
 ---
-# 40-settings-root — history side panel -> Settings root list renders grouped
-# categories + Admin group gated on isAdmin + version footer at the bottom.
-# Assumes an already logged-in session (run login.yaml first).
+# 40-settings-root — Settings root list renders grouped categories + Admin group
+# gated on isAdmin + version footer at the bottom. Self-navigating: login → open
+# Settings root (via _helpers/open-settings.yaml).
 #
-# Selectors: history-open (chat top bar) -> settings-open (account header gear) ->
-# settings-screen, settings-cat-<key>, settings-version, settings-update-action.
 # Unlike Android, the whole root list (categories + logout + footer) fits in ONE
-# SwiftUI ScrollView on an iPhone 16 Pro without scrolling — see twin-check #1
-# (footer-in-scroll) in the handover notes.
-#
-# tags: [ios, simulator-ok]
-- tapOn:
-    id: "history-open"
-- extendedWaitUntil:
-    visible:
-      id: "history-new-chat"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
-- extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
+# SwiftUI ScrollView on an iPhone 16 Pro without scrolling.
+- runFlow: _helpers/open-settings.yaml
 # Soul group
 - assertVisible:
     id: "settings-cat-memory"

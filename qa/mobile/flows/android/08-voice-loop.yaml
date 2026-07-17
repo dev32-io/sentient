@@ -1,45 +1,31 @@
 appId: io.dev32.sentient.debug
+tags:
+  - voice-loop
+  - fault-armed
 ---
 # 08-voice-loop — fixture-audio mic uplink via FaultAwareCaptureAdapter.
+# No-relaunch flow: the runner pushes the fixture to the app cache + arms the
+# fixture fault on the RUNNING app BEFORE this flow, then greps logcat for
+# "fixture-utterance" + "startMic" after. Excluded from the default batch
+# (fault-armed); run by the runner's orchestration phase.
 #
-# VOICE-LOOP STATUS:
-#   - Fixture plumbing: WIRED (FaultAwareCaptureAdapter feeds fixture to uplink).
-#   - Arming: via broadcast (harness pushes fixture to app cache + arms).
-#   - Full STT→LLM→TTS loop: REQUIRES a real speech fixture (not silence).
-#     The silence-500ms.pcm fixture tests the fixture injection plumbing +
-#     Opus encoder path only. STT will see silence → no transcript → no Hermes
-#     cycle. The assistant-bubble assert is SKIPPED for silence.
+# Fixture plumbing is WIRED; the full STT→LLM→TTS loop needs a real SPEECH fixture
+# (silence-500ms.pcm exercises only injection + the Opus encoder path — STT sees
+# silence → no transcript → no Hermes cycle → no assistant bubble to assert).
 #
-# PRE-CONDITION (handled by harness WHILE THIS APP IS RUNNING — no relaunch):
-#   1. App running and showing chat (composer-input visible).
-#   2. Fixture pushed to app cache dir via run-as pipe.
-#   3. Fault armed: adb shell am broadcast -a io.sentient.debug.FAULT
-#        -p io.dev32.sentient.debug --es kind fixture --es name sentient-fixture.pcm
-#
-# Log trail assertions (in run-e2e.sh after this flow):
-#   - "fixture-utterance" — FaultAwareCaptureAdapter injected the fixture.
-#   - "startMic" — SDK confirmed mic start.
-#   - "audio.start" (uplink connector) — wire frame sent.
-#
-# FLAG: Full STT→LLM→TTS requires a real speech PCM fixture.
-#
-# tags: [android, emulator-ok, fault-injection, voice-loop, fixture-plumbing, no-relaunch]
-- assertVisible:
-    id: "composer-input"
-# Tap mic to start fixture-fed uplink
-- tapOn:
-    id: "chat-mic"
-# Assert mic button still visible (no crash from fixture injection)
-- assertVisible:
-    id: "chat-mic"
-# Wait for fixture to drain through the pipeline
+# Pre-condition (runner, app already running):
+#   1. composer-input visible.
+#   2. Fixture pushed to the app cache via run-as.
+#   3. adb shell am broadcast -a io.sentient.debug.FAULT -p io.dev32.sentient.debug
+#        --es kind fixture --es name sentient-fixture.pcm
+- assertVisible: { id: "composer-input" }
+# tap mic to start the fixture-fed uplink.
+- tapOn: { id: "chat-mic" }
+- assertVisible: { id: "chat-mic" }
+# let the fixture drain through the pipeline.
 - extendedWaitUntil:
-    visible:
-      id: "chat-mic"
-    timeout: 4000
-# Stop mic
-- tapOn:
-    id: "chat-mic"
-# App must still be alive and not crashed
-- assertVisible:
-    id: "composer-input"
+    visible: { id: "chat-mic" }
+    timeout: 3000
+- tapOn: { id: "chat-mic" }
+# app must still be alive (no crash from fixture injection).
+- assertVisible: { id: "composer-input" }

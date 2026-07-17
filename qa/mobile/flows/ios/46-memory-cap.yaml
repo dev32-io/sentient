@@ -1,46 +1,27 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-soul
+  - slow
 ---
-# 46-memory-cap — Memory settings page: typing past the server charLimit (2200
-# for MEMORY.md) truncates the input client-side and the counter reflects the
-# cap. Never saved (no PUT fired) so the real MEMORY.md content is untouched —
-# discarded via the dirty-back confirm, no restore needed. Run login.yaml
-# immediately before this.
+# 46-memory-cap — Memory page: typing past the server charLimit (2200 for
+# MEMORY.md) truncates the input client-side and the counter reflects the cap.
+# Never saved (no PUT fired) so the real MEMORY.md content is untouched —
+# discarded via the dirty-back confirm, no restore needed. Self-navigating.
+# `slow` because the input is chunked into ~260-char steps (Maestro's inputText
+# simulates keystrokes and can hit the gRPC deadline on one very long string).
 #
-# NOTE: chunk the input into ~260-char steps — Maestro's inputText simulates
-# individual keystrokes and can hit the gRPC deadline on one very long string
-# (same lesson as Android's 46-memory-cap.yaml).
-#
-# DEFECT (iOS, confirmed live): once the editor is focused, the soft keyboard
-# covers the char counter below it and `hideKeyboard` FAILS outright (no
-# keyboard-accessory Done button exists on a plain TextEditor). Tapping the
-# already-selected "Preview" then "Edit" RowSegmented buttons by TEXT dismisses
-# the keyboard as a side effect (any Button tap resigns the TextEditor's first
-# responder) and reveals the counter. NOTE this ALSO proves RowSegmented has
-# the SAME accessibilityIdentifier-collision defect as RowToggle/MemberRow —
-# `maestro hierarchy` shows both "Edit" and "Preview" buttons sharing the bare
-# parent id "settings-memory-view" (the "-edit"/"-preview" suffixes the source
-# sets per-button never reach the tree) — text selectors are the only reliable
-# driver for every RowSegmented control in this pass, not just this screen.
-#
-# tags: [ios, simulator-ok, slow]
-- tapOn:
-    id: "history-open"
-- extendedWaitUntil:
-    visible:
-      id: "history-new-chat"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
-- extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
+# DEFECT (iOS, confirmed live): once the editor is focused the soft keyboard
+# covers the char counter and `hideKeyboard` FAILS (no keyboard-accessory Done).
+# Tapping the "Preview" then "Edit" RowSegmented buttons by TEXT dismisses the
+# keyboard as a side effect (any Button tap resigns first responder) and reveals
+# the counter. RowSegmented also has the id-collision defect ("Edit"/"Preview"
+# share the bare parent id) — text selectors are the reliable driver.
+- runFlow: _helpers/open-settings.yaml
 - tapOn:
     id: "settings-cat-memory"
 - extendedWaitUntil:
-    visible:
-      id: "settings-memory-screen"
-    timeout: 5000
+    visible: { id: "settings-memory-screen" }
+    timeout: 3000
 - assertVisible: "MEMORY.md"
 - takeScreenshot: "46-memory-before"
 - tapOn:
@@ -54,20 +35,19 @@ appId: io.dev32.sentient.debug
 - inputText: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 - inputText: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 - inputText: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-# dismiss the keyboard via a text-tap round trip (see DEFECT note above)
+# dismiss the keyboard via a text-tap round trip (see DEFECT note above).
 - tapOn: "Preview"
 - tapOn: "Edit"
 - assertVisible:
     text: "2,200 */ *2,200"
 - takeScreenshot: "46-memory-capped"
-# discard without saving — real MEMORY.md content stays untouched
+# discard without saving — real MEMORY.md content stays untouched.
 - tapOn:
     id: "settings-memory-back"
 - extendedWaitUntil:
     visible: "Discard changes?"
-    timeout: 5000
+    timeout: 3000
 - tapOn: "Discard"
 - extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
+    visible: { id: "settings-screen" }
+    timeout: 3000

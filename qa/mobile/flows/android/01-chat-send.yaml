@@ -1,14 +1,17 @@
-# Android chat round-trip against the local gateway (resumable-WS branch).
 appId: io.dev32.sentient.debug
+tags:
+  - chat
 ---
+# 01-chat-send — chat round-trip against the local gateway: type, send, and see
+# the echoed user message. Batch-safe: warm launchApp + conditional login.
 - launchApp
-- assertVisible:
-    id: "composer-input"
-- tapOn:
-    id: "composer-input"
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- assertVisible: { id: "composer-input" }
+- tapOn: { id: "composer-input" }
 - inputText: "what is 20 plus 22"
-- tapOn:
-    id: "chat-send"
+- tapOn: { id: "chat-send" }
 - extendedWaitUntil:
     visible: "what is 20 plus 22"
-    timeout: 15000
+    timeout: 3000

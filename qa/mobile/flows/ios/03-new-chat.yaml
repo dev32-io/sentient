@@ -1,12 +1,13 @@
 appId: io.dev32.sentient.debug
+tags:
+  - chat
 ---
 # 03-new-chat — tap new-chat and verify the composer appears with an empty state.
-# new-chat is the "+" button in the top-right of the ChatTitleBar.
-# After tap the message list resets; composer-input should be visible and empty.
-- launchApp
+# new-chat is the "+" button in the top-right of the ChatTitleBar. Self-navigating
+# (login helper) so it is batch-safe even after a logout flow cleared the token.
+- runFlow: _helpers/login.yaml
 - tapOn:
     id: "new-chat"
 - extendedWaitUntil:
-    visible:
-      id: "composer-input"
-    timeout: 5000
+    visible: { id: "composer-input" }
+    timeout: 3000

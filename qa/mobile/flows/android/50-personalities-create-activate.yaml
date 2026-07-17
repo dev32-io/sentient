@@ -1,89 +1,71 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-soul
+  - destructive-profile
 ---
 # 50-personalities-create-activate — Personalities page starting empty: create
-# "e2e-test", then Activate. Run login.yaml immediately before this.
+# "e2e-test", then Activate. Batch-safe. Self-restoring — see DEFECT-4.
 #
-# DEFECT-4 (confirmed live TWICE, backend — NOT mobile-specific): Activate
-# deterministically wipes the personality. Root cause: writeRendered()
-# (gateway/src/profile-store/profile-renderer.ts:349) unconditionally
-# overwrites config.yaml from the rendered ProfileV1 fields only, with no
-# agent.personalities section; the personality-store's separate
-# read-modify-write loses the race on the SAME restart cycle Activate
-# triggers. Reproduced via the real UI twice on 2026-07-16: create "e2e-test"
-# (persists, confirmed via GET /profile/personalities) -> tap Activate ->
-# "Applying — assistant restarting…" (~13s, gateway log:
-# `active.request` -> `runRestart.begin` -> `restart.ready`) -> list reverts
-# to "No personalities yet." — activeName never even sets (stays null).
+# DEFECT-4 (backend, NOT mobile): Activate deterministically wipes the personality
+# (writeRendered() overwrites config.yaml with no agent.personalities section; the
+# personality-store read-modify-write loses the race on the SAME restart Activate
+# triggers). Reproduced live: create "e2e-test" (persists) → Activate → "Applying
+# — restarting…" (~13s) → list reverts to "No personalities yet." So the bug
+# itself restores the starting state — no restore pair needed.
 #
-# NOTE: `create()` ALSO routes through the same apply/restart FSM as
-# activate()/delete() (PersonalitiesViewModel.kt:50-56 -> runMutation ->
-# applyProfileChange) — every mutation triggers a full Hermes restart, not
-# just Activate. Whether the personality SURVIVES its own creation restart
-# appears to be a timing race (observed both outcomes across repeated runs);
-# Activate's wipe, by contrast, reproduced deterministically every time it
-# was exercised. The create-phase wait below therefore tolerates either
-# outcome; the activate-phase wipe assertion is the reliable, asserted case.
-# No mobile-side cleanup needed — the bug itself restores the starting state.
-#
-# tags: [android, emulator-ok]
-- tapOn:
-    id: "history-open"
+# create() ALSO routes through the apply/restart FSM (every mutation restarts
+# Hermes); whether the personality survives its OWN creation restart is a timing
+# race (both outcomes observed). The create-phase waits tolerate either outcome;
+# the activate-phase wipe is the reliable asserted case.
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-open"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
+    visible: { id: "settings-open" }
+    timeout: 3000
+- tapOn: { id: "settings-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
-- tapOn:
-    id: "settings-cat-personalities"
+    visible: { id: "settings-screen" }
+    timeout: 3000
+- tapOn: { id: "settings-cat-personalities" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-personalities-screen"
-    timeout: 5000
+    visible: { id: "settings-personalities-screen" }
+    timeout: 3000
 - extendedWaitUntil:
     visible: "No personalities yet.*"
-    timeout: 5000
+    timeout: 3000
 - takeScreenshot: "50-personalities-empty"
-- tapOn:
-    id: "settings-personalities-new"
-- tapOn:
-    id: "settings-personality-new-name"
+- tapOn: { id: "settings-personalities-new" }
+- tapOn: { id: "settings-personality-new-name" }
 - inputText: "e2e-test"
-# the soft keyboard covers the "Create" button below the fold — dismiss it
-# first (same caveat as 46-memory-cap.yaml's editor scroll note).
+# the soft keyboard covers "Create" below the fold — dismiss it first.
 - hideKeyboard
-- tapOn:
-    id: "settings-personality-create"
-# create() also triggers a restart (see header note) — let it settle either way.
+- tapOn: { id: "settings-personality-create" }
+# create() also triggers a restart — let it settle either way (SLOW).
 - extendedWaitUntil:
-    visible:
-      id: "settings-apply-notice"
-    timeout: 5000
+    visible: { id: "settings-apply-notice" }
+    timeout: 3000
     optional: true
 - extendedWaitUntil:
-    notVisible:
-      id: "settings-apply-notice"
+    notVisible: { id: "settings-apply-notice" }
     timeout: 20000
     optional: true
 - takeScreenshot: "50-personalities-after-create"
-# only proceed to Activate if the personality actually survived create's own
-# restart race — otherwise the empty state already documents the same bug.
+# only Activate if the personality survived create's own restart race; otherwise
+# the empty state already documents the same bug.
 - tapOn:
     id: "settings-personality-activate-e2e-test"
     optional: true
 - extendedWaitUntil:
-    visible:
-      id: "settings-apply-notice"
-    timeout: 5000
+    visible: { id: "settings-apply-notice" }
+    timeout: 3000
     optional: true
 - takeScreenshot: "50-personalities-defect4-restarting"
+# SLOW restart budget.
 - extendedWaitUntil:
-    notVisible:
-      id: "settings-apply-notice"
+    notVisible: { id: "settings-apply-notice" }
     timeout: 20000
 - extendedWaitUntil:
     visible: "No personalities yet.*"

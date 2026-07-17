@@ -1,37 +1,45 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-user
 ---
-# 52-pin-wrong-current — Account page: Change PIN with a wrong current PIN
-# surfaces "Current PIN is wrong" inline (401 invalid-credentials — see
-# gateway/src/api/handlers/auth.ts handleChangePin), dialog stays open, no
-# logout, no lockout. Run login.yaml immediately before this (already on
-# Account screen after 51b works too).
+# 52-pin-wrong-current — Account page: Change PIN with a WRONG current PIN surfaces
+# "Current PIN is wrong" inline (401 invalid-credentials, handleChangePin), dialog
+# stays open, no logout, no lockout. Never changes the real PIN. Batch-safe:
+# self-navigates to the Account screen.
 #
-# DEFECT-2 note: ChangePinDialog is a Material3 AlertDialog — its testTags are
-# not covered by testTagsAsResourceId (see 41-members-add-cap.yaml). "Cancel"/
-# "Update PIN" are plain TextViews with real text (confirmed via uiautomator
-# dump) so text selectors work fine for THOSE; the PIN fields have no
-# distinguishing visible text beyond the shared placeholder labels, so drive
-# them by point. Two live-calibrated quirks (via uiautomator dump):
-#   1. Points are calibrated PRE-keyboard (dialog bounds before any field is
-#      focused): Current PIN EditText center ~= 47% height.
-#   2. Once the numeric keypad appears (after focusing Current PIN), the
-#      WHOLE dialog shifts up ~318px on a 2220px-tall screen (~14%) to stay
-#      above the keyboard — New PIN's PRE-keyboard position (56%) is stale
-#      once the keyboard is showing; its POST-keyboard center is ~42%. Using
-#      the stale 56% missed the field, left it empty, and "Update PIN" (with
-#      an empty New PIN) silently no-op'd instead of erroring.
-#
-# tags: [android, emulator-ok]
-- tapOn:
-    id: "settings-account-change-pin"
+# DEFECT-2: ChangePinDialog is a Material3 AlertDialog — testTags not covered by
+# testTagsAsResourceId. "Cancel"/"Update PIN" are plain text (selectors work). The
+# PIN fields have no id either, BUT each OutlinedTextField's LABEL ("Current PIN" /
+# "New PIN") renders INSIDE its field bounds (confirmed via uiautomator dump), so
+# tapping the label text focuses the field. This replaces the old fragile point
+# taps: the dialog does NOT reliably shift up when the keyboard appears (New PIN
+# stayed at ~56%, not the assumed ~42%), so a calibrated point tap missed the field
+# and left the new PIN empty → no validation error. Text taps are position-proof.
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
+- extendedWaitUntil:
+    visible: { id: "settings-open" }
+    timeout: 3000
+- tapOn: { id: "settings-open" }
+- extendedWaitUntil:
+    visible: { id: "settings-screen" }
+    timeout: 3000
+# see DEFECT-8 in 51 — one plain scroll clears Account from the pinned footer.
+- scroll
+- tapOn: { id: "settings-cat-account" }
+- extendedWaitUntil:
+    visible: { id: "settings-account-screen" }
+    timeout: 3000
+- tapOn: { id: "settings-account-change-pin" }
 - extendedWaitUntil:
     visible: "Change PIN"
-    timeout: 5000
-- tapOn:
-    point: "50%,47%"
+    timeout: 3000
+- tapOn: { text: "Current PIN" }
 - inputText: "9999"
-- tapOn:
-    point: "50%,42%"
+- tapOn: { text: "New PIN" }
 - inputText: "5555"
 - tapOn: "Update PIN"
 - extendedWaitUntil:
@@ -39,13 +47,10 @@ appId: io.dev32.sentient.debug
     timeout: 5000
 - takeScreenshot: "52-pin-wrong-current"
 - tapOn: "Cancel"
-# NOTE: "Change PIN" is ambiguous — it's BOTH the dialog title AND the
-# trigger button's label on the underlying Account page, so a notVisible
-# check on "Change PIN" alone can never succeed (the button is always
-# there). Assert on dialog-only body text instead.
+# "Change PIN" is BOTH the dialog title AND the trigger button label — assert on
+# dialog-only body text instead (a notVisible on "Change PIN" can never succeed).
 - extendedWaitUntil:
     notVisible: "Enter your current 4-digit PIN, then choose a new one."
-    timeout: 5000
-# no lockout: still on Account, still logged in
-- assertVisible:
-    id: "settings-account-screen"
+    timeout: 3000
+# no lockout: still on Account, still logged in.
+- assertVisible: { id: "settings-account-screen" }

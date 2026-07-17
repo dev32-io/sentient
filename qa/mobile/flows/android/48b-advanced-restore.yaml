@@ -1,18 +1,29 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-soul
+  - restore
 ---
-# 48b-advanced-restore — restores reasoning=minimal, compression=0.50, max
-# tokens=1024 after 48-advanced-sliders.yaml. Run immediately after 48 (same
-# Advanced screen still open). See DEFECT-6 in 48-advanced-sliders.yaml — the
-# dropdown option text is not in the accessibility tree; drive by fixed point.
-# The trigger-open tap uses the box's right edge (~88%), NOT a fixed
-# mid-box x — the box is content-width and currently shows the SHORT label
-# "High", so a tap that only worked against the longer "Minimal · default"
-# label (first-open state) misses once the box has shrunk (confirmed live:
-# a mid-box tap that opened the menu from "Minimal · default" missed
-# entirely once the box showed "High" — box bounds shrink from the left,
-# right edge is fixed). "Minimal · default" option sits at y~=46%, x~62%.
-#
-# tags: [android, emulator-ok]
+# 48b-advanced-restore — restore pair for 48: reasoning=minimal, compression=0.50,
+# max-tokens=1024. Batch-safe: self-navigates from chat root. executionOrder runs
+# it right after 48. See DEFECT-6 in 48 — dropdown option text is not in the a11y
+# tree; drive by fixed point. Open the box at its right edge (~88%); "Minimal ·
+# default" option sits at y≈46%, x≈62%.
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
+- extendedWaitUntil:
+    visible: { id: "settings-open" }
+    timeout: 3000
+- tapOn: { id: "settings-open" }
+- extendedWaitUntil:
+    visible: { id: "settings-screen" }
+    timeout: 3000
+- tapOn: { id: "settings-cat-advanced" }
+- extendedWaitUntil:
+    visible: { id: "settings-advanced-screen" }
+    timeout: 3000
 - tapOn:
     point: "88%,34%"
 - waitForAnimationToEnd:
@@ -24,11 +35,9 @@ appId: io.dev32.sentient.debug
     point: "50%,56%"
 - tapOn:
     point: "20%,71%"
-- assertVisible:
-    id: "settings-advanced-save"
-- tapOn:
-    id: "settings-advanced-save"
+- assertVisible: { id: "settings-advanced-save" }
+- tapOn: { id: "settings-advanced-save" }
+# SLOW apply/restart budget.
 - extendedWaitUntil:
-    notVisible:
-      id: "settings-apply-notice"
+    notVisible: { id: "settings-apply-notice" }
     timeout: 45000

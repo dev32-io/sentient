@@ -1,32 +1,37 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-soul
+  - slow
+  - destructive-profile
+  - restore
 ---
 # 45b-model-restore — restores the original model (deepseek-v4-flash:cloud) after
-# 45-model-slow-save.yaml. Run immediately after 45 (same Model screen still
-# open).
-#
-# tags: [ios, simulator-ok]
+# 45-model-slow-save.yaml. Self-navigating (does not assume 45 left the Model
+# screen open), so it is batch-safe on its own.
+- runFlow: _helpers/open-settings.yaml
+- tapOn:
+    id: "settings-cat-model"
+- extendedWaitUntil:
+    visible: { id: "settings-model-screen" }
+    timeout: 3000
 - tapOn:
     id: "settings-model-search"
-- eraseText: 30
 - inputText: "deepseek-v4-flash"
 - extendedWaitUntil:
-    visible:
-      id: "settings-model-card-deepseek-v4-flash:cloud"
-    timeout: 5000
+    visible: { id: "settings-model-card-deepseek-v4-flash:cloud" }
+    timeout: 3000
 - tapOn:
     id: "settings-model-card-deepseek-v4-flash:cloud"
-- assertVisible:
-    id: "settings-model-save"
+- extendedWaitUntil:
+    visible: { id: "settings-model-save" }
+    timeout: 3000
 - tapOn:
     id: "settings-model-save"
-# the apply-notice window can be brief on a fast local stack — tolerate a short
-# race instead of asserting it's visible at the exact instant after the tap
 - extendedWaitUntil:
-    visible:
-      id: "settings-applying"
+    visible: { id: "settings-applying" }
     timeout: 3000
     optional: true
+# apply/restart — full supervisord restart + Hermes worker boot, genuinely slow.
 - extendedWaitUntil:
-    notVisible:
-      id: "settings-applying"
+    notVisible: { id: "settings-applying" }
     timeout: 45000

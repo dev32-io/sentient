@@ -1,14 +1,16 @@
 appId: io.dev32.sentient.debug
+tags:
+  - session
 ---
 # 02-drawer — open the history side drawer and verify the session list renders.
-# history-open (hamburger) is in the top-left title bar.
-# history-new-chat and history-search are always present in the drawer.
+# history-open (hamburger) is in the top-left title bar; history-new-chat and
+# history-search are always present in the drawer. Batch-safe.
 - launchApp
-- tapOn:
-    id: "history-open"
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
 - extendedWaitUntil:
-    visible:
-      id: "history-new-chat"
-    timeout: 5000
-- assertVisible:
-    id: "history-search"
+    visible: { id: "history-new-chat" }
+    timeout: 3000
+- assertVisible: { id: "history-search" }

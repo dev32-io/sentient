@@ -1,22 +1,24 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-admin
 ---
 # 42-settings-non-admin-gate — logged in as a non-admin user (E2E Temp1), the
-# Settings root list must show Soul/User/Support groups but NEVER the Admin
-# group (Members/Secrets). Run login-temp1.yaml immediately before this.
-#
-# tags: [ios, simulator-ok]
+# Settings root must show Soul/User/Support groups but NEVER the Admin group
+# (Members/Secrets). Uses _helpers/login-temp1.yaml (clearState + Temp1 PIN
+# 1111). COUPLED TRIO: 41 must run first (creates Temp1); 43 must run after
+# (deletes the temps + restores Kevin's admin session). No mutation here, but it
+# leaves Temp1 logged in — 43 restores Kevin.
+- runFlow: _helpers/login-temp1.yaml
 - tapOn:
     id: "history-open"
 - extendedWaitUntil:
-    visible:
-      id: "history-new-chat"
-    timeout: 5000
+    visible: { id: "history-new-chat" }
+    timeout: 3000
 - tapOn:
     id: "settings-open"
 - extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
+    visible: { id: "settings-screen" }
+    timeout: 3000
 - assertVisible:
     id: "settings-cat-memory"
 - assertVisible:
@@ -24,7 +26,7 @@ appId: io.dev32.sentient.debug
 - assertVisible:
     id: "settings-cat-devices"
 - takeScreenshot: "42-non-admin-top"
-# Admin group must NOT render for a non-admin user
+# Admin group must NOT render for a non-admin user.
 - assertNotVisible:
     id: "settings-cat-members"
 - assertNotVisible:

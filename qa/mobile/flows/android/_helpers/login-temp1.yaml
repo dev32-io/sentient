@@ -1,0 +1,30 @@
+appId: io.dev32.sentient.debug
+tags:
+  - helper
+---
+# _helpers/login-temp1.yaml — login SUBFLOW for the non-admin E2E "Temp1" seed
+# user (PIN 1111). Used only by 42-settings-non-admin-gate.yaml.
+#
+# ⚠️ NON-DETERMINISTIC ID: Temp1 is created by 41-members-add-cap.yaml via the
+# real "Add user" UI, so its userId is server-random (crypto.randomUUID slice) —
+# it changes on every fresh run of 41. Re-sync the id below via
+# `GET /api/v1/admin/users` after any fresh 41 run before 42 will pass.
+# Current as of the 2026-07-16 settings-parity pass: u_50104890.
+#
+# The caller (42) launches with clearState so the avatar grid is guaranteed —
+# this helper never launches. Not run standalone (see _helpers/login.yaml note).
+- extendedWaitUntil:
+    visible: { id: "login-backend-setup" }
+    timeout: 3000
+- tapOn:
+    id: "login-avatar-u_50104890"
+- extendedWaitUntil:
+    visible: { id: "pin-key-1" }
+    timeout: 3000
+- tapOn: { id: "pin-key-1" }
+- tapOn: { id: "pin-key-1" }
+- tapOn: { id: "pin-key-1" }
+- tapOn: { id: "pin-key-1" }
+- extendedWaitUntil:
+    visible: { id: "composer-input" }
+    timeout: 6000

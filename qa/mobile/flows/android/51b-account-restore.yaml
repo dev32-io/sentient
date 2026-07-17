@@ -1,15 +1,32 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-user
+  - restore
 ---
-# 51b-account-restore — restores display name to "Kevin" after
-# 51-account-rename.yaml. Run immediately after 51 (same Account screen open).
-#
-# tags: [android, emulator-ok]
-- tapOn:
-    id: "settings-account-name-field"
+# 51b-account-restore — restore pair for 51: display name back to "Kevin".
+# Batch-safe: self-navigates from chat root. executionOrder runs it right after
+# 51. See DEFECT-8 in 51 — one plain scroll clears Account from the pinned footer.
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
+- extendedWaitUntil:
+    visible: { id: "settings-open" }
+    timeout: 3000
+- tapOn: { id: "settings-open" }
+- extendedWaitUntil:
+    visible: { id: "settings-screen" }
+    timeout: 3000
+- scroll
+- tapOn: { id: "settings-cat-account" }
+- extendedWaitUntil:
+    visible: { id: "settings-account-screen" }
+    timeout: 3000
+- tapOn: { id: "settings-account-name-field" }
 - eraseText: 20
 - inputText: "Kevin"
-- tapOn:
-    id: "settings-account-name-save"
+- tapOn: { id: "settings-account-name-save" }
 - extendedWaitUntil:
     visible: "Saved"
-    timeout: 10000
+    timeout: 8000

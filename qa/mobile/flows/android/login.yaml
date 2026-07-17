@@ -1,41 +1,15 @@
 appId: io.dev32.sentient.debug
+tags:
+  - auth
 ---
-# login — cold-launch → avatar select → PIN entry → chat screen.
-# Verifies the new Koin DI + Navigation-Compose nav gate routes to chat on valid auth.
+# login — standalone auth test: cold-launch (clearState) → avatar select → PIN
+# entry → chat screen. Proves the Koin DI + Navigation-Compose nav gate routes to
+# chat on valid auth. The avatar+PIN body lives in _helpers/login.yaml (shared with
+# every authed flow's conditional login); this flow forces the login screen via
+# clearState, then delegates. PIN is 1234 (Kevin / u_8c866990).
 #
-# Selectors: login-avatar-* (avatar grid), pin-key-1..4 (pin pad), composer-input (chat landed).
-# PIN is 1234 per the dev/debug fixture.
-#
-# tags: [android, emulator-ok]
+# Also serves as the runner's setup "ensure logged in" step at batch start.
 - launchApp:
     clearState: true
-# Avatar grid should appear (backend configured, user present)
-- extendedWaitUntil:
-    visible:
-      id: "login-backend-setup"
-    timeout: 8000
-# Tap Kevin's avatar specifically (userId u_8c866990) — the wildcard
-# ".*login-avatar-.*" is no longer safe once more than one user exists (it can
-# match any seeded user and enter the wrong PIN).
-- tapOn:
-    id: "login-avatar-u_8c866990"
-    optional: false
-# PIN pad should appear
-- extendedWaitUntil:
-    visible:
-      id: "pin-key-1"
-    timeout: 5000
-# Enter PIN 1234
-- tapOn:
-    id: "pin-key-1"
-- tapOn:
-    id: "pin-key-2"
-- tapOn:
-    id: "pin-key-3"
-- tapOn:
-    id: "pin-key-4"
-# After correct PIN the nav gate should route to chat; composer-input proves we landed
-- extendedWaitUntil:
-    visible:
-      id: "composer-input"
-    timeout: 15000
+- runFlow:
+    file: "_helpers/login.yaml"

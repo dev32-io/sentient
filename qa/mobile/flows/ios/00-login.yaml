@@ -1,0 +1,30 @@
+appId: io.dev32.sentient.debug
+tags:
+  - auth
+---
+# 00-login — standalone auth smoke (case T1). clearState wipes the persisted
+# token, then a real avatar + PIN 1234 login lands on the chat screen. This is
+# the ONE flow that actually exercises the login path end-to-end; the
+# _helpers/login.yaml subflow used elsewhere is a no-op when a token persists.
+# Leaves the app logged in as Kevin, priming the rest of a batch run.
+- launchApp:
+    clearState: true
+# cold clearState launch + avatar-grid fetch from the gateway.
+- extendedWaitUntil:
+    visible: "Who's here?"
+    timeout: 5000
+- tapOn:
+    id: "login-avatar-u_8c866990"
+- extendedWaitUntil:
+    visible: { id: "pin-key-1" }
+    timeout: 3000
+- tapOn: { id: "pin-key-1" }
+- tapOn: { id: "pin-key-2" }
+- tapOn: { id: "pin-key-3" }
+- tapOn: { id: "pin-key-4" }
+# login → chat: WS connect + session.ready handshake — genuinely slow, allow 15s.
+- extendedWaitUntil:
+    visible: { id: "composer-input" }
+    timeout: 15000
+- assertVisible:
+    id: "composer-input"

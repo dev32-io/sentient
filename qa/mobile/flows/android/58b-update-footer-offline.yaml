@@ -1,17 +1,30 @@
 appId: io.dev32.sentient.debug
+tags:
+  - update
+  - fault-armed
 ---
-# 58b-update-footer-offline — Settings root footer: tap "Check for updates"
-# with emulator connectivity killed by the harness (adb shell svc wifi/data
-# disable) BEFORE running this flow, and restored AFTER — same two-invocation
-# pattern as 60-model-offline-save-*.yaml (Maestro 2.6.0 has no shell-exec
-# step). Expect: "Check failed — Retry" (UpdateFooter.kt FooterVisual.Failed),
-# no crash. Verified live 2026-07-16 via a direct point tap (see DEFECT-11 in
-# 58-update-footer-check.yaml re: id-based tapOn reliability on this node —
-# point tap used here for the same reason). Run login.yaml + a plain
-# navigation to settings-screen immediately before this, with the network
-# killed in between.
+# 58b-update-footer-offline — Settings root footer: tap "Check for updates" with
+# emulator connectivity KILLED → "Check failed — Retry" (UpdateFooter FooterVisual
+# .Failed), no crash. Self-navigating: launchApp + conditional login + nav to
+# settings root are all LOCAL UI and work with the network down (the app still has
+# its token → lands on chat; only the update-check needs the network, which is the
+# point). The runner kills connectivity (adb svc wifi/data disable) BEFORE this
+# flow and restores it after — hence `fault-armed`, excluded from the default batch.
 #
-# tags: [android, emulator-ok]
+# DEFECT-11: id-based tapOn on settings-update-action is flaky on this node — a
+# direct point tap on the pinned footer is used instead.
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
+- extendedWaitUntil:
+    visible: { id: "settings-open" }
+    timeout: 3000
+- tapOn: { id: "settings-open" }
+- extendedWaitUntil:
+    visible: { id: "settings-screen" }
+    timeout: 3000
 - assertVisible: "Check for updates"
 - tapOn:
     point: "50%,89%"

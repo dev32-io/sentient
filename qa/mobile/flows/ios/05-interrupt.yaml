@@ -1,15 +1,14 @@
 appId: io.dev32.sentient.debug
+tags:
+  - chat
 ---
 # 05-interrupt — send a long-reply prompt, assert streaming starts, interrupt.
 #
-# ⚠ FLAG (iOS): Same limitation as Android — chat-interrupt is gated on TTS audio
-# state (isSpeaking || audioState == PROCESSING/ASSISTANT_SPEAKING), NOT cognition.
-# In TTS-disabled sessions the button does not appear.
-#
-# tags: [ios, simulator-ok, FLAGGED-interrupt-requires-tts]
-- launchApp
-- assertVisible:
-    id: "composer-input"
+# FLAG (iOS): Same limitation as Android — chat-interrupt is gated on TTS audio
+# state (isSpeaking || audioState == PROCESSING/ASSISTANT_SPEAKING), NOT
+# cognition. In TTS-disabled sessions the button does not appear, so this flow
+# asserts the send→stream path + app-alive rather than the interrupt button.
+- runFlow: _helpers/login.yaml
 - tapOn:
     id: "composer-input"
 - inputText: "tell me a very long story about the history of computing in great detail"
@@ -17,10 +16,9 @@ appId: io.dev32.sentient.debug
     id: "chat-send"
 - tapOn:
     id: "chat-message-list"
-# Wait for streaming bubble (proves send→gateway→Hermes path)
+# streaming bubble proves send→gateway→Hermes path — Hermes LLM round-trip, slow.
 - extendedWaitUntil:
-    visible:
-      id: "assistant-bubble"
+    visible: { id: "assistant-bubble" }
     timeout: 60000
 # App alive — no crash. chat-interrupt not asserted (TTS off = not visible).
 - assertVisible:

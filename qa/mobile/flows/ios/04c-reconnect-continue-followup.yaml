@@ -1,23 +1,25 @@
 appId: io.dev32.sentient.debug
+tags:
+  - reconnect
 ---
 # 04c (part 2/2, iOS) — reconnect conversation-continuity, FOLLOW-UP turn.
 #
 # Pre-state (set by the runner): 04c-...-login-send.yaml ran, then the gateway
 # was restarted (`docker restart sentient-gateway`) to drop the WS, and the SDK
-# reconnected. The app is the SAME running instance (NOT relaunched), so its
-# in-memory currentSessionId survives and is re-asserted in session.configure.
+# reconnected. The app is the SAME running instance (NOT relaunched) — so it does
+# NOT log in again here; it continues on the existing in-memory session so
+# currentSessionId is re-asserted in session.configure.
 #
 # GREEN is asserted from the GATEWAY LOG: the follow-up dispatch.end
 # conversationId must equal the first turn's, with NO dispatch.session-new.lazy,
 # and a `resume.reanchor source=configure` on the reconnect. The reply should
-# reference "42".
-#
-# tags: [ios, simulator-ok, reconnect, continuity]
+# reference "teal".
 - assertVisible: { id: "composer-input" }
 - tapOn: { id: "composer-input" }
 - inputText: "What is my lucky color?"
 - tapOn: { id: "chat-send" }
 - tapOn: { id: "chat-message-list" }
+# assistant reply — Hermes LLM round-trip, genuinely slow.
 - extendedWaitUntil:
     visible: { id: "assistant-bubble" }
     timeout: 60000

@@ -1,4 +1,6 @@
 appId: io.dev32.sentient.debug
+tags:
+  - chat
 ---
 # 01-newchat — validates the new-chat committed-reply render fix on iOS.
 # A NEW chat (fresh chain) previously failed to render the committed assistant
@@ -8,35 +10,29 @@ appId: io.dev32.sentient.debug
 # re-anchors the cache on currentSessionId. This flow proves the committed reply
 # renders on iOS.
 #
-# Flow: login (avatar + PIN 1234) → new chat → composer → send → assert both the
-# user message AND a committed assistant reply render.
-- runFlow: login.yaml
-- extendedWaitUntil:
-    visible:
-      id: "composer-input"
-    timeout: 15000
+# Flow: login → new chat → composer → send → assert both the user message AND a
+# committed assistant reply render.
+- runFlow: _helpers/login.yaml
 # Force a fresh chain: tap new-chat (the "+" in the title bar) so the cache anchor
 # starts null — the exact state the fix repairs.
 - tapOn:
     id: "new-chat"
 - extendedWaitUntil:
-    visible:
-      id: "composer-input"
-    timeout: 5000
+    visible: { id: "composer-input" }
+    timeout: 3000
 - tapOn:
     id: "composer-input"
 - inputText: "what is 8 plus 9"
 - tapOn:
     id: "chat-send"
-# Assert the user message rendered.
+# Optimistic user echo renders immediately.
 - extendedWaitUntil:
     visible: "what is 8 plus 9"
-    timeout: 10000
+    timeout: 3000
 # Dismiss the keyboard by tapping the message list so the assistant bubble shows.
 - tapOn:
     id: "chat-message-list"
-# Assert a COMMITTED assistant reply renders (the fix under test).
+# COMMITTED assistant reply (the fix under test) — Hermes LLM round-trip, slow.
 - extendedWaitUntil:
-    visible:
-      id: "assistant-bubble"
+    visible: { id: "assistant-bubble" }
     timeout: 60000

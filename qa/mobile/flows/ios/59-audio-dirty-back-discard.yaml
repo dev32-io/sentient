@@ -1,44 +1,37 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-soul
 ---
-# 59-audio-dirty-back-discard — Audio settings page: make a dirty change (TTS
-# toggle) then tap back -> discard confirm -> Discard restores the ORIGINAL
-# value (no PUT fired). Run login.yaml immediately before this.
-#
-# tags: [ios, simulator-ok]
-- tapOn:
-    id: "history-open"
-- extendedWaitUntil:
-    visible:
-      id: "history-new-chat"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
-- extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
+# 59-audio-dirty-back-discard — Audio page: make a dirty change (TTS toggle) then
+# tap back → discard confirm → Discard restores the ORIGINAL value (no PUT fired,
+# so NOT destructive-profile). Self-navigating. Same RowToggle id-collision
+# workaround as 44 — point-tap the switch.
+- runFlow: _helpers/open-settings.yaml
 - tapOn:
     id: "settings-cat-audio"
 - extendedWaitUntil:
-    visible:
-      id: "settings-audio-screen"
-    timeout: 5000
+    visible: { id: "settings-audio-screen" }
+    timeout: 3000
 - assertNotVisible:
     id: "settings-audio-save"
-# same RowToggle id-collision workaround as case 44 — point-tap the switch
+# wait for the toggle ROW to be data-bound before point-tapping the switch.
+- extendedWaitUntil:
+    visible: { id: "settings-audio-tts" }
+    timeout: 3000
 - tapOn:
     point: "85%,24%"
-- assertVisible:
-    id: "settings-audio-save"
+# Save appears after the toggle state-update — wait for it (avoid the race).
+- extendedWaitUntil:
+    visible: { id: "settings-audio-save" }
+    timeout: 3000
 - takeScreenshot: "59-audio-dirty"
 - tapOn:
     id: "settings-audio-back"
 - extendedWaitUntil:
     visible: "Discard changes?"
-    timeout: 5000
+    timeout: 3000
 - tapOn: "Discard"
 - extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
+    visible: { id: "settings-screen" }
+    timeout: 3000
 - takeScreenshot: "59-audio-discarded-back-at-root"

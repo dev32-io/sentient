@@ -1,38 +1,32 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-soul
+  - fault-armed
+  - restore
 ---
-# 60-model-offline-save-recover — continuation-only (no launchApp): run after
-# the harness restores connectivity following 60-model-offline-save-trigger.yaml.
-# Retries Save for real (now that the network is back) then restores the
-# original model (deepseek-v4-flash:cloud), same as 45b-model-restore.yaml.
-#
-# tags: [android, emulator-ok]
-- tapOn:
-    id: "settings-model-save"
-- assertVisible:
-    id: "settings-apply-notice"
+# 60-model-offline-save-recover (part 3/3) — continuation (no launchApp): run after
+# the runner restores connectivity following …-trigger. Retries Save for real (now
+# online), then restores the original model (deepseek-v4-flash:cloud). This is the
+# restore leg for the 60 sequence. fault-armed; excluded from the default batch.
+- tapOn: { id: "settings-model-save" }
+- assertVisible: { id: "settings-apply-notice" }
+# SLOW apply/restart budget.
 - extendedWaitUntil:
-    notVisible:
-      id: "settings-apply-notice"
+    notVisible: { id: "settings-apply-notice" }
     timeout: 45000
 - takeScreenshot: "60-offline-save-recovered"
-# restore original model
+# restore original model (see 45b for the right-edge-tap cursor caveat).
 - tapOn:
     point: "90%,28%"
 - eraseText: 60
 - inputText: "deepseek-v4-flash"
 - extendedWaitUntil:
-    visible:
-      id: "settings-model-card-deepseek-v4-flash:cloud"
-    timeout: 5000
-- tapOn:
-    id: "settings-model-card-deepseek-v4-flash:cloud"
-- assertVisible:
-    id: "settings-model-save"
-- tapOn:
-    id: "settings-model-save"
-- assertVisible:
-    id: "settings-apply-notice"
+    visible: { id: "settings-model-card-deepseek-v4-flash:cloud" }
+    timeout: 3000
+- tapOn: { id: "settings-model-card-deepseek-v4-flash:cloud" }
+- assertVisible: { id: "settings-model-save" }
+- tapOn: { id: "settings-model-save" }
+- assertVisible: { id: "settings-apply-notice" }
 - extendedWaitUntil:
-    notVisible:
-      id: "settings-apply-notice"
+    notVisible: { id: "settings-apply-notice" }
     timeout: 45000

@@ -1,17 +1,35 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-soul
+  - restore
 ---
-# 44b-audio-restore — flips "Speak responses (TTS)" back ON and saves, restoring
-# the profile to its original state after 44-audio-fast-save.yaml. Run
-# immediately after 44 (same Audio screen still open — no re-navigation needed).
-#
-# tags: [android, emulator-ok]
+# 44b-audio-restore — restore pair for 44-audio-fast-save. Flips "Speak responses
+# (TTS)" back ON and saves, returning the profile to ttsEnabled=true. Batch-safe:
+# self-navigates from chat root (does NOT assume 44 left the Audio screen open),
+# so it is correct even if run alone or reordered. config.yaml executionOrder
+# guarantees it runs right after 44.
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
+- extendedWaitUntil:
+    visible: { id: "settings-open" }
+    timeout: 3000
+- tapOn: { id: "settings-open" }
+- extendedWaitUntil:
+    visible: { id: "settings-screen" }
+    timeout: 3000
+- tapOn: { id: "settings-cat-audio" }
+- extendedWaitUntil:
+    visible: { id: "settings-audio-screen" }
+    timeout: 3000
+# Switch position (DEFECT-3 point tap, see 44). If TTS is already ON this makes
+# it dirty→ON→save (a no-op restore); if 44 left it OFF this flips it back ON.
 - tapOn:
     point: "84%,36%"
-- assertVisible:
-    id: "settings-audio-save"
-- tapOn:
-    id: "settings-audio-save"
+- assertVisible: { id: "settings-audio-save" }
+- tapOn: { id: "settings-audio-save" }
 - extendedWaitUntil:
-    notVisible:
-      id: "settings-audio-save"
+    notVisible: { id: "settings-audio-save" }
     timeout: 8000

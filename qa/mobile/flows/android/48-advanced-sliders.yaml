@@ -1,64 +1,45 @@
 appId: io.dev32.sentient.debug
+tags:
+  - settings-soul
+  - destructive-profile
 ---
-# 48-advanced-sliders — Advanced settings page: set reasoning, compression, and
-# max-tokens to non-default values, Save triggers the SLOW path (apply/restart).
-# Verified: RowSelect's DropdownMenu and RowSlider's Slider are NOT reachable via
-# Maestro's id: selector (same root cause as DEFECT-3 — the shared row wraps
-# label+control in one testTag'd Row, and only the small inner control is
-# actually clickable) — drive both via point taps.
+# 48-advanced-sliders — Advanced settings: set reasoning, compression, and
+# max-tokens to non-default values; Save triggers the SLOW path (apply/restart).
+# Restored to reasoning=minimal / compression=0.50 / max-tokens=1024 by
+# 48b-advanced-restore.yaml (runs next via executionOrder). Batch-safe.
 #
-# DEFECT-6 (Android, confirmed live, worse than the id: gap above): the
-# RowSelect DropdownMenu's OPTION TEXT is entirely absent from the
-# accessibility tree once open — confirmed via `adb shell uiautomator dump`
-# while the menu was visually open on-screen: none of "None · fastest",
-# "Minimal · default", "Low", "Medium", "High", "Extra high · slowest" appear
-# as `text=` nodes anywhere in the dump, even though they render on-screen.
-# This is an a11y gap too (TalkBack can't read the options), not just a test
-# tooling gap. `extendedWaitUntil: visible: "Extra high"` can NEVER succeed at
-# any timeout — this is not a flakiness/timing issue (confirmed: still failed
-# at both 3000ms and 8000ms). Fixed coordinates below were computed from a
-# native 1080x2220 `adb exec-out screencap` while manually re-driving the
-# dropdown with `adb shell input tap` (the list renders in a FIXED order
-# regardless of current selection: None/Minimal/Low/Medium/High/Extra-high @
-# y ~= 39%/47%/53%/59%/65%/71%, x ~62% for all rows). The original point
-# "62%,58%" actually targeted Medium, not High as intended.
+# RowSelect's DropdownMenu and RowSlider's Slider are NOT reachable via id:
+# (DEFECT-3 — the shared row wraps label+control in one testTag'd Row, only the
+# small inner control is clickable) — drive both via point taps.
 #
-# tags: [android, emulator-ok]
-- tapOn:
-    id: "history-open"
+# DEFECT-6: the RowSelect option TEXT is absent from the a11y tree once the menu
+# is open (confirmed via uiautomator dump) — `extendedWaitUntil visible "High"`
+# can NEVER succeed. Options render in a FIXED order regardless of selection
+# (None/Minimal/Low/Medium/High/Extra-high @ y≈39/47/53/59/65/71%, x≈62%). The
+# trigger box is right-aligned + content-width, so tap near its fixed RIGHT edge
+# (~88%) to open it regardless of current label width.
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- tapOn: { id: "history-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-open"
-    timeout: 5000
-- tapOn:
-    id: "settings-open"
+    visible: { id: "settings-open" }
+    timeout: 3000
+- tapOn: { id: "settings-open" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-screen"
-    timeout: 5000
-- tapOn:
-    id: "settings-cat-advanced"
+    visible: { id: "settings-screen" }
+    timeout: 3000
+- tapOn: { id: "settings-cat-advanced" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-advanced-screen"
-    timeout: 5000
-- assertVisible:
-    id: "settings-advanced-reasoning"
-- assertVisible:
-    id: "settings-advanced-compression"
-- assertVisible:
-    id: "settings-advanced-max-tokens"
+    visible: { id: "settings-advanced-screen" }
+    timeout: 3000
+- assertVisible: { id: "settings-advanced-reasoning" }
+- assertVisible: { id: "settings-advanced-compression" }
+- assertVisible: { id: "settings-advanced-max-tokens" }
 - takeScreenshot: "48-advanced-before"
-# reasoning: tap the value box (not the row center) to open the DropdownMenu,
-# settle the open animation (see DEFECT-6 — the option text can't be waited on),
-# then tap "High" by its fixed on-screen position. The trigger box is
-# RIGHT-ALIGNED and content-width (hugs its label text), so its LEFT EDGE
-# shifts with the label length ("Minimal · default" is much wider than
-# "High") — a fixed x that works when the label is long can miss once the
-# label is short. Tap near the box's fixed RIGHT edge (~88%) so it lands
-# inside regardless of current label width; confirmed via uiautomator dump
-# (box bounds [806,666]-[980,798] px on a 1080px-wide screen when showing
-# "High" — 88% = 950px is comfortably inside).
+# reasoning: open the dropdown at the box's right edge, settle, tap "High" by
+# fixed position (option text can't be waited on — DEFECT-6).
 - tapOn:
     point: "88%,34%"
 - waitForAnimationToEnd:
@@ -66,24 +47,21 @@ appId: io.dev32.sentient.debug
 - tapOn:
     point: "62%,65%"
 - assertVisible: "High"
-# compression slider (range 0..1): tap near the right end for a high value
+# compression slider (0..1): tap near the right end for a high value.
 - tapOn:
     point: "83%,56%"
-# max-tokens slider (range 128..8192): tap mid-track for a mid-high value
+# max-tokens slider (128..8192): tap mid-track for a mid-high value.
 - tapOn:
     point: "65%,71%"
-- assertVisible:
-    id: "settings-advanced-save"
+- assertVisible: { id: "settings-advanced-save" }
 - takeScreenshot: "48-advanced-dirty"
-- tapOn:
-    id: "settings-advanced-save"
+- tapOn: { id: "settings-advanced-save" }
 - extendedWaitUntil:
-    visible:
-      id: "settings-apply-notice"
+    visible: { id: "settings-apply-notice" }
     timeout: 3000
     optional: true
+# SLOW apply/restart budget.
 - extendedWaitUntil:
-    notVisible:
-      id: "settings-apply-notice"
+    notVisible: { id: "settings-apply-notice" }
     timeout: 45000
 - takeScreenshot: "48-advanced-after"
