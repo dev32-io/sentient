@@ -9,6 +9,9 @@ import io.sentient.mobilesdk.voice.io.VoiceAudioState.Phase
 /**
  * In-memory VoiceAudio for commonTest. Models the real contract:
  *  - configure() is idempotent + records every call (incl. the diff) for ordering tests;
+ *  - the path-carrying configure() overload additionally records the VoiceAudioPath hint
+ *    (configuredPaths) — this fake overrides it explicitly (rather than relying on the
+ *    interface's default delegation) so path-threading tests can assert on it directly;
  *  - micFrames is a bounded drop-newest channel (mirrors the real producer backpressure);
  *  - playFrame appends to playedFrames; flushPlayback clears them + marks idle;
  *  - isPlaybackIdle flips false on the first playFrame, true again after flushPlayback or
@@ -27,6 +30,13 @@ class FakeVoiceAudio(
     override val micFrames = micCh.receiveAsFlow()
 
     val configureCalls = mutableListOf<Triple<Boolean, Boolean, Int>>()
+
+    /** VoiceAudioPath hint recorded per path-carrying configure() call, in call order —
+     *  parallel to (but not 1:1 index-aligned with) configureCalls: a caller that invokes
+     *  the plain 3-arg configure() directly (bypassing the path overload) adds no entry
+     *  here. Production always goes through SdkVoice, which always calls the 4-arg form. */
+    val configuredPaths = mutableListOf<VoiceAudioPath>()
+
     val playedFrames = mutableListOf<ByteArray>()
     var flushCount = 0
         private set
@@ -46,6 +56,14 @@ class FakeVoiceAudio(
         // fake mirrors the real engine's vpio/running behavior without a device.
         voiceAudioGraph(mic, playback)
         _state.value = VoiceAudioState(Phase.Ready, micActive = mic, playbackActive = playback)
+    }
+
+    // Explicit override (rather than relying on the interface's default delegation) so
+    // this fake can record the routing hint; delegates to the 3-arg configure() above for
+    // the actual state/graph work, so both paths stay in lockstep.
+    override suspend fun configure(mic: Boolean, playback: Boolean, path: VoiceAudioPath, playbackRateHz: Int) {
+        configuredPaths += path
+        configure(mic, playback, playbackRateHz)
     }
 
     override fun playFrame(pcm16: ByteArray) {

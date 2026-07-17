@@ -1,6 +1,7 @@
 package io.sentient.mobilesdk.sdk
 
 import io.sentient.mobilesdk.voice.io.FakeVoiceAudio
+import io.sentient.mobilesdk.voice.io.VoiceAudioPath
 import io.sentient.mobilesdk.voice.talk.TurnMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -170,5 +171,119 @@ class SdkVoiceTest {
         val afterDisarm = va.configureCalls.last()
         assertEquals(true, afterDisarm.first, "disarm keeps the mic on (no per-reply teardown in voice mode)")
         assertEquals(false, afterDisarm.second, "disarm dropped playback back to the mic-only cell")
+    }
+
+    // ── VoiceAudioPath threading (S3b) ──────────────────────────────────────────
+
+    private fun sdkVoice(va: FakeVoiceAudio) = SdkVoice(
+        voiceAudio = va,
+        audioConfig = AudioPipelineConfig(),
+        audioInput = { throw IllegalStateException("not used here") },
+        onUplinkStart = {},
+        onUplinkStop = {},
+        scope = CoroutineScope(Dispatchers.Unconfined),
+        uplinkDispatcher = Dispatchers.Unconfined,
+    )
+
+    @Test
+    fun mic_rising_configure_derives_path_from_turnMode() = runTest {
+        // Hold entry: TurnMode.Manual on the mic-rising edge → VoiceAudioPath.Manual.
+        val manualVa = FakeVoiceAudio()
+        val manualVoice = sdkVoice(manualVa)
+        manualVoice.requestStart(TurnMode.Manual)
+        advanceUntilIdle()
+        assertEquals(listOf(VoiceAudioPath.Manual), manualVa.configuredPaths, "Manual turnMode on the mic-rising edge derives VoiceAudioPath.Manual")
+
+        // Continuous entry: TurnMode.Semantic on the mic-rising edge → VoiceAudioPath.Duplex.
+        val semanticVa = FakeVoiceAudio()
+        val semanticVoice = sdkVoice(semanticVa)
+        semanticVoice.requestStart(TurnMode.Semantic)
+        advanceUntilIdle()
+        assertEquals(listOf(VoiceAudioPath.Duplex), semanticVa.configuredPaths, "non-Manual turnMode on the mic-rising edge derives VoiceAudioPath.Duplex")
+    }
+
+    @Test
+    fun continuous_configure_carries_duplex_path() = runTest {
+        val va = FakeVoiceAudio()
+        val voice = sdkVoice(va)
+        // Realistic continuous-mode sequence: mic on (no turnMode declared) → TTS toggle
+        // mid-mic (VPIO cell) → mic off. No Manual turnMode is ever supplied, so every
+        // transition — rising, same-state-toggle, and falling — carries VoiceAudioPath.Duplex.
+        voice.requestConfigure(mic = true, playback = false); advanceUntilIdle()
+        voice.requestConfigure(mic = true, playback = true); advanceUntilIdle()
+        voice.requestConfigure(mic = false, playback = false); advanceUntilIdle()
+        assertEquals(List(3) { VoiceAudioPath.Duplex }, va.configuredPaths, "continuous mode never derives Manual; every cell in the sequence carries Duplex")
+    }
+
+    @Test
+    fun hold_release_arm_carries_manual_path() = runTest {
+        val va = FakeVoiceAudio()
+        val voice = sdkVoice(va)
+        // pressMic(): Hold entry establishes the Manual cell.
+        voice.requestStart(TurnMode.Manual); advanceUntilIdle()
+        // releaseMic(): endCapture() drops the mic axis (mic-falling, no turnMode) — the
+        // tracked path must NOT reset to Duplex here.
+        voice.requestStop(); advanceUntilIdle()
+        // endHoldDefer(): the release arm (playback-only axis, no turnMode) must land on the
+        // Manual cell the Hold entry established — the future MediaPlayback engine, not the
+        // duplex engine.
+        val armed = voice.armPlayback()
+        assertEquals(true, armed)
+        assertEquals(VoiceAudioPath.Manual, va.configuredPaths.last(), "Hold-release arm carries the tracked Manual path")
+        val lastCall = va.configureCalls.last()
+        assertEquals(false, lastCall.first, "release arm is playback-only (mic already fell)")
+        assertEquals(true, lastCall.second, "release arm turns playback on")
+    }
+
+    @Test
+    fun same_cell_different_path_does_not_collapse() = runTest {
+        val va = FakeVoiceAudio()
+        val voice = sdkVoice(va)
+        // Establish (mic=true, playback=false, path=Manual) via a real Hold entry.
+        voice.requestStart(TurnMode.Manual); advanceUntilIdle()
+        assertEquals(listOf(VoiceAudioPath.Manual), va.configuredPaths)
+
+        // A same-cell path-flip (mic/playback unchanged, path differs) is unreachable via the
+        // public requestConfigure/requestStart/requestPlayback/armPlayback surface today
+        // (derivePath only diverges from currentPath on a mic-rising edge, which always
+        // changes c.mic too) — requestConfigureWithPath is a TEST-ONLY seam that bypasses
+        // derivePath so this guard is pinned even though no caller can trigger it yet.
+        voice.requestConfigureWithPath(mic = true, playback = false, path = VoiceAudioPath.Duplex)
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf(VoiceAudioPath.Manual, VoiceAudioPath.Duplex),
+            va.configuredPaths,
+            "a same-cell path-flip drives a REAL voiceAudio.configure (not swallowed by the idempotent collapse) and carries the new path",
+        )
+        assertEquals(
+            listOf(true to false, true to false),
+            va.configureCalls.map { it.first to it.second },
+            "both calls hit the SAME (mic, playback) cell — confirms this is genuinely a path-only flip, not a cell change",
+        )
+    }
+
+    @Test
+    fun playback_axis_calls_still_collapse_idempotently_with_the_path_guard() = runTest {
+        // requestPlayback: a repeat with the SAME enabled value always re-derives path as the
+        // (unchanged) currentPath, so the new `&& c.path == currentPath` guard must not
+        // regress its pre-existing idempotent collapse.
+        val requestVa = FakeVoiceAudio()
+        val requestVoice = sdkVoice(requestVa)
+        requestVoice.requestPlayback(true); advanceUntilIdle()
+        requestVoice.requestPlayback(true); advanceUntilIdle()
+        assertEquals(1, requestVa.configureCalls.size, "repeated requestPlayback(true) still collapses to one engine call")
+        assertEquals(listOf(VoiceAudioPath.Duplex), requestVa.configuredPaths, "no second path recorded on the collapsed repeat")
+
+        // armPlayback: same invariant — it always passes the tracked currentPath explicitly,
+        // so a repeated arm while already playback-active must still collapse.
+        val armVa = FakeVoiceAudio()
+        val armVoice = sdkVoice(armVa)
+        val firstArm = armVoice.armPlayback()
+        val secondArm = armVoice.armPlayback()
+        assertEquals(true, firstArm)
+        assertEquals(true, secondArm, "the collapsed ack still resolves to the correct playback-active result")
+        assertEquals(1, armVa.configureCalls.size, "repeated armPlayback still collapses to one engine call")
+        assertEquals(listOf(VoiceAudioPath.Duplex), armVa.configuredPaths, "no second path recorded on the collapsed repeat")
     }
 }

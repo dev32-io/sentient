@@ -33,6 +33,17 @@ interface VoiceAudio : VoicePlaybackSink {
      */
     suspend fun configure(mic: Boolean, playback: Boolean, playbackRateHz: Int = 48_000)
 
+    /**
+     * Path-carrying overload. [path] is a ROUTING HINT for the ambiguous (mic=true,
+     * playback=false) cell: [VoiceAudioPath.Manual] selects the hold-mode capture path
+     * (future MicCapture engine); [VoiceAudioPath.Duplex] selects the continuous/VPIO
+     * path. The default body below delegates to the existing 3-arg [configure], so
+     * platform actuals that only implement the pre-existing method compile UNCHANGED
+     * and simply ignore the hint until they implement path-split engines.
+     */
+    suspend fun configure(mic: Boolean, playback: Boolean, path: VoiceAudioPath, playbackRateHz: Int = 48_000) =
+        configure(mic, playback, playbackRateHz)
+
     /** Downlink sink: one PCM16 LE frame → playback. No-op if playbackActive is false. */
     override fun playFrame(pcm16: ByteArray)
 
