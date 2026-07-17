@@ -42,13 +42,16 @@ struct SystemPromptScreen: View {
                 soulCard
             }
         }
-        .navigationBarBackButtonHidden(true)
+        // Clean → system back button (native interactive edge-swipe pop). Dirty →
+        // hide it + show the custom back that routes through the discard confirm
+        // (gesture is intentionally disabled only while a draft is unsaved).
+        .navigationBarBackButtonHidden(vm.isDirty)
         .toolbar {
-            ToolbarItem(placement: .navigation) {
-                SoulBackButton(accessibilityId: "settings-system-prompt-back", action: attemptBack)
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                if vm.isDirty {
+            if vm.isDirty {
+                ToolbarItem(placement: .navigation) {
+                    SoulBackButton(accessibilityId: "settings-system-prompt-back", action: attemptBack)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     SoulSaveButton(disabled: vm.isApplying, accessibilityId: "settings-system-prompt-save") {
                         Task { await vm.save() }
                     }

@@ -30,6 +30,9 @@ struct SettingsPageScaffold<Content: View>: View {
         .background(DuskColors.bg)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(DuskColors.bg, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
         .accessibilityIdentifier(screenId)
         .duskTheme()
     }

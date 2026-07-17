@@ -64,7 +64,9 @@ fun ModelScreen(
     val tokens = LocalTokens.current
     var confirmDiscard by remember { mutableStateOf(false) }
     val attemptBack: () -> Unit = { if (state.dirty) confirmDiscard = true else onBack() }
-    BackHandler(enabled = true, onBack = attemptBack)
+    // Intercept back only while dirty (discard-confirm gate); clean → let the NavHost
+    // handle the pop with the platform predictive-back animation. See SettingsEditChrome.
+    BackHandler(enabled = state.dirty, onBack = attemptBack)
 
     Column(modifier.fillMaxSize().safeDrawingPadding().testTag("settings-model-screen")) {
         SettingsSaveTopBar(

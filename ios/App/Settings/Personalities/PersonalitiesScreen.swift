@@ -3,7 +3,10 @@
 // personality cards (body preview + Activate + Delete-with-confirm) and a Create
 // sheet (name + instructions; the name is immutable after create). Every action
 // is imperative — its own apply-with-restart FSM run, surfaced by the banner —
-// so there is no page-level Save. Back pops directly (no dirty draft on the list).
+// so there is no page-level Save. No dirty draft on the list, so the page keeps
+// the system back button (native interactive edge-swipe pop); `onBack` stays a
+// host-contract param (mirrors AccountScreen) but the pushed page never renders
+// a custom back.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
@@ -36,12 +39,6 @@ struct PersonalitiesScreen: View {
                 ForEach(vm.personalities, id: \.name) { personality in
                     card(personality)
                 }
-            }
-        }
-        .navigationBarBackButtonHidden(true)
-        .toolbar {
-            ToolbarItem(placement: .navigation) {
-                SoulBackButton(accessibilityId: "settings-personalities-back", action: onBack)
             }
         }
         .task { await vm.load() }

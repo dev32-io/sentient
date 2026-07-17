@@ -146,10 +146,8 @@ struct UserSessionHost: View {
                 settings: settings,
                 updateModel: updateModel,
                 onLogout: logout,
-                onOpen: { path.append($0) },
-                onDismiss: { path.removeAll() }
+                onOpen: { path.append($0) }
             )
-            .navigationBarBackButtonHidden(true)
         case .settingsMemory:
             MemoryScreen(settings: settings, onBack: popRoute)
         case .settingsPersonalities:

@@ -6,14 +6,18 @@
 // version caption at the very bottom.
 //
 // Pushed as the `.settings` destination on UserSessionHost's NavigationStack (no
-// nested stack): tapping a row appends its Route to the outer `path` via `onOpen`;
-// the leading back button pops the whole settings subtree back to chat via
-// `onDismiss`. The Admin group is gated on `me.isAdmin`, collected once by the thin
-// `SettingsRootViewModel` over `ObserveSettingsAccessUseCase`.
+// nested stack): tapping a row appends its Route to the outer `path` via `onOpen`.
+// Back uses the NATIVE NavigationStack back button (pops `.settings` off `path`
+// back to chat) so the interactive edge-swipe pop works — no custom leading item,
+// which would replace the system back and kill UIKit's interactivePopGesture. The
+// Dusk look comes from restyling the system bar (bg toolbar background + dark
+// toolbar scheme + accent tint), not replacing it. The Admin group is gated on `me.isAdmin`,
+// collected once by the thin `SettingsRootViewModel` over `ObserveSettingsAccessUseCase`.
 //
-// accessibilityIdentifiers: settings-screen, settings-back, settings-logout,
+// accessibilityIdentifiers: settings-screen, settings-logout,
 // settings-update-action (UpdateFooter), settings-version (UpdateFooter caption),
-// settings-cat-<key> per row.
+// settings-cat-<key> per row. (Root back is the system button — no custom id;
+// no e2e flow targets it.)
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
@@ -79,21 +83,18 @@ struct SettingsSheet: View {
     @ObservedObject private var updateModel: UpdateModel
     private let onLogout: () -> Void
     private let onOpen: (Route) -> Void
-    private let onDismiss: () -> Void
     @State private var vm: SettingsRootViewModel
 
     init(
         settings: SettingsComponent,
         updateModel: UpdateModel,
         onLogout: @escaping () -> Void,
-        onOpen: @escaping (Route) -> Void,
-        onDismiss: @escaping () -> Void
+        onOpen: @escaping (Route) -> Void
     ) {
         self.settings = settings
         _updateModel = ObservedObject(wrappedValue: updateModel)
         self.onLogout = onLogout
         self.onOpen = onOpen
-        self.onDismiss = onDismiss
         _vm = State(initialValue: SettingsRootViewModel(observeAccess: settings.observeSettingsAccess))
     }
 
@@ -104,7 +105,6 @@ struct SettingsSheet: View {
             versionText: versionText,
             onOpen: onOpen,
             onLogout: onLogout,
-            onBack: onDismiss,
             onCheck: { await updateModel.check(); return updateModel.status },
             onInstall: { updateModel.install() }
         )
@@ -121,7 +121,6 @@ private struct SettingsRootView: View {
     let versionText: String
     let onOpen: (Route) -> Void
     let onLogout: () -> Void
-    let onBack: () -> Void
     let onCheck: () async -> UpdateStatus
     let onInstall: () -> Void
 
@@ -154,17 +153,10 @@ private struct SettingsRootView: View {
         .background(DuskColors.bg)
         .navigationTitle(titleText)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(DuskColors.bg, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
         .accessibilityIdentifier("settings-screen")
-        .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button(action: onBack) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: TypeScale.base, weight: .semibold))
-                        .foregroundStyle(DuskColors.ink2)
-                }
-                .accessibilityIdentifier("settings-back")
-            }
-        }
         .duskTheme()
     }
 
@@ -195,7 +187,6 @@ private struct SettingsRootView: View {
             versionText: "0.2.0 (6)",
             onOpen: { _ in },
             onLogout: {},
-            onBack: {},
             onCheck: { UpdateStatusUpToDate.shared },
             onInstall: {}
         )
@@ -217,7 +208,6 @@ private struct SettingsRootView: View {
             versionText: "0.2.0 (6)",
             onOpen: { _ in },
             onLogout: {},
-            onBack: {},
             onCheck: { UpdateStatusUpToDate.shared },
             onInstall: {}
         )

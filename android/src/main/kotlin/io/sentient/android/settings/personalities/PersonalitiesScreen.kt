@@ -71,7 +71,9 @@ fun PersonalitiesScreen(
     val editDirty = state.personalities.any { p -> editDrafts[p.name]?.let { it != p.body } ?: false }
     val dirty = editDirty || (newOpen && (newName.isNotBlank() || newBody.isNotBlank()))
     val attemptBack: () -> Unit = { if (dirty) confirmDiscard = true else onBack() }
-    BackHandler(enabled = true, onBack = attemptBack)
+    // Intercept back only while an edit draft / new-personality form is dirty (discard
+    // confirm); clean → let the NavHost pop with the platform predictive-back animation.
+    BackHandler(enabled = dirty, onBack = attemptBack)
 
     Column(modifier.fillMaxSize().safeDrawingPadding().testTag("settings-personalities-screen")) {
         SettingsTopBar(title = "Personalities", onBack = attemptBack, backTestTag = "settings-personalities-back")

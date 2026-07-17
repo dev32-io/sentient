@@ -76,7 +76,10 @@ fun SettingsEditScaffold(
     val tokens = LocalTokens.current
     var confirmDiscard by remember { mutableStateOf(false) }
     val attemptBack: () -> Unit = { if (dirty) confirmDiscard = true else onBack() }
-    BackHandler(enabled = true, onBack = attemptBack)
+    // Intercept system back ONLY while a draft is unsaved (routes through the discard
+    // confirm). Clean → disabled, so the NavHost's own back callback handles the pop
+    // WITH the platform predictive-back drag animation instead of us shadowing it.
+    BackHandler(enabled = dirty, onBack = attemptBack)
     Column(modifier.fillMaxSize().safeDrawingPadding().testTag(screenTestTag)) {
         SettingsSaveTopBar(
             title = title,
