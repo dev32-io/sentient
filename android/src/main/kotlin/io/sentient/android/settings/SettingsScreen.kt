@@ -3,7 +3,8 @@
 //
 // Renders GroupHeader + a SettingsCard of CategoryRows per group (Soul / User /
 // Admin / Support), a logout danger row, and the state-morphing UpdateFooter +
-// version caption pinned at the bottom. The Admin group shows only when the
+// version caption as the final scrolled-to section (inside the scroll content, not
+// a sticky bottom bar — it must not overlap category rows). The Admin group shows only when the
 // resolved access flags report isAdmin. Diagnostics is its own page now (Support
 // group row → DiagnosticsScreen), no longer inline here.
 //
@@ -91,17 +92,20 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth().padding(top = tokens.space.sm),
                 testTag = "settings-logout",
             )
+            // The update control + version caption live at the very bottom of the
+            // scrollable page (scrolled-to, not a sticky bottom bar) so they never
+            // overlap the first category rows on short screens.
+            UpdateFooter(
+                status = updateStatus,
+                isChecking = isCheckingUpdate,
+                versionText = versionText,
+                onCheck = onCheckUpdate,
+                onInstall = onInstallUpdate,
+                modifier = Modifier.padding(top = tokens.space.md),
+                actionTestTag = "settings-update-action",
+                versionTestTag = "settings-version",
+            )
         }
-        UpdateFooter(
-            status = updateStatus,
-            isChecking = isCheckingUpdate,
-            versionText = versionText,
-            onCheck = onCheckUpdate,
-            onInstall = onInstallUpdate,
-            modifier = Modifier.padding(horizontal = tokens.space.lg, vertical = tokens.space.md),
-            actionTestTag = "settings-update-action",
-            versionTestTag = "settings-version",
-        )
     }
 }
 

@@ -10,6 +10,7 @@ package io.sentient.android.settings.devices
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -49,10 +50,13 @@ fun SignalLinkDialog(
         modifier = Modifier.testTag("settings-devices-link-dialog"),
         title = { Text("Link your Signal account") },
         text = {
+            // Reserve a stable content height (≥ the QR footprint) and center the body
+            // so switching between Starting / AwaitingScan / Error does not collapse the
+            // card and jump the button row under the user's finger.
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().heightIn(min = QR_SIZE),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(tokens.space.md),
+                verticalArrangement = Arrangement.spacedBy(tokens.space.md, Alignment.CenterVertically),
             ) {
                 when (link) {
                     LinkFlowState.Starting -> {

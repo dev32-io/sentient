@@ -11,6 +11,7 @@
 // ---------------------------------------------------------------------------
 package io.sentient.android.nav
 
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraphBuilder
@@ -35,6 +36,7 @@ import io.sentient.android.settings.tools.ToolsScreen
 import io.sentient.android.settings.voice.AddVoiceScreen
 import io.sentient.android.settings.voice.FishCloneScreen
 import io.sentient.android.settings.voice.VoiceScreen
+import io.sentient.android.settings.voice.VoiceViewModel
 import io.sentient.android.update.UpdateViewModel
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
@@ -96,10 +98,27 @@ private fun NavGraphBuilder.personalitiesDestination(nav: NavHostController) {
     }
 }
 
+// Nav-result signal for a voice created/cloned in the Add/Fish sub-page. Those
+// pages set this on the Voice entry's savedStateHandle before popping; the Voice
+// destination observes it and refetches. This is reliable across the pop-back that
+// a lifecycle ON_RESUME observer misses (the Voice composable leaves + re-enters
+// composition when a child route is shown).
+private const val VOICE_LIST_DIRTY_KEY = "voice-list-dirty"
+
 private fun NavGraphBuilder.voiceDestination(nav: NavHostController) {
-    composable(Routes.SETTINGS_VOICE) {
+    composable(Routes.SETTINGS_VOICE) { entry ->
+        val vm = koinViewModel<VoiceViewModel>()
+        val dirty by entry.savedStateHandle
+            .getStateFlow(VOICE_LIST_DIRTY_KEY, false)
+            .collectAsStateWithLifecycle()
+        LaunchedEffect(dirty) {
+            if (dirty) {
+                vm.refresh()
+                entry.savedStateHandle[VOICE_LIST_DIRTY_KEY] = false
+            }
+        }
         VoiceScreen(
-            vm = koinViewModel(),
+            vm = vm,
             onBack = { nav.popBackStack() },
             onAddVoice = { nav.navigate(Routes.SETTINGS_VOICE_ADD) },
             onCloneFish = { nav.navigate(Routes.SETTINGS_VOICE_FISH) },
@@ -109,14 +128,27 @@ private fun NavGraphBuilder.voiceDestination(nav: NavHostController) {
 
 private fun NavGraphBuilder.voiceAddDestination(nav: NavHostController) {
     composable(Routes.SETTINGS_VOICE_ADD) {
-        AddVoiceScreen(vm = koinViewModel(), onBack = { nav.popBackStack() })
+        AddVoiceScreen(
+            vm = koinViewModel(),
+            onBack = { nav.popBackStack() },
+            onDone = { markVoiceListDirty(nav); nav.popBackStack() },
+        )
     }
 }
 
 private fun NavGraphBuilder.voiceFishDestination(nav: NavHostController) {
     composable(Routes.SETTINGS_VOICE_FISH) {
-        FishCloneScreen(vm = koinViewModel(), onBack = { nav.popBackStack() })
+        FishCloneScreen(
+            vm = koinViewModel(),
+            onBack = { nav.popBackStack() },
+            onDone = { markVoiceListDirty(nav); nav.popBackStack() },
+        )
     }
+}
+
+/** Flag the Voice list (the previous entry) to refetch on the pop-back. */
+private fun markVoiceListDirty(nav: NavHostController) {
+    nav.previousBackStackEntry?.savedStateHandle?.set(VOICE_LIST_DIRTY_KEY, true)
 }
 
 private fun NavGraphBuilder.audioDestination(nav: NavHostController) {

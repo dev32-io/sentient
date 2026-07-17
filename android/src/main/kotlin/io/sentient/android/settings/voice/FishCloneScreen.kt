@@ -3,8 +3,9 @@
 // list (debounced search + paged tiles + load-more + play sample) and the clone
 // form (prefilled name/tags/language once a voice is picked). FeatureDisabled shows
 // a gate message (normally unreachable — the Voice page only offers this when the
-// flag is on). On a successful clone the VM flags `done` and the screen pops back to
-// VoiceScreen, which refetches on resume. Mirrors the webui FishClonePanel.
+// flag is on). On a successful clone the VM flags `done` and the screen fires [onDone]
+// (distinct from a plain back) so the caller can signal VoiceScreen to refetch before
+// popping. Mirrors the webui FishClonePanel.
 // ---------------------------------------------------------------------------
 package io.sentient.android.settings.voice
 
@@ -41,15 +42,20 @@ import io.sentient.mobilesdk.settings.FishVoiceEntry
 
 private const val TITLE = "Clone from Fish"
 
-/** Fish clone page. Back returns to the list when a voice is picked, else pops. */
+/**
+ * Fish clone page. Back returns to the list when a voice is picked, else pops via
+ * [onBack]; [onDone] fires once on a successful clone ([FishCloneUiState.done]) so the
+ * caller can flag VoiceScreen to refetch before popping.
+ */
 @Composable
 fun FishCloneScreen(
     vm: FishCloneViewModel,
     onBack: () -> Unit,
+    onDone: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
-    LaunchedEffect(state.done) { if (state.done) onBack() }
+    LaunchedEffect(state.done) { if (state.done) onDone() }
     val inForm = state.selected != null
     BackHandler(enabled = inForm) { vm.backToList() }
 

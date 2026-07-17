@@ -22,16 +22,12 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.sentient.android.settings.components.SettingsTopBar
 import io.sentient.android.theme.LocalTokens
@@ -52,7 +48,6 @@ fun VoiceScreen(
     modifier: Modifier = Modifier,
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
-    RefreshOnReturn(vm)
     VoiceScreenContent(
         state = state,
         onBack = onBack,
@@ -123,24 +118,6 @@ private fun VoiceScreenContent(
     }
     state.pendingDelete?.let { target ->
         DeleteConfirmDialog(name = target.name, onCancel = onCancelDelete, onConfirm = onConfirmDelete)
-    }
-}
-
-/** Refetch the library on every ON_RESUME after the first — so a pack created in the
- *  Add/Fish sub-page (which pops back here) shows up without a manual reload. The
- *  first resume is skipped because the VM's init already loaded the list. */
-@Composable
-private fun RefreshOnReturn(vm: VoiceViewModel) {
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        var first = true
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                if (first) first = false else vm.refresh()
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 }
 

@@ -2,8 +2,9 @@
 // AddVoiceScreen — the Add Voice sub-page. A Record / Upload mode toggle, the
 // matching capture UI (RecordPanel for in-app recording, a SAF file picker for
 // upload), the shared name/description/tags/language form, and the multipart
-// create with progress. On success the VM flags `done` and the screen pops back to
-// VoiceScreen, which refetches on resume. Mirrors the webui AddVoiceModal.
+// create with progress. On success the VM flags `done` and the screen fires
+// [onDone] (distinct from a plain back) so the caller can signal VoiceScreen to
+// refetch before popping. Mirrors the webui AddVoiceModal.
 // ---------------------------------------------------------------------------
 package io.sentient.android.settings.voice
 
@@ -46,11 +47,16 @@ import kotlinx.coroutines.withContext
 private const val UPLOAD_MIME = "audio/*"
 private val MODE_OPTIONS = listOf(SegmentOption("record", "Record"), SegmentOption("upload", "Upload"))
 
-/** Add Voice page. On [AddVoiceUiState.done] the screen pops via [onBack]. */
+/**
+ * Add Voice page. [onBack] is a plain pop (top-bar back); [onDone] fires once on a
+ * successful create ([AddVoiceUiState.done]) so the caller can flag VoiceScreen to
+ * refetch before popping.
+ */
 @Composable
 fun AddVoiceScreen(
     vm: AddVoiceViewModel,
     onBack: () -> Unit,
+    onDone: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -59,7 +65,7 @@ fun AddVoiceScreen(
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) scope.launch { readUpload(context, uri)?.let(vm::onUpload) }
     }
-    LaunchedEffect(state.done) { if (state.done) onBack() }
+    LaunchedEffect(state.done) { if (state.done) onDone() }
 
     AddVoiceContent(
         state = state,

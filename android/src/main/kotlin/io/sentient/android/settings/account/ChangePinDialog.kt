@@ -22,6 +22,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.window.DialogProperties
 import io.sentient.android.theme.LocalTokens
 import io.sentient.android.theme.SentientTheme
 import io.sentient.mobilesdk.design.Colors
@@ -45,6 +46,11 @@ fun ChangePinDialog(
     val submittable = state.current.length == PIN_LENGTH && state.new.length == PIN_LENGTH && !state.saving
     AlertDialog(
         onDismissRequest = onDismiss,
+        // decorFitsSystemWindows = false → the dialog window uses ADJUST_NOTHING for the
+        // IME (API 31+), so it stays put instead of recentering ~half the keyboard height
+        // when a PIN field is focused. The two fields sit high in the card, above the
+        // numeric keypad, so nothing is occluded.
+        properties = DialogProperties(decorFitsSystemWindows = false),
         title = { Text("Change PIN") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(tokens.space.sm)) {

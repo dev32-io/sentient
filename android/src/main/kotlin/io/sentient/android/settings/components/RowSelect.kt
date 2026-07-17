@@ -24,10 +24,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import io.sentient.android.theme.LocalTokens
@@ -37,6 +41,9 @@ import io.sentient.mobilesdk.design.Colors
 private val BORDER_WIDTH = 1.dp
 private const val CHEVRON_DOWN = "⌄"
 
+/** Stable per-option testTag prefix so Maestro can target `settings-select-option-<value>`. */
+private const val OPTION_TAG_PREFIX = "settings-select-option-"
+
 /** One select option: a stable [value] used for equality + the display [label]. */
 data class SelectOption(val value: String, val label: String)
 
@@ -45,6 +52,7 @@ data class SelectOption(val value: String, val label: String)
  * label + a chevron on the right — tapping opens a [DropdownMenu] over [options].
  * [onSelect] fires with the chosen option's value and the menu closes.
  */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun RowSelect(
     label: String,
@@ -75,12 +83,26 @@ fun RowSelect(
             expanded = expanded,
             onToggle = { expanded = !expanded },
         ) {
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            // The menu renders in its own popup window, a SEPARATE semantics owner —
+            // the app-root testTagsAsResourceId does NOT reach it, so re-enable it here
+            // or Maestro/uiautomator can't see the option testTags as resource-ids.
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                modifier = Modifier.semantics { testTagsAsResourceId = true },
+            ) {
                 options.forEach { option ->
                     DropdownMenuItem(
                         text = { Text(option.label) },
                         onClick = { expanded = false; onSelect(option.value) },
-                        modifier = Modifier.testTag("$testTag-option-${option.value}"),
+                        // mergeDescendants makes the clickable item ONE a11y node that
+                        // carries the option label directly (via contentDescription), so
+                        // TalkBack reads it and uiautomator exposes content-desc on the
+                        // same node as the resource-id — the item otherwise has no text of
+                        // its own (the label lives in a separate child Text node).
+                        modifier = Modifier
+                            .testTag("$OPTION_TAG_PREFIX${option.value}")
+                            .semantics(mergeDescendants = true) { contentDescription = option.label },
                     )
                 }
             }
