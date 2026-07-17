@@ -122,10 +122,10 @@ Events/protocol otherwise unchanged. `smart_turn_eval` simply never appears in m
 
 | Path | iOS | Android |
 |---|---|---|
-| Media (hold/idle replies) | 1.0 | 1.0 |
-| Duplex (continuous) | 5.5 (landed) | 3.0 (landed) |
+| Media (hold/idle replies) | 5.0 | 5.0 |
+| Duplex (continuous) | 5.0 (was 5.5) | 5.0 (was 3.0) |
 
-Media route is loud; boosted PCM would clip. Constants stay in-file per the established `MIC_CAPTURE_GAIN` pattern.
+Uniform ×5.0 starting point everywhere (user decision 2026-07-17; fine-tune on device later). Note: on the loud media route ×5.0 will hard-clip loud peaks — accepted for the tuning phase. Constants stay in-file per the established `MIC_CAPTURE_GAIN` pattern.
 
 ### 7.3 Buffer-and-defer (proactive TTS during Hold)
 
@@ -161,7 +161,7 @@ Every mode transition: `talk-mode` INFO with `from`, `to`, `trigger`. Every path
 
 ## 11. E2E matrix
 
-Driver: native = Maestro tag-batch (`qa/mobile/run-e2e.sh --tags voice-mode`) + `logcat`/`os_log` trail; web = Playwright. **Loudness/volume-button rows are user-loop (agent cannot hear audio) — flagged U.**
+**Execution ownership (decision 2026-07-17): the whole matrix is the USER-LOOP device checklist — the agent cannot verify audio behavior. Agent gate per slice = unit tests + compile + framework/apk build only.** The matrix stays as the reference checklist for the user's device pass.
 
 | Case | Viewport | Pre-state | Action | Expected user-visible | Expected log trail |
 |---|---|---|---|---|---|
@@ -185,4 +185,4 @@ Driver: native = Maestro tag-batch (`qa/mobile/run-e2e.sh --tags voice-mode`) + 
 4. **S4 — iOS paths:** `MediaPlayback` + `MicCapture` scoped engines behind the facade; per-path gain. **Device gate: hold-basic + round-trip-stability before proceeding.**
 5. **S5 — Android paths:** per-mode attrs/source split. Emulator + device gate.
 6. **S6 — UI intents:** gesture → controller wiring both apps.
-7. **S7 — E2E + versions + docs:** full matrix run, version bumps, learnings/rules updates.
+7. **S7 — Versions + docs:** version bumps (§9), learnings/docs updates. Matrix execution = user device loop.
