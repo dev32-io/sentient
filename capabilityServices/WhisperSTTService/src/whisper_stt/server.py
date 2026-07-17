@@ -11,6 +11,10 @@ Wire protocol (server <-> gateway):
     - Binary frame: raw PCM16 LE mono @ 16 kHz
     - Text JSON ``{"type": "hello", ...}``  (optional)
     - Text JSON ``{"type": "ping"}``        (server replies ``{"type": "pong"}``)
+    - Text JSON ``{"type": "flush"}``       (force-finalize any open turn)
+    - Text JSON ``{"type": "turn_mode", "semantic": bool}``
+        (per-stream turn authority; ``false`` = manual/hold-to-talk with
+        Smart-Turn bypassed. Absent field / never sent = semantic true.)
 
   Server -> Client
     - Text JSON events (see CONTRACT.md for the full list).
@@ -347,6 +351,18 @@ class Server:
                 # pipeline's watchdogs are frame-clocked and won't fire
                 # again until the next mic hold delivers audio.
                 events = pipeline.flush()
+                for event in events:
+                    await self._send_event(ws, event, conn_log)
+            elif kind == "turn_mode":
+                # Per-stream turn authority (gateway relays the client's
+                # talk mode). ``semantic: false`` = manual / hold-to-talk
+                # (Smart-Turn bypassed, client-driven turns via flush);
+                # ``true`` = continuous (Smart-Turn decides). A missing or
+                # non-bool ``semantic`` field defaults to semantic — today's
+                # behavior. See TurnPipeline.set_turn_mode.
+                raw_semantic = parsed.get("semantic", True)
+                semantic = raw_semantic if isinstance(raw_semantic, bool) else True
+                events = pipeline.set_turn_mode(semantic)
                 for event in events:
                     await self._send_event(ws, event, conn_log)
 

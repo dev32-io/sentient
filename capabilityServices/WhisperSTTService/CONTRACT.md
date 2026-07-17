@@ -189,9 +189,10 @@ contiguous stream and rechunks internally.
 
 | Type      | Direction | Purpose                                         | Required? |
 | --------- | --------- | ----------------------------------------------- | --------- |
-| `hello`   | C → S     | Optional handshake; logged for debugging.       | No        |
-| `ping`    | C → S     | Liveness probe; server replies `pong`.          | No        |
-| `flush`   | C → S     | End-of-stream: force-finalize any open turn.    | No        |
+| `hello`     | C → S   | Optional handshake; logged for debugging.       | No        |
+| `ping`      | C → S   | Liveness probe; server replies `pong`.          | No        |
+| `flush`     | C → S   | End-of-stream: force-finalize any open turn.    | No        |
+| `turn_mode` | C → S   | Per-stream turn authority (semantic vs manual). | No        |
 
 #### `hello`
 
@@ -230,6 +231,29 @@ emits the normal `turn_complete` / `transcript_ready` pair. No-op when
 no turn is active. Without a `flush`, an open turn only finalizes when
 audio frames resume — the §6 watchdogs are evaluated on frame arrival,
 not on a wall clock.
+
+#### `turn_mode`
+
+```json
+{ "type": "turn_mode", "semantic": false }
+```
+
+Sets the turn authority for this stream. May be sent at stream start
+(after `ready`) and on any mid-stream change.
+
+- `semantic: true` (**default when never sent**) — Silero `vad_end` →
+  Smart-Turn v3 decides turn completion. Today's behavior, byte-for-byte.
+- `semantic: false` (manual / hold-to-talk) — Smart-Turn is **bypassed**
+  (never invoked; no `smart_turn_eval` events appear). VAD still runs:
+  pre-speech trim, pause metrics, and `vad_start` / `vad_end` events are
+  unchanged. A manual turn finalizes **only** via `flush`
+  (`reason: "client_flush"`) or the `max_turn_duration` safety valve —
+  there is no VAD-silence or Smart-Turn finalization.
+
+A missing or non-bool `semantic` field defaults to semantic (`true`).
+Normal callers flip modes *between* turns (send `flush` before switching).
+A flip that arrives with a turn still open force-finalizes it first
+(`turn.force_finalize` with `reason: "mode_change"`, WARN) before switching.
 
 > **Note on language handling**: the service exposes a `language` hint
 > at connect time (see §1.1). The hint is decode-only — Whisper still
