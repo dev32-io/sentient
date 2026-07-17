@@ -429,6 +429,69 @@ describe("createLocalSttAdapter — suppressInputFor()", () => {
 });
 
 // ---------------------------------------------------------------------------
+// setTurnMode() — gateway⇒STT turn_mode relay (2026-07-17 hold/toggle-talk
+// split design §6)
+// ---------------------------------------------------------------------------
+
+describe("createLocalSttAdapter — setTurnMode()", () => {
+  async function openedAdapter(): Promise<STTAdapter> {
+    const adapter = createLocalSttAdapter(BASE_CONFIG);
+    const openPromise = adapter.open(new AbortController().signal);
+    await Promise.resolve();
+    currentWs?._openHandshake();
+    currentWs?._receiveText({ type: "ready" });
+    await openPromise;
+    return adapter;
+  }
+
+  it("sends {type:'turn_mode', semantic:false} when the mode is manual", async () => {
+    const adapter = await openedAdapter();
+    adapter.setTurnMode("manual");
+    expect(currentWs?.send).toHaveBeenCalledTimes(1);
+    const [sent] = currentWs?.send.mock.calls[0] ?? [];
+    expect(JSON.parse(sent as string)).toEqual({ type: "turn_mode", semantic: false });
+    await adapter.close();
+  });
+
+  it("never sends turn_mode for a pure-semantic session (back-compat)", async () => {
+    const adapter = await openedAdapter();
+    // "semantic" is STT's own default — setTurnMode("semantic") as the
+    // FIRST call must be a no-op wire-wise, even though the client may
+    // still send audio.start(turnMode=semantic) explicitly (default value).
+    adapter.setTurnMode("semantic");
+    expect(currentWs?.send).not.toHaveBeenCalled();
+    await adapter.close();
+  });
+
+  it("does not resend turn_mode when a repeat audio.start keeps the same mode", async () => {
+    const adapter = await openedAdapter();
+    adapter.setTurnMode("manual");
+    expect(currentWs?.send).toHaveBeenCalledTimes(1);
+    adapter.setTurnMode("manual"); // e.g. next hold cycle, same mode
+    expect(currentWs?.send).toHaveBeenCalledTimes(1); // still just the one send
+    await adapter.close();
+  });
+
+  it("sends turn_mode:true when flipping back from manual to semantic (lock gesture)", async () => {
+    const adapter = await openedAdapter();
+    adapter.setTurnMode("manual");
+    currentWs?.send.mockClear();
+    adapter.setTurnMode("semantic");
+    expect(currentWs?.send).toHaveBeenCalledTimes(1);
+    const [sent] = currentWs?.send.mock.calls[0] ?? [];
+    expect(JSON.parse(sent as string)).toEqual({ type: "turn_mode", semantic: true });
+    await adapter.close();
+  });
+
+  it("is a no-op when the socket is closed, and does not mark the mode as sent", async () => {
+    const adapter = await openedAdapter();
+    await adapter.close();
+    adapter.setTurnMode("manual"); // must not throw
+    expect(currentWs?.send).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // I4: open() rejects immediately when WS closes before {type:'ready'}
 // ---------------------------------------------------------------------------

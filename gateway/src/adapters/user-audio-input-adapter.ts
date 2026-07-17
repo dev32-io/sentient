@@ -1,3 +1,4 @@
+import type { TurnMode } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
 import type { Adapter, AdapterContext } from "./adapter-types.js";
 import type { STTAdapter, STTAdapterConfig, STTAdapterFactory, STTEvent } from "./stt/stt-adapter-types.js";
@@ -5,6 +6,9 @@ import type { STTAdapter, STTAdapterConfig, STTAdapterFactory, STTEvent } from "
 const log = getLog(["sentient", "adapters", "user-audio-input"]);
 
 const ADAPTER_ID = "user-audio-input-v1";
+// Matches audioStartSchema's zod default (@sentient/protocol) — the mode
+// assumed until the first audio.start says otherwise.
+const DEFAULT_TURN_MODE: TurnMode = "semantic";
 
 export interface UserAudioInputAdapter extends Adapter {
   /** Forward one binary audio frame to the STT adapter. The codec is whichever
@@ -30,6 +34,12 @@ export interface UserAudioInputAdapter extends Adapter {
    *  by the session to trigger barge-in (stop playback + abort TTS
    *  controller). Pass null to clear. Called at most once per turn. */
   setOnSpeechOnset(cb: (() => void) | null): void;
+  /** Relay the mode carried on an `audio.start` frame to STT (2026-07-17
+   *  hold/toggle-talk split design §6). Remembered across STT reconnects —
+   *  a fresh STT connection defaults to "semantic" server-side, so this is
+   *  replayed immediately after every (re)connect in addition to firing on
+   *  the live audio.start that changed it. */
+  setTurnMode(mode: TurnMode): void;
 }
 
 function logSttEvent(event: STTEvent): void {
@@ -90,6 +100,17 @@ export function createUserAudioInputAdapter(
   // session abort signal + output sinks as the original start().
   let startCtx: AdapterContext | null = null;
   let onSpeechOnset: (() => void) | null = null;
+  // Last mode requested via an audio.start frame. Survives STT reconnects —
+  // replayed into every freshly-connected STT adapter (see replayTurnMode).
+  let currentTurnMode: TurnMode = DEFAULT_TURN_MODE;
+
+  // A freshly (re)connected STT adapter always defaults to "semantic"
+  // server-side, so every successful connect must replay the last known
+  // mode. setTurnMode() on the STT adapter dedupes internally — this is a
+  // safe no-op for sessions that never left "semantic".
+  function replayTurnMode(adapter: STTAdapter): void {
+    adapter.setTurnMode(currentTurnMode);
+  }
   // Aborting this cancels only the current supervisor loop (used by
   // reconfigure() to tear down the in-flight retry cycle). The outer
   // ctx.abortSignal ends the session.
@@ -154,6 +175,7 @@ export function createUserAudioInputAdapter(
           adapter = await openOnce(currentConfig, ctx);
           log.info("stt-connected", { attempt, language: currentConfig.language });
           sttAdapter = adapter;
+          replayTurnMode(adapter);
           backoffMs = RECONNECT_INITIAL_MS;
         } catch (err: unknown) {
           if (ctx.abortSignal.aborted || supervisorSignal.aborted) break;
@@ -220,6 +242,7 @@ export function createUserAudioInputAdapter(
         firstAdapter = await openOnce(currentConfig, ctx);
         sttAdapter = firstAdapter;
         log.info("stt-connected", { attempt: 1, language: currentConfig.language });
+        replayTurnMode(firstAdapter);
       } catch (err: unknown) {
         log.warn("stt-initial-connect-failed", {
           reason: err instanceof Error ? err.message : String(err),
@@ -282,6 +305,7 @@ export function createUserAudioInputAdapter(
         firstAdapter = await openOnce(newConfig, ctx);
         sttAdapter = firstAdapter;
         log.info("stt-connected", { attempt: 1, language: newConfig.language });
+        replayTurnMode(firstAdapter);
       } catch (err: unknown) {
         log.warn("stt-reconfigure-initial-connect-failed", {
           reason: err instanceof Error ? err.message : String(err),
@@ -307,6 +331,13 @@ export function createUserAudioInputAdapter(
 
     setOnSpeechOnset(cb: (() => void) | null): void {
       onSpeechOnset = cb;
+    },
+
+    setTurnMode(mode: TurnMode): void {
+      const prev = currentTurnMode;
+      currentTurnMode = mode;
+      log.debug("turn-mode-relay", { from: prev, to: mode, hasLiveSttAdapter: sttAdapter !== null });
+      sttAdapter?.setTurnMode(mode);
     },
   };
 }

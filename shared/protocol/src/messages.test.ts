@@ -7,6 +7,7 @@ import {
   conversationFeedUserItemSchema,
 } from "./conversation.ts";
 import {
+  audioStartSchema,
   clientMessageSchema,
   cognitionStatusSchema,
   connectorAudioDoneSchema,
@@ -415,9 +416,41 @@ describe("cognition.status", () => {
   });
 });
 
+describe("audio.start turnMode (hold/toggle-talk split design §4)", () => {
+  it("defaults turnMode to semantic when absent", () => {
+    const result = audioStartSchema.safeParse({ type: "audio.start" });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.turnMode).toBe("semantic");
+  });
+
+  it("parses explicit turnMode=manual", () => {
+    const result = audioStartSchema.safeParse({ type: "audio.start", turnMode: "manual" });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.turnMode).toBe("manual");
+  });
+
+  it("parses explicit turnMode=semantic", () => {
+    const result = audioStartSchema.safeParse({ type: "audio.start", turnMode: "semantic" });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.turnMode).toBe("semantic");
+  });
+
+  it("rejects an invalid turnMode value", () => {
+    expect(audioStartSchema.safeParse({ type: "audio.start", turnMode: "auto" }).success).toBe(false);
+  });
+});
+
 describe("clientMessageSchema", () => {
   it("parses audio.start", () => {
     expect(clientMessageSchema.safeParse({ type: "audio.start" }).success).toBe(true);
+  });
+
+  it("parses audio.start with turnMode=manual (client⇒gateway wire contract)", () => {
+    const result = clientMessageSchema.safeParse({ type: "audio.start", turnMode: "manual" });
+    expect(result.success).toBe(true);
+    if (result.success && result.data.type === "audio.start") {
+      expect(result.data.turnMode).toBe("manual");
+    }
   });
 
   it("parses session.configure with capabilities", () => {
