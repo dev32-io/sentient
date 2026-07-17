@@ -1,8 +1,10 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { McpCatalog } from "@sentient/config";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { isMap, parseDocument } from "yaml";
+import { createPersonalityStore } from "./personality-store.js";
 import { type RenderContext, renderProfile, writeRendered } from "./profile-renderer.js";
 import { PROFILE_SCHEMA_VERSION, type ProfileV1 } from "./profile-types.js";
 
@@ -355,5 +357,69 @@ describe("writeRendered (side-effect helper)", () => {
 
     expect(soulMode).toBe(0o644);
     expect(configMode).toBe(0o644);
+  });
+});
+
+// Regression: personalities live ONLY in config.yaml#agent.personalities (and
+// the active one as agent.system_prompt), written by the personality-store.
+// They are NOT in profile.json / ProfileV1. The renderer regenerates config.yaml
+// from the profile, so before the fix every apply / boot re-render (the webui
+// apply bar calls POST /apply on any "slow" op — creating a personality is one)
+// wiped the whole library. writeRendered must splice those sections back in.
+describe("writeRendered preserves personality state across a re-render (wipe-bug regression)", () => {
+  let tmpDir: string;
+  const userId = "carol";
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "sentient-test-"));
+    process.env.SENTIENT_GATEWAY_ROOT = tmpDir;
+  });
+
+  afterEach(() => {
+    // biome-ignore lint/performance/noDelete: test cleanup requires full env var removal
+    delete process.env.SENTIENT_GATEWAY_ROOT;
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  // The active personality is encoded as agent.system_prompt (extractList
+  // resolves activeName by matching it against each personality body).
+  function activate(configPath: string, body: string): void {
+    const doc = parseDocument(readFileSync(configPath, "utf8"));
+    const agent = doc.get("agent");
+    if (!isMap(agent)) throw new Error("test setup: rendered config has no agent map");
+    agent.set("system_prompt", body);
+    writeFileSync(configPath, doc.toString());
+  }
+
+  it("keeps a created + activated personality after an apply re-render", async () => {
+    const profile = buildTestProfile(userId);
+    const hermesDir = join(tmpDir, userId, "profiles", userId);
+    const configPath = join(hermesDir, "config.yaml");
+
+    // 1) Provision the initial config.yaml.
+    await writeRendered(userId, renderProfile(profile, "TEMPLATE_BODY"), { writeSoul: true });
+
+    // 2) Create a personality (writes agent.personalities into config.yaml).
+    const store = createPersonalityStore({ profileDir: hermesDir });
+    const body = "You are a rigorous scientist. Cite sources.";
+    expect((await store.add("scientist", body)).ok).toBe(true);
+
+    // 3) Activate it.
+    activate(configPath, body);
+
+    const before = await store.list();
+    if (!before.ok) throw new Error("unreachable");
+    expect(before.value.personalities.map((p) => p.name)).toContain("scientist");
+    expect(before.value.activeName).toBe("scientist");
+
+    // 4) An apply / boot re-renders config.yaml from the profile (no
+    //    personalities) and writes it back. The personality MUST survive.
+    await writeRendered(userId, renderProfile(profile, "TEMPLATE_BODY"), { writeSoul: false });
+
+    const after = await store.list();
+    if (!after.ok) throw new Error("unreachable");
+    expect(after.value.personalities.map((p) => p.name)).toContain("scientist");
+    expect(after.value.personalities.find((p) => p.name === "scientist")?.body).toBe(body);
+    expect(after.value.activeName).toBe("scientist");
   });
 });
