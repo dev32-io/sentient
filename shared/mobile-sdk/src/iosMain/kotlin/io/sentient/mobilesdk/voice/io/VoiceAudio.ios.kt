@@ -28,6 +28,7 @@ import io.sentient.mobilesdk.log.createLogger
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.BetaInteropApi
 import kotlinx.cinterop.alloc
+import kotlinx.cinterop.cValue
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.value
@@ -44,6 +45,8 @@ import platform.AVFAudio.AVAudioSessionCategoryOptionDefaultToSpeaker
 import platform.AVFAudio.AVAudioSessionCategoryPlayAndRecord
 import platform.AVFAudio.AVAudioSessionModeVideoChat
 import platform.AVFAudio.AVAudioSessionPortOverrideSpeaker
+import platform.AVFAudio.AVAudioVoiceProcessingOtherAudioDuckingConfiguration
+import platform.AVFAudio.AVAudioVoiceProcessingOtherAudioDuckingLevelMin
 import platform.AVFAudio.setActive
 import platform.Foundation.NSError
 import kotlin.concurrent.AtomicInt
@@ -400,7 +403,26 @@ class IosVoiceAudio : VoiceAudio {
             val ok = input.setVoiceProcessingEnabled(enabled, errVar.ptr)
             if (!ok) throw IllegalStateException("vpio enable failed")
         }
+        if (enabled) minimizeVoiceProcessingDucking(input)
         log.info("vpio", mapOf("enabled" to enabled))
+    }
+
+    /** VPIO treats our own player→mainMixer TTS as "other audio" and DUCKS it (WWDC23
+     *  10235) — a big part of why the full-duplex cell reads quiet. duckingLevel .min
+     *  keeps other audio "as loud as possible" while VPIO's AEC stays fully intact.
+     *  Advanced ducking (voice-activity-driven) stays off: we want a constant level,
+     *  not per-utterance pumping. Best-effort (no-crash contract): a failure keeps the
+     *  default duck, WARN + move on. iOS 17+ API; deployment target is 18. */
+    private fun minimizeVoiceProcessingDucking(input: platform.AVFAudio.AVAudioInputNode) {
+        runCatching {
+            input.voiceProcessingOtherAudioDuckingConfiguration = cValue {
+                enableAdvancedDucking = false
+                duckingLevel = AVAudioVoiceProcessingOtherAudioDuckingLevelMin
+            }
+            log.info("vpio-ducking", mapOf("level" to "min", "advanced" to false))
+        }.onFailure {
+            log.warn("vpio-ducking-failed", mapOf("cause" to (it.message ?: "unknown")))
+        }
     }
 
     private companion object {
