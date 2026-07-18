@@ -20,11 +20,13 @@ import io.sentient.mobiledata.outbox.OutboundCache
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.sdk.ConnectionState
 import io.sentient.mobilesdk.transport.SdkStatus
+import io.sentient.mobilesdk.voice.talk.TalkMode
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -43,6 +45,27 @@ class ChatViewModel(
     /** Transport + voice axis. Latest-wins StateFlow for the connection banner + composer. */
     val connection: StateFlow<ConnectionState> = component.connection.state
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STATE_SUBSCRIBE_STOP_MS), ConnectionState())
+
+    /** Talk mode (Idle | Hold | Continuous), owned by the SDK's TalkModeController. Exposed
+     *  for the keep-screen-on derivation below (and its reason logging in ChatHost). */
+    val talkMode: StateFlow<TalkMode> = component.talkMode
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STATE_SUBSCRIBE_STOP_MS), TalkMode.Idle)
+
+    /**
+     * Temporary keep-screen-on condition (S8): `Continuous talk mode OR the assistant is
+     * audibly speaking`. Reuses the EXACT [ConnectionState.isSpeaking] signal that drives
+     * the existing speaking visuals (BubbleSpeakingWave) — not a new signal. TTS frames
+     * buffered during a Hold are NOT "speaking" until they actually play after release,
+     * which is the desired semantics here too. Hold itself does not force screen-on: the
+     * user's finger on the screen already keeps it awake.
+     *
+     * Pure combine — no side effects, no logging — so it stays the testable seam. ChatHost
+     * (the chat screen) applies the platform FLAG_KEEP_SCREEN_ON and owns every clear path
+     * (condition-false, screen teardown), logging the reason for each transition there.
+     */
+    val keepScreenOn: StateFlow<Boolean> = combine(talkMode, connection) { mode, conn ->
+        mode == TalkMode.Continuous || conn.isSpeaking
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STATE_SUBSCRIBE_STOP_MS), false)
 
     init {
         log.info("init", mapOf("sessionId" to (sessionId ?: "<new>")))

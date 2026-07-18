@@ -26,8 +26,15 @@
 //
 // accessibilityIdentifier `chat-screen` lives on the title leaf in ChatTitleBar;
 // it is NOT applied to the SideDrawer container (that would flatten the a11y tree).
+//
+// Keep-screen-on (S8): UIApplication.shared.isIdleTimerDisabled is APP-GLOBAL (not
+// per-view like Android's window flag), so every clear path is wired here: condition
+// false (vm.keepScreenOn), this view disappearing (nav-away, e.g. to Settings), and
+// scene backgrounding (screen is off anyway — never leave the app-global timer
+// disabled while backgrounded). See applyIdleTimer/forceIdleTimerOff below.
 // ---------------------------------------------------------------------------
 import SwiftUI
+import UIKit
 import MobileData
 
 struct ChatView: View {
@@ -54,6 +61,17 @@ struct ChatView: View {
 
     @State private var drawerOpen = false
     @State private var panelNowMs: Int64 = 0
+
+    // ── Keep-screen-on (S8) ─────────────────────────────────────────────────────
+
+    /// Ambient scene state, read ONLY to gate/force-clear the idle timer. Distinct from
+    /// UserSessionHost's scenePhase ownership (SDK pause/resume) — this is a narrower,
+    /// view-local concern over a UI-only device flag, not session lifecycle.
+    @Environment(\.scenePhase) private var scenePhase
+    /// Carries the last reason a true→false condition was seen (see ChatViewModel's
+    /// keepScreenOn doc) so the OFF log line still names what just ended.
+    @State private var lastKeepScreenOnReason = "speaking"
+    private let keepScreenOnLog = AppLog("chat", "keep-screen-on")
 
     // ── Sheet + alert state ───────────────────────────────────────────────────────
 
@@ -148,6 +166,66 @@ struct ChatView: View {
             // liveness probe; not-READY → reconnect. Scoped to this view's lifetime.
             vm.ensureConnected()
         }
+        // Clear path (a) + resync: condition-driven changes while this view is the
+        // current screen. Skipped while backgrounded — the background handler below owns
+        // that state exclusively so the two paths never fight over the same flag.
+        .onChange(of: vm.keepScreenOn) { _, on in
+            guard scenePhase != .background else { return }
+            applyIdleTimer(on: on)
+        }
+        // Resync on reappear: covers both initial appear and returning from a sibling
+        // destination (e.g. Settings, pushed on the SAME app-global UIApplication — see
+        // the file header). onDisappear force-cleared the flag on the way out, so a
+        // still-true condition needs re-applying on the way back in.
+        .onAppear {
+            applyIdleTimer(on: vm.keepScreenOn)
+        }
+        // Clear path (b): this view leaving the screen (nav-away). isIdleTimerDisabled is
+        // APP-GLOBAL — leaving it set here would keep an unrelated screen's display awake.
+        .onDisappear {
+            forceIdleTimerOff(reason: "teardown")
+        }
+        // Clear path (c) + resync: scene backgrounding. The screen is off regardless, so
+        // the timer MUST NOT stay disabled in the background; resync on the way back to
+        // .active picks the condition back up if it's still true.
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .background:
+                forceIdleTimerOff(reason: "background")
+            case .active:
+                applyIdleTimer(on: vm.keepScreenOn)
+            default:
+                break
+            }
+        }
+    }
+
+    // ── Keep-screen-on application (S8) ─────────────────────────────────────────────
+
+    /// Applies the condition-driven state. Idempotent (no-op / no log if already at
+    /// `on`). Reason is computed fresh from the VM's current inputs when turning ON
+    /// (accurate — describing a live true condition); the OFF log reuses the last-seen
+    /// ON reason (the OR'd condition reads false on both sides once it drops, so the
+    /// "why" has to be remembered).
+    private func applyIdleTimer(on: Bool) {
+        guard UIApplication.shared.isIdleTimerDisabled != on else { return }
+        UIApplication.shared.isIdleTimerDisabled = on
+        let reason: String
+        if on {
+            reason = vm.talkMode == .continuous ? "continuous" : "speaking"
+            lastKeepScreenOnReason = reason
+        } else {
+            reason = lastKeepScreenOnReason
+        }
+        keepScreenOnLog.info("flag on=\(on) reason=\(reason)")
+    }
+
+    /// Lifecycle-forced clear (teardown / background) — always wins over the condition,
+    /// independent of `vm.keepScreenOn`. Idempotent.
+    private func forceIdleTimerOff(reason: String) {
+        guard UIApplication.shared.isIdleTimerDisabled else { return }
+        UIApplication.shared.isIdleTimerDisabled = false
+        keepScreenOnLog.info("flag on=false reason=\(reason)")
     }
 
     // ── Main content column ───────────────────────────────────────────────────────

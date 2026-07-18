@@ -15,6 +15,7 @@ import io.sentient.mobilesdk.protocol.AudioPreferencesPatch
 import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.sdk.SentientSdk
 import io.sentient.mobilesdk.util.Clock
+import io.sentient.mobilesdk.voice.talk.TalkMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.filterIsInstance
@@ -43,6 +44,12 @@ open class ChatComponent(
 
     /** The gateway-minted active session id, from the SDK's session.created/switched anchor. */
     val currentSessionId: StateFlow<String?> get() = sdk.currentSessionId
+
+    /** Talk mode (Idle | Hold | Continuous), owned by the SDK's TalkModeController. Thin
+     *  passthrough mirroring [currentSessionId] — a single StateFlow with no combine/mapping
+     *  needed, so it skips a dedicated repository. Consumed by the chat VMs' keep-screen-on
+     *  derivation (Continuous ⇒ hands-free, no touch keeping the device awake). */
+    val talkMode: StateFlow<TalkMode> get() = sdk.talkMode
 
     /**
      * One-shot notice stream: emits [Unit] whenever the SDK fires [SdkEvent.ReopenFailed]
