@@ -152,31 +152,28 @@ export function createAcpWireRegistry(ownerUserId = "__unowned__"): AcpWireRegis
   function disposeAll(): void {
     if (pool.size === 0) return;
     log.warn("disposeAll", { ownerUserId, count: pool.size, reason: "force-dispose-backstop" });
-    try {
-      for (const [surfaceId, entry] of pool) {
-        try {
-          if (entry.handle !== null) {
-            entry.handle.dispose();
-          } else {
-            entry.dialPromise
-              .then((h) => h.dispose())
-              .catch(() => {
-                /* failed dial — nothing to dispose */
-              });
-          }
-          log.debug("disposeAll.entry", { ownerUserId, surfaceId, refCount: entry.refCount });
-        } catch (err: unknown) {
-          // Continue disposing remaining entries even if one throws.
-          log.warn("disposeAll.dispose-entry-failed", {
-            ownerUserId,
-            surfaceId,
-            reason: err instanceof Error ? err.message : String(err),
-          });
+    for (const [surfaceId, entry] of pool) {
+      try {
+        if (entry.handle !== null) {
+          entry.handle.dispose();
+        } else {
+          entry.dialPromise
+            .then((h) => h.dispose())
+            .catch(() => {
+              /* failed dial — nothing to dispose */
+            });
         }
+        log.debug("disposeAll.entry", { ownerUserId, surfaceId, refCount: entry.refCount });
+      } catch (err: unknown) {
+        // Continue disposing remaining entries even if one throws.
+        log.warn("disposeAll.dispose-entry-failed", {
+          ownerUserId,
+          surfaceId,
+          reason: err instanceof Error ? err.message : String(err),
+        });
       }
-    } finally {
-      pool.clear();
     }
+    pool.clear();
   }
 
   return { acquire, release, refCount, hasLiveWires, disposeAll };

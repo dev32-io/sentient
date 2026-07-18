@@ -23,6 +23,11 @@ function fakeHandle(tag: string): AcpWireHandle & { disposed: () => boolean } {
   };
 }
 
+/** Test handle: minimal acpConn + optional dispose callback. */
+function testHandle(dispose?: () => void): AcpWireHandle {
+  return { acpConn: {} as never, dispose: dispose ?? (() => {}) };
+}
+
 /** A dial that resolves immediately to a fresh handle and counts invocations. */
 function immediateDial(): { dial: () => Promise<AcpWireHandle>; calls: () => number; last: () => AcpWireHandle } {
   let count = 0;
@@ -204,8 +209,7 @@ describe("AcpWireRegistry — ref-counted per-surface pooling", () => {
   it("hasLiveWires reflects pooled entries", async () => {
     const reg = createAcpWireRegistry("u_00000001");
     expect(reg.hasLiveWires()).toBe(false);
-    const handle = { acpConn: {} as never, dispose: () => {} };
-    await reg.acquire("surface-a", async () => handle);
+    await reg.acquire("surface-a", async () => testHandle());
     expect(reg.hasLiveWires()).toBe(true);
     reg.release("surface-a");
     expect(reg.hasLiveWires()).toBe(false);
@@ -215,18 +219,16 @@ describe("AcpWireRegistry — ref-counted per-surface pooling", () => {
     const reg = createAcpWireRegistry("u_00000001");
     let disposedA = 0;
     let disposedB = 0;
-    await reg.acquire("a", async () => ({
-      acpConn: {} as never,
-      dispose: () => {
+    await reg.acquire("a", async () =>
+      testHandle(() => {
         disposedA++;
-      },
-    }));
-    await reg.acquire("b", async () => ({
-      acpConn: {} as never,
-      dispose: () => {
+      }),
+    );
+    await reg.acquire("b", async () =>
+      testHandle(() => {
         disposedB++;
-      },
-    }));
+      }),
+    );
     reg.disposeAll();
     expect(disposedA).toBe(1);
     expect(disposedB).toBe(1);
@@ -251,12 +253,9 @@ describe("AcpWireRegistry — ref-counted per-surface pooling", () => {
     expect(reg.hasLiveWires()).toBe(false);
 
     // Eventually resolve the pending dial and attach a dispose tracker.
-    const handle = {
-      acpConn: {} as never,
-      dispose: () => {
-        disposed++;
-      },
-    };
+    const handle = testHandle(() => {
+      disposed++;
+    });
     (resolveDial as unknown as (h: AcpWireHandle) => void)(handle);
     await acquirePromise;
     // Let the pending-dial dispose chain settle.
@@ -271,24 +270,21 @@ describe("AcpWireRegistry — ref-counted per-surface pooling", () => {
     let disposedA = 0;
     let disposedC = 0;
 
-    await reg.acquire("a", async () => ({
-      acpConn: {} as never,
-      dispose: () => {
+    await reg.acquire("a", async () =>
+      testHandle(() => {
         disposedA++;
-      },
-    }));
-    await reg.acquire("b", async () => ({
-      acpConn: {} as never,
-      dispose: () => {
+      }),
+    );
+    await reg.acquire("b", async () =>
+      testHandle(() => {
         throw new Error("dispose-failure");
-      },
-    }));
-    await reg.acquire("c", async () => ({
-      acpConn: {} as never,
-      dispose: () => {
+      }),
+    );
+    await reg.acquire("c", async () =>
+      testHandle(() => {
         disposedC++;
-      },
-    }));
+      }),
+    );
 
     // disposeAll should not throw; it should log and continue.
     expect(() => reg.disposeAll()).not.toThrow();
