@@ -188,6 +188,70 @@ describe("PersonSession", () => {
   });
 });
 
+describe("PersonSession — wires/cycles/anchors composition", () => {
+  function makeSession(): PersonSession {
+    return new PersonSession({
+      profile: "u_00000001",
+      hermesUrl: "http://localhost:1/ws",
+      hermesApiKey: "k",
+      userId: "u_00000001",
+      replayBufferMaxBytes: 1024,
+    });
+  }
+
+  it("owns per-user wire and cycle registries", () => {
+    const s = makeSession();
+    expect(s.wires.hasLiveWires()).toBe(false);
+    expect(s.cycles.hasActiveLease()).toBe(false);
+  });
+
+  it("anchors are per-surface read/write/drop", () => {
+    const s = makeSession();
+    expect(s.conversationIdFor("surf")).toBeNull();
+    s.updateConversationId("surf", "conv-1");
+    expect(s.conversationIdFor("surf")).toBe("conv-1");
+    s.dropAnchor("surf");
+    expect(s.conversationIdFor("surf")).toBeNull();
+  });
+
+  it("clearAllAnchors drops every anchor", () => {
+    const s = makeSession();
+    s.updateConversationId("a", "c1");
+    s.updateConversationId("b", "c2");
+    s.clearAllAnchors();
+    expect(s.conversationIdFor("a")).toBeNull();
+    expect(s.conversationIdFor("b")).toBeNull();
+  });
+
+  it("hasLiveResources is true while a wire is pooled even with no buffers", async () => {
+    const s = makeSession();
+    expect(s.hasLiveResources()).toBe(false);
+    await s.wires.acquire("surf", async () => ({ acpConn: {} as never, dispose: () => {} }));
+    expect(s.hasLiveResources()).toBe(true);
+    s.wires.release("surf");
+    expect(s.hasLiveResources()).toBe(false);
+  });
+
+  it("dispose force-disposes wires, aborts cycles, clears anchors", async () => {
+    const s = makeSession();
+    let disposed = 0;
+    await s.wires.acquire("surf", async () => ({
+      acpConn: {} as never,
+      dispose: () => {
+        disposed++;
+      },
+    }));
+    const ctrl = new AbortController();
+    s.cycles.acquire("surf", "c1", ctrl);
+    s.updateConversationId("surf", "c1");
+    s.dispose();
+    expect(disposed).toBe(1);
+    expect(ctrl.signal.aborted).toBe(true);
+    expect(s.conversationIdFor("surf")).toBeNull();
+    expect(s.hasLiveResources()).toBe(false);
+  });
+});
+
 describe("PersonSession.admitPendingId", () => {
   it("admits a new pendingId once, rejects the duplicate", () => {
     const s = makeSession();
