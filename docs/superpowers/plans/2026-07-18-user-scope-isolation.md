@@ -28,7 +28,8 @@
 **Modified:**
 - `gateway/src/hermes-adapter-client/acp-wire-registry.ts` — add `ownerUserId` stamp/assert + `hasLiveWires()` + `disposeAll()`.
 - `gateway/src/session-handlers/surface-cycle-registry.ts` — add `hasActiveLease()` + `abortAll()`.
-- `gateway/src/person-session/person-session.ts` — own `wires`, `cycles`, anchors; retention guard; `dispose()`.
+- `gateway/src/person-session/conversation-anchors.ts` — **new** small `surfaceId → conversationId` map wrapper (mirrors `DeviceBufferStore` precedent), composed by PersonSession to keep it under the 300-line cap.
+- `gateway/src/person-session/person-session.ts` — own `wires`, `cycles`, and a composed `ConversationAnchors`; anchor methods delegate; retention guard; `dispose()`.
 - `gateway/src/person-session/person-session-registry.ts` — call `dispose()` on removal; retention includes wires/cycles.
 - `gateway/src/session-router.ts` — remove anchors; binding drops `conversationId`.
 - `gateway/src/session-handlers/ws-session-configure.ts` — route wire/cycle/anchor through `personSession`; Tier-3 assertion; source `conversationId` from anchor.
@@ -310,11 +311,13 @@ git commit -m "feat(gateway): SurfaceCycleRegistry hasActiveLease + abortAll"
 ## Task 3: PersonSession owns wires, cycles, anchors + dispose()
 
 **Files:**
+- Create: `gateway/src/person-session/conversation-anchors.ts` (pure map wrapper — no dedicated test per `.claude/rules/testing.md`; covered through PersonSession delegation)
 - Modify: `gateway/src/person-session/person-session.ts`
 - Test: `gateway/src/person-session/person-session.test.ts`
 
 **Interfaces:**
 - Consumes: `createAcpWireRegistry(ownerUserId)` (Task 1), `createSurfaceCycleRegistry()` (Task 2).
+- Produces `createConversationAnchors(): ConversationAnchors` with `get(surfaceId): string | null`, `set(surfaceId, id): void`, `drop(surfaceId): void`, `clear(): void`, `size(): number`. PersonSession composes one and its anchor methods delegate — this keeps `person-session.ts` under the 300-line cap (Global Constraints) and mirrors the `DeviceBufferStore` composition precedent.
 - Produces on `PersonSession`:
   - `readonly wires: AcpWireRegistry`
   - `readonly cycles: SurfaceCycleRegistry`
@@ -395,23 +398,53 @@ it("dispose force-disposes wires, aborts cycles, clears anchors", async () => {
 Run: `source scripts/env.sh && bun run --filter '@sentient/gateway' test -- person-session.test`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement**
+- [ ] **Step 3a: Create the anchors module**
+
+Create `gateway/src/person-session/conversation-anchors.ts`:
+
+```ts
+// surfaceId → conversationId map, owned per-PersonSession. Extracted from
+// SessionRouter: the anchor's lifetime is the surface's lifetime WITHIN one
+// user's scope (never a process-global map). Pure wrapper — no logging (the
+// owning PersonSession logs with its profile context).
+export interface ConversationAnchors {
+  get(surfaceId: string): string | null;
+  set(surfaceId: string, conversationId: string): void;
+  drop(surfaceId: string): boolean;
+  clear(): void;
+  size(): number;
+}
+
+export function createConversationAnchors(): ConversationAnchors {
+  const anchors = new Map<string, string>();
+  return {
+    get: (surfaceId) => anchors.get(surfaceId) ?? null,
+    set: (surfaceId, conversationId) => {
+      anchors.set(surfaceId, conversationId);
+    },
+    drop: (surfaceId) => anchors.delete(surfaceId),
+    clear: () => anchors.clear(),
+    size: () => anchors.size,
+  };
+}
+```
+
+- [ ] **Step 3b: Implement PersonSession composition**
 
 In `person-session.ts`, add imports:
 
 ```ts
 import { type AcpWireRegistry, createAcpWireRegistry } from "../hermes-adapter-client/acp-wire-registry.js";
 import { type SurfaceCycleRegistry, createSurfaceCycleRegistry } from "../session-handlers/surface-cycle-registry.js";
+import { type ConversationAnchors, createConversationAnchors } from "./conversation-anchors.js";
 ```
 
-Add fields + construction (inside the class, near `_deviceBuffers`):
+Add fields (inside the class, near `_deviceBuffers`):
 
 ```ts
   readonly wires: AcpWireRegistry;
   readonly cycles: SurfaceCycleRegistry;
-  /** surfaceId → conversationId. Moved out of SessionRouter: anchor lifetime is
-   *  the surface's lifetime WITHIN this user's scope (never global). */
-  private readonly _anchors = new Map<string, string>();
+  private readonly _anchors: ConversationAnchors = createConversationAnchors();
 ```
 
 In the constructor (after `this._deviceBuffers = ...`):
@@ -422,26 +455,26 @@ In the constructor (after `this._deviceBuffers = ...`):
     this.cycles = createSurfaceCycleRegistry();
 ```
 
-Add methods (before `get isIdle`):
+Add methods (before `get isIdle`) — thin delegators, logging stays here for profile context:
 
 ```ts
   conversationIdFor(surfaceId: string): string | null {
-    return this._anchors.get(surfaceId) ?? null;
+    return this._anchors.get(surfaceId);
   }
 
   updateConversationId(surfaceId: string, conversationId: string): void {
-    const prev = this._anchors.get(surfaceId) ?? null;
+    const prev = this._anchors.get(surfaceId);
     this._anchors.set(surfaceId, conversationId);
     log.debug("updateConversationId", { profile: this.profile, surfaceId, prev, next: conversationId });
   }
 
   dropAnchor(surfaceId: string): void {
-    if (!this._anchors.delete(surfaceId)) return;
+    if (!this._anchors.drop(surfaceId)) return;
     log.debug("dropAnchor", { profile: this.profile, surfaceId });
   }
 
   clearAllAnchors(): void {
-    const count = this._anchors.size;
+    const count = this._anchors.size();
     if (count === 0) return;
     this._anchors.clear();
     log.info("clearAllAnchors", { profile: this.profile, count });
@@ -478,7 +511,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add gateway/src/person-session/person-session.ts gateway/src/person-session/person-session.test.ts
+git add gateway/src/person-session/conversation-anchors.ts gateway/src/person-session/person-session.ts gateway/src/person-session/person-session.test.ts
 git commit -m "feat(gateway): PersonSession owns wires/cycles/anchors + dispose()"
 ```
 
