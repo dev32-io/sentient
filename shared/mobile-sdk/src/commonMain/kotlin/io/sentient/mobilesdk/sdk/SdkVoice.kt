@@ -29,6 +29,17 @@
 // the wire order audio.start → binary frames → audio.end is preserved and
 // serialized too (no late frame past audio.end).
 //
+// PATH + MIC-AXIS derivation are BOTH race-free against the back-to-back intents the
+// TalkModeController fires (end+start on lock, stop+arm on release) — neither reads the
+// tracked micOn, which lags behind those intents until each queued command APPLIES:
+//   - the VoiceAudioPath for a turn-open is derived from the EXPLICIT turnMode (Manual →
+//     Manual, Semantic/null → Duplex), never from a micOn-gated "rising edge" guess;
+//   - the playback-axis-only commands (armPlayback / requestPlayback) carry NULL mic AND
+//     NULL path sentinels, both resolved to the LIVE micOn / currentPath at APPLY time: an
+//     arm enqueued behind a stop lands as (mic=false, …) — never re-opening the mic — and a
+//     flush-arm enqueued behind a turn-open lands on the path that turn-open APPLIED (e.g.
+//     Duplex on lock), never the stale pre-lock path that would degrade the whole session.
+//
 // When the platform bundle ships NO VoiceAudio (text-only path / host tests), the
 // pipeline is null: Configure still fires the control-frame callbacks and [audioState]
 // stays Idle — so startMic/stopMic still send audio.start/audio.end with no uplink,
@@ -126,14 +137,23 @@ class SdkVoice(
      *  await THIS command's result without racing a stale state-flow value. */
     private sealed interface Cmd {
         data class Configure(
-            val mic: Boolean,
+            // Explicit mic axis, or NULL = "keep the LIVE micOn at apply time" — the
+            // playback-axis-only sentinel used by armPlayback / requestPlayback. [handle]
+            // resolves null to the tracked micOn AT APPLY TIME, so a playback command
+            // enqueued behind a mic toggle applies against the already-advanced mic (it can
+            // never re-open the mic or fire a spurious mic-rising audio.start).
+            val mic: Boolean?,
             val playback: Boolean,
             // TurnMode for a mic-RISING edge only (audio.start). Ignored on playback-axis /
             // mic-falling configures. Null ⇒ semantic (omitted on the wire).
             val turnMode: TurnMode? = null,
-            // VoiceAudioPath routing hint for the engine cell — see [requestConfigure]'s
-            // derivePath for how this is computed (fresh on mic-rising, tracked otherwise).
-            val path: VoiceAudioPath = VoiceAudioPath.Duplex,
+            // VoiceAudioPath routing hint for the engine cell, or NULL = "keep the LIVE
+            // currentPath at apply time" — the playback-axis-only sentinel (armPlayback /
+            // requestPlayback), symmetric with the mic sentinel. Turn-opens carry an explicit
+            // turnMode-derived path (see [derivePath]); turn-closes carry the tracked path.
+            // [handle] resolves null to currentPath AT APPLY TIME, so a flush-arm enqueued
+            // behind a turn-open lands on the APPLIED path, never the stale pre-lock path.
+            val path: VoiceAudioPath? = null,
             val ack: CompletableDeferred<Boolean>? = null,
         ) : Cmd
     }
@@ -173,18 +193,20 @@ class SdkVoice(
     }
 
     /**
-     * Derives the VoiceAudioPath for a Configure command. Fresh derivation from [turnMode]
-     * happens ONLY on a mic-RISING edge (mic requested true while the tracked [micOn] is
-     * false) — that is the one moment a caller can express a NEW turn's routing intent
-     * ([TurnMode.Manual] → [VoiceAudioPath.Manual]; anything else, incl. null/Semantic →
-     * [VoiceAudioPath.Duplex]). Every other call (mic-falling, same-state, or the
-     * playback-only axis used by requestPlayback/armPlayback) carries no turn-routing
-     * information, so it keeps the CURRENTLY TRACKED path unchanged — e.g. a Hold-release
-     * arm (playback-only, after the mic has already fallen) still lands on the Manual cell
-     * the Hold entry established, not a fresh Duplex default.
+     * Derives the VoiceAudioPath for a Configure command. A turn-OPEN (mic requested true)
+     * derives its path from the EXPLICIT [turnMode] — this is RACE-FREE: it never consults
+     * the tracked [micOn], which lags behind the back-to-back intents the TalkModeController
+     * fires (end+start on lock). [TurnMode.Manual] → [VoiceAudioPath.Manual] (hold /
+     * MicCapture path); anything else, incl. null/Semantic → [VoiceAudioPath.Duplex]
+     * (continuous / VPIO path). A turn-CLOSE (mic requested false) carries no turn-routing
+     * intent, so it keeps the CURRENTLY TRACKED path — a Hold-release stop stays on the
+     * Manual cell the Hold entry established.
+     *
+     * The playback-axis-only calls (armPlayback / requestPlayback) do NOT route through here:
+     * they carry [currentPath] directly alongside the null mic sentinel.
      */
     private fun derivePath(mic: Boolean, turnMode: TurnMode?): VoiceAudioPath =
-        if (mic && !micOn) {
+        if (mic) {
             if (turnMode == TurnMode.Manual) VoiceAudioPath.Manual else VoiceAudioPath.Duplex
         } else {
             currentPath
@@ -195,10 +217,11 @@ class SdkVoice(
      * Production callers MUST always go through [requestConfigure] / [requestStart] /
      * [requestPlayback] / [armPlayback] — [derivePath] is the single source of truth for path
      * derivation. This exists only because a same-cell path-flip ([path] differing from
-     * [currentPath] while (mic, playback) stay put) is unreachable via [derivePath] today
-     * (mic-rising always changes `c.mic` away from [micOn] too) but the idempotent-collapse
-     * guard in [handle] still checks it defensively for a future path-aware caller (S4/S5) —
-     * this seam is how commonTest pins that guard without waiting for that caller to exist.
+     * [currentPath] while (mic, playback) stay put) is unreachable in any production flow (a
+     * turn-open derives its path from turnMode and is always preceded by a mic-falling stop,
+     * so `c.mic != micOn` at apply time there) but the idempotent-collapse guard in [handle]
+     * still checks it defensively for a future path-aware caller (S4/S5) — this seam is how
+     * commonTest pins that guard without waiting for that caller to exist.
      */
     internal fun requestConfigureWithPath(mic: Boolean, playback: Boolean, path: VoiceAudioPath) {
         commands.trySend(Cmd.Configure(mic, playback, path = path))
@@ -217,24 +240,41 @@ class SdkVoice(
      * lane as mic, so it composes with VPIO. Disarming while mic is on is a mic-only cell
      * (engine stays up, no per-reply churn); disarming while mic is off tears the engine
      * to idle (battery). Fire-and-forget — no ack needed for a release.
+     *
+     * BOTH axes are the NULL sentinel: [handle] resolves mic → the LIVE micOn and path →
+     * the LIVE currentPath at apply time, so a disarm enqueued behind a mic toggle or a
+     * turn-open can never re-open (or wrongly hold) the mic, nor pin the stale pre-toggle
+     * path over the applied one. This call carries no turn-routing intent.
      */
-    fun requestPlayback(enabled: Boolean) = requestConfigure(mic = micOn, playback = enabled)
+    fun requestPlayback(enabled: Boolean) {
+        log.info("requestPlayback", mapOf("enabled" to enabled))
+        commands.trySend(Cmd.Configure(mic = null, playback = enabled, path = null))
+    }
 
     /**
      * LAZY-ARM the playback axis and suspend until THIS reconfig settles. Enqueues a
-     * Configure(mic=micOn, playback=true) carrying a completion ack, so the caller learns
-     * the result of exactly this command — never a stale state-flow value from a prior
-     * reconfig. Returns true iff the engine reached playback-active Ready. Null engine
-     * (text/test path) → true (frames drop at the pipeline's null-playback guard).
-     * The downlink pipeline awaits this on audio.start before flushing buffered frames.
+     * playback-axis-only Configure carrying a completion ack, so the caller learns the result
+     * of exactly this command — never a stale state-flow value from a prior reconfig. Returns
+     * true iff the engine reached playback-active Ready. Null engine (text/test path) → true
+     * (frames drop at the pipeline's null-playback guard). The downlink pipeline awaits this
+     * on audio.start before flushing buffered frames.
      */
     suspend fun armPlayback(): Boolean {
         if (voiceAudio == null) return true
         val ack = CompletableDeferred<Boolean>()
-        // Playback-only axis: no turnMode info here, so carry the CURRENTLY TRACKED path
-        // (see derivePath's KDoc) rather than re-deriving — a Hold-release arm must land
-        // on the Manual cell the Hold entry established.
-        commands.trySend(Cmd.Configure(mic = micOn, playback = true, path = currentPath, ack = ack))
+        // Playback-axis-only: BOTH the mic AND the path are the NULL sentinel — "keep the LIVE
+        // micOn / currentPath at apply time" (resolved in [handle]). The arm is enqueued BEHIND
+        // the controller's preceding intents on the SAME lane, so resolving at apply time is
+        // what makes it race-free against them:
+        //   - Hold-RELEASE: behind requestStop's mic-falling command → by apply time micOn=false
+        //     and currentPath=Manual → lands (mic=false, playback=true, Manual) → MediaPlayback,
+        //     never re-opening the mic or emitting a spurious audio.start.
+        //   - Hold-LOCK (buffered TTS): behind requestStart(Semantic) → by apply time
+        //     currentPath=Duplex → lands (mic=true, playback=true, Duplex) → the VPIO cell, and
+        //     leaves currentPath=Duplex. Snapshotting EITHER axis at SEND time (its prior form)
+        //     captured the stale pre-lock value (still-true mic / Manual path) while the consumer
+        //     was suspended inside the stop's pipeline.stop() cancelAndJoin.
+        commands.trySend(Cmd.Configure(mic = null, playback = true, path = null, ack = ack))
         return ack.await()
     }
 
@@ -246,21 +286,32 @@ class SdkVoice(
     // onUplinkStop (audio.end after uplink down + configure settled — no late frame).
     private suspend fun handle(cmd: Cmd) {
         val c = cmd as Cmd.Configure
-        if (c.mic == micOn && c.playback == playbackOn && c.path == currentPath) {
-            // Idempotent collapse: the engine is genuinely in (mic, playback, path) — micOn/
-            // playbackOn/currentPath only advance on a Ready configure — so an arm ack
-            // resolves to whether playback is on (no re-configure needed; the player is
-            // already armed). The path check matters even though derivePath only diverges
-            // from currentPath on a mic-rising edge (which always changes c.mic too, so it
-            // could never hit this branch on path alone TODAY) — it guards a future live
-            // path-flip on the SAME cell (e.g. an iOS engine switch while mic+playback stay
-            // put) from silently collapsing with no log and no engine call.
+        // Resolve the mic axis HERE, at apply time: an explicit value is used verbatim; the
+        // NULL sentinel (playback-axis-only arm / disarm) reads the LIVE micOn now — so a
+        // playback command enqueued behind a mic toggle applies against the already-advanced
+        // mic and can never re-open it or emit a spurious mic-rising audio.start.
+        val targetMic = c.mic ?: micOn
+        // Resolve the path axis HERE too: an explicit value is used verbatim; the NULL sentinel
+        // (playback-axis-only arm / disarm) reads the LIVE currentPath now — so a flush-arm
+        // enqueued behind a turn-open lands on the path that turn-open APPLIED (e.g. Duplex on
+        // lock), never the stale pre-lock path, and leaves currentPath on that applied value.
+        val targetPath = c.path ?: currentPath
+        if (targetMic == micOn && c.playback == playbackOn && targetPath == currentPath) {
+            // Idempotent collapse: the engine is genuinely in (targetMic, playback, targetPath)
+            // — micOn/playbackOn/currentPath only advance on a Ready configure — so an arm ack
+            // resolves to whether playback is on (no re-configure needed; the player is already
+            // armed). The path check still matters defensively for an EXPLICIT-path caller: no
+            // production flow reaches this branch with a differing path (a turn-open derives its
+            // path from turnMode and is always preceded by a mic-falling stop, so c.mic != micOn
+            // there; a playback-axis sentinel resolves targetPath == currentPath by definition),
+            // but it guards a future live path-flip on the SAME cell (e.g. an iOS engine switch
+            // while mic+playback stay put) from silently collapsing with no log and no engine call.
             c.ack?.complete(c.playback)
             return
         }
         runCatching {
-            val micRising = c.mic && !micOn
-            val micFalling = !c.mic && micOn
+            val micRising = targetMic && !micOn
+            val micFalling = !targetMic && micOn
             // audio.start BEFORE the engine + uplink come up (wire order: start→frames→end).
             // Carries this edge's TurnMode (Manual=hold / Semantic=continuous / null=semantic).
             if (micRising) onUplinkStart(c.turnMode)
@@ -271,7 +322,7 @@ class SdkVoice(
             // engines fall through the interface's default body to the 3-arg configure,
             // so this call is a pure parameter-threading change (no behavior change) until
             // S4/S5 land path-aware actuals.
-            voiceAudio?.configure(c.mic, c.playback, c.path)
+            voiceAudio?.configure(targetMic, c.playback, targetPath)
             // configure never throws (failures become Phase.Error inside), so runCatching
             // completes normally even on a failure. On Phase.Error the actual reset the
             // engine graph to idle (failReset/failConfigure) — so RECONCILE the lane to
@@ -284,14 +335,14 @@ class SdkVoice(
             // against a torn-down engine.
             val phase = voiceAudio?.state?.value?.phase
             if (phase == Phase.Error) {
-                log.warn("configure-error-reset-lane", mapOf("mic" to c.mic, "playback" to c.playback, "path" to c.path.name, "reason" to (voiceAudio?.state?.value?.errorReason ?: "unknown")))
+                log.warn("configure-error-reset-lane", mapOf("mic" to targetMic, "playback" to c.playback, "path" to targetPath.name, "reason" to (voiceAudio?.state?.value?.errorReason ?: "unknown")))
                 micOn = false; playbackOn = false; currentPath = VoiceAudioPath.Duplex
                 c.ack?.complete(false)
                 return@runCatching
             }
             // Start the uplink collect once the mic tap is live.
             if (micRising) pipeline?.start()
-            micOn = c.mic; playbackOn = c.playback; currentPath = c.path
+            micOn = targetMic; playbackOn = c.playback; currentPath = targetPath
             // audio.end AFTER the uplink is down + configure settled (no late frame past end).
             if (micFalling) onUplinkStop()
             c.ack?.complete(c.playback)

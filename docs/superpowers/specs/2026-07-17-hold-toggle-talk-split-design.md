@@ -173,6 +173,7 @@ Every mode transition: `talk-mode` INFO with `from`, `to`, `trigger`. Every path
 | continuous-turns | iPhone device | locked | speak naturally, multi-turn | turns fire on pauses (today's behavior); barge-in works | `smart_turn_eval` present; VPIO enabled |
 | proactive-tts-hold | iPhone device | holding; second surface sends a message triggering TTS | silence during hold; buffered reply plays after release | buffer count logs; deferred arm on release; no player start during Hold |
 | round-trip-stability | iPhone device | idle | 5× alternating hold-turns and replies, plus one lock/unlock cycle | every reply audible; mic live every round | no `engine-start-failed`/`session-activate-failed`; no silent round |
+| proactive-tts-lock | iPhone device | holding; second surface triggers TTS mid-hold | slide to LOCK (not release) | buffered reply plays; continuous mode works with AEC after | flush-arm on Duplex; NO `route-unexpected-manual-duplex-cell` WARN; VPIO on for continuous replies |
 | android-parity | Android emulator+device | same as hold-basic / slide-lock | same | same | same trail, `USAGE_ASSISTANT` track in hold, voice-comm in locked |
 | webui-regression | 1280×900 + 390×844 | web voice mode | toggle mic, speak, reply | unchanged behavior | `turnMode` absent or `semantic`; no STT `turn_mode` message |
 | loudness-buttons **(U)** | iPhone device | idle | reply at ~50% media volume; press buttons during and between replies | comfortably audible; buttons adjust TTS both times | media-route session logs |
