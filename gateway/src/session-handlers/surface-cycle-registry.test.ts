@@ -76,4 +76,28 @@ describe("SurfaceCycleRegistry — one in-flight cycle per surface", () => {
     await w;
     expect(reg.acquire("s", "c2", new AbortController()).owner).toBe(true);
   });
+
+  it("hasActiveLease reflects held slots", () => {
+    const reg = createSurfaceCycleRegistry();
+    expect(reg.hasActiveLease()).toBe(false);
+    reg.acquire("s", "c1", new AbortController());
+    expect(reg.hasActiveLease()).toBe(true);
+    reg.complete("s", "c1");
+    expect(reg.hasActiveLease()).toBe(false);
+  });
+
+  it("abortAll aborts controllers and wakes waiters", async () => {
+    const reg = createSurfaceCycleRegistry();
+    const ctrl = new AbortController();
+    reg.acquire("s", "c1", ctrl);
+    let released = false;
+    const wait = reg.whenReleased("s").then(() => {
+      released = true;
+    });
+    reg.abortAll();
+    await wait;
+    expect(ctrl.signal.aborted).toBe(true);
+    expect(released).toBe(true);
+    expect(reg.hasActiveLease()).toBe(false);
+  });
 });

@@ -23,6 +23,10 @@ export interface SurfaceCycleRegistry {
    * rather than spin-redispatching. Each call returns a fresh one-shot Promise.
    */
   whenReleased(surfaceKey: string): Promise<void>;
+  /** True iff any surface slot is currently held (retention guard input). */
+  hasActiveLease(): boolean;
+  /** Abort every held slot + wake every waiter (PersonSession.dispose backstop). */
+  abortAll(): void;
 }
 
 export function createSurfaceCycleRegistry(): SurfaceCycleRegistry {
@@ -73,6 +77,28 @@ export function createSurfaceCycleRegistry(): SurfaceCycleRegistry {
 
     currentController(surfaceKey) {
       return slots.get(surfaceKey)?.controller ?? null;
+    },
+
+    hasActiveLease(): boolean {
+      return slots.size > 0;
+    },
+
+    abortAll(): void {
+      if (slots.size === 0 && waiters.size === 0) return;
+      log.warn("abortAll", { slots: slots.size, waiterKeys: waiters.size, reason: "person-session-dispose" });
+      for (const [surfaceKey, slot] of slots) {
+        try {
+          slot.controller.abort("person-session-dispose");
+        } catch {
+          /* already aborted */
+        }
+        log.debug("abortAll.slot", { surfaceKey, cycleId: slot.cycleId });
+      }
+      slots.clear();
+      for (const [, arr] of waiters) {
+        for (const r of arr) r();
+      }
+      waiters.clear();
     },
   };
 }
