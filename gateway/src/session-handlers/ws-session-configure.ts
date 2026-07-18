@@ -204,6 +204,19 @@ export async function handleSessionConfigure(
     sendError(ws, "protocol_error", "Person session create failed");
     return;
   }
+  // Tier-3 boundary assertion: the resolved PersonSession MUST belong to the
+  // authenticated user. A mismatch means the wire pool / cycle registry /
+  // anchor state we are about to route through is owned by a DIFFERENT user —
+  // a cross-user isolation breach. Refuse the configure rather than proceed.
+  if (personSession.userId !== userId) {
+    log.error("person-session.owner-mismatch", {
+      sessionId,
+      expected: userId,
+      got: personSession.userId,
+    });
+    sendError(ws, "protocol_error", "Session identity mismatch");
+    return;
+  }
   // Task 3.8 — the resolved surfaceId (configureSurfaceId ?? deviceId) keys the
   // per-surface replay buffer across reconnects; deviceId is carried for presence.
   // The client supplies both on session.configure; the resume request now rides
@@ -251,7 +264,7 @@ export async function handleSessionConfigure(
     sessionId,
     userId: initialBinding.userId,
     surfaceId,
-    registry: services.acpWireRegistry,
+    registry: personSession.wires,
     wsUrl: resolvedWsUrl,
     token: initialBinding.apiKey,
     acpWire: services.hermes?.acp_wire,
@@ -266,7 +279,7 @@ export async function handleSessionConfigure(
   // Sibling of acpWireDispose: drop the surface's conversation anchor on the
   // SAME reap that disposes the wire (D3). Anchor lifetime == surface lifetime —
   // prevents unbounded anchor growth as surfaces churn (D2 leak fix).
-  ws.data.dropAnchor = () => services.sessionRouter.dropAnchor(surfaceId);
+  ws.data.dropAnchor = () => personSession.dropAnchor(surfaceId);
 
   // HANDOVER (Task 3.8): a matching-epoch resume hands back the deferred
   // teardown stashed by the prior resumable disconnect (Task 3.7). Run it NOW
@@ -638,6 +651,12 @@ export async function handleSessionConfigure(
           forceFinal: params.forceFinal,
           triggerReason: params.triggerReason,
         });
+        // The conversation anchor is per-surface state owned by PersonSession
+        // (not the per-sessionId binding, which does not survive transport
+        // handover). Source the surface's anchored conversationId and override
+        // the binding's null conversationId with it for this dispatch.
+        const anchoredConversationId = personSession.conversationIdFor(surfaceId);
+        const bindingWithAnchor = { ...binding, conversationId: anchoredConversationId };
         const mode: DispatchMode = params.forceFinal ? { bargedIn: () => true } : { bargedIn: () => false };
 
         const controller = new AbortController();
@@ -654,7 +673,7 @@ export async function handleSessionConfigure(
         // as active and accumulates other stimuli in pendingSalience (drained at
         // natural end) — no spin, no dropped message. We do NOT register the
         // per-transport cycleSlot until we win; the incumbent is NEVER cancelled.
-        let admission = admitCycle(services.surfaceCycles, surfaceId, params.cycleId, controller);
+        let admission = admitCycle(personSession.cycles, surfaceId, params.cycleId, controller);
         while (!admission.dispatch) {
           if (controller.signal.aborted) {
             return { aborted: true, shouldContinue: false };
@@ -665,11 +684,11 @@ export async function handleSessionConfigure(
             requestedCycleId: params.cycleId,
             activeCycleId: admission.activeCycleId,
           });
-          await waitForReleaseOrAbort(services.surfaceCycles.whenReleased(surfaceId), controller.signal);
+          await waitForReleaseOrAbort(personSession.cycles.whenReleased(surfaceId), controller.signal);
           if (controller.signal.aborted) {
             return { aborted: true, shouldContinue: false };
           }
-          admission = admitCycle(services.surfaceCycles, surfaceId, params.cycleId, controller);
+          admission = admitCycle(personSession.cycles, surfaceId, params.cycleId, controller);
         }
 
         cycleSlot.register(params.cycleId, controller);
@@ -705,7 +724,7 @@ export async function handleSessionConfigure(
               userId: binding.userId,
               cycleId: params.cycleId,
               userMessage: getLastUserMessage(conversationMirror),
-              binding,
+              binding: bindingWithAnchor,
               maxOutputTokens: services.hermes?.defaults.max_output_tokens ?? 512,
               signal: controller.signal,
               mode,
@@ -713,15 +732,15 @@ export async function handleSessionConfigure(
             },
             hermesDeps,
           );
-          if (result.conversationId && result.conversationId !== binding.conversationId) {
-            services.sessionRouter.updateConversationId(surfaceId, result.conversationId);
+          if (result.conversationId && result.conversationId !== anchoredConversationId) {
+            personSession.updateConversationId(surfaceId, result.conversationId);
           }
         } finally {
           cycleSlot.complete(params.cycleId);
           // Release the surface lease so the next cycle on this surface can win
           // ownership. Keyed-stale-safe: complete() no-ops if a newer cycle owns
           // the surface slot.
-          services.surfaceCycles.complete(surfaceId, params.cycleId);
+          personSession.cycles.complete(surfaceId, params.cycleId);
         }
 
         return { aborted: controller.signal.aborted, shouldContinue: false };

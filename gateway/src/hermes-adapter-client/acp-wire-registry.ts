@@ -51,6 +51,10 @@ export interface AcpWireRegistry {
   release(surfaceId: string): void;
   /** Test/observability hook: current reference count for a surface (0 if absent). */
   refCount(surfaceId: string): number;
+  /** True iff any wire is still pooled (retention guard input). */
+  hasLiveWires(): boolean;
+  /** Force-dispose every pooled handle (PersonSession.dispose backstop). */
+  disposeAll(): void;
 }
 
 interface PoolEntry {
@@ -59,31 +63,42 @@ interface PoolEntry {
   /** Live handle once dialed; null while the dial is still in flight. */
   handle: AcpWireHandle | null;
   refCount: number;
+  /** Owner stamped at dial resolution — the regression canary (§4.3). */
+  ownerUserId: string;
 }
 
-export function createAcpWireRegistry(): AcpWireRegistry {
+// ownerUserId is optional ONLY during the migration: the process-global
+// instantiation (phase-routes) has no user and passes nothing. That global is
+// deleted in Task 9, after which PersonSession is the sole caller and always
+// passes a real userId. The default keeps every intermediate commit
+// typecheck-green while the caller migration is in flight.
+export function createAcpWireRegistry(ownerUserId = "__unowned__"): AcpWireRegistry {
   const pool = new Map<string, PoolEntry>();
 
   async function acquire(surfaceId: string, dial: AcpWireDialFn): Promise<AcpPerProfileConnection> {
     const existing = pool.get(surfaceId);
     if (existing) {
+      // Regression canary: within a per-user pool this is always true. If it
+      // ever fires, a shared pool was reintroduced — fail closed.
+      if (existing.ownerUserId !== ownerUserId) {
+        log.error("acquire.owner-mismatch", { surfaceId, stored: existing.ownerUserId, expected: ownerUserId });
+        throw new Error("acp-wire-registry: owner mismatch on cache hit");
+      }
       existing.refCount += 1;
-      log.info("acquire.reuse", { surfaceId, refCount: existing.refCount });
-      // Awaits the same in-flight dial promise if the first dial is still
-      // pending; resolves immediately once the handle is live.
+      log.info("acquire.reuse", { ownerUserId, surfaceId, refCount: existing.refCount });
       const handle = await existing.dialPromise;
       return handle.acpConn;
     }
 
-    log.info("acquire.dial", { surfaceId });
+    log.info("acquire.dial", { ownerUserId, surfaceId });
     const dialPromise = dial();
-    const entry: PoolEntry = { dialPromise, handle: null, refCount: 1 };
+    const entry: PoolEntry = { dialPromise, handle: null, refCount: 1, ownerUserId };
     pool.set(surfaceId, entry);
 
     try {
       const handle = await dialPromise;
       entry.handle = handle;
-      log.info("acquire.dial-ok", { surfaceId, refCount: entry.refCount });
+      log.info("acquire.dial-ok", { ownerUserId, surfaceId, refCount: entry.refCount });
       return handle.acpConn;
     } catch (err: unknown) {
       // Drop the poisoned entry so a later acquire retries with a fresh dial.
@@ -91,6 +106,7 @@ export function createAcpWireRegistry(): AcpWireRegistry {
       // could have already cleared it).
       if (pool.get(surfaceId) === entry) pool.delete(surfaceId);
       log.warn("acquire.dial-failed", {
+        ownerUserId,
         surfaceId,
         reason: err instanceof Error ? err.message : String(err),
       });
@@ -101,23 +117,23 @@ export function createAcpWireRegistry(): AcpWireRegistry {
   function release(surfaceId: string): void {
     const entry = pool.get(surfaceId);
     if (!entry) {
-      log.debug("release.noop", { surfaceId, reason: "no-pooled-wire" });
+      log.debug("release.noop", { ownerUserId, surfaceId, reason: "no-pooled-wire" });
       return;
     }
     entry.refCount -= 1;
-    log.info("release", { surfaceId, refCount: entry.refCount });
+    log.info("release", { ownerUserId, surfaceId, refCount: entry.refCount });
     if (entry.refCount > 0) return;
 
     // Last reference gone — drop the entry and dispose the underlying wire.
     pool.delete(surfaceId);
     if (entry.handle !== null) {
-      log.info("release.dispose", { surfaceId });
+      log.info("release.dispose", { ownerUserId, surfaceId });
       entry.handle.dispose();
       return;
     }
     // Released while the dial is still in flight: dispose once it settles so a
     // wire is never left orphaned. A rejected dial already self-cleaned above.
-    log.info("release.dispose-pending-dial", { surfaceId });
+    log.info("release.dispose-pending-dial", { ownerUserId, surfaceId });
     entry.dialPromise
       .then((handle) => handle.dispose())
       .catch(() => {
@@ -129,5 +145,36 @@ export function createAcpWireRegistry(): AcpWireRegistry {
     return pool.get(surfaceId)?.refCount ?? 0;
   }
 
-  return { acquire, release, refCount };
+  function hasLiveWires(): boolean {
+    return pool.size > 0;
+  }
+
+  function disposeAll(): void {
+    if (pool.size === 0) return;
+    log.warn("disposeAll", { ownerUserId, count: pool.size, reason: "force-dispose-backstop" });
+    for (const [surfaceId, entry] of pool) {
+      try {
+        if (entry.handle !== null) {
+          entry.handle.dispose();
+        } else {
+          entry.dialPromise
+            .then((h) => h.dispose())
+            .catch(() => {
+              /* failed dial — nothing to dispose */
+            });
+        }
+        log.debug("disposeAll.entry", { ownerUserId, surfaceId, refCount: entry.refCount });
+      } catch (err: unknown) {
+        // Continue disposing remaining entries even if one throws.
+        log.warn("disposeAll.dispose-entry-failed", {
+          ownerUserId,
+          surfaceId,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    pool.clear();
+  }
+
+  return { acquire, release, refCount, hasLiveWires, disposeAll };
 }

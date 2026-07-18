@@ -5,7 +5,6 @@ import { createPauseAudioTool, createResumeAudioTool } from "./audio-tools.js";
 const fakeRouter = {
   bind: vi.fn(),
   release: vi.fn(),
-  rebind: vi.fn(),
   get: vi.fn(),
   updateConversationId: vi.fn(),
   findActiveSessionFor: vi.fn(),

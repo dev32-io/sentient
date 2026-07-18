@@ -315,9 +315,9 @@ function buildApplyHandler(
  *   resolvePluginClient — derives http base URL (hermes + userPortStore),
  *     shifts port by DASHBOARD_PORT_OFFSET to reach the sentient-plugin sidecar,
  *     constructs a SentientPluginClient with the shared Hermes bearer token.
- *   listSessions — acquires the per-user ACP wire from the shared registry
- *     (reuses a live wire if the same user has an active WS session, dials on
- *     first REST-only access), calls session/list, releases the ref in finally.
+ *   listSessions — dials a dedicated ephemeral ACP wire per call (never
+ *     pooled or shared with a surface wire), calls session/list, disposes
+ *     the wire in finally.
  *   resolveTitleStore — creates a per-user TitleStore scoped to the user's data
  *     dir; each call for the same userId within a request returns a fresh
  *     instance (stateless file-backed store — no identity requirement).
@@ -331,7 +331,6 @@ function buildSessionsHandler(services: GatewayServices): (req: Request) => Prom
   const pluginDeps: PerUserPluginDeps = {
     hermes: services.hermes,
     userPortStore: services.userPortStore,
-    acpWireRegistry: services.acpWireRegistry,
     hermesApiKey: services.hermesApiKey,
     timeoutMs: services.sessions.hermes_http_timeout_ms,
     acpOpenTimeoutMs: services.hermes.acp_wire.open_timeout_ms,

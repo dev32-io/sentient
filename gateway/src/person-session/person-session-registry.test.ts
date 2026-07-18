@@ -123,6 +123,53 @@ describe("PersonSessionRegistry", () => {
   it("returns null when the user has no port binding", async () => {
     expect(await registry.getOrCreate(GHOST)).toBeNull();
   });
+
+  // ---------------------------------------------------------------------------
+  // Cross-user wire isolation — the security pin for the PersonSession refactor.
+  // ALICE/BOB are already bound to distinct ports (8650/8651) by the beforeEach
+  // store, so this registry doubles as the two-user fixture; the wire dial fn
+  // is a stub, so the test asserts on dial COUNT and conn identity, not the URL.
+  // ---------------------------------------------------------------------------
+
+  it("two users with the SAME surfaceId get distinct wires (no cross-account leak)", async () => {
+    const sA = await registry.getOrCreate(ALICE);
+    const sB = await registry.getOrCreate(BOB);
+    if (!sA || !sB) throw new Error("expected sessions");
+
+    const SHARED_SURFACE = "device-xyz"; // same surfaceId (mobile: surfaceId == deviceId)
+    const dialed: Array<{ owner: string; surfaceId: string }> = [];
+
+    const connA = await sA.wires.acquire(SHARED_SURFACE, async () => {
+      dialed.push({ owner: ALICE, surfaceId: SHARED_SURFACE });
+      return { acpConn: { id: "A" } as never, dispose: () => {} };
+    });
+    const connB = await sB.wires.acquire(SHARED_SURFACE, async () => {
+      dialed.push({ owner: BOB, surfaceId: SHARED_SURFACE });
+      return { acpConn: { id: "B" } as never, dispose: () => {} };
+    });
+
+    // Both dials ran (no cross-user cache hit); connections are distinct.
+    expect(dialed).toHaveLength(2);
+    expect((connA as unknown as { id: string }).id).toBe("A");
+    expect((connB as unknown as { id: string }).id).toBe("B");
+  });
+
+  it("same user, same surfaceId reuses one wire (fork fix preserved)", async () => {
+    const s = await registry.getOrCreate(ALICE);
+    if (!s) throw new Error("expected session");
+    let dials = 0;
+    const handle = { acpConn: {} as never, dispose: () => {} };
+    await s.wires.acquire("surf", async () => {
+      dials++;
+      return handle;
+    });
+    await s.wires.acquire("surf", async () => {
+      dials++;
+      return handle;
+    });
+    expect(dials).toBe(1); // second acquire reuses (refCount 2)
+    expect(s.wires.refCount("surf")).toBe(2);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -214,5 +261,31 @@ describe("PersonSessionRegistry.sweep", () => {
     const result = reg.sweep(Date.now() + TTL_MS + 60_000);
     expect(result.sessionsRemoved).toBe(0);
     expect(reg.get(ALICE)).not.toBeNull();
+  });
+
+  it("a live wire blocks eviction; removal disposes the session", async () => {
+    const reg = makeRegistry();
+    const s = await reg.getOrCreate(ALICE);
+    expect(s).not.toBeNull();
+    if (!s) throw new Error("expected session");
+
+    // Acquire a wire but NO buffer → hasRetainedBuffers() false, hasLiveWires() true.
+    let disposed = 0;
+    await s.wires.acquire("surf", async () => ({
+      acpConn: {} as never,
+      dispose: () => {
+        disposed++;
+      },
+    }));
+
+    // Sweep far past the idle timeout — must NOT remove (wire still live).
+    reg.sweep(Date.now() + TTL_MS + 60_000);
+    expect(reg.get(ALICE)).not.toBeNull();
+
+    // Release the wire, then sweep — now removable, and dispose() runs.
+    s.wires.release("surf");
+    reg.sweep(Date.now() + TTL_MS + 60_000);
+    expect(reg.get(ALICE)).toBeNull();
+    expect(disposed).toBe(1); // disposeAll on an empty pool is a no-op; the release already disposed
   });
 });

@@ -5,7 +5,6 @@ import { createUpdateUserSettingsTool } from "./update-user-settings.js";
 const fakeRouter = {
   bind: vi.fn(),
   release: vi.fn(),
-  rebind: vi.fn(),
   get: vi.fn(),
   updateConversationId: vi.fn(),
   findActiveSessionFor: vi.fn(),

@@ -4,11 +4,11 @@ import type { UserPortStore } from "../admin/user-port-store.js";
 import type { SessionListItem } from "../api/handlers/sessions.js";
 import { buildHttpBaseUrlForUser, buildWsUrlForUser } from "../bootstrap/hermes-connection-helpers.js";
 import { getLog } from "../logging/logger.js";
-import type { AcpWireRegistry } from "./acp-wire-registry.js";
 import { buildPluginBaseUrl, createSentientPluginClient } from "./plugin-client.js";
 import type { SentientPluginClient } from "./plugin-client.js";
 import { listSessionsViaAcp } from "./sessions-client.js";
 import { bootstrapAcpWire } from "./wire-bootstrap.js";
+import type { AcpWireBootstrapResult } from "./wire-bootstrap.js";
 
 const log = getLog(["sentient", "hermes-adapter-client", "per-user-plugin"]);
 
@@ -28,11 +28,16 @@ const log = getLog(["sentient", "hermes-adapter-client", "per-user-plugin"]);
 export interface PerUserPluginDeps {
   readonly hermes: HermesConfig | null;
   readonly userPortStore: UserPortStore | null;
-  readonly acpWireRegistry: AcpWireRegistry;
   readonly hermesApiKey: () => string;
   readonly timeoutMs: number;
   /** ACP WS open handshake timeout (ms). Sourced from hermes.acp_wire.open_timeout_ms. */
   readonly acpOpenTimeoutMs: number;
+  /** Test seam — defaults to bootstrapAcpWire. */
+  readonly wireFactory?: (args: {
+    wsUrl: string;
+    token: string;
+    openTimeoutMs: number;
+  }) => Promise<AcpWireBootstrapResult>;
 }
 
 /**
@@ -63,34 +68,26 @@ export async function resolvePluginClientForUser(
 /**
  * List sessions for a userId via ACP session/list.
  *
- * Acquires a DEDICATED ephemeral ACP wire under the `rest-list:` key — NOT a
- * surface wire and never shared with one — calls listSessionsViaAcp, then
- * releases in finally (refCount hits 0 → wire disposed immediately). The
- * overlay spawns its own child for this connection, which coexists with any
- * live surface wires. Maps SessionRow → SessionListItem (the shape the sessions
- * HTTP handler expects).
+ * Dials a DEDICATED ephemeral ACP wire directly — NOT a surface wire and
+ * never pooled or shared with one — calls listSessionsViaAcp, then disposes
+ * in finally. Every call opens and tears down its own overlay child; there is
+ * no reuse across REST-list calls or with live surface wires. Maps
+ * SessionRow → SessionListItem (the shape the sessions HTTP handler expects).
  */
 export async function listSessionsForUser(userId: string, deps: PerUserPluginDeps): Promise<SessionListItem[]> {
   const wsUrl = await buildWsUrlForUser(deps.hermes, deps.userPortStore, userId);
   const token = deps.hermesApiKey();
-  // REST list is not a surface — ephemeral un-pooled key so it never aliases a
-  // real surface; finally-release at refCount 0 disposes immediately.
-  const wireKey = `rest-list:${userId}`;
-  const conn = await deps.acpWireRegistry.acquire(wireKey, () =>
-    bootstrapAcpWire({
-      wsUrl,
-      token,
-      openTimeoutMs: deps.acpOpenTimeoutMs,
-    }),
-  );
+  const dial = deps.wireFactory ?? ((args) => bootstrapAcpWire(args));
+  // REST list is not a surface — dedicated ephemeral wire, disposed immediately.
+  const wire = await dial({ wsUrl, token, openTimeoutMs: deps.acpOpenTimeoutMs });
   try {
-    const result = await listSessionsViaAcp(conn);
+    const result = await listSessionsViaAcp(wire.acpConn);
     return result.sessions.map((s) => ({
       sessionId: s.sessionId,
       title: s.title,
       lastActiveAt: s.lastActiveAt,
     }));
   } finally {
-    deps.acpWireRegistry.release(wireKey);
+    wire.dispose();
   }
 }

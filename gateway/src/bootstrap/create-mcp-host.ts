@@ -43,7 +43,7 @@ export async function createMcpHost(options: McpHostOptions): Promise<McpHost> {
   const basePath = config.mcp_host.socket_path;
 
   const registry = createToolRegistry([
-    createIdentifyUserTool({ router, userStore }),
+    createIdentifyUserTool({ userStore }),
     createPauseAudioTool({ audio, router }),
     createResumeAudioTool({ audio, router }),
     createUpdateUserSettingsTool({ controls: userSettings, router }),

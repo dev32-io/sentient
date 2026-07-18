@@ -1,5 +1,8 @@
+import { type AcpWireRegistry, createAcpWireRegistry } from "../hermes-adapter-client/acp-wire-registry.js";
 import { getLog } from "../logging/logger.js";
 import type { SessionReplayBuffer } from "../session-handlers/session-replay-buffer.js";
+import { type SurfaceCycleRegistry, createSurfaceCycleRegistry } from "../session-handlers/surface-cycle-registry.js";
+import { type ConversationAnchors, createConversationAnchors } from "./conversation-anchors.js";
 import {
   type AcquireDeviceBufferResult,
   type DeviceBufferEntry,
@@ -14,20 +17,16 @@ export type { DeviceBufferEntry, AcquireDeviceBufferResult, DeviceSocketRef, Dev
 
 /**
  * One PersonSession per profile (alice/bob/family). Owns the rolling
- * conversation and everything derived from it: history, ambient context,
- * preferences, Hermes chain continuity, audio pipeline state.
+ * conversation and derived state — history, ambient context, preferences,
+ * Hermes chain continuity, audio pipeline state — plus this user's per-surface
+ * ACP wire pool, cycle registry, and conversation anchors, so a client-supplied
+ * surfaceId can never address another user's state.
  *
- * Devices (web tabs, phones, ESP32s) attach to a PersonSession via
- * DeviceAttachment and become windows into that person's conversation.
- * The same conversation is shared by every attachment; any attachment
- * can drive input; output fans out.
+ * Devices attach via DeviceAttachment and become windows into the shared
+ * conversation; any attachment can drive input, output fans out to all.
  */
 
-/**
- * Opaque attachment token. DeviceAttachment lands in B2; for now the
- * registry just tracks identity (so detach-before-attach-existed cases
- * log cleanly) and iteration count (so tests can assert fan-out).
- */
+/** Opaque attachment token; tracks identity so detach-before-attach cases log cleanly. */
 export interface PersonSessionAttachment {
   readonly attachmentId: string;
 }
@@ -48,35 +47,33 @@ export class PersonSession {
   readonly userId: string | null;
 
   /**
-   * Last Hermes response id for chain continuity on this profile. Mutated
-   * after each cycle completes. Survives attach/detach — the point of
-   * hoisting it up here is so a reconnecting tab resumes the same chain.
+   * Last Hermes response id for chain continuity; survives attach/detach so
+   * a reconnecting tab resumes the same chain.
    */
   private _lastResponseId: string | null = null;
   /**
-   * Resolved local-tts voice id for this person, hydrated from the user's
-   * profile.json#voice.id. `null` means "no per-user override resolved yet —
-   * fall back to the gateway-wide default voiceId from cfg.tts.voice_id".
-   * Mutated by the registry when profile.json is saved or first loaded.
+   * Resolved local-tts voice id, hydrated from profile.json#voice.id. `null`
+   * falls back to the gateway-wide cfg.tts.voice_id. Mutated by the registry
+   * on profile save/first load.
    */
   private _voiceId: string | null = null;
   private readonly _attachments = new Set<PersonSessionAttachment>();
   private readonly _createdAtMs: number;
   private readonly _deviceBuffers: DeviceBufferStore;
+  readonly wires: AcpWireRegistry;
+  readonly cycles: SurfaceCycleRegistry;
+  private readonly _anchors: ConversationAnchors = createConversationAnchors();
 
   /**
    * Timestamp when the session first became idle (attachmentCount went to 0).
-   * Reset to null when an attachment is added. Starts at createdAtMs (a
-   * freshly created session with no attachments is immediately idle).
+   * Starts at createdAtMs (a fresh session with no attachments is idle).
    */
   private _idleSinceMs: number;
 
   /**
-   * Recently-seen client pendingIds for idempotent resend dedup. A resend
-   * (same pendingId on a new connection after reconnect) is rejected so it is
-   * re-echoed via replay/REST history but NOT re-dispatched to Hermes. Bounded
-   * insertion-ordered; evicts with the session at retention. Survives reconnect
-   * (the whole point of placing it here, like _lastResponseId).
+   * Recently-seen client pendingIds for idempotent resend dedup — a resend is
+   * re-echoed via replay/REST history but NOT re-dispatched. Bounded,
+   * insertion-ordered, survives reconnect (like _lastResponseId).
    */
   private readonly _recentPendingIds = new Set<string>();
   private static readonly PENDING_ID_CAP = 256;
@@ -87,13 +84,12 @@ export class PersonSession {
     this.hermesApiKey = init.hermesApiKey;
     this.userId = init.userId;
     this._deviceBuffers = new DeviceBufferStore(init.replayBufferMaxBytes);
+    const ownerUserId = init.userId ?? init.profile;
+    this.wires = createAcpWireRegistry(ownerUserId);
+    this.cycles = createSurfaceCycleRegistry();
     this._createdAtMs = Date.now();
     this._idleSinceMs = this._createdAtMs;
-    log.info("created", {
-      profile: this.profile,
-      hermesUrl: this.hermesUrl,
-      userId: this.userId,
-    });
+    log.info("created", { profile: this.profile, hermesUrl: this.hermesUrl, userId: this.userId });
   }
 
   get lastResponseId(): string | null {
@@ -103,11 +99,7 @@ export class PersonSession {
   setLastResponseId(id: string | null): void {
     const prev = this._lastResponseId;
     this._lastResponseId = id;
-    log.debug("lastResponseId.update", {
-      profile: this.profile,
-      prev,
-      next: id,
-    });
+    log.debug("lastResponseId.update", { profile: this.profile, prev, next: id });
   }
 
   /**
@@ -132,12 +124,7 @@ export class PersonSession {
     const prev = this._voiceId;
     if (prev === id) return;
     this._voiceId = id;
-    log.info("voiceId.update", {
-      profile: this.profile,
-      userId: this.userId,
-      prev,
-      next: id,
-    });
+    log.info("voiceId.update", { profile: this.profile, userId: this.userId, prev, next: id });
   }
 
   get attachmentCount(): number {
@@ -204,10 +191,7 @@ export class PersonSession {
     });
   }
 
-  /**
-   * Immediately remove the surface buffer entry without starting a TTL.
-   * Used on explicit session.end / logout where replay retention is not wanted.
-   */
+  /** Immediately remove the surface entry, no TTL (explicit session.end / logout). */
   disposeDeviceBuffer(surfaceId: string): void {
     this._deviceBuffers.dispose(surfaceId);
     log.debug("disposeDeviceBuffer", { profile: this.profile, surfaceId });
@@ -239,32 +223,70 @@ export class PersonSession {
   }
 
   /**
-   * Returns true when at least one device buffer entry is still retained —
-   * including entries for currently-attached (not yet detached) devices.
-   * A live attached device blocks session eviction just as much as a detached
-   * but not-yet-expired one.
+   * True when at least one device buffer entry is retained, including
+   * currently-attached devices — blocks session eviction either way.
    */
   hasRetainedBuffers(): boolean {
     return this._deviceBuffers.hasRetainedBuffers();
   }
 
-  // ---------------------------------------------------------------------------
+  // Conversation anchors (surfaceId -> conversationId) — delegates to
+  // ConversationAnchors; logging stays here for profile context.
+
+  conversationIdFor(surfaceId: string): string | null {
+    return this._anchors.get(surfaceId);
+  }
+
+  updateConversationId(surfaceId: string, conversationId: string): void {
+    const prev = this._anchors.get(surfaceId);
+    this._anchors.set(surfaceId, conversationId);
+    log.debug("updateConversationId", { profile: this.profile, surfaceId, prev, next: conversationId });
+  }
+
+  dropAnchor(surfaceId: string): void {
+    if (!this._anchors.drop(surfaceId)) return;
+    log.debug("dropAnchor", { profile: this.profile, surfaceId });
+  }
+
+  clearAllAnchors(): void {
+    const count = this._anchors.size();
+    if (count === 0) return;
+    this._anchors.clear();
+    log.info("clearAllAnchors", { profile: this.profile, count });
+  }
+
   // Lifecycle
-  // ---------------------------------------------------------------------------
 
   /**
-   * Indicator for the registry's idle-archive decision. PersonSession is
-   * idle when no device is attached. The registry decides when to archive
-   * based on age + idleness — PersonSession just exposes the facts.
+   * Retention input for the registry sweep — a live wire or held cycle lease
+   * blocks eviction just as a retained buffer does.
+   */
+  hasLiveResources(): boolean {
+    return this.hasRetainedBuffers() || this.wires.hasLiveWires() || this.cycles.hasActiveLease();
+  }
+
+  /**
+   * Final teardown when the registry removes this PersonSession: force-dispose
+   * any residual wire, abort any residual cycle lease, drop anchors.
+   */
+  dispose(): void {
+    log.info("dispose", { profile: this.profile, userId: this.userId });
+    this.wires.disposeAll();
+    this.cycles.abortAll();
+    this._anchors.clear();
+  }
+
+  /**
+   * Registry's idle-archive indicator: true when no device is attached. The
+   * registry decides eviction from age + idleness; this just exposes the fact.
    */
   get isIdle(): boolean {
     return this._attachments.size === 0;
   }
 
   /**
-   * Timestamp (ms) when the session most recently became idle (all
-   * attachments removed). 0 when the session currently has live attachments.
-   * Used by the registry sweep to determine if the TTL has elapsed.
+   * Timestamp (ms) when the session most recently became idle; 0 while it has
+   * live attachments. Used by the registry sweep against the TTL.
    */
   get idleSinceMs(): number {
     return this._idleSinceMs;
