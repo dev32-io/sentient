@@ -51,7 +51,7 @@
 **Interfaces:**
 - Consumes: existing `AcpWireHandle { acpConn, dispose }`, `AcpWireDialFn`.
 - Produces:
-  - `createAcpWireRegistry(ownerUserId: string): AcpWireRegistry`
+  - `createAcpWireRegistry(ownerUserId?: string): AcpWireRegistry` — `ownerUserId` is optional ONLY during the migration (the soon-deleted process-global caller passes nothing); defaults to `"__unowned__"`.
   - `AcpWireRegistry.hasLiveWires(): boolean` — true iff any pooled entry exists.
   - `AcpWireRegistry.disposeAll(): void` — force-dispose every pooled handle regardless of refCount; clears the pool.
   - `acquire` stamps `ownerUserId` on the resolved handle and, on cache-hit reuse, asserts the stored owner equals `ownerUserId` (logs `error` + refuses by re-throwing if not — the regression canary).
@@ -119,7 +119,12 @@ export interface AcpWireRegistry {
   disposeAll(): void;
 }
 
-export function createAcpWireRegistry(ownerUserId: string): AcpWireRegistry {
+// ownerUserId is optional ONLY during the migration: the process-global
+// instantiation (phase-routes) has no user and passes nothing. That global is
+// deleted in Task 9, after which PersonSession is the sole caller and always
+// passes a real userId. The default keeps every intermediate commit
+// typecheck-green while the caller migration is in flight.
+export function createAcpWireRegistry(ownerUserId = "__unowned__"): AcpWireRegistry {
   const pool = new Map<string, PoolEntry>();
 
   async function acquire(surfaceId: string, dial: AcpWireDialFn): Promise<AcpPerProfileConnection> {
@@ -199,7 +204,7 @@ export function createAcpWireRegistry(ownerUserId: string): AcpWireRegistry {
 }
 ```
 
-- [ ] **Step 4: Run — expect PASS** (all `acp-wire-registry` tests, including the existing ones — update any existing test that called `createAcpWireRegistry()` with no arg to pass a `userId` string).
+- [ ] **Step 4: Run — expect PASS** (all `acp-wire-registry` tests). Existing zero-arg `createAcpWireRegistry()` calls in the test file still compile (param is optional) — no change needed there.
 
 Run: `source scripts/env.sh && bun run --filter '@sentient/gateway' test -- acp-wire-registry`
 Expected: PASS.
@@ -598,6 +603,8 @@ git commit -m "feat(gateway): registry sweep guards on live wires/cycles + dispo
 ---
 
 ## Task 5: SessionRouter — remove anchors, binding drops conversationId
+
+> **Execution order:** run this task AFTER Tasks 6, 7, and 8. Those tasks are the last callers of `SessionRouter.updateConversationId` / `dropAnchor` / `clearConversationIdForAllSessions`; removing the methods before they migrate breaks `ws-session-configure` + `apply/orchestrator` typecheck (the pre-commit hook runs full typecheck, so an out-of-order commit is rejected). Task numbers are stable identities; execution sequence is 1,2,3,4,6,7,8,**5**,9,10,11.
 
 **Files:**
 - Modify: `gateway/src/session-router.ts`
