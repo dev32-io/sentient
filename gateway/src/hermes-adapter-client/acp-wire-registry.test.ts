@@ -200,4 +200,36 @@ describe("AcpWireRegistry — ref-counted per-surface pooling", () => {
     await Promise.resolve();
     expect(handle.disposed()).toBe(true);
   });
+
+  it("hasLiveWires reflects pooled entries", async () => {
+    const reg = createAcpWireRegistry("u_00000001");
+    expect(reg.hasLiveWires()).toBe(false);
+    const handle = { acpConn: {} as never, dispose: () => {} };
+    await reg.acquire("surface-a", async () => handle);
+    expect(reg.hasLiveWires()).toBe(true);
+    reg.release("surface-a");
+    expect(reg.hasLiveWires()).toBe(false);
+  });
+
+  it("disposeAll force-disposes every pooled handle and clears the pool", async () => {
+    const reg = createAcpWireRegistry("u_00000001");
+    let disposedA = 0;
+    let disposedB = 0;
+    await reg.acquire("a", async () => ({
+      acpConn: {} as never,
+      dispose: () => {
+        disposedA++;
+      },
+    }));
+    await reg.acquire("b", async () => ({
+      acpConn: {} as never,
+      dispose: () => {
+        disposedB++;
+      },
+    }));
+    reg.disposeAll();
+    expect(disposedA).toBe(1);
+    expect(disposedB).toBe(1);
+    expect(reg.hasLiveWires()).toBe(false);
+  });
 });
