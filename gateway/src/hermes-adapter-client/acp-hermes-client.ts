@@ -137,8 +137,9 @@ export function createAcpHermesClient(deps: AcpHermesClientDeps): HermesClient {
       //   1. forcedSessionId — set by sessions-handlers.ts on session.new /
       //      session.switch. Already created server-side (eager path); we
       //      trust the caller's id verbatim.
-      //   2. binding.conversationId — captured from a prior cycle's
-      //      synthetic `created` event. Same chain continues.
+      //   2. input.conversationId — the surface's conversation anchor,
+      //      captured from a prior cycle's synthetic `created` event. Same
+      //      chain continues.
       //   3. lazy session/new — ACP requires an explicit `session/new` before
       //      any `session/prompt`. The legacy custom-WS contract created
       //      sessions implicitly on first user.message; ACP does not. If the
@@ -148,9 +149,10 @@ export function createAcpHermesClient(deps: AcpHermesClientDeps): HermesClient {
       //      from 404'ing on the server-side ACP `session not found`.
       //
       // The synthetic `created` event then carries whichever id won, so the
-      // cerebrum's hermes-event-translator routes it to
-      // sessionRouter.updateConversationId — meaning subsequent turns reuse
-      // it via path (2) without re-minting.
+      // cerebrum's hermes-event-translator routes it to the surface's
+      // PersonSession anchor (updateConversationId there, not on
+      // SessionRouter) — meaning subsequent turns reuse it via path (2)
+      // without re-minting.
       let resolvedSessionId: string;
       try {
         resolvedSessionId = await resolveAcpSessionId(deps.acpConn, input);
