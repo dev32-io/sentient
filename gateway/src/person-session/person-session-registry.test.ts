@@ -215,4 +215,30 @@ describe("PersonSessionRegistry.sweep", () => {
     expect(result.sessionsRemoved).toBe(0);
     expect(reg.get(ALICE)).not.toBeNull();
   });
+
+  it("a live wire blocks eviction; removal disposes the session", async () => {
+    const reg = makeRegistry();
+    const s = await reg.getOrCreate(ALICE);
+    expect(s).not.toBeNull();
+    if (!s) throw new Error("expected session");
+
+    // Acquire a wire but NO buffer → hasRetainedBuffers() false, hasLiveWires() true.
+    let disposed = 0;
+    await s.wires.acquire("surf", async () => ({
+      acpConn: {} as never,
+      dispose: () => {
+        disposed++;
+      },
+    }));
+
+    // Sweep far past the idle timeout — must NOT remove (wire still live).
+    reg.sweep(Date.now() + TTL_MS + 60_000);
+    expect(reg.get(ALICE)).not.toBeNull();
+
+    // Release the wire, then sweep — now removable, and dispose() runs.
+    s.wires.release("surf");
+    reg.sweep(Date.now() + TTL_MS + 60_000);
+    expect(reg.get(ALICE)).toBeNull();
+    expect(disposed).toBe(1); // disposeAll on an empty pool is a no-op; the release already disposed
+  });
 });

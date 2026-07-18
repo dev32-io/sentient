@@ -46,8 +46,9 @@ export interface PersonSessionRegistry {
   /**
    * Run a sweep of all sessions: reap device buffers idle past idle_timeout_ms
    * (detached -> evict + deferred teardown; still-attached -> forceClose), then
-   * remove any session left with no retained buffers. Exposed for testing.
-   * Returns sweep stats for observability.
+   * remove any session left with no live resources (retained buffers, live
+   * wires, or active cycle leases) — disposing it immediately before removal.
+   * Exposed for testing. Returns sweep stats for observability.
    */
   sweep(nowMs: number): SweepResult;
   /**
@@ -125,7 +126,8 @@ export function createPersonSessionRegistry(deps: PersonSessionRegistryDeps): Pe
     for (const [userId, session] of sessions) {
       sessionsChecked += 1;
       buffersEvicted += session.sweepIdle(nowMs, idleTimeoutMs);
-      if (!session.hasRetainedBuffers()) {
+      if (!session.hasLiveResources()) {
+        session.dispose();
         sessions.delete(userId);
         sessionsRemoved += 1;
         log.info("sweep.session-removed", { userId, ageMs: session.ageMs });
