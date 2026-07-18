@@ -177,9 +177,7 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
 
   const routes = runPhaseRoutes({
     cfg,
-    internalSecretsStore,
-    profileStore: services.profileStore,
-    userPortStore,
+    personSessions: services.personSessions,
   });
 
   const surfaceCycles = createSurfaceCycleRegistry();

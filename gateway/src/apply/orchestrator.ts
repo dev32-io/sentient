@@ -3,6 +3,7 @@ import { dispatchReset } from "../admin/dispatch-reset.js";
 import type { SupervisordControl } from "../admin/supervisord-control.js";
 import type { HealthPollError, HealthPoller } from "../infrastructure/health-poller.js";
 import { getLog } from "../logging/logger.js";
+import type { PersonSessionRegistry } from "../person-session/person-session-registry.js";
 import type { RenderedProfile } from "../profile-store/profile-renderer.js";
 import type { ProfileStore } from "../profile-store/profile-store.js";
 import type { ProfileV1 } from "../profile-store/profile-types.js";
@@ -23,6 +24,10 @@ export type ApplyError =
 export interface ApplyDeps {
   profileStore: ProfileStore;
   sessionRouter: SessionRouter;
+  /** Per-user session registry — apply clears the resolved PersonSession's
+   *  conversation anchors (see runApply) instead of going through
+   *  SessionRouter, which no longer owns anchor state. */
+  personSessions: PersonSessionRegistry;
   healthPoller: HealthPoller;
   // The MCP catalog is injected by the wrapper in apply-deps; orchestrator
   // hands the renderer no extra context — userId is already on the profile.
@@ -171,7 +176,9 @@ export async function runApply(deps: ApplyDeps, userId: string): Promise<Result<
 
   // Clear conversationId BEFORE restart so any in-flight WS turn racing the
   // restart starts a fresh chain instead of continuing on the stale one.
-  deps.sessionRouter.clearConversationIdForAllSessions(userId);
+  // Anchors now live on PersonSession (not SessionRouter) — no-op if the
+  // user has no live PersonSession.
+  deps.personSessions.get(userId)?.clearAllAnchors();
 
   const runResult = await runRestartAndHealth(deps, userId, signalPaired);
   if (!runResult.ok) return runResult;
