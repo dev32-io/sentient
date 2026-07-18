@@ -31,6 +31,23 @@ final class ChatViewModel: ObservableObject {
     /// Transport + voice axis. Drives the connection banner + composer state.
     @Published private(set) var connection: ConnectionState = makeDisconnectedConnection()
 
+    /// Talk mode (Idle | Hold | Continuous), owned by the SDK's TalkModeController. Exposed
+    /// for the keep-screen-on derivation below (and its reason logging in ChatView).
+    @Published private(set) var talkMode: TalkMode = .idle
+
+    /// Temporary keep-screen-on condition (S8): `Continuous talk mode OR the assistant is
+    /// audibly speaking`. Reuses the EXACT `connection.isSpeaking` signal that drives the
+    /// existing speaking visuals (BubbleSpeakingWave) — not a new signal. TTS frames
+    /// buffered during a Hold are NOT "speaking" until they actually play after release,
+    /// which is the desired semantics here too. Hold itself does not force screen-on: the
+    /// user's finger on the screen already keeps it awake.
+    ///
+    /// Pure derivation — no side effects, no logging — so it stays the testable seam.
+    /// ChatView applies `UIApplication.shared.isIdleTimerDisabled` and owns every clear
+    /// path (condition-false, view disappearing, scene backgrounding), logging the reason
+    /// for each transition there.
+    @Published private(set) var keepScreenOn = false
+
     private let component: ChatComponent
     /// Per-conversation optimistic outbox. Dies with this VM (conversation switch).
     /// Built via the createOutboundCache() factory: SKIE doesn't synthesise a zero-arg
@@ -40,6 +57,7 @@ final class ChatViewModel: ObservableObject {
 
     private var chatTask: Task<Void, Never>?
     private var connectionTask: Task<Void, Never>?
+    private var talkModeTask: Task<Void, Never>?
     private var coldReplaceTask: Task<Void, Never>?
     private var sweepTask: Task<Void, Never>?
     private var reopenFailedTask: Task<Void, Never>?
@@ -64,6 +82,7 @@ final class ChatViewModel: ObservableObject {
 
         startChatCollecting()
         startConnectionCollecting()
+        startTalkModeCollecting()
         startColdReplaceCollecting()
         startPeriodicSweep()
         startReopenFailedCollecting()
@@ -97,18 +116,32 @@ final class ChatViewModel: ObservableObject {
         component.sendMessage.flushIfReady(cache: cache, status: connection.status)
     }
 
-    /// Start the voice uplink (corner mic pressed/locked) via the component
-    /// passthrough. Fire-and-forget: the SDK flips voiceMode optimistically; a
-    /// downstream failure drops it back to off, which resets the control.
-    func startMic() {
-        log.info("mic.start")
-        component.startMic()
+    // Talk-mode intents (design spec §3) — thin passthroughs to the component. All mode
+    // semantics live in the SDK's TalkModeController; the VM never decides anything here.
+    // Fire-and-forget: the SDK flips voiceMode optimistically off the resulting talk mode.
+
+    /// Corner mic pressed (idle→hold) — press-to-talk begins.
+    func pressMic() {
+        log.info("mic.press")
+        component.pressMic()
     }
 
-    /// Stop the voice uplink (corner mic released/unlocked).
-    func stopMic() {
-        log.info("mic.stop")
-        component.stopMic()
+    /// Corner mic released below the lock threshold (hold→idle).
+    func releaseMic() {
+        log.info("mic.release")
+        component.releaseMic()
+    }
+
+    /// Corner mic slid to lock (hold→locked) — continuous/hands-free begins.
+    func lockMic() {
+        log.info("mic.lock")
+        component.lockMic()
+    }
+
+    /// Locked control released to stop (locked→idle) — hands-free ends.
+    func stopContinuous() {
+        log.info("mic.stop-continuous")
+        component.stopContinuous()
     }
 
     /// Toggle TTS through the component passthrough (gateway echoes via prefs).
@@ -204,6 +237,26 @@ final class ChatViewModel: ObservableObject {
         if !cache.pending.value.isEmpty {
             cache.sweepTimeouts()
         }
+        recomputeKeepScreenOn()
+    }
+
+    // ── Talk-mode stream collection (S8 keep-screen-on) ───────────────────────
+
+    private func startTalkModeCollecting() {
+        talkModeTask = Task { [weak self] in
+            guard let self else { return }
+            for await mode in self.component.talkMode {
+                self.talkMode = mode
+                self.recomputeKeepScreenOn()
+            }
+        }
+    }
+
+    /// Pure re-derivation of `keepScreenOn` from the two latest inputs (`talkMode`,
+    /// `connection.isSpeaking`). No side effects here — ChatView applies the platform
+    /// flag off the published change and owns the transition log.
+    private func recomputeKeepScreenOn() {
+        keepScreenOn = talkMode == .continuous || connection.isSpeaking
     }
 
     // ── Periodic unacked-timeout sweep ────────────────────────────────────────
@@ -267,6 +320,7 @@ final class ChatViewModel: ObservableObject {
     deinit {
         chatTask?.cancel()
         connectionTask?.cancel()
+        talkModeTask?.cancel()
         coldReplaceTask?.cancel()
         sweepTask?.cancel()
         reopenFailedTask?.cancel()

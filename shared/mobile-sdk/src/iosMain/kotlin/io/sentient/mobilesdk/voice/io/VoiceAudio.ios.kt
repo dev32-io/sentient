@@ -1,396 +1,198 @@
 // ---------------------------------------------------------------------------
-// VoiceAudio.ios.kt — ONE AVAudioEngine serving every (mic, playback) state.
+// VoiceAudio.ios.kt — path-routing facade over THREE separate iOS audio engines.
 //
-// Consolidates the proven iOS audio snippets (mic tap, playback player, full-duplex
-// session, ObjCExceptionGuard) into one engine. configure(mic, playback, rate) diffs voiceAudioGraph against
-// the last-applied graph, then stop → reconfigure (tap/player/VPIO) → start.
-// VPIO toggled ONLY in the mic+playback cell, only inside a stop → always starts
-// on a clean session (kills StartIO-on-dirty-session). Player always connected to
-// mainMixerNode → never starts disconnected (kills the 2633b4e crash class).
+// iOS session transitions are HAUNTED: a per-cell .playback↔.playAndRecord category
+// switch on ONE shared engine was tried twice and both times killed audio (git 2633b4e
+// + a re-confirmed 2026-07-17 attempt). Root structural cause: an engine whose inputNode
+// was ever touched starts DEAD under .playback. The fix design is THREE fully separate
+// engines, each with its own scoped session, NEVER running concurrently:
 //
-// NO-CRASH: every AV call wrapped (runCatching / enginePrepareGuarded /
-// engineStartGuarded / memScoped NSError**). Failures become Phase.Error, never
-// a throw across @ObjCExport (K/N traps a thrown Throwable as SIGABRT).
+//   - DuplexEngine     — the original one-AVAudioEngine machinery, byte-for-byte
+//                        (.playAndRecord+.videoChat, VPIO iff mic+playback, tap reinstall,
+//                        gains, failReset, drain counters). Used for ALL cells when
+//                        path == Duplex (the Continuous / full-duplex path).
+//   - MediaPlaybackEngine — playback-only, scoped .playback session, NEVER touches
+//                        inputNode. Used for (mic=F, playback=T, path=Manual).
+//   - MicCaptureEngine — capture-only, scoped .playAndRecord+.default, NO VPIO. Used for
+//                        (mic=T, playback=F, path=Manual).
 //
-// DEVICE-VERIFIED (sim has no mic → no unit test). Compile GREEN is the agent gate;
-// device mic run is user-owned. Logs lengths/counts/ids ONLY (PrivacyGuard safe).
+// EXCLUSIVITY is the load-bearing invariant: at most ONE engine (⇒ one live AVAudioSession)
+// at a time. Before starting a new engine the facade FULLY tears down whichever other
+// engine is live (stop engine → remove tap / detach player → setActive(false)), so every
+// transition crosses a dead-audio boundary + a full session deactivate — guaranteed by
+// the TalkMode UX (press interrupts TTS before any switch; replies only start after
+// release), NOT by timing tricks.
+//
+// The facade OWNS the single [state] StateFlow + the single [micCh]/[micFrames] channel
+// (spec §7: one state + one micFrames across all engines) and injects them into each
+// engine. The 3-arg legacy configure delegates with path=Duplex (unchanged behavior for
+// any caller not yet threading path).
+//
+// NO-CRASH: every AV call inside the engines is guarded; the facade never throws across
+// @ObjCExport. Compile GREEN is the agent gate (sim has no mic/audio route); the device
+// hold-basic + round-trip-stability gate is user-owned. Logs lengths/counts/ids ONLY.
 // ---------------------------------------------------------------------------
 @file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class, kotlinx.cinterop.BetaInteropApi::class)
 
 package io.sentient.mobilesdk.voice.io
 
-import io.sentient.mobilesdk.audio.pcm16LeToShorts
-import io.sentient.mobilesdk.audioio.enginePrepareGuarded
-import io.sentient.mobilesdk.audioio.engineStartGuarded
-import io.sentient.mobilesdk.audioio.pcm16ToFloatBuffer
-import io.sentient.mobilesdk.audioio.Pcm16Converter
 import io.sentient.mobilesdk.log.createLogger
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.BetaInteropApi
-import kotlinx.cinterop.alloc
-import kotlinx.cinterop.memScoped
-import kotlinx.cinterop.ptr
-import kotlinx.cinterop.value
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
-import platform.AVFAudio.AVAudioEngine
-import platform.AVFAudio.AVAudioFormat
-import platform.AVFAudio.AVAudioPlayerNode
-import platform.AVFAudio.AVAudioSession
-import platform.AVFAudio.AVAudioSessionCategoryOptionDefaultToSpeaker
-import platform.AVFAudio.AVAudioSessionCategoryPlayAndRecord
-import platform.AVFAudio.AVAudioSessionModeVideoChat
-import platform.AVFAudio.AVAudioSessionPortOverrideSpeaker
-import platform.AVFAudio.setActive
-import platform.Foundation.NSError
-import kotlin.concurrent.AtomicInt
 import io.sentient.mobilesdk.voice.io.VoiceAudioState.Phase
 
-private const val TARGET_SAMPLE_RATE_HZ = 16_000
+// Bounded mic channel capacity (drop-newest via trySend). Owned by the facade; both the
+// Duplex and MicCapture engines feed this ONE channel.
 private const val FRAME_CHANNEL_CAPACITY = 16
-private const val INPUT_BUS = 0uL
-private const val OUTPUT_BUS = 0uL
-private const val TAP_BUFFER_FRAMES = 1024u
-private const val MONO_CHANNELS = 1u
-
-// Software mic gain applied to captured PCM16 in the tap. iOS delivers far-field
-// speech quiet (measured server rms 0.003–0.08 vs webui 0.03–0.2), so we boost
-// deterministically here instead of fighting iOS's session-mode processing.
-// Start ×4 (far-field ~0.01→0.04, close speech stays under hard-clip); tune from
-// the "capture-level" log below. 1.0f = no boost.
-private const val MIC_CAPTURE_GAIN = 4.0f
-// Throttle the capture-level meter log — the tap fires ~10×/s, so every 50 ≈ 5s.
-private const val METER_LOG_EVERY = 50
 
 /**
- * ONE AVAudioEngine serving every (mic, playback) state. session = .playAndRecord +
- * .videoChat (one stable VoIP mode that survives reconfigure; capture level handled by
- * MIC_CAPTURE_GAIN in the tap, AEC by the per-cell VPIO toggle — see activateSession).
- * Activated on first non-idle configure, deactivated at idle/shutdown.
- * configure() diffs [voiceAudioGraph] against the current graph: stop → reconfigure
- * (tap/player/VPIO) → ensureRunning. VPIO enabled ONLY in the mic+playback cell, and
- * only inside a stop→reconfigure→start (never on a live engine) → always starts on a
- * clean session (kills the StartIO-on-dirty-session bug class).
+ * The single [VoiceAudio] surface for iOS, routing each (mic, playback, path) cell to
+ * exactly one of three internal engines and enforcing one-live-session exclusivity.
+ * See the file header for the engine roster + the haunted-transition history.
  */
 class IosVoiceAudio : VoiceAudio {
-    private val log = createLogger("voice", "engine", "ios")
-
-    private val engine = AVAudioEngine()
-    private val player = AVAudioPlayerNode()
+    private val log = createLogger("voice", "engine", "ios", "facade")
 
     private val _state = MutableStateFlow(VoiceAudioState(Phase.Idle, micActive = false, playbackActive = false))
     override val state: StateFlow<VoiceAudioState> = _state
 
-    // Bounded SUSPEND channel; drop-newest via trySend (mirrors the prior iOS mic tap).
+    // Bounded SUSPEND channel; drop-newest via trySend. The ONE micFrames flow across all
+    // engines — both Duplex and MicCapture feed it.
     private val micCh = Channel<ShortArray>(capacity = FRAME_CHANNEL_CAPACITY)
     override val micFrames: Flow<ShortArray> = micCh.receiveAsFlow()
 
-    // The currently-applied graph; configure diffs against this.
-    private var current: VoiceAudioGraph = voiceAudioGraph(mic = false, playback = false)
+    // The three path-split engines. Each feeds the shared _state / micCh.
+    private val duplex = DuplexEngine(_state, micCh)
+    private val media = MediaPlaybackEngine(_state)
+    private val capture = MicCaptureEngine(_state, micCh)
 
-    // Mic-tap state (built lazily on first installTap; reset on removeTap).
-    private var converter: Pcm16Converter? = null
-    private var capturedCount = 0
-    private var droppedCount = 0
+    // Which engine currently holds the live session. Advanced only inside configure().
+    private var active = EngineKind.Idle
 
-    // Playback drain tracking — outstanding scheduled buffers + generation guard
-    // (mirrors the prior iOS playback adapter). AtomicInt: completion fires on the audio
-    // render thread; the counter is read here on the orchestrator coroutine.
-    private val outstanding = AtomicInt(0)
-    private val playbackEpoch = AtomicInt(0)
-    private var playerFormat: AVAudioFormat? = null
+    private enum class EngineKind { Idle, Duplex, Media, Capture }
 
-    override suspend fun configure(mic: Boolean, playback: Boolean, playbackRateHz: Int) {
-        val desired = voiceAudioGraph(mic, playback)
-        if (desired == current) {
-            log.debug("configure-noop", mapOf("mic" to mic, "playback" to playback))
-            return
-        }
+    override suspend fun configure(mic: Boolean, playback: Boolean, playbackRateHz: Int) =
+        configure(mic, playback, VoiceAudioPath.Duplex, playbackRateHz)
+
+    override suspend fun configure(mic: Boolean, playback: Boolean, path: VoiceAudioPath, playbackRateHz: Int) {
+        val target = route(mic, playback, path)
         log.info(
-            "configure",
-            mapOf("mic" to mic, "playback" to playback, "vpio" to desired.vpio, "rate" to playbackRateHz),
+            "route",
+            mapOf("mic" to mic, "playback" to playback, "path" to path.name, "from" to active.name, "to" to target.name),
         )
-        _state.value = _state.value.copy(phase = Phase.Configuring, micActive = mic, playbackActive = playback)
-        runCatching {
-            engine.stop()
-            if (desired.running) {
-                // I1: a session-activate failure (setCategory/setActive) must abort
-                // configure BEFORE applyGraph/ensureRunning run on an un-activated
-                // session — otherwise the engine proceeds to Phase.Ready with no audio
-                // route, silently dead. Match the ensureRunning()-check pattern (T4).
-                if (!activateSession()) {
-                    failReset(mic, playback, "session-activate-failed")
-                    return
-                }
-            } else {
-                deactivateSession()
-            }
-            applyGraph(desired, playbackRateHz)
-            if (desired.running && !ensureRunning()) {
-                failReset(mic, playback, "engine-start-failed")
-                return
-            }
-            current = desired
-        }.onFailure { err ->
-            // Partial-failure state desync fix: applyGraph may have attached the player /
-            // installed the tap before a later step threw. Leaving `current` at the old
-            // graph while the engine holds a half-built graph desyncs the next configure
-            // (it re-runs attachPlayer → double-attach + resets outstanding/epoch → the
-            // drain counter corrupts → isPlaybackIdle sticks). Hard-reset to a clean idle
-            // baseline so the next configure rebuilds from scratch.
-            failReset(mic, playback, err.message ?: "unknown")
+        if (target == EngineKind.Idle) {
+            goIdle(playbackRateHz)
             return
         }
-        _state.value = VoiceAudioState(Phase.Ready, micActive = mic, playbackActive = playback)
+        // EXCLUSIVITY: fully tear down whichever OTHER engine is live before starting the
+        // target (one live session at a time; always transition through silence).
+        if (active != target) {
+            teardownActive()
+            active = EngineKind.Idle
+        }
+        when (target) {
+            EngineKind.Duplex -> duplex.configure(mic, playback, playbackRateHz)
+            EngineKind.Media -> media.arm(playbackRateHz)
+            EngineKind.Capture -> capture.arm()
+            EngineKind.Idle -> Unit // unreachable (handled above)
+        }
+        // On a failure the engine self-reset to idle baseline + set Phase.Error (SdkVoice
+        // reconciles its lane to idle on Error). Mirror that: mark the facade Idle so the
+        // next configure re-attempts from scratch rather than diffing against a dead engine.
+        active = if (_state.value.phase == Phase.Error) EngineKind.Idle else target
     }
 
     /**
-     * A configure failure: force the engine + [current] back to a clean idle baseline so
-     * the next configure never diffs against a half-built graph. Tears down any
-     * partially-applied tap/player, deactivates the session, and resets the drain
-     * counters. [current] becomes graph(false,false); the caller retries from scratch.
+     * Route a (mic, playback, path) cell to the owning engine. Only (mic=T, playback=F)
+     * is path-ambiguous (Hold=Capture vs Continuous=Duplex mic-only); every other cell is
+     * unambiguous. (mic=T, playback=T, Manual) should NEVER occur (TalkModeController
+     * never produces it) — WARN + route to Duplex (defensive, never crash).
      */
-    private fun failReset(mic: Boolean, playback: Boolean, reason: String) {
-        runCatching { engine.stop() }
-        runCatching { engine.inputNode.removeTapOnBus(INPUT_BUS) }
-        runCatching { if (current.player) { player.stop(); engine.detachNode(player) } }
-        deactivateSession()
-        converter = null
-        playerFormat = null
-        outstanding.value = 0
-        playbackEpoch.incrementAndGet()
-        current = voiceAudioGraph(mic = false, playback = false)
-        _state.value = VoiceAudioState(Phase.Error, micActive = mic, playbackActive = playback, errorReason = reason)
-        log.warn("configure-failed", mapOf("reason" to reason))
-    }
-
-    /** Activate .playAndRecord + .videoChat — ONE stable VoIP mode (no fragile per-cell
-     *  mode switching). NOTE: .measurement was tried for its raw far-field capture but
-     *  it does NOT survive the engine stop→reconfigure→start — after one TTS turn the
-     *  tap AND playback went dead (round 2 silent). .videoChat is a VoIP mode (like the
-     *  original .voiceChat) that reconfigures cleanly, is hands-free-tuned for far-field,
-     *  and is VPIO-compatible for barge-in AEC. iOS still delivers far-field quiet, so
-     *  the CAPTURE LEVEL is handled deterministically by MIC_CAPTURE_GAIN in the tap.
-     *  Returns true only when BOTH setCategory + setActive succeed (I1 abort); speaker
-     *  override is best-effort. */
-    private fun activateSession(): Boolean = memScoped {
-        val s = AVAudioSession.sharedInstance()
-        val errVar = alloc<kotlinx.cinterop.ObjCObjectVar<NSError?>>()
-        val categorySet = s.setCategory(
-            AVAudioSessionCategoryPlayAndRecord,
-            mode = AVAudioSessionModeVideoChat,
-            options = AVAudioSessionCategoryOptionDefaultToSpeaker,
-            error = errVar.ptr,
-        )
-        if (!categorySet) {
-            log.warn("session-category-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
-            return@memScoped false
-        }
-        val activated = s.setActive(true, errVar.ptr)
-        if (!activated) {
-            log.warn("session-activate-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
-            return@memScoped false
-        }
-        // Force the LOUD speaker route. Canonical speakerphone toggle; keeps
-        // voice-processing AEC intact for barge-in.
-        val routed = s.overrideOutputAudioPort(AVAudioSessionPortOverrideSpeaker, errVar.ptr)
-        if (!routed) log.warn("session-speaker-override-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
-        log.debug("session-active", mapOf("category" to "playAndRecord", "mode" to "videoChat", "override" to "speaker"))
-        true
-    }
-
-    private fun deactivateSession() {
-        runCatching { AVAudioSession.sharedInstance().setActive(false, null) }
-            .onFailure { log.warn("session-deactivate-failed", mapOf("cause" to (it.message ?: "unknown"))) }
-    }
-
-    /**
-     * Apply the graph diff to the ONE engine. VPIO toggled ONLY here (engine is
-     * stopped above), so it always starts on a clean session. Player is always
-     * connected to mainMixerNode so it never starts "disconnected" (interim 2633b4e).
-     *
-     * ``setInputVoiceProcessing`` REBUILDS the input audio unit, which invalidates any
-     * live mic tap — so a mic that STAYS on across a VPIO toggle needs its tap
-     * re-installed. The plain "install only when newly mic" check missed this (inputTap
-     * stays true), which left the mic silently dead after the first TTS round (VPIO
-     * flips on for mic+playback, then off again → tap killed twice, never re-added).
-     */
-    private fun applyGraph(g: VoiceAudioGraph, rate: Int) {
-        val vpioChanged = g.vpio != current.vpio
-        if (vpioChanged) setInputVoiceProcessing(g.vpio)
-        when {
-            g.inputTap && !current.inputTap -> installTap()
-            g.inputTap && vpioChanged -> { removeTap(); installTap() }  // VPIO rebuilt the unit → re-tap
-            !g.inputTap && current.inputTap -> removeTap()
-        }
-        if (g.player && !current.player) attachPlayer(rate)
-        if (!g.player && current.player) detachPlayer()
-    }
-
-    private fun ensureRunning(): Boolean {
-        if (engine.running) return true
-        if (!enginePrepareGuarded(engine)) return false
-        return engineStartGuarded(engine)
-    }
-
-    // ── Mic tap (48k→16k convert-in-tap, drop-newest) ────────────────────────────
-    private fun installTap() {
-        val input = engine.inputNode
-        val inputFormat = input.inputFormatForBus(INPUT_BUS)
-        if (inputFormat.sampleRate <= 0.0 || inputFormat.channelCount <= 0u) {
-            // I2: throw so the outer runCatching in configure catches it → Phase.Error.
-            // A silent return left current.inputTap=true + Phase.Ready with micFrames
-            // cold → uplink silently dead. Match the T4 VPIO-failure pattern.
-            log.warn("mic-unavailable", mapOf("inputRate" to inputFormat.sampleRate, "channels" to inputFormat.channelCount.toLong()))
-            throw IllegalStateException("mic-unavailable")
-        }
-        val conv = Pcm16Converter(inputFormat, TARGET_SAMPLE_RATE_HZ)
-        if (!conv.isReady) {
-            log.warn("converter-init-failed", mapOf("inputRate" to inputFormat.sampleRate))
-            throw IllegalStateException("converter-init-failed")
-        }
-        capturedCount = 0
-        droppedCount = 0
-        input.installTapOnBus(INPUT_BUS, bufferSize = TAP_BUFFER_FRAMES, format = inputFormat) { buffer, _ ->
-            forwardBuffer(buffer, conv)
-        }
-        // Establish the OUTPUT graph (mainMixer→outputNode) BEFORE start — ALWAYS.
-        // E2 playback attaches its player to this SAME mixer; without the output half
-        // the player start()s "in a disconnected state" (crash + silent TTS).
-        val outputMixer = engine.mainMixerNode
-        log.debug(
-            "tap-installed",
-            mapOf("inputRate" to inputFormat.sampleRate, "targetRate" to TARGET_SAMPLE_RATE_HZ, "outputRate" to outputMixer.outputFormatForBus(OUTPUT_BUS).sampleRate),
-        )
-        converter = conv
-    }
-
-    private fun removeTap() {
-        runCatching { engine.inputNode.removeTapOnBus(INPUT_BUS) }
-            .onFailure { log.warn("remove-tap-failed", mapOf("cause" to (it.message ?: "unknown"))) }
-        converter = null
-    }
-
-    /** Convert one tap buffer to 16k PCM16 ShortArray and deliver (audio-thread safe). */
-    private fun forwardBuffer(buffer: platform.AVFAudio.AVAudioPCMBuffer?, conv: Pcm16Converter) {
-        if (buffer == null) return
-        capturedCount += 1
-        val bytes = conv.convert(buffer) ?: return
-        val shorts = pcm16LeToShorts(bytes)
-        meterAndGain(shorts)
-        deliver(shorts)
-    }
-
-    /** Log the RAW capture RMS (throttled — for gain tuning), then apply
-     *  MIC_CAPTURE_GAIN in-place, clamped to Int16. iOS delivers far-field speech
-     *  quiet; this normalizes it up to webui's level so one server rms floor fits
-     *  both. rmsRaw is an aggregate energy level, not content — safe to log. */
-    private fun meterAndGain(shorts: ShortArray) {
-        if (shorts.isEmpty()) return
-        if (capturedCount == 1 || capturedCount % METER_LOG_EVERY == 0) {
-            var sum = 0.0
-            for (s in shorts) { val f = s / 32768.0; sum += f * f }
-            val rmsRaw = kotlin.math.sqrt(sum / shorts.size)
-            log.debug("capture-level", mapOf("rmsRaw" to rmsRaw, "gain" to MIC_CAPTURE_GAIN, "frames" to shorts.size))
-        }
-        if (MIC_CAPTURE_GAIN == 1.0f) return
-        for (i in shorts.indices) {
-            val v = (shorts[i] * MIC_CAPTURE_GAIN).toInt()
-            shorts[i] = when {
-                v > Short.MAX_VALUE.toInt() -> Short.MAX_VALUE
-                v < Short.MIN_VALUE.toInt() -> Short.MIN_VALUE
-                else -> v.toShort()
+    private fun route(mic: Boolean, playback: Boolean, path: VoiceAudioPath): EngineKind {
+        if (!mic && !playback) return EngineKind.Idle
+        if (path == VoiceAudioPath.Duplex) return EngineKind.Duplex
+        // path == Manual
+        return when {
+            mic && !playback -> EngineKind.Capture
+            !mic && playback -> EngineKind.Media
+            else -> {
+                log.warn(
+                    "route-unexpected-manual-duplex-cell",
+                    mapOf("mic" to mic, "playback" to playback, "action" to "route-to-duplex"),
+                )
+                EngineKind.Duplex
             }
         }
     }
 
-    /** trySend the frame; on a full buffer drop the NEWEST + count it (throttled WARN). */
-    private fun deliver(shorts: ShortArray) {
-        if (micCh.trySend(shorts).isSuccess) return
-        droppedCount += 1
-        if (droppedCount == 1 || droppedCount % DROP_WARN_EVERY == 0) {
-            log.warn("frame-dropped", mapOf("reason" to "channel-full", "dropped" to droppedCount, "count" to capturedCount))
+    /**
+     * Transition to idle. Coming from Duplex we delegate to duplex.configure(false, false)
+     * so the Continuous→Idle teardown is BYTE-IDENTICAL to today (its own session
+     * deactivate + Phase.Ready(false,false)). Coming from Media/Capture we tear the engine
+     * down and set the same idle baseline the facade owns. From Idle it is a duplex no-op
+     * (matching today's repeated (F,F) configure-noop log).
+     */
+    private suspend fun goIdle(rate: Int) {
+        when (active) {
+            EngineKind.Duplex, EngineKind.Idle -> duplex.configure(false, false, rate)
+            EngineKind.Media -> {
+                media.teardown()
+                _state.value = VoiceAudioState(Phase.Ready, micActive = false, playbackActive = false)
+            }
+            EngineKind.Capture -> {
+                capture.teardown()
+                _state.value = VoiceAudioState(Phase.Ready, micActive = false, playbackActive = false)
+            }
+        }
+        active = EngineKind.Idle
+    }
+
+    /** Fully stop + deactivate whichever engine currently holds the live session. */
+    private fun teardownActive() {
+        when (active) {
+            EngineKind.Duplex -> duplex.teardown()
+            EngineKind.Media -> media.teardown()
+            EngineKind.Capture -> capture.teardown()
+            EngineKind.Idle -> Unit
         }
     }
 
-    // ── Playback (AVAudioPlayerNode → mainMixerNode) ──────────────────────────────
-    private fun attachPlayer(rate: Int) {
-        val format = AVAudioFormat(standardFormatWithSampleRate = rate.toDouble(), channels = MONO_CHANNELS)
-        engine.attachNode(player)
-        engine.connect(player, to = engine.mainMixerNode, format = format)
-        playerFormat = format
-        outstanding.value = 0
-        playbackEpoch.incrementAndGet()
-        log.info("player-attached", mapOf("rate" to rate))
-    }
-
-    private fun detachPlayer() {
-        runCatching {
-            player.stop()
-            engine.detachNode(player)
-        }.onFailure { log.warn("detach-player-failed", mapOf("cause" to (it.message ?: "unknown"))) }
-        playerFormat = null
-        outstanding.value = 0
-        playbackEpoch.incrementAndGet()
-    }
-
+    // ── Downlink sink: route to whichever engine currently owns playback ──────────
     override fun playFrame(pcm16: ByteArray) {
-        if (!current.player) return
-        val format = playerFormat ?: return
-        val buffer = pcm16ToFloatBuffer(pcm16, format) ?: return
-        val epochAtSchedule = playbackEpoch.value
-        outstanding.incrementAndGet()
-        runCatching {
-            player.scheduleBuffer(buffer, completionHandler = {
-                if (playbackEpoch.value == epochAtSchedule) outstanding.decrementAndGet()
-            })
-            if (!player.playing) player.play()
-        }.onFailure {
-            if (playbackEpoch.value == epochAtSchedule) outstanding.decrementAndGet()
-            log.error("play-frame-failed", mapOf("cause" to (it.message ?: "unknown"), "bytes" to pcm16.size))
+        when (active) {
+            EngineKind.Duplex -> duplex.playFrame(pcm16)
+            EngineKind.Media -> media.playFrame(pcm16)
+            EngineKind.Capture, EngineKind.Idle -> Unit // no player armed → drop (matches today's null-player guard)
         }
     }
 
     override fun flushPlayback() {
-        playbackEpoch.incrementAndGet()
-        outstanding.value = 0
-        runCatching { player.stop() }
-            .onFailure { log.warn("flush-playback-failed", mapOf("cause" to (it.message ?: "unknown"))) }
-        log.info("flush-playback", mapOf("reason" to "barge-in/interrupt drop-guard"))
+        when (active) {
+            EngineKind.Duplex -> duplex.flushPlayback()
+            EngineKind.Media -> media.flushPlayback()
+            EngineKind.Capture, EngineKind.Idle -> Unit // nothing playing
+        }
     }
 
-    override val isPlaybackIdle: Boolean get() = outstanding.value == 0
+    override val isPlaybackIdle: Boolean
+        get() = when (active) {
+            EngineKind.Duplex -> duplex.isPlaybackIdle
+            EngineKind.Media -> media.isPlaybackIdle
+            EngineKind.Capture, EngineKind.Idle -> true // no player → drained
+        }
 
     override suspend fun shutdown() {
-        log.info("shutdown", mapOf("captured" to capturedCount, "dropped" to droppedCount))
-        runCatching { engine.stop() }
-        runCatching { engine.inputNode.removeTapOnBus(INPUT_BUS) }
-        runCatching { if (current.player) { player.stop(); engine.detachNode(player) } }
-        deactivateSession()
+        log.info("shutdown", mapOf("active" to active.name))
+        duplex.teardown()
+        media.teardown()
+        capture.teardown()
+        active = EngineKind.Idle
         micCh.close()
-        converter = null
-        playerFormat = null
-        outstanding.value = 0
-        playbackEpoch.incrementAndGet()
-        current = voiceAudioGraph(mic = false, playback = false)
         _state.value = VoiceAudioState(Phase.Idle, micActive = false, playbackActive = false)
-    }
-
-    private fun setInputVoiceProcessing(enabled: Boolean) {
-        val input = engine.inputNode
-        memScoped {
-            val errVar = alloc<kotlinx.cinterop.ObjCObjectVar<NSError?>>()
-            val ok = input.setVoiceProcessingEnabled(enabled, errVar.ptr)
-            if (!ok) throw IllegalStateException("vpio enable failed")
-        }
-        log.info("vpio", mapOf("enabled" to enabled))
-    }
-
-    private companion object {
-        // Dropped-frame WARN throttle: warn on the first drop + every Nth after.
-        const val DROP_WARN_EVERY = 50
     }
 }

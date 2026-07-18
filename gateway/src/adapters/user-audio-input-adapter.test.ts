@@ -29,6 +29,7 @@ function makeFakeSttAdapter(): FakeSTTAdapter {
     }),
     suppressInputFor: vi.fn(),
     endUtterance: vi.fn(),
+    setTurnMode: vi.fn(),
 
     async *events(signal: AbortSignal): AsyncGenerator<STTEvent> {
       while (true) {
@@ -252,6 +253,66 @@ describe("UserAudioInputAdapter", () => {
     expect(fake.endUtterance).toHaveBeenCalledOnce();
   });
 
+  it("replays the default turn mode (semantic) into the STT adapter right after connect", async () => {
+    const fake = makeFakeSttAdapter();
+    const adapter = createUserAudioInputAdapter(makeSttFactory(fake), BASE_STT_CONFIG);
+    const { ctx } = makeCtxWithInject();
+
+    await adapter.start(ctx);
+
+    expect(fake.setTurnMode).toHaveBeenCalledWith("semantic");
+
+    await adapter.stop("done");
+  });
+
+  it("forwards setTurnMode(manual) to the active STT adapter (audio.start turnMode relay)", async () => {
+    const fake = makeFakeSttAdapter();
+    const adapter = createUserAudioInputAdapter(makeSttFactory(fake), BASE_STT_CONFIG);
+    const { ctx } = makeCtxWithInject();
+
+    await adapter.start(ctx);
+    (fake.setTurnMode as ReturnType<typeof vi.fn>).mockClear(); // isolate from the connect-time replay
+    adapter.setTurnMode("manual");
+
+    expect(fake.setTurnMode).toHaveBeenCalledOnce();
+    expect(fake.setTurnMode).toHaveBeenCalledWith("manual");
+
+    await adapter.stop("done");
+  });
+
+  it("setTurnMode is a no-op-safe when no STT adapter is active (mode remembered for later)", async () => {
+    const fake = makeFakeSttAdapter();
+    const adapter = createUserAudioInputAdapter(makeSttFactory(fake), BASE_STT_CONFIG);
+
+    // No start() yet — must not throw.
+    expect(() => adapter.setTurnMode("manual")).not.toThrow();
+
+    const { ctx } = makeCtxWithInject();
+    await adapter.start(ctx);
+    // The remembered mode is replayed at connect time, per the test below.
+    await adapter.stop("done");
+  });
+
+  it("replays the current (non-default) turn mode into a freshly reconnected STT adapter", async () => {
+    const fake = makeFakeSttAdapter();
+    const adapter = createUserAudioInputAdapter(makeSttFactory(fake), BASE_STT_CONFIG);
+    const { ctx } = makeCtxWithInject();
+
+    await adapter.start(ctx); // replay #1: "semantic" (default)
+    adapter.setTurnMode("manual"); // live forward while connected
+    (fake.setTurnMode as ReturnType<typeof vi.fn>).mockClear();
+
+    // reconfigure() tears down the current STT connection and opens a fresh
+    // one — a new connection defaults to "semantic" server-side, so the
+    // last-known mode ("manual") must be replayed into it immediately.
+    await adapter.reconfigure({ ...BASE_STT_CONFIG, language: "zh" });
+
+    expect(fake.setTurnMode).toHaveBeenCalledOnce();
+    expect(fake.setTurnMode).toHaveBeenCalledWith("manual");
+
+    await adapter.stop("done");
+  });
+
   it("closes STT adapter on stop", async () => {
     const fake = makeFakeSttAdapter();
     const adapter = createUserAudioInputAdapter(makeSttFactory(fake), BASE_STT_CONFIG);
@@ -278,6 +339,7 @@ describe("UserAudioInputAdapter", () => {
       close: vi.fn().mockResolvedValue(undefined),
       suppressInputFor: vi.fn(),
       endUtterance: vi.fn(),
+      setTurnMode: vi.fn(),
       async *events(): AsyncGenerator<STTEvent> {
         /* never yields */
       },

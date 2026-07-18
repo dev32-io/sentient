@@ -22,5 +22,5 @@ actual fun createPlatformBundle(): PlatformBundle = PlatformBundle(
     tokenStore = IosSecureTokenStore(),
     deviceIdStore = IosDeviceIdStore(),
     clock = Clock { (NSDate().timeIntervalSince1970 * MS_PER_SECOND).toLong() },
-    voiceAudio = IosVoiceAudio(), // Single audio engine: mic + playback on shared AVAudioEngine
+    voiceAudio = IosVoiceAudio(), // Path-routing facade over Duplex + MediaPlayback + MicCapture engines
 )

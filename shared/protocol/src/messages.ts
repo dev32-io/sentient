@@ -120,8 +120,26 @@ export const sessionConfigureSchema = z.object({
   surfaceId: z.string().min(1).optional(),
 });
 
+/**
+ * Turn-authority mode for a client audio stream (2026-07-17 hold/toggle-talk
+ * split design §4). "manual" = hold-to-talk: user press/release is the sole
+ * turn boundary — the gateway relays this to STT so Smart-Turn v3 is
+ * bypassed. "semantic" = today's continuous mode: Smart-Turn v3 decides turn
+ * boundaries (unchanged). z.union of literals (not this file's usual z.enum)
+ * was an explicit spec-slice directive — both infer the same "manual"|"semantic"
+ * TS union, so don't "fix" it back without checking the hold/toggle spec.
+ */
+export const turnModeSchema = z.union([z.literal("manual"), z.literal("semantic")]);
+export type TurnMode = z.infer<typeof turnModeSchema>;
+
 export const audioStartSchema = z.object({
   type: z.literal("audio.start"),
+  /**
+   * Optional; absent (or omitted by old clients / webui) defaults to
+   * "semantic" so back-compat is automatic — no client-side migration
+   * required. Mobile sets "manual" for a hold-to-talk press.
+   */
+  turnMode: turnModeSchema.default("semantic"),
 });
 
 export const audioEndSchema = z.object({

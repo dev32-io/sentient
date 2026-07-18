@@ -22,7 +22,7 @@
 // micActive (server-confirmed voiceMode), webui parity.
 //
 // Mic permission (E5, adapted): the corner control's press gates on
-// RECORD_AUDIO. Granted → HOLD + onMicStart. Not granted → system prompt,
+// RECORD_AUDIO. Granted → HOLD + onMicPress. Not granted → system prompt,
 // no HOLD; on grant the user presses again (no auto-start); on denial a
 // one-shot inline notice shows. Stopping never checks permission.
 //
@@ -106,8 +106,10 @@ private val composerLog = createLogger("android", "composer")
  * @param ttsEnabled Server-of-record TTS preference (mirrored, not owned).
  * @param micActive True while voiceMode == ACTIVE — external sync for MicCorner.
  * @param canInterrupt True when a cycle is in flight or audio is playing.
- * @param onMicStart Corner mic pressed/locked — start voice mode.
- * @param onMicStop Corner mic released/unlocked — stop voice mode.
+ * @param onMicPress Corner mic pressed (idle→hold) — enter push-to-talk.
+ * @param onMicRelease Corner mic released below the lock threshold (hold→idle).
+ * @param onMicLock Corner mic slid to lock (hold→locked) — enter continuous.
+ * @param onMicStopContinuous Locked control released to stop (locked→idle) — leave continuous.
  * @param onFocus Called once when the text field gains focus — used for ensureConnected.
  */
 @Composable
@@ -117,8 +119,10 @@ fun Composer(
     micActive: Boolean,
     canInterrupt: Boolean,
     onSend: (String) -> Unit,
-    onMicStart: () -> Unit,
-    onMicStop: () -> Unit,
+    onMicPress: () -> Unit,
+    onMicRelease: () -> Unit,
+    onMicLock: () -> Unit,
+    onMicStopContinuous: () -> Unit,
     onTtsToggle: () -> Unit,
     onInterrupt: () -> Unit,
     onFocus: () -> Unit = {},
@@ -241,8 +245,10 @@ fun Composer(
             micActive = micActive,
             onModeChange = { micMode = it },
             ensureMicPermission = { ensureMicPermission() },
-            onStart = onMicStart,
-            onStop = onMicStop,
+            onPress = onMicPress,
+            onRelease = onMicRelease,
+            onLock = onMicLock,
+            onStopContinuous = onMicStopContinuous,
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(end = MIC_END_INSET),

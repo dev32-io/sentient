@@ -30,6 +30,8 @@ import io.sentient.mobilesdk.transport.ResumeCursorPersistence
 import io.sentient.mobilesdk.transport.ResumeCursorStore
 import io.sentient.mobilesdk.transport.SdkStatus
 import io.sentient.mobilesdk.voice.io.VoiceAudioState
+import io.sentient.mobilesdk.voice.talk.TalkMode
+import io.sentient.mobilesdk.voice.talk.TalkModeController
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.BufferOverflow
@@ -172,7 +174,7 @@ class SentientSdk(
         // Control-frame senders ride the SAME serialized lane as pipeline start/stop
         // (audio.start before frames, audio.end after). Lazy/cycle-safe — connectors
         // is only deref'd when the consumer invokes these, exactly like audioInput.
-        onUplinkStart = { connectors.audioInput.startStreaming() },
+        onUplinkStart = { turnMode -> connectors.audioInput.startStreaming(turnMode) },
         onUplinkStop = { connectors.audioInput.stopStreaming() },
         scope = scope,
     )
@@ -182,6 +184,26 @@ class SentientSdk(
      *  surface exposed by [SdkVoice.audioState] — the single source of truth
      *  for the UI spinner + the SDK reconfig decision. */
     val audioState: StateFlow<VoiceAudioState> = voice.audioState
+
+    // Talk-mode brain (design spec §3), constructed at the SDK composition site over its
+    // 6 documented seams — all existing surfaces (S3 recipe B). Capture start/stop ride
+    // SdkVoice's serialized command lane (carrying TurnMode on the mic-rising edge); the
+    // press-interrupt reuses the SDK's own interrupt(); the hold defer drives the downlink
+    // pipeline's buffer-and-defer. Wiring only — the FSM + effect ordering (interrupt-on-press,
+    // beginHold-before-capture, back-to-back end+start on lock) live entirely in the controller.
+    private val talkModeController = TalkModeController(
+        startCapture = { turnMode -> voice.requestStart(turnMode) },
+        endCapture = { voice.requestStop() },
+        interrupt = { interrupt() },
+        isCycleOrTtsActive = { deriver.cognition != CognitionState.IDLE || deriver.isSpeaking },
+        beginHoldDefer = { audio.pipeline.beginHold() },
+        endHoldDefer = { audio.pipeline.endHold() },
+    )
+
+    /** Talk mode (Idle | Hold | Continuous), owned by [talkModeController]. Hot StateFlow per
+     *  the split observable-surface rule (conflation fine — latest wins); NOT folded into a
+     *  delta stream. The corner-mic affordance / future UI renders off this. */
+    val talkMode: StateFlow<TalkMode> = talkModeController.mode
 
     private val connectors = SdkConnectors(
         deriver = deriver,
@@ -368,6 +390,54 @@ class SentientSdk(
         log.info("stopMic")
         deriver.voiceMode = VoiceMode.OFF
         voice.requestStop()
+        emit()
+    }
+
+    // ── Talk-mode intents (design spec §3) — the stable UI contract ──────────────
+    // The corner-mic gesture layer (both apps) emits ONLY these four intents; ALL mode
+    // semantics (interrupt-on-press, turnMode on capture, buffer-and-defer, back-to-back
+    // end+start on lock) live in [talkModeController]. Each intent delegates to the controller,
+    // then projects the resulting TalkMode onto the voice-axis [VoiceMode] mirror via
+    // [syncVoiceMode] so the existing listening-glow + external-sync surface stays in lockstep.
+
+    /** Idle → Hold. Press-to-talk begins (press IS the barge-in). */
+    fun pressMic() {
+        log.info("pressMic")
+        markInteraction()
+        talkModeController.pressMic()
+        syncVoiceMode()
+    }
+
+    /** Hold → Idle. Release finalizes the manual turn; any deferred TTS flushes. */
+    fun releaseMic() {
+        log.info("releaseMic")
+        markInteraction()
+        talkModeController.releaseMic()
+        syncVoiceMode()
+    }
+
+    /** Hold → Continuous. Slide-to-lock: the manual segment finalizes, a semantic turn opens. */
+    fun lockMic() {
+        log.info("lockMic")
+        markInteraction()
+        talkModeController.lockMic()
+        syncVoiceMode()
+    }
+
+    /** Continuous → Idle. Tap-to-stop hands-free. */
+    fun stopContinuous() {
+        log.info("stopContinuous")
+        markInteraction()
+        talkModeController.stopContinuous()
+        syncVoiceMode()
+    }
+
+    /** Project the controller's TalkMode onto the voice-axis mirror: the mic is on
+     *  (voiceMode ACTIVE) in Hold OR Continuous, off in Idle. Computed from the FINAL mode
+     *  after the intent settles, so a lock (Hold→Continuous) never flickers voiceMode OFF.
+     *  voiceMode is a pure UI mirror (no SDK logic branches on it). */
+    private fun syncVoiceMode() {
+        deriver.voiceMode = if (talkMode.value != TalkMode.Idle) VoiceMode.ACTIVE else VoiceMode.OFF
         emit()
     }
 

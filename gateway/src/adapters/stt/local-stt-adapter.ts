@@ -1,8 +1,15 @@
+import type { TurnMode } from "@sentient/protocol";
 import { getLog } from "../../logging/logger.ts";
 import { renderPauses } from "./pause-renderer.ts";
 import { downsamplePcm16 } from "./pcm-resampler.ts";
 import type { STTAdapter, STTAdapterConfig, STTEvent, SttAudioFormat, SttDecodeLanguage } from "./stt-adapter-types.ts";
 import { sttServerMessageSchema } from "./wire-messages.ts";
+
+// STT service's own default (turn_pipeline.semantic_turns=True) — used to
+// decide whether a turn_mode message would actually change server behavior.
+// A session that never goes "manual" must never emit turn_mode at all
+// (2026-07-17 hold/toggle-talk split design §6 back-compat clause).
+const STT_DEFAULT_TURN_MODE: TurnMode = "semantic";
 
 const log = getLog(["sentient", "stt"]);
 
@@ -82,6 +89,9 @@ export function createLocalSttAdapter(config: STTAdapterConfig): STTAdapter {
   let ws: WebSocket | null = null;
   let suppressUntil = 0;
   let disposed = false;
+  // null = nothing sent yet on this WS — treated as STT_DEFAULT_TURN_MODE for
+  // dedup purposes (a fresh connection is implicitly semantic server-side).
+  let lastSentTurnMode: TurnMode | null = null;
   const queue = createEventQueue();
 
   function handleTextFrame(raw: string): void {
@@ -238,6 +248,25 @@ export function createLocalSttAdapter(config: STTAdapterConfig): STTAdapter {
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
       log.debug("flush-sent", { reason: "client audio.end" });
       ws.send(JSON.stringify({ type: "flush" }));
+    },
+
+    setTurnMode(mode: TurnMode): void {
+      const effectiveLast = lastSentTurnMode ?? STT_DEFAULT_TURN_MODE;
+      if (effectiveLast === mode) {
+        log.debug("turn-mode-unchanged", { mode, reason: "matches STT's current effective mode" });
+        return;
+      }
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        // Don't mark as sent — socket isn't up to receive it. A fresh
+        // reconnect gets its own instance (lastSentTurnMode resets to null)
+        // and the caller replays the desired mode right after it connects.
+        log.warn("turn-mode-send-skipped", { mode, reason: "socket not open" });
+        return;
+      }
+      lastSentTurnMode = mode;
+      const semantic = mode === "semantic";
+      log.info("turn-mode-sent", { mode, semantic, reason: "audio.start turnMode changed vs last-sent" });
+      ws.send(JSON.stringify({ type: "turn_mode", semantic }));
     },
 
     async *events(signal: AbortSignal): AsyncGenerator<STTEvent> {

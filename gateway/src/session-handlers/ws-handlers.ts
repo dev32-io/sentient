@@ -125,6 +125,10 @@ export async function handleWebSocketMessage(
 
     case "audio.start":
       ws.data.isStreaming = true;
+      // Relay the turn-authority mode to STT (2026-07-17 hold/toggle-talk
+      // split design §4/§6). zod defaults turnMode to "semantic" when the
+      // client omits it, so old clients / webui are unaffected.
+      ws.data.audioAdapter?.setTurnMode(msg.turnMode);
       return;
 
     case "audio.end":

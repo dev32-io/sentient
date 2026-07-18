@@ -1,3 +1,5 @@
+import type { TurnMode } from "@sentient/protocol";
+
 /** STT decode language sent to the local-stt service on connect. `auto`
  * keeps SenseVoice's per-utterance classifier; `en` / `zh` force that
  * language for better short-utterance accuracy. */
@@ -49,6 +51,13 @@ export interface STTAdapter {
    *  so a turn left open when frames stop would finalize at the NEXT mic
    *  hold — the transcript would ride the next session. */
   endUtterance(): void;
+  /** Relay the client's turn-authority mode (2026-07-17 hold/toggle-talk
+   *  split design §6) by sending `{"type":"turn_mode","semantic":boolean}`
+   *  on the STT WS. "semantic" is the service's own default, so a session
+   *  that never goes manual never emits this message — the adapter dedupes
+   *  against what it last actually sent. Safe to call on every `audio.start`
+   *  and immediately after (re)connect to replay state into a fresh socket. */
+  setTurnMode(mode: TurnMode): void;
 }
 
 export type STTAdapterFactory = (config: STTAdapterConfig) => STTAdapter;

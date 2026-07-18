@@ -1,3 +1,4 @@
+import type { TurnMode } from "@sentient/protocol";
 import type { Connector, SentientSDKInternal } from "../connector-types.ts";
 
 // ---------------------------------------------------------------------------
@@ -7,6 +8,17 @@ import type { Connector, SentientSDKInternal } from "../connector-types.ts";
 export interface UserAudioInputConfig {
   /** Called when the gateway sends a final transcript for user speech. */
   onTranscript?: (text: string) => void;
+}
+
+/**
+ * Outbound `audio.start` frame. Schema parity with the gateway's
+ * `audioStartSchema` (2026-07-17 hold/toggle-talk split design §4) — type
+ * only. Web always omits `turnMode` (gateway defaults to "semantic"); only
+ * mobile-sdk's hold-to-talk path sets it to "manual". Zero behavior change.
+ */
+interface AudioStartFrame {
+  type: "audio.start";
+  turnMode?: TurnMode;
 }
 
 // ---------------------------------------------------------------------------
@@ -53,7 +65,8 @@ export class UserAudioInputConnector implements Connector {
   startStreaming(): void {
     if (this.isStreaming || this.sdk === null) return;
     this.isStreaming = true;
-    this.sdk.send({ type: "audio.start" });
+    const frame: AudioStartFrame = { type: "audio.start" };
+    this.sdk.send(frame);
   }
 
   /** Stop streaming audio to the gateway. */

@@ -1,10 +1,15 @@
+import type { TurnMode } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
 import type { Adapter, AdapterContext } from "./adapter-types.js";
+import { RECONNECT_INITIAL_MS, createSttReconnectSupervisor } from "./stt-reconnect-supervisor.js";
 import type { STTAdapter, STTAdapterConfig, STTAdapterFactory, STTEvent } from "./stt/stt-adapter-types.js";
 
 const log = getLog(["sentient", "adapters", "user-audio-input"]);
 
 const ADAPTER_ID = "user-audio-input-v1";
+// Matches audioStartSchema's zod default (@sentient/protocol) — the mode
+// assumed until the first audio.start says otherwise.
+const DEFAULT_TURN_MODE: TurnMode = "semantic";
 
 export interface UserAudioInputAdapter extends Adapter {
   /** Forward one binary audio frame to the STT adapter. The codec is whichever
@@ -30,6 +35,12 @@ export interface UserAudioInputAdapter extends Adapter {
    *  by the session to trigger barge-in (stop playback + abort TTS
    *  controller). Pass null to clear. Called at most once per turn. */
   setOnSpeechOnset(cb: (() => void) | null): void;
+  /** Relay the mode carried on an `audio.start` frame to STT (2026-07-17
+   *  hold/toggle-talk split design §6). Remembered across STT reconnects —
+   *  a fresh STT connection defaults to "semantic" server-side, so this is
+   *  replayed immediately after every (re)connect in addition to firing on
+   *  the live audio.start that changed it. */
+  setTurnMode(mode: TurnMode): void;
 }
 
 function logSttEvent(event: STTEvent): void {
@@ -46,40 +57,6 @@ function logSttEvent(event: STTEvent): void {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Reconnect supervisor
-//
-// STT runs as a separate container; at session start it may be down, and can
-// disconnect mid-session. The supervisor keeps retrying adapter.open() with
-// exponential backoff while the session is alive, so once STT comes online
-// voice transparently starts working — no container restart required.
-// ---------------------------------------------------------------------------
-
-const RECONNECT_INITIAL_MS = 1_000;
-const RECONNECT_MAX_MS = 30_000;
-const RECONNECT_JITTER_MS = 250;
-
-function nextBackoff(prev: number): number {
-  const base = Math.min(prev * 2, RECONNECT_MAX_MS);
-  const jitter = Math.floor(Math.random() * RECONNECT_JITTER_MS);
-  return base + jitter;
-}
-
-async function sleepAbortable(ms: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return;
-  return new Promise<void>((resolve) => {
-    const t = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    const onAbort = () => {
-      clearTimeout(t);
-      resolve();
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
 export function createUserAudioInputAdapter(
   sttAdapterFactory: STTAdapterFactory,
   initialSttConfig: STTAdapterConfig,
@@ -90,10 +67,17 @@ export function createUserAudioInputAdapter(
   // session abort signal + output sinks as the original start().
   let startCtx: AdapterContext | null = null;
   let onSpeechOnset: (() => void) | null = null;
-  // Aborting this cancels only the current supervisor loop (used by
-  // reconfigure() to tear down the in-flight retry cycle). The outer
-  // ctx.abortSignal ends the session.
-  let supervisorController: AbortController | null = null;
+  // Last mode requested via an audio.start frame. Survives STT reconnects —
+  // replayed into every freshly-connected STT adapter (see replayTurnMode).
+  let currentTurnMode: TurnMode = DEFAULT_TURN_MODE;
+
+  // A freshly (re)connected STT adapter always defaults to "semantic"
+  // server-side, so every successful connect must replay the last known
+  // mode. setTurnMode() on the STT adapter dedupes internally — this is a
+  // safe no-op for sessions that never left "semantic".
+  function replayTurnMode(adapter: STTAdapter): void {
+    adapter.setTurnMode(currentTurnMode);
+  }
 
   async function consumeEvents(adapter: STTAdapter, ctx: AdapterContext): Promise<void> {
     for await (const event of adapter.events(ctx.abortSignal)) {
@@ -130,79 +114,22 @@ export function createUserAudioInputAdapter(
     return adapter;
   }
 
-  /**
-   * Background loop: watch the active adapter's event stream; when it ends
-   * (STT ws closed), reconnect with exponential backoff. `alreadyConnected`
-   * lets start() seed the loop with a freshly-opened adapter so the first
-   * attempt doesn't duplicate what start() already did.
-   */
-  async function runSupervisor(
-    ctx: AdapterContext,
-    supervisorSignal: AbortSignal,
-    alreadyConnected: STTAdapter | null,
-  ): Promise<void> {
-    let backoffMs = RECONNECT_INITIAL_MS;
-    let attempt = alreadyConnected ? 1 : 0;
-    let seeded = alreadyConnected;
-    while (!ctx.abortSignal.aborted && !supervisorSignal.aborted) {
-      let adapter = seeded;
-      seeded = null;
-      if (adapter === null) {
-        attempt++;
-        log.debug("stt-connect-attempt", { attempt, language: currentConfig.language, url: currentConfig.url });
-        try {
-          adapter = await openOnce(currentConfig, ctx);
-          log.info("stt-connected", { attempt, language: currentConfig.language });
-          sttAdapter = adapter;
-          backoffMs = RECONNECT_INITIAL_MS;
-        } catch (err: unknown) {
-          if (ctx.abortSignal.aborted || supervisorSignal.aborted) break;
-          log.warn("stt-connect-failed", {
-            attempt,
-            reason: err instanceof Error ? err.message : String(err),
-            nextBackoffMs: backoffMs,
-            url: currentConfig.url,
-          });
-          await sleepAbortable(backoffMs, AbortSignal.any([ctx.abortSignal, supervisorSignal]));
-          backoffMs = nextBackoff(backoffMs);
-          continue;
-        }
-      }
-
-      try {
-        await consumeEvents(adapter, ctx);
-      } finally {
-        if (sttAdapter === adapter) sttAdapter = null;
-        try {
-          await adapter.close();
-        } catch {
-          /* ignore */
-        }
-      }
-
-      if (ctx.abortSignal.aborted || supervisorSignal.aborted) break;
-      log.warn("stt-disconnected", {
-        reason: "event stream ended — will reconnect with backoff",
-        nextBackoffMs: backoffMs,
-      });
-      await sleepAbortable(backoffMs, AbortSignal.any([ctx.abortSignal, supervisorSignal]));
-      backoffMs = nextBackoff(backoffMs);
-    }
-    log.debug("stt-supervisor-exit", {
-      reason: ctx.abortSignal.aborted ? "session-ended" : "supervisor-replaced",
-    });
-  }
-
-  function startSupervisor(ctx: AdapterContext, alreadyConnected: STTAdapter | null): void {
-    if (supervisorController !== null) {
-      supervisorController.abort();
-    }
-    const controller = new AbortController();
-    supervisorController = controller;
-    runSupervisor(ctx, controller.signal, alreadyConnected).catch((err: unknown) => {
-      log.error("stt-supervisor-crashed", { error: err instanceof Error ? err.message : String(err) });
-    });
-  }
+  // The reconnect supervisor owns its own AbortController; the closures below
+  // give it live access to this adapter's mutable state (active adapter,
+  // current config) without it reaching into module-private variables.
+  const supervisor = createSttReconnectSupervisor({
+    log,
+    getConfig: () => currentConfig,
+    openOnce,
+    setActiveAdapter: (adapter) => {
+      sttAdapter = adapter;
+    },
+    clearActiveAdapterIf: (adapter) => {
+      if (sttAdapter === adapter) sttAdapter = null;
+    },
+    replayTurnMode,
+    consumeEvents,
+  });
 
   return {
     id: ADAPTER_ID,
@@ -220,6 +147,7 @@ export function createUserAudioInputAdapter(
         firstAdapter = await openOnce(currentConfig, ctx);
         sttAdapter = firstAdapter;
         log.info("stt-connected", { attempt: 1, language: currentConfig.language });
+        replayTurnMode(firstAdapter);
       } catch (err: unknown) {
         log.warn("stt-initial-connect-failed", {
           reason: err instanceof Error ? err.message : String(err),
@@ -227,13 +155,12 @@ export function createUserAudioInputAdapter(
           url: currentConfig.url,
         });
       }
-      startSupervisor(ctx, firstAdapter);
+      supervisor.start(ctx, firstAdapter);
     },
 
     async stop(reason: string): Promise<void> {
       log.info("adapter-stop", { id: ADAPTER_ID, reason });
-      supervisorController?.abort();
-      supervisorController = null;
+      supervisor.abort();
       const adapter = sttAdapter;
       sttAdapter = null;
       startCtx = null;
@@ -253,8 +180,7 @@ export function createUserAudioInputAdapter(
       });
       // Abort the current supervisor and its inner connect. If a live adapter
       // exists, close it. Then spin up a fresh supervisor using the new config.
-      supervisorController?.abort();
-      supervisorController = null;
+      supervisor.abort();
       const prevAdapter = sttAdapter;
       sttAdapter = null;
       if (prevAdapter) {
@@ -282,13 +208,14 @@ export function createUserAudioInputAdapter(
         firstAdapter = await openOnce(newConfig, ctx);
         sttAdapter = firstAdapter;
         log.info("stt-connected", { attempt: 1, language: newConfig.language });
+        replayTurnMode(firstAdapter);
       } catch (err: unknown) {
         log.warn("stt-reconfigure-initial-connect-failed", {
           reason: err instanceof Error ? err.message : String(err),
           url: newConfig.url,
         });
       }
-      startSupervisor(ctx, firstAdapter);
+      supervisor.start(ctx, firstAdapter);
       log.info("adapter-reconfigure-done", { language: newConfig.language });
     },
 
@@ -307,6 +234,13 @@ export function createUserAudioInputAdapter(
 
     setOnSpeechOnset(cb: (() => void) | null): void {
       onSpeechOnset = cb;
+    },
+
+    setTurnMode(mode: TurnMode): void {
+      const prev = currentTurnMode;
+      currentTurnMode = mode;
+      log.debug("turn-mode-relay", { from: prev, to: mode, hasLiveSttAdapter: sttAdapter !== null });
+      sttAdapter?.setTurnMode(mode);
     },
   };
 }

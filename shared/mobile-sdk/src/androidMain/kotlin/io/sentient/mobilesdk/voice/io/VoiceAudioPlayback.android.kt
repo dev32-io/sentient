@@ -3,11 +3,16 @@
 //
 // Split out of VoiceAudio.android.kt to stay under the 300-line file cap. Lifts
 // the proven AudioTrack snippets from the retired Android playback adapter verbatim:
-// streaming track build (USAGE_VOICE_COMMUNICATION + CONTENT_TYPE_SPEECH, mono
-// PCM16, WRITE_NON_BLOCKING), drop-oldest [ByteRing] overflow, [PlaybackResampler]
-// when the device rate differs, head-position idle check, flush() = track.flush()
-// + ring clear. No-throw: typed Boolean start result, runCatching on every platform
-// call. Owned by [AndroidVoiceAudio] — never used standalone.
+// streaming track build, mono PCM16, WRITE_NON_BLOCKING, drop-oldest [ByteRing]
+// overflow, [PlaybackResampler] when the device rate differs, head-position idle
+// check, flush() = track.flush() + ring clear. No-throw: typed Boolean start result,
+// runCatching on every platform call. Owned by [AndroidVoiceAudio] — never used
+// standalone.
+//
+// AudioAttributes usage is per-[VoiceAudioPath] (S5): [VoiceAudioPath.Manual]
+// (hold/idle replies) uses USAGE_ASSISTANT — the media volume stream, loud and
+// rocker-controlled; [VoiceAudioPath.Duplex] (continuous) keeps today's
+// USAGE_VOICE_COMMUNICATION, unchanged. CONTENT_TYPE_SPEECH is unchanged on both.
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.voice.io
 
@@ -22,6 +27,17 @@ import kotlin.concurrent.Volatile
 
 private const val BYTES_PER_PCM16_SAMPLE = 2
 private const val CHANNEL_COUNT = 1
+
+// Software playback makeup gain — the Android twin of iOS's PLAYBACK_MAKEUP_GAIN.
+// Applies uniformly to BOTH paths (S5, spec §7.2 user decision): the Duplex track runs
+// USAGE_VOICE_COMMUNICATION (→ STREAM_VOICE_CALL), so the media volume rocker doesn't
+// move it and it reads quiet even at max; the Manual track runs USAGE_ASSISTANT on the
+// loud media route where ×5.0 will hard-clip loud peaks (accepted for the tuning phase).
+// A fixed PCM-domain gain lifts the floor so the device's OWN volume control is
+// meaningful. Peaks hard-clamp to Int16. Do NOT normalize per-voice — quiet voices are
+// character; this only offsets the route. Was ×3.0; uniform ×5.0 starting point (tune
+// on device).
+private const val PLAYBACK_MAKEUP_GAIN = 5.0f
 
 /** Track buffer = this many seconds of audio at the output rate (OS-side jitter buffer). */
 private const val TRACK_BUFFER_SECONDS = 0.5
@@ -44,9 +60,9 @@ internal class VoiceAudioPlayback {
     @Volatile private var enqueuedBytes = 0L
 
     /** Returns true on success; false on build/play failure (proven no-throw pattern). */
-    fun start(rate: Int): Boolean {
+    fun start(rate: Int, path: VoiceAudioPath): Boolean {
         val built =
-            runCatching { buildTrack(rate) }.getOrElse { e ->
+            runCatching { buildTrack(rate, path) }.getOrElse { e ->
                 log.error("track-build-failed", mapOf("cause" to (e.message ?: "unknown")))
                 return false
             }
@@ -59,7 +75,10 @@ internal class VoiceAudioPlayback {
             track = null
             return false
         }
-        log.info("track-open", mapOf("trackRate" to rate, "state" to (track?.playState ?: -1)))
+        log.info(
+            "track-open",
+            mapOf("trackRate" to rate, "path" to path.name, "usage" to usageFor(path), "state" to (track?.playState ?: -1)),
+        )
         return true
     }
 
@@ -71,13 +90,33 @@ internal class VoiceAudioPlayback {
         teardown(active)
     }
 
-    /** Downlink sink: resample (if needed) → non-blocking write → unaccepted tail to ring. */
+    /** Downlink sink: resample (if needed) → makeup gain → non-blocking write → tail to ring. */
     fun enqueue(pcm16: ByteArray) {
         val active = track ?: return
-        val bytes = resampler?.resampleLe(pcm16) ?: pcm16
+        val rs = resampler
+        // resampleLe returns a FRESH array; when null (native-rate, no resample) copy
+        // before gain so the makeup multiply never mutates the caller's downlink frame.
+        var bytes = rs?.resampleLe(pcm16) ?: pcm16
+        if (PLAYBACK_MAKEUP_GAIN != 1.0f) {
+            if (rs == null) bytes = pcm16.copyOf()
+            applyMakeupGainInPlace(bytes)
+        }
         enqueuedBytes += bytes.size
         runCatching { writeToTrack(active, bytes) }.onFailure {
             log.error("play-frame-failed", mapOf("cause" to (it.message ?: "unknown"), "bytes" to bytes.size))
+        }
+    }
+
+    /** Scale each LE PCM16 sample by [PLAYBACK_MAKEUP_GAIN] in place, clamped to Int16. */
+    private fun applyMakeupGainInPlace(bytes: ByteArray) {
+        var i = 0
+        while (i + 1 < bytes.size) {
+            val sample = ((bytes[i + 1].toInt() shl 8) or (bytes[i].toInt() and 0xFF)).toShort()
+            val boosted = (sample * PLAYBACK_MAKEUP_GAIN).toInt()
+                .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+            bytes[i] = (boosted and 0xFF).toByte()
+            bytes[i + 1] = ((boosted shr 8) and 0xFF).toByte()
+            i += 2
         }
     }
 
@@ -141,7 +180,7 @@ internal class VoiceAudioPlayback {
     private fun ringCapacityBytes(rate: Int): Int =
         (rate * RING_SECONDS).toInt() * CHANNEL_COUNT * BYTES_PER_PCM16_SAMPLE
 
-    private fun buildTrack(sampleRate: Int): AudioTrack {
+    private fun buildTrack(sampleRate: Int, path: VoiceAudioPath): AudioTrack {
         val minBuffer =
             AudioTrack.getMinBufferSize(
                 sampleRate,
@@ -151,7 +190,7 @@ internal class VoiceAudioPlayback {
         require(minBuffer > 0) { "getMinBufferSize rejected rate=$sampleRate (err=$minBuffer)" }
         val bufferBytes =
             maxOf(minBuffer, (sampleRate * TRACK_BUFFER_SECONDS).toInt() * BYTES_PER_PCM16_SAMPLE)
-        val attributes = buildAudioAttributes()
+        val attributes = buildAudioAttributes(path)
         val format = buildAudioFormat(sampleRate)
         val built =
             AudioTrack(
@@ -175,12 +214,21 @@ internal class VoiceAudioPlayback {
         return built
     }
 
-    /** Voice-comms usage + speech content type — the AEC-friendly attribute pair. */
-    private fun buildAudioAttributes(): AudioAttributes =
+    /**
+     * Attrs by [VoiceAudioPath] (S5, spec §7.1): [VoiceAudioPath.Manual] (hold/idle replies)
+     * runs USAGE_ASSISTANT on the media volume stream — loud, rocker-controlled at any time.
+     * [VoiceAudioPath.Duplex] (continuous) keeps today's USAGE_VOICE_COMMUNICATION, the
+     * AEC-friendly voice-call route, unchanged. CONTENT_TYPE_SPEECH is unchanged on both.
+     */
+    private fun buildAudioAttributes(path: VoiceAudioPath): AudioAttributes =
         AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+            .setUsage(usageFor(path))
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
             .build()
+
+    /** The AudioAttributes usage constant selected by [path] — see [buildAudioAttributes]. */
+    private fun usageFor(path: VoiceAudioPath): Int =
+        if (path == VoiceAudioPath.Manual) AudioAttributes.USAGE_ASSISTANT else AudioAttributes.USAGE_VOICE_COMMUNICATION
 
     /** Mono PCM16 at [sampleRate] — the track's data format. */
     private fun buildAudioFormat(sampleRate: Int): AudioFormat =

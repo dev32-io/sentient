@@ -36,6 +36,7 @@ Python note — ``deque(maxlen=N)``:
 
 from __future__ import annotations
 
+import logging
 import time
 from collections import deque
 from pathlib import Path
@@ -58,6 +59,10 @@ from .pipeline_events import (
 from .whisper_mlx import WhisperMlx
 from .smart_turn import SmartTurn, SmartTurnResult
 from .turn_finalizer import finalize_turn
+
+# Module logger — same tag as server.py so turn-mode WARNs land in the
+# service's stdout/stderr stream alongside the connection lifecycle logs.
+log = logging.getLogger("stt-service")
 
 # Protocol constant — fixed by the audio format contract. NOT a tunable.
 SAMPLE_RATE = 16_000
@@ -108,6 +113,7 @@ class TurnPipeline:
         stt: WhisperMlx,
         recording_dir: Path,
         logger: JsonlLogger,
+        semantic_turns: bool = True,
     ) -> None:
         self._conn_id = connection_id
         self._config = config
@@ -115,6 +121,13 @@ class TurnPipeline:
         self._stt = stt
         self._recording_dir = recording_dir
         self._logger = logger
+        # Turn authority for this stream. True (default): Silero vad_end →
+        # Smart-Turn v3 decides completion (semantic turns — today's behavior).
+        # False (manual / hold-to-talk): the client owns turn boundaries;
+        # Smart-Turn is bypassed and only ``flush`` (client release) or the
+        # ``max_turn_duration`` guard finalizes. Flipped mid-stream via
+        # ``set_turn_mode()`` (gateway ``turn_mode`` control message).
+        self._semantic_turns = semantic_turns
         # Injected turn-level unit (flow manager owns the dep). Swap point for a
         # future acoustic backchannel model — pipeline only calls is_backchannel.
         self._backchannel = BackchannelClassifier(config.whisper.backchannel_phrases)
@@ -195,6 +208,48 @@ class TurnPipeline:
         # zero-padded decode, and _force_finalize resets the buffer state.
         self._rechunk_buf.clear()
         self._force_finalize(events, reason="client_flush")
+        return events
+
+    def set_turn_mode(self, semantic: bool) -> list[PipelineEvent]:
+        """Reconfigure turn authority for this stream. No-op when unchanged.
+
+        ``semantic=True`` (default): Silero vad_end → Smart-Turn v3 decides
+        turn completion (today's behavior). ``semantic=False`` (manual /
+        hold-to-talk): the client owns turn boundaries; Smart-Turn is bypassed
+        (never invoked) and only ``flush`` or the ``max_turn_duration`` guard
+        finalizes a turn.
+
+        Driven by the gateway's ``{"type": "turn_mode", "semantic": bool}``
+        control message — sent at stream start and on any mid-stream change.
+
+        Normal flow flips modes *between* turns: the gateway sends ``flush``
+        (on ``audio.end``) before switching, so the flip lands with no open
+        turn. If a flip DOES arrive with a turn still open (defensive rarity),
+        we force-finalize it first (``reason="mode_change"``, WARN) so the new
+        mode starts from a clean slate.
+        """
+        events: list[PipelineEvent] = []
+        if semantic == self._semantic_turns:
+            return events
+        if self._turn_active:
+            log.warning(
+                "turn_mode flip with an open turn "
+                "(conn=%s turn_idx=%d semantic=%s->%s) — "
+                "force-finalizing before switch",
+                self._conn_id,
+                self._turn_idx,
+                self._semantic_turns,
+                semantic,
+            )
+            self._logger.log(
+                "turn_mode.change_mid_turn",
+                turn_idx=self._turn_idx,
+                from_semantic=self._semantic_turns,
+                to_semantic=semantic,
+            )
+            self._force_finalize(events, reason="mode_change")
+        self._semantic_turns = semantic
+        self._logger.log("turn_mode.set", semantic=semantic)
         return events
 
     # -- internal chunk processing -------------------------------------------
@@ -302,6 +357,20 @@ class TurnPipeline:
         events.append(VadEnd(t_mono_ns=vad_end_ns, turn_idx=self._turn_idx))
         self._logger.log("vad.end", turn_idx=self._turn_idx)
 
+        # Manual turn mode (hold-to-talk): the client owns turn boundaries.
+        # Bypass Smart-Turn entirely — no wasted inference, no smart_turn_eval
+        # event, and NO finalization here. The turn stays open until the
+        # client releases (``flush`` → ``client_flush``) or the
+        # ``max_turn_duration`` safety valve trips. VAD start/end events and
+        # pause metrics above still fire so the client sees speech activity.
+        if not self._semantic_turns:
+            self._logger.log(
+                "smart_turn.bypassed",
+                turn_idx=self._turn_idx,
+                reason="manual_turn_mode",
+            )
+            return
+
         # Run Smart-Turn: "is the user done, or just pausing?"
         audio_f32 = (
             np.concatenate(self._turn_audio)
@@ -387,13 +456,15 @@ class TurnPipeline:
         """Safety-net: close the turn with a synthetic Smart-Turn result.
 
         ``reason`` distinguishes why the pipeline gave up waiting for
-        Smart-Turn to fire naturally. Three values today:
+        Smart-Turn to fire naturally. Four values today:
           - ``silent_timeout`` — stuck in "continuing" past
-            ``vad.silent_timeout_ms`` with no new speech.
+            ``vad.silent_timeout_ms`` with no new speech (semantic mode only).
           - ``max_turn_duration`` — turn exceeded ``vad.max_turn_duration_ms``
-            regardless of speech state.
+            regardless of speech state (safety valve, both modes).
           - ``client_flush`` — the client signalled end-of-stream (PTT
             release) while a turn was open. See ``flush()``.
+          - ``mode_change`` — a ``turn_mode`` flip arrived with a turn still
+            open (defensive rarity). See ``set_turn_mode()``.
 
         When the max-duration cap fires mid-speech we emit a synthetic
         ``VadEnd`` and fold the open speech segment into ``speech_segments``

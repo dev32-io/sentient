@@ -16,6 +16,7 @@
 package io.sentient.mobilesdk.connectors
 
 import io.sentient.mobilesdk.protocol.ClientMessage
+import io.sentient.mobilesdk.voice.talk.TurnMode
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -44,7 +45,22 @@ class UserAudioInputConnectorTest {
     fun startStreaming_sends_audio_start() {
         val (c, rec) = connector()
         c.startStreaming()
-        assertEquals(listOf<ClientMessage>(ClientMessage.AudioStart), rec.sent)
+        // Default (no turnMode) → omitted on the wire (semantic). Back-compat with old clients.
+        assertEquals(listOf<ClientMessage>(ClientMessage.AudioStart(turnMode = null)), rec.sent)
+    }
+
+    @Test
+    fun startStreaming_carries_turnMode_manual() {
+        val (c, rec) = connector()
+        c.startStreaming(TurnMode.Manual)
+        assertEquals(listOf<ClientMessage>(ClientMessage.AudioStart(turnMode = "manual")), rec.sent)
+    }
+
+    @Test
+    fun startStreaming_carries_turnMode_semantic() {
+        val (c, rec) = connector()
+        c.startStreaming(TurnMode.Semantic)
+        assertEquals(listOf<ClientMessage>(ClientMessage.AudioStart(turnMode = "semantic")), rec.sent)
     }
 
     @Test
@@ -52,7 +68,7 @@ class UserAudioInputConnectorTest {
         val (c, rec) = connector()
         c.startStreaming()
         c.stopStreaming()
-        assertEquals(listOf<ClientMessage>(ClientMessage.AudioStart, ClientMessage.AudioEnd), rec.sent)
+        assertEquals(listOf<ClientMessage>(ClientMessage.AudioStart(turnMode = null), ClientMessage.AudioEnd), rec.sent)
     }
 
     @Test
@@ -77,7 +93,7 @@ class UserAudioInputConnectorTest {
         val (c, rec) = connector()
         c.startStreaming()
         c.startStreaming()
-        assertEquals(listOf<ClientMessage>(ClientMessage.AudioStart), rec.sent)
+        assertEquals(listOf<ClientMessage>(ClientMessage.AudioStart(turnMode = null)), rec.sent)
     }
 
     @Test

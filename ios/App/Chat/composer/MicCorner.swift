@@ -11,12 +11,13 @@
 //   travel → idle (mic off, haptic); else snap back locked.
 //
 // The pure FSM lives in MicCornerGesture.swift; visual layers + constants in
-// MicCornerVisuals.swift. The control owns only its gesture state — mic
-// start/stop is dispatched up (onStart/onStop) and the composer's takeover
-// follows onModeChange. `micActive` is the external-sync input: a true→false
+// MicCornerVisuals.swift. The control owns only its gesture state — each FSM
+// transition is translated to ONE SDK talk-mode intent (pure gesture→intent, zero
+// mode semantics: the SDK's TalkModeController owns them all) and the composer's
+// takeover follows onModeChange. `micActive` is the external-sync input: a true→false
 // edge while held/locked and not dragging (disconnect, teardown, or an SDK
-// start that failed downstream) resets the control to idle WITHOUT calling
-// onStop again.
+// start that failed downstream) resets the control to idle WITHOUT emitting an
+// intent.
 //
 // beginPress is the permission gate (Composer+Mic.onMicPressGate): a press
 // from idle only enters hold when it returns true; a press from locked never
@@ -35,10 +36,14 @@ struct MicCorner: View {
     let beginPress: () -> Bool
     /// Composer takeover (waveform, hidden buttons) follows the reported mode.
     let onModeChange: (MicCornerMode) -> Void
-    /// Start the voice uplink (fires on idle→hold / idle→locked).
-    let onStart: () -> Void
-    /// Stop the voice uplink (fires on hold/locked→idle).
-    let onStop: () -> Void
+    /// idle→hold (press): enter push-to-talk.
+    let onPress: () -> Void
+    /// hold→idle (release below the lock threshold): end the manual turn.
+    let onRelease: () -> Void
+    /// hold→locked (release past the lock threshold / slide-to-lock): enter continuous.
+    let onLock: () -> Void
+    /// locked→idle (unlock release / tap-to-stop): leave continuous.
+    let onStopContinuous: () -> Void
 
     @State private var mode: MicCornerMode = .idle
     /// Button offset toward the lock end, 0…travel. Raw while dragging;
@@ -204,14 +209,25 @@ struct MicCorner: View {
         onModeChange(next)
         log.info("mode-change from=\(prev.rawValue) to=\(next.rawValue) trigger=\(trigger)")
         if next == .locked { snapBounce() }
-        if prev == .idle {
-            onStart()
-        } else if next == .idle {
-            onStop()
+        emitIntent(from: prev, to: next)
+    }
+
+    /// Pure gesture→intent translation — the one place the corner speaks to the SDK.
+    /// Zero mode semantics: it only names which talk-mode intent each FSM transition maps
+    /// to; the TalkModeController owns interrupt-on-press, turnMode, and buffer-and-defer.
+    /// idle→locked (VoiceOver direct-lock) composes press+lock (Idle→Hold→Continuous).
+    private func emitIntent(from: MicCornerMode, to: MicCornerMode) {
+        switch (from, to) {
+        case (.idle, .hold): onPress()
+        case (.hold, .idle): onRelease()
+        case (.hold, .locked): onLock()
+        case (.locked, .idle): onStopContinuous()
+        case (.idle, .locked): onPress(); onLock()
+        default: break
         }
     }
 
-    /// External reset — the mic is already torn down; must NOT call onStop again.
+    /// External reset — the mic is already torn down; must NOT emit an intent.
     private func resetToIdle(trigger: String) {
         let prev = mode
         mode = .idle
@@ -263,8 +279,10 @@ struct MicCorner: View {
         micActive: false,
         beginPress: { true },
         onModeChange: { _ in },
-        onStart: {},
-        onStop: {}
+        onPress: {},
+        onRelease: {},
+        onLock: {},
+        onStopContinuous: {}
     )
     .padding(Space.xxl)
     .background(DuskColors.paper)

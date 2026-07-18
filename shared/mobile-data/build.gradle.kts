@@ -9,7 +9,9 @@ plugins {
 
 // Shared mobile-data source version. Set to 0.1.0 with the WS-resilience + REST
 // sessions work. The chat timeline is in-memory from the SDK — no durable store.
-version = "0.1.0"
+// Bumped to 0.2.0 in lockstep with shared/mobile-sdk: hold-to-talk / toggle-to-talk
+// split touched ChatComponent's DI wiring (TalkModeController injection).
+version = "0.2.0"
 
 kotlin {
     androidTarget {

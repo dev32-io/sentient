@@ -6,4 +6,4 @@ events. Same wire CONTRACT as the SenseVoice STTService; text-only (no emotion/
 audio-event tags). See CONTRACT.md for the protocol.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.3.0"
