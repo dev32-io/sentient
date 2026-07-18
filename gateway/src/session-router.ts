@@ -15,8 +15,6 @@ export interface SessionRouter {
   bind(sessionId: string, userId: string, surfaceId: string): Promise<HermesProfileBinding>;
   /** Release a session binding when WS closes. */
   release(sessionId: string): void;
-  /** Rebind a session to a different user (Phase 1.7 `identify_user`). */
-  rebind(sessionId: string, newUserId: string): Promise<HermesProfileBinding>;
   /** Current binding for a session (read-only lookup). conversationId is
    *  always null here — the conversation anchor lives on PersonSession, not
    *  SessionRouter. */
@@ -90,40 +88,6 @@ export function createSessionRouter(deps: SessionRouterDeps): SessionRouter {
         priorSurfaceId: prior?.surfaceId ?? null,
         remainingBindings: bindings.size,
       });
-    },
-
-    async rebind(sessionId, newUserId) {
-      // NOTE: this used to also call anchors.delete(prior.surfaceId) to drop
-      // the session's conversation anchor on identity switch, forcing a fresh
-      // Hermes chain. That anchor map moved to PersonSession, and this router
-      // has no PersonSession/surfaceId handle to re-home the call onto — so
-      // "fresh chain on identify_user" is dropped here as a known follow-up,
-      // to be wired on the identify_user tool path instead (which does have
-      // both handles) rather than reintroduced on SessionRouter.
-      const prior = bindings.get(sessionId);
-      if (!prior) {
-        log.warn("rebind.unknown-session", { sessionId, newUserId, reason: "no prior bind" });
-        throw new Error(`rebind: unknown session ${sessionId}`);
-      }
-      const b = await resolveBinding(newUserId);
-      const rec: InternalBinding = {
-        sessionId,
-        userId: b.userId,
-        url: b.url,
-        apiKey: b.apiKey,
-        surfaceId: prior.surfaceId,
-        boundAt: ++bindSeq,
-      };
-      bindings.set(sessionId, rec);
-      log.info("rebind", {
-        sessionId,
-        priorUserId: prior.userId,
-        newUserId: b.userId,
-        url: b.url,
-        surfaceId: prior.surfaceId,
-        boundAt: rec.boundAt,
-      });
-      return b;
     },
 
     get(sessionId) {

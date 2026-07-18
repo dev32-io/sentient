@@ -103,24 +103,6 @@ describe("SessionRouter", () => {
     expect(router.get("sess-1")?.conversationId).toBeNull();
   });
 
-  it("rebind to different user updates userId and keeps conversationId null", async () => {
-    const router = makeRouter([
-      [ALICE, 8650],
-      [BOB, 8651],
-    ]);
-    await router.bind("sess-1", ALICE, "surf-1");
-    const after = await router.rebind("sess-1", BOB);
-    expect(after.userId).toBe(BOB);
-    expect(after.conversationId).toBeNull();
-    expect(router.get("sess-1")?.userId).toBe(BOB);
-    expect(router.get("sess-1")?.conversationId).toBeNull();
-  });
-
-  it("throws on rebind of unknown session", async () => {
-    const router = makeRouter([[ALICE, 8650]]);
-    await expect(router.rebind("missing", ALICE)).rejects.toThrow(/rebind/);
-  });
-
   it("findActiveSessionFor returns most recent session for userId", async () => {
     const router = makeRouter([
       [ALICE, 8650],

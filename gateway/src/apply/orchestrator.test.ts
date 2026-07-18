@@ -42,7 +42,6 @@ function makeSessionRouter(): SessionRouter {
   return {
     bind: vi.fn(),
     release: vi.fn(),
-    rebind: vi.fn(),
     get: vi.fn(),
     findActiveSessionFor: vi.fn(),
   } as unknown as SessionRouter;
