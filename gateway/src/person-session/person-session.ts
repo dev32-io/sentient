@@ -26,7 +26,7 @@ export type { DeviceBufferEntry, AcquireDeviceBufferResult, DeviceSocketRef, Dev
  * conversation; any attachment can drive input, output fans out to all.
  */
 
-/** Opaque attachment token; tracks identity + iteration count for fan-out tests. */
+/** Opaque attachment token; tracks identity so detach-before-attach cases log cleanly. */
 export interface PersonSessionAttachment {
   readonly attachmentId: string;
 }
@@ -137,7 +137,11 @@ export class PersonSession {
 
   attach(a: PersonSessionAttachment): void {
     if (this._attachments.has(a)) {
-      log.warn("attach.duplicate", { profile: this.profile, attachmentId: a.attachmentId, reason: "duplicate" });
+      log.warn("attach.duplicate", {
+        profile: this.profile,
+        attachmentId: a.attachmentId,
+        reason: "attachment already registered",
+      });
       return;
     }
     this._attachments.add(a);

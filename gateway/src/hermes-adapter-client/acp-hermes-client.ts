@@ -148,10 +148,12 @@ export function createAcpHermesClient(deps: AcpHermesClientDeps): HermesClient {
       //      channel like an adapter sensor), THIS branch keeps the cycle
       //      from 404'ing on the server-side ACP `session not found`.
       //
-      // The synthetic `created` event then carries whichever id won, so the
-      // cerebrum's hermes-event-translator routes it to the surface's
-      // PersonSession anchor (updateConversationId there, not on
-      // SessionRouter) — meaning subsequent turns reuse it via path (2)
+      // The synthetic `created` event then carries whichever id won. The
+      // translator (hermes-dispatcher.ts) captures it into
+      // capturedConversationId and returns it on the dispatch result; the
+      // write-back onto the surface's PersonSession anchor happens in
+      // ws-session-configure.ts's onCycle (personSession.updateConversationId),
+      // not on SessionRouter — meaning subsequent turns reuse it via path (2)
       // without re-minting.
       let resolvedSessionId: string;
       try {

@@ -26,9 +26,6 @@ const fakeRouter = {
   release: vi.fn(),
   rebind: vi.fn(),
   get: vi.fn(),
-  updateConversationId: vi.fn(),
-  dropAnchor: vi.fn(),
-  clearConversationIdForAllSessions: vi.fn(),
   findActiveSessionFor: vi.fn(),
 };
 

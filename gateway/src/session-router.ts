@@ -93,6 +93,13 @@ export function createSessionRouter(deps: SessionRouterDeps): SessionRouter {
     },
 
     async rebind(sessionId, newUserId) {
+      // NOTE: this used to also call anchors.delete(prior.surfaceId) to drop
+      // the session's conversation anchor on identity switch, forcing a fresh
+      // Hermes chain. That anchor map moved to PersonSession, and this router
+      // has no PersonSession/surfaceId handle to re-home the call onto — so
+      // "fresh chain on identify_user" is dropped here as a known follow-up,
+      // to be wired on the identify_user tool path instead (which does have
+      // both handles) rather than reintroduced on SessionRouter.
       const prior = bindings.get(sessionId);
       if (!prior) {
         log.warn("rebind.unknown-session", { sessionId, newUserId, reason: "no prior bind" });

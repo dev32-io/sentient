@@ -44,8 +44,6 @@ function makeSessionRouter(): SessionRouter {
     release: vi.fn(),
     rebind: vi.fn(),
     get: vi.fn(),
-    updateConversationId: vi.fn(),
-    clearConversationIdForAllSessions: vi.fn(),
     findActiveSessionFor: vi.fn(),
   } as unknown as SessionRouter;
 }
