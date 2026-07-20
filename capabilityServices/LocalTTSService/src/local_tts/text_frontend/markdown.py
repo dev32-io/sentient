@@ -17,7 +17,9 @@ be dropped structurally. The `url` plugin below promotes bare URLs (and
 CommonMark `<...>` autolinks, which are always active) into `link` tokens
 whose child text is literally the url. `_render_link` uses that
 text-equals-url signal to tell an autolink (drop) from an explicit
-`[text](url)` link (keep the text).
+`[text](url)` link (keep the text). Likewise `~~struck~~` stays a plain
+`text` token (markers and all) unless the `strikethrough` plugin is
+enabled; enabling it yields a `strikethrough` token (NOT `del`).
 """
 
 from __future__ import annotations
@@ -29,14 +31,19 @@ import mistune
 log = logging.getLogger("local_tts.text_frontend.markdown")
 
 # mistune 3 AST: renderer=None yields a list of block-token dicts.
-# `url` plugin: promotes bare "https://..." prose text into `link` tokens
-# (see module docstring) so bare URLs can be dropped like other links.
-_PARSE = mistune.create_markdown(renderer=None, plugins=["url"])
+# `url`: promotes bare "https://..." prose text into `link` tokens (see
+# module docstring) so bare URLs can be dropped like other links.
+# `strikethrough`: without it, `~~struck~~` stays a literal `text` token
+# with the `~~` markers included.
+_PARSE = mistune.create_markdown(renderer=None, plugins=["url", "strikethrough"])
 
-# Inline token types whose visible text we READ (recurse into children).
-_INLINE_READ = frozenset({"strong", "emphasis", "del", "block_text", "paragraph"})
 # Inline token types dropped entirely (no speakable content).
-_INLINE_DROP = frozenset({"image", "linebreak", "softbreak", "inline_math"})
+_INLINE_DROP = frozenset({"image", "inline_math"})
+# Inline token types rendered as a single space: these mark a line-wrap
+# point inside a block (soft/hard break), not a word boundary removal —
+# dropping them outright concatenates adjacent words ("here" + "more" ->
+# "heremore").
+_INLINE_SPACE = frozenset({"softbreak", "linebreak"})
 
 
 def strip_markdown(doc: str) -> str:
@@ -79,9 +86,14 @@ def _render_inline(child: dict) -> str:
         return child.get("raw", "")
     if ctype == "link":
         return _render_link(child)
+    if ctype in _INLINE_SPACE:
+        return " "
     if ctype in _INLINE_DROP:
         return ""
-    if ctype in _INLINE_READ or "children" in child:
+    # Every remaining container type we care about (strong, emphasis,
+    # strikethrough, block_text, paragraph, ...) carries `children` —
+    # no separate allow-list needed, this is the one dispatch rule.
+    if "children" in child:
         return _render_children(child.get("children", []))
     return ""
 

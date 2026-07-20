@@ -42,3 +42,21 @@ def test_drops_images_and_bare_urls():
 def test_empty_document_returns_empty():
     assert strip_markdown("") == ""
     assert strip_markdown("```\nonly code\n```").strip() == ""
+
+
+def test_softbreak_does_not_concatenate_words():
+    out = strip_markdown("quoted text here\nmore quote")
+    assert "here more" in out
+    assert "heremore" not in out
+
+
+def test_multiline_blockquote_does_not_concatenate_words():
+    out = strip_markdown("> line one\n> line two")
+    assert "line one" in out and "line two" in out
+    assert "onetwo" not in out
+
+
+def test_strikethrough_keeps_text_drops_markers():
+    out = strip_markdown("This is ~~struck~~ text.")
+    assert "struck" in out
+    assert "~~" not in out
