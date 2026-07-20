@@ -25,6 +25,10 @@ dependencies = [
     "psutil",
     "pyyaml",
     "huggingface_hub",
+    # Text frontend (see docs/superpowers/plans/2026-07-20-tts-text-frontend.md):
+    "mistune>=3.3,<4",        # markdown -> AST for the speech stripper
+    "emoji>=2.14,<3",         # emoji removal
+    "wetext>=0.1",            # WFST text normalization (zh+en+ja, pure-Python, ships FST data)
 ]
 
 [dependency-groups]
