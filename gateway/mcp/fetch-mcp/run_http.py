@@ -48,6 +48,31 @@ from mcp_server_fetch.server import (
 HOST = "0.0.0.0"
 PORT = 8088
 
+# Default outbound identity. mcp-server-fetch's built-in autonomous UA
+# (ModelContextProtocol/1.0) is actively blackholed/reset by common CDNs
+# (Akamai, Cloudflare) — including on the robots.txt preflight — which surfaces
+# to Hermes as "connection issue" and fails the whole fetch. Presenting a
+# mainstream browser UA restores reach. Override per-operator via env.
+DEFAULT_BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+
+# Env knobs (operator-overridable; see gateway/templates/services/fetch-mcp.yaml):
+#   FETCH_USER_AGENT        — UA string for autonomous + manual fetches.
+#                             Empty/unset -> DEFAULT_BROWSER_USER_AGENT.
+#   FETCH_IGNORE_ROBOTS_TXT — "true"/"1"/"yes" skips the robots.txt preflight.
+ENV_USER_AGENT = "FETCH_USER_AGENT"
+ENV_IGNORE_ROBOTS_TXT = "FETCH_IGNORE_ROBOTS_TXT"
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() in _TRUTHY
+
 
 def build_server(
     custom_user_agent: str | None = None,
@@ -182,6 +207,12 @@ def build_app(mcp_server: Server) -> Starlette:
 
 if __name__ == "__main__":
     proxy_url: str | None = os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY")
-    mcp_server = build_server(proxy_url=proxy_url, ignore_robots_txt=False)
+    user_agent = os.environ.get(ENV_USER_AGENT, "").strip() or DEFAULT_BROWSER_USER_AGENT
+    ignore_robots_txt = _env_flag(ENV_IGNORE_ROBOTS_TXT, default=True)
+    mcp_server = build_server(
+        custom_user_agent=user_agent,
+        ignore_robots_txt=ignore_robots_txt,
+        proxy_url=proxy_url,
+    )
     app = build_app(mcp_server)
     uvicorn.run(app, host=HOST, port=PORT, log_level="info")
