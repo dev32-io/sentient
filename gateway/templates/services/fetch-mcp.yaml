@@ -5,5 +5,11 @@ env:
   HTTP_PROXY: http://sentient-egress-proxy:3128
   HTTPS_PROXY: http://sentient-egress-proxy:3128
   NO_PROXY: localhost,127.0.0.1
+  # Fetch reach knobs (consumed by run_http.py). Defaults are max capability:
+  # mcp-server-fetch's built-in autonomous UA is blackholed/reset by common
+  # CDNs (Akamai/Cloudflare) — including on the robots.txt preflight — so we
+  # present a mainstream browser UA and skip the preflight.
+  # FETCH_USER_AGENT: override outbound UA; blank/unset -> baked-in browser UA.
+  FETCH_IGNORE_ROBOTS_TXT: "true"   # "true"/"1"/"yes" skip robots.txt; "false" respect it
 mem_limit_bytes: 268435456    # 256 MiB — python + readabilipy fetch workload
 cpus: 0.5
