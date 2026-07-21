@@ -1170,14 +1170,21 @@ _MULTI_SPACE = re.compile(r"[ \t]{2,}")
 # Artifacts of dropping a span mid-sentence: a floating separator, an
 # emptied bracket pair, a comma butted against a full stop.
 _EMPTY_BRACKETS = re.compile(r"\(\s*\)|\[\s*\]|\{\s*\}")
-_SPACE_BEFORE_PUNCT = re.compile(r"[ \t]+([,.;:!?，。；：！？])")
-_REPEATED_PUNCT = re.compile(r"([,;:，；：])[ \t]*[,.;:，。；：]+")
+# Trailing space before punctuation is an artifact of a dropped span --
+# EXCEPT before an ellipsis, where the space is the author's and removing
+# it changes the written form the synthesizer sees.
+_SPACE_BEFORE_PUNCT = re.compile(r"[ \t]+(?=[,.;:!?，。；：！？](?![.。]))")
+# A dropped span can strand a separator against the next punctuation mark
+# (", ." / ", ,"). Delete the stranded separator, but NEVER when what
+# follows is an ellipsis -- "Wait, ... what?" is ordinary prose and the
+# ellipsis carries a real prosodic pause.
+_REPEATED_PUNCT = re.compile(r"[,;:，；：][ \t]*(?=[.,;:。，；：!！?？](?![.。]))")
 
 
 def _fix_orphan_punctuation(text: str) -> str:
     text = _EMPTY_BRACKETS.sub("", text)
-    text = _REPEATED_PUNCT.sub(r"\1", text)
-    text = _SPACE_BEFORE_PUNCT.sub(r"\1", text)
+    text = _REPEATED_PUNCT.sub("", text)
+    text = _SPACE_BEFORE_PUNCT.sub("", text)
     return text
 
 
