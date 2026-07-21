@@ -84,6 +84,19 @@ TOOLING_VENV = DEPLOY_DIR / "native" / ".venv"
 MOUNTED_CONFIG = Path.home() / ".sentient" / "gateway" / "config" / "config.yaml"
 SEED_CONFIG = REPO_ROOT / "gateway" / "config.yaml"
 
+# Additive reconciler for the NATIVE service configs (local-tts / whisper-stt).
+# Their launchers seed the host config from config.example.yaml only on first
+# install, then never touch it — so a NEW REQUIRED key added to a service's
+# schema never reaches an already-seeded host, and the service's fail-loud
+# loader crashes on startup. This reconciler merges any missing top-level
+# section from the template into the host config (values preserved), run on
+# every deploy so the fail-loud loader always finds every required key.
+SERVICE_CONFIG_RECONCILE = DEPLOY_DIR / "native" / "service-config-reconcile.py"
+LOCAL_TTS_SVC_CONFIG = Path.home() / ".sentient" / "local-tts" / "config" / "config.yaml"
+LOCAL_TTS_SVC_TEMPLATE = REPO_ROOT / "capabilityServices" / "LocalTTSService" / "config" / "config.example.yaml"
+WHISPER_SVC_CONFIG = Path.home() / ".sentient" / "whisper-stt" / "config" / "config.yaml"
+WHISPER_SVC_TEMPLATE = REPO_ROOT / "capabilityServices" / "WhisperSTTService" / "config" / "config.example.yaml"
+
 # ANSI colors — works in any modern terminal; degrades gracefully if piped.
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -338,7 +351,44 @@ def apply_stt_backend(backend: str, ruamel_python: str) -> bool:
     return True
 
 
-def configure_native_stt(backend: str) -> bool:
+def reconcile_service_config(ruamel_python: str, template: Path, target: Path, label: str) -> bool:
+    """Additively merge any missing top-level sections from a service's shipped
+    template into its already-seeded host config, so the service's fail-loud
+    loader finds every required key after a re-deploy.
+
+    No-op on a freshly-seeded host (config already complete) and never clobbers
+    existing values (model pin, tuned constants, operator edits) — only genuinely
+    missing top-level sections are added. Shows the additive diff and confirms,
+    matching apply_stt_backend / apply_tts_backend.
+    """
+    if not SERVICE_CONFIG_RECONCILE.exists() or not template.is_file():
+        return True  # deploy without the native pieces (non-mac-prod) — nothing to do
+    if not target.is_file():
+        return True  # first-install seeding owns creation; nothing to reconcile yet
+    base = [ruamel_python, str(SERVICE_CONFIG_RECONCILE),
+            "--template", str(template), "--config", str(target)]
+    dry = run(base, check=False)
+    if dry.returncode != 0:
+        fail(f"service-config-reconcile ({label}) failed:\n  {dry.stderr.strip()}")
+        return False
+    if "no change needed" in dry.stdout:
+        ok(f"{label} service config already complete")
+        return True
+    print(dry.stdout)
+    if not confirm(f"Add missing section(s) to the {label} config at {target} "
+                   f"(additive — existing values above are preserved)?"):
+        warn(f"Skipped {label} config reconcile — the service may fail to start "
+             f"(fail-loud loader needs every required key).")
+        return True
+    applied = run(base + ["--apply"], check=False)
+    if applied.returncode != 0:
+        fail(f"service-config-reconcile ({label}) --apply failed:\n  {applied.stderr.strip()}")
+        return False
+    ok(f"reconciled {label} service config (added missing section(s))")
+    return True
+
+
+def configure_native_stt(backend: str, ruamel_python: str) -> bool:
     """Reconcile the native Whisper launchd service with the selected backend.
 
     native-whisper: install (venv + models + launchd plist) and start it.
@@ -358,6 +408,12 @@ def configure_native_stt(backend: str) -> bool:
         rc = subprocess.call(["bash", str(WHISPER_LAUNCHER), "install"], cwd=REPO_ROOT)
         if rc != 0:
             fail(f"whisper-stt.sh install exited with code {rc}")
+            return False
+        # Between seed (install) and start: fill in any newly-required config
+        # keys the seed-if-absent step can't add to an existing host config.
+        if not reconcile_service_config(
+            ruamel_python, WHISPER_SVC_TEMPLATE, WHISPER_SVC_CONFIG, "whisper-stt"
+        ):
             return False
         rc = subprocess.call(["bash", str(WHISPER_LAUNCHER), "start"], cwd=REPO_ROOT)
         if rc != 0:
@@ -411,7 +467,7 @@ def apply_tts_backend(ruamel_python: str) -> bool:
     return True
 
 
-def configure_native_tts() -> bool:
+def configure_native_tts(ruamel_python: str) -> bool:
     """Install + start the native local-tts (Qwen3-TTS) launchd service.
 
     Native-only (Apple-silicon MLX/Metal); there is no docker fallback, so this
@@ -435,6 +491,13 @@ def configure_native_tts() -> bool:
     rc = subprocess.call(["bash", str(LOCAL_TTS_LAUNCHER), "install"], cwd=REPO_ROOT)
     if rc != 0:
         fail(f"local-tts.sh install exited with code {rc}")
+        return False
+    # Between seed (install) and start: fill in any newly-required config keys
+    # (e.g. text_frontend) the seed-if-absent step can't add to an existing
+    # host config — otherwise local-tts's fail-loud loader crashes on start.
+    if not reconcile_service_config(
+        ruamel_python, LOCAL_TTS_SVC_TEMPLATE, LOCAL_TTS_SVC_CONFIG, "local-tts"
+    ):
         return False
     rc = subprocess.call(["bash", str(LOCAL_TTS_LAUNCHER), "start"], cwd=REPO_ROOT)
     if rc != 0:
@@ -795,14 +858,14 @@ def main() -> int:
 
     if backend is not None:
         info(f"Configuring native Whisper-STT service ({backend})")
-        if not configure_native_stt(backend):
+        if not configure_native_stt(backend, ruamel_python):
             return 1
 
         # TTS is native-only — install/start the local-tts launchd service
         # whenever the deploy ships its launcher (mac-prod).
         if LOCAL_TTS_LAUNCHER.exists():
             info("Configuring native local-tts service")
-            if not configure_native_tts():
+            if not configure_native_tts(ruamel_python):
                 return 1
 
     info("Clearing old sentient containers (gateway + orchestrator-managed)")
