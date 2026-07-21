@@ -56,7 +56,7 @@
 
 **Interfaces:**
 - Produces: `SpeechPolicy(table_max_cells: int, code_span_max_chars: int, speak_dropped_spans: bool)` — frozen dataclass, all fields required positionally-or-by-keyword.
-- Produces: `phrase(lang: str, key: str) -> str`. Valid keys: `link`, `file_path`, `command`, `table_summary`, `cell_sep`, `row_end`. `table_summary` is a `str.format` template taking `rows=` and `cols=`. Unknown `lang` falls back to `en`. Unknown `key` raises `KeyError` (fail loud — a typo'd key must not silently speak nothing).
+- Produces: `phrase(lang: str, key: str) -> str`. Valid keys: `link`, `file_path`, `command`, `email`, `table_summary`, `cell_sep`, `row_end`. `table_summary` is a `str.format` template taking `rows=` and `cols=`. Unknown `lang` falls back to `en`. Unknown `key` raises `KeyError` (fail loud — a typo'd key must not silently speak nothing).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -163,6 +163,7 @@ PHRASES: dict[str, dict[str, str]] = {
         "link": "a link",
         "file_path": "a file path",
         "command": "a command",
+        "email": "an email address",
         "table_summary": "a table with {rows} rows and {cols} columns",
         "cell_sep": ", ",
         "row_end": ". ",
@@ -171,6 +172,7 @@ PHRASES: dict[str, dict[str, str]] = {
         "link": "一个链接",
         "file_path": "一个文件路径",
         "command": "一条命令",
+        "email": "一个邮件地址",
         "table_summary": "一张 {rows} 行 {cols} 列的表格",
         "cell_sep": "，",
         "row_end": "。",
@@ -698,14 +700,19 @@ def render_table(tok: dict, render_cell: RenderCell, policy: SpeechPolicy, lang:
     heads, rows = _split(tok, render_cell)
     cols = max(len(heads), max((len(r) for r in rows), default=0))
     cell_count = len(rows) * cols
-    if not rows or cell_count > policy.table_max_cells:
+    # A body that renders entirely blank (valid GFM "|   |   |", or a row whose
+    # only content is images the inline renderer drops) must NOT fall through
+    # to the join below — that returned "" and silently vanished the table,
+    # breaking the two-outcome contract. Route it to the summary instead.
+    has_content = any(any(cell for cell in row) for row in rows)
+    if not rows or not has_content or cell_count > policy.table_max_cells:
         log.debug("table_summarized rows=%d cols=%d cells=%d", len(rows), cols, cell_count)
         return phrase(lang, "table_summary").format(rows=len(rows), cols=cols)
 
     sep = phrase(lang, "cell_sep")
     end = phrase(lang, "row_end")
     log.debug("table_linearized rows=%d cols=%d", len(rows), cols)
-    return "".join(f"{sep.join(_pairs(heads, row, sep))}{end}" for row in rows if any(row))
+    return "".join(f"{sep.join(_pairs(heads, row))}{end}" for row in rows if any(row))
 
 
 def _split(tok: dict, render_cell: RenderCell) -> tuple[list[str], list[list[str]]]:
@@ -723,7 +730,7 @@ def _split(tok: dict, render_cell: RenderCell) -> tuple[list[str], list[list[str
     return heads, rows
 
 
-def _pairs(heads: list[str], row: list[str], sep: str) -> list[str]:
+def _pairs(heads: list[str], row: list[str]) -> list[str]:
     """One "Header value" chunk per non-empty cell; bare value if headerless."""
     out: list[str] = []
     for index, value in enumerate(row):
@@ -1009,9 +1016,16 @@ def _render_inline(child: dict, ctx: _Ctx) -> str:
 def _render_link(child: dict, ctx: _Ctx) -> str:
     text = _render_children(child.get("children", []), ctx)
     url = child.get("attrs", {}).get("url", "")
+    if url.lower().startswith("mailto:"):
+        # Email autolink: child text is the bare address (no "mailto:"
+        # prefix), so the text==url signal below never fires for it --
+        # without this branch the address gets spoken character by character.
+        log.debug("link_dropped kind=email text_len=%d", len(text))
+        return phrase(ctx.lang, "email") if ctx.policy.speak_dropped_spans else ""
     if text == url or not text.strip():
         # Autolink / bare URL: visible text IS the url -> speak a phrase
         # (or nothing) instead of leaving a grammatical hole.
+        log.debug("link_dropped kind=autolink text_len=%d", len(text))
         return phrase(ctx.lang, "link") if ctx.policy.speak_dropped_spans else ""
     return text
 ```
