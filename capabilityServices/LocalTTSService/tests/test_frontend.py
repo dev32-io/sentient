@@ -56,3 +56,32 @@ def test_paragraph_gaps_are_preserved(policy):
     fe = build_frontend(normalize_enabled=True, policy=policy)
     out = fe.process("First para.\n\nSecond para.", "en")
     assert "\n\n" in out
+
+
+def test_ellipsis_after_comma_survives(policy):
+    fe = build_frontend(normalize_enabled=False, policy=policy)
+    out = fe.process("Wait, ... what?", "en")
+    assert "..." in out
+    assert "what" in out
+
+
+def test_ellipsis_with_no_space_survives_and_keeps_the_space(policy):
+    fe = build_frontend(normalize_enabled=False, policy=policy)
+    out = fe.process("So, ...anyway.", "en")
+    assert "..." in out
+    assert ",anyway" not in out
+
+
+def test_repeated_punct_still_cleans_a_dropped_span_artifact(policy):
+    # The image is dropped entirely (policy: drop), stranding the colon
+    # against the following full stop -- exactly the artifact this rule
+    # exists to clean up.
+    fe = build_frontend(normalize_enabled=False, policy=policy)
+    out = fe.process("Reference: ![diagram](fig.png). See below.", "en")
+    assert out == "Reference. See below."
+
+
+def test_ordinary_list_prose_is_untouched(policy):
+    fe = build_frontend(normalize_enabled=False, policy=policy)
+    out = fe.process("one, two, three.", "en")
+    assert out == "one, two, three."
