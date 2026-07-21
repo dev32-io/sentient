@@ -28,14 +28,15 @@ def render_table(tok: dict, render_cell: RenderCell, policy: SpeechPolicy, lang:
     heads, rows = _split(tok, render_cell)
     cols = max(len(heads), max((len(r) for r in rows), default=0))
     cell_count = len(rows) * cols
-    if not rows or cell_count > policy.table_max_cells:
+    has_content = any(any(cell for cell in row) for row in rows)
+    if not rows or not has_content or cell_count > policy.table_max_cells:
         log.debug("table_summarized rows=%d cols=%d cells=%d", len(rows), cols, cell_count)
         return phrase(lang, "table_summary").format(rows=len(rows), cols=cols)
 
     sep = phrase(lang, "cell_sep")
     end = phrase(lang, "row_end")
     log.debug("table_linearized rows=%d cols=%d", len(rows), cols)
-    return "".join(f"{sep.join(_pairs(heads, row, sep))}{end}" for row in rows if any(row))
+    return "".join(f"{sep.join(_pairs(heads, row))}{end}" for row in rows if any(row))
 
 
 def _split(tok: dict, render_cell: RenderCell) -> tuple[list[str], list[list[str]]]:
@@ -53,7 +54,7 @@ def _split(tok: dict, render_cell: RenderCell) -> tuple[list[str], list[list[str
     return heads, rows
 
 
-def _pairs(heads: list[str], row: list[str], sep: str) -> list[str]:
+def _pairs(heads: list[str], row: list[str]) -> list[str]:
     """One "Header value" chunk per non-empty cell; bare value if headerless."""
     out: list[str] = []
     for index, value in enumerate(row):
