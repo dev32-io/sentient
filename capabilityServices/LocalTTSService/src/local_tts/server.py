@@ -45,6 +45,7 @@ from .connection_session import ConnectionSession
 from .event_logger import JsonlLogger, RotatingJsonlLogger, prune_old_logs
 from .health_server import run_health_server
 from .metrics import MetricsSampler
+from .text_frontend import build_frontend
 
 if TYPE_CHECKING:  # pragma: no cover - import-time-only, avoids the MLX/mlx_audio
     from .synth_executor import SynthExecutor
@@ -58,6 +59,16 @@ log = logging.getLogger("local-tts-service")
 VALID_FORMATS = ("opus", "pcm")
 
 
+class _PassthroughFrontend:
+    """No-op stand-in for ``TextFrontend`` when ``config.text_frontend.enabled``
+    is false — duck-types ``TextFrontend.process`` so ``SynthesisRunner.flush()``
+    doesn't need an enabled/disabled branch of its own.
+    """
+
+    def process(self, doc: str, lang: str) -> str:
+        return doc
+
+
 class Server:
     """Owns the shared engine/voice-store/lock; creates per-connection sessions."""
 
@@ -69,6 +80,13 @@ class Server:
         # the full duration of each synth request AND each voice.create,
         # across every connection this process serves.
         self._synth_lock = asyncio.Lock()
+        # Built once per process, shared read-only across every connection
+        # (`TextFrontend`/`_PassthroughFrontend` hold no per-connection state).
+        self._frontend = (
+            build_frontend(normalize_enabled=config.text_frontend.normalize)
+            if config.text_frontend.enabled
+            else _PassthroughFrontend()
+        )
         log_dir = Path(config.log_dir)
         self._service_log = RotatingJsonlLogger("service", log_dir, echo_stdout=True)
         self._metrics_log = RotatingJsonlLogger("synth-metrics", log_dir, echo_stdout=False)
@@ -104,7 +122,7 @@ class Server:
             ws=ws, conn_id=conn_id, executor=self._executor, voice_store=self._voice_store,
             synth_lock=self._synth_lock, format_=fmt, sample_rate=sample_rate, voice=voice,
             streaming_interval=self._config.streaming_interval, default_lang=self._config.default_lang,
-            conn_log=conn_log, metrics_log=self._metrics_log,
+            conn_log=conn_log, metrics_log=self._metrics_log, frontend=self._frontend,
         )
         try:
             await session.send_ready()

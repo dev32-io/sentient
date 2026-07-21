@@ -101,6 +101,7 @@ class SynthesisRunner:
         default_lang: str,
         conn_log: Any,
         metrics_log: Any,
+        frontend: Any,
     ) -> None:
         self._executor = executor
         self._voice_store = voice_store
@@ -114,6 +115,7 @@ class SynthesisRunner:
         self._default_lang = default_lang
         self._conn_log = conn_log
         self._metrics_log = metrics_log
+        self._frontend = frontend
         self._text_buffer: list[str] = []
         self._queue: "asyncio.Queue[str]" = asyncio.Queue()
         self._cancel_event = threading.Event()
@@ -131,12 +133,16 @@ class SynthesisRunner:
         self._text_buffer.append(text)
 
     def flush(self) -> None:
-        """Move buffered text onto the request queue, if any is buffered."""
+        """Run the buffered text through the frontend, then enqueue it."""
         if not self._text_buffer:
             return
-        text = "".join(self._text_buffer)
+        raw = "".join(self._text_buffer)
         self._text_buffer = []
-        self._queue.put_nowait(text)
+        speakable = self._frontend.process(raw, self._default_lang)
+        if not speakable.strip():
+            self._conn_log.log("synth.flush_empty_after_frontend", raw_len=len(raw))
+            return
+        self._queue.put_nowait(speakable)
 
     def cancel_current(self) -> None:
         """Abort the in-flight request (if any) and drop queued-but-unstarted ones."""
