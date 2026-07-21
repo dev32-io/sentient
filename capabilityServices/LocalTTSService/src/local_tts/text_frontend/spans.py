@@ -33,9 +33,15 @@ _URL_LIKE_RE = re.compile(r"^(?:[a-z][a-z0-9+.-]*://|www\.)", re.IGNORECASE)
 _PATH_LIKE_RE = re.compile(r"^(?:~|/|\.{1,2}/|[A-Za-z]:\\)|(?:[^/\s]*/){2,}")
 
 # Prose-level scanners. Both require enough structure that ordinary
-# sentences (and "50/50", "and/or") can't match.
-_BARE_URL_RE = re.compile(r"(?:[a-z][a-z0-9+.-]*://|www\.)[^\s<>()\[\]]+", re.IGNORECASE)
-_BARE_PATH_RE = re.compile(r"(?<![\w/])(?:~|\.{0,2})/[\w.\-]+(?:/[\w.\-]+)+")
+# sentences (and "50/50", "and/or") can't match, and both must STOP before
+# trailing sentence punctuation -- a URL or path followed directly by a
+# period is ordinary English, and swallowing that period costs the
+# sentence its prosodic boundary.
+_BARE_URL_RE = re.compile(
+    r"(?:[a-z][a-z0-9+.-]*://|www\.)[^\s<>()\[\]]*[^\s<>()\[\].,;:!?'\"]",
+    re.IGNORECASE,
+)
+_BARE_PATH_RE = re.compile(r"(?<![\w/])(?:~|\.{0,2})/[\w.-]*[\w-](?:/[\w.-]*[\w-])+")
 
 
 @dataclass(frozen=True)
@@ -78,6 +84,16 @@ def replace_bare_spans(text: str, policy: SpeechPolicy, lang: str) -> str:
     """Rewrite bare URLs / absolute paths that mistune left in prose text."""
     url_repl = phrase(lang, "link") if policy.speak_dropped_spans else ""
     path_repl = phrase(lang, "file_path") if policy.speak_dropped_spans else ""
-    out = _BARE_URL_RE.sub(url_repl, text)
-    out = _BARE_PATH_RE.sub(path_repl, out)
+    # Pass replacements as callables, not strings -- re.sub interprets
+    # backslash escapes (\1, \g<name>, ...) in string replacements, so a
+    # future phrase-catalog entry containing one would break or raise.
+    out, url_subs = _BARE_URL_RE.subn(lambda _match: url_repl, text)
+    out, path_subs = _BARE_PATH_RE.subn(lambda _match: path_repl, out)
+    log.debug(
+        "replace_bare_spans url_subs=%d path_subs=%d in_len=%d out_len=%d",
+        url_subs,
+        path_subs,
+        len(text),
+        len(out),
+    )
     return out

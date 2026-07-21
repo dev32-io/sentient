@@ -79,3 +79,26 @@ def test_replace_bare_spans_does_not_eat_simple_division(policy):
     # A single slash between words is prose, not a path.
     s = "a 50/50 split and and/or logic"
     assert replace_bare_spans(s, policy, "en") == s
+
+
+def test_replace_bare_url_at_end_of_sentence_keeps_period(policy):
+    # A URL followed directly by a period is ordinary English punctuation --
+    # the sentence's terminal period must survive the rewrite so the
+    # synthesizer keeps its prosodic boundary.
+    out = replace_bare_spans("See https://example.com/a.", policy, "en")
+    assert out.endswith(".")
+    assert "a link" in out
+
+
+def test_replace_bare_path_at_end_of_sentence_keeps_period(policy):
+    out = replace_bare_spans("Config at /Users/kev/notes.md.", policy, "en")
+    assert out.endswith(".")
+    assert "a file path" in out
+
+
+def test_replace_bare_spans_preserves_dotted_path_leading_segment(policy):
+    # Regression guard: stopping short of trailing sentence punctuation must
+    # not break a path whose segment legitimately starts with a dot.
+    out = replace_bare_spans("Edit ~/.sentient/gateway/config.yaml now.", policy, "en")
+    assert "~/.sentient" not in out
+    assert "a file path" in out
