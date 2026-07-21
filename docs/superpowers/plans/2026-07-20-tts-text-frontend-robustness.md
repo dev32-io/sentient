@@ -294,20 +294,29 @@ log = logging.getLogger("local_tts.text_frontend.mask")
 
 # Deliberately unlikely to occur in prose, and letters-only (see docstring).
 _PREFIX = "zqxmask"
-_ALPHABET = "abcdefghijklmnopqrstuvwxyz"
+# 'z' is reserved as the terminator and excluded from the digit alphabet.
+_ALPHABET = "abcdefghijklmnopqrstuvwxy"
+_TERMINATOR = "z"
 
 
 def _encode(index: int) -> str:
-    """Base-26 letter encoding, fixed two digits minimum ('aa', 'ab', ...)."""
-    out = ""
+    """Prefix-free base-25 letter code, terminated by 'z'.
+
+    Because 'z' never appears among the digits, no code can be a prefix of
+    another: a shorter code's terminating 'z' would have to align with a
+    digit of the longer one, which is impossible. That makes restore()
+    order-independent. A plain base-26 code is NOT prefix-free — index 26
+    ("ba") prefixes index 676 ("baa"), and replacing the shorter sentinel
+    first corrupts the longer one's span.
+    """
+    digits = ""
     n = index
-    for _ in range(2):
-        out = _ALPHABET[n % 26] + out
-        n //= 26
-    while n:
-        out = _ALPHABET[n % 26] + out
-        n //= 26
-    return out
+    while True:
+        digits = _ALPHABET[n % 25] + digits
+        n //= 25
+        if n == 0:
+            break
+    return digits + _TERMINATOR
 
 
 class MaskTable:
@@ -319,6 +328,7 @@ class MaskTable:
     def add(self, text: str) -> str:
         sentinel = f"{_PREFIX}{_encode(len(self._spans))}"
         self._spans[sentinel] = text
+        log.debug("add sentinel=%s text_len=%d spans=%d", sentinel, len(text), len(self._spans))
         return sentinel
 
     def restore(self, text: str) -> str:
@@ -491,9 +501,18 @@ _URL_LIKE_RE = re.compile(r"^(?:[a-z][a-z0-9+.-]*://|www\.)", re.IGNORECASE)
 _PATH_LIKE_RE = re.compile(r"^(?:~|/|\.{1,2}/|[A-Za-z]:\\)|(?:[^/\s]*/){2,}")
 
 # Prose-level scanners. Both require enough structure that ordinary
-# sentences (and "50/50", "and/or") can't match.
-_BARE_URL_RE = re.compile(r"(?:[a-z][a-z0-9+.-]*://|www\.)[^\s<>()\[\]]+", re.IGNORECASE)
-_BARE_PATH_RE = re.compile(r"(?<![\w/])(?:~|\.{0,2})/[\w.\-]+(?:/[\w.\-]+)+")
+# sentences (and "50/50", "and/or") can't match, and both must STOP before
+# trailing sentence punctuation -- a URL or path followed directly by a
+# period is ordinary English, and swallowing that period costs the sentence
+# its prosodic boundary. Hence the mandatory non-punctuation final char.
+_BARE_URL_RE = re.compile(
+    r"(?:[a-z][a-z0-9+.-]*://|www\.)[^\s<>()\[\]]*[^\s<>()\[\].,;:!?'\"]",
+    re.IGNORECASE,
+)
+# Segment is `[\w.-]*[\w-]`: dots allowed INSIDE a segment but never at its
+# end, so "~/.sentient/gateway/config.yaml" still matches while a trailing
+# "." stays outside the match.
+_BARE_PATH_RE = re.compile(r"(?<![\w/])(?:~|\.{0,2})/[\w.-]*[\w-](?:/[\w.-]*[\w-])+")
 
 
 @dataclass(frozen=True)
@@ -536,8 +555,12 @@ def replace_bare_spans(text: str, policy: SpeechPolicy, lang: str) -> str:
     """Rewrite bare URLs / absolute paths that mistune left in prose text."""
     url_repl = phrase(lang, "link") if policy.speak_dropped_spans else ""
     path_repl = phrase(lang, "file_path") if policy.speak_dropped_spans else ""
-    out = _BARE_URL_RE.sub(url_repl, text)
-    out = _BARE_PATH_RE.sub(path_repl, out)
+    # Callables, not replacement STRINGS: re.sub interprets backslash escapes
+    # in a string replacement, so a future phrase containing one would break.
+    out, url_subs = _BARE_URL_RE.subn(lambda _match: url_repl, text)
+    out, path_subs = _BARE_PATH_RE.subn(lambda _match: path_repl, out)
+    log.debug("bare_spans url_subs=%d path_subs=%d in_len=%d out_len=%d",
+              url_subs, path_subs, len(text), len(out))
     return out
 ```
 
@@ -890,6 +913,7 @@ from dataclasses import dataclass
 import mistune
 
 from .mask import MaskTable
+from .phrases import phrase
 from .policy import SpeechPolicy
 from .spans import render_code_span, replace_bare_spans
 from .table import render_table
@@ -988,7 +1012,6 @@ def _render_link(child: dict, ctx: _Ctx) -> str:
     if text == url or not text.strip():
         # Autolink / bare URL: visible text IS the url -> speak a phrase
         # (or nothing) instead of leaving a grammatical hole.
-        from .phrases import phrase  # local import: avoids an import cycle at module load
         return phrase(ctx.lang, "link") if ctx.policy.speak_dropped_spans else ""
     return text
 ```
@@ -1041,11 +1064,6 @@ from local_tts.text_frontend import SpeechPolicy, build_frontend
 
 @pytest.fixture
 def policy():
-    return SpeechPolicy(table_max_cells=24, code_span_max_chars=32, speak_dropped_spans=True)
-
-
-@pytest.fixture(scope="module")
-def _shared_policy():
     return SpeechPolicy(table_max_cells=24, code_span_max_chars=32, speak_dropped_spans=True)
 
 
@@ -1527,8 +1545,8 @@ git commit -m "chore(local-tts): bump version to 1.2.0"
 
 - [ ] **Step 1: Full service unit suite**
 
-Run: `cd capabilityServices/LocalTTSService && .venv/bin/pip install -e . && .venv/bin/python -m pytest -v`
-Expected: PASS, all non-`live` tests.
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest -v`
+Expected: PASS, all non-`live` tests. (The service is managed with `uv`, not pip — do NOT run `pip install -e .`. This plan adds no dependencies, so no `uv sync` is needed either; the existing `.venv` already resolves `local_tts` from `src/`.)
 
 - [ ] **Step 2: Regression probe on the original failing document**
 
