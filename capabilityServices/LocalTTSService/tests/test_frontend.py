@@ -70,6 +70,13 @@ def test_ellipsis_with_no_space_survives_and_keeps_the_space(policy):
     out = fe.process("So, ...anyway.", "en")
     assert "..." in out
     assert ",anyway" not in out
+    assert ", ..." in out
+
+
+def test_ellipsis_in_prose_keeps_its_leading_space(policy):
+    fe = build_frontend(normalize_enabled=False, policy=policy)
+    out = fe.process("Hello ... world", "en")
+    assert out == "Hello ... world"
 
 
 def test_repeated_punct_still_cleans_a_dropped_span_artifact(policy):
@@ -85,3 +92,12 @@ def test_ordinary_list_prose_is_untouched(policy):
     fe = build_frontend(normalize_enabled=False, policy=policy)
     out = fe.process("one, two, three.", "en")
     assert out == "one, two, three."
+
+
+def test_space_before_punct_still_cleans_a_dropped_span_artifact(policy):
+    # The image is dropped entirely, stranding a space against the
+    # following comma -- exactly the ordinary artifact _SPACE_BEFORE_PUNCT
+    # exists to clean up (not an ellipsis, so it must still fire).
+    fe = build_frontend(normalize_enabled=False, policy=policy)
+    out = fe.process("Check the chart ![chart](fig.png) , it changes weekly.", "en")
+    assert out == "Check the chart, it changes weekly."
