@@ -1646,6 +1646,228 @@ git commit -am "chore: quality-gate fixups for tts text-frontend robustness" || 
 
 ---
 
+## Task 11: Residual-symbol sweep (L1 backstop)
+
+**Files:**
+- Create: `capabilityServices/LocalTTSService/src/local_tts/text_frontend/residual.py`
+- Modify: `capabilityServices/LocalTTSService/src/local_tts/text_frontend/frontend.py`
+- Test: `capabilityServices/LocalTTSService/tests/test_residual.py`
+- Test: `capabilityServices/LocalTTSService/tests/test_frontend.py` (one composed case)
+
+**Why this task exists:** L1 only routes what mistune *types*. Anything it fails to type
+arrives at the normalizer as literal punctuation, and the normalizer's whole contract is to
+verbalize it. That is the gap that let nested tables through, and it is still open for
+markdown-ish punctuation that never had a node to begin with. This stage makes L1 fail
+**safe**: sweep the residue instead of speaking it.
+
+Six leak classes reproduced against the current branch:
+
+| Input | Spoken today |
+|---|---|
+| `Humidity 71% \| Wind 3.6 km/h` | "…percent **vertical bar** Wind…" |
+| `Read *https://x* now` / `*unclosed` | "**asterisk** …" |
+| `Trailing ~ tilde` | "**tilde** tilde" |
+| `A # hash mid sentence` | "A **number** hash…" |
+| `snake_case_word` (in prose, not backticked) | "snake **underscore** case **underscore** word" |
+| `#tag` | "**hash** tag" |
+
+The prose `|` case is the motivating one: a single line of `a | b | c` is a *visual*
+separator, not a table — mistune needs a delimiter row to emit a `table` node, so this stays
+one plain `text` token and Task 5's table routing never sees it.
+
+**Interfaces:**
+- Produces: `sweep_residual_symbols(text: str) -> str`.
+- Consumed by `TextFrontend.process`, which calls it **after** markdown strip + emoji/pause
+  strip and **before** normalization.
+
+**Placement is safe with respect to masking:** sentinels are letters-only, so no rule here
+can touch one. That is also what makes the underscore rule correct — a backticked
+`` `snake_case_name` `` is already masked and keeps its underscores, while a *prose*
+`snake_case_word` gets them spoken as spaces. Prose and code diverge exactly as they should.
+
+**Policy, decided by the user:**
+- `|` → a sentence break, because the pipe is a *stronger* divider than the commas already
+  inside each segment; a period preserves that hierarchy and gives the synth a real pause.
+- stray `*` and `~` → deleted (orphaned emphasis / strikethrough markers).
+- `#` → deleted, EXCEPT directly after a letter, so `C#` and `F#` survive.
+- `_` between word characters → a space; leading/trailing underscores deleted.
+- `&`, `^`, `=`, `<`, `>`, `\`, `{}`, `[]` → left alone; the normalizer already speaks those
+  acceptably ("and", "squared", "equals").
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_residual.py
+from local_tts.text_frontend.residual import sweep_residual_symbols
+
+
+def test_pipe_becomes_a_sentence_break():
+    out = sweep_residual_symbols("Partly cloudy, 22.7C | Humidity 71% | Wind 3.6")
+    assert "|" not in out
+    assert "22.7C. Humidity" in out
+    assert "71%. Wind" in out
+
+
+def test_pipe_does_not_double_existing_terminal_punctuation():
+    # "foo. | bar" must not become "foo.. bar"
+    out = sweep_residual_symbols("First done. | Second next")
+    assert ".." not in out
+    assert "done. Second" in out
+
+
+def test_repeated_pipes_collapse_to_one_break():
+    out = sweep_residual_symbols("a || b")
+    assert "|" not in out
+    assert out.count(".") == 1
+
+
+def test_stray_emphasis_markers_are_dropped():
+    assert "*" not in sweep_residual_symbols("Some *unclosed emphasis here")
+    assert "~" not in sweep_residual_symbols("Trailing ~ tilde and ~unclosed")
+
+
+def test_hash_dropped_but_sharp_language_names_survive():
+    assert sweep_residual_symbols("#tag").strip() == "tag"
+    assert "C#" in sweep_residual_symbols("I write C# daily")
+
+
+def test_underscores_in_prose_become_spaces():
+    assert sweep_residual_symbols("snake_case_word here") == "snake case word here"
+
+
+def test_ordinary_prose_is_untouched():
+    s = "The weather is nice today, and it costs $50 (roughly)."
+    assert sweep_residual_symbols(s) == s
+
+
+def test_symbols_the_normalizer_handles_well_are_left_alone():
+    s = "Tom & Jerry, a^2, x = y, 5 < 6 > 4"
+    assert sweep_residual_symbols(s) == s
+
+
+def test_sentinel_tokens_are_untouched():
+    # Masked spans are letters-only; no rule here may alter one.
+    s = "call zqxmaskaz and zqxmaskba now"
+    assert sweep_residual_symbols(s) == s
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_residual.py -v`
+Expected: FAIL with `ModuleNotFoundError: No module named 'local_tts.text_frontend.residual'`
+
+- [ ] **Step 3: Implement**
+
+```python
+# src/local_tts/text_frontend/residual.py
+"""Backstop sweep for markdown-ish punctuation the AST never typed.
+
+L1 routes what mistune gives it a NODE for. Anything else survives as
+literal text and reaches the normalizer, whose contract is to give every
+symbol a spoken form -- so a stray marker becomes "asterisk", and a
+single line of "a | b | c" (a visual separator, NOT a table: mistune
+needs a delimiter row to emit a table node) becomes "vertical bar".
+
+This stage runs on prose only, after the markdown strip and before
+normalization, and makes that layer fail SAFE. Sentinels are letters-only
+so nothing here can disturb a masked span -- which is also why a
+backticked `snake_case` keeps its underscores while a prose one does not.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+
+log = logging.getLogger("local_tts.text_frontend.residual")
+
+# Terminal punctuation that already supplies the break a pipe would add.
+_TERMINAL = ".!?。！？"
+
+# One or more pipes, with the whitespace around them.
+_PIPE_RUN_RE = re.compile(r"[ \t]*\|+[ \t]*")
+# Orphaned emphasis / strikethrough markers left by unbalanced markup.
+_STRAY_MARKERS_RE = re.compile(r"[*~]+")
+# A hash NOT preceded by a letter -- "#tag" goes, "C#"/"F#" stay.
+_STRAY_HASH_RE = re.compile(r"(?<![A-Za-z])#+")
+# Underscores joining word characters ("snake_case") -> a word boundary.
+_INNER_UNDERSCORE_RE = re.compile(r"(?<=\w)_+(?=\w)")
+# Underscores hanging off either end of a word.
+_EDGE_UNDERSCORE_RE = re.compile(r"(?<!\w)_+|_+(?!\w)")
+
+
+def _pipe_to_break(match: re.Match) -> str:
+    """A pipe becomes a sentence break -- unless the text already ended in one."""
+    text = match.string
+    before = text[: match.start()].rstrip()
+    if not before:
+        return ""
+    if before[-1] in _TERMINAL:
+        return " "
+    return ". "
+
+
+def sweep_residual_symbols(text: str) -> str:
+    out = _PIPE_RUN_RE.sub(_pipe_to_break, text)
+    out = _STRAY_MARKERS_RE.sub("", out)
+    out = _STRAY_HASH_RE.sub("", out)
+    out = _INNER_UNDERSCORE_RE.sub(" ", out)
+    out = _EDGE_UNDERSCORE_RE.sub("", out)
+    if out != text:
+        log.debug("residual_swept in_len=%d out_len=%d", len(text), len(out))
+    return out
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_residual.py -v`
+Expected: PASS (9 tests).
+
+- [ ] **Step 5: Wire it into the composer**
+
+In `frontend.py`, import it and add the stage between the emoji/pause strip and
+normalization — the comment in `process()` documenting stage order must gain it too:
+
+```python
+from .residual import sweep_residual_symbols
+```
+
+```python
+        text = strip_pause_tags(strip_emoji(stripped.text))
+        text = sweep_residual_symbols(text)
+        if self._normalizer is not None and text.strip():
+```
+
+- [ ] **Step 6: Add the composed case**
+
+```python
+# tests/test_frontend.py
+def test_prose_pipe_separator_is_not_spoken(policy):
+    fe = build_frontend(normalize_enabled=True, policy=policy)
+    out = fe.process("Partly cloudy, 22.7C | Humidity 71% | Wind 3.6 km/h", "en")
+    assert "vertical bar" not in out
+    assert "percent" in out and "kilometers per hour" in out
+```
+
+- [ ] **Step 7: Run the full suite**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest -v`
+Expected: PASS. Every pre-existing test must still be green — pay particular attention to
+the masking tests (a sentinel must survive this stage untouched) and to
+`test_paragraph_gaps_are_preserved` (the sweep must not disturb `\n\n`).
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add capabilityServices/LocalTTSService/src/local_tts/text_frontend/residual.py \
+        capabilityServices/LocalTTSService/src/local_tts/text_frontend/frontend.py \
+        capabilityServices/LocalTTSService/tests/test_residual.py \
+        capabilityServices/LocalTTSService/tests/test_frontend.py
+git commit -m "feat(local-tts): sweep residual markdown punctuation before normalization"
+```
+
+---
+
 ## Self-Review
 
 **Spec coverage** (against the six failure classes reproduced on the current code):
