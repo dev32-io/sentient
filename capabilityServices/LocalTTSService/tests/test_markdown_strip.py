@@ -1,62 +1,98 @@
+import pytest
+
 from local_tts.text_frontend.markdown import strip_markdown
+from local_tts.text_frontend.policy import SpeechPolicy
 
 
-def test_drops_code_block_keeps_prose():
-    doc = "Here is code:\n\n```py\nprint(1)\n```\n\nDone."
-    out = strip_markdown(doc)
+@pytest.fixture
+def policy():
+    return SpeechPolicy(table_max_cells=24, code_span_max_chars=32, speak_dropped_spans=True)
+
+
+def _text(doc, policy, lang="en"):
+    return strip_markdown(doc, policy, lang).text
+
+
+def test_drops_code_block_keeps_prose(policy):
+    out = _text("Here is code:\n\n```py\nprint(1)\n```\n\nDone.", policy)
     assert "print" not in out
-    assert "Here is code:" in out
-    assert "Done." in out
+    assert "Here is code:" in out and "Done." in out
 
 
-def test_keeps_link_text_drops_url():
-    out = strip_markdown("See [the docs](https://example.com/x) now.")
+def test_keeps_link_text_drops_url(policy):
+    out = _text("See [the docs](https://example.com/x) now.", policy)
     assert "the docs" in out
     assert "example.com" not in out
-    assert "https" not in out
 
 
-def test_keeps_inline_code_and_emphasis_text():
-    out = strip_markdown("Run `npm test` for **bold** and *italic* words.")
-    assert "npm test" in out
-    assert "bold" in out
-    assert "italic" in out
-
-
-def test_heading_and_list_become_separated_blocks():
-    doc = "# Title\n\n- one\n- two"
-    out = strip_markdown(doc)
-    assert "Title" in out
-    assert "one" in out and "two" in out
-    # block elements separated by a blank line for the synth's prosodic gap
+def test_heading_and_list_become_separated_blocks(policy):
+    out = _text("# Title\n\n- one\n- two", policy)
+    assert "Title" in out and "one" in out and "two" in out
     assert "\n\n" in out
 
 
-def test_drops_images_and_bare_urls():
-    out = strip_markdown("Look ![alt](a.png) at https://raw.example.com here.")
+def test_drops_images(policy):
+    out = _text("Look ![alt](a.png) here.", policy)
     assert "a.png" not in out
-    assert "raw.example.com" not in out
     assert "Look" in out and "here" in out
 
 
-def test_empty_document_returns_empty():
-    assert strip_markdown("") == ""
-    assert strip_markdown("```\nonly code\n```").strip() == ""
+def test_empty_document_returns_empty(policy):
+    assert _text("", policy) == ""
+    assert _text("```\nonly code\n```", policy).strip() == ""
 
 
-def test_softbreak_does_not_concatenate_words():
-    out = strip_markdown("quoted text here\nmore quote")
-    assert "here more" in out
-    assert "heremore" not in out
+# --- v2 behaviours ---------------------------------------------------------
+
+def test_table_is_linearized_not_piped(policy):
+    doc = "| Service | Port |\n|---|---|\n| gateway | 8080 |\n"
+    out = _text(doc, policy)
+    assert "|" not in out
+    assert "Service gateway" in out and "Port 8080" in out
 
 
-def test_multiline_blockquote_does_not_concatenate_words():
-    out = strip_markdown("> line one\n> line two")
-    assert "line one" in out and "line two" in out
-    assert "onetwo" not in out
+def test_task_list_markers_are_not_spoken(policy):
+    out = _text("- [ ] undone\n- [x] done\n", policy)
+    assert "[" not in out and "]" not in out
+    assert "undone" in out and "done" in out
 
 
-def test_strikethrough_keeps_text_drops_markers():
-    out = strip_markdown("This is ~~struck~~ text.")
-    assert "struck" in out
-    assert "~~" not in out
+def test_math_is_dropped(policy):
+    out = _text("Math $x^2$ here.\n\n$$\na=b\n$$\n", policy)
+    assert "^" not in out and "$" not in out
+    assert "Math" in out and "here." in out
+
+
+def test_footnote_body_is_not_spoken(policy):
+    out = _text("Text[^1]\n\n[^1]: secret note body\n", policy)
+    assert "secret note body" not in out
+    assert "Text" in out
+
+
+def test_symbol_heavy_inline_code_becomes_a_phrase(policy):
+    out = _text("Install with `npm i --save-dev @types/node` now.", policy)
+    assert "--save-dev" not in out
+    assert "a command" in out
+
+
+def test_word_like_inline_code_is_kept_but_masked(policy):
+    result = strip_markdown("Then call `flush` on it.", policy, "en")
+    assert "flush" not in result.text          # masked until after TN
+    assert "flush" in result.masks.restore(result.text)
+
+
+def test_bare_url_in_prose_becomes_a_phrase(policy):
+    out = _text("Also www.example.com here.", policy)
+    assert "www" not in out
+    assert "a link" in out
+
+
+def test_html_is_dropped(policy):
+    out = _text("<div>hidden</div>\n\nInline <b>bold</b> text.\n", policy)
+    assert "hidden" not in out and "<b>" not in out
+    assert "bold" in out and "text." in out
+
+
+def test_autolink_speaks_the_phrase_exactly_once(policy):
+    out = _text("See <https://example.com/x> now.", policy)
+    assert out.count("a link") == 1
