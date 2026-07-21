@@ -101,7 +101,13 @@ def _make_config(tmp_path: Path) -> Config:
         voice_description_max_len=240,
         voice_tag_max_len=24,
         voice_max_tags=8,
-        text_frontend=TextFrontendConfig(enabled=True, normalize=True),
+        text_frontend=TextFrontendConfig(
+            enabled=True,
+            normalize=True,
+            table_max_cells=24,
+            code_span_max_chars=32,
+            speak_dropped_spans=True,
+        ),
     )
 
 

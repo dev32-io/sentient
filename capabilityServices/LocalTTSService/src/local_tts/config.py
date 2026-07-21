@@ -68,6 +68,9 @@ class TextFrontendConfig:
 
     enabled: bool
     normalize: bool
+    table_max_cells: int
+    code_span_max_chars: int
+    speak_dropped_spans: bool
 
 
 @dataclass(frozen=True)
@@ -172,9 +175,23 @@ def _parse(raw: dict[str, Any]) -> Config:
         voice_description_max_len=_require(raw, "voice_description_max_len", int),
         voice_tag_max_len=_require(raw, "voice_tag_max_len", int),
         voice_max_tags=_require(raw, "voice_max_tags", int),
-        text_frontend=TextFrontendConfig(
-            enabled=_require(text_frontend_raw, "text_frontend.enabled", bool),
-            normalize=_require(text_frontend_raw, "text_frontend.normalize", bool),
+        text_frontend=_parse_text_frontend(text_frontend_raw),
+    )
+
+
+def _parse_text_frontend(text_frontend_raw: dict[str, Any]) -> TextFrontendConfig:
+    """Build the ``text_frontend`` sub-tree — split out of ``_parse`` to keep
+    that function under the project's 40-line function cap.
+    """
+    return TextFrontendConfig(
+        enabled=_require(text_frontend_raw, "text_frontend.enabled", bool),
+        normalize=_require(text_frontend_raw, "text_frontend.normalize", bool),
+        table_max_cells=_require(text_frontend_raw, "text_frontend.table_max_cells", int),
+        code_span_max_chars=_require(
+            text_frontend_raw, "text_frontend.code_span_max_chars", int
+        ),
+        speak_dropped_spans=_require(
+            text_frontend_raw, "text_frontend.speak_dropped_spans", bool
         ),
     )
 

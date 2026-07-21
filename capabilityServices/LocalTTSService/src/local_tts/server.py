@@ -45,7 +45,7 @@ from .connection_session import ConnectionSession
 from .event_logger import JsonlLogger, RotatingJsonlLogger, prune_old_logs
 from .health_server import run_health_server
 from .metrics import MetricsSampler
-from .text_frontend import build_frontend
+from .text_frontend import SpeechPolicy, build_frontend
 
 if TYPE_CHECKING:  # pragma: no cover - import-time-only, avoids the MLX/mlx_audio
     from .synth_executor import SynthExecutor
@@ -83,7 +83,14 @@ class Server:
         # Built once per process, shared read-only across every connection
         # (`TextFrontend`/`_PassthroughFrontend` hold no per-connection state).
         self._frontend = (
-            build_frontend(normalize_enabled=config.text_frontend.normalize)
+            build_frontend(
+                normalize_enabled=config.text_frontend.normalize,
+                policy=SpeechPolicy(
+                    table_max_cells=config.text_frontend.table_max_cells,
+                    code_span_max_chars=config.text_frontend.code_span_max_chars,
+                    speak_dropped_spans=config.text_frontend.speak_dropped_spans,
+                ),
+            )
             if config.text_frontend.enabled
             else _PassthroughFrontend()
         )

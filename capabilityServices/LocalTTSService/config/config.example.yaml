@@ -117,6 +117,22 @@ text_frontend:
   # Run wetext WFST text normalization ($/%/numbers/dates/units).
   normalize: true
 
+  # Tables with MORE body cells than this (rows x columns) are summarized
+  # ("a table with 20 rows and 6 columns") instead of read out row by row.
+  # Small tables are linearized screen-reader style: "Service gateway,
+  # Port 8080." Range: 0-200; 0 summarizes every table.
+  table_max_cells: 24
+
+  # Inline `code` longer than this many characters is treated as non-prose
+  # (a command, not a word) and replaced by a short phrase rather than
+  # spoken character by character. Range: 8-120.
+  code_span_max_chars: 32
+
+  # When a span is dropped (command, file path, URL), speak a short
+  # placeholder ("a command") so the sentence keeps its grammar. Set false
+  # to drop silently.
+  speak_dropped_spans: true
+
 # =============================================================================
 # Logging + in-process metrics
 # =============================================================================

@@ -7,7 +7,7 @@ fenced code block with no speakable content) — see ``synthesis.py``'s
 
 import asyncio
 
-from local_tts.text_frontend import build_frontend
+from local_tts.text_frontend import SpeechPolicy, build_frontend
 
 
 class _FakeFrontend:
@@ -49,7 +49,10 @@ def test_flush_runs_frontend_before_enqueue():
 
 
 def test_flush_skips_enqueue_when_frontend_returns_empty():
-    fe = build_frontend(normalize_enabled=True)
+    fe = build_frontend(
+        normalize_enabled=True,
+        policy=SpeechPolicy(table_max_cells=24, code_span_max_chars=32, speak_dropped_spans=True),
+    )
 
     async def run():
         runner = _make_runner(fe)
