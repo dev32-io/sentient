@@ -46,7 +46,20 @@ log = logging.getLogger("local_tts.text_frontend.markdown")
 
 _PARSE = mistune.create_markdown(
     renderer=None,
-    plugins=["url", "strikethrough", "table", "task_lists", "math", "footnotes"],
+    plugins=[
+        "url",
+        "strikethrough",
+        "table",
+        # The bare `table` plugin only registers into the ROOT block parser.
+        # An LLM very often indents a table under a numbered list or inside a
+        # quote; without these two it stays literal pipe text and the
+        # normalizer reads it as "vertical bar Service vertical bar Port".
+        "mistune.plugins.table.table_in_quote",
+        "mistune.plugins.table.table_in_list",
+        "task_lists",
+        "math",
+        "footnotes",
+    ],
 )
 
 # Block token types with no speakable content.
@@ -75,7 +88,7 @@ class _Ctx:
 
 
 def strip_markdown(doc: str, policy: SpeechPolicy, lang: str) -> StrippedDoc:
-    masks = MaskTable()
+    masks = MaskTable(doc=doc)
     if not doc.strip():
         return StrippedDoc(text="", masks=masks)
     ctx = _Ctx(policy=policy, lang=lang, masks=masks)

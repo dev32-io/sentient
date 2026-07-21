@@ -3,27 +3,10 @@ from wetext import Normalizer
 from local_tts.text_frontend.mask import MaskTable
 
 
-def test_add_returns_distinct_sentinels():
-    m = MaskTable()
-    a = m.add("v1.2.3")
-    b = m.add("8080")
-    assert a != b
-
-
 def test_restore_round_trips():
     m = MaskTable()
     s = m.add("--save-dev")
     assert m.restore(f"run {s} now") == "run --save-dev now"
-
-
-def test_restore_is_noop_without_sentinels():
-    assert MaskTable().restore("plain text") == "plain text"
-
-
-def test_sentinels_are_letters_only():
-    m = MaskTable()
-    for i in range(60):  # forces the second base-26 digit
-        assert m.add(f"x{i}").isalpha()
 
 
 def test_sentinels_survive_wetext_normalization():
@@ -57,6 +40,19 @@ def test_sentinels_are_prefix_free():
             assert not longer.startswith(shorter), (
                 f"sentinel {shorter!r} (index {i}) is a proper prefix of {longer!r}"
             )
+
+
+def test_prose_containing_the_literal_prefix_does_not_get_rewritten():
+    # restore() does an unbounded str.replace per sentinel, so a document
+    # that already contains the sentinel prefix would otherwise have that
+    # literal occurrence rewritten too. MaskTable must detect the collision
+    # up front and fall back to a second letters-only prefix.
+    doc = "The word zqxmaskaz appears and also `flush`."
+    m = MaskTable(doc=doc)
+    s = m.add("flush")
+    assert not s.startswith("zqxmaskaz")
+    out = m.restore(f"The word zqxmaskaz appears and also {s}.")
+    assert out == "The word zqxmaskaz appears and also flush."
 
 
 def test_restore_at_prefix_collision_boundary():

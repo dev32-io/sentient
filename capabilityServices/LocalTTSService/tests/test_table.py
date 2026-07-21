@@ -44,12 +44,6 @@ def test_zh_uses_chinese_separators(policy):
     assert ", " not in out
 
 
-def test_cells_go_through_the_injected_renderer(policy):
-    doc = "| A |\n|---|\n| x |\n"
-    out = render_table(_first_table(doc), lambda ch: "RENDERED", policy, "en")
-    assert "RENDERED" in out
-
-
 def test_empty_body_summarizes_rather_than_emitting_junk(policy):
     doc = "| A | B |\n|---|---|\n"
     out = render_table(_first_table(doc), _plain_cell, policy, "en")

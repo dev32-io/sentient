@@ -51,6 +51,23 @@ def test_table_is_linearized_not_piped(policy):
     assert "Service gateway" in out and "Port 8080" in out
 
 
+def test_table_nested_in_list_item_is_linearized_not_piped(policy):
+    # An LLM commonly indents a table under a numbered list item; the bare
+    # `table` plugin only registers into the root block parser, so without
+    # table_in_list this table stays literal pipe text.
+    doc = "1. **Services**\n\n   | Service | Port |\n   |---|---|\n   | gateway | 8080 |\n"
+    out = _text(doc, policy)
+    assert "|" not in out
+    assert "Service gateway" in out and "Port 8080" in out
+
+
+def test_table_nested_in_block_quote_is_linearized_not_piped(policy):
+    doc = "> | Service | Port |\n> |---|---|\n> | gateway | 8080 |\n"
+    out = _text(doc, policy)
+    assert "|" not in out
+    assert "Service gateway" in out and "Port 8080" in out
+
+
 def test_task_list_markers_are_not_spoken(policy):
     out = _text("- [ ] undone\n- [x] done\n", policy)
     assert "[" not in out and "]" not in out

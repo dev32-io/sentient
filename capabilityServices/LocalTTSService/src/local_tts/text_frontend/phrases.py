@@ -6,6 +6,16 @@ in code next to the logic that uses them (same call as
 config.yaml. Numbers are left as DIGITS in ``table_summary`` on purpose:
 wetext runs after this and turns "12" into "twelve" (and zh "12" into
 "十二"), so we never hand-write number words per language.
+
+Reachability note: ``phrase()`` resolves a single ``lang`` tag per call,
+and the caller passes ``config.yaml``'s ``default_lang`` straight through
+(default ships as "auto"). ``phrase()`` falls back to the ``en`` table for
+any tag it doesn't recognize -- "auto" included -- so the ``zh`` table
+above only activates when an operator pins ``default_lang: "zh"``. A
+Chinese reply under the shipped default gets English phrases spliced into
+it (e.g. "请运行 flush 命令，参考 a link。"). Deriving per-document language
+is a design change out of scope here; this is a reachability note for the
+next reader, not a bug report.
 """
 
 from __future__ import annotations

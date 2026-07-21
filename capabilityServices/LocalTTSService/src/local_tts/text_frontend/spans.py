@@ -38,7 +38,7 @@ _PATH_LIKE_RE = re.compile(r"^(?:~|/|\.{1,2}/|[A-Za-z]:\\)|(?:[^/\s]*/){2,}")
 # period is ordinary English, and swallowing that period costs the
 # sentence its prosodic boundary.
 _BARE_URL_RE = re.compile(
-    r"(?:[a-z][a-z0-9+.-]*://|www\.)[^\s<>()\[\]]*[^\s<>()\[\].,;:!?'\"]",
+    r"(?:[a-z][a-z0-9+.-]*://|www\.)[A-Za-z0-9\-._~%:/?#@!$&*+,;=]*[A-Za-z0-9\-_~%:/?#@$&*+=]",
     re.IGNORECASE,
 )
 _BARE_PATH_RE = re.compile(r"(?<![\w/])(?:~|\.{0,2})/[\w.-]*[\w-](?:/[\w.-]*[\w-])+")
@@ -46,6 +46,11 @@ _BARE_PATH_RE = re.compile(r"(?<![\w/])(?:~|\.{0,2})/[\w.-]*[\w-](?:/[\w.-]*[\w-
 # (<a@b.com>) to a mailto link, so an unbracketed address reaches us as
 # plain text and would otherwise be spoken character by character.
 _BARE_EMAIL_RE = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+# A URL's userinfo/query ("https://user:pass@host/x") looks exactly like an
+# email address to _BARE_EMAIL_RE. Python's `re` has no variable-length
+# lookbehind, so the guard below walks back to the start of the current
+# whitespace-delimited run and checks for this scheme separator there.
+_SCHEME_SEP = "://"
 
 
 @dataclass(frozen=True)
@@ -84,6 +89,30 @@ def render_code_span(raw: str, policy: SpeechPolicy, lang: str, masks: MaskTable
     return phrase(lang, verdict.phrase_key)
 
 
+def _is_within_url_scheme(text: str, match_start: int) -> bool:
+    """True if a "scheme://" opens the whitespace-delimited run containing
+    ``match_start`` -- e.g. the "@" in "https://user:pass@host/x"."""
+    word_start = match_start
+    while word_start > 0 and not text[word_start - 1].isspace():
+        word_start -= 1
+    return _SCHEME_SEP in text[word_start:match_start]
+
+
+def _replace_emails_outside_urls(text: str, replacement: str) -> tuple[str, int]:
+    """Email scan, guarded so it never fires inside a URL's own userinfo or
+    query string (that span is left intact for the URL scanner instead)."""
+    count = 0
+
+    def _replace(match: re.Match) -> str:
+        nonlocal count
+        if _is_within_url_scheme(text, match.start()):
+            return match.group(0)
+        count += 1
+        return replacement
+
+    return _BARE_EMAIL_RE.sub(_replace, text), count
+
+
 def replace_bare_spans(text: str, policy: SpeechPolicy, lang: str) -> str:
     """Rewrite bare URLs / paths / emails that mistune left in prose text."""
     email_repl = phrase(lang, "email") if policy.speak_dropped_spans else ""
@@ -93,8 +122,10 @@ def replace_bare_spans(text: str, policy: SpeechPolicy, lang: str) -> str:
     # backslash escapes (\1, \g<name>, ...) in string replacements, so a
     # future phrase-catalog entry containing one would break or raise.
     # Email runs first: an address like user@www.example.com contains a
-    # "www." that _BARE_URL_RE would otherwise match first, mangling it.
-    out, email_subs = _BARE_EMAIL_RE.subn(lambda _match: email_repl, text)
+    # "www." that _BARE_URL_RE would otherwise match first, mangling it --
+    # see _replace_emails_outside_urls for why it must not fire on a URL's
+    # own userinfo/query.
+    out, email_subs = _replace_emails_outside_urls(text, email_repl)
     out, url_subs = _BARE_URL_RE.subn(lambda _match: url_repl, out)
     out, path_subs = _BARE_PATH_RE.subn(lambda _match: path_repl, out)
     log.debug(

@@ -134,6 +134,32 @@ def test_replace_bare_email_is_silent_when_disabled():
     assert "an email address" not in out
 
 
+def test_replace_bare_url_in_chinese_sentence_preserves_trailing_text(policy):
+    # Chinese has no inter-word spaces, so a body-class that doesn't stop at
+    # CJK punctuation swallows the entire rest of the line.
+    out = replace_bare_spans("参考 www.example.com，然后再看看别的。", policy, "zh")
+    assert "然后再看看别的" in out
+    assert "一个链接" in out
+
+
+def test_replace_bare_email_inside_url_userinfo_does_not_mangle_the_url(policy):
+    # A URL's userinfo ("https://user:pass@host/x") looks exactly like an
+    # email address to the bare-email scanner. The email scan runs first
+    # (see test below for why) but must not fire INSIDE a URL, or the URL
+    # scanner is left with a broken fragment.
+    out = replace_bare_spans("See https://ex.com/a.b@c.d/e now.", policy, "en")
+    assert out == "See a link now."
+
+
+def test_replace_bare_email_before_url_scan_still_protects_www_email(policy):
+    # THE reason email must still run before the URL scan (not after, and
+    # not removed): an address like user@www.example.com contains a
+    # "www." that _BARE_URL_RE would otherwise match on its own, mangling
+    # the email into "user@a link".
+    out = replace_bare_spans("Mail user@www.example.com now.", policy, "en")
+    assert out == "Mail an email address now."
+
+
 def test_replace_bare_spans_leaves_at_sign_without_domain_alone(policy):
     # An "@" with no domain after it (a price marker, not an address).
     s = "Costs $5 @ the store"

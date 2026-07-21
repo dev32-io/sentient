@@ -22,6 +22,9 @@ log = logging.getLogger("local_tts.text_frontend.mask")
 
 # Deliberately unlikely to occur in prose, and letters-only (see docstring).
 _PREFIX = "zqxmask"
+# Used only on the essentially-unreachable collision where a document
+# literally contains _PREFIX -- see MaskTable.__init__.
+_FALLBACK_PREFIX = "zqxtoken"
 
 # 'z' is reserved as the terminator and excluded from the digit alphabet.
 _ALPHABET = "abcdefghijklmnopqrstuvwxy"
@@ -51,11 +54,19 @@ def _encode(index: int) -> str:
 class MaskTable:
     """Per-document allocator for TN-proof sentinels."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, doc: str = "") -> None:
         self._spans: dict[str, str] = {}
+        # A document that literally contains our sentinel prefix would have
+        # restore()'s str.replace also rewrite that occurrence -- fall back
+        # to a second letters-only prefix on the (essentially unreachable)
+        # collision instead of corrupting the document's own text.
+        collided = bool(doc) and _PREFIX in doc
+        self._prefix = _FALLBACK_PREFIX if collided else _PREFIX
+        if collided:
+            log.warning("mask_prefix_collision fallback_prefix=%s doc_len=%d", self._prefix, len(doc))
 
     def add(self, text: str) -> str:
-        sentinel = f"{_PREFIX}{_encode(len(self._spans))}"
+        sentinel = f"{self._prefix}{_encode(len(self._spans))}"
         self._spans[sentinel] = text
         log.debug("add sentinel=%s masked_len=%d spans=%d", sentinel, len(text), len(self._spans))
         return sentinel
