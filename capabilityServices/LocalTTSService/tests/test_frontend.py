@@ -101,3 +101,10 @@ def test_space_before_punct_still_cleans_a_dropped_span_artifact(policy):
     fe = build_frontend(normalize_enabled=False, policy=policy)
     out = fe.process("Check the chart ![chart](fig.png) , it changes weekly.", "en")
     assert out == "Check the chart, it changes weekly."
+
+
+def test_prose_pipe_separator_is_not_spoken(policy):
+    fe = build_frontend(normalize_enabled=True, policy=policy)
+    out = fe.process("Partly cloudy, 22.7C | Humidity 71% | Wind 3.6 km/h", "en")
+    assert "vertical bar" not in out
+    assert "percent" in out and "kilometers per hour" in out

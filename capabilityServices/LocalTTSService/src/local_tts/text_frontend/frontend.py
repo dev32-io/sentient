@@ -1,8 +1,8 @@
 """Composes the text-frontend stages into one process() call.
 
 Stage order is load-bearing:
-  strip markdown (spans masked) -> emoji/pause strip -> normalize
-  -> UNMASK -> punctuation cleanup -> whitespace collapse
+  strip markdown (spans masked) -> emoji/pause strip -> residual sweep
+  -> normalize -> UNMASK -> punctuation cleanup -> whitespace collapse
 Unmasking before TN would defeat the mask; cleaning punctuation before
 unmasking would operate on sentinels instead of the real text.
 """
@@ -16,6 +16,7 @@ from .emoji_clean import strip_emoji, strip_pause_tags
 from .markdown import strip_markdown
 from .normalize import Normalizer
 from .policy import SpeechPolicy
+from .residual import sweep_residual_symbols
 
 log = logging.getLogger("local_tts.text_frontend.frontend")
 
@@ -61,6 +62,7 @@ class TextFrontend:
     def process(self, doc: str, lang: str) -> str:
         stripped = strip_markdown(doc, self._policy, lang)
         text = strip_pause_tags(strip_emoji(stripped.text))
+        text = sweep_residual_symbols(text)
         if self._normalizer is not None and text.strip():
             text = self._normalize_blocks(text, lang)
         text = stripped.masks.restore(text)
