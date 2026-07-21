@@ -34,3 +34,22 @@ def test_preserves_paragraph_breaks_for_prosody():
     fe = build_frontend(normalize_enabled=False)
     out = fe.process("# Title\n\nBody text here.", "en")
     assert "\n\n" in out
+
+
+def test_normalize_preserves_paragraph_breaks():
+    fe = build_frontend(normalize_enabled=True)
+    out = fe.process("# Weather\n\nIt costs $50 today.", "en")
+    assert "\n\n" in out                 # prosodic gap survives normalization
+    assert "dollars" in out.lower()      # normalization still ran
+
+
+def test_normalize_does_not_glue_blocks():
+    fe = build_frontend(normalize_enabled=True)
+    out = fe.process("Here is a list:\n\n- apples\n- oranges", "en")
+    # Blocks are joined with "\n\n", not glued directly — checking against
+    # the raw output (not newline-stripped) is the real invariant: stripping
+    # ALL newlines would recreate "list:apples" even on correctly-preserved
+    # \n\n-separated blocks, since strip_markdown emits "list:" and "apples"
+    # as adjacent blocks with no space between them.
+    assert "list:apples" not in out  # no cross-block gluing
+    assert "\n\n" in out

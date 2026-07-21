@@ -27,12 +27,19 @@ _RANGE_RE = re.compile(r"(\d)\s*-\s*(\d)")
 _NEG_RE = re.compile(r"(?<![\w\d])-(\d)")
 
 
+def _engine_key(lang: str) -> str:
+    """Resolve the lang tag to the wetext engine it will actually use.
+    Unsupported/unknown tags (including the shipped default "auto") fall
+    back to the "en" engine."""
+    return lang if lang in ("en", "zh", "ja") else "en"
+
+
 class Normalizer:
     def __init__(self) -> None:
         self._cache: dict[str, WeNormalizer] = {}
 
     def _for(self, lang: str) -> WeNormalizer:
-        key = lang if lang in ("en", "zh", "ja") else "en"
+        key = _engine_key(lang)
         if key not in self._cache:
             log.info("build_normalizer lang=%s", key)
             self._cache[key] = WeNormalizer(lang=key, operator="tn")
@@ -40,7 +47,7 @@ class Normalizer:
 
     def normalize(self, text: str, lang: str) -> str:
         pre = _RANGE_RE.sub(r"\1 to \2", text)
-        if lang == "en":
+        if _engine_key(lang) == "en":
             pre = _NEG_RE.sub(r"negative \1", pre)
         out = self._for(lang).normalize(pre)
         log.debug("normalize lang=%s in_len=%d out_len=%d", lang, len(text), len(out))

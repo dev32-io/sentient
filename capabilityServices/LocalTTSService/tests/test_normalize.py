@@ -46,3 +46,17 @@ def test_normalizer_cached_per_lang(norm):
     a = norm._for("en")
     b = norm._for("en")
     assert a is b
+
+
+def test_en_negative_shim_fires(norm):
+    assert "negative" in norm.normalize("temp is -5 today", "en").lower()
+
+
+def test_auto_lang_routes_to_en_and_fires_negative_shim(norm):
+    # "auto" (the shipped default) must behave like en for the negative shim.
+    # Use the adjacent-unit form ("-5C", no space) — wetext's own WFST already
+    # says "negative five" for a space-separated leading negative regardless
+    # of the shim, so a spaced input wouldn't actually distinguish gated vs
+    # ungated behavior. The adjacent form only reads "negative" when the
+    # shim fires; otherwise wetext leaves it as "-five".
+    assert "negative" in norm.normalize("temp is -5C today", "auto").lower()

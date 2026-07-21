@@ -113,9 +113,10 @@ stt:
 # ---------------------------------------------------------------------------
 # TTS — local-tts (LocalTTSService) is now the wired provider.
 #
-# The speak effect is a mini-pipeline: LLM text deltas → UtteranceAggregator
-# → local-tts. The aggregator knobs live here because they are internal
-# stages of TTS rendering, not general LLM config.
+# The gateway forwards raw LLM text deltas straight to local-tts, which owns
+# the full text frontend (markdown stripping, emoji/pause-tag handling,
+# normalization, paragraph aggregation) service-side. No gateway-side
+# aggregation stage or knobs exist for this pipeline.
 #
 # `url` is the native local-tts service. It needs Metal/MLX GPU access, so
 # it runs on the host (not containerized) — reached via host.docker.internal,

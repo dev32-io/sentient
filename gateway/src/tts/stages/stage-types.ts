@@ -16,16 +16,3 @@ export type FlushSignal = typeof FLUSH_SIGNAL;
 
 /** Item flowing through the TTS text pipeline: a text delta, or a flush marker. */
 export type TtsChunk = string | FlushSignal;
-
-/**
- * A text-domain decorator unit in the TTS pipeline.
- *
- * Rules (from .claude/rules/pipeline.md):
- * - AsyncGenerator in, AsyncGenerator out.
- * - One responsibility per unit.
- * - Pass FLUSH_SIGNAL through (after flushing internal buffer, if any).
- * - Respects AbortSignal — stops consuming, stops yielding, releases buffers,
- *   does NOT throw.
- * - Internal buffering is its own business; does not own service lifecycle.
- */
-export type TextStage = (input: AsyncIterable<TtsChunk>, signal: AbortSignal) => AsyncGenerator<TtsChunk>;
