@@ -19,8 +19,13 @@ loader always finds every required key after a deploy.
 
 Scope: recurses into nested mappings, so a newly-required key at any
 depth (e.g. `text_frontend.table_max_cells`) is filled in too. Recursion
-only descends where BOTH sides are mappings; a type mismatch is left
-untouched, because this tool fills gaps and never overwrites.
+descends wherever the template holds a mapping and the target holds a
+mapping OR NOTHING (a present-but-null section, e.g. `text_frontend:`
+with no value — the shape an already-seeded host config has for a
+section that predates its nested keys). A target SCALAR where the
+template has a mapping is left untouched — that is a genuine operator
+restructuring, not a gap — because this tool fills gaps and never
+imposes.
 
 Comment-preserving round-trip via ruamel.yaml (same dependency + style as the
 sibling tts-backend.py / stt-backend.py value-rewriters).
@@ -77,11 +82,11 @@ def reconcile(template_text: str, config_text: str) -> tuple[str, list[str]]:
         config = yaml.load("{}\n")
 
     added: list[str] = []
-    _merge_missing(template, config, "", added)
+    _merge_missing(yaml, template, config, "", added)
     return _dump(yaml, config), added
 
 
-def _merge_missing(template, config, prefix: str, added: list[str]) -> None:
+def _merge_missing(yaml, template, config, prefix: str, added: list[str]) -> None:
     """Copy template keys absent from config, recursing into mappings."""
     for key in template:
         path = f"{prefix}{key}"
@@ -94,11 +99,21 @@ def _merge_missing(template, config, prefix: str, added: list[str]) -> None:
             config[key] = template[key]
             added.append(path)
             continue
-        # Key exists on both sides: recurse only when BOTH are mappings.
-        # A type mismatch (operator turned a section into a scalar) is left
-        # alone — this tool never overwrites, it only fills gaps.
+        # Key exists on both sides. A present-but-null value (`section:`
+        # with nothing after the colon) is what an already-seeded host
+        # config looks like for a section that predates its nested keys —
+        # same shape as the whole-file blank case `reconcile()` normalizes
+        # above. Treat it the same way: heal it to an empty mapping so the
+        # recursion below can still add the section's missing children,
+        # instead of silently leaving them out forever.
+        if _is_mapping(template[key]) and config[key] is None:
+            config[key] = yaml.load("{}\n")
+        # Recurse only when BOTH sides are now mappings. A type mismatch
+        # (operator turned a section into a scalar, or the null case above
+        # didn't apply) is left alone — this tool never overwrites, it only
+        # fills gaps.
         if _is_mapping(template[key]) and _is_mapping(config[key]):
-            _merge_missing(template[key], config[key], f"{path}.", added)
+            _merge_missing(yaml, template[key], config[key], f"{path}.", added)
 
 
 def _is_mapping(value) -> bool:
