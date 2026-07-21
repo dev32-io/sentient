@@ -54,21 +54,10 @@ export type STTConfig = z.output<typeof sttConfigSchema>;
 // ---------------------------------------------------------------------------
 // TTS — local-tts (LocalTTSService)
 //
-// Note: utterance_aggregator lives here because it is an internal stage of
-// the speak effect's text→audio pipeline, not general LLM configuration.
-// The speak effect streams LLM text deltas through UtteranceAggregator →
-// the local-tts provider as one mini-pipeline.
+// The full text frontend (markdown stripping, emoji stripping, paragraph
+// aggregation) runs service-side in local-tts — the gateway forwards raw LLM
+// text deltas over the wire and does no text preprocessing of its own.
 // ---------------------------------------------------------------------------
-
-export const utteranceAggregatorConfigSchema = z.object({
-  // Hard cap; if no paragraph break hits, force-flush so TTS doesn't
-  // stall on a run-on generation. Trade-off: slightly awkward mid-
-  // paragraph cut vs. stalled audio. Paragraph-sized default keeps the
-  // aggregator out of the way for normal replies.
-  max_block_chars: z.number().int().min(10).max(4000).default(600),
-});
-
-export type UtteranceAggregatorConfig = z.output<typeof utteranceAggregatorConfigSchema>;
 
 export const ttsConfigSchema = z.object({
   // WS endpoint for the native local-tts (LocalTTSService) provider.
@@ -106,7 +95,6 @@ export const ttsConfigSchema = z.object({
   voice_description_max_len: z.number().int().min(1).default(12000), // create/edit description cap (~2000 words)
   voice_tag_max_len: z.number().int().min(1).default(24), // per-tag char cap
   voice_max_tags: z.number().int().min(0).default(8), // max tags per voice
-  utterance_aggregator: utteranceAggregatorConfigSchema.default({}),
 });
 
 export type TTSConfig = z.output<typeof ttsConfigSchema>;

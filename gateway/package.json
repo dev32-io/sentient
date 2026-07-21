@@ -25,10 +25,8 @@
     "@types/dockerode": "^4.0.1",
     "cockatiel": "^3.2.1",
     "dockerode": "^5.0.0",
-    "emoji-regex": "^10.6.0",
     "paseto-ts": "^2.0.5",
     "qrcode": "^1.5.4",
-    "streaming-markdown": "^0.2.15",
     "yaml": "^2.7.0",
     "zod": "^3.24.0"
   },

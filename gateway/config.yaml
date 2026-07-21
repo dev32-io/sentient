@@ -171,13 +171,6 @@ tts:
   voice_tag_max_len: 24              # per-tag char cap. Range: >=1.
   voice_max_tags: 8                  # max tags per voice. Range: >=0.
 
-  # Block-boundary detection on the LLM text stream feeding TTS. Splits
-  # only on paragraph breaks (\n) — the TTS provider handles sentence-level
-  # prosody on its own, and splitting mid-paragraph fragments natural tone.
-  # max_block_chars is a safety valve for run-on paragraphs with no break.
-  utterance_aggregator:
-    max_block_chars: 600             # force-flush on run-on paragraphs
-
 # ---------------------------------------------------------------------------
 # WebUI — client-side playback tuning sent to the browser via session.ready.
 # These values are hints; the browser falls back to its own defaults if absent.

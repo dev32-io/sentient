@@ -36,9 +36,7 @@ import { hermesMessageToMirrorEntry } from "../sessions/hermes-message-to-mirror
 import { migrateLegacyTitles } from "../sessions/storage-migrator.js";
 import { createSwitchFlow } from "../sessions/switch-flow.js";
 import { createTitleStore } from "../sessions/title-store.js";
-import { createEmojiStripper } from "../tts/stages/emoji-stripper.js";
-import { createMarkdownStripper } from "../tts/stages/markdown-stripper.js";
-import { type TtsChunk, composeTextStages } from "../tts/stages/stage-types.js";
+import type { TtsChunk } from "../tts/stages/stage-types.js";
 import type { TextStreamSynthesizer } from "../tts/text-stream-synthesizer.js";
 import { createAbortSlot } from "./abort-slot.js";
 import { drainAudioToWs } from "./audio-frame-sender.js";
@@ -495,7 +493,6 @@ export async function handleSessionConfigure(
   // speaks (≫ a profile-read ms), the right voiceId is in place. Falls
   // back to the gateway-wide default when null.
   const synthesizer: TextStreamSynthesizer | null = services.createSynthesizerFor(() => personSession.voiceId);
-  const stripChain = composeTextStages(createMarkdownStripper(), createEmojiStripper());
 
   // Route `session/update` notifications carrying out-of-band SDK frames
   // (sessions.renamed, commands.available) directly to the client. The cycle
@@ -604,8 +601,8 @@ export async function handleSessionConfigure(
                 yield chunk;
               }
             }
-            const stripped = stripChain(gateByChannel(deltas), ttsController.signal);
-            const audioStream = synthesizer.synthesize(stripped, ttsController.signal);
+            const gated = gateByChannel(deltas);
+            const audioStream = synthesizer.synthesize(gated, ttsController.signal);
             const done = drainAudioToWs(
               audioStream,
               cycleId,

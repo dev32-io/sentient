@@ -274,7 +274,8 @@ function internalToHermesEvents(evt: InternalEvent): HermesEvent[] {
     case "assistant.message":
       // ACP delivers each assistant micro-turn as a complete text block;
       // append a trailing newline to match the legacy translator's segment
-      // boundary contract (TTS aggregator + webui paragraph split).
+      // boundary contract (local-tts paragraph aggregation + webui paragraph
+      // split).
       return [{ type: "text.delta", delta: `${evt.text}\n` }];
     case "tool.started":
       return [
