@@ -10,7 +10,8 @@ against the installed wetext —
     "__TTS0__"   -> "underscore underscore TTS zero underscore ..."
     "\\ue000..."  -> spaces injected, inner digit normalized
     "TTSTOKZERO" -> unchanged
-so the index is encoded in base-26 letters, never digits.
+so the index is encoded in letters only, never digits -- see `_encode` for
+the prefix-free base-25 scheme.
 """
 
 from __future__ import annotations
@@ -21,20 +22,30 @@ log = logging.getLogger("local_tts.text_frontend.mask")
 
 # Deliberately unlikely to occur in prose, and letters-only (see docstring).
 _PREFIX = "zqxmask"
-_ALPHABET = "abcdefghijklmnopqrstuvwxyz"
+
+# 'z' is reserved as the terminator and excluded from the digit alphabet.
+_ALPHABET = "abcdefghijklmnopqrstuvwxy"
+_TERMINATOR = "z"
 
 
 def _encode(index: int) -> str:
-    """Base-26 letter encoding, fixed two digits minimum ('aa', 'ab', ...)."""
-    out = ""
+    """Prefix-free base-25 letter code, terminated by 'z'.
+
+    Because 'z' never appears among the digits, no code can be a prefix of
+    another: a shorter code's terminating 'z' would have to align with a
+    digit of the longer one, which is impossible. That makes restore()
+    order-independent. The previous forced-two-digits-then-grow scheme was
+    NOT prefix-free -- index 26 ("ba") is a prefix of index 676 ("baa"),
+    and replacing the shorter one first corrupted the longer one's text.
+    """
+    digits = ""
     n = index
-    for _ in range(2):
-        out = _ALPHABET[n % 26] + out
-        n //= 26
-    while n:
-        out = _ALPHABET[n % 26] + out
-        n //= 26
-    return out
+    while True:
+        digits = _ALPHABET[n % 25] + digits
+        n //= 25
+        if n == 0:
+            break
+    return digits + _TERMINATOR
 
 
 class MaskTable:
@@ -46,6 +57,7 @@ class MaskTable:
     def add(self, text: str) -> str:
         sentinel = f"{_PREFIX}{_encode(len(self._spans))}"
         self._spans[sentinel] = text
+        log.debug("add sentinel=%s masked_len=%d spans=%d", sentinel, len(text), len(self._spans))
         return sentinel
 
     def restore(self, text: str) -> str:
