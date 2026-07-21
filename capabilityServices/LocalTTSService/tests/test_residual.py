@@ -21,6 +21,18 @@ def test_repeated_pipes_collapse_to_one_break():
     assert out.count(".") == 1
 
 
+def test_whitespace_separated_pipe_runs_collapse_to_one_break():
+    out = sweep_residual_symbols("a | | b")
+    assert "|" not in out
+    assert out.count(".") == 1
+
+
+def test_whitespace_separated_pipe_runs_in_prose_collapse_to_one_break():
+    out = sweep_residual_symbols("Temp 22C | | Humidity 71%")
+    assert "|" not in out
+    assert out.count(".") == 1
+
+
 def test_stray_emphasis_markers_are_dropped():
     assert "*" not in sweep_residual_symbols("Some *unclosed emphasis here")
     assert "~" not in sweep_residual_symbols("Trailing ~ tilde and ~unclosed")
@@ -31,8 +43,17 @@ def test_hash_dropped_but_sharp_language_names_survive():
     assert "C#" in sweep_residual_symbols("I write C# daily")
 
 
+def test_hash_before_a_digit_survives_as_a_numbered_reference():
+    assert "#42" in sweep_residual_symbols("issue #42")
+
+
 def test_underscores_in_prose_become_spaces():
     assert sweep_residual_symbols("snake_case_word here") == "snake case word here"
+
+
+def test_edge_underscores_are_dropped():
+    assert sweep_residual_symbols("_leading word") == "leading word"
+    assert sweep_residual_symbols("trailing word_") == "trailing word"
 
 
 def test_ordinary_prose_is_untouched():

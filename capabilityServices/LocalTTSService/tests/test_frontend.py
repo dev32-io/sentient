@@ -108,3 +108,10 @@ def test_prose_pipe_separator_is_not_spoken(policy):
     out = fe.process("Partly cloudy, 22.7C | Humidity 71% | Wind 3.6 km/h", "en")
     assert "vertical bar" not in out
     assert "percent" in out and "kilometers per hour" in out
+
+
+def test_numbered_hash_reference_is_spoken_as_number(policy):
+    fe = build_frontend(normalize_enabled=True, policy=policy)
+    out = fe.process("issue #42", "en").lower()
+    assert "number" in out
+    assert "forty" in out and "two" in out

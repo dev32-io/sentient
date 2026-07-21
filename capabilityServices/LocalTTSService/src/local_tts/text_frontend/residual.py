@@ -22,12 +22,16 @@ log = logging.getLogger("local_tts.text_frontend.residual")
 # Terminal punctuation that already supplies the break a pipe would add.
 _TERMINAL = ".!?。！？"
 
-# One or more pipes, with the whitespace around them.
-_PIPE_RUN_RE = re.compile(r"[ \t]*\|+[ \t]*")
+# One or more pipe-groups, with the whitespace around and between them --
+# "a | | b" must collapse to a SINGLE break, not one per pipe-group.
+_PIPE_RUN_RE = re.compile(r"[ \t]*(?:\|+[ \t]*)+")
 # Orphaned emphasis / strikethrough markers left by unbalanced markup.
 _STRAY_MARKERS_RE = re.compile(r"[*~]+")
-# A hash NOT preceded by a letter -- "#tag" goes, "C#"/"F#" stay.
-_STRAY_HASH_RE = re.compile(r"(?<![A-Za-z])#+")
+# A hash NOT preceded by a letter and NOT followed by a digit -- "#tag"
+# goes, while "C#"/"F#" and "issue #42" both survive. The normalizer
+# speaks a surviving "#" as "number", which is what a numbered reference
+# ("issue number forty two") should sound like.
+_STRAY_HASH_RE = re.compile(r"(?<![A-Za-z])#+(?!\d)")
 # Underscores joining word characters ("snake_case") -> a word boundary.
 _INNER_UNDERSCORE_RE = re.compile(r"(?<=\w)_+(?=\w)")
 # Underscores hanging off either end of a word.
@@ -51,6 +55,5 @@ def sweep_residual_symbols(text: str) -> str:
     out = _STRAY_HASH_RE.sub("", out)
     out = _INNER_UNDERSCORE_RE.sub(" ", out)
     out = _EDGE_UNDERSCORE_RE.sub("", out)
-    if out != text:
-        log.debug("residual_swept in_len=%d out_len=%d", len(text), len(out))
+    log.debug("residual_swept in_len=%d out_len=%d changed=%s", len(text), len(out), out != text)
     return out
