@@ -15,6 +15,7 @@ _FALLBACK_LANG = "en"
 PHRASES: dict[str, dict[str, str]] = {
     "en": {
         "link": "a link",
+        "email": "an email address",
         "file_path": "a file path",
         "command": "a command",
         "table_summary": "a table with {rows} rows and {cols} columns",
@@ -23,6 +24,7 @@ PHRASES: dict[str, dict[str, str]] = {
     },
     "zh": {
         "link": "一个链接",
+        "email": "一个邮件地址",
         "file_path": "一个文件路径",
         "command": "一条命令",
         "table_summary": "一张 {rows} 行 {cols} 列的表格",

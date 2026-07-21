@@ -133,8 +133,15 @@ def _render_inline(child: dict, ctx: _Ctx) -> str:
 def _render_link(child: dict, ctx: _Ctx) -> str:
     text = _render_children(child.get("children", []), ctx)
     url = child.get("attrs", {}).get("url", "")
+    if url.lower().startswith("mailto:"):
+        # Email autolink: child text is the bare address (no "mailto:"
+        # prefix), so the text==url signal below never fires for it --
+        # without this branch the address gets spoken character by character.
+        log.debug("link_dropped kind=email text_len=%d", len(text))
+        return phrase(ctx.lang, "email") if ctx.policy.speak_dropped_spans else ""
     if text == url or not text.strip():
         # Autolink / bare URL: visible text IS the url -> speak a phrase
         # (or nothing) instead of leaving a grammatical hole.
+        log.debug("link_dropped kind=autolink text_len=%d", len(text))
         return phrase(ctx.lang, "link") if ctx.policy.speak_dropped_spans else ""
     return text

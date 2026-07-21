@@ -96,3 +96,41 @@ def test_html_is_dropped(policy):
 def test_autolink_speaks_the_phrase_exactly_once(policy):
     out = _text("See <https://example.com/x> now.", policy)
     assert out.count("a link") == 1
+
+
+def test_email_autolink_is_not_read_verbatim(policy):
+    out = _text("Mail <user@example.com> now.", policy)
+    assert "user@example.com" not in out
+    assert "@" not in out
+    assert "an email address" in out
+
+
+def test_email_autolink_is_silent_when_dropped_spans_not_spoken():
+    silent_policy = SpeechPolicy(
+        table_max_cells=24, code_span_max_chars=32, speak_dropped_spans=False
+    )
+    out = _text("Mail <user@example.com> now.", silent_policy)
+    assert "user@example.com" not in out
+    assert "@" not in out
+    assert "an email address" not in out
+
+
+# --- restored regression coverage (dropped by the Task 5 rewrite) ----------
+
+
+def test_softbreak_does_not_concatenate_words(policy):
+    out = _text("quoted text here\nmore quote", policy)
+    assert "here more" in out
+    assert "heremore" not in out
+
+
+def test_multiline_blockquote_does_not_concatenate_words(policy):
+    out = _text("> line one\n> line two", policy)
+    assert "line one" in out and "line two" in out
+    assert "onetwo" not in out
+
+
+def test_strikethrough_keeps_text_drops_markers(policy):
+    out = _text("This is ~~struck~~ text.", policy)
+    assert "struck" in out
+    assert "~~" not in out
