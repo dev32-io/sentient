@@ -1,7 +1,6 @@
 import { getLog } from "../logging/logger.ts";
 import type { TTSProvider } from "../providers/tts/tts-types.ts";
-import type { TtsChunk } from "./stages/stage-types.ts";
-import { type UtteranceAggregatorOptions, aggregateUtterances } from "./stages/utterance-aggregator.ts";
+import { FLUSH_SIGNAL, type TtsChunk } from "./stages/stage-types.ts";
 import type { AudioFrame, TextStreamSynthesizer } from "./text-stream-synthesizer.ts";
 
 const log = getLog(["sentient", "tts", "streaming-tts-synthesizer"]);
@@ -10,20 +9,18 @@ const log = getLog(["sentient", "tts", "streaming-tts-synthesizer"]);
 // StreamingTtsSynthesizer — provider-neutral concrete TextStreamSynthesizer.
 //
 // Pipeline inside:
-//   text deltas → UtteranceAggregator → TTSProvider.pushText
+//   raw text deltas → TTSProvider.pushText (no aggregation, no stripping —
+//   the local-tts service buffers the doc and cleans it service-side)
 // Concurrent: provider.audioFrames(signal) drains as frames are produced.
 //
 // Depends only on the abstract TTSProvider (tts-types.ts), so it drives ANY
 // provider behind that interface — the local LocalTTSService today.
 // The handler (speak-effect.ts) sees only frames in / frames out.
-// Aggregation, paragraph separators, and provider-specific session
-// management live entirely in this file.
+// Provider-specific session management lives entirely in this file.
 // ---------------------------------------------------------------------------
 
 export interface StreamingTtsSynthesizerDeps {
   readonly sessionFactory: TTSSessionFactory;
-  /** Builds a per-session aggregator options bag. Called once per synthesize() run. */
-  readonly aggregator: () => UtteranceAggregatorOptions;
 }
 
 export interface TTSSessionFactory {
@@ -52,24 +49,18 @@ async function* synthesizeImpl(
   const session = await deps.sessionFactory.createSession();
   session.warmup();
 
-  let blocksFed = 0;
   let frameCount = 0;
 
-  // Background producer: aggregate text deltas → pushText.
-  // We don't await this here; we drain frames in the foreground.
+  // Background producer: forward raw text deltas → pushText. No aggregation,
+  // no stripping — the local-tts service buffers the document and cleans it
+  // service-side. We don't await this here; we drain frames in the foreground.
   const producer = (async () => {
+    let firstPush = true;
     try {
-      const blocks = aggregateUtterances(textStream, deps.aggregator(), signal);
-      let firstPush = true;
-
-      for await (const rawBlock of blocks) {
+      for await (const chunk of textStream) {
         if (signal.aborted) break;
-
-        const cleaned = stripEdgePauses(rawBlock);
-        if (cleaned.length === 0) {
-          log.debug("block-skip-empty-after-strip", { blockIndex: blocksFed });
-          continue;
-        }
+        if (chunk === FLUSH_SIGNAL) continue; // service buffers + splits now
+        if (chunk.length === 0) continue;
 
         if (firstPush) {
           try {
@@ -83,17 +74,8 @@ async function* synthesizeImpl(
           }
           firstPush = false;
         }
-
-        // Re-introduce paragraph break for the provider's prosodic gap.
-        const sent = `${cleaned}\n\n`;
-        log.debug("block-push", {
-          blockIndex: blocksFed,
-          rawChars: rawBlock.length,
-          sentChars: sent.length,
-          preview: sent.length <= 120 ? sent : `${sent.slice(0, 120)}…`,
-        });
-        session.pushText(sent);
-        blocksFed += 1;
+        log.debug("delta-push", { chars: chunk.length });
+        session.pushText(chunk);
       }
     } catch (err: unknown) {
       log.error("producer-error", {
@@ -101,7 +83,7 @@ async function* synthesizeImpl(
       });
     } finally {
       session.endInput();
-      log.debug("producer-end-input", { blocksFed });
+      log.debug("producer-end-input");
     }
   })();
 
@@ -119,9 +101,9 @@ async function* synthesizeImpl(
     }
   } finally {
     if (signal.aborted) {
-      log.info("synthesize-aborted", { frameCount, blocksFed });
+      log.info("synthesize-aborted", { frameCount });
     } else {
-      log.info("synthesize-done", { frameCount, blocksFed });
+      log.info("synthesize-done", { frameCount });
     }
     // Dispose after the drain loop completes — on abort AND on normal
     // completion alike. The local LocalTTSService — see
@@ -135,19 +117,4 @@ async function* synthesizeImpl(
       /* logged */
     });
   }
-}
-
-// ---------------------------------------------------------------------------
-// Defensive pause-tag stripping at block edges.
-// Emotion-tagging (which could inject pause tags) has been removed from this
-// pipeline, but a raw LLM block could still contain literal pause-tag text —
-// this strip is a safety net.
-// ---------------------------------------------------------------------------
-
-const PAUSE_TAG_NAME = /\[(?:pause|short pause|long pause|停顿 | 短停顿 | 长停顿)\]/i;
-const LEADING_PAUSE_RE = new RegExp(`^(?:\\s*${PAUSE_TAG_NAME.source}\\s*)+`, "i");
-const TRAILING_PAUSE_RE = new RegExp(`(?:\\s*${PAUSE_TAG_NAME.source}\\s*)+$`, "i");
-
-function stripEdgePauses(s: string): string {
-  return s.replace(LEADING_PAUSE_RE, "").replace(TRAILING_PAUSE_RE, "").trim();
 }

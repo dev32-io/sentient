@@ -55,14 +55,13 @@ describe("gatewayConfigSchema", () => {
     expect(gatewayConfigSchema.safeParse(invalid).success).toBe(false);
   });
 
-  it("applies TTS defaults including utterance_aggregator", () => {
+  it("applies TTS defaults", () => {
     const result = gatewayConfigSchema.parse(minimalValidConfig);
     expect(result.tts.url).toBe("ws://host.docker.internal:8770");
     expect(result.tts.voice_id).toBe("default");
     expect(result.tts.format).toBe("opus");
     expect(result.tts.sample_rate).toBe(48000);
     expect(result.tts.connect_timeout_ms).toBe(10000);
-    expect(result.tts.utterance_aggregator.max_block_chars).toBe(600);
   });
 
   it("honors overrides from YAML", () => {

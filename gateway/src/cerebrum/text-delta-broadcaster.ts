@@ -9,10 +9,11 @@ const log = getLog(["sentient", "cerebrum", "text-delta-broadcaster"]);
  * (1) translatorEvents: sees ALL events.
  * (2) textDeltas: sees text deltas as strings, plus a FLUSH_SIGNAL marker
  *     whenever the model interrupts the text stream to call a tool. The
- *     marker tells downstream TTS stages "drain whatever you've buffered
- *     now" — without it, a short pre-tool acknowledgement ("Let me check.")
- *     would sit in the aggregator until the next text delta arrives, which
- *     may be seconds away on the far side of the tool round-trip.
+ *     marker tells local-tts (which owns paragraph aggregation service-side)
+ *     "flush whatever you've buffered now" — without it, a short pre-tool
+ *     acknowledgement ("Let me check.") would sit unspoken until the next
+ *     text delta arrives, which may be seconds away on the far side of the
+ *     tool round-trip.
  *
  * Both consumers are driven by ONE upstream iteration. We yield on a
  * dedicated queue so the TTS pipeline can run concurrently with the

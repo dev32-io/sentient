@@ -57,41 +57,36 @@ async function collectFrames(iter: AsyncIterable<AudioFrame>): Promise<AudioFram
   return out;
 }
 
-const AGGREGATOR = () => ({ maxBlockChars: 600 });
-
 describe("createStreamingTtsSynthesizer", () => {
-  it("aggregates text deltas into blocks and pushes them to the provider", async () => {
+  it("forwards raw text deltas to the provider with no aggregation", async () => {
     const { provider, calls } = makeFakeProvider([chunk(1)]);
     const synth = createStreamingTtsSynthesizer({
       sessionFactory: { createSession: async () => provider },
-      aggregator: AGGREGATOR,
     });
 
     const frames = await collectFrames(synth.synthesize(textStream(["Hello there.\n"]), new AbortController().signal));
 
     expect(frames).toHaveLength(1);
-    expect(calls.pushed).toEqual(["Hello there.\n\n"]);
+    expect(calls.pushed).toEqual(["Hello there.\n"]);
   });
 
-  it("passes FLUSH_SIGNAL through the aggregator so pre-tool text is spoken immediately", async () => {
+  it("ignores FLUSH_SIGNAL on the wire — service buffers + splits now", async () => {
     const { provider, calls } = makeFakeProvider([chunk(1)]);
     const synth = createStreamingTtsSynthesizer({
       sessionFactory: { createSession: async () => provider },
-      aggregator: AGGREGATOR,
     });
 
     await collectFrames(
       synth.synthesize(textStream(["Let me check.", FLUSH_SIGNAL, "Lights are on."]), new AbortController().signal),
     );
 
-    expect(calls.pushed).toEqual(["Let me check.\n\n", "Lights are on.\n\n"]);
+    expect(calls.pushed).toEqual(["Let me check.", "Lights are on."]);
   });
 
   it("disposes the provider after the drain loop completes NORMALLY (dispose-after-completion contract)", async () => {
     const { provider, calls } = makeFakeProvider([chunk(1), chunk(2)]);
     const synth = createStreamingTtsSynthesizer({
       sessionFactory: { createSession: async () => provider },
-      aggregator: AGGREGATOR,
     });
 
     const frames = await collectFrames(synth.synthesize(textStream(["Done."]), new AbortController().signal));
@@ -125,7 +120,6 @@ describe("createStreamingTtsSynthesizer", () => {
     };
     const synth = createStreamingTtsSynthesizer({
       sessionFactory: { createSession: async () => provider },
-      aggregator: AGGREGATOR,
     });
 
     const iter = synth.synthesize(textStream(["Hi.\n"]), ctrl.signal)[Symbol.asyncIterator]();

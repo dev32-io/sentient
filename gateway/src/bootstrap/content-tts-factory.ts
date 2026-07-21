@@ -19,15 +19,10 @@ export function createTextStreamSynthesizer(
     return null;
   }
 
-  const { utterance_aggregator: aggregator } = cfg.tts;
-
   const synth = createStreamingTtsSynthesizer({
     sessionFactory: {
       createSession: async () => createTTSProvider(),
     },
-    aggregator: () => ({
-      maxBlockChars: aggregator.max_block_chars,
-    }),
   });
 
   log.info("text-stream-synthesizer-created");

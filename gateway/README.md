@@ -55,10 +55,10 @@ Mic audio ─► STT adapter ─► (text)             ▲
                          hermes-adapter-client ┘ (per cycle, suffixed \n
                                 │                for utterance flush)
                                 ▼
-                       utterance-aggregator ─► content-tts ─► local-tts
-                                                                  │
-                                                                  ▼
-                                                           audio frames ─► client
+                                content-tts ─► local-tts
+                                                   │
+                                                   ▼
+                                            audio frames ─► client
 ```
 
 A trailing `\n` on each `assistant.message` is the per-cycle TTS flush

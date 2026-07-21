@@ -77,6 +77,7 @@ class ConnectionSession:
         default_lang: str,
         conn_log: Any,
         metrics_log: Any,
+        frontend: Any,
     ) -> None:
         self._ws = ws
         self._voice_store = voice_store
@@ -90,7 +91,7 @@ class ConnectionSession:
             executor=executor, voice_store=voice_store, synth_lock=synth_lock, ws=ws,
             conn_id=conn_id, format_=format_, sample_rate=sample_rate, voice=voice,
             streaming_interval=streaming_interval, default_lang=default_lang,
-            conn_log=conn_log, metrics_log=metrics_log,
+            conn_log=conn_log, metrics_log=metrics_log, frontend=frontend,
         )
 
     async def send_ready(self) -> None:

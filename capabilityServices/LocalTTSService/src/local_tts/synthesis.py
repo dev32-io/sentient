@@ -20,8 +20,8 @@ post-request metrics half):
    bounded ``asyncio.Queue`` (cross-thread ``run_coroutine_threadsafe`` puts); only
    the event loop calls ``ws.send``.
 3. ``{"type":"cancel"}`` or a WS close sets a ``threading.Event`` that ``synthesize()``
-   checks between chunks, returning early. ``_drain_to_ws`` keeps consuming to
-   ``QUEUE_STOP`` even after a send failure, so the MLX thread never blocks
+   checks between chunks, returning early. ``synth_drain.drain_to_ws`` keeps consuming
+   to ``QUEUE_STOP`` even after a send failure, so the MLX thread never blocks
    forever on an undrained queue (``close()`` follows the same rule).
 
 One ``SynthesisRunner`` per WebSocket connection: buffered text (``add_text``) moves
@@ -45,15 +45,10 @@ from .audio_constants import SOURCE_SAMPLE_RATE
 from .encoders import make_encoder
 from .event_sender import _safe_log, send_error_event, send_server_event, send_server_event_safe
 from .pipeline_events import Done, Started
+from .synth_drain import drain_to_ws
 from .synth_executor import SynthJob
 from .synth_metrics import build_done_fields, build_synth_record, compute_metrics
-from .synth_worker import (
-    QUEUE_STOP,
-    Metrics,
-    SampleCounter,
-    WorkerFailure,
-    drain_queue_nowait,
-)
+from .synth_worker import Metrics, SampleCounter, drain_queue_nowait
 
 if TYPE_CHECKING:  # pragma: no cover - import-time-only, avoids the MLX/mlx_audio
     from .synth_executor import SynthExecutor
@@ -101,6 +96,7 @@ class SynthesisRunner:
         default_lang: str,
         conn_log: Any,
         metrics_log: Any,
+        frontend: Any,
     ) -> None:
         self._executor = executor
         self._voice_store = voice_store
@@ -114,6 +110,7 @@ class SynthesisRunner:
         self._default_lang = default_lang
         self._conn_log = conn_log
         self._metrics_log = metrics_log
+        self._frontend = frontend
         self._text_buffer: list[str] = []
         self._queue: "asyncio.Queue[str]" = asyncio.Queue()
         self._cancel_event = threading.Event()
@@ -131,12 +128,16 @@ class SynthesisRunner:
         self._text_buffer.append(text)
 
     def flush(self) -> None:
-        """Move buffered text onto the request queue, if any is buffered."""
+        """Run the buffered text through the frontend, then enqueue it."""
         if not self._text_buffer:
             return
-        text = "".join(self._text_buffer)
+        raw = "".join(self._text_buffer)
         self._text_buffer = []
-        self._queue.put_nowait(text)
+        speakable = self._frontend.process(raw, self._default_lang)
+        if not speakable:
+            self._conn_log.log("synth.flush_empty_after_frontend", raw_len=len(raw))
+            return
+        self._queue.put_nowait(speakable)
 
     def cancel_current(self) -> None:
         """Abort the in-flight request (if any) and drop queued-but-unstarted ones."""
@@ -147,7 +148,7 @@ class SynthesisRunner:
         """Stop the worker task; called from the connection's ``finally`` block.
 
         Graceful-first: hard-cancelling ``_worker_task`` immediately (the
-        old behavior) can land while ``_drain_to_ws`` is awaiting
+        old behavior) can land while ``synth_drain.drain_to_ws`` is awaiting
         ``chunk_queue.get()`` — the cancel stops it calling ``.get()``
         again, so the MLX thread stuck on (or later filling) a bounded
         ``queue.put()`` blocks that job forever. So: set ``cancel_event``,
@@ -243,8 +244,8 @@ class SynthesisRunner:
             cancel_event.set()
             initial_error = exc
 
-        ttfa_ms, bytes_sent, error = await self._drain_to_ws(
-            chunk_queue, t0, cancel_event, initial_error,
+        ttfa_ms, bytes_sent, error = await drain_to_ws(
+            self._ws, chunk_queue, t0, cancel_event, initial_error,
         )
         await asyncio.to_thread(job.done.wait, _JOB_DONE_TIMEOUT_S)
         if error is not None:
@@ -256,38 +257,6 @@ class SynthesisRunner:
             total_samples=counter.total_samples, source_sample_rate=_SOURCE_SAMPLE_RATE,
             bytes_sent=bytes_sent,
         )
-
-    async def _drain_to_ws(
-        self, chunk_queue: "asyncio.Queue[Any]", t0: float,
-        cancel_event: threading.Event, initial_error: BaseException | None,
-    ) -> tuple[float | None, int, BaseException | None]:
-        """Drain ``chunk_queue`` to the ``QUEUE_STOP`` sentinel, sending each
-        chunk over the WS. Keeps draining (without sending) after a send
-        failure so the worker thread's blocking ``queue.put`` calls always
-        unblock — never leaving it stuck waiting on a queue nobody reads.
-        """
-        ttfa_ms: float | None = None
-        bytes_sent = 0
-        terminal_error = initial_error
-        worker_error: BaseException | None = None
-        while True:
-            item = await chunk_queue.get()
-            if item is QUEUE_STOP:
-                break
-            if isinstance(item, WorkerFailure):
-                worker_error = item.exc
-                continue
-            if terminal_error is not None:
-                continue
-            try:
-                if ttfa_ms is None:
-                    ttfa_ms = (time.monotonic() - t0) * 1000.0
-                await self._ws.send(item)
-                bytes_sent += len(item)
-            except ConnectionClosed as exc:
-                cancel_event.set()
-                terminal_error = exc
-        return ttfa_ms, bytes_sent, (terminal_error or worker_error)
 
     async def _finish_request(self, metrics: Metrics) -> None:
         """Send the ``Done`` event and log the ``local_tts.synthesize`` metrics
