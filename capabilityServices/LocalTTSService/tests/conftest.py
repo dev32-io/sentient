@@ -19,7 +19,7 @@ import soundfile as sf
 from websockets.asyncio.server import Server as WsServer
 from websockets.asyncio.server import serve
 
-from local_tts.config import Config, HealthConfig, ServerConfig
+from local_tts.config import Config, HealthConfig, ServerConfig, TextFrontendConfig
 from local_tts.server import Server
 from local_tts.synth_executor import SynthExecutor
 
@@ -101,6 +101,7 @@ def _make_config(tmp_path: Path) -> Config:
         voice_description_max_len=240,
         voice_tag_max_len=24,
         voice_max_tags=8,
+        text_frontend=TextFrontendConfig(enabled=True, normalize=True),
     )
 
 

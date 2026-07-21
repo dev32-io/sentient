@@ -46,3 +46,21 @@ def test_missing_default_lang_fails_loud(tmp_path):
     p.write_text(yaml.safe_dump(raw), encoding="utf-8")
     with pytest.raises(ConfigError, match="default_lang"):
         load_config(str(p))
+
+
+def test_text_frontend_section_parsed(tmp_path):
+    cfg = load_config(_EXAMPLE_PATH)
+    assert cfg.text_frontend.enabled is True
+    assert cfg.text_frontend.normalize is True
+
+
+def test_missing_text_frontend_raises(tmp_path):
+    """``text_frontend`` is a required section — dropping it from an
+    otherwise-valid config must fail loud, not silently disable the frontend.
+    """
+    raw = yaml.safe_load(Path(_EXAMPLE_PATH).read_text(encoding="utf-8"))
+    del raw["text_frontend"]
+    p = tmp_path / "no_text_frontend.yaml"
+    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ConfigError, match="text_frontend"):
+        load_config(str(p))

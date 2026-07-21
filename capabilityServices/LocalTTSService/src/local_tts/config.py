@@ -63,6 +63,14 @@ class HealthConfig:
 
 
 @dataclass(frozen=True)
+class TextFrontendConfig:
+    """Text preprocessing before synthesis (markdown/emoji strip + TN)."""
+
+    enabled: bool
+    normalize: bool
+
+
+@dataclass(frozen=True)
 class Config:
     """Root configuration — every field is required; no silent defaults.
 
@@ -92,6 +100,7 @@ class Config:
     voice_description_max_len: int
     voice_tag_max_len: int
     voice_max_tags: int
+    text_frontend: TextFrontendConfig
 
 
 # -----------------------------------------------------------------------------
@@ -138,6 +147,7 @@ def _parse(raw: dict[str, Any]) -> Config:
     """
     server_raw = _require_section(raw, "server")
     health_raw = _require_section(raw, "health")
+    text_frontend_raw = _require_section(raw, "text_frontend")
 
     return Config(
         schema_version=_require(raw, "schema_version", int),
@@ -162,6 +172,10 @@ def _parse(raw: dict[str, Any]) -> Config:
         voice_description_max_len=_require(raw, "voice_description_max_len", int),
         voice_tag_max_len=_require(raw, "voice_tag_max_len", int),
         voice_max_tags=_require(raw, "voice_max_tags", int),
+        text_frontend=TextFrontendConfig(
+            enabled=_require(text_frontend_raw, "text_frontend.enabled", bool),
+            normalize=_require(text_frontend_raw, "text_frontend.normalize", bool),
+        ),
     )
 
 

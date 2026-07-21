@@ -108,6 +108,16 @@ voice_tag_max_len: 24
 voice_max_tags: 8
 
 # =============================================================================
+# Text frontend — preprocessing applied to buffered text before synthesis.
+# =============================================================================
+text_frontend:
+  # Master switch: run markdown/emoji strip + normalization at all.
+  enabled: true
+
+  # Run wetext WFST text normalization ($/%/numbers/dates/units).
+  normalize: true
+
+# =============================================================================
 # Logging + in-process metrics
 # =============================================================================
 # Days to retain rotated jsonl log files. Files older than this are
