@@ -42,6 +42,10 @@ _BARE_URL_RE = re.compile(
     re.IGNORECASE,
 )
 _BARE_PATH_RE = re.compile(r"(?<![\w/])(?:~|\.{0,2})/[\w.-]*[\w-](?:/[\w.-]*[\w-])+")
+# Bare email address in prose. mistune only promotes the BRACKETED form
+# (<a@b.com>) to a mailto link, so an unbracketed address reaches us as
+# plain text and would otherwise be spoken character by character.
+_BARE_EMAIL_RE = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 
 
 @dataclass(frozen=True)
@@ -81,16 +85,21 @@ def render_code_span(raw: str, policy: SpeechPolicy, lang: str, masks: MaskTable
 
 
 def replace_bare_spans(text: str, policy: SpeechPolicy, lang: str) -> str:
-    """Rewrite bare URLs / absolute paths that mistune left in prose text."""
+    """Rewrite bare URLs / paths / emails that mistune left in prose text."""
+    email_repl = phrase(lang, "email") if policy.speak_dropped_spans else ""
     url_repl = phrase(lang, "link") if policy.speak_dropped_spans else ""
     path_repl = phrase(lang, "file_path") if policy.speak_dropped_spans else ""
     # Pass replacements as callables, not strings -- re.sub interprets
     # backslash escapes (\1, \g<name>, ...) in string replacements, so a
     # future phrase-catalog entry containing one would break or raise.
-    out, url_subs = _BARE_URL_RE.subn(lambda _match: url_repl, text)
+    # Email runs first: an address like user@www.example.com contains a
+    # "www." that _BARE_URL_RE would otherwise match first, mangling it.
+    out, email_subs = _BARE_EMAIL_RE.subn(lambda _match: email_repl, text)
+    out, url_subs = _BARE_URL_RE.subn(lambda _match: url_repl, out)
     out, path_subs = _BARE_PATH_RE.subn(lambda _match: path_repl, out)
     log.debug(
-        "replace_bare_spans url_subs=%d path_subs=%d in_len=%d out_len=%d",
+        "replace_bare_spans email_subs=%d url_subs=%d path_subs=%d in_len=%d out_len=%d",
+        email_subs,
         url_subs,
         path_subs,
         len(text),

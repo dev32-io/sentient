@@ -102,3 +102,39 @@ def test_replace_bare_spans_preserves_dotted_path_leading_segment(policy):
     out = replace_bare_spans("Edit ~/.sentient/gateway/config.yaml now.", policy, "en")
     assert "~/.sentient" not in out
     assert "a file path" in out
+
+
+def test_replace_bare_email_in_prose(policy):
+    out = replace_bare_spans("Contact user@example.com for help.", policy, "en")
+    assert "user" not in out
+    assert "@" not in out
+    assert "an email address" in out
+
+
+def test_replace_bare_complex_email_in_prose(policy):
+    out = replace_bare_spans("Mail first.last+tag@sub.example.co.uk now.", policy, "en")
+    assert "@" not in out
+    assert "sub.example.co.uk" not in out
+    assert "an email address" in out
+
+
+def test_replace_bare_email_at_end_of_sentence_keeps_period(policy):
+    # Same guarantee as the URL/path scanners: the sentence's terminal
+    # period must survive the rewrite, not get swallowed into the match.
+    out = replace_bare_spans("Email me at user@example.com.", policy, "en")
+    assert out.endswith(".")
+    assert "an email address" in out
+
+
+def test_replace_bare_email_is_silent_when_disabled():
+    quiet = SpeechPolicy(table_max_cells=24, code_span_max_chars=32, speak_dropped_spans=False)
+    out = replace_bare_spans("Contact user@example.com for help.", quiet, "en")
+    assert "user" not in out
+    assert "@" not in out
+    assert "an email address" not in out
+
+
+def test_replace_bare_spans_leaves_at_sign_without_domain_alone(policy):
+    # An "@" with no domain after it (a price marker, not an address).
+    s = "Costs $5 @ the store"
+    assert replace_bare_spans(s, policy, "en") == s
