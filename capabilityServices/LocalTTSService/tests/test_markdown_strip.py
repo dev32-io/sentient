@@ -102,6 +102,19 @@ def test_word_like_inline_code_is_kept_but_masked(policy):
     assert "flush" in result.masks.restore(result.text)
 
 
+def test_script_pure_zh_document_gets_chinese_phrases_while_undeclared(policy):
+    # THE Finding-8 regression guard. The sibling test below declares "zh",
+    # and a genuinely-mixed document resolves to whatever was declared -- so
+    # it would still pass if strip_markdown stopped calling resolve_lang and
+    # handed the raw lang to phrase(). This document is script-PURE Chinese
+    # (share 1.0: the path's segments are CJK, contributing no Latin letters)
+    # while still carrying a dropped span, so "auto" must be RESOLVED to zh.
+    # Without resolution the phrase falls back to English: "a file path".
+    out = _text("请打开 /用户/文档/报告 这个文件。", policy, lang="auto")
+    assert "一个文件路径" in out
+    assert "a file path" not in out
+
+
 def test_zh_document_uses_chinese_phrases_when_declared(policy):
     # Finding 8: strip_markdown must resolve a language before picking
     # phrases, rather than handing "auto" straight to phrase() (which falls

@@ -26,15 +26,39 @@ class _FakeVoiceStore:
         return ""
 
 
-def _make_runner(frontend):
+class _ZhVoiceStore:
+    """A pack that declares zh, so the pack -- not default_lang -- decides."""
+
+    def language_of(self, voice_id) -> str:
+        return "zh"
+
+
+def _make_runner(frontend, voice_store=None):
     # Import here so the test file loads even if heavy deps shift.
     from local_tts.synthesis import SynthesisRunner
     return SynthesisRunner(
-        executor=None, voice_store=_FakeVoiceStore(), synth_lock=asyncio.Lock(), ws=None,
+        executor=None, voice_store=voice_store or _FakeVoiceStore(),
+        synth_lock=asyncio.Lock(), ws=None,
         conn_id="t", format_="opus", sample_rate=48000, voice=None,
         streaming_interval=0.5, default_lang="en", conn_log=_NullLog(),
         metrics_log=_NullLog(), frontend=frontend,
     )
+
+
+def test_voice_pack_language_overrides_default_lang():
+    # The pack's language is the declared tiebreak for genuinely mixed text.
+    # Only the empty-pack fallback was covered before, so a regression that
+    # ignored the pack entirely would have gone unnoticed.
+    fe = _FakeFrontend()
+
+    async def run():
+        runner = _make_runner(fe, voice_store=_ZhVoiceStore())
+        runner._worker_task.cancel()
+        runner.add_text("hello")
+        runner.flush()
+        assert fe.calls == [("hello", "zh")]  # zh from the pack, not "en"
+
+    asyncio.run(run())
 
 
 class _NullLog:
