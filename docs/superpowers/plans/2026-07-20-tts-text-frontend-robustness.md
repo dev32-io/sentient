@@ -1868,6 +1868,376 @@ git commit -m "feat(local-tts): sweep residual markdown punctuation before norma
 
 ---
 
+# ADDENDUM — measured rework (Tasks 12–14)
+
+Tasks 1–11 were designed from *reading* the pipeline. Tasks 12–14 are designed
+from **measuring** it: a TTS→STT loop-back harness (`scripts/tts_stt_loopback.py`,
+commit `4d43691`) synthesized ~250 cases through local-tts and transcribed them
+back through whisper-stt, so the effect of each layer is evidence, not inference.
+
+**What the measurements showed**
+
+| Layer | Verdict |
+|---|---|
+| L1 structure + L2 span policy (Tasks 1–10) | **Essential.** Raw markdown reads code aloud, spells URLs out, turns `##` into "But but", `**` into "19", `- [ ]` into "might/minus", reads footnote bodies, renders tables as gibberish. With the strip, all clean. |
+| wetext TN, **English** | **Net-negative.** Breaks 3 cases the model gets right unaided (`\|`→"vertical bar", `snake_case`→"underscore underscore", `3.6 km/h`→"kilometers. Per hour are"); fixes only 2 (`*`→"times", `~`→"approximately"). |
+| wetext TN, **Chinese** | **Earns its place, narrowly.** `$50`→五十美元, `￥88`→88元, `7:30`→七点三十分. Without it the currency unit is dropped entirely. |
+| Residual sweep (Task 11) | **No measurable benefit in any battery.** Not one case where `sweep` beat `tn`. |
+
+Qwen3-TTS handles unaided, in English: ordinals, fractions, ranges, negatives,
+`1,234,567`, `$50`, `$4.99`, `90%`, `22.7°C`, `3.6 km/h`, `250g`, `Dr.`/`Mr.`,
+`e.g.`, acronyms, `1.2.3`, `8080`, `1984`, 12h/24h times, natural dates — and it
+renders a prose `|` as a natural pause on its own, which is what Task 11 was
+built to force.
+
+**Not fixed by any configuration, documented and accepted:** `2026-07-20` →
+"2026 to 07 to 20" (the model reads `-` as "to" natively — the range shim was
+never the cause), `C#` → "C hash", `config.yaml` → "config.uramel".
+
+**Deliberately NOT added:** a lexicon mapping `*`→"times" and `~`→"approximately"
+would recover the only two things English TN was buying. It is measured and real,
+but it reintroduces symbol-intent guessing for a rare case, so it stays a
+documented follow-up rather than shipping here.
+
+## Global Constraints (addendum)
+
+- Everything in the parent plan still applies.
+- **Language resolution happens per BLOCK, not per document.** A reply can mix
+  scripts; `default_lang` ships as `"auto"`.
+- `wetext.Normalizer` accepts `lang="auto"` and routes correctly by itself —
+  verified. Our own `_engine_key` collapsing `"auto"`→`"en"` is the bug.
+
+---
+
+## Task 12: Language-aware normalization + the `"auto"` fix
+
+**Files:**
+- Modify: `capabilityServices/LocalTTSService/src/local_tts/text_frontend/normalize.py`
+- Test: `capabilityServices/LocalTTSService/tests/test_normalize.py`
+
+**Interfaces:**
+- Produces: `detect_lang(text: str) -> str` — `"ja"` if kana present, else `"zh"` if
+  Han present, else `"en"`.
+- Produces: `resolve_lang(declared: str, text: str) -> str` — returns `declared`
+  when it is a concrete supported language (`en`/`zh`/`ja`), otherwise detects
+  from `text`. This is what replaces `_engine_key`.
+- `Normalizer.normalize(text: str, lang: str) -> str` keeps its signature but
+  `lang` MUST now be a concrete language; callers resolve first.
+
+**The production bug this fixes.** `config.yaml` ships `default_lang: "auto"`.
+`_engine_key("auto")` returns `"en"`, so every Chinese reply is normalized by the
+English engine:
+
+```
+'这个价格是 $50。'              -> '这个价格是 fifty dollars。'
+'湿度是 71%，风速 3.6 公里每小时。' -> '湿度是 seventy one percent，风速 three point six 公里每小时。'
+'会议在 7:30 开始。'            -> '会议在 seven thirty 开始。'
+```
+
+English number words spliced into Chinese speech, live on the Mac mini today.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_normalize.py  (add; keep the existing currency/percent tests)
+from local_tts.text_frontend.normalize import detect_lang, resolve_lang
+
+
+def test_detect_lang_by_script():
+    assert detect_lang("It costs fifty dollars.") == "en"
+    assert detect_lang("这个价格是五十美元。") == "zh"
+    assert detect_lang("これはテストです。") == "ja"
+
+
+def test_detect_lang_mixed_prefers_cjk():
+    # A CJK sentence with embedded latin is still CJK.
+    assert detect_lang("价格 $50 and it costs $20 too.") == "zh"
+
+
+def test_resolve_lang_honours_a_concrete_declaration():
+    assert resolve_lang("zh", "plain english text") == "zh"
+    assert resolve_lang("en", "这是中文") == "en"
+
+
+def test_resolve_lang_detects_when_declared_auto():
+    # THE production bug: "auto" used to collapse to "en", so Chinese was
+    # normalized by the English engine and spoke "fifty dollars".
+    assert resolve_lang("auto", "这个价格是 $50。") == "zh"
+    assert resolve_lang("auto", "It costs $50.") == "en"
+
+
+def test_auto_chinese_normalizes_to_chinese_currency(norm):
+    lang = resolve_lang("auto", "这个价格是 $50。")
+    out = norm.normalize("这个价格是 $50。", lang)
+    assert "美元" in out
+    assert "dollars" not in out
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_normalize.py -v`
+Expected: FAIL — `cannot import name 'detect_lang'`.
+
+- [ ] **Step 3: Implement**
+
+Replace `_engine_key` and delete both English shims:
+
+```python
+# Kana implies Japanese; Han without kana implies Chinese.
+_KANA_RE = re.compile(r"[぀-ヿ]")
+_HAN_RE = re.compile(r"[㐀-鿿豈-﫿]")
+
+_SUPPORTED = ("en", "zh", "ja")
+
+
+def detect_lang(text: str) -> str:
+    """Resolve a language from the script actually present in ``text``."""
+    if _KANA_RE.search(text):
+        return "ja"
+    if _HAN_RE.search(text):
+        return "zh"
+    return "en"
+
+
+def resolve_lang(declared: str, text: str) -> str:
+    """Concrete language for ``text``; detects when ``declared`` is not one.
+
+    ``default_lang`` ships as "auto". The previous implementation mapped
+    anything unrecognized to "en", which meant every Chinese reply was
+    normalized by the ENGLISH engine and spoke "fifty dollars" instead of
+    "五十美元". Detection is what "auto" was always supposed to mean.
+    """
+    if declared in _SUPPORTED:
+        return declared
+    return detect_lang(text)
+```
+
+Delete `_RANGE_RE`, `_NEG_RE` and their use in `normalize()`. They were
+band-aids for wetext's English grammar, and English is no longer normalized by
+default (Task 13). The measurements also showed the range shim was NOT the cause
+of the ISO-date reading — the model produces "2026 to 07 to 20" unaided. Leave a
+comment saying so, so nobody re-adds them.
+
+`normalize()` becomes:
+
+```python
+    def normalize(self, text: str, lang: str) -> str:
+        out = self._for(lang).normalize(text)
+        log.debug("normalize lang=%s in_len=%d out_len=%d", lang, len(text), len(out))
+        return out
+```
+
+and `_for` keys the cache on `lang` directly (callers pass a concrete language).
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_normalize.py -v`
+Expected: PASS. Existing tests that relied on the range/negative shims will fail —
+delete those two tests; the behaviour they pinned is deliberately gone.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add capabilityServices/LocalTTSService/src/local_tts/text_frontend/normalize.py \
+        capabilityServices/LocalTTSService/tests/test_normalize.py
+git commit -m "fix(local-tts): detect language for 'auto' instead of forcing English"
+```
+
+---
+
+## Task 13: Gate TN by language; delete the residual sweep
+
+**Files:**
+- Modify: `capabilityServices/LocalTTSService/src/local_tts/text_frontend/frontend.py`
+- Delete: `capabilityServices/LocalTTSService/src/local_tts/text_frontend/residual.py`
+- Delete: `capabilityServices/LocalTTSService/tests/test_residual.py`
+- Modify: `capabilityServices/LocalTTSService/tests/test_frontend.py`
+
+**Interfaces:**
+- `build_frontend(*, normalize_enabled: bool, normalize_languages: tuple[str, ...], policy: SpeechPolicy) -> TextFrontend`.
+- `TextFrontend.process(doc, lang)` unchanged.
+
+**Behaviour:** `_normalize_blocks` resolves the language **per block** and runs
+wetext only when that language is in `normalize_languages`. A mixed reply gets
+Chinese blocks normalized and English blocks left alone.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_frontend.py
+def _fe(policy, langs=("zh", "ja")):
+    return build_frontend(normalize_enabled=True, normalize_languages=langs, policy=policy)
+
+
+def test_english_is_not_normalized(policy):
+    out = _fe(policy).process("It costs $50 for 2 items.", "auto")
+    assert "$50" in out          # left for the model, which speaks it correctly
+    assert "dollars" not in out
+
+
+def test_chinese_is_normalized(policy):
+    out = _fe(policy).process("这个价格是 $50。", "auto")
+    assert "美元" in out
+    assert "dollars" not in out
+
+
+def test_mixed_document_normalizes_only_the_cjk_block(policy):
+    out = _fe(policy).process("It costs $50.\n\n这个价格是 $50。", "auto")
+    assert "$50" in out          # english block untouched
+    assert "美元" in out          # chinese block normalized
+
+
+def test_pipe_is_left_for_the_model(policy):
+    # Measured: the model renders a prose pipe as a natural pause, and the
+    # English normalizer is what used to say "vertical bar".
+    out = _fe(policy).process("Cloudy | Humidity 71% | Windy", "auto")
+    assert "|" in out
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_frontend.py -v`
+Expected: FAIL — `build_frontend() got an unexpected keyword argument 'normalize_languages'`.
+
+- [ ] **Step 3: Delete the sweep**
+
+```bash
+cd /Users/kevinye/Development/sentient
+git rm capabilityServices/LocalTTSService/src/local_tts/text_frontend/residual.py \
+       capabilityServices/LocalTTSService/tests/test_residual.py
+```
+
+Remove the `sweep_residual_symbols` import and its call from `frontend.py`, and
+delete `test_prose_pipe_separator_is_not_spoken` plus the `issue #42` composed
+test from `test_frontend.py` (both pinned sweep behaviour that is now gone).
+
+- [ ] **Step 4: Implement the per-block gate**
+
+```python
+from .normalize import Normalizer, resolve_lang
+
+
+class TextFrontend:
+    def __init__(self, *, normalizer, normalize_languages, policy) -> None:
+        self._normalizer = normalizer
+        self._normalize_languages = tuple(normalize_languages)
+        self._policy = policy
+
+    def _normalize_blocks(self, text: str, lang: str) -> str:
+        # wetext flattens newlines, so each block is normalized separately to
+        # preserve the \n\n prosodic gaps. Language is resolved PER BLOCK: a
+        # reply can mix scripts, and English measurably sounds better with no
+        # normalization at all while Chinese needs it for currency and times.
+        out: list[str] = []
+        for block in text.split("\n\n"):
+            resolved = resolve_lang(lang, block)
+            if block.strip() and resolved in self._normalize_languages:
+                out.append(self._normalizer.normalize(block, resolved))
+            else:
+                out.append(block)
+        return "\n\n".join(out)
+```
+
+`process()` drops the `sweep_residual_symbols` line; every other stage and the
+ordering stay exactly as they are (unmask still runs after normalization).
+
+`build_frontend` gains the keyword and passes it through.
+
+- [ ] **Step 5: Run tests**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_frontend.py tests/test_markdown_strip.py -v`
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add -A capabilityServices/LocalTTSService/
+git commit -m "feat(local-tts): normalize per block by language; drop the residual sweep"
+```
+
+---
+
+## Task 14: Config, version, and loop-back verification
+
+**Files:**
+- Modify: `capabilityServices/LocalTTSService/src/local_tts/config.py`
+- Modify: `capabilityServices/LocalTTSService/config/config.example.yaml`
+- Modify: `capabilityServices/LocalTTSService/src/local_tts/server.py`
+- Modify: `capabilityServices/LocalTTSService/pyproject.toml`, `src/local_tts/__init__.py`
+- Test: `capabilityServices/LocalTTSService/tests/test_config.py`
+
+- [ ] **Step 1: Add the config key**
+
+In `config/config.example.yaml`, inside `text_frontend:`:
+
+```yaml
+  # Languages whose text gets WFST normalization. Measured: English sounds
+  # BETTER with no normalization (the model reads $50, 90%, 1st, 3/4, ranges
+  # and Dr./Mr. correctly on its own, while the normalizer says "vertical
+  # bar" and "underscore"), whereas Chinese needs it or the currency unit is
+  # dropped entirely. Language is resolved per block, so a mixed reply gets
+  # the right treatment for each. Valid entries: en, zh, ja.
+  normalize_languages: ["zh", "ja"]
+```
+
+`TextFrontendConfig` gains `normalize_languages: tuple[str, ...]`, parsed with a
+new `_require_str_list` helper that validates every entry is one of `en`/`zh`/`ja`
+and raises `ConfigError` otherwise. Wire it into `build_frontend` in `server.py`.
+
+- [ ] **Step 2: Test**
+
+```python
+def test_normalize_languages_parsed(tmp_path):
+    cfg = _load_example(tmp_path)
+    assert cfg.text_frontend.normalize_languages == ("zh", "ja")
+
+
+def test_unknown_normalize_language_raises(tmp_path):
+    with pytest.raises(ConfigError):
+        _load_with(tmp_path, normalize_languages=["klingon"])
+```
+
+Follow whatever loading pattern `tests/test_config.py` already uses (load the
+shipped example, mutate the dict, dump to a tmp file) — do not invent a new one.
+
+- [ ] **Step 3: Bump the version**
+
+`pyproject.toml` and `src/local_tts/__init__.py`: `1.2.0` → `1.3.0`.
+
+- [ ] **Step 4: Full quality gate**
+
+```bash
+cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest -v
+cd /Users/kevinye/Development/sentient && source scripts/env.sh && bun run ci
+```
+
+- [ ] **Step 5: Loop-back verification (the point of all this)**
+
+Reconcile + restart the host service, then run both suites and confirm the
+measured wins hold end to end:
+
+```bash
+python3 deploy/mac-prod/native/service-config-reconcile.py \
+  --template capabilityServices/LocalTTSService/config/config.example.yaml \
+  --config ~/.sentient/local-tts/config/config.yaml --apply
+bash deploy/mac-prod/native/local-tts.sh stop && bash deploy/mac-prod/native/local-tts.sh start
+```
+
+Then, with `text_frontend.enabled: false` temporarily set (the harness sends
+pre-processed text), run:
+
+```bash
+cd capabilityServices/LocalTTSService
+.venv/bin/python scripts/tts_stt_loopback.py --lang en --suite markdown --variants none,strip
+.venv/bin/python scripts/tts_stt_loopback.py --lang zh --suite prose  --variants strip,tn
+```
+
+Expected: `strip` clean on every English markdown case (no code read aloud, no
+URL spelled out, no "vertical bar"); Chinese `tn` shows 美元/元 where `strip`
+drops the unit. **Restore the operator config afterwards** — back it up first.
+
+---
+
 ## Self-Review
 
 **Spec coverage** (against the six failure classes reproduced on the current code):
