@@ -104,6 +104,7 @@ def _make_config(tmp_path: Path) -> Config:
         text_frontend=TextFrontendConfig(
             enabled=True,
             normalize=True,
+            normalize_languages=("zh", "ja"),
             table_max_cells=24,
             code_span_max_chars=32,
             speak_dropped_spans=True,

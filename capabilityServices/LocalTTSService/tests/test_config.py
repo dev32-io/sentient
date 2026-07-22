@@ -83,3 +83,57 @@ def test_missing_table_max_cells_raises(tmp_path):
     p.write_text(yaml.safe_dump(raw), encoding="utf-8")
     with pytest.raises(ConfigError, match="table_max_cells"):
         load_config(str(p))
+
+
+def test_normalize_languages_parsed(tmp_path):
+    cfg = load_config(_EXAMPLE_PATH)
+    assert cfg.text_frontend.normalize_languages == ("zh", "ja")
+
+
+def test_missing_normalize_languages_raises(tmp_path):
+    """``normalize_languages`` is a required key — dropping it from an
+    otherwise-valid config must fail loud, not silently normalize nothing
+    (or everything).
+    """
+    raw = yaml.safe_load(Path(_EXAMPLE_PATH).read_text(encoding="utf-8"))
+    del raw["text_frontend"]["normalize_languages"]
+    p = tmp_path / "no_normalize_languages.yaml"
+    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ConfigError, match="normalize_languages"):
+        load_config(str(p))
+
+
+def test_normalize_languages_not_a_list_raises(tmp_path):
+    raw = yaml.safe_load(Path(_EXAMPLE_PATH).read_text(encoding="utf-8"))
+    raw["text_frontend"]["normalize_languages"] = "zh"
+    p = tmp_path / "normalize_languages_scalar.yaml"
+    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ConfigError, match="normalize_languages"):
+        load_config(str(p))
+
+
+def test_normalize_languages_empty_list_raises(tmp_path):
+    raw = yaml.safe_load(Path(_EXAMPLE_PATH).read_text(encoding="utf-8"))
+    raw["text_frontend"]["normalize_languages"] = []
+    p = tmp_path / "normalize_languages_empty.yaml"
+    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ConfigError, match="normalize_languages"):
+        load_config(str(p))
+
+
+def test_normalize_languages_non_string_entry_raises(tmp_path):
+    raw = yaml.safe_load(Path(_EXAMPLE_PATH).read_text(encoding="utf-8"))
+    raw["text_frontend"]["normalize_languages"] = ["zh", 1]
+    p = tmp_path / "normalize_languages_non_string.yaml"
+    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ConfigError, match="normalize_languages"):
+        load_config(str(p))
+
+
+def test_unknown_normalize_language_raises(tmp_path):
+    raw = yaml.safe_load(Path(_EXAMPLE_PATH).read_text(encoding="utf-8"))
+    raw["text_frontend"]["normalize_languages"] = ["klingon"]
+    p = tmp_path / "normalize_languages_unknown.yaml"
+    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ConfigError, match="normalize_languages"):
+        load_config(str(p))

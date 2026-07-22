@@ -117,6 +117,14 @@ text_frontend:
   # Run wetext WFST text normalization ($/%/numbers/dates/units).
   normalize: true
 
+  # Languages whose text gets WFST normalization. Measured: English sounds
+  # BETTER with no normalization (the model reads $50, 90%, 1st, 3/4, ranges
+  # and Dr./Mr. correctly on its own, while the normalizer says "vertical
+  # bar" and "underscore"), whereas Chinese needs it or the currency unit is
+  # dropped entirely. Language is resolved per block, so a mixed reply gets
+  # the right treatment for each. Valid entries: en, zh, ja.
+  normalize_languages: ["zh", "ja"]
+
   # Tables with MORE body cells than this (rows x columns) are summarized
   # ("a table with 20 rows and 6 columns") instead of read out row by row.
   # Small tables are linearized screen-reader style: "Service gateway,

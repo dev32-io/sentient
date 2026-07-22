@@ -37,6 +37,9 @@ from .conftest import _make_config, _make_server, _serve, _StubVoiceStore
 # ``TextFrontendConfig``) — values are arbitrary, these tests exercise
 # concurrency/teardown, not frontend behavior.
 _TEST_POLICY = SpeechPolicy(table_max_cells=24, code_span_max_chars=32, speak_dropped_spans=True)
+# Arbitrary for these tests too — see the ``_TEST_POLICY`` comment above;
+# concurrency/teardown coverage doesn't touch per-language normalization.
+_TEST_LANGS = ("zh", "ja")
 
 
 class _GatedEngine:
@@ -153,7 +156,9 @@ def test_close_unblocks_worker_thread_stuck_on_full_queue():
             executor=None, voice_store=None, synth_lock=asyncio.Lock(), ws=_NoopWs(),
             conn_id="test-conn", format_="pcm", sample_rate=24000, voice=None,
             streaming_interval=0.5, default_lang="auto", conn_log=_NoopLog(), metrics_log=_NoopLog(),
-            frontend=build_frontend(normalize_enabled=False, policy=_TEST_POLICY),
+            frontend=build_frontend(
+                normalize_enabled=False, normalize_languages=_TEST_LANGS, policy=_TEST_POLICY
+            ),
         )
         chunk_queue: "asyncio.Queue[object]" = asyncio.Queue(maxsize=2)
         chunk_queue.put_nowait(b"chunk-1")
@@ -263,7 +268,9 @@ def test_close_blocks_second_queued_request_from_starting():
             ws=_NoopWs(), conn_id="test-conn-2", format_="pcm", sample_rate=24000,
             voice=None, streaming_interval=0.5, default_lang="auto",
             conn_log=_NoopLog(), metrics_log=_NoopLog(),
-            frontend=build_frontend(normalize_enabled=False, policy=_TEST_POLICY),
+            frontend=build_frontend(
+                normalize_enabled=False, normalize_languages=_TEST_LANGS, policy=_TEST_POLICY
+            ),
         )
 
         runner.add_text("first")

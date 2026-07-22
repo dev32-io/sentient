@@ -51,6 +51,7 @@ def test_flush_runs_frontend_before_enqueue():
 def test_flush_skips_enqueue_when_frontend_returns_empty():
     fe = build_frontend(
         normalize_enabled=True,
+        normalize_languages=("en", "zh", "ja"),
         policy=SpeechPolicy(table_max_cells=24, code_span_max_chars=32, speak_dropped_spans=True),
     )
 

@@ -68,6 +68,7 @@ class TextFrontendConfig:
 
     enabled: bool
     normalize: bool
+    normalize_languages: tuple[str, ...]
     table_max_cells: int
     code_span_max_chars: int
     speak_dropped_spans: bool
@@ -186,6 +187,9 @@ def _parse_text_frontend(text_frontend_raw: dict[str, Any]) -> TextFrontendConfi
     return TextFrontendConfig(
         enabled=_require(text_frontend_raw, "text_frontend.enabled", bool),
         normalize=_require(text_frontend_raw, "text_frontend.normalize", bool),
+        normalize_languages=_require_str_list(
+            text_frontend_raw, "text_frontend.normalize_languages", _VALID_NORMALIZE_LANGUAGES
+        ),
         table_max_cells=_require(text_frontend_raw, "text_frontend.table_max_cells", int),
         code_span_max_chars=_require(
             text_frontend_raw, "text_frontend.code_span_max_chars", int
@@ -206,6 +210,43 @@ def _require_section(raw: dict[str, Any], name: str) -> dict[str, Any]:
             f"config.yaml: section '{name}' must be a mapping, got {type(value).__name__}"
         )
     return value
+
+
+# The only languages the WFST normalizer (``text_frontend/normalize.py``)
+# supports. Kept here (not imported from ``text_frontend``) because this
+# module's contract is "validate config.yaml shape only" — no dependency on
+# the pipeline it configures.
+_VALID_NORMALIZE_LANGUAGES: frozenset[str] = frozenset({"en", "zh", "ja"})
+
+
+def _require_str_list(section: dict[str, Any], path: str, valid_values: frozenset[str]) -> tuple[str, ...]:
+    """Pull a required list-of-strings value at ``path``.
+
+    Rejects a missing key, a non-list value, an empty list, a list
+    containing a non-string entry, and any entry not in ``valid_values``.
+    Returns a ``tuple`` (not a ``list``) so the value can live on a frozen
+    dataclass.
+    """
+    key = path.rsplit(".", 1)[-1]
+    if key not in section:
+        raise ConfigError(f"config.yaml: missing required key '{path}'")
+    value = section[key]
+    if not isinstance(value, list):
+        raise ConfigError(
+            f"config.yaml: '{path}' must be a list of strings, got {type(value).__name__}"
+        )
+    if not value:
+        raise ConfigError(f"config.yaml: '{path}' must not be empty")
+    for entry in value:
+        if not isinstance(entry, str):
+            raise ConfigError(
+                f"config.yaml: '{path}' entries must be strings, got {type(entry).__name__}"
+            )
+        if entry not in valid_values:
+            raise ConfigError(
+                f"config.yaml: '{path}' entry '{entry}' must be one of {sorted(valid_values)}"
+            )
+    return tuple(value)
 
 
 def _require(section: dict[str, Any], path: str, expected_type: type) -> Any:

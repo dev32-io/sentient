@@ -85,6 +85,7 @@ class Server:
         self._frontend = (
             build_frontend(
                 normalize_enabled=config.text_frontend.normalize,
+                normalize_languages=config.text_frontend.normalize_languages,
                 policy=SpeechPolicy(
                     table_max_cells=config.text_frontend.table_max_cells,
                     code_span_max_chars=config.text_frontend.code_span_max_chars,
