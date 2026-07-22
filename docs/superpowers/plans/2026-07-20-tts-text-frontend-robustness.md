@@ -1,0 +1,2481 @@
+# TTS Text-Frontend Robustness (v2) Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Make `LocalTTSService`'s text frontend produce speakable audio from real LLM markdown — tables, inline code, URLs, file paths, math, task lists and footnotes currently reach the synthesizer as symbol soup ("vertical bar Service vertical bar Port", "at circumflex two zero point one", "slash Users slash kev slash…").
+
+**Architecture:** Three layers, strictly ordered. **L1 structure** — the mistune AST gains the `table`, `task_lists`, `math` and `footnotes` plugins so those constructs become typed nodes we can route instead of literal punctuation; tables are size-gated and linearized screen-reader style, math/footnotes/HTML are dropped. **L2 span policy** — inline-code spans and bare URLs/paths in prose are *classified* into keep-vs-drop; dropped ones become a short spoken phrase ("a command", "a file path", "a link") so the sentence keeps its grammar, kept ones are *masked* behind an alphabetic sentinel so text normalization cannot mangle them. **L3 normalization** — the existing wetext WFST pass, now only ever seeing prose. Nothing about streaming, latency or the wire protocol changes: the frontend still runs once per cycle on the buffered document at `flush`.
+
+**Tech Stack:** Python 3.11, `mistune>=3.3,<4` (markdown AST + plugins), `wetext>=0.1` (WFST TN), `emoji>=2.14,<3`. Deploy tooling: `ruamel.yaml`. No new dependencies.
+
+## Global Constraints
+
+- Service files MUST stay under 300 lines; functions under 40 lines; max nesting depth 3.
+- Every tunable lives in `config/config.example.yaml`, parsed by `config.py` into a frozen dataclass, **every key REQUIRED** (fail-loud, no silent defaults) — mirror the existing `_require` / `_require_section` pattern exactly.
+- Logging: `logging.getLogger("local_tts.<module>")`. Log **lengths / counts / kinds only** — NEVER text content (`text_len=`, `kind=`, never `text=`).
+- Synthesis granularity is UNCHANGED. The frontend runs once per cycle on the buffered document. No per-sentence synthesis, no wire-protocol change, no gateway change.
+- New Python deps go in BOTH `pyproject.toml` AND `requirements.txt`. **This plan adds none.**
+- Sentinel tokens used for TN masking MUST be **ASCII letters only** — no digits, no underscores, no private-use codepoints. Verified against the installed wetext: `__TTS0__` → "underscore underscore TTS zero…", `` → spaced + digit-normalized, `TTSTOKZERO` → unchanged. This is a hard constraint, not a preference.
+- Language handling: `default_lang` may be the shipped value `"auto"`. Every language lookup falls back to `en` for anything that is not an exact key match — same rule as `normalize._engine_key`.
+- No e2e audio verification in this plan (audio cannot be validated by the agent). Verification is: service unit suite + gateway CI + a real chat reply through the local stack with the service log trail confirming the frontend ran.
+
+---
+
+## File Structure
+
+**New (`capabilityServices/LocalTTSService/src/local_tts/text_frontend/`):**
+- `policy.py` — `SpeechPolicy` frozen dataclass (the three new tunables). No logic.
+- `phrases.py` — per-language spoken phrases + separators for dropped spans and table summaries; `phrase(lang, key)` with `en` fallback.
+- `spans.py` — L2 classification: `classify_code_span()` for `` `codespan` `` nodes, `replace_bare_spans()` for URLs/paths that appear in plain prose text.
+- `mask.py` — `MaskTable`: allocate alphabetic sentinels, restore after TN.
+- `table.py` — `render_table()`: size-gated linearizer / summarizer.
+
+**Modified (service):**
+- `text_frontend/markdown.py` — enable 4 plugins, drop `footnotes`, thread a render context, delegate codespans/tables to L2/L1 helpers, return `StrippedDoc`.
+- `text_frontend/frontend.py` — accept `SpeechPolicy`, unmask after TN, add orphan-punctuation cleanup.
+- `text_frontend/__init__.py` — export `SpeechPolicy`.
+- `config.py` — three new required keys under `text_frontend`.
+- `config/config.example.yaml` — same three keys, each with an inline comment.
+- `server.py:85-88` — build `SpeechPolicy` from config, pass to `build_frontend`.
+- `pyproject.toml` — version `1.1.0` → `1.2.0`.
+- Tests: `tests/test_markdown_strip.py`, `tests/test_frontend.py`, `tests/test_config.py` updated; `tests/test_spans.py`, `tests/test_mask.py`, `tests/test_table.py` added.
+
+**Modified (deploy):**
+- `deploy/mac-prod/native/service-config-reconcile.py` — recurse additively into nested mappings. Without this, the three new **nested** keys never reach an already-seeded prod config and local-tts crashes on boot with `ConfigError` (the exact failure this script was written for, one level deeper).
+
+**Untouched:** the whole `gateway/` tree, the wire protocol, `synthesis.py`, `connection_session.py`.
+
+---
+
+## Task 1: Policy + phrases foundations
+
+**Files:**
+- Create: `capabilityServices/LocalTTSService/src/local_tts/text_frontend/policy.py`
+- Create: `capabilityServices/LocalTTSService/src/local_tts/text_frontend/phrases.py`
+- Test: `capabilityServices/LocalTTSService/tests/test_phrases.py`
+
+**Interfaces:**
+- Produces: `SpeechPolicy(table_max_cells: int, code_span_max_chars: int, speak_dropped_spans: bool)` — frozen dataclass, all fields required positionally-or-by-keyword.
+- Produces: `phrase(lang: str, key: str) -> str`. Valid keys: `link`, `file_path`, `command`, `email`, `table_summary`, `cell_sep`, `row_end`. `table_summary` is a `str.format` template taking `rows=` and `cols=`. Unknown `lang` falls back to `en`. Unknown `key` raises `KeyError` (fail loud — a typo'd key must not silently speak nothing).
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_phrases.py
+import pytest
+
+from local_tts.text_frontend.phrases import phrase
+from local_tts.text_frontend.policy import SpeechPolicy
+
+
+def test_policy_is_frozen():
+    p = SpeechPolicy(table_max_cells=24, code_span_max_chars=32, speak_dropped_spans=True)
+    assert p.table_max_cells == 24
+    with pytest.raises(Exception):
+        p.table_max_cells = 1  # frozen dataclass
+
+
+def test_english_phrases():
+    assert phrase("en", "command") == "a command"
+    assert phrase("en", "file_path") == "a file path"
+    assert phrase("en", "link") == "a link"
+
+
+def test_chinese_phrases_differ():
+    assert phrase("zh", "command") != phrase("en", "command")
+    assert phrase("zh", "cell_sep") == "，"
+
+
+def test_unknown_lang_falls_back_to_english():
+    # "auto" is the shipped default_lang value.
+    assert phrase("auto", "command") == phrase("en", "command")
+    assert phrase("ko", "link") == phrase("en", "link")
+
+
+def test_table_summary_is_a_format_template():
+    out = phrase("en", "table_summary").format(rows=12, cols=6)
+    assert "12" in out and "6" in out
+
+
+def test_unknown_key_raises():
+    with pytest.raises(KeyError):
+        phrase("en", "not_a_key")
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_phrases.py -v`
+Expected: FAIL with `ModuleNotFoundError: No module named 'local_tts.text_frontend.policy'`
+
+- [ ] **Step 3: Implement `policy.py`**
+
+```python
+# src/local_tts/text_frontend/policy.py
+"""Tunables that decide WHAT the text frontend speaks.
+
+Separate from ``config.py`` on purpose: ``config.py`` owns "what does
+config.yaml contain", this owns "what does the speech policy need". The
+server builds one of these at startup and hands it to the frontend, so
+every stage below reads the same immutable policy object instead of
+reaching back into global config.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class SpeechPolicy:
+    """Immutable speech-shaping policy for one process."""
+
+    # Tables with MORE than this many body cells (rows x columns) are
+    # summarized ("a table with N rows and M columns") instead of read.
+    table_max_cells: int
+    # Inline-code spans longer than this are treated as non-prose and
+    # replaced by a phrase rather than spoken verbatim.
+    code_span_max_chars: int
+    # When a span is dropped, speak a short placeholder phrase ("a
+    # command") instead of leaving a hole in the sentence.
+    speak_dropped_spans: bool
+```
+
+- [ ] **Step 4: Implement `phrases.py`**
+
+```python
+# src/local_tts/text_frontend/phrases.py
+"""Per-language spoken phrases for dropped spans and summarized tables.
+
+These are localization resources, not deployment tunables, so they live
+in code next to the logic that uses them (same call as
+``languages.py``'s SUPPORTED_LANGUAGES frozenset) rather than in
+config.yaml. Numbers are left as DIGITS in ``table_summary`` on purpose:
+wetext runs after this and turns "12" into "twelve" (and zh "12" into
+"十二"), so we never hand-write number words per language.
+"""
+
+from __future__ import annotations
+
+_FALLBACK_LANG = "en"
+
+PHRASES: dict[str, dict[str, str]] = {
+    "en": {
+        "link": "a link",
+        "file_path": "a file path",
+        "command": "a command",
+        "email": "an email address",
+        "table_summary": "a table with {rows} rows and {cols} columns",
+        "cell_sep": ", ",
+        "row_end": ". ",
+    },
+    "zh": {
+        "link": "一个链接",
+        "file_path": "一个文件路径",
+        "command": "一条命令",
+        "email": "一个邮件地址",
+        "table_summary": "一张 {rows} 行 {cols} 列的表格",
+        "cell_sep": "，",
+        "row_end": "。",
+    },
+}
+
+
+def phrase(lang: str, key: str) -> str:
+    """Spoken phrase for ``key`` in ``lang``; unknown langs fall back to en.
+
+    Raises ``KeyError`` for an unknown ``key`` — a typo must fail loudly
+    rather than silently speak an empty string.
+    """
+    table = PHRASES.get(lang) or PHRASES[_FALLBACK_LANG]
+    if key in table:
+        return table[key]
+    # Known lang, missing key: fall back to en before giving up, so a
+    # partially-translated table still speaks something.
+    return PHRASES[_FALLBACK_LANG][key]
+```
+
+- [ ] **Step 5: Run test to verify it passes**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_phrases.py -v`
+Expected: PASS (6 tests).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add capabilityServices/LocalTTSService/src/local_tts/text_frontend/policy.py \
+        capabilityServices/LocalTTSService/src/local_tts/text_frontend/phrases.py \
+        capabilityServices/LocalTTSService/tests/test_phrases.py
+git commit -m "feat(local-tts): add speech policy + per-language phrase table"
+```
+
+---
+
+## Task 2: TN mask table (alphabetic sentinels)
+
+**Files:**
+- Create: `capabilityServices/LocalTTSService/src/local_tts/text_frontend/mask.py`
+- Test: `capabilityServices/LocalTTSService/tests/test_mask.py`
+
+**Interfaces:**
+- Produces: `MaskTable` with `add(text: str) -> str` (returns the sentinel that replaces `text`) and `restore(text: str) -> str` (substitutes every allocated sentinel back). `MaskTable()` takes no arguments; one instance per document.
+
+**Why:** wetext normalizes *everything* it sees. A kept inline-code span like `` `v1.2.3` `` or `` `8080` `` would be rewritten ("one point two point three", "eight thousand and eighty"). Masking replaces it with an inert token for the duration of the TN pass. The sentinel alphabet is letters-only because that is the only form verified to survive wetext untouched (see Global Constraints).
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_mask.py
+from wetext import Normalizer
+
+from local_tts.text_frontend.mask import MaskTable
+
+
+def test_add_returns_distinct_sentinels():
+    m = MaskTable()
+    a = m.add("v1.2.3")
+    b = m.add("8080")
+    assert a != b
+
+
+def test_restore_round_trips():
+    m = MaskTable()
+    s = m.add("--save-dev")
+    assert m.restore(f"run {s} now") == "run --save-dev now"
+
+
+def test_restore_is_noop_without_sentinels():
+    assert MaskTable().restore("plain text") == "plain text"
+
+
+def test_sentinels_are_letters_only():
+    m = MaskTable()
+    for i in range(60):  # forces the second base-26 digit
+        assert m.add(f"x{i}").isalpha()
+
+
+def test_sentinels_survive_wetext_normalization():
+    # THE reason this module exists: any sentinel shape containing digits
+    # or underscores gets verbalized by wetext and the restore misses.
+    m = MaskTable()
+    sentinels = [m.add(f"tok{i}") for i in range(30)]
+    text = " and ".join(sentinels)
+    out = Normalizer(lang="en", operator="tn").normalize(text)
+    for s in sentinels:
+        assert s in out, f"sentinel {s} did not survive TN"
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_mask.py -v`
+Expected: FAIL with `ModuleNotFoundError: No module named 'local_tts.text_frontend.mask'`
+
+- [ ] **Step 3: Implement**
+
+```python
+# src/local_tts/text_frontend/mask.py
+"""Protect spans from text normalization behind inert sentinel tokens.
+
+wetext's job is to give EVERY token a spoken form, so a span we decided
+to keep verbatim (a short identifier, a version, a port number) gets
+rewritten if TN can see it. We swap those spans for a sentinel before
+TN and swap them back after.
+
+Sentinel shape is load-bearing: it must be pure ASCII letters. Verified
+against the installed wetext —
+    "__TTS0__"   -> "underscore underscore TTS zero underscore ..."
+    "\\ue000..."  -> spaces injected, inner digit normalized
+    "TTSTOKZERO" -> unchanged
+so the index is encoded in base-26 letters, never digits.
+"""
+
+from __future__ import annotations
+
+import logging
+
+log = logging.getLogger("local_tts.text_frontend.mask")
+
+# Deliberately unlikely to occur in prose, and letters-only (see docstring).
+_PREFIX = "zqxmask"
+# 'z' is reserved as the terminator and excluded from the digit alphabet.
+_ALPHABET = "abcdefghijklmnopqrstuvwxy"
+_TERMINATOR = "z"
+
+
+def _encode(index: int) -> str:
+    """Prefix-free base-25 letter code, terminated by 'z'.
+
+    Because 'z' never appears among the digits, no code can be a prefix of
+    another: a shorter code's terminating 'z' would have to align with a
+    digit of the longer one, which is impossible. That makes restore()
+    order-independent. A plain base-26 code is NOT prefix-free — index 26
+    ("ba") prefixes index 676 ("baa"), and replacing the shorter sentinel
+    first corrupts the longer one's span.
+    """
+    digits = ""
+    n = index
+    while True:
+        digits = _ALPHABET[n % 25] + digits
+        n //= 25
+        if n == 0:
+            break
+    return digits + _TERMINATOR
+
+
+class MaskTable:
+    """Per-document allocator for TN-proof sentinels."""
+
+    def __init__(self) -> None:
+        self._spans: dict[str, str] = {}
+
+    def add(self, text: str) -> str:
+        sentinel = f"{_PREFIX}{_encode(len(self._spans))}"
+        self._spans[sentinel] = text
+        log.debug("add sentinel=%s text_len=%d spans=%d", sentinel, len(text), len(self._spans))
+        return sentinel
+
+    def restore(self, text: str) -> str:
+        if not self._spans:
+            return text
+        out = text
+        for sentinel, original in self._spans.items():
+            out = out.replace(sentinel, original)
+        log.debug("restore spans=%d in_len=%d out_len=%d", len(self._spans), len(text), len(out))
+        return out
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_mask.py -v`
+Expected: PASS (5 tests). If `test_sentinels_survive_wetext_normalization` fails, the prefix collided with a wetext rule — change `_PREFIX` to another letters-only string and re-run; do NOT introduce digits.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add capabilityServices/LocalTTSService/src/local_tts/text_frontend/mask.py \
+        capabilityServices/LocalTTSService/tests/test_mask.py
+git commit -m "feat(local-tts): add TN-proof span mask table"
+```
+
+---
+
+## Task 3: Span classification (inline code, bare URLs, paths)
+
+**Files:**
+- Create: `capabilityServices/LocalTTSService/src/local_tts/text_frontend/spans.py`
+- Test: `capabilityServices/LocalTTSService/tests/test_spans.py`
+
+**Interfaces:**
+- Consumes: `SpeechPolicy` (Task 1), `phrase` (Task 1), `MaskTable` (Task 2).
+- Produces:
+  - `SpanVerdict(keep: bool, phrase_key: str)` — frozen dataclass. `keep=True` means "speak it verbatim, masked from TN"; `keep=False` means "replace with `phrase(lang, phrase_key)`", or with `""` when `phrase_key` is empty.
+  - `classify_code_span(raw: str, policy: SpeechPolicy) -> SpanVerdict`
+  - `render_code_span(raw: str, policy: SpeechPolicy, lang: str, masks: MaskTable) -> str` — applies the verdict, masking kept spans.
+  - `replace_bare_spans(text: str, policy: SpeechPolicy, lang: str) -> str` — rewrites bare URLs and absolute file paths found in **plain prose** (mistune leaves `www.example.com` and `/Users/x/y/z.ts` inside plain `text` tokens; only `scheme://` gets promoted to a `link` node).
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_spans.py
+import pytest
+
+from local_tts.text_frontend.mask import MaskTable
+from local_tts.text_frontend.policy import SpeechPolicy
+from local_tts.text_frontend.spans import (
+    classify_code_span,
+    render_code_span,
+    replace_bare_spans,
+)
+
+
+@pytest.fixture
+def policy():
+    return SpeechPolicy(table_max_cells=24, code_span_max_chars=32, speak_dropped_spans=True)
+
+
+@pytest.mark.parametrize("raw", ["flush", "config.yaml", "v1.2.3", "8080", "snake_case_name"])
+def test_word_like_spans_are_kept(raw, policy):
+    assert classify_code_span(raw, policy).keep is True
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected_key"),
+    [
+        ("npm install --save-dev @types/node", "command"),
+        ("--save-dev", "command"),
+        ("/Users/kev/dev/sentient/gateway/src/a.ts", "file_path"),
+        ("~/.sentient/gateway/config.yaml", "file_path"),
+        ("https://example.com/a?b=1", "link"),
+        ("www.example.com", "link"),
+    ],
+)
+def test_non_prose_spans_are_dropped_with_the_right_phrase(raw, expected_key, policy):
+    verdict = classify_code_span(raw, policy)
+    assert verdict.keep is False
+    assert verdict.phrase_key == expected_key
+
+
+def test_over_length_span_is_dropped(policy):
+    long_word = "a" * (policy.code_span_max_chars + 1)
+    assert classify_code_span(long_word, policy).keep is False
+
+
+def test_render_kept_span_is_masked(policy):
+    masks = MaskTable()
+    out = render_code_span("v1.2.3", policy, "en", masks)
+    assert "v1.2.3" not in out          # masked for the TN pass
+    assert masks.restore(out) == "v1.2.3"
+
+
+def test_render_dropped_span_speaks_a_phrase(policy):
+    out = render_code_span("npm i --save-dev x", policy, "en", MaskTable())
+    assert out == "a command"
+
+
+def test_render_dropped_span_is_silent_when_disabled():
+    quiet = SpeechPolicy(table_max_cells=24, code_span_max_chars=32, speak_dropped_spans=False)
+    assert render_code_span("npm i --save-dev x", quiet, "en", MaskTable()) == ""
+
+
+def test_replace_bare_url_in_prose(policy):
+    out = replace_bare_spans("Also www.example.com here.", policy, "en")
+    assert "www" not in out
+    assert "a link" in out
+
+
+def test_replace_bare_path_in_prose(policy):
+    out = replace_bare_spans("Path: /Users/kev/dev/a.ts done.", policy, "en")
+    assert "/Users" not in out
+    assert "a file path" in out
+
+
+def test_replace_bare_spans_leaves_prose_alone(policy):
+    s = "The weather is nice today, e.g. sunny."
+    assert replace_bare_spans(s, policy, "en") == s
+
+
+def test_replace_bare_spans_does_not_eat_simple_division(policy):
+    # A single slash between words is prose, not a path.
+    s = "a 50/50 split and and/or logic"
+    assert replace_bare_spans(s, policy, "en") == s
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_spans.py -v`
+Expected: FAIL with `ModuleNotFoundError: No module named 'local_tts.text_frontend.spans'`
+
+- [ ] **Step 3: Implement**
+
+```python
+# src/local_tts/text_frontend/spans.py
+"""Decide which non-prose spans get spoken, and how.
+
+Text normalization (wetext, NeMo, any WFST engine) is built to give
+EVERY symbol a spoken form — NeMo's own docs turn a URL into "HTTPS
+colon slash slash WWW dot ...". That is correct for its job and wrong
+for ours, so the "should this be spoken at all" judgement has to happen
+HERE, above TN.
+
+Two entry points:
+  * ``render_code_span``  — a `codespan` AST node (backticked text).
+  * ``replace_bare_spans`` — URLs/paths sitting in plain prose text,
+    which mistune does not promote to nodes (only ``scheme://`` becomes
+    a ``link``; ``www.foo.com`` and ``/Users/x/y`` stay plain text).
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from dataclasses import dataclass
+
+from .mask import MaskTable
+from .phrases import phrase
+from .policy import SpeechPolicy
+
+log = logging.getLogger("local_tts.text_frontend.spans")
+
+# Speakable identifier: alnum runs joined by a single . _ or - and no
+# leading separator. Covers flush, config.yaml, v1.2.3, 8080, snake_case.
+_WORD_LIKE_RE = re.compile(r"^[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*$")
+_URL_LIKE_RE = re.compile(r"^(?:[a-z][a-z0-9+.-]*://|www\.)", re.IGNORECASE)
+# Path-like: starts at root/home, or has 2+ separators anywhere.
+_PATH_LIKE_RE = re.compile(r"^(?:~|/|\.{1,2}/|[A-Za-z]:\\)|(?:[^/\s]*/){2,}")
+
+# Prose-level scanners. Both require enough structure that ordinary
+# sentences (and "50/50", "and/or") can't match, and both must STOP before
+# trailing sentence punctuation -- a URL or path followed directly by a
+# period is ordinary English, and swallowing that period costs the sentence
+# its prosodic boundary. Hence the mandatory non-punctuation final char.
+_BARE_URL_RE = re.compile(
+    r"(?:[a-z][a-z0-9+.-]*://|www\.)[^\s<>()\[\]]*[^\s<>()\[\].,;:!?'\"]",
+    re.IGNORECASE,
+)
+# Segment is `[\w.-]*[\w-]`: dots allowed INSIDE a segment but never at its
+# end, so "~/.sentient/gateway/config.yaml" still matches while a trailing
+# "." stays outside the match.
+_BARE_PATH_RE = re.compile(r"(?<![\w/])(?:~|\.{0,2})/[\w.-]*[\w-](?:/[\w.-]*[\w-])+")
+
+
+@dataclass(frozen=True)
+class SpanVerdict:
+    """keep=True -> speak verbatim (masked from TN). keep=False -> phrase."""
+
+    keep: bool
+    phrase_key: str
+
+
+_KEEP = SpanVerdict(keep=True, phrase_key="")
+
+
+def classify_code_span(raw: str, policy: SpeechPolicy) -> SpanVerdict:
+    text = raw.strip()
+    if not text:
+        return SpanVerdict(keep=False, phrase_key="")
+    if _URL_LIKE_RE.search(text):
+        return SpanVerdict(keep=False, phrase_key="link")
+    if _PATH_LIKE_RE.search(text):
+        return SpanVerdict(keep=False, phrase_key="file_path")
+    if len(text) > policy.code_span_max_chars or " " in text:
+        return SpanVerdict(keep=False, phrase_key="command")
+    if _WORD_LIKE_RE.match(text):
+        return _KEEP
+    return SpanVerdict(keep=False, phrase_key="command")
+
+
+def render_code_span(raw: str, policy: SpeechPolicy, lang: str, masks: MaskTable) -> str:
+    verdict = classify_code_span(raw, policy)
+    if verdict.keep:
+        return masks.add(raw.strip())
+    log.debug("code_span_dropped len=%d phrase=%s", len(raw), verdict.phrase_key or "silent")
+    if not verdict.phrase_key or not policy.speak_dropped_spans:
+        return ""
+    return phrase(lang, verdict.phrase_key)
+
+
+def replace_bare_spans(text: str, policy: SpeechPolicy, lang: str) -> str:
+    """Rewrite bare URLs / absolute paths that mistune left in prose text."""
+    url_repl = phrase(lang, "link") if policy.speak_dropped_spans else ""
+    path_repl = phrase(lang, "file_path") if policy.speak_dropped_spans else ""
+    # Callables, not replacement STRINGS: re.sub interprets backslash escapes
+    # in a string replacement, so a future phrase containing one would break.
+    out, url_subs = _BARE_URL_RE.subn(lambda _match: url_repl, text)
+    out, path_subs = _BARE_PATH_RE.subn(lambda _match: path_repl, out)
+    log.debug("bare_spans url_subs=%d path_subs=%d in_len=%d out_len=%d",
+              url_subs, path_subs, len(text), len(out))
+    return out
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_spans.py -v`
+Expected: PASS (17 parametrized cases). If `test_replace_bare_spans_does_not_eat_simple_division` fails, `_BARE_PATH_RE` is too greedy — it requires at least two `/`-joined segments AFTER a leading `/`, `./` or `~/`; tighten rather than loosen the surrounding lookbehind.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add capabilityServices/LocalTTSService/src/local_tts/text_frontend/spans.py \
+        capabilityServices/LocalTTSService/tests/test_spans.py
+git commit -m "feat(local-tts): classify inline-code, bare URL and path spans for speech"
+```
+
+---
+
+## Task 4: Size-gated table linearizer
+
+**Files:**
+- Create: `capabilityServices/LocalTTSService/src/local_tts/text_frontend/table.py`
+- Test: `capabilityServices/LocalTTSService/tests/test_table.py`
+
+**Interfaces:**
+- Consumes: `SpeechPolicy`, `phrase` (Task 1).
+- Produces: `render_table(tok: dict, render_cell: Callable[[list[dict]], str], policy: SpeechPolicy, lang: str) -> str`.
+  `tok` is a mistune `table` token. `render_cell` renders one cell's `children` list to a string — injected by the caller so cell contents go through the SAME inline renderer (a cell can hold a codespan, and it must obey the span policy). Returns one speakable block.
+
+**AST shape (verified against installed mistune 3.3.x):**
+```
+table -> children: [ table_head -> [table_cell...], table_body -> [table_row -> [table_cell...]] ]
+table_cell: {"type":"table_cell", "attrs":{"align":..., "head":bool}, "children":[...]}
+```
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_table.py
+import mistune
+import pytest
+
+from local_tts.text_frontend.policy import SpeechPolicy
+from local_tts.text_frontend.table import render_table
+
+_PARSE = mistune.create_markdown(renderer=None, plugins=["table"])
+
+
+def _first_table(doc):
+    return [t for t in _PARSE(doc) if t["type"] == "table"][0]
+
+
+def _plain_cell(children):
+    return "".join(c.get("raw", "") for c in children)
+
+
+SMALL = "| Service | Port |\n|---|---|\n| gateway | 8080 |\n| tts | 8888 |\n"
+
+
+@pytest.fixture
+def policy():
+    return SpeechPolicy(table_max_cells=24, code_span_max_chars=32, speak_dropped_spans=True)
+
+
+def test_small_table_is_linearized_with_header_prefixes(policy):
+    out = render_table(_first_table(SMALL), _plain_cell, policy, "en")
+    assert "Service gateway, Port 8080." in out
+    assert "Service tts, Port 8888." in out
+    assert "|" not in out
+
+
+def test_large_table_is_summarized(policy):
+    rows = "\n".join(f"| r{i} | v{i} |" for i in range(20))
+    doc = f"| A | B |\n|---|---|\n{rows}\n"
+    out = render_table(_first_table(doc), _plain_cell, policy, "en")
+    assert "20" in out and "2" in out
+    assert "r0" not in out
+
+
+def test_zh_uses_chinese_separators(policy):
+    out = render_table(_first_table(SMALL), _plain_cell, policy, "zh")
+    assert "，" in out
+    assert ", " not in out
+
+
+def test_cells_go_through_the_injected_renderer(policy):
+    doc = "| A |\n|---|\n| x |\n"
+    out = render_table(_first_table(doc), lambda ch: "RENDERED", policy, "en")
+    assert "RENDERED" in out
+
+
+def test_empty_body_summarizes_rather_than_emitting_junk(policy):
+    doc = "| A | B |\n|---|---|\n"
+    out = render_table(_first_table(doc), _plain_cell, policy, "en")
+    assert "|" not in out
+    assert out.strip() != ""
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_table.py -v`
+Expected: FAIL with `ModuleNotFoundError: No module named 'local_tts.text_frontend.table'`
+
+- [ ] **Step 3: Implement**
+
+```python
+# src/local_tts/text_frontend/table.py
+"""Markdown table -> speech.
+
+Without the mistune ``table`` plugin a GFM table never becomes a node:
+it stays literal pipe text and TN reads it as "vertical bar Service
+vertical bar Port vertical bar". With the plugin we get a real tree and
+can do what a screen reader does — linearize row by row, prefixing each
+value with its column header so the listener keeps context.
+
+Size gate: reading a 20-row table aloud is a minute of recitation, so
+anything past ``policy.table_max_cells`` body cells collapses to a
+one-sentence summary instead.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Callable
+
+from .phrases import phrase
+from .policy import SpeechPolicy
+
+log = logging.getLogger("local_tts.text_frontend.table")
+
+RenderCell = Callable[[list], str]
+
+
+def render_table(tok: dict, render_cell: RenderCell, policy: SpeechPolicy, lang: str) -> str:
+    heads, rows = _split(tok, render_cell)
+    cols = max(len(heads), max((len(r) for r in rows), default=0))
+    cell_count = len(rows) * cols
+    # A body that renders entirely blank (valid GFM "|   |   |", or a row whose
+    # only content is images the inline renderer drops) must NOT fall through
+    # to the join below — that returned "" and silently vanished the table,
+    # breaking the two-outcome contract. Route it to the summary instead.
+    has_content = any(any(cell for cell in row) for row in rows)
+    if not rows or not has_content or cell_count > policy.table_max_cells:
+        log.debug("table_summarized rows=%d cols=%d cells=%d", len(rows), cols, cell_count)
+        return phrase(lang, "table_summary").format(rows=len(rows), cols=cols)
+
+    sep = phrase(lang, "cell_sep")
+    end = phrase(lang, "row_end")
+    log.debug("table_linearized rows=%d cols=%d", len(rows), cols)
+    return "".join(f"{sep.join(_pairs(heads, row))}{end}" for row in rows if any(row))
+
+
+def _split(tok: dict, render_cell: RenderCell) -> tuple[list[str], list[list[str]]]:
+    heads: list[str] = []
+    rows: list[list[str]] = []
+    for section in tok.get("children", []):
+        stype = section.get("type")
+        if stype == "table_head":
+            heads = [render_cell(c.get("children", [])).strip() for c in section.get("children", [])]
+        elif stype == "table_body":
+            rows = [
+                [render_cell(c.get("children", [])).strip() for c in row.get("children", [])]
+                for row in section.get("children", [])
+            ]
+    return heads, rows
+
+
+def _pairs(heads: list[str], row: list[str]) -> list[str]:
+    """One "Header value" chunk per non-empty cell; bare value if headerless."""
+    out: list[str] = []
+    for index, value in enumerate(row):
+        if not value:
+            continue
+        head = heads[index] if index < len(heads) else ""
+        out.append(f"{head} {value}" if head else value)
+    return out
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_table.py -v`
+Expected: PASS (5 tests).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add capabilityServices/LocalTTSService/src/local_tts/text_frontend/table.py \
+        capabilityServices/LocalTTSService/tests/test_table.py
+git commit -m "feat(local-tts): linearize small tables, summarize large ones"
+```
+
+---
+
+## Task 5: Markdown layer — plugins, render context, delegation
+
+**Files:**
+- Modify: `capabilityServices/LocalTTSService/src/local_tts/text_frontend/markdown.py` (whole file)
+- Modify: `capabilityServices/LocalTTSService/tests/test_markdown_strip.py` (whole file — the `strip_markdown` signature changes)
+
+**Interfaces:**
+- Consumes: `SpeechPolicy`, `phrase` (Task 1), `MaskTable` (Task 2), `render_code_span` / `replace_bare_spans` (Task 3), `render_table` (Task 4).
+- Produces: `StrippedDoc(text: str, masks: MaskTable)` frozen dataclass, and `strip_markdown(doc: str, policy: SpeechPolicy, lang: str) -> StrippedDoc`. **Breaking signature change** — the old one-arg form is gone; Task 6 updates the only caller.
+
+**Plugin AST facts (verified against installed mistune 3.3.x — do not re-derive):**
+- `table` → `table` / `table_head` / `table_body` / `table_row` / `table_cell`.
+- `task_lists` → list items become `task_list_item` with `attrs.checked`; the `[ ]` / `[x]` marker is removed from the text. Without the plugin the marker is spoken.
+- `math` → `inline_math` (inline) and `block_math` (fenced `$$`), both carrying `raw`.
+- `footnotes` → `footnote_ref` inline (no children) and a trailing `footnotes` block holding `footnote_item`s. The block MUST be dropped or the note bodies get read out at the end of the reply.
+- `block_html` / `inline_html` carry `raw` and no `children`, so they fall through to "" already.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_markdown_strip.py
+import pytest
+
+from local_tts.text_frontend.markdown import strip_markdown
+from local_tts.text_frontend.policy import SpeechPolicy
+
+
+@pytest.fixture
+def policy():
+    return SpeechPolicy(table_max_cells=24, code_span_max_chars=32, speak_dropped_spans=True)
+
+
+def _text(doc, policy, lang="en"):
+    return strip_markdown(doc, policy, lang).text
+
+
+def test_drops_code_block_keeps_prose(policy):
+    out = _text("Here is code:\n\n```py\nprint(1)\n```\n\nDone.", policy)
+    assert "print" not in out
+    assert "Here is code:" in out and "Done." in out
+
+
+def test_keeps_link_text_drops_url(policy):
+    out = _text("See [the docs](https://example.com/x) now.", policy)
+    assert "the docs" in out
+    assert "example.com" not in out
+
+
+def test_heading_and_list_become_separated_blocks(policy):
+    out = _text("# Title\n\n- one\n- two", policy)
+    assert "Title" in out and "one" in out and "two" in out
+    assert "\n\n" in out
+
+
+def test_drops_images(policy):
+    out = _text("Look ![alt](a.png) here.", policy)
+    assert "a.png" not in out
+    assert "Look" in out and "here" in out
+
+
+def test_empty_document_returns_empty(policy):
+    assert _text("", policy) == ""
+    assert _text("```\nonly code\n```", policy).strip() == ""
+
+
+# --- v2 behaviours ---------------------------------------------------------
+
+def test_table_is_linearized_not_piped(policy):
+    doc = "| Service | Port |\n|---|---|\n| gateway | 8080 |\n"
+    out = _text(doc, policy)
+    assert "|" not in out
+    assert "Service gateway" in out and "Port 8080" in out
+
+
+def test_task_list_markers_are_not_spoken(policy):
+    out = _text("- [ ] undone\n- [x] done\n", policy)
+    assert "[" not in out and "]" not in out
+    assert "undone" in out and "done" in out
+
+
+def test_math_is_dropped(policy):
+    out = _text("Math $x^2$ here.\n\n$$\na=b\n$$\n", policy)
+    assert "^" not in out and "$" not in out
+    assert "Math" in out and "here." in out
+
+
+def test_footnote_body_is_not_spoken(policy):
+    out = _text("Text[^1]\n\n[^1]: secret note body\n", policy)
+    assert "secret note body" not in out
+    assert "Text" in out
+
+
+def test_symbol_heavy_inline_code_becomes_a_phrase(policy):
+    out = _text("Install with `npm i --save-dev @types/node` now.", policy)
+    assert "--save-dev" not in out
+    assert "a command" in out
+
+
+def test_word_like_inline_code_is_kept_but_masked(policy):
+    result = strip_markdown("Then call `flush` on it.", policy, "en")
+    assert "flush" not in result.text          # masked until after TN
+    assert "flush" in result.masks.restore(result.text)
+
+
+def test_bare_url_in_prose_becomes_a_phrase(policy):
+    out = _text("Also www.example.com here.", policy)
+    assert "www" not in out
+    assert "a link" in out
+
+
+def test_html_is_dropped(policy):
+    out = _text("<div>hidden</div>\n\nInline <b>bold</b> text.\n", policy)
+    assert "hidden" not in out and "<b>" not in out
+    assert "bold" in out and "text." in out
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_markdown_strip.py -v`
+Expected: FAIL — `strip_markdown() takes 1 positional argument but 3 were given`.
+
+- [ ] **Step 3: Rewrite `markdown.py`**
+
+```python
+# src/local_tts/text_frontend/markdown.py
+"""Markdown document -> speakable plaintext via mistune's AST.
+
+Runs on a COMPLETE document (buffered at flush/end), not a stream — so
+mistune parses reliably (unclosed fences/bold across delta boundaries,
+which broke the old TS streaming stripper, can't happen here).
+
+Policy:
+  drop   : code blocks, images, math (inline + block), footnote bodies
+           and refs, raw HTML, autolinked/bare URLs
+  route  : tables -> table.render_table (linearize or summarize)
+           inline code -> spans.render_code_span (keep+mask or phrase)
+  keep   : link TEXT (url dropped), bold/italic/strike text
+  layout : block-level elements separated by a blank line so the synth
+           gets a prosodic gap between paragraphs/headings/list items.
+
+Plugin notes (verified against the installed mistune 3.3.x):
+  * ``url`` promotes bare "https://..." and <...> autolinks into ``link``
+    tokens whose child text IS the url — that text-equals-url signal is
+    how ``_render_link`` tells an autolink (drop) from ``[text](url)``.
+    It does NOT promote "www.foo.com"; spans.replace_bare_spans handles
+    those at the prose level.
+  * ``strikethrough`` yields a ``strikethrough`` token (NOT ``del``);
+    without it ``~~x~~`` keeps its literal markers.
+  * ``task_lists`` yields ``task_list_item`` and strips the [ ]/[x]
+    marker; without it the marker is spoken.
+  * ``math`` yields ``inline_math`` / ``block_math``; without it "$x^2$"
+    is read as "dollar x circumflex two dollar".
+  * ``footnotes`` yields ``footnote_ref`` (no children) plus a trailing
+    ``footnotes`` block — dropped, or the note bodies get read out.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+
+import mistune
+
+from .mask import MaskTable
+from .phrases import phrase
+from .policy import SpeechPolicy
+from .spans import render_code_span, replace_bare_spans
+from .table import render_table
+
+log = logging.getLogger("local_tts.text_frontend.markdown")
+
+_PARSE = mistune.create_markdown(
+    renderer=None,
+    plugins=["url", "strikethrough", "table", "task_lists", "math", "footnotes"],
+)
+
+# Block token types with no speakable content.
+_BLOCK_DROP = frozenset({"block_code", "block_math", "block_html", "thematic_break",
+                         "blank_line", "footnotes"})
+# Inline token types dropped entirely.
+_INLINE_DROP = frozenset({"image", "inline_math", "inline_html", "footnote_ref"})
+# Inline breaks: a line-wrap point inside a block, not a word boundary to
+# delete — dropping them outright glues adjacent words ("heremore").
+_INLINE_SPACE = frozenset({"softbreak", "linebreak"})
+
+
+@dataclass(frozen=True)
+class StrippedDoc:
+    """Speakable text plus the mask table protecting its kept spans."""
+
+    text: str
+    masks: MaskTable
+
+
+@dataclass(frozen=True)
+class _Ctx:
+    policy: SpeechPolicy
+    lang: str
+    masks: MaskTable
+
+
+def strip_markdown(doc: str, policy: SpeechPolicy, lang: str) -> StrippedDoc:
+    masks = MaskTable()
+    if not doc.strip():
+        return StrippedDoc(text="", masks=masks)
+    ctx = _Ctx(policy=policy, lang=lang, masks=masks)
+    blocks: list[str] = []
+    for tok in _PARSE(doc):
+        text = _render_block(tok, ctx)
+        if text and text.strip():
+            blocks.append(text.strip())
+    out = "\n\n".join(blocks)
+    log.debug("strip in_len=%d out_len=%d blocks=%d", len(doc), len(out), len(blocks))
+    return StrippedDoc(text=out, masks=masks)
+
+
+def _render_block(tok: dict, ctx: _Ctx) -> str:
+    ttype = tok.get("type")
+    if ttype in _BLOCK_DROP:
+        return ""
+    if ttype == "table":
+        return render_table(tok, lambda ch: _render_children(ch, ctx), ctx.policy, ctx.lang)
+    if ttype in ("heading", "paragraph"):
+        return _render_children(tok.get("children", []), ctx)
+    if ttype == "list":
+        items = [_render_block(item, ctx) for item in tok.get("children", [])]
+        return "\n\n".join(i.strip() for i in items if i.strip())
+    if ttype in ("list_item", "task_list_item", "block_quote"):
+        parts = [_render_block(c, ctx) for c in tok.get("children", [])]
+        return " ".join(p.strip() for p in parts if p.strip())
+    # Unknown block: best-effort read of any children.
+    return _render_children(tok.get("children", []), ctx)
+
+
+def _render_children(children: list, ctx: _Ctx) -> str:
+    return "".join(_render_inline(child, ctx) for child in children)
+
+
+def _render_inline(child: dict, ctx: _Ctx) -> str:
+    ctype = child.get("type")
+    if ctype == "text":
+        return replace_bare_spans(child.get("raw", ""), ctx.policy, ctx.lang)
+    if ctype == "codespan":
+        return render_code_span(child.get("raw", ""), ctx.policy, ctx.lang, ctx.masks)
+    if ctype == "link":
+        return _render_link(child, ctx)
+    if ctype in _INLINE_SPACE:
+        return " "
+    if ctype in _INLINE_DROP:
+        return ""
+    # Every remaining container type (strong, emphasis, strikethrough,
+    # block_text, ...) carries `children` — one dispatch rule, no allow-list.
+    if "children" in child:
+        return _render_children(child.get("children", []), ctx)
+    return ""
+
+
+def _render_link(child: dict, ctx: _Ctx) -> str:
+    text = _render_children(child.get("children", []), ctx)
+    url = child.get("attrs", {}).get("url", "")
+    if url.lower().startswith("mailto:"):
+        # Email autolink: child text is the bare address (no "mailto:"
+        # prefix), so the text==url signal below never fires for it --
+        # without this branch the address gets spoken character by character.
+        log.debug("link_dropped kind=email text_len=%d", len(text))
+        return phrase(ctx.lang, "email") if ctx.policy.speak_dropped_spans else ""
+    if text == url or not text.strip():
+        # Autolink / bare URL: visible text IS the url -> speak a phrase
+        # (or nothing) instead of leaving a grammatical hole.
+        log.debug("link_dropped kind=autolink text_len=%d", len(text))
+        return phrase(ctx.lang, "link") if ctx.policy.speak_dropped_spans else ""
+    return text
+```
+
+> Note on `_render_link`: `replace_bare_spans` already substituted the phrase inside plain `text` tokens, so when mistune's `url` plugin promoted the URL to a `link` node the child text arrives here **already rewritten** — meaning `text == url` will be False and the phrase would be emitted twice. Guard against that in Step 4's verification: if `test_bare_url_in_prose_becomes_a_phrase` shows a doubled phrase, move the `replace_bare_spans` call so it runs on `text` tokens ONLY (it already does) and confirm the autolink path returns the phrase exactly once by asserting `out.count("a link") == 1`.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_markdown_strip.py -v`
+Expected: PASS (13 tests). Then add and run this guard for the doubled-phrase risk called out above:
+
+```python
+def test_autolink_speaks_the_phrase_exactly_once(policy):
+    out = _text("See <https://example.com/x> now.", policy)
+    assert out.count("a link") == 1
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add capabilityServices/LocalTTSService/src/local_tts/text_frontend/markdown.py \
+        capabilityServices/LocalTTSService/tests/test_markdown_strip.py
+git commit -m "feat(local-tts): route tables, code spans, math and footnotes in the markdown layer"
+```
+
+---
+
+## Task 6: Frontend composition — unmask + punctuation cleanup
+
+**Files:**
+- Modify: `capabilityServices/LocalTTSService/src/local_tts/text_frontend/frontend.py`
+- Modify: `capabilityServices/LocalTTSService/src/local_tts/text_frontend/__init__.py`
+- Modify: `capabilityServices/LocalTTSService/tests/test_frontend.py`
+
+**Interfaces:**
+- Consumes: `strip_markdown` / `StrippedDoc` (Task 5), `SpeechPolicy` (Task 1), existing `strip_emoji` / `strip_pause_tags` / `Normalizer`.
+- Produces: `build_frontend(*, normalize_enabled: bool, policy: SpeechPolicy) -> TextFrontend` — **keyword-only, `policy` is required**. `TextFrontend.process(doc: str, lang: str) -> str` is unchanged in signature.
+- `text_frontend/__init__.py` exports `TextFrontend`, `build_frontend`, `SpeechPolicy`.
+
+**Order matters:** strip → emoji/pause → **TN (masked)** → **unmask** → punctuation cleanup → whitespace collapse. Unmasking before TN would defeat the mask; cleaning punctuation before unmasking would run on sentinels instead of real text.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_frontend.py
+import pytest
+
+from local_tts.text_frontend import SpeechPolicy, build_frontend
+
+
+@pytest.fixture
+def policy():
+    return SpeechPolicy(table_max_cells=24, code_span_max_chars=32, speak_dropped_spans=True)
+
+
+def test_end_to_end_markdown_currency_emoji(policy):
+    fe = build_frontend(normalize_enabled=True, policy=policy)
+    doc = "## Weather 🎉\n\nIt costs **$50** for 2 items.\n\n```py\nx=1\n```"
+    out = fe.process(doc, "en").lower()
+    assert "dollars" in out
+    assert "🎉" not in out and "weather" in out
+    assert "x=1" not in out
+    assert "$" not in out
+
+
+def test_normalize_disabled_keeps_symbols_but_strips_markdown(policy):
+    fe = build_frontend(normalize_enabled=False, policy=policy)
+    out = fe.process("Cost is **$50** 🎉", "en")
+    assert "$50" in out
+    assert "🎉" not in out
+
+
+def test_empty_after_strip_returns_empty(policy):
+    fe = build_frontend(normalize_enabled=True, policy=policy)
+    assert fe.process("```\njust code\n```", "en").strip() == ""
+
+
+def test_masked_span_is_restored_verbatim_after_normalization(policy):
+    fe = build_frontend(normalize_enabled=True, policy=policy)
+    out = fe.process("Then call `flush` and check `v1.2.3`.", "en")
+    assert "flush" in out
+    assert "v1.2.3" in out            # NOT "one point two point three"
+    assert "zqxmask" not in out       # no sentinel leaked
+
+
+def test_table_survives_the_full_pipeline(policy):
+    fe = build_frontend(normalize_enabled=True, policy=policy)
+    out = fe.process("| Service | Port |\n|---|---|\n| gateway | 8080 |\n", "en")
+    assert "vertical bar" not in out
+    assert "Service gateway" in out
+
+
+def test_no_orphan_punctuation_after_dropped_spans(policy):
+    fe = build_frontend(normalize_enabled=False, policy=policy)
+    out = fe.process("See [x](https://a.b) , and ( ) done.", "en")
+    assert " ," not in out
+    assert "( )" not in out and "()" not in out
+
+
+def test_paragraph_gaps_are_preserved(policy):
+    fe = build_frontend(normalize_enabled=True, policy=policy)
+    out = fe.process("First para.\n\nSecond para.", "en")
+    assert "\n\n" in out
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_frontend.py -v`
+Expected: FAIL — `cannot import name 'SpeechPolicy' from 'local_tts.text_frontend'`.
+
+- [ ] **Step 3: Rewrite `frontend.py`**
+
+```python
+# src/local_tts/text_frontend/frontend.py
+"""Composes the text-frontend stages into one process() call.
+
+Stage order is load-bearing:
+  strip markdown (spans masked) -> emoji/pause strip -> normalize
+  -> UNMASK -> punctuation cleanup -> whitespace collapse
+Unmasking before TN would defeat the mask; cleaning punctuation before
+unmasking would operate on sentinels instead of the real text.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+
+from .emoji_clean import strip_emoji, strip_pause_tags
+from .markdown import strip_markdown
+from .normalize import Normalizer
+from .policy import SpeechPolicy
+
+log = logging.getLogger("local_tts.text_frontend.frontend")
+
+# Collapse whitespace artifacts left by stripping WITHOUT destroying the
+# \n\n paragraph gaps that give the synth its prosodic breaks.
+_SPACES_AROUND_NL = re.compile(r"[ \t]*\n[ \t]*")
+_MULTI_NL = re.compile(r"\n{3,}")
+_MULTI_SPACE = re.compile(r"[ \t]{2,}")
+
+# Artifacts of dropping a span mid-sentence: a floating separator, an
+# emptied bracket pair, a comma butted against a full stop.
+_EMPTY_BRACKETS = re.compile(r"\(\s*\)|\[\s*\]|\{\s*\}")
+# Trailing space before punctuation is an artifact of a dropped span --
+# EXCEPT before an ellipsis, where the space is the author's and removing
+# it changes the written form the synthesizer sees.
+_SPACE_BEFORE_PUNCT = re.compile(r"[ \t]+(?=[,.;:!?，。；：！？](?![.。]))")
+# A dropped span can strand a separator against the next punctuation mark
+# (", ." / ", ,"). Delete the stranded separator, but NEVER when what
+# follows is an ellipsis -- "Wait, ... what?" is ordinary prose and the
+# ellipsis carries a real prosodic pause.
+_REPEATED_PUNCT = re.compile(r"[,;:，；：][ \t]*(?=[.,;:。，；：!！?？](?![.。]))")
+
+
+def _fix_orphan_punctuation(text: str) -> str:
+    text = _EMPTY_BRACKETS.sub("", text)
+    text = _REPEATED_PUNCT.sub("", text)
+    text = _SPACE_BEFORE_PUNCT.sub("", text)
+    return text
+
+
+def _collapse_whitespace(text: str) -> str:
+    text = _SPACES_AROUND_NL.sub("\n", text)   # trim spaces hugging newlines
+    text = _MULTI_NL.sub("\n\n", text)          # 3+ newlines -> one paragraph gap
+    text = _MULTI_SPACE.sub(" ", text)          # runs of spaces -> single
+    return text
+
+
+class TextFrontend:
+    def __init__(self, *, normalizer: Normalizer | None, policy: SpeechPolicy) -> None:
+        self._normalizer = normalizer
+        self._policy = policy
+
+    def process(self, doc: str, lang: str) -> str:
+        stripped = strip_markdown(doc, self._policy, lang)
+        text = strip_pause_tags(strip_emoji(stripped.text))
+        if self._normalizer is not None and text.strip():
+            text = self._normalize_blocks(text, lang)
+        text = stripped.masks.restore(text)
+        text = _collapse_whitespace(_fix_orphan_punctuation(text))
+        out = text.strip()
+        log.debug("process in_len=%d out_len=%d lang=%s normalize=%s",
+                  len(doc), len(out), lang, self._normalizer is not None)
+        return out
+
+    def _normalize_blocks(self, text: str, lang: str) -> str:
+        # wetext flattens newlines, so normalizing the whole document glues
+        # paragraph blocks together and destroys the \n\n prosodic gaps that
+        # strip_markdown emits. Normalize each block independently and
+        # rejoin with \n\n to preserve them.
+        blocks = text.split("\n\n")
+        out = [
+            self._normalizer.normalize(b, lang) if b.strip() else b
+            for b in blocks
+        ]
+        return "\n\n".join(out)
+
+
+def build_frontend(*, normalize_enabled: bool, policy: SpeechPolicy) -> TextFrontend:
+    return TextFrontend(
+        normalizer=Normalizer() if normalize_enabled else None,
+        policy=policy,
+    )
+```
+
+- [ ] **Step 4: Update `__init__.py`**
+
+```python
+# src/local_tts/text_frontend/__init__.py
+"""Text frontend: markdown/emoji strip + normalization before synthesis."""
+
+from .frontend import TextFrontend, build_frontend
+from .policy import SpeechPolicy
+
+__all__ = ["SpeechPolicy", "TextFrontend", "build_frontend"]
+```
+
+- [ ] **Step 5: Run test to verify it passes**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_frontend.py -v`
+Expected: PASS (7 tests).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add capabilityServices/LocalTTSService/src/local_tts/text_frontend/frontend.py \
+        capabilityServices/LocalTTSService/src/local_tts/text_frontend/__init__.py \
+        capabilityServices/LocalTTSService/tests/test_frontend.py
+git commit -m "feat(local-tts): unmask after TN and clean orphan punctuation"
+```
+
+---
+
+## Task 7: Config wiring — three new required keys
+
+**Files:**
+- Modify: `capabilityServices/LocalTTSService/src/local_tts/config.py:65-71` (dataclass) and `:175-178` (`_parse`)
+- Modify: `capabilityServices/LocalTTSService/config/config.example.yaml:112-119`
+- Modify: `capabilityServices/LocalTTSService/src/local_tts/server.py:85-88`
+- Modify: `capabilityServices/LocalTTSService/tests/test_config.py`
+- Modify: `capabilityServices/LocalTTSService/tests/test_synthesis_frontend.py`
+
+**Interfaces:**
+- Consumes: `SpeechPolicy` (Task 1), `build_frontend(normalize_enabled=..., policy=...)` (Task 6).
+- Produces: `TextFrontendConfig(enabled: bool, normalize: bool, table_max_cells: int, code_span_max_chars: int, speak_dropped_spans: bool)`. All five REQUIRED — `_require` raises `ConfigError` on any missing key.
+
+- [ ] **Step 1: Add the config keys to the example YAML**
+
+In `config/config.example.yaml`, replace the `text_frontend:` block (currently lines 113-118) with:
+
+```yaml
+text_frontend:
+  # Master switch: run markdown/emoji strip + normalization at all.
+  enabled: true
+
+  # Run wetext WFST text normalization ($/%/numbers/dates/units).
+  normalize: true
+
+  # Tables with MORE body cells than this (rows x columns) are summarized
+  # ("a table with 20 rows and 6 columns") instead of read out row by row.
+  # Small tables are linearized screen-reader style: "Service gateway,
+  # Port 8080." Range: 0-200; 0 summarizes every table.
+  table_max_cells: 24
+
+  # Inline `code` longer than this many characters is treated as non-prose
+  # (a command, not a word) and replaced by a short phrase rather than
+  # spoken character by character. Range: 8-120.
+  code_span_max_chars: 32
+
+  # When a span is dropped (command, file path, URL), speak a short
+  # placeholder ("a command") so the sentence keeps its grammar. Set false
+  # to drop silently.
+  speak_dropped_spans: true
+```
+
+- [ ] **Step 2: Write the failing test**
+
+In `tests/test_config.py`, update the module-level `_MINIMAL_YAML` constant so its `text_frontend:` section matches the block above verbatim, then add:
+
+```python
+def test_text_frontend_speech_policy_keys_parsed(tmp_path):
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(_MINIMAL_YAML)
+    cfg = load_config(str(cfg_file))
+    assert cfg.text_frontend.table_max_cells == 24
+    assert cfg.text_frontend.code_span_max_chars == 32
+    assert cfg.text_frontend.speak_dropped_spans is True
+
+
+def test_missing_table_max_cells_raises(tmp_path):
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(_MINIMAL_YAML.replace("  table_max_cells: 24\n", ""))
+    with pytest.raises(ConfigError):
+        load_config(str(cfg_file))
+```
+
+- [ ] **Step 3: Run test to verify it fails**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_config.py -v`
+Expected: FAIL — `AttributeError: 'TextFrontendConfig' object has no attribute 'table_max_cells'`.
+
+- [ ] **Step 4: Extend `config.py`**
+
+Replace the `TextFrontendConfig` dataclass:
+
+```python
+@dataclass(frozen=True)
+class TextFrontendConfig:
+    """Text preprocessing before synthesis (markdown/emoji strip + TN)."""
+
+    enabled: bool
+    normalize: bool
+    table_max_cells: int
+    code_span_max_chars: int
+    speak_dropped_spans: bool
+```
+
+and the `text_frontend=` block inside `_parse`'s `Config(...)`:
+
+```python
+        text_frontend=TextFrontendConfig(
+            enabled=_require(text_frontend_raw, "text_frontend.enabled", bool),
+            normalize=_require(text_frontend_raw, "text_frontend.normalize", bool),
+            table_max_cells=_require(text_frontend_raw, "text_frontend.table_max_cells", int),
+            code_span_max_chars=_require(
+                text_frontend_raw, "text_frontend.code_span_max_chars", int
+            ),
+            speak_dropped_spans=_require(
+                text_frontend_raw, "text_frontend.speak_dropped_spans", bool
+            ),
+        ),
+```
+
+- [ ] **Step 5: Wire the policy in `server.py`**
+
+Change the import on line 48 to:
+
+```python
+from .text_frontend import SpeechPolicy, build_frontend
+```
+
+and the frontend construction (currently lines 85-88) to:
+
+```python
+        self._frontend = (
+            build_frontend(
+                normalize_enabled=config.text_frontend.normalize,
+                policy=SpeechPolicy(
+                    table_max_cells=config.text_frontend.table_max_cells,
+                    code_span_max_chars=config.text_frontend.code_span_max_chars,
+                    speak_dropped_spans=config.text_frontend.speak_dropped_spans,
+                ),
+            )
+            if config.text_frontend.enabled
+            else _PassthroughFrontend()
+        )
+```
+
+- [ ] **Step 6: Fix the existing frontend-construction call in tests**
+
+`tests/test_synthesis_frontend.py` calls `build_frontend(normalize_enabled=True)`. Update it to:
+
+```python
+    fe = build_frontend(
+        normalize_enabled=True,
+        policy=SpeechPolicy(table_max_cells=24, code_span_max_chars=32, speak_dropped_spans=True),
+    )
+```
+
+adding `from local_tts.text_frontend import SpeechPolicy, build_frontend` at the top. Run `cd capabilityServices/LocalTTSService && grep -rn "build_frontend" tests/ src/` and fix every remaining call site the same way.
+
+- [ ] **Step 7: Run the full service suite**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest -v`
+Expected: PASS (all non-`live` tests).
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add capabilityServices/LocalTTSService/src/local_tts/config.py \
+        capabilityServices/LocalTTSService/config/config.example.yaml \
+        capabilityServices/LocalTTSService/src/local_tts/server.py \
+        capabilityServices/LocalTTSService/tests/
+git commit -m "feat(local-tts): add speech-policy config keys and wire them at startup"
+```
+
+---
+
+## Task 8: Deploy — recursive additive config reconcile
+
+**Files:**
+- Modify: `capabilityServices/../deploy/mac-prod/native/service-config-reconcile.py` (path from repo root: `deploy/mac-prod/native/service-config-reconcile.py`)
+
+**Interfaces:**
+- Produces: `reconcile(template_text: str, config_text: str) -> tuple[str, list[str]]` — unchanged signature, new behaviour. `added` now contains **dotted paths** (`text_frontend.table_max_cells`) as well as top-level keys.
+
+**Why this task exists:** the reconciler currently copies **top-level keys only**, by explicit design ("A newly-required NESTED key still needs a bespoke migration — deliberately out of scope"). Task 7 adds three keys *nested* under an existing `text_frontend:` section. On a prod host whose `~/.sentient/...` config already has `text_frontend:`, the reconciler would skip it, local-tts's fail-loud loader would raise `ConfigError: missing required key 'text_frontend.table_max_cells'`, and TTS would not start — the exact outage this script was written to prevent, one level deeper. Recursion stays strictly additive (only keys ABSENT from the target are copied), so operator edits and tuned values are still never touched.
+
+`deploy/setup-prod.py` needs **no change** — it already calls `reconcile_service_config(...)` between local-tts install and start.
+
+- [ ] **Step 1: Make `reconcile` recurse**
+
+Replace the `reconcile` function body with:
+
+```python
+def reconcile(template_text: str, config_text: str) -> tuple[str, list[str]]:
+    """Return (updated_text, added_paths). Additive-only, comment-preserving.
+
+    Recurses into nested mappings so a newly-required key one or more
+    levels down (e.g. ``text_frontend.table_max_cells``) also lands in an
+    already-seeded host config. Only keys MISSING from the target are
+    added; existing keys, values and ordering are never modified.
+    """
+    yaml = _yaml()
+    template = yaml.load(template_text)
+    config = yaml.load(config_text)
+    if config is None:  # blank/empty target — treat every template key as missing
+        config = yaml.load("{}\n")
+
+    added: list[str] = []
+    _merge_missing(template, config, "", added)
+    return _dump(yaml, config), added
+
+
+def _merge_missing(template, config, prefix: str, added: list[str]) -> None:
+    """Copy template keys absent from config, recursing into mappings."""
+    for key in template:
+        path = f"{prefix}{key}"
+        if key not in config:
+            # Copy value + its INNER comments (per-field comments live inside
+            # the value's CommentedMap and travel with it). We deliberately do
+            # NOT copy the key's `.ca` entry: ruamel often stores a block
+            # comment there that actually belongs to the FOLLOWING key, which
+            # would duplicate that header into the target.
+            config[key] = template[key]
+            added.append(path)
+            continue
+        # Key exists on both sides: recurse only when BOTH are mappings.
+        # A type mismatch (operator turned a section into a scalar) is left
+        # alone — this tool never overwrites, it only fills gaps.
+        if _is_mapping(template[key]) and _is_mapping(config[key]):
+            _merge_missing(template[key], config[key], f"{path}.", added)
+
+
+def _is_mapping(value) -> bool:
+    """True for YAML mappings (ruamel CommentedMap subclasses dict)."""
+    return isinstance(value, dict)
+```
+
+- [ ] **Step 2: Update the module docstring**
+
+In the same file, replace the paragraph beginning `Scope: top-level keys only.` with:
+
+```
+Scope: recurses into nested mappings, so a newly-required key at any
+depth (e.g. `text_frontend.table_max_cells`) is filled in too. Recursion
+only descends where BOTH sides are mappings; a type mismatch is left
+untouched, because this tool fills gaps and never overwrites.
+```
+
+- [ ] **Step 3: Verify against a synthetic stale config**
+
+```bash
+cd /Users/kevinye/Development/sentient
+python3 - <<'PY'
+import pathlib, tempfile, textwrap
+stale = textwrap.dedent("""
+schema_version: 1
+text_frontend:
+  enabled: true
+  normalize: true
+""").lstrip()
+p = pathlib.Path(tempfile.mkdtemp()) / "config.yaml"
+p.write_text(stale)
+print(p)
+PY
+```
+
+Take the printed path and run (substitute `<PATH>`):
+
+```bash
+python3 deploy/mac-prod/native/service-config-reconcile.py \
+  --template capabilityServices/LocalTTSService/config/config.example.yaml \
+  --config <PATH>
+```
+
+Expected: a unified diff whose `+` lines include `table_max_cells: 24`, `code_span_max_chars: 32` and `speak_dropped_spans: true` **inside** the existing `text_frontend:` block, and whose summary line names the dotted paths. The pre-existing `enabled: true` / `normalize: true` lines must be unchanged.
+
+If `ruamel.yaml` is missing the script exits 2 with `ruamel.yaml required` — install it into whatever interpreter you use for this check (`python3 -m pip install ruamel.yaml`) and re-run.
+
+- [ ] **Step 4: Verify idempotence**
+
+Re-run the same command with `--apply`, then run it once more without `--apply`.
+Expected: the second run prints `no change needed`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add deploy/mac-prod/native/service-config-reconcile.py
+git commit -m "fix(deploy): reconcile nested service-config keys, not just top-level"
+```
+
+---
+
+## Task 9: Version bump
+
+**Files:**
+- Modify: `capabilityServices/LocalTTSService/pyproject.toml:9`
+
+- [ ] **Step 1: Bump the version**
+
+Change line 9 from `version = "1.1.0"` to:
+
+```toml
+version = "1.2.0"
+```
+
+- [ ] **Step 2: Confirm no dependency drift**
+
+Run: `cd capabilityServices/LocalTTSService && grep -n "mistune\|emoji\|wetext" pyproject.toml requirements.txt`
+Expected: the same three specifiers (`mistune>=3.3,<4`, `emoji>=2.14,<3`, `wetext>=0.1`) present in BOTH files. This plan adds no dependencies; if they differ, fix `requirements.txt` to match `pyproject.toml`.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add capabilityServices/LocalTTSService/pyproject.toml
+git commit -m "chore(local-tts): bump version to 1.2.0"
+```
+
+---
+
+## Task 10: Quality gate + live chat verification
+
+**Files:** none (verification only).
+
+**No audio e2e.** The agent cannot validate synthesized speech, so this task proves the frontend is *installed, wired and running* and that a real chat reply still completes end to end. Audio quality is the user's to judge.
+
+- [ ] **Step 1: Full service unit suite**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest -v`
+Expected: PASS, all non-`live` tests. (The service is managed with `uv`, not pip — do NOT run `pip install -e .`. This plan adds no dependencies, so no `uv sync` is needed either; the existing `.venv` already resolves `local_tts` from `src/`.)
+
+- [ ] **Step 2: Regression probe on the original failing document**
+
+```bash
+cd /Users/kevinye/Development/sentient/capabilityServices/LocalTTSService
+.venv/bin/python - <<'PY'
+from local_tts.text_frontend import SpeechPolicy, build_frontend
+
+fe = build_frontend(
+    normalize_enabled=True,
+    policy=SpeechPolicy(table_max_cells=24, code_span_max_chars=32, speak_dropped_spans=True),
+)
+DOC = """## Setup guide
+
+Install with `npm install --save-dev @types/node@^20.1.0` then run `bun run test:unit`.
+
+Docs at https://example.com/a/b?x=1 or see [the guide](https://docs.example.com/guide).
+Also www.example.com and <https://auto.link/x>.
+
+| Service | Port | Status |
+|---------|------|--------|
+| gateway | 8080 | up     |
+| tts     | 8888 | down   |
+
+```python
+def foo(x):
+    return x ** 2
+```
+
+- [ ] task one
+- [x] task two
+
+Path: `/Users/kev/dev/sentient/gateway/src/a.ts`
+Math: $x^2 + y^2 = z^2$ and 5 - 10 items.
+"""
+out = fe.process(DOC, "en")
+print(out)
+for bad in ("vertical bar", "circumflex", "slash Users", "dollar x", "[ ]", "--save-dev"):
+    assert bad not in out, f"REGRESSION: {bad!r} still spoken"
+print("\nOK: no symbol-soup markers present")
+PY
+```
+
+Expected: prints readable prose ending with `OK: no symbol-soup markers present`. No assertion fires.
+
+- [ ] **Step 3: Gateway CI (proves nothing gateway-side broke)**
+
+Run: `cd /Users/kevinye/Development/sentient && source scripts/env.sh && bun run ci`
+Expected: lint + typecheck + tests all PASS.
+
+- [ ] **Step 4: Restart the local native local-tts and confirm it boots with the new config**
+
+```bash
+cd /Users/kevinye/Development/sentient
+bash deploy/mac-prod/native/local-tts.sh restart
+sleep 5
+curl -s localhost:8771/health
+```
+
+Expected: health responds OK. If it exits with `ConfigError: missing required key 'text_frontend.table_max_cells'`, the local `~/.sentient` config predates Task 7 — run the Task 8 reconciler against it with `--apply` (do NOT hand-edit or overwrite the host config) and restart.
+
+- [ ] **Step 5: One real chat reply through the local stack**
+
+Boot the local stack per `deploy/macos/`, open the webui, send a message that provokes markdown (e.g. "give me a two-row table of two services and their ports, plus a one-line code example"), and confirm:
+- the assistant reply renders in the webui (text path unaffected),
+- the local-tts log shows `local_tts.text_frontend.frontend process ... normalize=True` and a `table_linearized` or `table_summarized` debug line,
+- no WARN/ERROR in the gateway or local-tts logs for that cycle.
+
+Record the log excerpt in the handover. Audio correctness is explicitly NOT asserted here.
+
+- [ ] **Step 6: Commit any fixups**
+
+```bash
+git commit -am "chore: quality-gate fixups for tts text-frontend robustness" || echo "nothing to commit"
+```
+
+---
+
+## Task 11: Residual-symbol sweep (L1 backstop)
+
+**Files:**
+- Create: `capabilityServices/LocalTTSService/src/local_tts/text_frontend/residual.py`
+- Modify: `capabilityServices/LocalTTSService/src/local_tts/text_frontend/frontend.py`
+- Test: `capabilityServices/LocalTTSService/tests/test_residual.py`
+- Test: `capabilityServices/LocalTTSService/tests/test_frontend.py` (one composed case)
+
+**Why this task exists:** L1 only routes what mistune *types*. Anything it fails to type
+arrives at the normalizer as literal punctuation, and the normalizer's whole contract is to
+verbalize it. That is the gap that let nested tables through, and it is still open for
+markdown-ish punctuation that never had a node to begin with. This stage makes L1 fail
+**safe**: sweep the residue instead of speaking it.
+
+Six leak classes reproduced against the current branch:
+
+| Input | Spoken today |
+|---|---|
+| `Humidity 71% \| Wind 3.6 km/h` | "…percent **vertical bar** Wind…" |
+| `Read *https://x* now` / `*unclosed` | "**asterisk** …" |
+| `Trailing ~ tilde` | "**tilde** tilde" |
+| `A # hash mid sentence` | "A **number** hash…" |
+| `snake_case_word` (in prose, not backticked) | "snake **underscore** case **underscore** word" |
+| `#tag` | "**hash** tag" |
+
+The prose `|` case is the motivating one: a single line of `a | b | c` is a *visual*
+separator, not a table — mistune needs a delimiter row to emit a `table` node, so this stays
+one plain `text` token and Task 5's table routing never sees it.
+
+**Interfaces:**
+- Produces: `sweep_residual_symbols(text: str) -> str`.
+- Consumed by `TextFrontend.process`, which calls it **after** markdown strip + emoji/pause
+  strip and **before** normalization.
+
+**Placement is safe with respect to masking:** sentinels are letters-only, so no rule here
+can touch one. That is also what makes the underscore rule correct — a backticked
+`` `snake_case_name` `` is already masked and keeps its underscores, while a *prose*
+`snake_case_word` gets them spoken as spaces. Prose and code diverge exactly as they should.
+
+**Policy, decided by the user:**
+- `|` → a sentence break, because the pipe is a *stronger* divider than the commas already
+  inside each segment; a period preserves that hierarchy and gives the synth a real pause.
+- stray `*` and `~` → deleted (orphaned emphasis / strikethrough markers).
+- `#` → deleted, EXCEPT directly after a letter, so `C#` and `F#` survive.
+- `_` between word characters → a space; leading/trailing underscores deleted.
+- `&`, `^`, `=`, `<`, `>`, `\`, `{}`, `[]` → left alone; the normalizer already speaks those
+  acceptably ("and", "squared", "equals").
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_residual.py
+from local_tts.text_frontend.residual import sweep_residual_symbols
+
+
+def test_pipe_becomes_a_sentence_break():
+    out = sweep_residual_symbols("Partly cloudy, 22.7C | Humidity 71% | Wind 3.6")
+    assert "|" not in out
+    assert "22.7C. Humidity" in out
+    assert "71%. Wind" in out
+
+
+def test_pipe_does_not_double_existing_terminal_punctuation():
+    # "foo. | bar" must not become "foo.. bar"
+    out = sweep_residual_symbols("First done. | Second next")
+    assert ".." not in out
+    assert "done. Second" in out
+
+
+def test_repeated_pipes_collapse_to_one_break():
+    out = sweep_residual_symbols("a || b")
+    assert "|" not in out
+    assert out.count(".") == 1
+
+
+def test_stray_emphasis_markers_are_dropped():
+    assert "*" not in sweep_residual_symbols("Some *unclosed emphasis here")
+    assert "~" not in sweep_residual_symbols("Trailing ~ tilde and ~unclosed")
+
+
+def test_hash_dropped_but_sharp_language_names_survive():
+    assert sweep_residual_symbols("#tag").strip() == "tag"
+    assert "C#" in sweep_residual_symbols("I write C# daily")
+
+
+def test_underscores_in_prose_become_spaces():
+    assert sweep_residual_symbols("snake_case_word here") == "snake case word here"
+
+
+def test_ordinary_prose_is_untouched():
+    s = "The weather is nice today, and it costs $50 (roughly)."
+    assert sweep_residual_symbols(s) == s
+
+
+def test_symbols_the_normalizer_handles_well_are_left_alone():
+    s = "Tom & Jerry, a^2, x = y, 5 < 6 > 4"
+    assert sweep_residual_symbols(s) == s
+
+
+def test_sentinel_tokens_are_untouched():
+    # Masked spans are letters-only; no rule here may alter one.
+    s = "call zqxmaskaz and zqxmaskba now"
+    assert sweep_residual_symbols(s) == s
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_residual.py -v`
+Expected: FAIL with `ModuleNotFoundError: No module named 'local_tts.text_frontend.residual'`
+
+- [ ] **Step 3: Implement**
+
+```python
+# src/local_tts/text_frontend/residual.py
+"""Backstop sweep for markdown-ish punctuation the AST never typed.
+
+L1 routes what mistune gives it a NODE for. Anything else survives as
+literal text and reaches the normalizer, whose contract is to give every
+symbol a spoken form -- so a stray marker becomes "asterisk", and a
+single line of "a | b | c" (a visual separator, NOT a table: mistune
+needs a delimiter row to emit a table node) becomes "vertical bar".
+
+This stage runs on prose only, after the markdown strip and before
+normalization, and makes that layer fail SAFE. Sentinels are letters-only
+so nothing here can disturb a masked span -- which is also why a
+backticked `snake_case` keeps its underscores while a prose one does not.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+
+log = logging.getLogger("local_tts.text_frontend.residual")
+
+# Terminal punctuation that already supplies the break a pipe would add.
+_TERMINAL = ".!?。！？"
+
+# One or more pipes, with the whitespace around them.
+_PIPE_RUN_RE = re.compile(r"[ \t]*\|+[ \t]*")
+# Orphaned emphasis / strikethrough markers left by unbalanced markup.
+_STRAY_MARKERS_RE = re.compile(r"[*~]+")
+# A hash NOT preceded by a letter -- "#tag" goes, "C#"/"F#" stay.
+_STRAY_HASH_RE = re.compile(r"(?<![A-Za-z])#+")
+# Underscores joining word characters ("snake_case") -> a word boundary.
+_INNER_UNDERSCORE_RE = re.compile(r"(?<=\w)_+(?=\w)")
+# Underscores hanging off either end of a word.
+_EDGE_UNDERSCORE_RE = re.compile(r"(?<!\w)_+|_+(?!\w)")
+
+
+def _pipe_to_break(match: re.Match) -> str:
+    """A pipe becomes a sentence break -- unless the text already ended in one."""
+    text = match.string
+    before = text[: match.start()].rstrip()
+    if not before:
+        return ""
+    if before[-1] in _TERMINAL:
+        return " "
+    return ". "
+
+
+def sweep_residual_symbols(text: str) -> str:
+    out = _PIPE_RUN_RE.sub(_pipe_to_break, text)
+    out = _STRAY_MARKERS_RE.sub("", out)
+    out = _STRAY_HASH_RE.sub("", out)
+    out = _INNER_UNDERSCORE_RE.sub(" ", out)
+    out = _EDGE_UNDERSCORE_RE.sub("", out)
+    if out != text:
+        log.debug("residual_swept in_len=%d out_len=%d", len(text), len(out))
+    return out
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_residual.py -v`
+Expected: PASS (9 tests).
+
+- [ ] **Step 5: Wire it into the composer**
+
+In `frontend.py`, import it and add the stage between the emoji/pause strip and
+normalization — the comment in `process()` documenting stage order must gain it too:
+
+```python
+from .residual import sweep_residual_symbols
+```
+
+```python
+        text = strip_pause_tags(strip_emoji(stripped.text))
+        text = sweep_residual_symbols(text)
+        if self._normalizer is not None and text.strip():
+```
+
+- [ ] **Step 6: Add the composed case**
+
+```python
+# tests/test_frontend.py
+def test_prose_pipe_separator_is_not_spoken(policy):
+    fe = build_frontend(normalize_enabled=True, policy=policy)
+    out = fe.process("Partly cloudy, 22.7C | Humidity 71% | Wind 3.6 km/h", "en")
+    assert "vertical bar" not in out
+    assert "percent" in out and "kilometers per hour" in out
+```
+
+- [ ] **Step 7: Run the full suite**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest -v`
+Expected: PASS. Every pre-existing test must still be green — pay particular attention to
+the masking tests (a sentinel must survive this stage untouched) and to
+`test_paragraph_gaps_are_preserved` (the sweep must not disturb `\n\n`).
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add capabilityServices/LocalTTSService/src/local_tts/text_frontend/residual.py \
+        capabilityServices/LocalTTSService/src/local_tts/text_frontend/frontend.py \
+        capabilityServices/LocalTTSService/tests/test_residual.py \
+        capabilityServices/LocalTTSService/tests/test_frontend.py
+git commit -m "feat(local-tts): sweep residual markdown punctuation before normalization"
+```
+
+---
+
+# ADDENDUM — measured rework (Tasks 12–14)
+
+Tasks 1–11 were designed from *reading* the pipeline. Tasks 12–14 are designed
+from **measuring** it: a TTS→STT loop-back harness (`scripts/tts_stt_loopback.py`,
+commit `4d43691`) synthesized ~250 cases through local-tts and transcribed them
+back through whisper-stt, so the effect of each layer is evidence, not inference.
+
+**What the measurements showed**
+
+| Layer | Verdict |
+|---|---|
+| L1 structure + L2 span policy (Tasks 1–10) | **Essential.** Raw markdown reads code aloud, spells URLs out, turns `##` into "But but", `**` into "19", `- [ ]` into "might/minus", reads footnote bodies, renders tables as gibberish. With the strip, all clean. |
+| wetext TN, **English** | **Net-negative.** Breaks 3 cases the model gets right unaided (`\|`→"vertical bar", `snake_case`→"underscore underscore", `3.6 km/h`→"kilometers. Per hour are"); fixes only 2 (`*`→"times", `~`→"approximately"). |
+| wetext TN, **Chinese** | **Earns its place, narrowly.** `$50`→五十美元, `￥88`→88元, `7:30`→七点三十分. Without it the currency unit is dropped entirely. |
+| Residual sweep (Task 11) | **No measurable benefit in any battery.** Not one case where `sweep` beat `tn`. |
+
+Qwen3-TTS handles unaided, in English: ordinals, fractions, ranges, negatives,
+`1,234,567`, `$50`, `$4.99`, `90%`, `22.7°C`, `3.6 km/h`, `250g`, `Dr.`/`Mr.`,
+`e.g.`, acronyms, `1.2.3`, `8080`, `1984`, 12h/24h times, natural dates — and it
+renders a prose `|` as a natural pause on its own, which is what Task 11 was
+built to force.
+
+**Not fixed by any configuration, documented and accepted:** `2026-07-20` →
+"2026 to 07 to 20" (the model reads `-` as "to" natively — the range shim was
+never the cause), `C#` → "C hash", `config.yaml` → "config.uramel".
+
+**Deliberately NOT added:** a lexicon mapping `*`→"times" and `~`→"approximately"
+would recover the only two things English TN was buying. It is measured and real,
+but it reintroduces symbol-intent guessing for a rare case, so it stays a
+documented follow-up rather than shipping here.
+
+## Global Constraints (addendum)
+
+- Everything in the parent plan still applies.
+- **Language resolution happens per BLOCK, not per document.** A reply can mix
+  scripts; `default_lang` ships as `"auto"`.
+- `wetext.Normalizer` accepts `lang="auto"` and routes correctly by itself —
+  verified. Our own `_engine_key` collapsing `"auto"`→`"en"` is the bug.
+
+---
+
+## Task 12: Language-aware normalization + the `"auto"` fix
+
+**Files:**
+- Modify: `capabilityServices/LocalTTSService/src/local_tts/text_frontend/normalize.py`
+- Test: `capabilityServices/LocalTTSService/tests/test_normalize.py`
+
+**Interfaces:**
+- Produces: `detect_lang(text: str) -> str` — `"ja"` if kana present, else `"zh"` if
+  Han present, else `"en"`.
+- Produces: `resolve_lang(declared: str, text: str) -> str` — returns `declared`
+  when it is a concrete supported language (`en`/`zh`/`ja`), otherwise detects
+  from `text`. This is what replaces `_engine_key`.
+- `Normalizer.normalize(text: str, lang: str) -> str` keeps its signature but
+  `lang` MUST now be a concrete language; callers resolve first.
+
+**The production bug this fixes.** `config.yaml` ships `default_lang: "auto"`.
+`_engine_key("auto")` returns `"en"`, so every Chinese reply is normalized by the
+English engine:
+
+```
+'这个价格是 $50。'              -> '这个价格是 fifty dollars。'
+'湿度是 71%，风速 3.6 公里每小时。' -> '湿度是 seventy one percent，风速 three point six 公里每小时。'
+'会议在 7:30 开始。'            -> '会议在 seven thirty 开始。'
+```
+
+English number words spliced into Chinese speech, live on the Mac mini today.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_normalize.py  (add; keep the existing currency/percent tests)
+from local_tts.text_frontend.normalize import detect_lang, resolve_lang
+
+
+def test_detect_lang_by_script():
+    assert detect_lang("It costs fifty dollars.") == "en"
+    assert detect_lang("这个价格是五十美元。") == "zh"
+    assert detect_lang("これはテストです。") == "ja"
+
+
+def test_detect_lang_mixed_prefers_cjk():
+    # A CJK sentence with embedded latin is still CJK.
+    assert detect_lang("价格 $50 and it costs $20 too.") == "zh"
+
+
+def test_resolve_lang_honours_a_concrete_declaration():
+    assert resolve_lang("zh", "plain english text") == "zh"
+    assert resolve_lang("en", "这是中文") == "en"
+
+
+def test_resolve_lang_detects_when_declared_auto():
+    # THE production bug: "auto" used to collapse to "en", so Chinese was
+    # normalized by the English engine and spoke "fifty dollars".
+    assert resolve_lang("auto", "这个价格是 $50。") == "zh"
+    assert resolve_lang("auto", "It costs $50.") == "en"
+
+
+def test_auto_chinese_normalizes_to_chinese_currency(norm):
+    lang = resolve_lang("auto", "这个价格是 $50。")
+    out = norm.normalize("这个价格是 $50。", lang)
+    assert "美元" in out
+    assert "dollars" not in out
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_normalize.py -v`
+Expected: FAIL — `cannot import name 'detect_lang'`.
+
+- [ ] **Step 3: Implement**
+
+Replace `_engine_key` and delete both English shims:
+
+```python
+# Kana implies Japanese; Han without kana implies Chinese.
+_KANA_RE = re.compile(r"[぀-ヿ]")
+_HAN_RE = re.compile(r"[㐀-鿿豈-﫿]")
+
+_SUPPORTED = ("en", "zh", "ja")
+
+
+def detect_lang(text: str) -> str:
+    """Resolve a language from the script actually present in ``text``."""
+    if _KANA_RE.search(text):
+        return "ja"
+    if _HAN_RE.search(text):
+        return "zh"
+    return "en"
+
+
+def resolve_lang(declared: str, text: str) -> str:
+    """Concrete language for ``text``; detects when ``declared`` is not one.
+
+    ``default_lang`` ships as "auto". The previous implementation mapped
+    anything unrecognized to "en", which meant every Chinese reply was
+    normalized by the ENGLISH engine and spoke "fifty dollars" instead of
+    "五十美元". Detection is what "auto" was always supposed to mean.
+    """
+    if declared in _SUPPORTED:
+        return declared
+    return detect_lang(text)
+```
+
+Delete `_RANGE_RE`, `_NEG_RE` and their use in `normalize()`. They were
+band-aids for wetext's English grammar, and English is no longer normalized by
+default (Task 13). The measurements also showed the range shim was NOT the cause
+of the ISO-date reading — the model produces "2026 to 07 to 20" unaided. Leave a
+comment saying so, so nobody re-adds them.
+
+`normalize()` becomes:
+
+```python
+    def normalize(self, text: str, lang: str) -> str:
+        out = self._for(lang).normalize(text)
+        log.debug("normalize lang=%s in_len=%d out_len=%d", lang, len(text), len(out))
+        return out
+```
+
+and `_for` keys the cache on `lang` directly (callers pass a concrete language).
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_normalize.py -v`
+Expected: PASS. Existing tests that relied on the range/negative shims will fail —
+delete those two tests; the behaviour they pinned is deliberately gone.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add capabilityServices/LocalTTSService/src/local_tts/text_frontend/normalize.py \
+        capabilityServices/LocalTTSService/tests/test_normalize.py
+git commit -m "fix(local-tts): detect language for 'auto' instead of forcing English"
+```
+
+---
+
+## Task 13: Gate TN by language; delete the residual sweep
+
+**Files:**
+- Modify: `capabilityServices/LocalTTSService/src/local_tts/text_frontend/frontend.py`
+- Delete: `capabilityServices/LocalTTSService/src/local_tts/text_frontend/residual.py`
+- Delete: `capabilityServices/LocalTTSService/tests/test_residual.py`
+- Modify: `capabilityServices/LocalTTSService/tests/test_frontend.py`
+
+**Interfaces:**
+- `build_frontend(*, normalize_enabled: bool, normalize_languages: tuple[str, ...], policy: SpeechPolicy) -> TextFrontend`.
+- `TextFrontend.process(doc, lang)` unchanged.
+
+**Behaviour:** `_normalize_blocks` resolves the language **per block** and runs
+wetext only when that language is in `normalize_languages`. A mixed reply gets
+Chinese blocks normalized and English blocks left alone.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_frontend.py
+def _fe(policy, langs=("zh", "ja")):
+    return build_frontend(normalize_enabled=True, normalize_languages=langs, policy=policy)
+
+
+def test_english_is_not_normalized(policy):
+    out = _fe(policy).process("It costs $50 for 2 items.", "auto")
+    assert "$50" in out          # left for the model, which speaks it correctly
+    assert "dollars" not in out
+
+
+def test_chinese_is_normalized(policy):
+    out = _fe(policy).process("这个价格是 $50。", "auto")
+    assert "美元" in out
+    assert "dollars" not in out
+
+
+def test_mixed_document_normalizes_only_the_cjk_block(policy):
+    out = _fe(policy).process("It costs $50.\n\n这个价格是 $50。", "auto")
+    assert "$50" in out          # english block untouched
+    assert "美元" in out          # chinese block normalized
+
+
+def test_pipe_is_left_for_the_model(policy):
+    # Measured: the model renders a prose pipe as a natural pause, and the
+    # English normalizer is what used to say "vertical bar".
+    out = _fe(policy).process("Cloudy | Humidity 71% | Windy", "auto")
+    assert "|" in out
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_frontend.py -v`
+Expected: FAIL — `build_frontend() got an unexpected keyword argument 'normalize_languages'`.
+
+- [ ] **Step 3: Delete the sweep**
+
+```bash
+cd /Users/kevinye/Development/sentient
+git rm capabilityServices/LocalTTSService/src/local_tts/text_frontend/residual.py \
+       capabilityServices/LocalTTSService/tests/test_residual.py
+```
+
+Remove the `sweep_residual_symbols` import and its call from `frontend.py`, and
+delete `test_prose_pipe_separator_is_not_spoken` plus the `issue #42` composed
+test from `test_frontend.py` (both pinned sweep behaviour that is now gone).
+
+- [ ] **Step 4: Implement the per-block gate**
+
+```python
+from .normalize import Normalizer, resolve_lang
+
+
+class TextFrontend:
+    def __init__(self, *, normalizer, normalize_languages, policy) -> None:
+        self._normalizer = normalizer
+        self._normalize_languages = tuple(normalize_languages)
+        self._policy = policy
+
+    def _normalize_blocks(self, text: str, lang: str) -> str:
+        # wetext flattens newlines, so each block is normalized separately to
+        # preserve the \n\n prosodic gaps. Language is resolved PER BLOCK: a
+        # reply can mix scripts, and English measurably sounds better with no
+        # normalization at all while Chinese needs it for currency and times.
+        out: list[str] = []
+        for block in text.split("\n\n"):
+            resolved = resolve_lang(lang, block)
+            if block.strip() and resolved in self._normalize_languages:
+                out.append(self._normalizer.normalize(block, resolved))
+            else:
+                out.append(block)
+        return "\n\n".join(out)
+```
+
+`process()` drops the `sweep_residual_symbols` line; every other stage and the
+ordering stay exactly as they are (unmask still runs after normalization).
+
+`build_frontend` gains the keyword and passes it through.
+
+- [ ] **Step 5: Run tests**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_frontend.py tests/test_markdown_strip.py -v`
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add -A capabilityServices/LocalTTSService/
+git commit -m "feat(local-tts): normalize per block by language; drop the residual sweep"
+```
+
+---
+
+## Task 14: Config, version, and loop-back verification
+
+**Files:**
+- Modify: `capabilityServices/LocalTTSService/src/local_tts/config.py`
+- Modify: `capabilityServices/LocalTTSService/config/config.example.yaml`
+- Modify: `capabilityServices/LocalTTSService/src/local_tts/server.py`
+- Modify: `capabilityServices/LocalTTSService/pyproject.toml`, `src/local_tts/__init__.py`
+- Test: `capabilityServices/LocalTTSService/tests/test_config.py`
+
+- [ ] **Step 1: Add the config key**
+
+In `config/config.example.yaml`, inside `text_frontend:`:
+
+```yaml
+  # Languages whose text gets WFST normalization. Measured: English sounds
+  # BETTER with no normalization (the model reads $50, 90%, 1st, 3/4, ranges
+  # and Dr./Mr. correctly on its own, while the normalizer says "vertical
+  # bar" and "underscore"), whereas Chinese needs it or the currency unit is
+  # dropped entirely. Language is resolved per block, so a mixed reply gets
+  # the right treatment for each. Valid entries: en, zh, ja.
+  normalize_languages: ["zh", "ja"]
+```
+
+`TextFrontendConfig` gains `normalize_languages: tuple[str, ...]`, parsed with a
+new `_require_str_list` helper that validates every entry is one of `en`/`zh`/`ja`
+and raises `ConfigError` otherwise. Wire it into `build_frontend` in `server.py`.
+
+- [ ] **Step 2: Test**
+
+```python
+def test_normalize_languages_parsed(tmp_path):
+    cfg = _load_example(tmp_path)
+    assert cfg.text_frontend.normalize_languages == ("zh", "ja")
+
+
+def test_unknown_normalize_language_raises(tmp_path):
+    with pytest.raises(ConfigError):
+        _load_with(tmp_path, normalize_languages=["klingon"])
+```
+
+Follow whatever loading pattern `tests/test_config.py` already uses (load the
+shipped example, mutate the dict, dump to a tmp file) — do not invent a new one.
+
+- [ ] **Step 3: Bump the version**
+
+`pyproject.toml` and `src/local_tts/__init__.py`: `1.2.0` → `1.3.0`.
+
+- [ ] **Step 4: Full quality gate**
+
+```bash
+cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest -v
+cd /Users/kevinye/Development/sentient && source scripts/env.sh && bun run ci
+```
+
+- [ ] **Step 5: Loop-back verification (the point of all this)**
+
+Reconcile + restart the host service, then run both suites and confirm the
+measured wins hold end to end:
+
+```bash
+python3 deploy/mac-prod/native/service-config-reconcile.py \
+  --template capabilityServices/LocalTTSService/config/config.example.yaml \
+  --config ~/.sentient/local-tts/config/config.yaml --apply
+bash deploy/mac-prod/native/local-tts.sh stop && bash deploy/mac-prod/native/local-tts.sh start
+```
+
+Then, with `text_frontend.enabled: false` temporarily set (the harness sends
+pre-processed text), run:
+
+```bash
+cd capabilityServices/LocalTTSService
+.venv/bin/python scripts/tts_stt_loopback.py --lang en --suite markdown --variants none,strip
+.venv/bin/python scripts/tts_stt_loopback.py --lang zh --suite prose  --variants strip,tn
+```
+
+Expected: `strip` clean on every English markdown case (no code read aloud, no
+URL spelled out, no "vertical bar"); Chinese `tn` shows 美元/元 where `strip`
+drops the unit. **Restore the operator config afterwards** — back it up first.
+
+---
+
+## Task 15: Pure-block script detection; voice pack supplies the tiebreak
+
+**Files:**
+- Modify: `src/local_tts/text_frontend/normalize.py`, `.../frontend.py`
+- Modify: `src/local_tts/voice_store.py`, `src/local_tts/synthesis.py`
+- Modify: `src/local_tts/config.py`, `config/config.example.yaml`, `src/local_tts/server.py`
+- Tests: `tests/test_normalize.py`, `tests/test_frontend.py`, `tests/test_voice_store.py`, `tests/test_config.py`
+
+**Why the previous rule was wrong.** Task 12–14 used a `cjk_ratio` over *all
+non-whitespace characters*, so digits, `$`, punctuation and URLs diluted the
+signal — a Chinese sentence containing one URL scored 0.164 and was treated as
+English. Two separate patches followed (a threshold, then a two-pass re-strip),
+which is the shape of a band-aid rather than a design.
+
+**Measured on real traffic** (194 assistant messages, 461 blocks, from the
+production profile): **99.6% of blocks are script-pure** — 457 pure Latin,
+3 pure CJK, exactly **1** genuinely mixed (4.3% CJK) and 1 with no letters at
+all. Real mixing is rare, and the sample is far too small (n=1) to calibrate a
+threshold. So the rule should decide only what is obvious and defer the rest.
+
+**The rule.**
+
+```
+share = CJK letters / (CJK letters + Latin letters)     # neutral chars ignored
+
+share >= script_confidence        -> ja if kana present else zh
+share <= 1 - script_confidence    -> en
+otherwise (genuinely mixed)       -> the declared language, else en
+```
+
+Counting **letters only** is the correction that matters: `$50`, `7:30` and
+`71%` are script-neutral, so `这个价格是 $50。` is *pure* CJK (share 1.0) and
+normalizes correctly, while `The character 好 means good, and it costs $50`
+is 0.02 and stays English.
+
+**Content beats declaration for pure blocks.** A declared `zh` does NOT force
+Chinese onto a pure-English block. The assistant can switch language at any
+time, so a declared value is a stale prior — it may only break ties, never
+override clear evidence.
+
+**Declared language comes from the voice pack**, which already stores
+`language` in its `meta.json`, falling back to `config.default_lang`. No wire
+protocol change: a `?language=` query param can be added later if the gateway
+ever needs a per-request override, and it slots in ahead of the voice pack in
+the same precedence.
+
+**Blocks stay whole.** An earlier idea to segment a block into per-script runs
+was rejected: wetext's behaviour on short fragments is unproven, and the
+pipeline is moving toward text-delta streaming with sentence/paragraph
+aggregation, where larger units help every stage. Record this in the module
+docstring so it is not "optimized" into fine-grained segmentation later.
+
+**Interfaces:**
+- `script_share(text: str) -> float`
+- `detect_lang(text: str, confidence: float) -> str | None` — `None` when the
+  block is genuinely mixed and the caller must fall back.
+- `resolve_lang(declared: str, text: str, confidence: float) -> str`
+- `VoiceStore.language_of(voice_id: str | None) -> str` — `""` when unknown.
+- `build_frontend(*, normalize_enabled, normalize_languages, policy, script_confidence)`.
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+# tests/test_normalize.py
+import pytest
+from local_tts.text_frontend.normalize import detect_lang, resolve_lang, script_share
+
+C = 0.9
+
+
+@pytest.mark.parametrize(("text", "expected"), [
+    ("这个价格是 $50。", "zh"),              # neutral chars must not dilute
+    ("会议在 7:30 开始。", "zh"),
+    ("これは 500 円です。", "ja"),
+    ("Wait 5-10 minutes and it costs $50.", "en"),
+    ("The character 好 means good, and it costs $50 for 2 items.", "en"),
+    ("가격은 $50이고 온도는 -5도입니다.", "en"),   # no Han/kana/Latin -> not CJK
+])
+def test_detect_lang_on_pure_blocks(text, expected):
+    assert detect_lang(text, C) == expected
+
+
+def test_detect_lang_returns_none_when_genuinely_mixed():
+    assert detect_lang("我买了 iPhone，价格是 $50。", C) is None
+
+
+def test_mixed_block_uses_the_declared_language():
+    mixed = "我买了 iPhone，价格是 $50。"
+    assert resolve_lang("zh", mixed, C) == "zh"
+    assert resolve_lang("auto", mixed, C) == "en"   # undeclared -> English
+
+
+def test_declared_language_never_overrides_a_pure_block():
+    # A declared value is a stale prior: the assistant can switch language
+    # mid-conversation, so content wins whenever content is unambiguous.
+    assert resolve_lang("zh", "Wait 5-10 minutes.", C) == "en"
+    assert resolve_lang("en", "这个价格是 $50。", C) == "zh"
+
+
+def test_script_share_ignores_neutral_characters():
+    assert script_share("$50 7:30 71% -- ...") == 0.0
+    assert script_share("这个价格是 $50。") == 1.0
+```
+
+```python
+# tests/test_frontend.py
+def test_mixed_block_follows_the_declared_language(policy):
+    fe = _fe(policy)
+    assert "五十美元" in fe.process("我买了 iPhone，价格是 $50。", "zh")
+    assert "$50" in fe.process("我买了 iPhone，价格是 $50。", "auto")
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_normalize.py tests/test_frontend.py -v`
+Expected: FAIL — `cannot import name 'script_share'`, and `detect_lang` still takes a ratio.
+
+- [ ] **Step 3: Implement the detection rule**
+
+In `normalize.py`, replace `_cjk_share` / `detect_lang` / `resolve_lang`:
+
+```python
+_LATIN_RE = re.compile(r"[A-Za-z]")
+
+
+def script_share(text: str) -> float:
+    """CJK share of the SCRIPT-BEARING letters in ``text``.
+
+    Digits, currency symbols, punctuation and whitespace are script-neutral
+    and are excluded from BOTH sides of the ratio -- counting them is what
+    made an earlier revision score "这个价格是 $50。" as 0.16 and speak it
+    with the English engine.
+    """
+    cjk = len(_HAN_RE.findall(text)) + len(_KANA_RE.findall(text))
+    latin = len(_LATIN_RE.findall(text))
+    total = cjk + latin
+    return cjk / total if total else 0.0
+
+
+def detect_lang(text: str, confidence: float) -> str | None:
+    """Language of a script-PURE block, or None when genuinely mixed."""
+    share = script_share(text)
+    if share >= confidence:
+        return "ja" if _KANA_RE.search(text) else "zh"
+    if share <= 1.0 - confidence:
+        return "en"
+    return None
+
+
+def resolve_lang(declared: str, text: str, confidence: float) -> str:
+    """Language for ``text``; ``declared`` breaks ties only.
+
+    Content wins whenever content is unambiguous. A declared value (voice
+    pack, then config.default_lang) is a STALE prior -- the assistant can
+    switch language at any turn -- so it may never override clear evidence,
+    only decide a block that is genuinely mixed. Undeclared falls to English.
+    """
+    detected = detect_lang(text, confidence)
+    if detected is not None:
+        return detected
+    return declared if declared in _SUPPORTED else "en"
+```
+
+- [ ] **Step 4: Thread the confidence and drop the two-pass strip**
+
+In `frontend.py`: rename the constructor/`build_frontend` keyword `cjk_ratio` to
+`script_confidence`, pass it to `resolve_lang`, and **delete `_strip`** — with
+neutral characters excluded, a URL no longer swings the verdict, so re-stripping
+to re-measure is unnecessary. `process` calls `strip_markdown(...)` once again.
+
+- [ ] **Step 5: Voice pack supplies the declared language**
+
+Add to `voice_store.py`:
+
+```python
+    def language_of(self, voice_id: str | None) -> str:
+        """The pack's declared language, or "" when unknown.
+
+        Used as the tiebreak for genuinely mixed text. It describes the
+        VOICE, not the content -- a reasonable prior for the undecidable
+        case, never an override.
+        """
+```
+
+Implement it by reading the pack meta (reuse the existing meta-reading path;
+built-ins included). Return `""` for an unknown or absent voice.
+
+In `synthesis.py`, replace `self._frontend.process(raw, self._default_lang)`:
+
+```python
+        declared = self._voice_store.language_of(self._voice) or self._default_lang
+        speakable = self._frontend.process(raw, declared)
+```
+
+Leave the model call's `lang_code=self._default_lang` untouched — that is the
+synthesizer's own language hint, a separate concern.
+
+- [ ] **Step 6: Config**
+
+Replace the `cjk_ratio` key with:
+
+```yaml
+  # How script-pure a block must be before its own content decides the
+  # normalization language. At or above this share of CJK letters the block
+  # is Chinese/Japanese; at or below (1 - this) it is English; anything in
+  # between is genuinely mixed and falls back to the declared language (the
+  # voice pack's, else default_lang, else English). Measured on real traffic,
+  # 99.6% of blocks are script-pure, so this only governs the rare mixed
+  # case -- keep it conservative. Range 0.5-1.0.
+  script_confidence: 0.9
+```
+
+Parse as a float on `TextFrontendConfig`, fail-loud, wire through `server.py`.
+
+- [ ] **Step 7: Full suite + gateway CI**
+
+```bash
+cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest -v
+cd /Users/kevinye/Development/sentient && source scripts/env.sh && bun run ci
+```
+
+---
+
+## Self-Review
+
+**Spec coverage** (against the six failure classes reproduced on the current code):
+1. Table → "vertical bar" spam — Task 4 (`table` plugin + linearizer) + Task 5 (routing). ✓
+2. Inline code read raw — Task 3 (`classify_code_span`) + Task 2 (masking kept spans) + Task 5 (routing). ✓
+3. Bare `www.` / scheme-less URLs — Task 3 (`replace_bare_spans`). ✓
+4. Orphan punctuation after drops — Task 6 (`_fix_orphan_punctuation`) plus the phrase substitution in Task 3 that keeps the sentence grammatical. ✓
+5. Math `$x^2$` — Task 5 (`math` plugin; `inline_math`/`block_math` in the drop sets). ✓
+6. Task-list `[ ]` markers — Task 5 (`task_lists` plugin + `task_list_item` handling). ✓
+Also covered: footnote bodies and raw HTML (Task 5), the user's two policy decisions (size-gated linearize / classify-then-drop, Tasks 4 and 3), the operator config surface (Task 7), the prod-deploy migration gap the nested keys create (Task 8), the requested version bump (Task 9).
+
+**Explicitly out of scope, flagged not solved:** wetext's ID-number reading (`port 8080` → "eight thousand and eighty" rather than "eighty eighty"), `50/50` → "fifty fiftieths", `100m` meters-vs-millions ambiguity, and abbreviations `e.g.` / `vs.` passing through unexpanded. All are TN-engine residuals that need per-token semantic context; deferred deliberately rather than patched with fragile regex. The complementary upstream fix (a persona hint telling Hermes to prefer prose over tables and fenced code when the reply will be spoken) is a Hermes-side change and is not part of this branch.
+
+**Placeholder scan:** every code step contains complete, runnable code. The two "find the call site" steps (Task 7 Step 6, Task 8 Step 3) give the exact grep/command and the exact replacement text.
+
+**Type consistency:** `SpeechPolicy(table_max_cells, code_span_max_chars, speak_dropped_spans)` is constructed identically in Tasks 1, 3, 4, 5, 6, 7 and 10. `MaskTable.add`/`.restore`, `SpanVerdict(keep, phrase_key)`, `phrase(lang, key)`, `render_table(tok, render_cell, policy, lang)`, `render_code_span(raw, policy, lang, masks)`, `replace_bare_spans(text, policy, lang)`, `strip_markdown(doc, policy, lang) -> StrippedDoc(text, masks)` and `build_frontend(normalize_enabled=, policy=)` keep the same names and argument order in every task that references them.
+
+**Known risks flagged in-plan:** sentinel/wetext collision (Task 2 Step 4 fallback), doubled "a link" phrase from the prose-scan + autolink-node overlap (Task 5 Step 3 note + Step 4 guard test), `_BARE_PATH_RE` over-matching ordinary prose (Task 3 Step 4), existing `build_frontend` call sites (Task 7 Step 6), stale local/prod host config missing the nested keys (Task 8 + Task 10 Step 4).

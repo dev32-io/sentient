@@ -352,14 +352,14 @@ def apply_stt_backend(backend: str, ruamel_python: str) -> bool:
 
 
 def reconcile_service_config(ruamel_python: str, template: Path, target: Path, label: str) -> bool:
-    """Additively merge any missing top-level sections from a service's shipped
-    template into its already-seeded host config, so the service's fail-loud
-    loader finds every required key after a re-deploy.
+    """Additively merge any missing sections/keys, at any nesting depth, from
+    a service's shipped template into its already-seeded host config, so the
+    service's fail-loud loader finds every required key after a re-deploy.
 
     No-op on a freshly-seeded host (config already complete) and never clobbers
     existing values (model pin, tuned constants, operator edits) — only genuinely
-    missing top-level sections are added. Shows the additive diff and confirms,
-    matching apply_stt_backend / apply_tts_backend.
+    missing keys are added. Shows the additive diff and confirms, matching
+    apply_stt_backend / apply_tts_backend.
     """
     if not SERVICE_CONFIG_RECONCILE.exists() or not template.is_file():
         return True  # deploy without the native pieces (non-mac-prod) — nothing to do

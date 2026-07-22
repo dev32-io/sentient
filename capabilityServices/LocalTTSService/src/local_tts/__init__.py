@@ -7,4 +7,4 @@ JSONL event/metrics logging), independent process and dependency set.
 The wire protocol is specified in CONTRACT.md.
 """
 
-__version__ = "1.1.0"
+__version__ = "1.3.0"

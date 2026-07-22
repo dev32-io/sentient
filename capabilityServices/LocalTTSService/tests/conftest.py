@@ -53,6 +53,9 @@ class _StubVoiceStore:
     def get_or_default(self, voice_id):
         return _SENTINEL_REF_PATH
 
+    def language_of(self, voice_id) -> str:
+        return ""
+
     def list(self) -> list[dict]:
         return list(self._voices)
 
@@ -101,7 +104,15 @@ def _make_config(tmp_path: Path) -> Config:
         voice_description_max_len=240,
         voice_tag_max_len=24,
         voice_max_tags=8,
-        text_frontend=TextFrontendConfig(enabled=True, normalize=True),
+        text_frontend=TextFrontendConfig(
+            enabled=True,
+            normalize=True,
+            normalize_languages=("zh", "ja"),
+            table_max_cells=24,
+            code_span_max_chars=32,
+            speak_dropped_spans=True,
+            script_confidence=0.9,
+        ),
     )
 
 

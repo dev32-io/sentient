@@ -28,9 +28,19 @@ from websockets.asyncio.client import connect
 from local_tts.synth_executor import SynthExecutor, SynthJob
 from local_tts.synth_worker import QUEUE_STOP
 from local_tts.synthesis import _CLOSE_WORKER_TIMEOUT_S, SynthesisRunner
-from local_tts.text_frontend import build_frontend
+from local_tts.text_frontend import SpeechPolicy, build_frontend
 
 from .conftest import _make_config, _make_server, _serve, _StubVoiceStore
+
+# Shared stand-in policy for the two ``SynthesisRunner``s built directly in
+# this file (below the fixture layer, so they can't reuse ``_make_config``'s
+# ``TextFrontendConfig``) — values are arbitrary, these tests exercise
+# concurrency/teardown, not frontend behavior.
+_TEST_POLICY = SpeechPolicy(table_max_cells=24, code_span_max_chars=32, speak_dropped_spans=True)
+# Arbitrary for these tests too — see the ``_TEST_POLICY`` comment above;
+# concurrency/teardown coverage doesn't touch per-language normalization.
+_TEST_LANGS = ("zh", "ja")
+_TEST_SCRIPT_CONFIDENCE = 0.9
 
 
 class _GatedEngine:
@@ -147,7 +157,10 @@ def test_close_unblocks_worker_thread_stuck_on_full_queue():
             executor=None, voice_store=None, synth_lock=asyncio.Lock(), ws=_NoopWs(),
             conn_id="test-conn", format_="pcm", sample_rate=24000, voice=None,
             streaming_interval=0.5, default_lang="auto", conn_log=_NoopLog(), metrics_log=_NoopLog(),
-            frontend=build_frontend(normalize_enabled=False),
+            frontend=build_frontend(
+                normalize_enabled=False, normalize_languages=_TEST_LANGS, policy=_TEST_POLICY,
+                script_confidence=_TEST_SCRIPT_CONFIDENCE,
+            ),
         )
         chunk_queue: "asyncio.Queue[object]" = asyncio.Queue(maxsize=2)
         chunk_queue.put_nowait(b"chunk-1")
@@ -257,7 +270,10 @@ def test_close_blocks_second_queued_request_from_starting():
             ws=_NoopWs(), conn_id="test-conn-2", format_="pcm", sample_rate=24000,
             voice=None, streaming_interval=0.5, default_lang="auto",
             conn_log=_NoopLog(), metrics_log=_NoopLog(),
-            frontend=build_frontend(normalize_enabled=False),
+            frontend=build_frontend(
+                normalize_enabled=False, normalize_languages=_TEST_LANGS, policy=_TEST_POLICY,
+                script_confidence=_TEST_SCRIPT_CONFIDENCE,
+            ),
         )
 
         runner.add_text("first")

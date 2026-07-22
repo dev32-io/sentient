@@ -225,6 +225,54 @@ def test_get_resolves_builtin_slug(tmp_path: Path) -> None:
     assert store.get("nova") == str(builtin / "nova" / "ref.wav")
 
 
+def test_language_of_none_voice_is_unknown(tmp_path: Path) -> None:
+    store = VoiceStore(_StubEngine(), tmp_path / "voices")
+    assert store.language_of(None) == ""
+
+
+def test_language_of_unknown_voice_id(tmp_path: Path) -> None:
+    store = VoiceStore(_StubEngine(), tmp_path / "voices")
+    # Well-formed but never created.
+    assert store.language_of("b" * 32) == ""
+
+
+def test_language_of_malformed_voice_id_is_unknown_not_raising(tmp_path: Path) -> None:
+    # Unlike get()/delete(), this is a soft tiebreak input -- a bad id
+    # falls back to "unknown" rather than raising.
+    store = VoiceStore(_StubEngine(), tmp_path / "voices")
+    assert store.language_of("../../etc/passwd") == ""
+
+
+def test_language_of_user_pack(tmp_path: Path) -> None:
+    store = VoiceStore(_StubEngine(), tmp_path / "voices")
+    ref = np.zeros(int(24000 * 4), dtype=np.float32)  # >3s
+    result = store.create(ref, 24000, "Nova", language="ja")
+    assert store.language_of(result["voiceId"]) == "ja"
+
+
+def test_language_of_user_pack_without_language_is_unknown(tmp_path: Path) -> None:
+    store = VoiceStore(_StubEngine(), tmp_path / "voices")
+    pack = tmp_path / "voices" / ("a" * 32)
+    pack.mkdir(parents=True)
+    (pack / "ref.wav").write_bytes(b"stub")
+    (pack / "meta.json").write_text(json.dumps({"name": "Old", "createdAt": 1.0, "refDurationMs": 6000}))
+    assert store.language_of("a" * 32) == ""
+
+
+def test_language_of_builtin_pack(tmp_path: Path) -> None:
+    # Scope note: built-ins must resolve too -- they all currently declare
+    # language: "en" (see voices_library/*/meta.json).
+    builtin = tmp_path / "library"
+    pack = builtin / "nova"
+    pack.mkdir(parents=True)
+    (pack / "ref.wav").write_bytes(b"stub")
+    (pack / "meta.json").write_text(
+        json.dumps({"name": "Nova", "description": "", "tags": [], "language": "en"})
+    )
+    store = VoiceStore(_StubEngine(), tmp_path / "voices", builtin_dir=builtin)
+    assert store.language_of("nova") == "en"
+
+
 @pytest.mark.live
 def test_create_then_get_roundtrip(tmp_path: Path) -> None:
     """Live: persist a real ref.wav pack, then synthesize with the real

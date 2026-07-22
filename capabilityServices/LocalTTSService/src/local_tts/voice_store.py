@@ -114,6 +114,29 @@ class VoiceStore:
         log.info("voice_store.get resolved voice_id=%s path=%s", voice_id, ref_path)
         return str(ref_path)
 
+    def language_of(self, voice_id: str | None) -> str:
+        """The pack's declared language, or "" when unknown.
+
+        Tiebreak input for genuinely mixed text -- describes the VOICE, not
+        the content, so it is never an override. Reuses the meta-reading
+        path ``list()`` already uses (``pack_meta.read_pack_meta``) rather
+        than opening ``meta.json`` a second way. A malformed ``voice_id``
+        resolves to "" rather than raising -- unlike ``get``/``delete``,
+        this is a soft input, not a security boundary.
+        """
+        if voice_id is None:
+            return ""
+        try:
+            pack_dir = (
+                self._builtin.pack_dir(voice_id) if self._builtin.has(voice_id)
+                else self._validated_pack_dir(voice_id)
+            )
+        except ValueError:
+            log.debug("voice_store.language_of unknown reason=invalid_voice_id voice_id=%r", voice_id)
+            return ""
+        meta = read_pack_meta(pack_dir)
+        return meta["language"] if meta else ""
+
     def get_or_default(self, voice_id: str | None) -> str | None:
         """Like ``get``, but never raises: a malformed ``voice_id`` (fails
         ``get``'s traversal/format validation) falls back to the default

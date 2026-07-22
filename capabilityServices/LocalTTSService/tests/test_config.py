@@ -64,3 +64,80 @@ def test_missing_text_frontend_raises(tmp_path):
     p.write_text(yaml.safe_dump(raw), encoding="utf-8")
     with pytest.raises(ConfigError, match="text_frontend"):
         load_config(str(p))
+
+
+def test_text_frontend_speech_policy_keys_parsed(tmp_path):
+    cfg = load_config(_EXAMPLE_PATH)
+    assert cfg.text_frontend.table_max_cells == 24
+    assert cfg.text_frontend.code_span_max_chars == 32
+    assert cfg.text_frontend.speak_dropped_spans is True
+
+
+def test_missing_table_max_cells_raises(tmp_path):
+    """``table_max_cells`` is a required key — dropping it from an
+    otherwise-valid config must fail loud, not silently fall back.
+    """
+    raw = yaml.safe_load(Path(_EXAMPLE_PATH).read_text(encoding="utf-8"))
+    del raw["text_frontend"]["table_max_cells"]
+    p = tmp_path / "no_table_max_cells.yaml"
+    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ConfigError, match="table_max_cells"):
+        load_config(str(p))
+
+
+def test_normalize_languages_parsed(tmp_path):
+    cfg = load_config(_EXAMPLE_PATH)
+    assert cfg.text_frontend.normalize_languages == ("zh", "ja")
+
+
+def test_missing_normalize_languages_raises(tmp_path):
+    """``normalize_languages`` is a required key — dropping it from an
+    otherwise-valid config must fail loud, not silently normalize nothing
+    (or everything).
+    """
+    raw = yaml.safe_load(Path(_EXAMPLE_PATH).read_text(encoding="utf-8"))
+    del raw["text_frontend"]["normalize_languages"]
+    p = tmp_path / "no_normalize_languages.yaml"
+    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ConfigError, match="normalize_languages"):
+        load_config(str(p))
+
+
+def test_unknown_normalize_language_raises(tmp_path):
+    raw = yaml.safe_load(Path(_EXAMPLE_PATH).read_text(encoding="utf-8"))
+    raw["text_frontend"]["normalize_languages"] = ["klingon"]
+    p = tmp_path / "normalize_languages_unknown.yaml"
+    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ConfigError, match="normalize_languages"):
+        load_config(str(p))
+
+
+def test_script_confidence_parsed(tmp_path):
+    cfg = load_config(_EXAMPLE_PATH)
+    assert cfg.text_frontend.script_confidence == 0.9
+
+
+def test_missing_script_confidence_raises(tmp_path):
+    """``script_confidence`` is a required key — dropping it must fail loud,
+    not silently fall back to a permissive threshold.
+    """
+    raw = yaml.safe_load(Path(_EXAMPLE_PATH).read_text(encoding="utf-8"))
+    del raw["text_frontend"]["script_confidence"]
+    p = tmp_path / "no_script_confidence.yaml"
+    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ConfigError, match="script_confidence"):
+        load_config(str(p))
+
+
+def test_invalid_default_lang_raises(tmp_path):
+    """``default_lang`` selects the normalization engine (Finding 6) --
+    an unrecognized tag like "en-US" must fail loud at load time rather
+    than silently falling through ``resolve_lang`` to detection on every
+    call.
+    """
+    raw = yaml.safe_load(Path(_EXAMPLE_PATH).read_text(encoding="utf-8"))
+    raw["default_lang"] = "en-US"
+    p = tmp_path / "bad_default_lang.yaml"
+    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ConfigError, match="default_lang"):
+        load_config(str(p))

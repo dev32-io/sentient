@@ -117,6 +117,43 @@ text_frontend:
   # Run wetext WFST text normalization ($/%/numbers/dates/units).
   normalize: true
 
+  # Languages whose text gets WFST normalization. Measured: English sounds
+  # BETTER with no normalization (the model reads $50, 90%, 1st, 3/4, ranges
+  # and Dr./Mr. correctly on its own, while the normalizer says "vertical
+  # bar" and "underscore"), whereas Chinese needs it or the currency unit is
+  # dropped entirely. Language is resolved per block, so a mixed reply gets
+  # the right treatment for each. Valid entries: en, zh, ja. Adding "en" is
+  # not just a quality preference -- it reintroduces text-corrupting
+  # wetext-English bugs that no longer have shims to patch them, e.g.
+  # "Wait 5-10 minutes" comes back as "five to ten minutes inutes" and
+  # "-5C" comes back as "-five C".
+  normalize_languages: ["zh", "ja"]
+
+  # How script-pure a block must be before its own content decides the
+  # normalization language. At or above this share of CJK letters the block
+  # is Chinese/Japanese; at or below (1 - this) it is English; anything in
+  # between is genuinely mixed and falls back to the declared language (the
+  # voice pack's, else default_lang, else English). Measured on real traffic,
+  # 99.6% of blocks are script-pure, so this only governs the rare mixed
+  # case -- keep it conservative. Range 0.5-1.0.
+  script_confidence: 0.9
+
+  # Tables with MORE body cells than this (rows x columns) are summarized
+  # ("a table with 20 rows and 6 columns") instead of read out row by row.
+  # Small tables are linearized screen-reader style: "Service gateway,
+  # Port 8080." Range: 0-200; 0 summarizes every table.
+  table_max_cells: 24
+
+  # Inline `code` longer than this many characters is treated as non-prose
+  # (a command, not a word) and replaced by a short phrase rather than
+  # spoken character by character. Range: 8-120.
+  code_span_max_chars: 32
+
+  # When a span is dropped (command, file path, URL), speak a short
+  # placeholder ("a command") so the sentence keeps its grammar. Set false
+  # to drop silently.
+  speak_dropped_spans: true
+
 # =============================================================================
 # Logging + in-process metrics
 # =============================================================================

@@ -133,7 +133,8 @@ class SynthesisRunner:
             return
         raw = "".join(self._text_buffer)
         self._text_buffer = []
-        speakable = self._frontend.process(raw, self._default_lang)
+        declared = self._voice_store.language_of(self._voice) or self._default_lang
+        speakable = self._frontend.process(raw, declared)
         if not speakable:
             self._conn_log.log("synth.flush_empty_after_frontend", raw_len=len(raw))
             return

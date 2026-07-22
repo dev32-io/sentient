@@ -1,62 +1,190 @@
+import pytest
+
 from local_tts.text_frontend.markdown import strip_markdown
+from local_tts.text_frontend.policy import SpeechPolicy
 
 
-def test_drops_code_block_keeps_prose():
-    doc = "Here is code:\n\n```py\nprint(1)\n```\n\nDone."
-    out = strip_markdown(doc)
+@pytest.fixture
+def policy():
+    return SpeechPolicy(table_max_cells=24, code_span_max_chars=32, speak_dropped_spans=True)
+
+
+# Mirrors config.example.yaml's text_frontend.script_confidence default.
+_SCRIPT_CONFIDENCE = 0.9
+
+
+def _text(doc, policy, lang="en", confidence=_SCRIPT_CONFIDENCE):
+    return strip_markdown(doc, policy, lang, confidence).text
+
+
+def test_drops_code_block_keeps_prose(policy):
+    out = _text("Here is code:\n\n```py\nprint(1)\n```\n\nDone.", policy)
     assert "print" not in out
-    assert "Here is code:" in out
-    assert "Done." in out
+    assert "Here is code:" in out and "Done." in out
 
 
-def test_keeps_link_text_drops_url():
-    out = strip_markdown("See [the docs](https://example.com/x) now.")
+def test_keeps_link_text_drops_url(policy):
+    out = _text("See [the docs](https://example.com/x) now.", policy)
     assert "the docs" in out
     assert "example.com" not in out
-    assert "https" not in out
 
 
-def test_keeps_inline_code_and_emphasis_text():
-    out = strip_markdown("Run `npm test` for **bold** and *italic* words.")
-    assert "npm test" in out
-    assert "bold" in out
-    assert "italic" in out
-
-
-def test_heading_and_list_become_separated_blocks():
-    doc = "# Title\n\n- one\n- two"
-    out = strip_markdown(doc)
-    assert "Title" in out
-    assert "one" in out and "two" in out
-    # block elements separated by a blank line for the synth's prosodic gap
+def test_heading_and_list_become_separated_blocks(policy):
+    out = _text("# Title\n\n- one\n- two", policy)
+    assert "Title" in out and "one" in out and "two" in out
     assert "\n\n" in out
 
 
-def test_drops_images_and_bare_urls():
-    out = strip_markdown("Look ![alt](a.png) at https://raw.example.com here.")
+def test_drops_images(policy):
+    out = _text("Look ![alt](a.png) here.", policy)
     assert "a.png" not in out
-    assert "raw.example.com" not in out
     assert "Look" in out and "here" in out
 
 
-def test_empty_document_returns_empty():
-    assert strip_markdown("") == ""
-    assert strip_markdown("```\nonly code\n```").strip() == ""
+def test_empty_document_returns_empty(policy):
+    assert _text("", policy) == ""
+    assert _text("```\nonly code\n```", policy).strip() == ""
 
 
-def test_softbreak_does_not_concatenate_words():
-    out = strip_markdown("quoted text here\nmore quote")
+# --- v2 behaviours ---------------------------------------------------------
+
+def test_table_is_linearized_not_piped(policy):
+    doc = "| Service | Port |\n|---|---|\n| gateway | 8080 |\n"
+    out = _text(doc, policy)
+    assert "|" not in out
+    assert "Service gateway" in out and "Port 8080" in out
+
+
+def test_table_nested_in_list_item_is_linearized_not_piped(policy):
+    # An LLM commonly indents a table under a numbered list item; the bare
+    # `table` plugin only registers into the root block parser, so without
+    # table_in_list this table stays literal pipe text.
+    doc = "1. **Services**\n\n   | Service | Port |\n   |---|---|\n   | gateway | 8080 |\n"
+    out = _text(doc, policy)
+    assert "|" not in out
+    assert "Service gateway" in out and "Port 8080" in out
+
+
+def test_table_nested_in_block_quote_is_linearized_not_piped(policy):
+    doc = "> | Service | Port |\n> |---|---|\n> | gateway | 8080 |\n"
+    out = _text(doc, policy)
+    assert "|" not in out
+    assert "Service gateway" in out and "Port 8080" in out
+
+
+def test_task_list_markers_are_not_spoken(policy):
+    out = _text("- [ ] undone\n- [x] done\n", policy)
+    assert "[" not in out and "]" not in out
+    assert "undone" in out and "done" in out
+
+
+def test_math_is_dropped(policy):
+    out = _text("Math $x^2$ here.\n\n$$\na=b\n$$\n", policy)
+    assert "^" not in out and "$" not in out
+    assert "Math" in out and "here." in out
+
+
+def test_footnote_body_is_not_spoken(policy):
+    out = _text("Text[^1]\n\n[^1]: secret note body\n", policy)
+    assert "secret note body" not in out
+    assert "Text" in out
+
+
+def test_symbol_heavy_inline_code_becomes_a_phrase(policy):
+    out = _text("Install with `npm i --save-dev @types/node` now.", policy)
+    assert "--save-dev" not in out
+    assert "a command" in out
+
+
+def test_word_like_inline_code_is_kept_but_masked(policy):
+    result = strip_markdown("Then call `flush` on it.", policy, "en", _SCRIPT_CONFIDENCE)
+    assert "flush" not in result.text          # masked until after TN
+    assert "flush" in result.masks.restore(result.text)
+
+
+def test_script_pure_zh_document_gets_chinese_phrases_while_undeclared(policy):
+    # THE Finding-8 regression guard. The sibling test below declares "zh",
+    # and a genuinely-mixed document resolves to whatever was declared -- so
+    # it would still pass if strip_markdown stopped calling resolve_lang and
+    # handed the raw lang to phrase(). This document is script-PURE Chinese
+    # (share 1.0: the path's segments are CJK, contributing no Latin letters)
+    # while still carrying a dropped span, so "auto" must be RESOLVED to zh.
+    # Without resolution the phrase falls back to English: "a file path".
+    out = _text("请打开 /用户/文档/报告 这个文件。", policy, lang="auto")
+    assert "一个文件路径" in out
+    assert "a file path" not in out
+
+
+def test_zh_document_uses_chinese_phrases_when_declared(policy):
+    # Finding 8: strip_markdown must resolve a language before picking
+    # phrases, rather than handing "auto" straight to phrase() (which falls
+    # back to English) -- a Chinese document must not speak "a link"/
+    # "a command" under the shipped default.
+    #
+    # Counting letters only (not all non-whitespace chars) means this url +
+    # command contribute REAL Latin-letter evidence, not neutral filler, so
+    # the document is genuinely mixed rather than pure Chinese -- content
+    # alone can't decide it. The DECLARED language ("zh") breaks the tie,
+    # same as it does for TN's per-block gate (see test_frontend.py's
+    # ``test_mixed_document_phrase_language_follows_the_declared_language``).
+    doc = "这是链接 https://a.b ，请运行 `flush now` 命令。"
+    out = _text(doc, policy, lang="zh")
+    assert "一个链接" in out
+    assert "一条命令" in out
+    assert "a link" not in out
+    assert "a command" not in out
+
+
+def test_bare_url_in_prose_becomes_a_phrase(policy):
+    out = _text("Also www.example.com here.", policy)
+    assert "www" not in out
+    assert "a link" in out
+
+
+def test_html_is_dropped(policy):
+    out = _text("<div>hidden</div>\n\nInline <b>bold</b> text.\n", policy)
+    assert "hidden" not in out and "<b>" not in out
+    assert "bold" in out and "text." in out
+
+
+def test_autolink_speaks_the_phrase_exactly_once(policy):
+    out = _text("See <https://example.com/x> now.", policy)
+    assert out.count("a link") == 1
+
+
+def test_email_autolink_is_not_read_verbatim(policy):
+    out = _text("Mail <user@example.com> now.", policy)
+    assert "user@example.com" not in out
+    assert "@" not in out
+    assert "an email address" in out
+
+
+def test_email_autolink_is_silent_when_dropped_spans_not_spoken():
+    silent_policy = SpeechPolicy(
+        table_max_cells=24, code_span_max_chars=32, speak_dropped_spans=False
+    )
+    out = _text("Mail <user@example.com> now.", silent_policy)
+    assert "user@example.com" not in out
+    assert "@" not in out
+    assert "an email address" not in out
+
+
+# --- restored regression coverage (dropped by the Task 5 rewrite) ----------
+
+
+def test_softbreak_does_not_concatenate_words(policy):
+    out = _text("quoted text here\nmore quote", policy)
     assert "here more" in out
     assert "heremore" not in out
 
 
-def test_multiline_blockquote_does_not_concatenate_words():
-    out = strip_markdown("> line one\n> line two")
+def test_multiline_blockquote_does_not_concatenate_words(policy):
+    out = _text("> line one\n> line two", policy)
     assert "line one" in out and "line two" in out
     assert "onetwo" not in out
 
 
-def test_strikethrough_keeps_text_drops_markers():
-    out = strip_markdown("This is ~~struck~~ text.")
+def test_strikethrough_keeps_text_drops_markers(policy):
+    out = _text("This is ~~struck~~ text.", policy)
     assert "struck" in out
     assert "~~" not in out

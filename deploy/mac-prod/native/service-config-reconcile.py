@@ -17,9 +17,15 @@ values (model pin, tuned constants, operator edits) are preserved; only
 genuinely-missing top-level sections are added, so the service's fail-loud
 loader always finds every required key after a deploy.
 
-Scope: top-level keys only. A newly-required NESTED key (e.g. `server.foo`)
-still needs a bespoke migration — deliberately out of scope, to keep this
-strictly additive and safe.
+Scope: recurses into nested mappings, so a newly-required key at any
+depth (e.g. `text_frontend.table_max_cells`) is filled in too. Recursion
+descends wherever the template holds a mapping and the target holds a
+mapping OR NOTHING (a present-but-null section, e.g. `text_frontend:`
+with no value — the shape an already-seeded host config has for a
+section that predates its nested keys). A target SCALAR where the
+template has a mapping is left untouched — that is a genuine operator
+restructuring, not a gap — because this tool fills gaps and never
+imposes.
 
 Comment-preserving round-trip via ruamel.yaml (same dependency + style as the
 sibling tts-backend.py / stt-backend.py value-rewriters).
@@ -62,10 +68,12 @@ def _dump(yaml, data) -> str:
 
 
 def reconcile(template_text: str, config_text: str) -> tuple[str, list[str]]:
-    """Return (updated_text, added_keys). Additive-only, comment-preserving.
+    """Return (updated_text, added_paths). Additive-only, comment-preserving.
 
-    Only top-level keys missing from the target are added; existing keys and
-    their values are never modified or reordered.
+    Recurses into nested mappings so a newly-required key one or more
+    levels down (e.g. ``text_frontend.table_max_cells``) also lands in an
+    already-seeded host config. Only keys MISSING from the target are
+    added; existing keys, values and ordering are never modified.
     """
     yaml = _yaml()
     template = yaml.load(template_text)
@@ -74,19 +82,43 @@ def reconcile(template_text: str, config_text: str) -> tuple[str, list[str]]:
         config = yaml.load("{}\n")
 
     added: list[str] = []
-    for key in template:
-        if key in config:
-            continue
-        # Copy value + its INNER comments (per-field comments live inside the
-        # value's CommentedMap and travel with it). We deliberately do NOT copy
-        # the key's `.ca` entry: ruamel often stores a block comment there that
-        # actually belongs to the FOLLOWING key, which would duplicate that
-        # header into the target. Losing a section-header comment is a fair
-        # trade for not corrupting surrounding comments.
-        config[key] = template[key]
-        added.append(key)
-
+    _merge_missing(yaml, template, config, "", added)
     return _dump(yaml, config), added
+
+
+def _merge_missing(yaml, template, config, prefix: str, added: list[str]) -> None:
+    """Copy template keys absent from config, recursing into mappings."""
+    for key in template:
+        path = f"{prefix}{key}"
+        if key not in config:
+            # Copy value + its INNER comments (per-field comments live inside
+            # the value's CommentedMap and travel with it). We deliberately do
+            # NOT copy the key's `.ca` entry: ruamel often stores a block
+            # comment there that actually belongs to the FOLLOWING key, which
+            # would duplicate that header into the target.
+            config[key] = template[key]
+            added.append(path)
+            continue
+        # Key exists on both sides. A present-but-null value (`section:`
+        # with nothing after the colon) is what an already-seeded host
+        # config looks like for a section that predates its nested keys —
+        # same shape as the whole-file blank case `reconcile()` normalizes
+        # above. Treat it the same way: heal it to an empty mapping so the
+        # recursion below can still add the section's missing children,
+        # instead of silently leaving them out forever.
+        if _is_mapping(template[key]) and config[key] is None:
+            config[key] = yaml.load("{}\n")
+        # Recurse only when BOTH sides are now mappings. A type mismatch
+        # (operator turned a section into a scalar, or the null case above
+        # didn't apply) is left alone — this tool never overwrites, it only
+        # fills gaps.
+        if _is_mapping(template[key]) and _is_mapping(config[key]):
+            _merge_missing(yaml, template[key], config[key], f"{path}.", added)
+
+
+def _is_mapping(value) -> bool:
+    """True for YAML mappings (ruamel CommentedMap subclasses dict)."""
+    return isinstance(value, dict)
 
 
 def main() -> int:
