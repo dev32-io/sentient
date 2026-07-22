@@ -65,46 +65,55 @@ _KANA_RE = re.compile(r"[ぁ-ゟァ-ヺヽ-ヿ]")
 # reader regardless of what font renders this file.
 _HAN_RE = re.compile(r"[㐀-鿿豈-﫿]")
 
+# ASCII Latin letters. Digits, currency symbols, punctuation and CJK
+# punctuation are NOT letters and take neither side of ``script_share``'s
+# ratio -- see that function's docstring for why this is the correction
+# that matters.
+_LATIN_RE = re.compile(r"[A-Za-z]")
+
 _SUPPORTED = ("en", "zh", "ja")
 
 
-def _cjk_share(text: str) -> float:
-    """Share of ``text``'s non-whitespace characters that are Han or kana."""
-    non_ws = [c for c in text if not c.isspace()]
-    if not non_ws:
-        return 0.0
-    cjk = sum(1 for c in non_ws if _HAN_RE.match(c) or _KANA_RE.match(c))
-    return cjk / len(non_ws)
+def script_share(text: str) -> float:
+    """CJK share of the SCRIPT-BEARING letters in ``text``.
 
-
-def detect_lang(text: str, cjk_ratio: float) -> str:
-    """Resolve a language from the script actually present in ``text``.
-
-    CJK (Han+kana) must be at least ``cjk_ratio`` share of the block's
-    non-whitespace characters, not merely PRESENT -- one quoted Chinese
-    name or word in an otherwise-English sentence must not flip the whole
-    block to the Chinese engine (Finding 2). ``cjk_ratio`` is
-    ``config.yaml``'s ``text_frontend.cjk_ratio``, threaded in by the
-    caller rather than hardcoded here.
+    Digits, currency symbols, punctuation and whitespace are script-neutral
+    and are excluded from BOTH sides of the ratio -- counting them is what
+    made an earlier revision score "这个价格是 $50。" as 0.16 and speak it
+    with the English engine.
     """
-    if _cjk_share(text) < cjk_ratio:
+    cjk = len(_HAN_RE.findall(text)) + len(_KANA_RE.findall(text))
+    latin = len(_LATIN_RE.findall(text))
+    total = cjk + latin
+    return cjk / total if total else 0.0
+
+
+def detect_lang(text: str, confidence: float) -> str | None:
+    """Language of a script-PURE block, or None when genuinely mixed.
+
+    ``confidence`` is ``config.yaml``'s ``text_frontend.script_confidence``,
+    threaded in by the caller rather than hardcoded here.
+    """
+    share = script_share(text)
+    if share >= confidence:
+        return "ja" if _KANA_RE.search(text) else "zh"
+    if share <= 1.0 - confidence:
         return "en"
-    if _KANA_RE.search(text):
-        return "ja"
-    return "zh"
+    return None
 
 
-def resolve_lang(declared: str, text: str, cjk_ratio: float) -> str:
-    """Concrete language for ``text``; detects when ``declared`` is not one.
+def resolve_lang(declared: str, text: str, confidence: float) -> str:
+    """Language for ``text``; ``declared`` breaks ties only.
 
-    ``default_lang`` ships as "auto". The previous implementation mapped
-    anything unrecognized to "en", which meant every Chinese reply was
-    normalized by the ENGLISH engine and spoke "fifty dollars" instead of
-    "五十美元". Detection is what "auto" was always supposed to mean.
+    Content wins whenever content is unambiguous. A declared value (voice
+    pack, then config.default_lang) is a STALE prior -- the assistant can
+    switch language at any turn -- so it may never override clear evidence,
+    only decide a block that is genuinely mixed. Undeclared falls to English.
     """
-    if declared in _SUPPORTED:
-        return declared
-    return detect_lang(text, cjk_ratio)
+    detected = detect_lang(text, confidence)
+    if detected is not None:
+        return detected
+    return declared if declared in _SUPPORTED else "en"
 
 
 class Normalizer:

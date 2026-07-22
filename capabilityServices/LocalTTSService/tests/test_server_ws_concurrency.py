@@ -40,7 +40,7 @@ _TEST_POLICY = SpeechPolicy(table_max_cells=24, code_span_max_chars=32, speak_dr
 # Arbitrary for these tests too — see the ``_TEST_POLICY`` comment above;
 # concurrency/teardown coverage doesn't touch per-language normalization.
 _TEST_LANGS = ("zh", "ja")
-_TEST_CJK_RATIO = 0.2
+_TEST_SCRIPT_CONFIDENCE = 0.9
 
 
 class _GatedEngine:
@@ -159,7 +159,7 @@ def test_close_unblocks_worker_thread_stuck_on_full_queue():
             streaming_interval=0.5, default_lang="auto", conn_log=_NoopLog(), metrics_log=_NoopLog(),
             frontend=build_frontend(
                 normalize_enabled=False, normalize_languages=_TEST_LANGS, policy=_TEST_POLICY,
-                cjk_ratio=_TEST_CJK_RATIO,
+                script_confidence=_TEST_SCRIPT_CONFIDENCE,
             ),
         )
         chunk_queue: "asyncio.Queue[object]" = asyncio.Queue(maxsize=2)
@@ -272,7 +272,7 @@ def test_close_blocks_second_queued_request_from_starting():
             conn_log=_NoopLog(), metrics_log=_NoopLog(),
             frontend=build_frontend(
                 normalize_enabled=False, normalize_languages=_TEST_LANGS, policy=_TEST_POLICY,
-                cjk_ratio=_TEST_CJK_RATIO,
+                script_confidence=_TEST_SCRIPT_CONFIDENCE,
             ),
         )
 

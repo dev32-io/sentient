@@ -88,7 +88,7 @@ class _Ctx:
     masks: MaskTable
 
 
-def strip_markdown(doc: str, policy: SpeechPolicy, lang: str, cjk_ratio: float) -> StrippedDoc:
+def strip_markdown(doc: str, policy: SpeechPolicy, lang: str, confidence: float) -> StrippedDoc:
     masks = MaskTable(doc=doc)
     if not doc.strip():
         return StrippedDoc(text="", masks=masks)
@@ -98,7 +98,7 @@ def strip_markdown(doc: str, policy: SpeechPolicy, lang: str, cjk_ratio: float) 
     # this, a Chinese document under the shipped "auto" default_lang got
     # the raw "auto" tag handed straight to phrase(), which falls back to
     # the English table -- a Chinese reply spoke "a link"/"a command".
-    resolved_lang = resolve_lang(lang, doc, cjk_ratio)
+    resolved_lang = resolve_lang(lang, doc, confidence)
     ctx = _Ctx(policy=policy, lang=resolved_lang, masks=masks)
     blocks: list[str] = []
     for tok in _PARSE(doc):

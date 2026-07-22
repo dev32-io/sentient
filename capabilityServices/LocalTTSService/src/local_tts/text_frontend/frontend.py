@@ -6,6 +6,14 @@ Stage order is load-bearing:
   collapse
 Unmasking before TN would defeat the mask; cleaning punctuation before
 unmasking would operate on sentinels instead of the real text.
+
+Language is resolved PER BLOCK (``\\n\\n``-separated), never at finer
+grain. An earlier idea to segment a single block into per-script runs
+(so a sentence mixing scripts could normalize each run separately) was
+rejected: wetext's behaviour on short fragments is unproven, and the
+pipeline is moving toward text-delta streaming with sentence/paragraph
+aggregation, where LARGER units help every stage, not smaller ones. Do
+not "optimize" this into fine-grained segmentation.
 """
 
 from __future__ import annotations
@@ -61,15 +69,15 @@ class TextFrontend:
         normalizer: Normalizer | None,
         normalize_languages: tuple[str, ...],
         policy: SpeechPolicy,
-        cjk_ratio: float,
+        script_confidence: float,
     ) -> None:
         self._normalizer = normalizer
         self._normalize_languages = tuple(normalize_languages)
         self._policy = policy
-        self._cjk_ratio = cjk_ratio
+        self._script_confidence = script_confidence
 
     def process(self, doc: str, lang: str) -> str:
-        stripped = self._strip(doc, lang)
+        stripped = strip_markdown(doc, self._policy, lang, self._script_confidence)
         text = strip_pause_tags(strip_emoji(stripped.text))
         normalized_blocks = 0
         if self._normalizer is not None and text.strip():
@@ -84,25 +92,6 @@ class TextFrontend:
                   len(doc), len(out), lang, normalized_blocks)
         return out
 
-    def _strip(self, doc: str, lang: str):
-        """Strip markdown, re-running once if that changes the language verdict.
-
-        The strip picks the language for its spoken phrases ("a link" vs
-        "一个链接") -- but the strip is also what REMOVES the URLs and code
-        spans that dilute the script ratio. Measuring the raw document can
-        therefore disagree with the text the listener actually hears: a
-        Chinese sentence containing one long URL scores 0.164 CJK raw and
-        0.375 once stripped, so it emitted English phrases mid-Chinese.
-        Re-strip only when the verdict actually changed; a concrete declared
-        language resolves to itself both times, so the common path parses once.
-        """
-        stripped = strip_markdown(doc, self._policy, lang, self._cjk_ratio)
-        refined = resolve_lang(lang, stripped.text, self._cjk_ratio)
-        if refined != resolve_lang(lang, doc, self._cjk_ratio):
-            log.debug("relang declared=%s refined=%s", lang, refined)
-            stripped = strip_markdown(doc, self._policy, refined, self._cjk_ratio)
-        return stripped
-
     def _normalize_blocks(self, text: str, lang: str) -> tuple[str, int]:
         # wetext flattens newlines, so each block is normalized separately to
         # preserve the \n\n prosodic gaps. Language is resolved PER BLOCK: a
@@ -114,7 +103,7 @@ class TextFrontend:
             if not block.strip():
                 out.append(block)
                 continue
-            resolved = resolve_lang(lang, block, self._cjk_ratio)
+            resolved = resolve_lang(lang, block, self._script_confidence)
             should_normalize = resolved in self._normalize_languages
             log.debug("block_lang idx=%d len=%d declared=%s resolved=%s normalize=%s",
                       index, len(block), lang, resolved, should_normalize)
@@ -131,11 +120,11 @@ def build_frontend(
     normalize_enabled: bool,
     normalize_languages: tuple[str, ...],
     policy: SpeechPolicy,
-    cjk_ratio: float,
+    script_confidence: float,
 ) -> TextFrontend:
     return TextFrontend(
         normalizer=Normalizer() if normalize_enabled else None,
         normalize_languages=normalize_languages,
         policy=policy,
-        cjk_ratio=cjk_ratio,
+        script_confidence=script_confidence,
     )

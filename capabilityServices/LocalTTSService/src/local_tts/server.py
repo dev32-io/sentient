@@ -91,7 +91,7 @@ class Server:
                     code_span_max_chars=config.text_frontend.code_span_max_chars,
                     speak_dropped_spans=config.text_frontend.speak_dropped_spans,
                 ),
-                cjk_ratio=config.text_frontend.cjk_ratio,
+                script_confidence=config.text_frontend.script_confidence,
             )
             if config.text_frontend.enabled
             else _PassthroughFrontend()

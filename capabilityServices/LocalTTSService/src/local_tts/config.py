@@ -75,10 +75,11 @@ class TextFrontendConfig:
     table_max_cells: int
     code_span_max_chars: int
     speak_dropped_spans: bool
-    # Minimum share of a block's non-whitespace characters that must be
-    # CJK (Han or kana) before ``text_frontend/normalize.py``'s
-    # ``detect_lang`` treats the block as Chinese/Japanese. Range 0.0-1.0.
-    cjk_ratio: float
+    # How script-pure a block must be before its own content decides the
+    # normalization language, rather than falling back to the declared
+    # language (voice pack, then default_lang, else English). Range 0.5-1.0
+    # -- see ``text_frontend/normalize.py``'s ``detect_lang``.
+    script_confidence: float
 
 
 @dataclass(frozen=True)
@@ -219,5 +220,5 @@ def _parse_text_frontend(text_frontend_raw: dict[str, Any]) -> TextFrontendConfi
         speak_dropped_spans=require(
             text_frontend_raw, "text_frontend.speak_dropped_spans", bool
         ),
-        cjk_ratio=require(text_frontend_raw, "text_frontend.cjk_ratio", float),
+        script_confidence=require(text_frontend_raw, "text_frontend.script_confidence", float),
     )

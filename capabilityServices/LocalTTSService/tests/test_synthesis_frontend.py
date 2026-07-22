@@ -19,11 +19,18 @@ class _FakeFrontend:
         return f"NORM::{doc}"
 
 
+class _FakeVoiceStore:
+    """No voice pinned in these tests -- always defers to ``default_lang``."""
+
+    def language_of(self, voice_id) -> str:
+        return ""
+
+
 def _make_runner(frontend):
     # Import here so the test file loads even if heavy deps shift.
     from local_tts.synthesis import SynthesisRunner
     return SynthesisRunner(
-        executor=None, voice_store=None, synth_lock=asyncio.Lock(), ws=None,
+        executor=None, voice_store=_FakeVoiceStore(), synth_lock=asyncio.Lock(), ws=None,
         conn_id="t", format_="opus", sample_rate=48000, voice=None,
         streaming_interval=0.5, default_lang="en", conn_log=_NullLog(),
         metrics_log=_NullLog(), frontend=frontend,
@@ -53,7 +60,7 @@ def test_flush_skips_enqueue_when_frontend_returns_empty():
         normalize_enabled=True,
         normalize_languages=("en", "zh", "ja"),
         policy=SpeechPolicy(table_max_cells=24, code_span_max_chars=32, speak_dropped_spans=True),
-        cjk_ratio=0.2,
+        script_confidence=0.9,
     )
 
     async def run():

@@ -129,13 +129,14 @@ text_frontend:
   # "-5C" comes back as "-five C".
   normalize_languages: ["zh", "ja"]
 
-  # Minimum share of a block's non-whitespace characters that must be CJK
-  # (Han or kana) before the block is treated as Chinese/Japanese for
-  # normalization. Guards against one quoted Chinese name in an English
-  # sentence flipping the whole block to Chinese number words. Range 0.0-1.0;
-  # 0.2 keeps short Chinese lines detecting correctly while ignoring
-  # incidental characters.
-  cjk_ratio: 0.2
+  # How script-pure a block must be before its own content decides the
+  # normalization language. At or above this share of CJK letters the block
+  # is Chinese/Japanese; at or below (1 - this) it is English; anything in
+  # between is genuinely mixed and falls back to the declared language (the
+  # voice pack's, else default_lang, else English). Measured on real traffic,
+  # 99.6% of blocks are script-pure, so this only governs the rare mixed
+  # case -- keep it conservative. Range 0.5-1.0.
+  script_confidence: 0.9
 
   # Tables with MORE body cells than this (rows x columns) are summarized
   # ("a table with 20 rows and 6 columns") instead of read out row by row.

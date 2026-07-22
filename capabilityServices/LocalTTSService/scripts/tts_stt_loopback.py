@@ -62,6 +62,8 @@ CHUNK = RATE * 2 // 25  # 40 ms of PCM16
 SILENCE = b"\x00\x00" * (RATE // 2)  # 500 ms padding so VAD sees onset/offset
 
 POLICY = SpeechPolicy(table_max_cells=24, code_span_max_chars=32, speak_dropped_spans=True)
+# Mirrors config.example.yaml's text_frontend.script_confidence default.
+SCRIPT_CONFIDENCE = 0.9
 
 # A transcript containing any of these means markup or a symbol was read
 # aloud instead of being rendered as speech.
@@ -146,12 +148,12 @@ def build_variants(doc: str, lang: str, normalizer: Normalizer, wanted: list[str
     still shows what normalization would do to English. Production gates it
     per block via ``normalize_languages`` -- see frontend.py.
     """
-    stripped = strip_markdown(doc, POLICY, lang)
+    stripped = strip_markdown(doc, POLICY, lang, SCRIPT_CONFIDENCE)
     base = strip_pause_tags(strip_emoji(stripped.text))
 
     def normalize(text: str) -> str:
         return "\n\n".join(
-            normalizer.normalize(b, resolve_lang(lang, b)) if b.strip() else b
+            normalizer.normalize(b, resolve_lang(lang, b, SCRIPT_CONFIDENCE)) if b.strip() else b
             for b in text.split("\n\n")
         )
 

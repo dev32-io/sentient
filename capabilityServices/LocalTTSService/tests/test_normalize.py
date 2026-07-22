@@ -1,6 +1,6 @@
 import pytest
 
-from local_tts.text_frontend.normalize import Normalizer, detect_lang, resolve_lang
+from local_tts.text_frontend.normalize import Normalizer, detect_lang, resolve_lang, script_share
 
 
 @pytest.fixture(scope="module")
@@ -35,77 +35,57 @@ def test_normalizer_cached_per_lang(norm):
     assert a is b
 
 
-# Mirrors config.example.yaml's text_frontend.cjk_ratio default -- the
-# minimum share of a block's non-whitespace characters that must be CJK
-# before it is treated as Chinese/Japanese.
-_CJK_RATIO = 0.2
+# Mirrors config.example.yaml's text_frontend.script_confidence default --
+# how script-pure a block must be before its own content decides the
+# language, rather than falling back to a declared value.
+C = 0.9
 
 
-def test_detect_lang_by_script():
-    assert detect_lang("It costs fifty dollars.", _CJK_RATIO) == "en"
-    assert detect_lang("这个价格是五十美元。", _CJK_RATIO) == "zh"
-    assert detect_lang("これはテストです。", _CJK_RATIO) == "ja"
+@pytest.mark.parametrize(("text", "expected"), [
+    ("这个价格是 $50。", "zh"),              # neutral chars must not dilute
+    ("会议在 7:30 开始。", "zh"),
+    ("これは 500 円です。", "ja"),
+    ("Wait 5-10 minutes and it costs $50.", "en"),
+    ("The character 好 means good, and it costs $50 for 2 items.", "en"),
+    ("가격은 $50이고 온도는 -5도입니다.", "en"),   # no Han/kana/Latin -> not CJK
+])
+def test_detect_lang_on_pure_blocks(text, expected):
+    assert detect_lang(text, C) == expected
 
 
-def test_detect_lang_mixed_prefers_cjk_when_ratio_is_high():
-    # A CJK-DOMINANT sentence with embedded latin/currency is still CJK.
-    assert detect_lang("这个东西的价格是 $50，别的东西是 $20。", _CJK_RATIO) == "zh"
-
-
-def test_detect_lang_mixed_falls_back_to_en_when_ratio_is_low():
-    # Finding 2: sparse CJK inside a mostly-English sentence must not flip
-    # the whole block to the Chinese engine -- this used to be "zh" under
-    # the old any-Han-present rule.
-    assert detect_lang("价格 $50 and it costs $20 too.", _CJK_RATIO) == "en"
-
-
-def test_detect_lang_korean_is_not_chinese():
-    # Finding 1: _HAN_RE's second range was typo'd to start at U+8C48 (a
-    # normal ideograph that LOOKS like U+F900 in most fonts) instead of
-    # U+F900 itself, which silently widened the range over the whole
-    # Hangul Syllables block. Korean text was being routed to the Chinese
-    # WFST engine and spoken with Chinese number words.
-    text = "가격은 $50이고 온도는 -5도입니다. 회의는 7:30에 시작합니다."
-    assert detect_lang(text, _CJK_RATIO) == "en"
-
-
-def test_detect_lang_ignores_a_single_incidental_han_character():
-    # Finding 2: one quoted CJK character (a name, a dish) must not flip an
-    # entire English block to the Chinese engine.
-    text = "The character 好 means good, and it costs $50 for 2 items."
-    assert detect_lang(text, _CJK_RATIO) == "en"
-
-
-def test_detect_lang_still_detects_short_chinese_strings():
-    # Finding 2 regression guard: the ratio gate must not raise the bar so
-    # high that ordinary short Chinese lines stop detecting.
-    assert detect_lang("这个价格是 $50。", _CJK_RATIO) == "zh"
-    assert detect_lang("多云 | 湿度 71% | 有风", _CJK_RATIO) == "zh"
+def test_detect_lang_returns_none_when_genuinely_mixed():
+    assert detect_lang("我买了 iPhone，价格是 $50。", C) is None
 
 
 def test_detect_lang_kana_middle_dot_and_prolonger_do_not_force_japanese():
     # Finding 7: U+30FB (katakana middle dot) and U+30FC (prolonged sound
     # mark) are common in CHINESE text for transliterated foreign names
     # ("史蒂夫・乔布斯" = Steve Jobs) -- they must not force a "ja" verdict.
-    assert detect_lang("史蒂夫・乔布斯的价格是 $50。", _CJK_RATIO) == "zh"
+    assert detect_lang("史蒂夫・乔布斯的价格是 $50。", C) == "zh"
     # Kana priority still holds for genuine Japanese.
-    assert detect_lang("これはテスト", _CJK_RATIO) == "ja"
+    assert detect_lang("これはテスト", C) == "ja"
 
 
-def test_resolve_lang_honours_a_concrete_declaration():
-    assert resolve_lang("zh", "plain english text", _CJK_RATIO) == "zh"
-    assert resolve_lang("en", "这是中文", _CJK_RATIO) == "en"
+def test_mixed_block_uses_the_declared_language():
+    mixed = "我买了 iPhone，价格是 $50。"
+    assert resolve_lang("zh", mixed, C) == "zh"
+    assert resolve_lang("auto", mixed, C) == "en"   # undeclared -> English
 
 
-def test_resolve_lang_detects_when_declared_auto():
-    # THE production bug: "auto" used to collapse to "en", so Chinese was
-    # normalized by the English engine and spoke "fifty dollars".
-    assert resolve_lang("auto", "这个价格是 $50。", _CJK_RATIO) == "zh"
-    assert resolve_lang("auto", "It costs $50.", _CJK_RATIO) == "en"
+def test_declared_language_never_overrides_a_pure_block():
+    # A declared value is a stale prior: the assistant can switch language
+    # mid-conversation, so content wins whenever content is unambiguous.
+    assert resolve_lang("zh", "Wait 5-10 minutes.", C) == "en"
+    assert resolve_lang("en", "这个价格是 $50。", C) == "zh"
+
+
+def test_script_share_ignores_neutral_characters():
+    assert script_share("$50 7:30 71% -- ...") == 0.0
+    assert script_share("这个价格是 $50。") == 1.0
 
 
 def test_auto_chinese_normalizes_to_chinese_currency(norm):
-    lang = resolve_lang("auto", "这个价格是 $50。", _CJK_RATIO)
+    lang = resolve_lang("auto", "这个价格是 $50。", C)
     out = norm.normalize("这个价格是 $50。", lang)
     assert "美元" in out
     assert "dollars" not in out

@@ -8,13 +8,14 @@ def policy():
     return SpeechPolicy(table_max_cells=24, code_span_max_chars=32, speak_dropped_spans=True)
 
 
-# Mirrors config.example.yaml's text_frontend.cjk_ratio default.
-_CJK_RATIO = 0.2
+# Mirrors config.example.yaml's text_frontend.script_confidence default.
+_SCRIPT_CONFIDENCE = 0.9
 
 
 def _fe(policy, langs=("zh", "ja")):
     return build_frontend(
-        normalize_enabled=True, normalize_languages=langs, policy=policy, cjk_ratio=_CJK_RATIO
+        normalize_enabled=True, normalize_languages=langs, policy=policy,
+        script_confidence=_SCRIPT_CONFIDENCE,
     )
 
 
@@ -37,17 +38,26 @@ def test_chinese_is_normalized(policy):
     assert "dollars" not in out
 
 
-def test_phrase_language_is_decided_on_the_stripped_text(policy):
-    # The strip picks the phrase language, but the strip is also what removes
-    # the URL and code span that dilute the script ratio: this document scores
-    # 0.164 CJK raw (below the 0.2 threshold, so "en") and 0.375 once stripped.
-    # Measuring the raw form emitted English phrases mid-Chinese sentence.
+def test_mixed_document_phrase_language_follows_the_declared_language(policy):
+    # Counting letters only (not all non-whitespace chars) means a URL's own
+    # Latin letters are real script evidence, not neutral filler -- so this
+    # document (~9 Han letters against ~32 real Latin letters from the URL
+    # and command) is genuinely mixed, not pure Chinese. The two-pass
+    # re-strip this test used to pin (measure raw, re-measure stripped) is
+    # gone: with a real mix like this, content can't decide, so the
+    # DECLARED language breaks the tie for the dropped-span phrases too.
     out = _fe(policy).process(
-        "这是链接 https://example.com/a/b ，请运行 `flush --now --verbose` 命令。", "auto"
+        "这是链接 https://example.com/a/b ，请运行 `flush --now --verbose` 命令。", "zh"
     )
     assert "一个链接" in out
     assert "一条命令" in out
     assert "a link" not in out
+
+
+def test_mixed_block_follows_the_declared_language(policy):
+    fe = _fe(policy)
+    assert "五十美元" in fe.process("我买了 iPhone，价格是 $50。", "zh")
+    assert "$50" in fe.process("我买了 iPhone，价格是 $50。", "auto")
 
 
 def test_mixed_document_normalizes_only_the_cjk_block(policy):
@@ -65,7 +75,7 @@ def test_pipe_is_left_for_the_model(policy):
 
 def test_end_to_end_markdown_currency_emoji(policy):
     fe = build_frontend(
-        normalize_enabled=True, normalize_languages=_ALL_LANGS, policy=policy, cjk_ratio=_CJK_RATIO
+        normalize_enabled=True, normalize_languages=_ALL_LANGS, policy=policy, script_confidence=_SCRIPT_CONFIDENCE
     )
     doc = "## Weather 🎉\n\nIt costs **$50** for 2 items.\n\n```py\nx=1\n```"
     out = fe.process(doc, "en").lower()
@@ -77,7 +87,7 @@ def test_end_to_end_markdown_currency_emoji(policy):
 
 def test_normalize_disabled_keeps_symbols_but_strips_markdown(policy):
     fe = build_frontend(
-        normalize_enabled=False, normalize_languages=_ALL_LANGS, policy=policy, cjk_ratio=_CJK_RATIO
+        normalize_enabled=False, normalize_languages=_ALL_LANGS, policy=policy, script_confidence=_SCRIPT_CONFIDENCE
     )
     out = fe.process("Cost is **$50** 🎉", "en")
     assert "$50" in out
@@ -86,14 +96,14 @@ def test_normalize_disabled_keeps_symbols_but_strips_markdown(policy):
 
 def test_empty_after_strip_returns_empty(policy):
     fe = build_frontend(
-        normalize_enabled=True, normalize_languages=_ALL_LANGS, policy=policy, cjk_ratio=_CJK_RATIO
+        normalize_enabled=True, normalize_languages=_ALL_LANGS, policy=policy, script_confidence=_SCRIPT_CONFIDENCE
     )
     assert fe.process("```\njust code\n```", "en").strip() == ""
 
 
 def test_masked_span_is_restored_verbatim_after_normalization(policy):
     fe = build_frontend(
-        normalize_enabled=True, normalize_languages=_ALL_LANGS, policy=policy, cjk_ratio=_CJK_RATIO
+        normalize_enabled=True, normalize_languages=_ALL_LANGS, policy=policy, script_confidence=_SCRIPT_CONFIDENCE
     )
     out = fe.process("Then call `flush` and check `v1.2.3`.", "en")
     assert "flush" in out
@@ -103,7 +113,7 @@ def test_masked_span_is_restored_verbatim_after_normalization(policy):
 
 def test_table_survives_the_full_pipeline(policy):
     fe = build_frontend(
-        normalize_enabled=True, normalize_languages=_ALL_LANGS, policy=policy, cjk_ratio=_CJK_RATIO
+        normalize_enabled=True, normalize_languages=_ALL_LANGS, policy=policy, script_confidence=_SCRIPT_CONFIDENCE
     )
     out = fe.process("| Service | Port |\n|---|---|\n| gateway | 8080 |\n", "en")
     assert "vertical bar" not in out
@@ -112,7 +122,7 @@ def test_table_survives_the_full_pipeline(policy):
 
 def test_no_orphan_punctuation_after_dropped_spans(policy):
     fe = build_frontend(
-        normalize_enabled=False, normalize_languages=_ALL_LANGS, policy=policy, cjk_ratio=_CJK_RATIO
+        normalize_enabled=False, normalize_languages=_ALL_LANGS, policy=policy, script_confidence=_SCRIPT_CONFIDENCE
     )
     out = fe.process("See [x](https://a.b) , and ( ) done.", "en")
     assert " ," not in out
@@ -121,7 +131,7 @@ def test_no_orphan_punctuation_after_dropped_spans(policy):
 
 def test_paragraph_gaps_are_preserved(policy):
     fe = build_frontend(
-        normalize_enabled=True, normalize_languages=_ALL_LANGS, policy=policy, cjk_ratio=_CJK_RATIO
+        normalize_enabled=True, normalize_languages=_ALL_LANGS, policy=policy, script_confidence=_SCRIPT_CONFIDENCE
     )
     out = fe.process("First para.\n\nSecond para.", "en")
     assert "\n\n" in out
@@ -129,7 +139,7 @@ def test_paragraph_gaps_are_preserved(policy):
 
 def test_ellipsis_after_comma_survives(policy):
     fe = build_frontend(
-        normalize_enabled=False, normalize_languages=_ALL_LANGS, policy=policy, cjk_ratio=_CJK_RATIO
+        normalize_enabled=False, normalize_languages=_ALL_LANGS, policy=policy, script_confidence=_SCRIPT_CONFIDENCE
     )
     out = fe.process("Wait, ... what?", "en")
     assert "..." in out
@@ -138,7 +148,7 @@ def test_ellipsis_after_comma_survives(policy):
 
 def test_ellipsis_with_no_space_survives_and_keeps_the_space(policy):
     fe = build_frontend(
-        normalize_enabled=False, normalize_languages=_ALL_LANGS, policy=policy, cjk_ratio=_CJK_RATIO
+        normalize_enabled=False, normalize_languages=_ALL_LANGS, policy=policy, script_confidence=_SCRIPT_CONFIDENCE
     )
     out = fe.process("So, ...anyway.", "en")
     assert "..." in out
@@ -148,7 +158,7 @@ def test_ellipsis_with_no_space_survives_and_keeps_the_space(policy):
 
 def test_ellipsis_in_prose_keeps_its_leading_space(policy):
     fe = build_frontend(
-        normalize_enabled=False, normalize_languages=_ALL_LANGS, policy=policy, cjk_ratio=_CJK_RATIO
+        normalize_enabled=False, normalize_languages=_ALL_LANGS, policy=policy, script_confidence=_SCRIPT_CONFIDENCE
     )
     out = fe.process("Hello ... world", "en")
     assert out == "Hello ... world"
@@ -159,7 +169,7 @@ def test_repeated_punct_still_cleans_a_dropped_span_artifact(policy):
     # against the following full stop -- exactly the artifact this rule
     # exists to clean up.
     fe = build_frontend(
-        normalize_enabled=False, normalize_languages=_ALL_LANGS, policy=policy, cjk_ratio=_CJK_RATIO
+        normalize_enabled=False, normalize_languages=_ALL_LANGS, policy=policy, script_confidence=_SCRIPT_CONFIDENCE
     )
     out = fe.process("Reference: ![diagram](fig.png). See below.", "en")
     assert out == "Reference. See below."
@@ -167,7 +177,7 @@ def test_repeated_punct_still_cleans_a_dropped_span_artifact(policy):
 
 def test_ordinary_list_prose_is_untouched(policy):
     fe = build_frontend(
-        normalize_enabled=False, normalize_languages=_ALL_LANGS, policy=policy, cjk_ratio=_CJK_RATIO
+        normalize_enabled=False, normalize_languages=_ALL_LANGS, policy=policy, script_confidence=_SCRIPT_CONFIDENCE
     )
     out = fe.process("one, two, three.", "en")
     assert out == "one, two, three."
@@ -178,7 +188,7 @@ def test_space_before_punct_still_cleans_a_dropped_span_artifact(policy):
     # following comma -- exactly the ordinary artifact _SPACE_BEFORE_PUNCT
     # exists to clean up (not an ellipsis, so it must still fire).
     fe = build_frontend(
-        normalize_enabled=False, normalize_languages=_ALL_LANGS, policy=policy, cjk_ratio=_CJK_RATIO
+        normalize_enabled=False, normalize_languages=_ALL_LANGS, policy=policy, script_confidence=_SCRIPT_CONFIDENCE
     )
     out = fe.process("Check the chart ![chart](fig.png) , it changes weekly.", "en")
     assert out == "Check the chart, it changes weekly."
