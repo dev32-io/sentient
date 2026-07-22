@@ -2238,6 +2238,229 @@ drops the unit. **Restore the operator config afterwards** — back it up first.
 
 ---
 
+## Task 15: Pure-block script detection; voice pack supplies the tiebreak
+
+**Files:**
+- Modify: `src/local_tts/text_frontend/normalize.py`, `.../frontend.py`
+- Modify: `src/local_tts/voice_store.py`, `src/local_tts/synthesis.py`
+- Modify: `src/local_tts/config.py`, `config/config.example.yaml`, `src/local_tts/server.py`
+- Tests: `tests/test_normalize.py`, `tests/test_frontend.py`, `tests/test_voice_store.py`, `tests/test_config.py`
+
+**Why the previous rule was wrong.** Task 12–14 used a `cjk_ratio` over *all
+non-whitespace characters*, so digits, `$`, punctuation and URLs diluted the
+signal — a Chinese sentence containing one URL scored 0.164 and was treated as
+English. Two separate patches followed (a threshold, then a two-pass re-strip),
+which is the shape of a band-aid rather than a design.
+
+**Measured on real traffic** (194 assistant messages, 461 blocks, from the
+production profile): **99.6% of blocks are script-pure** — 457 pure Latin,
+3 pure CJK, exactly **1** genuinely mixed (4.3% CJK) and 1 with no letters at
+all. Real mixing is rare, and the sample is far too small (n=1) to calibrate a
+threshold. So the rule should decide only what is obvious and defer the rest.
+
+**The rule.**
+
+```
+share = CJK letters / (CJK letters + Latin letters)     # neutral chars ignored
+
+share >= script_confidence        -> ja if kana present else zh
+share <= 1 - script_confidence    -> en
+otherwise (genuinely mixed)       -> the declared language, else en
+```
+
+Counting **letters only** is the correction that matters: `$50`, `7:30` and
+`71%` are script-neutral, so `这个价格是 $50。` is *pure* CJK (share 1.0) and
+normalizes correctly, while `The character 好 means good, and it costs $50`
+is 0.02 and stays English.
+
+**Content beats declaration for pure blocks.** A declared `zh` does NOT force
+Chinese onto a pure-English block. The assistant can switch language at any
+time, so a declared value is a stale prior — it may only break ties, never
+override clear evidence.
+
+**Declared language comes from the voice pack**, which already stores
+`language` in its `meta.json`, falling back to `config.default_lang`. No wire
+protocol change: a `?language=` query param can be added later if the gateway
+ever needs a per-request override, and it slots in ahead of the voice pack in
+the same precedence.
+
+**Blocks stay whole.** An earlier idea to segment a block into per-script runs
+was rejected: wetext's behaviour on short fragments is unproven, and the
+pipeline is moving toward text-delta streaming with sentence/paragraph
+aggregation, where larger units help every stage. Record this in the module
+docstring so it is not "optimized" into fine-grained segmentation later.
+
+**Interfaces:**
+- `script_share(text: str) -> float`
+- `detect_lang(text: str, confidence: float) -> str | None` — `None` when the
+  block is genuinely mixed and the caller must fall back.
+- `resolve_lang(declared: str, text: str, confidence: float) -> str`
+- `VoiceStore.language_of(voice_id: str | None) -> str` — `""` when unknown.
+- `build_frontend(*, normalize_enabled, normalize_languages, policy, script_confidence)`.
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+# tests/test_normalize.py
+import pytest
+from local_tts.text_frontend.normalize import detect_lang, resolve_lang, script_share
+
+C = 0.9
+
+
+@pytest.mark.parametrize(("text", "expected"), [
+    ("这个价格是 $50。", "zh"),              # neutral chars must not dilute
+    ("会议在 7:30 开始。", "zh"),
+    ("これは 500 円です。", "ja"),
+    ("Wait 5-10 minutes and it costs $50.", "en"),
+    ("The character 好 means good, and it costs $50 for 2 items.", "en"),
+    ("가격은 $50이고 온도는 -5도입니다.", "en"),   # no Han/kana/Latin -> not CJK
+])
+def test_detect_lang_on_pure_blocks(text, expected):
+    assert detect_lang(text, C) == expected
+
+
+def test_detect_lang_returns_none_when_genuinely_mixed():
+    assert detect_lang("我买了 iPhone，价格是 $50。", C) is None
+
+
+def test_mixed_block_uses_the_declared_language():
+    mixed = "我买了 iPhone，价格是 $50。"
+    assert resolve_lang("zh", mixed, C) == "zh"
+    assert resolve_lang("auto", mixed, C) == "en"   # undeclared -> English
+
+
+def test_declared_language_never_overrides_a_pure_block():
+    # A declared value is a stale prior: the assistant can switch language
+    # mid-conversation, so content wins whenever content is unambiguous.
+    assert resolve_lang("zh", "Wait 5-10 minutes.", C) == "en"
+    assert resolve_lang("en", "这个价格是 $50。", C) == "zh"
+
+
+def test_script_share_ignores_neutral_characters():
+    assert script_share("$50 7:30 71% -- ...") == 0.0
+    assert script_share("这个价格是 $50。") == 1.0
+```
+
+```python
+# tests/test_frontend.py
+def test_mixed_block_follows_the_declared_language(policy):
+    fe = _fe(policy)
+    assert "五十美元" in fe.process("我买了 iPhone，价格是 $50。", "zh")
+    assert "$50" in fe.process("我买了 iPhone，价格是 $50。", "auto")
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest tests/test_normalize.py tests/test_frontend.py -v`
+Expected: FAIL — `cannot import name 'script_share'`, and `detect_lang` still takes a ratio.
+
+- [ ] **Step 3: Implement the detection rule**
+
+In `normalize.py`, replace `_cjk_share` / `detect_lang` / `resolve_lang`:
+
+```python
+_LATIN_RE = re.compile(r"[A-Za-z]")
+
+
+def script_share(text: str) -> float:
+    """CJK share of the SCRIPT-BEARING letters in ``text``.
+
+    Digits, currency symbols, punctuation and whitespace are script-neutral
+    and are excluded from BOTH sides of the ratio -- counting them is what
+    made an earlier revision score "这个价格是 $50。" as 0.16 and speak it
+    with the English engine.
+    """
+    cjk = len(_HAN_RE.findall(text)) + len(_KANA_RE.findall(text))
+    latin = len(_LATIN_RE.findall(text))
+    total = cjk + latin
+    return cjk / total if total else 0.0
+
+
+def detect_lang(text: str, confidence: float) -> str | None:
+    """Language of a script-PURE block, or None when genuinely mixed."""
+    share = script_share(text)
+    if share >= confidence:
+        return "ja" if _KANA_RE.search(text) else "zh"
+    if share <= 1.0 - confidence:
+        return "en"
+    return None
+
+
+def resolve_lang(declared: str, text: str, confidence: float) -> str:
+    """Language for ``text``; ``declared`` breaks ties only.
+
+    Content wins whenever content is unambiguous. A declared value (voice
+    pack, then config.default_lang) is a STALE prior -- the assistant can
+    switch language at any turn -- so it may never override clear evidence,
+    only decide a block that is genuinely mixed. Undeclared falls to English.
+    """
+    detected = detect_lang(text, confidence)
+    if detected is not None:
+        return detected
+    return declared if declared in _SUPPORTED else "en"
+```
+
+- [ ] **Step 4: Thread the confidence and drop the two-pass strip**
+
+In `frontend.py`: rename the constructor/`build_frontend` keyword `cjk_ratio` to
+`script_confidence`, pass it to `resolve_lang`, and **delete `_strip`** — with
+neutral characters excluded, a URL no longer swings the verdict, so re-stripping
+to re-measure is unnecessary. `process` calls `strip_markdown(...)` once again.
+
+- [ ] **Step 5: Voice pack supplies the declared language**
+
+Add to `voice_store.py`:
+
+```python
+    def language_of(self, voice_id: str | None) -> str:
+        """The pack's declared language, or "" when unknown.
+
+        Used as the tiebreak for genuinely mixed text. It describes the
+        VOICE, not the content -- a reasonable prior for the undecidable
+        case, never an override.
+        """
+```
+
+Implement it by reading the pack meta (reuse the existing meta-reading path;
+built-ins included). Return `""` for an unknown or absent voice.
+
+In `synthesis.py`, replace `self._frontend.process(raw, self._default_lang)`:
+
+```python
+        declared = self._voice_store.language_of(self._voice) or self._default_lang
+        speakable = self._frontend.process(raw, declared)
+```
+
+Leave the model call's `lang_code=self._default_lang` untouched — that is the
+synthesizer's own language hint, a separate concern.
+
+- [ ] **Step 6: Config**
+
+Replace the `cjk_ratio` key with:
+
+```yaml
+  # How script-pure a block must be before its own content decides the
+  # normalization language. At or above this share of CJK letters the block
+  # is Chinese/Japanese; at or below (1 - this) it is English; anything in
+  # between is genuinely mixed and falls back to the declared language (the
+  # voice pack's, else default_lang, else English). Measured on real traffic,
+  # 99.6% of blocks are script-pure, so this only governs the rare mixed
+  # case -- keep it conservative. Range 0.5-1.0.
+  script_confidence: 0.9
+```
+
+Parse as a float on `TextFrontendConfig`, fail-loud, wire through `server.py`.
+
+- [ ] **Step 7: Full suite + gateway CI**
+
+```bash
+cd capabilityServices/LocalTTSService && .venv/bin/python -m pytest -v
+cd /Users/kevinye/Development/sentient && source scripts/env.sh && bun run ci
+```
+
+---
+
 ## Self-Review
 
 **Spec coverage** (against the six failure classes reproduced on the current code):
