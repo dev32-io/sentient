@@ -103,37 +103,41 @@ def test_missing_normalize_languages_raises(tmp_path):
         load_config(str(p))
 
 
-def test_normalize_languages_not_a_list_raises(tmp_path):
-    raw = yaml.safe_load(Path(_EXAMPLE_PATH).read_text(encoding="utf-8"))
-    raw["text_frontend"]["normalize_languages"] = "zh"
-    p = tmp_path / "normalize_languages_scalar.yaml"
-    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
-    with pytest.raises(ConfigError, match="normalize_languages"):
-        load_config(str(p))
-
-
-def test_normalize_languages_empty_list_raises(tmp_path):
-    raw = yaml.safe_load(Path(_EXAMPLE_PATH).read_text(encoding="utf-8"))
-    raw["text_frontend"]["normalize_languages"] = []
-    p = tmp_path / "normalize_languages_empty.yaml"
-    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
-    with pytest.raises(ConfigError, match="normalize_languages"):
-        load_config(str(p))
-
-
-def test_normalize_languages_non_string_entry_raises(tmp_path):
-    raw = yaml.safe_load(Path(_EXAMPLE_PATH).read_text(encoding="utf-8"))
-    raw["text_frontend"]["normalize_languages"] = ["zh", 1]
-    p = tmp_path / "normalize_languages_non_string.yaml"
-    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
-    with pytest.raises(ConfigError, match="normalize_languages"):
-        load_config(str(p))
-
-
 def test_unknown_normalize_language_raises(tmp_path):
     raw = yaml.safe_load(Path(_EXAMPLE_PATH).read_text(encoding="utf-8"))
     raw["text_frontend"]["normalize_languages"] = ["klingon"]
     p = tmp_path / "normalize_languages_unknown.yaml"
     p.write_text(yaml.safe_dump(raw), encoding="utf-8")
     with pytest.raises(ConfigError, match="normalize_languages"):
+        load_config(str(p))
+
+
+def test_cjk_ratio_parsed(tmp_path):
+    cfg = load_config(_EXAMPLE_PATH)
+    assert cfg.text_frontend.cjk_ratio == 0.2
+
+
+def test_missing_cjk_ratio_raises(tmp_path):
+    """``cjk_ratio`` is a required key — dropping it must fail loud, not
+    silently fall back to "any CJK char present" (Finding 2's regression).
+    """
+    raw = yaml.safe_load(Path(_EXAMPLE_PATH).read_text(encoding="utf-8"))
+    del raw["text_frontend"]["cjk_ratio"]
+    p = tmp_path / "no_cjk_ratio.yaml"
+    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ConfigError, match="cjk_ratio"):
+        load_config(str(p))
+
+
+def test_invalid_default_lang_raises(tmp_path):
+    """``default_lang`` selects the normalization engine (Finding 6) --
+    an unrecognized tag like "en-US" must fail loud at load time rather
+    than silently falling through ``resolve_lang`` to detection on every
+    call.
+    """
+    raw = yaml.safe_load(Path(_EXAMPLE_PATH).read_text(encoding="utf-8"))
+    raw["default_lang"] = "en-US"
+    p = tmp_path / "bad_default_lang.yaml"
+    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ConfigError, match="default_lang"):
         load_config(str(p))

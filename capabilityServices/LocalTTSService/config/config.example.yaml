@@ -122,8 +122,20 @@ text_frontend:
   # and Dr./Mr. correctly on its own, while the normalizer says "vertical
   # bar" and "underscore"), whereas Chinese needs it or the currency unit is
   # dropped entirely. Language is resolved per block, so a mixed reply gets
-  # the right treatment for each. Valid entries: en, zh, ja.
+  # the right treatment for each. Valid entries: en, zh, ja. Adding "en" is
+  # not just a quality preference -- it reintroduces text-corrupting
+  # wetext-English bugs that no longer have shims to patch them, e.g.
+  # "Wait 5-10 minutes" comes back as "five to ten minutes inutes" and
+  # "-5C" comes back as "-five C".
   normalize_languages: ["zh", "ja"]
+
+  # Minimum share of a block's non-whitespace characters that must be CJK
+  # (Han or kana) before the block is treated as Chinese/Japanese for
+  # normalization. Guards against one quoted Chinese name in an English
+  # sentence flipping the whole block to Chinese number words. Range 0.0-1.0;
+  # 0.2 keeps short Chinese lines detecting correctly while ignoring
+  # incidental characters.
+  cjk_ratio: 0.2
 
   # Tables with MORE body cells than this (rows x columns) are summarized
   # ("a table with 20 rows and 6 columns") instead of read out row by row.

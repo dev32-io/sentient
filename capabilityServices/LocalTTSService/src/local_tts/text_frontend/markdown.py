@@ -37,6 +37,7 @@ from dataclasses import dataclass
 import mistune
 
 from .mask import MaskTable
+from .normalize import resolve_lang
 from .phrases import phrase
 from .policy import SpeechPolicy
 from .spans import render_code_span, replace_bare_spans
@@ -87,18 +88,28 @@ class _Ctx:
     masks: MaskTable
 
 
-def strip_markdown(doc: str, policy: SpeechPolicy, lang: str) -> StrippedDoc:
+def strip_markdown(doc: str, policy: SpeechPolicy, lang: str, cjk_ratio: float) -> StrippedDoc:
     masks = MaskTable(doc=doc)
     if not doc.strip():
         return StrippedDoc(text="", masks=masks)
-    ctx = _Ctx(policy=policy, lang=lang, masks=masks)
+    # Resolve ONCE for the whole document -- unlike TN's per-block gate in
+    # frontend.py, every phrase() call downstream (dropped-span
+    # placeholders, table summaries) needs one concrete language. Without
+    # this, a Chinese document under the shipped "auto" default_lang got
+    # the raw "auto" tag handed straight to phrase(), which falls back to
+    # the English table -- a Chinese reply spoke "a link"/"a command".
+    resolved_lang = resolve_lang(lang, doc, cjk_ratio)
+    ctx = _Ctx(policy=policy, lang=resolved_lang, masks=masks)
     blocks: list[str] = []
     for tok in _PARSE(doc):
         text = _render_block(tok, ctx)
         if text and text.strip():
             blocks.append(text.strip())
     out = "\n\n".join(blocks)
-    log.debug("strip in_len=%d out_len=%d blocks=%d", len(doc), len(out), len(blocks))
+    log.debug(
+        "strip in_len=%d out_len=%d blocks=%d declared_lang=%s resolved_lang=%s",
+        len(doc), len(out), len(blocks), lang, resolved_lang,
+    )
     return StrippedDoc(text=out, masks=masks)
 
 

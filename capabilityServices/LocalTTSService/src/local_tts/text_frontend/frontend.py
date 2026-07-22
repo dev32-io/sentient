@@ -61,13 +61,15 @@ class TextFrontend:
         normalizer: Normalizer | None,
         normalize_languages: tuple[str, ...],
         policy: SpeechPolicy,
+        cjk_ratio: float,
     ) -> None:
         self._normalizer = normalizer
         self._normalize_languages = tuple(normalize_languages)
         self._policy = policy
+        self._cjk_ratio = cjk_ratio
 
     def process(self, doc: str, lang: str) -> str:
-        stripped = strip_markdown(doc, self._policy, lang)
+        stripped = strip_markdown(doc, self._policy, lang, self._cjk_ratio)
         text = strip_pause_tags(strip_emoji(stripped.text))
         normalized_blocks = 0
         if self._normalizer is not None and text.strip():
@@ -93,7 +95,7 @@ class TextFrontend:
             if not block.strip():
                 out.append(block)
                 continue
-            resolved = resolve_lang(lang, block)
+            resolved = resolve_lang(lang, block, self._cjk_ratio)
             should_normalize = resolved in self._normalize_languages
             log.debug("block_lang idx=%d len=%d declared=%s resolved=%s normalize=%s",
                       index, len(block), lang, resolved, should_normalize)
@@ -106,10 +108,15 @@ class TextFrontend:
 
 
 def build_frontend(
-    *, normalize_enabled: bool, normalize_languages: tuple[str, ...], policy: SpeechPolicy
+    *,
+    normalize_enabled: bool,
+    normalize_languages: tuple[str, ...],
+    policy: SpeechPolicy,
+    cjk_ratio: float,
 ) -> TextFrontend:
     return TextFrontend(
         normalizer=Normalizer() if normalize_enabled else None,
         normalize_languages=normalize_languages,
         policy=policy,
+        cjk_ratio=cjk_ratio,
     )

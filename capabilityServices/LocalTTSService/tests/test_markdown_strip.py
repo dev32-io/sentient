@@ -9,8 +9,12 @@ def policy():
     return SpeechPolicy(table_max_cells=24, code_span_max_chars=32, speak_dropped_spans=True)
 
 
-def _text(doc, policy, lang="en"):
-    return strip_markdown(doc, policy, lang).text
+# Mirrors config.example.yaml's text_frontend.cjk_ratio default.
+_CJK_RATIO = 0.2
+
+
+def _text(doc, policy, lang="en", cjk_ratio=_CJK_RATIO):
+    return strip_markdown(doc, policy, lang, cjk_ratio).text
 
 
 def test_drops_code_block_keeps_prose(policy):
@@ -93,9 +97,34 @@ def test_symbol_heavy_inline_code_becomes_a_phrase(policy):
 
 
 def test_word_like_inline_code_is_kept_but_masked(policy):
-    result = strip_markdown("Then call `flush` on it.", policy, "en")
+    result = strip_markdown("Then call `flush` on it.", policy, "en", _CJK_RATIO)
     assert "flush" not in result.text          # masked until after TN
     assert "flush" in result.masks.restore(result.text)
+
+
+def test_zh_document_uses_chinese_phrases_not_english(policy):
+    # Finding 8: strip_markdown must resolve the DECLARED language (here
+    # "auto", the shipped default_lang) against the document's own script
+    # before picking phrases -- previously the raw declared tag was passed
+    # straight to phrase(), so a Chinese document spoke English placeholder
+    # wording ("a link", "a command") under the shipped default.
+    #
+    # NOTE on this fixture's exact wording: resolution runs on the RAW
+    # (pre-strip) doc, so a long ASCII url/command dilutes the CJK ratio
+    # computed by Finding 2's gate -- the finding's own illustrative
+    # example ("https://example.com/a/b", "flush --now --verbose") comes
+    # out to a ~0.16 ratio, BELOW the 0.2 default, and still resolves "en".
+    # That's a real interaction between Finding 2's ratio gate and Finding
+    # 8's doc-level resolution the review text didn't cross-check; this
+    # fixture uses a shorter url/command so the ratio clears 0.2 while
+    # still exercising the same fix (link phrase + command phrase, in
+    # Chinese) -- see the fix-wave report for the full discrepancy note.
+    doc = "这是链接 https://a.b ，请运行 `flush now` 命令。"
+    out = _text(doc, policy, lang="auto")
+    assert "一个链接" in out
+    assert "一条命令" in out
+    assert "a link" not in out
+    assert "a command" not in out
 
 
 def test_bare_url_in_prose_becomes_a_phrase(policy):

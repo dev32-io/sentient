@@ -108,6 +108,7 @@ def _make_config(tmp_path: Path) -> Config:
             table_max_cells=24,
             code_span_max_chars=32,
             speak_dropped_spans=True,
+            cjk_ratio=0.2,
         ),
     )
 
