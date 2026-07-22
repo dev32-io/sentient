@@ -69,28 +69,40 @@ class TextFrontend:
     def process(self, doc: str, lang: str) -> str:
         stripped = strip_markdown(doc, self._policy, lang)
         text = strip_pause_tags(strip_emoji(stripped.text))
+        normalized_blocks = 0
         if self._normalizer is not None and text.strip():
-            text = self._normalize_blocks(text, lang)
+            text, normalized_blocks = self._normalize_blocks(text, lang)
         text = stripped.masks.restore(text)
         text = _collapse_whitespace(_fix_orphan_punctuation(text))
         out = text.strip()
-        log.debug("process in_len=%d out_len=%d lang=%s normalize=%s",
-                  len(doc), len(out), lang, self._normalizer is not None)
+        # Report blocks ACTUALLY normalized, not merely whether a Normalizer
+        # exists: with the default ("zh","ja") gate an all-English document
+        # normalizes nothing, and a flag would misreport that as normalize=True.
+        log.debug("process in_len=%d out_len=%d lang=%s normalized_blocks=%d",
+                  len(doc), len(out), lang, normalized_blocks)
         return out
 
-    def _normalize_blocks(self, text: str, lang: str) -> str:
+    def _normalize_blocks(self, text: str, lang: str) -> tuple[str, int]:
         # wetext flattens newlines, so each block is normalized separately to
         # preserve the \n\n prosodic gaps. Language is resolved PER BLOCK: a
         # reply can mix scripts, and English measurably sounds better with no
         # normalization at all while Chinese needs it for currency and times.
         out: list[str] = []
-        for block in text.split("\n\n"):
+        normalized = 0
+        for index, block in enumerate(text.split("\n\n")):
+            if not block.strip():
+                out.append(block)
+                continue
             resolved = resolve_lang(lang, block)
-            if block.strip() and resolved in self._normalize_languages:
+            should_normalize = resolved in self._normalize_languages
+            log.debug("block_lang idx=%d len=%d declared=%s resolved=%s normalize=%s",
+                      index, len(block), lang, resolved, should_normalize)
+            if should_normalize:
                 out.append(self._normalizer.normalize(block, resolved))
+                normalized += 1
             else:
                 out.append(block)
-        return "\n\n".join(out)
+        return "\n\n".join(out), normalized
 
 
 def build_frontend(

@@ -52,9 +52,8 @@ import websockets  # noqa: E402
 
 from local_tts.text_frontend.emoji_clean import strip_emoji, strip_pause_tags  # noqa: E402
 from local_tts.text_frontend.markdown import strip_markdown  # noqa: E402
-from local_tts.text_frontend.normalize import Normalizer  # noqa: E402
+from local_tts.text_frontend.normalize import Normalizer, resolve_lang  # noqa: E402
 from local_tts.text_frontend.policy import SpeechPolicy  # noqa: E402
-from local_tts.text_frontend.residual import sweep_residual_symbols  # noqa: E402
 
 TTS_PORT = 8770
 STT_PORT = 8768
@@ -138,17 +137,22 @@ def build_variants(doc: str, lang: str, normalizer: Normalizer, wanted: list[str
     """Mirror TextFrontend.process stage-for-stage, per configuration.
 
     Stage order is load-bearing and matches frontend.py exactly:
-      strip (spans masked) -> emoji/pause -> [sweep] -> [TN] -> UNMASK
+      strip (spans masked) -> emoji/pause -> [TN] -> UNMASK
     Skipping the unmask step makes the model read sentinels aloud
     ("zqxmaskaa"), which is a harness bug, not a product one -- it bit an
     earlier revision of this script.
+
+    The "tn" variant normalizes EVERY block regardless of language, so it
+    still shows what normalization would do to English. Production gates it
+    per block via ``normalize_languages`` -- see frontend.py.
     """
     stripped = strip_markdown(doc, POLICY, lang)
     base = strip_pause_tags(strip_emoji(stripped.text))
 
     def normalize(text: str) -> str:
         return "\n\n".join(
-            normalizer.normalize(b, lang) if b.strip() else b for b in text.split("\n\n")
+            normalizer.normalize(b, resolve_lang(lang, b)) if b.strip() else b
+            for b in text.split("\n\n")
         )
 
     out: dict[str, str] = {}
@@ -158,8 +162,6 @@ def build_variants(doc: str, lang: str, normalizer: Normalizer, wanted: list[str
         out["strip"] = stripped.masks.restore(base)
     if "tn" in wanted:
         out["tn"] = stripped.masks.restore(normalize(base))
-    if "sweep" in wanted:
-        out["sweep"] = stripped.masks.restore(normalize(sweep_residual_symbols(base)))
     return out
 
 
@@ -261,7 +263,7 @@ def main() -> None:
     parser.add_argument("--lang", default="en", choices=["en", "zh"])
     parser.add_argument("--suite", default="prose", choices=["prose", "markdown"])
     parser.add_argument("--voice", default="nova", help="voice pack id; MUST be pinned for a fair A/B")
-    parser.add_argument("--variants", default="none,strip,tn,sweep")
+    parser.add_argument("--variants", default="none,strip,tn")
     parser.add_argument("--only", default="", help="comma-separated case names to run")
     parser.add_argument("--out", default="", help="output directory")
     asyncio.run(run(parser.parse_args()))
