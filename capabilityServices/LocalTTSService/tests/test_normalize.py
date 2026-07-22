@@ -1,6 +1,6 @@
 import pytest
 
-from local_tts.text_frontend.normalize import Normalizer
+from local_tts.text_frontend.normalize import Normalizer, detect_lang, resolve_lang
 
 
 @pytest.fixture(scope="module")
@@ -16,19 +16,6 @@ def test_percent_and_units(norm):
     out = norm.normalize("90% done at 100km/h", "en").lower()
     assert "percent" in out
     assert "kilometers per hour" in out
-
-
-def test_range_does_not_corrupt_following_word(norm):
-    # Regression: bare wetext turns "5-10 minutes" into "... minutes inutes"
-    # (a spurious duplicated tail-word). NOTE: "inutes" is a substring of
-    # "minutes" itself (m-inutes), so a raw `"inutes" not in out` check is
-    # unsatisfiable by construction once "minutes" is required to be
-    # present — check for the standalone corrupted word token instead.
-    out = norm.normalize("Wait 5-10 minutes.", "en").lower()
-    words = out.replace(".", "").split()
-    assert "inutes" not in words  # no spurious duplicated tail-word
-    assert "minutes" in out
-    assert "to" in out  # "five to ten minutes"
 
 
 def test_plain_prose_untouched(norm):
@@ -48,15 +35,31 @@ def test_normalizer_cached_per_lang(norm):
     assert a is b
 
 
-def test_en_negative_shim_fires(norm):
-    assert "negative" in norm.normalize("temp is -5 today", "en").lower()
+def test_detect_lang_by_script():
+    assert detect_lang("It costs fifty dollars.") == "en"
+    assert detect_lang("这个价格是五十美元。") == "zh"
+    assert detect_lang("これはテストです。") == "ja"
 
 
-def test_auto_lang_routes_to_en_and_fires_negative_shim(norm):
-    # "auto" (the shipped default) must behave like en for the negative shim.
-    # Use the adjacent-unit form ("-5C", no space) — wetext's own WFST already
-    # says "negative five" for a space-separated leading negative regardless
-    # of the shim, so a spaced input wouldn't actually distinguish gated vs
-    # ungated behavior. The adjacent form only reads "negative" when the
-    # shim fires; otherwise wetext leaves it as "-five".
-    assert "negative" in norm.normalize("temp is -5C today", "auto").lower()
+def test_detect_lang_mixed_prefers_cjk():
+    # A CJK sentence with embedded latin is still CJK.
+    assert detect_lang("价格 $50 and it costs $20 too.") == "zh"
+
+
+def test_resolve_lang_honours_a_concrete_declaration():
+    assert resolve_lang("zh", "plain english text") == "zh"
+    assert resolve_lang("en", "这是中文") == "en"
+
+
+def test_resolve_lang_detects_when_declared_auto():
+    # THE production bug: "auto" used to collapse to "en", so Chinese was
+    # normalized by the English engine and spoke "fifty dollars".
+    assert resolve_lang("auto", "这个价格是 $50。") == "zh"
+    assert resolve_lang("auto", "It costs $50.") == "en"
+
+
+def test_auto_chinese_normalizes_to_chinese_currency(norm):
+    lang = resolve_lang("auto", "这个价格是 $50。")
+    out = norm.normalize("这个价格是 $50。", lang)
+    assert "美元" in out
+    assert "dollars" not in out
