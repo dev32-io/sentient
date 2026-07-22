@@ -1,18 +1,23 @@
 """Text normalization: written form -> spoken form.
 
-Core engine is wetext (WFST, zh+en+ja). Callers resolve a concrete language
-via ``resolve_lang`` before calling ``Normalizer.normalize`` -- wetext keys
-its grammar off the declared language, and the shipped ``default_lang``
-value is the sentinel "auto", never a language wetext itself understands.
+Core engine is wetext (WFST, zh+en+ja). Callers MUST resolve a concrete
+language via ``resolve_lang`` before calling ``Normalizer.normalize``.
+
+Passing "auto" straight through mostly works -- wetext re-detects per call
+-- but its own ``get_lang`` has no kana check and returns "en" for
+kana-only Japanese, so a Japanese reply would be normalized with the
+English grammar. ``detect_lang`` below checks kana first, which is why
+resolution belongs to the caller rather than to wetext.
 
 Ambiguous cases (e.g. "100m" = meters vs millions) are NOT resolved --
 wetext picks one reading; that residual is accepted by design.
 
 Two EN regex pre-shims (range "N-N" -> "N to N", leading negative "-5" ->
 "negative 5") used to run here to patch wetext's English grammar. Both were
-deleted: English is no longer normalized by default (language-gated
-normalization landed separately), so they were dead code on the default
-path, and a ~250-case TTS->STT loop-back measurement showed the range shim
+deleted because the per-language gate in ``frontend.py`` stops normalizing
+English at all, which makes them dead code on the default path. Until that
+gate exists they are load-bearing, so these two changes must ship together.
+A ~250-case TTS->STT loop-back measurement also showed the range shim
 was NEVER the cause of "2026-07-20" being read as "2026 to 07 to 20" -- the
 model reads the bare ISO date that way with NO normalization involved. Do
 not re-add them on that theory.
