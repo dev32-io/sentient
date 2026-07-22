@@ -1,8 +1,9 @@
 """Composes the text-frontend stages into one process() call.
 
 Stage order is load-bearing:
-  strip markdown (spans masked) -> emoji/pause strip -> residual sweep
-  -> normalize -> UNMASK -> punctuation cleanup -> whitespace collapse
+  strip markdown (spans masked) -> emoji/pause strip -> normalize (gated
+  per language, per block) -> UNMASK -> punctuation cleanup -> whitespace
+  collapse
 Unmasking before TN would defeat the mask; cleaning punctuation before
 unmasking would operate on sentinels instead of the real text.
 """
@@ -14,9 +15,8 @@ import re
 
 from .emoji_clean import strip_emoji, strip_pause_tags
 from .markdown import strip_markdown
-from .normalize import Normalizer
+from .normalize import Normalizer, resolve_lang
 from .policy import SpeechPolicy
-from .residual import sweep_residual_symbols
 
 log = logging.getLogger("local_tts.text_frontend.frontend")
 
@@ -55,14 +55,20 @@ def _collapse_whitespace(text: str) -> str:
 
 
 class TextFrontend:
-    def __init__(self, *, normalizer: Normalizer | None, policy: SpeechPolicy) -> None:
+    def __init__(
+        self,
+        *,
+        normalizer: Normalizer | None,
+        normalize_languages: tuple[str, ...],
+        policy: SpeechPolicy,
+    ) -> None:
         self._normalizer = normalizer
+        self._normalize_languages = tuple(normalize_languages)
         self._policy = policy
 
     def process(self, doc: str, lang: str) -> str:
         stripped = strip_markdown(doc, self._policy, lang)
         text = strip_pause_tags(strip_emoji(stripped.text))
-        text = sweep_residual_symbols(text)
         if self._normalizer is not None and text.strip():
             text = self._normalize_blocks(text, lang)
         text = stripped.masks.restore(text)
@@ -73,20 +79,25 @@ class TextFrontend:
         return out
 
     def _normalize_blocks(self, text: str, lang: str) -> str:
-        # wetext flattens newlines, so normalizing the whole document glues
-        # paragraph blocks together and destroys the \n\n prosodic gaps that
-        # strip_markdown emits. Normalize each block independently and
-        # rejoin with \n\n to preserve them.
-        blocks = text.split("\n\n")
-        out = [
-            self._normalizer.normalize(b, lang) if b.strip() else b
-            for b in blocks
-        ]
+        # wetext flattens newlines, so each block is normalized separately to
+        # preserve the \n\n prosodic gaps. Language is resolved PER BLOCK: a
+        # reply can mix scripts, and English measurably sounds better with no
+        # normalization at all while Chinese needs it for currency and times.
+        out: list[str] = []
+        for block in text.split("\n\n"):
+            resolved = resolve_lang(lang, block)
+            if block.strip() and resolved in self._normalize_languages:
+                out.append(self._normalizer.normalize(block, resolved))
+            else:
+                out.append(block)
         return "\n\n".join(out)
 
 
-def build_frontend(*, normalize_enabled: bool, policy: SpeechPolicy) -> TextFrontend:
+def build_frontend(
+    *, normalize_enabled: bool, normalize_languages: tuple[str, ...], policy: SpeechPolicy
+) -> TextFrontend:
     return TextFrontend(
         normalizer=Normalizer() if normalize_enabled else None,
+        normalize_languages=normalize_languages,
         policy=policy,
     )
