@@ -37,6 +37,19 @@ def test_chinese_is_normalized(policy):
     assert "dollars" not in out
 
 
+def test_phrase_language_is_decided_on_the_stripped_text(policy):
+    # The strip picks the phrase language, but the strip is also what removes
+    # the URL and code span that dilute the script ratio: this document scores
+    # 0.164 CJK raw (below the 0.2 threshold, so "en") and 0.375 once stripped.
+    # Measuring the raw form emitted English phrases mid-Chinese sentence.
+    out = _fe(policy).process(
+        "这是链接 https://example.com/a/b ，请运行 `flush --now --verbose` 命令。", "auto"
+    )
+    assert "一个链接" in out
+    assert "一条命令" in out
+    assert "a link" not in out
+
+
 def test_mixed_document_normalizes_only_the_cjk_block(policy):
     out = _fe(policy).process("It costs $50.\n\n这个价格是 $50。", "auto")
     assert "$50" in out          # english block untouched

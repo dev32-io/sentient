@@ -69,7 +69,7 @@ class TextFrontend:
         self._cjk_ratio = cjk_ratio
 
     def process(self, doc: str, lang: str) -> str:
-        stripped = strip_markdown(doc, self._policy, lang, self._cjk_ratio)
+        stripped = self._strip(doc, lang)
         text = strip_pause_tags(strip_emoji(stripped.text))
         normalized_blocks = 0
         if self._normalizer is not None and text.strip():
@@ -83,6 +83,25 @@ class TextFrontend:
         log.debug("process in_len=%d out_len=%d lang=%s normalized_blocks=%d",
                   len(doc), len(out), lang, normalized_blocks)
         return out
+
+    def _strip(self, doc: str, lang: str):
+        """Strip markdown, re-running once if that changes the language verdict.
+
+        The strip picks the language for its spoken phrases ("a link" vs
+        "一个链接") -- but the strip is also what REMOVES the URLs and code
+        spans that dilute the script ratio. Measuring the raw document can
+        therefore disagree with the text the listener actually hears: a
+        Chinese sentence containing one long URL scores 0.164 CJK raw and
+        0.375 once stripped, so it emitted English phrases mid-Chinese.
+        Re-strip only when the verdict actually changed; a concrete declared
+        language resolves to itself both times, so the common path parses once.
+        """
+        stripped = strip_markdown(doc, self._policy, lang, self._cjk_ratio)
+        refined = resolve_lang(lang, stripped.text, self._cjk_ratio)
+        if refined != resolve_lang(lang, doc, self._cjk_ratio):
+            log.debug("relang declared=%s refined=%s", lang, refined)
+            stripped = strip_markdown(doc, self._policy, refined, self._cjk_ratio)
+        return stripped
 
     def _normalize_blocks(self, text: str, lang: str) -> tuple[str, int]:
         # wetext flattens newlines, so each block is normalized separately to
