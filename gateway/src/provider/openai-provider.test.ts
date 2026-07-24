@@ -17,7 +17,6 @@ live("[@live] openai-provider against a real endpoint", () => {
       {
         base_url: "https://openrouter.ai/api/v1",
         model: MODEL,
-        api_key_env: "OPENROUTER_API_KEY",
         max_output_tokens: 64,
         request_timeout_ms: 60000,
         site_name: "Sentient",

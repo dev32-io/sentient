@@ -85,31 +85,41 @@ store:
 
 # ---------------------------------------------------------------------------
 # Orchestrator — the native LLM agent loop (Sentient 2.0, spec §4/§5).
-# NOT YET WIRED to a runtime consumer (Plan 2 builds that). Section is
-# optional at the schema level (shared/config/src/schema.ts) — left commented
-# out here so a fresh clone / `bun run dev` / `docker compose up` boots
-# without ORCHESTRATOR_MODEL, which is not documented in .env.example,
-# docker-compose, or CI. When Plan 2 wires the orchestrator runtime, uncomment
-# this block, set ORCHESTRATOR_MODEL, and document it alongside
-# OPENROUTER_API_KEY in .env.example — the runtime construction site must
-# fail loudly if this section is absent while the orchestrator is enabled.
+# Wired by the Plan 2 composition root (gateway/src/bootstrap/phase-services.ts).
+# Section is optional at the schema level (shared/config/src/schema.ts) — a
+# fresh clone / `bun run dev` / `docker compose up` boots fine without it,
+# the orchestrator just stays disabled (services.provider / .createSessionRuntime
+# are null).
+#
+# The API key + base_url are NOT read from here (and NOT from any env var):
+# the composition root resolves them from the operator's 1.0 secrets store
+# (`~/.sentient/gateway/secrets/keys.yaml`, already populated by the wizard —
+# see SecretsStore.getActiveLlm() in gateway/src/admin/secrets-store.ts). The
+# `model` below is a plain gateway-config tunable — override it to match
+# whichever provider is active in that store (OpenRouter, Ollama Cloud, or a
+# custom OpenAI-compatible endpoint).
 # ---------------------------------------------------------------------------
-# orchestrator:
-#   provider:
-#     base_url: https://openrouter.ai/api/v1   # OpenAI-compatible endpoint
-#     model: ${ORCHESTRATOR_MODEL}             # e.g. a tool-calling-capable model
-#     api_key_env: OPENROUTER_API_KEY          # env var holding the key (secret)
-#     max_output_tokens: 1024                  # per-request output cap (1-32000)
-#     request_timeout_ms: 120000               # per-request deadline (1000-600000)
-#     site_name: Sentient                      # OpenRouter attribution header
-#   loop:
-#     max_iterations: 10                       # ReAct iteration cap (1-50)
-#   tools:
-#     foreground_timeout_ms: 30000             # per foreground tool call (1000-120000)
-#     max_concurrent_background_tasks: 50      # per session (1-500)
-#   delegation:
-#     frontmatter_dir: ./config/delegation     # static per-agent envelope dir
-#     hermes_timeout_ms: 600000                # per Hermes one-shot (1000-3600000)
+orchestrator:
+  provider:
+    # OPTIONAL override, consulted only when the secrets store's own
+    # base_url is empty (its OpenRouter entry ships with none by default —
+    # see gateway/templates/wizard/keys.yaml.tmpl). Ollama-cloud/custom
+    # entries normally carry their own base_url, which always wins over this.
+    base_url: https://openrouter.ai/api/v1
+    # Tool-calling-capable, widely-available default; override to match the
+    # operator's active secrets-store provider if it isn't OpenRouter.
+    model: openai/gpt-4o-mini
+    max_output_tokens: 1024                  # per-request output cap (1-32000)
+    request_timeout_ms: 120000               # per-request deadline (1000-600000)
+    site_name: Sentient                      # OpenRouter attribution header
+  loop:
+    max_iterations: 10                       # ReAct iteration cap (1-50)
+  tools:
+    foreground_timeout_ms: 30000             # per foreground tool call (1000-120000)
+    max_concurrent_background_tasks: 50      # per session (1-500)
+  delegation:
+    frontmatter_dir: ./config/delegation     # static per-agent envelope dir (relative to gateway/)
+    hermes_timeout_ms: 600000                # per Hermes one-shot (1000-3600000)
 
 # ---------------------------------------------------------------------------
 # STT — local-stt service (Silero VAD + Smart-Turn v3 + SenseVoice-Small)

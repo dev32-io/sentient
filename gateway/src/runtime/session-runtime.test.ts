@@ -28,7 +28,6 @@ function testConfig(maxIterations = 10): OrchestratorConfig {
     provider: {
       base_url: "http://localhost:0",
       model: "test-model",
-      api_key_env: "TEST_KEY",
       max_output_tokens: 1024,
       request_timeout_ms: 120000,
       site_name: "Sentient",

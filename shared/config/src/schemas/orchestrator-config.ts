@@ -2,12 +2,17 @@ import { z } from "zod";
 
 export const orchestratorConfigSchema = z.object({
   provider: z.object({
-    // OpenAI-compatible base URL (OpenRouter, local Ollama, etc.).
-    base_url: z.string().url(),
-    // Model id sent on every request.
+    // OPTIONAL OpenAI-compatible base URL override (OpenRouter, local Ollama,
+    // etc.). The composition root's active-provider connection comes from
+    // the operator's secrets store (`SecretsStore.getActiveLlm()`) — this
+    // key is consulted ONLY when the secrets store's own base_url is empty
+    // (e.g. the default openrouter entry ships with no base_url). Leave
+    // empty ("") to always defer to the secrets store.
+    base_url: z.union([z.literal(""), z.string().url()]).default(""),
+    // Model id sent on every request. The key + base_url are resolved from
+    // the secrets store at composition-root construction time, NOT from an
+    // env var — see gateway/src/bootstrap/resolve-provider-connection.ts.
     model: z.string().min(1),
-    // Env var name holding the API key (secrets only via ${VAR}).
-    api_key_env: z.string().min(1),
     // Per-request cap.
     max_output_tokens: z.number().int().min(1).max(32000).default(1024),
     // Per-request wall-clock deadline (ms). Match to the model's worst case.

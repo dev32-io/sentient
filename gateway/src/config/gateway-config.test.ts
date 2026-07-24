@@ -16,7 +16,6 @@ orchestrator:
   provider:
     base_url: https://openrouter.ai/api/v1
     model: test-model
-    api_key_env: OPENROUTER_API_KEY
   loop: {}
   tools: {}
   delegation: {}
@@ -57,7 +56,6 @@ orchestrator:
   provider:
     base_url: https://openrouter.ai/api/v1
     model: test-model
-    api_key_env: OPENROUTER_API_KEY
   loop: {}
   tools: {}
   delegation: {}
@@ -86,7 +84,6 @@ orchestrator:
   provider:
     base_url: https://openrouter.ai/api/v1
     model: test-model
-    api_key_env: OPENROUTER_API_KEY
   loop: {}
   tools: {}
   delegation: {}
@@ -123,7 +120,6 @@ orchestrator:
   provider:
     base_url: https://openrouter.ai/api/v1
     model: test-model
-    api_key_env: OPENROUTER_API_KEY
   loop: {}
   tools: {}
   delegation: {}

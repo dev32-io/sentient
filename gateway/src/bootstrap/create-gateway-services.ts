@@ -9,6 +9,7 @@ import type {
   TTSConfig,
   WebuiConfig,
 } from "@sentient/config";
+import type { AccessManager } from "../access/access-manager.js";
 import type { InstallState } from "../admin/install-state.js";
 import type { KeyRotationOrchestrator } from "../admin/key-rotation.js";
 import type { ProfileRestartOrchestrator } from "../admin/profile-restart-orchestrator.js";
@@ -23,15 +24,20 @@ import type { TestProviderResult } from "../api/wizard/index.ts";
 import type { ApplyDeps } from "../apply/orchestrator.js";
 import type { SessionManager } from "../auth/session-manager.ts";
 import type { StartupConfig } from "../config/startup-config.ts";
+import type { UserPrincipal } from "../identity/user-principal.js";
 import type { HealthPoller } from "../infrastructure/health-poller.js";
 import { getLog } from "../logging/logger.ts";
 import type { PersonalityStore } from "../profile-store/personality-store.js";
 import type { ProfileStore } from "../profile-store/profile-store.ts";
 import type { TemplateLoader } from "../profile-store/template-loader.ts";
+import type { ProviderClient } from "../provider/provider-client.js";
+import type { SessionRuntime } from "../runtime/session-runtime.js";
+import type { TurnEmitter } from "../runtime/turn-emitter.js";
 import type { SessionControlsRegistry } from "../session-handlers/session-controls-registry.js";
 import type { GatewayTlsMaterial } from "../session-handlers/ws-handlers.ts";
 import type { SessionRouter } from "../session-router.js";
 import type { SystemOrchestratorService } from "../system-orchestrator/index.js";
+import type { McpClient } from "../tools/mcp-client.js";
 import type { TextStreamSynthesizer } from "../tts/text-stream-synthesizer.ts";
 import { type AuthService, createAuthService } from "../user-auth/auth-service.ts";
 import { getHermesProfileDir } from "../user-auth/paths.js";
@@ -120,6 +126,24 @@ export interface GatewayServices {
   /** Returns the shared Hermes bearer token used for per-user ACP / plugin auth. */
   readonly hermesApiKey: () => string;
   resolveProfileDir(userId: string): string;
+
+  // --- Native orchestrator composition root (spec §2.6, Plan 2 Task 9) ------
+  /** L1 capability minter (spec §2.1) — always present. */
+  readonly accessManager: AccessManager;
+  /** Shared MCP client dialing `mcp_catalog` — always present (a no-op with
+   *  an empty catalog). */
+  readonly mcpClient: McpClient;
+  /** The orchestrator's OpenAI-compatible provider, resolved from the
+   *  operator's ACTIVE secrets-store LLM (never an env var). `null` when
+   *  `orchestrator:` is absent from config, or present with no active key
+   *  configured yet — either way the gateway still boots. */
+  readonly provider: ProviderClient | null;
+  /** Per-session runtime factory. `null` only when `orchestrator:` is absent
+   *  from config.yaml. When present but `provider` is null, calling it
+   *  throws a clear error rather than the gateway failing to boot. */
+  readonly createSessionRuntime:
+    | ((principal: UserPrincipal, sessionId: string, emitter: TurnEmitter) => SessionRuntime)
+    | null;
 }
 
 export async function createGatewayServices(cfg: StartupConfig): Promise<GatewayServices> {
@@ -167,6 +191,8 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     tls: services.tls !== undefined,
     language: cfg.language,
     systemOrchestrator: systemOrchestrator !== null,
+    orchestrator: cfg.orchestrator !== undefined,
+    orchestratorProvider: services.provider !== null,
   });
 
   return {
@@ -215,5 +241,9 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     devicesHandlerDeps: services.devicesHandlerDeps,
     hermesApiKey: () => internalSecretsStore.getHermesAuthTokenSync(),
     resolveProfileDir: getHermesProfileDir,
+    accessManager: services.accessManager,
+    mcpClient: services.mcpClient,
+    provider: services.provider,
+    createSessionRuntime: services.createSessionRuntime,
   };
 }

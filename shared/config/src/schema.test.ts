@@ -23,7 +23,7 @@ const wsResilienceSession = {
 // a fully-populated orchestrator block.
 const minimalAccess = { user_data_root: "/tmp/sentient-test-users" };
 const minimalOrchestrator = {
-  provider: { base_url: "https://openrouter.ai/api/v1", model: "test-model", api_key_env: "OPENROUTER_API_KEY" },
+  provider: { base_url: "https://openrouter.ai/api/v1", model: "test-model" },
   loop: {},
   tools: {},
   delegation: {},

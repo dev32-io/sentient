@@ -1,4 +1,8 @@
+import { join } from "node:path";
+import { riskConfigSchema } from "@sentient/config";
+import type { OrchestratorConfig } from "@sentient/config";
 import { ensureTlsMaterial } from "@sentient/tls";
+import { type AccessManager, createAccessManager } from "../access/access-manager.js";
 import { archiveUserDir } from "../admin/archive-user-dir.js";
 import {
   migrateUnboundUsers,
@@ -30,21 +34,42 @@ import type { ApplyDeps } from "../apply/orchestrator.js";
 import { renderAndWrite } from "../apply/orchestrator.js";
 import type { StartupConfig } from "../config/startup-config.ts";
 import { SignalProvisioner } from "../devices/signal/signal-provisioner.js";
+import type { UserPrincipal } from "../identity/user-principal.js";
 import { type HealthPoller, createHealthPoller } from "../infrastructure/health-poller.js";
 import { type Log, getLog } from "../logging/logger.ts";
 import { createPersonalityStore } from "../profile-store/personality-store.js";
 import type { PersonalityStore } from "../profile-store/personality-store.js";
 import { type ProfileStore, createProfileStore } from "../profile-store/profile-store.ts";
 import { type TemplateLoader, createTemplateLoader } from "../profile-store/template-loader.ts";
+import { createOpenAIProvider } from "../provider/openai-provider.js";
+import type { ProviderClient } from "../provider/provider-client.js";
 import type { TTSProviderFactory } from "../providers/tts/tts-types.ts";
+import { createSessionRuntime as buildSessionRuntime } from "../runtime/session-runtime.js";
+import type { SessionRuntime } from "../runtime/session-runtime.js";
+import type { TurnEmitter } from "../runtime/turn-emitter.js";
+import { createPolicyEngine } from "../security/policy-engine.js";
+import type { PolicyEngine } from "../security/policy-engine.js";
+import { loadMcpPolicy } from "../security/policy-loader.js";
 import type { GatewayTlsMaterial } from "../session-handlers/ws-handlers.ts";
 import { createSessionRouter } from "../session-router.js";
 import type { SessionRouter } from "../session-router.js";
+import { openSessionStore } from "../store/session-store.js";
+import { createDelegateTaskRunner, delegateTaskDefinition } from "../tools/delegate-task.js";
+import { createDelegationGuard, loadDelegationFrontmatterDir } from "../tools/delegation-guard.js";
+import type { DelegationGuard } from "../tools/delegation-guard.js";
+import { createHermesRunner } from "../tools/hermes-runner.js";
+import type { HermesRunner } from "../tools/hermes-runner.js";
+import { createMcpClient } from "../tools/mcp-client.js";
+import type { McpClient } from "../tools/mcp-client.js";
+import { createPromptClassifier } from "../tools/prompt-classifier.js";
+import { createToolBroker } from "../tools/tool-broker.js";
+import type { BackgroundToolRunner } from "../tools/tool-broker.js";
 import type { TextStreamSynthesizer } from "../tts/text-stream-synthesizer.ts";
 import type { AuthService } from "../user-auth/auth-service.js";
 import { getHermesProfileDir } from "../user-auth/paths.js";
 import { hashPin } from "../user-auth/pin-service.js";
 import { createTextStreamSynthesizer } from "./content-tts-factory.ts";
+import { resolveProviderConnection } from "./resolve-provider-connection.ts";
 import type { SttService } from "./stt-factory.ts";
 import { createSttService } from "./stt-factory.ts";
 import type { TtsService } from "./tts-factory.ts";
@@ -55,6 +80,18 @@ const log = getLog(["sentient", "bootstrap", "phase-services"]);
 // Fallback provider used in supervisord program env when a user's profile is
 // unreadable (corruption case).
 const FALLBACK_LLM_PROVIDER = "openrouter" as const;
+
+// Gateway project root (gateway/) — mirrors startup-config.ts's own
+// computation. `orchestrator.delegation.frontmatter_dir` ships as a relative
+// path (e.g. "./config/delegation") and needs resolving against this, not
+// against `process.cwd()`, which varies by launcher.
+const GATEWAY_ROOT = join(import.meta.dir, "..", "..");
+
+// Plan 2 walking-skeleton system prompt — deliberately minimal (a real
+// prompt-assembly layer, persona/profile-aware, is Plan 3's job; see
+// clean-code.md's rule on loading large prompt content from .md files,
+// which does not yet apply to this one-liner placeholder).
+const DEFAULT_SYSTEM_PROMPT = "You are Sentient, a helpful family assistant.";
 
 export interface PhaseServicesInput {
   readonly cfg: StartupConfig;
@@ -83,6 +120,31 @@ export interface PhaseServicesOutput {
   /** Deps bag for `/api/v1/devices*` handlers. Null when hermes + supervisord
    *  are not configured (e.g. headless / CI builds). */
   readonly devicesHandlerDeps: DevicesHandlerDeps | null;
+
+  // --- Native orchestrator composition root (spec §2.6, Plan 2 Task 9) ------
+  // App-lifetime singletons + a per-session factory. See the header comment
+  // above `buildOrchestratorServices` below for the full wiring rationale.
+
+  /** L1 capability minter (spec §2.1) — always constructed, independent of
+   *  whether the orchestrator itself is enabled. */
+  readonly accessManager: AccessManager;
+  /** Shared MCP client (spec §5.3) — dials every `mcp_catalog` entry lazily
+   *  per-server; always constructed (harmless/no-op with an empty catalog). */
+  readonly mcpClient: McpClient;
+  /** The native orchestrator's OpenAI-compatible provider, built from the
+   *  operator's ACTIVE secrets-store LLM (never an env var — see
+   *  resolve-provider-connection.ts). `null` when `orchestrator:` is absent
+   *  from config, OR it's present but no active LLM key is configured yet —
+   *  either way the gateway still boots; only a session that actually needs
+   *  the orchestrator fails, at construction, with a clear error. */
+  readonly provider: ProviderClient | null;
+  /** Per-session runtime factory. `null` when `orchestrator:` is absent from
+   *  config (the whole native-orchestrator feature is off). Present-but-
+   *  no-provider is a DIFFERENT state (see `provider` above) — the factory
+   *  itself still exists in that case, and throws when actually invoked. */
+  readonly createSessionRuntime:
+    | ((principal: UserPrincipal, sessionId: string, emitter: TurnEmitter) => SessionRuntime)
+    | null;
 }
 
 export async function runPhaseServices(input: PhaseServicesInput): Promise<PhaseServicesOutput> {
@@ -98,6 +160,11 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     const sessionFactory: TTSProviderFactory = asStrictFactory(tts, getVoiceId);
     return createTextStreamSynthesizer(cfg, sessionFactory);
   };
+
+  const { accessManager, mcpClient, provider, createSessionRuntime } = await buildOrchestratorServices(
+    cfg,
+    secretsStore,
+  );
 
   const profileStore = createProfileStore();
   const templateLoader = createTemplateLoader();
@@ -246,6 +313,8 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     tts: tts !== null,
     tls: tls !== undefined,
     language: cfg.language,
+    orchestrator: cfg.orchestrator !== undefined,
+    provider: provider !== null,
   });
 
   return {
@@ -264,6 +333,10 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     profileRestartOrchestrator,
     buildPersonalityStore,
     devicesHandlerDeps,
+    accessManager,
+    mcpClient,
+    provider,
+    createSessionRuntime,
   };
 }
 
@@ -461,4 +534,237 @@ function buildKeyRotation(
       return { ok: true };
     },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Native orchestrator composition root (Plan 2 Task 9, spec §2.6)
+// ---------------------------------------------------------------------------
+//
+// Builds the app-lifetime singletons (AccessManager, McpClient, the shared
+// PolicyEngine/DelegationGuard/HermesRunner) once, resolves the orchestrator's
+// ProviderClient from the operator's 1.0 secrets store, and returns a
+// per-session `createSessionRuntime` factory closure that mints a fresh
+// ToolBroker (+ its own delegateTask runner bound to that session's userId)
+// on every call — mirroring `createSynthesizerFor` above. Everything here
+// no-ops (`provider: null`, `createSessionRuntime: null`) when
+// `cfg.orchestrator` is absent: the native orchestrator is an OPTIONAL
+// subsystem and must never block gateway boot.
+
+interface OrchestratorServices {
+  accessManager: AccessManager;
+  mcpClient: McpClient;
+  provider: ProviderClient | null;
+  createSessionRuntime: ((principal: UserPrincipal, sessionId: string, emitter: TurnEmitter) => SessionRuntime) | null;
+}
+
+async function buildOrchestratorServices(
+  cfg: StartupConfig,
+  secretsStore: SecretsStore | null,
+): Promise<OrchestratorServices> {
+  const accessManager = createAccessManager({ userDataRoot: cfg.access.user_data_root });
+  const mcpClient = createMcpClient(cfg.mcpCatalog, {});
+
+  // MCP-warm-before-first-call (Task 4 residual — see tool-broker.ts's
+  // `ensureMcpWarm` doc comment and Task 4's own report: "a residual for
+  // Task 6/9/10 to confirm the composition root gives the warm-up time to
+  // land before the very first LLM call"). Chosen fix: warm the SHARED
+  // McpClient's per-server transport connections once here, at boot — the
+  // slow part (network handshake to each configured MCP server) is done
+  // before any session exists. Each session still builds its OWN ToolBroker
+  // (spec §5.3: no cross-session tool state), so its own `ensureMcpWarm()`
+  // still re-lists tools once — but against already-connected transports, a
+  // fast local round trip instead of a cold dial. This narrows the
+  // `definitions()` synchronous-read race (Task 4's residual) to something
+  // Task 10's real WS round trip (session creation → first user message)
+  // comfortably outlasts in practice; a hard guarantee would require making
+  // this factory async, which the locked signature
+  // (`createSessionRuntime(principal, sessionId, emitter): SessionRuntime`)
+  // does not allow. Noted as a residual, not silently dropped.
+  await warmMcpClient(mcpClient);
+
+  if (!cfg.orchestrator) {
+    log.info("orchestrator.disabled", { reason: "no orchestrator: block in config.yaml" });
+    return { accessManager, mcpClient, provider: null, createSessionRuntime: null };
+  }
+
+  const orchestratorCfg = cfg.orchestrator;
+  const provider = await buildOrchestratorProvider(orchestratorCfg, secretsStore);
+
+  const policyEngine = createPolicyEngine(loadMcpPolicy());
+  const frontmatterDir = resolveDelegationFrontmatterDir(orchestratorCfg.delegation.frontmatter_dir);
+  const delegationFrontmatter = loadDelegationFrontmatterDir(frontmatterDir);
+  const promptClassifier = createPromptClassifier({ riskConfig: riskConfigSchema.parse({}) });
+  const delegationGuard = createDelegationGuard({ frontmatter: delegationFrontmatter, classifier: promptClassifier });
+  const hermesRunner = createHermesRunner({
+    resolveProfileDir: getHermesProfileDir,
+    timeoutMs: orchestratorCfg.delegation.hermes_timeout_ms,
+  });
+
+  const createSessionRuntime = buildCreateSessionRuntime({
+    orchestratorCfg,
+    accessManager,
+    provider,
+    mcpClient,
+    policyEngine,
+    delegationGuard,
+    hermesRunner,
+  });
+
+  return { accessManager, mcpClient, provider, createSessionRuntime };
+}
+
+/** Warms the shared MCP client's per-server transport connections. Never
+ *  throws — `McpClient.listTools()` already catches/logs/skips a single
+ *  unreachable server internally; this try/catch is belt-and-braces against
+ *  a future change to that contract, not a sign it can currently reject. */
+async function warmMcpClient(mcpClient: McpClient): Promise<void> {
+  try {
+    const tools = await mcpClient.listTools();
+    log.info("mcp-client.warmup.ok", { toolCount: tools.length });
+  } catch (err) {
+    log.warn("mcp-client.warmup.failed", { reason: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+/** `orchestrator.delegation.frontmatter_dir` ships relative
+ *  (`./config/delegation`) — resolve against the gateway project root, not
+ *  `process.cwd()` (which varies by launcher). Absolute overrides pass
+ *  through untouched. */
+function resolveDelegationFrontmatterDir(frontmatterDir: string): string {
+  return frontmatterDir.startsWith("/") ? frontmatterDir : join(GATEWAY_ROOT, frontmatterDir);
+}
+
+/** Resolves the orchestrator's live `ProviderClient` from the operator's 1.0
+ *  secrets store — see resolve-provider-connection.ts's header for why this
+ *  is NEVER `process.env`. `null` covers every "not ready yet" case: no
+ *  secrets store at all (hermes not configured), an unreadable keys.yaml, or
+ *  an active provider with no key set — the gateway boots regardless; only a
+ *  session that actually needs the orchestrator fails later, loudly, at
+ *  construction (`buildCreateSessionRuntime` below). */
+async function buildOrchestratorProvider(
+  orchestratorCfg: OrchestratorConfig,
+  secretsStore: SecretsStore | null,
+): Promise<ProviderClient | null> {
+  if (!secretsStore) {
+    log.warn("orchestrator.provider.no-secrets-store", {
+      reason: "secrets store absent (hermes not configured) — orchestrator provider unavailable",
+    });
+    return null;
+  }
+
+  const activeLlm = await secretsStore.getActiveLlm();
+  if (!activeLlm.ok) {
+    log.warn("orchestrator.provider.secrets-read-failed", { reason: activeLlm.error.kind });
+    return null;
+  }
+
+  const conn = resolveProviderConnection(activeLlm.value, orchestratorCfg.provider);
+  if (!conn) {
+    log.warn("orchestrator.provider.no-active-key", {
+      activeProvider: activeLlm.value.provider,
+      hasKey: activeLlm.value.apiKey !== "",
+      hasSecretsBaseUrl: activeLlm.value.baseUrl !== "",
+      hasConfigBaseUrl: orchestratorCfg.provider.base_url !== "",
+    });
+    return null;
+  }
+
+  log.info("orchestrator.provider.resolved", {
+    provider: conn.provider,
+    baseUrlHost: safeUrlHost(conn.baseUrl),
+    hasKey: true, // presence only — NEVER log conn.apiKey
+    model: orchestratorCfg.provider.model,
+  });
+  return createOpenAIProvider({ ...orchestratorCfg.provider, base_url: conn.baseUrl }, conn.apiKey);
+}
+
+/** Host only — never log a full URL that might (in a future provider) carry
+ *  query-string credentials. */
+function safeUrlHost(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "invalid-url";
+  }
+}
+
+interface CreateSessionRuntimeFactoryDeps {
+  orchestratorCfg: OrchestratorConfig;
+  accessManager: AccessManager;
+  provider: ProviderClient | null;
+  mcpClient: McpClient;
+  policyEngine: PolicyEngine;
+  delegationGuard: DelegationGuard;
+  hermesRunner: HermesRunner;
+}
+
+/** The per-session factory itself. Synchronous (matches the locked
+ *  `GatewayServices.createSessionRuntime` signature) — everything it does is
+ *  either pure construction or fire-and-forget (`broker.definitions()`'s
+ *  warm-up kick-off). Throws when `provider` is null: `cfg.orchestrator` was
+ *  present at boot but no active LLM key resolved — a genuine misconfig for
+ *  a caller that specifically asked for a session runtime, never a reason to
+ *  fail the whole gateway boot (that check lives HERE, at the point of
+ *  actual use, not in `buildOrchestratorServices` above). */
+function buildCreateSessionRuntime(
+  deps: CreateSessionRuntimeFactoryDeps,
+): (principal: UserPrincipal, sessionId: string, emitter: TurnEmitter) => SessionRuntime {
+  const { orchestratorCfg, accessManager, provider, mcpClient, policyEngine, delegationGuard, hermesRunner } = deps;
+
+  return (principal, sessionId, emitter) => {
+    if (!provider) {
+      log.error("session-runtime.factory.no-provider", {
+        userId: principal.userId,
+        sessionId,
+        reason: "orchestrator configured but no active LLM key resolved from the secrets store",
+      });
+      throw new Error(
+        "orchestrator provider unavailable — no active LLM key configured in the secrets store (admin > secrets)",
+      );
+    }
+
+    const backgroundTools = new Map<string, BackgroundToolRunner>();
+    backgroundTools.set(
+      delegateTaskDefinition.name,
+      createDelegateTaskRunner({ guard: delegationGuard, hermesRunner, userId: principal.userId }),
+    );
+
+    // ToolBrokerDeps.store is accepted for interface parity only (see
+    // tool-broker.ts's header) — never read/written by the broker itself.
+    // Minted under the distinct "tool-broker" resource class so capability
+    // audit logs (access-manager.ts) can tell this grant apart from
+    // SessionRuntime's own "session-store" grant, even though both currently
+    // resolve to the same per-user sessions.db (WAL mode — safe for this
+    // second, otherwise-idle connection).
+    const brokerStoreCap = accessManager.grant(principal, "tool-broker");
+    const brokerStore = openSessionStore(brokerStoreCap);
+
+    const broker = createToolBroker({
+      mcp: mcpClient,
+      policy: policyEngine,
+      store: brokerStore,
+      principal,
+      sessionId,
+      backgroundTools,
+      config: orchestratorCfg.tools,
+      // Plan 2 default: deny every unconfirmed side-effecting call. Plan 3
+      // wires a real client permission-prompt UI without touching this file
+      // (mirrors tool-broker.ts's own header note on the same contract).
+      requestConfirm: async () => false,
+    });
+    void broker.definitions(); // kick off this session's own MCP list-tools warm-up now, not on the first turn.
+
+    log.info("session-runtime.factory.build", { userId: principal.userId, sessionId });
+
+    return buildSessionRuntime({
+      principal,
+      sessionId,
+      accessManager,
+      provider,
+      broker,
+      emitter,
+      systemPrompt: DEFAULT_SYSTEM_PROMPT,
+      config: orchestratorCfg,
+    });
+  };
 }
