@@ -166,6 +166,28 @@ describe("ToolBroker — PDP choke point (foreground)", () => {
     expect(result).toEqual({ content: "result from test-mcp/get_weather", isError: false });
     expect(mcp.callToolCalls).toEqual([{ serverName: "test-mcp", name: "get_weather" }]);
   });
+
+  it("SECURITY: a confirm hook that THROWS fails closed (deny), never rejects dispatch", async () => {
+    const mcp = fakeMcp([weatherTool]);
+    const broker = createToolBroker({
+      mcp,
+      policy: fakePolicy({ action: "confirm", reason: "side-effecting tool" }),
+      store: fakeStore(),
+      principal,
+      sessionId: "session-1",
+      backgroundTools: new Map(),
+      config: toolsConfig,
+      requestConfirm: async () => {
+        throw new Error("confirm UI crashed");
+      },
+    });
+
+    // dispatch must resolve to an isError ToolResult, not reject — and the
+    // tool must never run.
+    const result = await broker.dispatch(makeInvocation());
+    expect(result).toEqual({ content: expect.stringContaining("confirmation error"), isError: true });
+    expect(mcp.callToolCalls).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------

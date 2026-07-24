@@ -153,9 +153,23 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     }
 
     // action === "confirm" — fail-closed unless the injected confirm hook
-    // says otherwise (Plan 2 default: always false).
+    // says otherwise (Plan 2 default: always false). A confirm hook that
+    // THROWS (Plan 3's real UI could) must still fail closed, and the broker's
+    // contract is "never throw out of dispatch" — so a throw becomes a deny,
+    // not a rejected promise the ReAct loop has to catch.
     const reason = decision.reason ?? "confirmation required";
-    const confirmed = await requestConfirm(inv, reason);
+    let confirmed: boolean;
+    try {
+      confirmed = await requestConfirm(inv, reason);
+    } catch {
+      log.warn("tool-broker.pdp.confirm-error", {
+        sessionId,
+        tool: inv.name,
+        toolCallId: inv.toolCallId,
+        reason: "confirm hook threw — failing closed",
+      });
+      return { action: "deny", reason: "confirmation error" };
+    }
     log.info("tool-broker.pdp.confirm-resolved", {
       sessionId,
       tool: inv.name,
@@ -172,6 +186,10 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
       log.warn("tool-broker.dispatch.unknown-tool", { sessionId, tool: inv.name, toolCallId: inv.toolCallId });
       return { content: `Unknown tool: ${inv.name}`, isError: true };
     }
+    // Plan 2: the foreground deadline is enforced per-server by the MCP client
+    // (each catalog entry's `timeout`), which supersedes config.foreground_timeout_ms
+    // at this layer. A broker-level per-call deadline (AbortSignal.timeout merged
+    // with inv.signal) is a later hardening step if a single per-call bound is wanted.
     const result = await mcp.callTool(serverName, inv.name, inv.args, inv.signal);
     log.info("tool-broker.dispatch.foreground.done", {
       sessionId,
