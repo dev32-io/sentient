@@ -19,21 +19,32 @@ export function createOpenAIProvider(cfg: OrchestratorConfig["provider"], apiKey
 
   return {
     async *stream(req: ProviderRequest): AsyncGenerator<ProviderStreamChunk> {
+      if (req.signal.aborted) return; // already-aborted: skip create() entirely, yield nothing
+
       const startedAt = Date.now();
       const hasTools = req.tools.length > 0;
       log.info("stream-start", { model: cfg.model, messageCount: req.messages.length, toolCount: req.tools.length });
 
-      const response = await client.chat.completions.create(
-        {
-          model: cfg.model,
-          messages: req.messages as OpenAI.Chat.ChatCompletionMessageParam[],
-          stream: true,
-          stream_options: { include_usage: true },
-          max_tokens: cfg.max_output_tokens,
-          ...(hasTools ? { tools: req.tools as OpenAI.Chat.ChatCompletionTool[], tool_choice: "auto" as const } : {}),
-        },
-        { signal: req.signal },
-      );
+      let response: Awaited<ReturnType<typeof client.chat.completions.create>>;
+      try {
+        response = await client.chat.completions.create(
+          {
+            model: cfg.model,
+            messages: req.messages as OpenAI.Chat.ChatCompletionMessageParam[],
+            stream: true,
+            stream_options: { include_usage: true },
+            max_tokens: cfg.max_output_tokens,
+            ...(hasTools ? { tools: req.tools as OpenAI.Chat.ChatCompletionTool[], tool_choice: "auto" as const } : {}),
+          },
+          { signal: req.signal },
+        );
+      } catch (err) {
+        // The SDK's makeRequest throws APIUserAbortError synchronously when the
+        // signal is already aborted, or asynchronously if it aborts before
+        // headers arrive — neither path is a real provider error.
+        if (req.signal.aborted) return;
+        throw err;
+      }
 
       const acc = new ToolCallAccumulator();
       let finishReason = "stop";

@@ -2,7 +2,10 @@
 // field guaranteed on every delta); id/name/arguments are late-bound as they
 // arrive. flush() drains and resets. Prior art: keying on id double-dispatches
 // when a provider sends index+name before id.
+import { getLog } from "../logging/logger.js";
 import type { ChatToolCall } from "../store/model-projection.js";
+
+const log = getLog(["sentient", "provider", "tool-call-accumulator"]);
 
 export interface ToolCallDelta {
   index: number;
@@ -25,8 +28,11 @@ export class ToolCallAccumulator {
 
   flush(): ChatToolCall[] {
     const out: ChatToolCall[] = [];
-    for (const [, c] of this.pending) {
-      if (!c.id || !c.name) continue; // never emit a half-formed call
+    for (const [index, c] of this.pending) {
+      if (!c.id || !c.name) {
+        log.warn("accumulator.dropped-half-formed-call", { index, hasId: !!c.id, hasName: !!c.name });
+        continue; // never emit a half-formed call
+      }
       out.push({ id: c.id, type: "function", function: { name: c.name, arguments: c.arguments || "{}" } });
     }
     this.pending.clear();
