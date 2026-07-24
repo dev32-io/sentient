@@ -118,6 +118,15 @@ export interface SessionRuntimeDeps {
 interface InFlightTurn {
   turnId: string;
   controller: AbortController;
+  /** Set synchronously (via `onTurnCommitting`) the instant react-loop.ts
+   *  appends this turn's terminal assistant entry — i.e. the turn reached a
+   *  natural completion and its final text is already durable in the store,
+   *  even though `inFlight` itself isn't cleared until the async
+   *  `onTurnSettled` continuation runs. Closes the terminal-completion race:
+   *  a bargeIn()/interrupt() landing in that window must treat the turn as
+   *  already settled (see cancellation.ts's `abortTurn`), never re-commit
+   *  its text or fire a spurious `turnAborted`. */
+  settled: boolean;
 }
 
 function blankEntry(sessionId: string, turnId: string): Omit<NewSessionEntry, "kind"> {
@@ -153,13 +162,20 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   let lastProcessedSeq = 0;
   let disposed = false;
   // Text streamed so far for the CURRENT, not-yet-committed loop iteration —
-  // reset to "" the instant the loop itself commits that text (narration
-  // before a tool call, or the terminal reply): `onToolUpdate` firing is a
-  // reliable proxy for "narration, if any, is already durable" because
-  // react-loop.ts always appends narration BEFORE the first `onToolUpdate`
-  // call of an iteration (see react-loop.ts's `dispatchToolCalls`). Read by
-  // cancellation.ts via `getInFlight()` below — never resurrected once a
-  // turn ends, `startTurn` resets it fresh for every new turn.
+  // reset to "" the instant the loop itself commits that text durably.
+  // Two commit points, two reset hooks: `onToolUpdate` firing is a reliable
+  // proxy for "narration, if any, is already durable" because react-loop.ts
+  // always appends narration BEFORE the first `onToolUpdate` call of an
+  // iteration (see react-loop.ts's `dispatchToolCalls`); `onTurnCommitting`
+  // fires the instant the loop appends the terminal assistant entry on
+  // natural completion (no-toolcalls / forced-final) — the fix for the
+  // terminal-completion race (Task 8 follow-up): without this second hook,
+  // a bargeIn()/interrupt() landing after the terminal commit but before
+  // `inFlight` is asynchronously cleared would still see the already-
+  // committed text sitting in this accumulator and double-append it as a
+  // bogus cutoff entry. Read by cancellation.ts via `getInFlight()` below —
+  // never resurrected once a turn ends, `startTurn` resets it fresh for
+  // every new turn.
   let turnText = "";
 
   const cancellation = createCancellationControllers({
@@ -169,7 +185,9 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     broker,
     emitter,
     getInFlight: (): CancellableTurn | null =>
-      inFlight ? { turnId: inFlight.turnId, controller: inFlight.controller, text: turnText } : null,
+      inFlight
+        ? { turnId: inFlight.turnId, controller: inFlight.controller, text: turnText, settled: inFlight.settled }
+        : null,
   });
 
   function currentMaxSeq(): number {
@@ -236,7 +254,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     // so the running (or about-to-run) turn absorbs it via steer.
     if (inFlight !== null) return;
     const controller = new AbortController();
-    inFlight = { turnId, controller };
+    inFlight = { turnId, controller, settled: false };
     // Synchronous snapshot, no await between this and the `runTurn` call
     // below — guarantees the turn's first iteration sees everything ≤ this.
     lastProcessedSeq = currentMaxSeq();
@@ -264,6 +282,19 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
         // (if any) start counting fresh.
         turnText = "";
         emitter.toolUpdate(id, u);
+      },
+      onTurnCommitting: (id) => {
+        // Fires synchronously right after react-loop.ts appends the terminal
+        // assistant entry for a natural completion — BEFORE `runTurn`'s
+        // promise resolves and long before the async `onTurnSettled`
+        // continuation clears `inFlight`. Closes the terminal-completion
+        // race (Task 8 follow-up): a bargeIn()/interrupt() landing in that
+        // window must neither re-commit this already-durable text nor fire a
+        // spurious turnAborted for a turn that already completed normally.
+        turnText = ""; // text is durable now — commitCutoffEntry's empty-text guard no-ops.
+        if (inFlight && inFlight.turnId === id) {
+          inFlight.settled = true;
+        }
       },
     };
 

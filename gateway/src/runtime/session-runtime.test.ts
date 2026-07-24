@@ -634,3 +634,96 @@ describe("SessionRuntime — cancellation: double-commit guard", () => {
     runtime.dispose();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Cancellation — terminal-completion race (reviewer-reproduced regression).
+//
+// A turn that completes NATURALLY never sets `signal.aborted`, and
+// `inFlight` is only cleared asynchronously in `onTurnSettled` (a `.then()`
+// microtask after `runTurn` resolves). Before the `onTurnCommitting` /
+// `settled` fix, a bargeIn()/interrupt() landing in the window between
+// "terminal assistant text committed" and "inFlight cleared" would
+// re-commit that already-durable text as a bogus SECOND cutoff-stamped
+// assistant entry (double-append into append-only history) and fire a
+// spurious turnAborted racing the legitimate turnCompleted. This test
+// reproduces that window by spinning microtask ticks after submit, exactly
+// as the reviewer did, then asserts the race is closed.
+// ---------------------------------------------------------------------------
+
+describe("SessionRuntime — cancellation: terminal-completion race", () => {
+  it("bargeIn landing after natural completion but before inFlight clears commits nothing extra and fires no turnAborted", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/case-terminal-race` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = fakeProvider(async function* () {
+      yield { type: "text", content: "a normal, complete reply" };
+      yield { type: "done", finishReason: "stop" };
+    });
+    const emitter = recordingEmitter();
+
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-terminal-race",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter,
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+    });
+
+    // A second, independent handle onto the SAME on-disk store (bun:sqlite —
+    // synchronous, auto-committed writes) lets us POLL for the terminal
+    // entry's durability instead of guessing a magic microtask-tick count.
+    // Empirically this window is exactly ONE microtask tick wide: the entry
+    // becomes readable in the same synchronous continuation react-loop.ts
+    // uses to call the (pre-fix: nonexistent, post-fix: `onTurnCommitting`)
+    // durability hook, one tick before `onTurnSettled`'s `.then()`
+    // continuation clears `inFlight`. Polling — rather than a fixed tick
+    // count — finds that tick deterministically regardless of exactly how
+    // many ticks the fake provider's async-generator machinery burns getting
+    // there, so this test doesn't rot if that plumbing changes.
+    const reader = openSessionStore(am.grant(alice, "session-store"));
+    const hasCommittedText = (): boolean =>
+      reader
+        .readSession("sess-terminal-race")
+        .some((e) => e.kind === "assistant" && e.text === "a normal, complete reply");
+
+    runtime.submit({ kind: "conversational", text: "hello" });
+
+    const MAX_POLL_TICKS = 50;
+    let found = false;
+    for (let i = 0; i < MAX_POLL_TICKS; i++) {
+      await Promise.resolve();
+      if (hasCommittedText()) {
+        found = true;
+        break;
+      }
+    }
+    expect(found).toBe(true); // sanity: the terminal commit must actually have happened
+
+    // Fire bargeIn() in the SAME synchronous continuation we detected the
+    // durable commit in — no further await in between — landing as early as
+    // possible inside the race window this test targets.
+    runtime.bargeIn();
+
+    await waitUntilIdle(runtime);
+
+    const assistantEntries = reader.readSession("sess-terminal-race").filter((e) => e.kind === "assistant");
+    reader.close();
+
+    // Exactly one assistant entry for the turn — no second, cutoff-stamped
+    // duplicate from the race.
+    expect(assistantEntries).toHaveLength(1);
+    expect(assistantEntries[0]?.text).toBe("a normal, complete reply");
+    // It completed normally — never stamped with a bogus cutoff.
+    expect(assistantEntries[0]?.cutoff).toBeNull();
+
+    // The legitimate turnCompleted fired; no spurious turnAborted raced it.
+    expect(emitter.events.some((e) => e.type === "turnCompleted")).toBe(true);
+    expect(emitter.events.some((e) => e.type === "turnAborted")).toBe(false);
+
+    runtime.dispose();
+  });
+});

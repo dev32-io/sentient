@@ -27,11 +27,30 @@
 // Empty partial (abort landed before any text streamed, e.g. mid tool-call
 // dispatch) commits nothing — an empty assistant entry is noise, not signal.
 //
-// Double-commit guard: `signal.aborted` is checked before committing/aborting
-// — a second bargeIn()/interrupt() call on the same still-in-flight turn (or
-// interrupt following a prior bargeIn) sees the signal already aborted and
-// skips straight to the (idempotent) background-cancel step, never appending
-// a second cutoff entry for the same turn.
+// Double-commit guard: `signal.aborted || turn.settled` is checked before
+// committing/aborting.
+//   - `signal.aborted`: a second bargeIn()/interrupt() call on the same
+//     still-in-flight turn (or interrupt following a prior bargeIn) sees the
+//     signal already aborted and skips straight to the (idempotent)
+//     background-cancel step, never appending a second cutoff entry for the
+//     same turn.
+//   - `turn.settled`: the terminal-completion race. A turn that finishes
+//     NATURALLY never sets `signal.aborted` — its final text commits
+//     directly in react-loop.ts's terminal branch (not through
+//     `onToolUpdate`), and `inFlight` is only cleared asynchronously in
+//     session-runtime.ts's `onTurnSettled`, a `.then()` microtask after
+//     `runTurn` resolves. A bargeIn()/interrupt() landing in the window
+//     between "terminal text committed" and "inFlight cleared" would
+//     otherwise see `signal.aborted === false` and `turn.text` still holding
+//     the already-committed text, re-committing it as a bogus second cutoff
+//     entry and firing a spurious `turnAborted` racing the legitimate
+//     `turnCompleted` for the same turnId. `onTurnCommitting`
+//     (react-loop.ts) fires synchronously the instant the terminal entry is
+//     appended, letting session-runtime.ts mark the turn `settled` before
+//     any of that can happen. `turn.settled` folds into this same guard
+//     because the required behavior is identical: commit nothing further,
+//     fire no `turnAborted` — but interrupt's unconditional `cancelAll()`
+//     below still fires either way (background tasks outlive the turn).
 
 import { getLog } from "../logging/logger.js";
 import type { CutoffKind, NewSessionEntry } from "../store/entry-types.js";
@@ -58,10 +77,18 @@ export interface CancellableTurn {
   /** Text streamed so far for the turn's current, not-yet-committed
    *  iteration. The runtime resets this to "" every time the loop itself
    *  commits an iteration's text (narration or terminal) — see
-   *  session-runtime.ts's `onTextDelta`/`onToolUpdate` wiring — so this
-   *  always holds exactly the not-yet-durable partial, never text that's
-   *  already safely in the store. */
+   *  session-runtime.ts's `onTextDelta`/`onToolUpdate`/`onTurnCommitting`
+   *  wiring — so this always holds exactly the not-yet-durable partial,
+   *  never text that's already safely in the store. */
   text: string;
+  /** True the instant the turn reached a natural terminal commit
+   *  (react-loop.ts's `onTurnCommitting`, wired by session-runtime.ts),
+   *  even though the runtime's `inFlight` marker isn't cleared until the
+   *  async `onTurnSettled` continuation runs after `runTurn`'s promise
+   *  settles. A bargeIn()/interrupt() landing in that window must treat the
+   *  turn as already-cut-off-equivalent: commit nothing further, fire no
+   *  `turnAborted` — see `abortTurn` below. */
+  settled: boolean;
 }
 
 export interface CancellationDeps {
@@ -120,17 +147,22 @@ function abortTurn(deps: CancellationDeps, cutoff: CutoffKind, cancelBackground:
       cutoff,
       cancelBackground,
     });
-  } else if (turn.controller.signal.aborted) {
-    // Already aborted by a prior bargeIn()/interrupt() on this same turn —
-    // the cutoff entry (if any) was already committed then. Skip straight to
-    // the background step below so a follow-up interrupt() after an earlier
-    // bargeIn() still reaches cancelAll() without double-appending.
+  } else if (turn.controller.signal.aborted || turn.settled) {
+    // Either already aborted by a prior bargeIn()/interrupt() on this same
+    // turn (the cutoff entry, if any, was already committed then), or the
+    // turn already reached a natural terminal commit (the
+    // terminal-completion race — see the module doc comment above). Either
+    // way: commit nothing, fire no turnAborted, skip straight to the
+    // background step below so a follow-up interrupt() still reaches
+    // cancelAll() without double-appending or racing turnCompleted.
     log.info("cancellation.already-aborted", {
       userId: deps.userId,
       sessionId: deps.sessionId,
       turnId: turn.turnId,
       cutoff,
       cancelBackground,
+      alreadyAborted: turn.controller.signal.aborted,
+      alreadySettled: turn.settled,
     });
   } else {
     commitCutoffEntry(deps, turn, cutoff);

@@ -78,6 +78,13 @@ export interface ReactLoopDeps {
   config: OrchestratorConfig["loop"];
   onTextDelta: (turnId: string, text: string) => void;
   onToolUpdate: (turnId: string, u: ToolUpdate) => void;
+  /** Fired synchronously, immediately after the terminal assistant entry is
+   *  appended to the store (natural completion — no-toolcalls or
+   *  forced-final iteration). A pure durability notification, same category
+   *  as `onToolUpdate`: it tells the caller "this turn's final text is now
+   *  in the store," nothing more. Does NOT reopen this loop's "don't stamp
+   *  cutoff" contract — this loop still never touches `cutoff` itself. */
+  onTurnCommitting?: (turnId: string) => void;
 }
 
 export interface RunTurnArgs {
@@ -278,7 +285,7 @@ export async function runTurn(
   deps: ReactLoopDeps,
   args: RunTurnArgs,
 ): Promise<{ completed: boolean; iterations: number }> {
-  const { provider, broker, store, systemPrompt, sessionId, config, onTextDelta } = deps;
+  const { provider, broker, store, systemPrompt, sessionId, config, onTextDelta, onTurnCommitting } = deps;
   const { turnId, signal } = args;
 
   // Immutable per spec §4.6 — computed once, passed unchanged every
@@ -335,6 +342,7 @@ export async function runTurn(
 
     if (forceFinal || outcome.toolCalls.length === 0) {
       store.append({ ...blankEntry(sessionId, turnId), kind: "assistant", text: outcome.text });
+      onTurnCommitting?.(turnId);
       log.info("react-loop.completed", { sessionId, turnId, iterations: iteration, forceFinal });
       return { completed: true, iterations: iteration };
     }
