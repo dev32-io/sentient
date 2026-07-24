@@ -3,6 +3,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import type { OrchestratorConfig } from "@sentient/config";
 import type { Capability } from "../access/capability.js";
 import type { ProviderClient, ProviderRequest, ProviderStreamChunk } from "../provider/provider-client.js";
+import { projectForClient } from "../store/client-projection.js";
 import type { NewSessionEntry } from "../store/entry-types.js";
 import { openSessionStore } from "../store/session-store.js";
 import type { BackgroundRegistry } from "../tools/background-registry.js";
@@ -335,6 +336,94 @@ describe("runTurn — abort mid-stream", () => {
     expect(threw).toBe(false);
     expect(result).toEqual({ completed: false, iterations: 1 });
     expect(store.readSession(sessionId)).toHaveLength(beforeCount); // no assistant entry committed
+
+    store.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Case 5: live/replay convergence — narration that precedes a tool call in
+// the same iteration must survive replay (spec §3.2 Invariant B), not just
+// stream live via onTextDelta. Regression test for the bug where
+// `outcome.text` was discarded whenever an iteration ALSO produced tool
+// calls (not forceFinal): the store never got the narration, so a page
+// reload dropped text the live client already showed.
+// ---------------------------------------------------------------------------
+
+describe("runTurn — narration + tool call in the same iteration (convergence)", () => {
+  it("commits the narration as its own assistant entry and keeps the tool round-trip intact", async () => {
+    const store = openSessionStore(cap);
+    const sessionId = "narration-convergence";
+    seedUserMessage(store, sessionId, "what is the weather in NYC?");
+
+    const provider = fakeProvider(async function* (callIndex) {
+      if (callIndex === 1) {
+        yield { type: "text", content: "Let me check." };
+        yield {
+          type: "tool_call",
+          toolCall: {
+            id: "call_1",
+            type: "function",
+            function: { name: "get_weather", arguments: '{"city":"NYC"}' },
+          },
+        };
+        yield { type: "done", finishReason: "tool_calls" };
+        return;
+      }
+      yield { type: "text", content: "It is sunny." };
+      yield { type: "done", finishReason: "stop" };
+    });
+
+    const weatherDef: ToolDefinition = {
+      name: "get_weather",
+      description: "gets the weather",
+      parameters: { type: "object", properties: {} },
+      category: "foreground",
+    };
+    const broker = fakeBroker([weatherDef], async () => ({ content: "sunny", isError: false }));
+
+    const deltas: string[] = [];
+    const result = await runTurn(
+      {
+        provider,
+        broker,
+        store,
+        systemPrompt: "you are a test assistant",
+        sessionId,
+        config: loopConfig(10),
+        onTextDelta: (_turnId, text) => deltas.push(text),
+        onToolUpdate: () => {},
+      },
+      { turnId: "turn-5", signal: new AbortController().signal },
+    );
+
+    expect(result).toEqual({ completed: true, iterations: 2 });
+    // The narration streamed live, same as before the fix (deltas span both
+    // iterations of this turn: narration, then the terminal reply).
+    expect(deltas.join("")).toBe("Let me check.It is sunny.");
+
+    // Before this fix, "Let me check." would be ABSENT here — discarded the
+    // instant the loop saw toolCalls.length > 0 on a non-forceFinal iteration.
+    const entries = store.readSession(sessionId);
+    expect(entries.map((e) => e.kind)).toEqual(["user", "assistant", "tool_call", "tool_result", "assistant"]);
+    expect(entries[1]?.text).toBe("Let me check.");
+    expect(entries[entries.length - 1]?.text).toBe("It is sunny.");
+
+    // The tool round-trip is unaffected: the narration entry sits BEFORE the
+    // tool_call, not between the tool_call and its tool_result, so the
+    // model's 2nd call still gets a contiguous, valid role:"tool" pairing.
+    const secondCallMessages = provider.calls[1]?.messages ?? [];
+    const toolMessage = secondCallMessages.find((m) => m.role === "tool");
+    expect(toolMessage).toEqual({ role: "tool", content: "sunny", tool_call_id: "call_1" });
+
+    // Replay convergence: projectForClient over the STORED entries shows the
+    // same narration the live onTextDelta stream showed — proving
+    // render(replay) == render(live) for this turn.
+    const feed = projectForClient(store.readSession(sessionId));
+    const narrationItem = feed.find((item) => item.kind === "assistant" && item.text === "Let me check.");
+    expect(narrationItem).toBeDefined();
+    const toolTile = feed.find((item) => item.kind === "tool");
+    expect(toolTile?.text).toBe("sunny");
 
     store.close();
   });

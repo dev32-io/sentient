@@ -17,14 +17,21 @@
 //    BOTH `tool_call` and `tool_result`; skip the result and the model
 //    re-issues the same call next iteration (the pre-Hermes 3x-refire bug).
 //  - Text is never smuggled through as a tool. Assistant text streams from
-//    provider `text` chunks straight to `onTextDelta`; it is committed to
-//    the store as an `assistant` entry only once the response is FINAL (no
-//    tool_calls, or the forced-final iteration) — matching spec §4.3's
-//    flowchart, which appends an assistant entry only on the "no tool_calls"
-//    branch. Narration that merely precedes a tool call still streams live
-//    (for TTS) but is not persisted: a `tool_call` entry has no text field
-//    to carry it, and model-projection.ts's block-adjacency pairing was
-//    never designed to merge assistant content with a tool_calls array.
+//    provider `text` chunks straight to `onTextDelta`; on the FINAL response
+//    (no tool_calls, or the forced-final iteration) it is committed as the
+//    terminal `assistant` entry — matching spec §4.3's flowchart. Narration
+//    that precedes a tool call in the SAME iteration (content AND tool_calls
+//    in one assistant message — Qwen/DeepSeek/GLM/many OpenRouter routes do
+//    this; multi-iteration ReAct narration hits this on every acting
+//    non-final iteration) is committed as its OWN standalone `assistant`
+//    entry BEFORE that iteration's `tool_call` entries — a `tool_call` entry
+//    has no text field to carry it, and model-projection.ts's block-adjacency
+//    pairing was never designed to merge assistant content with a
+//    `tool_calls` array. Committing it as a preceding entry instead keeps
+//    live and replay converged (spec §3.2 Invariant B: `render(replay) ==
+//    render(live)`) — text is committed exactly once per iteration, either
+//    as this standalone narration entry or as the terminal assistant entry,
+//    never both.
 //  - `max_iterations` bounds the loop; the FINAL allowed iteration is forced
 //    content-only (`tools: []`) so budget exhaustion always yields a reply,
 //    never silence.
@@ -330,6 +337,19 @@ export async function runTurn(
       store.append({ ...blankEntry(sessionId, turnId), kind: "assistant", text: outcome.text });
       log.info("react-loop.completed", { sessionId, turnId, iterations: iteration, forceFinal });
       return { completed: true, iterations: iteration };
+    }
+
+    // Narration that precedes a tool call in the SAME iteration (many
+    // OpenAI-compatible providers — Qwen/DeepSeek/GLM/many OpenRouter routes
+    // — emit content AND tool_calls in one assistant message; multi-iteration
+    // ReAct narration hits this on every non-final iteration that also acts).
+    // It already streamed live via onTextDelta above — commit it as a
+    // standalone assistant entry BEFORE the tool_call entries so replay
+    // converges with what the live stream showed (spec §3.2 Invariant B).
+    // Appended here, never at the terminal branch above, so text is
+    // committed exactly once per iteration.
+    if (outcome.text.length > 0) {
+      store.append({ ...blankEntry(sessionId, turnId), kind: "assistant", text: outcome.text });
     }
 
     const dispatchedAll = await dispatchToolCalls(deps, sessionId, turnId, signal, outcome.toolCalls);
