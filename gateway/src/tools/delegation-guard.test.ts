@@ -141,6 +141,81 @@ describe("loadDelegationEnvelope / loadDelegationFrontmatterDir", () => {
     expect(envelope.enabled).toBe(false);
   });
 
+  // Security-boundary assertion: a delegation config file with the delimiters
+  // present but an invalid YAML body must NEVER throw out of the loader (an
+  // uncaught YAMLParseError here would crash gateway boot / abort loading
+  // every other agent) and must NEVER resolve to an enabled envelope.
+  it("fails closed (does not throw, enabled:false) when the frontmatter YAML body is invalid", () => {
+    const dir = mkdtempSync(join(tmpdir(), "delegation-guard-test-"));
+    try {
+      const filePath = join(dir, "hermes.md");
+      // Unbalanced brackets — invalid YAML, but delimiters are present.
+      writeFileSync(filePath, ["---", "allowed_tools: [", "network: full", "---", "", "# Hermes"].join("\n"));
+
+      expect(() => loadDelegationEnvelope("hermes", filePath)).not.toThrow();
+      const envelope = loadDelegationEnvelope("hermes", filePath);
+      expect(envelope.enabled).toBe(false);
+
+      const guard = createDelegationGuard({
+        frontmatter: new Map([["hermes", envelope]]),
+        classifier: fakeClassifier({ tier: "low", findings: [] }),
+      });
+      expect(guard.evaluate("hermes", "clean prompt")).toEqual({
+        action: "deny",
+        reason: 'delegation disabled for agent "hermes"',
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not let one malformed-YAML agent file abort loading the rest of the directory", () => {
+    const dir = mkdtempSync(join(tmpdir(), "delegation-guard-test-"));
+    try {
+      writeFileSync(join(dir, "broken.md"), ["---", "network: [", "---"].join("\n"));
+      writeFileSync(
+        join(dir, "hermes.md"),
+        ["---", "network: full", "confirm_class: confirm", "enabled: true", "---"].join("\n"),
+      );
+
+      const map = loadDelegationFrontmatterDir(dir);
+
+      expect(map.get("hermes")).toEqual({
+        agent: "hermes",
+        allowed_tools: [],
+        network: "full",
+        confirm_class: "confirm",
+        enabled: true,
+      });
+      // The broken file is loaded closed (enabled:false), not absent — its
+      // own loader path never throws — but either way `evaluate` denies it.
+      expect(map.get("broken")?.enabled).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Asymmetry guard (MINOR 1): a present-but-empty frontmatter block must
+  // fail closed exactly like a fully absent one — "present but empty" must
+  // never be more trusted than "absent".
+  it("fails closed (enabled:false) when the frontmatter block is present but empty", () => {
+    const dir = mkdtempSync(join(tmpdir(), "delegation-guard-test-"));
+    try {
+      const filePath = join(dir, "hermes.md");
+      writeFileSync(filePath, ["---", "---", "", "# Hermes"].join("\n"));
+      const envelope = loadDelegationEnvelope("hermes", filePath);
+      expect(envelope.enabled).toBe(false);
+
+      const guard = createDelegationGuard({
+        frontmatter: new Map([["hermes", envelope]]),
+        classifier: fakeClassifier({ tier: "low", findings: [] }),
+      });
+      expect(guard.evaluate("hermes", "clean prompt").action).toBe("deny");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("scans a directory of *.md files into a map keyed by filename-as-agent", () => {
     const dir = mkdtempSync(join(tmpdir(), "delegation-guard-test-"));
     try {

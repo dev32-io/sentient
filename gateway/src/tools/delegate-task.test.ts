@@ -107,6 +107,23 @@ describe("delegateTask runner — guard gates every invocation before hermesRunn
     expect(hermesRunner.callCount()).toBe(0);
   });
 
+  // MINOR 2 hardening: parseArgs validates `agent` against SUPPORTED_AGENTS
+  // itself (defense-in-depth alongside DelegationGuard's own frontmatter-map
+  // allowlist) — a future N>1-agent state can't route an unsupported agent
+  // string to hermesRunner.run just because it type-checks as a string.
+  it("rejects an agent outside SUPPORTED_AGENTS without ever evaluating the guard", async () => {
+    const guard = fakeGuard({ action: "allow" });
+    const hermesRunner = fakeHermesRunner({ ok: true, output: "should never happen" });
+    const runner = createDelegateTaskRunner({ guard, hermesRunner, userId });
+
+    const { result } = runner.run(makeInvocation({ agent: "codex", taskPrompt: "do it" }), "task-1");
+    const toolResult = await result;
+
+    expect(toolResult.isError).toBe(true);
+    expect(guard.calls).toHaveLength(0);
+    expect(hermesRunner.callCount()).toBe(0);
+  });
+
   it("cancel() aborts the signal passed into hermesRunner.run", () => {
     let capturedSignal: AbortSignal | undefined;
     const hermesRunner: HermesRunner = {

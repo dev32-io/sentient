@@ -47,16 +47,37 @@ export interface DelegationEnvelope {
   /** What a `high`-tier classified prompt resolves to for this agent. */
   confirm_class: "confirm" | "deny";
   /** Operator kill switch — flip off in the frontmatter file without
-   *  deleting it. Absent in the file defaults to enabled. */
+   *  deleting it. Must be explicitly `true` to enable; absent, `false`, or
+   *  any other value defaults to disabled (fail-closed on a security
+   *  boundary — a present-but-empty frontmatter block must not silently
+   *  grant the agent). */
   enabled: boolean;
 }
 
+/** Parses the YAML frontmatter block out of `content`. Returns `null` when
+ *  the delimiters are missing/unbalanced OR the YAML body fails to parse —
+ *  both route the caller into the same fail-closed (`enabled: false`)
+ *  branch. Never throws: a single operator YAML typo in one delegation
+ *  config file must not crash gateway boot or block loading of the other,
+ *  well-formed files. */
 function parseFrontmatterBlock(content: string): Record<string, unknown> | null {
   const lines = content.split("\n");
   if (lines[0]?.trim() !== FRONTMATTER_DELIMITER) return null;
   const closeIndex = lines.findIndex((line, i) => i > 0 && line.trim() === FRONTMATTER_DELIMITER);
   if (closeIndex < 0) return null;
-  const parsed: unknown = parseYaml(lines.slice(1, closeIndex).join("\n"));
+
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(lines.slice(1, closeIndex).join("\n"));
+  } catch {
+    // Never log the raw content/error message here — a YAML parse error
+    // message frequently echoes back the offending source snippet, which
+    // would leak operator-authored file content into logs.
+    log.warn("delegation-guard.frontmatter.parse-error", {
+      reason: "invalid YAML — treating as disabled",
+    });
+    return null;
+  }
   return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
 }
 
@@ -88,14 +109,18 @@ export function loadDelegationEnvelope(agent: string, filePath: string): Delegat
     allowed_tools: Array.isArray(fm.allowed_tools) ? fm.allowed_tools.map(String) : [],
     network: fm.network === "restricted" || fm.network === "full" ? fm.network : "none",
     confirm_class: fm.confirm_class === "confirm" ? "confirm" : "deny",
-    enabled: fm.enabled !== false,
+    enabled: fm.enabled === true,
   };
 }
 
 /** Scans `dir` for `<agent>.md` frontmatter files and builds the map
  *  `createDelegationGuard` consumes. A missing/unreadable directory
  *  resolves to an empty map — fail-closed, since an agent absent from the
- *  map is denied by `evaluate`. */
+ *  map is denied by `evaluate`. Per-file loading is isolated: a single
+ *  agent file that fails to load for any reason (defense-in-depth beyond
+ *  `loadDelegationEnvelope`'s own fail-closed handling) is skipped and
+ *  logged, never allowed to abort the scan — one bad operator file must
+ *  never crash loading of the other, well-formed agents. */
 export function loadDelegationFrontmatterDir(dir: string): Map<string, DelegationEnvelope> {
   const map = new Map<string, DelegationEnvelope>();
   let entries: string[];
@@ -109,7 +134,14 @@ export function loadDelegationFrontmatterDir(dir: string): Map<string, Delegatio
   for (const entry of entries) {
     if (!entry.endsWith(MD_EXTENSION)) continue;
     const agent = entry.slice(0, -MD_EXTENSION.length);
-    map.set(agent, loadDelegationEnvelope(agent, join(dir, entry)));
+    try {
+      map.set(agent, loadDelegationEnvelope(agent, join(dir, entry)));
+    } catch (err) {
+      log.warn("delegation-guard.load.agent-load-failed", {
+        agent,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
   log.info("delegation-guard.load.ok", { dir, agents: [...map.keys()] });
   return map;
