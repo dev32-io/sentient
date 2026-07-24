@@ -48,15 +48,35 @@ const TOO_MANY_BACKGROUND_TASKS = "too many running tasks";
  *  starts the work immediately and returns a cancel handle (registered in
  *  `BackgroundRegistry`, invoked on interrupt) plus a result promise the
  *  broker observes off-turn — it is NEVER awaited before `dispatch`
- *  returns (fire-and-steer). The runner owns everything about what
- *  completion means for its own tool: per the late-result constraint
- *  (spec §5.2/§5.4), a background tool's eventual result is appended as a
- *  fresh `system`/`trigger` entry, never a second `tool_result` for an
- *  already-answered call id — that's the runner's job, not the broker's. */
+ *  returns (fire-and-steer). The runner's only job is to settle `result`
+ *  faithfully with the tool's final outcome; it does NOT touch the store
+ *  itself. Per the late-result constraint (spec §5.2/§5.4), that result
+ *  must eventually reach the model as a fresh `system`/`trigger` entry,
+ *  never a second `tool_result` for an already-answered call id — the
+ *  broker does that by observing this same promise in `dispatchBackground`
+ *  and forwarding the settled outcome to `onBackgroundComplete` (see
+ *  `setBackgroundCompletionSink` below), which the composition root binds
+ *  to `SessionRuntime.submit({ kind: "background-completion", ... })`. */
 export interface BackgroundToolRunner {
   definition: ToolDefinition;
   run(inv: ToolInvocation, taskId: string): { cancel: () => void; result: Promise<ToolResult> };
 }
+
+/** The settled outcome of a background tool run, handed to whatever sink
+ *  `setBackgroundCompletionSink` installed. `toolName` + `taskId` let the
+ *  sink build a readable stimulus note; `content`/`isError` are the
+ *  runner's settled `ToolResult`, normalized (a rejected `result` promise
+ *  becomes an `isError: true` entry here — the sink never has to handle a
+ *  rejection itself). */
+export interface BackgroundCompletionResult {
+  taskId: string;
+  toolName: string;
+  content: string;
+  isError: boolean;
+}
+
+/** Late-bound completion callback (see `ToolBroker.setBackgroundCompletionSink`). */
+export type BackgroundCompletionSink = (result: BackgroundCompletionResult) => void;
 
 export interface ToolBroker {
   /** The session's full, immutable tool vocabulary (MCP-catalog tools +
@@ -69,6 +89,17 @@ export interface ToolBroker {
    *  PDP check first, unconditionally. */
   dispatch(inv: ToolInvocation): Promise<ToolResult | { taskId: string }>;
   readonly background: BackgroundRegistry;
+  /** Late-bound seam for the chicken-and-egg in the broker/runtime
+   *  construction order (the broker is built BEFORE the `SessionRuntime`
+   *  that owns `submit`, so the sink can't be a constructor dep). The
+   *  composition root calls this once, right after `SessionRuntime` exists,
+   *  binding it to `runtime.submit({ kind: "background-completion", ... })`
+   *  (see `phase-services.ts`'s `buildCreateSessionRuntime`). Unset is a
+   *  safe no-op — `dispatchBackground` just drops the settled result, same
+   *  as before this seam existed. Not part of `ToolBrokerDeps`: that
+   *  interface is fixed at construction time, before the runtime it would
+   *  need to close over exists. */
+  setBackgroundCompletionSink(sink: BackgroundCompletionSink): void;
 }
 
 export interface ToolBrokerDeps {
@@ -88,6 +119,11 @@ export interface ToolBrokerDeps {
 export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
   const { mcp, policy, principal, sessionId, backgroundTools, config, requestConfirm } = deps;
   const background = createBackgroundRegistry();
+  // Late-bound (see `ToolBroker.setBackgroundCompletionSink`'s doc comment
+  // for why this can't be a constructor dep). `null` until the composition
+  // root binds it — dispatchBackground below tolerates that by just not
+  // forwarding the settled result.
+  let completionSink: BackgroundCompletionSink | null = null;
 
   // MCP tool listing is I/O (a round-trip to every configured server), so
   // it can't be resolved synchronously inside `definitions()`. It is
@@ -225,22 +261,47 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
       taskId,
     });
 
-    // Fire-and-steer: never awaited before returning `{ taskId }`. The
-    // runner is responsible for surfacing its own result to the store
-    // (late-result constraint, see the BackgroundToolRunner doc comment);
-    // the broker's only remaining job is freeing the concurrency slot.
+    // Fire-and-steer: never awaited before returning `{ taskId }`. First
+    // stage normalizes a rejected `result` into an isError ToolResult (a
+    // runner's promise must never reach the second stage as a rejection,
+    // per the BackgroundToolRunner contract); second stage always runs with
+    // a settled ToolResult, frees the concurrency slot, and — this closes
+    // the loop the file header describes — forwards the outcome to whatever
+    // `setBackgroundCompletionSink` installed, so the delegated task's
+    // output actually reaches the model instead of dead-ending here.
     result
-      .catch((err) => {
-        log.warn("tool-broker.dispatch.background.runner-rejected", {
+      .then(
+        (toolResult) => toolResult,
+        (err): ToolResult => {
+          const reason = err instanceof Error ? err.message : String(err);
+          log.warn("tool-broker.dispatch.background.runner-rejected", {
+            sessionId,
+            tool: inv.name,
+            taskId,
+            reason,
+          });
+          return { content: `Background task failed: ${reason}`, isError: true };
+        },
+      )
+      .then((toolResult) => {
+        background.complete(taskId);
+        log.info("tool-broker.dispatch.background.completed", {
           sessionId,
           tool: inv.name,
           taskId,
-          reason: err instanceof Error ? err.message : String(err),
+          isError: toolResult.isError,
+          contentLength: toolResult.content.length,
         });
-      })
-      .finally(() => {
-        background.complete(taskId);
-        log.info("tool-broker.dispatch.background.completed", { sessionId, tool: inv.name, taskId });
+        if (!completionSink) {
+          log.warn("tool-broker.dispatch.background.no-sink", {
+            sessionId,
+            tool: inv.name,
+            taskId,
+            reason: "setBackgroundCompletionSink was never bound — settled result dropped",
+          });
+          return;
+        }
+        completionSink({ taskId, toolName: inv.name, content: toolResult.content, isError: toolResult.isError });
       });
 
     return { taskId };
@@ -269,5 +330,9 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     return dispatchForeground(inv);
   }
 
-  return { definitions, dispatch, background };
+  function setBackgroundCompletionSink(sink: BackgroundCompletionSink): void {
+    completionSink = sink;
+  }
+
+  return { definitions, dispatch, background, setBackgroundCompletionSink };
 }

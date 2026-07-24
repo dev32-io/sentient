@@ -6,7 +6,8 @@ import { createUserPrincipal } from "../identity/user-principal.js";
 import type { ProviderClient, ProviderRequest, ProviderStreamChunk } from "../provider/provider-client.js";
 import { openSessionStore } from "../store/session-store.js";
 import type { BackgroundRegistry } from "../tools/background-registry.js";
-import type { ToolBroker } from "../tools/tool-broker.js";
+import type { BackgroundToolRunner, ToolBroker } from "../tools/tool-broker.js";
+import { createToolBroker } from "../tools/tool-broker.js";
 import type { ToolDefinition, ToolInvocation, ToolResult } from "../tools/tool-types.js";
 import type { SessionRuntime } from "./session-runtime.js";
 import { createSessionRuntime } from "./session-runtime.js";
@@ -78,6 +79,7 @@ function fakeBroker(
       return dispatch(inv);
     },
     background,
+    setBackgroundCompletionSink: () => {},
   };
 }
 
@@ -316,6 +318,153 @@ describe("SessionRuntime — next-turn trigger", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Case 3b: delegateTask's fire-and-steer loop, end to end — a background
+// tool's settled result must reach the model as a follow-up turn, not dead-
+// end. Mirrors phase-services.ts's `buildCreateSessionRuntime` composition
+// exactly: a REAL ToolBroker (not the FakeBroker used elsewhere in this
+// file) is built first, the runtime second, and
+// `broker.setBackgroundCompletionSink` is bound to `runtime.submit` only
+// AFTER the runtime exists — same order, same chicken-and-egg the real
+// composition root resolves. This is the regression test for the gap fixed
+// here: before the fix, `dispatchBackground` discarded the settled
+// `ToolResult` and no `trigger` entry — and no next turn — ever appeared.
+// ---------------------------------------------------------------------------
+
+describe("SessionRuntime — delegateTask fire-and-steer loop closes end to end", () => {
+  it("a background tool's settled result lands as a trigger entry and fires a follow-up turn", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/case3b` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    // Controlled by the test — the background runner's `result` promise
+    // settles only when this resolves, so the assertions below can pin
+    // "no trigger/next-turn until the background task actually completes."
+    let resolveDelegated: (() => void) | undefined;
+    const delegatedGate = new Promise<void>((resolve) => {
+      resolveDelegated = resolve;
+    });
+
+    const backgroundRunner: BackgroundToolRunner = {
+      definition: {
+        name: "delegateTask",
+        description: "delegate to a background worker",
+        parameters: { type: "object", properties: {} },
+        category: "background",
+      },
+      run: () => ({
+        cancel: () => {},
+        result: delegatedGate.then(() => ({ content: "the delegated worker's answer", isError: false })),
+      }),
+    };
+
+    const broker = createToolBroker({
+      mcp: {
+        listTools: async () => [],
+        callTool: async () => ({ content: "unused", isError: false }),
+        close: async () => {},
+      },
+      policy: { evaluate: () => ({ action: "allow" }) },
+      store: {
+        append: () => {
+          throw new Error("ToolBroker.store is interface-parity only");
+        },
+        readSession: () => [],
+        readSince: () => [],
+        listSessions: () => [],
+        close: () => {},
+      },
+      principal: alice,
+      sessionId: "sess-3b",
+      backgroundTools: new Map([["delegateTask", backgroundRunner]]),
+      config: { foreground_timeout_ms: 30000, max_concurrent_background_tasks: 5 },
+      requestConfirm: async () => false,
+    });
+
+    const provider = fakeProvider(async function* (callIndex) {
+      if (callIndex === 1) {
+        // Turn 1: model delegates, then narrates a foreground reply without
+        // waiting for the background task — the real ReAct shape.
+        yield {
+          type: "tool_call",
+          toolCall: { id: "call_1", type: "function", function: { name: "delegateTask", arguments: "{}" } },
+        };
+        yield { type: "done", finishReason: "tool_calls" };
+        return;
+      }
+      if (callIndex === 2) {
+        yield { type: "text", content: "I'll get back to you on that." };
+        yield { type: "done", finishReason: "stop" };
+        return;
+      }
+      // Turn 2 (the follow-up fired by the background-completion trigger).
+      yield { type: "text", content: "Update: here is what the delegated worker found." };
+      yield { type: "done", finishReason: "stop" };
+    });
+
+    const emitter = recordingEmitter();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-3b",
+      accessManager: am,
+      provider,
+      broker,
+      emitter,
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+    });
+
+    // Exactly mirrors phase-services.ts: the sink is bound AFTER `runtime`
+    // exists, closing over it.
+    broker.setBackgroundCompletionSink((result) => {
+      const note = result.isError
+        ? `Delegated task ${result.taskId} (${result.toolName}) failed: ${result.content}`
+        : `Delegated task ${result.taskId} (${result.toolName}) completed: ${result.content}`;
+      runtime.submit({ kind: "background-completion", note });
+    });
+
+    runtime.submit({ kind: "conversational", text: "please delegate this" });
+    await waitUntilIdle(runtime);
+
+    // Turn 1 completed WITHOUT waiting on the background task.
+    expect(emitter.events.filter((e) => e.type === "turnCompleted")).toHaveLength(1);
+    expect(provider.calls).toHaveLength(2);
+    expect(broker.background.count()).toBe(1); // still running
+
+    const readback = openSessionStore(am.grant(alice, "session-store"));
+    expect(readback.readSession("sess-3b").some((e) => e.kind === "trigger")).toBe(false);
+
+    // Now let the background runner settle — this is the exact moment the
+    // fixed gap closes: the broker's dispatchBackground observes the
+    // settled promise and calls the bound sink. Poll for the follow-up
+    // turn's completion rather than an intermediate `runtime.running`
+    // flip — with this fixture's ungated second turn, the whole
+    // settle→submit→turn-2-completes chain can resolve within the same
+    // microtask flush, too fast for a 5ms-interval poll to reliably catch
+    // `running` transiently `true`.
+    resolveDelegated?.();
+    await waitFor(() => emitter.events.filter((e) => e.type === "turnCompleted").length >= 2);
+
+    const triggerEntry = readback
+      .readSession("sess-3b")
+      .find((e) => e.kind === "trigger" && e.text?.includes("the delegated worker's answer"));
+    expect(triggerEntry).toBeDefined();
+    expect(triggerEntry?.text).toContain("Delegated task");
+    expect(triggerEntry?.text).toContain("completed:");
+
+    await waitUntilIdle(runtime);
+    readback.close();
+
+    // A SECOND turn actually ran and completed — the loop closed, not just
+    // the trigger entry landing inertly in the store.
+    expect(emitter.events.filter((e) => e.type === "turnCompleted")).toHaveLength(2);
+    expect(provider.calls).toHaveLength(3);
+    expect(broker.background.count()).toBe(0); // slot freed on settle
+
+    runtime.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Case 4: isolation — two runtimes for different principals write to
 // separate stores; neither can read the other's entries.
 // ---------------------------------------------------------------------------
@@ -474,6 +623,7 @@ function fakeBrokerWithBackground(background: BackgroundRegistry): FakeBroker {
       throw new Error("dispatch should never be called in cancellation tests");
     },
     background,
+    setBackgroundCompletionSink: () => {},
   };
 }
 

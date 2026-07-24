@@ -91,6 +91,7 @@ function fakeBroker(
       return dispatch(inv);
     },
     background,
+    setBackgroundCompletionSink: () => {},
   };
 }
 

@@ -272,3 +272,115 @@ describe("ToolBroker — background dispatch", () => {
     expect(second.content).toContain("too many running tasks");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Background completion sink — closes the delegateTask fire-and-steer loop.
+// A background runner's settled `result` must reach `setBackgroundCompletionSink`
+// (the seam `phase-services.ts` binds to `SessionRuntime.submit`), not just get
+// logged and dropped. See tool-broker.ts's `dispatchBackground` doc comment.
+// ---------------------------------------------------------------------------
+
+/** Resolves once, capturing whatever `setBackgroundCompletionSink` is called
+ *  with — lets a test `await` the async `.then()` chain inside
+ *  `dispatchBackground` instead of racing it with an arbitrary tick count. */
+function deferredSinkCall<T>(): { promise: Promise<T>; sink: (value: T) => void } {
+  let sink!: (value: T) => void;
+  const promise = new Promise<T>((resolve) => {
+    sink = resolve;
+  });
+  return { promise, sink };
+}
+
+describe("ToolBroker — background completion sink", () => {
+  it("forwards the settled ToolResult to a bound sink, after freeing the concurrency slot", async () => {
+    const runner: BackgroundToolRunner = {
+      definition: { name: "delegateTask", description: "", parameters: {}, category: "background" },
+      run: () => ({ cancel: () => {}, result: Promise.resolve({ content: "the delegated output", isError: false }) }),
+    };
+    const broker = createToolBroker({
+      mcp: fakeMcp([]),
+      policy: fakePolicy({ action: "allow" }),
+      store: fakeStore(),
+      principal,
+      sessionId: "session-1",
+      backgroundTools: new Map([["delegateTask", runner]]),
+      config: toolsConfig,
+      requestConfirm: async () => false,
+    });
+
+    const { promise, sink } = deferredSinkCall<{
+      taskId: string;
+      toolName: string;
+      content: string;
+      isError: boolean;
+    }>();
+    broker.setBackgroundCompletionSink(sink);
+
+    const dispatchResult = await broker.dispatch(makeInvocation({ name: "delegateTask", toolCallId: "call-1" }));
+    if (!("taskId" in dispatchResult)) throw new Error("expected a background handle");
+    const { taskId } = dispatchResult;
+
+    const settled = await promise;
+    expect(settled).toEqual({ taskId, toolName: "delegateTask", content: "the delegated output", isError: false });
+    // The slot is freed before (or at latest alongside) the sink firing —
+    // never leaked because a sink happened to be bound.
+    expect(broker.background.count()).toBe(0);
+  });
+
+  it("normalizes a rejected runner promise into an isError completion — the sink never sees a rejection", async () => {
+    const runner: BackgroundToolRunner = {
+      definition: { name: "delegateTask", description: "", parameters: {}, category: "background" },
+      run: () => ({ cancel: () => {}, result: Promise.reject(new Error("hermes process crashed")) }),
+    };
+    const broker = createToolBroker({
+      mcp: fakeMcp([]),
+      policy: fakePolicy({ action: "allow" }),
+      store: fakeStore(),
+      principal,
+      sessionId: "session-1",
+      backgroundTools: new Map([["delegateTask", runner]]),
+      config: toolsConfig,
+      requestConfirm: async () => false,
+    });
+
+    const { promise, sink } = deferredSinkCall<{
+      taskId: string;
+      toolName: string;
+      content: string;
+      isError: boolean;
+    }>();
+    broker.setBackgroundCompletionSink(sink);
+
+    await broker.dispatch(makeInvocation({ name: "delegateTask", toolCallId: "call-1" }));
+
+    const settled = await promise;
+    expect(settled.isError).toBe(true);
+    expect(settled.content).toContain("hermes process crashed");
+  });
+
+  it("an unbound sink is a safe no-op — the settled result is dropped, never thrown", async () => {
+    const runner: BackgroundToolRunner = {
+      definition: { name: "delegateTask", description: "", parameters: {}, category: "background" },
+      run: () => ({ cancel: () => {}, result: Promise.resolve({ content: "nobody is listening", isError: false }) }),
+    };
+    const broker = createToolBroker({
+      mcp: fakeMcp([]),
+      policy: fakePolicy({ action: "allow" }),
+      store: fakeStore(),
+      principal,
+      sessionId: "session-1",
+      backgroundTools: new Map([["delegateTask", runner]]),
+      config: toolsConfig,
+      requestConfirm: async () => false,
+    });
+
+    // No setBackgroundCompletionSink call.
+    await broker.dispatch(makeInvocation({ name: "delegateTask", toolCallId: "call-1" }));
+
+    // Give the internal .then() chain a chance to run; must not throw or
+    // leave the slot stuck.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(broker.background.count()).toBe(0);
+  });
+});

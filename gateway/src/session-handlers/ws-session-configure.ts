@@ -80,14 +80,19 @@ export function handleSessionConfigure(
       // Thrown only when the orchestrator IS configured but no active LLM
       // key resolved from the secrets store (see phase-services.ts's
       // `buildCreateSessionRuntime`) — a genuine per-session misconfig, not
-      // a reason to fail the whole handshake. session.ready still follows
-      // below; text.input will find ws.data.runtime null and no-op.
+      // a reason to fail the whole handshake. Single-signal by design: this
+      // handler does NOT sendError here (a session.configure that both
+      // errors AND acks with session.ready is contradictory) — the socket
+      // is otherwise perfectly usable for everything that doesn't need the
+      // orchestrator, so session.ready still follows below with
+      // `ws.data.runtime` left null, and `text.input` (ws-handlers.ts)
+      // surfaces this exact "orchestrator_unavailable" error itself, at the
+      // point the client actually tries to use it.
       log.error("session-configure.runtime-construction-failed", {
         sessionId,
         userId,
         reason: errorMessage(err, "unknown error"),
       });
-      sendError(ws, "orchestrator_unavailable", "Native orchestrator is not available (no active LLM key configured)");
     }
   } else {
     log.info("session-configure.no-orchestrator", { sessionId, userId, reason: "orchestrator: absent from config" });

@@ -17,12 +17,15 @@ export interface AccessManagerConfig {
   /**
    * Root under which each user gets <root>/<userId>/.
    *
-   * Must be ABSOLUTE. gateway/config.yaml#access.user_data_root ships a leading
-   * `~`, which neither path.join nor path.resolve expands — whoever wires this
-   * at the composition root must expand it first (see user-auth/paths.ts for the
-   * os.homedir() precedent), or every user's data lands under <cwd>/~/ instead
-   * of $HOME. That key is also still absent from gatewayConfigSchema, so zod
-   * currently drops it.
+   * Must be ABSOLUTE — the composition root is contractually responsible for
+   * passing an already-expanded absolute path here. `gateway/config.yaml#access.
+   * user_data_root` is declared in `gatewayConfigSchema` and may ship a leading
+   * `~`; the load boundary runs `expandHome` on it (see user-auth/paths.ts for
+   * the `os.homedir()` precedent) before this config reaches `createAccessManager`,
+   * so by the time this value lands here it is always absolute. This module
+   * itself does no expansion — a caller that skips the load-boundary step and
+   * passes a raw `~`-prefixed path will land data under `<cwd>/~/` instead of
+   * `$HOME`, since neither `path.join` nor `path.resolve` expands `~`.
    */
   userDataRoot: string;
 }

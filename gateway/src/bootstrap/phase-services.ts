@@ -785,7 +785,7 @@ function buildCreateSessionRuntime(
 
     log.info("session-runtime.factory.build", { userId: principal.userId, sessionId });
 
-    return buildSessionRuntime({
+    const runtime = buildSessionRuntime({
       principal,
       sessionId,
       accessManager,
@@ -795,5 +795,23 @@ function buildCreateSessionRuntime(
       systemPrompt: DEFAULT_SYSTEM_PROMPT,
       config: orchestratorCfg,
     });
+
+    // Closes the delegateTask fire-and-steer loop (spec §5.2/§5.4): the
+    // broker is necessarily built BEFORE this runtime (it's a runtime
+    // constructor dep), so the completion sink can't be wired until now,
+    // right after `runtime` exists. A background tool's settled result
+    // (e.g. delegateTask's Hermes one-shot output) becomes a
+    // `background-completion` stimulus — SessionRuntime maps that to a
+    // fresh `trigger` entry and fires/steers the next turn. See
+    // tool-broker.ts's `setBackgroundCompletionSink` doc comment and
+    // delegate-task.ts's file header for the full mechanism.
+    broker.setBackgroundCompletionSink((result) => {
+      const note = result.isError
+        ? `Delegated task ${result.taskId} (${result.toolName}) failed: ${result.content}`
+        : `Delegated task ${result.taskId} (${result.toolName}) completed: ${result.content}`;
+      runtime.submit({ kind: "background-completion", note });
+    });
+
+    return runtime;
   };
 }

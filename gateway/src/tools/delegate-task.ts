@@ -14,11 +14,15 @@
 // Late-result note (load-bearing, spec §5.2/§5.4): the `result` promise this
 // runner returns settles with the FINAL ToolResult, but nothing in this file
 // appends it to the store. `ToolInvocation` carries no `turnId` (see
-// tool-broker.ts's header for why), so the append — as a fresh
-// `system`/`trigger` entry, NEVER a second `tool_result` for
-// `inv.toolCallId` — is owned by the SessionRuntime layer (Task 7), which
-// observes this same `result` promise and holds the turnId context this
-// file does not.
+// tool-broker.ts's header for why), so this runner has no way to append
+// directly. The actual mechanism: tool-broker.ts's `dispatchBackground`
+// observes this same `result` promise and, once it settles, forwards the
+// outcome to whatever `setBackgroundCompletionSink` installed. The
+// composition root (phase-services.ts's `buildCreateSessionRuntime`) binds
+// that sink, right after constructing `SessionRuntime`, to
+// `runtime.submit({ kind: "background-completion", note })` — which holds
+// the turnId context this file does not and appends a fresh `trigger` entry,
+// NEVER a second `tool_result` for `inv.toolCallId`.
 
 import { getLog } from "../logging/logger.js";
 import type { UserId } from "../user-auth/user-id.js";
