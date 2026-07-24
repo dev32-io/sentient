@@ -59,7 +59,6 @@ function makeServices(hermes: HermesConfig | null, userPortStore: UserPortStore 
     } as unknown as ApplyDepsServices["templateLoader"],
     healthPoller: {} as ApplyDepsServices["healthPoller"],
     sessionRouter: {} as ApplyDepsServices["sessionRouter"],
-    personSessions: {} as ApplyDepsServices["personSessions"],
     supervisordControl: {
       restartProfile: async () => ({ ok: true, value: undefined }),
       upsertProgram: async () => ({ ok: true, value: undefined }),

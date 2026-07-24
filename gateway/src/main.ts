@@ -5,8 +5,6 @@ import { createGatewayLogger, getLog } from "./logging/logger.ts";
 import type { UpdateUserSettingsPatch } from "./mcp-host/tools/update-user-settings.js";
 import { createPolicyEngine } from "./security/policy-engine.js";
 import { loadMcpPolicy } from "./security/policy-loader.js";
-import { createAmbientEventLog } from "./sensors/ambient-event-log.js";
-import { HomeAssistantObserver } from "./sensors/home-assistant-observer.js";
 import { createGatewayServer } from "./server.ts";
 
 const loggingConfig = loadLoggingConfig();
@@ -85,39 +83,9 @@ if (config.hermes) {
   await mcpHost.start();
 }
 
-// ---------------------------------------------------------------------------
-// Home Assistant Observer — Phase 1.5+
-// ---------------------------------------------------------------------------
-const ambientLog = createAmbientEventLog(config.hermes?.ambient?.event_log?.retention_count ?? 10_000);
-
-let haObserver: HomeAssistantObserver | null = null;
-if (config.hermes?.home_assistant_observer?.enabled) {
-  const haObs = config.hermes.home_assistant_observer;
-  const haToken = process.env[haObs.token_env] ?? "";
-  if (!haToken) {
-    log.warn("ha-observer.no-token", { env: haObs.token_env });
-  } else if (!haObs.url) {
-    log.warn("ha-observer.no-url");
-  } else {
-    haObserver = new HomeAssistantObserver(
-      {
-        url: haObs.url,
-        accessToken: haToken,
-        watchDomains: haObs.watch_domains ?? [],
-        watchEntities: haObs.watch_entities ?? [],
-        ignoreEntities: haObs.ignore_entities ?? [],
-        duplicateStateWindowMs: haObs.duplicate_state_window_ms ?? 5000,
-      },
-      ambientLog,
-    );
-    haObserver.start();
-  }
-}
-
 // Graceful shutdown
 process.on("SIGINT", async () => {
   log.info("shutdown", { signal: "SIGINT" });
-  haObserver?.stop();
   if (mcpHost) await mcpHost.stop();
   services.personSessions.dispose();
   process.exit(0);
@@ -125,7 +93,6 @@ process.on("SIGINT", async () => {
 
 process.on("SIGTERM", async () => {
   log.info("shutdown", { signal: "SIGTERM" });
-  haObserver?.stop();
   if (mcpHost) await mcpHost.stop();
   services.personSessions.dispose();
   process.exit(0);

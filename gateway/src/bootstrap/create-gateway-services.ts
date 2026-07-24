@@ -1,7 +1,6 @@
 import type {
   ApplyConfig,
   AuthConfig,
-  CerebrumConfig,
   HermesBuiltinTools,
   HermesConfig,
   McpCatalog,
@@ -24,7 +23,6 @@ import type { DevicesHandlerDeps } from "../api/handlers/devices.js";
 import type { TestProviderResult } from "../api/wizard/index.ts";
 import type { ApplyDeps } from "../apply/orchestrator.js";
 import type { SessionManager } from "../auth/session-manager.ts";
-import type { SalienceMap } from "../cerebrum/short-term-context-types.ts";
 import type { StartupConfig } from "../config/startup-config.ts";
 import type { HealthPoller } from "../infrastructure/health-poller.js";
 import { getLog } from "../logging/logger.ts";
@@ -94,13 +92,9 @@ export interface GatewayServices {
   readonly tls: GatewayTlsMaterial | undefined;
   readonly webDistDir: string | undefined;
   readonly downloads: { artifactsDir: string; publicBaseUrl: string };
-  readonly cerebrum: CerebrumConfig;
   readonly hermes: HermesConfig | null;
   readonly session: SessionConfig;
   readonly sessions: SessionsConfig;
-  readonly salienceMap: SalienceMap;
-  readonly persona: string;
-  readonly systemPrompt: string;
   readonly webui: WebuiConfig;
   readonly auth: AuthService;
   readonly authConfig: AuthConfig;
@@ -204,13 +198,9 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     tls: services.tls,
     webDistDir: cfg.webDistDir,
     downloads: { artifactsDir: cfg.downloads.artifacts_dir, publicBaseUrl: cfg.downloads.public_base_url },
-    cerebrum: services.cerebrumServices.cerebrumConfig,
     hermes: cfg.hermes ?? null,
     session: cfg.session,
     sessions: cfg.sessions,
-    salienceMap: services.cerebrumServices.salienceMap,
-    persona: services.cerebrumServices.persona,
-    systemPrompt: services.cerebrumServices.systemPrompt,
     webui: cfg.webui,
     auth,
     authConfig: cfg.auth,

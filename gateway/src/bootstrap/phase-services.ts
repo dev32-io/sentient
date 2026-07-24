@@ -46,8 +46,6 @@ import type { AuthService } from "../user-auth/auth-service.js";
 import { getHermesProfileDir } from "../user-auth/paths.js";
 import { hashPin } from "../user-auth/pin-service.js";
 import { buildPersonSessionRegistry } from "./build-person-session-registry.ts";
-import { createCerebrumServices } from "./cerebrum-factory.ts";
-import type { CerebrumServices } from "./cerebrum-factory.ts";
 import { createTextStreamSynthesizer } from "./content-tts-factory.ts";
 import type { SttService } from "./stt-factory.ts";
 import { createSttService } from "./stt-factory.ts";
@@ -73,7 +71,6 @@ export interface PhaseServicesOutput {
   readonly stt: SttService | null;
   readonly tts: TtsService | null;
   readonly tls: GatewayTlsMaterial | undefined;
-  readonly cerebrumServices: CerebrumServices;
   readonly createSynthesizerFor: (getVoiceId: () => string | null) => TextStreamSynthesizer | null;
   readonly applyDeps: ApplyDeps;
   readonly profileStore: ProfileStore;
@@ -81,10 +78,7 @@ export interface PhaseServicesOutput {
   readonly healthPoller: HealthPoller;
   readonly sessionRouter: SessionRouter;
   /** Single per-user session registry shared with phase-routes (WS handlers)
-   *  via personSessions passthrough in create-gateway-services.ts — apply
-   *  and live sessions MUST resolve the same PersonSession instance, or
-   *  runApply's `personSessions.get(userId)` never finds the live session
-   *  and the pre-restart anchor clear silently no-ops. */
+   *  via personSessions passthrough in create-gateway-services.ts. */
   readonly personSessions: PersonSessionRegistry;
   readonly userProvisioner: UserProvisioner | null;
   readonly keyRotation: KeyRotationOrchestrator | null;
@@ -104,7 +98,6 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
   const tls = cfg.tls.enabled
     ? ensureTlsMaterial({ hostnames: cfg.tls.hostnames, certsDir: cfg.tls.certsDir, logTag: "gateway" })
     : undefined;
-  const cerebrumServices = createCerebrumServices(cfg);
 
   const createSynthesizerFor = (getVoiceId: () => string | null): TextStreamSynthesizer | null => {
     const sessionFactory: TTSProviderFactory = asStrictFactory(tts, getVoiceId);
@@ -133,7 +126,6 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
   const applyDeps: ApplyDeps = createApplyDeps({
     profileStore,
     sessionRouter,
-    personSessions,
     healthPoller,
     templateLoader,
     applyConfig: cfg.apply,
@@ -266,7 +258,6 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     stt,
     tts,
     tls,
-    cerebrumServices,
     createSynthesizerFor,
     applyDeps,
     profileStore,

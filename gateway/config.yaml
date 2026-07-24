@@ -25,7 +25,7 @@ logging:
   # chasing a stall, without bumping the whole gateway to debug. Requires restart.
   level_overrides: {}
     # Example:
-    #   sentient:cerebrum:hermes-event-translator: debug
+    #   sentient:ws:session-configure: debug
 
 # ---------------------------------------------------------------------------
 # Log sink — receives UDP datagrams from cube firmware after WiFi connect
@@ -196,32 +196,20 @@ downloads:
   public_base_url: https://sentient.dev32.io
 
 # ---------------------------------------------------------------------------
-# Cerebrum — cognitive cycle orchestration
+# Cerebrum — legacy cognitive-cycle keys. The gateway's Hermes-cycle
+# dispatch brain (cerebrum/, hermes-adapter-client/, salience/) was purged;
+# these three keys are kept as-is for Plan 2, which rehomes them under a
+# new `orchestrator:` section. Do not add new keys under `cerebrum:`.
 # ---------------------------------------------------------------------------
 cerebrum:
-  # Provider: only "hermes" since Phase 1.9 (in-process cerebrum removed).
-  provider: hermes
-
   cycle:
-    debounce_window_ms: 80            # coalesce events within this window before waking
-    standard_threshold: 50            # per-effect salience to fire a cycle at window close
-    immediate_wake_threshold: 100     # per-effect salience to fire cycle before window close
-    max_per_hour: 120                 # cost-control safety net; rolling 1h window
     max_iterations: 10                # ReAct loop cap: consecutive auto-triggered cycles between external stimuli
-    max_iter_warn_ahead: 3            # cycles before the cap to inject a silent ReAct-budget warning into ConversationHistory
     history_max_tokens: 4096          # per-cycle token budget for the conversation-history transcript layer
-
-  # Sticky-note-in-pocket surface: running + recently completed tasks the
-  # model can cross-reference via taskId.
-  task_table:
-    window: 30                        # last N completed tasks visible alongside running tasks
 
   # OOM guard for the in-memory ConversationHistory log. Per-cycle token
   # fitting is separate (see cycle.history_max_tokens).
   conversation_history:
     max_entries: 10000                # FIFO cap; evicts oldest once exceeded
-
-  salience_map_path: /app/config/salience_map.yaml
 
   # Bypass the family-friendly persona guardrails for local / uncensored-model
   # testing. When true, loads system_prompts/system_prompt_unlimited.md (STT +
@@ -229,8 +217,13 @@ cerebrum:
   unlimited_mode: false
 
 # ---------------------------------------------------------------------------
-# Hermes Agent integration — spec §5, §7.
-# Feature-flagged: set cerebrum.provider to "hermes" to use.
+# Hermes — per-user Hermes WORKER PROCESS deployment. Distinct from the
+# cognitive-cycle dispatch brain purged above: `worker` / `mcp_host` are
+# still read by retained code (session-router.ts, admin/, apply/,
+# bootstrap/create-mcp-host.ts) to provision and address each user's
+# supervisord-managed Hermes child. `ambient` and `home_assistant_observer`
+# are removed — they fed the deleted sensors/ ambient-event pipeline and
+# have no reader left in gateway/src.
 # ---------------------------------------------------------------------------
 hermes:
   # Single Hermes worker template. Every user gets a supervisord-managed
@@ -265,29 +258,10 @@ hermes:
     searxng:
       enabled: true
 
-  home_assistant_observer:
-    enabled: true
-    url: "ws://homeassistant.local:8123/api/websocket"
-    token_env: HA_OBSERVE_TOKEN
-    watch_domains: [binary_sensor, climate, alarm_control_panel, light, lock, cover]
-
   mcp_host:
     transport: unix_socket
     # Base directory for per-user sockets. Actual paths are /run/sentient/mcp-<userId>.sock
     socket_path: "/run/sentient/mcp.sock"
-
-  # Satellite device → default user mapping. `default_user` is matched
-  # against UserStore.displayName (case-insensitive) at consumption time.
-  # No active consumers in v1 — populate when satellite hardware ships.
-  satellite_devices: []
-
-  ambient:
-    event_log:
-      enabled: true
-      retention_count: 10000
-      persist_path: "./data/ambient-events.db"
-    dispatch:
-      steward_enabled: false                # v1.5+
 
   tts:
     markdown_stripping_enabled: true

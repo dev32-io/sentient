@@ -44,13 +44,12 @@ export interface PersonSessionRegistry {
    */
   refreshVoice(userId: string): Promise<void>;
   /**
-   * Run a sweep of all sessions: reap device buffers idle past idle_timeout_ms
-   * (detached -> evict + deferred teardown; still-attached -> forceClose), then
-   * remove any session left with no live resources (retained buffers, live
-   * wires, or active cycle leases) — disposing it immediately before removal.
-   * Exposed for testing. Returns sweep stats for observability.
+   * Remove any session left with no live resources (per
+   * PersonSession.hasLiveResources — attachment presence, post-purge)
+   * — disposing it immediately before removal. Exposed for testing.
+   * Returns sweep stats for observability.
    */
-  sweep(nowMs: number): SweepResult;
+  sweep(): SweepResult;
   /**
    * Stop the background sweep interval. Call during gateway shutdown.
    */
@@ -59,7 +58,6 @@ export interface PersonSessionRegistry {
 
 export interface SweepResult {
   readonly sessionsChecked: number;
-  readonly buffersEvicted: number;
   readonly sessionsRemoved: number;
 }
 
@@ -72,10 +70,6 @@ export interface PersonSessionRegistryOptions {
    * Tests can omit this safely.
    */
   readonly voiceLoader?: VoiceLoader;
-  /**
-   * Override the current-time source for testing. Defaults to Date.now().
-   */
-  readonly nowMs?: () => number;
 }
 
 export interface PersonSessionRegistryDeps {
@@ -83,27 +77,20 @@ export interface PersonSessionRegistryDeps {
   userPortStore: UserPortStore;
   apiKeyResolver: ApiKeyResolver;
   /**
-   * How long a device buffer may be idle (no activity-clock touch) before
-   * the sweep reaps it. Must be provided explicitly — sourced from
-   * config.session.idle_timeout_ms.
+   * How often the background sweep checks for sessions with no live
+   * resources (currently: no attachments — see PersonSession.hasLiveResources).
+   * Must be provided explicitly — sourced from config.session.idle_timeout_ms.
    */
   idleTimeoutMs: number;
-  /**
-   * Per-device replay ring buffer cap in bytes.
-   * Must be provided explicitly — sourced from config.session.replay_buffer_max_bytes.
-   */
-  replayBufferMaxBytes: number;
   options?: PersonSessionRegistryOptions;
 }
 
 export function createPersonSessionRegistry(deps: PersonSessionRegistryDeps): PersonSessionRegistry {
   const sessions = new Map<string, PersonSession>();
-  const { voiceLoader, nowMs: clockNowMs } = deps.options ?? {};
+  const { voiceLoader } = deps.options ?? {};
   const idleTimeoutMs = deps.idleTimeoutMs;
-  const replayBufferMaxBytes = deps.replayBufferMaxBytes;
   // Sweep every ~idleTimeoutMs/6 (e.g. 5 min for a 30-min idle timeout).
   const sweepIntervalMs = Math.max(60_000, Math.floor(idleTimeoutMs / 6));
-  const now = clockNowMs ?? (() => Date.now());
 
   async function loadAndApplyVoice(session: PersonSession): Promise<void> {
     if (!voiceLoader || !session.userId) return;
@@ -118,14 +105,12 @@ export function createPersonSessionRegistry(deps: PersonSessionRegistryDeps): Pe
     }
   }
 
-  function sweep(nowMs: number): SweepResult {
+  function sweep(): SweepResult {
     let sessionsChecked = 0;
-    let buffersEvicted = 0;
     let sessionsRemoved = 0;
 
     for (const [userId, session] of sessions) {
       sessionsChecked += 1;
-      buffersEvicted += session.sweepIdle(nowMs, idleTimeoutMs);
       if (!session.hasLiveResources()) {
         session.dispose();
         sessions.delete(userId);
@@ -134,15 +119,15 @@ export function createPersonSessionRegistry(deps: PersonSessionRegistryDeps): Pe
       }
     }
 
-    log.debug("sweep.done", { sessionsChecked, buffersEvicted, sessionsRemoved });
-    return { sessionsChecked, buffersEvicted, sessionsRemoved };
+    log.debug("sweep.done", { sessionsChecked, sessionsRemoved });
+    return { sessionsChecked, sessionsRemoved };
   }
 
-  // Background sweep interval — clears expired buffers + idle sessions.
+  // Background sweep interval — clears idle sessions with no live resources.
   // Import from node:timers so Bun returns a Timeout object (not a number)
   // and .unref() actually runs, preventing the timer from keeping the process alive.
   const sweepTimer = setInterval(() => {
-    sweep(now());
+    sweep();
   }, sweepIntervalMs);
   sweepTimer.unref();
 
@@ -164,7 +149,6 @@ export function createPersonSessionRegistry(deps: PersonSessionRegistryDeps): Pe
         hermesUrl: url,
         hermesApiKey: deps.apiKeyResolver(),
         userId,
-        replayBufferMaxBytes,
       });
       sessions.set(userId, next);
       log.info("getOrCreate.miss-created", {

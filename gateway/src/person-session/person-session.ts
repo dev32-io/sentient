@@ -1,29 +1,16 @@
-import { type AcpWireRegistry, createAcpWireRegistry } from "../hermes-adapter-client/acp-wire-registry.js";
 import { getLog } from "../logging/logger.js";
-import type { SessionReplayBuffer } from "../session-handlers/session-replay-buffer.js";
-import { type SurfaceCycleRegistry, createSurfaceCycleRegistry } from "../session-handlers/surface-cycle-registry.js";
-import { type ConversationAnchors, createConversationAnchors } from "./conversation-anchors.js";
-import {
-  type AcquireDeviceBufferResult,
-  type DeviceBufferEntry,
-  DeviceBufferStore,
-  type DeviceSocketRef,
-  type DeviceSocketSink,
-} from "./device-buffer-store.js";
 
 const log = getLog(["sentient", "person-session"]);
 
-export type { DeviceBufferEntry, AcquireDeviceBufferResult, DeviceSocketRef, DeviceSocketSink };
-
 /**
- * One PersonSession per profile (alice/bob/family). Owns the rolling
- * conversation and derived state — history, ambient context, preferences,
- * Hermes chain continuity, audio pipeline state — plus this user's per-surface
- * ACP wire pool, cycle registry, and conversation anchors, so a client-supplied
- * surfaceId can never address another user's state.
+ * One PersonSession per profile (alice/bob/family). Owns per-user session
+ * bookkeeping — attachment tracking, idle state, pendingId dedup, voice
+ * selection, Hermes chain continuity — so a client-supplied surfaceId can
+ * never address another user's state.
  *
- * Devices attach via DeviceAttachment and become windows into the shared
- * conversation; any attachment can drive input, output fans out to all.
+ * Devices attach via an opaque PersonSessionAttachment token and become
+ * windows into the shared conversation; any attachment can drive input,
+ * output fans out to all.
  */
 
 /** Opaque attachment token; tracks identity so detach-before-attach cases log cleanly. */
@@ -36,8 +23,6 @@ export interface PersonSessionInit {
   readonly hermesUrl: string;
   readonly hermesApiKey: string;
   readonly userId: string | null;
-  /** Max bytes retained per per-device replay buffer. */
-  readonly replayBufferMaxBytes: number;
 }
 
 export class PersonSession {
@@ -59,10 +44,6 @@ export class PersonSession {
   private _voiceId: string | null = null;
   private readonly _attachments = new Set<PersonSessionAttachment>();
   private readonly _createdAtMs: number;
-  private readonly _deviceBuffers: DeviceBufferStore;
-  readonly wires: AcpWireRegistry;
-  readonly cycles: SurfaceCycleRegistry;
-  private readonly _anchors: ConversationAnchors = createConversationAnchors();
 
   /**
    * Timestamp when the session first became idle (attachmentCount went to 0).
@@ -83,10 +64,6 @@ export class PersonSession {
     this.hermesUrl = init.hermesUrl;
     this.hermesApiKey = init.hermesApiKey;
     this.userId = init.userId;
-    this._deviceBuffers = new DeviceBufferStore(init.replayBufferMaxBytes);
-    const ownerUserId = init.userId ?? init.profile;
-    this.wires = createAcpWireRegistry(ownerUserId);
-    this.cycles = createSurfaceCycleRegistry();
     this._createdAtMs = Date.now();
     this._idleSinceMs = this._createdAtMs;
     log.info("created", { profile: this.profile, hermesUrl: this.hermesUrl, userId: this.userId });
@@ -167,113 +144,22 @@ export class PersonSession {
     });
   }
 
-  // ---------------------------------------------------------------------------
-  // Per-device replay buffer API — delegates to DeviceBufferStore
-  // ---------------------------------------------------------------------------
-
-  acquireDeviceBuffer(surfaceId: string, opts: { deviceId: string; resumeEpoch?: number }): AcquireDeviceBufferResult {
-    const result = this._deviceBuffers.acquire(surfaceId, opts);
-    log.debug(`acquireDeviceBuffer.${result.resumed ? "resumed" : "fresh"}`, {
-      profile: this.profile,
-      surfaceId,
-      deviceId: opts.deviceId,
-      epoch: result.epoch,
-    });
-    return result;
-  }
-
-  releaseDeviceBuffer(surfaceId: string, deferredTeardown?: () => void): void {
-    this._deviceBuffers.release(surfaceId, deferredTeardown);
-    log.debug("releaseDeviceBuffer", {
-      profile: this.profile,
-      surfaceId,
-      hasDeferredTeardown: deferredTeardown !== undefined,
-    });
-  }
-
-  /** Immediately remove the surface entry, no TTL (explicit session.end / logout). */
-  disposeDeviceBuffer(surfaceId: string): void {
-    this._deviceBuffers.dispose(surfaceId);
-    log.debug("disposeDeviceBuffer", { profile: this.profile, surfaceId });
-  }
-
-  /** Read the replay buffer for a surface (undefined if not present). */
-  bufferFor(surfaceId: string): SessionReplayBuffer | undefined {
-    return this._deviceBuffers.bufferFor(surfaceId);
-  }
-
-  /** Read the current epoch for a surface (undefined if not present). */
-  epochFor(surfaceId: string): number | undefined {
-    return this._deviceBuffers.epochFor(surfaceId);
-  }
-
-  /** Read the carried deviceId for a surface (undefined if absent). */
-  deviceIdFor(surfaceId: string): string | undefined {
-    return this._deviceBuffers.deviceIdFor(surfaceId);
-  }
-
-  /** Reap idle surface buffers (>= idleTimeoutMs of no activity). Returns count removed. */
-  sweepIdle(nowMs: number, idleTimeoutMs: number): number {
-    return this._deviceBuffers.sweepIdle(nowMs, idleTimeoutMs);
-  }
-
-  /** Register the live-WS close hook for a surface (session-configure). */
-  setForceClose(surfaceId: string, forceClose: (() => void) | null): void {
-    this._deviceBuffers.setForceClose(surfaceId, forceClose);
-  }
-
-  /**
-   * True when at least one device buffer entry is retained, including
-   * currently-attached devices — blocks session eviction either way.
-   */
-  hasRetainedBuffers(): boolean {
-    return this._deviceBuffers.hasRetainedBuffers();
-  }
-
-  // Conversation anchors (surfaceId -> conversationId) — delegates to
-  // ConversationAnchors; logging stays here for profile context.
-
-  conversationIdFor(surfaceId: string): string | null {
-    return this._anchors.get(surfaceId);
-  }
-
-  updateConversationId(surfaceId: string, conversationId: string): void {
-    const prev = this._anchors.get(surfaceId);
-    this._anchors.set(surfaceId, conversationId);
-    log.debug("updateConversationId", { profile: this.profile, surfaceId, prev, next: conversationId });
-  }
-
-  dropAnchor(surfaceId: string): void {
-    if (!this._anchors.drop(surfaceId)) return;
-    log.debug("dropAnchor", { profile: this.profile, surfaceId });
-  }
-
-  clearAllAnchors(): void {
-    const count = this._anchors.size();
-    if (count === 0) return;
-    this._anchors.clear();
-    log.info("clearAllAnchors", { profile: this.profile, count });
-  }
-
   // Lifecycle
 
   /**
-   * Retention input for the registry sweep — a live wire or held cycle lease
-   * blocks eviction just as a retained buffer does.
+   * Retention input for the registry sweep. No live resources are tracked
+   * on PersonSession itself post-purge (the ACP wire pool, cycle lease, and
+   * device replay buffer this used to check were part of the deleted
+   * Hermes-cycle brain) — a session is retainable only while it has live
+   * attachments. Plan 2 rehomes any orchestrator-owned retention signal here.
    */
   hasLiveResources(): boolean {
-    return this.hasRetainedBuffers() || this.wires.hasLiveWires() || this.cycles.hasActiveLease();
+    return !this.isIdle;
   }
 
-  /**
-   * Final teardown when the registry removes this PersonSession: force-dispose
-   * any residual wire, abort any residual cycle lease, drop anchors.
-   */
+  /** Final teardown when the registry removes this PersonSession. */
   dispose(): void {
     log.info("dispose", { profile: this.profile, userId: this.userId });
-    this.wires.disposeAll();
-    this.cycles.abortAll();
-    this._anchors.clear();
   }
 
   /**

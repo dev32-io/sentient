@@ -2,7 +2,6 @@ import type { Result } from "@sentient/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { SupervisordControl, SupervisordError } from "../admin/supervisord-control.js";
 import type { HealthPollError, HealthPoller } from "../infrastructure/health-poller.js";
-import type { PersonSessionRegistry } from "../person-session/person-session-registry.js";
 import type { RenderedProfile } from "../profile-store/profile-renderer.js";
 import type { ProfileStore, ProfileStoreError } from "../profile-store/profile-store.js";
 import type { ProfileV1 } from "../profile-store/profile-types.js";
@@ -47,18 +46,6 @@ function makeSessionRouter(): SessionRouter {
   } as unknown as SessionRouter;
 }
 
-function makePersonSessions(overrides: Partial<PersonSessionRegistry> = {}): PersonSessionRegistry {
-  return {
-    getOrCreate: vi.fn(),
-    get: vi.fn(() => null),
-    list: vi.fn(() => []),
-    refreshVoice: vi.fn(),
-    sweep: vi.fn(),
-    dispose: vi.fn(),
-    ...overrides,
-  } as unknown as PersonSessionRegistry;
-}
-
 function makeHealthPoller(pollResult: Result<void, HealthPollError> = { ok: true, value: undefined }): HealthPoller {
   return {
     pollUntilHealthy: vi.fn(async () => pollResult),
@@ -82,12 +69,10 @@ function makeRefreshProgramEnv(
 function makeDeps(overrides: Partial<ApplyDeps> = {}): ApplyDeps {
   const profileStore = overrides.profileStore ?? makeProfileStore();
   const sessionRouter = overrides.sessionRouter ?? makeSessionRouter();
-  const personSessions = overrides.personSessions ?? makePersonSessions();
   const healthPoller = overrides.healthPoller ?? makeHealthPoller();
   return {
     profileStore,
     sessionRouter,
-    personSessions,
     healthPoller,
     renderProfile: overrides.renderProfile ?? vi.fn(() => rendered()),
     writeRendered: overrides.writeRendered ?? vi.fn(async () => {}),
@@ -117,19 +102,8 @@ describe("runApply", () => {
     expect(result.value.state).toBe("ready");
     expect(result.value.elapsedMs).toBeGreaterThanOrEqual(0);
     expect(deps.profileStore.get).toHaveBeenCalledWith("alice");
-    expect(deps.personSessions.get).toHaveBeenCalledWith("alice");
     expect(deps.supervisordControl.restartProfile).toHaveBeenCalledWith("alice", 1000, false);
     expect(deps.healthPoller.pollUntilHealthy).toHaveBeenCalledTimes(1);
-  });
-
-  it("apply clears the user's conversation anchors via the resolved PersonSession", async () => {
-    const cleared: string[] = [];
-    const fakeSession = { clearAllAnchors: () => cleared.push("u_00000001") };
-    const deps = makeDeps({ personSessions: { get: () => fakeSession } as never });
-
-    await runApply(deps, "u_00000001");
-
-    expect(cleared).toEqual(["u_00000001"]);
   });
 
   it("returns user-not-found when profileStore.get fails", async () => {
@@ -143,7 +117,6 @@ describe("runApply", () => {
     if (result.ok) return;
     expect(result.error.kind).toBe("user-not-found");
     expect(deps.supervisordControl.restartProfile).not.toHaveBeenCalled();
-    expect(deps.personSessions.get).not.toHaveBeenCalled();
   });
 
   it("returns render-error when loadTemplate fails", async () => {
@@ -252,31 +225,5 @@ describe("runApply", () => {
     if (result.ok) return;
     expect(result.error.kind).toBe("docker-restart-failed");
     expect(supervisordControl.restartProfile).not.toHaveBeenCalled();
-  });
-
-  it("clears conversation anchors BEFORE supervisord.restartProfile (order matters for race safety)", async () => {
-    const order: string[] = [];
-    const personSessions = makePersonSessions({
-      get: vi.fn(
-        () =>
-          ({
-            clearAllAnchors: () => {
-              order.push("clear");
-            },
-          }) as never,
-      ),
-    });
-    const supervisordControl: Pick<SupervisordControl, "restartProfile"> = {
-      restartProfile: vi.fn(async (_userId, _timeoutMs, _signalPaired) => {
-        order.push("restart");
-        return { ok: true as const, value: undefined };
-      }),
-    };
-    const deps = makeDeps({ personSessions, supervisordControl });
-
-    const result = await runApply(deps, "alice");
-
-    expect(result.ok).toBe(true);
-    expect(order).toEqual(["clear", "restart"]);
   });
 });

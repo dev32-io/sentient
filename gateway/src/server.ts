@@ -1,4 +1,3 @@
-import { homedir } from "node:os";
 import type { Server, ServerWebSocket } from "bun";
 import type { AdminDeps } from "./api/handlers/admin.ts";
 import { createAdminHandler } from "./api/handlers/admin.ts";
@@ -18,7 +17,6 @@ import { createProvidersHandler } from "./api/handlers/providers.ts";
 import { createReadyHandler } from "./api/handlers/ready.ts";
 import { createSecretsHandler } from "./api/handlers/secrets.ts";
 import { createServicesVersionsHandler } from "./api/handlers/services-versions.ts";
-import { createSessionsHttpHandler } from "./api/handlers/sessions.ts";
 import { createSystemStatusHandler } from "./api/handlers/system-status.ts";
 import { createVoicesHandler } from "./api/handlers/voices.ts";
 import { createWebuiHandler } from "./api/handlers/webui.ts";
@@ -30,8 +28,6 @@ import { runApply } from "./apply/orchestrator.ts";
 import type { RouterDeps } from "./apply/router.ts";
 import { testProviderImpl } from "./bootstrap/create-gateway-services.ts";
 import type { GatewayServices } from "./bootstrap/create-gateway-services.ts";
-import { listSessionsForUser, resolvePluginClientForUser } from "./hermes-adapter-client/per-user-plugin.js";
-import type { PerUserPluginDeps } from "./hermes-adapter-client/per-user-plugin.js";
 import { getLog } from "./logging/logger.ts";
 import {
   type ClientData,
@@ -39,7 +35,6 @@ import {
   handleWebSocketMessage,
   openSession,
 } from "./session-handlers/ws-handlers.ts";
-import { createTitleStore } from "./sessions/title-store.js";
 import type { TokenService } from "./user-auth/token-service.ts";
 
 export type { ClientData };
@@ -171,7 +166,6 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
   const handleDevices = services.devicesHandlerDeps
     ? createDevicesHandler({ tokens: services.auth.tokens, ...services.devicesHandlerDeps })
     : async (_req: Request) => new Response("Service Unavailable", { status: 503 });
-  const handleSessions = buildSessionsHandler(services);
   const handleVoices = createVoicesHandler({
     tokens: services.auth.tokens,
     profileStore: services.profileStore,
@@ -218,7 +212,6 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
         handleSystemStatus,
         handleApply,
         handleDevices,
-        handleSessions,
         handleVoices,
         handleDiagnostics,
         handleStatic,
@@ -238,10 +231,7 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
       close(ws: ServerWebSocket<ClientData>) {
         activeConnections--;
         log.info("client-disconnected");
-        // Transport close: attempt resumable disconnect if the client
-        // advertised stream.resume capability and a device buffer exists.
-        // Falls through to full teardown when the capability is absent.
-        cleanupSession(ws, services, { full: false });
+        cleanupSession(ws, services);
       },
     },
   });
@@ -307,50 +297,6 @@ function buildApplyHandler(
   };
 
   return createApplyHandler(applyHandlerDeps);
-}
-
-/** Builds the `/api/v1/sessions*` handler from GatewayServices.
- *
- * Per-user resolution:
- *   resolvePluginClient — derives http base URL (hermes + userPortStore),
- *     shifts port by DASHBOARD_PORT_OFFSET to reach the sentient-plugin sidecar,
- *     constructs a SentientPluginClient with the shared Hermes bearer token.
- *   listSessions — dials a dedicated ephemeral ACP wire per call (never
- *     pooled or shared with a surface wire), calls session/list, disposes
- *     the wire in finally.
- *   resolveTitleStore — creates a per-user TitleStore scoped to the user's data
- *     dir; each call for the same userId within a request returns a fresh
- *     instance (stateless file-backed store — no identity requirement).
- *
- * Falls back to a 503 handler when hermes or userPortStore is absent (headless
- * / CI builds where Hermes is not configured). */
-function buildSessionsHandler(services: GatewayServices): (req: Request) => Promise<Response> {
-  if (!services.hermes || !services.userPortStore) {
-    return async (_req: Request) => new Response("Service Unavailable", { status: 503 });
-  }
-  const pluginDeps: PerUserPluginDeps = {
-    hermes: services.hermes,
-    userPortStore: services.userPortStore,
-    hermesApiKey: services.hermesApiKey,
-    timeoutMs: services.sessions.hermes_http_timeout_ms,
-    acpOpenTimeoutMs: services.hermes.acp_wire.open_timeout_ms,
-  };
-  const userDataRoot = expandHome(services.sessions.user_data_root);
-  return createSessionsHttpHandler({
-    tokens: services.auth.tokens,
-    resolvePluginClient: (userId) => resolvePluginClientForUser(userId, pluginDeps),
-    listSessions: (userId) => listSessionsForUser(userId, pluginDeps),
-    resolveTitleStore: (userId) => createTitleStore({ userDataRoot, userId }),
-  });
-}
-
-// TODO(cleanup): dedup expandHome into a shared gateway/src/util path helper (also in ws-session-configure.ts).
-/** Expands a leading `~` to the OS home directory. Absolute and env-derived
- *  paths are returned unchanged. */
-function expandHome(rawPath: string): string {
-  if (rawPath === "~") return homedir();
-  if (rawPath.startsWith("~/")) return `${homedir()}/${rawPath.slice(2)}`;
-  return rawPath;
 }
 
 /** Builds AdminDeps from GatewayServices. Nullable admin stores are stubbed

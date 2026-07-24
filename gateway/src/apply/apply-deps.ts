@@ -5,7 +5,6 @@ import type { SupervisordControl } from "../admin/supervisord-control.js";
 import type { UserPortStore } from "../admin/user-port-store.js";
 import type { HealthPoller } from "../infrastructure/health-poller.js";
 import { getLog } from "../logging/logger.js";
-import type { PersonSessionRegistry } from "../person-session/person-session-registry.js";
 import { type ProviderBaseUrlAccessor, renderProfile, writeRendered } from "../profile-store/profile-renderer.js";
 import type { ProfileStore } from "../profile-store/profile-store.js";
 import type { ModelProvider } from "../profile-store/profile-types.js";
@@ -20,12 +19,6 @@ const log = getLog(["sentient", "gateway", "apply", "apply-deps"]);
 export interface ApplyDepsServices {
   readonly profileStore: ProfileStore;
   readonly sessionRouter: SessionRouter;
-  /** Per-user session registry. Apply clears the resolved PersonSession's
-   *  conversation anchors before restart — must be the SAME registry
-   *  instance the WS handlers attach live sessions to (see
-   *  bootstrap/phase-services.ts), otherwise `.get(userId)` never finds
-   *  the live session and the anchor clear silently no-ops. */
-  readonly personSessions: PersonSessionRegistry;
   readonly healthPoller: HealthPoller;
   readonly templateLoader: TemplateLoader;
   readonly applyConfig: ApplyConfig;
@@ -76,7 +69,6 @@ export function createApplyDeps(services: ApplyDepsServices): ApplyDeps {
   return {
     profileStore: services.profileStore,
     sessionRouter: services.sessionRouter,
-    personSessions: services.personSessions,
     healthPoller: services.healthPoller,
     renderProfile: renderWithCatalog,
     writeRendered,

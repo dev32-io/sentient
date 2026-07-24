@@ -39,7 +39,6 @@ export function buildPersonSessionRegistry(
     userPortStore,
     apiKeyResolver: () => secrets.getHermesAuthTokenSync(),
     idleTimeoutMs: cfg.session.idle_timeout_ms,
-    replayBufferMaxBytes: cfg.session.replay_buffer_max_bytes,
     options: { voiceLoader },
   });
 }

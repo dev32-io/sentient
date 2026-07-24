@@ -1,10 +1,17 @@
 import type { HermesConfig } from "@sentient/config";
 import type { UserPortStore } from "./admin/user-port-store.js";
-import type { HermesProfileBinding } from "./cerebrum/hermes-client.js";
 import { getLog } from "./logging/logger.js";
 import { assertUserId } from "./user-auth/user-id.js";
 
 const log = getLog(["sentient", "gateway", "session-router"]);
+
+/** Per-user binding resolved by the gateway from config + secret store. */
+export interface HermesProfileBinding {
+  userId: string;
+  url: string;
+  apiKey: string;
+  conversationId: string | null;
+}
 
 /** Maps sessions to per-user Hermes profile bindings with conversation persistence. */
 export interface SessionRouter {
