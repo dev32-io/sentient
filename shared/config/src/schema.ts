@@ -329,9 +329,11 @@ export const gatewayConfigSchema = z.object({
   // Store — durable per-user session history (spec §3). Optional; the
   // filename default matches the standard single-DB-per-user layout.
   store: storeConfigSchema.default({}),
-  // Orchestrator — the native LLM agent loop (spec §4/§5). Required — no
-  // default; every deployment must configure a provider.
-  orchestrator: orchestratorConfigSchema,
+  // Orchestrator — the native LLM agent loop (spec §4/§5). Optional during
+  // the mid-transition state: the runtime isn't wired to a consumer yet
+  // (Plan 2). The composition root that constructs the orchestrator runtime
+  // MUST fail loudly if this is absent when the orchestrator is enabled.
+  orchestrator: orchestratorConfigSchema.optional(),
   logging: loggingConfigSchema.default({}),
   stt: sttConfigSchema,
   tts: ttsConfigSchema,

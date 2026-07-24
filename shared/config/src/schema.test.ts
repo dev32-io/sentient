@@ -16,9 +16,11 @@ const wsResilienceSession = {
   per_user_max_sessions: 40,
 };
 
-// Shared access/orchestrator fixtures — both sections are required (no
-// `.default()` at the root), so every gatewayConfigSchema.parse() fixture
-// below must supply them.
+// Shared access/orchestrator fixtures. `access` is required (no `.default()`
+// at the root), so every gatewayConfigSchema.parse() fixture below must
+// supply it. `orchestrator` is optional (mirrors `hermes`) but every fixture
+// still supplies it so the shape-when-present assertions below keep exercising
+// a fully-populated orchestrator block.
 const minimalAccess = { user_data_root: "/tmp/sentient-test-users" };
 const minimalOrchestrator = {
   provider: { base_url: "https://openrouter.ai/api/v1", model: "test-model", api_key_env: "OPENROUTER_API_KEY" },
@@ -43,6 +45,13 @@ describe("gatewayConfigSchema", () => {
     expect(result.host).toBe("0.0.0.0");
     expect(result.max_sessions).toBe(100);
     expect(result.auth_timeout_ms).toBe(5000);
+  });
+
+  it("accepts a config with no orchestrator block — orchestrator is optional (mirrors hermes)", () => {
+    const { orchestrator, ...withoutOrchestrator } = minimalValidConfig;
+    const result = gatewayConfigSchema.parse(withoutOrchestrator);
+
+    expect(result.orchestrator).toBeUndefined();
   });
 
   it("applies TTS defaults", () => {

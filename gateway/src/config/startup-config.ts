@@ -67,9 +67,12 @@ export interface StartupConfig {
    *  db_filename defaults to "sessions.db" when omitted from config.yaml. */
   store: StoreYaml;
 
-  /** Orchestrator — the native LLM agent loop (spec §4/§5). Always defined;
-   *  provider is required (no default) so a deployment must configure one. */
-  orchestrator: OrchestratorYaml;
+  /** Orchestrator — the native LLM agent loop (spec §4/§5). `undefined` when
+   *  no orchestrator block — mirrors `hermes` below. Not yet wired to a
+   *  runtime consumer (Plan 2). The composition root that constructs the
+   *  orchestrator runtime MUST fail loudly if this is absent when the
+   *  orchestrator is enabled — do not add that check here. */
+  orchestrator: OrchestratorYaml | undefined;
 
   /** Top-level language ("auto" | "en" | "zh") mirrored from stt.language for
    * ergonomics. "auto" = Whisper autodetects (bilingual households). */
