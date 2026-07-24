@@ -75,7 +75,6 @@ COPY gateway/persona.md ./persona.md
 # Default config baked into image. Operator may override at runtime by
 # mounting their own files at /app/config/*.
 COPY gateway/config.yaml ./config/config.yaml
-COPY gateway/salience_map.yaml ./config/salience_map.yaml
 
 # Baked-in template seeds (default SOUL etc). Read at runtime by
 # template-loader from <runtimeDir>/templates/. Operator overrides

@@ -1,84 +1,95 @@
 # Architecture Details — Gateway
 
 Gateway-specific architecture details. Pairs with the cross-cutting
-root: `agents/docs/architecture-details.md` and the gateway rule
-`.claude/rules/gateway/cerebrum.md`.
+root: `agents/docs/architecture-details.md`.
 
-## Per-Profile Hermes Process Lifecycle (supervisord)
+> **Status (2026-07):** the gateway is being rebuilt as a native LLM
+> orchestrator on `feature/native-orchestrator` (Sentient 2.0). The
+> canonical design is
+> `docs/superpowers/specs/2026-07-23-sentient-2.0-native-orchestrator-design.md`.
+> The previous ACP-client-over-Hermes brain (per-profile supervisord ACP +
+> dashboard programs, `hermes-adapter-client/`, `cerebrum/`, ACP wire pool,
+> `ConversationMirror`, `cycleId`) has been **deleted**, not adapted. Do not
+> reintroduce it. This document describes only what Plan 1 (the foundation)
+> has landed; the runtime, tools, voice, and wire are Plan 2+ and will be
+> documented as they arrive.
 
-Single `sentient-hermes` overlay container hosts all per-user Hermes
-workers under supervisord. The gateway drives lifecycle via
-`supervisorctl` over a shared unix socket on a docker volume mounted into
-both containers.
+## Identity & capability-based security (spec §2)
 
-**Two programs per active user** (post-ACP pivot):
-- `hermes-<userId>-acp` on `acpPort` — `acp_ws_server.py` wraps
-  `hermes -p <userId> acp` (stdio JSON-RPC) and bridges it to a
-  WebSocket endpoint on path `/acp`.
-- `hermes-<userId>-dashboard` on `acpPort + 1000` — `hermes -p <userId>
-  dashboard` runs as a sidecar and exposes the bundled `sentient-plugin`
-  REST surface (search / get / getMessages / delete) at
-  `/api/plugins/sentient-plugin/`. ACP doesn't cover those surfaces.
+Ambient authority is removed: no component reads a "current user" from
+module scope. Identity and authority flow only as explicit parameters.
 
-**Lifecycle:**
-1. Auth resolves a user → gateway provisions in `users.json` if new.
-2. Apply renders `<gatewayRoot>/<userId>/{config.yaml,SOUL.md}` and writes
-   `/data/supervisor/programs/<userId>.conf` (supervisord program config,
-   both programs above).
-3. Gateway calls `supervisorctl reread && update`.
-4. supervisord spawns both programs as managed children.
-5. Per-profile-renderer regenerates `config.yaml` on every gateway boot
-   so stale models / MCP catalogs never land at the worker
-   (`gateway/src/admin/boot-migration.ts#renderConfigsForExistingUsers`).
-6. The ACP wire is **pooled per surfaceId, ref-counted** across that surface's
-   reconnects (`hermes-adapter-client/acp-wire-registry.ts`). A surface (web tab
-   = per-tab sessionStorage `surfaceId`; mobile = `deviceId`) dials
-   `ws://sentient-hermes:<acpPort>/acp` via `bootstrapAcpWire` on first attach
-   (runs `initialize`, reaches the AcpHermesClient adapter); reconnects with the
-   SAME surfaceId reuse the live wire (refCount++), and it is disposed only when
-   the surface's last attachment releases. `acquire`/`release` are driven from
-   `ws-session-configure.ts`. WHY per-surface: the Hermes overlay
-   (`acp_ws_server.py`) spawns a fresh Hermes child **per WS connection**, so one
-   wire per surface = one isolated child = no cross-surface conversation forks.
-   The overlay is a **dumb transport** — it does NOT evict prior connections;
-   concurrent connections per profile (multiple surfaces PLUS the ephemeral
-   `rest-list:<userId>` session-list wire) coexist, each with its own child. The
-   gateway owns all pooling + single-flight gating. (`state.db`, the shared
-   per-profile memory chain, is WAL-mode → concurrent children write safely.)
-7. The wire **self-heals**. A *remote* close (any code, including 1000 — overlay
-   restart / network flap) is NOT terminal: it lazily reconnects on the next
-   dispatch, bounded by `hermes.acp_wire.reconnect_max_attempts`
-   (`acp-wire-socket.ts`). Only a *local* `dispose()` (last attachment released) is
-   terminal. An in-flight prompt is un-stuck two ways: WS reject-on-abnormal-close
-   (`per-profile-connection.ts#rejectInflight`) AND a `hermes.defaults.request_timeout_ms`
-   backstop on the AcpClient.
-8. Force-restart removes + rewrites the .conf and signals `restart`. The
-   restart orchestrator reports ready optimistically (no eager probe); the next
-   dispatch on the (reconnecting) wire proves dispatch end-to-end.
+- **L0 — `UserPrincipal`** (`gateway/src/identity/user-principal.ts`).
+  Immutable `{ userId, role, householdId }`, frozen, `userId` validated by
+  `assertUserId` at construction. Minted exactly once, at the auth gate
+  (`session-handlers/ws-auth-gate.ts`), from a validated token, and stored on
+  the socket as `SessionData.principal`. There is no rebind and no setter;
+  switching accounts requires re-authenticating. The gate claims an
+  `authenticating` state synchronously before any await, re-checks that claim
+  after every await, and rejects cleanly (never throws) on a malformed stored
+  userId — so a second in-flight auth frame cannot rebind the principal and a
+  timeout cannot revive a rejected socket.
+- **L1 — `AccessManager`** (`gateway/src/access/access-manager.ts`). The ONLY
+  place a principal becomes authority. `grant(principal, resourceClass)` mints
+  an attenuated, frozen `Capability { ownerUserId, resource, rootPath }`
+  confined to `<userDataRoot>/<userId>/`.
+- **L2 — resource handles hold capabilities, never the principal.**
+  `FileScope` (`access/file-scope.ts`) and `SessionStore` (`store/`) accept a
+  `Capability` and refuse any path outside its grant — cross-user access is
+  denied by path, including reads, via `capabilityCoversPath` (a lexical
+  `path.resolve` + `root + path.sep` prefix check; siblings whose name merely
+  prefixes the root are correctly excluded). Physical per-user isolation
+  (separate dir, separate DB file) sits underneath the code-level capability
+  as defense-in-depth.
+- **L3 — PDP/PEP tool-call mediation** is Plan 2 (the security primitives in
+  `gateway/src/security/` are retained but not yet wired into a tool path).
 
-**State:** supervisord tracks each program's state machine
-(STOPPED / STARTING / RUNNING / BACKOFF / FATAL / EXITED). RPC events are
-`PROCESS_STATE:<process_name>:<event>` — colon notation, not dot.
+## Session store — single source of truth (spec §3)
 
-## ACP wire surfaces
+`gateway/src/store/` — one durable, append-only SQLite DB per user
+(`bun:sqlite`, WAL), opened through the user's capability so its file is
+confined to their home dir.
 
-| Surface | Transport | Notes |
-|---|---|---|
-| `session/new`, `session/list`, `session/prompt`, `session/cancel`, `session/update` | ACP JSON-RPC over WS at `/acp` | Owned by upstream `hermes acp` agent. |
-| `session.created` / `session.switched` / `commands.available` / `sessions.renamed` | ACP `session/update` notifications | Routed via `acpConn.onEvent` in `ws-session-configure.ts`. Multiple subscribers OK. |
-| Past-sessions search / get / getMessages / delete | sentient-plugin REST (port = acpPort + 1000) | `SentientPluginClient` in `hermes-adapter-client/plugin-client.ts`. Bearer auth via `SENTIENT_HERMES_BEARER`. |
-| `/healthz` | HTTP at acpPort | Boot health check. ACP itself has no `/healthz` equivalent — the bridge (`acp_ws_server.py`) exposes one. |
+- **Canonical entry** (`store/entry-types.ts`): `SessionEntry` with kinds
+  `user | assistant | tool_call | tool_result | trigger | system |
+  compaction`, each carrying a gateway-owned `created_at` (the timestamp the
+  previous Hermes store never had) and a store-wide monotonic `seq`.
+- **Append-only invariant.** The store's public API is append + read only —
+  there is no update/delete/replace method. This keeps the model-facing prompt
+  prefix byte-stable for provider prompt caching; a mutated prior entry would
+  invalidate the cache from that point for the rest of the session.
+- **Two pure projections read the one store** and must converge —
+  `render(replay(store)) == render(live)`, pinned by
+  `store/projection-convergence.test.ts`:
+  - **Model** (`store/model-projection.ts`) → OpenAI `messages[]`. Emits
+    complete tool round-trips, and pairs `tool_call`/`tool_result` by **block
+    adjacency** (a call-run pairs only with the immediately-following
+    result-run), dropping anything unmatched in either direction with a
+    reason-bearing WARN — so no entry landing between a call-run and its
+    result-run can produce a provider-rejected `messages[]`. Replays only from
+    the latest `compaction` marker forward (to shrink LLM context).
+  - **Client** (`store/client-projection.ts`) → feed items. Folds a
+    `tool_call`+`tool_result` into ONE tile, renders the FULL history across
+    compaction (the user never loses history because the model's context was
+    compacted), and skips `system`/`compaction`. `trigger` renders as its own
+    `trigger` kind (matching the shipped `conversationFeedItemSchema`), never
+    as `user`.
 
-## Client contract notes
+### Constraint for the entry appender (Plan 2)
 
-- **clientTypes** = `webui | cube | mobile` (`shared/protocol` `clientTypeSchema`). TTS is per-clientType (`session-handlers/tts-policy.ts`); the `mobile` arm v1 mirrors webui (honour channel + `ttsEnabled`), with the webui playback fallback.
-- **`pendingId`** round-trips optimistic sends: optional on `text.input` and the user conversation-feed item (`shared/protocol`). The gateway threads the client id onto the committed user echo (`adapters/user-text-input-adapter.ts` → `cerebrum/conversation-feed.ts`) so the client reconciles by id. Absent ⇒ legacy text-FIFO dedup still applies.
-- **Conversation-feed `ts` is a guaranteed non-negative int.** NaN/null/negative are backstopped to 0 with a WARN (`cerebrum/conversation-feed.ts#safeTs`; resume backfill in `sessions/hermes-message-to-mirror.ts`) — NaN serialises to `null` and crashes the strict KMP SDK decoder.
+Because the model projection pairs by block adjacency, a **late / out-of-band
+tool result** (e.g. a background-task completion arriving after its block) MUST
+be appended as a `system` or `trigger` entry — NEVER as a second `tool_result`
+for an already-answered `tool_call` id. Otherwise the model never sees it and
+re-issues the call. This is recorded in the header of `store/model-projection.ts`.
 
-## Stubbed paths under ACP (open todos)
+## Not yet wired (Plan 2 composition root)
 
-`apply` / restart / dispatch-reset paths used to fire `/reset` /
-`/personality <name>` over a pooled custom-WS connection. ACP has no
-slash-command equivalent today. Stubbed with WARN logs and TODO
-comments; see `docs/research/2026-05-08-apply-restart-acp-rewire-todo.md`
-for the gap and required equivalents.
+Plan 1 delivers the primitives; nothing constructs them at runtime yet. Before
+the orchestrator loop can use them, the composition root must: add
+`accessConfigSchema` + `storeConfigSchema` to `shared/config`'s
+`gatewayConfigSchema` (both YAML sections are currently dropped by zod's
+non-strict parse); expand the leading `~` in `access.user_data_root` at the
+config-load boundary (follow `user-auth/paths.ts`'s `os.homedir()` precedent);
+and thread `store.db_filename` in to replace the hardcoded constant. These are
+tracked in the Plan 1 progress ledger.
