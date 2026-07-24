@@ -79,8 +79,11 @@ export function createMcpClient(catalog: McpCatalog, opts: { includeServers?: st
   }
 
   /** Connects to a server on first use and caches the live client. Concurrent
-   *  callers for the same server share the in-flight connect promise. */
-  function connect(serverName: string, entry: McpHttpEntry): Promise<Client> {
+   *  callers for the same server share the in-flight connect promise. `signal`
+   *  is forwarded into the SDK's `initialize` request alongside the
+   *  operator-configured `connect_timeout` — without it the SDK silently
+   *  defaults to a hardcoded 60s timeout and ignores caller aborts. */
+  function connect(serverName: string, entry: McpHttpEntry, signal: AbortSignal | undefined): Promise<Client> {
     const cached = connections.get(serverName);
     if (cached) return cached;
 
@@ -92,7 +95,12 @@ export function createMcpClient(catalog: McpCatalog, opts: { includeServers?: st
       // `StreamableHTTPClientTransport`'s getter (`string | undefined`) are
       // only incompatible under our `exactOptionalPropertyTypes` — an
       // upstream typing gap, not a real structural mismatch.
-      await client.connect(transport as unknown as Transport);
+      // `exactOptionalPropertyTypes` forbids `signal: undefined` against the
+      // SDK's `signal?: AbortSignal` — spread it in only when present.
+      await client.connect(transport as unknown as Transport, {
+        ...(signal ? { signal } : {}),
+        timeout: entry.connect_timeout * 1000,
+      });
       log.info("mcp.connect.ok", { serverName, url: entry.url, elapsedMs: Date.now() - startedAt });
       return client;
     })();
@@ -105,7 +113,7 @@ export function createMcpClient(catalog: McpCatalog, opts: { includeServers?: st
   async function listToolsForServer(serverName: string, entry: McpHttpEntry): Promise<McpToolRef[]> {
     const startedAt = Date.now();
     try {
-      const client = await connect(serverName, entry);
+      const client = await connect(serverName, entry, undefined);
       const { tools } = await client.listTools();
       const refs: McpToolRef[] = tools.map((tool) => ({
         serverName,
@@ -149,25 +157,38 @@ export function createMcpClient(catalog: McpCatalog, opts: { includeServers?: st
       signal: AbortSignal,
     ): Promise<ToolResult> {
       const startedAt = Date.now();
+      const catalogEntry = catalog[serverName];
       const entry = httpEntry(serverName);
       if (!entry) {
-        log.warn("mcp.call-tool.unknown-server", { serverName, name });
-        return { content: `Unknown MCP server: ${serverName}`, isError: true };
+        const reason =
+          catalogEntry?.transport === "stdio" ? "configured but stdio transport (unsupported in v1)" : "not configured";
+        log.warn("mcp.call-tool.unknown-server", { serverName, name, reason });
+        return { content: `Unknown MCP server: ${serverName} (${reason})`, isError: true };
       }
       try {
-        const client = await connect(serverName, entry);
+        const client = await connect(serverName, entry, signal);
         const result = await client.callTool({ name, arguments: args }, undefined, {
           signal,
           timeout: entry.timeout * 1000,
         });
-        const content = Array.isArray(result.content)
-          ? result.content
-              .filter((part): part is { type: "text"; text: string } => part.type === "text")
-              .map((part) => part.text)
-              .join("")
-          : "";
+        const parts = Array.isArray(result.content) ? result.content : [];
+        const textParts = parts.filter((part): part is { type: "text"; text: string } => part.type === "text");
+        const nonTextParts = parts.filter((part) => part.type !== "text");
+        const content = textParts.map((part) => part.text).join("\n");
+        if (textParts.length === 0 && nonTextParts.length > 0) {
+          log.debug("mcp.call-tool.dropped-nontext-parts", {
+            serverName,
+            droppedPartTypes: [...new Set(nonTextParts.map((part) => part.type))],
+          });
+        }
         const isError = !!result.isError;
-        log.info("mcp.call-tool.ok", { serverName, name, isError, elapsedMs: Date.now() - startedAt });
+        log.info("mcp.call-tool.ok", {
+          serverName,
+          name,
+          isError,
+          contentLength: content.length,
+          elapsedMs: Date.now() - startedAt,
+        });
         return { content, isError };
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
