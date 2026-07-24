@@ -193,6 +193,14 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   }
 
   function startTurn(turnId: string): void {
+    // Re-entrancy guard: a future TurnEmitter.turnCompleted callback could call
+    // submit() synchronously from inside onTurnSettled's clear-and-decide window;
+    // without this, that re-entrant start plus onTurnSettled's own next-turn start
+    // would overwrite a live `inFlight` and run two concurrent turns over one
+    // store — the exact torn-feed invariant this runtime protects. No-op if a
+    // turn is already in flight; the caller has already appended its stimulus,
+    // so the running (or about-to-run) turn absorbs it via steer.
+    if (inFlight !== null) return;
     const controller = new AbortController();
     inFlight = { turnId, controller };
     // Synchronous snapshot, no await between this and the `runTurn` call

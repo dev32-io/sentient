@@ -363,4 +363,74 @@ describe("SessionRuntime — isolation", () => {
     expect(bobDirect.readSession("shared-session-id")).toEqual([]);
     bobDirect.close();
   });
+
+  // Case 5: a re-entrant submit from a turnCompleted callback must not start a
+  // SECOND concurrent turn. A future real TurnEmitter could call submit()
+  // synchronously from turnCompleted, inside onTurnSettled's clear-and-decide
+  // window; the startTurn re-entrancy guard must keep exactly one turn live.
+  it("SECURITY/INVARIANT: a re-entrant submit from turnCompleted never runs two concurrent turns", async () => {
+    const ROOT5 = `${ROOT}/case5`;
+    const am = createAccessManager({ userDataRoot: ROOT5 });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    let concurrent = 0;
+    let concurrentPeak = 0;
+    const provider = fakeProvider(async function* () {
+      concurrent += 1;
+      concurrentPeak = Math.max(concurrentPeak, concurrent);
+      yield { type: "text", content: "ok" };
+      yield { type: "done", finishReason: "stop" };
+      concurrent -= 1;
+    });
+
+    // Re-entrant emitter: the first turnCompleted submits a follow-up message
+    // synchronously (once), mimicking a client-wire emitter that echoes.
+    let reentered = false;
+    // Mutable holder so the emitter closure can reach the runtime that is
+    // constructed after it (genuine forward reference).
+    const ref: { runtime?: SessionRuntime } = {};
+    const events: RecordedEvent[] = [];
+    const emitter: RecordingEmitter = {
+      events,
+      turnStarted: (t) => events.push({ type: "turnStarted", turnId: t }),
+      textDelta: (t) => events.push({ type: "textDelta", turnId: t }),
+      toolUpdate: (t) => events.push({ type: "toolUpdate", turnId: t }),
+      turnCompleted: (t) => {
+        events.push({ type: "turnCompleted", turnId: t });
+        // Submit TWICE: the first re-entrant submit starts a turn (setting
+        // inFlight); the second appends a stimulus AFTER that turn's seq
+        // snapshot, so onTurnSettled's own next-turn check then also wants to
+        // start — without the startTurn guard the two collide into two
+        // concurrent loops over one store (the reviewer's reproduced race).
+        if (!reentered) {
+          reentered = true;
+          ref.runtime?.submit({ kind: "conversational", text: "follow-up-1" });
+          ref.runtime?.submit({ kind: "conversational", text: "follow-up-2" });
+        }
+      },
+      turnAborted: (t) => events.push({ type: "turnAborted", turnId: t }),
+    };
+
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "reentry",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter,
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+    });
+    ref.runtime = runtime;
+
+    runtime.submit({ kind: "conversational", text: "hello" });
+    await waitUntilIdle(runtime);
+
+    // Peak concurrency must be 1 — never two loops over one store at once.
+    expect(concurrentPeak).toBe(1);
+    // The follow-up was still processed (two turns total, back-to-back).
+    expect(provider.calls.length).toBeGreaterThanOrEqual(2);
+    runtime.dispose();
+  });
 });
