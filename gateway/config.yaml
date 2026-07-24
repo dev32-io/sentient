@@ -76,6 +76,14 @@ access:
   user_data_root: ~/.sentient/gateway/users
 
 # ---------------------------------------------------------------------------
+# Store — durable per-user session history (spec §3)
+# ---------------------------------------------------------------------------
+store:
+  # SQLite filename created inside each user's home dir (<user_data_root>/<userId>/).
+  # One DB per user: physical isolation plus a natural per-user WAL write lane.
+  db_filename: sessions.db
+
+# ---------------------------------------------------------------------------
 # STT — local-stt service (Silero VAD + Smart-Turn v3 + SenseVoice-Small)
 # See capabilityServices/STTService/CONTRACT.md for the wire protocol.
 # ---------------------------------------------------------------------------
