@@ -33,6 +33,7 @@ export function createFileScope(cap: Capability): FileScope {
         reason: "outside-capability-scope",
         userId: cap.ownerUserId,
         rootPath: cap.rootPath,
+        attemptedPath: relativePath.slice(0, 120),
       });
       throw new PathOutsideScopeError(relativePath, cap.rootPath);
     }
