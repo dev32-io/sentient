@@ -31,12 +31,6 @@ export interface ProfileHandlerDeps {
   runApply: (userId: string) => Promise<Result<ApplyOutcome, ApplyError>>;
   /** Phase D delegate — handles `/soul`, `/personalities*`, `/active-personality`. */
   handleEdit: (request: Request) => Promise<Response>;
-  /**
-   * Re-resolve and apply per-user voiceId on the live PersonSession after a
-   * profile.json save. Lets a voice change take effect on the next TTS turn
-   * without a Hermes restart. No-op when no PersonSession is bound.
-   */
-  refreshVoice: (userId: string) => Promise<void>;
 }
 
 export function createProfileHandler(deps: ProfileHandlerDeps): (request: Request) => Promise<Response> {
@@ -163,12 +157,6 @@ async function handleMePut(deps: ProfileHandlerDeps, userId: string, request: Re
     log.warn("me.put-save-failed", { userId, reason: saveResult.error });
     return jsonError(HTTP_INTERNAL, saveResult.error);
   }
-
-  // Live-propagate per-user voice to any attached PersonSession. Voice is
-  // gateway-side TTS, not Hermes-side — the apply-restart for Hermes-owned
-  // fields is a separate flow; this keeps voice picks effective even when
-  // the user doesn't apply (or for the next TTS turn after apply restarts).
-  await deps.refreshVoice(userId);
 
   return Response.json(parsed.data, { status: HTTP_OK });
 }

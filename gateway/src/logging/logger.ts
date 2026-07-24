@@ -16,9 +16,9 @@ export interface GatewayLoggerOptions {
   testSink?: (line: string) => void;
   /**
    * Per-category level overrides. Keys are colon-joined LogTape category
-   * paths (e.g. "sentient:cerebrum:hermes-event-translator"). Categories
-   * not listed inherit `logLevel`. Used to flip debug on for a specific
-   * path without bumping the whole gateway to debug.
+   * paths (e.g. "sentient:session-router"). Categories not listed inherit
+   * `logLevel`. Used to flip debug on for a specific path without bumping
+   * the whole gateway to debug.
    */
   levelOverrides?: Record<string, string>;
 }

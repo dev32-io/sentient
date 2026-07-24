@@ -60,27 +60,11 @@ tls:
     # - "sentient.local"             # add the mDNS / DNS name if you use one
 
 # ---------------------------------------------------------------------------
-# Session — turn detection, barge-in, inactivity
+# Session — connection limits
 # ---------------------------------------------------------------------------
 session:
-  # Barge-in: user interrupts assistant mid-speech
-  barge_in:
-    no_interrupt_ms: 500             # ignore audio for this long after assistant starts speaking
-    min_speech_duration_ms: 50      # sustained audio required before confirming barge-in
-
-  # Grace window (ms) between server TTS completion and the point where the
-  # client's audio buffer is assumed drained. Mic-onset within this window
-  # still sends playback.stop so the user can interrupt tail audio. WebRTC
-  # loopback buffers 200–500ms depending on browser + network; 2000 is safe.
-  # Range: 0–5000. Default 2000.
-  tts_drain_grace_ms: 2000
-
-  # WS resilience (resumable sequenced stream + replay buffer) — Slice 3
   ws_idle_timeout_ms: 255000         # Range: 1000–255000. Bun WS idle close; Bun takes SECONDS (cap 255), gateway converts ms→s.
-  replay_buffer_max_bytes: 16777216  # 16 MB. Range: 65536–268435456 (64 KB–256 MB). Per device-session ring cap (evict-oldest).
   per_user_max_sessions: 40           # max concurrent WS sessions for ONE user (1–100). Bounds memory under churn.
-  idle_timeout_ms: 900000             # 15 min. Reap a device buffer + its session after this much silence across
-                                      # WS (in/out) AND Hermes ACP (in/out). Resets on any activity; ping/pong excluded.
 
 # ---------------------------------------------------------------------------
 # STT — local-stt service (Silero VAD + Smart-Turn v3 + SenseVoice-Small)
@@ -235,24 +219,6 @@ hermes:
     url_template: "http://sentient-hermes:{port}"
     port_base: 8650
 
-  # ACP wire resilience. The gateway→Hermes ACP WebSocket auto-reconnects on ANY
-  # remote close — abnormal (1006 after a gateway restart / resumed-session flap)
-  # AND a clean remote 1000 (the overlay evicts the prior wire when another client
-  # for the same user connects). On the next dispatch the wire re-opens + re-runs
-  # `initialize` so the session keeps dispatching cycles. Only a LOCAL teardown
-  # (dispose — the last PersonSession attachment releases the ref-counted wire) is
-  # terminal. Reconnect is bounded; after exhaustion the dispatch surfaces a
-  # terminal error rather than hanging.
-  acp_wire:
-    open_timeout_ms: 5000          # per WS open handshake deadline (500-60000)
-    reconnect_base_ms: 500         # first backoff delay (50-10000)
-    reconnect_max_ms: 5000         # backoff ceiling (100-60000)
-    reconnect_jitter_ms: 250       # random jitter added per backoff (0-10000)
-    reconnect_max_attempts: 5      # max re-open attempts before a send fails (1-20)
-
-  defaults:
-    max_output_tokens: 512                   # per-turn token cap
-
   web_tools:
     provider: searxng
     searxng:
@@ -302,25 +268,6 @@ providers:
   ollama_cloud_base_url: https://ollama.com/v1
   ollama_cache_ttl_ms: 3600000
   external_fetch_timeout_ms: 5000
-
-# ---------------------------------------------------------------------------
-# Sessions — past-sessions feature: pagination caps, search bounds, title
-# length, override-store location, source tag, HTTP + switch-teardown
-# timeouts. All keys are operator-tunable; the webui reads search_debounce_ms
-# from session.ready and applies it to the search input.
-# ---------------------------------------------------------------------------
-sessions:
-  list_page_size: 20         # default page size for sessions.list (1-100)
-  search_max_results: 20     # cap on FTS results (1-50)
-  search_min_chars: 2        # debounce floor; queries shorter dropped (0-10)
-  search_debounce_ms: 300    # client-side debounce — surfaced for tuning (50-1000)
-  title_max_chars: 200       # rename input bound (10-500)
-  title_override_dir: ~/.sentient/gateway/session-titles  # legacy per-profile JSON store; migrator moves to user_data_root
-  user_data_root: ~/.sentient/gateway/users  # per-user, per-category data root: <user_data_root>/<userId>/<category>/<file>
-  source_tag: sentient-user  # adapter writes this on every new chain
-  hermes_http_timeout_ms: 5000           # per-request timeout for Hermes /api/sessions/* (1000-30000)
-  switch_teardown_timeout_ms: 3000       # max wait for cycle-cancel before switch proceeds (500-10000)
-  min_new_interval_ms: 500               # min ms between client session.new — blocks spam/double-fire, not human-paced new chats (0-60000)
 
 # ---------------------------------------------------------------------------
 # Companions — on-demand version resolution for co-deployed services.

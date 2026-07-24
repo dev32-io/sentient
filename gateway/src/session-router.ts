@@ -17,14 +17,14 @@ export interface HermesProfileBinding {
 export interface SessionRouter {
   /** Bind a session to a user's Hermes worker. UserId is required — every
    *  session is associated with the auth-derived userId from ws-auth-gate.
-   *  surfaceId identifies the transport's surface for logging; the
-   *  conversation anchor itself lives on PersonSession, not here. */
+   *  surfaceId identifies the transport's surface for logging; conversation
+   *  anchoring is unowned post-purge — Plan 2's SessionRuntime + session
+   *  store take that role. */
   bind(sessionId: string, userId: string, surfaceId: string): Promise<HermesProfileBinding>;
   /** Release a session binding when WS closes. */
   release(sessionId: string): void;
   /** Current binding for a session (read-only lookup). conversationId is
-   *  always null here — the conversation anchor lives on PersonSession, not
-   *  SessionRouter. */
+   *  always null here — SessionRouter has no conversation-anchoring role. */
   get(sessionId: string): HermesProfileBinding | null;
   /** Find the most recent session bound to a given userId. */
   findActiveSessionFor(userId: string): string | null;

@@ -32,7 +32,6 @@ import type { StartupConfig } from "../config/startup-config.ts";
 import { SignalProvisioner } from "../devices/signal/signal-provisioner.js";
 import { type HealthPoller, createHealthPoller } from "../infrastructure/health-poller.js";
 import { type Log, getLog } from "../logging/logger.ts";
-import type { PersonSessionRegistry } from "../person-session/person-session-registry.js";
 import { createPersonalityStore } from "../profile-store/personality-store.js";
 import type { PersonalityStore } from "../profile-store/personality-store.js";
 import { type ProfileStore, createProfileStore } from "../profile-store/profile-store.ts";
@@ -45,7 +44,6 @@ import type { TextStreamSynthesizer } from "../tts/text-stream-synthesizer.ts";
 import type { AuthService } from "../user-auth/auth-service.js";
 import { getHermesProfileDir } from "../user-auth/paths.js";
 import { hashPin } from "../user-auth/pin-service.js";
-import { buildPersonSessionRegistry } from "./build-person-session-registry.ts";
 import { createTextStreamSynthesizer } from "./content-tts-factory.ts";
 import type { SttService } from "./stt-factory.ts";
 import { createSttService } from "./stt-factory.ts";
@@ -77,9 +75,6 @@ export interface PhaseServicesOutput {
   readonly templateLoader: TemplateLoader;
   readonly healthPoller: HealthPoller;
   readonly sessionRouter: SessionRouter;
-  /** Single per-user session registry shared with phase-routes (WS handlers)
-   *  via personSessions passthrough in create-gateway-services.ts. */
-  readonly personSessions: PersonSessionRegistry;
   readonly userProvisioner: UserProvisioner | null;
   readonly keyRotation: KeyRotationOrchestrator | null;
   readonly userLifecycle: UserLifecycle;
@@ -108,7 +103,6 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
   const templateLoader = createTemplateLoader();
   const healthPoller = createHealthPoller();
   const sessionRouter = buildSessionRouter(cfg, internalSecretsStore, userPortStore);
-  const personSessions = buildPersonSessionRegistry(cfg, internalSecretsStore, profileStore, userPortStore);
   const supervisordForApply: Pick<SupervisordControl, "restartProfile" | "upsertProgram"> = supervisordControl ?? {
     restartProfile: async (_userId, _timeoutMs, _signalPaired) => ({
       ok: false,
@@ -264,7 +258,6 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     templateLoader,
     healthPoller,
     sessionRouter,
-    personSessions,
     userProvisioner,
     keyRotation,
     userLifecycle,

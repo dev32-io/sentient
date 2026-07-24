@@ -45,8 +45,10 @@ let mcpHost: Awaited<ReturnType<typeof createMcpHost>> | null = null;
 if (config.hermes) {
   // pause_audio / resume_audio are still stubs — we don't yet have a
   // pause/resume primitive on the audio pipeline (barge-in cancels, which
-  // isn't the same). update_user_settings is real: it delegates to the
-  // per-session SessionControls registered by ws-session-configure.
+  // isn't the same). update_user_settings resolves via SessionControlsRegistry
+  // below, but nothing currently registers a session's SessionControls handle
+  // (ws-session-configure was stripped to auth+hold in the legacy-brain purge)
+  // — so this producer side is unwired pending Plan 2 (SessionRuntime).
   const stubAudio = {
     async pause(_sessionId: string, _reason?: string) {},
     async resume(_sessionId: string, _reason?: string) {},
@@ -87,14 +89,12 @@ if (config.hermes) {
 process.on("SIGINT", async () => {
   log.info("shutdown", { signal: "SIGINT" });
   if (mcpHost) await mcpHost.stop();
-  services.personSessions.dispose();
   process.exit(0);
 });
 
 process.on("SIGTERM", async () => {
   log.info("shutdown", { signal: "SIGTERM" });
   if (mcpHost) await mcpHost.stop();
-  services.personSessions.dispose();
   process.exit(0);
 });
 

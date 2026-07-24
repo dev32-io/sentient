@@ -11,7 +11,6 @@ import type {
   ProvidersConfig as ProvidersYaml,
   STTConfig as STTYaml,
   SessionConfig as SessionYaml,
-  SessionsConfig as SessionsYaml,
   TTSConfig as TTSYaml,
   TlsConfig as TlsYaml,
   WebuiConfig as WebuiYaml,
@@ -53,8 +52,8 @@ export interface StartupConfig {
   /** TTS yaml block — always defined. tts-factory builds a local-tts
    *  (LocalTTSService) provider from `tts.url` — no API key needed, so
    *  a provider is always constructed (no boot-time or key-presence gate).
-   *  Per-cycle voice_id comes from PersonSession.voiceId; cfg.tts.voice_id
-   *  is the fallback default for sessions with no profile-supplied voice. */
+   *  cfg.tts.voice_id is the gateway-wide default voice; a future
+   *  per-session voice override is Plan 2's concern (SessionRuntime). */
   tts: TTSYaml;
 
   cerebrum: CerebrumYaml;
@@ -63,7 +62,6 @@ export interface StartupConfig {
   auth: AuthYaml;
   apply: ApplyYaml;
   providers: ProvidersYaml;
-  sessions: SessionsYaml;
   companions: CompanionsYaml;
   mcpCatalog: McpCatalog;
   /** Per-tool descriptor list for Hermes built-in tools — surfaces the
@@ -135,7 +133,6 @@ export function loadStartupConfig(): StartupConfig {
     auth: cfg.auth,
     apply: cfg.apply,
     providers: cfg.providers,
-    sessions: cfg.sessions,
     companions: cfg.companions,
     mcpCatalog: cfg.mcp_catalog,
     hermesBuiltinTools: cfg.hermes_builtin_tools,

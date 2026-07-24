@@ -57,7 +57,6 @@ function makeDeps(tokensOverride?: ReturnType<typeof makeTokens>, profileStoreOv
     profileStore: profileStoreOverride ?? makeProfileStore(),
     runApply: vi.fn(async () => ({ ok: true as const, value: { state: "ready" as const, elapsedMs: 0 } })),
     handleEdit: vi.fn(async (_req: Request) => new Response("not exercised", { status: 501 })),
-    refreshVoice: vi.fn(async (_userId: string) => undefined),
   };
 }
 

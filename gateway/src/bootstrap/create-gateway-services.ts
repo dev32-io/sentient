@@ -6,7 +6,6 @@ import type {
   McpCatalog,
   ProvidersConfig,
   SessionConfig,
-  SessionsConfig,
   TTSConfig,
   WebuiConfig,
 } from "@sentient/config";
@@ -26,7 +25,6 @@ import type { SessionManager } from "../auth/session-manager.ts";
 import type { StartupConfig } from "../config/startup-config.ts";
 import type { HealthPoller } from "../infrastructure/health-poller.js";
 import { getLog } from "../logging/logger.ts";
-import type { PersonSessionRegistry } from "../person-session/person-session-registry.js";
 import type { PersonalityStore } from "../profile-store/personality-store.js";
 import type { ProfileStore } from "../profile-store/profile-store.ts";
 import type { TemplateLoader } from "../profile-store/template-loader.ts";
@@ -79,7 +77,6 @@ export interface GatewayServices {
   readonly gatewayVersion: string;
   readonly sessionManager: SessionManager;
   readonly sessionRouter: SessionRouter;
-  readonly personSessions: PersonSessionRegistry;
   readonly sessionControls: SessionControlsRegistry;
   readonly stt: SttService | null;
   readonly tts: TtsService | null;
@@ -94,7 +91,6 @@ export interface GatewayServices {
   readonly downloads: { artifactsDir: string; publicBaseUrl: string };
   readonly hermes: HermesConfig | null;
   readonly session: SessionConfig;
-  readonly sessions: SessionsConfig;
   readonly webui: WebuiConfig;
   readonly auth: AuthService;
   readonly authConfig: AuthConfig;
@@ -163,10 +159,7 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     hostConfigDirContainerPath: `${process.env.SENTIENT_HOME ?? "/sentient"}/gateway/config`,
   });
 
-  const routes = runPhaseRoutes({
-    cfg,
-    personSessions: services.personSessions,
-  });
+  const routes = runPhaseRoutes({ cfg });
 
   log.info("services-composed", {
     stt: services.stt !== null,
@@ -186,7 +179,6 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     gatewayVersion,
     sessionManager: routes.sessionManager,
     sessionRouter: services.sessionRouter,
-    personSessions: routes.personSessions,
     sessionControls: routes.sessionControls,
     stt: services.stt,
     tts: services.tts,
@@ -200,7 +192,6 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     downloads: { artifactsDir: cfg.downloads.artifacts_dir, publicBaseUrl: cfg.downloads.public_base_url },
     hermes: cfg.hermes ?? null,
     session: cfg.session,
-    sessions: cfg.sessions,
     webui: cfg.webui,
     auth,
     authConfig: cfg.auth,

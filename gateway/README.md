@@ -120,7 +120,7 @@ Tunables live in [`config.yaml`](config.yaml). Key sections:
 | Section | Covers |
 |---------|--------|
 | `server` | port, host, TLS hostnames |
-| `session.barge_in` | barge-in policy |
+| `session` | WS idle timeout, per-user session cap |
 | `stt` | STTService URL, language, energy gate, sample rates |
 | `tts` | local-tts URL, voice, format, sample rate, connect timeout |
 | `webui` | server-authoritative client tunables (e.g. playback) |

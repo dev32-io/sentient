@@ -12,7 +12,7 @@ Rules live at the repo root: cross-cutting at `.claude/rules/*.md`, gateway-spec
 - Language: TypeScript (strict mode)
 - Test runner: Vitest
 - WebSocket: Bun built-in
-- LLM: Hermes (per user, supervised by `sentient-hermes`); gateway dials it via ACP JSON-RPC over WebSocket (`hermes-adapter-client/`). The `sentient-plugin` dashboard sidecar covers the search / get / getMessages / delete surfaces ACP doesn't expose.
+- LLM: native orchestrator being built per the Sentient 2.0 spec (`docs/superpowers/specs/2026-07-23-sentient-2.0-native-orchestrator-design.md`) — the gateway runs its own ReAct loop directly against an OpenAI-compatible provider. Hermes is a delegated background tool (`delegateTask`), invoked as a native local process, not the agent runtime.
 - STT: local STTService (gateway dials over WS)
 - TTS: local-tts / LocalTTSService (gateway dials over WS)
 - Validation: zod

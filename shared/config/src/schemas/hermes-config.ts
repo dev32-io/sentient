@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { satelliteDevicesSchema } from "./satellite-devices.js";
 
 // ---------------------------------------------------------------------------
 // Hermes Agent integration config — per spec v4 §5, §7, §9
@@ -44,78 +43,17 @@ export const hermesWebToolsSchema = z
   .default({});
 export type HermesWebTools = z.infer<typeof hermesWebToolsSchema>;
 
-export const hermesHomeAssistantObserverSchema = z
-  .object({
-    enabled: z.boolean().default(true),
-    url: z.string().url().optional(),
-    token_env: z.string().default("HA_OBSERVE_TOKEN"),
-    watch_domains: z
-      .array(z.string())
-      .default(["binary_sensor", "climate", "alarm_control_panel", "light", "lock", "cover"]),
-    watch_entities: z.array(z.string()).default([]),
-    ignore_entities: z.array(z.string()).default([]),
-    duplicate_state_window_ms: z.number().int().default(10_000),
-  })
-  .default({});
-export type HermesHomeAssistantObserver = z.infer<typeof hermesHomeAssistantObserverSchema>;
-
 export const hermesMcpHostSchema = z.object({
   transport: z.enum(["unix_socket", "http"]).default("unix_socket"),
   socket_path: z.string().default("/run/sentient/mcp.sock"),
 });
 export type HermesMcpHost = z.infer<typeof hermesMcpHostSchema>;
 
-export const hermesAmbientSchema = z
-  .object({
-    event_log: z
-      .object({
-        enabled: z.boolean().default(true),
-        retention_count: z.number().int().default(10_000),
-        persist_path: z.string().default("./data/ambient-events.db"),
-      })
-      .default({}),
-    dispatch: z
-      .object({
-        steward_enabled: z.boolean().default(false), // v1.5+
-        accumulation_window_ms: z.number().int().default(2000),
-      })
-      .default({}),
-  })
-  .default({});
-export type HermesAmbient = z.infer<typeof hermesAmbientSchema>;
-
-/**
- * ACP wire resilience — auto-reconnect tunables for the gateway→Hermes ACP
- * WebSocket. On an ABNORMAL close (e.g. 1006 after a gateway restart / resumed
- * session flap) the wire re-opens + re-runs `initialize` on the next dispatch,
- * bounded by these knobs. A clean teardown (1000 / session end) never
- * reconnects. open_timeout_ms bounds each open handshake.
- */
-export const hermesAcpWireSchema = z
-  .object({
-    open_timeout_ms: z.number().int().min(500).max(60_000).default(5_000),
-    reconnect_base_ms: z.number().int().min(50).max(10_000).default(500),
-    reconnect_max_ms: z.number().int().min(100).max(60_000).default(5_000),
-    reconnect_jitter_ms: z.number().int().min(0).max(10_000).default(250),
-    reconnect_max_attempts: z.number().int().min(1).max(20).default(5),
-  })
-  .default({});
-export type HermesAcpWire = z.infer<typeof hermesAcpWireSchema>;
-
 /** Full hermes: section of gateway config. */
 export const hermesConfigSchema = z.object({
   worker: hermesWorkerSchema,
-  acp_wire: hermesAcpWireSchema,
-  defaults: z
-    .object({
-      max_output_tokens: z.number().int().default(512),
-    })
-    .default({}),
   web_tools: hermesWebToolsSchema,
-  home_assistant_observer: hermesHomeAssistantObserverSchema,
   mcp_host: hermesMcpHostSchema.default({}),
-  ambient: hermesAmbientSchema,
-  satellite_devices: satelliteDevicesSchema,
   tts: z
     .object({
       markdown_stripping_enabled: z.boolean().default(true),

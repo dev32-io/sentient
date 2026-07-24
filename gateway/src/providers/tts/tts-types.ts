@@ -54,9 +54,9 @@ export interface TTSProvider {
 
 /**
  * Per-session override knobs handed to a TTSProviderFactory call. Today the
- * only override is `voiceId` — set by the WS handler from the authenticated
- * user's profile.json#voice.id so each PersonSession synthesizes in its own
- * voice. Omitting falls back to the gateway-wide default from cfg.tts.voice_id.
+ * only override is `voiceId` — resolved from the authenticated user's
+ * profile.json#voice.id so each session synthesizes in its own voice.
+ * Omitting falls back to the gateway-wide default from cfg.tts.voice_id.
  */
 export interface TTSProviderOverrides {
   readonly voiceId?: string;

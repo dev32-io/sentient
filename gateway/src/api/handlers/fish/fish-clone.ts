@@ -73,8 +73,6 @@ export interface FishCloneDeps {
   /** Bounds both the Fish `/model/:id` lookup and the mp3 sample download. */
   externalFetchTimeoutMs: number;
   profileStore: ProfileStore;
-  /** Re-applies the per-user voice to the live PersonSession after activation. */
-  refreshVoice: (userId: string) => Promise<void>;
   ttsUrl: string;
   connectTimeoutMs: number;
   opTimeoutMs: number;

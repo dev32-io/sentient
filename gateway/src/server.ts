@@ -103,7 +103,6 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
     profileStore: services.profileStore,
     runApply: (userId) => runApply(services.applyDeps, userId),
     handleEdit,
-    refreshVoice: (userId) => services.personSessions.refreshVoice(userId),
   });
   const handleProviders = createProvidersHandler({
     tokens: services.auth.tokens,
@@ -120,7 +119,6 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
       fishApiKey: services.fishApiKey,
       externalFetchTimeoutMs: services.providersConfig.external_fetch_timeout_ms,
       profileStore: services.profileStore,
-      refreshVoice: (userId) => services.personSessions.refreshVoice(userId),
       ttsUrl: services.ttsConfig.url,
       connectTimeoutMs: services.ttsConfig.connect_timeout_ms,
       opTimeoutMs: services.ttsConfig.voice_op_timeout_ms,
@@ -169,7 +167,6 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
   const handleVoices = createVoicesHandler({
     tokens: services.auth.tokens,
     profileStore: services.profileStore,
-    refreshVoice: (userId) => services.personSessions.refreshVoice(userId),
     ttsUrl: services.ttsConfig.url,
     connectTimeoutMs: services.ttsConfig.connect_timeout_ms,
     opTimeoutMs: services.ttsConfig.voice_op_timeout_ms,

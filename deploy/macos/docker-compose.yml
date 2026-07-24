@@ -99,7 +99,6 @@ services:
       # Whisper via deploy/mac-prod/native/stt-backend.py. Seed it on first boot:
       #   mkdir -p ~/.sentient/gateway/config
       #   cp gateway/config.yaml ~/.sentient/gateway/config/config.yaml
-      # (salience_map.yaml stays baked at /app/config/salience_map.yaml.)
       - ${HOME}/.sentient/gateway/config/config.yaml:/app/config/config.yaml
       - ~/.sentient/gateway/logs:/app/logs
       - ~/.sentient/gateway/clientLogs:/app/clientLogs

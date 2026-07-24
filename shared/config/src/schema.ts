@@ -4,33 +4,16 @@ import { hermesConfigSchema } from "./schemas/hermes-config";
 import { mcpCatalogSchema } from "./schemas/mcp-catalog";
 
 // ---------------------------------------------------------------------------
-// Session — turn detection, barge-in, inactivity
+// Session — connection + inactivity limits
 // ---------------------------------------------------------------------------
 
-export const bargeInConfigSchema = z.object({
-  no_interrupt_ms: z.number().int().min(0).default(500),
-  min_speech_duration_ms: z.number().int().min(0).default(50),
-});
-
-export type BargeInConfig = z.output<typeof bargeInConfigSchema>;
-
 export const sessionConfigSchema = z.object({
-  tts_drain_grace_ms: z.number().int().min(0).max(5000).default(2000),
-  barge_in: bargeInConfigSchema.default({}),
-  // WS resilience (resumable sequenced stream + replay buffer) — Slice 3
   // Bun WS idle close timeout in ms; gateway converts to seconds at boot.
   // Bun's idleTimeout cap is 255 s → max effective value 255000 ms.
   ws_idle_timeout_ms: z.number().int().min(1000).max(255000),
-  // Per device-session replay ring buffer cap in bytes (evict-oldest).
-  // Range: 65536–268435456 (64 KB – 256 MB).
-  replay_buffer_max_bytes: z.number().int().min(65_536).max(268_435_456),
   // Per-user concurrent WS session cap. Bounds memory under churn (one user /
   // reconnect-loop). Range 1–100.
   per_user_max_sessions: z.number().int().min(1).max(100),
-  // Single activity-based idle window. A device buffer + its session are reaped
-  // after this much silence across BOTH boundaries (client WS in/out + Hermes
-  // ACP in/out). Resets on any activity; ping/pong excluded. Range: 60000–86400000.
-  idle_timeout_ms: z.number().int().min(60_000).max(86_400_000),
 });
 
 export type SessionConfig = z.output<typeof sessionConfigSchema>;
@@ -131,10 +114,9 @@ export const loggingConfigSchema = z.object({
   retention_days: z.number().int().min(0).max(365).default(7),
 
   // Per-category level overrides, keyed by colon-joined LogTape category
-  // path (e.g. "sentient:cerebrum:hermes-event-translator"). Anything not
-  // listed inherits the top-level `level`. Use this to flip debug on for
-  // a specific path while chasing a stall, without redeploying with a
-  // global debug level.
+  // path (e.g. "sentient:session-router"). Anything not listed inherits
+  // the top-level `level`. Use this to flip debug on for a specific path
+  // while chasing a stall, without redeploying with a global debug level.
   level_overrides: z.record(z.string(), z.enum(["debug", "info", "warning", "error"])).default({}),
 });
 
@@ -183,7 +165,6 @@ export const cerebrumConfigSchema = z.object({
   cycle: cerebrumCycleConfigSchema.default({}),
   task_table: cerebrumTaskTableConfigSchema.default({}),
   conversation_history: cerebrumConversationHistoryConfigSchema.default({}),
-  salience_map_path: z.string().default("/app/config/salience_map.yaml"),
   // Bypass the family-friendly persona guardrails. When true, loads
   // `system_prompts/system_prompt_unlimited.md` (STT + TTS mechanics only,
   // no safety/behavior rules) instead of `persona.md` + `system_prompt.md`.
@@ -286,53 +267,6 @@ export const providersConfigSchema = z.object({
 export type ProvidersConfig = z.output<typeof providersConfigSchema>;
 
 // ---------------------------------------------------------------------------
-// Sessions — past-sessions feature: pagination, search, titles, switch flow
-// ---------------------------------------------------------------------------
-
-export const sessionsConfigSchema = z.object({
-  // Default page size for the sessions.list wire request. Range: 1–100.
-  list_page_size: z.number().int().positive().max(100).default(20),
-  // Hard cap on FTS results returned by sessions.search. Range: 1–50.
-  search_max_results: z.number().int().positive().max(50).default(20),
-  // Minimum query length; shorter queries are dropped before hitting the
-  // server. Range: 0–10.
-  search_min_chars: z.number().int().min(0).max(10).default(2),
-  // Client-side debounce floor for sessions.search keystrokes. Surfaced
-  // here so operators can tune without rebuilding the webui. Range: 50–1000.
-  search_debounce_ms: z.number().int().min(50).max(1000).default(300),
-  // Upper bound on user-supplied session titles (rename input). Range: 10–500.
-  title_max_chars: z.number().int().min(10).max(500).default(200),
-  // Per-profile JSON store directory for title overrides (legacy layout).
-  // Migrator runs at startup; once migrated to user_data_root the file at
-  // <title_override_dir>/<userId>.json moves to
-  // <user_data_root>/<userId>/sessions/titles.json. Kept for the migration
-  // window only; remove once all profiles have been migrated.
-  title_override_dir: z.string().min(1).default("~/.sentient/gateway/session-titles"),
-  // Per-user, per-category data root. Layout:
-  //   <user_data_root>/<userId>/sessions/titles.json
-  //   <user_data_root>/<userId>/preferences/...   (future)
-  //   <user_data_root>/<userId>/memory/...        (future)
-  // Outermost dir is the userId so per-user wipe/backup is one rm. Categories
-  // nest under each userId so future stores drop in without restructuring.
-  user_data_root: z.string().min(1).default("~/.sentient/gateway/users"),
-  // Adapter-side `source` tag written on every new Hermes chain so the
-  // gateway can distinguish UI-created sessions from agent-spawned ones.
-  source_tag: z.string().min(1).default("sentient-user"),
-  // Per-request timeout for the gateway → Hermes /api/sessions/* HTTP
-  // calls (list, search, getMessages, rename, …). Range: 1000–30000.
-  hermes_http_timeout_ms: z.number().int().min(1000).max(30_000).default(5000),
-  // Max wall time SwitchFlow waits for the active cycle to cancel before
-  // proceeding with the switch anyway. Range: 500–10000.
-  switch_teardown_timeout_ms: z.number().int().min(500).max(10_000).default(3000),
-  // Min ms between client session.new — blocks spam/double-fire, not
-  // human-paced new chats. Per-connection (one client), NOT per-user.
-  // Range: 0–60000.
-  min_new_interval_ms: z.number().int().min(0).max(60_000).default(500),
-});
-
-export type SessionsConfig = z.output<typeof sessionsConfigSchema>;
-
-// ---------------------------------------------------------------------------
 // Companions — version resolution for co-deployed services
 // ---------------------------------------------------------------------------
 
@@ -382,8 +316,9 @@ export const gatewayConfigSchema = z.object({
   max_sessions: z.number().int().min(1).max(1000).default(100),
   auth_timeout_ms: z.number().int().min(1000).default(5000),
   tls: tlsConfigSchema.default({}),
-  // session block is required — no default; WS-resilience fields must be
-  // explicitly present in every config.yaml (fail loud if missing per config rule).
+  // session block is required — no default; connection/inactivity fields
+  // must be explicitly present in every config.yaml (fail loud if missing
+  // per config rule).
   session: sessionConfigSchema,
   logging: loggingConfigSchema.default({}),
   stt: sttConfigSchema,
@@ -394,9 +329,6 @@ export const gatewayConfigSchema = z.object({
   auth: authConfigSchema.default({}),
   apply: applyConfigSchema.default({}),
   providers: providersConfigSchema.default({}),
-  // Past-sessions feature tunables: pagination, search bounds, title length,
-  // override-store location, source tag, HTTP + switch-teardown timeouts.
-  sessions: sessionsConfigSchema.default({}),
   // Co-deployed companion service configuration: version resolution URLs,
   // file paths, and cache knobs. Defaults work for the standard docker compose.
   companions: companionsConfigSchema.default({}),

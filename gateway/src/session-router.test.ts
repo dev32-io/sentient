@@ -13,33 +13,12 @@ const baseConfig: HermesConfig = {
     url_template: "http://sentient-hermes:{port}",
     port_base: 8650,
   },
-  acp_wire: {
-    open_timeout_ms: 5000,
-    reconnect_base_ms: 500,
-    reconnect_max_ms: 5000,
-    reconnect_jitter_ms: 250,
-    reconnect_max_attempts: 5,
-  },
-  defaults: { max_output_tokens: 512 },
   web_tools: {
     provider: "searxng",
     searxng: { enabled: true },
     voice_wrapper: { enabled: false },
   },
-  home_assistant_observer: {
-    enabled: false,
-    token_env: "HA_OBSERVE_TOKEN",
-    watch_domains: [],
-    watch_entities: [],
-    ignore_entities: [],
-    duplicate_state_window_ms: 10000,
-  },
   mcp_host: { transport: "unix_socket", socket_path: "/run/sentient/mcp.sock" },
-  satellite_devices: [],
-  ambient: {
-    event_log: { enabled: true, retention_count: 10000, persist_path: "./data/ambient-events.db" },
-    dispatch: { steward_enabled: false, accumulation_window_ms: 2000 },
-  },
   tts: { markdown_stripping_enabled: true, emoji_stripping_enabled: true },
 };
 
@@ -97,7 +76,7 @@ describe("SessionRouter", () => {
     await expect(router.bind("sess-1", "admin", "surf-1")).rejects.toThrow(/invalid userId/);
   });
 
-  it("get() returns a binding with null conversationId (anchors moved to PersonSession)", async () => {
+  it("get() returns a binding with null conversationId (SessionRouter has no anchoring role)", async () => {
     const router = makeRouter([[ALICE, 8650]]);
     await router.bind("sess-1", ALICE, "surf-1");
     expect(router.get("sess-1")?.conversationId).toBeNull();

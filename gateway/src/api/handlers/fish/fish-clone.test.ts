@@ -140,7 +140,6 @@ function makeDeps(overrides: Partial<FishCloneDeps> = {}): {
     fishApiKey: null,
     externalFetchTimeoutMs: 5000,
     profileStore: makeProfileStore(),
-    refreshVoice: vi.fn(async () => undefined),
     ttsUrl: "ws://host.docker.internal:8770",
     connectTimeoutMs: 1000,
     opTimeoutMs: 1000,

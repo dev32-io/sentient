@@ -5,18 +5,15 @@ import {
   gatewayConfigSchema,
   loggingConfigSchema,
   sessionConfigSchema,
-  sessionsConfigSchema,
   sttConfigSchema,
   ttsConfigSchema,
 } from "./schema.ts";
 
-// Shared WS-resilience session fields required in every gateway config
-// (no code defaults — YAML is the source of truth per config rules).
+// Shared session fields required in every gateway config (no code defaults —
+// YAML is the source of truth per config rules).
 const wsResilienceSession = {
   ws_idle_timeout_ms: 255000,
-  replay_buffer_max_bytes: 16777216,
   per_user_max_sessions: 40,
-  idle_timeout_ms: 900000,
 };
 
 describe("gatewayConfigSchema", () => {
@@ -33,26 +30,6 @@ describe("gatewayConfigSchema", () => {
     expect(result.host).toBe("0.0.0.0");
     expect(result.max_sessions).toBe(100);
     expect(result.auth_timeout_ms).toBe(5000);
-  });
-
-  it("applies session defaults", () => {
-    const result = gatewayConfigSchema.parse(minimalValidConfig);
-    expect(result.session.tts_drain_grace_ms).toBe(2000);
-    expect(result.session.barge_in.no_interrupt_ms).toBe(500);
-    expect(result.session.barge_in.min_speech_duration_ms).toBe(50);
-  });
-
-  it("accepts custom tts_drain_grace_ms", () => {
-    const result = gatewayConfigSchema.parse({
-      ...minimalValidConfig,
-      session: { ...wsResilienceSession, tts_drain_grace_ms: 500 },
-    });
-    expect(result.session.tts_drain_grace_ms).toBe(500);
-  });
-
-  it("rejects tts_drain_grace_ms above max", () => {
-    const invalid = { ...minimalValidConfig, session: { ...wsResilienceSession, tts_drain_grace_ms: 6000 } };
-    expect(gatewayConfigSchema.safeParse(invalid).success).toBe(false);
   });
 
   it("applies TTS defaults", () => {
@@ -74,14 +51,13 @@ describe("gatewayConfigSchema", () => {
         format: "opus",
         sample_rate: 44100,
       },
-      session: { ...wsResilienceSession, barge_in: { no_interrupt_ms: 300 } },
+      session: wsResilienceSession,
     });
     expect(result.stt.language).toBe("zh");
     expect(result.tts.url).toBe("ws://localhost:8770");
     expect(result.tts.voice_id).toBe("custom");
     expect(result.tts.format).toBe("opus");
     expect(result.tts.sample_rate).toBe(44100);
-    expect(result.session.barge_in.no_interrupt_ms).toBe(300);
   });
 
   it("rejects port out of range", () => {
@@ -211,12 +187,12 @@ describe("loggingConfigSchema", () => {
   it("accepts per-category level overrides", () => {
     expect(
       loggingConfigSchema.parse({
-        level_overrides: { "sentient:cerebrum:hermes-event-translator": "debug" },
+        level_overrides: { "sentient:session-router": "debug" },
       }),
     ).toEqual({
       level: "info",
       retention_days: 7,
-      level_overrides: { "sentient:cerebrum:hermes-event-translator": "debug" },
+      level_overrides: { "sentient:session-router": "debug" },
     });
   });
 
@@ -230,26 +206,6 @@ describe("loggingConfigSchema", () => {
 
   it("rejects non-integer retention_days", () => {
     expect(() => loggingConfigSchema.parse({ retention_days: 7.5 })).toThrow();
-  });
-});
-
-describe("sessionsConfigSchema rate-limit fields", () => {
-  it("applies the default for the session.new min-interval", () => {
-    const result = sessionsConfigSchema.parse({});
-    expect(result.min_new_interval_ms).toBe(500);
-  });
-
-  it("accepts a custom min-interval within bounds", () => {
-    const result = sessionsConfigSchema.parse({ min_new_interval_ms: 1000 });
-    expect(result.min_new_interval_ms).toBe(1000);
-  });
-
-  it("rejects min_new_interval_ms below 0", () => {
-    expect(sessionsConfigSchema.safeParse({ min_new_interval_ms: -1 }).success).toBe(false);
-  });
-
-  it("rejects min_new_interval_ms above 60000", () => {
-    expect(sessionsConfigSchema.safeParse({ min_new_interval_ms: 60001 }).success).toBe(false);
   });
 });
 
@@ -387,10 +343,6 @@ describe("applyConfigSchema", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// sessionConfigSchema — WS-resilience knobs (Slice 3, Task 3.1)
-// ---------------------------------------------------------------------------
-
 describe("gatewayConfigSchema downloads field", () => {
   const minimalWithDownloads = {
     stt: { provider: "local-stt" },
@@ -418,19 +370,15 @@ describe("gatewayConfigSchema downloads field", () => {
   });
 });
 
-describe("sessionConfigSchema — WS-resilience fields", () => {
+describe("sessionConfigSchema", () => {
   const validSession = {
     ws_idle_timeout_ms: 255000,
-    replay_buffer_max_bytes: 16777216,
     per_user_max_sessions: 40,
-    idle_timeout_ms: 900000,
   };
 
-  it("parses a valid session config with WS-resilience fields", () => {
+  it("parses a valid session config", () => {
     const result = sessionConfigSchema.parse(validSession);
     expect(result.ws_idle_timeout_ms).toBe(255000);
-    expect(result.replay_buffer_max_bytes).toBe(16777216);
-    expect(result.idle_timeout_ms).toBe(900000);
   });
 
   it("rejects ws_idle_timeout_ms above Bun cap (255000 ms)", () => {
@@ -439,13 +387,5 @@ describe("sessionConfigSchema — WS-resilience fields", () => {
 
   it("rejects ws_idle_timeout_ms below min (1000 ms)", () => {
     expect(sessionConfigSchema.safeParse({ ...validSession, ws_idle_timeout_ms: 500 }).success).toBe(false);
-  });
-
-  it("rejects replay_buffer_max_bytes above max (268435456 bytes)", () => {
-    expect(sessionConfigSchema.safeParse({ ...validSession, replay_buffer_max_bytes: 300000000 }).success).toBe(false);
-  });
-
-  it("rejects replay_buffer_max_bytes below min (65536 bytes)", () => {
-    expect(sessionConfigSchema.safeParse({ ...validSession, replay_buffer_max_bytes: 1024 }).success).toBe(false);
   });
 });

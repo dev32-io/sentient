@@ -89,9 +89,9 @@ services:
     ports:
       - "8888:8888"
     volumes:
-      # gateway/config.yaml + salience_map.yaml are baked into the image
-      # (see gateway/Dockerfile). Operator can override either by mounting
-      # a custom file at /app/config/config.yaml or /app/config/salience_map.yaml.
+      # gateway/config.yaml is baked into the image (see gateway/Dockerfile).
+      # Operator can override by mounting a custom file at
+      # /app/config/config.yaml.
       - ~/.sentient/gateway/logs:/app/logs
       - ~/.sentient/gateway/clientLogs:/app/clientLogs
       # Mutable gateway data — users.json, secrets.json, profiles, archives,

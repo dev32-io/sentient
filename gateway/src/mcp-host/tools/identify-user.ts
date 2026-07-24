@@ -14,8 +14,8 @@ export interface IdentifyUserDeps {
  * SECURITY INVARIANT: a live session's identity is set by the auth token at
  * connect and is immutable for the session's lifetime. Switching accounts must
  * go through re-authentication (log out → log in as X), which yields a fresh
- * session under X's isolated scope (its own PersonSession, Hermes worker, and
- * conversation). This tool therefore NEVER rebinds the session — a silent
+ * session under X's isolated scope (its own per-user session state, Hermes
+ * worker, and conversation). This tool therefore NEVER rebinds the session — a silent
  * in-place identity change would grant the current session another user's live
  * worker + memory without proof of identity. It only validates that X is a
  * known household member and returns guidance to re-authenticate.
