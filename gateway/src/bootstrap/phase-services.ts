@@ -53,7 +53,7 @@ import { loadMcpPolicy } from "../security/policy-loader.js";
 import type { GatewayTlsMaterial } from "../session-handlers/ws-handlers.ts";
 import { createSessionRouter } from "../session-router.js";
 import type { SessionRouter } from "../session-router.js";
-import { openSessionStore } from "../store/session-store.js";
+import type { SessionStore } from "../store/session-store.js";
 import { createDelegateTaskRunner, delegateTaskDefinition } from "../tools/delegate-task.js";
 import { createDelegationGuard, loadDelegationFrontmatterDir } from "../tools/delegation-guard.js";
 import type { DelegationGuard } from "../tools/delegation-guard.js";
@@ -729,15 +729,30 @@ function buildCreateSessionRuntime(
       createDelegateTaskRunner({ guard: delegationGuard, hermesRunner, userId: principal.userId }),
     );
 
-    // ToolBrokerDeps.store is accepted for interface parity only (see
-    // tool-broker.ts's header) — never read/written by the broker itself.
-    // Minted under the distinct "tool-broker" resource class so capability
-    // audit logs (access-manager.ts) can tell this grant apart from
-    // SessionRuntime's own "session-store" grant, even though both currently
-    // resolve to the same per-user sessions.db (WAL mode — safe for this
-    // second, otherwise-idle connection).
-    const brokerStoreCap = accessManager.grant(principal, "tool-broker");
-    const brokerStore = openSessionStore(brokerStoreCap);
+    // `ToolBrokerDeps.store` is interface-parity only — tool-broker.ts never
+    // reads it (the ReAct loop owns turnId and does all appending). Opening a
+    // real per-session SQLite handle for a field that is never touched would
+    // leak one fd triple (db + WAL + SHM) per session for the process lifetime
+    // — unbounded on a long-running family gateway. Pass a stub that throws if
+    // anything ever calls it, so a future read surfaces loudly instead of
+    // silently corrupting isolation. Dropping `store` from ToolBrokerDeps is
+    // the real fix, but that is Task 4's locked interface — tracked as a
+    // follow-up.
+    const brokerStore: SessionStore = {
+      append: () => {
+        throw new Error("ToolBroker.store is interface-parity only and must not be used");
+      },
+      readSession: () => {
+        throw new Error("ToolBroker.store is interface-parity only and must not be used");
+      },
+      readSince: () => {
+        throw new Error("ToolBroker.store is interface-parity only and must not be used");
+      },
+      listSessions: () => {
+        throw new Error("ToolBroker.store is interface-parity only and must not be used");
+      },
+      close: () => {},
+    };
 
     const broker = createToolBroker({
       mcp: mcpClient,
