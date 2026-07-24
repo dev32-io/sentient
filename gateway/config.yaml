@@ -105,10 +105,19 @@ orchestrator:
     # base_url is empty (its OpenRouter entry ships with none by default —
     # see gateway/templates/wizard/keys.yaml.tmpl). Ollama-cloud/custom
     # entries normally carry their own base_url, which always wins over this.
-    base_url: https://openrouter.ai/api/v1
-    # Tool-calling-capable, widely-available default; override to match the
-    # operator's active secrets-store provider if it isn't OpenRouter.
-    model: openai/gpt-4o-mini
+    # Defaulted to Ollama Cloud's OpenAI-compat endpoint (Task 10: the
+    # reference dev/operator install's active secrets-store LLM is
+    # ollama-cloud with no stored base_url, so THIS fallback is what the
+    # native orchestrator actually dials). Operators whose active provider
+    # is OpenRouter must override this to https://openrouter.ai/api/v1 (or
+    # set the secrets-store entry's own base_url, which always wins).
+    base_url: https://ollama.com/v1
+    # Tool-calling-capable, widely-available Ollama Cloud default (verified
+    # live against https://ollama.com/api/tags — resolves to model tag
+    # `gpt-oss:20b-cloud`, see providers/catalogs/ollama-fetcher.ts's
+    # `toCloudTag`). Override to match the operator's active secrets-store
+    # provider/model if it isn't ollama-cloud/gpt-oss:20b.
+    model: gpt-oss:20b-cloud
     max_output_tokens: 1024                  # per-request output cap (1-32000)
     request_timeout_ms: 120000               # per-request deadline (1000-600000)
     site_name: Sentient                      # OpenRouter attribution header

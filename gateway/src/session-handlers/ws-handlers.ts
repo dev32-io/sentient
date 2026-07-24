@@ -35,14 +35,18 @@ export function openSession(ws: ServerWebSocket<SessionData>, services: GatewayS
 }
 
 // ---------------------------------------------------------------------------
-// Message routing — post-purge minimal form.
+// Message routing.
 //
 // The full cognitive-cycle message surface (text.input / audio.start /
 // audio.end / interrupt / session.new / conversation.activate /
-// user.preferences.patch) routed into the Hermes-cycle brain purged in this
-// task (see the sibling-directory deletions in the same commit). What
-// remains: auth handshake, ping/pong, session.configure (bare accept-and-hold
-// form — see ws-session-configure.ts), and session.end. Plan 2 rebuilds the rest.
+// user.preferences.patch) used to route into the Hermes-cycle brain purged
+// in an earlier task (see the sibling-directory deletions in that commit).
+// Plan 2 Task 10 rebuilds the text-only slice of it: `text.input` and
+// `interrupt` now route to `ws.data.runtime` (minted in
+// ws-session-configure.ts), which drives the native ReAct loop and streams
+// replies back through `WsTurnEmitter` (ws-turn-emitter.ts). audio.start /
+// audio.end / session.new / conversation.activate remain unhandled — voice
+// and multi-conversation routing are Plan 3.
 // ---------------------------------------------------------------------------
 
 export async function handleWebSocketMessage(
@@ -102,12 +106,30 @@ export async function handleWebSocketMessage(
       handleSessionEnd(ws, services);
       return;
 
+    case "text.input":
+      if (!ws.data.runtime) {
+        log.warn("text.input.no-runtime", {
+          sessionId: ws.data.sessionId,
+          reason: "orchestrator unconfigured, or session.configure has not run / failed to mint a runtime",
+        });
+        sendError(ws, "orchestrator_unavailable", "Native orchestrator is not available for this session");
+        return;
+      }
+      ws.data.runtime.submit({ kind: "conversational", text: msg.text });
+      return;
+
+    case "interrupt":
+      // No-op (not an error) if idle or the orchestrator is unconfigured —
+      // interrupt is idempotent and there is nothing to cancel.
+      ws.data.runtime?.interrupt();
+      return;
+
     default:
-      // text.input / audio.start / audio.end / interrupt / tool.confirm /
-      // session.new / conversation.activate all required deleted
-      // infrastructure (input adapters, controllers, sessions handlers).
-      // Received but unhandled until Plan 2 rebuilds the native orchestrator.
-      log.debug("message-unhandled", { type: msg.type, reason: "orchestrator not yet rebuilt" });
+      // audio.start / audio.end / tool.confirm / session.new /
+      // conversation.activate all required deleted infrastructure (input
+      // adapters, controllers, sessions handlers) or belong to Plan 3 (voice,
+      // multi-conversation, tool-confirm UI). Received but unhandled.
+      log.debug("message-unhandled", { type: msg.type, reason: "plan 3" });
       return;
   }
 }
@@ -123,12 +145,14 @@ function handleSessionEnd(ws: ServerWebSocket<SessionData>, services: GatewaySer
 }
 
 /**
- * Tears down the bare connection-tracking state this file owns: the auth
- * timeout and the SessionManager registration. There is no pipeline left to
- * dispose (no ACP wire, no attention gate, no device buffer) — everything
- * that used to require the resumable-disconnect / full-teardown split went
- * with the purged Hermes-cycle brain. Plan 2 restores that split once there
- * is orchestrator state worth resuming.
+ * Tears down the connection-tracking state this file owns: the auth
+ * timeout, the SessionManager registration, and (Plan 2 Task 10) the
+ * per-session `SessionRuntime` minted in ws-session-configure.ts.
+ * `runtime.dispose()` aborts any in-flight turn's AbortSignal and closes
+ * the session's store handle — idempotent, so a socket that never reached
+ * session.configure (runtime still null) is unaffected. There is no
+ * resumable-disconnect handling yet — a fresh connection always mints a
+ * fresh runtime; Plan 3 revisits reconnect/resume for the orchestrator.
  */
 export function cleanupSession(ws: ServerWebSocket<SessionData>, services: GatewayServices): void {
   const sessionId = ws.data.sessionId;
@@ -138,6 +162,9 @@ export function cleanupSession(ws: ServerWebSocket<SessionData>, services: Gatew
     clearTimeout(ws.data.authTimeout);
     ws.data.authTimeout = null;
   }
+
+  ws.data.runtime?.dispose();
+  ws.data.runtime = null;
 
   services.sessionManager.unbindUser(sessionId);
   services.sessionManager.removeSession(sessionId);

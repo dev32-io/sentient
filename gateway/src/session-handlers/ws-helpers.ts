@@ -1,6 +1,7 @@
 import type { ClientType } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import type { UserPrincipal } from "../identity/user-principal.js";
+import type { SessionRuntime } from "../runtime/session-runtime.js";
 
 /**
  * Per-connection WS state. Post-purge minimal form (spec §9 Task 1) — holds
@@ -37,6 +38,16 @@ export interface SessionData {
    * "webui" when the client omits the field (legacy clients).
    */
   clientType: ClientType;
+  /**
+   * The native orchestrator's per-session owner (Plan 2 Task 10). Minted in
+   * `handleSessionConfigure` via `services.createSessionRuntime` once the
+   * principal is known; null until then, and null for the lifetime of a
+   * session if the orchestrator is unconfigured
+   * (`services.createSessionRuntime === null`) or construction failed (no
+   * active LLM key — see ws-session-configure.ts). `text.input` /
+   * `interrupt` routing (ws-handlers.ts) both no-op safely against null.
+   */
+  runtime: SessionRuntime | null;
 }
 
 export function createEmptySessionData(): SessionData {
@@ -47,6 +58,7 @@ export function createEmptySessionData(): SessionData {
     authTimeout: null,
     grantedCapabilities: new Set(),
     clientType: "webui",
+    runtime: null,
   };
 }
 

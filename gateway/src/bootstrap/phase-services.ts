@@ -550,14 +550,28 @@ function buildKeyRotation(
 // `cfg.orchestrator` is absent: the native orchestrator is an OPTIONAL
 // subsystem and must never block gateway boot.
 
-interface OrchestratorServices {
+export interface OrchestratorServices {
   accessManager: AccessManager;
   mcpClient: McpClient;
   provider: ProviderClient | null;
   createSessionRuntime: ((principal: UserPrincipal, sessionId: string, emitter: TurnEmitter) => SessionRuntime) | null;
 }
 
-async function buildOrchestratorServices(
+/**
+ * Exported (beyond this file's own use in `runPhaseServices`) so
+ * `tests/integration/native-brain-text.test.ts` (Plan 2 Task 10's `@live`
+ * gate) can construct the exact same real composition-root primitives —
+ * `AccessManager`, `McpClient`, the resolved `ProviderClient`, and the
+ * per-session `createSessionRuntime` factory — WITHOUT going through the
+ * full `createGatewayServices()` boot chain, which (via `runPhaseServices`'s
+ * Hermes-migration tail: `migrateUnboundUsers` /
+ * `renderConfigsForExistingUsers` / `renderProgramsForExistingUsers`) would
+ * mutate this machine's real supervisord/user state as a side effect of
+ * running the test suite. This function itself has no such side effect
+ * (only `warmMcpClient`'s network I/O, which never throws) — see Task 9's
+ * own header comment on `buildOrchestratorServices` below.
+ */
+export async function buildOrchestratorServices(
   cfg: StartupConfig,
   secretsStore: SecretsStore | null,
 ): Promise<OrchestratorServices> {
