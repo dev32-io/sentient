@@ -18,6 +18,17 @@
 //     run of tool_result entries. Anything unmatched in either direction is
 //     dropped and logged — a dropped-but-computed result is real context
 //     loss, so it must never be silent.
+//  4. Block adjacency means a result that lands AFTER its block has already
+//     closed has nowhere valid to attach: a second tool_result for an
+//     id this function already answered is superseded and dropped (logged,
+//     never silent), not appended out of position. There is no production
+//     caller of a late/out-of-band completion yet, but the rule is fixed now
+//     so nobody "fixes" this by reusing the id: a background-task completion
+//     that arrives after its block MUST be appended as a new "system" or
+//     "trigger" entry, never as a second tool_result for an already-answered
+//     id. Reusing the id makes the completion invisible to the model, which
+//     then re-issues the same call — the exact failure mode rule 1 exists to
+//     prevent.
 
 import { getLog } from "../logging/logger.js";
 import type { SessionEntry } from "./entry-types.js";
@@ -70,16 +81,31 @@ function sliceFromLatestCompaction(entries: SessionEntry[]): {
  */
 function emitToolBlock(messages: ChatMessage[], callEntries: SessionEntry[], resultEntries: SessionEntry[]): void {
   const resultById = new Map<string, SessionEntry>();
+  const supersededResultIds: string[] = [];
   for (const r of resultEntries) {
-    if (r.toolCallId && !resultById.has(r.toolCallId)) resultById.set(r.toolCallId, r); // first wins
+    if (!r.toolCallId) continue;
+    if (resultById.has(r.toolCallId)) {
+      supersededResultIds.push(r.toolCallId); // second-in-block for an id already mapped; first wins
+      continue;
+    }
+    resultById.set(r.toolCallId, r);
   }
 
   const seen = new Set<string>();
   const toolCalls: ChatToolCall[] = [];
   const droppedCallIds: string[] = [];
+  const duplicateCallIds: string[] = [];
+  const malformedCallSeqs: number[] = [];
   for (const c of callEntries) {
     const id = c.toolCallId;
-    if (!id || !c.toolName || seen.has(id)) continue; // malformed entry or duplicate id; first wins
+    if (!id || !c.toolName) {
+      malformedCallSeqs.push(c.seq);
+      continue;
+    }
+    if (seen.has(id)) {
+      duplicateCallIds.push(id); // repeat id in this block; first wins
+      continue;
+    }
     seen.add(id);
     if (!resultById.has(id)) {
       droppedCallIds.push(id);
@@ -89,6 +115,24 @@ function emitToolBlock(messages: ChatMessage[], callEntries: SessionEntry[], res
   }
   const droppedResultIds = [...resultById.keys()].filter((id) => !seen.has(id));
 
+  if (supersededResultIds.length > 0) {
+    log.warn("projection.dropped-superseded-tool-results", {
+      reason: "superseded-result-in-block",
+      toolCallIds: supersededResultIds,
+    });
+  }
+  if (malformedCallSeqs.length > 0) {
+    log.warn("projection.dropped-malformed-tool-call", {
+      reason: "malformed-tool-call",
+      seqs: malformedCallSeqs,
+    });
+  }
+  if (duplicateCallIds.length > 0) {
+    log.warn("projection.dropped-duplicate-tool-calls", {
+      reason: "duplicate-call-id-in-block",
+      toolCallIds: duplicateCallIds,
+    });
+  }
   if (droppedCallIds.length > 0) {
     log.warn("projection.dropped-unreplied-tool-calls", {
       reason: "unreplied-in-block",
@@ -133,13 +177,18 @@ export function projectForModel(entries: SessionEntry[]): ChatMessage[] {
     if (entry.kind === "tool_result") {
       // Not immediately preceded by its call block (arrived early, or
       // separated by an intervening entry) — pairing it here would put the
-      // tool message out of position. Drop it; the caller already has the
-      // computed result on record elsewhere, but the model never sees it.
+      // tool message out of position. Drop the whole run of consecutive
+      // orphans as one batch (matching the in-block reporting shape); the
+      // caller already has the computed result on record elsewhere, but the
+      // model never sees it.
+      const orphanStart = i;
+      while (rest[i]?.kind === "tool_result") i += 1;
+      const orphanRun = rest.slice(orphanStart, i);
       log.warn("projection.dropped-parentless-tool-results", {
-        reason: "no-parent-in-block",
-        toolCallIds: entry.toolCallId ? [entry.toolCallId] : [],
+        reason: "orphan-outside-block",
+        toolCallIds: orphanRun.flatMap((r) => (r.toolCallId ? [r.toolCallId] : [])),
+        seqs: orphanRun.map((r) => r.seq),
       });
-      i += 1;
       continue;
     }
 

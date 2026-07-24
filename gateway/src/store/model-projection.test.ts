@@ -245,6 +245,38 @@ describe("projectForModel", () => {
       expect(toolMsgs[0]).toEqual({ role: "tool", tool_call_id: "bg1", content: '{"taskId":"t1"}' });
     });
 
+    it("keeps the first tool_result content when a call id has two results in one block", () => {
+      // Mutation guard: a last-wins map would emit "second" here instead of
+      // "first" — kills that mutant.
+      const out = projectForModel([
+        e({ kind: "tool_call", toolCallId: "bg1", toolName: "delegateTask", toolArgs: "{}" }),
+        e({ kind: "tool_result", toolCallId: "bg1", toolName: "delegateTask", toolArgs: '"first"' }),
+        e({ kind: "tool_result", toolCallId: "bg1", toolName: "delegateTask", toolArgs: '"second"' }),
+      ]);
+      assertValidToolPairing(out);
+      const toolMsgs = out.filter((m) => m.role === "tool");
+      expect(toolMsgs).toHaveLength(1);
+      expect(toolMsgs[0]).toEqual({ role: "tool", tool_call_id: "bg1", content: '"first"' });
+    });
+
+    it("emits tool messages in call-declaration order, not result-arrival order", () => {
+      // Results for a and b arrive reversed (b then a); the emitted tool
+      // messages must still follow declaration order (a then b) — pins the
+      // ordering the fix in emitToolBlock depends on for validity.
+      const out = projectForModel([
+        e({ kind: "tool_call", turnId: "tr", toolCallId: "a", toolName: "x", toolArgs: "{}" }),
+        e({ kind: "tool_call", turnId: "tr", toolCallId: "b", toolName: "y", toolArgs: "{}" }),
+        e({ kind: "tool_result", turnId: "tr", toolCallId: "b", toolName: "y", toolArgs: '"rb"' }),
+        e({ kind: "tool_result", turnId: "tr", toolCallId: "a", toolName: "x", toolArgs: '"ra"' }),
+      ]);
+      assertValidToolPairing(out);
+      const toolMsgs = out.filter((m) => m.role === "tool");
+      expect(toolMsgs).toEqual([
+        { role: "tool", tool_call_id: "a", content: '"ra"' },
+        { role: "tool", tool_call_id: "b", content: '"rb"' },
+      ]);
+    });
+
     it("dedupes a repeated tool_call id from accumulated streaming deltas", () => {
       const out = projectForModel([
         e({ kind: "tool_call", toolCallId: "d1", toolName: "search", toolArgs: '{"n":1}' }),
