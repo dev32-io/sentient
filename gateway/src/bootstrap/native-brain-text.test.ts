@@ -1,12 +1,24 @@
 // @live — Plan 2 Task 10: "the gateway walks text-only end-to-end."
 //
-// Gate: skipped unless a boot-equivalent construction yields a non-null
-// `provider` (an active LLM key is configured in the operator's 1.0 secrets
-// store) — NEVER an env var. `OPENROUTER_API_KEY` / `ORCHESTRATOR_MODEL`
-// (used by ./provider/openai-provider.test.ts's own @live case, one
-// directory over) are the LEGACY per-user Hermes-provisioning knobs and are
-// irrelevant to this orchestrator's key sourcing — see
-// resolve-provider-connection.ts's header.
+// Gate: TWO independent conditions, both required.
+//   (a) `RUN_LIVE=1` — this repo's shared "run the live suite" opt-in (see
+//       gateway/tests/integration/docker-driver.test.ts, the other committed
+//       @live suite that reads the same flag). Without it, module-scope work
+//       below (config load, secrets-store read, MCP warm-up dial, and the
+//       real streaming LLM call inside `it`) is skipped entirely — a plain
+//       `bun run test` / CI run never touches the network or spends
+//       operator credit, matching this repo's established @live idiom
+//       (openai-provider.test.ts, mcp-client.test.ts both gate `describe` on
+//       an opt-in signal so CI skips by default).
+//   (b) a boot-equivalent construction yields a non-null `provider` (an
+//       active LLM key is configured in the operator's 1.0 secrets store) —
+//       NEVER an env var. `OPENROUTER_API_KEY` / `ORCHESTRATOR_MODEL` (used
+//       by ./provider/openai-provider.test.ts's own @live case, one
+//       directory over) are the LEGACY per-user Hermes-provisioning knobs and
+//       are irrelevant to this orchestrator's key sourcing — see
+//       resolve-provider-connection.ts's header.
+// This file never reads or prints the key's VALUE either way — only whether
+// one resolved.
 //
 // Runner choice: `bun:test`, colocated under src/ (openai-provider.test.ts /
 // secrets-store.test.ts / session-runtime.test.ts precedent), NOT vitest
@@ -49,7 +61,7 @@
 // recorded in task-10-report.md.
 
 import { describe, expect, it } from "bun:test";
-import { mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createSecretsStore } from "../admin/secrets-store.js";
@@ -58,6 +70,7 @@ import { createUserPrincipal } from "../identity/user-principal.js";
 import type { ToolUpdate } from "../runtime/react-loop.js";
 import type { TurnEmitter } from "../runtime/turn-emitter.js";
 import type { CutoffKind } from "../store/entry-types.js";
+import type { OrchestratorServices } from "./phase-services.js";
 import { buildOrchestratorServices } from "./phase-services.js";
 
 const TEST_USER_ID = "u_deadbeef" as const; // valid per user-id.ts's /^u_[a-f0-9]{8}$/
@@ -108,43 +121,66 @@ async function waitFor(predicate: () => boolean, timeoutMs: number): Promise<voi
 }
 
 // ---------------------------------------------------------------------------
-// Gate — real boot-equivalent resolution, no env var. Top-level await runs
-// fine under bun:test's ESM module loader.
+// Gate — see file header for the two-condition rationale. Top-level await
+// runs fine under bun:test's ESM module loader.
 // ---------------------------------------------------------------------------
 
-const cfg = loadStartupConfig();
-// Mirrors phase-state.ts's own path computation exactly — that file lives in
-// this same directory (src/bootstrap/), so the relative depth matches.
-const SENTIENT_HOME = process.env.SENTIENT_HOME ?? join(homedir(), ".sentient");
-const GATEWAY_RUNTIME_DIR = process.env.GATEWAY_RUNTIME_DIR ?? join(import.meta.dir, "..", "..");
-const secretsStore = cfg.hermes
-  ? createSecretsStore({
-      keysPath: join(SENTIENT_HOME, "secrets", "keys.yaml"),
-      templatePath: join(GATEWAY_RUNTIME_DIR, "templates", "wizard", "keys.yaml.tmpl"),
-      generateAdminToken: () => "unused-in-this-test",
-    })
-  : null;
-if (secretsStore) await secretsStore.load();
+const RUN_LIVE = process.env.RUN_LIVE === "1";
 
-const orchestratorServices = await buildOrchestratorServices(cfg, secretsStore);
-const hasActiveKey = orchestratorServices.provider !== null && orchestratorServices.createSessionRuntime !== null;
+/**
+ * Real boot-equivalent resolution — config load, secrets-store read, MCP
+ * warm-up dial (see buildOrchestratorServices's own doc comment on that
+ * network I/O). Only invoked when `RUN_LIVE` is set: condition (a) gates
+ * even ATTEMPTING this work, not just the assertion inside `it`, so a plain
+ * `bun run test` never dials anything.
+ */
+async function resolveOrchestratorServices(): Promise<OrchestratorServices> {
+  const cfg = loadStartupConfig();
+  // Mirrors phase-state.ts's own path computation exactly — that file lives in
+  // this same directory (src/bootstrap/), so the relative depth matches.
+  const SENTIENT_HOME = process.env.SENTIENT_HOME ?? join(homedir(), ".sentient");
+  const GATEWAY_RUNTIME_DIR = process.env.GATEWAY_RUNTIME_DIR ?? join(import.meta.dir, "..", "..");
+  const secretsStore = cfg.hermes
+    ? createSecretsStore({
+        keysPath: join(SENTIENT_HOME, "secrets", "keys.yaml"),
+        templatePath: join(GATEWAY_RUNTIME_DIR, "templates", "wizard", "keys.yaml.tmpl"),
+        generateAdminToken: () => "unused-in-this-test",
+      })
+    : null;
+  if (secretsStore) await secretsStore.load();
+  return buildOrchestratorServices(cfg, secretsStore);
+}
+
+const orchestratorServices = RUN_LIVE ? await resolveOrchestratorServices() : null;
+const hasActiveKey =
+  orchestratorServices !== null &&
+  orchestratorServices.provider !== null &&
+  orchestratorServices.createSessionRuntime !== null;
 
 // Matches this repo's established @live gating idiom (openai-provider.test.ts,
 // mcp-client.test.ts): a ternary onto `describe`/`describe.skip`, evaluated
 // once at module load — not `describe.skipIf`, kept consistent with existing
-// precedent in this file's own directory tree.
-const live = hasActiveKey ? describe : describe.skip;
+// precedent in this file's own directory tree. Both conditions (RUN_LIVE +
+// hasActiveKey) are required; `hasActiveKey` is trivially false whenever
+// RUN_LIVE is unset (resolution above never ran), so the `&&` is belt-and-
+// braces, not load-bearing on its own.
+const live = RUN_LIVE && hasActiveKey ? describe : describe.skip;
 
 live("[@live] native orchestrator — text-only turn against the real active LLM key", () => {
   it(
     "streams response.text.delta content containing 'pong' and completes the turn",
     async () => {
-      if (!orchestratorServices.createSessionRuntime) {
-        throw new Error("unreachable: gated on createSessionRuntime !== null above");
+      if (!orchestratorServices || !orchestratorServices.createSessionRuntime) {
+        throw new Error("unreachable: gated on RUN_LIVE && createSessionRuntime !== null above");
       }
 
       const alice = createUserPrincipal(TEST_USER_ID, "adult", "home");
       const userHomeDir = orchestratorServices.accessManager.userHomeDir(alice);
+      // Never delete an operator dir this test didn't create — capture
+      // pre-existence BEFORE mkdirSync so the finally block below can guard
+      // the rmSync accordingly. TEST_USER_ID is a fixed fake id, but this
+      // resolves under the operator's REAL `access.user_data_root`.
+      const userHomeDirPreexisted = existsSync(userHomeDir);
       mkdirSync(userHomeDir, { recursive: true });
 
       const emitter = recordingEmitter();
@@ -174,7 +210,9 @@ live("[@live] native orchestrator — text-only turn against the real active LLM
         expect(combined.toLowerCase()).toContain("pong");
       } finally {
         runtime.dispose();
-        rmSync(userHomeDir, { recursive: true, force: true });
+        if (!userHomeDirPreexisted) {
+          rmSync(userHomeDir, { recursive: true, force: true });
+        }
       }
     },
     TURN_TIMEOUT_MS + 5_000,
