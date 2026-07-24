@@ -6,11 +6,18 @@
 //     matching tool_call_id. Break this and the model never sees its own tool
 //     result and re-issues the same call.
 //  2. After compaction we replay from the last compaction entry forward.
-//  3. The provider rejects orphans in BOTH directions, so this function emits
-//     ONLY matched pairs: a role:"tool" with no parent is dropped, and a
-//     tool_call with no reply (abort mid-call, suppressed call, truncation) is
-//     dropped from the tool_calls array. Being a pure function, this is the one
-//     place the invariant can be enforced without any caller remembering to.
+//  3. OpenAI requires role:"tool" messages to immediately follow the assistant
+//     message that declared them, and every id declared in one run to be
+//     answered by that SAME run. Set-membership pairing (any call id in the
+//     slice intersected with any result id in the slice) is not enough — it
+//     lets a tool_result that arrived out of position (before its call, or
+//     separated from it by an intervening user/assistant/system entry) pair
+//     with a call it doesn't structurally follow, producing a message array
+//     the provider 400s on. This function pairs by BLOCK ADJACENCY instead: a
+//     run of tool_call entries is paired only with the immediately-following
+//     run of tool_result entries. Anything unmatched in either direction is
+//     dropped and logged — a dropped-but-computed result is real context
+//     loss, so it must never be silent.
 
 import { getLog } from "../logging/logger.js";
 import type { SessionEntry } from "./entry-types.js";
@@ -55,78 +62,109 @@ function sliceFromLatestCompaction(entries: SessionEntry[]): {
   };
 }
 
+/**
+ * Pairs one run of tool_call entries with the immediately-following run of
+ * tool_result entries and pushes the resulting assistant + tool messages.
+ * A call with no reply in this run, or a result with no matching call in
+ * this run, is dropped (and logged) rather than emitted out of position.
+ */
+function emitToolBlock(messages: ChatMessage[], callEntries: SessionEntry[], resultEntries: SessionEntry[]): void {
+  const resultById = new Map<string, SessionEntry>();
+  for (const r of resultEntries) {
+    if (r.toolCallId && !resultById.has(r.toolCallId)) resultById.set(r.toolCallId, r); // first wins
+  }
+
+  const seen = new Set<string>();
+  const toolCalls: ChatToolCall[] = [];
+  const droppedCallIds: string[] = [];
+  for (const c of callEntries) {
+    const id = c.toolCallId;
+    if (!id || !c.toolName || seen.has(id)) continue; // malformed entry or duplicate id; first wins
+    seen.add(id);
+    if (!resultById.has(id)) {
+      droppedCallIds.push(id);
+      continue;
+    }
+    toolCalls.push({ id, type: "function", function: { name: c.toolName, arguments: c.toolArgs ?? "{}" } });
+  }
+  const droppedResultIds = [...resultById.keys()].filter((id) => !seen.has(id));
+
+  if (droppedCallIds.length > 0) {
+    log.warn("projection.dropped-unreplied-tool-calls", {
+      reason: "unreplied-in-block",
+      toolCallIds: droppedCallIds,
+    });
+  }
+  if (droppedResultIds.length > 0) {
+    log.warn("projection.dropped-parentless-tool-results", {
+      reason: "no-parent-in-block",
+      toolCallIds: droppedResultIds,
+    });
+  }
+
+  if (toolCalls.length === 0) return; // never emit an empty tool_calls array
+  messages.push({ role: "assistant", content: null, tool_calls: toolCalls });
+  for (const tc of toolCalls) {
+    messages.push({ role: "tool", tool_call_id: tc.id, content: resultById.get(tc.id)?.toolArgs ?? "" });
+  }
+}
+
 export function projectForModel(entries: SessionEntry[]): ChatMessage[] {
   const { head, rest } = sliceFromLatestCompaction(entries);
-
-  // Pass 1: within THIS slice, find which tool_calls actually have a reply and
-  // which replies actually have a parent. Only two-way-matched ids are emitted.
-  const callIdsInSlice = new Set<string>();
-  const resultIdsInSlice = new Set<string>();
-  for (const entry of rest) {
-    if (entry.kind === "tool_call" && entry.toolCallId && entry.toolName) {
-      callIdsInSlice.add(entry.toolCallId);
-    } else if (entry.kind === "tool_result" && entry.toolCallId) {
-      resultIdsInSlice.add(entry.toolCallId);
-    }
-  }
-  const pairedIds = new Set([...callIdsInSlice].filter((id) => resultIdsInSlice.has(id)));
-
-  const droppedCalls = [...callIdsInSlice].filter((id) => !pairedIds.has(id));
-  const droppedResults = [...resultIdsInSlice].filter((id) => !pairedIds.has(id));
-  if (droppedCalls.length > 0) {
-    log.debug("projection.dropped-unreplied-tool-calls", { toolCallIds: droppedCalls });
-  }
-  if (droppedResults.length > 0) {
-    log.debug("projection.dropped-parentless-tool-results", { toolCallIds: droppedResults });
-  }
-
-  // Pass 2: emit, skipping anything unpaired.
   const messages: ChatMessage[] = [...head];
-  let pendingCalls: ChatToolCall[] = [];
 
-  const flushPendingCalls = (): void => {
-    if (pendingCalls.length === 0) return;
-    messages.push({ role: "assistant", content: null, tool_calls: pendingCalls });
-    pendingCalls = [];
-  };
-
-  for (const entry of rest) {
-    if (entry.kind === "tool_call") {
-      if (entry.toolCallId && entry.toolName && pairedIds.has(entry.toolCallId)) {
-        pendingCalls.push({
-          id: entry.toolCallId,
-          type: "function",
-          function: { name: entry.toolName, arguments: entry.toolArgs ?? "{}" },
-        });
-      }
+  let i = 0;
+  while (i < rest.length) {
+    const entry = rest[i];
+    if (!entry) {
+      i += 1;
       continue;
     }
 
-    flushPendingCalls();
+    if (entry.kind === "tool_call") {
+      const callStart = i;
+      while (rest[i]?.kind === "tool_call") i += 1;
+      const resultStart = i;
+      while (rest[i]?.kind === "tool_result") i += 1;
+      emitToolBlock(messages, rest.slice(callStart, resultStart), rest.slice(resultStart, i));
+      continue;
+    }
 
     if (entry.kind === "tool_result") {
-      if (!entry.toolCallId || !pairedIds.has(entry.toolCallId)) continue;
-      messages.push({
-        role: "tool",
-        tool_call_id: entry.toolCallId,
-        content: entry.toolArgs ?? "",
+      // Not immediately preceded by its call block (arrived early, or
+      // separated by an intervening entry) — pairing it here would put the
+      // tool message out of position. Drop it; the caller already has the
+      // computed result on record elsewhere, but the model never sees it.
+      log.warn("projection.dropped-parentless-tool-results", {
+        reason: "no-parent-in-block",
+        toolCallIds: entry.toolCallId ? [entry.toolCallId] : [],
       });
+      i += 1;
       continue;
     }
 
     if (entry.kind === "user" || entry.kind === "trigger") {
       messages.push({ role: "user", content: entry.text ?? "" });
+      i += 1;
       continue;
     }
     if (entry.kind === "assistant") {
       messages.push({ role: "assistant", content: entry.text ?? "" });
+      i += 1;
       continue;
     }
-    if (entry.kind === "system" || entry.kind === "compaction") {
+    if (entry.kind === "system") {
       messages.push({ role: "system", content: entry.text ?? "" });
+      i += 1;
+      continue;
     }
+
+    // Unrecognized kind. The store's read path casts `row.kind` with no
+    // runtime validation (session-store.ts), so a foreign/corrupt row can
+    // reach here. Never drop it silently.
+    log.warn("projection.unknown-entry-kind", { kind: entry.kind, seq: entry.seq });
+    i += 1;
   }
 
-  flushPendingCalls();
   return messages;
 }
