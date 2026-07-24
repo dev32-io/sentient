@@ -67,6 +67,15 @@ session:
   per_user_max_sessions: 40           # max concurrent WS sessions for ONE user (1–100). Bounds memory under churn.
 
 # ---------------------------------------------------------------------------
+# Access — capability minting + per-user physical isolation (spec §2.1, §2.5)
+# ---------------------------------------------------------------------------
+access:
+  # Root under which every user gets their own home directory:
+  # <user_data_root>/<userId>/ holds that user's session DB, files, and scratch.
+  # Per-user physical separation is defense-in-depth beneath the capability model.
+  user_data_root: ~/.sentient/gateway/users
+
+# ---------------------------------------------------------------------------
 # STT — local-stt service (Silero VAD + Smart-Turn v3 + SenseVoice-Small)
 # See capabilityServices/STTService/CONTRACT.md for the wire protocol.
 # ---------------------------------------------------------------------------
