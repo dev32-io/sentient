@@ -10,6 +10,16 @@ auth_timeout_ms: 5000
 session:
   ws_idle_timeout_ms: 255000
   per_user_max_sessions: 40
+access:
+  user_data_root: /tmp/sentient-test-users
+orchestrator:
+  provider:
+    base_url: https://openrouter.ai/api/v1
+    model: test-model
+    api_key_env: OPENROUTER_API_KEY
+  loop: {}
+  tools: {}
+  delegation: {}
 stt:
   provider: local-stt
   url: ws://stt-service:8766
@@ -41,6 +51,16 @@ auth_timeout_ms: 5000
 session:
   ws_idle_timeout_ms: 255000
   per_user_max_sessions: 40
+access:
+  user_data_root: /tmp/sentient-test-users
+orchestrator:
+  provider:
+    base_url: https://openrouter.ai/api/v1
+    model: test-model
+    api_key_env: OPENROUTER_API_KEY
+  loop: {}
+  tools: {}
+  delegation: {}
 stt:
   provider: local-stt
 tts: {}
@@ -60,6 +80,16 @@ auth_timeout_ms: 5000
 session:
   ws_idle_timeout_ms: 255000
   per_user_max_sessions: 40
+access:
+  user_data_root: /tmp/sentient-test-users
+orchestrator:
+  provider:
+    base_url: https://openrouter.ai/api/v1
+    model: test-model
+    api_key_env: OPENROUTER_API_KEY
+  loop: {}
+  tools: {}
+  delegation: {}
 stt:
   provider: local-stt
 tts: {}
@@ -87,6 +117,16 @@ auth_timeout_ms: 3000
 session:
   ws_idle_timeout_ms: 255000
   per_user_max_sessions: 40
+access:
+  user_data_root: /tmp/sentient-test-users
+orchestrator:
+  provider:
+    base_url: https://openrouter.ai/api/v1
+    model: test-model
+    api_key_env: OPENROUTER_API_KEY
+  loop: {}
+  tools: {}
+  delegation: {}
 stt:
   provider: local-stt
 tts: {}

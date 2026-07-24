@@ -1,5 +1,7 @@
+import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
+  AccessConfig as AccessYaml,
   ApplyConfig as ApplyYaml,
   AuthConfig as AuthYaml,
   CerebrumConfig as CerebrumYaml,
@@ -8,9 +10,11 @@ import type {
   HermesBuiltinTools,
   HermesConfig as HermesYaml,
   McpCatalog,
+  OrchestratorConfig as OrchestratorYaml,
   ProvidersConfig as ProvidersYaml,
   STTConfig as STTYaml,
   SessionConfig as SessionYaml,
+  StoreConfig as StoreYaml,
   TTSConfig as TTSYaml,
   TlsConfig as TlsYaml,
   WebuiConfig as WebuiYaml,
@@ -18,6 +22,20 @@ import type {
 import { getLog } from "../logging/logger.ts";
 import { loadGatewayConfig } from "./gateway-config.ts";
 import { migrateOperatorConfigYamlSync } from "./operator-config-migrator.ts";
+
+/**
+ * Expand a single leading `~` path segment to the user's home directory.
+ * Lexical only: a `~` that is not the whole path or immediately followed by
+ * `/` is left untouched (e.g. `/opt/~backup` stays literal). `path.join`/
+ * `path.resolve` do NOT do this expansion, so anything sourced from YAML
+ * that may carry a leading `~` (e.g. access.user_data_root) must pass
+ * through here before it is treated as absolute.
+ */
+export function expandHome(p: string): string {
+  if (p === "~") return homedir();
+  if (p.startsWith("~/")) return `${homedir()}/${p.slice(2)}`;
+  return p;
+}
 
 export interface LoggingConfig {
   logLevel: string;
@@ -39,6 +57,19 @@ export interface StartupConfig {
   tls: TlsYaml & { certsDir: string };
 
   session: SessionYaml;
+
+  /** Access — capability minting + per-user physical isolation (spec §2.1,
+   *  §2.5). `userDataRoot` is resolved to an absolute path here (a leading
+   *  `~` in config.yaml is expanded via expandHome; path.* would not). */
+  access: AccessYaml;
+
+  /** Store — durable per-user session history (spec §3). Always defined;
+   *  db_filename defaults to "sessions.db" when omitted from config.yaml. */
+  store: StoreYaml;
+
+  /** Orchestrator — the native LLM agent loop (spec §4/§5). Always defined;
+   *  provider is required (no default) so a deployment must configure one. */
+  orchestrator: OrchestratorYaml;
 
   /** Top-level language ("auto" | "en" | "zh") mirrored from stt.language for
    * ergonomics. "auto" = Whisper autodetects (bilingual households). */
@@ -117,6 +148,10 @@ export function loadStartupConfig(): StartupConfig {
     tls: { ...cfg.tls, certsDir: process.env.GATEWAY_CERTS_DIR ?? join(gatewayRoot, "certs") },
 
     session: cfg.session,
+
+    access: { ...cfg.access, user_data_root: expandHome(cfg.access.user_data_root) },
+    store: cfg.store,
+    orchestrator: cfg.orchestrator,
 
     language: cfg.stt.language,
 

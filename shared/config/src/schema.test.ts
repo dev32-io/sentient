@@ -16,11 +16,24 @@ const wsResilienceSession = {
   per_user_max_sessions: 40,
 };
 
+// Shared access/orchestrator fixtures — both sections are required (no
+// `.default()` at the root), so every gatewayConfigSchema.parse() fixture
+// below must supply them.
+const minimalAccess = { user_data_root: "/tmp/sentient-test-users" };
+const minimalOrchestrator = {
+  provider: { base_url: "https://openrouter.ai/api/v1", model: "test-model", api_key_env: "OPENROUTER_API_KEY" },
+  loop: {},
+  tools: {},
+  delegation: {},
+};
+
 describe("gatewayConfigSchema", () => {
   const minimalValidConfig = {
     stt: { provider: "local-stt" },
     tts: {},
     session: wsResilienceSession,
+    access: minimalAccess,
+    orchestrator: minimalOrchestrator,
   };
 
   it("accepts a minimal config and applies defaults", () => {
@@ -215,6 +228,8 @@ describe("gatewayConfigSchema logging field", () => {
       stt: { provider: "local-stt" },
       tts: {},
       session: wsResilienceSession,
+      access: minimalAccess,
+      orchestrator: minimalOrchestrator,
     };
     const parsed = gatewayConfigSchema.parse(minimal);
     expect(parsed.logging).toEqual({ level: "info", retention_days: 7, level_overrides: {} });
@@ -226,6 +241,8 @@ describe("gatewayConfigSchema webui field", () => {
     stt: { provider: "local-stt" },
     tts: {},
     session: wsResilienceSession,
+    access: minimalAccess,
+    orchestrator: minimalOrchestrator,
   };
 
   it("applies webui playback defaults when section is omitted", () => {
@@ -257,6 +274,8 @@ describe("gateway config — auth/apply/providers sections", () => {
     stt: { provider: "local-stt" },
     tts: {},
     session: wsResilienceSession,
+    access: minimalAccess,
+    orchestrator: minimalOrchestrator,
   };
 
   it("defaults auth.token_ttl_seconds to 7 days", () => {
@@ -348,6 +367,8 @@ describe("gatewayConfigSchema downloads field", () => {
     stt: { provider: "local-stt" },
     tts: {},
     session: wsResilienceSession,
+    access: minimalAccess,
+    orchestrator: minimalOrchestrator,
     downloads: {
       artifacts_dir: "/app/releases",
       public_base_url: "https://sentient.dev32.io",

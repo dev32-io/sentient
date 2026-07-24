@@ -1,7 +1,10 @@
 import { z } from "zod";
+import { accessConfigSchema } from "./schemas/access-config";
 import { hermesBuiltinToolsSchema } from "./schemas/hermes-builtin-tools";
 import { hermesConfigSchema } from "./schemas/hermes-config";
 import { mcpCatalogSchema } from "./schemas/mcp-catalog";
+import { orchestratorConfigSchema } from "./schemas/orchestrator-config";
+import { storeConfigSchema } from "./schemas/store-config";
 
 // ---------------------------------------------------------------------------
 // Session — connection + inactivity limits
@@ -320,6 +323,15 @@ export const gatewayConfigSchema = z.object({
   // must be explicitly present in every config.yaml (fail loud if missing
   // per config rule).
   session: sessionConfigSchema,
+  // Access — capability minting + per-user physical isolation (spec §2.1, §2.5).
+  // Required — no default; every deployment must pick a user_data_root.
+  access: accessConfigSchema,
+  // Store — durable per-user session history (spec §3). Optional; the
+  // filename default matches the standard single-DB-per-user layout.
+  store: storeConfigSchema.default({}),
+  // Orchestrator — the native LLM agent loop (spec §4/§5). Required — no
+  // default; every deployment must configure a provider.
+  orchestrator: orchestratorConfigSchema,
   logging: loggingConfigSchema.default({}),
   stt: sttConfigSchema,
   tts: ttsConfigSchema,

@@ -84,6 +84,26 @@ store:
   db_filename: sessions.db
 
 # ---------------------------------------------------------------------------
+# Orchestrator — the native LLM agent loop (Sentient 2.0, spec §4/§5)
+# ---------------------------------------------------------------------------
+orchestrator:
+  provider:
+    base_url: https://openrouter.ai/api/v1   # OpenAI-compatible endpoint
+    model: ${ORCHESTRATOR_MODEL}             # e.g. a tool-calling-capable model
+    api_key_env: OPENROUTER_API_KEY          # env var holding the key (secret)
+    max_output_tokens: 1024                  # per-request output cap (1-32000)
+    request_timeout_ms: 120000               # per-request deadline (1000-600000)
+    site_name: Sentient                      # OpenRouter attribution header
+  loop:
+    max_iterations: 10                       # ReAct iteration cap (1-50)
+  tools:
+    foreground_timeout_ms: 30000             # per foreground tool call (1000-120000)
+    max_concurrent_background_tasks: 50      # per session (1-500)
+  delegation:
+    frontmatter_dir: ./config/delegation     # static per-agent envelope dir
+    hermes_timeout_ms: 600000                # per Hermes one-shot (1000-3600000)
+
+# ---------------------------------------------------------------------------
 # STT — local-stt service (Silero VAD + Smart-Turn v3 + SenseVoice-Small)
 # See capabilityServices/STTService/CONTRACT.md for the wire protocol.
 # ---------------------------------------------------------------------------
