@@ -3,11 +3,11 @@ import type { ServerWebSocket } from "bun";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { getLog } from "../logging/logger.js";
 import { handleAuthMessage, scheduleAuthTimeout } from "./ws-auth-gate.js";
-import type { ClientData } from "./ws-helpers.js";
+import type { SessionData } from "./ws-helpers.js";
 import { sendError } from "./ws-helpers.js";
 import { handleSessionConfigure } from "./ws-session-configure.js";
 
-export type { ClientData };
+export type { SessionData };
 
 export interface GatewayTlsMaterial {
   readonly cert: string;
@@ -21,7 +21,7 @@ const WS_NORMAL_CLOSURE = 1000;
 // Session open — auth + session registration
 // ---------------------------------------------------------------------------
 
-export function openSession(ws: ServerWebSocket<ClientData>, services: GatewayServices): void {
+export function openSession(ws: ServerWebSocket<SessionData>, services: GatewayServices): void {
   const result = services.sessionManager.createSession();
   if (!result.ok) {
     sendError(ws, "session_limit", result.error);
@@ -46,7 +46,7 @@ export function openSession(ws: ServerWebSocket<ClientData>, services: GatewaySe
 // ---------------------------------------------------------------------------
 
 export async function handleWebSocketMessage(
-  ws: ServerWebSocket<ClientData>,
+  ws: ServerWebSocket<SessionData>,
   message: string | Buffer,
   services: GatewayServices,
 ): Promise<void> {
@@ -116,7 +116,7 @@ export async function handleWebSocketMessage(
 // Session end + cleanup
 // ---------------------------------------------------------------------------
 
-function handleSessionEnd(ws: ServerWebSocket<ClientData>, services: GatewayServices): void {
+function handleSessionEnd(ws: ServerWebSocket<SessionData>, services: GatewayServices): void {
   if (!ws.data.sessionId) return;
   cleanupSession(ws, services);
   ws.close(WS_NORMAL_CLOSURE, "Session ended");
@@ -130,7 +130,7 @@ function handleSessionEnd(ws: ServerWebSocket<ClientData>, services: GatewayServ
  * with the purged Hermes-cycle brain. Plan 2 restores that split once there
  * is orchestrator state worth resuming.
  */
-export function cleanupSession(ws: ServerWebSocket<ClientData>, services: GatewayServices): void {
+export function cleanupSession(ws: ServerWebSocket<SessionData>, services: GatewayServices): void {
   const sessionId = ws.data.sessionId;
   if (!sessionId) return;
 

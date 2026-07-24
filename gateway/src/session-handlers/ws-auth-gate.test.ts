@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createSessionManager } from "../auth/session-manager.js";
 import { createAuthService } from "../user-auth/auth-service.js";
 import { handleAuthMessage } from "./ws-auth-gate.js";
-import type { ClientData } from "./ws-helpers.js";
+import type { SessionData } from "./ws-helpers.js";
 
 const AUTH_CONFIG: AuthConfig = {
   token_ttl_seconds: 3600,
@@ -17,7 +17,7 @@ const AUTH_CONFIG: AuthConfig = {
 };
 
 interface FakeWs {
-  data: ClientData;
+  data: SessionData;
   sent: unknown[];
   closeCode: number | null;
   send: (s: string) => void;
@@ -25,11 +25,11 @@ interface FakeWs {
 }
 
 function fakeWs(): FakeWs {
-  const data: ClientData = {
+  const data: SessionData = {
     sessionId: "test-session",
     connectedAt: Date.now(),
     authState: "pending",
-    userId: null,
+    principal: null,
     authTimeout: null,
     grantedCapabilities: new Set(),
     clientType: "webui",
@@ -64,31 +64,34 @@ describe("ws auth gate", () => {
     delete process.env.SENTIENT_GATEWAY_ROOT;
   });
 
-  it("authes the WS on a valid token, sets userId, sends auth.ok", async () => {
+  it("authes the WS on a valid token, mints a frozen principal, sends auth.ok", async () => {
     const auth = await createAuthService(AUTH_CONFIG);
     await auth.createUser({
-      userId: "kevin",
+      userId: "u_a1b2c3d4",
       displayName: "Kevin",
       pin: "1234",
       isAdmin: true,
       avatarTint: "terra",
     });
-    const r = await auth.authenticate("kevin", "1234");
+    const r = await auth.authenticate("u_a1b2c3d4", "1234");
     if (!r.ok) throw new Error("seed failed");
 
     const ws = fakeWs();
     await handleAuthMessage(
-      ws as unknown as { data: ClientData; send: (s: string) => void; close: (c: number) => void },
+      ws as unknown as { data: SessionData; send: (s: string) => void; close: (c: number) => void },
       { type: "auth", token: r.value.token },
       auth,
       sessionManager,
     );
     expect(ws.data.authState).toBe("authed");
-    expect(ws.data.userId).toBe("kevin");
+    expect(ws.data.principal?.userId).toBe("u_a1b2c3d4");
+    expect(ws.data.principal?.role).toBe("adult");
+    expect(ws.data.principal?.householdId).toBe("home");
+    expect(Object.isFrozen(ws.data.principal)).toBe(true);
     expect(ws.sent).toEqual([
       {
         type: "auth.ok",
-        user: { userId: "kevin", displayName: "Kevin", isAdmin: true, avatarTint: "terra" },
+        user: { userId: "u_a1b2c3d4", displayName: "Kevin", isAdmin: true, avatarTint: "terra" },
       },
     ]);
     expect(ws.closeCode).toBeNull();
@@ -98,13 +101,13 @@ describe("ws auth gate", () => {
     const auth = await createAuthService(AUTH_CONFIG);
     const ws = fakeWs();
     await handleAuthMessage(
-      ws as unknown as { data: ClientData; send: (s: string) => void; close: (c: number) => void },
+      ws as unknown as { data: SessionData; send: (s: string) => void; close: (c: number) => void },
       { type: "auth", token: "garbage" },
       auth,
       sessionManager,
     );
     expect(ws.data.authState).toBe("rejected");
-    expect(ws.data.userId).toBeNull();
+    expect(ws.data.principal).toBeNull();
     expect(ws.sent[0]).toMatchObject({ type: "auth.error" });
     expect(ws.closeCode).not.toBeNull();
   });
@@ -113,7 +116,7 @@ describe("ws auth gate", () => {
     const auth = await createAuthService(AUTH_CONFIG);
     const ws = fakeWs();
     await handleAuthMessage(
-      ws as unknown as { data: ClientData; send: (s: string) => void; close: (c: number) => void },
+      ws as unknown as { data: SessionData; send: (s: string) => void; close: (c: number) => void },
       { type: "session.configure" },
       auth,
       sessionManager,
@@ -138,7 +141,7 @@ describe("ws auth gate", () => {
 
     const ws = fakeWs();
     await handleAuthMessage(
-      ws as unknown as { data: ClientData; send: (s: string) => void; close: (c: number) => void },
+      ws as unknown as { data: SessionData; send: (s: string) => void; close: (c: number) => void },
       { type: "auth", token: r.value.token },
       auth,
       sessionManager,
@@ -166,7 +169,7 @@ describe("ws auth gate", () => {
 
     const ws = fakeWs();
     await handleAuthMessage(
-      ws as unknown as { data: ClientData; send: (s: string) => void; close: (c: number) => void },
+      ws as unknown as { data: SessionData; send: (s: string) => void; close: (c: number) => void },
       { type: "auth", token: r.value.token },
       auth,
       cappedManager,

@@ -1,12 +1,19 @@
 import { z } from "zod";
 import type { SessionManager } from "../auth/session-manager.js";
+import { type PrincipalRole, createUserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
 import type { AuthService } from "../user-auth/auth-service.js";
-import type { ClientData } from "./ws-helpers.js";
+import type { SessionData } from "./ws-helpers.js";
 
 const log = getLog(["sentient", "gateway", "session-handlers", "ws-auth-gate"]);
 
 const WS_CLOSE_POLICY = 1008; // RFC 6455 — policy violation
+
+// The user record doesn't carry role/householdId yet — default them here and
+// log it so the gap is visible. The real role model (system/operator/
+// household scopes) lands with the ambient re-architecture spec.
+const DEFAULT_PRINCIPAL_ROLE: PrincipalRole = "adult";
+const DEFAULT_HOUSEHOLD_ID = "home";
 
 const authMsgSchema = z.object({
   type: z.literal("auth"),
@@ -14,7 +21,7 @@ const authMsgSchema = z.object({
 });
 
 interface WsLike {
-  data: ClientData;
+  data: SessionData;
   send: (s: string) => void;
   close: (code: number, reason?: string) => void;
 }
@@ -57,7 +64,8 @@ export async function handleAuthMessage(
     return reject(ws, "session-limit", bindResult.error);
   }
 
-  ws.data.userId = userId;
+  log.debug("principal.defaulted", { userId, role: DEFAULT_PRINCIPAL_ROLE, householdId: DEFAULT_HOUSEHOLD_ID });
+  ws.data.principal = createUserPrincipal(userId, DEFAULT_PRINCIPAL_ROLE, DEFAULT_HOUSEHOLD_ID);
   ws.data.authState = "authed";
   if (ws.data.authTimeout) {
     clearTimeout(ws.data.authTimeout);
@@ -91,7 +99,7 @@ export function scheduleAuthTimeout(ws: WsLike, timeoutMs: number): ReturnType<t
 
 function reject(ws: WsLike, code: string, reason: string): void {
   ws.data.authState = "rejected";
-  ws.data.userId = null;
+  ws.data.principal = null;
   if (ws.data.authTimeout) {
     clearTimeout(ws.data.authTimeout);
     ws.data.authTimeout = null;

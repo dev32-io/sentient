@@ -30,14 +30,14 @@ import { testProviderImpl } from "./bootstrap/create-gateway-services.ts";
 import type { GatewayServices } from "./bootstrap/create-gateway-services.ts";
 import { getLog } from "./logging/logger.ts";
 import {
-  type ClientData,
+  type SessionData,
   cleanupSession,
   handleWebSocketMessage,
   openSession,
 } from "./session-handlers/ws-handlers.ts";
 import type { TokenService } from "./user-auth/token-service.ts";
 
-export type { ClientData };
+export type { SessionData };
 export type { GatewayTlsMaterial } from "./session-handlers/ws-handlers.ts";
 
 const log = getLog(["sentient", "ws"]);
@@ -59,7 +59,7 @@ export interface GatewayServerOptions {
   services: GatewayServices;
 }
 
-export function createGatewayServer(options: GatewayServerOptions): Server<ClientData> {
+export function createGatewayServer(options: GatewayServerOptions): Server<SessionData> {
   const { services } = options;
   const adminToken = process.env.ADMIN_TOKEN;
   let activeConnections = 0;
@@ -178,7 +178,7 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
   });
   const handleDiagnostics = createDiagnosticsHandler({ tokens: services.auth.tokens });
 
-  return Bun.serve<ClientData>({
+  return Bun.serve<SessionData>({
     port: options.port,
     hostname: options.host,
     // Bun's idleTimeout is in whole seconds, capped at 255. Convert from the
@@ -217,15 +217,15 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
     },
 
     websocket: {
-      open(ws: ServerWebSocket<ClientData>) {
+      open(ws: ServerWebSocket<SessionData>) {
         activeConnections++;
         log.info("client-connected");
         openSession(ws, services);
       },
-      async message(ws: ServerWebSocket<ClientData>, message: string | Buffer) {
+      async message(ws: ServerWebSocket<SessionData>, message: string | Buffer) {
         await handleWebSocketMessage(ws, message, services);
       },
-      close(ws: ServerWebSocket<ClientData>) {
+      close(ws: ServerWebSocket<SessionData>) {
         activeConnections--;
         log.info("client-disconnected");
         cleanupSession(ws, services);

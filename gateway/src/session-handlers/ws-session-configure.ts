@@ -2,7 +2,7 @@ import type { ClientType, SessionConfigureResume } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { getLog } from "../logging/logger.js";
-import type { ClientData } from "./ws-helpers.js";
+import type { SessionData } from "./ws-helpers.js";
 import { sendError } from "./ws-helpers.js";
 
 const log = getLog(["sentient", "ws", "session-configure"]);
@@ -29,7 +29,7 @@ const AUDIO_ENCODING = "pcm16";
 // ---------------------------------------------------------------------------
 
 export function handleSessionConfigure(
-  ws: ServerWebSocket<ClientData>,
+  ws: ServerWebSocket<SessionData>,
   capabilities: readonly string[],
   language: "en" | "zh",
   services: GatewayServices,
@@ -44,9 +44,9 @@ export function handleSessionConfigure(
     sendError(ws, "protocol_error", "No active session");
     return;
   }
-  const userId = ws.data.userId;
+  const userId = ws.data.principal?.userId;
   if (!userId) {
-    log.warn("session-configure-no-user", { sessionId, reason: "auth gate must set ws.data.userId" });
+    log.warn("session-configure-no-user", { sessionId, reason: "auth gate must set ws.data.principal" });
     sendError(ws, "protocol_error", "Session not authenticated");
     return;
   }

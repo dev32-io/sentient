@@ -1,5 +1,6 @@
 import type { ClientType } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
+import type { UserPrincipal } from "../identity/user-principal.js";
 
 /**
  * Per-connection WS state. Post-purge minimal form (spec §9 Task 1) — holds
@@ -11,14 +12,17 @@ import type { ServerWebSocket } from "bun";
  * handlers, ACP wire/anchor teardown, activity clock) is gone along with the
  * Hermes-runtime-brain purge (this task's sibling-directory deletions) —
  * Plan 2 rebuilds this shape alongside the native orchestrator.
+ *
+ * Named `SessionData` (not `CerebrumSessionData`, the pre-purge name) since
+ * the "cerebrum" construct it referred to no longer exists in this codebase.
  */
-export interface ClientData {
+export interface SessionData {
   sessionId: string | null;
   connectedAt: number;
   /** Auth gate state; transitions from pending → authed or pending → rejected. */
   authState: "pending" | "authed" | "rejected";
-  /** Authenticated userId; null until auth gate succeeds. */
-  userId: string | null;
+  /** Minted once at the auth gate; null until authenticated. Never reassigned after. */
+  principal: UserPrincipal | null;
   /** Handle for the auth timeout; cleared on auth success or rejection. */
   authTimeout: ReturnType<typeof setTimeout> | null;
   /** Capabilities the client declared in session.configure. */
@@ -30,19 +34,19 @@ export interface ClientData {
   clientType: ClientType;
 }
 
-export function createEmptySessionData(): ClientData {
+export function createEmptySessionData(): SessionData {
   return {
     sessionId: null,
     connectedAt: Date.now(),
     authState: "pending",
-    userId: null,
+    principal: null,
     authTimeout: null,
     grantedCapabilities: new Set(),
     clientType: "webui",
   };
 }
 
-export function sendError(ws: ServerWebSocket<ClientData>, code: string, message: string): void {
+export function sendError(ws: ServerWebSocket<SessionData>, code: string, message: string): void {
   ws.send(JSON.stringify({ type: "error", code, message }));
 }
 
