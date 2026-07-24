@@ -62,6 +62,8 @@ import { openSessionStore } from "../store/session-store.js";
 import type { SessionStore } from "../store/session-store.js";
 import type { ToolBroker } from "../tools/tool-broker.js";
 import type { UserId } from "../user-auth/user-id.js";
+import type { CancellableTurn } from "./cancellation.js";
+import { createCancellationControllers } from "./cancellation.js";
 import type { ReactLoopDeps } from "./react-loop.js";
 import { runTurn } from "./react-loop.js";
 import type { Stimulus } from "./stimulus.js";
@@ -87,6 +89,19 @@ export interface SessionRuntime {
   /** Aborts any in-flight turn's signal, stops the store handle, and makes
    *  every subsequent `submit` a no-op. Idempotent. */
   dispose(): void;
+  /** Mic onset — the user starts speaking over the assistant (spec §4.7).
+   *  Aborts the in-flight turn (+ TTS, Plan 3) and commits its partial
+   *  output as an assistant entry with `cutoff: "barge-in"`, but LEAVES any
+   *  registered background task running. No-op if idle. See
+   *  `runtime/cancellation.ts`. */
+  bargeIn(): void;
+  /** UI Stop / Esc (spec §4.7). Aborts the in-flight turn (+ TTS, Plan 3),
+   *  commits its partial output as an assistant entry with
+   *  `cutoff: "interrupt"`, AND cancels every background task for this
+   *  session (`broker.background.cancelAll()`) — fires even if no turn is
+   *  in flight, since a background task outlives the turn that dispatched
+   *  it. See `runtime/cancellation.ts`. */
+  interrupt(): void;
 }
 
 export interface SessionRuntimeDeps {
@@ -137,6 +152,25 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   let inFlight: InFlightTurn | null = null;
   let lastProcessedSeq = 0;
   let disposed = false;
+  // Text streamed so far for the CURRENT, not-yet-committed loop iteration —
+  // reset to "" the instant the loop itself commits that text (narration
+  // before a tool call, or the terminal reply): `onToolUpdate` firing is a
+  // reliable proxy for "narration, if any, is already durable" because
+  // react-loop.ts always appends narration BEFORE the first `onToolUpdate`
+  // call of an iteration (see react-loop.ts's `dispatchToolCalls`). Read by
+  // cancellation.ts via `getInFlight()` below — never resurrected once a
+  // turn ends, `startTurn` resets it fresh for every new turn.
+  let turnText = "";
+
+  const cancellation = createCancellationControllers({
+    sessionId,
+    userId,
+    store,
+    broker,
+    emitter,
+    getInFlight: (): CancellableTurn | null =>
+      inFlight ? { turnId: inFlight.turnId, controller: inFlight.controller, text: turnText } : null,
+  });
 
   function currentMaxSeq(): number {
     const entries = store.readSession(sessionId);
@@ -206,6 +240,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     // Synchronous snapshot, no await between this and the `runTurn` call
     // below — guarantees the turn's first iteration sees everything ≤ this.
     lastProcessedSeq = currentMaxSeq();
+    turnText = ""; // fresh accumulator for this turn — see the field's doc comment above.
 
     emitter.turnStarted(turnId);
     log.info("session-runtime.turn.start", { userId, sessionId, turnId, lastProcessedSeq });
@@ -217,8 +252,19 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
       systemPrompt,
       sessionId,
       config: config.loop,
-      onTextDelta: (id, text) => emitter.textDelta(id, text),
-      onToolUpdate: (id, u) => emitter.toolUpdate(id, u),
+      onTextDelta: (id, text) => {
+        turnText += text;
+        emitter.textDelta(id, text);
+      },
+      onToolUpdate: (id, u) => {
+        // Any onToolUpdate call is preceded by the loop committing this
+        // iteration's narration (if it had any) to the store directly — see
+        // react-loop.ts's `dispatchToolCalls`. That text is durable now, so
+        // drop it from the cutoff accumulator; the next iteration's deltas
+        // (if any) start counting fresh.
+        turnText = "";
+        emitter.toolUpdate(id, u);
+      },
     };
 
     runTurn(loopDeps, { turnId, signal: controller.signal }).then(
@@ -277,5 +323,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
       return inFlight !== null;
     },
     dispose,
+    bargeIn: cancellation.bargeIn,
+    interrupt: cancellation.interrupt,
   };
 }

@@ -434,3 +434,203 @@ describe("SessionRuntime — isolation", () => {
     runtime.dispose();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Cancellation (spec §4.7, Task 8) — barge-in vs interrupt. Two distinct
+// gestures, pinned as the FSM invariant that must never regress into one
+// do-everything "cancel": barge-in aborts the turn but keeps background
+// tasks alive; interrupt aborts the turn AND cancels them. Both commit the
+// turn's not-yet-durable partial as a `cutoff` assistant entry before
+// aborting.
+// ---------------------------------------------------------------------------
+
+interface SpyBackgroundRegistry extends BackgroundRegistry {
+  cancelAllCalls: number;
+}
+
+function spyBackgroundRegistry(): SpyBackgroundRegistry {
+  const tasks = new Map<string, () => void>();
+  const registry: SpyBackgroundRegistry = {
+    cancelAllCalls: 0,
+    count: () => tasks.size,
+    register: (taskId, cancel) => {
+      tasks.set(taskId, cancel);
+    },
+    complete: (taskId) => {
+      tasks.delete(taskId);
+    },
+    cancelAll: () => {
+      registry.cancelAllCalls += 1;
+      tasks.clear();
+    },
+  };
+  return registry;
+}
+
+function fakeBrokerWithBackground(background: BackgroundRegistry): FakeBroker {
+  return {
+    dispatchCalls: [],
+    definitions: () => [],
+    async dispatch(): Promise<ToolResult> {
+      throw new Error("dispatch should never be called in cancellation tests");
+    },
+    background,
+  };
+}
+
+/** A provider that streams one text chunk, then blocks until the turn's
+ *  AbortSignal actually fires — mirroring a real streaming HTTP call (which
+ *  ends promptly on abort rather than throwing). react-loop.test.ts's own
+ *  "abort mid-stream" case establishes the same requirement: merely calling
+ *  `controller.abort()` does not itself unblock a generator already
+ *  suspended on an unrelated promise, so the fake must cooperate with the
+ *  signal directly. */
+function partialReplyThenHangProvider(partial: string): FakeProvider {
+  return fakeProvider(async function* (_callIndex, req) {
+    yield { type: "text", content: partial };
+    await new Promise<void>((resolve) => {
+      if (req.signal.aborted) {
+        resolve();
+        return;
+      }
+      req.signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+    // real providers don't throw on abort; neither does this fake — it just
+    // stops yielding, exactly like react-loop.test.ts's abort-mid-stream case.
+  });
+}
+
+describe("SessionRuntime — cancellation: barge-in keeps background tasks alive", () => {
+  it("aborts the turn, commits cutoff:barge-in, and does NOT cancel background tasks", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/case-bargein` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = partialReplyThenHangProvider("here is a partial answer");
+    const background = spyBackgroundRegistry();
+    background.register("task-1", () => {});
+    const broker = fakeBrokerWithBackground(background);
+    const emitter = recordingEmitter();
+
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-bargein",
+      accessManager: am,
+      provider,
+      broker,
+      emitter,
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "tell me something" });
+    await waitFor(() => emitter.events.some((e) => e.type === "textDelta"));
+
+    runtime.bargeIn();
+    await waitUntilIdle(runtime);
+
+    const readback = openSessionStore(am.grant(alice, "session-store"));
+    const cutoffEntry = readback
+      .readSession("sess-bargein")
+      .find((e) => e.kind === "assistant" && e.cutoff === "barge-in");
+    expect(cutoffEntry?.text).toBe("here is a partial answer");
+    readback.close();
+
+    expect(background.cancelAllCalls).toBe(0);
+    expect(background.count()).toBe(1); // still registered — barge-in never touches it
+
+    expect(emitter.events.some((e) => e.type === "turnAborted")).toBe(true);
+
+    runtime.dispose();
+  });
+});
+
+describe("SessionRuntime — cancellation: interrupt cancels background tasks", () => {
+  it("aborts the turn, commits cutoff:interrupt, and DOES cancel background tasks", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/case-interrupt` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = partialReplyThenHangProvider("stopping now");
+    const background = spyBackgroundRegistry();
+    background.register("task-1", () => {});
+    const broker = fakeBrokerWithBackground(background);
+    const emitter = recordingEmitter();
+
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-interrupt",
+      accessManager: am,
+      provider,
+      broker,
+      emitter,
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "do a long task" });
+    await waitFor(() => emitter.events.some((e) => e.type === "textDelta"));
+
+    runtime.interrupt();
+    await waitUntilIdle(runtime);
+
+    const readback = openSessionStore(am.grant(alice, "session-store"));
+    const cutoffEntry = readback
+      .readSession("sess-interrupt")
+      .find((e) => e.kind === "assistant" && e.cutoff === "interrupt");
+    expect(cutoffEntry?.text).toBe("stopping now");
+    readback.close();
+
+    expect(background.cancelAllCalls).toBe(1);
+    expect(background.count()).toBe(0); // cancelAll cleared the registry
+
+    expect(emitter.events.some((e) => e.type === "turnAborted")).toBe(true);
+
+    runtime.dispose();
+  });
+});
+
+describe("SessionRuntime — cancellation: double-commit guard", () => {
+  it("interrupt() right after bargeIn() on the same turn still cancels background but never double-appends a cutoff entry", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/case-double-cancel` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = partialReplyThenHangProvider("only once");
+    const background = spyBackgroundRegistry();
+    background.register("task-1", () => {});
+    const broker = fakeBrokerWithBackground(background);
+    const emitter = recordingEmitter();
+
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-double-cancel",
+      accessManager: am,
+      provider,
+      broker,
+      emitter,
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "go" });
+    await waitFor(() => emitter.events.some((e) => e.type === "textDelta"));
+
+    // Same still-in-flight turn, back to back — the second call must see the
+    // signal already aborted and skip straight to its own background step
+    // without re-committing a cutoff entry for a turn already cut off.
+    runtime.bargeIn();
+    runtime.interrupt();
+
+    await waitUntilIdle(runtime);
+
+    const readback = openSessionStore(am.grant(alice, "session-store"));
+    const cutoffEntries = readback.readSession("sess-double-cancel").filter((e) => e.cutoff !== null);
+    expect(cutoffEntries).toHaveLength(1);
+    expect(cutoffEntries[0]?.cutoff).toBe("barge-in"); // first call wins
+    readback.close();
+
+    expect(background.cancelAllCalls).toBe(1); // interrupt's own background step still fires
+    runtime.dispose();
+  });
+});
