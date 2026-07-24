@@ -16,6 +16,11 @@ import { STORE_DDL } from "./schema.js";
 
 const log = getLog(["sentient", "store", "session-store"]);
 
+// Mirrors gateway/config.yaml#store.db_filename. The composition root does not
+// exist yet, so nothing reads that key: `store` is absent from gatewayConfigSchema
+// and zod's non-strict parsing drops it, leaving cfg.store undefined. When the
+// runtime composition root lands it must add the schema section and thread the
+// value here, retiring this constant.
 const DB_FILENAME = "sessions.db";
 
 interface EntryRow {

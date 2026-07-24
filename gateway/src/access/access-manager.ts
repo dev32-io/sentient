@@ -14,7 +14,16 @@ import { getLog } from "../logging/logger.js";
 const log = getLog(["sentient", "access", "access-manager"]);
 
 export interface AccessManagerConfig {
-  /** Root under which each user gets <root>/<userId>/. */
+  /**
+   * Root under which each user gets <root>/<userId>/.
+   *
+   * Must be ABSOLUTE. gateway/config.yaml#access.user_data_root ships a leading
+   * `~`, which neither path.join nor path.resolve expands — whoever wires this
+   * at the composition root must expand it first (see user-auth/paths.ts for the
+   * os.homedir() precedent), or every user's data lands under <cwd>/~/ instead
+   * of $HOME. That key is also still absent from gatewayConfigSchema, so zod
+   * currently drops it.
+   */
   userDataRoot: string;
 }
 

@@ -12,7 +12,11 @@ export type EntryKind = "user" | "assistant" | "tool_call" | "tool_result" | "tr
 export type CutoffKind = "interrupt" | "barge-in";
 
 export interface SessionEntry {
-  /** Monotonic per-session sequence. Assigned by the store on append. */
+  /**
+   * Store-wide monotonic sequence, assigned on append. Shared across every
+   * session in this user's database — NOT restarted per session — so it orders
+   * a session's entries without being a per-session counter.
+   */
   seq: number;
   sessionId: string;
   /** Groups entries belonging to one turn (one ReAct loop run). */
