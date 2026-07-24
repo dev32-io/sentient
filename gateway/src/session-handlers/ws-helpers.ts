@@ -18,9 +18,14 @@ import type { UserPrincipal } from "../identity/user-principal.js";
  */
 export interface SessionData {
   sessionId: string | null;
-  connectedAt: number;
-  /** Auth gate state; transitions from pending → authed or pending → rejected. */
-  authState: "pending" | "authed" | "rejected";
+  /**
+   * Auth gate state. pending → authenticating happens synchronously (no
+   * await between the guard read and this write in ws-auth-gate.ts), so a
+   * second `auth` frame arriving while the first is suspended on I/O always
+   * sees "authenticating" and is dropped. authenticating → authed on
+   * success; pending | authenticating → rejected on failure or timeout.
+   */
+  authState: "pending" | "authenticating" | "authed" | "rejected";
   /** Minted once at the auth gate; null until authenticated. Never reassigned after. */
   principal: UserPrincipal | null;
   /** Handle for the auth timeout; cleared on auth success or rejection. */
@@ -37,7 +42,6 @@ export interface SessionData {
 export function createEmptySessionData(): SessionData {
   return {
     sessionId: null,
-    connectedAt: Date.now(),
     authState: "pending",
     principal: null,
     authTimeout: null,

@@ -35,12 +35,20 @@ import {
   handleWebSocketMessage,
   openSession,
 } from "./session-handlers/ws-handlers.ts";
+import { errorMessage } from "./session-handlers/ws-helpers.ts";
 import type { TokenService } from "./user-auth/token-service.ts";
 
 export type { SessionData };
 export type { GatewayTlsMaterial } from "./session-handlers/ws-handlers.ts";
 
 const log = getLog(["sentient", "ws"]);
+
+// RFC 6455 — 1011: server encountered an unexpected condition. Used only when
+// a websocket.message handler throws; Bun's Bun.serve `error()` hook is
+// fetch-only and is never invoked for WS message-handler exceptions, so an
+// uncaught throw there otherwise crashes the whole process (exit 1, taking
+// every connected user with it).
+const WS_INTERNAL_ERROR = 1011;
 
 function makeThrowProxy(name: string): never {
   return new Proxy(
@@ -223,7 +231,19 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
         openSession(ws, services);
       },
       async message(ws: ServerWebSocket<SessionData>, message: string | Buffer) {
-        await handleWebSocketMessage(ws, message, services);
+        // Bun's websocket.message handler has no equivalent of the fetch
+        // error() hook — an unhandled rejection here terminates the whole
+        // process (all connected users), not just this connection. Catch at
+        // this boundary per .claude/rules/error-handling.md.
+        try {
+          await handleWebSocketMessage(ws, message, services);
+        } catch (err: unknown) {
+          log.warn("ws-message-handler-threw", {
+            sessionId: ws.data.sessionId,
+            reason: errorMessage(err, "unknown error"),
+          });
+          ws.close(WS_INTERNAL_ERROR, "internal error");
+        }
       },
       close(ws: ServerWebSocket<SessionData>) {
         activeConnections--;
