@@ -17,6 +17,7 @@
   "dependencies": {
     "@logtape/file": "^2.0.5",
     "@logtape/logtape": "^2.0.5",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@sentient/audio-prefs": "workspace:*",
     "@sentient/config": "workspace:*",
     "@sentient/protocol": "workspace:*",
