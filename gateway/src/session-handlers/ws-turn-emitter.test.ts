@@ -16,6 +16,7 @@ import { describe, expect, it } from "bun:test";
 import { gatewayMessageSchema } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import type { ToolUpdate } from "../runtime/react-loop.js";
+import { createFrameJournal } from "./frame-journal.js";
 import { type SessionData, createEmptySessionData } from "./ws-helpers.js";
 import { createWsTurnEmitter } from "./ws-turn-emitter.js";
 
@@ -189,14 +190,19 @@ describe("createWsTurnEmitter — 2.0 wire contract", () => {
     expect(Array.from(frame.slice(BINARY_HEADER_BYTES))).toEqual([0xaa, 0xbb]);
   });
 
-  it("audio frame seq is monotonic and starts at 1 (0 means unsequenced to clients)", () => {
+  it("stamps the unsequenced sentinel 0 when the connection has no frame journal", () => {
+    // `createEmptySessionData()` leaves `journal` null — the pre-configure
+    // window. Both client SDKs treat header seq 0 as "unsequenced" and pass it
+    // through without dedup, so the audio still plays; it just cannot be
+    // replayed. Monotonic allocation is pinned by the Task 10 block below,
+    // against a connection that actually has a journal.
     const ws = fakeWs();
     const emitter = emitterFor(ws);
     emitter.audioFrame("turn-1", new Uint8Array([1]));
     emitter.audioFrame("turn-1", new Uint8Array([2]));
     const seqOf = (f: Uint8Array) => Number(new DataView(f.buffer, f.byteOffset).getBigUint64(0, false));
-    expect(seqOf(ws.binary[0] as Uint8Array)).toBe(1);
-    expect(seqOf(ws.binary[1] as Uint8Array)).toBe(2);
+    expect(seqOf(ws.binary[0] as Uint8Array)).toBe(0);
+    expect(seqOf(ws.binary[1] as Uint8Array)).toBe(0);
   });
 
   it("permissionRequest puts the mediated argument VALUES on the wire", () => {
@@ -312,5 +318,99 @@ describe("createWsTurnEmitter — 2.0 wire contract", () => {
       throw new Error("socket closed");
     };
     expect(() => emitterFor(ws).textDelta("turn-1", "x")).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan 3 Task 10 — seq/epoch stamping.
+//
+// Wire-contract regression. Both client SDKs run ONE resume cursor
+// (shared/web-sdk/src/resume-cursor.ts, shared/mobile-sdk/.../ResumeCursor.kt)
+// and feed it from BOTH the JSON path and the binary path. If the gateway
+// ever draws JSON seqs and audio-header seqs from two counters, the client
+// silently drops roughly half the stream as "already applied". This pins the
+// single-seq-space invariant at the only place it can be violated.
+// ---------------------------------------------------------------------------
+
+interface SequencedFakeWs {
+  data: SessionData;
+  sentText: Record<string, unknown>[];
+  sentBinary: Uint8Array[];
+  send: (payload: string | Uint8Array) => void;
+}
+
+function sequencedFakeWs(epoch = 7): SequencedFakeWs {
+  const data = createEmptySessionData();
+  data.sessionId = "test-session";
+  data.journal = createFrameJournal({ maxBytes: 1_000_000 });
+  data.epoch = epoch;
+  const ws: SequencedFakeWs = {
+    data,
+    sentText: [],
+    sentBinary: [],
+    send(payload) {
+      if (typeof payload === "string") ws.sentText.push(JSON.parse(payload));
+      else ws.sentBinary.push(payload);
+    },
+  };
+  return ws;
+}
+
+function headerSeq(frame: Uint8Array): number {
+  return Number(new DataView(frame.buffer, frame.byteOffset, frame.byteLength).getBigUint64(0, false));
+}
+
+describe("createWsTurnEmitter — seq/epoch stamping (Task 10)", () => {
+  it("stamps every JSON frame with a monotonic seq and the connection epoch", () => {
+    const ws = sequencedFakeWs(7);
+    const emitter = createWsTurnEmitter(ws as unknown as ServerWebSocket<SessionData>);
+
+    emitter.turnStarted("turn-1", "user");
+    emitter.textDelta("turn-1", "hi");
+    emitter.turnCompleted("turn-1");
+
+    expect(ws.sentText.map((f) => f.seq)).toEqual([1, 2, 3]);
+    expect(ws.sentText.map((f) => f.epoch)).toEqual([7, 7, 7]);
+  });
+
+  it("draws JSON and binary audio seqs from ONE monotonic space", () => {
+    const ws = sequencedFakeWs();
+    const emitter = createWsTurnEmitter(ws as unknown as ServerWebSocket<SessionData>);
+
+    emitter.audioStart("turn-1", "opus", 48000); // seq 1 (JSON)
+    emitter.audioFrame("turn-1", new Uint8Array([1])); // seq 2 (binary)
+    emitter.audioFrame("turn-1", new Uint8Array([2])); // seq 3 (binary)
+    emitter.audioDone("turn-1"); // seq 4 (JSON)
+
+    expect(ws.sentText.map((f) => f.seq)).toEqual([1, 4]);
+    expect(ws.sentBinary.map(headerSeq)).toEqual([2, 3]);
+    expect(ws.sentBinary[0]?.byteLength).toBe(BINARY_HEADER_BYTES + 1);
+  });
+
+  it("journals every frame it sends so a later resume can replay them verbatim", () => {
+    const ws = sequencedFakeWs();
+    const emitter = createWsTurnEmitter(ws as unknown as ServerWebSocket<SessionData>);
+
+    emitter.turnStarted("turn-1", "user");
+    emitter.audioFrame("turn-1", new Uint8Array([9]));
+
+    const replayed = ws.data.journal?.since(0) ?? [];
+    expect(replayed.map((f) => f.seq)).toEqual([1, 2]);
+    expect(replayed.map((f) => f.kind)).toEqual(["text", "binary"]);
+    expect(JSON.parse(new TextDecoder().decode(replayed[0]?.bytes ?? new Uint8Array()))).toEqual(
+      ws.sentText[0] as Record<string, unknown>,
+    );
+  });
+
+  it("sends unstamped and unjournaled when the connection has no journal yet", () => {
+    const ws = sequencedFakeWs();
+    ws.data.journal = null;
+    ws.data.epoch = 0;
+    const emitter = createWsTurnEmitter(ws as unknown as ServerWebSocket<SessionData>);
+
+    emitter.turnStarted("turn-1", "user");
+
+    expect(ws.sentText[0]?.seq).toBeUndefined();
+    expect(ws.sentText[0]?.epoch).toBeUndefined();
   });
 });

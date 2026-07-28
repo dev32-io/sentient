@@ -3,6 +3,7 @@ import type { ServerWebSocket } from "bun";
 import type { UserPrincipal } from "../identity/user-principal.js";
 import type { PermissionBroker } from "../runtime/permission-broker.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
+import type { FrameJournal } from "./frame-journal.js";
 import type { SttSession } from "./stt-session.js";
 
 /**
@@ -68,6 +69,31 @@ export interface SessionData {
    * (ws-handlers.ts) and its transcript events land on `runtime.submit`.
    */
   stt: SttSession | null;
+  /**
+   * This connection's outbound frame journal (Plan 3 Task 10, spec §11
+   * slice 6). Acquired from `services.replayRegistry` in
+   * `handleSessionConfigure`, so it is null for every frame sent before
+   * then (auth.ok, auth-gate errors) — those go out unstamped and
+   * unjournaled, which is correct: the client has no cursor yet either.
+   * The OBJECT is owned by the registry, not by this connection — a
+   * resumed surface gets the same journal back and its seq counter simply
+   * continues, which is what makes replay contiguous across the socket
+   * boundary.
+   */
+  journal: FrameJournal | null;
+  /**
+   * Sequencing epoch for `journal`. Stamped on every outbound JSON frame so
+   * the client can tell a genuine seq gap from a stream restart. 0 until
+   * session.configure. Registry-global and never reused.
+   */
+  epoch: number;
+  /**
+   * `${userId}::${surfaceId}` — the registry key for `journal`. Held here so
+   * `cleanupSession` can release the journal into its retention window
+   * without re-deriving the key from a principal that may already be gone.
+   * null until session.configure.
+   */
+  replayKey: string | null;
 }
 
 export function createEmptySessionData(): SessionData {
@@ -81,6 +107,9 @@ export function createEmptySessionData(): SessionData {
     runtime: null,
     permissions: null,
     stt: null,
+    journal: null,
+    epoch: 0,
+    replayKey: null,
   };
 }
 

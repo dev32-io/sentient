@@ -44,11 +44,11 @@ const TEXT_PREVIEW_LEN = 120;
 export function createWsTurnEmitter(ws: ServerWebSocket<SessionData>): TurnEmitter {
   const sessionId = ws.data.sessionId;
 
-  // Binary audio frames carry a per-connection monotonic seq in their header.
-  // Task 10 replaces this local counter with the shared JSON+binary allocator
-  // (reconciliation R7) — until then audio is the only sequenced path, and it
-  // starts at 1 because both client SDKs treat seq 0 as "unsequenced".
-  let audioSeq = 0;
+  // Frames emitted this connection — LOG ONLY. The wire seq now comes from
+  // `ws.data.journal` inside `sendAudioFrame` (ws-send.ts) so JSON and
+  // binary share one monotonic space, which is what both client resume
+  // cursors assume.
+  let audioFramesSent = 0;
 
   // A tool call's start time, stamped on its FIRST update and read back by the
   // terminal one so `endedAtMs - startedAtMs` is a real duration. Without this
@@ -142,18 +142,18 @@ export function createWsTurnEmitter(ws: ServerWebSocket<SessionData>): TurnEmitt
     },
 
     audioFrame(turnId: string, bytes: Uint8Array) {
-      audioSeq += 1;
+      const seq = sendAudioFrame(ws, bytes);
+      audioFramesSent += 1;
       log.debug("turn-emitter.audio-frame", {
         sessionId,
         turnId,
-        seq: audioSeq,
+        seq,
         payloadBytes: bytes.byteLength,
       });
-      sendAudioFrame(ws, audioSeq, bytes);
     },
 
     audioDone(turnId: string) {
-      log.info("turn-emitter.audio-done", { sessionId, turnId });
+      log.info("turn-emitter.audio-done", { sessionId, turnId, framesSent: audioFramesSent });
       emit({ type: "turn.audio.done", turnId });
     },
 
