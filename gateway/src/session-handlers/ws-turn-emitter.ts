@@ -35,7 +35,7 @@ import type {
 } from "../runtime/turn-emitter.js";
 import type { CutoffKind } from "../store/entry-types.js";
 import type { SessionData } from "./ws-helpers.js";
-import { sendAudioFrame, sendFrame } from "./ws-send.js";
+import { sendAudioFrame, sendGatewayFrame } from "./ws-send.js";
 
 const log = getLog(["sentient", "ws", "turn-emitter"]);
 
@@ -50,8 +50,18 @@ export function createWsTurnEmitter(ws: ServerWebSocket<SessionData>): TurnEmitt
   // starts at 1 because both client SDKs treat seq 0 as "unsequenced".
   let audioSeq = 0;
 
+  // A tool call's start time, stamped on its FIRST update and read back by the
+  // terminal one so `endedAtMs - startedAtMs` is a real duration. Without this
+  // both fields get the same `Date.now()` and every tile renders 0ms — each
+  // frame is individually schema-valid, so nothing else catches it.
+  //
+  // Cleared on a terminal status. A BACKGROUND call never reaches one through
+  // this callback (its completion arrives as `delegation.progress`), so those
+  // entries are also cleared at turn end to stop the map growing.
+  const toolStartedAtMs = new Map<string, number>();
+
   function emit(frame: GatewayMessage): void {
-    sendFrame(ws, frame);
+    sendGatewayFrame(ws, frame);
   }
 
   return {
@@ -71,6 +81,12 @@ export function createWsTurnEmitter(ws: ServerWebSocket<SessionData>): TurnEmitt
     },
 
     toolUpdate(turnId: string, u: ToolUpdate) {
+      const now = Date.now();
+      const startedAtMs = toolStartedAtMs.get(u.toolCallId) ?? now;
+      if (!toolStartedAtMs.has(u.toolCallId)) toolStartedAtMs.set(u.toolCallId, now);
+      const isTerminal = u.status !== "running";
+      if (isTerminal) toolStartedAtMs.delete(u.toolCallId);
+
       log.debug("turn-emitter.tool-update", {
         sessionId,
         turnId,
@@ -78,8 +94,9 @@ export function createWsTurnEmitter(ws: ServerWebSocket<SessionData>): TurnEmitt
         toolName: u.toolName,
         status: u.status,
         taskId: u.taskId,
+        elapsedMs: now - startedAtMs,
       });
-      const now = Date.now();
+
       emit({
         type: "turn.tool.update",
         turnId,
@@ -92,8 +109,8 @@ export function createWsTurnEmitter(ws: ServerWebSocket<SessionData>): TurnEmitt
         // Already truncated upstream by react-loop.ts; "" when the loop had no
         // argument data to preview.
         argsPreview: u.argsPreview ?? "",
-        startedAtMs: now,
-        ...(u.status === "running" ? {} : { endedAtMs: now }),
+        startedAtMs,
+        ...(isTerminal ? { endedAtMs: now } : {}),
       });
     },
 

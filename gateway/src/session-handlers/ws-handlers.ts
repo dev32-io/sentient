@@ -125,10 +125,12 @@ export async function handleWebSocketMessage(
       return;
 
     default:
-      // audio.start / audio.end / tool.confirm / session.new /
+      // audio.start / audio.end / permission.response / session.new /
       // conversation.activate all required deleted infrastructure (input
-      // adapters, controllers, sessions handlers) or belong to Plan 3 (voice,
-      // multi-conversation, tool-confirm UI). Received but unhandled.
+      // adapters, controllers, sessions handlers) or belong to later Plan 3
+      // tasks: voice owns audio.* (Task 2), the permission PDP owns
+      // permission.response (Task 6), multi-conversation is unscheduled.
+      // Received but unhandled.
       log.debug("message-unhandled", { type: msg.type, reason: "plan 3" });
       return;
   }

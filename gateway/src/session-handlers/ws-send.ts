@@ -34,7 +34,7 @@ const BINARY_TYPE_AUDIO = 0x01;
  * Returns true when the bytes actually left; false on a schema violation or a
  * dead socket, so callers that care (audio drains) can stop early.
  */
-export function sendFrame(ws: ServerWebSocket<SessionData>, frame: GatewayMessage): boolean {
+export function sendGatewayFrame(ws: ServerWebSocket<SessionData>, frame: GatewayMessage): boolean {
   const parsed = gatewayMessageSchema.safeParse(frame);
   if (!parsed.success) {
     log.error("ws-send.schema-violation", {
@@ -71,14 +71,17 @@ export function sendFrame(ws: ServerWebSocket<SessionData>, frame: GatewayMessag
  * frames share ONE sequence space so a resuming client can feed both paths
  * into a single cursor (reconciliation R7). Task 10 owns that allocator.
  */
-export function sendAudioFrame(ws: ServerWebSocket<SessionData>, seq: number, payload: Uint8Array): boolean {
+export function encodeAudioFrame(seq: number, payload: Uint8Array): Uint8Array {
   const buf = new Uint8Array(BINARY_HEADER_BYTES + payload.byteLength);
   new DataView(buf.buffer).setBigUint64(0, BigInt(seq), false); // big-endian
   buf[8] = BINARY_TYPE_AUDIO;
   buf.set(payload, BINARY_HEADER_BYTES);
+  return buf;
+}
 
+export function sendAudioFrame(ws: ServerWebSocket<SessionData>, seq: number, payload: Uint8Array): boolean {
   try {
-    ws.send(buf);
+    ws.send(encodeAudioFrame(seq, payload));
     return true;
   } catch (err) {
     log.warn("ws-send.audio-write-failed", {

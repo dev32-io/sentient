@@ -58,7 +58,7 @@ ws.onmessage = (event) => {
       prompt();
       break;
 
-    case "response.text.delta":
+    case "turn.text.delta":
       if (!isStreaming) {
         process.stdout.write("\x1b[33msentient:\x1b[0m ");
         isStreaming = true;
@@ -66,10 +66,20 @@ ws.onmessage = (event) => {
       process.stdout.write(msg.text);
       break;
 
-    case "response.text.done":
+    case "turn.completed":
       process.stdout.write("\n\n");
       isStreaming = false;
       prompt();
+      break;
+
+    case "turn.aborted":
+      process.stdout.write(`\n  \x1b[31m[cut off: ${msg.cutoff}]\x1b[0m\n\n`);
+      isStreaming = false;
+      prompt();
+      break;
+
+    case "turn.tool.update":
+      console.info(`  \x1b[35m[tool]\x1b[0m ${msg.toolName} ${msg.status}`);
       break;
 
     case "pong":

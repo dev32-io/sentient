@@ -108,6 +108,36 @@ describe("createWsTurnEmitter — 2.0 wire contract", () => {
     expect(ws.sent[1]).toHaveProperty("endedAtMs");
   });
 
+  it("REGRESSION: startedAtMs is carried from the running update to the terminal one", async () => {
+    // The terminal frame must report when the call STARTED, not when it ended.
+    // Re-stamping Date.now() on every update leaves startedAtMs === endedAtMs,
+    // so every client tile renders a 0ms duration — and because each frame is
+    // individually schema-valid, nothing else catches it.
+    const ws = fakeWs();
+    const emitter = emitterFor(ws);
+    emitter.toolUpdate("turn-1", { toolCallId: "c1", toolName: "search", status: "running" });
+    await new Promise((r) => setTimeout(r, 12));
+    emitter.toolUpdate("turn-1", { toolCallId: "c1", toolName: "search", status: "done" });
+
+    const running = ws.sent[0] as { startedAtMs: number };
+    const terminal = ws.sent[1] as { startedAtMs: number; endedAtMs: number };
+    expect(terminal.startedAtMs).toBe(running.startedAtMs);
+    expect(terminal.endedAtMs).toBeGreaterThan(terminal.startedAtMs);
+  });
+
+  it("tracks two concurrent tool calls independently by toolCallId", () => {
+    const ws = fakeWs();
+    const emitter = emitterFor(ws);
+    emitter.toolUpdate("turn-1", { toolCallId: "c1", toolName: "search", status: "running" });
+    emitter.toolUpdate("turn-1", { toolCallId: "c2", toolName: "weather", status: "running" });
+    emitter.toolUpdate("turn-1", { toolCallId: "c1", toolName: "search", status: "done" });
+
+    const c1Running = ws.sent[0] as { startedAtMs: number };
+    const c1Done = ws.sent[2] as { toolCallId: string; startedAtMs: number };
+    expect(c1Done.toolCallId).toBe("c1");
+    expect(c1Done.startedAtMs).toBe(c1Running.startedAtMs);
+  });
+
   it("a tool update without argsPreview still satisfies the schema (falls back to empty)", () => {
     const ws = fakeWs();
     emitterFor(ws).toolUpdate("turn-1", { toolCallId: "c1", toolName: "search", status: "running" });
