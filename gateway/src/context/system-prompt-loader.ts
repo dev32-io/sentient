@@ -41,3 +41,21 @@ export function loadSystemPrompt(opts: LoadSystemPromptOptions): string {
 
   return parts.join("\n\n");
 }
+
+// Baked-in default for the compaction summarizer (spec §8). Read at module
+// init, exactly like DEFAULT_PERSONA above: a missing baked-in template is a
+// build error, and failing loudly at boot beats discovering it at the first
+// compaction, mid-conversation.
+export const DEFAULT_COMPACTION_SUMMARIZER = readFileSync(
+  join(GATEWAY_ROOT, "templates/prompts/compaction-summarizer.md"),
+  "utf8",
+).trim();
+
+/** Operator override first, baked-in template as the fallback — same
+ *  two-tier shape as `loadSystemPrompt`, so an operator can retune the
+ *  summarizer without a rebuild. */
+export function loadCompactionSummarizerPrompt(opts: { runtimeDir?: string } = {}): string {
+  const runtimeDir = opts.runtimeDir ?? GATEWAY_ROOT;
+  const override = tryRead(join(runtimeDir, "system_prompts", "compaction_summarizer.md"), "compaction-summarizer");
+  return override ?? DEFAULT_COMPACTION_SUMMARIZER;
+}
