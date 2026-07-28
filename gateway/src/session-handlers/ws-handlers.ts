@@ -2,6 +2,8 @@ import { clientMessageSchema } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { getLog } from "../logging/logger.js";
+import { createSttSession } from "./stt-session.js";
+import type { SttSession } from "./stt-session.js";
 import { handleAuthMessage, scheduleAuthTimeout } from "./ws-auth-gate.js";
 import type { SessionData } from "./ws-helpers.js";
 import { sendError } from "./ws-helpers.js";
@@ -37,16 +39,19 @@ export function openSession(ws: ServerWebSocket<SessionData>, services: GatewayS
 // ---------------------------------------------------------------------------
 // Message routing.
 //
-// The full cognitive-cycle message surface (text.input / audio.start /
-// audio.end / interrupt / session.new / conversation.activate /
-// user.preferences.patch) used to route into the Hermes-cycle brain purged
-// in an earlier task (see the sibling-directory deletions in that commit).
-// Plan 2 Task 10 rebuilds the text-only slice of it: `text.input` and
-// `interrupt` now route to `ws.data.runtime` (minted in
-// ws-session-configure.ts), which drives the native ReAct loop and streams
-// replies back through `WsTurnEmitter` (ws-turn-emitter.ts). audio.start /
-// audio.end / session.new / conversation.activate remain unhandled — voice
-// and multi-conversation routing are Plan 3.
+// `text.input` and `interrupt` route to `ws.data.runtime` (a SessionRuntime,
+// minted in ws-session-configure.ts), which drives the native ReAct loop and
+// streams replies back through `WsTurnEmitter` (ws-turn-emitter.ts).
+//
+// Voice (Plan 3 Task 2, spec §6) adds the audio path: `audio.start` /
+// `audio.end` drive this connection's `SttSession` (stt-session.ts), and
+// INBOUND binary frames are mic audio forwarded to it. Inbound and outbound
+// binary are separate paths — outbound TTS frames leave through the turn
+// emitter, never through this router.
+//
+// `session.new` / `conversation.activate` (multi-conversation) and
+// `tool.confirm` (superseded by `permission.response`, Task 6) are still
+// received-but-unhandled.
 // ---------------------------------------------------------------------------
 
 export async function handleWebSocketMessage(
@@ -54,8 +59,21 @@ export async function handleWebSocketMessage(
   message: string | Buffer,
   services: GatewayServices,
 ): Promise<void> {
-  // Binary frames had nowhere to go without the deleted audio input adapter.
-  if (typeof message !== "string") return;
+  // Inbound binary = mic audio → STT (spec §6). Never routed through the
+  // outbound emitter. Dropped before auth completes: unauthenticated bytes
+  // must not reach the STT service running on the operator's host.
+  if (typeof message !== "string") {
+    if (ws.data.authState !== "authed") {
+      log.warn("binary-frame-preauth", {
+        sessionId: ws.data.sessionId,
+        byteSize: message.byteLength,
+        reason: "audio frame arrived before auth completed",
+      });
+      return;
+    }
+    ws.data.stt?.pushFrame(message);
+    return;
+  }
 
   let parsed: unknown;
   try {
@@ -124,16 +142,48 @@ export async function handleWebSocketMessage(
       ws.data.runtime?.interrupt();
       return;
 
+    case "audio.start":
+      // The mic opened. Lazily dial STT (a text-only session never does) and
+      // relay the client's turn authority (manual = hold-to-talk).
+      ensureSttSession(ws, services)?.start(msg.turnMode);
+      return;
+
+    case "audio.end":
+      // PTT release / mic off — force-finalize any open STT turn now.
+      ws.data.stt?.end();
+      return;
+
     default:
-      // audio.start / audio.end / permission.response / session.new /
-      // conversation.activate all required deleted infrastructure (input
-      // adapters, controllers, sessions handlers) or belong to later Plan 3
-      // tasks: voice owns audio.* (Task 2), the permission PDP owns
-      // permission.response (Task 6), multi-conversation is unscheduled.
-      // Received but unhandled.
-      log.debug("message-unhandled", { type: msg.type, reason: "plan 3" });
+      // session.new / conversation.activate (multi-conversation) and
+      // tool.confirm (replaced by permission.response, Task 6) have no
+      // handler yet. Received but unhandled.
+      log.debug("message-unhandled", { type: msg.type, reason: "no handler in this slice" });
       return;
   }
+}
+
+/**
+ * Lazily mints this connection's STT uplink on the first `audio.start`.
+ * Returns null when the gateway has no `stt:` config block at all — a
+ * text-capable deployment, not an error. The runtime is read through a
+ * getter, not captured, so a re-`session.configure` that re-mints
+ * `ws.data.runtime` cannot strand transcripts on a dead runtime.
+ */
+function ensureSttSession(ws: ServerWebSocket<SessionData>, services: GatewayServices): SttSession | null {
+  if (ws.data.stt) return ws.data.stt;
+  if (!services.stt) {
+    log.warn("audio.start.no-stt", { sessionId: ws.data.sessionId, reason: "no stt: block in config.yaml" });
+    return null;
+  }
+  const session = createSttSession({
+    sessionId: ws.data.sessionId ?? "unbound",
+    factory: services.stt.adapterFactory,
+    config: services.stt.adapterConfig,
+    getRuntime: () => ws.data.runtime,
+  });
+  ws.data.stt = session;
+  log.info("stt-session-created", { sessionId: ws.data.sessionId });
+  return session;
 }
 
 // ---------------------------------------------------------------------------
@@ -148,8 +198,10 @@ function handleSessionEnd(ws: ServerWebSocket<SessionData>, services: GatewaySer
 
 /**
  * Tears down the connection-tracking state this file owns: the auth
- * timeout, the SessionManager registration, and (Plan 2 Task 10) the
- * per-session `SessionRuntime` minted in ws-session-configure.ts.
+ * timeout, the SessionManager registration, the per-session `SessionRuntime`
+ * minted in ws-session-configure.ts, and (Plan 3 Task 2) this connection's
+ * `SttSession` — closing it aborts its event stream and releases the socket
+ * to the STT service, which no other owner would ever do.
  * `runtime.dispose()` aborts any in-flight turn's AbortSignal and closes
  * the session's store handle — idempotent, so a socket that never reached
  * session.configure (runtime still null) is unaffected. There is no
@@ -167,6 +219,9 @@ export function cleanupSession(ws: ServerWebSocket<SessionData>, services: Gatew
 
   ws.data.runtime?.dispose();
   ws.data.runtime = null;
+
+  ws.data.stt?.close();
+  ws.data.stt = null;
 
   services.sessionManager.unbindUser(sessionId);
   services.sessionManager.removeSession(sessionId);

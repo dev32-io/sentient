@@ -35,6 +35,7 @@ function fakeWs(): FakeWs {
     grantedCapabilities: new Set(),
     clientType: "webui",
     runtime: null,
+    stt: null,
   };
   const ws: FakeWs = {
     data,

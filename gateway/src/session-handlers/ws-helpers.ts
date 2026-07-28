@@ -2,6 +2,7 @@ import type { ClientType } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import type { UserPrincipal } from "../identity/user-principal.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
+import type { SttSession } from "./stt-session.js";
 
 /**
  * Per-connection WS state. Post-purge minimal form (spec §9 Task 1) — holds
@@ -48,6 +49,13 @@ export interface SessionData {
    * `interrupt` routing (ws-handlers.ts) both no-op safely against null.
    */
   runtime: SessionRuntime | null;
+  /**
+   * The connection's STT uplink (Plan 3 Task 2, spec §6). Null until the
+   * client's first `audio.start` — a text-only session never dials the STT
+   * service. Owns one STTAdapter; inbound binary WS frames route into it
+   * (ws-handlers.ts) and its transcript events land on `runtime.submit`.
+   */
+  stt: SttSession | null;
 }
 
 export function createEmptySessionData(): SessionData {
@@ -59,6 +67,7 @@ export function createEmptySessionData(): SessionData {
     grantedCapabilities: new Set(),
     clientType: "webui",
     runtime: null,
+    stt: null,
   };
 }
 
