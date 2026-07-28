@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import type { Capability } from "../access/capability.js";
 import type { NewSessionEntry } from "./entry-types.js";
 import { openSessionStore } from "./session-store.js";
@@ -99,6 +99,23 @@ describe("SessionStore", () => {
     expect(rows[0]?.toolCallId).toBe("call_1");
     expect(rows[1]?.toolCallId).toBe("call_1");
     expect(rows[1]?.kind).toBe("tool_result");
+    store.close();
+  });
+
+  it("creates its owner's home dir when absent, then opens", () => {
+    // A freshly-created user whose home dir was never provisioned. The store
+    // must mkdir its own scoped root — not fail with "unable to open database
+    // file". Regression for the live-WS e2e where session.configure threw.
+    const freshRoot = `${ROOT}/u_bbbbbbbb`; // NOT pre-created above
+    const freshCap: Capability = Object.freeze({
+      ownerUserId: "u_bbbbbbbb",
+      resource: "session-store",
+      rootPath: freshRoot,
+    });
+    const store = openSessionStore(freshCap);
+    const appended = store.append(entry({ sessionId: "fresh", text: "hi" }));
+    expect(appended.seq).toBeGreaterThan(0);
+    expect(existsSync(freshRoot)).toBe(true);
     store.close();
   });
 

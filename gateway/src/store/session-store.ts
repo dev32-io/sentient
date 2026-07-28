@@ -8,6 +8,7 @@
 // directory. One file per user (spec §2.5, §2.6).
 
 import { Database } from "bun:sqlite";
+import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { type Capability, capabilityCoversPath } from "../access/capability.js";
 import { getLog } from "../logging/logger.js";
@@ -67,6 +68,14 @@ export function openSessionStore(cap: Capability): SessionStore {
   if (!capabilityCoversPath(cap, dbPath)) {
     throw new Error(`store path escapes capability scope: ${dbPath}`);
   }
+
+  // The owner's home dir may not exist yet — a session for a freshly-created
+  // user, or any deploy path that did not pre-provision the dir. Create it
+  // inside the capability's own scoped root (checked above) BEFORE SQLite
+  // opens the file: `new Database(create:true)` creates the DB file but never
+  // its parent dir, failing with "unable to open database file". Mirrors
+  // FileScope, which already mkdir's dirname on write.
+  mkdirSync(cap.rootPath, { recursive: true });
 
   const db = new Database(dbPath, { create: true });
   db.exec(STORE_DDL);
