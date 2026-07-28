@@ -95,7 +95,7 @@ class PrivacyGuardTest {
     /**
      * Exercises the REAL WsTransport inbound TEXT-frame path — the proven
      * chat-content leak site (WsTransport.routeText logged `raw` directly before
-     * the fix). A realistic assistant.message.delta JSON frame whose `delta` field
+     * the fix). A realistic turn.text.delta JSON frame whose `text` field
      * contains the secret is delivered through FakeWebSocketEngine so that
      * routeText runs and logs. The captured ring must contain ZERO chat text.
      *
@@ -111,10 +111,10 @@ class PrivacyGuardTest {
             captured.append(tag).append(' ').append(line).append('\n')
         }
 
-        // Realistic assistant.message.delta wire frame — this is the exact JSON
-        // shape the gateway sends. The `delta` field holds the chat content that
-        // was leaking into the diagnostic ring.
-        val frame = """{"type":"assistant.message.delta","cycleId":"c-ws-priv-1","delta":"$secret"}"""
+        // Realistic turn.text.delta wire frame — this is the exact JSON shape the
+        // gateway sends. The `text` field holds the chat content that was leaking
+        // into the diagnostic ring.
+        val frame = """{"type":"turn.text.delta","turnId":"t-ws-priv-1","text":"$secret"}"""
 
         val fake = FakeWebSocketEngine()
         val session = fake.open("wss://test/ws", allowSelfSignedDevHost = false)

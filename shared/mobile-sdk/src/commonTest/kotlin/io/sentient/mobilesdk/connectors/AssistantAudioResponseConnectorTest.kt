@@ -1,12 +1,12 @@
 // ---------------------------------------------------------------------------
 // AssistantAudioResponseConnectorTest — ported from web-sdk
 // assistant-audio-response-connector.test.ts. FSM/drop-guard contract:
-//   connector.audio.start → onAudioStart(cycleId), isReceiving=true, clears cancel
-//   binary frame while receiving && !cancelled → onAudioFrame(bytes, cycleId)
+//   turn.audio.start → onAudioStart(turnId), isReceiving=true, clears cancel
+//   binary frame while receiving && !cancelled → onAudioFrame(bytes, turnId)
 //   binary frame before start OR after cancel → dropped (no callback)
-//   connector.audio.done → isReceiving=false, onAudioDone (unless cancelled)
-//   playback.stop → isCancelled=true, isReceiving=false, onPlaybackStop(reason,cycleId)
-//   next connector.audio.start re-enables playback (clears cancel latch)
+//   turn.audio.done → isReceiving=false, onAudioDone (unless cancelled)
+//   playback.stop → isCancelled=true, isReceiving=false, onPlaybackStop(reason,turnId)
+//   next turn.audio.start re-enables playback (clears cancel latch)
 // This is the barge-in / interrupt drop-guard FSM → keeper per
 // .claude/rules/testing.md.
 //
@@ -34,13 +34,13 @@ class AssistantAudioResponseConnectorTest {
 
     private fun connector(sink: Sink = Sink()): Pair<AssistantAudioResponseConnector, Sink> =
         AssistantAudioResponseConnector(
-            onAudioStart = { cycleId, encoding, sampleRate ->
-                sink.started += cycleId
+            onAudioStart = { turnId, encoding, sampleRate ->
+                sink.started += turnId
                 sink.startMeta += encoding to sampleRate
             },
-            onAudioFrame = { bytes, cycleId -> sink.frames += bytes to cycleId },
+            onAudioFrame = { bytes, turnId -> sink.frames += bytes to turnId },
             onAudioDone = { sink.done += it },
-            onPlaybackStop = { reason, cycleId -> sink.stopped += reason to cycleId },
+            onPlaybackStop = { reason, turnId -> sink.stopped += reason to turnId },
         ) to sink
 
     @Test
@@ -49,31 +49,31 @@ class AssistantAudioResponseConnectorTest {
     }
 
     @Test
-    fun audio_start_calls_onAudioStart_with_cycleId_and_sets_receiving() {
+    fun audio_start_calls_onAudioStart_with_turnId_and_sets_receiving() {
         val (c, sink) = connector()
-        c.handle(ServerMessage.TurnAudioStart(turnId = "cycle-xyz"))
-        assertEquals(listOf("cycle-xyz"), sink.started)
+        c.handle(ServerMessage.TurnAudioStart(turnId = "turn-xyz"))
+        assertEquals(listOf("turn-xyz"), sink.started)
         assertTrue(c.isReceiving())
     }
 
     @Test
     fun audio_start_forwards_encoding_and_sampleRate_to_onAudioStart() {
         // JUSTIFIED DIVERGENCE from web-sdk: mobile SDK owns opus decode, so the
-        // connector must forward connector.audio.start's encoding + sampleRate.
+        // connector must forward turn.audio.start's encoding + sampleRate.
         val (c, sink) = connector()
         c.handle(ServerMessage.TurnAudioStart(turnId = "c1", encoding = "opus", sampleRate = 48000))
         assertEquals(listOf<Pair<String?, Int?>>("opus" to 48000), sink.startMeta)
     }
 
     @Test
-    fun binary_during_active_stream_calls_onAudioFrame_with_cycleId() {
+    fun binary_during_active_stream_calls_onAudioFrame_with_turnId() {
         val (c, sink) = connector()
-        c.handle(ServerMessage.TurnAudioStart(turnId = "cycle-123"))
+        c.handle(ServerMessage.TurnAudioStart(turnId = "turn-123"))
         val pcm = byteArrayOf(4, 5, 6)
         c.handleBinary(pcm)
         assertEquals(1, sink.frames.size)
         assertTrue(sink.frames[0].first.contentEquals(pcm))
-        assertEquals("cycle-123", sink.frames[0].second)
+        assertEquals("turn-123", sink.frames[0].second)
     }
 
     @Test
@@ -84,28 +84,28 @@ class AssistantAudioResponseConnectorTest {
     }
 
     @Test
-    fun audio_done_calls_onAudioDone_with_cycleId_and_clears_receiving() {
+    fun audio_done_calls_onAudioDone_with_turnId_and_clears_receiving() {
         val (c, sink) = connector()
-        c.handle(ServerMessage.TurnAudioStart(turnId = "cycle-abc"))
-        c.handle(ServerMessage.TurnAudioDone(turnId = "cycle-abc"))
-        assertEquals(listOf("cycle-abc"), sink.done)
+        c.handle(ServerMessage.TurnAudioStart(turnId = "turn-abc"))
+        c.handle(ServerMessage.TurnAudioDone(turnId = "turn-abc"))
+        assertEquals(listOf("turn-abc"), sink.done)
         assertTrue(!c.isReceiving())
     }
 
     @Test
-    fun audio_done_falls_back_to_active_cycleId_when_absent() {
+    fun audio_done_falls_back_to_active_turnId_when_absent() {
         val (c, sink) = connector()
-        c.handle(ServerMessage.TurnAudioStart(turnId = "cycle-fallback"))
+        c.handle(ServerMessage.TurnAudioStart(turnId = "turn-fallback"))
         c.handle(ServerMessage.TurnAudioDone(turnId = ""))
-        assertEquals(listOf("cycle-fallback"), sink.done)
+        assertEquals(listOf("turn-fallback"), sink.done)
     }
 
     @Test
     fun playback_stop_sets_cancel_latch_and_calls_onPlaybackStop() {
         val (c, sink) = connector()
-        c.handle(ServerMessage.TurnAudioStart(turnId = "cycle-1"))
-        c.handle(ServerMessage.PlaybackStop(turnId = "cycle-1", reason = "interrupt"))
-        assertEquals(listOf("interrupt" to "cycle-1"), sink.stopped)
+        c.handle(ServerMessage.TurnAudioStart(turnId = "turn-1"))
+        c.handle(ServerMessage.PlaybackStop(turnId = "turn-1", reason = "interrupt"))
+        assertEquals(listOf("interrupt" to "turn-1"), sink.stopped)
         assertTrue(c.isCancelled())
         assertTrue(!c.isReceiving())
     }
@@ -113,16 +113,16 @@ class AssistantAudioResponseConnectorTest {
     @Test
     fun playback_stop_defaults_reason_to_barge_in_when_absent() {
         val (c, sink) = connector()
-        c.handle(ServerMessage.TurnAudioStart(turnId = "cycle-1"))
-        c.handle(ServerMessage.PlaybackStop(turnId = "cycle-1", reason = ""))
-        assertEquals(listOf("barge-in" to "cycle-1"), sink.stopped)
+        c.handle(ServerMessage.TurnAudioStart(turnId = "turn-1"))
+        c.handle(ServerMessage.PlaybackStop(turnId = "turn-1", reason = ""))
+        assertEquals(listOf("barge-in" to "turn-1"), sink.stopped)
     }
 
     @Test
     fun binary_after_playback_stop_is_dropped() {
         val (c, sink) = connector()
-        c.handle(ServerMessage.TurnAudioStart(turnId = "cycle-1"))
-        c.handle(ServerMessage.PlaybackStop(turnId = "cycle-1", reason = "barge-in"))
+        c.handle(ServerMessage.TurnAudioStart(turnId = "turn-1"))
+        c.handle(ServerMessage.PlaybackStop(turnId = "turn-1", reason = "barge-in"))
         c.handleBinary(byteArrayOf(7, 8, 9))
         assertTrue(sink.frames.isEmpty(), "frames after playback.stop must be dropped until next audio.start")
     }
@@ -130,23 +130,23 @@ class AssistantAudioResponseConnectorTest {
     @Test
     fun audio_done_after_playback_stop_does_not_call_onAudioDone() {
         val (c, sink) = connector()
-        c.handle(ServerMessage.TurnAudioStart(turnId = "cycle-1"))
-        c.handle(ServerMessage.PlaybackStop(turnId = "cycle-1", reason = "barge-in"))
-        c.handle(ServerMessage.TurnAudioDone(turnId = "cycle-1"))
+        c.handle(ServerMessage.TurnAudioStart(turnId = "turn-1"))
+        c.handle(ServerMessage.PlaybackStop(turnId = "turn-1", reason = "barge-in"))
+        c.handle(ServerMessage.TurnAudioDone(turnId = "turn-1"))
         assertTrue(sink.done.isEmpty(), "done suppressed while cancelled")
     }
 
     @Test
     fun next_audio_start_clears_cancel_latch_and_re_enables_frames() {
         val (c, sink) = connector()
-        c.handle(ServerMessage.TurnAudioStart(turnId = "cycle-1"))
-        c.handle(ServerMessage.PlaybackStop(turnId = "cycle-1", reason = "barge-in"))
+        c.handle(ServerMessage.TurnAudioStart(turnId = "turn-1"))
+        c.handle(ServerMessage.PlaybackStop(turnId = "turn-1", reason = "barge-in"))
         // New stream — cancel latch cleared, frames flow again.
-        c.handle(ServerMessage.TurnAudioStart(turnId = "cycle-2"))
+        c.handle(ServerMessage.TurnAudioStart(turnId = "turn-2"))
         assertTrue(!c.isCancelled())
         c.handleBinary(byteArrayOf(1))
         assertEquals(1, sink.frames.size)
-        assertEquals("cycle-2", sink.frames[0].second)
+        assertEquals("turn-2", sink.frames[0].second)
     }
 
     @Test

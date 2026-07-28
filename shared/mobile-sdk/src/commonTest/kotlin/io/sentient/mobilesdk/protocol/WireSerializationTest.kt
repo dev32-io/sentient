@@ -222,7 +222,7 @@ class WireSerializationTest {
 
     @Test fun gateway_push_frame_seq_epoch_are_peelable() {
         // The SDK reads seq/epoch generically off the raw JSON (not per-variant).
-        val s = """{"type":"message.delta","cycleId":"c1","delta":"hi","seq":7,"epoch":2}"""
+        val s = """{"type":"turn.text.delta","turnId":"t1","text":"hi","seq":7,"epoch":2}"""
         val (seq, epoch) = WireJson.peelSeqEpoch(s)
         assertEquals(7L, seq)
         assertEquals(2L, epoch)

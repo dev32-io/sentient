@@ -155,7 +155,7 @@ class ConversationHistoryConnectorTest {
     }
 
     @Test
-    fun reattaches_frame_cycleId_onto_committed_assistant_entry() {
+    fun reattaches_frame_turnId_onto_committed_assistant_entry() {
         var emitted: ConversationFeedItem? = null
         val c = ConversationHistoryConnector(onEntry = { emitted = it })
 
@@ -168,7 +168,7 @@ class ConversationHistoryConnectorTest {
     }
 
     @Test
-    fun leaves_cycleId_null_when_frame_carries_none() {
+    fun leaves_turnId_null_when_frame_carries_none() {
         val c = ConversationHistoryConnector()
         c.handle(ServerMessage.ConversationSnapshot(items = emptyList()))
         c.handle(ServerMessage.ConversationEntry(assistantItem("hello")))
