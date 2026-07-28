@@ -35,6 +35,7 @@ function testConfig(maxIterations = 10): OrchestratorConfig {
       site_name: "Sentient",
     },
     loop: { max_iterations: maxIterations },
+    permission: { request_timeout_ms: 120000 },
     tools: { foreground_timeout_ms: 30000, max_concurrent_background_tasks: 50 },
     delegation: { frontmatter_dir: "./config/delegation", hermes_timeout_ms: 600000 },
     // OFF for every pre-existing case: compaction adds a second provider

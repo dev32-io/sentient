@@ -25,6 +25,19 @@ export const orchestratorConfigSchema = z.object({
     // forced content-only final answer.
     max_iterations: z.number().int().min(1).max(50).default(10),
   }),
+  permission: z
+    .object({
+      // Wall-clock deadline for a human answer to an L3 `confirm` prompt
+      // (ms). On expiry the request AUTO-DENIES (spec §7.1 — a timeout is
+      // never an implicit approval) and the model receives a "permission
+      // request timed out" tool result. 5000-600000; spec default 120000
+      // (2 minutes).
+      request_timeout_ms: z.number().int().min(5000).max(600000).default(120000),
+    })
+    // Block-level default: operator configs (`~/.sentient/gateway/config/config.yaml`)
+    // are edited in place and predate this key — a missing block must never
+    // brick boot for a gateway that was working yesterday.
+    .default({}),
   tools: z.object({
     // Per-tool-call deadline for a foreground MCP call (ms).
     foreground_timeout_ms: z.number().int().min(1000).max(120000).default(30000),

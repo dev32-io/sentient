@@ -123,6 +123,8 @@ orchestrator:
     site_name: Sentient                      # OpenRouter attribution header
   loop:
     max_iterations: 10                       # ReAct iteration cap (1-50)
+  permission:
+    request_timeout_ms: 120000               # confirm-prompt deadline before auto-deny (5000-600000)
   tools:
     foreground_timeout_ms: 30000             # per foreground tool call (1000-120000)
     max_concurrent_background_tasks: 50      # per session (1-500)
