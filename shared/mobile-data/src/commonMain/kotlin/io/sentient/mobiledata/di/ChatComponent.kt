@@ -11,6 +11,8 @@ import io.sentient.mobiledata.usecase.ObserveSessionsUseCase
 import io.sentient.mobiledata.usecase.RenameSessionUseCase
 import io.sentient.mobiledata.usecase.SendMessageUseCase
 import io.sentient.mobiledata.usecase.SwitchConversationUseCase
+import io.sentient.mobilesdk.connectors.DelegationSnapshotItem
+import io.sentient.mobilesdk.connectors.PermissionPrompt
 import io.sentient.mobilesdk.protocol.AudioPreferencesPatch
 import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.sdk.SentientSdk
@@ -61,6 +63,34 @@ open class ChatComponent(
         get() = conversationRepository.liveEvents
             .filterIsInstance<SdkEvent.ReopenFailed>()
             .map { }
+
+    /**
+     * Open L3 permission prompts (design §7.1) — the DI seam both platform ViewModels
+     * wrap. Continuous state, so a StateFlow: every value carries every still-open
+     * prompt, which makes conflation harmless. Thin passthrough, no accumulation.
+     */
+    val permissions: StateFlow<List<PermissionPrompt>> get() = sdk.permissions
+
+    /** Live background-delegation rows (design §5.4). Thin passthrough. */
+    val delegations: StateFlow<List<DelegationSnapshotItem>> get() = sdk.delegations
+
+    /**
+     * One-shot prompt arrivals off the SDK's NO-LOSS event stream. A VM that renders
+     * dialogs from a queue collects this; a VM that renders "the current prompt" reads
+     * [permissions]. Never fold a request away — a dropped prompt blocks a turn until
+     * the gateway's 2-minute timeout denies it.
+     */
+    val permissionRequests: Flow<PermissionPrompt>
+        get() = conversationRepository.liveEvents
+            .filterIsInstance<SdkEvent.PermissionRequested>()
+            .map { it.prompt }
+
+    /** One-shot resolutions (allowed | denied | timeout) — the dismiss signal. */
+    val permissionResolutions: Flow<SdkEvent.PermissionResolved>
+        get() = conversationRepository.liveEvents.filterIsInstance<SdkEvent.PermissionResolved>()
+
+    /** The user's Allow / Deny. Fail-closed: silence is never approval (§7.1). */
+    fun respondToPermission(requestId: String, approved: Boolean) = sdk.respondToPermission(requestId, approved)
 
     val observeChat = ObserveChatUseCase(conversationRepository, clock)
     val switchConversation = SwitchConversationUseCase(sessionsRepository)

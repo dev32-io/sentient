@@ -24,7 +24,10 @@ plugins {
 // release track (chore 0824423) and is no longer numerically equal to this
 // module's source version; "lockstep" from here on means bump-together cadence
 // on every mobile release, not equal digits.
-version = "0.2.0"
+// Bumped to 0.3.0: Sentient 2.0 wire rebase — turn.*/permission.*/delegation.progress
+// frames, cycleId→turnId across protocol/connectors/sdk, per-turn downlink audio queue
+// (§7.2: a new turn queues behind, never flushes), permission + delegation connectors.
+version = "0.3.0"
 
 kotlin {
     androidTarget {
