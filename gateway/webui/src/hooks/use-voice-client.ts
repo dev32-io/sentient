@@ -56,6 +56,7 @@ import {
 } from "../constants.ts";
 import { createAwaitingTracker } from "./awaiting-tracker.ts";
 import { attachToolsToAssistantMessages, deriveCycleStatus, deriveMessages } from "./cycle-helpers.ts";
+import { reducePermissionPrompt } from "./permission-helpers.ts";
 import { useTypewriterBuffer } from "./use-typewriter-buffer.ts";
 import { buildVoiceStatus, resolveGatewayUrl } from "./voice-status.ts";
 
@@ -508,17 +509,31 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     });
 
     // L3 `confirm` prompts (spec §5.3 / §7.1). The connector owns the pending
-    // set and is the single source of truth: it adds on `permission.request`,
-    // removes on `permission.resolved` (including the gateway's fail-closed
-    // 2-minute timeout) and on a sent response, and drops everything on
-    // detach. The signal below is a pure projection of that set — the oldest
-    // pending request, or null.
+    // set; `reducePermissionPrompt` is the ONLY function that moves the signal,
+    // so every open/close is one auditable, fail-closed transition.
     const permissionConnector = new PermissionConfirmConnector({
       onPending: (pending) => {
-        permissionRequest.value = pending[0] ?? null;
+        const head = pending[0];
+        // An empty set means the connector dropped everything — the request
+        // was answered, the gateway resolved it, or the socket detached. No
+        // decision can be inferred from that, so the dialog closes without
+        // ever implying an approval.
+        permissionRequest.value =
+          head === undefined
+            ? null
+            : reducePermissionPrompt(permissionRequest.peek(), { type: "request", request: head });
       },
       onResolved: (requestId, outcome) => {
+        // The gateway decided first — answered on another surface, or the
+        // fail-closed 2-minute timeout. The reducer dismisses the dialog only
+        // when the id matches the one on screen, so a stale or mismatched
+        // `permission.resolved` can never clobber a newer request.
         log.info("permission.resolved", { requestId, outcome });
+        permissionRequest.value = reducePermissionPrompt(permissionRequest.peek(), {
+          type: "resolved",
+          requestId,
+          outcome,
+        });
       },
     });
 
