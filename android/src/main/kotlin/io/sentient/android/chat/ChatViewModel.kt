@@ -17,10 +17,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.sentient.mobiledata.di.ChatComponent
 import io.sentient.mobiledata.outbox.OutboundCache
+import io.sentient.mobilesdk.connectors.PermissionPrompt
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.sdk.ConnectionState
 import io.sentient.mobilesdk.transport.SdkStatus
 import io.sentient.mobilesdk.voice.talk.TalkMode
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -38,6 +40,11 @@ class ChatViewModel(
 ) : ViewModel() {
     private val log = createLogger("android", "chat-viewmodel")
     private val cache = OutboundCache()
+
+    /** The active local-timeout-fallback job (see [armLocalTimeoutFallback]), or null.
+     *  Re-armed per prompt; cancelled the instant a newer emission or a user
+     *  response supersedes it. */
+    private var permissionTimeoutJob: Job? = null
 
     private val _state = MutableStateFlow(ChatUiState())
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
@@ -89,7 +96,14 @@ class ChatViewModel(
                 // the LIVE echo (model.reconciledPendingIds) from the in-memory timeline —
                 // NOT model.committed.pendingId (the committed twin may carry it null).
                 model.reconciledPendingIds.forEach(cache::remove)
-                _state.value = ChatUiState(model = model)
+                // Rebuild from the model, but carry the permission gate across: it is a
+                // DECISION the user must answer (spec §7.1), not a slice derived from the
+                // chat model. Wholesale replacement here would dismiss an open dialog on
+                // the next streamed token or tool-status tick.
+                _state.value = ChatUiState(
+                    model = model,
+                    pendingPermissionRequest = _state.value.pendingPermissionRequest,
+                )
             }
         }
         // Drain the outbox on every READY emission AND sweep unacked timeouts. Both
@@ -125,6 +139,63 @@ class ChatViewModel(
                     log.debug("reopen-failed.notice.auto-dismiss")
                     _state.value = _state.value.copy(reopenFailedNotice = null)
                 }
+            }
+        }
+        startPermissionCollecting()
+    }
+
+    /**
+     * Dedicated collector for the SDK's open-permission-prompt list (design spec
+     * §7.1) — a SEPARATE loop from every other collector in [init], never folded
+     * into [ChatComponent.reopenFailed]'s or any other block. The connector already
+     * carries the single-outcome-per-requestId invariant (it removes a prompt on
+     * the user's response AND on the gateway's `permission.resolved`), so this
+     * collector just mirrors the head of that list into [ChatUiState] and arms the
+     * defensive local-timeout fallback per prompt. Head-of-list is "the current
+     * prompt": SessionRuntime blocks the turn on one at a time, so the list holds
+     * more than one only transiently.
+     */
+    private fun startPermissionCollecting() {
+        viewModelScope.launch {
+            component.permissions.collect { open ->
+                val pending = open.firstOrNull()
+                val previous = _state.value.pendingPermissionRequest
+                permissionTimeoutJob?.cancel()
+                // Log the TRANSITION only — the list re-emits (and replays its empty
+                // initial value on every VM build) without the head prompt changing.
+                // toolName is a fixed MCP-route identifier, not user content. NEVER log
+                // `description` or `args` — those are chat content (PrivacyGuardTest).
+                if (previous?.requestId != pending?.requestId) {
+                    log.info(
+                        "permission.pending.changed",
+                        mapOf(
+                            "hasPending" to (pending != null),
+                            "toolName" to (pending?.toolName ?: "<none>"),
+                            "open" to open.size,
+                        ),
+                    )
+                }
+                _state.value = _state.value.copy(pendingPermissionRequest = pending)
+                if (pending != null) armLocalTimeoutFallback(pending)
+            }
+        }
+    }
+
+    /**
+     * Defensive UI-only backstop (design spec §7.1): if neither the user's own tap
+     * nor the gateway's `permission.resolved` frame clears this prompt by its
+     * `expiresAtMs`, clear it locally so the dialog can never hang forever on a
+     * lost/delayed frame. NEVER an approval or a denial — nothing is sent to the
+     * server from this path; by the time it fires the gateway's own matching timeout
+     * has already fail-closed denied the tool call server-side. Guarded by
+     * [shouldClearOnLocalTimeout] against a stale fire clobbering a newer request.
+     */
+    private fun armLocalTimeoutFallback(request: PermissionPrompt) {
+        permissionTimeoutJob = viewModelScope.launch {
+            delay((request.expiresAtMs - System.currentTimeMillis()).coerceAtLeast(0))
+            if (shouldClearOnLocalTimeout(_state.value.pendingPermissionRequest, request.requestId)) {
+                log.warn("permission.local-timeout-fallback", mapOf("requestId" to request.requestId))
+                _state.value = _state.value.copy(pendingPermissionRequest = null)
             }
         }
     }
@@ -203,6 +274,23 @@ class ChatViewModel(
     fun dismissReopenFailedNotice() {
         log.debug("reopen-failed.notice.dismissed")
         _state.value = _state.value.copy(reopenFailedNotice = null)
+    }
+
+    /** User tapped Allow on the permission-prompt dialog (design spec §7.1). */
+    fun allowPermission() = respondToPermission(approved = true)
+
+    /** User tapped Deny on the permission-prompt dialog (design spec §7.1). */
+    fun denyPermission() = respondToPermission(approved = false)
+
+    private fun respondToPermission(approved: Boolean) {
+        val requestId = _state.value.pendingPermissionRequest?.requestId ?: return
+        permissionTimeoutJob?.cancel()
+        log.info("permission.response.sent", mapOf("requestId" to requestId, "approved" to approved))
+        // Optimistic local clear, ahead of the round trip — same shape as the
+        // OutboundCache's optimistic sends. The connector drops the prompt from its
+        // open list too, so the mirrored StateFlow converges on the same value.
+        _state.value = _state.value.copy(pendingPermissionRequest = null)
+        component.respondToPermission(requestId, approved)
     }
 
     companion object {
