@@ -4,6 +4,7 @@ import type { OrchestratorConfig } from "@sentient/config";
 import { createAccessManager } from "../access/access-manager.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
 import type { ProviderClient, ProviderRequest, ProviderStreamChunk } from "../provider/provider-client.js";
+import type { CutoffKind } from "../store/entry-types.js";
 import { openSessionStore } from "../store/session-store.js";
 import type { BackgroundRegistry } from "../tools/background-registry.js";
 import type { BackgroundToolRunner, ToolBroker } from "../tools/tool-broker.js";
@@ -99,6 +100,8 @@ function noopBroker(): FakeBroker {
 interface RecordedEvent {
   type: "turnStarted" | "textDelta" | "toolUpdate" | "turnCompleted" | "turnAborted";
   turnId: string;
+  /** Only ever set on a `turnAborted` event — the wire's cutoff kind. */
+  cutoff?: CutoffKind;
 }
 
 interface RecordingEmitter extends TurnEmitter {
@@ -113,7 +116,7 @@ function recordingEmitter(): RecordingEmitter {
     textDelta: (turnId) => events.push({ type: "textDelta", turnId }),
     toolUpdate: (turnId) => events.push({ type: "toolUpdate", turnId }),
     turnCompleted: (turnId) => events.push({ type: "turnCompleted", turnId }),
-    turnAborted: (turnId) => events.push({ type: "turnAborted", turnId }),
+    turnAborted: (turnId, cutoff) => events.push({ type: "turnAborted", turnId, cutoff }),
     // Not part of any assertion in this file — SessionRuntime never drives
     // these (audio is the voice pipeline's, permission/delegation the PDP's
     // and broker's). Present only to satisfy the TurnEmitter contract.
@@ -1191,6 +1194,51 @@ describe("SessionRuntime — voice fork: the turn's own AbortSignal drives TTS",
     runtime.interrupt();
 
     expect(voice.calls[0]?.signal.aborted).toBe(true);
+
+    await waitUntilIdle(runtime);
+    runtime.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// turn.aborted producer (spec §4.7, Plan 3 Task 6). `cancellation.ts` commits
+// the cutoff-stamped entry and calls `emitter.turnAborted`; this pins the
+// PRODUCER end — that the frame actually reaches the emitter, carries the
+// cutoff kind, and fires exactly ONCE for a repeated gesture — so a future
+// refactor of the cutoff path cannot silently go log-only again.
+// ---------------------------------------------------------------------------
+
+describe("SessionRuntime — turn.aborted producer", () => {
+  it("fires turnAborted exactly once with cutoff=interrupt for the in-flight turn", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/abort-frame` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    // Streams one delta then blocks on the turn's own AbortSignal, so the
+    // turn is reliably mid-flight when interrupt() lands.
+    const provider = partialReplyThenHangProvider("thinking");
+    const emitter = recordingEmitter();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "session-abort",
+      accessManager: am,
+      provider,
+      broker: fakeBrokerWithBackground(spyBackgroundRegistry()),
+      emitter,
+      systemPrompt: "test",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "hello" });
+    await waitFor(() => emitter.events.some((e) => e.type === "textDelta"));
+
+    runtime.interrupt();
+    runtime.interrupt(); // idempotent — must NOT produce a second frame
+
+    const aborted = emitter.events.filter((e) => e.type === "turnAborted");
+    expect(aborted).toHaveLength(1);
+    expect(aborted[0]?.cutoff).toBe("interrupt");
+    expect(emitter.events.filter((e) => e.type === "turnCompleted")).toHaveLength(0);
 
     await waitUntilIdle(runtime);
     runtime.dispose();

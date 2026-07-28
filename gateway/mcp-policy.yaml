@@ -19,3 +19,12 @@ rules:
     condition: 'role == "child"'
     action: deny
     reason: "Audio control restricted for child role"
+
+  # Side-effecting Home Assistant call → real permission prompt (spec §2.2's
+  # write/side-effecting tier). This is the rule the permission E2E cases
+  # drive; `ha_get_*` reads stay in the low-risk allow tier with no rule.
+  - name: confirm_ha_service_call
+    tool: ha_call_service
+    condition: 'tool == "ha_call_service"'
+    action: confirm
+    reason: "Calling a Home Assistant service changes device state"
