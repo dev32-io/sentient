@@ -2,6 +2,7 @@ package io.sentient.android.chat
 
 import io.sentient.mobiledata.model.ChatModel
 import io.sentient.mobiledata.result.SentientResult
+import io.sentient.mobilesdk.connectors.PermissionPrompt
 import io.sentient.mobilesdk.result.RetryPolicy
 
 data class ErrorBanner(val text: String, val canRetry: Boolean)
@@ -20,6 +21,17 @@ data class ChatUiState(
      * failures); they are independent UI elements.
      */
     val reopenFailedNotice: String? = null,
+    /**
+     * Outstanding L3 permission-confirm prompt (design spec §7.1/§5.3), or null.
+     * Mirrors the head of `ChatComponent.permissions` (the SDK's still-open prompt
+     * list — SessionRuntime blocks the turn on one prompt at a time) via
+     * ChatViewModel.startPermissionCollecting; cleared optimistically on Allow/Deny
+     * or when that list itself empties (server `permission.resolved`, any outcome).
+     * UNLIKE [reopenFailedNotice], this is a decision gate, not a passive notice —
+     * see ChatViewModel.armLocalTimeoutFallback for the one place a LOCAL clear can
+     * also happen, and [shouldClearOnLocalTimeout] for the invariant that guards it.
+     */
+    val pendingPermissionRequest: PermissionPrompt? = null,
 ) {
     /**
      * True while an existing-session switch is loading its history snapshot — the
@@ -37,3 +49,13 @@ fun reduceChatUi(prev: ChatUiState, result: SentientResult<ChatModel>): ChatUiSt
         banner = ErrorBanner(result.error.userMessage, canRetry = result.error.retry != RetryPolicy.None),
     )
 }
+
+/**
+ * Guards ChatViewModel's local-timeout-fallback clearing decision against a stale
+ * job firing after a NEWER request has replaced the one it was armed for (design
+ * spec §7.1). Display-only: this decides nothing security-relevant — only whether
+ * the LOCAL dialog should still be told to go away. Mirrors Task 9's iOS
+ * `PermissionPromptFSM.reduce(..., .localTimeoutFired)` guard.
+ */
+internal fun shouldClearOnLocalTimeout(current: PermissionPrompt?, firedForRequestId: String): Boolean =
+    current?.requestId == firedForRequestId
