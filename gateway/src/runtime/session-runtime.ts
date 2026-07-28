@@ -51,10 +51,18 @@
 // startable. The same holds for the back-to-back restart inside
 // `onTurnSettled`: clearing `inFlight` and deciding whether to start the
 // next turn happen in one synchronous continuation.
+//
+// Compaction (spec §8/§3.4) hangs off the settle path, not the loop: the
+// marker is appended after the turn's terminal frame and before `inFlight`
+// clears. That ordering is required, not stylistic — model-projection.ts
+// slices positionally from the latest marker, so a marker is only truthful
+// when the store's tail IS its boundary, which is only true between turns.
+// See runtime/compaction.ts's header.
 
 import type { OrchestratorConfig } from "@sentient/config";
 import type { TurnTrigger } from "@sentient/protocol";
 import type { AccessManager } from "../access/access-manager.js";
+import { loadCompactionSummarizerPrompt } from "../context/system-prompt-loader.js";
 import type { UserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
 import type { ProviderClient } from "../provider/provider-client.js";
@@ -65,10 +73,12 @@ import type { ToolBroker } from "../tools/tool-broker.js";
 import type { UserId } from "../user-auth/user-id.js";
 import type { CancellableTurn } from "./cancellation.js";
 import { createCancellationControllers } from "./cancellation.js";
+import { maybeCompact } from "./compaction.js";
 import type { ReactLoopDeps } from "./react-loop.js";
 import { runTurn } from "./react-loop.js";
 import type { Stimulus } from "./stimulus.js";
 import type { TurnEmitter } from "./turn-emitter.js";
+import type { TurnVoice, TurnVoiceStream } from "./turn-voice.js";
 
 const log = getLog(["sentient", "runtime", "session-runtime"]);
 
@@ -77,6 +87,11 @@ const log = getLog(["sentient", "runtime", "session-runtime"]);
  *  / tool_result / system / compaction: those are always the loop's OWN
  *  output (self-output must never re-trigger a turn). */
 const TURN_TRIGGER_KINDS = new Set<SessionEntry["kind"]>(["user", "trigger"]);
+
+// Resolved once at module load (operator override → baked-in template),
+// matching system-prompt-loader.ts's DEFAULT_PERSONA precedent: a missing
+// baked-in template is a boot-time failure, not a per-turn surprise.
+const COMPACTION_SUMMARIZER_PROMPT = loadCompactionSummarizerPrompt();
 
 export interface SessionRuntime {
   readonly userId: UserId;
@@ -114,6 +129,13 @@ export interface SessionRuntimeDeps {
   emitter: TurnEmitter;
   systemPrompt: string;
   config: OrchestratorConfig;
+  /**
+   * This session's TTS fork (spec §6). Built at the WS layer and handed in
+   * so the turn's OWN AbortController drives it — see turn-voice.ts's header
+   * for why a TTS controller minted anywhere else would survive barge-in.
+   * Null/absent for text-only sessions (no `tts:` config, headless harness).
+   */
+  voice?: TurnVoice | null;
 }
 
 interface InFlightTurn {
@@ -128,6 +150,8 @@ interface InFlightTurn {
    *  already settled (see cancellation.ts's `abortTurn`), never re-commit
    *  its text or fire a spurious `turnAborted`. */
   settled: boolean;
+  /** This turn's TTS text sink, or null when the session is text-only. */
+  speech: TurnVoiceStream | null;
 }
 
 function blankEntry(sessionId: string, turnId: string): Omit<NewSessionEntry, "kind"> {
@@ -158,6 +182,7 @@ function stimulusText(stimulus: Stimulus): string {
 
 export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   const { principal, sessionId, accessManager, provider, broker, emitter, systemPrompt, config } = deps;
+  const voice = deps.voice ?? null;
   const userId = principal.userId;
 
   const cap = accessManager.grant(principal, "session-store");
@@ -220,8 +245,19 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     });
   }
 
-  function onTurnSettled(turnId: string, result: { completed: boolean; iterations: number }): void {
-    inFlight = null;
+  async function onTurnSettled(
+    turnId: string,
+    result: { completed: boolean; iterations: number },
+    signal: AbortSignal,
+  ): Promise<void> {
+    // No more deltas for this turn — let the synthesizer finalize its tail.
+    // Deliberately BEFORE the compaction await below: holding the turn's last
+    // spoken words behind a summarizer round trip would stall the reply the
+    // user is listening to. On an aborted turn this is already a no-op (the
+    // abort closed the text queue — see turn-voice.ts's createChunkQueue).
+    const speech = inFlight?.turnId === turnId ? inFlight.speech : null;
+    speech?.end();
+
     log.info("session-runtime.turn.end", {
       userId,
       sessionId,
@@ -238,6 +274,47 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
       // the AbortController the abort came through.
       log.warn("session-runtime.turn.not-completed", { userId, sessionId, turnId, iterations: result.iterations });
     }
+
+    // Compaction (spec §8, §3.4) runs HERE, in the one window where it is
+    // safe, and nowhere else:
+    //  - AFTER the terminal frame above, so the client never waits on a
+    //    summarizer round trip to see its turn complete;
+    //  - BEFORE `inFlight` is cleared, so the one-turn-at-a-time lock still
+    //    holds and no new turn can start over a half-written model window.
+    //    A `submit()` landing in this window still just appends and returns
+    //    (the existing steer path) and is picked up by the next-turn-trigger
+    //    check below — and compaction.ts's own race guard refuses to append
+    //    a marker over it.
+    // Cancellation invariants are unaffected by the longer in-flight window:
+    // a naturally-completed turn is already `settled: true` and an aborted
+    // one already has `signal.aborted`, so cancellation.ts's
+    // `signal.aborted || turn.settled` guard no-ops either way (it still
+    // reaches interrupt's unconditional `background.cancelAll()`).
+    if (!disposed) {
+      try {
+        await maybeCompact({
+          store,
+          provider,
+          sessionId,
+          userId,
+          turnId,
+          config: config.compaction,
+          summarizerPrompt: COMPACTION_SUMMARIZER_PROMPT,
+          signal,
+        });
+      } catch (err) {
+        // maybeCompact's contract is "never throws" — a backstop only, so a
+        // bug there can never wedge the one-turn guard open forever.
+        log.error("session-runtime.compaction.threw", {
+          userId,
+          sessionId,
+          turnId,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    inFlight = null;
 
     if (disposed) {
       log.debug("session-runtime.turn.settled-after-dispose", { userId, sessionId, turnId });
@@ -268,7 +345,10 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     // so the running (or about-to-run) turn absorbs it via steer.
     if (inFlight !== null) return;
     const controller = new AbortController();
-    inFlight = { turnId, controller, settled: false };
+    // The turn's own signal drives TTS — barge-in/interrupt abort it and the
+    // audio dies with the turn, with no extra cancellation path (spec §4.7).
+    const speech = voice ? voice.begin(turnId, controller.signal) : null;
+    inFlight = { turnId, controller, settled: false, speech };
     // Synchronous snapshot, no await between this and the `runTurn` call
     // below — guarantees the turn's first iteration sees everything ≤ this.
     lastProcessedSeq = currentMaxSeq();
@@ -287,6 +367,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
       onTextDelta: (id, text) => {
         turnText += text;
         emitter.textDelta(id, text);
+        speech?.pushText(text);
       },
       onToolUpdate: (id, u) => {
         // Any onToolUpdate call is preceded by the loop committing this
@@ -296,6 +377,11 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
         // (if any) start counting fresh.
         turnText = "";
         emitter.toolUpdate(id, u);
+        // Flush what local-tts has buffered so a short pre-tool line is
+        // spoken now, not after the tool round-trip. `onToolUpdate` fires on
+        // EVERY status transition; `flush` is idempotent per toolCallId
+        // (turn-voice.ts) so a tool call flushes exactly once.
+        speech?.flush(u.toolCallId);
       },
       onTurnCommitting: (id) => {
         // Fires synchronously right after react-loop.ts appends the terminal
@@ -313,7 +399,9 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     };
 
     runTurn(loopDeps, { turnId, signal: controller.signal }).then(
-      (result) => onTurnSettled(turnId, result),
+      (result) => {
+        void onTurnSettled(turnId, result, controller.signal);
+      },
       (err: unknown) => {
         // react-loop.ts's contract is "never throw" — this is a defensive
         // backstop only, so a bug elsewhere can never wedge the one-turn
@@ -324,7 +412,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
           turnId,
           reason: err instanceof Error ? err.message : String(err),
         });
-        onTurnSettled(turnId, { completed: false, iterations: 0 });
+        void onTurnSettled(turnId, { completed: false, iterations: 0 }, controller.signal);
       },
     );
   }
