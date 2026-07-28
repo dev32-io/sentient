@@ -35,7 +35,7 @@ function makeInvocation(
   args: Record<string, unknown>,
   signal: AbortSignal = new AbortController().signal,
 ): ToolInvocation {
-  return { toolCallId: "call-1", name: "delegateTask", args, signal };
+  return { toolCallId: "call-1", name: "delegateTask", args, signal, turnId: "turn-1" };
 }
 
 describe("delegateTask definition", () => {

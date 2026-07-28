@@ -8,22 +8,27 @@
 // cannot reach `mcp.callTool` or a `BackgroundToolRunner.run`.
 //
 // Fail-closed: `policy-engine.ts` itself fails OPEN (no matching rule →
-// allow) and treats `confirm` as an implementation detail with no UI behind
-// it yet. This broker closes that gap for `confirm` — it calls the injected
-// `requestConfirm`, and Plan 2's composition root wires a default that
-// always returns `false` (deny), so an unconfirmed side-effecting tool is
-// BLOCKED, never silently run. Plan 3 replaces that default with a real
-// permission-prompt UI without touching this file.
+// allow) and treats `confirm` as an implementation detail. This broker
+// closes that gap — it calls the injected `requestConfirm`, which Plan 3's
+// composition root binds to the connection's `PermissionBroker`
+// (runtime/permission-broker.ts), so an unconfirmed side-effecting tool is
+// BLOCKED, never silently run. Three outcomes reach a two-valued seam: an
+// explicit human answer RESOLVES true/false, and an UNANSWERABLE request
+// (timeout, socket close, turn abort) REJECTS with `ConfirmUnavailableError`
+// whose message is forwarded to the model verbatim as the deny reason. Any
+// other throw is a bug in the hook and stays opaque ("confirmation error"),
+// so an internal error string never enters the model's context.
 //
 // `store: SessionStore` is accepted for interface parity with the wider
 // deps-threading pattern (composition root, Task 9) but is NOT used to
 // append tool_call/tool_result here. Per spec §4.3's loop steps and Task
 // 6's brief ("for each call, broker.dispatch ... loop appends
 // tool_call+tool_result"), that append is the ReAct loop's job — it owns
-// `turnId`, which `ToolInvocation` (Task 3, locked) does not carry and
-// which `SessionEntry` requires on every row. Giving the append to the
-// loop also keeps this file focused on the one thing it must get right:
-// the PDP choke point.
+// turn semantics. `ToolInvocation` now carries `turnId`, but ONLY so
+// background dispatch can key its `delegation.progress` frames to a turn;
+// that field is read for frame correlation and never for a store write.
+// Keeping the append in the loop keeps this file focused on the one thing
+// it must get right: the PDP choke point.
 //
 // `sessionChannel` is hardcoded to "text": Plan 2 walks text-only
 // end-to-end (voice/TTS lands in Plan 3). When a session gains a real
@@ -38,11 +43,24 @@ import type { SessionStore } from "../store/session-store.js";
 import { createBackgroundRegistry } from "./background-registry.js";
 import type { BackgroundRegistry } from "./background-registry.js";
 import type { McpClient } from "./mcp-client.js";
-import type { PdpDecision, ToolDefinition, ToolInvocation, ToolResult } from "./tool-types.js";
+import { ConfirmUnavailableError } from "./tool-types.js";
+import type { DelegationProgress, PdpDecision, ToolDefinition, ToolInvocation, ToolResult } from "./tool-types.js";
 
 const log = getLog(["sentient", "tools", "tool-broker"]);
 
 const TOO_MANY_BACKGROUND_TASKS = "too many running tasks";
+
+/** Client-facing failure-note budget on a `delegation.progress` error frame.
+ *  A tile shows a hint, never the delegated worker's full output. */
+const NOTE_PREVIEW_LEN = 120;
+
+/** `delegateTask`'s worker name; any other background tool reports under its
+ *  own tool name. Never throws on a malformed `args` — the guard/runner is
+ *  what rejects a bad agent, not this display-only derivation. */
+function delegationAgent(inv: ToolInvocation): string {
+  const agent = inv.args.agent;
+  return typeof agent === "string" && agent.length > 0 ? agent : inv.name;
+}
 
 /** A background tool's execution unit (e.g. `delegateTask`, Task 5). `run`
  *  starts the work immediately and returns a cancel handle (registered in
@@ -111,13 +129,24 @@ export interface ToolBrokerDeps {
   /** name → runner. `delegateTask` (Task 5) registers itself here. */
   backgroundTools: Map<string, BackgroundToolRunner>;
   config: OrchestratorConfig["tools"];
-  /** Resolves an L3 `confirm` decision. Plan 3 wires real client UI; Plan
-   *  2's default always resolves `false` (deny) — see the file header. */
+  /** Resolves an L3 `confirm` decision. Plan 3's composition root binds this
+   *  to the connection's `PermissionBroker` (runtime/permission-broker.ts):
+   *  it resolves `true`/`false` on a human answer and REJECTS with
+   *  `ConfirmUnavailableError` when the prompt could not be answered at all.
+   *  Either way the call fails closed — see `resolveDecision` below. */
   requestConfirm: (inv: ToolInvocation, reason: string) => Promise<boolean>;
+  /** Fired at both ends of a background task's life (spec §5.4 / §7): once
+   *  with `status: "running"` the moment `dispatch` hands back a `{taskId}`,
+   *  and once with `done`/`error` when the runner's promise settles. The
+   *  composition root binds this to the session's `TurnEmitter`, which puts
+   *  it on the wire as `delegation.progress`. Optional for the same reason
+   *  `setBackgroundCompletionSink` is late-bound — a headless/dev broker has
+   *  no client — but an UNSET sink is logged once per task, never silent. */
+  onDelegationProgress?: (p: DelegationProgress) => void;
 }
 
 export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
-  const { mcp, policy, principal, sessionId, backgroundTools, config, requestConfirm } = deps;
+  const { mcp, policy, principal, sessionId, backgroundTools, config, requestConfirm, onDelegationProgress } = deps;
   const background = createBackgroundRegistry();
   // Late-bound (see `ToolBroker.setBackgroundCompletionSink`'s doc comment
   // for why this can't be a constructor dep). `null` until the composition
@@ -197,14 +226,23 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     let confirmed: boolean;
     try {
       confirmed = await requestConfirm(inv, reason);
-    } catch {
+    } catch (err) {
+      // Fail-closed either way — the ONLY difference is what the model is
+      // told. `ConfirmUnavailableError` is the confirm hook's deliberate
+      // "nobody could answer this" signal (timeout / socket closed / turn
+      // aborted, see runtime/permission-broker.ts) and its message is
+      // model-facing copy by design. Every other throw is a bug in the hook:
+      // report it opaquely so an internal error string never enters the
+      // model's context.
+      const denyReason = err instanceof ConfirmUnavailableError ? err.message : "confirmation error";
       log.warn("tool-broker.pdp.confirm-error", {
         sessionId,
         tool: inv.name,
         toolCallId: inv.toolCallId,
-        reason: "confirm hook threw — failing closed",
+        unavailable: err instanceof ConfirmUnavailableError,
+        reason: denyReason,
       });
-      return { action: "deny", reason: "confirmation error" };
+      return { action: "deny", reason: denyReason };
     }
     log.info("tool-broker.pdp.confirm-resolved", {
       sessionId,
@@ -261,6 +299,18 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
       taskId,
     });
 
+    const agent = delegationAgent(inv);
+    if (onDelegationProgress) {
+      onDelegationProgress({ taskId, turnId: inv.turnId, agent, status: "running" });
+    } else {
+      log.warn("tool-broker.dispatch.background.no-progress-sink", {
+        sessionId,
+        tool: inv.name,
+        taskId,
+        reason: "onDelegationProgress was not wired — client sees no delegation tile for this task",
+      });
+    }
+
     // Fire-and-steer: never awaited before returning `{ taskId }`. First
     // stage normalizes a rejected `result` into an isError ToolResult (a
     // runner's promise must never reach the second stage as a rejection,
@@ -285,6 +335,13 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
       )
       .then((toolResult) => {
         background.complete(taskId);
+        onDelegationProgress?.({
+          taskId,
+          turnId: inv.turnId,
+          agent,
+          status: toolResult.isError ? "error" : "done",
+          ...(toolResult.isError ? { note: toolResult.content.slice(0, NOTE_PREVIEW_LEN) } : {}),
+        });
         log.info("tool-broker.dispatch.background.completed", {
           sessionId,
           tool: inv.name,

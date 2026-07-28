@@ -6,7 +6,8 @@ import type { SessionStore } from "../store/session-store.js";
 import type { McpClient, McpToolRef } from "./mcp-client.js";
 import type { BackgroundToolRunner } from "./tool-broker.js";
 import { createToolBroker } from "./tool-broker.js";
-import type { ToolInvocation } from "./tool-types.js";
+import { ConfirmUnavailableError } from "./tool-types.js";
+import type { DelegationProgress, ToolInvocation, ToolResult } from "./tool-types.js";
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -68,6 +69,7 @@ function makeInvocation(overrides: Partial<ToolInvocation> = {}): ToolInvocation
     name: "get_weather",
     args: {},
     signal: new AbortController().signal,
+    turnId: "turn-1",
     ...overrides,
   };
 }
@@ -187,6 +189,52 @@ describe("ToolBroker — PDP choke point (foreground)", () => {
     const result = await broker.dispatch(makeInvocation());
     expect(result).toEqual({ content: expect.stringContaining("confirmation error"), isError: true });
     expect(mcp.callToolCalls).toEqual([]);
+  });
+});
+
+describe("ToolBroker — unanswerable confirm (fail-closed reason passthrough)", () => {
+  it("surfaces a ConfirmUnavailableError message to the model verbatim as the deny reason", async () => {
+    const mcp = fakeMcp([weatherTool]);
+    const broker = createToolBroker({
+      mcp,
+      policy: fakePolicy({ action: "confirm", reason: "side-effecting" }),
+      store: fakeStore(),
+      principal,
+      sessionId: "session-1",
+      backgroundTools: new Map(),
+      config: toolsConfig,
+      requestConfirm: async () => {
+        throw new ConfirmUnavailableError("permission request timed out");
+      },
+    });
+
+    const result = await broker.dispatch(makeInvocation());
+
+    if ("taskId" in result) throw new Error("expected a ToolResult, got a background handle");
+    expect(result).toEqual({ content: "permission request timed out", isError: true });
+    expect(mcp.callToolCalls).toHaveLength(0);
+  });
+
+  it("keeps any other throw opaque — a buggy hook never leaks internals to the model", async () => {
+    const mcp = fakeMcp([weatherTool]);
+    const broker = createToolBroker({
+      mcp,
+      policy: fakePolicy({ action: "confirm", reason: "side-effecting" }),
+      store: fakeStore(),
+      principal,
+      sessionId: "session-1",
+      backgroundTools: new Map(),
+      config: toolsConfig,
+      requestConfirm: async () => {
+        throw new Error("ECONNREFUSED /var/run/internal.sock");
+      },
+    });
+
+    const result = await broker.dispatch(makeInvocation());
+
+    if ("taskId" in result) throw new Error("expected a ToolResult, got a background handle");
+    expect(result).toEqual({ content: "confirmation error", isError: true });
+    expect(mcp.callToolCalls).toHaveLength(0);
   });
 });
 
@@ -382,5 +430,101 @@ describe("ToolBroker — background completion sink", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(broker.background.count()).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// delegation.progress producer — the `{taskId}` handle a background dispatch
+// hands back is invisible to the client unless the broker announces it. This
+// pins both ends of that announcement (running on dispatch, done/error on
+// settle) and the taskId/turnId/agent correlation every surface's delegation
+// tile is keyed by.
+// ---------------------------------------------------------------------------
+
+describe("ToolBroker — delegation.progress producer", () => {
+  /** Hands the runner's own `resolve` back to the caller so a test can settle
+   *  the background task at the exact moment it wants to observe the terminal
+   *  progress frame. */
+  function progressRunner(captureResolve: (resolve: (r: ToolResult) => void) => void): BackgroundToolRunner {
+    return {
+      definition: {
+        name: "delegateTask",
+        description: "delegates",
+        parameters: { type: "object", properties: {} },
+        category: "background",
+      },
+      run: () => ({ cancel: () => {}, result: new Promise<ToolResult>((resolve) => captureResolve(resolve)) }),
+    };
+  }
+
+  it("emits running on dispatch and done on settle, keyed by taskId + turnId + agent", async () => {
+    const progress: DelegationProgress[] = [];
+    let finish: (r: ToolResult) => void = () => {};
+    const broker = createToolBroker({
+      mcp: fakeMcp([]),
+      policy: fakePolicy({ action: "allow" }),
+      store: fakeStore(),
+      principal,
+      sessionId: "session-1",
+      backgroundTools: new Map([
+        [
+          "delegateTask",
+          progressRunner((res) => {
+            finish = res;
+          }),
+        ],
+      ]),
+      config: toolsConfig,
+      requestConfirm: async () => false,
+      onDelegationProgress: (p) => progress.push(p),
+    });
+
+    const dispatched = await broker.dispatch(
+      makeInvocation({ name: "delegateTask", args: { agent: "hermes", taskPrompt: "go" }, turnId: "turn-9" }),
+    );
+    if (!("taskId" in dispatched)) throw new Error("expected a background handle");
+
+    expect(progress).toEqual([{ taskId: dispatched.taskId, turnId: "turn-9", agent: "hermes", status: "running" }]);
+
+    finish({ content: "all done", isError: false });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(progress[1]).toEqual({
+      taskId: dispatched.taskId,
+      turnId: "turn-9",
+      agent: "hermes",
+      status: "done",
+    });
+  });
+
+  it("reports an errored background task as status error with a truncated note", async () => {
+    const progress: DelegationProgress[] = [];
+    let finish: (r: ToolResult) => void = () => {};
+    const broker = createToolBroker({
+      mcp: fakeMcp([]),
+      policy: fakePolicy({ action: "allow" }),
+      store: fakeStore(),
+      principal,
+      sessionId: "session-1",
+      backgroundTools: new Map([
+        [
+          "delegateTask",
+          progressRunner((res) => {
+            finish = res;
+          }),
+        ],
+      ]),
+      config: toolsConfig,
+      requestConfirm: async () => false,
+      onDelegationProgress: (p) => progress.push(p),
+    });
+
+    await broker.dispatch(makeInvocation({ name: "delegateTask", args: { agent: "hermes" }, turnId: "turn-9" }));
+    finish({ content: "hermes exited 1", isError: true });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(progress[1]).toMatchObject({ status: "error", note: "hermes exited 1" });
   });
 });

@@ -185,7 +185,7 @@ async function dispatchToolCalls(
     onToolUpdate(turnId, { toolCallId, toolName, status: "running", argsPreview });
 
     const args = parseToolArgs(call.function.arguments, toolName, toolCallId);
-    const invocation: ToolInvocation = { toolCallId, name: toolName, args, signal };
+    const invocation: ToolInvocation = { toolCallId, name: toolName, args, signal, turnId };
     const outcome = await broker.dispatch(invocation);
 
     if (signal.aborted) {

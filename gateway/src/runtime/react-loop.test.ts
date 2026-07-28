@@ -199,7 +199,7 @@ describe("runTurn — one tool call", () => {
     expect(result).toEqual({ completed: true, iterations: 2 });
     expect(provider.calls).toHaveLength(2);
     expect(broker.dispatchCalls).toEqual([
-      { toolCallId: "call_1", name: "get_weather", args: { city: "NYC" }, signal: expect.anything() },
+      { toolCallId: "call_1", name: "get_weather", args: { city: "NYC" }, signal: expect.anything(), turnId: "turn-2" },
     ]);
 
     // The round-trip: the SECOND provider call's messages must include the
