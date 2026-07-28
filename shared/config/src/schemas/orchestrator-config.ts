@@ -37,5 +37,26 @@ export const orchestratorConfigSchema = z.object({
     // Deadline for a single Hermes one-shot invocation (ms). Long-running.
     hermes_timeout_ms: z.number().int().min(1000).max(3600000).default(600000),
   }),
+  compaction: z
+    .object({
+      // Master switch (spec §8). false = the model window grows unbounded
+      // until the provider rejects the request; only sensible for a
+      // short-lived debug session.
+      enabled: z.boolean().default(true),
+      // Estimated model-window size (tokens) at or above which a compaction
+      // fires at the NEXT turn boundary. Set to roughly 40-60% of the active
+      // model's context window: the estimate is character-based (±30%) and
+      // the summarizer itself needs headroom to read the transcript it is
+      // compacting. Range 1000-1000000.
+      compact_threshold_tokens: z.number().int().min(1000).max(1000000).default(24000),
+      // How many of the most recent turns are copied VERBATIM into the
+      // compaction marker instead of being summarized away. Recent detail
+      // survives inside the marker's own text because the model projection
+      // slices POSITIONALLY from the marker forward — nothing can be left
+      // "after" an append-only marker. 0 = summarize everything.
+      // Range 0-50.
+      keep_recent_turns: z.number().int().min(0).max(50).default(4),
+    })
+    .default({}),
 });
 export type OrchestratorConfig = z.output<typeof orchestratorConfigSchema>;

@@ -36,6 +36,11 @@ function testConfig(maxIterations = 10): OrchestratorConfig {
     loop: { max_iterations: maxIterations },
     tools: { foreground_timeout_ms: 30000, max_concurrent_background_tasks: 50 },
     delegation: { frontmatter_dir: "./config/delegation", hermes_timeout_ms: 600000 },
+    // OFF for every pre-existing case: compaction adds a second provider
+    // call at turn end, which would silently change the call-index
+    // assertions those cases are built on. The compaction case below
+    // builds its own config with it enabled.
+    compaction: { enabled: false, compact_threshold_tokens: 24000, keep_recent_turns: 4 },
   };
 }
 
@@ -887,6 +892,83 @@ describe("SessionRuntime — cancellation: terminal-completion race", () => {
     // The legitimate turnCompleted fired; no spurious turnAborted raced it.
     expect(emitter.events.some((e) => e.type === "turnCompleted")).toBe(true);
     expect(emitter.events.some((e) => e.type === "turnAborted")).toBe(false);
+
+    runtime.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Case: compaction runs at the turn boundary, under the one-turn lock.
+// Pins the ONE thing session-runtime.ts adds: the marker is appended after
+// the turn's terminal frame (the client never waits on the summarizer) and
+// before `inFlight` clears (no turn can start over a half-written window),
+// and the NEXT turn replays from the summary instead of the raw history.
+// ---------------------------------------------------------------------------
+
+describe("SessionRuntime — compaction at the turn boundary", () => {
+  it("appends the marker at turn end under the lock, and the next turn replays from the summary", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/compaction` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const emitter = recordingEmitter();
+    // Mutable holder so the provider closure can reach the runtime that is
+    // constructed after it (genuine forward reference — same shape as the
+    // re-entrancy case above).
+    const ref: { runtime?: SessionRuntime } = {};
+
+    const provider = fakeProvider(async function* (callIndex) {
+      if (callIndex === 2) {
+        // The compaction summarizer call. The turn is over — its terminal
+        // frame is already out — but the one-turn lock is still held.
+        expect(emitter.events.some((e) => e.type === "turnCompleted")).toBe(true);
+        expect(ref.runtime?.running).toBe(true);
+        yield { type: "text", content: "EARLIER-SUMMARY" };
+        yield { type: "done", finishReason: "stop" };
+        return;
+      }
+      yield { type: "text", content: "an answer" };
+      yield { type: "done", finishReason: "stop" };
+    });
+
+    const config: OrchestratorConfig = {
+      ...testConfig(),
+      // keep_recent_turns 0 keeps the marker small, so the follow-up turn
+      // lands back under the threshold and does not compact again.
+      compaction: { enabled: true, compact_threshold_tokens: 1000, keep_recent_turns: 0 },
+    };
+
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-compaction",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter,
+      systemPrompt: "you are a test assistant",
+      config,
+    });
+    ref.runtime = runtime;
+
+    runtime.submit({ kind: "conversational", text: `a long question ${"x".repeat(5000)}` });
+    await waitFor(() => provider.calls.length >= 2);
+    await waitUntilIdle(runtime);
+
+    const store = openSessionStore(am.grant(alice, "session-store"));
+    const kinds = store.readSession("sess-compaction").map((e) => e.kind);
+    expect(kinds.filter((k) => k === "compaction")).toHaveLength(1);
+    expect(kinds[kinds.length - 1]).toBe("compaction"); // marker is the tail
+    store.close();
+
+    runtime.submit({ kind: "conversational", text: "follow up" });
+    await waitUntilIdle(runtime);
+
+    // messages[0] is the loop's own system prompt; [1] is the projection
+    // head (the summary); [2] is the new user message.
+    const followUp = provider.calls[2];
+    expect(followUp?.messages[1]?.role).toBe("system");
+    expect(followUp?.messages[1]?.content).toContain("EARLIER-SUMMARY");
+    expect(followUp?.messages[2]?.content).toBe("follow up");
 
     runtime.dispose();
   });

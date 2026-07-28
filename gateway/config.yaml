@@ -129,6 +129,10 @@ orchestrator:
   delegation:
     frontmatter_dir: ./config/delegation     # static per-agent envelope dir (relative to gateway/)
     hermes_timeout_ms: 600000                # per Hermes one-shot (1000-3600000)
+  compaction:
+    enabled: true                            # master switch; false = never compact (window grows until the provider rejects the request)
+    compact_threshold_tokens: 24000          # estimated model-window tokens that trigger compaction at the next turn boundary (1000-1000000; ~40-60% of the model's context)
+    keep_recent_turns: 4                     # most-recent turns copied VERBATIM into the summary marker rather than summarized away (0-50)
 
 # ---------------------------------------------------------------------------
 # STT — local-stt service (Silero VAD + Smart-Turn v3 + SenseVoice-Small)
@@ -147,7 +151,7 @@ stt:
   # Client capture rate. Adapter downsamples to 16 kHz before sending to STT.
   input_sample_rate: 48000
 
-  # Echo-suppression cooldown (ms). On connector.audio.start, the mic is
+  # Echo-suppression cooldown (ms). On turn.audio.start, the mic is
   # hard-muted for this long so the browser's WebRTC AEC can converge on the
   # initial TTS burst before frames start reaching STT again. Residual echo
   # past the cooldown is now handled by the webui-edge RNNoise neural
