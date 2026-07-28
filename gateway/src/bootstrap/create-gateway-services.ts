@@ -82,7 +82,7 @@ export interface GatewayServices {
   readonly unlockCodePath: string;
   readonly gatewayVersion: string;
   readonly sessionManager: SessionManager;
-  readonly sessionRouter: SessionRouter;
+  readonly sessionRouter: SessionRouter | null;
   readonly sessionControls: SessionControlsRegistry;
   readonly stt: SttService | null;
   readonly tts: TtsService | null;

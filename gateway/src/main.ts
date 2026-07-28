@@ -42,7 +42,11 @@ log.info("gateway-started", { host: server.hostname, port: server.port });
 
 let mcpHost: Awaited<ReturnType<typeof createMcpHost>> | null = null;
 
-if (config.hermes) {
+// `services.sessionRouter` is non-null exactly when `config.hermes` is set
+// (buildSessionRouter returns null otherwise) — the `&& sessionRouter` narrows
+// the now-nullable type for createMcpHost, which is the router's only consumer.
+if (config.hermes && services.sessionRouter) {
+  const sessionRouter = services.sessionRouter;
   // pause_audio / resume_audio are still stubs — we don't yet have a
   // pause/resume primitive on the audio pipeline (barge-in cancels, which
   // isn't the same). update_user_settings resolves via SessionControlsRegistry
@@ -68,7 +72,7 @@ if (config.hermes) {
 
   mcpHost = await createMcpHost({
     config: config.hermes,
-    router: services.sessionRouter,
+    router: sessionRouter,
     userStore: services.auth.users,
     audio: stubAudio,
     userSettings: userSettingsControls,

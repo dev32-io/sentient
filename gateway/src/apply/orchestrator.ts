@@ -22,7 +22,10 @@ export type ApplyError =
 
 export interface ApplyDeps {
   profileStore: ProfileStore;
-  sessionRouter: SessionRouter;
+  // Null when `hermes:` is absent from config (legacy Hermes ACP router). The
+  // apply flow only runs for hermes-configured deploys, so this is held but
+  // never dereferenced in the no-hermes path.
+  sessionRouter: SessionRouter | null;
   healthPoller: HealthPoller;
   // The MCP catalog is injected by the wrapper in apply-deps; orchestrator
   // hands the renderer no extra context — userId is already on the profile.

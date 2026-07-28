@@ -18,7 +18,7 @@ const log = getLog(["sentient", "gateway", "apply", "apply-deps"]);
 /** Discrete dependency view consumed by `createApplyDeps`. */
 export interface ApplyDepsServices {
   readonly profileStore: ProfileStore;
-  readonly sessionRouter: SessionRouter;
+  readonly sessionRouter: SessionRouter | null;
   readonly healthPoller: HealthPoller;
   readonly templateLoader: TemplateLoader;
   readonly applyConfig: ApplyConfig;

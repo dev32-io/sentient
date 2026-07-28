@@ -111,7 +111,7 @@ export interface PhaseServicesOutput {
   readonly profileStore: ProfileStore;
   readonly templateLoader: TemplateLoader;
   readonly healthPoller: HealthPoller;
-  readonly sessionRouter: SessionRouter;
+  readonly sessionRouter: SessionRouter | null;
   readonly userProvisioner: UserProvisioner | null;
   readonly keyRotation: KeyRotationOrchestrator | null;
   readonly userLifecycle: UserLifecycle;
@@ -348,9 +348,14 @@ function buildSessionRouter(
   cfg: StartupConfig,
   secrets: InternalSecretsStore,
   userPortStore: UserPortStore | null,
-): SessionRouter {
-  if (!cfg.hermes) throw new Error("hermes config is required for session router");
-  if (!userPortStore) throw new Error("user-port-store is required for session router");
+): SessionRouter | null {
+  // Legacy Hermes ACP router — maps a session to its per-user Hermes worker.
+  // The native orchestrator does NOT use it (SessionRuntime + the session
+  // store own session state); its only live consumer is the MCP host, itself
+  // gated on cfg.hermes in main.ts. Returning null instead of throwing lets
+  // the gateway boot and serve native-orchestrator turns with `hermes:`
+  // entirely absent from config.
+  if (!cfg.hermes || !userPortStore) return null;
   return createSessionRouter({
     hermes: cfg.hermes,
     userPortStore,

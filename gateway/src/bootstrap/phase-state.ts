@@ -118,14 +118,19 @@ export async function runPhaseState(cfg: StartupConfig): Promise<PhaseStateOutpu
     ? createUserPortStore({ rootDir: gatewayRoot, portBase: cfg.hermes.worker.port_base })
     : null;
 
-  const secretsStore: SecretsStore | null = cfg.hermes
-    ? createSecretsStore({
-        keysPath: join(SENTIENT_HOME, "secrets", "keys.yaml"),
-        templatePath: join(TEMPLATE_DIR, "wizard", "keys.yaml.tmpl"),
-        generateAdminToken: () => randomBytes(32).toString("hex"),
-      })
-    : null;
-  if (secretsStore) await secretsStore.load();
+  // Operator secrets (LLM provider keys, active-provider selection) — NOT
+  // hermes-specific. Built UNCONDITIONALLY so the native orchestrator's
+  // provider resolves its key via getActiveLlm() even when `hermes:` is absent
+  // from config (the whole legacy Hermes fleet off). Was gated on cfg.hermes
+  // in 1.0 only because hermes was assumed always present; that gate coupled
+  // the native brain's LLM key to the legacy subsystem. keysPath is seeded
+  // from the template on first load if missing.
+  const secretsStore: SecretsStore = createSecretsStore({
+    keysPath: join(SENTIENT_HOME, "secrets", "keys.yaml"),
+    templatePath: join(TEMPLATE_DIR, "wizard", "keys.yaml.tmpl"),
+    generateAdminToken: () => randomBytes(32).toString("hex"),
+  });
+  await secretsStore.load();
 
   const supervisordTemplates = await loadSupervisordTemplates(TEMPLATE_DIR);
   const programsDir = process.env.SENTIENT_SUPERVISORD_PROGRAMS_DIR ?? "/data/supervisor/programs";
