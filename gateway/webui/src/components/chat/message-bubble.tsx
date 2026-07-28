@@ -27,13 +27,13 @@ function formatTime(ts: number): string {
 
 function MessageBubbleInner({ message, avatarMode, currentUser }: MessageBubbleProps): JSX.Element {
   const isSpeaking = avatarMode === "speaking";
-  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [openToolCallId, setOpenToolCallId] = useState<string | null>(null);
   const { role, text, timestamp, isStreaming, cutoff, tools } = message;
   const name = role === "user" ? currentUser.displayName : ASSISTANT_NAME;
   const userInitial = currentUser.displayName.charAt(0).toUpperCase() || "?";
 
-  function handleToggle(taskId: string): void {
-    setOpenTaskId((prev) => (prev === taskId ? null : taskId));
+  function handleToggle(toolCallId: string): void {
+    setOpenToolCallId((prev) => (prev === toolCallId ? null : toolCallId));
   }
 
   return (
@@ -66,8 +66,8 @@ function MessageBubbleInner({ message, avatarMode, currentUser }: MessageBubbleP
             <ToolPillStrip
               tools={tools}
               expandDirection="down"
-              openTaskId={openTaskId}
-              onToggleTask={handleToggle}
+              openToolCallId={openToolCallId}
+              onToggleTool={handleToggle}
             />
           )}
         </div>

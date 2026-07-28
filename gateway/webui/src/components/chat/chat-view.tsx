@@ -9,7 +9,7 @@ import { MessageList } from "./message-list.tsx";
 export interface ChatViewProps {
   messages: readonly ChatMessage[];
   transcript: string;
-  currentCycleId: string | null;
+  currentTurnId: string | null;
   activeCycleMode: SentientMarkMode;
   currentUser: CurrentUser;
 }
@@ -17,7 +17,7 @@ export interface ChatViewProps {
 export function ChatView({
   messages,
   transcript,
-  currentCycleId,
+  currentTurnId,
   activeCycleMode,
   currentUser,
 }: ChatViewProps): JSX.Element {
@@ -33,7 +33,7 @@ export function ChatView({
       <div class="chat-view__content" ref={contentRef as unknown as RefObject<HTMLDivElement>}>
         <MessageList
           messages={messages}
-          currentCycleId={currentCycleId}
+          currentTurnId={currentTurnId}
           activeCycleMode={activeCycleMode}
           currentUser={currentUser}
         />

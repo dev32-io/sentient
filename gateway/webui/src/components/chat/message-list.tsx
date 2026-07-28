@@ -7,7 +7,7 @@ import { MessageBubble, type CurrentUser } from "./message-bubble.tsx";
 
 export interface MessageListProps {
   messages: readonly ChatMessage[];
-  currentCycleId: string | null;
+  currentTurnId: string | null;
   activeCycleMode: SentientMarkMode;
   currentUser: CurrentUser;
 }
@@ -27,7 +27,7 @@ function dividerLabelFor(prev: ChatMessage | undefined, cur: ChatMessage): strin
   return null;
 }
 
-export function MessageList({ messages, currentCycleId, activeCycleMode, currentUser }: MessageListProps): JSX.Element {
+export function MessageList({ messages, currentTurnId, activeCycleMode, currentUser }: MessageListProps): JSX.Element {
   if (messages.length === 0) {
     return (
       <section class="message-list message-list--empty" aria-label="Messages">
@@ -40,7 +40,7 @@ export function MessageList({ messages, currentCycleId, activeCycleMode, current
       {messages.map((m, i) => {
         const divider = dividerLabelFor(messages[i - 1], m);
         const avatarMode: SentientMarkMode =
-          m.role === "assistant" && m.cycleId === currentCycleId ? activeCycleMode : "idle";
+          m.role === "assistant" && m.turnId === currentTurnId ? activeCycleMode : "idle";
         return (
           <Fragment key={m.id}>
             {divider && <DayDivider label={divider} />}

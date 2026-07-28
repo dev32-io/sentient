@@ -10,10 +10,10 @@ const log = createLogger(["sentient", "webui", "awaiting-tracker"]);
  *
  * State transitions:
  *   - `arm()` on sendText — flag flips on.
- *   - `onCognitionIdle(audioPlaying)` — cycle.completed arrived. If audio
+ *   - `onCognitionIdle(audioPlaying)` — turn.completed arrived. If audio
  *     isn't already playing, start a grace timer; when it fires we disarm.
  *     Covers text-only replies.
- *   - `onCognitionActive()` — cycle is running again (thinking/acting) or
+ *   - `onCognitionActive()` — a turn is running again (thinking/acting) or
  *     a ReAct continuation started. Cancel any pending grace timer.
  *   - `onAudioStart()` — TTS began; audio-playing state takes over the
  *     "still speaking" visibility from here.

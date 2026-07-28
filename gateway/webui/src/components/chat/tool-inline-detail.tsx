@@ -1,8 +1,8 @@
 import type { JSX } from "preact";
-import type { TaskSnapshotItem } from "@sentient/web-sdk";
+import type { ToolCallSnapshotItem } from "@sentient/web-sdk";
 
 export interface ToolInlineDetailProps {
-  task: TaskSnapshotItem;
+  task: ToolCallSnapshotItem;
   direction: "down" | "up";
 }
 

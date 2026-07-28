@@ -1,5 +1,5 @@
 import type { ConversationAssistantCutoff, ConversationUserChannel } from "@sentient/protocol";
-import type { TaskSnapshotItem } from "@sentient/web-sdk";
+import type { ToolCallSnapshotItem } from "@sentient/web-sdk";
 import type { AuthUser } from "./services/auth-api.js";
 
 /** Chat message for UI rendering */
@@ -9,14 +9,14 @@ export interface ChatMessage {
   readonly text: string;
   readonly timestamp: number;
   readonly isStreaming: boolean;
-  /** Cycle that produced this assistant message, or triggered by this user message. */
-  readonly cycleId?: string;
+  /** Turn that produced this assistant message, or triggered by this user message. */
+  readonly turnId?: string;
   /** Present for user messages only — which input channel the message came in on. */
   readonly channel?: ConversationUserChannel;
   /** Present for assistant messages that ended with a cutoff (barge-in or interrupt). */
   readonly cutoff?: ConversationAssistantCutoff;
-  /** Assistant messages only: tasks grouped onto this message by shared cycleId. */
-  readonly tools?: readonly TaskSnapshotItem[];
+  /** Assistant messages only: tool calls grouped onto this message by shared turnId. */
+  readonly tools?: readonly ToolCallSnapshotItem[];
 }
 
 /** Auth state */

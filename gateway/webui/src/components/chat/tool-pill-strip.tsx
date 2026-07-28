@@ -1,16 +1,16 @@
 import type { JSX } from "preact";
-import type { TaskSnapshotItem } from "@sentient/web-sdk";
+import type { ToolCallSnapshotItem } from "@sentient/web-sdk";
 import { Icon } from "../common/icon.tsx";
 import { ToolInlineDetail } from "./tool-inline-detail.tsx";
 
 export interface ToolPillStripProps {
-  tools: readonly TaskSnapshotItem[];
+  tools: readonly ToolCallSnapshotItem[];
   expandDirection: "down" | "up";
-  openTaskId: string | null;
-  onToggleTask(taskId: string): void;
+  openToolCallId: string | null;
+  onToggleTool(toolCallId: string): void;
 }
 
-function statusClass(s: TaskSnapshotItem["status"]): string {
+function statusClass(s: ToolCallSnapshotItem["status"]): string {
   return `tool-pill--${s}`;
 }
 
@@ -48,9 +48,9 @@ function iconForTool(toolName: string): ToolIconName {
 }
 
 interface ToolPillButtonProps {
-  task: TaskSnapshotItem;
+  task: ToolCallSnapshotItem;
   isOpen: boolean;
-  onToggle(taskId: string): void;
+  onToggle(toolCallId: string): void;
 }
 
 function ToolPillButton({ task, isOpen, onToggle }: ToolPillButtonProps): JSX.Element {
@@ -59,7 +59,7 @@ function ToolPillButton({ task, isOpen, onToggle }: ToolPillButtonProps): JSX.El
     <button
       type="button"
       class={`tool-pill ${statusClass(task.status)} ${openClass}`}
-      onClick={() => onToggle(task.taskId)}
+      onClick={() => onToggle(task.toolCallId)}
     >
       <span class="tool-pill__icon">
         <Icon name={iconForTool(task.toolName)} size={14} />
@@ -74,20 +74,20 @@ function ToolPillButton({ task, isOpen, onToggle }: ToolPillButtonProps): JSX.El
 export function ToolPillStrip({
   tools,
   expandDirection,
-  openTaskId,
-  onToggleTask,
+  openToolCallId,
+  onToggleTool,
 }: ToolPillStripProps): JSX.Element {
-  const open = openTaskId !== null ? tools.find((t) => t.taskId === openTaskId) : undefined;
+  const open = openToolCallId !== null ? tools.find((t) => t.toolCallId === openToolCallId) : undefined;
   return (
     <div class={`tool-strip tool-strip--${expandDirection}`}>
       {expandDirection === "up" && open && <ToolInlineDetail task={open} direction="up" />}
       <div class="tool-strip__pills">
         {tools.map((t) => (
           <ToolPillButton
-            key={t.taskId}
+            key={t.toolCallId}
             task={t}
-            isOpen={openTaskId === t.taskId}
-            onToggle={onToggleTask}
+            isOpen={openToolCallId === t.toolCallId}
+            onToggle={onToggleTool}
           />
         ))}
       </div>
