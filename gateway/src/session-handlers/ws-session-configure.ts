@@ -2,6 +2,9 @@ import type { ClientType, SessionConfigureResume } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { getLog } from "../logging/logger.js";
+import { createTurnVoice } from "../runtime/turn-voice.js";
+import { createMicEchoGuard } from "./mic-echo-guard.js";
+import { createSessionVoicePrefs } from "./session-voice-prefs.js";
 import type { SessionData } from "./ws-helpers.js";
 import { errorMessage, sendError } from "./ws-helpers.js";
 import { createWsTurnEmitter } from "./ws-turn-emitter.js";
@@ -34,6 +37,12 @@ const AUDIO_ENCODING = "pcm16";
 // point on, `ws.data.runtime` is the seam `text.input`/`interrupt`
 // (ws-handlers.ts) route through — see that file for the message-level
 // wiring, and ws-turn-emitter.ts for the outbound frame mapping.
+//
+// Plan 3 Task 2 adds the voice half: this handler also composes the session's
+// `TurnVoice` (profile-backed voice id + audio prefs, mic echo guard, TTS
+// synthesizer) and hands it to `createSessionRuntime`, so the ReAct loop's
+// text deltas fork into TTS on the turn's own AbortController. The STT half
+// is lazy — ws-handlers.ts mints `ws.data.stt` on the first `audio.start`.
 // ---------------------------------------------------------------------------
 
 export function handleSessionConfigure(
@@ -72,10 +81,35 @@ export function handleSessionConfigure(
     ws.data.runtime = null;
   }
 
+  let hasVoice = false;
+
   if (services.createSessionRuntime) {
     try {
       const emitter = createWsTurnEmitter(ws);
-      ws.data.runtime = services.createSessionRuntime(principal, sessionId, emitter);
+      // Voice composition (spec §6). Built HERE because this is the only
+      // place that knows the socket, the emitter, the authenticated user's
+      // profile, and this connection's STT session — but DRIVEN inside
+      // SessionRuntime on the turn's own AbortController, so barge-in and
+      // interrupt cancel TTS through the same abort that stops the provider
+      // stream. See runtime/turn-voice.ts's header.
+      const voicePrefs = createSessionVoicePrefs(services.profileStore, userId, sessionId);
+      const echoGuard = createMicEchoGuard(
+        () => ws.data.stt,
+        services.stt?.adapterConfig.ttsEchoCooldownMs ?? null,
+        sessionId,
+      );
+      const synthesizer = services.createSynthesizerFor(() => voicePrefs.voiceId());
+      const voice = synthesizer
+        ? createTurnVoice({
+            synthesizer,
+            sink: emitter,
+            echoGuard,
+            shouldSpeak: () => voicePrefs.shouldSpeak(),
+            sessionId,
+          })
+        : null;
+      hasVoice = voice !== null;
+      ws.data.runtime = services.createSessionRuntime(principal, sessionId, emitter, voice);
     } catch (err) {
       // Thrown only when the orchestrator IS configured but no active LLM
       // key resolved from the secrets store (see phase-services.ts's
@@ -107,6 +141,7 @@ export function handleSessionConfigure(
     deviceId: configureDeviceId,
     surfaceId: configureSurfaceId,
     hasRuntime: ws.data.runtime !== null,
+    hasVoice,
     // Accepted but not acted on post-purge — resume/conversation-anchor
     // wiring goes with the rest of Plan 2's orchestrator rebuild.
     hasResume: configureResume !== undefined,

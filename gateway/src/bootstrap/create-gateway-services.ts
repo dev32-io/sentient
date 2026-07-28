@@ -33,6 +33,7 @@ import type { TemplateLoader } from "../profile-store/template-loader.ts";
 import type { ProviderClient } from "../provider/provider-client.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { TurnEmitter } from "../runtime/turn-emitter.js";
+import type { TurnVoice } from "../runtime/turn-voice.js";
 import type { SessionControlsRegistry } from "../session-handlers/session-controls-registry.js";
 import type { GatewayTlsMaterial } from "../session-handlers/ws-handlers.ts";
 import type { SessionRouter } from "../session-router.js";
@@ -142,7 +143,7 @@ export interface GatewayServices {
    *  from config.yaml. When present but `provider` is null, calling it
    *  throws a clear error rather than the gateway failing to boot. */
   readonly createSessionRuntime:
-    | ((principal: UserPrincipal, sessionId: string, emitter: TurnEmitter) => SessionRuntime)
+    | ((principal: UserPrincipal, sessionId: string, emitter: TurnEmitter, voice?: TurnVoice | null) => SessionRuntime)
     | null;
 }
 

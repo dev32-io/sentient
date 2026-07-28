@@ -47,6 +47,7 @@ import type { TTSProviderFactory } from "../providers/tts/tts-types.ts";
 import { createSessionRuntime as buildSessionRuntime } from "../runtime/session-runtime.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { TurnEmitter } from "../runtime/turn-emitter.js";
+import type { TurnVoice } from "../runtime/turn-voice.js";
 import { createPolicyEngine } from "../security/policy-engine.js";
 import type { PolicyEngine } from "../security/policy-engine.js";
 import { loadMcpPolicy } from "../security/policy-loader.js";
@@ -143,7 +144,7 @@ export interface PhaseServicesOutput {
    *  no-provider is a DIFFERENT state (see `provider` above) — the factory
    *  itself still exists in that case, and throws when actually invoked. */
   readonly createSessionRuntime:
-    | ((principal: UserPrincipal, sessionId: string, emitter: TurnEmitter) => SessionRuntime)
+    | ((principal: UserPrincipal, sessionId: string, emitter: TurnEmitter, voice?: TurnVoice | null) => SessionRuntime)
     | null;
 }
 
@@ -559,7 +560,9 @@ export interface OrchestratorServices {
   accessManager: AccessManager;
   mcpClient: McpClient;
   provider: ProviderClient | null;
-  createSessionRuntime: ((principal: UserPrincipal, sessionId: string, emitter: TurnEmitter) => SessionRuntime) | null;
+  createSessionRuntime:
+    | ((principal: UserPrincipal, sessionId: string, emitter: TurnEmitter, voice?: TurnVoice | null) => SessionRuntime)
+    | null;
 }
 
 /**
@@ -727,10 +730,10 @@ interface CreateSessionRuntimeFactoryDeps {
  *  actual use, not in `buildOrchestratorServices` above). */
 function buildCreateSessionRuntime(
   deps: CreateSessionRuntimeFactoryDeps,
-): (principal: UserPrincipal, sessionId: string, emitter: TurnEmitter) => SessionRuntime {
+): (principal: UserPrincipal, sessionId: string, emitter: TurnEmitter, voice?: TurnVoice | null) => SessionRuntime {
   const { orchestratorCfg, accessManager, provider, mcpClient, policyEngine, delegationGuard, hermesRunner } = deps;
 
-  return (principal, sessionId, emitter) => {
+  return (principal, sessionId, emitter, voice) => {
     if (!provider) {
       log.error("session-runtime.factory.no-provider", {
         userId: principal.userId,
@@ -799,6 +802,7 @@ function buildCreateSessionRuntime(
       emitter,
       systemPrompt: DEFAULT_SYSTEM_PROMPT,
       config: orchestratorCfg,
+      voice: voice ?? null,
     });
 
     // Closes the delegateTask fire-and-steer loop (spec §5.2/§5.4): the
