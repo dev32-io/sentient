@@ -9,9 +9,10 @@ import { describe, expect, it } from "bun:test";
 import type { ServerWebSocket } from "bun";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
+import type { PermissionBroker } from "../runtime/permission-broker.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { Stimulus } from "../runtime/stimulus.js";
-import { handleWebSocketMessage } from "./ws-handlers.js";
+import { cleanupSession, handleWebSocketMessage } from "./ws-handlers.js";
 import { type SessionData, createEmptySessionData } from "./ws-helpers.js";
 
 interface FakeWs {
@@ -66,6 +67,37 @@ function stubRuntime(): StubRuntime {
 // see ws-handlers.ts's switch. A cast stub keeps this test independent of
 // GatewayServices' large surface without exercising any of it.
 const unusedServices = {} as GatewayServices;
+
+// cleanupSession() DOES dereference services (sessionManager) — unlike the
+// text.input/interrupt cases, so it gets a real two-method stub.
+const cleanupServices = {
+  sessionManager: { unbindUser: () => {}, removeSession: () => {} },
+} as unknown as GatewayServices;
+
+interface StubPermissions extends PermissionBroker {
+  resolveCalls: Array<{ requestId: string; approved: boolean }>;
+  denyAllCallCount: () => number;
+}
+
+function stubPermissions(matches = true): StubPermissions {
+  const resolveCalls: Array<{ requestId: string; approved: boolean }> = [];
+  let denyAllCalls = 0;
+  return {
+    resolveCalls,
+    denyAllCallCount: () => denyAllCalls,
+    request: async () => false,
+    resolve: (requestId, approved) => {
+      resolveCalls.push({ requestId, approved });
+      return matches;
+    },
+    denyAll: () => {
+      denyAllCalls += 1;
+    },
+    get pendingCount() {
+      return 0;
+    },
+  };
+}
 
 describe("ws-handlers routing — text.input", () => {
   it("submits a conversational stimulus with the message text when runtime is set", async () => {
@@ -135,5 +167,74 @@ describe("ws-handlers routing — interrupt", () => {
     ).resolves.toBeUndefined();
 
     expect(ws.sent).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// permission.response (Plan 3 Task 6, spec §7.1). The security boundary being
+// pinned: the ONLY broker a frame can reach is the one on its OWN socket, so
+// a requestId minted on another connection resolves nothing.
+// ---------------------------------------------------------------------------
+
+describe("ws-handlers routing — permission.response", () => {
+  it("routes the client's decision into this connection's permission broker", async () => {
+    const { runtime } = stubRuntime();
+    const permissions = stubPermissions();
+    const ws = fakeAuthedWs(runtime);
+    ws.data.permissions = permissions;
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({ type: "permission.response", requestId: "req-1", approved: true }),
+      unusedServices,
+    );
+
+    expect(permissions.resolveCalls).toEqual([{ requestId: "req-1", approved: true }]);
+    expect(ws.sent).toEqual([]);
+  });
+
+  it("does not throw or answer when the requestId matches nothing on this connection", async () => {
+    const { runtime } = stubRuntime();
+    const permissions = stubPermissions(false);
+    const ws = fakeAuthedWs(runtime);
+    ws.data.permissions = permissions;
+
+    await expect(
+      handleWebSocketMessage(
+        ws as unknown as ServerWebSocket<SessionData>,
+        JSON.stringify({ type: "permission.response", requestId: "someone-elses-request", approved: true }),
+        unusedServices,
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(ws.sent).toEqual([]);
+  });
+
+  it("is a safe no-op when the connection has no permission broker", async () => {
+    const ws = fakeAuthedWs(null);
+
+    await expect(
+      handleWebSocketMessage(
+        ws as unknown as ServerWebSocket<SessionData>,
+        JSON.stringify({ type: "permission.response", requestId: "req-1", approved: true }),
+        unusedServices,
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(ws.sent).toEqual([]);
+  });
+});
+
+describe("ws-handlers cleanup — outstanding permission prompts", () => {
+  it("denies every open prompt so a dropped socket never leaks a pending promise", () => {
+    const { runtime } = stubRuntime();
+    const permissions = stubPermissions();
+    const ws = fakeAuthedWs(runtime);
+    ws.data.permissions = permissions;
+
+    cleanupSession(ws as unknown as ServerWebSocket<SessionData>, cleanupServices);
+
+    expect(permissions.denyAllCallCount()).toBe(1);
+    expect(ws.data.permissions).toBeNull();
   });
 });

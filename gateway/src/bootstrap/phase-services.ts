@@ -44,8 +44,9 @@ import { type TemplateLoader, createTemplateLoader } from "../profile-store/temp
 import { createOpenAIProvider } from "../provider/openai-provider.js";
 import type { ProviderClient } from "../provider/provider-client.js";
 import type { TTSProviderFactory } from "../providers/tts/tts-types.ts";
+import { createPermissionBroker } from "../runtime/permission-broker.js";
+import type { SessionHandles } from "../runtime/session-handles.js";
 import { createSessionRuntime as buildSessionRuntime } from "../runtime/session-runtime.js";
-import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { TurnEmitter } from "../runtime/turn-emitter.js";
 import type { TurnVoice } from "../runtime/turn-voice.js";
 import { createPolicyEngine } from "../security/policy-engine.js";
@@ -144,7 +145,7 @@ export interface PhaseServicesOutput {
    *  no-provider is a DIFFERENT state (see `provider` above) — the factory
    *  itself still exists in that case, and throws when actually invoked. */
   readonly createSessionRuntime:
-    | ((principal: UserPrincipal, sessionId: string, emitter: TurnEmitter, voice?: TurnVoice | null) => SessionRuntime)
+    | ((principal: UserPrincipal, sessionId: string, emitter: TurnEmitter, voice?: TurnVoice | null) => SessionHandles)
     | null;
 }
 
@@ -561,7 +562,7 @@ export interface OrchestratorServices {
   mcpClient: McpClient;
   provider: ProviderClient | null;
   createSessionRuntime:
-    | ((principal: UserPrincipal, sessionId: string, emitter: TurnEmitter, voice?: TurnVoice | null) => SessionRuntime)
+    | ((principal: UserPrincipal, sessionId: string, emitter: TurnEmitter, voice?: TurnVoice | null) => SessionHandles)
     | null;
 }
 
@@ -730,7 +731,7 @@ interface CreateSessionRuntimeFactoryDeps {
  *  actual use, not in `buildOrchestratorServices` above). */
 function buildCreateSessionRuntime(
   deps: CreateSessionRuntimeFactoryDeps,
-): (principal: UserPrincipal, sessionId: string, emitter: TurnEmitter, voice?: TurnVoice | null) => SessionRuntime {
+): (principal: UserPrincipal, sessionId: string, emitter: TurnEmitter, voice?: TurnVoice | null) => SessionHandles {
   const { orchestratorCfg, accessManager, provider, mcpClient, policyEngine, delegationGuard, hermesRunner } = deps;
 
   return (principal, sessionId, emitter, voice) => {
@@ -744,6 +745,18 @@ function buildCreateSessionRuntime(
         "orchestrator provider unavailable — no active LLM key configured in the secrets store (admin > secrets)",
       );
     }
+
+    // Connection-scoped permission mediation (spec §5.3/§7.1). Created here
+    // because this is the only scope holding BOTH the session's emitter and
+    // the orchestrator config; `ws-session-configure.ts` receives it back on
+    // `SessionHandles` and parks it on `ws.data.permissions` so
+    // `permission.response` can route into it.
+    const permissions = createPermissionBroker({
+      emitter,
+      sessionId,
+      userId: principal.userId,
+      timeoutMs: orchestratorCfg.permission.request_timeout_ms,
+    });
 
     const backgroundTools = new Map<string, BackgroundToolRunner>();
     backgroundTools.set(
@@ -784,10 +797,11 @@ function buildCreateSessionRuntime(
       sessionId,
       backgroundTools,
       config: orchestratorCfg.tools,
-      // Plan 2 default: deny every unconfirmed side-effecting call. Plan 3
-      // wires a real client permission-prompt UI without touching this file
-      // (mirrors tool-broker.ts's own header note on the same contract).
-      requestConfirm: async () => false,
+      // Real L3 confirm round-trip (spec §5.3): emits `permission.request` to
+      // this connection and blocks the dispatch until the user answers, the
+      // 2-minute config timeout fires (auto-deny), or the socket drops.
+      requestConfirm: (inv, reason) => permissions.request(inv, reason),
+      onDelegationProgress: (p) => emitter.delegationProgress(p),
     });
     void broker.definitions(); // kick off this session's own MCP list-tools warm-up now, not on the first turn.
 
@@ -821,6 +835,6 @@ function buildCreateSessionRuntime(
       runtime.submit({ kind: "background-completion", note });
     });
 
-    return runtime;
+    return { runtime, permissions };
   };
 }

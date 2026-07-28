@@ -1,6 +1,7 @@
 import type { ClientType } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import type { UserPrincipal } from "../identity/user-principal.js";
+import type { PermissionBroker } from "../runtime/permission-broker.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { SttSession } from "./stt-session.js";
 
@@ -50,6 +51,17 @@ export interface SessionData {
    */
   runtime: SessionRuntime | null;
   /**
+   * This connection's L3 permission round-trip (Plan 3 Task 6, spec §7.1).
+   * Minted alongside `runtime` in `handleSessionConfigure`; null until then
+   * and for the lifetime of a session whose orchestrator is unconfigured.
+   * Connection-scoped ON PURPOSE — a `permission.response` frame can only
+   * settle a prompt this same socket issued, which is what makes cross-user
+   * resolution structurally impossible rather than a check to remember.
+   * `cleanupSession` calls `denyAll()` so a dropped socket never strands a
+   * ReAct turn awaiting an answer.
+   */
+  permissions: PermissionBroker | null;
+  /**
    * The connection's STT uplink (Plan 3 Task 2, spec §6). Null until the
    * client's first `audio.start` — a text-only session never dials the STT
    * service. Owns one STTAdapter; inbound binary WS frames route into it
@@ -67,6 +79,7 @@ export function createEmptySessionData(): SessionData {
     grantedCapabilities: new Set(),
     clientType: "webui",
     runtime: null,
+    permissions: null,
     stt: null,
   };
 }

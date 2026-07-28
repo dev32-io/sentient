@@ -49,8 +49,13 @@ export function openSession(ws: ServerWebSocket<SessionData>, services: GatewayS
 // binary are separate paths — outbound TTS frames leave through the turn
 // emitter, never through this router.
 //
-// `session.new` / `conversation.activate` (multi-conversation) and
-// `tool.confirm` (superseded by `permission.response`, Task 6) are still
+// Permission (Plan 3 Task 6, spec §7.1) adds the L3 confirm answer:
+// `permission.response` routes into `ws.data.permissions`, the broker minted
+// for THIS connection in ws-session-configure.ts. Connection scoping is the
+// isolation boundary — a frame can only ever settle a prompt this same
+// socket issued.
+//
+// `session.new` / `conversation.activate` (multi-conversation) are still
 // received-but-unhandled.
 // ---------------------------------------------------------------------------
 
@@ -153,11 +158,26 @@ export async function handleWebSocketMessage(
       ws.data.stt?.end();
       return;
 
+    case "permission.response":
+      // Fail-closed by construction: an unknown/duplicate/expired requestId
+      // just returns false here — the PDP already denied (or is about to
+      // auto-deny) and nothing is re-opened. Only a prompt THIS connection
+      // issued can be settled, so a frame naming another user's requestId
+      // resolves nothing.
+      if (!ws.data.permissions?.resolve(msg.requestId, msg.approved)) {
+        log.warn("permission.response.unmatched", {
+          sessionId: ws.data.sessionId,
+          requestId: msg.requestId,
+          reason: "no pending permission prompt on this connection for that requestId",
+        });
+      }
+      return;
+
     default:
-      // session.new / conversation.activate (multi-conversation) and
-      // tool.confirm (replaced by permission.response, Task 6) have no
-      // handler yet. Received but unhandled.
-      log.debug("message-unhandled", { type: msg.type, reason: "no handler in this slice" });
+      // session.new / conversation.activate still require the
+      // multi-conversation wiring landing in its own Plan 3 task. Received
+      // but unhandled.
+      log.debug("message-unhandled", { type: msg.type, reason: "not yet wired" });
       return;
   }
 }
@@ -199,9 +219,10 @@ function handleSessionEnd(ws: ServerWebSocket<SessionData>, services: GatewaySer
 /**
  * Tears down the connection-tracking state this file owns: the auth
  * timeout, the SessionManager registration, the per-session `SessionRuntime`
- * minted in ws-session-configure.ts, and (Plan 3 Task 2) this connection's
- * `SttSession` — closing it aborts its event stream and releases the socket
- * to the STT service, which no other owner would ever do.
+ * and `PermissionBroker` minted in ws-session-configure.ts, and (Plan 3
+ * Task 2) this connection's `SttSession` — closing it aborts its event
+ * stream and releases the socket to the STT service, which no other owner
+ * would ever do.
  * `runtime.dispose()` aborts any in-flight turn's AbortSignal and closes
  * the session's store handle — idempotent, so a socket that never reached
  * session.configure (runtime still null) is unaffected. There is no
@@ -216,6 +237,13 @@ export function cleanupSession(ws: ServerWebSocket<SessionData>, services: Gatew
     clearTimeout(ws.data.authTimeout);
     ws.data.authTimeout = null;
   }
+
+  // Settle every open permission prompt BEFORE disposing the runtime: each
+  // one is a promise the ReAct loop is awaiting inside `broker.dispatch`,
+  // and an unsettled one would keep that turn parked for the full
+  // permission timeout after the socket is already gone.
+  ws.data.permissions?.denyAll();
+  ws.data.permissions = null;
 
   ws.data.runtime?.dispose();
   ws.data.runtime = null;

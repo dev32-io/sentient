@@ -52,13 +52,21 @@ export interface PermissionPrompt {
   expiresAtMs: number;
 }
 
+/** One resolution, as it appears on the `permission.resolved` frame. */
+export interface PermissionResolution {
+  requestId: string;
+  outcome: PermissionOutcome;
+}
+
 /** The two emitter methods this module needs. Declared structurally rather
  *  than as `Pick<TurnEmitter, …>` so `runtime/` owns no import cycle and this
  *  module is testable against a two-method double. Task 1's `TurnEmitter`
- *  satisfies it by shape. */
+ *  satisfies it by shape — including the single-payload-object arity of both
+ *  methods, which is why `permissionResolved` takes a `PermissionResolution`
+ *  rather than two positional arguments. */
 export interface PermissionEmitter {
   permissionRequest(req: PermissionPrompt): void;
-  permissionResolved(requestId: string, outcome: PermissionOutcome): void;
+  permissionResolved(res: PermissionResolution): void;
 }
 
 export interface PermissionBroker {
@@ -122,7 +130,7 @@ export function createPermissionBroker(deps: PermissionBrokerDeps): PermissionBr
     entry.detach();
 
     if (reason !== "closed") {
-      emitter.permissionResolved(requestId, WIRE_OUTCOME[reason]);
+      emitter.permissionResolved({ requestId, outcome: WIRE_OUTCOME[reason] });
     }
     log.info("permission-broker.settled", {
       userId,

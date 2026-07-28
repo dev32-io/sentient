@@ -196,7 +196,7 @@ live("[@live] native orchestrator — text-only turn against the real active LLM
       mkdirSync(userHomeDir, { recursive: true });
 
       const emitter = recordingEmitter();
-      const runtime = orchestratorServices.createSessionRuntime(alice, TEST_SESSION_ID, emitter);
+      const { runtime } = orchestratorServices.createSessionRuntime(alice, TEST_SESSION_ID, emitter);
 
       try {
         expect(runtime.running).toBe(false);

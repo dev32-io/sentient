@@ -38,6 +38,12 @@ const AUDIO_ENCODING = "pcm16";
 // (ws-handlers.ts) route through — see that file for the message-level
 // wiring, and ws-turn-emitter.ts for the outbound frame mapping.
 //
+// Plan 3 Task 6 makes that factory return a PAIR — `SessionHandles`
+// { runtime, permissions }. The permission broker is connection-scoped for
+// the same reason the runtime is, and lands on `ws.data.permissions` so
+// `permission.response` (ws-handlers.ts) can settle only prompts THIS socket
+// issued.
+//
 // Plan 3 Task 2 adds the voice half: this handler also composes the session's
 // `TurnVoice` (profile-backed voice id + audio prefs, mic echo guard, TTS
 // synthesizer) and hands it to `createSessionRuntime`, so the ReAct loop's
@@ -73,10 +79,13 @@ export function handleSessionConfigure(
   ws.data.clientType = clientType;
 
   // A repeat session.configure on the same connection (e.g. a future
-  // reconnect/resume flow) must not leak the previous runtime's store
-  // handle — dispose it before minting a fresh one.
+  // reconnect/resume flow) must not leak the previous runtime's store handle
+  // or strand its open permission prompts — tear both down before minting a
+  // fresh pair.
   if (ws.data.runtime) {
     log.info("session-configure.reconfigure", { sessionId, userId, reason: "disposing prior runtime" });
+    ws.data.permissions?.denyAll();
+    ws.data.permissions = null;
     ws.data.runtime.dispose();
     ws.data.runtime = null;
   }
@@ -109,7 +118,9 @@ export function handleSessionConfigure(
           })
         : null;
       hasVoice = voice !== null;
-      ws.data.runtime = services.createSessionRuntime(principal, sessionId, emitter, voice);
+      const handles = services.createSessionRuntime(principal, sessionId, emitter, voice);
+      ws.data.runtime = handles.runtime;
+      ws.data.permissions = handles.permissions;
     } catch (err) {
       // Thrown only when the orchestrator IS configured but no active LLM
       // key resolved from the secrets store (see phase-services.ts's

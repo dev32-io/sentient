@@ -6,22 +6,22 @@
 import { describe, expect, it } from "bun:test";
 import { ConfirmUnavailableError } from "../tools/tool-types.js";
 import type { ToolInvocation } from "../tools/tool-types.js";
-import type { PermissionEmitter, PermissionOutcome, PermissionPrompt } from "./permission-broker.js";
+import type { PermissionEmitter, PermissionPrompt, PermissionResolution } from "./permission-broker.js";
 import { createPermissionBroker } from "./permission-broker.js";
 
 interface RecordingEmitter extends PermissionEmitter {
   requests: PermissionPrompt[];
-  resolutions: Array<{ requestId: string; outcome: PermissionOutcome }>;
+  resolutions: PermissionResolution[];
 }
 
 function recordingEmitter(): RecordingEmitter {
   const requests: PermissionPrompt[] = [];
-  const resolutions: Array<{ requestId: string; outcome: PermissionOutcome }> = [];
+  const resolutions: PermissionResolution[] = [];
   return {
     requests,
     resolutions,
     permissionRequest: (req) => requests.push(req),
-    permissionResolved: (requestId, outcome) => resolutions.push({ requestId, outcome }),
+    permissionResolved: (res) => resolutions.push(res),
   };
 }
 
