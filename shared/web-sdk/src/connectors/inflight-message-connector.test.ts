@@ -1,16 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { SentientSDKInternal } from "../connector-types.ts";
-import { InFlightMessageConnector } from "./inflight-message-connector.ts";
+import { type InFlightMessage, InFlightMessageConnector } from "./inflight-message-connector.ts";
 
-function createMockSDK(): {
-  sdk: SentientSDKInternal;
-  emit: (type: string, msg: unknown) => void;
-} {
+function createMockSDK(): { sdk: SentientSDKInternal; emit: (type: string, msg: unknown) => void } {
   const handlers = new Map<string, ((msg: unknown) => void)[]>();
   return {
     sdk: {
-      send: vi.fn(),
-      sendBinary: vi.fn(),
+      send: () => {},
+      sendBinary: () => {},
       onMessage: (type, handler) => {
         const list = handlers.get(type) ?? [];
         list.push(handler);
@@ -33,90 +30,58 @@ function createMockSDK(): {
 describe("InFlightMessageConnector", () => {
   let connector: InFlightMessageConnector;
   let mock: ReturnType<typeof createMockSDK>;
-  let updates: (unknown | null)[];
+  let updates: (readonly InFlightMessage[])[];
 
   beforeEach(() => {
     updates = [];
-    connector = new InFlightMessageConnector({
-      onUpdate: (inflight) => updates.push(inflight),
-    });
+    connector = new InFlightMessageConnector({ onUpdate: (inflight) => updates.push(inflight) });
     mock = createMockSDK();
     connector.attach(mock.sdk);
   });
 
-  it("starts with null inflight", () => {
-    expect(connector.inflight()).toBeNull();
+  it("seeds an empty buffer on turn.started so the UI can render the pre-first-token placeholder", () => {
+    mock.emit("turn.started", { turnId: "t-1", trigger: "user" });
+    expect(connector.list()).toEqual([{ turnId: "t-1", text: "" }]);
   });
 
-  it("seeds an empty buffer on cycle.started so the UI can render the pre-first-token placeholder", () => {
-    mock.emit("cycle.started", { cycleId: "c-1", triggerReason: "test" });
-    expect(connector.inflight()).toEqual({ cycleId: "c-1", text: "" });
-    expect(updates[updates.length - 1]).toEqual({ cycleId: "c-1", text: "" });
+  it("accumulates turn.text.delta into that turn's buffer", () => {
+    mock.emit("turn.started", { turnId: "t-1", trigger: "user" });
+    mock.emit("turn.text.delta", { turnId: "t-1", text: "Hello " });
+    mock.emit("turn.text.delta", { turnId: "t-1", text: "world" });
+    expect(connector.list()).toEqual([{ turnId: "t-1", text: "Hello world" }]);
   });
 
-  it("transitions seed → text on the first delta without losing the cycleId", () => {
-    mock.emit("cycle.started", { cycleId: "c-1", triggerReason: "test" });
-    mock.emit("message.delta", { cycleId: "c-1", delta: "Hi" });
-    expect(connector.inflight()).toEqual({ cycleId: "c-1", text: "Hi" });
+  it("holds TWO turns in flight concurrently — a follow-up turn never clobbers the open bubble (spec 7.2)", () => {
+    mock.emit("turn.started", { turnId: "t-1", trigger: "user" });
+    mock.emit("turn.text.delta", { turnId: "t-1", text: "first" });
+    mock.emit("turn.started", { turnId: "t-2", trigger: "background-completion" });
+    mock.emit("turn.text.delta", { turnId: "t-2", text: "second" });
+
+    expect(connector.list()).toEqual([
+      { turnId: "t-1", text: "first" },
+      { turnId: "t-2", text: "second" },
+    ]);
   });
 
-  it("clears the seed buffer on cycle.aborted before any delta", () => {
-    mock.emit("cycle.started", { cycleId: "c-1", triggerReason: "test" });
-    mock.emit("cycle.aborted", { cycleId: "c-1", reason: "barge-in" });
-    expect(connector.inflight()).toBeNull();
+  it("turn.completed clears only its own turn", () => {
+    mock.emit("turn.text.delta", { turnId: "t-1", text: "first" });
+    mock.emit("turn.text.delta", { turnId: "t-2", text: "second" });
+    mock.emit("turn.completed", { turnId: "t-1" });
+    expect(connector.list()).toEqual([{ turnId: "t-2", text: "second" }]);
   });
 
-  it("accumulates deltas for a cycle", () => {
-    mock.emit("message.delta", { cycleId: "c-1", delta: "Hello " });
-    mock.emit("message.delta", { cycleId: "c-1", delta: "world" });
-    expect(connector.inflight()).toEqual({ cycleId: "c-1", text: "Hello world" });
-    expect(updates).toHaveLength(2);
+  it("turn.aborted clears only its own turn", () => {
+    mock.emit("turn.text.delta", { turnId: "t-1", text: "first" });
+    mock.emit("turn.text.delta", { turnId: "t-2", text: "second" });
+    mock.emit("turn.aborted", { turnId: "t-2", cutoff: "barge-in" });
+    expect(connector.list()).toEqual([{ turnId: "t-1", text: "first" }]);
   });
 
-  it("clears inflight on message.done", () => {
-    mock.emit("message.delta", { cycleId: "c-1", delta: "Hi" });
-    mock.emit("message.done", { cycleId: "c-1" });
-    expect(connector.inflight()).toBeNull();
-    expect(updates[updates.length - 1]).toBeNull();
-  });
-
-  it("clears inflight on cycle.aborted", () => {
-    mock.emit("message.delta", { cycleId: "c-1", delta: "Hi" });
-    mock.emit("cycle.aborted", { cycleId: "c-1", reason: "barge-in" });
-    expect(connector.inflight()).toBeNull();
-  });
-
-  it("ignores message.done for a different cycle", () => {
-    mock.emit("message.delta", { cycleId: "c-1", delta: "Hi" });
-    mock.emit("message.done", { cycleId: "c-2" });
-    expect(connector.inflight()).toEqual({ cycleId: "c-1", text: "Hi" });
-  });
-
-  it("starts a fresh buffer when a new cycleId begins", () => {
-    mock.emit("message.delta", { cycleId: "c-1", delta: "First" });
-    mock.emit("message.done", { cycleId: "c-1" });
-    mock.emit("message.delta", { cycleId: "c-2", delta: "Second" });
-    expect(connector.inflight()).toEqual({ cycleId: "c-2", text: "Second" });
-  });
-
-  it("replaces buffer if a new cycleId arrives mid-stream (no lingering tail)", () => {
-    mock.emit("message.delta", { cycleId: "c-1", delta: "Old" });
-    mock.emit("message.delta", { cycleId: "c-2", delta: "New" });
-    expect(connector.inflight()).toEqual({ cycleId: "c-2", text: "New" });
-  });
-
-  it("ignores malformed messages", () => {
-    mock.emit("message.delta", {});
-    mock.emit("message.delta", { cycleId: "c-1" });
-    mock.emit("message.delta", { delta: "Hi" });
-    expect(connector.inflight()).toBeNull();
-  });
-
-  it("detach clears buffer + stops handling further events", () => {
-    mock.emit("message.delta", { cycleId: "c-1", delta: "Hi" });
+  it("detach drops every buffer and stops handling further frames", () => {
+    mock.emit("turn.text.delta", { turnId: "t-1", text: "hi" });
     connector.detach();
-    expect(connector.inflight()).toBeNull();
-    mock.emit("message.delta", { cycleId: "c-1", delta: "more" });
-    expect(connector.inflight()).toBeNull();
+    expect(connector.list()).toEqual([]);
+    mock.emit("turn.text.delta", { turnId: "t-1", text: "more" });
+    expect(connector.list()).toEqual([]);
   });
 });
