@@ -44,7 +44,7 @@ class MessageRouterTest {
         val b = RecordingConnector("cap.b")
         val router = MessageRouter(connectors = listOf(a, b))
 
-        val msg = ServerMessage.MessageDelta(cycleId = "c1", delta = "hi")
+        val msg = ServerMessage.TurnTextDelta(turnId = "c1", text = "hi")
         router.route(msg)
 
         assertEquals(listOf<ServerMessage>(msg), a.handled)
@@ -56,7 +56,7 @@ class MessageRouterTest {
         val filtering = FilteringConnector("cap.transcript")
         val router = MessageRouter(connectors = listOf(filtering))
 
-        router.route(ServerMessage.MessageDelta(cycleId = "c1", delta = "ignored"))
+        router.route(ServerMessage.TurnTextDelta(turnId = "c1", text = "ignored"))
         val transcript = ServerMessage.ConnectorTranscriptFinal(text = "hello")
         router.route(transcript)
 

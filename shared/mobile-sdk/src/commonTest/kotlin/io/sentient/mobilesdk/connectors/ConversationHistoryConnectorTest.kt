@@ -160,11 +160,11 @@ class ConversationHistoryConnectorTest {
         val c = ConversationHistoryConnector(onEntry = { emitted = it })
 
         c.handle(ServerMessage.ConversationSnapshot(items = emptyList()))
-        c.handle(ServerMessage.ConversationEntry(assistantItem("hello"), cycleId = "c-1"))
+        c.handle(ServerMessage.ConversationEntry(assistantItem("hello"), turnId = "c-1"))
 
         val item = c.items().single()
-        assertEquals("c-1", (item as ConversationFeedItem.Assistant).cycleId)
-        assertEquals("c-1", (emitted as ConversationFeedItem.Assistant).cycleId)
+        assertEquals("c-1", (item as ConversationFeedItem.Assistant).turnId)
+        assertEquals("c-1", (emitted as ConversationFeedItem.Assistant).turnId)
     }
 
     @Test
@@ -172,7 +172,7 @@ class ConversationHistoryConnectorTest {
         val c = ConversationHistoryConnector()
         c.handle(ServerMessage.ConversationSnapshot(items = emptyList()))
         c.handle(ServerMessage.ConversationEntry(assistantItem("hello")))
-        assertEquals(null, (c.items().single() as ConversationFeedItem.Assistant).cycleId)
+        assertEquals(null, (c.items().single() as ConversationFeedItem.Assistant).turnId)
     }
 
     @Test
@@ -186,7 +186,7 @@ class ConversationHistoryConnectorTest {
     fun ignores_unowned_frames() {
         val c = ConversationHistoryConnector()
         c.handle(ServerMessage.Pong)
-        c.handle(ServerMessage.MessageDelta(cycleId = "c1", delta = "x"))
+        c.handle(ServerMessage.TurnTextDelta(turnId = "c1", text = "x"))
         assertEquals(emptyList(), c.items())
     }
 

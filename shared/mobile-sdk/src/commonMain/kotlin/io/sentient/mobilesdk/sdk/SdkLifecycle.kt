@@ -46,11 +46,11 @@ interface LifecycleHooks {
     /** A `stream.resumed` ack arrived (Task 3.10). recovered drives dedup vs. cursor-reset+refetch. */
     fun onStreamResumed(recovered: Boolean)
     /**
-     * A cycle reached a natural boundary (completed / aborted). Coalesce point for
+     * A turn reached a natural boundary (completed / aborted). Coalesce point for
      * the durable resume cursor: flush the latest cursor snapshot to the store once
-     * per cycle instead of on every applied frame (Task 4.7 save throttling).
+     * per turn instead of on every applied frame (Task 4.7 save throttling).
      */
-    fun onCycleSettled()
+    fun onTurnSettled()
     /**
      * Resume params to fold INTO session.configure on a RECONNECT, or null on a
      * first connect / after a non-recovered reset (the cursor has no seq). Read at
@@ -173,7 +173,7 @@ class SdkLifecycle(
     private fun startPump(tx: WsTransport) {
         pumpJob = scope.launch {
             // ONE in-order consumer: control + audio interleave is preserved by
-            // the transport's single event stream, so `connector.audio.done`
+            // the transport's single event stream, so `turn.audio.done`
             // (control) never overtakes the trailing audio frames it terminates.
             tx.events.collect { event ->
                 when (event) {
@@ -209,9 +209,9 @@ class SdkLifecycle(
             // Resume ack (Task 3.10): recovered=true → dedup handles replays;
             // recovered=false → orchestrator resets cursor + refetches history.
             is ServerMessage.StreamResumed -> hooks.onStreamResumed(msg.recovered)
-            // Cycle boundary → coalesce the durable resume-cursor write (Task 4.7).
-            is ServerMessage.CycleCompleted -> hooks.onCycleSettled()
-            is ServerMessage.CycleAborted -> hooks.onCycleSettled()
+            // Turn boundary → coalesce the durable resume-cursor write (Task 4.7).
+            is ServerMessage.TurnCompleted -> hooks.onTurnSettled()
+            is ServerMessage.TurnAborted -> hooks.onTurnSettled()
             else -> Unit
         }
         if (!intercepted) router.route(msg)

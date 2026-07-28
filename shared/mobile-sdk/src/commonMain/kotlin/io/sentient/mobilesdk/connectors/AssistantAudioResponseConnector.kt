@@ -3,21 +3,27 @@
 //
 // Mirrors web-sdk's assistant-audio-response-connector.ts VERBATIM:
 //   capability = "audio.output"
-//   connector.audio.start → activeCycleId = cycleId; isReceiving = true;
-//                           isCancelled = false; onAudioStart(cycleId)
+//   turn.audio.start → activeTurnId = turnId; isReceiving = true;
+//                           isCancelled = false; onAudioStart(turnId)
 //   binary frame (handleBinary) → IF isReceiving && !isCancelled →
-//                           onAudioFrame(bytes, activeCycleId); else DROP
-//   connector.audio.done → isReceiving = false; IF !isCancelled →
-//                           onAudioDone(cycleId ?: activeCycleId)
+//                           onAudioFrame(bytes, activeTurnId); else DROP
+//   turn.audio.done → isReceiving = false; IF !isCancelled →
+//                           onAudioDone(turnId, falling back to activeTurnId when blank)
 //   playback.stop → isCancelled = true; isReceiving = false;
-//                           onPlaybackStop(reason ?: "barge-in", cycleId ?: "")
+//                           onPlaybackStop(reason, defaulting to "barge-in" when blank)
+//
+// TURN ATTRIBUTION: binary downlink frames carry NO turnId (9-byte header = seq +
+// type only), so every frame is attributed to the most recent turn.audio.start.
+// The gateway therefore MUST bracket each turn's audio strictly —
+// start(t) … frames(t) … done(t) — before start(t+1). AudioPipeline's queue is
+// defensive against an overlapping start, but it cannot re-attribute bytes.
 //
 // DROP-GUARD (the barge-in / interrupt latch — ported exactly):
 //   A playback.stop sets isCancelled and clears isReceiving. Subsequent binary
 //   frames are DROPPED (the && !isCancelled check) and a trailing
-//   connector.audio.done is suppressed — until the NEXT connector.audio.start
+//   turn.audio.done is suppressed — until the NEXT turn.audio.start
 //   clears isCancelled and re-enables playback. This is what stops the user
-//   hearing the assistant immediately on barge-in while the next cycle's audio
+//   hearing the assistant immediately on barge-in while the next turn's audio
 //   resumes cleanly.
 //
 // web-sdk receives binary via sdk.onBinary; mobile-sdk receives it through the
@@ -30,7 +36,7 @@
 // .playFrame and onPlaybackStop → .flushPlayback. This connector owns ONLY the flag FSM.
 //
 // Threading: single-threaded; the router drives handle/handleBinary on the
-// orchestrator's dispatcher. The flag/cycleId state is owned here.
+// orchestrator's dispatcher. The flag/turnId state is owned here.
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.connectors
 
@@ -41,12 +47,12 @@ import io.sentient.mobilesdk.protocol.ServerMessage
 // onAudioStart carries encoding + sampleRate. On web, opus→PCM decode lives in
 // webui (not web-sdk), so the web connector never sees the encoding. On mobile
 // the SDK OWNS decode (AudioPipeline → OpusDecoderPort), so the connector must
-// forward connector.audio.start's encoding/sampleRate down to the pipeline.
+// forward turn.audio.start's encoding/sampleRate down to the pipeline.
 class AssistantAudioResponseConnector(
-    private val onAudioStart: ((cycleId: String, encoding: String?, sampleRate: Int?) -> Unit)? = null,
-    private val onAudioFrame: ((frame: ByteArray, cycleId: String) -> Unit)? = null,
-    private val onAudioDone: ((cycleId: String) -> Unit)? = null,
-    private val onPlaybackStop: ((reason: String, cycleId: String) -> Unit)? = null,
+    private val onAudioStart: ((turnId: String, encoding: String?, sampleRate: Int?) -> Unit)? = null,
+    private val onAudioFrame: ((frame: ByteArray, turnId: String) -> Unit)? = null,
+    private val onAudioDone: ((turnId: String) -> Unit)? = null,
+    private val onPlaybackStop: ((reason: String, turnId: String) -> Unit)? = null,
 ) : Connector {
     override val capability: String = CAPABILITY
 
@@ -58,8 +64,8 @@ class AssistantAudioResponseConnector(
     /** Drop latch: set on playback.stop, cleared on the next audio.start. */
     private var isCancelled = false
 
-    /** cycleId of the currently active audio stream (set on audio.start). */
-    private var activeCycleId = ""
+    /** turnId of the currently active audio stream (set on audio.start). */
+    private var activeTurnId = ""
 
     /** Exposed for tests / orchestration: are we accepting downlink frames? */
     fun isReceiving(): Boolean = isReceiving
@@ -69,9 +75,9 @@ class AssistantAudioResponseConnector(
 
     override fun handle(msg: ServerMessage) {
         when (msg) {
-            is ServerMessage.ConnectorAudioStart -> onStart(msg.cycleId ?: "", msg.encoding, msg.sampleRate)
-            is ServerMessage.ConnectorAudioDone -> onDone(msg.cycleId)
-            is ServerMessage.PlaybackStop -> onStop(msg.reason, msg.cycleId)
+            is ServerMessage.TurnAudioStart -> onStart(msg.turnId, msg.encoding, msg.sampleRate)
+            is ServerMessage.TurnAudioDone -> onDone(msg.turnId)
+            is ServerMessage.PlaybackStop -> onStop(msg.reason, msg.turnId)
             else -> Unit // not owned by this connector
         }
     }
@@ -85,59 +91,60 @@ class AssistantAudioResponseConnector(
             )
             return
         }
-        log.debug("downlink-frame", mapOf("bytes" to bytes.size, "cycleId" to activeCycleId))
-        onAudioFrame?.invoke(bytes, activeCycleId)
+        log.debug("downlink-frame", mapOf("bytes" to bytes.size, "turnId" to activeTurnId))
+        onAudioFrame?.invoke(bytes, activeTurnId)
     }
 
-    private fun onStart(cycleId: String, encoding: String?, sampleRate: Int?) {
-        activeCycleId = cycleId
+    private fun onStart(turnId: String, encoding: String?, sampleRate: Int?) {
+        activeTurnId = turnId
         isReceiving = true
         isCancelled = false
         log.info(
             "transition",
             mapOf(
                 "to" to "receiving",
-                "trigger" to "connector.audio.start",
-                "cycleId" to cycleId,
+                "trigger" to "turn.audio.start",
+                "turnId" to turnId,
                 "encoding" to (encoding ?: ""),
                 "sampleRate" to (sampleRate ?: 0),
             ),
         )
-        onAudioStart?.invoke(cycleId, encoding, sampleRate)
+        onAudioStart?.invoke(turnId, encoding, sampleRate)
     }
 
-    private fun onDone(cycleId: String?) {
-        val doneId = cycleId ?: activeCycleId
+    private fun onDone(turnId: String) {
+        // Blank turnId (a malformed/legacy frame) falls back to the stream in flight.
+        val doneId = turnId.ifEmpty { activeTurnId }
         isReceiving = false
         log.info(
             "transition",
             mapOf(
                 "to" to "idle",
-                "trigger" to "connector.audio.done",
-                "cycleId" to doneId,
+                "trigger" to "turn.audio.done",
+                "turnId" to doneId,
                 "isCancelled" to isCancelled,
             ),
         )
         if (!isCancelled) onAudioDone?.invoke(doneId)
     }
 
-    private fun onStop(reason: String?, cycleId: String?) {
+    private fun onStop(reason: String, turnId: String) {
         // Mark this stream dropped. isReceiving stays false until a fresh
-        // connector.audio.start arrives — the next cycle's audio re-enables
+        // turn.audio.start arrives — the next turn's audio re-enables
         // playback automatically.
         isCancelled = true
         isReceiving = false
-        val effectiveReason = reason ?: DEFAULT_STOP_REASON
+        val effectiveReason = reason.ifEmpty { DEFAULT_STOP_REASON }
         log.info(
             "transition",
             mapOf(
                 "to" to "cancelled",
                 "trigger" to "playback.stop",
                 "reason" to effectiveReason,
-                "cycleId" to (cycleId ?: ""),
+                "turnId" to turnId,
             ),
         )
-        onPlaybackStop?.invoke(effectiveReason, cycleId ?: "")
+        onPlaybackStop?.invoke(effectiveReason, turnId)
     }
 
     companion object {

@@ -48,8 +48,8 @@ import kotlin.random.Random
 
 private const val DEFAULT_SESSIONS_TIMEOUT_MS = 5_000L
 
-/** A1: "stuck" only when a cycle is active AND the socket is not healthy. A slow healthy
- *  cycle stays READY and never arms — no content-frame false-positives. */
+/** A1: "stuck" only when a turn is active AND the socket is not healthy. A slow healthy
+ *  turn stays READY and never arms — no content-frame false-positives. */
 internal fun shouldWatchStuck(cognition: CognitionState, isSpeaking: Boolean, status: SdkStatus): Boolean =
     (cognition != CognitionState.IDLE || isSpeaking) && status != SdkStatus.READY
 
@@ -68,7 +68,7 @@ class SentientSdk(
      * mobile-data keeps the chat timeline in-memory and injects nothing — so this
      * defaults to a no-op and the in-memory cursor dies with the process (a cold
      * relaunch takes the recovered:false REST-refetch path). When set, it seeds the
-     * cursor on resume-prep, persists on advance (coalesced to cycle boundaries), and
+     * cursor on resume-prep, persists on advance (coalesced to turn boundaries), and
      * clears on a non-recovered reset / delete.
      */
     private val resumeCursorStore: ResumeCursorStore = NoOpResumeCursorStore,
@@ -137,7 +137,7 @@ class SentientSdk(
     private val resumeCursor = ResumeCursor()
 
     // Task 4.7 durable persistence: seeds the empty cursor on resume-prep, persists
-    // on advance (coalesced to cycle boundaries), clears on a non-recovered reset /
+    // on advance (coalesced to turn boundaries), clears on a non-recovered reset /
     // delete. Keyed by the live currentSessionId so it never holds a stale anchor.
     private val cursorPersistence = ResumeCursorPersistence(
         cursor = resumeCursor,
@@ -157,7 +157,7 @@ class SentientSdk(
         voiceAudio = bundle.voiceAudio,
         scope = scope,
         onStateChanged = ::onAudioStateChanged,
-        // Lazy-arm the downlink engine on the first TTS cycle (mirrors web-sdk's
+        // Lazy-arm the downlink engine on the first TTS turn (mirrors web-sdk's
         // arm-on-audio.start model). Deferred accessors — `voice` is constructed AFTER
         // `audio`, but these only fire at audio.start / drain, long after construction.
         armPlayback = { voice.armPlayback() },
@@ -172,7 +172,7 @@ class SentientSdk(
         audioConfig = config.audio,
         audioInput = { connectors.audioInput },
         // Control-frame senders ride the SAME serialized lane as pipeline start/stop
-        // (audio.start before frames, audio.end after). Lazy/cycle-safe — connectors
+        // (audio.start before frames, audio.end after). Lazily deref'd — connectors
         // is only deref'd when the consumer invokes these, exactly like audioInput.
         onUplinkStart = { turnMode -> connectors.audioInput.startStreaming(turnMode) },
         onUplinkStop = { connectors.audioInput.stopStreaming() },
@@ -366,7 +366,7 @@ class SentientSdk(
     fun interrupt() {
         log.info("interrupt")
         markInteraction()
-        connectors.cycleError.noteInterrupt(null)
+        connectors.turnError.noteInterrupt(null)
         clearActiveToIdle()
         sendControl(ClientMessage.Interrupt) // best-effort; null-safe if transport is dead
     }
@@ -442,7 +442,7 @@ class SentientSdk(
     }
 
     /** Patch TTS on/off; the server echoes via session.preferences.changed and starts /
-     *  stops sending connector.audio.* accordingly. The downlink engine is LAZY-ARMED on
+     *  stops sending turn.audio.* accordingly. The downlink engine is LAZY-ARMED on
      *  audio.start (mirrors web-sdk), so no local configure is needed here — arming
      *  follows the actual audio, not the preference flag. */
     suspend fun setTtsEnabled(enabled: Boolean) {
@@ -472,14 +472,14 @@ class SentientSdk(
     )
     suspend fun switchSession(sessionId: String) {
         markInteraction()
-        connectors.cycleError.reset()
+        connectors.turnError.reset()
         // Problem 1: drop the current session's messages NOW so the spinner
         // renders over an empty chat, not stale history, while the target loads.
         connectors.history.clearForSwitch()
         connectors.sessions.switchTo(sessionId)
         // Bug #3: switching to a past chat must drop stale active cognition
         // (THINKING / interrupt) from the current view — the gateway cancels the
-        // current cycle on switch but emits no cognition idle. Clear AFTER the
+        // current turn on switch but emits no cognition idle. Clear AFTER the
         // switch is sent so it can never gate the request.
         clearActiveToIdle()
     }
@@ -492,7 +492,7 @@ class SentientSdk(
     )
     suspend fun newChat(): String {
         markInteraction()
-        connectors.cycleError.reset()
+        connectors.turnError.reset()
         // Bug #1: the gateway clears its own mirror on session.new but emits no
         // client-facing clear; drop the visible past-chat history locally the
         // instant "+" is tapped (safe pure-state clear — never gates the mint).
@@ -527,7 +527,7 @@ class SentientSdk(
      */
     fun sendNewChat() {
         markInteraction()
-        connectors.cycleError.reset()
+        connectors.turnError.reset()
         // Bug #1: the gateway clears its own mirror on session.new but emits no
         // client-facing clear; drop the visible past-chat history locally the
         // instant "+" is tapped (safe pure-state clear — never gates the mint).
@@ -562,7 +562,7 @@ class SentientSdk(
      */
     private fun fireSwitch(id: String) {
         markInteraction()
-        connectors.cycleError.reset()
+        connectors.turnError.reset()
         connectors.sessions.sendSwitch(id)
     }
 
@@ -831,7 +831,7 @@ class SentientSdk(
      * BEFORE routing so deduped replays never reach the connectors.
      *
      * On a real advance (the cursor moved forward) note it on [cursorPersistence] so
-     * the next cycle boundary persists the snapshot (Task 4.7 save coalescing).
+     * the next turn boundary persists the snapshot (Task 4.7 save coalescing).
      */
     private fun applyCursor(seq: Long, epoch: Long?): Boolean {
         val before = resumeCursor.snapshot
@@ -869,7 +869,7 @@ class SentientSdk(
      * the clear/activate decision to here).
      *
      * recovered=true → PRESERVE in-flight state. The gateway replayed the in-flight
-     *   cycle's frames; the cursor dedups them and they re-establish THINKING/
+     *   turn's frames; the cursor dedups them and they re-establish THINKING/
      *   speaking. We must NOT clear cognition/isSpeaking — that is the whole point
      *   of the resume. No-op beyond confirming the recovery.
      *
@@ -952,7 +952,7 @@ class SentientSdk(
         override fun onSessionForbidden() = this@SentientSdk.onSessionForbidden()
         override fun onPong() = this@SentientSdk.onPong()
         override fun onStreamResumed(recovered: Boolean) = this@SentientSdk.onStreamResumed(recovered)
-        override fun onCycleSettled() = cursorPersistence.flush()
+        override fun onTurnSettled() = cursorPersistence.flush()
         override fun resumeParams(): ResumeParams? = this@SentientSdk.resumeParams()
         override fun currentConversationId(): String? = _currentSessionId.value
         override fun onAuthFailed() = setError(authExpired = true)

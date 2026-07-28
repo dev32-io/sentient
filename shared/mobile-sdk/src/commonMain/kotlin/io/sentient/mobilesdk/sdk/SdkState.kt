@@ -26,13 +26,13 @@ enum class VoiceMode { OFF, ACTIVE }
  * @param content Rendered text.
  * @param streaming True for the live in-flight bubble (pre-commit). False once committed.
  * @param cutoffKind "interrupt" | "barge-in" when an assistant reply was cut short.
- * @param cycleId Cycle that produced this assistant message (UI join key for tools). Null when unknown.
+ * @param turnId Turn that produced this assistant message (UI join key for tools). Null when unknown.
  * @param pendingId Correlates an optimistic client send to its committed feed entry. Set on user
  *   messages derived from a [ConversationFeedItem.User] that carries a pendingId (echoed back by
  *   the gateway). ChatRepository uses this to reconcile the optimistic bubble by id. Null when the
  *   entry has no associated optimistic send (assistant, tool, trigger entries, or legacy user entries
  *   that predate the pendingId echo).
- * @param tools Tasks grouped onto this message by shared cycleId (mirrors web-sdk ChatMessage.tools).
+ * @param tools Tool rows grouped onto this message by shared turnId (mirrors web-sdk ChatMessage.tools).
  * @param entryId Stable gateway entry id of the committed feed item this message folds. Empty for the
  *   live streaming bubble (pre-commit) and for legacy frames without an entryId. Used for Slice-4
  *   mirror keying + de-dup of a replayed committed entry on reconnect (Task 3.10).
@@ -43,7 +43,7 @@ data class ChatMessage(
     val content: String,
     val streaming: Boolean = false,
     val cutoffKind: String? = null,
-    val cycleId: String? = null,
+    val turnId: String? = null,
     val pendingId: String? = null,
     val tools: List<TaskSnapshotItem> = emptyList(),
     val entryId: String = "",

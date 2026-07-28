@@ -9,7 +9,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class RevealReducerTest {
-    private val C = "cycle-1"
+    private val C = "turn-1"
 
     @Test fun delta_accumulates_full_reveal_lags() {
         var s = RevealReducer.reduce(RevealState(), SdkEvent.MessageStarted(C))
@@ -31,7 +31,7 @@ class RevealReducerTest {
     @Test fun commit_drains_then_nulls() {
         var s = RevealReducer.reduce(RevealState(), SdkEvent.MessageStarted(C))
         s = RevealReducer.reduce(s, SdkEvent.MessageDelta(C, "abcde"))
-        s = RevealReducer.reduce(s, SdkEvent.MessageCommitted(ChatMessage(ts = 1, role = "assistant", content = "abcde", cycleId = C)))
+        s = RevealReducer.reduce(s, SdkEvent.MessageCommitted(ChatMessage(ts = 1, role = "assistant", content = "abcde", turnId = C)))
         assertEquals(LivePhase.DRAINING, s.bubble?.phase)
         s = RevealReducer.reduce(s, RevealTick(1_000))
         s = RevealReducer.reduce(s, RevealTick(5_000))
@@ -50,7 +50,7 @@ class RevealReducerTest {
         var s = RevealReducer.reduce(RevealState(), SdkEvent.MessageStarted(C))
         s = RevealReducer.reduce(s, SdkEvent.TaskUpserted(TaskSnapshotItem("t1", "search", C, "running", "", 1L)))
         s = RevealReducer.reduce(s, SdkEvent.MessageDelta(C, "x"))
-        s = RevealReducer.reduce(s, SdkEvent.MessageCommitted(ChatMessage(ts = 1, role = "assistant", content = "x", cycleId = C)))
+        s = RevealReducer.reduce(s, SdkEvent.MessageCommitted(ChatMessage(ts = 1, role = "assistant", content = "x", turnId = C)))
         assertEquals(1, s.tasks.size)
         s = RevealReducer.reduce(s, RevealTick(1_000))
         s = RevealReducer.reduce(s, RevealTick(5_000))

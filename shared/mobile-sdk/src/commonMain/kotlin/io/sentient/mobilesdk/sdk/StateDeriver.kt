@@ -51,7 +51,7 @@ class StateDeriver(private val clock: Clock) {
     var hasSession: Boolean = false
     var connectionLost: Boolean = false
     var authExpired: Boolean = false
-    var lastCycleError: Boolean = false
+    var lastTurnError: Boolean = false
 
     /**
      * Set the committed feed, clearing the live STT [transcript] when a speech
@@ -62,8 +62,8 @@ class StateDeriver(private val clock: Clock) {
      * must not linger as a duplicate bubble. Channel-scoped to "speech" so a
      * text.input commit never clears a voice preview.
      *
-     * Each committed Assistant entry already carries its gateway cycleId (the
-     * history connector re-attaches the frame cycleId), so the live-bubble
+     * Each committed Assistant entry already carries its gateway turnId (the
+     * history connector re-attaches the frame turnId), so the live-bubble
      * suppression + tool attachment read it straight off the item — no stamping.
      */
     fun applyFeed(items: List<ConversationFeedItem>) {
@@ -106,7 +106,7 @@ class StateDeriver(private val clock: Clock) {
  * pre-token placeholders that don't render). Committed entries first, the
  * streaming bubble last.
  *
- * @param tasks Current task list used to attach tools to messages by cycleId.
+ * @param tasks Current tool-row list used to attach tools to messages by turnId.
  */
 internal fun deriveMessages(
     feed: List<ConversationFeedItem>,
@@ -125,8 +125,8 @@ internal fun deriveMessages(
                 role = ROLE_ASSISTANT,
                 content = inflight.text,
                 streaming = true,
-                cycleId = inflight.cycleId,
-                tools = toolsFor(inflight.cycleId, tasks),
+                turnId = inflight.turnId,
+                tools = toolsFor(inflight.turnId, tasks),
             ),
         )
     }
@@ -150,17 +150,17 @@ private fun committedMessage(
     is ConversationFeedItem.Assistant -> {
         if (item.content.isEmpty() && item.cutoff == null) null
         else {
-            // cycleId is the gateway-owned join key carried on the entry (re-attached
+            // turnId is the gateway-owned join key carried on the entry (re-attached
             // from the conversation.entry frame by the history connector). Read it
             // directly — no client-side text-match/ts-window derivation.
-            val cycleId = item.cycleId
+            val turnId = item.turnId
             ChatMessage(
                 ts = item.ts,
                 role = ROLE_ASSISTANT,
                 content = item.content,
                 cutoffKind = item.cutoff?.kind,
-                cycleId = cycleId,
-                tools = toolsFor(cycleId, tasks),
+                turnId = turnId,
+                tools = toolsFor(turnId, tasks),
                 entryId = item.entryId,
             )
         }
@@ -173,9 +173,9 @@ private fun committedMessage(
     is ConversationFeedItem.Trigger -> null
 }
 
-/** Filter [tasks] to only those belonging to [cycleId]. Returns empty list when cycleId is null. */
-private fun toolsFor(cycleId: String?, tasks: List<TaskSnapshotItem>): List<TaskSnapshotItem> =
-    if (cycleId == null) emptyList() else tasks.filter { it.cycleId == cycleId }
+/** Filter [tasks] to only those belonging to [turnId]. Returns empty list when turnId is null. */
+private fun toolsFor(turnId: String?, tasks: List<TaskSnapshotItem>): List<TaskSnapshotItem> =
+    if (turnId == null) emptyList() else tasks.filter { it.turnId == turnId }
 
 private const val SPEECH_CHANNEL = "speech"
 private const val ROLE_USER = "user"

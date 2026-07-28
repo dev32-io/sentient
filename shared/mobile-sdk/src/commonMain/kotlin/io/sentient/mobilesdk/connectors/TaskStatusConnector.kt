@@ -1,23 +1,20 @@
 // ---------------------------------------------------------------------------
-// TaskStatusConnector — session-scoped live task list.
+// TaskStatusConnector — session-scoped live tool-call list.
 //
-// Mirrors web-sdk's task-status-connector.ts VERBATIM:
+// Mirrors web-sdk's task-status-connector.ts:
 //   capability = "task.status"  (status observer; no outbound protocol)
 //
-//   task.update → upsert by taskId into a map. Requires taskId, toolName,
-//                 cycleId, status, startedAtMs (the sealed ServerMessage.TaskUpdate
-//                 already enforces these as non-null at decode, so the TS guard
-//                 "reject if a required field is missing" is satisfied by the
-//                 wire schema — a malformed frame decodes to ServerMessage.Unknown
-//                 and never reaches here). argsPreview defaults to "" when blank.
-//                 Fire onUpdate(item) + onList(list()).
+//   turn.tool.update → upsert by toolCallId into a map. A malformed frame
+//                      decodes to ServerMessage.Unknown and never reaches here,
+//                      so the TS "reject if a required field is missing" guard is
+//                      satisfied by the wire schema. Fire onUpdate(item) + onList(list()).
 //
-//   list() → all tasks sorted by startedAtMs ASCENDING. Terminal states stay in
+//   list() → all rows sorted by startedAtMs ASCENDING. Terminal states stay in
 //            the list — the UI filters running-only if it wants. endedAtMs is
-//            carried through when present (set on the deregister update).
+//            carried through once the call reaches a terminal status.
 //
 // Threading: single-threaded; the orchestrator routes frames + subscribes the
-// callbacks. The mutable task map is owned here.
+// callbacks. The mutable map is owned here.
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.connectors
 
@@ -26,22 +23,23 @@ import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.protocol.ServerMessage
 
 /**
- * Immutable snapshot of one task row. Mirrors web-sdk's `TaskSnapshotItem`.
+ * Immutable snapshot of one tool-call row. Built from [ServerMessage.TurnToolUpdate].
  *
- * Defined here (not in protocol) because it is a connector-derived view, not a
- * raw wire frame — it is built from [ServerMessage.TaskUpdate] with argsPreview
- * defaulted. Used by ChatMessage.tools and exposed on ConnectionState.
+ * IDENTITY IS [toolCallId] — one row per model-emitted tool call. [taskId] is present
+ * only for a BACKGROUND tool (delegateTask), which returns a handle immediately and
+ * completes later via a stimulus; a foreground tool has none.
  */
 data class TaskSnapshotItem(
-    val taskId: String,
+    val toolCallId: String,
     val toolName: String,
-    val cycleId: String,
-    /** Mirrors web-sdk TaskStatus (e.g. "running" | "finished" | "failed"). */
+    val turnId: String,
+    /** "running" | "done" | "error". */
     val status: String,
-    /** Auto-derived short preview of the tool's args; "" when absent. */
+    /** Auto-derived short preview of the tool's args; "" when absent. USER CONTENT — never logged. */
     val argsPreview: String,
     val startedAtMs: Long,
     val endedAtMs: Long? = null,
+    val taskId: String? = null,
 )
 
 class TaskStatusConnector(
@@ -55,42 +53,46 @@ class TaskStatusConnector(
 
     private val tasks = LinkedHashMap<String, TaskSnapshotItem>()
 
-    /** All tasks, ordered by startedAtMs ascending. Safe to read synchronously. */
+    /** All rows, ordered by startedAtMs ascending. Safe to read synchronously. */
     fun list(): List<TaskSnapshotItem> = tasks.values.sortedBy { it.startedAtMs }
 
     override fun handle(msg: ServerMessage) {
         when (msg) {
-            is ServerMessage.TaskUpdate -> onTaskUpdate(msg)
+            is ServerMessage.TurnToolUpdate -> onToolUpdate(msg)
             else -> Unit // not owned by this connector
         }
     }
 
-    private fun onTaskUpdate(msg: ServerMessage.TaskUpdate) {
+    private fun onToolUpdate(msg: ServerMessage.TurnToolUpdate) {
         val item = TaskSnapshotItem(
-            taskId = msg.taskId,
+            toolCallId = msg.toolCallId,
             toolName = msg.toolName,
-            cycleId = msg.cycleId,
+            turnId = msg.turnId,
             status = msg.status,
             argsPreview = msg.argsPreview,
             startedAtMs = msg.startedAtMs,
             endedAtMs = msg.endedAtMs,
+            taskId = msg.taskId,
         )
+        // argsPreview is user content — ids/status/timing only.
         log.info(
-            "task.update",
+            "turn.tool.update",
             mapOf(
-                "taskId" to item.taskId,
-                "cycleId" to item.cycleId,
+                "toolCallId" to item.toolCallId,
+                "turnId" to item.turnId,
+                "toolName" to item.toolName,
                 "status" to item.status,
+                "taskId" to item.taskId,
                 "endedAtMs" to item.endedAtMs,
             ),
         )
-        tasks[item.taskId] = item
+        tasks[item.toolCallId] = item
         onEvent?.invoke(SdkEvent.TaskUpserted(item))
         onUpdate?.invoke(item)
         onList?.invoke(list())
     }
 
-    /** Clear the task list. Called by the orchestrator on session teardown. */
+    /** Clear the row list. Called by the orchestrator on session teardown. */
     fun clear() {
         log.info("clear", mapOf("count" to tasks.size))
         tasks.clear()

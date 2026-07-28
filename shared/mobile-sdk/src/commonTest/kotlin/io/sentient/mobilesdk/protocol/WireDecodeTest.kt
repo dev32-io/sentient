@@ -21,9 +21,9 @@ class WireDecodeTest {
 
     @Test
     fun known_frame_decodes_to_typed_success() {
-        val result = WireJson.decodeServerMessageResult("{\"type\":\"message.done\",\"cycleId\":\"c1\"}")
+        val result = WireJson.decodeServerMessageResult("{\"type\":\"turn.completed\",\"turnId\":\"t1\"}")
         assertTrue(result.isSuccess)
-        assertTrue(result.getOrNull() is ServerMessage.MessageDone)
+        assertTrue(result.getOrNull() is ServerMessage.TurnCompleted)
     }
 
     // sessions.error WITHOUT requestId — emitted by the gateway on conversation.activate

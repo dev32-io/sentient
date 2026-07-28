@@ -66,16 +66,16 @@ class PrivacyGuardTest {
         // InFlightMessageConnector logs only cycleId, deltaLen, and totalLen — never
         // the raw delta — so the secret must not appear in the captured output.
         val c = InFlightMessageConnector()
-        c.handle(ServerMessage.CycleStarted(cycleId = "c-priv-1", triggerKind = "text"))
-        c.handle(ServerMessage.MessageDelta(cycleId = "c-priv-1", delta = secret))
-        c.handle(ServerMessage.MessageDone(cycleId = "c-priv-1"))
+        c.handle(ServerMessage.TurnStarted(turnId = "c-priv-1", trigger = "text"))
+        c.handle(ServerMessage.TurnTextDelta(turnId = "c-priv-1", text = secret))
+        c.handle(ServerMessage.TurnCompleted(turnId = "c-priv-1"))
 
         // Also exercise the abort (barge-in) path — in-flight content dropped mid-stream
         // is the primary case the diagnostic feature exists to debug and a plausible
         // future leak vector. The secret must not appear in abort logging either.
-        c.handle(ServerMessage.CycleStarted(cycleId = "c-priv-2", triggerKind = "text"))
-        c.handle(ServerMessage.MessageDelta(cycleId = "c-priv-2", delta = secret))
-        c.handle(ServerMessage.CycleAborted(cycleId = "c-priv-2", reason = "barge-in"))
+        c.handle(ServerMessage.TurnStarted(turnId = "c-priv-2", trigger = "text"))
+        c.handle(ServerMessage.TurnTextDelta(turnId = "c-priv-2", text = secret))
+        c.handle(ServerMessage.TurnAborted(turnId = "c-priv-2", cutoff = "barge-in"))
 
         val log = captured.toString()
         assertTrue(

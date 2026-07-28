@@ -51,7 +51,7 @@ class AssistantAudioResponseConnectorTest {
     @Test
     fun audio_start_calls_onAudioStart_with_cycleId_and_sets_receiving() {
         val (c, sink) = connector()
-        c.handle(ServerMessage.ConnectorAudioStart(cycleId = "cycle-xyz"))
+        c.handle(ServerMessage.TurnAudioStart(turnId = "cycle-xyz"))
         assertEquals(listOf("cycle-xyz"), sink.started)
         assertTrue(c.isReceiving())
     }
@@ -61,14 +61,14 @@ class AssistantAudioResponseConnectorTest {
         // JUSTIFIED DIVERGENCE from web-sdk: mobile SDK owns opus decode, so the
         // connector must forward connector.audio.start's encoding + sampleRate.
         val (c, sink) = connector()
-        c.handle(ServerMessage.ConnectorAudioStart(cycleId = "c1", encoding = "opus", sampleRate = 48000))
+        c.handle(ServerMessage.TurnAudioStart(turnId = "c1", encoding = "opus", sampleRate = 48000))
         assertEquals(listOf<Pair<String?, Int?>>("opus" to 48000), sink.startMeta)
     }
 
     @Test
     fun binary_during_active_stream_calls_onAudioFrame_with_cycleId() {
         val (c, sink) = connector()
-        c.handle(ServerMessage.ConnectorAudioStart(cycleId = "cycle-123"))
+        c.handle(ServerMessage.TurnAudioStart(turnId = "cycle-123"))
         val pcm = byteArrayOf(4, 5, 6)
         c.handleBinary(pcm)
         assertEquals(1, sink.frames.size)
@@ -86,8 +86,8 @@ class AssistantAudioResponseConnectorTest {
     @Test
     fun audio_done_calls_onAudioDone_with_cycleId_and_clears_receiving() {
         val (c, sink) = connector()
-        c.handle(ServerMessage.ConnectorAudioStart(cycleId = "cycle-abc"))
-        c.handle(ServerMessage.ConnectorAudioDone(cycleId = "cycle-abc"))
+        c.handle(ServerMessage.TurnAudioStart(turnId = "cycle-abc"))
+        c.handle(ServerMessage.TurnAudioDone(turnId = "cycle-abc"))
         assertEquals(listOf("cycle-abc"), sink.done)
         assertTrue(!c.isReceiving())
     }
@@ -95,16 +95,16 @@ class AssistantAudioResponseConnectorTest {
     @Test
     fun audio_done_falls_back_to_active_cycleId_when_absent() {
         val (c, sink) = connector()
-        c.handle(ServerMessage.ConnectorAudioStart(cycleId = "cycle-fallback"))
-        c.handle(ServerMessage.ConnectorAudioDone(cycleId = null))
+        c.handle(ServerMessage.TurnAudioStart(turnId = "cycle-fallback"))
+        c.handle(ServerMessage.TurnAudioDone(turnId = ""))
         assertEquals(listOf("cycle-fallback"), sink.done)
     }
 
     @Test
     fun playback_stop_sets_cancel_latch_and_calls_onPlaybackStop() {
         val (c, sink) = connector()
-        c.handle(ServerMessage.ConnectorAudioStart(cycleId = "cycle-1"))
-        c.handle(ServerMessage.PlaybackStop(cycleId = "cycle-1", reason = "interrupt"))
+        c.handle(ServerMessage.TurnAudioStart(turnId = "cycle-1"))
+        c.handle(ServerMessage.PlaybackStop(turnId = "cycle-1", reason = "interrupt"))
         assertEquals(listOf("interrupt" to "cycle-1"), sink.stopped)
         assertTrue(c.isCancelled())
         assertTrue(!c.isReceiving())
@@ -113,16 +113,16 @@ class AssistantAudioResponseConnectorTest {
     @Test
     fun playback_stop_defaults_reason_to_barge_in_when_absent() {
         val (c, sink) = connector()
-        c.handle(ServerMessage.ConnectorAudioStart(cycleId = "cycle-1"))
-        c.handle(ServerMessage.PlaybackStop(cycleId = "cycle-1", reason = null))
+        c.handle(ServerMessage.TurnAudioStart(turnId = "cycle-1"))
+        c.handle(ServerMessage.PlaybackStop(turnId = "cycle-1", reason = ""))
         assertEquals(listOf("barge-in" to "cycle-1"), sink.stopped)
     }
 
     @Test
     fun binary_after_playback_stop_is_dropped() {
         val (c, sink) = connector()
-        c.handle(ServerMessage.ConnectorAudioStart(cycleId = "cycle-1"))
-        c.handle(ServerMessage.PlaybackStop(cycleId = "cycle-1", reason = "barge-in"))
+        c.handle(ServerMessage.TurnAudioStart(turnId = "cycle-1"))
+        c.handle(ServerMessage.PlaybackStop(turnId = "cycle-1", reason = "barge-in"))
         c.handleBinary(byteArrayOf(7, 8, 9))
         assertTrue(sink.frames.isEmpty(), "frames after playback.stop must be dropped until next audio.start")
     }
@@ -130,19 +130,19 @@ class AssistantAudioResponseConnectorTest {
     @Test
     fun audio_done_after_playback_stop_does_not_call_onAudioDone() {
         val (c, sink) = connector()
-        c.handle(ServerMessage.ConnectorAudioStart(cycleId = "cycle-1"))
-        c.handle(ServerMessage.PlaybackStop(cycleId = "cycle-1", reason = "barge-in"))
-        c.handle(ServerMessage.ConnectorAudioDone(cycleId = "cycle-1"))
+        c.handle(ServerMessage.TurnAudioStart(turnId = "cycle-1"))
+        c.handle(ServerMessage.PlaybackStop(turnId = "cycle-1", reason = "barge-in"))
+        c.handle(ServerMessage.TurnAudioDone(turnId = "cycle-1"))
         assertTrue(sink.done.isEmpty(), "done suppressed while cancelled")
     }
 
     @Test
     fun next_audio_start_clears_cancel_latch_and_re_enables_frames() {
         val (c, sink) = connector()
-        c.handle(ServerMessage.ConnectorAudioStart(cycleId = "cycle-1"))
-        c.handle(ServerMessage.PlaybackStop(cycleId = "cycle-1", reason = "barge-in"))
+        c.handle(ServerMessage.TurnAudioStart(turnId = "cycle-1"))
+        c.handle(ServerMessage.PlaybackStop(turnId = "cycle-1", reason = "barge-in"))
         // New stream — cancel latch cleared, frames flow again.
-        c.handle(ServerMessage.ConnectorAudioStart(cycleId = "cycle-2"))
+        c.handle(ServerMessage.TurnAudioStart(turnId = "cycle-2"))
         assertTrue(!c.isCancelled())
         c.handleBinary(byteArrayOf(1))
         assertEquals(1, sink.frames.size)
@@ -153,7 +153,7 @@ class AssistantAudioResponseConnectorTest {
     fun handle_ignores_unowned_frames() {
         val (c, sink) = connector()
         c.handle(ServerMessage.Pong)
-        c.handle(ServerMessage.MessageDelta(cycleId = "c1", delta = "x"))
+        c.handle(ServerMessage.TurnTextDelta(turnId = "c1", text = "x"))
         assertTrue(sink.started.isEmpty() && sink.done.isEmpty() && sink.stopped.isEmpty())
         assertTrue(!c.isReceiving())
     }

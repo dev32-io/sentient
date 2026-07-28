@@ -8,7 +8,7 @@ class ChatModelTest {
     @Test
     fun messagesForUi_appends_live_bubble_after_committed() {
         val committed = listOf(ChatMessage(ts = 1, role = "user", content = "hi"))
-        val live = ChatMessage(ts = 2, role = "assistant", content = "he", streaming = true, cycleId = "c1")
+        val live = ChatMessage(ts = 2, role = "assistant", content = "he", streaming = true, turnId = "c1")
         val m = ChatModel(committed = committed, live = live, tasks = emptyList())
         val ui = m.messagesForUi()
         assertEquals(2, ui.size)

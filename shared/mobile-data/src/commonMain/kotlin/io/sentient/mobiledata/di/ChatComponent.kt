@@ -100,7 +100,7 @@ open class ChatComponent(
      */
     suspend fun patchAudioPreferences(patch: AudioPreferencesPatch) = sdk.patchAudioPreferences(patch)
 
-    /** UI Stop — idempotent hard interrupt of the active cycle + audio. */
+    /** UI Stop — idempotent hard interrupt of the active turn + audio. */
     fun interrupt() = sdk.interrupt()
 
     /** Manual reconnect — re-arm the reconnect controller and drive recovery. */

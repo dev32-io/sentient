@@ -67,8 +67,11 @@ sealed class ClientMessage {
     @Serializable @SerialName("text.input")
     data class TextInput(val text: String, val pendingId: String? = null) : ClientMessage()
 
-    @Serializable @SerialName("tool.confirm")
-    data class ToolConfirm(val toolCallId: String, val approved: Boolean) : ClientMessage()
+    /** User's Allow / Deny for an open [ServerMessage.PermissionRequest] (design §7.1).
+     *  Replaces the retired `tool.confirm`. Keyed by requestId, NOT toolCallId — the
+     *  PDP owns the request lifetime, and one tool call can be re-prompted. */
+    @Serializable @SerialName("permission.response")
+    data class PermissionResponse(val requestId: String, val approved: Boolean) : ClientMessage()
 
     @Serializable @SerialName("session.end")
     data object SessionEnd : ClientMessage()
@@ -76,7 +79,7 @@ sealed class ClientMessage {
     @Serializable @SerialName("ping")
     data object Ping : ClientMessage()
 
-    /** Explicit user-initiated interrupt (UI Stop / Escape). Hard abort: cycle + TTS + interruptable tasks. */
+    /** Explicit user-initiated interrupt (UI Stop / Escape). Hard abort: turn + TTS + background tasks. */
     @Serializable @SerialName("interrupt")
     data object Interrupt : ClientMessage()
 

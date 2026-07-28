@@ -2,6 +2,7 @@ package io.sentient.mobilesdk.protocol
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 
 /**
  * Gateway → client wire frames. Mirrors shared/protocol/src/messages.ts +
@@ -66,20 +67,94 @@ sealed class ServerMessage {
     @Serializable @SerialName("session.preferences.changed")
     data class SessionPreferencesChanged(val preferences: AudioPreferences) : ServerMessage()
 
-    // ── Cognitive cycle lifecycle ──
+    // ── Turn lifecycle (design §7 — replaces the retired cycle.* / message.* frames) ──
+    // Every non-identity field carries a default: a malformed frame degrades to a
+    // harmless value instead of throwing MissingFieldException, which would drop the
+    // WHOLE frame at WsTransport decode (a dropped turn.audio.start = silent TTS).
 
-    @Serializable @SerialName("cycle.started")
-    data class CycleStarted(
-        val cycleId: String,
-        val triggerKind: String? = null,
-        val triggerSource: String? = null,
+    @Serializable @SerialName("turn.started")
+    data class TurnStarted(
+        val turnId: String,
+        /** "user" | "background-completion". */
+        val trigger: String = "",
     ) : ServerMessage()
 
-    @Serializable @SerialName("cycle.aborted")
-    data class CycleAborted(val cycleId: String, val reason: String? = null) : ServerMessage()
+    @Serializable @SerialName("turn.text.delta")
+    data class TurnTextDelta(val turnId: String, val text: String = "") : ServerMessage()
 
-    @Serializable @SerialName("cycle.completed")
-    data class CycleCompleted(val cycleId: String) : ServerMessage()
+    @Serializable @SerialName("turn.completed")
+    data class TurnCompleted(val turnId: String) : ServerMessage()
+
+    @Serializable @SerialName("turn.aborted")
+    data class TurnAborted(
+        val turnId: String,
+        /** "interrupt" | "barge-in"; "" only for a malformed frame. */
+        val cutoff: String = "",
+    ) : ServerMessage()
+
+    /** Tool-call lifecycle. Identity is [toolCallId]; [taskId] is present only for a
+     *  BACKGROUND tool (delegateTask), which returns a task handle immediately. */
+    @Serializable @SerialName("turn.tool.update")
+    data class TurnToolUpdate(
+        val turnId: String,
+        val toolCallId: String,
+        val toolName: String = "",
+        /** "running" | "done" | "error". */
+        val status: String = "",
+        val taskId: String? = null,
+        val argsPreview: String = "",
+        val startedAtMs: Long = 0L,
+        val endedAtMs: Long? = null,
+    ) : ServerMessage()
+
+    // ── Turn audio (design §7.2) ──
+    // A NEW turnId NEVER cancels in-flight audio — it queues behind it. See AudioPipeline.
+
+    @Serializable @SerialName("turn.audio.start")
+    data class TurnAudioStart(
+        val turnId: String,
+        /** "opus" | "pcm". */
+        val encoding: String = "",
+        val sampleRate: Int = 0,
+    ) : ServerMessage()
+
+    @Serializable @SerialName("turn.audio.done")
+    data class TurnAudioDone(val turnId: String) : ServerMessage()
+
+    // ── Permission mediation (design §7.1) ──
+
+    /** L3 `confirm` decision awaiting the user. [args] is an arbitrary tool-argument
+     *  object — it is USER CONTENT and must never be logged. */
+    @Serializable @SerialName("permission.request")
+    data class PermissionRequest(
+        val requestId: String,
+        val toolCallId: String,
+        val toolName: String = "",
+        val args: JsonObject = JsonObject(emptyMap()),
+        val description: String = "",
+        val expiresAtMs: Long = 0L,
+    ) : ServerMessage()
+
+    /** The gateway resolved the request first (user answered elsewhere, or the
+     *  2-minute fail-closed timeout fired) — the client dismisses its dialog. */
+    @Serializable @SerialName("permission.resolved")
+    data class PermissionResolved(
+        val requestId: String,
+        /** "allowed" | "denied" | "timeout". */
+        val outcome: String = "",
+    ) : ServerMessage()
+
+    // ── Delegation progress (design §5.4 / §7) ──
+
+    @Serializable @SerialName("delegation.progress")
+    data class DelegationProgress(
+        val taskId: String,
+        val turnId: String = "",
+        val agent: String = "",
+        /** "running" | "done" | "error". */
+        val status: String = "",
+        val note: String? = null,
+    ) : ServerMessage()
 
     // ── Connector frames ──
 
@@ -89,28 +164,6 @@ sealed class ServerMessage {
         val language: String? = null,
     ) : ServerMessage()
 
-    @Serializable @SerialName("connector.audio.start")
-    data class ConnectorAudioStart(
-        val cycleId: String? = null,
-        val taskId: String? = null,
-        val encoding: String? = null,
-        val sampleRate: Int? = null,
-    ) : ServerMessage()
-
-    @Serializable @SerialName("connector.audio.done")
-    data class ConnectorAudioDone(
-        val cycleId: String? = null,
-        val taskId: String? = null,
-    ) : ServerMessage()
-
-    // ── Streaming assistant content ──
-
-    @Serializable @SerialName("message.delta")
-    data class MessageDelta(val cycleId: String? = null, val delta: String? = null) : ServerMessage()
-
-    @Serializable @SerialName("message.done")
-    data class MessageDone(val cycleId: String? = null) : ServerMessage()
-
     // ── Conversation feed ──
 
     @Serializable @SerialName("conversation.snapshot")
@@ -118,35 +171,25 @@ sealed class ServerMessage {
         val items: List<ConversationFeedItem> = emptyList(),
     ) : ServerMessage()
 
-    // `cycleId` is the gateway-owned join key between this committed entry and
-    // its live streaming bubble (carried on the FRAME; the item strips it). Read
-    // it straight through — the client never invents/derives it. Null for
-    // user-echo / out-of-band entries and for REST history (no live cycle).
+    // `turnId` is the gateway-owned join key between this committed entry and its live
+    // streaming bubble (carried on the FRAME; the item strips it). Read it straight
+    // through — the client never invents/derives it. Null for user-echo / out-of-band
+    // entries and for REST history (no live turn).
     @Serializable @SerialName("conversation.entry")
     data class ConversationEntry(
         val item: ConversationFeedItem,
-        val cycleId: String? = null,
-    ) : ServerMessage()
-
-    // ── Task sidebar ──
-
-    @Serializable @SerialName("task.update")
-    data class TaskUpdate(
-        val taskId: String,
-        val toolName: String,
-        val cycleId: String,
-        val status: String,
-        val argsPreview: String,
-        val startedAtMs: Long,
-        val endedAtMs: Long? = null,
+        val turnId: String? = null,
     ) : ServerMessage()
 
     // ── Playback control ──
 
+    /** Flush playback. Emitted ONLY for a user action — barge-in (mic onset) or
+     *  interrupt (UI Stop). Never for a new turn. */
     @Serializable @SerialName("playback.stop")
     data class PlaybackStop(
-        val cycleId: String? = null,
-        val reason: String? = null,
+        val turnId: String = "",
+        /** "barge-in" | "interrupt". */
+        val reason: String = "",
     ) : ServerMessage()
 
     // ── Shared utility ──

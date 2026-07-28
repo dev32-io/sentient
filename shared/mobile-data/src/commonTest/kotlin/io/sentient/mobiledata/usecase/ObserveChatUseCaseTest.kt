@@ -40,11 +40,11 @@ class ObserveChatUseCaseTest {
     private fun useCase(repo: ConversationRepository) = ObserveChatUseCase(repo, clock = Clock { 0L })
 
     @Test
-    fun committed_twin_suppressed_while_live_same_cycle() = runTest(UnconfinedTestDispatcher()) {
+    fun committed_twin_suppressed_while_live_same_turn() = runTest(UnconfinedTestDispatcher()) {
         val repo = FakeConversationRepository()
         repo.timelineState.value = listOf(
             ChatMessage(ts = 1, role = "user", content = "hi"),
-            ChatMessage(ts = 2, role = "assistant", content = "Hello", cycleId = "c1"),
+            ChatMessage(ts = 2, role = "assistant", content = "Hello", turnId = "c1"),
         )
         val models = mutableListOf<ChatModel>()
         val job = launch { useCase(repo).invoke(MutableStateFlow(emptyList())).collect { models.add(it) } }
@@ -54,7 +54,7 @@ class ObserveChatUseCaseTest {
         val m = models.last()
         assertEquals(1, m.committed.size)          // user only; assistant c1 suppressed by live bubble
         assertEquals("user", m.committed[0].role)
-        assertEquals("c1", m.live?.cycleId)
+        assertEquals("c1", m.live?.turnId)
         job.cancel()
     }
 
@@ -170,14 +170,14 @@ class ObserveChatUseCaseTest {
     }
 
     @Test
-    fun prior_turn_is_not_suppressed_when_live_cycle_differs() = runTest(UnconfinedTestDispatcher()) {
-        // With unique cycleIds, the live turn's id never matches a PRIOR turn's id,
+    fun prior_turn_is_not_suppressed_when_live_turn_differs() = runTest(UnconfinedTestDispatcher()) {
+        // With unique turnIds, the live turn's id never matches a PRIOR turn's id,
         // so the suppression filter drops only the live turn's committed twin. (Under
         // the old reused-"cycle-1" bug, the prior turn's reply was wrongly suppressed.)
         val repo = FakeConversationRepository()
         repo.timelineState.value = listOf(
             ChatMessage(ts = 1, role = "user", content = "q1"),
-            ChatMessage(ts = 2, role = "assistant", content = "answer-1", cycleId = "1000"), // prior turn
+            ChatMessage(ts = 2, role = "assistant", content = "answer-1", turnId = "1000"), // prior turn
             ChatMessage(ts = 3, role = "user", content = "q2"),
         )
         val models = mutableListOf<ChatModel>()
@@ -187,10 +187,10 @@ class ObserveChatUseCaseTest {
         runCurrent()
         val m = models.last()
         assertTrue(
-            m.committed.any { it.cycleId == "1000" && it.content == "answer-1" },
+            m.committed.any { it.turnId == "1000" && it.content == "answer-1" },
             "the prior turn's reply must stay visible — only the live turn (2000) is suppressed",
         )
-        assertEquals("2000", m.live?.cycleId)
+        assertEquals("2000", m.live?.turnId)
         job.cancel()
     }
 }

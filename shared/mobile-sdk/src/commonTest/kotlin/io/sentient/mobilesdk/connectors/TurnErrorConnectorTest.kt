@@ -1,19 +1,19 @@
 // ---------------------------------------------------------------------------
-// CycleErrorConnectorTest — pins the unsolicited-cycle-error INVARIANT
-// (Task 4, mobile-resilience). cycle.aborted is overloaded across UI Stop,
+// TurnErrorConnectorTest — pins the unsolicited-turn-error INVARIANT
+// (Task 4, mobile-resilience). turn.aborted is overloaded across UI Stop,
 // barge-in, and real wire/server errors; only the last must surface a
 // recoverable error. This is a documented FSM invariant → keeper per
 // .claude/rules/testing.md.
 //
 // Feeds the real connector typed frames + the two client-side notes
 // (noteInterrupt / noteBargeIn) — no mocks of internals. The connector exposes
-// onErrorChange; the orchestrator wires that to deriver.lastCycleError (an
-// events-emitted SdkEvent.CycleAborted is the app-facing signal).
+// onErrorChange; the orchestrator wires that to deriver.lastTurnError (an
+// events-emitted SdkEvent.TurnAborted is the app-facing signal).
 //
-//   cycle.started → interrupt() → cycle.aborted ⇒ lastCycleError false
-//   cycle.started → barge-in    → cycle.aborted ⇒ false
-//   cycle.started → cycle.aborted (no note)     ⇒ true
-//   then cycle.started                          ⇒ cleared to false
+//   turn.started → interrupt() → turn.aborted ⇒ lastTurnError false
+//   turn.started → barge-in    → turn.aborted ⇒ false
+//   turn.started → turn.aborted (no note)     ⇒ true
+//   then turn.started                         ⇒ cleared to false
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.connectors
 
@@ -23,33 +23,33 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-class CycleErrorConnectorTest {
+class TurnErrorConnectorTest {
 
-    private fun connectorWithChanges(): Pair<CycleErrorConnector, MutableList<Boolean>> {
+    private fun connectorWithChanges(): Pair<TurnErrorConnector, MutableList<Boolean>> {
         val changes = mutableListOf<Boolean>()
-        val c = CycleErrorConnector(onErrorChange = { changes += it })
+        val c = TurnErrorConnector(onErrorChange = { changes += it })
         return c to changes
     }
 
-    private fun started(id: String) = ServerMessage.CycleStarted(cycleId = id, triggerKind = "test")
-    private fun aborted(id: String, reason: String? = null) = ServerMessage.CycleAborted(cycleId = id, reason = reason)
+    private fun started(id: String) = ServerMessage.TurnStarted(turnId = id, trigger = "test")
+    private fun aborted(id: String, cutoff: String = "") = ServerMessage.TurnAborted(turnId = id, cutoff = cutoff)
 
     @Test
-    fun has_capability_cycle_error() {
-        assertEquals("cycle.error", CycleErrorConnector().capability)
+    fun has_capability_turn_error() {
+        assertEquals("turn.error", TurnErrorConnector().capability)
     }
 
     @Test
     fun starts_with_no_error() {
-        assertFalse(CycleErrorConnector().hasError())
+        assertFalse(TurnErrorConnector().hasError())
     }
 
     @Test
     fun interrupt_then_abort_does_not_set_error() {
         val (c, changes) = connectorWithChanges()
         c.handle(started("c1"))
-        c.noteInterrupt(null) // UI Stop, no cycleId — latches the active cycle
-        c.handle(aborted("c1", reason = "interrupt"))
+        c.noteInterrupt(null) // UI Stop, no turnId — latches the active turn
+        c.handle(aborted("c1", cutoff = "interrupt"))
         assertFalse(c.hasError())
         assertTrue(changes.none { it }) // never went true
     }
@@ -59,7 +59,7 @@ class CycleErrorConnectorTest {
         val (c, changes) = connectorWithChanges()
         c.handle(started("c1"))
         c.noteBargeIn("c1")
-        c.handle(aborted("c1")) // bare abort (reason absent — barge-in carries none)
+        c.handle(aborted("c1")) // bare abort (cutoff absent — a degraded frame)
         assertFalse(c.hasError())
         assertTrue(changes.none { it })
     }
@@ -68,15 +68,15 @@ class CycleErrorConnectorTest {
     fun unsolicited_abort_sets_error() {
         val (c, changes) = connectorWithChanges()
         c.handle(started("c1"))
-        c.handle(aborted("c1", reason = "error")) // wire-death — no local interrupt/barge-in
+        c.handle(aborted("c1", cutoff = "error")) // wire-death — no local interrupt/barge-in
         assertTrue(c.hasError())
         assertEquals(listOf(true), changes)
     }
 
     @Test
-    fun bare_unsolicited_abort_sets_error_without_reason() {
-        // The SDK contract must not depend on the gateway's `reason`: a bare
-        // cycle.aborted (older gateway / reason absent) the client did NOT cause
+    fun bare_unsolicited_abort_sets_error_without_cutoff() {
+        // The SDK contract must not depend on the gateway's `cutoff`: a bare
+        // turn.aborted (degraded frame / cutoff absent) the client did NOT cause
         // is still an error.
         val (c, _) = connectorWithChanges()
         c.handle(started("c1"))
@@ -85,7 +85,7 @@ class CycleErrorConnectorTest {
     }
 
     @Test
-    fun next_cycle_started_clears_the_error() {
+    fun next_turn_started_clears_the_error() {
         val (c, changes) = connectorWithChanges()
         c.handle(started("c1"))
         c.handle(aborted("c1"))
@@ -96,24 +96,24 @@ class CycleErrorConnectorTest {
     }
 
     @Test
-    fun message_done_before_abort_is_not_an_error() {
-        // A completed-then-aborted ReAct continuation: the cycle produced a final
-        // answer (message.done) — a later abort is not a broken chat.
+    fun turn_completed_before_abort_is_not_an_error() {
+        // A completed-then-aborted ReAct continuation: the turn produced a final
+        // answer (turn.completed) — a later abort is not a broken chat.
         val (c, _) = connectorWithChanges()
         c.handle(started("c1"))
-        c.handle(ServerMessage.MessageDone(cycleId = "c1"))
-        c.handle(aborted("c1", reason = "error"))
+        c.handle(ServerMessage.TurnCompleted(turnId = "c1"))
+        c.handle(aborted("c1", cutoff = "error"))
         assertFalse(c.hasError())
     }
 
     @Test
-    fun successful_cycle_clears_a_prior_error() {
+    fun successful_turn_clears_a_prior_error() {
         val (c, _) = connectorWithChanges()
         c.handle(started("c1"))
         c.handle(aborted("c1"))
         assertTrue(c.hasError())
         c.handle(started("c2"))
-        c.handle(ServerMessage.MessageDone(cycleId = "c2"))
+        c.handle(ServerMessage.TurnCompleted(turnId = "c2"))
         assertFalse(c.hasError())
     }
 
@@ -128,21 +128,21 @@ class CycleErrorConnectorTest {
     }
 
     @Test
-    fun note_for_a_different_cycle_does_not_exempt_the_active_one() {
-        // A stale interrupt note targeting an OLD cycle must not suppress a real
-        // error on the current cycle.
+    fun note_for_a_different_turn_does_not_exempt_the_active_one() {
+        // A stale interrupt note targeting an OLD turn must not suppress a real
+        // error on the current turn.
         val (c, _) = connectorWithChanges()
         c.handle(started("c1"))
-        c.noteInterrupt("c0") // targets a prior cycle, not c1
+        c.noteInterrupt("c0") // targets a prior turn, not c1
         c.handle(aborted("c1"))
         assertTrue(c.hasError())
     }
 
     @Test
-    fun abort_for_a_different_cycle_is_ignored() {
+    fun abort_for_a_different_turn_is_ignored() {
         val (c, _) = connectorWithChanges()
         c.handle(started("c2"))
-        c.handle(aborted("c1")) // abort for a stale cycle — not the active one
+        c.handle(aborted("c1")) // abort for a stale turn — not the active one
         assertFalse(c.hasError())
     }
 

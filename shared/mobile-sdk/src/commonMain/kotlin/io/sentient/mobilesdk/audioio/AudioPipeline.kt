@@ -115,9 +115,9 @@ class AudioPipeline(
     // (voiceMode OFF → FSM INACTIVE) and must still flip speaking (webui isAudioPlaying).
     private var isSpeaking = false
 
-    // cycleId of the TTS stream currently playing (set on audio.start, cleared on
+    // turnId of the TTS stream currently playing (set on audio.start, cleared on
     // done / playback.stop). "" when no TTS is active. Guards supersede + stale-drop.
-    private var activeCycleId = ""
+    private var activeTurnId = ""
 
     // Drain-watch: true between audio.done and the speaker physically draining. While
     // true, isSpeaking (and the interrupt affordance) are HELD — audio.done only means
@@ -137,13 +137,13 @@ class AudioPipeline(
      * pcm16 mode passes bytes through at the announced rate ([outputSampleRate] fallback —
      * logging only).
      */
-    fun onAudioStart(cycleId: String, encoding: String? = null, sampleRate: Int? = null) {
+    fun onAudioStart(turnId: String, encoding: String? = null, sampleRate: Int? = null) {
         // A NEWER cycle's audio arriving while a prior cycle is still playing/queued →
         // drop the superseded audio so the user hears the LATEST response, not the old
-        // tail (webui parity). The cycleId guard in onAudioFrame/onAudioDone then drops
+        // tail (webui parity). The turnId guard in onAudioFrame/onAudioDone then drops
         // any late frames/done still in flight for the superseded cycle.
-        if (activeCycleId.isNotEmpty() && activeCycleId != cycleId) {
-            log.info("downlink-supersede", mapOf("superseded" to activeCycleId, "next" to cycleId))
+        if (activeTurnId.isNotEmpty() && activeTurnId != turnId) {
+            log.info("downlink-supersede", mapOf("superseded" to activeTurnId, "next" to turnId))
             playback?.flushPlayback()
             clearPendingFrames()
         }
@@ -157,19 +157,19 @@ class AudioPipeline(
         val playbackRate = if (opusMode) OPUS_DECODE_RATE_HZ else (sampleRate ?: outputSampleRate)
         log.info(
             "downlink-start",
-            mapOf("cycleId" to cycleId, "opusMode" to opusMode, "playbackRate" to playbackRate),
+            mapOf("turnId" to turnId, "opusMode" to opusMode, "playbackRate" to playbackRate),
         )
         if (opusMode) opusDecoder.reset()
-        activeCycleId = cycleId
+        activeTurnId = turnId
         // HOLD (spec §7.3): buffer only — do NOT flip speaking, do NOT arm playback, do NOT
         // transition the FSM. Frames accumulate in [pendingFrames] and flush on [endHold].
         if (holdDeferred) {
-            log.info("downlink-hold-start", mapOf("cycleId" to cycleId, "opusMode" to opusMode))
+            log.info("downlink-hold-start", mapOf("turnId" to turnId, "opusMode" to opusMode))
             return
         }
         isSpeaking = true
         armPlaybackOnce()
-        transition(AudioInput.AudioStart, cycleId)
+        transition(AudioInput.AudioStart, turnId)
     }
 
     /**
@@ -199,7 +199,7 @@ class AudioPipeline(
                 // Hold release with an already-completed stream: the buffered reply has now
                 // flushed to the player, so start the physical-drain watch (the player is no
                 // longer idle) — deferred here to avoid a pre-flush idle=true false-finalize.
-                if (framesDone && activeCycleId.isNotEmpty()) armDrainWatch(activeCycleId)
+                if (framesDone && activeTurnId.isNotEmpty()) armDrainWatch(activeTurnId)
             } else {
                 log.warn("downlink-arm-skipped", mapOf("armed" to armed, "started" to playbackStarted))
             }
@@ -212,33 +212,33 @@ class AudioPipeline(
      * pcm16 mode: pass the raw bytes through unchanged. Either way frames buffer
      * until the player is ready, then enqueue directly.
      */
-    fun onAudioFrame(frame: ByteArray, cycleId: String) {
+    fun onAudioFrame(frame: ByteArray, turnId: String) {
         if (playback == null) return
-        // Drop frames from a superseded cycle (a newer audio.start moved activeCycleId
+        // Drop frames from a superseded cycle (a newer audio.start moved activeTurnId
         // on). Dropping BEFORE decode is essential in opus mode — feeding a stale chunk
         // would corrupt the freshly-reset decoder state for the new cycle.
-        if (activeCycleId.isNotEmpty() && cycleId != activeCycleId) {
-            log.debug("downlink-frame-stale-drop", mapOf("frameCycle" to cycleId, "activeCycle" to activeCycleId))
+        if (activeTurnId.isNotEmpty() && turnId != activeTurnId) {
+            log.debug("downlink-frame-stale-drop", mapOf("frameCycle" to turnId, "activeCycle" to activeTurnId))
             return
         }
         if (!opusMode) {
-            enqueueOrBuffer(frame, cycleId)
+            enqueueOrBuffer(frame, turnId)
             return
         }
         val decoded = opusDecoder.decode(frame)
         log.debug(
             "downlink-decode",
-            mapOf("oggBytes" to frame.size, "pcmFrames" to decoded.size, "cycleId" to cycleId),
+            mapOf("oggBytes" to frame.size, "pcmFrames" to decoded.size, "turnId" to turnId),
         )
-        for (pcm in decoded) enqueueOrBuffer(pcm, cycleId)
+        for (pcm in decoded) enqueueOrBuffer(pcm, turnId)
     }
 
     /** Feed [bytes] to the player once armed; buffer until the lazy arm settles (or, during a
      *  hold, until [endHold]). [holdDeferred] forces buffering even if a stale ready latch
      *  lingers — the invariant "in Hold, playback is NEVER armed" holds by construction. */
-    private fun enqueueOrBuffer(bytes: ByteArray, cycleId: String) {
+    private fun enqueueOrBuffer(bytes: ByteArray, turnId: String) {
         if (playbackReady && !holdDeferred) {
-            log.debug("downlink-frame", mapOf("bytes" to bytes.size, "cycleId" to cycleId))
+            log.debug("downlink-frame", mapOf("bytes" to bytes.size, "turnId" to turnId))
             playback?.playFrame(bytes)
         } else {
             // Lazy-arm / hold buffer: frames that arrive before the engine is armed queue here
@@ -255,7 +255,7 @@ class AudioPipeline(
             }
             log.debug(
                 "downlink-frame-buffered",
-                mapOf("bytes" to bytes.size, "depth" to pendingFrames.size, "cycleId" to cycleId),
+                mapOf("bytes" to bytes.size, "depth" to pendingFrames.size, "turnId" to turnId),
             )
         }
     }
@@ -284,11 +284,11 @@ class AudioPipeline(
      * state (and the interrupt affordance) until the player physically drains
      * (armDrainWatch), instead of clearing it here.
      */
-    fun onAudioDone(cycleId: String) {
-        log.info("downlink-done", mapOf("cycleId" to cycleId))
+    fun onAudioDone(turnId: String) {
+        log.info("downlink-done", mapOf("turnId" to turnId))
         // Stale audio.done for a superseded cycle — the active cycle owns the state.
-        if (activeCycleId.isNotEmpty() && cycleId != activeCycleId) {
-            log.debug("downlink-done-stale-drop", mapOf("doneCycle" to cycleId, "activeCycle" to activeCycleId))
+        if (activeTurnId.isNotEmpty() && turnId != activeTurnId) {
+            log.debug("downlink-done-stale-drop", mapOf("doneCycle" to turnId, "activeCycle" to activeTurnId))
             return
         }
         if (opusMode) opusDecoder.reset()
@@ -296,11 +296,11 @@ class AudioPipeline(
         // stream completed; [endHold] arms + flushes, then starts the drain-watch post-flush.
         if (holdDeferred) {
             holdStreamDone = true
-            log.info("downlink-hold-done", mapOf("cycleId" to cycleId))
+            log.info("downlink-hold-done", mapOf("turnId" to turnId))
             return
         }
         framesDone = true
-        armDrainWatch(cycleId)
+        armDrainWatch(turnId)
     }
 
     /**
@@ -310,27 +310,27 @@ class AudioPipeline(
      * the interrupt affordance visible through the speaker tail (webui parity). A new
      * cycle (onAudioStart) or an interrupt (onPlaybackStop) cancels the watch.
      */
-    private fun armDrainWatch(cycleId: String) {
+    private fun armDrainWatch(turnId: String) {
         drainJob?.cancel()
-        val pb = playback ?: run { finalizeDrain(cycleId); return }
+        val pb = playback ?: run { finalizeDrain(turnId); return }
         drainJob = scope.launch {
             while (framesDone && !pb.isPlaybackIdle) delay(DRAIN_POLL_MS)
             if (!framesDone) return@launch // superseded by a new cycle / interrupt
             delay(playbackDrainSettleMs)
-            if (framesDone && pb.isPlaybackIdle) finalizeDrain(cycleId)
+            if (framesDone && pb.isPlaybackIdle) finalizeDrain(turnId)
         }
     }
 
     /** Clear the speaking latch + advance the FSM once the speaker has truly drained,
      *  then RELEASE the downlink engine (lazy model: it only runs while there is audio). */
-    private fun finalizeDrain(cycleId: String) {
+    private fun finalizeDrain(turnId: String) {
         if (!framesDone) return
         framesDone = false
         isSpeaking = false
-        activeCycleId = ""
-        log.info("downlink-drained", mapOf("cycleId" to cycleId))
+        activeTurnId = ""
+        log.info("downlink-drained", mapOf("turnId" to turnId))
         releasePlaybackEngine()
-        transition(AudioInput.AudioDone, cycleId)
+        transition(AudioInput.AudioDone, turnId)
     }
 
     /**
@@ -383,27 +383,27 @@ class AudioPipeline(
         holdStreamDone = false
         log.info(
             "hold-end",
-            mapOf("bufferedFrames" to pendingFrames.size, "bufferedBytes" to holdBufferedBytes, "streamDone" to streamDone, "cycleId" to activeCycleId),
+            mapOf("bufferedFrames" to pendingFrames.size, "bufferedBytes" to holdBufferedBytes, "streamDone" to streamDone, "turnId" to activeTurnId),
         )
-        if (activeCycleId.isEmpty() && !hadBuffered) return // nothing arrived during the hold
+        if (activeTurnId.isEmpty() && !hadBuffered) return // nothing arrived during the hold
         isSpeaking = true
         // If the stream already finished SENDING during the hold, mark framesDone BEFORE the
         // arm so armPlaybackOnce starts the physical-drain watch once the buffer has flushed
         // (never before — a pre-flush idle=true would false-finalize + clear speaking early).
         framesDone = streamDone
         armPlaybackOnce()
-        transition(AudioInput.AudioStart, activeCycleId)
+        transition(AudioInput.AudioStart, activeTurnId)
     }
 
     /** Local Stop (UI/escape): force-stop playback for the active cycle without a server frame. */
     fun stopLocal() {
-        if (activeCycleId.isEmpty() && !isSpeaking) return
-        onPlaybackStop(reason = "interrupt-local", cycleId = activeCycleId)
+        if (activeTurnId.isEmpty() && !isSpeaking) return
+        onPlaybackStop(reason = "interrupt-local", turnId = activeTurnId)
     }
 
     /** playback.stop (barge-in / interrupt): flush playback, reset decoder, clear speaking. */
-    fun onPlaybackStop(reason: String, cycleId: String) {
-        log.info("downlink-stop", mapOf("reason" to reason, "cycleId" to cycleId))
+    fun onPlaybackStop(reason: String, turnId: String) {
+        log.info("downlink-stop", mapOf("reason" to reason, "turnId" to turnId))
         // Interrupt/barge-in clears speaking immediately — cancel any pending drain-watch.
         drainJob?.cancel()
         framesDone = false
@@ -415,8 +415,8 @@ class AudioPipeline(
         clearPendingFrames()
         releasePlaybackEngine()
         isSpeaking = false
-        activeCycleId = ""
-        transition(AudioInput.Interrupt, cycleId)
+        activeTurnId = ""
+        transition(AudioInput.Interrupt, turnId)
     }
 
     /**
@@ -464,13 +464,13 @@ class AudioPipeline(
      * snapshot consistent when audio plays on the text path (voiceMode OFF → FSM
      * INACTIVE) so no FSM transition fires.
      */
-    private fun transition(input: AudioInput, cycleId: String = "") {
+    private fun transition(input: AudioInput, turnId: String = "") {
         val prev = fsm.state
         val next = fsm.handle(input)
         if (next != prev) {
             log.debug(
                 "fsm",
-                mapOf("from" to prev, "to" to next, "input" to input::class.simpleName, "cycleId" to cycleId),
+                mapOf("from" to prev, "to" to next, "input" to input::class.simpleName, "turnId" to turnId),
             )
         }
         onStateChanged(isSpeaking, next)

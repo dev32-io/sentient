@@ -30,10 +30,10 @@ import kotlinx.coroutines.CoroutineScope
  *   depends only on its [io.sentient.mobilesdk.audioio.VoicePlaybackSink] slice.
  * @param scope Orchestrator scope the downlink coroutines run on.
  * @param onStateChanged Pushes isSpeaking + FSM state into the StateDeriver.
- * @param armPlayback LAZY-ARM the engine for playback on the first TTS cycle; suspends
- *   until playback-active Ready (true) or fail (false). Cycle-safe lambda — [SdkVoice] is
+ * @param armPlayback LAZY-ARM the engine for playback on the first TTS turn; suspends
+ *   until playback-active Ready (true) or fail (false). Deferred-accessor lambda — [SdkVoice] is
  *   constructed AFTER SdkAudio, so the orchestrator passes a deferred accessor.
- * @param disarmPlayback Release the engine after a TTS cycle drains/interrupts (no-op in
+ * @param disarmPlayback Release the engine after a TTS turn drains/interrupts (no-op in
  *   voice mode, teardown-to-idle in text mode).
  */
 class SdkAudio(
@@ -46,7 +46,7 @@ class SdkAudio(
 ) {
     private val fsm = AudioFsm()
 
-    // Long-lived OGG-Opus → PCM16-LE downlink decoder (A4); reset between TTS cycles
+    // Long-lived OGG-Opus → PCM16-LE downlink decoder (A4); reset between TTS turns
     // by the pipeline. Wrapped in LazyOpusDecoderPort so the native kopus decoder is
     // only allocated when opus actually streams (on a real device) — eager
     // construction would crash host-JVM full-SDK tests on the libopus native load.
@@ -85,6 +85,6 @@ class SdkAudio(
     /** Terminal: logout / SDK close. Free the native codec. */
     fun dispose() = pipeline.dispose()
 
-    /** Local Stop (UI/escape): force-stop playback for the active cycle without a server frame. */
+    /** Local Stop (UI/escape): force-stop playback for the active turn without a server frame. */
     fun stopLocal() = pipeline.stopLocal()
 }

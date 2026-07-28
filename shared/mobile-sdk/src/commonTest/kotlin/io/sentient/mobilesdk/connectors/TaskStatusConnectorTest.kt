@@ -1,15 +1,14 @@
 // ---------------------------------------------------------------------------
-// TaskStatusConnectorTest — ported VERBATIM from web-sdk
-// task-status-connector.test.ts. Pins the task.update parse contract + the
-// list() ordering invariant (startedAtMs ascending) + upsert-by-taskId + the
-// cycleId threading. Wire-shape contract at the gateway↔SDK boundary → keeper
-// per .claude/rules/testing.md.
+// TaskStatusConnectorTest — ported from web-sdk task-status-connector.test.ts.
+// Pins the turn.tool.update parse contract + the list() ordering invariant
+// (startedAtMs ascending) + upsert-by-toolCallId + the turnId threading.
+// Wire-shape contract at the gateway↔SDK boundary → keeper per
+// .claude/rules/testing.md.
 //
 // The TS "rejects missing field" guard maps onto the sealed wire schema:
-// ServerMessage.TaskUpdate enforces non-null taskId/toolName/cycleId/status/
-// startedAtMs at decode, so a frame missing one decodes to ServerMessage.Unknown
-// (covered by the WireJson polymorphic-default contract test, not here). The
-// equivalent here is "ignores unowned frames".
+// a frame missing turnId/toolCallId decodes to ServerMessage.Unknown (covered by
+// the WireJson polymorphic-default contract test, not here). The equivalent here
+// is "ignores unowned frames".
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.connectors
 
@@ -21,21 +20,23 @@ import kotlin.test.assertNull
 class TaskStatusConnectorTest {
 
     private fun update(
-        taskId: String,
+        toolCallId: String,
         toolName: String = "tool",
-        cycleId: String = "cycle-1",
+        turnId: String = "turn-1",
         status: String = "running",
         argsPreview: String = "",
         startedAtMs: Long = 1000L,
         endedAtMs: Long? = null,
-    ) = ServerMessage.TaskUpdate(
-        taskId = taskId,
+        taskId: String? = null,
+    ) = ServerMessage.TurnToolUpdate(
+        turnId = turnId,
+        toolCallId = toolCallId,
         toolName = toolName,
-        cycleId = cycleId,
         status = status,
         argsPreview = argsPreview,
         startedAtMs = startedAtMs,
         endedAtMs = endedAtMs,
+        taskId = taskId,
     )
 
     @Test
@@ -49,19 +50,19 @@ class TaskStatusConnectorTest {
     }
 
     @Test
-    fun parses_task_update_and_threads_cycleId_into_snapshot() {
+    fun parses_tool_update_and_threads_turnId_into_snapshot() {
         val updates = mutableListOf<TaskSnapshotItem>()
         val c = TaskStatusConnector(onUpdate = { updates += it })
 
-        c.handle(update(taskId = "t-1", toolName = "search", cycleId = "cycle-1", argsPreview = "query=hello"))
+        c.handle(update(toolCallId = "t-1", toolName = "search", turnId = "turn-1", argsPreview = "query=hello"))
 
         val items = c.list()
         assertEquals(1, items.size)
         assertEquals(
             TaskSnapshotItem(
-                taskId = "t-1",
+                toolCallId = "t-1",
                 toolName = "search",
-                cycleId = "cycle-1",
+                turnId = "turn-1",
                 status = "running",
                 argsPreview = "query=hello",
                 startedAtMs = 1000L,
@@ -72,27 +73,27 @@ class TaskStatusConnectorTest {
     }
 
     @Test
-    fun preserves_distinct_cycleIds_across_tasks() {
+    fun preserves_distinct_turnIds_across_tool_calls() {
         val c = TaskStatusConnector()
-        c.handle(update(taskId = "t1", toolName = "play_music", cycleId = "cycle-A", startedAtMs = 100L))
-        c.handle(update(taskId = "t2", toolName = "run_scene", cycleId = "cycle-B", startedAtMs = 200L))
+        c.handle(update(toolCallId = "t1", toolName = "play_music", turnId = "turn-A", startedAtMs = 100L))
+        c.handle(update(toolCallId = "t2", toolName = "run_scene", turnId = "turn-B", startedAtMs = 200L))
 
         val items = c.list()
         assertEquals(2, items.size)
-        assertEquals("cycle-A", items.first { it.taskId == "t1" }.cycleId)
-        assertEquals("cycle-B", items.first { it.taskId == "t2" }.cycleId)
+        assertEquals("turn-A", items.first { it.toolCallId == "t1" }.turnId)
+        assertEquals("turn-B", items.first { it.toolCallId == "t2" }.turnId)
     }
 
     @Test
-    fun updates_tasks_by_taskId_on_subsequent_updates() {
+    fun updates_rows_by_toolCallId_on_subsequent_updates() {
         val updates = mutableListOf<TaskSnapshotItem>()
         val lists = mutableListOf<List<TaskSnapshotItem>>()
         val c = TaskStatusConnector(onUpdate = { updates += it }, onList = { lists += it })
 
-        c.handle(update(taskId = "t-1", toolName = "search", argsPreview = "query=hello"))
+        c.handle(update(toolCallId = "t-1", toolName = "search", argsPreview = "query=hello"))
         c.handle(
             update(
-                taskId = "t-1",
+                toolCallId = "t-1",
                 toolName = "search",
                 status = "finished",
                 argsPreview = "query=hello",
@@ -110,26 +111,26 @@ class TaskStatusConnectorTest {
     @Test
     fun maintains_order_by_startedAtMs_ascending() {
         val c = TaskStatusConnector()
-        c.handle(update(taskId = "t-2", toolName = "tool2", startedAtMs = 2000L))
-        c.handle(update(taskId = "t-1", toolName = "tool1", startedAtMs = 1000L))
+        c.handle(update(toolCallId = "t-2", toolName = "tool2", startedAtMs = 2000L))
+        c.handle(update(toolCallId = "t-1", toolName = "tool1", startedAtMs = 1000L))
 
         val items = c.list()
         assertEquals(2, items.size)
-        assertEquals("t-1", items[0].taskId)
-        assertEquals("t-2", items[1].taskId)
+        assertEquals("t-1", items[0].toolCallId)
+        assertEquals("t-2", items[1].toolCallId)
     }
 
     @Test
     fun defaults_argsPreview_to_empty_string_when_blank() {
         val c = TaskStatusConnector()
-        c.handle(update(taskId = "t-1", toolName = "tool"))
+        c.handle(update(toolCallId = "t-1", toolName = "tool"))
         assertEquals("", c.list()[0].argsPreview)
     }
 
     @Test
-    fun keeps_terminal_tasks_in_the_list_with_endedAtMs() {
+    fun keeps_terminal_rows_in_the_list_with_endedAtMs() {
         val c = TaskStatusConnector()
-        c.handle(update(taskId = "t-1", status = "finished", endedAtMs = 5000L))
+        c.handle(update(toolCallId = "t-1", status = "finished", endedAtMs = 5000L))
         assertEquals(1, c.list().size)
         assertEquals(5000L, c.list()[0].endedAtMs)
     }
@@ -137,7 +138,7 @@ class TaskStatusConnectorTest {
     @Test
     fun clear_empties_the_list() {
         val c = TaskStatusConnector()
-        c.handle(update(taskId = "t-1"))
+        c.handle(update(toolCallId = "t-1"))
         assertEquals(1, c.list().size)
         c.clear()
         assertEquals(0, c.list().size)
@@ -147,14 +148,25 @@ class TaskStatusConnectorTest {
     fun ignores_unowned_frames() {
         val c = TaskStatusConnector()
         c.handle(ServerMessage.Pong)
-        c.handle(ServerMessage.CycleStarted(cycleId = "c1"))
+        c.handle(ServerMessage.TurnStarted(turnId = "c1"))
         assertEquals(emptyList(), c.list())
     }
 
     @Test
-    fun running_task_has_null_endedAtMs() {
+    fun background_tool_carries_its_taskId_onto_the_snapshot() {
+        // delegateTask is the BACKGROUND archetype: the frame's taskId is the handle
+        // Tasks 8/9 join a delegation row to its tool tile. A foreground call has none.
         val c = TaskStatusConnector()
-        c.handle(update(taskId = "t-1"))
+        c.handle(update(toolCallId = "tc-1", toolName = "delegateTask", taskId = "task-9"))
+        c.handle(update(toolCallId = "tc-2", toolName = "readFile", startedAtMs = 1001L))
+        assertEquals("task-9", c.list().first { it.toolCallId == "tc-1" }.taskId)
+        assertNull(c.list().first { it.toolCallId == "tc-2" }.taskId)
+    }
+
+    @Test
+    fun running_row_has_null_endedAtMs() {
+        val c = TaskStatusConnector()
+        c.handle(update(toolCallId = "t-1"))
         assertNull(c.list()[0].endedAtMs)
     }
 }

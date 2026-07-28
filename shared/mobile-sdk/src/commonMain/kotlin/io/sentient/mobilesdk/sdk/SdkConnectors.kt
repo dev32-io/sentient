@@ -28,11 +28,11 @@ import io.sentient.mobilesdk.connectors.CognitionState
 import io.sentient.mobilesdk.connectors.CognitionStatusConnector
 import io.sentient.mobilesdk.connectors.Connector
 import io.sentient.mobilesdk.connectors.ConversationHistoryConnector
-import io.sentient.mobilesdk.connectors.CycleErrorConnector
 import io.sentient.mobilesdk.connectors.InFlightMessageConnector
 import io.sentient.mobilesdk.connectors.PreferencesConnector
 import io.sentient.mobilesdk.connectors.SessionsConnector
 import io.sentient.mobilesdk.connectors.TaskStatusConnector
+import io.sentient.mobilesdk.connectors.TurnErrorConnector
 import io.sentient.mobilesdk.connectors.UserAudioInputConnector
 import io.sentient.mobilesdk.connectors.UserTextInputConnector
 import io.sentient.mobilesdk.log.createLogger
@@ -50,16 +50,16 @@ import kotlinx.coroutines.launch
  * echoGate lifecycle + FSM). Defaults are no-ops so the text-only path (no
  * pipeline) compiles unchanged.
  *
- * @param onAudioStart connector.audio.start → pipeline.onAudioStart.
+ * @param onAudioStart turn.audio.start → pipeline.onAudioStart.
  * @param onAudioFrame binary downlink → pipeline.onAudioFrame.
- * @param onAudioDone connector.audio.done → pipeline.onAudioDone.
+ * @param onAudioDone turn.audio.done → pipeline.onAudioDone.
  * @param onPlaybackStop playback.stop → pipeline.onPlaybackStop.
  */
 class AudioDownlinkHooks(
-    val onAudioStart: (cycleId: String, encoding: String?, sampleRate: Int?) -> Unit = { _, _, _ -> },
-    val onAudioFrame: (frame: ByteArray, cycleId: String) -> Unit = { _, _ -> },
-    val onAudioDone: (cycleId: String) -> Unit = {},
-    val onPlaybackStop: (reason: String, cycleId: String) -> Unit = { _, _ -> },
+    val onAudioStart: (turnId: String, encoding: String?, sampleRate: Int?) -> Unit = { _, _, _ -> },
+    val onAudioFrame: (frame: ByteArray, turnId: String) -> Unit = { _, _ -> },
+    val onAudioDone: (turnId: String) -> Unit = {},
+    val onPlaybackStop: (reason: String, turnId: String) -> Unit = { _, _ -> },
 )
 
 /**
@@ -119,15 +119,15 @@ class SdkConnectors(
         onEvent = emitEvent,
     )
 
-    val cycleError = CycleErrorConnector(
-        onErrorChange = { hasError -> deriver.lastCycleError = hasError; emit() },
+    val turnError = TurnErrorConnector(
+        onErrorChange = { hasError -> deriver.lastTurnError = hasError; emit() },
         onEvent = emitEvent,
     )
 
     val preferences = PreferencesConnector(
         send = send,
         // Fold a server-driven prefs change into the deriver + re-emit for the UI toggle
-        // state. The downlink engine is LAZY-ARMED on connector.audio.start (mirrors
+        // state. The downlink engine is LAZY-ARMED on turn.audio.start (mirrors
         // web-sdk), not from the preference flag — the gateway only sends audio.* when TTS
         // is on, so arming follows the actual audio, no preference→configure coupling.
         onChange = { prefs ->
@@ -157,15 +157,15 @@ class SdkConnectors(
     )
 
     val audioOutput = AssistantAudioResponseConnector(
-        onAudioStart = { cycleId, encoding, sampleRate -> audioHooks().onAudioStart(cycleId, encoding, sampleRate) },
-        onAudioFrame = { frame, cycleId -> audioHooks().onAudioFrame(frame, cycleId) },
-        onAudioDone = { cycleId -> audioHooks().onAudioDone(cycleId) },
-        onPlaybackStop = { reason, cycleId -> audioHooks().onPlaybackStop(reason, cycleId) },
+        onAudioStart = { turnId, encoding, sampleRate -> audioHooks().onAudioStart(turnId, encoding, sampleRate) },
+        onAudioFrame = { frame, turnId -> audioHooks().onAudioFrame(frame, turnId) },
+        onAudioDone = { turnId -> audioHooks().onAudioDone(turnId) },
+        onPlaybackStop = { reason, turnId -> audioHooks().onPlaybackStop(reason, turnId) },
     )
 
     /** All connectors, broadcast targets for the MessageRouter. */
     val all: List<Connector> = listOf(
-        text, history, inflight, cognition, cycleError, preferences, tasks, sessions, audioInput, audioOutput,
+        text, history, inflight, cognition, turnError, preferences, tasks, sessions, audioInput, audioOutput,
     )
 
     /** Capability strings every connector advertises (merged into session.configure). */

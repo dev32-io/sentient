@@ -25,7 +25,7 @@ internal object RevealRate {
 }
 
 data class RevealBubble(
-    val cycleId: String,
+    val turnId: String,
     val fullContent: String,
     val revealed: Int,
     val phase: LivePhase,
@@ -47,9 +47,9 @@ data class RevealState(
 object RevealReducer {
     fun reduce(s: RevealState, e: Any): RevealState = when (e) {
         is SdkEvent.MessageStarted ->
-            s.copy(bubble = RevealBubble(e.cycleId, "", 0, LivePhase.STREAMING), tasks = emptyList())
+            s.copy(bubble = RevealBubble(e.turnId, "", 0, LivePhase.STREAMING), tasks = emptyList())
         is SdkEvent.MessageDelta -> {
-            val cur = s.bubble ?: RevealBubble(e.cycleId, "", 0, LivePhase.STREAMING)
+            val cur = s.bubble ?: RevealBubble(e.turnId, "", 0, LivePhase.STREAMING)
             s.copy(bubble = cur.copy(fullContent = cur.fullContent + e.chunk))
         }
         is SdkEvent.TaskUpserted -> s.copy(tasks = upsert(s.tasks, e.task))
@@ -71,5 +71,5 @@ object RevealReducer {
     }
 
     private fun upsert(list: List<TaskSnapshotItem>, t: TaskSnapshotItem): List<TaskSnapshotItem> =
-        (list.filterNot { it.taskId == t.taskId } + t).sortedBy { it.startedAtMs }
+        (list.filterNot { it.toolCallId == t.toolCallId } + t).sortedBy { it.startedAtMs }
 }

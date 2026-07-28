@@ -15,7 +15,7 @@ interface ConversationRepository {
     /** Committed history of the active conversation. */
     val timeline: StateFlow<List<ChatMessage>>
 
-    /** No-loss event stream (deltas, task upserts, cycle/commit, session switch). */
+    /** No-loss event stream (deltas, tool upserts, turn/commit, session switch). */
     val liveEvents: SharedFlow<SdkEvent>
 
     /**

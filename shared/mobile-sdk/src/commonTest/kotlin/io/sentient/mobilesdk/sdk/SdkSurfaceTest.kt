@@ -22,7 +22,7 @@ class SdkSurfaceTest {
     @Test
     fun deriveTimeline_excludes_live_inflight() {
         val d = StateDeriver(FixedClock(1000L))
-        d.inflight = InFlightMessage(cycleId = "c9", text = "streaming...")
+        d.inflight = InFlightMessage(turnId = "c9", text = "streaming...")
         // timeline is committed-only: the live bubble text must not appear
         val timeline = d.deriveTimeline()
         assertEquals(false, timeline.any { it.content == "streaming..." && it.streaming })
