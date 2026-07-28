@@ -5,14 +5,14 @@
 // return (only reconnect if we closed because of idle, not because the
 // consumer called disconnect()).
 //
-// Task 1.4 level-based wiring: the coordinator maps cycle/TTS message pairs
-// to explicit start/end signals. The detector owns a suppression flag for
-// each pair and cannot enter idle while either flag is set — so a long
-// stretch of silence between TTS frames mid-reply no longer risks an
-// idle-close. Binary audio frames are intentionally NOT notified here: the
-// `connector.audio.start` / `connector.audio.done` start/end pair plus
-// level-based suppression already holds the idle timer for the entire TTS
-// stream, and per-frame notifies would just be noise.
+// Level-based wiring: the coordinator maps turn/TTS message pairs to explicit
+// start/end signals. The detector owns a suppression flag for each pair and
+// cannot enter idle while either flag is set — so a long stretch of silence
+// between TTS frames mid-reply no longer risks an idle-close. Binary audio
+// frames are intentionally NOT notified here: the `turn.audio.start` /
+// `turn.audio.done` start/end pair plus level-based suppression already holds
+// the idle timer for the entire TTS stream, and per-frame notifies would just
+// be noise.
 //
 // Keeps `sentient-sdk.ts` focused on WS/status coordination and under the
 // 300-line clean-code budget.
@@ -27,12 +27,12 @@ import type {
 import { createLogger } from "../logger.ts";
 import { createPresenceWiring } from "./presence-wiring.ts";
 
-/** WS message types that mark the start / end of a cognitive cycle. */
-const CYCLE_START_TYPES = new Set<string>(["cycle.started"]);
-const CYCLE_END_TYPES = new Set<string>(["cycle.completed", "cycle.aborted"]);
-/** WS message types that mark the start / end of TTS playback. */
-const TTS_START_TYPES = new Set<string>(["connector.audio.start"]);
-const TTS_END_TYPES = new Set<string>(["connector.audio.done"]);
+/** WS message types that mark the start / end of an assistant turn (2.0 wire). */
+const TURN_START_TYPES = new Set<string>(["turn.started"]);
+const TURN_END_TYPES = new Set<string>(["turn.completed", "turn.aborted"]);
+/** WS message types that mark the start / end of TTS playback (2.0 wire). */
+const TTS_START_TYPES = new Set<string>(["turn.audio.start"]);
+const TTS_END_TYPES = new Set<string>(["turn.audio.done"]);
 
 export interface PresenceCoordinatorHooks {
   /** SDK should close the WS with idle-timeout semantics. */
@@ -42,7 +42,7 @@ export interface PresenceCoordinatorHooks {
 }
 
 export interface PresenceCoordinator {
-  /** Forward a WS JSON message type into the detector (routes to notifyCycle/Tts start/end). */
+  /** Forward a WS JSON message type into the detector (routes to turn/TTS start/end). */
   notifyForType(type: string): void;
   /**
    * Consumer escape hatch — forces the detector to stay out of idle until the
@@ -96,11 +96,11 @@ export function createPresenceCoordinator(
   return {
     notifyForType(type) {
       if (disposed || wiring === null) return;
-      if (CYCLE_START_TYPES.has(type)) {
+      if (TURN_START_TYPES.has(type)) {
         wiring.notifyCycleStart();
         return;
       }
-      if (CYCLE_END_TYPES.has(type)) {
+      if (TURN_END_TYPES.has(type)) {
         wiring.notifyCycleEnd();
         return;
       }
