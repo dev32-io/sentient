@@ -28,7 +28,11 @@ import io.sentient.mobilesdk.connectors.CognitionState
 import io.sentient.mobilesdk.connectors.CognitionStatusConnector
 import io.sentient.mobilesdk.connectors.Connector
 import io.sentient.mobilesdk.connectors.ConversationHistoryConnector
+import io.sentient.mobilesdk.connectors.DelegationProgressConnector
+import io.sentient.mobilesdk.connectors.DelegationSnapshotItem
 import io.sentient.mobilesdk.connectors.InFlightMessageConnector
+import io.sentient.mobilesdk.connectors.PermissionConnector
+import io.sentient.mobilesdk.connectors.PermissionPrompt
 import io.sentient.mobilesdk.connectors.PreferencesConnector
 import io.sentient.mobilesdk.connectors.SessionsConnector
 import io.sentient.mobilesdk.connectors.TaskStatusConnector
@@ -77,6 +81,9 @@ class AudioDownlinkHooks(
  *   factory; null in text-only / test paths where REST is not exercised.
  * @param scope SDK coroutine scope; used to launch REST history fetches on switch.
  * @param audioHooks Downlink side-effect hooks wired to the AudioPipeline (E3).
+ * @param onCognitionChanged Folds a cognition transition into the deriver + re-emits.
+ * @param onPermissionsChanged Publishes the OPEN permission-prompt list (§7.1) as SDK state.
+ * @param onDelegationsChanged Publishes the background-delegation row list (§5.4) as SDK state.
  */
 class SdkConnectors(
     private val deriver: StateDeriver,
@@ -92,6 +99,8 @@ class SdkConnectors(
     private val scope: CoroutineScope? = null,
     private val audioHooks: () -> AudioDownlinkHooks = { AudioDownlinkHooks() },
     private val onCognitionChanged: (CognitionState) -> Unit = { state -> deriver.cognition = state; emit() },
+    private val onPermissionsChanged: (List<PermissionPrompt>) -> Unit = {},
+    private val onDelegationsChanged: (List<DelegationSnapshotItem>) -> Unit = {},
 ) {
     private val log = createLogger("sdk", "connectors")
 
@@ -163,9 +172,23 @@ class SdkConnectors(
         onPlaybackStop = { reason, turnId -> audioHooks().onPlaybackStop(reason, turnId) },
     )
 
+    /** L3 confirm prompts (§7.1). The open list is published as continuous state; the
+     *  arrival/resolution one-shots ride the SDK's no-loss event stream via [emitEvent]. */
+    val permission = PermissionConnector(
+        send = send,
+        onPending = { prompts -> onPermissionsChanged(prompts) },
+        onEvent = emitEvent,
+    )
+
+    val delegation = DelegationProgressConnector(
+        onList = { list -> onDelegationsChanged(list) },
+        onEvent = emitEvent,
+    )
+
     /** All connectors, broadcast targets for the MessageRouter. */
     val all: List<Connector> = listOf(
-        text, history, inflight, cognition, turnError, preferences, tasks, sessions, audioInput, audioOutput,
+        text, history, inflight, cognition, turnError, preferences, tasks, sessions,
+        audioInput, audioOutput, permission, delegation,
     )
 
     /** Capability strings every connector advertises (merged into session.configure). */

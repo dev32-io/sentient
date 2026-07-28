@@ -10,6 +10,8 @@
 package io.sentient.mobilesdk.sdk
 
 import io.sentient.mobilesdk.connectors.CognitionState
+import io.sentient.mobilesdk.connectors.DelegationSnapshotItem
+import io.sentient.mobilesdk.connectors.PermissionPrompt
 import io.sentient.mobilesdk.connectors.SessionsListPage
 import io.sentient.mobilesdk.connectors.SessionsRequestException
 import io.sentient.mobilesdk.connectors.SessionsTimeoutException
@@ -80,6 +82,17 @@ class SentientSdk(
 
     private val _timeline = MutableStateFlow<List<ChatMessage>>(emptyList())
     val timeline: StateFlow<List<ChatMessage>> = _timeline.asStateFlow()
+
+    // Open L3 confirm prompts (§7.1). A StateFlow is conflation-SAFE here only because
+    // every emitted value carries EVERY still-open prompt — never model this as a single
+    // nullable prompt, or two back-to-back requests would lose the first. The arrival
+    // one-shots ride [events] (buffered, suspend-on-overflow).
+    private val _permissions = MutableStateFlow<List<PermissionPrompt>>(emptyList())
+    val permissions: StateFlow<List<PermissionPrompt>> = _permissions.asStateFlow()
+
+    /** Live background-delegation rows (§5.4). Same cumulative-list rationale. */
+    private val _delegations = MutableStateFlow<List<DelegationSnapshotItem>>(emptyList())
+    val delegations: StateFlow<List<DelegationSnapshotItem>> = _delegations.asStateFlow()
 
     private val _events = MutableSharedFlow<SdkEvent>(
         replay = 0,
@@ -219,6 +232,8 @@ class SentientSdk(
         scope = scope,
         audioHooks = { audio.downlinkHooks },
         onCognitionChanged = ::onCognitionChanged,
+        onPermissionsChanged = { prompts -> _permissions.value = prompts },
+        onDelegationsChanged = { list -> _delegations.value = list },
         // Lazy-arm model: the downlink engine is armed on connector.audio.start, not from
         // the preference flag. The gateway only sends audio.* when TTS is on, so arming
         // follows the actual audio — no preference→configure coupling needed. The prefs
@@ -242,6 +257,7 @@ class SentientSdk(
 
     private fun clearActiveToIdle() {
         connectors.cognition.reset()  // currentState→IDLE + onCognitionChanged → deriver IDLE + refreshStuckWatch + emit
+        connectors.permission.reset() // fail-closed: drop open prompts, never auto-approve
         audio.stopLocal()             // isSpeaking→false (if speaking) via onAudioStateChanged
         stuckWatchdog.disarm()
         emit()
@@ -371,6 +387,17 @@ class SentientSdk(
         sendControl(ClientMessage.Interrupt) // best-effort; null-safe if transport is dead
     }
 
+    /**
+     * Answer an open permission prompt (design §7.1). Fail-closed by construction: NOT
+     * calling this is never an approval — the gateway auto-denies at its 2-minute timeout
+     * and echoes permission.resolved{outcome:"timeout"}.
+     */
+    fun respondToPermission(requestId: String, approved: Boolean) {
+        log.info("permission.respond", mapOf("requestId" to requestId, "approved" to approved))
+        markInteraction()
+        connectors.permission.respond(requestId, approved)
+    }
+
     /** Start the voice uplink: flip voiceMode ACTIVE, then request the serialized
      *  configure(mic=true, playback=<current tts>) on [SdkVoice]'s single lane. The lane
      *  emits audio.start, runs VoiceAudio.configure (mic tap up), and starts the uplink
@@ -473,6 +500,7 @@ class SentientSdk(
     suspend fun switchSession(sessionId: String) {
         markInteraction()
         connectors.turnError.reset()
+        connectors.delegation.clear()
         // Problem 1: drop the current session's messages NOW so the spinner
         // renders over an empty chat, not stale history, while the target loads.
         connectors.history.clearForSwitch()
@@ -493,6 +521,7 @@ class SentientSdk(
     suspend fun newChat(): String {
         markInteraction()
         connectors.turnError.reset()
+        connectors.delegation.clear()
         // Bug #1: the gateway clears its own mirror on session.new but emits no
         // client-facing clear; drop the visible past-chat history locally the
         // instant "+" is tapped (safe pure-state clear — never gates the mint).
@@ -528,6 +557,7 @@ class SentientSdk(
     fun sendNewChat() {
         markInteraction()
         connectors.turnError.reset()
+        connectors.delegation.clear()
         // Bug #1: the gateway clears its own mirror on session.new but emits no
         // client-facing clear; drop the visible past-chat history locally the
         // instant "+" is tapped (safe pure-state clear — never gates the mint).

@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
 // PrivacyGuardTest — privacy boundary: chat content must never appear in the
-// captured diagnostic log. Three cases are pinned:
+// captured diagnostic log. Four cases are pinned:
 //
 //   1. InFlightMessageConnector (streaming assistant text path): logs only
-//      cycleId, deltaLen, totalLen — never the raw delta. This was the
+//      turnId, deltaLen, totalLen — never the raw delta. This was the
 //      original guard.
 //
 //   2. WsTransport recv path (NEW): the inbound TEXT-frame boundary was the
@@ -17,6 +17,11 @@
 //      the raw user search query = user content. The fix changed to `qLen`
 //      (integer length only). This case drives the REAL SessionsConnector
 //      path so the guard fails loudly if raw query logging is re-introduced.
+//
+//   4. PermissionConnector (L3 confirm prompt path): a permission.request carries
+//      the ACTUAL tool ARGUMENT VALUES plus a gateway-rendered description built
+//      from them. Both are user content; the connector logs the argument-key COUNT
+//      only.
 //
 // Why this test belongs here (.claude/rules/testing.md):
 //   Security boundary — log content privacy is an explicit boundary concern.
@@ -32,6 +37,7 @@ import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.sentient.mobilesdk.connectors.InFlightMessageConnector
+import io.sentient.mobilesdk.connectors.PermissionConnector
 import io.sentient.mobilesdk.connectors.SessionsConnector
 import io.sentient.mobilesdk.fakes.FakeWebSocketEngine
 import io.sentient.mobilesdk.log.LogConfig
@@ -44,6 +50,8 @@ import io.sentient.mobilesdk.transport.WsTransport
 import io.sentient.mobilesdk.util.Clock
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertTrue
@@ -63,7 +71,7 @@ class PrivacyGuardTest {
         }
 
         // Drive the REAL streaming path with the secret as the assistant delta text.
-        // InFlightMessageConnector logs only cycleId, deltaLen, and totalLen — never
+        // InFlightMessageConnector logs only turnId, deltaLen, and totalLen — never
         // the raw delta — so the secret must not appear in the captured output.
         val c = InFlightMessageConnector()
         c.handle(ServerMessage.TurnStarted(turnId = "c-priv-1", trigger = "text"))
@@ -181,5 +189,32 @@ class PrivacyGuardTest {
             !log.contains(secret),
             "search query content leaked into the diagnostic log:\n$log",
         )
+    }
+
+    /**
+     * Permission prompts carry TOOL ARGUMENTS — the message body, the file path, the
+     * search text. They are user content and must never reach the diagnostic ring.
+     * The connector logs argKeys count only; the description is gateway-rendered from
+     * the same arguments, so it is not logged either.
+     */
+    @Test fun permission_request_arguments_are_never_logged() {
+        val secret = "tell Biscuit the vet appointment is at 4pm"
+        val captured = StringBuilder()
+        VitalsLogTap.register { _, tag, line -> captured.append(tag).append(' ').append(line).append('\n') }
+
+        val c = PermissionConnector(send = { })
+        c.handle(
+            ServerMessage.PermissionRequest(
+                requestId = "r-priv-1",
+                toolCallId = "tc-priv-1",
+                toolName = "sendMessage",
+                args = JsonObject(mapOf("body" to JsonPrimitive(secret))),
+                description = "Send: $secret",
+                expiresAtMs = 120_000,
+            ),
+        )
+        c.respond("r-priv-1", approved = true)
+
+        assertTrue(!captured.toString().contains(secret), "tool arguments leaked into the diagnostic log:\n$captured")
     }
 }
