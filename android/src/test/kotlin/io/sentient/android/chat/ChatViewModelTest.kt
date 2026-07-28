@@ -18,7 +18,7 @@ class ChatViewModelTest {
         val model = ChatModel(
             committed = listOf(ChatMessage(ts = 1, role = "user", content = "hi")),
             pending = listOf(PendingMessage("p1", "later", MessageStatus.QUEUED)),
-            live = ChatMessage(ts = 2, role = "assistant", content = "he", streaming = true, cycleId = "c1"),
+            live = ChatMessage(ts = 2, role = "assistant", content = "he", streaming = true, turnId = "t1"),
         )
         val ui = reduceChatUi(ChatUiState(banner = ErrorBanner("old", true)), SentientResult.Success(model))
         assertEquals(1, ui.model.committed.size)

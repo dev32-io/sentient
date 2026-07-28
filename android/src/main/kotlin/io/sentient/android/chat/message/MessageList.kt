@@ -129,8 +129,8 @@ fun MessageList(
         items(
             rows,
             // Stable per-message key for Msg rows — the live streaming bubble and its
-            // committed twin share the gateway-owned cycleId, so the streaming→committed
-            // handoff is the SAME row (grows in place, no remount). cycleId is constant
+            // committed twin share the gateway-owned turnId, so the streaming→committed
+            // handoff is the SAME row (grows in place, no remount). turnId is constant
             // across tokens, so unlike ts it never churns mid-reveal. See messageRowKey.
             // Pending rows use a stable "pending-<id>" key so they survive recomposition.
             key = { row ->

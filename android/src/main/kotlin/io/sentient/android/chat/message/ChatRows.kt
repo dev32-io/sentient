@@ -24,13 +24,13 @@ sealed interface ChatRow {
 /**
  * Stable per-message LazyColumn key — ONE row per logical message across its
  * lifecycle. The live streaming bubble and its committed twin share the
- * gateway-owned cycleId, so the streaming→committed handoff is the SAME row (no
- * remount, no flash). cycleId is constant across tokens, so unlike ts it never
- * churns mid-reveal. Entries with no cycle (user, REST history) key by their
+ * gateway-owned turnId, so the streaming→committed handoff is the SAME row (no
+ * remount, no flash). turnId is constant across tokens, so unlike ts it never
+ * churns mid-reveal. Entries with no turn (user, REST history) key by their
  * stable gateway entryId. Index is a last-resort fallback. Mirrors iOS ChatRow.
  */
 internal fun messageRowKey(m: ChatMessage, index: Int): String = when {
-    !m.cycleId.isNullOrEmpty() -> "cyc-${m.cycleId}"
+    !m.turnId.isNullOrEmpty() -> "turn-${m.turnId}"
     m.entryId.isNotEmpty() -> "ent-${m.entryId}"
     else -> "idx-$index"
 }

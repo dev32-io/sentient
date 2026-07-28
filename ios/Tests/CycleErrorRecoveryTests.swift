@@ -10,7 +10,7 @@ import MobileData
 struct CycleErrorRecoveryTests {
     private func msg(_ role: String, _ content: String, ts: Int64 = 0) -> ChatMessage {
         ChatMessage(ts: ts, role: role, content: content, streaming: false,
-                    cutoffKind: nil, cycleId: nil, pendingId: nil, tools: [], entryId: "")
+                    cutoffKind: nil, turnId: nil, pendingId: nil, tools: [], entryId: "")
     }
 
     @Test func returnsLastUserText() {

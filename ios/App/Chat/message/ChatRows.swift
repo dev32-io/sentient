@@ -15,13 +15,13 @@ enum ChatRow: Identifiable {
 
     // Stable per-message identity — ONE row per logical message across its whole
     // lifecycle. The live streaming bubble and its committed twin share the
-    // gateway-owned cycleId, so the streaming→committed handoff is the SAME
-    // SwiftUI row (no remount, no flash). cycleId is constant across tokens, so
-    // unlike ts it never churns mid-reveal. Entries with no cycle (user, REST
+    // gateway-owned turnId, so the streaming→committed handoff is the SAME
+    // SwiftUI row (no remount, no flash). turnId is constant across tokens, so
+    // unlike ts it never churns mid-reveal. Entries with no turn (user, REST
     // history) key by their stable gateway entryId. Index is a last-resort
-    // fallback only (every committed row carries entryId; the live bubble cycleId).
+    // fallback only (every committed row carries entryId; the live bubble turnId).
     private static func messageRowId(_ m: ChatMessage, index: Int) -> String {
-        if let cycleId = m.cycleId, !cycleId.isEmpty { return "cyc-\(cycleId)" }
+        if let turnId = m.turnId, !turnId.isEmpty { return "turn-\(turnId)" }
         if !m.entryId.isEmpty { return "ent-\(m.entryId)" }
         return "idx-\(index)"
     }
