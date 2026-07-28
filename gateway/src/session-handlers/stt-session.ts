@@ -17,6 +17,14 @@
 //   - `setTurnMode` is replayed after every successful connect: a fresh STT
 //     socket is implicitly "semantic" server-side. The adapter dedups
 //     internally (local-stt-adapter.ts, tuned — never modify).
+//
+// Failure containment: every promise this file starts is detached — nothing
+// awaits it. `STTAdapter`'s contract lets `events()` reject and `close()`
+// reject, so an unguarded detached promise turns one session's STT socket
+// error into a process-level `unhandledRejection` that kills the gateway for
+// every other session. All detached work goes through `detach()` below, and
+// the event loop keeps its own `catch` so a dead stream reads as a disconnect
+// (adapter cleared → the next mic frame re-dials), not as a crash.
 
 import type { TurnMode } from "@sentient/protocol";
 import type { STTAdapter, STTAdapterConfig, STTAdapterFactory, STTEvent } from "../adapters/stt/stt-adapter-types.js";
@@ -58,6 +66,27 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
   let closed = false;
   let micOpen = false;
   let desiredTurnMode: TurnMode = INITIAL_TURN_MODE;
+
+  /**
+   * Start detached background work with a rejection handler already attached.
+   * Sync throws are caught too: `close()` is `Promise<void>` on the interface,
+   * but nothing forces an implementation to be `async`. Never rethrows — the
+   * whole point is that a failing STT socket cannot escape this session.
+   */
+  function detach(op: string, work: () => Promise<void>): void {
+    const onFailed = (err: unknown): void => {
+      log.warn("stt.detached-failed", {
+        sessionId,
+        op,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    };
+    try {
+      work().catch(onFailed);
+    } catch (err: unknown) {
+      onFailed(err);
+    }
+  }
 
   function dispatch(event: STTEvent): void {
     const runtime = getRuntime();
@@ -105,6 +134,15 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
           });
         }
       }
+    } catch (err: unknown) {
+      // The event stream itself failed (a socket error the adapter surfaced as
+      // a throw rather than a clean return). That is a disconnect, not a fatal
+      // condition: `finally` clears the adapter, so the next mic frame re-dials.
+      log.warn("stt.events.failed", {
+        sessionId,
+        micOpen,
+        reason: err instanceof Error ? err.message : String(err),
+      });
     } finally {
       if (adapter === active) {
         adapter = null;
@@ -123,13 +161,13 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
       .then(() => {
         connecting = false;
         if (closed) {
-          void candidate.close();
+          detach("close-after-session-closed", () => candidate.close());
           return;
         }
         adapter = candidate;
         candidate.setTurnMode(desiredTurnMode);
         log.info("stt.connected", { sessionId, turnMode: desiredTurnMode });
-        void consumeEvents(candidate);
+        detach("consume-events", () => consumeEvents(candidate));
       })
       .catch((err: unknown) => {
         connecting = false;
@@ -182,7 +220,7 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
       lifetime.abort();
       const active = adapter;
       adapter = null;
-      void active?.close();
+      if (active) detach("close", () => active.close());
     },
   };
 }

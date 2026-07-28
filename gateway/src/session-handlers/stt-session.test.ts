@@ -3,6 +3,12 @@
 // `runtime.submit({kind:"conversational"})` seam `text.input` uses, and an STT
 // `turn_started` (mic onset) MUST call `runtime.bargeIn()` — the only
 // production caller that method has. Zero network: a fake STTAdapter.
+//
+// One containment invariant lives here too: `STTAdapter.events()` may reject
+// (the interface admits it — a socket error surfacing as a throw), and that
+// rejection must be contained inside the session. Detached work escaping as an
+// `unhandledRejection` would take the whole gateway process down over one
+// session's STT socket.
 
 import { describe, expect, it } from "bun:test";
 import type { TurnMode } from "@sentient/protocol";
@@ -31,7 +37,7 @@ interface FakeAdapter {
   closes: number;
 }
 
-function fakeAdapter(openError?: Error): FakeAdapter {
+function fakeAdapter(openError?: Error, eventsError?: Error): FakeAdapter {
   const pendingEvents: STTEvent[] = [];
   let deliver: ((e: STTEvent | null) => void) | null = null;
   const f: FakeAdapter = {
@@ -71,6 +77,7 @@ function fakeAdapter(openError?: Error): FakeAdapter {
         deliver = null;
       },
       async *events() {
+        if (eventsError) throw eventsError;
         while (true) {
           const next = pendingEvents.shift();
           if (next !== undefined) {
@@ -194,6 +201,30 @@ describe("createSttSession", () => {
     expect(fake.turnModes).toEqual(["manual"]);
     expect(fake.sent).toHaveLength(1);
     expect(fake.flushes).toBe(1);
+    session.close();
+  });
+
+  it("contains a rejecting event stream and re-dials on the next mic frame", async () => {
+    const failing = fakeAdapter(undefined, new Error("stt socket died"));
+    const healthy = fakeAdapter();
+    const queue = [failing, healthy];
+    const stub = stubRuntime();
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => (queue.shift() ?? healthy).adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+    });
+
+    session.start("semantic");
+    await settle(); // the first adapter's events() rejects here
+
+    session.pushFrame(new Uint8Array([1])); // mic still open → frame-driven re-dial
+    await settle();
+    healthy.emit({ type: "transcript", turnIdx: 1, text: "still here" });
+    await settle();
+
+    expect(stub.submitted).toEqual([{ kind: "conversational", text: "still here" }]);
     session.close();
   });
 
