@@ -12,6 +12,7 @@ import type { ToolDefinition, ToolInvocation, ToolResult } from "../tools/tool-t
 import type { SessionRuntime } from "./session-runtime.js";
 import { createSessionRuntime } from "./session-runtime.js";
 import type { TurnEmitter } from "./turn-emitter.js";
+import type { TurnVoice, TurnVoiceStream } from "./turn-voice.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures — real on-disk stores under a scratch /tmp root (matches
@@ -970,6 +971,227 @@ describe("SessionRuntime — compaction at the turn boundary", () => {
     expect(followUp?.messages[1]?.content).toContain("EARLIER-SUMMARY");
     expect(followUp?.messages[2]?.content).toBe("follow up");
 
+    runtime.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Voice fork (spec §6, §4.7 — Plan 3 Task 2). SessionRuntime is the ONLY
+// driver of `TurnVoice`, and the composition is load-bearing in a way no
+// other test file can see: turn-voice.test.ts builds its own AbortController,
+// so it proves TurnVoice honours *a* signal, never that the signal it gets in
+// production is the TURN'S OWN one.
+//
+// That distinction IS §4.7's barge-in guarantee. If a refactor mints a fresh
+// controller for `voice.begin(...)` — the obvious-looking option the task's
+// composition-root section explicitly rejects — barge-in would abort the turn
+// while TTS kept draining, and the assistant would talk over the user. It
+// would compile, typecheck, and pass every other test in the repo. So the
+// cases below pin the four wiring points by identity, not by shape:
+//   1. deltas fork to `pushText`, tool updates fork to `flush(toolCallId)`;
+//   2. settle closes the text stream with exactly one `end()`;
+//   3. `bargeIn()` aborts the very AbortSignal instance handed to `begin()`;
+//   4. `interrupt()` does the same.
+// ---------------------------------------------------------------------------
+
+interface VoiceCall {
+  turnId: string;
+  /** The signal instance `begin()` was handed — asserted by identity below. */
+  signal: AbortSignal;
+  pushed: string[];
+  flushed: string[];
+  ends: number;
+}
+
+interface RecordingVoice extends TurnVoice {
+  calls: VoiceCall[];
+}
+
+function recordingVoice(): RecordingVoice {
+  const calls: VoiceCall[] = [];
+  return {
+    calls,
+    begin(turnId, signal): TurnVoiceStream {
+      const call: VoiceCall = { turnId, signal, pushed: [], flushed: [], ends: 0 };
+      calls.push(call);
+      return {
+        pushText: (text) => {
+          call.pushed.push(text);
+        },
+        // Records EVERY forward: de-duplication per toolCallId is
+        // turn-voice.ts's contract (pinned in turn-voice.test.ts), not the
+        // runtime's — the runtime must forward each status transition.
+        flush: (toolCallId) => {
+          call.flushed.push(toolCallId);
+        },
+        end: () => {
+          call.ends += 1;
+        },
+      };
+    },
+  };
+}
+
+describe("SessionRuntime — voice fork: loop output reaches the turn's TTS stream", () => {
+  it("forks text deltas and the tool call id into the turn's voice stream", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/voice-fork` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = fakeProvider(async function* (callIndex) {
+      if (callIndex === 1) {
+        yield { type: "text", content: "Let me check." };
+        yield {
+          type: "tool_call",
+          toolCall: { id: "call_1", type: "function", function: { name: "get_weather", arguments: "{}" } },
+        };
+        yield { type: "done", finishReason: "tool_calls" };
+        return;
+      }
+      yield { type: "text", content: "It is sunny." };
+      yield { type: "done", finishReason: "stop" };
+    });
+
+    const voice = recordingVoice();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-voice-fork",
+      accessManager: am,
+      provider,
+      broker: fakeBroker([weatherDef], async () => ({ content: "sunny", isError: false })),
+      emitter: recordingEmitter(),
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+      voice,
+    });
+
+    runtime.submit({ kind: "conversational", text: "what is the weather?" });
+    await waitUntilIdle(runtime);
+
+    expect(voice.calls).toHaveLength(1);
+    expect(voice.calls[0]?.pushed).toEqual(["Let me check.", "It is sunny."]);
+    // The loop's tool-call id must reach the voice stream so local-tts speaks
+    // the pre-tool line now instead of holding it for the round trip.
+    expect(voice.calls[0]?.flushed).toContain("call_1");
+    expect(voice.calls[0]?.flushed.every((id) => id === "call_1")).toBe(true);
+
+    runtime.dispose();
+  });
+
+  it("ends the turn's voice stream exactly once when the turn settles", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/voice-end` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = fakeProvider(async function* () {
+      yield { type: "text", content: "done talking" };
+      yield { type: "done", finishReason: "stop" };
+    });
+
+    const voice = recordingVoice();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-voice-end",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter: recordingEmitter(),
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+      voice,
+    });
+
+    runtime.submit({ kind: "conversational", text: "say something" });
+    await waitUntilIdle(runtime);
+
+    expect(voice.calls[0]?.ends).toBe(1);
+
+    // A second turn gets its OWN stream — the session-scoped TurnVoice is
+    // begun per turn, never reused across turns.
+    runtime.submit({ kind: "conversational", text: "again" });
+    await waitUntilIdle(runtime);
+
+    expect(voice.calls).toHaveLength(2);
+    expect(voice.calls[1]?.turnId).not.toBe(voice.calls[0]?.turnId);
+    expect(voice.calls[1]?.ends).toBe(1);
+    expect(voice.calls[0]?.ends).toBe(1); // not re-ended by the second turn
+
+    runtime.dispose();
+  });
+});
+
+describe("SessionRuntime — voice fork: the turn's own AbortSignal drives TTS", () => {
+  it("INVARIANT: bargeIn() aborts the exact AbortSignal instance handed to voice.begin()", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/voice-bargein` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = partialReplyThenHangProvider("mid sentence");
+    const voice = recordingVoice();
+    const emitter = recordingEmitter();
+
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-voice-bargein",
+      accessManager: am,
+      provider,
+      broker: fakeBrokerWithBackground(spyBackgroundRegistry()),
+      emitter,
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+      voice,
+    });
+
+    runtime.submit({ kind: "conversational", text: "tell me something" });
+    await waitFor(() => emitter.events.some((e) => e.type === "textDelta"));
+
+    const turnStarted = emitter.events.find((e) => e.type === "turnStarted");
+    expect(voice.calls[0]?.turnId).toBe(turnStarted?.turnId ?? "");
+    expect(voice.calls[0]?.signal.aborted).toBe(false);
+
+    runtime.bargeIn();
+
+    // Synchronous: bargeIn() aborts the turn's controller, and TTS dies with
+    // it because that is the same object `begin()` was given. A separately
+    // minted TTS controller would leave this false and let the assistant keep
+    // talking over the user.
+    expect(voice.calls[0]?.signal.aborted).toBe(true);
+
+    await waitUntilIdle(runtime);
+    runtime.dispose();
+  });
+
+  it("INVARIANT: interrupt() aborts the exact AbortSignal instance handed to voice.begin()", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/voice-interrupt` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = partialReplyThenHangProvider("stopping now");
+    const voice = recordingVoice();
+    const emitter = recordingEmitter();
+
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-voice-interrupt",
+      accessManager: am,
+      provider,
+      broker: fakeBrokerWithBackground(spyBackgroundRegistry()),
+      emitter,
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+      voice,
+    });
+
+    runtime.submit({ kind: "conversational", text: "do a long task" });
+    await waitFor(() => emitter.events.some((e) => e.type === "textDelta"));
+
+    expect(voice.calls[0]?.signal.aborted).toBe(false);
+
+    runtime.interrupt();
+
+    expect(voice.calls[0]?.signal.aborted).toBe(true);
+
+    await waitUntilIdle(runtime);
     runtime.dispose();
   });
 });
