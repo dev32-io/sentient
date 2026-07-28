@@ -37,18 +37,21 @@ export interface Connector {
   onCancelled?(): void;
 }
 
-/** Payload extracted from the `session.ready` message. */
+/**
+ * Payload extracted from the `session.ready` message.
+ *
+ * The pre-2.0 `playback { minEagerEndMs, preemptFadeoutMs }` pair is
+ * deliberately absent: both values existed only to tune the retired preempt
+ * policy, and §7.2 forbids preemption outright. `createTurnAudioQueue` is a
+ * strict FIFO with no tunables, so the SDK does not surface them even if a
+ * gateway build still sends them.
+ */
 export interface SessionReadyPayload {
   sessionId: string;
   audioEncoding: string;
   inputSampleRate: number;
   outputSampleRate: number;
   enabledEffects: string[];
-  /** Playback tunables sent by the gateway. Absent on older builds. */
-  playback?: {
-    minEagerEndMs: number;
-    preemptFadeoutMs: number;
-  };
 }
 
 /**
