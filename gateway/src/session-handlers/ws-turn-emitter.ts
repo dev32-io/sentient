@@ -1,85 +1,167 @@
-// WsTurnEmitter (Plan 2 Task 10, spec §7) — the REAL `TurnEmitter` that
-// writes to the client's WebSocket. `turn-emitter.ts` (Task 7) ships only
-// `createLoggingTurnEmitter`, a logging-only default for headless use; this
-// is the first implementation that actually reaches a client.
+// WsTurnEmitter (spec §7) — the REAL `TurnEmitter`, writing the 2.0 wire
+// contract to a client socket. `turn-emitter.ts` ships the headless
+// `createLoggingTurnEmitter`; this is the implementation that reaches a client.
 //
-// Plan 2 emits ONLY the minimal text-only frame set the dev harness
-// (gateway/scripts/try-chat.ts:41-73) already consumes:
-//   - textDelta     → { type: "response.text.delta", text }
-//   - turnCompleted → { type: "response.text.done", turnId }
-// `turnStarted` gets its own lifecycle frame (harmless if a client ignores
-// it — try-chat.ts's `default` case just logs unknown frame types).
-// `toolUpdate` / `turnAborted` are intentionally LOG-ONLY here — tool tiles,
-// permission-prompt UI, and cutoff/cancellation frames are the full
-// client-facing wire contract, which is Plan 3's job on top of this same
-// `TurnEmitter` interface, without touching any caller of it.
+// Every method maps 1:1 onto exactly one frame in
+// shared/protocol/src/messages.ts and is constructed as a typed
+// `GatewayMessage`, then validated by `sendFrame` before any bytes leave (see
+// ws-send.ts for the drop-never-throw policy). Nothing here hand-builds an
+// object literal or calls `ws.send` directly.
+//
+// Two Plan-2 behaviours are deliberately GONE:
+//   - `toolUpdate` and `turnAborted` are no longer log-only. They emit
+//     `turn.tool.update` and `turn.aborted`; without them the client could
+//     never render a tool tile and could never learn a turn was cut off (its
+//     stream would simply stall).
+//   - `turn.text.delta` now carries `turnId`. Plan 2's `response.text.delta`
+//     omitted it, which made §7.2's back-to-back follow-up turns impossible to
+//     route to the correct bubble.
+//
+// A cut-off turn emits BOTH `turn.aborted` (the feed marker, carrying the
+// cutoff kind) and `playback.stop` (the audio-flush command). They are
+// separate frames because they drive separate client subsystems, and
+// `playback.stop` is the ONLY frame that may flush the client's audio queue —
+// a new turnId must never do so (spec §4.6/§7.2, Global Constraint 5).
 
+import type { GatewayMessage, TurnAudioEncoding, TurnTrigger } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import { getLog } from "../logging/logger.js";
 import type { ToolUpdate } from "../runtime/react-loop.js";
-import type { TurnEmitter } from "../runtime/turn-emitter.js";
+import type {
+  DelegationProgress,
+  PermissionRequest,
+  PermissionResolution,
+  TurnEmitter,
+} from "../runtime/turn-emitter.js";
 import type { CutoffKind } from "../store/entry-types.js";
 import type { SessionData } from "./ws-helpers.js";
+import { sendAudioFrame, sendFrame } from "./ws-send.js";
 
 const log = getLog(["sentient", "ws", "turn-emitter"]);
 
 const TEXT_PREVIEW_LEN = 120;
 
 export function createWsTurnEmitter(ws: ServerWebSocket<SessionData>): TurnEmitter {
-  function send(frame: Record<string, unknown>): void {
-    // The turn's promise chain runs detached from the WS message handler
-    // (session-runtime.ts's `startTurn` never awaits `runTurn`), so a frame
-    // can still be in flight after the socket closes (session.end, network
-    // drop). Bun's `ws.send` on a closed socket does not throw, but guard
-    // anyway per the error-handling rule (never let a boundary write take
-    // down the turn) and to log the degraded path once, not per delta.
-    try {
-      ws.send(JSON.stringify(frame));
-    } catch (err) {
-      log.warn("turn-emitter.send-failed", {
-        sessionId: ws.data.sessionId,
-        frameType: frame.type,
-        reason: err instanceof Error ? err.message : String(err),
-      });
-    }
+  const sessionId = ws.data.sessionId;
+
+  // Binary audio frames carry a per-connection monotonic seq in their header.
+  // Task 10 replaces this local counter with the shared JSON+binary allocator
+  // (reconciliation R7) — until then audio is the only sequenced path, and it
+  // starts at 1 because both client SDKs treat seq 0 as "unsequenced".
+  let audioSeq = 0;
+
+  function emit(frame: GatewayMessage): void {
+    sendFrame(ws, frame);
   }
 
   return {
-    turnStarted(turnId) {
-      log.info("turn-emitter.turn-started", { sessionId: ws.data.sessionId, turnId });
-      send({ type: "response.turn.started", turnId });
+    turnStarted(turnId: string, trigger: TurnTrigger) {
+      log.info("turn-emitter.turn-started", { sessionId, turnId, trigger });
+      emit({ type: "turn.started", turnId, trigger });
     },
 
-    textDelta(turnId, text) {
+    textDelta(turnId: string, text: string) {
       log.debug("turn-emitter.text-delta", {
-        sessionId: ws.data.sessionId,
+        sessionId,
         turnId,
         length: text.length,
         preview: text.slice(0, TEXT_PREVIEW_LEN),
       });
-      send({ type: "response.text.delta", text });
+      emit({ type: "turn.text.delta", turnId, text });
     },
 
-    toolUpdate(turnId, u: ToolUpdate) {
-      // No client-facing tool-tile frame in Plan 2 — see file header.
+    toolUpdate(turnId: string, u: ToolUpdate) {
       log.debug("turn-emitter.tool-update", {
-        sessionId: ws.data.sessionId,
+        sessionId,
         turnId,
         toolCallId: u.toolCallId,
         toolName: u.toolName,
         status: u.status,
         taskId: u.taskId,
       });
+      const now = Date.now();
+      emit({
+        type: "turn.tool.update",
+        turnId,
+        toolCallId: u.toolCallId,
+        toolName: u.toolName,
+        status: u.status,
+        // `taskId` is present only on a background dispatch's "running"
+        // update; omit the key entirely rather than sending undefined.
+        ...(u.taskId === undefined ? {} : { taskId: u.taskId }),
+        // Already truncated upstream by react-loop.ts; "" when the loop had no
+        // argument data to preview.
+        argsPreview: u.argsPreview ?? "",
+        startedAtMs: now,
+        ...(u.status === "running" ? {} : { endedAtMs: now }),
+      });
     },
 
-    turnCompleted(turnId) {
-      log.info("turn-emitter.turn-completed", { sessionId: ws.data.sessionId, turnId });
-      send({ type: "response.text.done", turnId });
+    turnCompleted(turnId: string) {
+      log.info("turn-emitter.turn-completed", { sessionId, turnId });
+      emit({ type: "turn.completed", turnId });
     },
 
-    turnAborted(turnId, cutoff: CutoffKind) {
-      // No client-facing cutoff/cancellation frame in Plan 2 — see file header.
-      log.info("turn-emitter.turn-aborted", { sessionId: ws.data.sessionId, turnId, cutoff });
+    turnAborted(turnId: string, cutoff: CutoffKind) {
+      log.info("turn-emitter.turn-aborted", { sessionId, turnId, cutoff });
+      emit({ type: "turn.aborted", turnId, cutoff });
+      // The one sanctioned audio flush: a USER-initiated cancellation.
+      emit({ type: "playback.stop", turnId, reason: cutoff });
+    },
+
+    audioStart(turnId: string, encoding: TurnAudioEncoding, sampleRate: number) {
+      log.info("turn-emitter.audio-start", { sessionId, turnId, encoding, sampleRate });
+      emit({ type: "turn.audio.start", turnId, encoding, sampleRate });
+    },
+
+    audioFrame(turnId: string, bytes: Uint8Array) {
+      audioSeq += 1;
+      log.debug("turn-emitter.audio-frame", {
+        sessionId,
+        turnId,
+        seq: audioSeq,
+        payloadBytes: bytes.byteLength,
+      });
+      sendAudioFrame(ws, audioSeq, bytes);
+    },
+
+    audioDone(turnId: string) {
+      log.info("turn-emitter.audio-done", { sessionId, turnId });
+      emit({ type: "turn.audio.done", turnId });
+    },
+
+    permissionRequest(req: PermissionRequest) {
+      // Argument VALUES go on the wire (the user must approve what will really
+      // happen) but never into the log — only which keys were mediated.
+      log.info("turn-emitter.permission-request", {
+        sessionId,
+        requestId: req.requestId,
+        toolCallId: req.toolCallId,
+        toolName: req.toolName,
+        argKeys: Object.keys(req.args),
+        expiresAtMs: req.expiresAtMs,
+      });
+      emit({ type: "permission.request", ...req });
+    },
+
+    permissionResolved(res: PermissionResolution) {
+      log.info("turn-emitter.permission-resolved", {
+        sessionId,
+        requestId: res.requestId,
+        outcome: res.outcome,
+      });
+      emit({ type: "permission.resolved", ...res });
+    },
+
+    delegationProgress(p: DelegationProgress) {
+      log.info("turn-emitter.delegation-progress", {
+        sessionId,
+        taskId: p.taskId,
+        turnId: p.turnId,
+        agent: p.agent,
+        status: p.status,
+      });
+      emit({ type: "delegation.progress", ...p });
     },
   };
 }

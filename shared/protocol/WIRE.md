@@ -10,10 +10,10 @@ reader can't infer at a glance. Keep it in lockstep with `src/messages.ts` and
 A standing architectural rule, not just for one feature:
 
 - **WebSocket** carries the **live chat session ONLY**: mic audio in, TTS audio
-  out, the live conversation stream (`conversation.entry`, `cycle.*`,
-  `cognition.status`, `task.update`, `tool.confirm_request`), `ping`/`pong`,
-  `interrupt`, and the resume handshake. *Everything on the WS push channel is
-  seq-stamped and replay-buffered.*
+  out, the live conversation stream (`conversation.entry`, `turn.*`,
+  `permission.*`, `delegation.progress`), `ping`/`pong`, `interrupt`, and the
+  resume handshake. *Everything on the WS push channel is seq-stamped and
+  replay-buffered.*
 - **REST** carries everything client-driven and stateless: session list,
   conversation history (paginated `getMessages`), search, rename, delete,
   preferences/settings. The client re-issues on demand; no resume/buffer
@@ -101,17 +101,63 @@ write-through by their live `entryId`; a REST reload wipes + repopulates the
 conversation. Within each path `entryId` dedups; the resume replay dedupes by
 `seq`.
 
-## `cycleId` on the `conversation.entry` frame (live-bubble join key)
+## `turnId` on the `conversation.entry` frame (live-bubble join key)
 
-The `conversation.entry` FRAME carries an optional `cycleId` (sibling of `item`)
+The `conversation.entry` FRAME carries an optional `turnId` (sibling of `item`)
 — the gateway-owned id of the turn that produced the entry. It is **stripped from
 the item** (the item is a UI-display projection) but present on the frame for
-assistant/tool entries the translator emits. This is the join key between a live
-streaming bubble (`message.delta`/`message.done`, which carry `cycleId`) and its
-committed entry: the client renders ONE bubble per reply by suppressing the
-committed twin while its bubble reveals, matched by exact `cycleId`. **Clients
-read it off the frame — they never derive it** (no text-match, no ts-window). It
-is absent on user-echo / out-of-band entries and on REST history (no live cycle).
+assistant/tool entries. This is the join key between a live streaming bubble
+(`turn.text.delta` / `turn.completed`, which carry `turnId`) and its committed
+entry: the client renders ONE bubble per reply by suppressing the committed twin
+while its bubble reveals, matched by exact `turnId`. **Clients read it off the
+frame — they never derive it** (no text-match, no ts-window). It is absent on
+user-echo / out-of-band entries and on REST history (no live turn).
+
+## The 2.0 frame inventory
+
+The native orchestrator (spec §7) replaced the Hermes-cycle vocabulary
+wholesale. `cycle.*`, `message.delta`/`message.done`, `connector.audio.*`,
+`task.update`, `tool.confirm_request`, and `cognition.status` are **deleted** —
+not deprecated. Nothing emits or parses them.
+
+### Gateway → client
+
+| Frame | Payload | Notes |
+|---|---|---|
+| `turn.started` | `turnId`, `trigger` | `trigger` is `user` or `background-completion`. Clients label the bubble from it; they never infer it. |
+| `turn.text.delta` | `turnId`, `text` | `turnId` is **required**. Its absence in the Plan-2 interim frame made §7.2's back-to-back turns unroutable. |
+| `turn.completed` | `turnId` | |
+| `turn.aborted` | `turnId`, `cutoff` | `cutoff` is `interrupt` or `barge-in`. |
+| `turn.tool.update` | `turnId`, `toolCallId`, `toolName`, `status`, `taskId?`, `argsPreview`, `startedAtMs`, `endedAtMs?` | `toolCallId` is the tile dedupe key. `taskId` appears only on a background dispatch's `running` update. |
+| `turn.audio.start` | `turnId`, `encoding`, `sampleRate` | Does **not** stop a previous turn's audio. |
+| `turn.audio.done` | `turnId` | |
+| `permission.request` | `requestId`, `toolCallId`, `toolName`, `args`, `description`, `expiresAtMs` | Carries real argument VALUES — authorization is value-aware (§2.2). |
+| `permission.resolved` | `requestId`, `outcome` | `allowed` / `denied` / `timeout`. Fires on every resolution path so a dialog is never orphaned. |
+| `delegation.progress` | `taskId`, `turnId`, `agent`, `status`, `note?` | `turnId` is the turn that **dispatched** the task, not necessarily the live one. |
+| `playback.stop` | `turnId`, `reason` | The ONLY frame that may flush the client audio queue. |
+
+### Client → gateway
+
+`permission.response` `{ requestId, approved }` replaced `tool.confirm`. Clients
+answer by `requestId`, so a late answer to a superseded prompt is trivially
+ignorable.
+
+## Audio queueing — a new turnId NEVER flushes
+
+Because the gateway never interrupts its own TTS (spec §4.6), a follow-up turn's
+audio arrives while the previous turn's audio may still be playing. Clients
+**queue by `turnId`; they do not replace**. The queue is flushed *only* on
+`playback.stop` (barge-in or interrupt — both user-initiated). A new
+`turn.audio.start` with a different `turnId` must append, never fade or cancel.
+
+Binary audio frames carry **no `turnId`** — the client attributes bytes to the
+most recent `turn.audio.start`. The gateway therefore MUST bracket each turn's
+audio (`start` → frames → `done`) before beginning the next turn's.
+
+Text does **not** overlap the way audio does: one turn runs at a time per
+session (§4.5), so a follow-up turn starts only after the previous one commits.
+"Two bubbles" means one committed bubble plus one live bubble — never two
+simultaneously streaming.
 
 ## Capability gate
 

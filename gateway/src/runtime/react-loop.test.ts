@@ -213,9 +213,12 @@ describe("runTurn — one tool call", () => {
     expect(entries.map((e) => e.kind)).toEqual(["user", "tool_call", "tool_result", "assistant"]);
     expect(entries[entries.length - 1]?.text).toBe("It is sunny.");
 
+    // argsPreview is populated from the provider's raw argument JSON so the
+    // client's tool tile can show what the call actually did. It is truncated
+    // upstream; the emitter sends it verbatim.
     expect(toolUpdates).toEqual([
-      { toolCallId: "call_1", toolName: "get_weather", status: "running" },
-      { toolCallId: "call_1", toolName: "get_weather", status: "done" },
+      { toolCallId: "call_1", toolName: "get_weather", status: "running", argsPreview: '{"city":"NYC"}' },
+      { toolCallId: "call_1", toolName: "get_weather", status: "done", argsPreview: '{"city":"NYC"}' },
     ]);
 
     store.close();

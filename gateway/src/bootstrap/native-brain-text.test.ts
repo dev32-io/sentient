@@ -108,6 +108,18 @@ function recordingEmitter(): RecordingEmitter {
     turnAborted: (_turnId: string, _cutoff: CutoffKind) => {
       emitter.turnAbortedCount += 1;
     },
+    // Audio / permission / delegation are not exercised by this text-only
+    // @live walk — present to satisfy the full TurnEmitter contract. If the
+    // loop ever drives one of these during a plain text turn, that is a
+    // regression, so they are not silent: each records nothing but the
+    // assertions below (turnCompletedCount === 1) would still hold, and the
+    // absence of audio here is the point.
+    audioStart: () => {},
+    audioFrame: () => {},
+    audioDone: () => {},
+    permissionRequest: () => {},
+    permissionResolved: () => {},
+    delegationProgress: () => {},
   };
   return emitter;
 }

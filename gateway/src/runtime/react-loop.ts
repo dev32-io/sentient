@@ -56,6 +56,10 @@ const log = getLog(["sentient", "runtime", "react-loop"]);
 
 const DEBUG_PREVIEW_LEN = 120;
 
+/** Client-facing tool-tile preview budget (spec §7 `turn.tool.update`).
+ *  Separate from DEBUG_PREVIEW_LEN: this one ships to a UI, not a log. */
+const ARGS_PREVIEW_LEN = 120;
+
 export type ToolUpdateStatus = "running" | "done" | "error";
 
 /** Fed to `onToolUpdate` for the client's running/done tool tiles (spec §7).
@@ -67,6 +71,10 @@ export interface ToolUpdate {
   toolName: string;
   status: ToolUpdateStatus;
   taskId?: string;
+  /** Truncated preview of the raw argument JSON for the client's tool tile.
+   *  Optional so existing callers/fakes stay valid; the WS emitter falls back
+   *  to "" when absent. */
+  argsPreview?: string;
 }
 
 export interface ReactLoopDeps {
@@ -165,6 +173,7 @@ async function dispatchToolCalls(
 
     const toolCallId = call.id;
     const toolName = call.function.name;
+    const argsPreview = call.function.arguments.slice(0, ARGS_PREVIEW_LEN);
 
     store.append({
       ...blankEntry(sessionId, turnId),
@@ -173,7 +182,7 @@ async function dispatchToolCalls(
       toolName,
       toolArgs: call.function.arguments,
     });
-    onToolUpdate(turnId, { toolCallId, toolName, status: "running" });
+    onToolUpdate(turnId, { toolCallId, toolName, status: "running", argsPreview });
 
     const args = parseToolArgs(call.function.arguments, toolName, toolCallId);
     const invocation: ToolInvocation = { toolCallId, name: toolName, args, signal };
@@ -190,7 +199,7 @@ async function dispatchToolCalls(
         kind: "system",
         text: `Task started: ${toolName} (taskId=${outcome.taskId})`,
       });
-      onToolUpdate(turnId, { toolCallId, toolName, status: "running", taskId: outcome.taskId });
+      onToolUpdate(turnId, { toolCallId, toolName, status: "running", taskId: outcome.taskId, argsPreview });
       log.info("react-loop.tool-dispatch.background", {
         sessionId,
         turnId,
@@ -208,7 +217,7 @@ async function dispatchToolCalls(
       toolName,
       toolArgs: outcome.content,
     });
-    onToolUpdate(turnId, { toolCallId, toolName, status: outcome.isError ? "error" : "done" });
+    onToolUpdate(turnId, { toolCallId, toolName, status: outcome.isError ? "error" : "done", argsPreview });
     log.info("react-loop.tool-dispatch.foreground", {
       sessionId,
       turnId,

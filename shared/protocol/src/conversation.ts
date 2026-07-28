@@ -8,9 +8,9 @@ import { z } from "zod";
 // plumbing (taskId) is stripped from the ITEM; only fields the UI needs to
 // render chat bubbles + the task sidebar remain.
 //
-// NOTE on cycleId: it is stripped from the ITEM but carried on the
+// NOTE on turnId: it is stripped from the ITEM but carried on the
 // `conversation.entry` FRAME (see messages.ts conversationEntrySchema). Clients
-// re-attach the frame cycleId to a live assistant entry so the committed twin
+// re-attach the frame turnId to a live assistant entry so the committed twin
 // joins its streaming bubble by id — the client never invents/derives the id.
 //
 // `entryId` — stable, opaque string id assigned at commit time (live path)
@@ -33,7 +33,7 @@ export type ConversationToolStatus = z.infer<typeof conversationToolStatusSchema
 // Why an assistant reply was cut short. Absent on normal completions.
 // `barge-in`: user spoke mid-TTS, playback stopped; LLM stream finished
 //             normally but the audio was interrupted.
-// `interrupt`: cycle was hard-aborted (UI button or `interrupt` tool).
+// `interrupt`: turn was hard-aborted (UI button or `interrupt` tool).
 //              `cancelledTaskIds` lets the UI / model correlate tasks
 //              that died with this interrupt specifically.
 export const conversationAssistantCutoffSchema = z.discriminatedUnion("kind", [

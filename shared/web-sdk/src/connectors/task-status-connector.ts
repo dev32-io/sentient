@@ -1,4 +1,4 @@
-import type { TaskStatus } from "@sentient/protocol";
+import type { TurnToolStatus } from "@sentient/protocol";
 import type { Connector, SentientSDKInternal } from "../connector-types.ts";
 
 // ---------------------------------------------------------------------------
@@ -9,7 +9,7 @@ export interface TaskSnapshotItem {
   readonly taskId: string;
   readonly toolName: string;
   readonly cycleId: string;
-  readonly status: TaskStatus;
+  readonly status: TurnToolStatus;
   /** Auto-derived short preview of the tool's args. */
   readonly argsPreview: string;
   readonly startedAtMs: number;
@@ -30,7 +30,9 @@ export interface TaskStatusConnectorConfig {
 // Direction: status (observer; no per-task outbound protocol from here)
 //
 // Receives:
-//   - task.update  (one on register, one on deregister; dedups by taskId)
+//   - task.update  (RETIRED — the 2.0 gateway never emits this frame; Task 4
+//                   rebases this connector onto `turn.tool.update`, keyed by
+//                   toolCallId + turnId. Inert until then, by design.)
 //
 // Exposes ordered list by startedAt ascending. Terminal states stay in
 // the list — UI can filter out if it only wants running tasks.
@@ -61,7 +63,7 @@ export class TaskStatusConnector implements Connector {
           taskId?: string;
           toolName?: string;
           cycleId?: string;
-          status?: TaskStatus;
+          status?: TurnToolStatus;
           argsPreview?: string;
           startedAtMs?: number;
           endedAtMs?: number;

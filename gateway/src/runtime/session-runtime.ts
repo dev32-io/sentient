@@ -53,6 +53,7 @@
 // next turn happen in one synchronous continuation.
 
 import type { OrchestratorConfig } from "@sentient/config";
+import type { TurnTrigger } from "@sentient/protocol";
 import type { AccessManager } from "../access/access-manager.js";
 import type { UserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
@@ -147,6 +148,10 @@ function stimulusEntryKind(stimulus: Stimulus): "user" | "trigger" {
   return stimulus.kind === "conversational" ? "user" : "trigger";
 }
 
+function stimulusTrigger(stimulus: Stimulus): TurnTrigger {
+  return stimulus.kind === "conversational" ? "user" : "background-completion";
+}
+
 function stimulusText(stimulus: Stimulus): string {
   return stimulus.kind === "conversational" ? stimulus.text : stimulus.note;
 }
@@ -196,8 +201,15 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     return last ? last.seq : 0;
   }
 
-  function hasUnprocessedStimuli(): boolean {
-    return store.readSince(sessionId, lastProcessedSeq).some((e) => TURN_TRIGGER_KINDS.has(e.kind));
+  /** The trigger for the next back-to-back turn (spec §4.5), or null when
+   *  nothing is pending. Same unprocessed-stimulus window the old
+   *  `hasUnprocessedStimuli` read; a pending `user` entry outranks a
+   *  `trigger` (background-completion) entry, because a person waiting on a
+   *  reply is what the client should label the new bubble with. */
+  function nextTurnTrigger(): TurnTrigger | null {
+    const pending = store.readSince(sessionId, lastProcessedSeq).filter((e) => TURN_TRIGGER_KINDS.has(e.kind));
+    if (pending.length === 0) return null;
+    return pending.some((e) => e.kind === "user") ? "user" : "background-completion";
   }
 
   function appendStimulus(stimulus: Stimulus, turnId: string): SessionEntry {
@@ -232,19 +244,21 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
       return;
     }
 
-    if (hasUnprocessedStimuli()) {
+    const trigger = nextTurnTrigger();
+    if (trigger !== null) {
       const nextTurnId = crypto.randomUUID();
       log.info("session-runtime.turn.next-turn-trigger", {
         userId,
         sessionId,
         previousTurnId: turnId,
         nextTurnId,
+        trigger,
       });
-      startTurn(nextTurnId);
+      startTurn(nextTurnId, trigger);
     }
   }
 
-  function startTurn(turnId: string): void {
+  function startTurn(turnId: string, trigger: TurnTrigger): void {
     // Re-entrancy guard: a future TurnEmitter.turnCompleted callback could call
     // submit() synchronously from inside onTurnSettled's clear-and-decide window;
     // without this, that re-entrant start plus onTurnSettled's own next-turn start
@@ -260,8 +274,8 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     lastProcessedSeq = currentMaxSeq();
     turnText = ""; // fresh accumulator for this turn — see the field's doc comment above.
 
-    emitter.turnStarted(turnId);
-    log.info("session-runtime.turn.start", { userId, sessionId, turnId, lastProcessedSeq });
+    emitter.turnStarted(turnId, trigger);
+    log.info("session-runtime.turn.start", { userId, sessionId, turnId, trigger, lastProcessedSeq });
 
     const loopDeps: ReactLoopDeps = {
       provider,
@@ -336,7 +350,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     const turnId = crypto.randomUUID();
     const entry = appendStimulus(stimulus, turnId);
     log.info("session-runtime.submit.start-turn", { userId, sessionId, kind: stimulus.kind, seq: entry.seq, turnId });
-    startTurn(turnId);
+    startTurn(turnId, stimulusTrigger(stimulus));
   }
 
   function dispose(): void {

@@ -152,11 +152,18 @@ export const textInputSchema = z.object({
   pendingId: z.string().optional(),
 });
 
-export const toolConfirmSchema = z.object({
-  type: z.literal("tool.confirm"),
-  toolCallId: z.string(),
+// Client → gateway answer to a `permission.request` (spec §7.1). Keyed by
+// `requestId`, not `toolCallId`: the gateway may have already resolved the
+// request (timeout, interrupt) by the time this lands, and matching on the
+// prompt id makes that late answer a clean no-op instead of a stale approval
+// applied to a different call. `approved` is REQUIRED — there is no
+// "unanswered" wire value, because a missing decision must never read as yes.
+export const permissionResponseSchema = z.object({
+  type: z.literal("permission.response"),
+  requestId: z.string(),
   approved: z.boolean(),
 });
+export type PermissionResponse = z.infer<typeof permissionResponseSchema>;
 
 export const sessionEndSchema = z.object({
   type: z.literal("session.end"),
@@ -183,7 +190,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   audioStartSchema,
   audioEndSchema,
   textInputSchema,
-  toolConfirmSchema,
+  permissionResponseSchema,
   sessionEndSchema,
   pingSchema,
   interruptSchema,
@@ -218,83 +225,171 @@ export const sessionReadySchema = z.object({
     .optional(),
 });
 
-// ─── Cycle Lifecycle ───
-
-export const cycleStartedSchema = z.object({
-  type: z.literal("cycle.started"),
-  cycleId: z.string(),
-  triggerKind: z.string(),
-  triggerSource: z.string(),
-});
-
-export const connectorCancelledSchema = z.object({
-  type: z.literal("connector.cancelled"),
-  connector: z.string(),
-  cycleId: z.string(),
-  taskId: z.string(),
-  reason: z.string(),
-});
-
-export const cycleAbortedSchema = z.object({
-  type: z.literal("cycle.aborted"),
-  cycleId: z.string(),
-  reason: z.string(),
-});
-
-export const cycleCompletedSchema = z.object({
-  type: z.literal("cycle.completed"),
-  cycleId: z.string(),
-  effectsInvoked: z.array(z.string()),
-});
-
-// ─── Connector Messages ───
-
-export const connectorTranscriptFinalSchema = z.object({
-  type: z.literal("connector.transcript.final"),
-  connector: z.literal("UserAudioInputConnector"),
-  text: z.string(),
-  language: z.string(),
-});
-
-export const connectorAudioStartSchema = z.object({
-  type: z.literal("connector.audio.start"),
-  connector: z.literal("AssistantAudioResponseConnector"),
-  cycleId: z.string(),
-  taskId: z.string(),
-  encoding: z.string(),
-  sampleRate: z.number(),
-});
-
-export const connectorAudioDoneSchema = z.object({
-  type: z.literal("connector.audio.done"),
-  connector: z.string(),
-  cycleId: z.string(),
-  taskId: z.string(),
-});
-
-// ─── Streaming assistant content (chat-bubble source) ───
+// ─── Turn lifecycle (Sentient 2.0 native orchestrator, spec §7) ───
 //
-// The model's `content` field is the canonical user-facing reply.
-// Delta frames stream mid-cycle; done commits the bubble to history.
+// A "turn" is one native ReAct run inside a `SessionRuntime`: stimulus in →
+// zero or more tool round-trips → final text out. It replaces the pre-2.0
+// "cycle", which was named for one Hermes round-trip — a unit the native
+// brain no longer has. `turnId` is minted by `SessionRuntime`
+// (crypto.randomUUID) and is the ONLY turn identity on the wire; there is no
+// `cycleId` in 2.0.
+//
+// Turn frames NEVER imply audio control. Per spec §4.6/§7.2 the gateway does
+// not stop its own TTS: a new `turn.started` must not cancel or replace
+// in-flight audio — the client queues behind it. Only `playback.stop`
+// (barge-in / interrupt) flushes audio.
 
-export const messageDeltaSchema = z.object({
-  type: z.literal("message.delta"),
-  cycleId: z.string(),
-  delta: z.string(),
+export const turnTriggerSchema = z.enum(["user", "background-completion"]);
+export type TurnTrigger = z.infer<typeof turnTriggerSchema>;
+
+export const turnStartedSchema = z.object({
+  type: z.literal("turn.started"),
+  turnId: z.string(),
+  /** What caused this turn: a person's message/utterance, or a background
+   *  `delegateTask` completion arriving as a stimulus (spec §4.4). Clients
+   *  use it to label the bubble; they never infer it. */
+  trigger: turnTriggerSchema,
 });
+export type TurnStartedMessage = z.infer<typeof turnStartedSchema>;
 
-export const messageDoneSchema = z.object({
-  type: z.literal("message.done"),
-  cycleId: z.string(),
+export const turnTextDeltaSchema = z.object({
+  type: z.literal("turn.text.delta"),
+  /** REQUIRED. Plan 2's interim `response.text.delta` omitted this, which
+   *  made two overlapping turns (§7.2's back-to-back follow-up) impossible to
+   *  route to the right bubble. That was a bug; this frame fixes it. */
+  turnId: z.string(),
+  text: z.string(),
 });
+export type TurnTextDeltaMessage = z.infer<typeof turnTextDeltaSchema>;
 
-// ─── Cognition Status ───
-
-export const cognitionStatusSchema = z.object({
-  type: z.literal("cognition.status"),
-  state: z.enum(["idle", "thinking", "acting"]),
-  runningEffects: z.array(z.string()),
+export const turnCompletedSchema = z.object({
+  type: z.literal("turn.completed"),
+  turnId: z.string(),
 });
+export type TurnCompletedMessage = z.infer<typeof turnCompletedSchema>;
+
+/** Why an assistant turn was cut short (spec §4.7). Mirrors the gateway's
+ *  `CutoffKind` (gateway/src/store/entry-types.ts) and the cutoff marker
+ *  stamped on the committed partial in the session store — one vocabulary,
+ *  store and wire. */
+export const turnCutoffSchema = z.enum(["interrupt", "barge-in"]);
+export type TurnCutoff = z.infer<typeof turnCutoffSchema>;
+
+export const turnAbortedSchema = z.object({
+  type: z.literal("turn.aborted"),
+  turnId: z.string(),
+  cutoff: turnCutoffSchema,
+});
+export type TurnAbortedMessage = z.infer<typeof turnAbortedSchema>;
+
+/** Tool-tile status. Deliberately NOT the retired `task.update` vocabulary
+ *  ("finished"|"cancelled"|"failed") — the native loop only distinguishes
+ *  in-flight, succeeded, and errored. */
+export const turnToolStatusSchema = z.enum(["running", "done", "error"]);
+export type TurnToolStatus = z.infer<typeof turnToolStatusSchema>;
+
+export const turnToolUpdateSchema = z.object({
+  type: z.literal("turn.tool.update"),
+  turnId: z.string(),
+  /** Provider-assigned id for this call; the client's dedupe key so one tile
+   *  transitions in place instead of stacking. */
+  toolCallId: z.string(),
+  toolName: z.string(),
+  status: turnToolStatusSchema,
+  /** Present only on a BACKGROUND dispatch's "running" update (the
+   *  `delegateTask` archetype). Its completion arrives later as a
+   *  `delegation.progress` frame, never as a second `turn.tool.update`. */
+  taskId: z.string().optional(),
+  /** Short, already-truncated preview of the tool's arguments for the tile.
+   *  Never the full argument object — clients render this verbatim. */
+  argsPreview: z.string(),
+  startedAtMs: z.number().int().nonnegative(),
+  /** Present once the call reaches a terminal status. */
+  endedAtMs: z.number().int().nonnegative().optional(),
+});
+export type TurnToolUpdateMessage = z.infer<typeof turnToolUpdateSchema>;
+
+/** Wire encoding of the outbound TTS byte stream. Exactly two values — this
+ *  is NOT the free-form `session.ready.audioEncoding` string. */
+export const turnAudioEncodingSchema = z.enum(["opus", "pcm"]);
+export type TurnAudioEncoding = z.infer<typeof turnAudioEncodingSchema>;
+
+export const turnAudioStartSchema = z.object({
+  type: z.literal("turn.audio.start"),
+  turnId: z.string(),
+  encoding: turnAudioEncodingSchema,
+  sampleRate: z.number().int().positive(),
+});
+export type TurnAudioStartMessage = z.infer<typeof turnAudioStartSchema>;
+
+export const turnAudioDoneSchema = z.object({
+  type: z.literal("turn.audio.done"),
+  turnId: z.string(),
+});
+export type TurnAudioDoneMessage = z.infer<typeof turnAudioDoneSchema>;
+
+// ─── Permission mediation (spec §5.3 L3 PDP, §7.1 prompt UI) ───
+//
+// A `confirm` decision on a side-effecting tool blocks the turn until the
+// user answers. The gateway sends `permission.request`; the client renders a
+// real dialog and replies with `permission.response`. `permission.resolved`
+// is the server's closing signal — it fires on EVERY resolution path,
+// including the ones the client did not cause (2-minute timeout → auto-deny,
+// or the turn being interrupted), so a dialog is never left orphaned on
+// screen. Fail-closed: a timeout is a denial, never an implicit approval.
+
+export const permissionRequestSchema = z.object({
+  type: z.literal("permission.request"),
+  /** Correlation id for this prompt. Distinct from `toolCallId`: one tool
+   *  call yields at most one prompt, but the client answers by `requestId`
+   *  so a late answer to a superseded prompt is trivially ignorable. */
+  requestId: z.string(),
+  toolCallId: z.string(),
+  toolName: z.string(),
+  /** The ACTUAL argument values the PDP is mediating (§2.2: authorization is
+   *  value-aware). Rendered in the dialog so the user approves what will
+   *  really happen, not a tool name. */
+  args: z.record(z.unknown()),
+  /** Human-readable one-line summary of the action, produced by the gateway. */
+  description: z.string(),
+  /** Absolute epoch-ms deadline. The client dismisses at this point without
+   *  waiting for `permission.resolved`, so a dropped frame can't hang the UI. */
+  expiresAtMs: z.number().int().nonnegative(),
+});
+export type PermissionRequestMessage = z.infer<typeof permissionRequestSchema>;
+
+export const permissionOutcomeSchema = z.enum(["allowed", "denied", "timeout"]);
+export type PermissionOutcome = z.infer<typeof permissionOutcomeSchema>;
+
+export const permissionResolvedSchema = z.object({
+  type: z.literal("permission.resolved"),
+  requestId: z.string(),
+  outcome: permissionOutcomeSchema,
+});
+export type PermissionResolvedMessage = z.infer<typeof permissionResolvedSchema>;
+
+// ─── Delegation progress (spec §5.4) ───
+//
+// Background `delegateTask` work outlives the turn that dispatched it. This
+// frame is the client's only live view of it; the eventual completion also
+// re-enters the brain as a stimulus, producing a NEW turn (§4.5).
+
+export const delegationStatusSchema = z.enum(["running", "done", "error"]);
+export type DelegationStatus = z.infer<typeof delegationStatusSchema>;
+
+export const delegationProgressSchema = z.object({
+  type: z.literal("delegation.progress"),
+  taskId: z.string(),
+  /** The turn that DISPATCHED the task — not necessarily the turn that is
+   *  live when this frame arrives. */
+  turnId: z.string(),
+  /** Delegated agent name, e.g. "hermes". */
+  agent: z.string(),
+  status: delegationStatusSchema,
+  /** Short human-readable progress/failure note. Never the full result. */
+  note: z.string().optional(),
+});
+export type DelegationProgressMessage = z.infer<typeof delegationProgressSchema>;
 
 // ─── Conversation Sync (session-scoped feed) ───
 
@@ -303,52 +398,20 @@ export const conversationSnapshotSchema = z.object({
   items: z.array(conversationFeedItemSchema),
 });
 
-// `cycleId` is the gateway-owned join key between a live streaming bubble
-// (message.delta/done) and its committed entry. It is carried on the FRAME,
-// not on the item (the feed item deliberately strips cycle/task plumbing —
-// see conversation.ts). Clients read it here to render ONE bubble per reply
-// instead of reverse-engineering it client-side. Optional because some entries
-// have no originating cycle (a user-input echo, an out-of-band activate entry).
+// `turnId` is the gateway-owned join key between a live streaming bubble
+// (turn.text.delta) and its committed entry. It is carried on the FRAME, not
+// on the item (the feed item deliberately strips turn/task plumbing — see
+// conversation.ts). Clients read it here to render ONE bubble per reply
+// instead of reverse-engineering it client-side. Optional because some
+// entries have no originating turn (a user-input echo, an out-of-band
+// activate entry).
 export const conversationEntrySchema = z.object({
   type: z.literal("conversation.entry"),
-  cycleId: z.string().optional(),
+  turnId: z.string().optional(),
   item: conversationFeedItemSchema,
 });
 
-// ─── Task lifecycle (live per-task status for the UI sidebar) ───
-//
-// Fires once at register time with status="running" and again at
-// deregister with the terminal status. Client dedups by taskId so the
-// same sidebar row transitions in place. Separate from the conversation
-// feed because ConversationHistory only records terminal state (for LLM
-// context) — the running state is a UI concern.
-
-export const taskStatusSchema = z.enum(["running", "finished", "cancelled", "failed"]);
-export type TaskStatus = z.infer<typeof taskStatusSchema>;
-
-export const taskUpdateSchema = z.object({
-  type: z.literal("task.update"),
-  taskId: z.string(),
-  toolName: z.string(),
-  cycleId: z.string(),
-  status: taskStatusSchema,
-  /** Short auto-derived preview of the tool's args for the UI sidebar. */
-  argsPreview: z.string(),
-  startedAtMs: z.number().int().nonnegative(),
-  /** Present once the task reaches a terminal state. */
-  endedAtMs: z.number().int().nonnegative().optional(),
-});
-export type TaskUpdate = z.infer<typeof taskUpdateSchema>;
-
 // ─── Shared Gateway → Client ───
-
-export const toolConfirmRequestSchema = z.object({
-  type: z.literal("tool.confirm_request"),
-  toolCallId: z.string(),
-  toolName: z.string(),
-  args: z.record(z.unknown()),
-  description: z.string(),
-});
 
 export const errorSchema = z.object({
   type: z.literal("error"),
@@ -365,15 +428,17 @@ export const sessionExpiredSchema = z.object({
   reason: z.string(),
 });
 
-// Tell the client to drop any playing/buffered audio for the named
-// cycle immediately. Fires on: mic-onset (barge-in) and hard interrupt.
-// Client filters further incoming audio.frame messages whose cycleId
-// matches a `playback.stop` already received.
+// Tell the client to drop any playing/buffered audio for the named turn
+// immediately. Fires on mic-onset (barge-in) and hard interrupt ONLY — never
+// on a new turn (spec §4.6/§7.2: the gateway does not stop its own audio).
+// The client filters further binary audio for a turn whose `playback.stop`
+// it has already received.
 export const playbackStopSchema = z.object({
   type: z.literal("playback.stop"),
-  cycleId: z.string(),
-  reason: z.enum(["barge-in", "interrupt"]),
+  turnId: z.string(),
+  reason: turnCutoffSchema,
 });
+export type PlaybackStopMessage = z.infer<typeof playbackStopSchema>;
 
 // Resume acknowledgement — sent by the gateway after processing stream.resume.
 // recovered=true means the buffer contained frames in [fromSeq, toSeq] that
@@ -402,20 +467,18 @@ export type StreamResumed = z.infer<typeof streamResumedSchema>;
 export const gatewayMessageSchema = z.discriminatedUnion("type", [
   withSeqEpoch(authOkSchema),
   withSeqEpoch(sessionReadySchema),
-  withSeqEpoch(cycleStartedSchema),
-  withSeqEpoch(connectorCancelledSchema),
-  withSeqEpoch(cycleAbortedSchema),
-  withSeqEpoch(cycleCompletedSchema),
-  withSeqEpoch(connectorTranscriptFinalSchema),
-  withSeqEpoch(connectorAudioStartSchema),
-  withSeqEpoch(connectorAudioDoneSchema),
-  withSeqEpoch(messageDeltaSchema),
-  withSeqEpoch(messageDoneSchema),
-  withSeqEpoch(cognitionStatusSchema),
+  withSeqEpoch(turnStartedSchema),
+  withSeqEpoch(turnTextDeltaSchema),
+  withSeqEpoch(turnCompletedSchema),
+  withSeqEpoch(turnAbortedSchema),
+  withSeqEpoch(turnToolUpdateSchema),
+  withSeqEpoch(turnAudioStartSchema),
+  withSeqEpoch(turnAudioDoneSchema),
+  withSeqEpoch(permissionRequestSchema),
+  withSeqEpoch(permissionResolvedSchema),
+  withSeqEpoch(delegationProgressSchema),
   withSeqEpoch(conversationSnapshotSchema),
   withSeqEpoch(conversationEntrySchema),
-  withSeqEpoch(taskUpdateSchema),
-  withSeqEpoch(toolConfirmRequestSchema),
   withSeqEpoch(errorSchema),
   withSeqEpoch(pongSchema),
   withSeqEpoch(sessionExpiredSchema),

@@ -107,6 +107,15 @@ function recordingEmitter(): RecordingEmitter {
     toolUpdate: (turnId) => events.push({ type: "toolUpdate", turnId }),
     turnCompleted: (turnId) => events.push({ type: "turnCompleted", turnId }),
     turnAborted: (turnId) => events.push({ type: "turnAborted", turnId }),
+    // Not part of any assertion in this file — SessionRuntime never drives
+    // these (audio is the voice pipeline's, permission/delegation the PDP's
+    // and broker's). Present only to satisfy the TurnEmitter contract.
+    audioStart: () => {},
+    audioFrame: () => {},
+    audioDone: () => {},
+    permissionRequest: () => {},
+    permissionResolved: () => {},
+    delegationProgress: () => {},
   };
 }
 
@@ -558,6 +567,12 @@ describe("SessionRuntime — isolation", () => {
         }
       },
       turnAborted: (t) => events.push({ type: "turnAborted", turnId: t }),
+      audioStart: () => {},
+      audioFrame: () => {},
+      audioDone: () => {},
+      permissionRequest: () => {},
+      permissionResolved: () => {},
+      delegationProgress: () => {},
     };
 
     const runtime = createSessionRuntime({
