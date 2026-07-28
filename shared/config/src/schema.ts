@@ -17,6 +17,18 @@ export const sessionConfigSchema = z.object({
   // Per-user concurrent WS session cap. Bounds memory under churn (one user /
   // reconnect-loop). Range 1–100.
   per_user_max_sessions: z.number().int().min(1).max(100),
+  // Reconnect gap-fill (spec §11 slice 6). Per-surface cap on the outbound
+  // frame journal that lets a reconnecting client replay what it missed.
+  // Oldest frames evict first; the newest frame is never evicted. Range
+  // 65536–268435456 (64 KB–256 MB).
+  // `.default()` (unlike this block's two older keys) so an operator's
+  // existing config.yaml keeps booting without an operator-config-migrator
+  // schema_version bump.
+  replay_journal_max_bytes: z.number().int().min(65536).max(268435456).default(16777216),
+  // How long a DETACHED surface journal is kept for a reconnect before it is
+  // dropped. Past this, a resuming client gets stream.resumed{recovered:false}
+  // and REST-refetches its history. Range 1000–3600000 (1 s–1 h).
+  replay_journal_retention_ms: z.number().int().min(1000).max(3600000).default(300000),
 });
 
 export type SessionConfig = z.output<typeof sessionConfigSchema>;

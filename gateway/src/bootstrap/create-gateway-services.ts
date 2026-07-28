@@ -34,6 +34,7 @@ import type { ProviderClient } from "../provider/provider-client.js";
 import type { SessionHandles } from "../runtime/session-handles.js";
 import type { TurnEmitter } from "../runtime/turn-emitter.js";
 import type { TurnVoice } from "../runtime/turn-voice.js";
+import { type ReplayRegistry, createReplayRegistry } from "../session-handlers/replay-registry.js";
 import type { SessionControlsRegistry } from "../session-handlers/session-controls-registry.js";
 import type { GatewayTlsMaterial } from "../session-handlers/ws-handlers.ts";
 import type { SessionRouter } from "../session-router.js";
@@ -98,6 +99,12 @@ export interface GatewayServices {
   readonly downloads: { artifactsDir: string; publicBaseUrl: string };
   readonly hermes: HermesConfig | null;
   readonly session: SessionConfig;
+  /** Per-surface outbound frame journals, keyed `${userId}::${surfaceId}`
+   *  (Plan 3 Task 10, spec §11 slice 6). Deliberately NOT per-connection:
+   *  the journal must survive the socket that filled it so a reconnecting
+   *  client can replay the frames it missed. Built here rather than in a
+   *  phase because it depends on nothing but `cfg.session`. */
+  readonly replayRegistry: ReplayRegistry;
   readonly webui: WebuiConfig;
   readonly auth: AuthService;
   readonly authConfig: AuthConfig;
@@ -222,6 +229,10 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     downloads: { artifactsDir: cfg.downloads.artifacts_dir, publicBaseUrl: cfg.downloads.public_base_url },
     hermes: cfg.hermes ?? null,
     session: cfg.session,
+    replayRegistry: createReplayRegistry({
+      maxBytesPerSurface: cfg.session.replay_journal_max_bytes,
+      retentionMs: cfg.session.replay_journal_retention_ms,
+    }),
     webui: cfg.webui,
     auth,
     authConfig: cfg.auth,

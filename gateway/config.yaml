@@ -65,6 +65,13 @@ tls:
 session:
   ws_idle_timeout_ms: 255000         # Range: 1000–255000. Bun WS idle close; Bun takes SECONDS (cap 255), gateway converts ms→s.
   per_user_max_sessions: 40           # max concurrent WS sessions for ONE user (1–100). Bounds memory under churn.
+  # --- Reconnect gap-fill (spec §11 slice 6) ---
+  # Every gateway → client frame is stamped with a monotonic seq inside an
+  # epoch and journaled per surface, so a client that reconnects with
+  # `resume: {epoch, lastSeq}` in session.configure gets the frames it
+  # missed replayed instead of a silently truncated conversation.
+  replay_journal_max_bytes: 16777216    # 16 MB per surface. Range 65536–268435456 (64 KB–256 MB). Evict-oldest; the newest frame is never evicted.
+  replay_journal_retention_ms: 300000   # 5 min. Range 1000–3600000. Retention for a DETACHED surface journal; past this a resuming client gets recovered:false and REST-refetches.
 
 # ---------------------------------------------------------------------------
 # Access — capability minting + per-user physical isolation (spec §2.1, §2.5)
