@@ -161,6 +161,13 @@ struct ChatView: View {
         .panelDeletePrompt($panelDeleting) { id in
             Task { await historyModel.deleteSession(id) }
         }
+        .permissionPrompt(
+            Binding(
+                get: { vm.pendingPermission },
+                set: { if $0 == nil { vm.dismissPermissionPrompt() } }
+            ),
+            onRespond: { requestId, approved in vm.respondPermission(requestId, approved: approved) }
+        )
         .task {
             // Engagement signal: the chat surface appeared. Idempotent — READY → a
             // liveness probe; not-READY → reconnect. Scoped to this view's lifetime.
