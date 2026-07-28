@@ -12,6 +12,7 @@ import { createUserPrincipal } from "../identity/user-principal.js";
 import type { PermissionBroker } from "../runtime/permission-broker.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { Stimulus } from "../runtime/stimulus.js";
+import { createReplayRegistry } from "./replay-registry.js";
 import { cleanupSession, handleWebSocketMessage } from "./ws-handlers.js";
 import { type SessionData, createEmptySessionData } from "./ws-helpers.js";
 
@@ -68,10 +69,11 @@ function stubRuntime(): StubRuntime {
 // GatewayServices' large surface without exercising any of it.
 const unusedServices = {} as GatewayServices;
 
-// cleanupSession() DOES dereference services (sessionManager) — unlike the
-// text.input/interrupt cases, so it gets a real two-method stub.
+// cleanupSession() dereferences sessionManager AND replayRegistry. A real
+// (tiny) registry is cheaper and more honest than a hand-rolled double.
 const cleanupServices = {
   sessionManager: { unbindUser: () => {}, removeSession: () => {} },
+  replayRegistry: createReplayRegistry({ maxBytesPerSurface: 65536, retentionMs: 1000 }),
 } as unknown as GatewayServices;
 
 interface StubPermissions extends PermissionBroker {
@@ -236,5 +238,28 @@ describe("ws-handlers cleanup — outstanding permission prompts", () => {
 
     expect(permissions.denyAllCallCount()).toBe(1);
     expect(ws.data.permissions).toBeNull();
+  });
+});
+
+describe("ws-handlers cleanup — replay journal", () => {
+  it("releases the surface journal into the registry instead of dropping it", () => {
+    const registry = createReplayRegistry({ maxBytesPerSurface: 65536, retentionMs: 60_000 });
+    const services = {
+      sessionManager: { unbindUser: () => {}, removeSession: () => {} },
+      replayRegistry: registry,
+    } as unknown as GatewayServices;
+
+    const ws = fakeAuthedWs(null);
+    const acquired = registry.acquire("u_deadbeef::surface-a", undefined);
+    ws.data.journal = acquired.journal;
+    ws.data.epoch = acquired.epoch;
+    ws.data.replayKey = "u_deadbeef::surface-a";
+
+    cleanupSession(ws as unknown as ServerWebSocket<SessionData>, services);
+
+    expect(ws.data.journal).toBeNull();
+    expect(ws.data.replayKey).toBeNull();
+    // Parked, not destroyed — a reconnect at the same epoch still resumes.
+    expect(registry.acquire("u_deadbeef::surface-a", acquired.epoch).resumed).toBe(true);
   });
 });

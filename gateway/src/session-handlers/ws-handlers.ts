@@ -110,8 +110,9 @@ export async function handleWebSocketMessage(
       return;
 
     case "session.configure":
-      // Resume params ride INSIDE the configure frame (msg.resume) — accepted
-      // and logged by the handler, not acted on (see ws-session-configure.ts).
+      // Resume params ride INSIDE the configure frame (msg.resume) — the
+      // handler acquires this surface's frame journal and answers with the
+      // stream.resumed decision (Plan 3 Task 10, see ws-session-configure.ts).
       handleSessionConfigure(
         ws,
         msg.capabilities.supports,
@@ -212,6 +213,12 @@ function ensureSttSession(ws: ServerWebSocket<SessionData>, services: GatewaySer
 
 function handleSessionEnd(ws: ServerWebSocket<SessionData>, services: GatewayServices): void {
   if (!ws.data.sessionId) return;
+  // Explicit end: discard rather than park. Clearing replayKey here also
+  // stops cleanupSession below from re-releasing a key that no longer exists.
+  if (ws.data.replayKey !== null) {
+    services.replayRegistry.discard(ws.data.replayKey);
+    ws.data.replayKey = null;
+  }
   cleanupSession(ws, services);
   ws.close(WS_NORMAL_CLOSURE, "Session ended");
 }
@@ -225,9 +232,13 @@ function handleSessionEnd(ws: ServerWebSocket<SessionData>, services: GatewaySer
  * would ever do.
  * `runtime.dispose()` aborts any in-flight turn's AbortSignal and closes
  * the session's store handle — idempotent, so a socket that never reached
- * session.configure (runtime still null) is unaffected. There is no
- * resumable-disconnect handling yet — a fresh connection always mints a
- * fresh runtime; Plan 3 revisits reconnect/resume for the orchestrator.
+ * session.configure (runtime still null) is unaffected.
+ * A fresh connection always mints a fresh runtime; what DOES survive the
+ * disconnect is this surface's outbound frame journal, parked in
+ * `services.replayRegistry` for `session.replay_journal_retention_ms` so a
+ * reconnect carrying `resume: {epoch, lastSeq}` can replay the frames the
+ * client missed (Plan 3 Task 10). The in-flight turn is not resumed — it is
+ * aborted by `dispose()` — only the already-emitted frames are.
  */
 export function cleanupSession(ws: ServerWebSocket<SessionData>, services: GatewayServices): void {
   const sessionId = ws.data.sessionId;
@@ -247,6 +258,18 @@ export function cleanupSession(ws: ServerWebSocket<SessionData>, services: Gatew
 
   ws.data.runtime?.dispose();
   ws.data.runtime = null;
+
+  // Detach the frame journal LAST, after the runtime has been disposed:
+  // dispose() is synchronous, and anything it still writes to this socket
+  // must land in the journal so a reconnecting client replays it. The
+  // journal OBJECT survives in the registry for the retention window; only
+  // this connection's handle on it is cleared.
+  if (ws.data.replayKey !== null) {
+    services.replayRegistry.release(ws.data.replayKey);
+    ws.data.replayKey = null;
+  }
+  ws.data.journal = null;
+  ws.data.epoch = 0;
 
   ws.data.stt?.close();
   ws.data.stt = null;

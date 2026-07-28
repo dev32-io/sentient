@@ -1,4 +1,4 @@
-import type { ClientType, SessionConfigureResume } from "@sentient/protocol";
+import type { ClientType, GatewayMessage, SessionConfigureResume } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { getLog } from "../logging/logger.js";
@@ -7,6 +7,8 @@ import { createMicEchoGuard } from "./mic-echo-guard.js";
 import { createSessionVoicePrefs } from "./session-voice-prefs.js";
 import type { SessionData } from "./ws-helpers.js";
 import { errorMessage, sendError } from "./ws-helpers.js";
+import { handleResumeOrFresh } from "./ws-resume.js";
+import { sendGatewayFrame } from "./ws-send.js";
 import { createWsTurnEmitter } from "./ws-turn-emitter.js";
 
 const log = getLog(["sentient", "ws", "session-configure"]);
@@ -49,6 +51,14 @@ const AUDIO_ENCODING = "pcm16";
 // synthesizer) and hands it to `createSessionRuntime`, so the ReAct loop's
 // text deltas fork into TTS on the turn's own AbortController. The STT half
 // is lazy — ws-handlers.ts mints `ws.data.stt` on the first `audio.start`.
+//
+// Plan 3 Task 10 adds the second piece: acquiring this surface's frame
+// journal from `services.replayRegistry` and running the resume decision
+// (ws-resume.ts) before session.ready goes out. The `resume` field the
+// client folds into this frame is now honoured, not just logged. session.ready
+// itself now leaves through `sendGatewayFrame`, so it is validated against
+// `gatewayMessageSchema` like every other outbound frame instead of being
+// hand-serialised.
 // ---------------------------------------------------------------------------
 
 export function handleSessionConfigure(
@@ -78,10 +88,36 @@ export function handleSessionConfigure(
   ws.data.grantedCapabilities = new Set(capabilities);
   ws.data.clientType = clientType;
 
-  // A repeat session.configure on the same connection (e.g. a future
-  // reconnect/resume flow) must not leak the previous runtime's store handle
-  // or strand its open permission prompts — tear both down before minting a
-  // fresh pair.
+  // --- Reconnect gap-fill: acquire this surface's frame journal ---
+  //
+  // Keyed `${userId}::${surfaceId}`, matching SessionRuntime's own identity.
+  // surfaceId falls back to deviceId when the client omits it — mandated by
+  // sessionConfigureSchema.surfaceId's contract note, and the reason two
+  // browser tabs of one user stay independent. The registry (not this
+  // connection) OWNS the journal: a resumed surface gets the same object
+  // back and its seq counter simply continues, which is what makes replay
+  // contiguous across the socket boundary.
+  //
+  // Acquired BEFORE the runtime block, so any frame the runtime can emit is
+  // already sequenced.
+  const surfaceId = configureSurfaceId ?? configureDeviceId;
+  const replayKey = `${userId}::${surfaceId}`;
+  if (ws.data.replayKey !== null && ws.data.replayKey !== replayKey) {
+    // A re-configure that moved this connection to a different surface —
+    // park the old surface's journal rather than orphaning it attached.
+    services.replayRegistry.release(ws.data.replayKey);
+  }
+  const acquisition = services.replayRegistry.acquire(replayKey, configureResume?.epoch);
+  ws.data.journal = acquisition.journal;
+  ws.data.epoch = acquisition.epoch;
+  ws.data.replayKey = replayKey;
+
+  // A repeat session.configure on the same connection must not leak the
+  // previous runtime's store handle or strand its open permission prompts —
+  // tear both down before minting a fresh pair. The frame journal above is
+  // deliberately NOT torn down with them: it belongs to the surface, not to
+  // the runtime, and losing it here would break the very replay this
+  // handshake just promised.
   if (ws.data.runtime) {
     log.info("session-configure.reconfigure", { sessionId, userId, reason: "disposing prior runtime" });
     ws.data.permissions?.denyAll();
@@ -150,27 +186,41 @@ export function handleSessionConfigure(
     clientType,
     language,
     deviceId: configureDeviceId,
-    surfaceId: configureSurfaceId,
+    surfaceId,
     hasRuntime: ws.data.runtime !== null,
     hasVoice,
-    // Accepted but not acted on post-purge — resume/conversation-anchor
-    // wiring goes with the rest of Plan 2's orchestrator rebuild.
-    hasResume: configureResume !== undefined,
+    epoch: acquisition.epoch,
+    resumed: acquisition.resumed,
+    requestedResumeLastSeq: configureResume?.lastSeq ?? null,
     conversationId: configureConversationId ?? null,
   });
 
-  ws.send(
-    JSON.stringify({
-      type: "session.ready",
-      sessionId,
-      audioEncoding: AUDIO_ENCODING,
-      inputSampleRate: INPUT_SAMPLE_RATE,
-      outputSampleRate: OUTPUT_SAMPLE_RATE,
-      enabledEffects: [],
-      playback: {
-        minEagerEndMs: services.webui.playback.min_eager_end_ms,
-        preemptFadeoutMs: services.webui.playback.preempt_fadeout_ms,
-      },
-    }),
-  );
+  const readyFrame: GatewayMessage = {
+    type: "session.ready",
+    sessionId,
+    audioEncoding: AUDIO_ENCODING,
+    inputSampleRate: INPUT_SAMPLE_RATE,
+    outputSampleRate: OUTPUT_SAMPLE_RATE,
+    enabledEffects: [],
+    playback: {
+      minEagerEndMs: services.webui.playback.min_eager_end_ms,
+      preemptFadeoutMs: services.webui.playback.preempt_fadeout_ms,
+    },
+  };
+
+  // On the recovered path this sends session.ready itself (RAW, before the
+  // stream.resumed ack and the verbatim replay) and returns true — see
+  // ws-resume.ts for why that order is load-bearing. Every other path
+  // returns false and we send the normal seq-stamped ready below.
+  const readyAlreadySent = handleResumeOrFresh({
+    ws,
+    sessionId,
+    surfaceKey: replayKey,
+    journal: acquisition.journal,
+    epoch: acquisition.epoch,
+    resumed: acquisition.resumed,
+    resumeParams: configureResume,
+    readyFrame,
+  });
+  if (!readyAlreadySent) sendGatewayFrame(ws, readyFrame);
 }
