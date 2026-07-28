@@ -1,0 +1,32 @@
+.permission-dialog__tool {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: var(--color-bg-elev);
+  border: 1px solid var(--color-line-soft);
+  border-radius: var(--radius-md);
+}
+
+.permission-dialog__tool-label {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.permission-dialog__tool-name {
+  font-family: monospace;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.permission-dialog__args {
+  margin-top: var(--space-sm);
+  font-size: var(--font-size-sm);
+  color: var(--color-ink-2);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
