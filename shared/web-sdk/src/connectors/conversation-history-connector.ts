@@ -6,16 +6,16 @@ import type { SessionsRest } from "../sessions-rest.ts";
 const log = createLogger(["sentient", "sdk", "connectors", "conversation-history"]);
 
 // ---------------------------------------------------------------------------
-// CommittedFeedItem — a feed item plus the gateway-owned `cycleId` carried on
-// its conversation.entry FRAME. The wire item itself strips cycle plumbing
-// (see protocol/conversation.ts); we re-attach the frame's cycleId here so the
-// UI can join a committed assistant entry to its live streaming bubble WITHOUT
-// inventing an id (no ts-window stamping). `cycleId` is undefined for snapshot /
-// REST-history items (historical entries have no live cycle) and for user /
-// trigger entries (no originating cycle).
+// CommittedFeedItem — a feed item plus the gateway-owned `turnId` carried on
+// its conversation.entry FRAME. The wire item itself strips turn plumbing (see
+// protocol/conversation.ts); we re-attach the frame's turnId here so the UI can
+// join a committed assistant entry to its live streaming bubble WITHOUT
+// inventing an id (no ts-window stamping, no position guessing). `turnId` is
+// undefined for snapshot / REST-history items (historical entries have no live
+// turn) and for user / trigger entries (no originating turn).
 // ---------------------------------------------------------------------------
 
-export type CommittedFeedItem = ConversationFeedItem & { readonly cycleId?: string };
+export type CommittedFeedItem = ConversationFeedItem & { readonly turnId?: string };
 
 // ---------------------------------------------------------------------------
 // Config
@@ -100,11 +100,11 @@ export class ConversationHistoryConnector implements Connector {
     this.unsubs.push(
       sdk.onMessage("conversation.entry", (msg: unknown) => {
         if (this.awaitingSnapshot) return; // drop straggler from prior generation
-        const m = msg as { item?: ConversationFeedItem; cycleId?: string };
+        const m = msg as { item?: ConversationFeedItem; turnId?: string };
         if (!m.item) return;
-        // Re-attach the gateway's frame cycleId to the committed item so the UI
+        // Re-attach the gateway's frame turnId to the committed item so the UI
         // joins it to the live bubble by id (never by ts-window guessing).
-        const entry: CommittedFeedItem = m.cycleId ? { ...m.item, cycleId: m.cycleId } : m.item;
+        const entry: CommittedFeedItem = m.turnId ? { ...m.item, turnId: m.turnId } : m.item;
         this.mirror = [...this.mirror, entry];
         this.config.onEntry?.(entry);
         this.config.onUpdate?.(this.mirror);
