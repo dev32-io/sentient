@@ -13,6 +13,7 @@
 // actually reach the client.
 
 import { describe, expect, it } from "bun:test";
+import { gatewayMessageSchema } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import type { ToolUpdate } from "../runtime/react-loop.js";
 import { type SessionData, createEmptySessionData } from "./ws-helpers.js";
@@ -247,6 +248,52 @@ describe("createWsTurnEmitter — 2.0 wire contract", () => {
         status: "done",
         note: "finished",
       },
+    ]);
+  });
+
+  it("CONTRACT: every JSON frame the emitter can produce survives gatewayMessageSchema", () => {
+    // Definition-of-done pin. `sendGatewayFrame` writes `parsed.data`, so a
+    // re-parse can never fail — the load-bearing assertion is the TYPE SET:
+    // a frame the emitter builds wrongly (misnamed/missing field) fails
+    // validation and is DROPPED, so it simply goes missing from `sent`. That
+    // is the exact silent failure this case exists to catch; comparing the
+    // full set also catches a method that starts emitting an extra frame.
+    const ws = fakeWs();
+    const emitter = emitterFor(ws);
+    emitter.turnStarted("turn-1", "user");
+    emitter.textDelta("turn-1", "hi");
+    emitter.toolUpdate("turn-1", { toolCallId: "c1", toolName: "search", status: "running", argsPreview: "{}" });
+    emitter.audioStart("turn-1", "pcm", 48000);
+    emitter.audioFrame("turn-1", new Uint8Array([1])); // binary — must NOT appear below
+    emitter.audioDone("turn-1");
+    emitter.permissionRequest({
+      requestId: "r1",
+      toolCallId: "c1",
+      toolName: "sendMessage",
+      args: { to: "+1555" },
+      description: "Send a message",
+      expiresAtMs: 1_800_000_000_000,
+    });
+    emitter.permissionResolved({ requestId: "r1", outcome: "allowed" });
+    emitter.delegationProgress({ taskId: "t-9", turnId: "turn-1", agent: "hermes", status: "running" });
+    emitter.turnAborted("turn-1", "interrupt");
+    emitter.turnCompleted("turn-1");
+
+    for (const frame of ws.sent) {
+      expect(gatewayMessageSchema.safeParse(frame).success, JSON.stringify(frame)).toBe(true);
+    }
+    expect(ws.sent.map((f) => (f as { type: string }).type)).toEqual([
+      "turn.started",
+      "turn.text.delta",
+      "turn.tool.update",
+      "turn.audio.start",
+      "turn.audio.done",
+      "permission.request",
+      "permission.resolved",
+      "delegation.progress",
+      "turn.aborted",
+      "playback.stop",
+      "turn.completed",
     ]);
   });
 
