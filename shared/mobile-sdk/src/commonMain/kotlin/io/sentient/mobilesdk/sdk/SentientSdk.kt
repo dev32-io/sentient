@@ -255,12 +255,38 @@ class SentientSdk(
         emit()
     }
 
+    /**
+     * Drop TURN-scoped active state back to idle. Runs on every conversation change,
+     * but ALSO on interrupt and on the stuck-state watchdog — i.e. while the client
+     * stays in the same conversation. Nothing conversation-scoped belongs here; that
+     * is [clearConversationScopedState].
+     */
     private fun clearActiveToIdle() {
         connectors.cognition.reset()  // currentState→IDLE + onCognitionChanged → deriver IDLE + refreshStuckWatch + emit
         connectors.permission.reset() // fail-closed: drop open prompts, never auto-approve
         audio.stopLocal()             // isSpeaking→false (if speaking) via onAudioStateChanged
         stuckWatchdog.disarm()
         emit()
+    }
+
+    /**
+     * Drop CONVERSATION-scoped state when leaving the current conversation. Single
+     * writer for every "leave" entry point — [switchSession], [newChat], [sendNewChat]
+     * and [sendSwitchSession] — so a new entry point cannot silently skip one clear.
+     *
+     * Delegation rows (§5.4) outlive the turn that dispatched them and are keyed by
+     * taskId alone, and terminal rows are retained by design, so nothing else ever
+     * retires them: without this, conversation A's background-task rows render inside
+     * conversation B and may never self-clear.
+     *
+     * Deliberately NOT folded into [clearActiveToIdle] (that also runs on interrupt /
+     * stuck-watchdog, where the conversation is unchanged and its in-flight
+     * delegations must keep rendering) and NOT into [fireSwitch] (the reconnect
+     * re-establish path re-activates the SAME conversation and must preserve them).
+     */
+    private fun clearConversationScopedState(trigger: String) {
+        log.info("conversation.scope.clear", mapOf("trigger" to trigger))
+        connectors.delegation.clear()
     }
 
     private fun onStuckTimeout() {
@@ -500,7 +526,7 @@ class SentientSdk(
     suspend fun switchSession(sessionId: String) {
         markInteraction()
         connectors.turnError.reset()
-        connectors.delegation.clear()
+        clearConversationScopedState("switch")
         // Problem 1: drop the current session's messages NOW so the spinner
         // renders over an empty chat, not stale history, while the target loads.
         connectors.history.clearForSwitch()
@@ -521,7 +547,7 @@ class SentientSdk(
     suspend fun newChat(): String {
         markInteraction()
         connectors.turnError.reset()
-        connectors.delegation.clear()
+        clearConversationScopedState("new-chat")
         // Bug #1: the gateway clears its own mirror on session.new but emits no
         // client-facing clear; drop the visible past-chat history locally the
         // instant "+" is tapped (safe pure-state clear — never gates the mint).
@@ -557,7 +583,7 @@ class SentientSdk(
     fun sendNewChat() {
         markInteraction()
         connectors.turnError.reset()
-        connectors.delegation.clear()
+        clearConversationScopedState("new-chat-fire")
         // Bug #1: the gateway clears its own mirror on session.new but emits no
         // client-facing clear; drop the visible past-chat history locally the
         // instant "+" is tapped (safe pure-state clear — never gates the mint).
@@ -576,6 +602,10 @@ class SentientSdk(
         // Problem 1: drop the current session's messages NOW so the spinner
         // renders over an empty chat, not stale history, while the target loads.
         connectors.history.clearForSwitch()
+        // …and with them the conversation's background-delegation rows. This is the
+        // path the UI actually takes (SwitchConversationUseCase → switchToFireAndForget);
+        // the awaited [switchSession] is not wired to any screen.
+        clearConversationScopedState("switch-fire")
         // Send the activate FIRST (never gated), THEN drop stale active cognition
         // (THINKING / interrupt) from the current view (bug #3). The reconnect
         // re-establish path uses fireSwitch directly (no cognition clear AND no

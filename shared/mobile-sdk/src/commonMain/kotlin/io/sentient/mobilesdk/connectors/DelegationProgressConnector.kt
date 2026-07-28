@@ -73,7 +73,13 @@ class DelegationProgressConnector(
         onList?.invoke(list())
     }
 
-    /** Drop every row. Driven on newChat / switchSession by the orchestrator. */
+    /**
+     * Drop every row. Driven by the orchestrator's `clearConversationScopedState` from
+     * EVERY leave-the-conversation entry point — the awaited `newChat` / `switchSession`
+     * and the fire-and-forget `sendNewChat` / `sendSwitchSession` the UI actually uses.
+     * Never driven by interrupt or by the reconnect re-establish: a delegation outlives
+     * its turn and survives a resume of the same conversation.
+     */
     fun clear() {
         if (tasks.isEmpty()) return
         log.info("clear", mapOf("count" to tasks.size))
