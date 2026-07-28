@@ -82,6 +82,8 @@ import io.sentient.mobilesdk.transport.SdkStatus
  * @param onRetry             User tapped the FAILED chip on a pending message — re-queues by pendingId.
  * @param onComposerFocus     Composer TextField gained focus — used to trigger ensureConnected.
  * @param onDismissReopenFailed  Tap-to-dismiss for the ReopenFailed one-shot notice.
+ * @param onAllowPermission   User tapped Allow on the permission-prompt dialog (spec §7.1).
+ * @param onDenyPermission    User tapped Deny on the permission-prompt dialog (spec §7.1).
  * @param userName            Logged-in user's display name for bubble avatars.
  */
 @Composable
@@ -101,6 +103,8 @@ fun ChatContent(
     onRetry: (String) -> Unit = {},
     onComposerFocus: () -> Unit = {},
     onDismissReopenFailed: () -> Unit = {},
+    onAllowPermission: () -> Unit = {},
+    onDenyPermission: () -> Unit = {},
     userName: String = "You",
     modifier: Modifier = Modifier,
 ) {
@@ -210,5 +214,13 @@ fun ChatContent(
                     .testTag("banner-connection"),
             )
         }
+    }
+
+    // Permission-prompt dialog (design spec §7.1) — floats as its own system Window
+    // (Material3 AlertDialog), so its position in this tree has no effect on where
+    // it renders. Kept OUTSIDE the Box so it is structurally independent of the
+    // connection-banner overlay above.
+    uiState.pendingPermissionRequest?.let { request ->
+        PermissionPromptDialog(request = request, onAllow = onAllowPermission, onDeny = onDenyPermission)
     }
 }
