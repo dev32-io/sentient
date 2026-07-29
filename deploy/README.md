@@ -6,13 +6,22 @@ on demand via the host docker socket. **All provider keys, voice IDs,
 and admin secrets are entered through the webui setup wizard** on first
 launch — there is nothing to configure on disk beyond `HOST_DOCKER_GID`.
 
-Three compose files:
+Two compose files:
 
 | File | Purpose |
 |------|---------|
 | `deploy/mac-prod/docker-compose.yml` | **Production** — macOS Docker Desktop (Apple-silicon Mac mini). Builds all images locally; release profile. The supported deploy path. |
 | `deploy/macos/docker-compose.yml` | Local dev on macOS Docker Desktop — debug build. Uses a docker named volume for the supervisord socket (virtiofs rejects AF_UNIX `bind()`). |
-| `deploy/docker/docker-compose.yml` | Local dev on Linux — bind-mounts everything under `~/.sentient/`. |
+
+`deploy/docker/` (local dev on Linux) was **removed** with the native cutover.
+It was a single-service compose that ran the gateway itself from
+`gateway/Dockerfile`, and the gateway is a native launchd-supervised binary now —
+that Dockerfile, the supervisord/per-user-hermes env it wired up, and the
+containerised `stt-service` are all gone. Linux is not a target either way: two
+`optional: false` services (`whisper-stt`, `local-tts`) run natively on
+Metal/MLX, which is Apple-silicon only. Recover it from git history if you want
+the old containerised-gateway layout as a starting point (same as the retired
+`deploy/pi/` compose).
 
 ## Why macOS for production
 
