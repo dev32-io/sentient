@@ -678,8 +678,13 @@ class Installer:
             raise InstallError(f"checksum mismatch for {tarball}; refusing to install")
 
         # Idempotent: an identical, healthy install must not bounce the service.
-        if previous == version and self._is_healthy()[0]:
-            return
+        # Only probed when the version already matches — on an upgrade the OLD
+        # version's health is irrelevant, and probing it would burn the whole
+        # budget before unpacking whenever the running gateway is down.
+        if previous == version:
+            already_healthy, _ = self._is_healthy()
+            if already_healthy:
+                return
 
         self._fs.unpack(version, tarball)
         # Finish the release BEFORE it goes live. The native services' venvs are
