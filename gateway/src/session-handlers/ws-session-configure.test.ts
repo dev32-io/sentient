@@ -1,0 +1,134 @@
+// Journal lifecycle across a RE-`session.configure` (Plan 3 Task 10 residual).
+//
+// One invariant is pinned here: a second `session.configure` on a connection
+// that is STILL OPEN and names the SAME surface must KEEP that connection's
+// frame journal and epoch. Nothing was lost — the socket never closed — so
+// minting a fresh journal would discard a live replay window and jump the
+// client's epoch for no reason, which reads on the wire as a stream restart
+// (`stream.resumed{recovered:false}` on the next reconnect, a full REST
+// refetch, and every frame still in the old journal unreachable).
+//
+// The mirror case is pinned too: re-configuring onto a DIFFERENT surface is a
+// genuine handover, so the old journal is parked and a fresh one is minted.
+//
+// Zero cost: a FakeWs double (mirrors ws-resume.test.ts) plus a real, tiny
+// ReplayRegistry. No provider/network I/O; `createSessionRuntime: null` keeps
+// the orchestrator branch out of the picture entirely.
+
+import { describe, expect, it } from "bun:test";
+import type { ServerWebSocket } from "bun";
+import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
+import { createUserPrincipal } from "../identity/user-principal.js";
+import { type ReplayRegistry, createReplayRegistry } from "./replay-registry.js";
+import { type SessionData, createEmptySessionData } from "./ws-helpers.js";
+import { handleSessionConfigure } from "./ws-session-configure.js";
+
+const USER_ID = "u_deadbeef";
+const DEVICE_ID = "device-1";
+const SURFACE_A = "surface-a";
+const SURFACE_B = "surface-b";
+
+interface FakeWs {
+  data: SessionData;
+  sent: Record<string, unknown>[];
+  send: (payload: string) => void;
+}
+
+function fakeAuthedWs(): FakeWs {
+  const data = createEmptySessionData();
+  data.sessionId = "test-session";
+  data.authState = "authed";
+  data.principal = createUserPrincipal(USER_ID, "adult", "home");
+  const ws: FakeWs = {
+    data,
+    sent: [],
+    send(payload) {
+      ws.sent.push(JSON.parse(payload) as Record<string, unknown>);
+    },
+  };
+  return ws;
+}
+
+function asWs(ws: FakeWs): ServerWebSocket<SessionData> {
+  return ws as unknown as ServerWebSocket<SessionData>;
+}
+
+/** Only the two fields `handleSessionConfigure` reads on the no-orchestrator
+ *  path: the registry it acquires from, and the playback block session.ready
+ *  carries. */
+function servicesWith(replayRegistry: ReplayRegistry): GatewayServices {
+  return {
+    replayRegistry,
+    webui: { playback: { min_eager_end_ms: 0, preempt_fadeout_ms: 0 } },
+    createSessionRuntime: null,
+  } as unknown as GatewayServices;
+}
+
+function configure(ws: FakeWs, services: GatewayServices, surfaceId: string): void {
+  handleSessionConfigure(asWs(ws), [], "en", services, "webui", DEVICE_ID, surfaceId, undefined, undefined);
+}
+
+describe("handleSessionConfigure — journal across a re-configure", () => {
+  it("keeps the same journal and epoch when a still-open connection re-configures the same surface", () => {
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const services = servicesWith(registry);
+    const ws = fakeAuthedWs();
+
+    configure(ws, services, SURFACE_A);
+    const firstJournal = ws.data.journal;
+    const firstEpoch = ws.data.epoch;
+
+    configure(ws, services, SURFACE_A);
+
+    expect(ws.data.journal).toBe(firstJournal);
+    expect(ws.data.epoch).toBe(firstEpoch);
+  });
+
+  it("continues the same seq space across that re-configure, so the client sees no restart", () => {
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const services = servicesWith(registry);
+    const ws = fakeAuthedWs();
+
+    configure(ws, services, SURFACE_A);
+    configure(ws, services, SURFACE_A);
+
+    const readies = ws.sent.filter((f) => f.type === "session.ready");
+    expect(readies.map((f) => f.seq)).toEqual([1, 2]);
+    expect(readies.map((f) => f.epoch)).toEqual([readies[0]?.epoch, readies[0]?.epoch]);
+  });
+
+  it("leaves the surface attached, so a later reconnect at that epoch still resumes", () => {
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const services = servicesWith(registry);
+    const ws = fakeAuthedWs();
+
+    configure(ws, services, SURFACE_A);
+    configure(ws, services, SURFACE_A);
+    const epoch = ws.data.epoch;
+    const lease = ws.data.replayLease;
+    expect(lease).not.toBeNull();
+
+    registry.release(lease as NonNullable<typeof lease>);
+    const reconnect = registry.acquire(`${USER_ID}::${SURFACE_A}`, epoch);
+
+    expect(reconnect.resumed).toBe(true);
+    expect(reconnect.journal.newestSeq).toBe(2);
+    expect(registry.size).toBe(1);
+  });
+
+  it("mints a fresh journal and epoch when the same connection re-configures a DIFFERENT surface", () => {
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const services = servicesWith(registry);
+    const ws = fakeAuthedWs();
+
+    configure(ws, services, SURFACE_A);
+    const firstJournal = ws.data.journal;
+    const firstEpoch = ws.data.epoch;
+
+    configure(ws, services, SURFACE_B);
+
+    expect(ws.data.journal).not.toBe(firstJournal);
+    expect(ws.data.epoch).not.toBe(firstEpoch);
+    expect(ws.data.journal?.newestSeq).toBe(1);
+  });
+});

@@ -62,10 +62,13 @@ export interface ReplayLease {
 export interface ReplayAcquisition {
   readonly journal: FrameJournal;
   readonly epoch: number;
-  /** True iff an existing journal was reused because it was DETACHED and its
-   *  epoch matched `resumeEpoch`. False means a fresh journal + a fresh
-   *  epoch, and the caller must answer any resume request with
-   *  `recovered: false`. */
+  /** True iff an EXISTING journal was reused rather than a fresh one minted.
+   *  `acquire` sets it only when the entry was DETACHED and its epoch matched
+   *  `resumeEpoch`; ws-session-configure.ts also builds this shape itself when
+   *  a still-open connection re-configures a surface it already holds, which
+   *  is the same "existing journal, existing epoch" answer arrived at without
+   *  a registry round-trip. False means a fresh journal + a fresh epoch, and
+   *  the caller must answer any resume request with `recovered: false`. */
   readonly resumed: boolean;
   /** Ownership token for this acquisition; hand it back to release/discard. */
   readonly lease: ReplayLease;

@@ -4,6 +4,7 @@ import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { getLog } from "../logging/logger.js";
 import { createTurnVoice } from "../runtime/turn-voice.js";
 import { createMicEchoGuard } from "./mic-echo-guard.js";
+import type { ReplayAcquisition } from "./replay-registry.js";
 import { createSessionVoicePrefs } from "./session-voice-prefs.js";
 import type { SessionData } from "./ws-helpers.js";
 import { errorMessage, sendError } from "./ws-helpers.js";
@@ -99,18 +100,13 @@ export function handleSessionConfigure(
   // contiguous across the socket boundary.
   //
   // Acquired BEFORE the runtime block, so any frame the runtime can emit is
-  // already sequenced.
+  // already sequenced. `acquireSurfaceJournal` (bottom of this file) owns the
+  // one case the registry cannot see from the outside: a re-configure on a
+  // connection that already holds THIS surface keeps its journal instead of
+  // minting a fresh one.
   const surfaceId = configureSurfaceId ?? configureDeviceId;
   const replayKey = `${userId}::${surfaceId}`;
-  if (ws.data.replayLease !== null) {
-    // A re-configure on this same connection. Park whatever this connection
-    // already held FIRST — whether it names the same surface or a different
-    // one — so the acquire below sees a detached entry rather than reading
-    // this connection's own attachment as a rival live socket and minting a
-    // fresh journal underneath it.
-    services.replayRegistry.release(ws.data.replayLease);
-  }
-  const acquisition = services.replayRegistry.acquire(replayKey, configureResume?.epoch);
+  const acquisition = acquireSurfaceJournal(ws, services, replayKey, sessionId, configureResume?.epoch);
   ws.data.journal = acquisition.journal;
   ws.data.epoch = acquisition.epoch;
   ws.data.replayLease = acquisition.lease;
@@ -226,4 +222,54 @@ export function handleSessionConfigure(
     readyFrame,
   });
   if (!readyAlreadySent) sendGatewayFrame(ws, readyFrame);
+}
+
+/**
+ * Take — or KEEP — ownership of this surface's outbound frame journal.
+ *
+ * Three shapes:
+ *
+ *  1. **Re-configure of a surface this still-open connection already holds**
+ *     (and no resume naming a foreign epoch). Nothing was lost: the socket
+ *     never closed and this connection's own journal is still live and
+ *     attached. So the lease, journal and epoch are kept VERBATIM. Releasing
+ *     and re-acquiring here would present the registry with a detached entry
+ *     and no resume request, which is its `no-resume-requested` mint-fresh
+ *     branch — a live replay window silently discarded and an epoch jump the
+ *     client can only read as a stream restart (`recovered:false` + a full
+ *     REST refetch on its next reconnect).
+ *  2. **Re-configure onto a different surface**, or a resume naming an epoch
+ *     this connection is not on — a genuine handover. Park what this
+ *     connection held FIRST, so the acquire sees a detached entry rather than
+ *     reading this connection's own attachment as a rival live socket and
+ *     minting a fresh journal underneath it.
+ *  3. **First configure** — nothing held; straight to the registry.
+ */
+function acquireSurfaceJournal(
+  ws: ServerWebSocket<SessionData>,
+  services: GatewayServices,
+  surfaceKey: string,
+  sessionId: string,
+  resumeEpoch: number | undefined,
+): ReplayAcquisition {
+  const heldLease = ws.data.replayLease;
+  if (heldLease === null) return services.replayRegistry.acquire(surfaceKey, resumeEpoch);
+
+  const heldJournal = ws.data.journal;
+  const isSameSurface = heldLease.surfaceKey === surfaceKey;
+  const isEpochCompatible = resumeEpoch === undefined || resumeEpoch === ws.data.epoch;
+  if (heldJournal !== null && isSameSurface && isEpochCompatible) {
+    log.info("session-configure.journal-retained", {
+      sessionId,
+      surfaceKey,
+      epoch: ws.data.epoch,
+      leaseId: heldLease.id,
+      newestSeq: heldJournal.newestSeq,
+      reason: "re-configure on a still-open connection for the same surface — nothing was lost",
+    });
+    return { journal: heldJournal, epoch: ws.data.epoch, resumed: true, lease: heldLease };
+  }
+
+  services.replayRegistry.release(heldLease);
+  return services.replayRegistry.acquire(surfaceKey, resumeEpoch);
 }
