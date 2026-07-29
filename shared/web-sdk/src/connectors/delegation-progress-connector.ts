@@ -38,6 +38,26 @@ export interface DelegationProgressConnectorConfig {
 //
 // Join key: `ToolCallSnapshotItem.taskId` (from turn.tool.update) is the same
 // id, so the UI can attach progress to the tool pill that launched it.
+//
+// CACHE LIFETIME — attach/detach are TRANSPORT lifecycle, not session
+// lifecycle, so neither touches the task map. Same rule, same reason, as
+// ToolStatusConnector's own CACHE LIFETIME header and
+// ConversationHistoryConnector's mirror: a reconnect detaches every connector
+// (sdk-close-handler.teardownWsForReconnect) and re-attaches them on the next
+// session.ready, and the `recovered:true` resume then replays ONLY the frames
+// the client missed. Clearing here dropped every row the client had already
+// seen, and the gateway never re-sends those.
+//
+// The stakes are higher on this connector than on the live tool cache.
+// Delegated work is the longest-lived thing on this wire — `delegateTask` is
+// fire-and-steer, so a Hermes task routinely outlives the socket that
+// dispatched it and reports its completion on a LATER turn. Wiping the map on
+// reconnect stranded exactly that work: its `running` row vanished, and the
+// only frame that could have restored it was the terminal one, arriving
+// minutes later, if at all.
+//
+// `reset()` is the session/identity teardown path (SentientSDK.disconnect) and
+// the only clear. A reconnect must never reach it.
 // ---------------------------------------------------------------------------
 
 export class DelegationProgressConnector implements Connector {
@@ -58,8 +78,6 @@ export class DelegationProgressConnector implements Connector {
   }
 
   attach(sdk: SentientSDKInternal): void {
-    this.tasks = new Map();
-
     this.unsubs.push(
       sdk.onMessage("delegation.progress", (msg: unknown) => {
         const m = msg as {
@@ -96,9 +114,17 @@ export class DelegationProgressConnector implements Connector {
     );
   }
 
+  /** Drop the socket subscriptions only. The task map survives — see CACHE
+   *  LIFETIME above. */
   detach(): void {
     for (const unsub of this.unsubs) unsub();
     this.unsubs = [];
+  }
+
+  /** Drop all session state. `SentientSDK.disconnect()` is the one caller. */
+  reset(): void {
+    const previousCount = this.tasks.size;
     this.tasks = new Map();
+    log.info("delegation-progress.reset", { reason: "session identity teardown", previousCount });
   }
 }
