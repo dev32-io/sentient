@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 import { reconcileOnBoot } from "./boot-reconciler.js";
-import type { DockerDriver } from "./docker-driver.js";
-import type { ManagedProcessInfo, ManagedService, OrchestratorStatus } from "./types.js";
+import type { ManagedProcessInfo, ManagedService, OrchestratorStatus, ServiceDriver } from "./types.js";
 
 const ok = { ok: true, value: undefined } as const;
 
@@ -30,7 +29,8 @@ const ms = (name: string): ManagedService => ({
 
 test("orphan containers (managed but not in registry) are removed", async () => {
   const removeCalls: string[] = [];
-  const driver: DockerDriver = {
+  const driver: ServiceDriver = {
+    prepare: async () => ok,
     recreate: async () => ok,
     start: async () => ok,
     stop: async () => ok,
@@ -38,7 +38,6 @@ test("orphan containers (managed but not in registry) are removed", async () => 
       removeCalls.push(name);
       return ok;
     },
-    pullImage: async () => ok,
     listManaged: async (): Promise<ManagedProcessInfo[]> => [
       { id: "1", service: "ha-mcp", state: "running" },
       { id: "2", service: "fake-service", state: "running" },
@@ -59,12 +58,12 @@ test("orphan containers (managed but not in registry) are removed", async () => 
 
 test("calls applyAll after orphan reap to bring up registry services", async () => {
   let applyCount = 0;
-  const driver: DockerDriver = {
+  const driver: ServiceDriver = {
+    prepare: async () => ok,
     recreate: async () => ok,
     start: async () => ok,
     stop: async () => ok,
     remove: async () => ok,
-    pullImage: async () => ok,
     listManaged: async () => [],
   };
   const reg = new Map([["ha-mcp", ms("ha-mcp")]]);

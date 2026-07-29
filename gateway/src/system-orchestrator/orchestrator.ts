@@ -1,14 +1,20 @@
 import { getLog } from "../logging/logger.js";
 import { type DepMap, blockedByFailedDeps, topoOrder } from "./dep-graph.js";
-import type { DockerDriver } from "./docker-driver.js";
 import { type HealthIO, pollHealthy } from "./health.js";
-import type { ManagedService, OrchestratorStatus, ServiceName, ServiceState, ServiceStatus } from "./types.js";
+import type {
+  ManagedService,
+  OrchestratorStatus,
+  ServiceDriver,
+  ServiceName,
+  ServiceState,
+  ServiceStatus,
+} from "./types.js";
 
 const log = getLog(["sentient", "system-orch", "orchestrator"]);
 
 export interface SystemOrchestratorDeps {
   registry: Map<ServiceName, ManagedService>;
-  driver: DockerDriver;
+  driver: ServiceDriver;
   healthIO: HealthIO;
   pollIntervalMs: number;
   applyTimeoutMs: number;

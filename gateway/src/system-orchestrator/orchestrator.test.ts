@@ -1,8 +1,7 @@
 import { expect, test } from "bun:test";
-import type { DockerDriver } from "./docker-driver.js";
 import type { HealthIO } from "./health.js";
 import { createSystemOrchestrator } from "./orchestrator.js";
-import type { ManagedService } from "./types.js";
+import type { ManagedService, ServiceDriver } from "./types.js";
 
 const ok = { ok: true, value: undefined } as const;
 function svc(name: string, deps: string[] = [], optional = false): ManagedService {
@@ -30,12 +29,12 @@ function svc(name: string, deps: string[] = [], optional = false): ManagedServic
   };
 }
 
-const happyDriver: DockerDriver = {
+const happyDriver: ServiceDriver = {
+  prepare: async () => ok,
   recreate: async () => ok,
   start: async () => ok,
   stop: async () => ok,
   remove: async () => ok,
-  pullImage: async () => ok,
   listManaged: async () => [],
 };
 
@@ -94,7 +93,7 @@ test("optional service health failure leaves orchestrator ready, marks degraded"
 
 test("required service failure leaves orchestrator failed", async () => {
   const reg = new Map([["req", svc("req")]]);
-  const failingDriver: DockerDriver = {
+  const failingDriver: ServiceDriver = {
     ...happyDriver,
     recreate: async () => ({ ok: false, error: { kind: "create-failed", reason: "boom" } }),
   };
@@ -114,7 +113,7 @@ test("downstream of a failed required service is marked blocked-by-dep", async (
     ["a", svc("a")],
     ["b", svc("b", ["a"])],
   ]);
-  const failOnA: DockerDriver = {
+  const failOnA: ServiceDriver = {
     ...happyDriver,
     recreate: async (ms) => (ms.name === "a" ? { ok: false, error: { kind: "create-failed", reason: "x" } } : ok),
   };
@@ -135,7 +134,7 @@ test("applySubset only touches the requested services", async () => {
     ["b", svc("b")],
   ]);
   const seen: string[] = [];
-  const tracking: DockerDriver = {
+  const tracking: ServiceDriver = {
     ...happyDriver,
     recreate: async (ms) => {
       seen.push(ms.name);
@@ -171,7 +170,7 @@ test("getStatus reflects terminal state after applyAll resolves", async () => {
 test("concurrent applyAll calls share a single in-flight apply", async () => {
   const reg = new Map([["a", svc("a")]]);
   let recreates = 0;
-  const counting: DockerDriver = {
+  const counting: ServiceDriver = {
     ...happyDriver,
     recreate: async () => {
       recreates++;

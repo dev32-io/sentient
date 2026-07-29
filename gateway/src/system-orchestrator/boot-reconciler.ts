@@ -1,11 +1,10 @@
 import { getLog } from "../logging/logger.js";
-import type { DockerDriver } from "./docker-driver.js";
-import type { ManagedService, OrchestratorStatus, ServiceName } from "./types.js";
+import type { ManagedService, OrchestratorStatus, ServiceDriver, ServiceName } from "./types.js";
 
 const log = getLog(["sentient", "system-orch", "boot-reconciler"]);
 
 export interface ReconcileDeps {
-  driver: DockerDriver;
+  driver: ServiceDriver;
   registry: Map<ServiceName, ManagedService>;
   orchestrator: { applyAll(): Promise<OrchestratorStatus> };
 }

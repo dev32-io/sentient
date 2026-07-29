@@ -6,6 +6,7 @@ import {
   type DriverError,
   type ManagedProcessInfo,
   type ManagedService,
+  type ServiceDriver,
   isDockerService,
 } from "./types.js";
 
@@ -46,21 +47,13 @@ export interface DockerodeLike {
   };
 }
 
-export interface DockerDriver {
-  recreate(ms: ManagedService): Promise<Result<undefined, DriverError>>;
-  start(name: string): Promise<Result<undefined, DriverError>>;
-  stop(name: string): Promise<Result<undefined, DriverError>>;
-  remove(name: string): Promise<Result<undefined, DriverError>>;
-  pullImage(image: string): Promise<Result<undefined, DriverError>>;
-  listManaged(): Promise<ManagedProcessInfo[]>;
-}
-
 export interface DockerDriverDeps {
   docker: DockerodeLike;
 }
 
-export function createDockerDriver(deps: DockerDriverDeps): DockerDriver {
+export function createDockerDriver(deps: DockerDriverDeps): ServiceDriver {
   return {
+    prepare: (ms) => prepare(deps.docker, ms),
     recreate: (ms) => recreate(deps.docker, ms),
     start: async (name) => {
       try {
@@ -86,17 +79,20 @@ export function createDockerDriver(deps: DockerDriverDeps): DockerDriver {
         return { ok: false, error: { kind: "remove-failed", reason: errMsg(err) } };
       }
     },
-    pullImage: (image) => pullImageDraining(deps.docker, image),
     listManaged: async () => listManaged(deps.docker),
   };
 }
 
+/** Ensure the launch artifact exists — for docker, the image on the host
+ *  daemon. The native driver's analogue verifies the venv and its pinned
+ *  interpreter; both are idempotent and safe to re-run. */
+async function prepare(docker: DockerodeLike, ms: ManagedService): Promise<Result<undefined, DriverError>> {
+  if (!isDockerService(ms)) return wrongBackend(ms);
+  return ensureImageAvailable(docker, ms.template.image);
+}
+
 async function recreate(docker: DockerodeLike, ms: ManagedService): Promise<Result<undefined, DriverError>> {
-  if (!isDockerService(ms)) {
-    const reason = `service ${ms.name} is launch=${ms.config.launch}, not docker`;
-    log.warn("driver.wrong-backend", { service: ms.name, reason });
-    return { ok: false, error: { kind: "wrong-backend", reason } };
-  }
+  if (!isDockerService(ms)) return wrongBackend(ms);
   const policy = enforcePolicy(ms);
   if (!policy.ok) return policy;
 
@@ -203,6 +199,13 @@ async function listManaged(docker: DockerodeLike): Promise<ManagedProcessInfo[]>
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/** Fail closed when a native service reaches the docker driver. */
+function wrongBackend(ms: ManagedService): Result<undefined, DriverError> {
+  const reason = `service ${ms.name} is launch=${ms.config.launch}, not docker`;
+  log.warn("driver.wrong-backend", { service: ms.name, reason });
+  return { ok: false, error: { kind: "wrong-backend", reason } };
 }
 
 /** Pull an image, draining the progress stream so the pull actually completes
