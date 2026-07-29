@@ -116,6 +116,43 @@ there. Once the agent is loaded and healthy, re-run
 `python3 deploy/setup-prod.py` as usual to reconcile the gateway config's
 `tts.url` / `companions.tts_health_url`.
 
+## Native installer — first real run
+
+`setup-prod.py install <tarball>` unpacks a release under `/opt/sentient`,
+builds each native service's venv from vendored wheels, flips the `current`
+symlink, restarts the LaunchDaemon, and **health-gates the result over verified
+TLS — rolling back to the previous release if the new one does not come up**.
+
+Three of its operations need root, so they are the parts a dev box cannot
+exercise. Everything else is covered before you ever run this on the mini:
+
+| Behaviour | Where it is verified |
+|---|---|
+| install / rollback FSM, checksum gate, TLS trust decisions | `tests/test_setup_prod.py` (unit) |
+| ordering between the real collaborators — real tarball, real plist, real filesystem, real HTTPS + pinned CA | `bash tests/e2e-install.sh <workdir>` (rootless, 7 cases incl. rollback) |
+| the real `launchctl` contract — `print` exit codes, bootstrap-vs-kickstart, a rendered plist actually spawning a process with the substituted env | `SENTIENT_LAUNCHD_REHEARSAL=1 pytest deploy/mac-prod/tests/` (real launchctl, `gui/<uid>` domain) |
+| `chown -R root:wheel`; the `system` domain; `UserName` switching to another account | **first real run — the commands below** |
+
+Run these once on the mini and read the output rather than assuming:
+
+```bash
+./scripts/build-gateway.sh --release
+sudo python3 deploy/mac-prod/setup-prod.py install dist/gateway/<version>.tar.gz
+
+ls -la /opt/sentient/                 # versioned dir root:wheel, `current` symlink
+launchctl print system/io.sentient.gateway | grep -E "state|username|path"
+curl -sk https://localhost:8888/api/v1/health     # {"status":"ok"}
+```
+
+Expected: the release dir owned by `root:wheel`, the daemon `state = running`
+with `username = <operator>` (NOT root), and health ok. A failed health gate
+exits non-zero having already rolled back — the message names the version it
+reverted to, or says manual intervention is needed and why.
+
+**Prerequisite the installer will refuse without:** `brew install python@3.11`.
+`native/install-venv.sh` pins local-tts to 3.11 (mlx-audio ships no 3.14
+wheels) and fails loudly rather than building a venv on the wrong interpreter.
+
 ## Headless 24×7 host notes
 
 The Mac mini runs headless. Required host setup (auto-login so Docker Desktop
