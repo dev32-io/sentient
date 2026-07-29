@@ -16,6 +16,13 @@ from pathlib import Path
 
 INSTALLER = Path(__file__).resolve().parent.parent / "setup-prod.py"
 
+# Never cache this module's bytecode. Python invalidates a .pyc on (mtime, size),
+# and an edit that preserves BOTH — e.g. mutation-testing `"local-tts"` into
+# `"local_tts"` and reverting within the same second — silently serves the stale
+# copy. That produced one false test result already: a mutation appeared to
+# survive a revert. Bytecode buys nothing for a module loaded once per session.
+sys.dont_write_bytecode = True
+
 
 def _load_installer() -> None:
     spec = importlib.util.spec_from_file_location("setup_prod", INSTALLER)
