@@ -612,3 +612,27 @@ managed_services:
       timeout_ms: 30000
     depends_on: ["searxng"]
     optional: false
+
+  # Native (non-container) services. `launch: native` swaps the docker backend
+  # for a plain host process the gateway spawns into its own process group; the
+  # entries above omit `launch` and therefore default to `docker`. These two
+  # need Metal/MLX on the host GPU, which no container can reach.
+  whisper-stt:
+    launch: native
+    # argv[0] is the pinned interpreter; ${SENTIENT_CODE} resolves to the
+    # root-owned release dir (/opt/sentient/current) in prod, or the repo
+    # checkout in dev. An unresolved placeholder stays literal so prepare()
+    # fails loudly rather than launching an unexpected binary.
+    exec: ["${SENTIENT_CODE}/whisper-stt/venv/bin/python", "-m", "whisper_stt"]
+    python: "3.14"                                  # pinned; prepare() verifies before start
+    healthcheck: { tcp: "127.0.0.1:8766", timeout_ms: 30000 }   # STT WS port
+    depends_on: []
+    optional: false
+
+  local-tts:
+    launch: native
+    exec: ["${SENTIENT_CODE}/local-tts/venv/bin/python", "-m", "local_tts"]
+    python: "3.11"                                  # 3.11 REQUIRED: mlx-audio ships no 3.14 wheels
+    healthcheck: { tcp: "127.0.0.1:8770", timeout_ms: 30000 }   # TTS WS port
+    depends_on: []
+    optional: false
