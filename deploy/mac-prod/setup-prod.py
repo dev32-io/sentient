@@ -460,12 +460,20 @@ class RealLaunchd:
         label: str = LAUNCHD_LABEL,
         daemon_dir: Path = LAUNCHD_DIR,
         runner=subprocess.run,
+        domain: str = LAUNCHD_DOMAIN,
     ):
         self._source = Path(plist_source)
         self._operator = operator
         self._label = label
         self._dir = Path(daemon_dir)
         self._run = runner
+        # `system` in production, and deliberately NOT a CLI flag — a gateway
+        # loaded into a per-user domain would die at logout. It is a constructor
+        # argument so the rehearsal in tests/test_launchd_live.py can exercise
+        # this exact code against the REAL launchctl in an unprivileged domain,
+        # which is the only way to verify the bootstrap/kickstart branch without
+        # root. See deploy/mac-prod/README.md.
+        self._domain = domain
 
     @property
     def installed_plist(self) -> Path:
@@ -494,7 +502,7 @@ class RealLaunchd:
     def _is_loaded(self) -> bool:
         try:
             self._run(
-                ["launchctl", "print", f"{LAUNCHD_DOMAIN}/{self._label}"],
+                ["launchctl", "print", f"{self._domain}/{self._label}"],
                 check=True, capture_output=True,
             )
             return True
@@ -504,18 +512,19 @@ class RealLaunchd:
     def kickstart(self) -> None:
         """Restart the daemon, bootstrapping it first if it is not loaded yet.
 
-        `launchctl kickstart` FAILS on a label that is not in the system domain,
+        `launchctl kickstart` FAILS on a label that is not in the domain yet
+        (verified against the real launchctl: exit 113, "Could not find service"),
         so a fresh mini has to be bootstrapped — and bootstrap itself starts the
         job, which is why it replaces the kickstart rather than preceding it.
         """
         if not self._is_loaded():
             self._run(
-                ["launchctl", "bootstrap", LAUNCHD_DOMAIN, str(self.installed_plist)],
+                ["launchctl", "bootstrap", self._domain, str(self.installed_plist)],
                 check=True,
             )
             return
         self._run(
-            ["launchctl", "kickstart", "-k", f"{LAUNCHD_DOMAIN}/{self._label}"],
+            ["launchctl", "kickstart", "-k", f"{self._domain}/{self._label}"],
             check=True,
         )
 
