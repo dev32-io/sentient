@@ -81,6 +81,10 @@ CODE_MODE = "755"
 # macOS tar writes an AppleDouble `._<name>` sidecar beside any member carrying
 # extended attributes. Metadata, not content — never a version directory.
 APPLEDOUBLE_PREFIX = "._"
+# How many past releases stay on disk after an install. Valid: 1..50. Must be
+# >= 2 so there is always a rollback target besides the live release; 3 leaves
+# room to roll back twice. Each release is ~30 MB unpacked plus its venvs.
+RELEASES_TO_KEEP = 3
 
 # --- launchd -----------------------------------------------------------------
 # A LaunchDaemon in the `system` domain, not a LaunchAgent: the gateway must be
@@ -328,6 +332,40 @@ class RealFs:
             staging.unlink()
         staging.symlink_to(self._root / version)
         staging.replace(self._root / CURRENT_LINK)
+
+    def _releases(self) -> list[Path]:
+        """Release directories only.
+
+        `current` resolves as a directory but is a SYMLINK living in the same
+        parent. Including it would let `rmtree` delete straight through it and
+        take out the live release — so real directories only, symlinks excluded.
+        """
+        if not self._root.is_dir():
+            return []
+        return [
+            path for path in self._root.iterdir()
+            if path.is_dir() and not path.is_symlink()
+        ]
+
+    def prune(self, keep: int = RELEASES_TO_KEEP, protect=()) -> None:
+        """Delete old releases, keeping the `keep` most recently installed.
+
+        `current` and everything in `protect` survive regardless of age. That is
+        not belt-and-braces: mtime order does not protect `current` (an operator
+        who reinstalls an older build to roll forward-fix leaves the live release
+        as the oldest directory on disk), and pruning the rollback target is
+        exactly what turns a failed upgrade into a manual-intervention outage.
+        """
+        keeping = {self.current, *protect} - {None}
+        # Most recently installed first; mtime is install order and needs no
+        # version-string parsing, which would break on any `-rc1` suffix.
+        ordered = sorted(self._releases(), key=lambda p: p.stat().st_mtime, reverse=True)
+        keeping.update(path.name for path in ordered[:keep])
+
+        for release in ordered:
+            if release.name in keeping:
+                continue
+            shutil.rmtree(release)
 
 
 def stage_native_services(repo: Path, release: Path, wheels_root: Path, runner=subprocess.run) -> None:

@@ -701,3 +701,70 @@ def test_staging_refuses_a_release_missing_its_service_source(tmp_path):
                               runner=_recording_runner([]))
 
     assert "whisper-stt" in str(e.value) or "local-tts" in str(e.value)
+
+
+# --- pruning (must never delete what rollback depends on) ----------------------
+
+
+def _releases(opt, *versions):
+    """Create release dirs with strictly increasing mtimes (install order)."""
+    opt.mkdir(parents=True, exist_ok=True)
+    for index, version in enumerate(versions):
+        release = opt / version
+        release.mkdir()
+        (release / "bin").mkdir()
+        os.utime(release, (index + 1, index + 1))
+    return RealFs(opt, runner=_rootless_runner([]))
+
+
+def test_prune_keeps_the_most_recent_releases_and_removes_the_rest(tmp_path):
+    opt = tmp_path / "opt"
+    fs = _releases(opt, "1.10.0", "1.11.0", "1.12.0", "1.13.0")
+    fs.point_current_at("1.13.0")
+
+    fs.prune(keep=2)
+
+    assert sorted(p.name for p in opt.iterdir() if p.name != "current") == ["1.12.0", "1.13.0"]
+
+
+def test_prune_never_removes_the_current_release(tmp_path):
+    """`current` is what launchd execs. Removing it is an outage, and mtime order
+    does not protect it — an operator who reinstalls an OLDER build to roll
+    forward-fix leaves `current` pointing at the oldest directory on disk."""
+    opt = tmp_path / "opt"
+    fs = _releases(opt, "1.10.0", "1.11.0", "1.12.0", "1.13.0")
+    fs.point_current_at("1.10.0")  # oldest mtime, yet it is the live one
+
+    fs.prune(keep=1)
+
+    assert fs.has_version("1.10.0") is True
+    assert fs.current == "1.10.0"
+
+
+def test_prune_never_removes_the_rollback_target(tmp_path):
+    """Pruning the previous version is what turns a failed upgrade into a
+    manual-intervention outage — the installer refuses to roll back to a version
+    that is not on disk."""
+    opt = tmp_path / "opt"
+    fs = _releases(opt, "1.11.0", "1.12.0", "1.13.0")
+    fs.point_current_at("1.13.0")
+
+    fs.prune(keep=1, protect=("1.12.0",))
+
+    assert fs.has_version("1.12.0") is True
+
+
+def test_prune_does_not_mistake_the_current_symlink_for_a_release(tmp_path):
+    """`current` lives in the same directory and resolves as a dir.
+
+    Treating it as a release would `rmtree` through the symlink and delete the
+    live release's contents — the worst possible outcome of a cleanup step.
+    """
+    opt = tmp_path / "opt"
+    fs = _releases(opt, "1.13.0")
+    fs.point_current_at("1.13.0")
+
+    fs.prune(keep=1)
+
+    assert (opt / "current").is_symlink()
+    assert (opt / "1.13.0/bin").is_dir(), "must not have deleted through the symlink"
