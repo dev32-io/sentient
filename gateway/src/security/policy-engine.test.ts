@@ -2,6 +2,7 @@ import type { McpPolicy } from "@sentient/config";
 import { describe, expect, it } from "vitest";
 import { createPolicyEngine, evaluateCondition } from "./policy-engine.js";
 import type { PolicyContext } from "./policy-engine.js";
+import { loadMcpPolicy } from "./policy-loader.js";
 
 // ---------------------------------------------------------------------------
 // evaluateCondition
@@ -98,6 +99,13 @@ describe("PolicyEngine", () => {
         action: "deny",
         reason: "Audio control restricted for child role",
       },
+      {
+        name: "allow_ha_get_state",
+        tool: "ha_get_state",
+        condition: 'tool == "ha_get_state"',
+        action: "allow",
+        reason: "Read-only Home Assistant query",
+      },
     ],
   };
 
@@ -127,7 +135,21 @@ describe("PolicyEngine", () => {
     expect(decision.rule).toBe("no_identify_user_outside_voice");
   });
 
-  it("allows identify_user for adult on voice", () => {
+  it("allows a tool an explicit allow rule puts in the read tier", () => {
+    const decision = engine.evaluate({
+      tool: "ha_get_state",
+      userId: "alice",
+      role: "adult",
+      sessionChannel: "voice",
+      args: {},
+    });
+    expect(decision.action).toBe("allow");
+    expect(decision.rule).toBe("allow_ha_get_state");
+  });
+
+  it("requires confirmation when only deny rules name the tool and none match", () => {
+    // identify_user has two deny rules; neither matches an adult on voice. Not
+    // denied is NOT the same as allowed — it falls to the side-effecting default.
     const decision = engine.evaluate({
       tool: "identify_user",
       userId: "alice",
@@ -135,8 +157,7 @@ describe("PolicyEngine", () => {
       sessionChannel: "voice",
       args: {},
     });
-    expect(decision.action).toBe("allow");
-    expect(decision.rule).toBeUndefined();
+    expect(decision.action).toBe("confirm");
   });
 
   it("denies pause_audio for child role", () => {
@@ -151,15 +172,30 @@ describe("PolicyEngine", () => {
     expect(decision.reason).toBe("Audio control restricted for child role");
   });
 
-  it("defaults to allow when no rule matches", () => {
+  // SECURITY BOUNDARY (spec §2.2 "fail-closed for side-effecting tools"). The
+  // engine used to return `allow` here, so every write tool the policy file
+  // forgot — ha_bulk_control among them — dispatched with no mediation at all.
+  it("classifies a tool no rule names as side-effecting and requires confirmation", () => {
     const decision = engine.evaluate({
-      tool: "resume_audio",
+      tool: "ha_bulk_control",
       userId: "alice",
       role: "adult",
       sessionChannel: "text",
       args: {},
     });
-    expect(decision.action).toBe("allow");
+    expect(decision.action).toBe("confirm");
+    expect(decision.reason).toBeTruthy();
+  });
+
+  it("stays fail-closed when the policy file is empty", () => {
+    const decision = createPolicyEngine({ rules: [] }).evaluate({
+      tool: "anything_at_all",
+      userId: "alice",
+      role: "adult",
+      sessionChannel: "text",
+      args: {},
+    });
+    expect(decision.action).toBe("confirm");
   });
 
   it("first matching rule wins — guest on text hits guest rule, not channel rule", () => {
@@ -173,5 +209,46 @@ describe("PolicyEngine", () => {
     // "no_identify_user_outside_voice" matches first (tool=identify_user, channel=text)
     expect(decision.action).toBe("deny");
     expect(decision.rule).toBe("no_identify_user_outside_voice");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Shipped policy (gateway/mcp-policy.yaml)
+//
+// SECURITY BOUNDARY. The engine's fail-closed default is only half the fix:
+// the operator file is where the read tier earns its prompt-free path, so a
+// careless edit there re-opens the same hole from the other side. These cases
+// pin the tiering of the tools `gateway/config.yaml#mcp_catalog` actually
+// exposes — write surfaces mediated, queries not.
+// ---------------------------------------------------------------------------
+
+describe("shipped mcp-policy.yaml", () => {
+  const engine = createPolicyEngine(loadMcpPolicy());
+
+  function decide(tool: string): string {
+    return engine.evaluate({ tool, userId: "u_a1b2c3d4", role: "adult", sessionChannel: "voice", args: {} }).action;
+  }
+
+  it.each(["ha_get_overview", "ha_get_state", "ha_search_entities", "ha_get_todo", "search_web", "fetch"])(
+    "leaves the read/low-risk tool %s prompt-free",
+    (tool) => {
+      expect(decide(tool)).toBe("allow");
+    },
+  );
+
+  it.each([
+    "ha_call_service",
+    "ha_bulk_control",
+    "ha_set_todo_item",
+    "ha_remove_todo_item",
+    "ha_config_set_calendar_event",
+    "ha_config_remove_calendar_event",
+    "update_user_settings",
+  ])("mediates the write/side-effecting tool %s", (tool) => {
+    expect(decide(tool)).toBe("confirm");
+  });
+
+  it("mediates a tool the file does not tier at all", () => {
+    expect(decide("some_new_mcp_write_tool")).toBe("confirm");
   });
 });

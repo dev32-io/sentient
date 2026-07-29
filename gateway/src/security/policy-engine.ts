@@ -76,10 +76,37 @@ export function evaluateCondition(cond: string, ctx: PolicyContext): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Unmatched-tool classification (design §2.2)
+// ---------------------------------------------------------------------------
+//
+// THE CLASSIFICATION RULE, stated once: a tool is read/low-risk ONLY when the
+// policy file says so with an explicit `allow` rule. Absence of a rule is not
+// evidence that a tool is harmless — a tool nobody tiered is classified
+// side-effecting and mediated. The engine used to return `allow` here, which
+// meant every write surface the operator file forgot (`ha_bulk_control` and
+// every uncurated MCP server's tools) dispatched with no mediation at all.
+//
+// `confirm`, not `deny`, because the deny tier in §2.2 is reserved for
+// argument-value violations — a hard deny on everything unnamed would refuse
+// work outright with no way for the human to say yes. `confirm` routes the
+// call to the L3 permission prompt, which is itself fail-closed: a timeout,
+// a closed socket, or an aborted turn all resolve to deny (tool-broker.ts).
+//
+// The prompt-free read tier is therefore an ALLOWLIST, declared per tool in
+// `gateway/mcp-policy.yaml` — that file, not this constant, is where the
+// operator tunes which queries run without friction.
+
+const UNMATCHED_RULE_NAME = "default:unclassified-tool";
+
+const UNMATCHED: PolicyDecision = {
+  action: "confirm",
+  reason: "No policy rule classifies this tool, so it is treated as side-effecting",
+  rule: UNMATCHED_RULE_NAME,
+};
+
+// ---------------------------------------------------------------------------
 // Policy engine factory
 // ---------------------------------------------------------------------------
-
-const ALLOW: PolicyDecision = { action: "allow" };
 
 export function createPolicyEngine(policy: McpPolicy): PolicyEngine {
   const rules: readonly PolicyRule[] = policy.rules;
@@ -91,7 +118,12 @@ export function createPolicyEngine(policy: McpPolicy): PolicyEngine {
         log.debug("policy-engine.matched", { rule: rule.name, action: rule.action, tool: ctx.tool });
         return { action: rule.action, reason: rule.reason, rule: rule.name };
       }
-      return ALLOW;
+      log.warn("policy-engine.unmatched", {
+        tool: ctx.tool,
+        action: UNMATCHED.action,
+        reason: "no rule tiers this tool — classified side-effecting, fail-closed per design §2.2",
+      });
+      return UNMATCHED;
     },
   };
 }

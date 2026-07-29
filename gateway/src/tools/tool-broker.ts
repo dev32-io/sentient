@@ -7,9 +7,10 @@
 // through it first, so a `deny` or an unconfirmed `confirm` structurally
 // cannot reach `mcp.callTool` or a `BackgroundToolRunner.run`.
 //
-// Fail-closed: `policy-engine.ts` itself fails OPEN (no matching rule →
-// allow) and treats `confirm` as an implementation detail. This broker
-// closes that gap — it calls the injected `requestConfirm`, which Plan 3's
+// Fail-closed at both layers: `policy-engine.ts` classifies a tool that NO
+// rule names as side-effecting and returns `confirm` (design §2.2), and this
+// broker is what makes `confirm` mean something — it calls the injected
+// `requestConfirm`, which Plan 3's
 // composition root binds to the connection's `PermissionBroker`
 // (runtime/permission-broker.ts), so an unconfirmed side-effecting tool is
 // BLOCKED, never silently run. Three outcomes reach a two-valued seam: an

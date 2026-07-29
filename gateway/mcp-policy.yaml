@@ -1,7 +1,32 @@
-# MCP tool-call policy rules — evaluated before every tools/call dispatch.
-# First matching rule wins. If no rule matches, the call is allowed.
+# MCP tool-call policy rules — evaluated before every tools/call dispatch,
+# foreground or background (gateway/src/tools/tool-broker.ts is the single
+# choke point).
+#
+# Risk tiering is the 2.0 design's §2.2:
+#
+#   read / low-risk (queries, HA reads, search)  → allow    no prompt
+#   write / side-effecting / spend / ext. comms  → confirm  real permission prompt
+#   argument-value violation, role/channel rule  → deny     hard, value-aware
+#
+# First matching rule wins. A tool that matches NO rule is NOT allowed: the
+# engine classifies it as side-effecting and returns `confirm`
+# (policy-engine.ts's `UNMATCHED`). So this file is an ALLOWLIST for the
+# prompt-free read tier — a newly added MCP server's tools start out mediated
+# and earn their friction-free path only by being tiered here.
+#
+# Rule order below is deliberate: hard denies first (they must beat any allow
+# under them), then the read/low-risk allow tier, then the explicit confirm
+# tier. The confirm rules are NOT redundant with the fail-closed default —
+# their `reason` is the text the user reads in the permission dialog.
+#
+# The tools named here are the ones `gateway/config.yaml#mcp_catalog` actually
+# exposes. Keep the two in sync: a catalog addition with no rule here works,
+# but prompts on every call.
 
 rules:
+  # ─────────────────────────────────────────────────────────────────────
+  # Hard deny — role / channel restrictions. Must stay above the allow tier.
+  # ─────────────────────────────────────────────────────────────────────
   - name: no_identify_user_outside_voice
     tool: identify_user
     condition: 'session.channel != "voice"'
@@ -20,11 +45,167 @@ rules:
     action: deny
     reason: "Audio control restricted for child role"
 
-  # Side-effecting Home Assistant call → real permission prompt (spec §2.2's
-  # write/side-effecting tier). This is the rule the permission E2E cases
-  # drive; `ha_get_*` reads stay in the low-risk allow tier with no rule.
+  # ─────────────────────────────────────────────────────────────────────
+  # Read / low-risk tier → allow. These run with no prompt; keeping queries
+  # friction-free is the whole point of tiering (§2.2 row 1).
+  # ─────────────────────────────────────────────────────────────────────
+  # Home Assistant reads.
+  - name: allow_ha_get_overview
+    tool: ha_get_overview
+    condition: 'tool == "ha_get_overview"'
+    action: allow
+    reason: "Read-only Home Assistant query"
+
+  - name: allow_ha_get_state
+    tool: ha_get_state
+    condition: 'tool == "ha_get_state"'
+    action: allow
+    reason: "Read-only Home Assistant query"
+
+  - name: allow_ha_search_entities
+    tool: ha_search_entities
+    condition: 'tool == "ha_search_entities"'
+    action: allow
+    reason: "Read-only Home Assistant query"
+
+  - name: allow_ha_get_history
+    tool: ha_get_history
+    condition: 'tool == "ha_get_history"'
+    action: allow
+    reason: "Read-only Home Assistant query"
+
+  - name: allow_ha_eval_template
+    tool: ha_eval_template
+    condition: 'tool == "ha_eval_template"'
+    action: allow
+    reason: "Read-only Home Assistant template render"
+
+  - name: allow_ha_get_operation_status
+    tool: ha_get_operation_status
+    condition: 'tool == "ha_get_operation_status"'
+    action: allow
+    reason: "Read-only Home Assistant query"
+
+  - name: allow_ha_list_floors_areas
+    tool: ha_list_floors_areas
+    condition: 'tool == "ha_list_floors_areas"'
+    action: allow
+    reason: "Read-only Home Assistant query"
+
+  - name: allow_ha_get_zone
+    tool: ha_get_zone
+    condition: 'tool == "ha_get_zone"'
+    action: allow
+    reason: "Read-only Home Assistant query"
+
+  - name: allow_ha_get_camera_image
+    tool: ha_get_camera_image
+    condition: 'tool == "ha_get_camera_image"'
+    action: allow
+    reason: "Read-only Home Assistant camera snapshot"
+
+  - name: allow_ha_get_todo
+    tool: ha_get_todo
+    condition: 'tool == "ha_get_todo"'
+    action: allow
+    reason: "Read-only todo/shopping-list query"
+
+  - name: allow_ha_config_get_calendar_events
+    tool: ha_config_get_calendar_events
+    condition: 'tool == "ha_config_get_calendar_events"'
+    action: allow
+    reason: "Read-only calendar query"
+
+  # Web reads. Content they return is untrusted and handled by the injection
+  # scanner (gateway/src/security/injection-scanner.ts), not by a prompt.
+  - name: allow_search_web
+    tool: search_web
+    condition: 'tool == "search_web"'
+    action: allow
+    reason: "Read-only web search"
+
+  - name: allow_fetch
+    tool: fetch
+    condition: 'tool == "fetch"'
+    action: allow
+    reason: "Read-only URL fetch"
+
+  # Session-local audio control: reversible, no state leaves the session, and
+  # latency-sensitive during voice. The child restriction above still wins.
+  - name: allow_pause_audio
+    tool: pause_audio
+    condition: 'tool == "pause_audio"'
+    action: allow
+    reason: "Session-local audio control"
+
+  - name: allow_resume_audio
+    tool: resume_audio
+    condition: 'tool == "resume_audio"'
+    action: allow
+    reason: "Session-local audio control"
+
+  # Delegation is its own security category (§2.3): the free-form taskPrompt is
+  # mediated by the DelegationGuard (static envelope + PromptClassifier) inside
+  # gateway/src/tools/delegate-task.ts, which fails closed on its own. A blanket
+  # PDP confirm here would double-prompt and is not what §2.3 specifies.
+  - name: allow_delegate_task
+    tool: delegateTask
+    condition: 'tool == "delegateTask"'
+    action: allow
+    reason: "Delegation is mediated by the DelegationGuard, not the tool PDP"
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Write / side-effecting tier → confirm. The fail-closed default already
+  # catches anything unlisted; these exist to give the dialog a reason the
+  # user can act on.
+  # ─────────────────────────────────────────────────────────────────────
   - name: confirm_ha_service_call
     tool: ha_call_service
     condition: 'tool == "ha_call_service"'
     action: confirm
     reason: "Calling a Home Assistant service changes device state"
+
+  - name: confirm_ha_bulk_control
+    tool: ha_bulk_control
+    condition: 'tool == "ha_bulk_control"'
+    action: confirm
+    reason: "Bulk control changes the state of many devices at once"
+
+  - name: confirm_ha_set_todo_item
+    tool: ha_set_todo_item
+    condition: 'tool == "ha_set_todo_item"'
+    action: confirm
+    reason: "Writes an item to a shared todo/shopping list"
+
+  - name: confirm_ha_remove_todo_item
+    tool: ha_remove_todo_item
+    condition: 'tool == "ha_remove_todo_item"'
+    action: confirm
+    reason: "Removes an item from a shared todo/shopping list"
+
+  - name: confirm_ha_set_calendar_event
+    tool: ha_config_set_calendar_event
+    condition: 'tool == "ha_config_set_calendar_event"'
+    action: confirm
+    reason: "Creates or edits a calendar event for the household"
+
+  - name: confirm_ha_remove_calendar_event
+    tool: ha_config_remove_calendar_event
+    condition: 'tool == "ha_config_remove_calendar_event"'
+    action: confirm
+    reason: "Deletes a calendar event for the household"
+
+  - name: confirm_user_settings_write
+    tool: update_user_settings
+    condition: 'tool == "update_user_settings"'
+    action: confirm
+    reason: "Changes persisted account settings"
+
+  # Not denied by the two rules above is not the same as allowed: an identity
+  # rebind changes who the assistant acts for, which is the confused-deputy
+  # case §2.2 exists for.
+  - name: confirm_identity_rebind
+    tool: identify_user
+    condition: 'tool == "identify_user"'
+    action: confirm
+    reason: "Rebinding the session changes who the assistant is acting for"
