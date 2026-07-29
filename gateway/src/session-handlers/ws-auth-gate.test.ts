@@ -2,6 +2,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AuthConfig } from "@sentient/config";
+import { gatewayMessageSchema } from "@sentient/protocol";
+import type { ServerWebSocket } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type SessionManager, createSessionManager } from "../auth/session-manager.js";
 import type { AuthService } from "../user-auth/auth-service.js";
@@ -55,8 +57,15 @@ function fakeWs(): FakeWs {
   return ws;
 }
 
-/** Shape handleAuthMessage/scheduleAuthTimeout actually need from a WS-like object. */
-type WsHandle = { data: SessionData; send: (s: string) => void; close: (c: number, reason?: string) => void };
+/**
+ * The auth gate is typed on the real Bun socket because it writes through
+ * `sendGatewayFrame`, which reads `ws.data.journal` / `ws.data.epoch`. The fake
+ * carries exactly the members that path touches; the cast is the deliberate
+ * cost of typing on the transport instead of on a second structural stand-in.
+ */
+function asSocket(ws: FakeWs): ServerWebSocket<SessionData> {
+  return ws as unknown as ServerWebSocket<SessionData>;
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -126,12 +135,7 @@ describe("ws auth gate", () => {
     if (!r.ok) throw new Error("seed failed");
 
     const ws = fakeWs();
-    await handleAuthMessage(
-      ws as unknown as { data: SessionData; send: (s: string) => void; close: (c: number) => void },
-      { type: "auth", token: r.value.token },
-      auth,
-      sessionManager,
-    );
+    await handleAuthMessage(asSocket(ws), { type: "auth", token: r.value.token }, auth, sessionManager);
     expect(ws.data.authState).toBe("authed");
     expect(ws.data.principal?.userId).toBe("u_a1b2c3d4");
     expect(ws.data.principal?.role).toBe("adult");
@@ -146,15 +150,38 @@ describe("ws auth gate", () => {
     expect(ws.closeCode).toBeNull();
   });
 
+  // CONTRACT (branch Global Constraint: every outbound frame is constructed and
+  // validated through `gatewayMessageSchema`). Both halves matter: if the
+  // schema and the sent shape drift apart again, `sendGatewayFrame` DROPS the
+  // frame rather than writing it, and a client with no auth ack hangs at
+  // connect — so "a frame was sent" and "it parses" are asserted together.
+  it("CONTRACT: auth.ok and auth.error leave the socket validated under gatewayMessageSchema", async () => {
+    const auth = await createAuthService(AUTH_CONFIG);
+    await auth.createUser({
+      userId: "u_a1b2c3d4",
+      displayName: "Kevin",
+      pin: "1234",
+      isAdmin: true,
+      avatarTint: "terra",
+    });
+    const r = await auth.authenticate("u_a1b2c3d4", "1234");
+    if (!r.ok) throw new Error("seed failed");
+
+    const okWs = fakeWs();
+    await handleAuthMessage(asSocket(okWs), { type: "auth", token: r.value.token }, auth, sessionManager);
+    const errWs = fakeWs();
+    await handleAuthMessage(asSocket(errWs), { type: "auth", token: "garbage" }, auth, sessionManager);
+
+    for (const frame of [okWs.sent[0], errWs.sent[0]]) {
+      expect(frame).toBeDefined();
+      expect(gatewayMessageSchema.safeParse(frame).success, JSON.stringify(frame)).toBe(true);
+    }
+  });
+
   it("rejects + closes on invalid token", async () => {
     const auth = await createAuthService(AUTH_CONFIG);
     const ws = fakeWs();
-    await handleAuthMessage(
-      ws as unknown as { data: SessionData; send: (s: string) => void; close: (c: number) => void },
-      { type: "auth", token: "garbage" },
-      auth,
-      sessionManager,
-    );
+    await handleAuthMessage(asSocket(ws), { type: "auth", token: "garbage" }, auth, sessionManager);
     expect(ws.data.authState).toBe("rejected");
     expect(ws.data.principal).toBeNull();
     expect(ws.sent[0]).toMatchObject({ type: "auth.error" });
@@ -164,12 +191,7 @@ describe("ws auth gate", () => {
   it("rejects + closes when first message is not type:auth", async () => {
     const auth = await createAuthService(AUTH_CONFIG);
     const ws = fakeWs();
-    await handleAuthMessage(
-      ws as unknown as { data: SessionData; send: (s: string) => void; close: (c: number) => void },
-      { type: "session.configure" },
-      auth,
-      sessionManager,
-    );
+    await handleAuthMessage(asSocket(ws), { type: "session.configure" }, auth, sessionManager);
     expect(ws.data.authState).toBe("rejected");
     expect(ws.sent[0]).toMatchObject({ type: "auth.error", code: "auth-required" });
     expect(ws.closeCode).not.toBeNull();
@@ -189,12 +211,7 @@ describe("ws auth gate", () => {
     await auth.users.remove("u_deadbeef");
 
     const ws = fakeWs();
-    await handleAuthMessage(
-      ws as unknown as { data: SessionData; send: (s: string) => void; close: (c: number) => void },
-      { type: "auth", token: r.value.token },
-      auth,
-      sessionManager,
-    );
+    await handleAuthMessage(asSocket(ws), { type: "auth", token: r.value.token }, auth, sessionManager);
     expect(ws.data.authState).toBe("rejected");
     expect(ws.sent[0]).toMatchObject({ type: "auth.error" });
     expect(ws.closeCode).not.toBeNull();
@@ -217,12 +234,7 @@ describe("ws auth gate", () => {
     cappedManager.bindUser("pre-existing-session", "u_cafe1234");
 
     const ws = fakeWs();
-    await handleAuthMessage(
-      ws as unknown as { data: SessionData; send: (s: string) => void; close: (c: number) => void },
-      { type: "auth", token: r.value.token },
-      auth,
-      cappedManager,
-    );
+    await handleAuthMessage(asSocket(ws), { type: "auth", token: r.value.token }, auth, cappedManager);
     expect(ws.data.authState).toBe("rejected");
     expect(ws.sent[0]).toMatchObject({ type: "auth.error", code: "session-limit" });
     expect(ws.closeCode).not.toBeNull();
@@ -261,19 +273,9 @@ describe("ws auth gate", () => {
     const ws = fakeWs();
 
     // Fire frame A but do NOT await it — it suspends inside `await auth.tokens.validate("token-a")`.
-    const pendingA = handleAuthMessage(
-      ws as unknown as WsHandle,
-      { type: "auth", token: "token-a" },
-      auth,
-      trackedManager,
-    );
+    const pendingA = handleAuthMessage(asSocket(ws), { type: "auth", token: "token-a" }, auth, trackedManager);
     // Frame B arrives synchronously while A is still suspended.
-    const pendingB = handleAuthMessage(
-      ws as unknown as WsHandle,
-      { type: "auth", token: "token-b" },
-      auth,
-      trackedManager,
-    );
+    const pendingB = handleAuthMessage(asSocket(ws), { type: "auth", token: "token-b" }, auth, trackedManager);
     await pendingB;
 
     // B must have been dropped by the synchronous claim — the gate is still held by A.
@@ -323,9 +325,9 @@ describe("ws auth gate", () => {
 
     const ws = fakeWs();
     const TIMEOUT_MS = 15;
-    ws.data.authTimeout = scheduleAuthTimeout(ws as unknown as WsHandle, TIMEOUT_MS);
+    ws.data.authTimeout = scheduleAuthTimeout(asSocket(ws), TIMEOUT_MS);
 
-    const pending = handleAuthMessage(ws as unknown as WsHandle, { type: "auth", token: "t" }, auth, trackedManager);
+    const pending = handleAuthMessage(asSocket(ws), { type: "auth", token: "t" }, auth, trackedManager);
 
     // Let real wall-clock time pass the timeout window while users.get() is still hung.
     await sleep(TIMEOUT_MS + 35);
@@ -372,7 +374,7 @@ describe("ws auth gate", () => {
 
     const ws = fakeWs();
     await expect(
-      handleAuthMessage(ws as unknown as WsHandle, { type: "auth", token: r.value.token }, auth, sessionManager),
+      handleAuthMessage(asSocket(ws), { type: "auth", token: r.value.token }, auth, sessionManager),
     ).resolves.toBeUndefined();
 
     expect(ws.data.authState).toBe("rejected");

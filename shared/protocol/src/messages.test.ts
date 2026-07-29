@@ -377,8 +377,7 @@ describe("seq/epoch stamping on gateway push frames", () => {
   it("parses auth.ok WITH seq/epoch", () => {
     const result = gatewayMessageSchema.safeParse({
       type: "auth.ok",
-      sessionId: "s-1",
-      role: "adult",
+      user: { userId: "u_a1b2c3d4", displayName: "Kevin", isAdmin: false, avatarTint: "terra" },
       seq: 0,
       epoch: 1,
     });

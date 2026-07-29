@@ -21,7 +21,6 @@
 
 import { z } from "zod";
 import { conversationFeedItemSchema } from "./conversation.ts";
-import { userRoleSchema } from "./roles.ts";
 import {
   conversationActivateSchema,
   sessionCreatedEventSchema,
@@ -104,9 +103,8 @@ export const sessionConfigureSchema = z.object({
    * displaying. This is the same value the client receives as `sessionId` on
    * `session.created` / `session.switched` and sends back in
    * `conversation.activate.sessionId`. It is NOT the per-WS connection id
-   * (`auth.ok.sessionId` / `session.ready.sessionId`). Sent on (re)connect so
-   * the gateway re-anchors the thread for the next message instead of forking.
-   * Omitted on a fresh chat.
+   * (`session.ready.sessionId`). Sent on (re)connect so the gateway re-anchors
+   * the thread for the next message instead of forking. Omitted on a fresh chat.
    */
   conversationId: z.string().min(1).optional(),
   /**
@@ -202,11 +200,48 @@ export type ClientMessage = z.infer<typeof clientMessageSchema>;
 
 // ─── Gateway → Client Messages ───
 
+// ─── Auth handshake (pre-journal) ───
+//
+// `auth.ok` / `auth.error` are sent before `session.configure` mints this
+// connection's FrameJournal, so they go out unsequenced — both SDKs treat an
+// absent seq as "not sequenced" and pass it through. Unsequenced is NOT
+// unvalidated: like every other outbound frame they are constructed as a
+// `GatewayMessage` and parsed by `sendGatewayFrame` before any bytes leave.
+//
+// The shape below is the one the clients actually decode — `shared/mobile-sdk`
+// `ServerMessage.AuthOk` requires `user`, and the web SDK reads only the type.
+// The previous `{ sessionId, role }` stub matched neither sender nor consumer:
+// `ws-auth-gate.ts` never populated it, so routing the real frame through
+// validation against that stub would have made every auth ack fail zod and get
+// dropped, hanging every client at connect.
+
+/** The authenticated user, as the clients render it (avatar + display name).
+ *  `avatarTint` stays a plain string rather than the tint enum on purpose: a
+ *  legacy or hand-edited user record with an unknown tint must degrade to a
+ *  wrong colour, never to a dropped auth ack. */
+const authUserSchema = z.object({
+  userId: z.string(),
+  displayName: z.string(),
+  isAdmin: z.boolean(),
+  avatarTint: z.string(),
+});
+
 export const authOkSchema = z.object({
   type: z.literal("auth.ok"),
-  sessionId: z.string(),
-  role: userRoleSchema,
+  user: authUserSchema,
 });
+export type AuthOkMessage = z.infer<typeof authOkSchema>;
+
+/** Sent immediately before the gateway closes the socket (RFC 6455 1008).
+ *  `code` is the stable machine token the clients branch on (`auth-required`,
+ *  `auth-timeout`, `session-limit`, `invalid-user-record`, or a token
+ *  validation error); `message` is human-readable detail. */
+export const authErrorSchema = z.object({
+  type: z.literal("auth.error"),
+  code: z.string(),
+  message: z.string(),
+});
+export type AuthErrorMessage = z.infer<typeof authErrorSchema>;
 
 export const sessionReadySchema = z.object({
   type: z.literal("session.ready"),
@@ -466,6 +501,7 @@ export type StreamResumed = z.infer<typeof streamResumedSchema>;
  */
 export const gatewayMessageSchema = z.discriminatedUnion("type", [
   withSeqEpoch(authOkSchema),
+  withSeqEpoch(authErrorSchema),
   withSeqEpoch(sessionReadySchema),
   withSeqEpoch(turnStartedSchema),
   withSeqEpoch(turnTextDeltaSchema),

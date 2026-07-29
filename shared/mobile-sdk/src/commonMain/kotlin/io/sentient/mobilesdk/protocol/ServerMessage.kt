@@ -20,7 +20,10 @@ sealed class ServerMessage {
     /**
      * Sent after a valid auth frame. Carries the authenticated user object.
      * Wire: { type:"auth.ok", user:{userId,displayName,isAdmin,avatarTint} }
-     * (matches ws-auth-gate.ts actual send shape, not the gatewayMessageSchema stub).
+     * — now the shape gatewayMessageSchema declares AND the one ws-auth-gate.ts
+     * sends through it. (It used to be neither: the schema carried a
+     * {sessionId, role} stub nobody sent, and the gate hand-serialized this
+     * frame past validation.)
      */
     @Serializable @SerialName("auth.ok")
     data class AuthOk(val user: AuthUser) : ServerMessage()

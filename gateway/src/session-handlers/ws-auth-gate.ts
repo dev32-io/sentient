@@ -1,9 +1,31 @@
+// The auth gate's two frames — `auth.ok` and `auth.error` — are the only ones
+// a client sees before `session.configure`, and the whole session depends on
+// them. They used to be hand-serialized object literals passed straight to
+// `ws.send`, which is exactly the bypass the branch's "every outbound frame is
+// constructed and validated through `gatewayMessageSchema`" constraint forbids;
+// the schema's `auth.ok` had drifted to a `{ sessionId, role }` stub nothing
+// sent and nothing read, and `auth.error` was not in the union at all.
+// Both now go out through `sendGatewayFrame` (ws-send.ts) like every other
+// frame. They are still UNSEQUENCED — `ws.data.journal` is null until
+// session.configure, and sendGatewayFrame writes unstamped in that case — so
+// this changed validation, not sequencing.
+//
+// SIGNATURE: the socket is typed `ServerWebSocket<SessionData>` rather than the
+// narrow local `WsLike` this file used to declare. `sendGatewayFrame` reads
+// `ws.data.journal` / `ws.data.epoch` and writes through `ws.send`, so a
+// three-member structural stand-in is not assignable to it; duplicating a
+// second socket type to work around that would just re-create the drift this
+// commit is removing. Callers already hold the real Bun socket; the tests pass
+// a cast fake, which is the normal cost of typing on the real transport.
+
+import type { ServerWebSocket } from "bun";
 import { z } from "zod";
 import type { SessionManager } from "../auth/session-manager.js";
 import { type PrincipalRole, type UserPrincipal, createUserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
 import type { AuthService } from "../user-auth/auth-service.js";
 import type { SessionData } from "./ws-helpers.js";
+import { sendGatewayFrame } from "./ws-send.js";
 
 const log = getLog(["sentient", "gateway", "session-handlers", "ws-auth-gate"]);
 
@@ -22,18 +44,12 @@ const authMsgSchema = z.object({
   token: z.string().min(1),
 });
 
-interface WsLike {
-  data: SessionData;
-  send: (s: string) => void;
-  close: (code: number, reason?: string) => void;
-}
-
 /**
  * Process the very first WS message. Closes the connection on any failure.
  * Idempotent: if already authed or rejected, drops silently.
  */
 export async function handleAuthMessage(
-  ws: WsLike,
+  ws: ServerWebSocket<SessionData>,
   message: unknown,
   auth: AuthService,
   sessionManager: SessionManager,
@@ -107,17 +123,15 @@ export async function handleAuthMessage(
     clearTimeout(ws.data.authTimeout);
     ws.data.authTimeout = null;
   }
-  ws.send(
-    JSON.stringify({
-      type: "auth.ok",
-      user: {
-        userId: userR.value.userId,
-        displayName: userR.value.displayName,
-        isAdmin: userR.value.isAdmin,
-        avatarTint: userR.value.avatarTint,
-      },
-    }),
-  );
+  sendGatewayFrame(ws, {
+    type: "auth.ok",
+    user: {
+      userId: userR.value.userId,
+      displayName: userR.value.displayName,
+      isAdmin: userR.value.isAdmin,
+      avatarTint: userR.value.avatarTint,
+    },
+  });
   log.info("auth.ok", { sessionId, userId });
 }
 
@@ -127,7 +141,10 @@ export async function handleAuthMessage(
  * lookup in flight) after timeoutMs — handleAuthMessage's post-await
  * re-checks then see "rejected" and bail instead of reviving the socket.
  */
-export function scheduleAuthTimeout(ws: WsLike, timeoutMs: number): ReturnType<typeof setTimeout> {
+export function scheduleAuthTimeout(
+  ws: ServerWebSocket<SessionData>,
+  timeoutMs: number,
+): ReturnType<typeof setTimeout> {
   return setTimeout(() => {
     if (ws.data.authState === "pending" || ws.data.authState === "authenticating") {
       reject(ws, "auth-timeout", `no auth message within ${timeoutMs}ms`);
@@ -140,7 +157,7 @@ export function scheduleAuthTimeout(ws: WsLike, timeoutMs: number): ReturnType<t
  * socket is already "rejected" (e.g. the auth-timeout fired first) so a
  * racing caller can never double-close / double-send.
  */
-function reject(ws: WsLike, code: string, reason: string): void {
+function reject(ws: ServerWebSocket<SessionData>, code: string, reason: string): void {
   if (ws.data.authState === "rejected") {
     return;
   }
@@ -150,7 +167,7 @@ function reject(ws: WsLike, code: string, reason: string): void {
     clearTimeout(ws.data.authTimeout);
     ws.data.authTimeout = null;
   }
-  ws.send(JSON.stringify({ type: "auth.error", code, message: reason }));
+  sendGatewayFrame(ws, { type: "auth.error", code, message: reason });
   log.info("auth.reject", { sessionId: ws.data.sessionId, code, reason });
   ws.close(WS_CLOSE_POLICY, reason);
 }
