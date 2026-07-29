@@ -1,13 +1,14 @@
 import { expect, test } from "bun:test";
 import { reconcileOnBoot } from "./boot-reconciler.js";
-import type { DockerDriver, ManagedContainerInfo } from "./docker-driver.js";
-import type { ManagedService, OrchestratorStatus } from "./types.js";
+import type { DockerDriver } from "./docker-driver.js";
+import type { ManagedProcessInfo, ManagedService, OrchestratorStatus } from "./types.js";
 
 const ok = { ok: true, value: undefined } as const;
 
 const ms = (name: string): ManagedService => ({
   name,
   config: {
+    launch: "docker",
     template: "x",
     allowed_images: ["x"],
     networks: ["sentient-internal"],
@@ -38,7 +39,7 @@ test("orphan containers (managed but not in registry) are removed", async () => 
       return ok;
     },
     pullImage: async () => ok,
-    listManaged: async (): Promise<ManagedContainerInfo[]> => [
+    listManaged: async (): Promise<ManagedProcessInfo[]> => [
       { id: "1", service: "ha-mcp", state: "running" },
       { id: "2", service: "fake-service", state: "running" },
     ],

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { buildServiceRegistry } from "./service-registry.js";
 import type { SecretAccessor } from "./template-loader.js";
+import { isDockerService } from "./types.js";
 
 const cfg = {
   "ha-mcp": {
@@ -37,7 +38,35 @@ test("buildServiceRegistry returns one ManagedService per config entry", async (
   expect(r.ok).toBe(true);
   if (!r.ok) return;
   expect(r.value.size).toBe(2);
-  expect(r.value.get("ha-mcp")?.template.image).toBe("ghcr.io/homeassistant-ai/ha-mcp:stable");
+  const ha = r.value.get("ha-mcp");
+  if (!ha || !isDockerService(ha)) throw new Error("expected ha-mcp to be a docker service");
+  expect(ha.template.image).toBe("ghcr.io/homeassistant-ai/ha-mcp:stable");
+});
+
+// CONTRACT: a native entry produces a ManagedService with no template and with
+// host-env placeholders in its argv resolved — the launch path never shells out,
+// so an unresolved ${VAR} must stay literal and fail loudly at prepare().
+test("buildServiceRegistry resolves host-env placeholders in a native service argv", async () => {
+  const r = await buildServiceRegistry({
+    config: {
+      "local-tts": {
+        launch: "native",
+        exec: ["${SENTIENT_CODE}/local-tts/venv/bin/python", "-m", "local_tts"],
+        python: "3.11",
+        healthcheck: { tcp: "127.0.0.1:8770", timeout_ms: 30000 },
+        depends_on: [],
+        optional: false,
+      },
+    },
+    readTemplate,
+    secrets,
+    hostEnv: { SENTIENT_CODE: "/opt/sentient/current" },
+  });
+  expect(r.ok).toBe(true);
+  if (!r.ok) return;
+  const tts = r.value.get("local-tts");
+  if (!tts || isDockerService(tts)) throw new Error("expected local-tts to be a native service");
+  expect(tts.config.exec[0]).toBe("/opt/sentient/current/local-tts/venv/bin/python");
 });
 
 test("rejects entry whose template image is not in allowed_images", async () => {

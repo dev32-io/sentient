@@ -9,6 +9,7 @@ function svc(name: string, deps: string[] = [], optional = false): ManagedServic
   return {
     name,
     config: {
+      launch: "docker",
       template: "x",
       allowed_images: ["x"],
       networks: ["sentient-internal"],

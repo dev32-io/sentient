@@ -1,5 +1,6 @@
 import type { Result } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
+import { isDockerService } from "../system-orchestrator/types.js";
 import type { ManagedService, OrchestratorStatus, ServiceName } from "../system-orchestrator/types.js";
 
 const log = getLog(["sentient", "apply", "router"]);
@@ -75,6 +76,9 @@ function collectTargets(reg: Map<ServiceName, ManagedService>, changed: Readonly
   const out = new Set<ServiceName>();
   const want = new Set(changed);
   for (const ms of reg.values()) {
+    // Only docker services bind secrets; a native service's argv carries no
+    // secret material, so a secrets diff can never target one.
+    if (!isDockerService(ms)) continue;
     for (const path of Object.values(ms.config.secrets)) {
       if (want.has(path)) out.add(ms.name);
     }

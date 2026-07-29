@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
 import { type DockerodeLike, createDockerDriver } from "./docker-driver.js";
-import type { ManagedService } from "./types.js";
+import type { DockerManagedService } from "./types.js";
 
-const ms: ManagedService = {
+const ms: DockerManagedService = {
   name: "ha-mcp",
   config: {
+    launch: "docker",
     template: "x",
     allowed_images: ["ghcr.io/homeassistant-ai/ha-mcp:stable"],
     networks: ["sentient-internal"],
@@ -74,7 +75,7 @@ test("recreate sends spec with sentient.managed label", async () => {
 });
 
 test("recreate rejects template whose image is not in allowed_images", async () => {
-  const bad: ManagedService = { ...ms, template: { ...ms.template, image: "evil/image:v1" } };
+  const bad: DockerManagedService = { ...ms, template: { ...ms.template, image: "evil/image:v1" } };
   const { stub } = makeStub();
   const drv = createDockerDriver({ docker: stub });
   const r = await drv.recreate(bad);

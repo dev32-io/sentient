@@ -1,11 +1,15 @@
 import type { Result } from "@sentient/protocol";
 import { z } from "zod";
 import { getLog } from "../logging/logger.js";
-import { type SecretAccessor, type TemplateError, loadServiceTemplate } from "./template-loader.js";
+import { type SecretAccessor, type TemplateError, loadServiceTemplate, substituteHostEnv } from "./template-loader.js";
 import {
+  type DockerManagedService,
+  type DockerServiceConfig,
   type ManagedService,
   type ManagedServiceConfig,
   ManagedServiceConfigSchema,
+  type NativeManagedService,
+  type NativeServiceConfig,
   type ServiceName,
   ServiceNameSchema,
 } from "./types.js";
@@ -40,6 +44,13 @@ export async function buildServiceRegistry(
   const out = new Map<ServiceName, ManagedService>();
   for (const [name, cfg] of Object.entries(cfgParse.data)) {
     const typedCfg = cfg as ManagedServiceConfig;
+    // Native services have no container template and no image/network policy —
+    // their whole runtime spec is argv + env + cwd, so the registry only has to
+    // resolve host-env placeholders in it.
+    if (typedCfg.launch === "native") {
+      out.set(name, buildNativeService(name, typedCfg, input.hostEnv ?? {}));
+      continue;
+    }
     const tplResult = await loadOneTemplate(name, typedCfg, input);
     if (!tplResult.ok) {
       // Optional services with missing secrets get skipped (logged), not
@@ -75,11 +86,30 @@ export async function buildServiceRegistry(
   return { ok: true, value: out };
 }
 
+function buildNativeService(
+  name: ServiceName,
+  cfg: NativeServiceConfig,
+  hostEnv: Record<string, string>,
+): NativeManagedService {
+  const exec = cfg.exec.map((arg) => substituteHostEnv(arg, hostEnv)) as NativeServiceConfig["exec"];
+  const env = Object.fromEntries(
+    Object.entries(cfg.env).map(([key, value]) => [key, substituteHostEnv(value, hostEnv)]),
+  );
+  const resolved: NativeServiceConfig = {
+    ...cfg,
+    exec,
+    env,
+    ...(cfg.cwd === undefined ? {} : { cwd: substituteHostEnv(cfg.cwd, hostEnv) }),
+  };
+  log.debug("registry.native-resolved", { service: name, interpreter: resolved.exec[0], argc: resolved.exec.length });
+  return { name, config: resolved };
+}
+
 async function loadOneTemplate(
   name: ServiceName,
-  cfg: ManagedServiceConfig,
+  cfg: DockerServiceConfig,
   input: BuildRegistryInput,
-): Promise<Result<ManagedService, RegistryError>> {
+): Promise<Result<DockerManagedService, RegistryError>> {
   const yamlBody = await input.readTemplate(cfg.template);
   const tplResult = await loadServiceTemplate({
     yamlBody,

@@ -78,6 +78,17 @@ export async function loadServiceTemplate(input: LoadTemplateInput): Promise<Res
   return { ok: true, value: result.data };
 }
 
+/** Resolve `${VAR}` placeholders from host env only — no secret bindings, no
+ *  errors. Unresolved placeholders are left literal so the failure surfaces at
+ *  the point of use (e.g. a native service's argv[0] that does not exist)
+ *  rather than as a silently-empty string. */
+export function substituteHostEnv(value: string, hostEnv: Record<string, string>): string {
+  return value.replace(PLACEHOLDER_RE, (whole, envVar: string) => {
+    const hostValue = hostEnv[envVar];
+    return hostValue !== undefined && hostValue !== "" ? hostValue : whole;
+  });
+}
+
 function substituteEnvPlaceholders(
   body: string,
   bindings: Record<string, string>,

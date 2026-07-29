@@ -1,27 +1,18 @@
 import type { Readable } from "node:stream";
 import type { Result } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
-import type { ManagedService, ServiceName } from "./types.js";
+import {
+  type DockerManagedService,
+  type DriverError,
+  type ManagedProcessInfo,
+  type ManagedService,
+  isDockerService,
+} from "./types.js";
 
 const log = getLog(["sentient", "system-orch", "docker-driver"]);
 
 const LABEL_MANAGED = "sentient.managed";
 const LABEL_SERVICE = "sentient.service";
-
-export type DockerError =
-  | { kind: "policy-violation"; reason: string }
-  | { kind: "create-failed"; reason: string }
-  | { kind: "remove-failed"; reason: string }
-  | { kind: "stop-failed"; reason: string }
-  | { kind: "start-failed"; reason: string }
-  | { kind: "pull-failed"; reason: string }
-  | { kind: "image-missing"; reason: string };
-
-export interface ManagedContainerInfo {
-  id: string;
-  service: ServiceName;
-  state: string;
-}
 
 /** Narrow surface we need from dockerode — keeps tests free of any real socket.
  *  `pull` returns dockerode's progress stream; the caller drains it via
@@ -56,12 +47,12 @@ export interface DockerodeLike {
 }
 
 export interface DockerDriver {
-  recreate(ms: ManagedService): Promise<Result<undefined, DockerError>>;
-  start(name: string): Promise<Result<undefined, DockerError>>;
-  stop(name: string): Promise<Result<undefined, DockerError>>;
-  remove(name: string): Promise<Result<undefined, DockerError>>;
-  pullImage(image: string): Promise<Result<undefined, DockerError>>;
-  listManaged(): Promise<ManagedContainerInfo[]>;
+  recreate(ms: ManagedService): Promise<Result<undefined, DriverError>>;
+  start(name: string): Promise<Result<undefined, DriverError>>;
+  stop(name: string): Promise<Result<undefined, DriverError>>;
+  remove(name: string): Promise<Result<undefined, DriverError>>;
+  pullImage(image: string): Promise<Result<undefined, DriverError>>;
+  listManaged(): Promise<ManagedProcessInfo[]>;
 }
 
 export interface DockerDriverDeps {
@@ -100,7 +91,12 @@ export function createDockerDriver(deps: DockerDriverDeps): DockerDriver {
   };
 }
 
-async function recreate(docker: DockerodeLike, ms: ManagedService): Promise<Result<undefined, DockerError>> {
+async function recreate(docker: DockerodeLike, ms: ManagedService): Promise<Result<undefined, DriverError>> {
+  if (!isDockerService(ms)) {
+    const reason = `service ${ms.name} is launch=${ms.config.launch}, not docker`;
+    log.warn("driver.wrong-backend", { service: ms.name, reason });
+    return { ok: false, error: { kind: "wrong-backend", reason } };
+  }
   const policy = enforcePolicy(ms);
   if (!policy.ok) return policy;
 
@@ -148,7 +144,7 @@ async function recreate(docker: DockerodeLike, ms: ManagedService): Promise<Resu
   return { ok: true, value: undefined };
 }
 
-function enforcePolicy(ms: ManagedService): Result<undefined, DockerError> {
+function enforcePolicy(ms: DockerManagedService): Result<undefined, DriverError> {
   if (!ms.config.allowed_images.includes(ms.template.image)) {
     return { ok: false, error: { kind: "policy-violation", reason: `image ${ms.template.image} not allowed` } };
   }
@@ -160,7 +156,7 @@ function enforcePolicy(ms: ManagedService): Result<undefined, DockerError> {
   return { ok: true, value: undefined };
 }
 
-function buildCreateSpec(ms: ManagedService): Record<string, unknown> {
+function buildCreateSpec(ms: DockerManagedService): Record<string, unknown> {
   const env = Object.entries(ms.template.env).map(([k, v]) => `${k}=${v}`);
   const primaryNet = ms.template.networks[0] ?? "";
   return {
@@ -193,7 +189,7 @@ function buildCreateSpec(ms: ManagedService): Record<string, unknown> {
   };
 }
 
-async function listManaged(docker: DockerodeLike): Promise<ManagedContainerInfo[]> {
+async function listManaged(docker: DockerodeLike): Promise<ManagedProcessInfo[]> {
   const filters = JSON.stringify({ label: [`${LABEL_MANAGED}=true`] });
   const list = await docker.listContainers({ all: true, filters });
   return list
@@ -213,7 +209,7 @@ function errMsg(err: unknown): string {
  *  before resolution. dockerode's `pull` returns a readable progress stream;
  *  awaiting the call alone resolves the moment the stream is opened, NOT when
  *  the pull finishes. `modem.followProgress` is the canonical drain helper. */
-async function pullImageDraining(docker: DockerodeLike, image: string): Promise<Result<undefined, DockerError>> {
+async function pullImageDraining(docker: DockerodeLike, image: string): Promise<Result<undefined, DriverError>> {
   let stream: Readable;
   try {
     stream = await docker.pull(image);
@@ -235,7 +231,7 @@ async function pullImageDraining(docker: DockerodeLike, image: string): Promise<
  *  fall back to a local `getImage().inspect()` check. Local-built tags
  *  (`sentient/<svc>:local`) can't be pulled but exist locally — they should
  *  succeed. Foreign images that fail to pull AND aren't local fail outright. */
-async function ensureImageAvailable(docker: DockerodeLike, image: string): Promise<Result<undefined, DockerError>> {
+async function ensureImageAvailable(docker: DockerodeLike, image: string): Promise<Result<undefined, DriverError>> {
   const pull = await pullImageDraining(docker, image);
   if (pull.ok) return pull;
 
