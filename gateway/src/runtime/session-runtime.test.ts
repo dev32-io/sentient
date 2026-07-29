@@ -1521,4 +1521,47 @@ describe("SessionRuntime — cancellation reaches the audio tail", () => {
 
     runtime.dispose();
   });
+
+  it("INVARIANT: dispose() cuts a drain that outlived its turn, so no drain is ever orphaned", async () => {
+    // Teardown lands in the SAME tail window as a late gesture: the turn
+    // settled naturally, so `inFlight` is null and its controller was never
+    // aborted — `inFlight?.controller.abort()` alone is a no-op there. And a
+    // drain missed HERE is unreachable FOREVER: ws-session-configure.ts mints a
+    // brand-new TurnVoice (with its own empty `draining` map) on the next
+    // session.configure, so no later bargeIn()/interrupt() can ever see it. It
+    // would keep pulling frames from local-tts and writing them at a dead (or
+    // reassigned) socket for the rest of the reply.
+    const am = createAccessManager({ userDataRoot: `${ROOT}/dispose-tail` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = fakeProvider(async function* () {
+      yield { type: "text", content: "a reply whose speech outlasts it" };
+      yield { type: "done", finishReason: "stop" };
+    });
+    const voice = recordingVoice();
+    const emitter = recordingEmitter();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-dispose-tail",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter,
+      systemPrompt: "test",
+      config: testConfig(),
+      voice,
+    });
+
+    runtime.submit({ kind: "conversational", text: "tell me a story" });
+    await waitUntilIdle(runtime);
+    expect(voice.calls[0]?.signal.aborted).toBe(false);
+
+    runtime.dispose();
+
+    expect(voice.cancelledAudio).toEqual([[voice.calls[0]?.turnId ?? ""]]);
+    // Teardown is NOT a user gesture: the socket is closing (or already
+    // belongs to the next runtime), so there is no one to command a flush.
+    expect(emitter.events.some((e) => e.type === "playbackStop")).toBe(false);
+  });
 });

@@ -118,8 +118,10 @@ export function handleSessionConfigure(
   ws.data.replayLease = acquisition.lease;
 
   // A repeat session.configure on the same connection must not leak the
-  // previous runtime's store handle or strand its open permission prompts —
-  // tear both down before minting a fresh pair. The frame journal above is
+  // previous runtime's store handle, strand its open permission prompts, or
+  // leave its speech draining — `dispose()` cuts all three, which is why the
+  // fresh `TurnVoice` minted below can start with an empty drain map and still
+  // be the only thing writing audio. The frame journal above is
   // deliberately NOT torn down with them: it belongs to the surface, not to
   // the runtime, and losing it here would break the very replay this
   // handshake just promised.
@@ -246,6 +248,28 @@ export function handleSessionConfigure(
  * handle. No runtime (orchestrator absent, or per-session construction
  * failure) means no store to project — the socket is still usable, so this
  * logs its reason rather than failing the handshake.
+ *
+ * DOES THIS CLOSE `recovered:false` WITHOUT THE MISSING REST ROUTE? Per client:
+ *
+ *  - **web: yes, but only because of the frame order** — and that order is now
+ *    pinned by ws-session-configure.test.ts. Both client SDKs treat
+ *    `stream.resumed{recovered:false}` as "refetch history over
+ *    `GET /sessions/:id/messages`", a route this gateway does not serve
+ *    (sessions CRUD is later scope), and both replace their mirror with an
+ *    EMPTY list when that fetch fails. web-sdk attaches its
+ *    ConversationHistoryConnector only on `session.ready`
+ *    (sdk-message-router.ts's `handleReady` → `attachAll`), and ws-resume.ts
+ *    sends the ack BEFORE ready, so the synthetic `session.switched` reaches no
+ *    history connector and no fetch is made — this snapshot is then the only
+ *    thing that fills the mirror. Reordering either side reawakens the 404 and
+ *    wipes the chat a moment after this frame filled it.
+ *  - **mobile: no — a live residual.** `SentientSdk.onStreamResumed` calls
+ *    `refetchHistoryForSession` directly, with no handler-map gate to be
+ *    detached, so the 404 lands AFTER this snapshot and clears the mirror
+ *    (SdkConnectors.loadHistoryForSession's error branch → `replaceMirror(
+ *    emptyList())`). Closing it needs the REST route or a mobile-sdk change;
+ *    neither is in this task's scope, and no gateway-side ordering can beat an
+ *    async client fetch.
  */
 function sendConversationSnapshot(ws: ServerWebSocket<SessionData>, sessionId: string, userId: string): void {
   const runtime = ws.data.runtime;

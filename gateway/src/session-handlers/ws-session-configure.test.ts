@@ -210,9 +210,21 @@ describe("handleSessionConfigure — committed-feed handshake", () => {
     expect(spy.snapshotCalls).toBe(1); // unchanged
   });
 
-  it("CONTRACT: a resume the registry could NOT honour still gets a snapshot", () => {
+  it("CONTRACT: a non-recovered resume sends stream.resumed, then session.ready, then the snapshot", () => {
     // recovered:false means the client resets its cursor and has no history —
     // the one reconnect path where the snapshot is the only way back.
+    //
+    // The ORDER is load-bearing, and for a reason no gateway file states on its
+    // own: web-sdk attaches its ConversationHistoryConnector only when
+    // `session.ready` lands (sdk-message-router.ts's `handleReady` →
+    // `attachAll`), and `stream.resumed{recovered:false}` makes it synthesise a
+    // `session.switched` that REST-refetches history and, on failure, replaces
+    // the mirror with an EMPTY list. `GET /sessions/:id/messages` does not
+    // exist in this gateway (sessions CRUD is later scope), so that refetch
+    // would 404 and wipe the chat moments after the snapshot filled it. It does
+    // not fire today only because the ack arrives BEFORE ready, while the
+    // connector is still detached. Flip these two and the "reconnect yields an
+    // empty chat" bug this handshake exists to close comes straight back.
     const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
     const ws = fakeAuthedWs();
     const spy = servicesWithRuntime(registry, ws);
@@ -229,7 +241,8 @@ describe("handleSessionConfigure — committed-feed handshake", () => {
       undefined,
     );
 
-    expect(ws.sent.some((f) => f.type === "stream.resumed" && f.recovered === false)).toBe(true);
+    expect(ws.sent.map((f) => f.type)).toEqual(["stream.resumed", "session.ready", "conversation.snapshot"]);
+    expect(ws.sent[0]?.recovered).toBe(false);
     expect(spy.snapshotCalls).toBe(1);
   });
 });

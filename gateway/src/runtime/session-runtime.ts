@@ -112,8 +112,10 @@ export interface SessionRuntime {
   /** True the instant a turn is in flight (set synchronously by `submit`,
    *  cleared synchronously when that turn's `runTurn` promise settles). */
   readonly running: boolean;
-  /** Aborts any in-flight turn's signal, stops the store handle, and makes
-   *  every subsequent `submit` a no-op. Idempotent. */
+  /** Aborts any in-flight turn's signal, CUTS this session's still-draining
+   *  speech (audio outlives its turn, and the next `session.configure` mints a
+   *  fresh `TurnVoice` that could never reach it), stops the store handle, and
+   *  makes every subsequent `submit` a no-op. Idempotent. */
   dispose(): void;
   /** Mic onset — the user starts speaking over the assistant (spec §4.7).
    *  Aborts the in-flight turn and commits its partial output as an assistant
@@ -510,7 +512,25 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   function dispose(): void {
     if (disposed) return;
     disposed = true;
-    log.info("session-runtime.dispose", { userId, sessionId, hadInFlight: inFlight !== null });
+    // Aborting the in-flight turn is NOT enough, and is a no-op in exactly the
+    // state that matters: a turn that completed naturally never aborted its own
+    // controller and has already cleared `inFlight`, while its speech is still
+    // draining. That drain has to be cut HERE or never — ws-session-configure.ts
+    // mints a fresh `TurnVoice` (own empty `draining` map) on the next
+    // session.configure, so no later gesture on the new runtime can reach it,
+    // and it would keep pulling from local-tts and writing at a dead or
+    // reassigned socket for the rest of the reply.
+    //
+    // No `playback.stop` goes with it: teardown is not a user gesture, and the
+    // socket is closing or already belongs to the next runtime. `stopPlayback`
+    // stays the cancel path's alone.
+    const cut = voice?.cancelAudio() ?? [];
+    log.info("session-runtime.dispose", {
+      userId,
+      sessionId,
+      hadInFlight: inFlight !== null,
+      cutTurnCount: cut.length,
+    });
     inFlight?.controller.abort();
     store.close();
   }
