@@ -60,6 +60,12 @@ const AUDIO_ENCODING = "pcm16";
 // itself now leaves through `sendGatewayFrame`, so it is validated against
 // `gatewayMessageSchema` like every other outbound frame instead of being
 // hand-serialised.
+//
+// Finally, every NON-recovered handshake ends with a `conversation.snapshot`
+// (runtime/conversation-feed.ts, via `SessionRuntime`). Without it a client
+// renders an empty chat on every reload, reconnect-with-recovered:false, and
+// first connect — the `turn.*` family is a live stream the client discards,
+// so the committed feed is the only thing that survives a turn.
 // ---------------------------------------------------------------------------
 
 export function handleSessionConfigure(
@@ -221,7 +227,37 @@ export function handleSessionConfigure(
     resumeParams: configureResume,
     readyFrame,
   });
-  if (!readyAlreadySent) sendGatewayFrame(ws, readyFrame);
+  if (readyAlreadySent) return;
+
+  sendGatewayFrame(ws, readyFrame);
+  sendConversationSnapshot(ws, sessionId, userId);
+}
+
+/**
+ * Hand the client its committed conversation feed, right after session.ready.
+ *
+ * ONLY on the non-recovered paths (fresh connect, and a resume the registry
+ * could not honour). A recovered resume replays the exact frames the client
+ * missed, and its mirror is still intact — a snapshot there would fight that
+ * replay. `readyAlreadySent` is precisely the recovered flag, so this reads
+ * off the same decision rather than re-deriving it.
+ *
+ * The feed lives on the SessionRuntime because the runtime owns the store
+ * handle. No runtime (orchestrator absent, or per-session construction
+ * failure) means no store to project — the socket is still usable, so this
+ * logs its reason rather than failing the handshake.
+ */
+function sendConversationSnapshot(ws: ServerWebSocket<SessionData>, sessionId: string, userId: string): void {
+  const runtime = ws.data.runtime;
+  if (runtime === null) {
+    log.warn("session-configure.no-conversation-snapshot", {
+      sessionId,
+      userId,
+      reason: "no session runtime on this connection — no store to project",
+    });
+    return;
+  }
+  runtime.emitConversationSnapshot();
 }
 
 /**

@@ -118,6 +118,7 @@ function stubRuntime(): StubRuntime {
       bargeIns.push("barge-in");
     },
     interrupt: () => {},
+    emitConversationSnapshot: () => {},
   };
   return { runtime, submitted, bargeIns };
 }

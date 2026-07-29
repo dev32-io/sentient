@@ -21,6 +21,21 @@
 // streaming-tts-synthesizer.ts) — the upstream local-tts session is not
 // created until the first `next()`. A turn aborted while its drain is still
 // queued therefore never opens a socket at all.
+//
+// SPEECH OUTLIVES ITS TURN. `end()` closes only the TEXT queue; the audio
+// chained on `tail` keeps draining for as long as playback lasts — seconds
+// after the loop committed its final entry and the turn settled. A turn that
+// finishes NATURALLY never aborts its own controller, so that controller
+// cannot carry a cancel gesture landing in the tail window. Each turn's audio
+// therefore runs on its OWN AbortController, derived from (and aborted by)
+// the turn's signal but reachable independently through `cancelAudio()`.
+// Without that second handle the last stretch of every reply is
+// un-cancellable: UI Stop and mic-onset barge-in do nothing server-side and
+// the gateway keeps writing frames the user asked it to stop.
+//
+// `cancelAudio()` has exactly one caller — cancellation.ts, on a USER
+// gesture. The gateway still never stops its own audio for a new turn
+// (spec §4.6/§7.2); a new turn queues behind the old one on `tail`.
 
 import { getLog } from "../logging/logger.js";
 import { FLUSH_SIGNAL, type TtsChunk } from "../tts/stages/stage-types.js";
@@ -61,6 +76,16 @@ export interface TurnVoiceStream {
 
 export interface TurnVoice {
   begin(turnId: string, signal: AbortSignal): TurnVoiceStream;
+  /**
+   * Stop every drain this session still has queued or in flight, NOW, and
+   * report the turnIds that were cut (empty when nothing was speaking).
+   *
+   * The tail-window handle described in this file's header: it works whether
+   * or not the turn is still in flight, because it aborts the audio's own
+   * controller rather than the turn's. Called ONLY from a user cancel gesture
+   * (barge-in / interrupt) — never on a new turn.
+   */
+  cancelAudio(): string[];
 }
 
 export interface TurnVoiceDeps {
@@ -218,9 +243,25 @@ async function drainAudio(
   }
 }
 
+/** Mirror `source`'s abort onto `target`, now or when it happens. Lets a
+ *  turn's own signal still kill its audio while leaving the audio a second,
+ *  independently abortable handle for the tail window. */
+function mirrorAbort(source: AbortSignal, target: AbortController): void {
+  if (source.aborted) {
+    target.abort();
+    return;
+  }
+  source.addEventListener("abort", () => target.abort(), { once: true });
+}
+
 export function createTurnVoice(deps: TurnVoiceDeps): TurnVoice {
   // Serializes the audio DRAIN across turns — see the file header.
   let tail: Promise<void> = Promise.resolve();
+  // turnId → the controller driving THAT turn's audio. An entry lives from
+  // `begin()` until its drain settles, so the map IS the set of turns whose
+  // speech a cancel gesture still has to reach — including turns that already
+  // settled and turns whose drain is still queued behind an earlier one.
+  const draining = new Map<string, AbortController>();
 
   return {
     begin(turnId, signal) {
@@ -233,8 +274,12 @@ export function createTurnVoice(deps: TurnVoiceDeps): TurnVoice {
         return SILENT_STREAM;
       }
 
-      const queue = createChunkQueue(signal);
-      const frames = deps.synthesizer.synthesize(queue.stream, signal);
+      const audio = new AbortController();
+      mirrorAbort(signal, audio);
+      draining.set(turnId, audio);
+
+      const queue = createChunkQueue(audio.signal);
+      const frames = deps.synthesizer.synthesize(queue.stream, audio.signal);
       const flushedToolCalls = new Set<string>();
       const previous = tail;
       tail = (async () => {
@@ -243,7 +288,13 @@ export function createTurnVoice(deps: TurnVoiceDeps): TurnVoice {
         } catch {
           /* the prior turn's drain logged its own failure */
         }
-        await drainAudio(deps, turnId, frames, signal);
+        try {
+          await drainAudio(deps, turnId, frames, audio.signal);
+        } finally {
+          // Only ever drop THIS turn's entry: `cancelAudio` may already have
+          // cleared the map and a newer turn may already own its own slot.
+          if (draining.get(turnId) === audio) draining.delete(turnId);
+        }
       })();
 
       log.info("turn-voice.begin", { sessionId: deps.sessionId, turnId });
@@ -263,6 +314,18 @@ export function createTurnVoice(deps: TurnVoiceDeps): TurnVoice {
           log.debug("turn-voice.end", { sessionId: deps.sessionId, turnId });
         },
       };
+    },
+
+    cancelAudio(): string[] {
+      const cut = [...draining.keys()];
+      for (const controller of draining.values()) controller.abort();
+      draining.clear();
+      log.info("turn-voice.audio.cancel", {
+        sessionId: deps.sessionId,
+        turnIds: cut,
+        reason: "user cancel gesture — barge-in or interrupt",
+      });
+      return cut;
     },
   };
 }

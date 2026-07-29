@@ -27,6 +27,17 @@
 // Empty partial (abort landed before any text streamed, e.g. mid tool-call
 // dispatch) commits nothing — an empty assistant entry is noise, not signal.
 //
+// TWO CONCERNS, NOT ONE. Committing a cutoff entry (+ firing `turnAborted`)
+// is about the TURN; flushing playback is about AUDIO — and audio OUTLIVES
+// its turn. `onTurnSettled` closes only the TTS text queue; the drain chained
+// on TurnVoice's `tail` keeps writing frames for as long as playback lasts,
+// and a turn that completed NATURALLY never aborts its own controller. So a
+// gesture landing in that tail window has no turn to abort and nothing to
+// commit — but absolutely must still stop the audio. `stopPlayback` therefore
+// runs on EVERY call, outside the guard below, while the guard keeps owning
+// the commit decision alone. Fusing the two is what made UI Stop and mic-onset
+// barge-in dead for the last seconds of every spoken reply.
+//
 // Double-commit guard: `signal.aborted || turn.settled` is checked before
 // committing/aborting.
 //   - `signal.aborted`: a second bargeIn()/interrupt() call on the same
@@ -101,6 +112,14 @@ export interface CancellationDeps {
    *  every call — cancellation always acts on whatever is running NOW, never
    *  a snapshot taken at construction time. */
   getInFlight: () => CancellableTurn | null;
+  /** Halt this session's outbound speech and tell the client to flush its
+   *  playback queue. Runs on EVERY gesture, including one that lands after
+   *  the turn settled while its audio is still draining — see the header. */
+  stopPlayback: (cutoff: CutoffKind) => void;
+  /** Publish newly committed entries on the client's committed feed. Called
+   *  right after a cutoff entry is appended so the interrupted bubble reaches
+   *  the client immediately, rather than whenever the loop happens to unwind. */
+  publishCommitted: () => void;
 }
 
 function commitCutoffEntry(deps: CancellationDeps, turn: CancellableTurn, cutoff: CutoffKind): void {
@@ -166,6 +185,7 @@ function abortTurn(deps: CancellationDeps, cutoff: CutoffKind, cancelBackground:
     });
   } else {
     commitCutoffEntry(deps, turn, cutoff);
+    deps.publishCommitted();
     turn.controller.abort();
     deps.emitter.turnAborted(turn.turnId, cutoff);
     log.info("cancellation.abort", {
@@ -176,6 +196,13 @@ function abortTurn(deps: CancellationDeps, cutoff: CutoffKind, cancelBackground:
       cancelBackground,
     });
   }
+
+  // Outside the guard on purpose: speech outlives its turn, so every branch
+  // above — including "no turn" and "already settled" — still has audio to
+  // stop. Ordered after the turn branch so a cut-off turn's `turn.aborted`
+  // feed marker precedes its `playback.stop`, the order both client SDKs and
+  // ws-turn-emitter.test.ts pin.
+  deps.stopPlayback(cutoff);
 
   if (cancelBackground) {
     deps.broker.background.cancelAll();

@@ -147,25 +147,60 @@ describe("createWsTurnEmitter — 2.0 wire contract", () => {
     expect(ws.sent[0]).toMatchObject({ argsPreview: "" });
   });
 
-  it("turnAborted sends BOTH turn.aborted and playback.stop, in that order", () => {
-    // Two frames because they drive two different client subsystems: the feed
-    // marker (cutoff kind on the bubble) and the audio flush. playback.stop is
-    // the ONLY sanctioned audio flush — a new turnId must never cause one.
+  it("turnAborted sends ONLY turn.aborted — the feed marker, never the audio flush", () => {
+    // REGRESSION (whole-branch review, Critical 2): these two frames drive two
+    // different client subsystems and have two different lifetimes. Speech
+    // outlives its turn, so a cancel landing in the audio tail must still be
+    // able to flush playback for a turn that is no longer abortable. Fusing
+    // them into one emitter method made playback.stop unreachable in exactly
+    // that window.
     const ws = fakeWs();
     emitterFor(ws).turnAborted("turn-1", "barge-in");
+    expect(ws.sent).toEqual([{ type: "turn.aborted", turnId: "turn-1", cutoff: "barge-in" }]);
+  });
+
+  it("playbackStop sends the audio flush on its own, carrying the cutoff as its reason", () => {
+    const ws = fakeWs();
+    emitterFor(ws).playbackStop("turn-1", "interrupt");
+    expect(ws.sent).toEqual([{ type: "playback.stop", turnId: "turn-1", reason: "interrupt" }]);
+  });
+
+  it("conversationSnapshot sends the whole committed feed under conversation.snapshot", () => {
+    const ws = fakeWs();
+    emitterFor(ws).conversationSnapshot([
+      { entryId: "1", ts: 1000, kind: "user", channel: "text", content: "hi" },
+      { entryId: "2", ts: 1001, kind: "assistant", content: "hello" },
+    ]);
     expect(ws.sent).toEqual([
-      { type: "turn.aborted", turnId: "turn-1", cutoff: "barge-in" },
-      { type: "playback.stop", turnId: "turn-1", reason: "barge-in" },
+      {
+        type: "conversation.snapshot",
+        items: [
+          { entryId: "1", ts: 1000, kind: "user", channel: "text", content: "hi" },
+          { entryId: "2", ts: 1001, kind: "assistant", content: "hello" },
+        ],
+      },
     ]);
   });
 
-  it("carries the interrupt cutoff kind through both frames", () => {
+  it("conversationEntry carries the entry's own turnId as the join key", () => {
+    // The item deliberately strips turn plumbing; the FRAME carries it, and
+    // both client connectors re-attach it so a committed assistant entry joins
+    // its live streaming bubble by id instead of by ts-window guessing.
     const ws = fakeWs();
-    emitterFor(ws).turnAborted("turn-1", "interrupt");
+    emitterFor(ws).conversationEntry({ entryId: "7", ts: 1002, kind: "assistant", content: "done" }, "turn-1");
     expect(ws.sent).toEqual([
-      { type: "turn.aborted", turnId: "turn-1", cutoff: "interrupt" },
-      { type: "playback.stop", turnId: "turn-1", reason: "interrupt" },
+      {
+        type: "conversation.entry",
+        turnId: "turn-1",
+        item: { entryId: "7", ts: 1002, kind: "assistant", content: "done" },
+      },
     ]);
+  });
+
+  it("conversationEntry omits turnId entirely when the entry has no originating turn", () => {
+    const ws = fakeWs();
+    emitterFor(ws).conversationEntry({ entryId: "7", ts: 1002, kind: "user", channel: "text", content: "hi" });
+    expect(ws.sent[0]).not.toHaveProperty("turnId");
   });
 
   it("audioStart and audioDone bracket the stream as JSON frames", () => {
@@ -282,7 +317,10 @@ describe("createWsTurnEmitter — 2.0 wire contract", () => {
     });
     emitter.permissionResolved({ requestId: "r1", outcome: "allowed" });
     emitter.delegationProgress({ taskId: "t-9", turnId: "turn-1", agent: "hermes", status: "running" });
+    emitter.conversationSnapshot([{ entryId: "1", ts: 1000, kind: "user", channel: "text", content: "hi" }]);
+    emitter.conversationEntry({ entryId: "2", ts: 1001, kind: "assistant", content: "hello" }, "turn-1");
     emitter.turnAborted("turn-1", "interrupt");
+    emitter.playbackStop("turn-1", "interrupt");
     emitter.turnCompleted("turn-1");
 
     for (const frame of ws.sent) {
@@ -297,6 +335,8 @@ describe("createWsTurnEmitter — 2.0 wire contract", () => {
       "permission.request",
       "permission.resolved",
       "delegation.progress",
+      "conversation.snapshot",
+      "conversation.entry",
       "turn.aborted",
       "playback.stop",
       "turn.completed",

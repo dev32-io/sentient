@@ -11,16 +11,24 @@
 // The mirror case is pinned too: re-configuring onto a DIFFERENT surface is a
 // genuine handover, so the old journal is parked and a fresh one is minted.
 //
+// The committed-feed handshake is pinned here too: every NON-recovered
+// configure must end with a `conversation.snapshot`, and a recovered one must
+// NOT send one (its verbatim replay already restores the client's mirror).
+// Without the first half, every reload and every `recovered:false` reconnect
+// renders an empty chat.
+//
 // Zero cost: a FakeWs double (mirrors ws-resume.test.ts) plus a real, tiny
 // ReplayRegistry. No provider/network I/O; `createSessionRuntime: null` keeps
-// the orchestrator branch out of the picture entirely.
+// the orchestrator branch out of the picture for the journal cases.
 
 import { describe, expect, it } from "bun:test";
 import type { ServerWebSocket } from "bun";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
+import type { SessionRuntime } from "../runtime/session-runtime.js";
 import { type ReplayRegistry, createReplayRegistry } from "./replay-registry.js";
 import { type SessionData, createEmptySessionData } from "./ws-helpers.js";
+import { sendGatewayFrame } from "./ws-send.js";
 import { handleSessionConfigure } from "./ws-session-configure.js";
 
 const USER_ID = "u_deadbeef";
@@ -66,6 +74,36 @@ function servicesWith(replayRegistry: ReplayRegistry): GatewayServices {
 
 function configure(ws: FakeWs, services: GatewayServices, surfaceId: string): void {
   handleSessionConfigure(asWs(ws), [], "en", services, "webui", DEVICE_ID, surfaceId, undefined, undefined);
+}
+
+interface SnapshotSpy {
+  services: GatewayServices;
+  snapshotCalls: number;
+}
+
+/** Services whose runtime factory hands back a stub whose
+ *  `emitConversationSnapshot` writes a real (empty) snapshot frame down the
+ *  same validated send path the production feed uses — so the ORDER relative
+ *  to session.ready is observable, not just the call count. Voice composition
+ *  is short-circuited by `createSynthesizerFor: () => null`. */
+function servicesWithRuntime(replayRegistry: ReplayRegistry, ws: FakeWs): SnapshotSpy {
+  const spy: SnapshotSpy = { snapshotCalls: 0, services: {} as GatewayServices };
+  const runtime = {
+    emitConversationSnapshot: () => {
+      spy.snapshotCalls += 1;
+      sendGatewayFrame(asWs(ws), { type: "conversation.snapshot", items: [] });
+    },
+    dispose: () => {},
+  } as unknown as SessionRuntime;
+  spy.services = {
+    replayRegistry,
+    webui: { playback: { min_eager_end_ms: 0, preempt_fadeout_ms: 0 } },
+    profileStore: { get: async () => ({ ok: false, error: "no profile in this test" }) },
+    createSynthesizerFor: () => null,
+    stt: null,
+    createSessionRuntime: () => ({ runtime, permissions: { denyAll: () => {} } }),
+  } as unknown as GatewayServices;
+  return spy;
 }
 
 describe("handleSessionConfigure — journal across a re-configure", () => {
@@ -130,5 +168,68 @@ describe("handleSessionConfigure — journal across a re-configure", () => {
     expect(ws.data.journal).not.toBe(firstJournal);
     expect(ws.data.epoch).not.toBe(firstEpoch);
     expect(ws.data.journal?.newestSeq).toBe(1);
+  });
+});
+
+describe("handleSessionConfigure — committed-feed handshake", () => {
+  it("CONTRACT: a fresh configure sends conversation.snapshot right after session.ready", () => {
+    // Nothing else on the wire carries committed history: `turn.*` is a live
+    // stream the client drops on turn.completed. Without this frame the chat
+    // is empty on every reload.
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const ws = fakeAuthedWs();
+    const spy = servicesWithRuntime(registry, ws);
+
+    configure(ws, spy.services, SURFACE_A);
+
+    expect(ws.sent.map((f) => f.type)).toEqual(["session.ready", "conversation.snapshot"]);
+    expect(spy.snapshotCalls).toBe(1);
+  });
+
+  it("CONTRACT: a RECOVERED resume sends no snapshot — the verbatim replay already restored the mirror", () => {
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const ws = fakeAuthedWs();
+    const spy = servicesWithRuntime(registry, ws);
+
+    configure(ws, spy.services, SURFACE_A);
+    expect(spy.snapshotCalls).toBe(1);
+
+    handleSessionConfigure(
+      asWs(ws),
+      [],
+      "en",
+      spy.services,
+      "webui",
+      DEVICE_ID,
+      SURFACE_A,
+      { epoch: ws.data.epoch, lastSeq: 0 },
+      undefined,
+    );
+
+    expect(ws.sent.some((f) => f.type === "stream.resumed" && f.recovered === true)).toBe(true);
+    expect(spy.snapshotCalls).toBe(1); // unchanged
+  });
+
+  it("CONTRACT: a resume the registry could NOT honour still gets a snapshot", () => {
+    // recovered:false means the client resets its cursor and has no history —
+    // the one reconnect path where the snapshot is the only way back.
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const ws = fakeAuthedWs();
+    const spy = servicesWithRuntime(registry, ws);
+
+    handleSessionConfigure(
+      asWs(ws),
+      [],
+      "en",
+      spy.services,
+      "webui",
+      DEVICE_ID,
+      SURFACE_A,
+      { epoch: 999, lastSeq: 42 },
+      undefined,
+    );
+
+    expect(ws.sent.some((f) => f.type === "stream.resumed" && f.recovered === false)).toBe(true);
+    expect(spy.snapshotCalls).toBe(1);
   });
 });

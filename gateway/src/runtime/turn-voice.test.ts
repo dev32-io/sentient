@@ -1,4 +1,4 @@
-// Pins three TurnVoice invariants (spec §4.7, §6, §7.2):
+// Pins four TurnVoice invariants (spec §4.7, §6, §7.2):
 //   1. ONE FLUSH_SIGNAL per tool call. The loop's `onToolUpdate` fires on
 //      every status transition (running → done/error, plus a second
 //      "running" carrying taskId for background dispatch); the deleted
@@ -8,6 +8,10 @@
 //      binary stream, no per-frame turn id — the gateway must serialize.
 //   3. An aborted turn emits NO turn.audio.done, and clears the mic echo
 //      window (the user is speaking; their frames must reach STT now).
+//   4. `cancelAudio()` reaches a drain whose turn ALREADY settled. Speech
+//      outlives its turn by seconds; the turn's own controller is never
+//      aborted on a natural completion, so without this the last stretch of
+//      every reply is un-cancellable.
 
 import { describe, expect, it } from "bun:test";
 import { FLUSH_SIGNAL, type TtsChunk } from "../tts/stages/stage-types.js";
@@ -208,6 +212,70 @@ describe("createTurnVoice", () => {
 
     expect(sink.events.some((e) => e.type === "done")).toBe(false);
     expect(guard.cancelled).toEqual(["turn-a"]);
+  });
+
+  it("INVARIANT: cancelAudio stops a drain that outlived its turn's own AbortSignal", async () => {
+    // The tail window. `speech.end()` closes only the TEXT queue; the audio
+    // keeps draining, and a turn that finished NATURALLY never aborts its own
+    // controller — so the turn signal cannot carry a late cancel. If
+    // cancelAudio does not reach the live drain, the gateway keeps writing
+    // frames after the user pressed Stop and the assistant audibly resumes.
+    const synth = fakeSynthesizer();
+    const sink = recordingSink();
+    const guard = recordingGuard();
+    const voice = createTurnVoice({
+      synthesizer: synth.synthesizer,
+      sink: sink.sink,
+      echoGuard: guard.guard,
+      shouldSpeak: () => true,
+      sessionId: "sess-1",
+    });
+
+    const controller = new AbortController();
+    const speech = voice.begin("turn-a", controller.signal);
+    speech.pushText("a long reply");
+    speech.end(); // the turn settled — text is done, audio is not
+    synth.calls[0]?.emit(FRAME);
+    await settle();
+    expect(sink.events).toEqual([
+      { type: "start", turnId: "turn-a" },
+      { type: "frame", turnId: "turn-a" },
+    ]);
+    expect(controller.signal.aborted).toBe(false); // nothing aborts a natural completion
+
+    expect(voice.cancelAudio()).toEqual(["turn-a"]);
+
+    synth.calls[0]?.emit(FRAME); // synthesis had more buffered
+    synth.calls[0]?.finish();
+    await settle();
+
+    expect(sink.events.filter((e) => e.type === "frame")).toHaveLength(1);
+    expect(sink.events.some((e) => e.type === "done")).toBe(false);
+    expect(guard.cancelled).toEqual(["turn-a"]);
+  });
+
+  it("cancelAudio reports nothing to cut once every drain has finished", async () => {
+    const synth = fakeSynthesizer();
+    const sink = recordingSink();
+    const guard = recordingGuard();
+    const voice = createTurnVoice({
+      synthesizer: synth.synthesizer,
+      sink: sink.sink,
+      echoGuard: guard.guard,
+      shouldSpeak: () => true,
+      sessionId: "sess-1",
+    });
+
+    const controller = new AbortController();
+    const speech = voice.begin("turn-a", controller.signal);
+    speech.pushText("short");
+    speech.end();
+    synth.calls[0]?.emit(FRAME);
+    synth.calls[0]?.finish();
+    await settle();
+
+    expect(sink.events.some((e) => e.type === "done")).toBe(true);
+    expect(voice.cancelAudio()).toEqual([]);
   });
 
   it("synthesizes nothing when the user's profile has TTS off", async () => {

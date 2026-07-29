@@ -108,6 +108,9 @@ function recordingEmitter(): RecordingEmitter {
     turnAborted: (_turnId: string, _cutoff: CutoffKind) => {
       emitter.turnAbortedCount += 1;
     },
+    playbackStop: () => {},
+    conversationSnapshot: () => {},
+    conversationEntry: () => {},
     // Audio / permission / delegation are not exercised by this text-only
     // @live walk — present to satisfy the full TurnEmitter contract. If the
     // loop ever drives one of these during a plain text turn, that is a

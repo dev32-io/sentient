@@ -52,6 +52,15 @@
 // `onTurnSettled`: clearing `inFlight` and deciding whether to start the
 // next turn happen in one synchronous continuation.
 //
+// The COMMITTED FEED (spec §3.2) hangs off the same store. This runtime is
+// the only thing that knows when an append became durable, so it is also the
+// only thing that can publish it: `conversation-feed.ts` is driven from four
+// points here — the stimulus append in `submit`, the loop's `onToolUpdate`
+// durability signal, the turn boundary in `onTurnSettled`, and the cutoff
+// commit in `cancellation.ts`. Everything on the `turn.*` wire family is a
+// live stream the client discards on `turn.completed`; without these frames
+// the reply visibly vanishes and the user's own message never renders.
+//
 // Compaction (spec §8/§3.4) hangs off the settle path, not the loop: the
 // marker is appended after the turn's terminal frame and before `inFlight`
 // clears. That ordering is required, not stylistic — model-projection.ts
@@ -66,7 +75,7 @@ import { loadCompactionSummarizerPrompt } from "../context/system-prompt-loader.
 import type { UserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
 import type { ProviderClient } from "../provider/provider-client.js";
-import type { NewSessionEntry, SessionEntry } from "../store/entry-types.js";
+import type { CutoffKind, NewSessionEntry, SessionEntry } from "../store/entry-types.js";
 import { openSessionStore } from "../store/session-store.js";
 import type { SessionStore } from "../store/session-store.js";
 import type { ToolBroker } from "../tools/tool-broker.js";
@@ -74,6 +83,7 @@ import type { UserId } from "../user-auth/user-id.js";
 import type { CancellableTurn } from "./cancellation.js";
 import { createCancellationControllers } from "./cancellation.js";
 import { maybeCompact } from "./compaction.js";
+import { createConversationFeed } from "./conversation-feed.js";
 import type { ReactLoopDeps } from "./react-loop.js";
 import { runTurn } from "./react-loop.js";
 import type { Stimulus } from "./stimulus.js";
@@ -106,18 +116,24 @@ export interface SessionRuntime {
    *  every subsequent `submit` a no-op. Idempotent. */
   dispose(): void;
   /** Mic onset — the user starts speaking over the assistant (spec §4.7).
-   *  Aborts the in-flight turn (+ TTS, Plan 3) and commits its partial
-   *  output as an assistant entry with `cutoff: "barge-in"`, but LEAVES any
-   *  registered background task running. No-op if idle. See
+   *  Aborts the in-flight turn and commits its partial output as an assistant
+   *  entry with `cutoff: "barge-in"`, but LEAVES any registered background
+   *  task running. Cuts this session's speech and flushes client playback
+   *  even when no turn is in flight — audio outlives its turn. See
    *  `runtime/cancellation.ts`. */
   bargeIn(): void;
-  /** UI Stop / Esc (spec §4.7). Aborts the in-flight turn (+ TTS, Plan 3),
-   *  commits its partial output as an assistant entry with
-   *  `cutoff: "interrupt"`, AND cancels every background task for this
-   *  session (`broker.background.cancelAll()`) — fires even if no turn is
-   *  in flight, since a background task outlives the turn that dispatched
-   *  it. See `runtime/cancellation.ts`. */
+  /** UI Stop / Esc (spec §4.7). Aborts the in-flight turn, commits its
+   *  partial output as an assistant entry with `cutoff: "interrupt"`, cuts
+   *  speech + flushes client playback, AND cancels every background task for
+   *  this session (`broker.background.cancelAll()`). The last two fire even
+   *  with no turn in flight: a background task outlives the turn that
+   *  dispatched it, and so does the audio. See `runtime/cancellation.ts`. */
   interrupt(): void;
+  /** Publish this session's whole committed feed as `conversation.snapshot`
+   *  and arm the live `conversation.entry` cursor at its tail. Called once
+   *  per NON-recovered `session.configure` (ws-session-configure.ts) — a
+   *  recovered resume replays the exact frames the client missed instead. */
+  emitConversationSnapshot(): void;
 }
 
 export interface SessionRuntimeDeps {
@@ -188,9 +204,15 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   const cap = accessManager.grant(principal, "session-store");
   const store: SessionStore = openSessionStore(cap);
 
+  const feed = createConversationFeed({ store, sessionId, userId, emitter });
+
   let inFlight: InFlightTurn | null = null;
   let lastProcessedSeq = 0;
   let disposed = false;
+  // The most recent turn this session started, kept AFTER it settles. Audio
+  // outlives its turn, so a cancel landing in the tail window still has to
+  // name a turn on its `playback.stop`; `inFlight` is already null by then.
+  let lastTurnId: string | null = null;
   // Text streamed so far for the CURRENT, not-yet-committed loop iteration —
   // reset to "" the instant the loop itself commits that text durably.
   // Two commit points, two reset hooks: `onToolUpdate` firing is a reliable
@@ -208,6 +230,33 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   // every new turn.
   let turnText = "";
 
+  /**
+   * Cut this session's outbound speech and command the client to flush its
+   * playback queue. Unconditional on a user gesture BY DESIGN: the gateway
+   * cannot see the client's playback buffer, which routinely still holds
+   * seconds of audio after the gateway's own drain finished. Making the flush
+   * conditional on gateway-side drain state is exactly how Stop became a
+   * no-op at the end of a reply.
+   */
+  function stopPlayback(cutoff: CutoffKind): void {
+    const cut = voice?.cancelAudio() ?? [];
+    // Drains serialize (turn-voice.ts), so the FIRST still-live turn is the
+    // one whose `turn.audio.start` the client last saw and is attributing
+    // bytes to. Fall back to the in-flight turn, then to the last one to run.
+    const turnId = cut[0] ?? inFlight?.turnId ?? lastTurnId;
+    if (turnId === null) {
+      log.info("session-runtime.playback.nothing-to-stop", {
+        userId,
+        sessionId,
+        cutoff,
+        reason: "no turn has ever run on this session",
+      });
+      return;
+    }
+    emitter.playbackStop(turnId, cutoff);
+    log.info("session-runtime.playback.stop", { userId, sessionId, turnId, cutoff, cutTurnCount: cut.length });
+  }
+
   const cancellation = createCancellationControllers({
     sessionId,
     userId,
@@ -218,6 +267,8 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
       inFlight
         ? { turnId: inFlight.turnId, controller: inFlight.controller, text: turnText, settled: inFlight.settled }
         : null,
+    stopPlayback,
+    publishCommitted: () => feed.publishAll(),
   });
 
   function currentMaxSeq(): number {
@@ -257,6 +308,13 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     // abort closed the text queue — see turn-voice.ts's createChunkQueue).
     const speech = inFlight?.turnId === turnId ? inFlight.speech : null;
     speech?.end();
+
+    // Turn boundary: release everything still outstanding on the committed
+    // feed — including a tool tile whose `tool_result` is never coming (a
+    // background dispatch) — BEFORE the terminal frame below. The client
+    // drops its live bubble on `turn.completed`, so the committed twin has to
+    // already be there or the reply visibly vanishes.
+    feed.publishAll();
 
     log.info("session-runtime.turn.end", {
       userId,
@@ -349,6 +407,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     // audio dies with the turn, with no extra cancellation path (spec §4.7).
     const speech = voice ? voice.begin(turnId, controller.signal) : null;
     inFlight = { turnId, controller, settled: false, speech };
+    lastTurnId = turnId;
     // Synchronous snapshot, no await between this and the `runTurn` call
     // below — guarantees the turn's first iteration sees everything ≤ this.
     lastProcessedSeq = currentMaxSeq();
@@ -377,6 +436,9 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
         // (if any) start counting fresh.
         turnText = "";
         emitter.toolUpdate(id, u);
+        // The loop just made this iteration's narration and/or a tool
+        // round-trip durable — publish whatever of it is now content-final.
+        feed.publishSettled();
         // Flush what local-tts has buffered so a short pre-tool line is
         // spoken now, not after the tool round-trip. `onToolUpdate` fires on
         // EVERY status transition; `flush` is idempotent per toolCallId
@@ -425,6 +487,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
 
     if (inFlight) {
       const entry = appendStimulus(stimulus, inFlight.turnId);
+      feed.publishSettled();
       log.info("session-runtime.submit.steer", {
         userId,
         sessionId,
@@ -437,6 +500,9 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
 
     const turnId = crypto.randomUUID();
     const entry = appendStimulus(stimulus, turnId);
+    // Before `startTurn`, so the user's own bubble reaches the client ahead of
+    // the `turn.started` it triggers — there is no optimistic client-side echo.
+    feed.publishSettled();
     log.info("session-runtime.submit.start-turn", { userId, sessionId, kind: stimulus.kind, seq: entry.seq, turnId });
     startTurn(turnId, stimulusTrigger(stimulus));
   }
@@ -458,5 +524,6 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     dispose,
     bargeIn: cancellation.bargeIn,
     interrupt: cancellation.interrupt,
+    emitConversationSnapshot: () => feed.snapshot(),
   };
 }

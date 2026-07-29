@@ -18,12 +18,22 @@
 //     route to the correct bubble.
 //
 // A cut-off turn emits BOTH `turn.aborted` (the feed marker, carrying the
-// cutoff kind) and `playback.stop` (the audio-flush command). They are
-// separate frames because they drive separate client subsystems, and
-// `playback.stop` is the ONLY frame that may flush the client's audio queue —
-// a new turnId must never do so (spec §4.6/§7.2, Global Constraint 5).
+// cutoff kind) and `playback.stop` (the audio-flush command) — but through
+// TWO emitter methods, not one. They drive separate client subsystems AND
+// have separate lifetimes: speech outlives its turn, so a cancel landing
+// while the audio still drains must be able to flush playback for a turn that
+// is no longer abortable (see runtime/cancellation.ts). `playback.stop` is
+// the ONLY frame that may flush the client's audio queue — a new turnId must
+// never do so (spec §4.6/§7.2, Global Constraint 5).
+//
+// `conversation.snapshot` / `conversation.entry` are the COMMITTED feed: the
+// store projected through `projectForClient` (store/client-projection.ts) by
+// runtime/conversation-feed.ts. Everything on the `turn.*` family is a live,
+// disposable stream — without these two the client's assistant bubble
+// vanishes the moment `turn.completed` lands, and the user's own message
+// never renders at all.
 
-import type { GatewayMessage, TurnAudioEncoding, TurnTrigger } from "@sentient/protocol";
+import type { ConversationFeedItem, GatewayMessage, TurnAudioEncoding, TurnTrigger } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import { getLog } from "../logging/logger.js";
 import type { ToolUpdate } from "../runtime/react-loop.js";
@@ -132,8 +142,28 @@ export function createWsTurnEmitter(ws: ServerWebSocket<SessionData>): TurnEmitt
       endTurn();
       log.info("turn-emitter.turn-aborted", { sessionId, turnId, cutoff });
       emit({ type: "turn.aborted", turnId, cutoff });
-      // The one sanctioned audio flush: a USER-initiated cancellation.
-      emit({ type: "playback.stop", turnId, reason: cutoff });
+    },
+
+    playbackStop(turnId: string, reason: CutoffKind) {
+      log.info("turn-emitter.playback-stop", { sessionId, turnId, reason });
+      emit({ type: "playback.stop", turnId, reason });
+    },
+
+    conversationSnapshot(items: ConversationFeedItem[]) {
+      // Item CONTENT is chat content — never logged. Count only.
+      log.info("turn-emitter.conversation-snapshot", { sessionId, itemCount: items.length });
+      emit({ type: "conversation.snapshot", items });
+    },
+
+    conversationEntry(item: ConversationFeedItem, turnId?: string) {
+      log.debug("turn-emitter.conversation-entry", {
+        sessionId,
+        entryId: item.entryId,
+        kind: item.kind,
+        turnId: turnId ?? null,
+      });
+      // Omit the key entirely rather than sending an explicit undefined.
+      emit({ type: "conversation.entry", item, ...(turnId === undefined ? {} : { turnId }) });
     },
 
     audioStart(turnId: string, encoding: TurnAudioEncoding, sampleRate: number) {

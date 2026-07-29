@@ -61,6 +61,7 @@ function stubRuntime(): StubRuntime {
     interrupt: () => {
       interruptCalls += 1;
     },
+    emitConversationSnapshot: () => {},
   };
   return { runtime, submitCalls, interruptCallCount: () => interruptCalls };
 }

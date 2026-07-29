@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import type { OrchestratorConfig } from "@sentient/config";
+import type { ConversationFeedItem } from "@sentient/protocol";
 import { createAccessManager } from "../access/access-manager.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
 import type { ProviderClient, ProviderRequest, ProviderStreamChunk } from "../provider/provider-client.js";
@@ -98,10 +99,21 @@ function noopBroker(): FakeBroker {
 }
 
 interface RecordedEvent {
-  type: "turnStarted" | "textDelta" | "toolUpdate" | "turnCompleted" | "turnAborted";
+  type:
+    | "turnStarted"
+    | "textDelta"
+    | "toolUpdate"
+    | "turnCompleted"
+    | "turnAborted"
+    | "playbackStop"
+    | "conversationSnapshot"
+    | "conversationEntry";
   turnId: string;
-  /** Only ever set on a `turnAborted` event — the wire's cutoff kind. */
+  /** Set on `turnAborted` and `playbackStop` — the wire's cutoff kind. */
   cutoff?: CutoffKind;
+  /** Set on the two committed-feed events. */
+  item?: ConversationFeedItem;
+  items?: ConversationFeedItem[];
 }
 
 interface RecordingEmitter extends TurnEmitter {
@@ -117,6 +129,9 @@ function recordingEmitter(): RecordingEmitter {
     toolUpdate: (turnId) => events.push({ type: "toolUpdate", turnId }),
     turnCompleted: (turnId) => events.push({ type: "turnCompleted", turnId }),
     turnAborted: (turnId, cutoff) => events.push({ type: "turnAborted", turnId, cutoff }),
+    playbackStop: (turnId, reason) => events.push({ type: "playbackStop", turnId, cutoff: reason }),
+    conversationSnapshot: (items) => events.push({ type: "conversationSnapshot", turnId: "", items }),
+    conversationEntry: (item, turnId) => events.push({ type: "conversationEntry", turnId: turnId ?? "", item }),
     // Not part of any assertion in this file — SessionRuntime never drives
     // these (audio is the voice pipeline's, permission/delegation the PDP's
     // and broker's). Present only to satisfy the TurnEmitter contract.
@@ -577,6 +592,9 @@ describe("SessionRuntime — isolation", () => {
         }
       },
       turnAborted: (t) => events.push({ type: "turnAborted", turnId: t }),
+      playbackStop: (t, reason) => events.push({ type: "playbackStop", turnId: t, cutoff: reason }),
+      conversationSnapshot: (items) => events.push({ type: "conversationSnapshot", turnId: "", items }),
+      conversationEntry: (item, t) => events.push({ type: "conversationEntry", turnId: t ?? "", item }),
       audioStart: () => {},
       audioFrame: () => {},
       audioDone: () => {},
@@ -1005,18 +1023,34 @@ interface VoiceCall {
   pushed: string[];
   flushed: string[];
   ends: number;
+  /** Audio OUTLIVES the turn: `end()` closes only the text queue, so this
+   *  stays true until a cancel gesture cuts the drain. */
+  audioLive: boolean;
 }
 
 interface RecordingVoice extends TurnVoice {
   calls: VoiceCall[];
+  /** turnIds reported cut, one entry per `cancelAudio()` call. */
+  cancelledAudio: string[][];
 }
 
 function recordingVoice(): RecordingVoice {
   const calls: VoiceCall[] = [];
+  const cancelledAudio: string[][] = [];
   return {
     calls,
+    cancelledAudio,
+    // Mirrors turn-voice.ts: reports the turns whose audio was still live.
+    // Deliberately independent of the turns' own signals — that independence
+    // is the whole point of the tail-window fix.
+    cancelAudio(): string[] {
+      const cut = calls.filter((c) => c.audioLive).map((c) => c.turnId);
+      for (const call of calls) call.audioLive = false;
+      cancelledAudio.push(cut);
+      return cut;
+    },
     begin(turnId, signal): TurnVoiceStream {
-      const call: VoiceCall = { turnId, signal, pushed: [], flushed: [], ends: 0 };
+      const call: VoiceCall = { turnId, signal, pushed: [], flushed: [], ends: 0, audioLive: true };
       calls.push(call);
       return {
         pushText: (text) => {
@@ -1241,6 +1275,250 @@ describe("SessionRuntime — turn.aborted producer", () => {
     expect(emitter.events.filter((e) => e.type === "turnCompleted")).toHaveLength(0);
 
     await waitUntilIdle(runtime);
+    runtime.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Committed-feed producer (spec §3.2/§3.4, §7). The `turn.*` family is a live,
+// disposable stream — the client drops it on `turn.completed`. These cases pin
+// that `conversation.entry` actually reaches the emitter at the two lifecycle
+// points that matter, because a producer that exists but is never called
+// leaves the chat empty in exactly the way the whole-branch review found.
+// Convergence of the frames themselves is pinned in conversation-feed.test.ts.
+// ---------------------------------------------------------------------------
+
+describe("SessionRuntime — committed-feed producer", () => {
+  it("commits the USER entry to the feed before the turn it triggers even starts", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/feed-user` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = fakeProvider(async function* () {
+      yield { type: "text", content: "hi there" };
+      yield { type: "done", finishReason: "stop" };
+    });
+    const emitter = recordingEmitter();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-feed-user",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter,
+      systemPrompt: "test",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "hello" });
+
+    // Synchronous: the user's own bubble must not wait on the model.
+    const first = emitter.events[0];
+    expect(first?.type).toBe("conversationEntry");
+    expect(first?.item).toMatchObject({ kind: "user", content: "hello", channel: "text" });
+    expect(emitter.events[1]?.type).toBe("turnStarted");
+
+    await waitUntilIdle(runtime);
+    runtime.dispose();
+  });
+
+  it("commits the assistant entry to the feed BEFORE turn.completed clears the live bubble", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/feed-assistant` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = fakeProvider(async function* () {
+      yield { type: "text", content: "the answer" };
+      yield { type: "done", finishReason: "stop" };
+    });
+    const emitter = recordingEmitter();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-feed-assistant",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter,
+      systemPrompt: "test",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "ask" });
+    await waitUntilIdle(runtime);
+
+    const kinds = emitter.events.map((e) => e.type);
+    const assistantIdx = emitter.events.findIndex(
+      (e) => e.type === "conversationEntry" && e.item?.kind === "assistant",
+    );
+    expect(assistantIdx).toBeGreaterThan(-1);
+    expect(assistantIdx).toBeLessThan(kinds.indexOf("turnCompleted"));
+
+    const committed = emitter.events[assistantIdx];
+    expect(committed?.item).toMatchObject({ kind: "assistant", content: "the answer" });
+    // The join key is the entry's OWN turn, so the client folds the committed
+    // twin into its live bubble instead of rendering a second one.
+    expect(committed?.turnId).toBe(emitter.events.find((e) => e.type === "turnStarted")?.turnId ?? "");
+
+    runtime.dispose();
+  });
+
+  it("emitConversationSnapshot replays the whole session for a reconnecting client", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/feed-snapshot` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = fakeProvider(async function* () {
+      yield { type: "text", content: "remembered" };
+      yield { type: "done", finishReason: "stop" };
+    });
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-feed-snapshot",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter: recordingEmitter(),
+      systemPrompt: "test",
+      config: testConfig(),
+    });
+    runtime.submit({ kind: "conversational", text: "say something" });
+    await waitUntilIdle(runtime);
+    runtime.dispose();
+
+    // A brand new connection for the same session — what session.configure does.
+    const reconnectEmitter = recordingEmitter();
+    const reconnected = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-feed-snapshot",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter: reconnectEmitter,
+      systemPrompt: "test",
+      config: testConfig(),
+    });
+    reconnected.emitConversationSnapshot();
+
+    const snapshot = reconnectEmitter.events.find((e) => e.type === "conversationSnapshot");
+    expect(snapshot?.items?.map((i) => i.kind)).toEqual(["user", "assistant"]);
+
+    // Armed at the snapshot's tail: the next turn's entries must not re-send
+    // history the client already has.
+    reconnected.submit({ kind: "conversational", text: "again" });
+    const afterSnapshot = reconnectEmitter.events
+      .slice(reconnectEmitter.events.indexOf(snapshot as RecordedEvent) + 1)
+      .filter((e) => e.type === "conversationEntry");
+    expect(afterSnapshot.map((e) => e.item?.kind)).toEqual(["user"]);
+
+    await waitUntilIdle(reconnected);
+    reconnected.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The audio tail window (spec §4.7). TTS OUTLIVES its turn: `onTurnSettled`
+// closes only the text queue, and a turn that completes naturally never aborts
+// its own controller. Every gesture landing between "final entry committed"
+// and "playback finished" used to be a no-op server-side — the gateway kept
+// writing frames, the client never learned to flush, and the assistant audibly
+// resumed talking after the user pressed Stop.
+//
+// Cancelling audio and committing a cutoff entry are separate concerns: the
+// double-commit guard still owns the second, and must stay untouched by the
+// first.
+// ---------------------------------------------------------------------------
+
+describe("SessionRuntime — cancellation reaches the audio tail", () => {
+  it("INVARIANT: interrupt() after a natural completion still cuts audio and flushes playback", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/tail-interrupt` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = fakeProvider(async function* () {
+      yield { type: "text", content: "a long spoken reply" };
+      yield { type: "done", finishReason: "stop" };
+    });
+    const background = spyBackgroundRegistry();
+    const voice = recordingVoice();
+    const emitter = recordingEmitter();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-tail-interrupt",
+      accessManager: am,
+      provider,
+      broker: fakeBrokerWithBackground(background),
+      emitter,
+      systemPrompt: "test",
+      config: testConfig(),
+      voice,
+    });
+
+    runtime.submit({ kind: "conversational", text: "tell me a story" });
+    await waitUntilIdle(runtime);
+
+    // The turn is over and its own signal was never aborted — this is exactly
+    // the window the old guard treated as "nothing to do".
+    expect(voice.calls[0]?.signal.aborted).toBe(false);
+    expect(emitter.events.some((e) => e.type === "turnCompleted")).toBe(true);
+
+    runtime.interrupt();
+
+    expect(voice.cancelledAudio).toEqual([[voice.calls[0]?.turnId ?? ""]]);
+    const stops = emitter.events.filter((e) => e.type === "playbackStop");
+    expect(stops).toHaveLength(1);
+    expect(stops[0]?.cutoff).toBe("interrupt");
+    expect(stops[0]?.turnId).toBe(voice.calls[0]?.turnId ?? "");
+
+    // The double-commit guard still holds: no second cutoff entry, no
+    // turn.aborted racing the legitimate turn.completed.
+    const readback = openSessionStore(am.grant(alice, "session-store"));
+    const assistantEntries = readback.readSession("sess-tail-interrupt").filter((e) => e.kind === "assistant");
+    expect(assistantEntries).toHaveLength(1);
+    expect(assistantEntries[0]?.cutoff).toBeNull();
+    readback.close();
+    expect(emitter.events.some((e) => e.type === "turnAborted")).toBe(false);
+    // interrupt's unconditional reach into background tasks is unaffected.
+    expect(background.cancelAllCalls).toBe(1);
+
+    runtime.dispose();
+  });
+
+  it("INVARIANT: bargeIn() during the audio tail flushes playback but leaves background tasks alone", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/tail-bargein` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = fakeProvider(async function* () {
+      yield { type: "text", content: "still speaking" };
+      yield { type: "done", finishReason: "stop" };
+    });
+    const background = spyBackgroundRegistry();
+    background.register("task-1", () => {});
+    const voice = recordingVoice();
+    const emitter = recordingEmitter();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-tail-bargein",
+      accessManager: am,
+      provider,
+      broker: fakeBrokerWithBackground(background),
+      emitter,
+      systemPrompt: "test",
+      config: testConfig(),
+      voice,
+    });
+
+    runtime.submit({ kind: "conversational", text: "keep talking" });
+    await waitUntilIdle(runtime);
+
+    runtime.bargeIn();
+
+    const stops = emitter.events.filter((e) => e.type === "playbackStop");
+    expect(stops).toHaveLength(1);
+    expect(stops[0]?.cutoff).toBe("barge-in");
+    expect(background.cancelAllCalls).toBe(0);
+    expect(background.count()).toBe(1);
+
     runtime.dispose();
   });
 });
