@@ -62,6 +62,47 @@ test("orphan containers (managed but not in registry) are removed", async () => 
   expect(removeCalls.some((s) => s.includes("fake-service") || s === "2")).toBe(true);
 });
 
+test("CONTRACT: each backend's orphans are reaped through that backend's OWN driver", async () => {
+  // The one test that gives the two backends different stubs. With a single
+  // shared stub, a reconciler that visited only one launch kind — or routed
+  // both through one driver — would look identical: the same orphan list would
+  // come back and the same remove() would fire twice.
+  const dockerRemoved: string[] = [];
+  const nativeRemoved: string[] = [];
+  const backend = (orphan: string, into: string[]): ServiceDriver => ({
+    prepare: async () => ok,
+    recreate: async () => ok,
+    start: async () => ok,
+    stop: async () => ok,
+    remove: async (id) => {
+      into.push(id);
+      return ok;
+    },
+    listManaged: async (): Promise<ManagedProcessInfo[]> => [{ id: orphan, service: orphan, state: "running" }],
+  });
+  const reg = new Map([["ha-mcp", ms("ha-mcp")]]);
+  const orch = {
+    applyAll: async (): Promise<OrchestratorStatus> => ({
+      state: "ready",
+      services: [],
+      startedAt: 0,
+      finishedAt: 1,
+    }),
+  };
+
+  await reconcileOnBoot({
+    drivers: {
+      docker: backend("stale-container", dockerRemoved),
+      native: backend("stale-process", nativeRemoved),
+    },
+    registry: reg,
+    orchestrator: orch,
+  });
+
+  expect(dockerRemoved).toEqual(["stale-container"]);
+  expect(nativeRemoved).toEqual(["stale-process"]);
+});
+
 test("calls applyAll after orphan reap to bring up registry services", async () => {
   let applyCount = 0;
   const driver: ServiceDriver = {

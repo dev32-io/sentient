@@ -29,6 +29,20 @@ function svc(name: string, deps: string[] = [], optional = false): ManagedServic
   };
 }
 
+function nativeSvc(name: string): ManagedService {
+  return {
+    name,
+    config: {
+      launch: "native",
+      exec: [`/opt/${name}/venv/bin/python`, "-m", name.replace("-", "_")],
+      env: {},
+      healthcheck: { url: `http://${name}/health`, timeout_ms: 200 },
+      depends_on: [],
+      optional: false,
+    },
+  };
+}
+
 const happyDriver: ServiceDriver = {
   prepare: async () => ok,
   recreate: async () => ok,
@@ -193,6 +207,40 @@ test("concurrent applyAll calls share a single in-flight apply", async () => {
   const [r1, r2] = await Promise.all([orch.applyAll(), orch.applyAll()]);
   expect(recreates).toBe(1);
   expect(r1).toBe(r2); // same status object — same in-flight promise
+});
+
+test("CONTRACT: each service is recreated by the driver for its OWN launch kind", async () => {
+  // The one test that gives the two backends different stubs. Every other test
+  // here routes both kinds through one stub, so a swapped or collapsed
+  // Record<LaunchKind, ServiceDriver> would pass them all: each driver's
+  // fail-closed wrong-backend guard would reject the mismatch and the apply
+  // would just degrade, with nothing asserting where a service actually went.
+  const dockerSeen: string[] = [];
+  const nativeSeen: string[] = [];
+  const recorder = (into: string[]): ServiceDriver => ({
+    ...happyDriver,
+    recreate: async (ms) => {
+      into.push(ms.name);
+      return ok;
+    },
+  });
+  const reg = new Map([
+    ["ha-mcp", svc("ha-mcp")],
+    ["local-tts", nativeSvc("local-tts")],
+  ]);
+  const orch = createSystemOrchestrator({
+    registry: reg,
+    drivers: { docker: recorder(dockerSeen), native: recorder(nativeSeen) },
+    healthIO: healthyIO,
+    pollIntervalMs: 1,
+    applyTimeoutMs: 100,
+  });
+
+  const r = await orch.applyAll();
+
+  expect(r.state).toBe("ready");
+  expect(dockerSeen).toEqual(["ha-mcp"]);
+  expect(nativeSeen).toEqual(["local-tts"]);
 });
 
 test("dep-graph cycle leaves every service with a lastError reason", async () => {
