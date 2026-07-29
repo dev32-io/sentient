@@ -27,11 +27,15 @@ Invariants this script exists to hold:
 from __future__ import annotations
 
 import hashlib
+import os
+import shutil
 import ssl
+import subprocess
+import tarfile
 import time
 import urllib.error
 import urllib.request
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 # Read the tarball in fixed-size blocks so a multi-hundred-MB release never
 # lands in memory in one piece. Valid: any power of two >= 4096; 1 MiB is the
@@ -60,6 +64,42 @@ HEALTH_INTERVAL_SECONDS = 2
 # Valid: 1..60 seconds.
 HEALTH_TIMEOUT_SECONDS = 5
 HTTP_OK = 200
+
+# --- release layout ----------------------------------------------------------
+# Root-owned, immutable code. Nothing executable lives under $HOME.
+OPT = Path("/opt/sentient")
+# launchd's ProgramArguments points at the fixed `current/...` path, so a
+# version flip is exactly this symlink swap.
+CURRENT_LINK = "current"
+CURRENT_STAGING = ".current.tmp"
+# Relative to a release dir; produced by scripts/build-gateway.sh.
+GATEWAY_BINARY = "bin/sentient-gateway"
+CODE_OWNER = "root:wheel"
+# 755: root writes, everyone executes. Never group- or world-writable — that
+# would hand the service user a way to rewrite its own binary.
+CODE_MODE = "755"
+# macOS tar writes an AppleDouble `._<name>` sidecar beside any member carrying
+# extended attributes. Metadata, not content — never a version directory.
+APPLEDOUBLE_PREFIX = "._"
+
+# --- state layout ------------------------------------------------------------
+# Mutable, operator-owned state. Mirrors what the compose deploy bind-mounted,
+# so an existing mini keeps every path it already has. Relative to ~/.sentient.
+STATE_DIRS = (
+    "gateway/config",
+    "gateway/logs",
+    "gateway/clientLogs",
+    "gateway/data",
+    "gateway/users",
+    "secrets",
+    "certs",
+    "run",
+)
+# 0700: only the operator may traverse the secrets dir. 0600 on the key file
+# itself, because a mode that leaks is a security defect, not a nuisance.
+SECRETS_DIR_MODE = 0o700
+SECRETS_FILE_MODE = 0o600
+SECRET_FILENAMES = ("keys.yaml",)
 
 
 class InstallError(Exception):
@@ -98,6 +138,153 @@ def verify_tarball_checksum(tarball: Path, sidecar: Path) -> bool:
         return sha256_of(tarball) == digest
     except OSError:
         return False
+
+
+def ensure_state_dirs(home: Path, template_config: Path, chown=None) -> None:
+    """Create the operator's mutable state tree under `home/.sentient`.
+
+    Idempotent by construction. `chown` is called for every path this function
+    creates: the installer runs as root but the gateway runs as the operator,
+    so anything root creates and forgets to hand back is a directory the
+    gateway cannot write at next boot — a failure that surfaces hours later as
+    a permission error rather than here.
+    """
+    handed_back = chown or (lambda _path: None)
+    root = home / ".sentient"
+
+    for relative in ("",) + STATE_DIRS:
+        path = root / relative if relative else root
+        path.mkdir(parents=True, exist_ok=True)
+        handed_back(path)
+
+    secrets = root / "secrets"
+    secrets.chmod(SECRETS_DIR_MODE)
+    for name in SECRET_FILENAMES:
+        secret = secrets / name
+        if secret.exists():
+            secret.chmod(SECRETS_FILE_MODE)
+            handed_back(secret)
+
+    # HARD RULE: the operator edits config.yaml by hand. Seed it once, never
+    # clobber it. Reverting a hand-tuned production config is silent data loss.
+    config = root / "gateway/config/config.yaml"
+    if config.exists():
+        return
+    if not template_config.is_file():
+        raise InstallError(
+            f"no config template at {template_config} and no existing config at {config} "
+            "— the gateway has nothing to read at startup"
+        )
+    shutil.copyfile(template_config, config)
+    handed_back(config)
+
+
+def read_release_version(tarball: Path) -> str:
+    """The version a release tarball actually contains.
+
+    `scripts/build-gateway.sh` packs `tar -czf <v>.tar.gz -C dist/gateway <v>`,
+    so the archive's single top-level directory is the authoritative version.
+    The FILENAME is only a label — an operator can rename or mistype it, and
+    trusting it would unpack `1.13.0/` while pointing `current` at `9.9.9/`,
+    leaving launchd exec'ing a path that does not exist.
+
+    Also the guard for an archive that writes outside the release root. This
+    runs as root, so a `../` member would land anywhere on the system.
+    """
+    try:
+        with tarfile.open(tarball, "r:gz") as archive:
+            names = archive.getnames()
+    except (OSError, tarfile.TarError) as e:
+        raise InstallError(f"cannot read release archive {tarball}: {e}") from e
+
+    tops = set()
+    for name in names:
+        parts = PurePosixPath(name).parts
+        if name.startswith("/") or ".." in parts:
+            raise InstallError(
+                f"release archive {tarball} contains {name!r}, which escapes the "
+                "release root — refusing to extract it as root"
+            )
+        # AppleDouble sidecars are metadata, not content. macOS tar emits a
+        # `._<name>` beside every xattr-bearing member, so counting them as
+        # top-level directories would reject a genuine release built on such a
+        # host. The traversal guard above still applies to them.
+        if parts and not parts[0].startswith(APPLEDOUBLE_PREFIX):
+            tops.add(parts[0])
+
+    if len(tops) != 1:
+        raise InstallError(
+            f"release archive {tarball} must hold exactly one top-level version "
+            f"directory, found {sorted(tops) or 'none'}"
+        )
+    return tops.pop()
+
+
+class RealFs:
+    """The `/opt/sentient` release tree.
+
+    Code lives here and nowhere else: root-owned and immutable, so the
+    unprivileged service user cannot rewrite the binary it runs. `current` is a
+    symlink, swapped atomically, because launchd's ProgramArguments points at
+    the fixed `current/bin/sentient-gateway` path — the version flip IS the
+    symlink swap.
+    """
+
+    def __init__(self, opt_root: Path = OPT, runner=subprocess.run):
+        self._root = Path(opt_root)
+        self._run = runner
+
+    @property
+    def current(self) -> str | None:
+        link = self._root / CURRENT_LINK
+        if not link.is_symlink():
+            return None
+        return Path(os.readlink(link)).name
+
+    def has_version(self, version: str) -> bool:
+        return (self._root / version).is_dir()
+
+    def unpack(self, version: str, tarball: Path) -> None:
+        contained = read_release_version(tarball)
+        if contained != version:
+            raise InstallError(
+                f"release archive {tarball} contains {contained}, not the requested "
+                f"{version} — refusing to install a version that is not there"
+            )
+
+        self._root.mkdir(parents=True, exist_ok=True)
+        self._run(["tar", "-xzf", str(tarball), "-C", str(self._root)], check=True)
+
+        release = self._root / version
+        binary = release / GATEWAY_BINARY
+        if not binary.is_file():
+            raise InstallError(
+                f"release {version} unpacked without {GATEWAY_BINARY} — the archive is "
+                "not a gateway release"
+            )
+        self._harden(release)
+
+    def _harden(self, release: Path) -> None:
+        # CODE IS ROOT-OWNED: the service runs as the operator and must not be
+        # able to rewrite its own binary. This is the whole reason code does not
+        # live under $HOME.
+        self._run(["chown", "-R", CODE_OWNER, str(release)], check=True)
+        self._run(["chmod", "-R", CODE_MODE, str(release)], check=True)
+
+    def point_current_at(self, version: str) -> None:
+        """Swap `current` via rename, so it is never momentarily absent.
+
+        An unlink-then-symlink would leave a window in which launchd has no
+        binary to exec. `Path.replace` is a rename(2) — atomic on the same
+        filesystem.
+        """
+        staging = self._root / CURRENT_STAGING
+        # A previous run killed mid-swap leaves this behind. Clearing it turns a
+        # retry into a retry rather than an outage.
+        if staging.is_symlink() or staging.exists():
+            staging.unlink()
+        staging.symlink_to(self._root / version)
+        staging.replace(self._root / CURRENT_LINK)
 
 
 def build_tls_context(ca_bundle: Path) -> ssl.SSLContext:

@@ -10,14 +10,20 @@ from __future__ import annotations
 
 import hashlib
 import ssl
+import os
+import stat
 import subprocess
+import tarfile
 
 import pytest
 from setup_prod import (
     HealthProbe,
     InstallError,
     Installer,
+    RealFs,
     build_tls_context,
+    ensure_state_dirs,
+    read_release_version,
     verify_tarball_checksum,
 )
 
@@ -305,3 +311,202 @@ def test_health_probe_gives_up_within_its_budget(tmp_path):
 
     assert probe.wait() is False
     assert len(calls) == 4, "bounded retry budget — never an unbounded wait"
+
+
+# --- user-owned state (data-loss + privilege boundary) ------------------------
+
+
+def test_operator_config_is_never_clobbered(tmp_path):
+    """The operator hand-edits config.yaml. Re-running the installer must not
+    revert those edits — this has bitten before."""
+    home = tmp_path / "home"
+    template = tmp_path / "template.yaml"
+    template.write_text("orchestrator:\n  model: template-default\n")
+    cfg = home / ".sentient/gateway/config/config.yaml"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text("orchestrator:\n  model: operator-tuned\n")
+
+    ensure_state_dirs(home, template)
+    ensure_state_dirs(home, template)  # idempotent: twice must be identical
+
+    assert cfg.read_text() == "orchestrator:\n  model: operator-tuned\n"
+
+
+def test_config_is_seeded_from_the_template_on_a_fresh_host(tmp_path):
+    home = tmp_path / "home"
+    template = tmp_path / "template.yaml"
+    template.write_text("orchestrator:\n  model: template-default\n")
+
+    ensure_state_dirs(home, template)
+
+    assert (home / ".sentient/gateway/config/config.yaml").read_text() == template.read_text()
+
+
+def test_secrets_are_not_readable_by_group_or_world(tmp_path):
+    home = tmp_path / "home"
+    template = tmp_path / "template.yaml"
+    template.write_text("orchestrator: {}\n")
+    ensure_state_dirs(home, template)
+    keys = home / ".sentient/secrets/keys.yaml"
+    keys.write_text("paseto: redacted\n")
+    keys.chmod(0o644)
+
+    ensure_state_dirs(home, template)
+
+    assert stat.S_IMODE((home / ".sentient/secrets").stat().st_mode) == 0o700
+    assert stat.S_IMODE(keys.stat().st_mode) == 0o600
+
+
+def test_state_created_under_sudo_is_handed_back_to_the_operator(tmp_path):
+    """The installer runs as root; the gateway runs as the operator.
+
+    Anything root creates under ~/.sentient and forgets to chown is a directory
+    the gateway cannot write at next boot — a failure that shows up hours later
+    as a permission error, not here.
+    """
+    home = tmp_path / "home"
+    template = tmp_path / "template.yaml"
+    template.write_text("orchestrator: {}\n")
+    chowned = []
+
+    ensure_state_dirs(home, template, chown=chowned.append)
+
+    created = {p for p in chowned}
+    assert home / ".sentient" in created
+    assert home / ".sentient/secrets" in created
+    assert home / ".sentient/gateway/config/config.yaml" in created, "the seeded config too"
+
+
+# --- release archive -> disk (untrusted-archive boundary + layout invariant) ---
+#
+# `scripts/build-gateway.sh` packs `tar -czf <v>.tar.gz -C dist/gateway <v>`, so
+# the archive's single top-level directory IS the version. The filename is just
+# a label an operator can rename or mistype; the archive is the fact.
+
+
+def _release_tarball(tmp_path, version, members=()):
+    """A tarball shaped exactly like `scripts/build-gateway.sh` emits."""
+    staging = tmp_path / "staging"
+    release = staging / version
+    (release / "bin").mkdir(parents=True, exist_ok=True)
+    (release / "bin/sentient-gateway").write_text("#!/bin/sh\nexit 0\n")
+    (release / "share").mkdir(exist_ok=True)
+    for name in members:
+        member = release / name
+        member.parent.mkdir(parents=True, exist_ok=True)
+        member.write_text("x")
+    tarball = tmp_path / f"{version}.tar.gz"
+    # COPYFILE_DISABLE mirrors the real `dist/gateway/<v>.tar.gz`, which has zero
+    # AppleDouble members (verified). Without it macOS tar emits a `._<name>`
+    # sidecar for every xattr-bearing file, which is a DIFFERENT archive shape —
+    # covered explicitly by test_applesingle_sidecars_do_not_hide_the_version.
+    subprocess.run(
+        ["tar", "-czf", str(tarball), "-C", str(staging), version],
+        check=True, capture_output=True, env={**os.environ, "COPYFILE_DISABLE": "1"},
+    )
+    return tarball
+
+
+def _rootless_runner(recorded):
+    """Run `tar` for real; record the privileged calls instead of running them.
+
+    The hardening commands need root. Recording them keeps the extraction path
+    genuinely exercised while letting the layout invariants be verified without
+    sudo — and lets the tests assert that hardening was actually requested.
+    """
+    def runner(argv, **kwargs):
+        recorded.append(list(argv))
+        if argv[0] == "tar":
+            return subprocess.run(argv, **kwargs)
+        return subprocess.CompletedProcess(argv, 0)
+    return runner
+
+
+def test_release_version_comes_from_the_archive_not_the_filename(tmp_path):
+    tarball = _release_tarball(tmp_path, "1.13.0")
+    renamed = tmp_path / "9.9.9.tar.gz"
+    tarball.rename(renamed)
+
+    assert read_release_version(renamed) == "1.13.0"
+
+
+def test_applesingle_sidecars_do_not_hide_the_version(tmp_path):
+    """A build host whose files carry xattrs makes macOS tar emit a `._<name>`
+    AppleDouble sidecar beside every member.
+
+    Today's `dist/gateway/<v>.tar.gz` happens to have none, but treating those
+    sidecars as a second top-level directory would reject EVERY genuine release
+    the day a build host starts adding xattrs — the same shape of bug as
+    trusting the absolute path in the `.sha256` sidecar.
+    """
+    tarball = tmp_path / "1.13.0.tar.gz"
+    payload = tmp_path / "sentient-gateway"
+    payload.write_text("#!/bin/sh\nexit 0\n")
+    with tarfile.open(tarball, "w:gz") as archive:
+        archive.add(payload, arcname="1.13.0/bin/sentient-gateway")
+        archive.add(payload, arcname="._1.13.0")
+        archive.add(payload, arcname="1.13.0/bin/._sentient-gateway")
+
+    assert read_release_version(tarball) == "1.13.0"
+
+
+def test_a_tarball_disagreeing_with_the_requested_version_is_refused(tmp_path):
+    """The failure this prevents: unpacking `1.13.0/` but pointing `current` at
+    `9.9.9/`, leaving launchd exec'ing a path that does not exist."""
+    tarball = _release_tarball(tmp_path, "1.13.0")
+    fs = RealFs(tmp_path / "opt", runner=_rootless_runner([]))
+
+    with pytest.raises(InstallError) as e:
+        fs.unpack("9.9.9", tarball)
+
+    assert "1.13.0" in str(e.value) and "9.9.9" in str(e.value)
+
+
+def test_an_archive_escaping_the_release_root_is_refused(tmp_path):
+    """A member outside `<version>/` writes over arbitrary paths as root."""
+    payload = tmp_path / "evil"
+    payload.write_text("pwned")
+    tarball = tmp_path / "1.13.0.tar.gz"
+    # Written with tarfile, not `tar`: bsdtar normalises `../` out of member
+    # names, so shelling out would silently build a BENIGN archive and the
+    # test would pass without ever exercising the guard.
+    with tarfile.open(tarball, "w:gz") as archive:
+        archive.add(payload, arcname="../../etc/evil")
+
+    with pytest.raises(InstallError) as e:
+        read_release_version(tarball)
+
+    assert "escape" in str(e.value).lower() or "outside" in str(e.value).lower()
+
+
+def test_unpack_lays_down_a_runnable_release_and_hardens_it(tmp_path):
+    """CODE IS ROOT-OWNED: the service user must not be able to rewrite its own
+    binary. That is the entire reason code does not live under $HOME."""
+    tarball = _release_tarball(tmp_path, "1.13.0")
+    opt = tmp_path / "opt"
+    recorded = []
+    fs = RealFs(opt, runner=_rootless_runner(recorded))
+
+    fs.unpack("1.13.0", tarball)
+
+    assert (opt / "1.13.0/bin/sentient-gateway").is_file()
+    assert fs.has_version("1.13.0") is True
+    hardening = [argv for argv in recorded if argv[0] == "chown"]
+    assert hardening, "must chown the release"
+    assert "root:wheel" in hardening[0]
+
+
+def test_current_survives_a_tmp_symlink_left_by_a_crashed_run(tmp_path):
+    """`current` must never be absent, and a half-finished previous run must not
+    wedge the installer — that would turn a retry into an outage."""
+    opt = tmp_path / "opt"
+    (opt / "1.12.0").mkdir(parents=True)
+    (opt / "1.13.0").mkdir(parents=True)
+    fs = RealFs(opt, runner=_rootless_runner([]))
+    fs.point_current_at("1.12.0")
+    (opt / ".current.tmp").symlink_to(opt / "1.12.0")  # crashed mid-swap
+
+    fs.point_current_at("1.13.0")
+
+    assert fs.current == "1.13.0"
+    assert (opt / "current").is_symlink()
