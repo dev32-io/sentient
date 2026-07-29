@@ -603,11 +603,12 @@ class Installer:
     take the mini down — is testable without root, launchd or a live gateway.
     """
 
-    def __init__(self, fs, launchd, health, verify_checksum):
+    def __init__(self, fs, launchd, health, verify_checksum, prepare=None):
         self._fs = fs
         self._launchd = launchd
         self._health = health
         self._verify_checksum = verify_checksum
+        self._prepare = prepare or (lambda _version: None)
 
     def install(self, version, tarball):
         previous = self._fs.current
@@ -620,6 +621,10 @@ class Installer:
             raise InstallError(f"checksum mismatch for {tarball}; refusing to install")
 
         self._fs.unpack(version, tarball)
+        # Finish the release BEFORE it goes live. The native services' venvs are
+        # built here, and a failure must leave the working version current
+        # rather than hand launchd a release with no interpreter.
+        self._prepare(version)
         self._fs.point_current_at(version)
         self._launchd.kickstart()
 

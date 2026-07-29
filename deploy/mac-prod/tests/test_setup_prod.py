@@ -120,6 +120,33 @@ def test_reinstalling_the_running_version_is_a_noop():
     assert ld.kicks == 0, "idempotent: a healthy identical install must not restart the service"
 
 
+def test_a_release_that_fails_to_prepare_never_becomes_current():
+    """Unpacking is not the whole release: the native services' venvs are built
+    afterwards, from vendored wheels, and that can fail (a missing wheel, a
+    wrong interpreter minor).
+
+    If it does, `current` must still point at the working version. Flipping first
+    and preparing second would hand launchd a release with no interpreter and
+    turn a recoverable packaging error into an outage.
+    """
+    fs, ld = FakeFs(), FakeLaunchd()
+    fs.point_current_at("1.12.0")
+    fs.installed.append("1.12.0")
+
+    def prepare(_version):
+        raise InstallError("local-tts: vendored wheel missing")
+
+    inst = Installer(fs=fs, launchd=ld, health=lambda: True,
+                     verify_checksum=lambda p: True, prepare=prepare)
+
+    with pytest.raises(InstallError) as e:
+        inst.install("1.13.0", tarball="x.tar.gz")
+
+    assert "wheel" in str(e.value)
+    assert fs.current == "1.12.0", "the working version must stay live"
+    assert ld.kicks == 0, "must not restart into a half-built release"
+
+
 def test_first_ever_install_failure_says_there_is_nothing_to_roll_back_to():
     fs, ld = FakeFs(), FakeLaunchd()  # no `current` — fresh mini
     inst = Installer(fs=fs, launchd=ld, health=lambda: False, verify_checksum=lambda p: True)
