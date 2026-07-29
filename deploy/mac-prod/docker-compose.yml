@@ -1,179 +1,46 @@
-# Sentient — macOS Docker Desktop PRODUCTION (release) compose.
+# Sentient — macOS PRODUCTION addon image bakery.
 #
-# This is the production deploy target. It replaces the retired deploy/pi/
-# (Raspberry Pi) setup: the gateway + all sibling services now run on an
-# Apple-silicon Mac mini so local STT (Whisper-large) and large TTS models
-# have the headroom the Pi lacked. (You CAN still split — gateway on a Pi,
-# heavy services on a bigger box — but this folder targets all-on-one macOS.)
+# This file no longer runs anything. After the native-stack migration the
+# gateway is a compiled binary supervised by launchd (io.sentient.gateway.plist,
+# installed to /Library/LaunchDaemons/), and the gateway itself is the host
+# orchestrator: it creates, starts, recreates and health-checks every addon
+# container over /var/run/docker.sock. `docker compose up` has no service to
+# select here — bring-up is `launchctl bootstrap system`, see deploy/README.md.
 #
-# Structure mirrors the old Pi prod model:
-#   - gateway is the only long-running compose service.
-#   - hermes / MCPs / signal-cli are `build-only` siblings; the gateway's
-#     orchestrator creates/starts/recreates them at runtime via
-#     /var/run/docker.sock. Compose only needs their images present.
-#   - stt-service (SenseVoice) is gated behind the `stt-docker` profile — it is
-#     built/managed ONLY when deploy.conf selects the docker-sensevoice backend.
-#     The default (native-whisper) runs STT as a host launchd service instead;
-#     see deploy.conf + native/ + deploy/setup-prod.py.
+# What compose is still for: baking the `:local` image tags the orchestrator
+# creates containers from.
 #
-# macOS-specific vs the old Pi compose:
-#   - /data/supervisor is a NAMED VOLUME, not a bind. Docker Desktop's
-#     virtiofs bind-mounts reject AF_UNIX bind() (EINVAL), which kills
-#     supervisord. A named volume (ext4 inside the VM) lets it bind its
-#     socket. Both gateway and orchestrator-spawned hermes mount it.
-#   - /run/sentient is a NAMED VOLUME (sentient-run) for the same reason.
-#     The gateway binds per-user mcp-<userId>.sock unix sockets here for
-#     Hermes to dial. On a bind-mount, listen() succeeds once but unlink()
-#     and chmod() fail (EINVAL/ENOTSUP), so a force-killed container leaves
-#     stale socket files that brick the next boot's listen() with ENOTSUP.
-#     A named volume makes bind/unlink/chmod all work. Both gateway and
-#     orchestrator-spawned hermes mount it (via MCP_SOCKET_DIR).
-#   - The TLS cert lives at ~/.data/certs/sentient.dev32.io (acme.sh on the
-#     LAN renews + rsyncs it there). This is the ONE state path outside
-#     ~/.sentient by design — it is externally managed infra, re-derivable
-#     on renewal, not app state.
-#
-# All other persistent state — including the Hermes "brain" (now bound at
-# ~/.sentient/hermes/data, see gateway/templates/services/sentient-hermes.yaml)
-# — lives under ~/.sentient/, so the whole assistant migrates with one rsync.
-#
-# First-boot:
-#   cp deploy/mac-prod/.env.example deploy/mac-prod/.env   # set HOST_DOCKER_GID
-#   mkdir -p ~/.sentient/gateway/config                          # operator config dir
-#   cp gateway/config.yaml ~/.sentient/gateway/config/config.yaml # seed the mounted config
 #   docker compose -f deploy/mac-prod/docker-compose.yml --profile build-only build
-#   docker compose -f deploy/mac-prod/docker-compose.yml build gateway
-#   docker compose -f deploy/mac-prod/docker-compose.yml up -d
-# Then visit https://sentient.dev32.io:8888 — the wizard sets everything else.
-
-networks:
-  # Internal-only network — sibling containers (hermes, stt, MCPs) attach
-  # here. `internal: true` blocks egress; egress-proxy is the single
-  # outbound hop for MCPs that need internet.
-  sentient-internal:
-    name: sentient-internal
-    driver: bridge
-    internal: true
-  # External network for the gateway + MCPs needing raw LAN egress.
-  sentient-external:
-    name: sentient-external
-    driver: bridge
-
-volumes:
-  # Shared between gateway and orchestrator-spawned hermes. Holds the
-  # supervisord unix socket + per-user program .conf files. Named volume
-  # (not bind) so supervisord can bind() its socket on ext4 inside the
-  # Docker Desktop VM. See file header for why. Holds NO migratable data
-  # (runtime socket + regenerated .conf only).
-  sentient-supervisor:
-    name: sentient-supervisor
-  # Gateway-hosted MCP per-user unix sockets (mcp-<userId>.sock). Named volume
-  # on macOS for the same virtiofs reason as sentient-supervisor — bind-mounts
-  # reject AF_UNIX bind()/unlink()/chmod(), so a force-killed container's
-  # stale socket files brick the next boot's listen() with ENOTSUP. Holds no
-  # migratable data (runtime sockets only, regenerated each boot).
-  sentient-run:
-    name: sentient-run
+#
+# Addon networks are NOT declared here. The gateway creates them, and
+# gateway/src/system-orchestrator/types.ts#MANAGED_NETWORK_TOPOLOGY is the
+# single source of truth for their egress posture (`sentient-internal` is
+# `internal: true` — the invariant that forces every MCP through egress-proxy).
+# A second declaration in YAML is one drift away from silently opening it.
+#
+# Addon host ports are loopback-only (`127.0.0.1:<port>:<port>`, declared in
+# gateway/templates/services/*.yaml and enforced by the driver). The gateway is
+# native now, so it dials localhost — docker DNS is gone and Docker Desktop
+# bridge IPs are not host-routable. Publishing on 0.0.0.0 would put every MCP
+# on the LAN.
+#
+# Not here, by design:
+#   - gateway         native binary under /opt/sentient/current/bin/
+#   - hermes          one-shot exec per delegateTask, not a service — no image
+#   - whisper-stt     native python venv addon (pinned 3.14), gateway-spawned
+#   - local-tts       native python venv addon (pinned 3.11), gateway-spawned
+#   - stt-service     retired; superseded by native whisper-stt
+#
+# State stays user-owned and mutable under ~/.sentient/ (gateway config, logs,
+# data, users, secrets, certs, releases); code is root-owned and immutable
+# under /opt/sentient/<version>/. The whole assistant still migrates with one
+# rsync of ~/.sentient/.
+#
+# The TLS cert lives at ~/.data/certs/sentient.dev32.io (acme.sh on the LAN
+# renews + rsyncs it there). This is the ONE state path outside ~/.sentient by
+# design — externally managed infra, re-derivable on renewal, not app state.
 
 services:
-  gateway:
-    container_name: sentient-gateway
-    build:
-      context: ../..
-      dockerfile: gateway/Dockerfile
-      args:
-        # Release: bun --minify, no source maps. Use deploy/macos/ for a
-        # debug build during development.
-        BUILD_PROFILE: release
-    image: sentient/gateway:local
-    pull_policy: never
-    restart: unless-stopped
-    # The gateway calls the docker API over /var/run/docker.sock to spawn
-    # its sibling containers. The host docker group's GID is passed in via
-    # group_add so the gateway process can write the socket.
-    group_add:
-      - "${HOST_DOCKER_GID:?HOST_DOCKER_GID required — see deploy/mac-prod/.env.example}"
-    environment:
-      - TZ=${TZ:-America/Vancouver}
-      - SENTIENT_GATEWAY_ROOT=/app/gateway-data
-      - SENTIENT_HOST_GATEWAY_DATA_DIR=${HOME}/.sentient/gateway/data
-      - SENTIENT_SUPERVISORD_SOCKET=/data/supervisor/supervisor.sock
-      - SENTIENT_HOME=/sentient
-      - HOST_HOME=${HOME}
-      - HOST_DOCKER_GID=${HOST_DOCKER_GID:?HOST_DOCKER_GID required}
-      - HOST_CONFIG_DIR=${HOME}/.sentient/gateway/config
-      # Named-volume name (no slash) — dockerode's HostConfig.Binds treats a
-      # source-without-slash as a docker volume reference, so the orchestrator
-      # spawns hermes with the same shared supervisor volume.
-      - SUPERVISOR_DIR=sentient-supervisor
-      # Named-volume name for the gateway's per-user mcp-<userId>.sock unix
-      # sockets — same macOS-virtiofs reason as SUPERVISOR_DIR. The orchestrator
-      # forwards this to the spawned hermes container so both sides mount the
-      # same volume at /run/sentient and hermes can dial the gateway's socket.
-      - MCP_SOCKET_DIR=sentient-run
-      # Hermes container runs as uid:gid 10000 (USER hermes). The gateway
-      # (root) chowns per-user data dirs to this before supervisord spawns.
-      # Best-effort on Docker Desktop (virtiofs remaps ownership anyway).
-      - SENTIENT_HERMES_UID=10000
-      - SENTIENT_HERMES_GID=10000
-    ports:
-      # Gateway API + WSS + REST. Mobile / direct clients use this port.
-      - "8888:8888"
-      # Same container:8888 also published on standard HTTPS so browsers can
-      # hit https://sentient.dev32.io with no port suffix. The webui derives
-      # its WSS/REST URLs from window.location (origin-relative), so serving
-      # it on :443 makes those endpoints resolve to :443 automatically while
-      # :8888 stays available. (No plaintext :80 — the gateway is HTTPS-only;
-      # an HTTP→HTTPS redirect would need a separate listener.)
-      - "443:8888"
-    volumes:
-      # Operator config, sourced from ~/.sentient like all other state.
-      # Overrides the image-baked /app/config/config.yaml so operators edit ONE
-      # host file — e.g. flip the STT backend to native Whisper via
-      # deploy/mac-prod/native/stt-backend.py. Seed it on first boot:
-      #   mkdir -p ~/.sentient/gateway/config
-      #   cp gateway/config.yaml ~/.sentient/gateway/config/config.yaml
-      - ${HOME}/.sentient/gateway/config/config.yaml:/app/config/config.yaml
-      - ${HOME}/.sentient/gateway/logs:/app/logs
-      - ${HOME}/.sentient/gateway/clientLogs:/app/clientLogs
-      - ${HOME}/.sentient/gateway/data:/app/gateway-data
-      - ${HOME}/.sentient/gateway/data:${HOME}/.sentient/gateway/data
-      - sentient-run:/run/sentient
-      # Externally-managed TLS cert (acme.sh renews + rsyncs here). The one
-      # state path outside ~/.sentient by design — see file header.
-      - ${HOME}/.data/certs/sentient.dev32.io:/app/certs
-      # Supervisord state — named volume (see header).
-      - sentient-supervisor:/data/supervisor
-      - ${HOME}/.sentient:/sentient
-      - /var/run/docker.sock:/var/run/docker.sock
-      # Mobile release artifacts (apk/ipa/manifest.json/icons) served at /download.
-      # Read-only — the gateway only serves them; deploy-mobile.sh writes the host dir.
-      - ${HOME}/.sentient/releases:/app/releases:ro
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "bun",
-          "-e",
-          "fetch('https://localhost:8888/api/v1/health', { tls: { rejectUnauthorized: false } }).then(r => r.ok ? process.exit(0) : process.exit(1))",
-        ]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      start_period: 5s
-    # Resolve host.docker.internal to the host on Colima/OrbStack as well as
-    # Docker Desktop, so the gateway can dial a native (host-side) STT backend
-    # (native-whisper: ws://host.docker.internal:8768). No effect when the
-    # STT backend is the containerized sentient-stt-service.
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    networks: [sentient-internal, sentient-external]
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "7"
-
   # ---------------------------------------------------------------------------
   # Build-only siblings. The gateway's orchestrator owns runtime lifecycle
   # (create/start/stop/recreate) via the host docker socket. Compose only
@@ -181,32 +48,6 @@ services:
   # compose services. `profiles: build-only` keeps them out of `up` while
   # `docker compose --profile build-only build` produces them.
   # ---------------------------------------------------------------------------
-  # SenseVoice STT — only relevant to the docker-sensevoice backend. Gated
-  # behind its own `stt-docker` profile (NOT `build-only`) so the ~10-min
-  # image bake is skipped when deploy.conf selects native-whisper. setup-prod.py
-  # adds `--profile stt-docker` to the build only for the docker backend; with
-  # native-whisper the gateway config drops managed_services.stt-service, so the
-  # orchestrator never spawns this container even if the image happens to exist.
-  stt-service:
-    build:
-      context: ../../capabilityServices/STTService
-    image: sentient/stt-service:local
-    pull_policy: never
-    profiles: ["stt-docker"]
-
-  hermes:
-    build:
-      # Repo root so the image can COPY both deploy/hermes-overlay/* and
-      # hermes/plugins/sentient-plugin/ into a single build.
-      context: ../..
-      dockerfile: deploy/hermes-overlay/Dockerfile
-      args:
-        # Single source of truth: deploy/hermes-overlay/HERMES_VERSION.
-        HERMES_VERSION: "${HERMES_VERSION:-v2026.4.23}"
-    image: sentient/hermes:local
-    pull_policy: never
-    profiles: ["build-only"]
-
   ma-mcp:
     build:
       context: ../../gateway/mcp/ma-mcp

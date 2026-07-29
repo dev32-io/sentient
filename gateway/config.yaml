@@ -524,30 +524,15 @@ managed_services:
     depends_on: []
     optional: false
 
-  sentient-hermes:
-    template: sentient-hermes.yaml
-    allowed_images: ["sentient/hermes:local"]
-    networks: ["sentient-internal", "sentient-external"]
-    # Hermes runs supervisord with no TCP-bound services until per-user
-    # programs are added at user-creation time. The container itself can
-    # only be probed via supervisord's unix socket, which is not exposed
-    # to the gateway. Use noop and rely on docker's restart policy +
-    # downstream cycle dispatch failures to detect crashes.
-    healthcheck:
-      noop: true
-    depends_on: ["egress-proxy"]
-    optional: false
-
-  stt-service:
-    template: stt-service.yaml
-    allowed_images: ["sentient/stt-service:local"]
-    networks: ["sentient-internal"]
-    healthcheck:
-      url: "http://sentient-stt-service:8767/health"
-      timeout_ms: 60000
-    depends_on: []
-    optional: false
-
+  # NOT here, deliberately:
+  #   sentient-hermes — hermes has no lifecycle in 2.0. It is `hermes -p <userId>
+  #     -z <prompt>`, spawned and exited by delegateTask (gateway/src/tools/
+  #     hermes-runner.ts). Registering it would resurrect the per-user worker
+  #     fleet 2.0 deleted, and its image no longer exists (deploy/hermes-overlay/
+  #     is gone).
+  #   stt-service — the containerised SenseVoice STT is retired; `whisper-stt`
+  #     below supersedes it as a native addon (Metal/MLX needs host GPU access
+  #     no container can reach).
   ha-mcp:
     template: ha-mcp.yaml
     allowed_images: ["ghcr.io/homeassistant-ai/ha-mcp:stable"]

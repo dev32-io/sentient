@@ -6,9 +6,18 @@ container_name: sentient-signal-cli
 # ("Link request error: Connection closed!"), so this sidecar attaches to
 # sentient-external for direct egress instead.
 #
-# Still binds no host port (no `ports:` here) — external attackers can't
-# reach the daemon; only sibling sentient-* containers on the docker
-# networks can. Gateway + Hermes dial http://sentient-signal-cli:8080.
+# Binds no host port (no `ports:` here), so only sibling sentient-* containers
+# on the docker networks can reach the daemon.
+#
+# KNOWN GAP after the native-stack migration: the gateway is a host process now,
+# so it can no longer resolve `sentient-signal-cli` by docker DNS. The two
+# hardcoded `http://sentient-signal-cli:8080` constants in
+# gateway/src/api/handlers/devices.ts and
+# gateway/src/devices/signal/signal-provisioner.ts are therefore unreachable.
+# Re-enabling Signal needs three things together: a loopback publish here on a
+# host port that is NOT 8080 (searxng already owns 127.0.0.1:8080), that URL
+# moved out of TS into config.yaml, and a managed_services entry — this template
+# is currently unregistered, so nothing creates the container at all.
 networks: [sentient-internal, sentient-external]
 volumes:
   # Per-user account data (linked-device keys, message store) persists across
