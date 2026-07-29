@@ -441,6 +441,27 @@ mcp_catalog:
     timeout: 30
     connect_timeout: 5
     description: Music Assistant playback control.
+    # Curated tool surface — the full set the pinned fork registers
+    # (players/playback/queue/music, gateway/mcp/ma-mcp/Dockerfile pins the
+    # commit). Enumerated rather than left open so the surface cannot grow
+    # silently on a fork bump: every tool here is tiered in
+    # gateway/mcp-policy.yaml, and an untiered tool prompts on every call.
+    tools:
+      include:
+        # library reads
+        - ma_search
+        - ma_browse
+        # players
+        - ma_list_players
+        - ma_volume
+        - ma_group
+        # playback
+        - ma_playback
+        - ma_play_media
+        # queue
+        - ma_queue
+        - ma_queue_item
+        - ma_transfer_queue
 
   # fetch-mcp — dockerized HTTP MCP at gateway/mcp/fetch-mcp/.
   # Outbound HTTP fetches route through egress-proxy.
@@ -450,6 +471,11 @@ mcp_catalog:
     timeout: 30
     connect_timeout: 5
     description: Fetch URL contents as markdown.
+    # mcp-server-fetch registers exactly one tool (gateway/mcp/fetch-mcp/
+    # run_http.py). Named explicitly for the same reason as above.
+    tools:
+      include:
+        - fetch
 
   # SearXNG metasearch — dockerized HTTP MCP at gateway/mcp/searxng-mcp/.
   # Adapter forwards queries to the sibling searxng container which

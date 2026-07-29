@@ -20,8 +20,10 @@
 # their `reason` is the text the user reads in the permission dialog.
 #
 # The tools named here are the ones `gateway/config.yaml#mcp_catalog` actually
-# exposes. Keep the two in sync: a catalog addition with no rule here works,
-# but prompts on every call.
+# exposes, and the two are kept in sync BY TEST: policy-engine.test.ts fails
+# when a catalog entry ships without a curated `tools.include`, or when a tool
+# in one of those lists reaches the fail-closed default instead of a rule below
+# (mediated, but prompting on every call — including its reads).
 
 rules:
   # ─────────────────────────────────────────────────────────────────────
@@ -48,6 +50,12 @@ rules:
   # ─────────────────────────────────────────────────────────────────────
   # Read / low-risk tier → allow. These run with no prompt; keeping queries
   # friction-free is the whole point of tiering (§2.2 row 1).
+  #
+  # A tool belongs here only if it either (a) just reads, or (b) is low-risk
+  # on ALL of these at once: trivially reversible, no spend, nothing leaves
+  # the home, no security-relevant device class (locks, alarms, cameras as
+  # actuators), and no persisted state another household member relies on.
+  # Anything else is side-effecting and belongs in the confirm tier below.
   # ─────────────────────────────────────────────────────────────────────
   # Home Assistant reads.
   - name: allow_ha_get_overview
@@ -115,6 +123,51 @@ rules:
     condition: 'tool == "ha_config_get_calendar_events"'
     action: allow
     reason: "Read-only calendar query"
+
+  # Music Assistant reads.
+  - name: allow_ma_search
+    tool: ma_search
+    condition: 'tool == "ma_search"'
+    action: allow
+    reason: "Read-only music library search"
+
+  - name: allow_ma_browse
+    tool: ma_browse
+    condition: 'tool == "ma_browse"'
+    action: allow
+    reason: "Read-only music library browse"
+
+  - name: allow_ma_list_players
+    tool: ma_list_players
+    condition: 'tool == "ma_list_players"'
+    action: allow
+    reason: "Read-only player/now-playing query"
+
+  # Music Assistant playback. Low-risk by the criterion stated at the top of
+  # this tier: transient (it changes only what is audible right now, and stops
+  # mattering when the music does), trivially reversible by the next voice
+  # command, no spend, no data leaves the home, no security-relevant device
+  # class. Prompting on "play some jazz" / "pause" / "turn it down" would make
+  # voice music control unusable, which §2.2 row 1 exists to prevent. Note the
+  # contrast with ha_call_service below: that one is a GENERIC dispatcher whose
+  # blast radius includes locks and alarms, so it stays mediated.
+  - name: allow_ma_playback
+    tool: ma_playback
+    condition: 'tool == "ma_playback"'
+    action: allow
+    reason: "Transient playback transport control"
+
+  - name: allow_ma_play_media
+    tool: ma_play_media
+    condition: 'tool == "ma_play_media"'
+    action: allow
+    reason: "Transient playback of chosen media"
+
+  - name: allow_ma_volume
+    tool: ma_volume
+    condition: 'tool == "ma_volume"'
+    action: allow
+    reason: "Transient player volume control"
 
   # Web reads. Content they return is untrusted and handled by the injection
   # scanner (gateway/src/security/injection-scanner.ts), not by a prompt.
@@ -194,6 +247,35 @@ rules:
     condition: 'tool == "ha_config_remove_calendar_event"'
     action: confirm
     reason: "Deletes a calendar event for the household"
+
+  # Music Assistant state that outlives the current track. `ma_queue` is a
+  # mixed read/write tool upstream — the same call that reports the queue can
+  # also flip shuffle/repeat or clear it — and the condition grammar matches
+  # string args only (these tools nest theirs under a `params` object), so the
+  # read half cannot be carved out here. It is classified by its worst case.
+  - name: confirm_ma_queue
+    tool: ma_queue
+    condition: 'tool == "ma_queue"'
+    action: confirm
+    reason: "Reading the queue may also clear it or change shuffle/repeat"
+
+  - name: confirm_ma_queue_item
+    tool: ma_queue_item
+    condition: 'tool == "ma_queue_item"'
+    action: confirm
+    reason: "Reorders or removes tracks someone else queued"
+
+  - name: confirm_ma_group
+    tool: ma_group
+    condition: 'tool == "ma_group"'
+    action: confirm
+    reason: "Changes which speakers are grouped together"
+
+  - name: confirm_ma_transfer_queue
+    tool: ma_transfer_queue
+    condition: 'tool == "ma_transfer_queue"'
+    action: confirm
+    reason: "Moves playback and its queue to a different room"
 
   - name: confirm_user_settings_write
     tool: update_user_settings

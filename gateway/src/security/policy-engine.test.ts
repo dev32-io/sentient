@@ -1,5 +1,8 @@
-import type { McpPolicy } from "@sentient/config";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { type McpPolicy, loadConfig, mcpCatalogSchema } from "@sentient/config";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { createPolicyEngine, evaluateCondition } from "./policy-engine.js";
 import type { PolicyContext } from "./policy-engine.js";
 import { loadMcpPolicy } from "./policy-loader.js";
@@ -229,12 +232,19 @@ describe("shipped mcp-policy.yaml", () => {
     return engine.evaluate({ tool, userId: "u_a1b2c3d4", role: "adult", sessionChannel: "voice", args: {} }).action;
   }
 
-  it.each(["ha_get_overview", "ha_get_state", "ha_search_entities", "ha_get_todo", "search_web", "fetch"])(
-    "leaves the read/low-risk tool %s prompt-free",
-    (tool) => {
-      expect(decide(tool)).toBe("allow");
-    },
-  );
+  it.each([
+    "ha_get_overview",
+    "ha_get_state",
+    "ha_search_entities",
+    "ha_get_todo",
+    "search_web",
+    "fetch",
+    "ma_search",
+    "ma_list_players",
+    "ma_playback",
+  ])("leaves the read/low-risk tool %s prompt-free", (tool) => {
+    expect(decide(tool)).toBe("allow");
+  });
 
   it.each([
     "ha_call_service",
@@ -244,11 +254,71 @@ describe("shipped mcp-policy.yaml", () => {
     "ha_config_set_calendar_event",
     "ha_config_remove_calendar_event",
     "update_user_settings",
+    "ma_queue",
+    "ma_queue_item",
+    "ma_group",
   ])("mediates the write/side-effecting tool %s", (tool) => {
     expect(decide(tool)).toBe("confirm");
   });
 
   it("mediates a tool the file does not tier at all", () => {
     expect(decide("some_new_mcp_write_tool")).toBe("confirm");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Catalog ↔ policy coverage (gateway/config.yaml#mcp_catalog vs mcp-policy.yaml)
+//
+// SECURITY BOUNDARY, second half. Failing closed MEDIATES an untiered tool; it
+// does not TIER it. Two ways that degrades into a prompt on every call:
+//
+//   1. a catalog entry with no `tools.include` puts an unknown, upstream-owned
+//      tool surface into the vocabulary — nobody can tier what nobody can
+//      enumerate, and an upstream bump silently adds more of it;
+//   2. an enumerated tool no rule names lands on the fail-closed default, so
+//      even its read path prompts.
+//
+// Both halves are pinned here, so adding an MCP to the catalog without tiering
+// its tools fails the suite instead of shipping friction (or, before the
+// fail-closed default, silent dispatch).
+// ---------------------------------------------------------------------------
+
+describe("mcp_catalog ↔ mcp-policy.yaml coverage", () => {
+  const policy = loadMcpPolicy();
+  const engine = createPolicyEngine(policy);
+  const ruleNames = new Set(policy.rules.map((rule) => rule.name));
+  const catalog = loadConfig(
+    readFileSync(join(import.meta.dir, "../../config.yaml"), "utf-8"),
+    z.object({ mcp_catalog: mcpCatalogSchema }),
+  ).mcp_catalog;
+
+  const curated = Object.entries(catalog).flatMap(([server, entry]) =>
+    (entry.tools?.include ?? []).map((tool) => ({ server, tool })),
+  );
+
+  it("curates every catalog entry's tool surface with tools.include", () => {
+    const uncurated = Object.entries(catalog)
+      .filter(([, entry]) => entry.tools?.include === undefined)
+      .map(([server]) => server);
+    expect(uncurated).toEqual([]);
+  });
+
+  // Evaluated as an adult on voice: the role/channel deny rules do not fire, so
+  // anything that still reaches the default is genuinely untiered rather than
+  // merely allowed for this caller.
+  it("tiers every catalog tool with a named rule instead of the fail-closed default", () => {
+    const untiered = curated
+      .filter(({ tool }) => {
+        const decision = engine.evaluate({
+          tool,
+          userId: "u_a1b2c3d4",
+          role: "adult",
+          sessionChannel: "voice",
+          args: {},
+        });
+        return !ruleNames.has(decision.rule ?? "");
+      })
+      .map(({ server, tool }) => `${server}/${tool}`);
+    expect(untiered).toEqual([]);
   });
 });
