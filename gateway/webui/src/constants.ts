@@ -191,6 +191,9 @@ export const SPEECH_GATE_GAP_TOLERANCE_FRAMES = 3;
 // (SPEECH_GATE_OPEN_DEBOUNCE_MS / SPEECH_GATE_FRAME_MS = 20) so the onset
 // buffered during the debounce is flushed intact on open. 24 ≈ 240ms.
 export const SPEECH_GATE_PREROLL_FRAMES = 24;
-// Failsafe: if connector.transcript.final never arrives (server hiccup),
-// force the latch closed after this long so it can't stream forever.
+// Failsafe: if the gateway's `turn.started` never arrives (server hiccup),
+// force the latch closed after this long so it can't stream forever. The
+// normal close is the turn.started binding in use-voice-client.ts — reaching
+// this timeout means the mic streamed for 20s of one reply, so treat it as a
+// symptom, not as the design.
 export const SPEECH_GATE_MAX_OPEN_MS = 20_000;

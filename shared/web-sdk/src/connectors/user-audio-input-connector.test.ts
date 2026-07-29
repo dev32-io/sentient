@@ -93,16 +93,35 @@ describe("UserAudioInputConnector", () => {
     expect(internal.sentBinary).toHaveLength(0);
   });
 
-  it("calls onTranscript when connector.transcript.final arrives", () => {
-    const onTranscript = vi.fn();
-    const connector = new UserAudioInputConnector({ onTranscript });
+  // R9 deleted `connector.transcript.final`, which was the ONLY frame that
+  // closed the web mic latch. `turn.started` is the 2.0 contract's signal that
+  // the gateway took ownership of the utterance; without this binding the gate
+  // stays open until its 20s failsafe and the browser streams mic audio through
+  // the whole reply.
+  it("calls onTurnStarted when the gateway opens a user turn", () => {
+    const onTurnStarted = vi.fn();
+    const connector = new UserAudioInputConnector({ onTurnStarted });
     const internal = createMockInternal();
     connector.attach(internal);
 
-    const handler = internal.messageHandlers.get("connector.transcript.final");
-    handler?.({ type: "connector.transcript.final", text: "hello world" });
+    internal.messageHandlers.get("turn.started")?.({ type: "turn.started", turnId: "t-1", trigger: "user" });
 
-    expect(onTranscript).toHaveBeenCalledWith("hello world");
+    expect(onTurnStarted).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a background-completion turn — it is not an utterance boundary", () => {
+    const onTurnStarted = vi.fn();
+    const connector = new UserAudioInputConnector({ onTurnStarted });
+    const internal = createMockInternal();
+    connector.attach(internal);
+
+    internal.messageHandlers.get("turn.started")?.({
+      type: "turn.started",
+      turnId: "t-2",
+      trigger: "background-completion",
+    });
+
+    expect(onTurnStarted).not.toHaveBeenCalled();
   });
 
   it("stops streaming on detach", () => {

@@ -90,6 +90,13 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
   const messages = useSignal<readonly ChatMessage[]>([]);
   // tasks signal exposed to UI — raw SDK shape (ToolCallSnapshotItem).
   const tasks = useSignal<readonly ToolCallSnapshotItem[]>([]);
+  /**
+   * Live user-speech preview. ALWAYS EMPTY under the 2.0 contract: R9 deleted
+   * the partial-transcript frame, so spoken text now appears only once the
+   * gateway commits it as a conversation entry. Kept because ChatView still
+   * binds it; retiring the signal means retiring that UI too, which is a
+   * webui-wide change, not this fix's.
+   */
   const transcript = useSignal<string>("");
   const cycleStatus = useSignal(deriveCycleStatus({ cognition: "idle", audioPlaying: false, runningTasks: 0 }));
   const currentTurnId = useSignal<string | null>(null);
@@ -228,9 +235,16 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       maxOpenMs: SPEECH_GATE_MAX_OPEN_MS,
     });
 
+    // `turn.started` (user trigger) is the mic latch's close signal: the
+    // gateway has taken ownership of the utterance, so stop streaming until
+    // sustained speech reopens the gate. This replaces the deleted
+    // `connector.transcript.final` (R9) — without it the only thing that ever
+    // closed the latch was SPEECH_GATE_MAX_OPEN_MS, so every utterance was
+    // followed by up to 20s of continuous mic uplink and STT load, with a wide
+    // window for residual TTS echo to re-trigger barge-in.
     const audioInputConnector = new UserAudioInputConnector({
-      onTranscript: (text) => {
-        transcript.value = text;
+      onTurnStarted: () => {
+        log.debug("speech-gate.close", { reason: "turn.started", stateBefore: speechGate.state() });
         speechGate.close();
         denoiser?.reset();
       },
@@ -451,9 +465,6 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
           }
           committedRef.current = items;
           refreshMessages();
-          // Clear live STT preview once finalized user/speech entry lands.
-          const last = items.findLast((i) => i.kind === "user" && i.channel === "speech");
-          if (last && (last as { content: string }).content === transcript.value) transcript.value = "";
         },
       },
       sessionsRest,
