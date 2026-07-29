@@ -4,6 +4,8 @@ import { getLog } from "../logging/logger.js";
 import {
   type DockerManagedService,
   type DriverError,
+  LOOPBACK_PORT_RE,
+  LOOPBACK_PORT_REASON,
   type ManagedProcessInfo,
   type ManagedService,
   type ServiceDriver,
@@ -14,6 +16,12 @@ const log = getLog(["sentient", "system-orch", "docker-driver"]);
 
 const LABEL_MANAGED = "sentient.managed";
 const LABEL_SERVICE = "sentient.service";
+
+/** The only host address an addon may be published on. Docker treats an empty
+ *  `HostIp` as 0.0.0.0, so this is written explicitly into every binding. */
+const LOOPBACK_HOST_IP = "127.0.0.1";
+/** Docker keys ExposedPorts/PortBindings by `<port>/<proto>`; addons are TCP. */
+const PORT_PROTO = "tcp";
 
 /** Narrow surface we need from dockerode — keeps tests free of any real socket.
  *  `pull` returns dockerode's progress stream; the caller drains it via
@@ -96,6 +104,12 @@ async function recreate(docker: DockerodeLike, ms: ManagedService): Promise<Resu
   const policy = enforcePolicy(ms);
   if (!policy.ok) return policy;
 
+  // Resolve publishing BEFORE the teardown below: a rejected port mapping must
+  // leave the currently-running container alone rather than remove it and then
+  // refuse to create its replacement.
+  const published = buildPortPublishing(ms);
+  if (!published.ok) return published;
+
   // Ensure the image is available BEFORE we tear down the existing container.
   // Public images (e.g. kalaksi/tinyproxy:latest) get pulled here; locally-
   // built `:local` tags fail to pull but exist on the host daemon — tolerate
@@ -113,7 +127,7 @@ async function recreate(docker: DockerodeLike, ms: ManagedService): Promise<Resu
     }
   }
 
-  const spec = buildCreateSpec(ms);
+  const spec = buildCreateSpec(ms, published.value);
   let created: { id: string; start: () => Promise<void> };
   try {
     created = await docker.createContainer(spec);
@@ -152,7 +166,35 @@ function enforcePolicy(ms: DockerManagedService): Result<undefined, DriverError>
   return { ok: true, value: undefined };
 }
 
-function buildCreateSpec(ms: DockerManagedService): Record<string, unknown> {
+/** Docker Engine API port publishing, split into the two fields `createContainer`
+ *  needs. `ExposedPorts` declares the container-side port; `PortBindings` maps it
+ *  to a host address. The `HostIp` is written EXPLICITLY — an omitted or empty
+ *  HostIp means 0.0.0.0 to the daemon, i.e. the addon on every LAN interface. */
+interface PortPublishing {
+  exposed: Record<string, Record<string, never>>;
+  bindings: Record<string, Array<{ HostIp: string; HostPort: string }>>;
+}
+
+function buildPortPublishing(ms: DockerManagedService): Result<PortPublishing, DriverError> {
+  const out: PortPublishing = { exposed: {}, bindings: {} };
+  for (const entry of ms.template.ports) {
+    if (!LOOPBACK_PORT_RE.test(entry)) {
+      const reason = `${LOOPBACK_PORT_REASON}; got ${entry}`;
+      log.warn("driver.port-policy-violation", { service: ms.name, reason });
+      return { ok: false, error: { kind: "policy-violation", reason } };
+    }
+    const [, hostPort, containerPort] = entry.split(":");
+    const key = `${containerPort}/${PORT_PROTO}`;
+    out.exposed[key] = {};
+    out.bindings[key] = [{ HostIp: LOOPBACK_HOST_IP, HostPort: hostPort ?? "" }];
+  }
+  if (ms.template.ports.length > 0) {
+    log.info("driver.ports-published", { service: ms.name, ports: ms.template.ports });
+  }
+  return { ok: true, value: out };
+}
+
+function buildCreateSpec(ms: DockerManagedService, published: PortPublishing): Record<string, unknown> {
   const env = Object.entries(ms.template.env).map(([k, v]) => `${k}=${v}`);
   const primaryNet = ms.template.networks[0] ?? "";
   return {
@@ -160,6 +202,7 @@ function buildCreateSpec(ms: DockerManagedService): Record<string, unknown> {
     Image: ms.template.image,
     Cmd: ms.template.command,
     Env: env,
+    ExposedPorts: published.exposed,
     Labels: {
       [LABEL_MANAGED]: "true",
       [LABEL_SERVICE]: ms.name,
@@ -175,9 +218,9 @@ function buildCreateSpec(ms: DockerManagedService): Record<string, unknown> {
       Memory: ms.template.mem_limit_bytes ?? 0,
       NanoCpus: ms.template.cpus ? Math.floor(ms.template.cpus * 1_000_000_000) : 0,
       GroupAdd: ms.template.group_add,
-      // Explicit empty PortBindings — defense in depth against accidental
-      // host-port exposure.
-      PortBindings: {},
+      // Loopback-only, built by buildPortPublishing. Empty when the template
+      // declares no ports — defence in depth against accidental exposure.
+      PortBindings: published.bindings,
     },
     // NetworkingConfig is intentionally omitted — Docker only honours the
     // first entry at create time, so secondary networks would be silently

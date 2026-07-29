@@ -75,6 +75,56 @@ test("recreate sends spec with sentient.managed label", async () => {
   expect((calls.create[0] as { Labels?: Record<string, string> }).Labels?.["sentient.service"]).toBe("ha-mcp");
 });
 
+// WIRE CONTRACT (docker Engine API) + SECURITY. The orchestrator creates
+// containers itself via dockerode — compose never runs them — so a `ports:`
+// entry in a template only publishes if the driver translates it into
+// ExposedPorts + HostConfig.PortBindings. Docker's PortBindings entry defaults
+// HostIp to "" which the daemon reads as 0.0.0.0, so the loopback bind must be
+// carried through explicitly or every addon lands on the LAN.
+test("SECURITY: recreate publishes a loopback port as an explicit 127.0.0.1 PortBinding", async () => {
+  const withPort: DockerManagedService = {
+    ...ms,
+    template: { ...ms.template, ports: ["127.0.0.1:8086:8086"] },
+  };
+  const { stub, calls } = makeStub();
+  const drv = createDockerDriver({ docker: stub });
+  const r = await drv.recreate(withPort);
+  expect(r.ok).toBe(true);
+  const spec = calls.create[0] as {
+    ExposedPorts?: Record<string, unknown>;
+    HostConfig?: { PortBindings?: Record<string, Array<{ HostIp?: string; HostPort?: string }>> };
+  };
+  expect(spec.ExposedPorts).toEqual({ "8086/tcp": {} });
+  expect(spec.HostConfig?.PortBindings).toEqual({ "8086/tcp": [{ HostIp: "127.0.0.1", HostPort: "8086" }] });
+});
+
+test("SECURITY: recreate publishes nothing when the template declares no ports", async () => {
+  const { stub, calls } = makeStub();
+  const drv = createDockerDriver({ docker: stub });
+  const r = await drv.recreate(ms);
+  expect(r.ok).toBe(true);
+  const spec = calls.create[0] as {
+    ExposedPorts?: Record<string, unknown>;
+    HostConfig?: { PortBindings?: Record<string, unknown> };
+  };
+  expect(spec.ExposedPorts).toEqual({});
+  expect(spec.HostConfig?.PortBindings).toEqual({});
+});
+
+// Defence in depth: the template schema already rejects this shape, but the
+// driver is the last hop before the docker socket and must fail closed rather
+// than hand the daemon a binding it would resolve to 0.0.0.0.
+test("SECURITY: recreate refuses a template port that does not bind loopback", async () => {
+  const bad: DockerManagedService = { ...ms, template: { ...ms.template, ports: ["0.0.0.0:8086:8086"] } };
+  const { stub, calls } = makeStub();
+  const drv = createDockerDriver({ docker: stub });
+  const r = await drv.recreate(bad);
+  expect(r.ok).toBe(false);
+  if (r.ok) return;
+  expect(r.error.kind).toBe("policy-violation");
+  expect(calls.create.length).toBe(0);
+});
+
 test("recreate rejects template whose image is not in allowed_images", async () => {
   const bad: DockerManagedService = { ...ms, template: { ...ms.template, image: "evil/image:v1" } };
   const { stub } = makeStub();
