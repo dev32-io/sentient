@@ -26,9 +26,54 @@ Invariants this script exists to hold:
 
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
+
+# Read the tarball in fixed-size blocks so a multi-hundred-MB release never
+# lands in memory in one piece. Valid: any power of two >= 4096; 1 MiB is the
+# usual sweet spot for local disks.
+HASH_CHUNK_BYTES = 1024 * 1024
+# A sha256 hex digest is exactly 64 hex characters. Anything else in the digest
+# field of the sidecar is malformed, not a mismatch.
+SHA256_HEX_LEN = 64
+
 
 class InstallError(Exception):
     """Install or rollback failed. The message names which, and why."""
+
+
+def sha256_of(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(HASH_CHUNK_BYTES), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def verify_tarball_checksum(tarball: Path, sidecar: Path) -> bool:
+    """Compare the release tarball against its `.sha256` sidecar.
+
+    Deliberately NOT `shasum -c`: `scripts/build-gateway.sh` writes the sidecar
+    as `<digest>  <absolute build-host path>`, and that path does not exist on
+    the mini — `shasum -c` would fail every genuine release. Only the digest
+    field travels between hosts, so only the digest is compared.
+
+    Fails closed on a missing or malformed sidecar: absent provenance is not
+    the same as verified provenance.
+    """
+    try:
+        recorded = sidecar.read_text().split()
+    except OSError:
+        return False
+    if not recorded:
+        return False
+    digest = recorded[0].strip().lower()
+    if len(digest) != SHA256_HEX_LEN or any(c not in "0123456789abcdef" for c in digest):
+        return False
+    try:
+        return sha256_of(tarball) == digest
+    except OSError:
+        return False
 
 
 class Installer:

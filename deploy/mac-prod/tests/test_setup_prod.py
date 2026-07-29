@@ -8,8 +8,10 @@ exercised through the FSM against a real temp filesystem rather than mocked.
 
 from __future__ import annotations
 
+import hashlib
+
 import pytest
-from setup_prod import InstallError, Installer
+from setup_prod import InstallError, Installer, verify_tarball_checksum
 
 
 class FakeFs:
@@ -134,3 +136,50 @@ def test_rollback_target_missing_on_disk_is_reported_not_attempted():
     assert "1.12.0" in message and "not on disk" in message
     assert fs.current == "1.13.0", "must not point `current` at a missing directory"
     assert ld.kicks == 1
+
+
+# --- checksum gate (supply-chain boundary) -----------------------------------
+#
+# `scripts/build-gateway.sh` writes the sidecar with
+#   shasum -a 256 dist/gateway/<v>.tar.gz > dist/gateway/<v>.tar.gz.sha256
+# which records the BUILD HOST's absolute path alongside the digest. `shasum -c`
+# on the mini therefore checks a path that does not exist there. The digest is
+# the only field that travels.
+
+
+def _release(tmp_path, body=b"gateway release bytes"):
+    tarball = tmp_path / "1.13.0.tar.gz"
+    tarball.write_bytes(body)
+    return tarball
+
+
+def test_checksum_matches_despite_a_foreign_path_in_the_sidecar(tmp_path):
+    tarball = _release(tmp_path)
+    digest = hashlib.sha256(tarball.read_bytes()).hexdigest()
+    sidecar = tmp_path / "1.13.0.tar.gz.sha256"
+    sidecar.write_text(f"{digest}  /Users/builder/sentient/dist/gateway/1.13.0.tar.gz\n")
+
+    assert verify_tarball_checksum(tarball, sidecar) is True
+
+
+def test_checksum_mismatch_is_refused(tmp_path):
+    tarball = _release(tmp_path)
+    sidecar = tmp_path / "1.13.0.tar.gz.sha256"
+    sidecar.write_text(f"{'0' * 64}  1.13.0.tar.gz\n")
+
+    assert verify_tarball_checksum(tarball, sidecar) is False
+
+
+def test_missing_sidecar_fails_closed(tmp_path):
+    """No sidecar means no provenance. It must never mean 'assume fine'."""
+    tarball = _release(tmp_path)
+
+    assert verify_tarball_checksum(tarball, tmp_path / "absent.sha256") is False
+
+
+def test_malformed_sidecar_fails_closed(tmp_path):
+    tarball = _release(tmp_path)
+    sidecar = tmp_path / "1.13.0.tar.gz.sha256"
+    sidecar.write_text("not-a-digest\n")
+
+    assert verify_tarball_checksum(tarball, sidecar) is False
