@@ -630,12 +630,17 @@ class Installer:
     def install(self, version, tarball):
         previous = self._fs.current
 
+        # Verify FIRST, before even the idempotency shortcut. The operator handed
+        # us an artifact; if we cannot verify it we say so rather than reporting
+        # "live and healthy" because the version happened to match what is
+        # already running. Otherwise a corrupted release re-deployed to repair a
+        # host looks like a successful deploy.
+        if not self._verify_checksum(tarball):
+            raise InstallError(f"checksum mismatch for {tarball}; refusing to install")
+
         # Idempotent: an identical, healthy install must not bounce the service.
         if previous == version and self._health():
             return
-
-        if not self._verify_checksum(tarball):
-            raise InstallError(f"checksum mismatch for {tarball}; refusing to install")
 
         self._fs.unpack(version, tarball)
         # Finish the release BEFORE it goes live. The native services' venvs are

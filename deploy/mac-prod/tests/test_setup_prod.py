@@ -110,6 +110,32 @@ def test_bad_checksum_refuses_before_touching_anything():
     assert ld.kicks == 0
 
 
+def test_an_unverifiable_tarball_is_refused_even_when_it_matches_the_running_version():
+    """The idempotency shortcut must not be reachable before the checksum gate.
+
+    Found by the end-to-end harness: re-installing the CURRENT version from a
+    tarball with a corrupt `.sha256` exited 0 and reported "live and healthy",
+    because `previous == version and health()` returned before verification ran.
+    Nothing malicious gets extracted on that path, but the operator handed us an
+    artifact we could not verify and we reported success — so a corrupted release
+    being re-deployed to repair a host looks like a good deploy.
+
+    The invariant is the simple one: never report success on an artifact whose
+    provenance we did not check.
+    """
+    fs, ld = FakeFs(), FakeLaunchd()
+    fs.point_current_at("1.13.0")
+    fs.installed.append("1.13.0")
+    inst = Installer(fs=fs, launchd=ld, health=lambda: True,
+                     verify_checksum=lambda p: False)
+
+    with pytest.raises(InstallError) as e:
+        inst.install("1.13.0", tarball="tampered.tar.gz")
+
+    assert "checksum" in str(e.value).lower()
+    assert ld.kicks == 0, "still must not bounce the service"
+
+
 def test_reinstalling_the_running_version_is_a_noop():
     fs, ld = FakeFs(), FakeLaunchd()
     fs.point_current_at("1.13.0")
