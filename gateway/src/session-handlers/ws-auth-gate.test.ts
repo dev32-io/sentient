@@ -31,6 +31,7 @@ interface FakeWs {
 function fakeWs(): FakeWs {
   const data: SessionData = {
     sessionId: "test-session",
+    conversationId: null,
     authState: "pending",
     principal: null,
     authTimeout: null,

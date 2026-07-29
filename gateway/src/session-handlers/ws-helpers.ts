@@ -25,7 +25,26 @@ import { sendGatewayFrame } from "./ws-send.js";
  * the "cerebrum" construct it referred to no longer exists in this codebase.
  */
 export interface SessionData {
+  /**
+   * CONNECTION-scoped id, minted per WebSocket in `openSession`
+   * (ws-handlers.ts) by `SessionManager.createSession()`. It dies with the
+   * socket, and it is ONLY for connection bookkeeping: the SessionManager
+   * registry, the per-user concurrent-connection cap, and log correlation.
+   *
+   * It is NOT the conversation — see `conversationId` below. Keying anything
+   * durable on this field re-partitions that thing on every reload,
+   * reconnect and gateway restart.
+   */
   sessionId: string | null;
+  /**
+   * DURABLE conversation id — the session store's partition key (its
+   * `session_id` column), resolved in `handleSessionConfigure` from the
+   * authenticated principal plus the client's own stable surface id. Stable
+   * across reload / reconnect / gateway restart, which is what makes the
+   * committed feed and the model's history survive them (spec §10
+   * acceptance #9). Null until session.configure.
+   */
+  conversationId: string | null;
   /**
    * Auth gate state. pending → authenticating happens synchronously (no
    * await between the guard read and this write in ws-auth-gate.ts), so a
@@ -107,6 +126,7 @@ export interface SessionData {
 export function createEmptySessionData(): SessionData {
   return {
     sessionId: null,
+    conversationId: null,
     authState: "pending",
     principal: null,
     authTimeout: null,

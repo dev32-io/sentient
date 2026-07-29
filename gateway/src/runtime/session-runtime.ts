@@ -140,6 +140,19 @@ export interface SessionRuntime {
 
 export interface SessionRuntimeDeps {
   principal: UserPrincipal;
+  /**
+   * The DURABLE conversation id — this runtime's partition of the session
+   * store (its `session_id` column), and the only thing this field is: every
+   * read, append, projection and compaction below scopes to it.
+   *
+   * It is NOT `ws.data.sessionId`, which is minted per WebSocket connection
+   * and dies with the socket. `handleSessionConfigure` resolves the durable
+   * id (principal + the client's stable surface id) and passes THAT here —
+   * keying the store on the connection id instead opened a brand-new empty
+   * partition on every reload, reconnect and gateway restart. The field keeps
+   * its name only because the store's own vocabulary for a partition is
+   * `sessionId`.
+   */
   sessionId: string;
   accessManager: AccessManager;
   provider: ProviderClient;

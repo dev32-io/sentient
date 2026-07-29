@@ -24,6 +24,9 @@ const WS_NORMAL_CLOSURE = 1000;
 // Session open — auth + session registration
 // ---------------------------------------------------------------------------
 
+// `sessionId` here is the CONNECTION id and nothing else — it dies with this
+// socket. The durable conversation the store partitions on is resolved later,
+// in `handleSessionConfigure`, and parked on `ws.data.conversationId`.
 export function openSession(ws: ServerWebSocket<SessionData>, services: GatewayServices): void {
   const result = services.sessionManager.createSession();
   if (!result.ok) {
@@ -120,6 +123,9 @@ export async function handleWebSocketMessage(
       // Resume params ride INSIDE the configure frame (msg.resume) — the
       // handler acquires this surface's frame journal and answers with the
       // stream.resumed decision (Plan 3 Task 10, see ws-session-configure.ts).
+      // `msg.conversationId` is the client's optional anchor for the DURABLE
+      // conversation; the handler validates it against this principal and
+      // resolves the store partition from it (or from the surface).
       handleSessionConfigure(
         ws,
         msg.capabilities.supports,
@@ -242,8 +248,14 @@ function handleSessionEnd(ws: ServerWebSocket<SessionData>, services: GatewaySer
  * `runtime.dispose()` aborts any in-flight turn's AbortSignal and closes
  * the session's store handle — idempotent, so a socket that never reached
  * session.configure (runtime still null) is unaffected.
- * A fresh connection always mints a fresh runtime; what DOES survive the
- * disconnect is this surface's outbound frame journal, parked in
+ * A fresh connection always mints a fresh runtime over the SAME durable
+ * conversation partition — `ws.data.conversationId` is derived from the
+ * principal + the client's surface id, so the next connection re-derives it
+ * and the store hands the committed feed and the model's history straight
+ * back (ws-session-configure.ts). Only the handle is torn down here; nothing
+ * in the store is.
+ * The other thing that survives the disconnect is this surface's outbound
+ * frame journal, parked in
  * `services.replayRegistry` for `session.replay_journal_retention_ms` so a
  * reconnect carrying `resume: {epoch, lastSeq}` can replay the frames the
  * client missed (Plan 3 Task 10). The in-flight turn is not resumed — it is
@@ -288,7 +300,9 @@ export function cleanupSession(ws: ServerWebSocket<SessionData>, services: Gatew
 
   services.sessionManager.unbindUser(sessionId);
   services.sessionManager.removeSession(sessionId);
+  const conversationId = ws.data.conversationId;
   ws.data.sessionId = null;
+  ws.data.conversationId = null;
 
-  log.info("session-cleanup", { sessionId });
+  log.info("session-cleanup", { sessionId, conversationId });
 }

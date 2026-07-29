@@ -21,17 +21,25 @@
 // ReplayRegistry. No provider/network I/O; `createSessionRuntime: null` keeps
 // the orchestrator branch out of the picture for the journal cases.
 
-import { describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
+import { mkdirSync, rmSync } from "node:fs";
+import type { OrchestratorConfig } from "@sentient/config";
 import type { ServerWebSocket } from "bun";
+import { type AccessManager, createAccessManager } from "../access/access-manager.js";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
+import type { ProviderClient, ProviderRequest, ProviderStreamChunk } from "../provider/provider-client.js";
+import { createSessionRuntime } from "../runtime/session-runtime.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
+import type { BackgroundRegistry } from "../tools/background-registry.js";
+import type { ToolBroker } from "../tools/tool-broker.js";
 import { type ReplayRegistry, createReplayRegistry } from "./replay-registry.js";
 import { type SessionData, createEmptySessionData } from "./ws-helpers.js";
 import { sendGatewayFrame } from "./ws-send.js";
 import { handleSessionConfigure } from "./ws-session-configure.js";
 
 const USER_ID = "u_deadbeef";
+const OTHER_USER_ID = "u_aaaaaaaa";
 const DEVICE_ID = "device-1";
 const SURFACE_A = "surface-a";
 const SURFACE_B = "surface-b";
@@ -42,9 +50,9 @@ interface FakeWs {
   send: (payload: string) => void;
 }
 
-function fakeAuthedWs(): FakeWs {
+function fakeAuthedWs(connectionSessionId = "test-session"): FakeWs {
   const data = createEmptySessionData();
-  data.sessionId = "test-session";
+  data.sessionId = connectionSessionId;
   data.authState = "authed";
   data.principal = createUserPrincipal(USER_ID, "adult", "home");
   const ws: FakeWs = {
@@ -72,8 +80,8 @@ function servicesWith(replayRegistry: ReplayRegistry): GatewayServices {
   } as unknown as GatewayServices;
 }
 
-function configure(ws: FakeWs, services: GatewayServices, surfaceId: string): void {
-  handleSessionConfigure(asWs(ws), [], "en", services, "webui", DEVICE_ID, surfaceId, undefined, undefined);
+function configure(ws: FakeWs, services: GatewayServices, surfaceId: string, conversationId?: string): void {
+  handleSessionConfigure(asWs(ws), [], "en", services, "webui", DEVICE_ID, surfaceId, undefined, conversationId);
 }
 
 interface SnapshotSpy {
@@ -244,5 +252,271 @@ describe("handleSessionConfigure — committed-feed handshake", () => {
     expect(ws.sent.map((f) => f.type)).toEqual(["stream.resumed", "session.ready", "conversation.snapshot"]);
     expect(ws.sent[0]?.recovered).toBe(false);
     expect(spy.snapshotCalls).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Durable conversation identity (spec §10 acceptance #9).
+//
+// The store partitions on the id this handler resolves, NOT on
+// `ws.data.sessionId` — that one is minted per WEBSOCKET CONNECTION and dies
+// with it, so keying the store on it opened a brand-new empty partition on
+// every reload, reconnect and gateway restart: `conversation.snapshot` came
+// back empty AND the model projection handed the LLM no history at all.
+// ---------------------------------------------------------------------------
+
+/** Records the partition id `handleSessionConfigure` hands the runtime factory. */
+interface PartitionSpy {
+  services: GatewayServices;
+  partitionIds: string[];
+}
+
+function servicesRecordingPartition(replayRegistry: ReplayRegistry, ws: FakeWs): PartitionSpy {
+  const spy: PartitionSpy = { partitionIds: [], services: {} as GatewayServices };
+  const runtime = {
+    emitConversationSnapshot: () => sendGatewayFrame(asWs(ws), { type: "conversation.snapshot", items: [] }),
+    dispose: () => {},
+  } as unknown as SessionRuntime;
+  spy.services = {
+    replayRegistry,
+    webui: { playback: { min_eager_end_ms: 0, preempt_fadeout_ms: 0 } },
+    profileStore: { get: async () => ({ ok: false, error: "no profile in this test" }) },
+    createSynthesizerFor: () => null,
+    stt: null,
+    createSessionRuntime: (_principal: unknown, partitionId: string) => {
+      spy.partitionIds.push(partitionId);
+      return { runtime, permissions: { denyAll: () => {} } };
+    },
+  } as unknown as GatewayServices;
+  return spy;
+}
+
+describe("handleSessionConfigure — durable conversation identity", () => {
+  it("CONTRACT: two connections on the same surface resolve the SAME store partition", () => {
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const first = fakeAuthedWs("connection-1");
+    const spy = servicesRecordingPartition(registry, first);
+
+    configure(first, spy.services, SURFACE_A);
+    const second = fakeAuthedWs("connection-2");
+    configure(second, spy.services, SURFACE_A);
+
+    expect(spy.partitionIds).toHaveLength(2);
+    expect(spy.partitionIds[0]).toBe(spy.partitionIds[1] as string);
+  });
+
+  it("CONTRACT: the partition is NOT the per-connection sessionId", () => {
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const ws = fakeAuthedWs("connection-1");
+    const spy = servicesRecordingPartition(registry, ws);
+
+    configure(ws, spy.services, SURFACE_A);
+
+    expect(spy.partitionIds[0]).not.toBe("connection-1");
+    expect(ws.data.conversationId).toBe(spy.partitionIds[0] as string);
+    expect(ws.data.sessionId).toBe("connection-1");
+  });
+
+  it("gives a different surface its own partition", () => {
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const ws = fakeAuthedWs();
+    const spy = servicesRecordingPartition(registry, ws);
+
+    configure(ws, spy.services, SURFACE_A);
+    configure(ws, spy.services, SURFACE_B);
+
+    expect(spy.partitionIds[0]).not.toBe(spy.partitionIds[1] as string);
+  });
+
+  it("honours a conversationId that is scoped to this principal", () => {
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const ws = fakeAuthedWs();
+    const spy = servicesRecordingPartition(registry, ws);
+
+    // The id this principal was anchored to on an earlier surface.
+    configure(ws, spy.services, SURFACE_B);
+    const ownId = spy.partitionIds[0] as string;
+
+    const other = fakeAuthedWs("connection-2");
+    configure(other, spy.services, SURFACE_A, ownId);
+
+    expect(spy.partitionIds[1]).toBe(ownId);
+  });
+
+  it("SECURITY: refuses a conversationId scoped to another principal", () => {
+    // The store is already one DB per user, so the blast radius is bounded —
+    // but a client-supplied string must never become the partition key on
+    // trust alone. The presented id is accepted only when it is namespaced to
+    // the AUTHENTICATED principal; anything else falls back to this
+    // principal's own surface partition.
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const ws = fakeAuthedWs();
+    const spy = servicesRecordingPartition(registry, ws);
+
+    configure(ws, spy.services, SURFACE_A);
+    const ownId = spy.partitionIds[0] as string;
+    const foreignId = ownId.replace(USER_ID, OTHER_USER_ID);
+
+    const attacker = fakeAuthedWs("connection-2");
+    configure(attacker, spy.services, SURFACE_B, foreignId);
+
+    expect(spy.partitionIds[1]).not.toBe(foreignId);
+    expect(spy.partitionIds[1]).toContain(USER_ID);
+    expect(spy.partitionIds[1]).not.toContain(OTHER_USER_ID);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// End-to-end reload durability, over a REAL on-disk store and a real
+// SessionRuntime (fake provider only — no network). This is spec §10
+// acceptance #9: a reconnect rebuilds the full feed from the store AND the
+// model projection carries the prior turn.
+// ---------------------------------------------------------------------------
+
+const STORE_ROOT = "/tmp/sentient-ws-conversation-identity-test";
+mkdirSync(STORE_ROOT, { recursive: true });
+afterAll(() => rmSync(STORE_ROOT, { recursive: true, force: true }));
+
+function testOrchestratorConfig(): OrchestratorConfig {
+  return {
+    provider: {
+      base_url: "http://localhost:0",
+      model: "test-model",
+      max_output_tokens: 1024,
+      request_timeout_ms: 120000,
+      site_name: "Sentient",
+    },
+    loop: { max_iterations: 4 },
+    permission: { request_timeout_ms: 120000 },
+    tools: { foreground_timeout_ms: 30000, max_concurrent_background_tasks: 50 },
+    delegation: { frontmatter_dir: "./config/delegation", hermes_timeout_ms: 600000 },
+    compaction: { enabled: false, compact_threshold_tokens: 24000, keep_recent_turns: 4 },
+  };
+}
+
+interface FakeProvider extends ProviderClient {
+  calls: ProviderRequest[];
+}
+
+function fakeProvider(reply: string): FakeProvider {
+  const calls: ProviderRequest[] = [];
+  return {
+    calls,
+    stream(req) {
+      calls.push(req);
+      return (async function* (): AsyncGenerator<ProviderStreamChunk> {
+        yield { type: "text", content: reply };
+        yield { type: "done", finishReason: "stop" };
+      })();
+    },
+  };
+}
+
+function noopBroker(): ToolBroker {
+  const background: BackgroundRegistry = {
+    count: () => 0,
+    register: () => {},
+    complete: () => {},
+    cancelAll: () => {},
+  };
+  return {
+    definitions: () => [],
+    dispatch: async () => {
+      throw new Error("dispatch should never be called for a text-only response");
+    },
+    background,
+    setBackgroundCompletionSink: () => {},
+  };
+}
+
+function servicesWithStoreBackedRuntime(
+  replayRegistry: ReplayRegistry,
+  accessManager: AccessManager,
+  provider: ProviderClient,
+): GatewayServices {
+  return {
+    replayRegistry,
+    webui: { playback: { min_eager_end_ms: 0, preempt_fadeout_ms: 0 } },
+    profileStore: { get: async () => ({ ok: false, error: "no profile in this test" }) },
+    createSynthesizerFor: () => null,
+    stt: null,
+    createSessionRuntime: (principal: never, partitionId: string, emitter: never) => ({
+      runtime: createSessionRuntime({
+        principal,
+        sessionId: partitionId,
+        accessManager,
+        provider,
+        broker: noopBroker(),
+        emitter,
+        systemPrompt: "you are a test assistant",
+        config: testOrchestratorConfig(),
+      }),
+      permissions: { denyAll: () => {} },
+    }),
+  } as unknown as GatewayServices;
+}
+
+async function waitUntilIdle(runtime: SessionRuntime, timeoutMs = 2000): Promise<void> {
+  const start = Date.now();
+  while (runtime.running) {
+    if (Date.now() - start > timeoutMs) throw new Error("waitUntilIdle: turn never settled");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+describe("handleSessionConfigure — reload rebuilds the conversation", () => {
+  it("CONTRACT: a reconnect on the same surface replays the prior feed and a non-empty model projection", async () => {
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const accessManager = createAccessManager({ userDataRoot: `${STORE_ROOT}/reload` });
+    const provider = fakeProvider("hello back");
+    const services = servicesWithStoreBackedRuntime(registry, accessManager, provider);
+
+    const first = fakeAuthedWs("connection-1");
+    configure(first, services, SURFACE_A);
+    const firstRuntime = first.data.runtime as SessionRuntime;
+    firstRuntime.submit({ kind: "conversational", text: "remember the number 41" });
+    await waitUntilIdle(firstRuntime);
+    // The socket drops (reload): the runtime is disposed, the store is not.
+    firstRuntime.dispose();
+
+    const second = fakeAuthedWs("connection-2");
+    configure(second, services, SURFACE_A);
+
+    const snapshot = second.sent.find((f) => f.type === "conversation.snapshot");
+    const items = (snapshot?.items ?? []) as { kind: string; content?: string }[];
+    expect(items.map((i) => i.kind)).toEqual(["user", "assistant"]);
+    expect(items[0]?.content).toBe("remember the number 41");
+
+    // …and the model sees it too: the next turn's request replays the prior
+    // exchange, which is what "the assistant keeps context across a reload"
+    // actually means.
+    const secondRuntime = second.data.runtime as SessionRuntime;
+    secondRuntime.submit({ kind: "conversational", text: "what number?" });
+    await waitUntilIdle(secondRuntime);
+    const replayed = provider.calls[1]?.messages ?? [];
+    expect(replayed.some((m) => m.role === "user" && m.content === "remember the number 41")).toBe(true);
+    expect(replayed.some((m) => m.role === "assistant" && m.content === "hello back")).toBe(true);
+    secondRuntime.dispose();
+  });
+
+  it("a fresh surface starts clean — no other conversation bleeds in", async () => {
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const accessManager = createAccessManager({ userDataRoot: `${STORE_ROOT}/fresh` });
+    const provider = fakeProvider("hello back");
+    const services = servicesWithStoreBackedRuntime(registry, accessManager, provider);
+
+    const first = fakeAuthedWs("connection-1");
+    configure(first, services, SURFACE_A);
+    const firstRuntime = first.data.runtime as SessionRuntime;
+    firstRuntime.submit({ kind: "conversational", text: "private to surface A" });
+    await waitUntilIdle(firstRuntime);
+    firstRuntime.dispose();
+
+    const second = fakeAuthedWs("connection-2");
+    configure(second, services, SURFACE_B);
+
+    const snapshot = second.sent.find((f) => f.type === "conversation.snapshot");
+    expect(snapshot?.items).toEqual([]);
+    (second.data.runtime as SessionRuntime).dispose();
   });
 });

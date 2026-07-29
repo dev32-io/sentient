@@ -50,6 +50,13 @@ export interface SessionManager {
   unbindUser(sessionId: string): void;
 }
 
+/**
+ * Mints a CONNECTION id, one per WebSocket. It is ephemeral by design — the
+ * SessionManager registry, the per-user concurrent-connection cap, and log
+ * correlation are all connection-scoped concerns. Nothing durable may be
+ * keyed on it; the conversation the session store partitions on is resolved
+ * separately, in `handleSessionConfigure`.
+ */
 function generateSessionId(): string {
   const random = Math.random().toString(36).slice(2, 10);
   const timestamp = Date.now().toString(36);

@@ -18,6 +18,15 @@ const INPUT_SAMPLE_RATE = 16000;
 const OUTPUT_SAMPLE_RATE = 48000;
 const AUDIO_ENCODING = "pcm16";
 
+// Conversation-id shape: `c::<userId>::<surfaceId>`. An internal identifier
+// format, not an operator tunable — the same class as a protocol string.
+// `userId` is `u_[a-f0-9]{8}` (user-auth/user-id.ts), so it can never contain
+// the separator and the owner segment is unambiguous to parse back out.
+const CONVERSATION_ID_PREFIX = "c";
+const ID_SEGMENT_SEPARATOR = "::";
+/** Cap on the client-supplied id echoed into a rejection log line. */
+const PRESENTED_ID_PREVIEW_MAX = 120;
+
 // ---------------------------------------------------------------------------
 // Session configure — post-purge minimal form.
 //
@@ -61,11 +70,20 @@ const AUDIO_ENCODING = "pcm16";
 // `gatewayMessageSchema` like every other outbound frame instead of being
 // hand-serialised.
 //
-// Finally, every NON-recovered handshake ends with a `conversation.snapshot`
+// Every NON-recovered handshake ends with a `conversation.snapshot`
 // (runtime/conversation-feed.ts, via `SessionRuntime`). Without it a client
 // renders an empty chat on every reload, reconnect-with-recovered:false, and
 // first connect — the `turn.*` family is a live stream the client discards,
 // so the committed feed is the only thing that survives a turn.
+//
+// Finally, this handler resolves the DURABLE CONVERSATION ID the session
+// store partitions on (`resolveConversationId` below) and hands it to the
+// runtime factory. Two ids live in this file and they are not the same thing:
+// `sessionId` is this WebSocket connection and dies with it; `conversationId`
+// outlives every socket. The store used to be keyed on the former, so a
+// reload / reconnect / restart landed in a brand-new empty partition — the
+// snapshot above came back empty AND the model projection replayed nothing,
+// which is the whole of "the assistant forgot everything on reload".
 // ---------------------------------------------------------------------------
 
 export function handleSessionConfigure(
@@ -111,11 +129,22 @@ export function handleSessionConfigure(
   // connection that already holds THIS surface keeps its journal instead of
   // minting a fresh one.
   const surfaceId = configureSurfaceId ?? configureDeviceId;
-  const replayKey = `${userId}::${surfaceId}`;
+  const replayKey = `${userId}${ID_SEGMENT_SEPARATOR}${surfaceId}`;
   const acquisition = acquireSurfaceJournal(ws, services, replayKey, sessionId, configureResume?.epoch);
   ws.data.journal = acquisition.journal;
   ws.data.epoch = acquisition.epoch;
   ws.data.replayLease = acquisition.lease;
+
+  // --- Durable conversation identity: the STORE's partition key ---
+  //
+  // Resolved before the runtime block, because it is a runtime construction
+  // input. Deliberately NOT `sessionId`: that one is minted per WebSocket
+  // connection, so partitioning the store on it opened a brand-new empty
+  // partition on every reload, reconnect and restart — the committed feed came
+  // back empty and the model projection handed the LLM no history at all
+  // (spec §10 acceptance #9).
+  const conversationId = resolveConversationId(userId, surfaceId, configureConversationId, sessionId);
+  ws.data.conversationId = conversationId;
 
   // A repeat session.configure on the same connection must not leak the
   // previous runtime's store handle, strand its open permission prompts, or
@@ -161,7 +190,10 @@ export function handleSessionConfigure(
           })
         : null;
       hasVoice = voice !== null;
-      const handles = services.createSessionRuntime(principal, sessionId, emitter, voice);
+      // The factory's second parameter is the SESSION STORE's partition key —
+      // it reaches `SessionRuntimeDeps.sessionId`, which is the conversation,
+      // not this socket. See that field's doc comment in session-runtime.ts.
+      const handles = services.createSessionRuntime(principal, conversationId, emitter, voice);
       ws.data.runtime = handles.runtime;
       ws.data.permissions = handles.permissions;
     } catch (err) {
@@ -199,7 +231,7 @@ export function handleSessionConfigure(
     epoch: acquisition.epoch,
     resumed: acquisition.resumed,
     requestedResumeLastSeq: configureResume?.lastSeq ?? null,
-    conversationId: configureConversationId ?? null,
+    conversationId,
   });
 
   const readyFrame: GatewayMessage = {
@@ -232,7 +264,57 @@ export function handleSessionConfigure(
   if (readyAlreadySent) return;
 
   sendGatewayFrame(ws, readyFrame);
-  sendConversationSnapshot(ws, sessionId, userId);
+  sendConversationSnapshot(ws, sessionId, conversationId, userId);
+}
+
+/**
+ * Resolve the DURABLE conversation id this connection's store partition keys
+ * on. Three decisions, all deliberate:
+ *
+ *  - **Who mints it?** The gateway, deterministically, from the authenticated
+ *    principal plus the client's own stable surface id (`surfaceId`, falling
+ *    back to `deviceId` — the same pair the replay journal is keyed on). Web
+ *    persists `surfaceId` in sessionStorage and mobile sends `deviceId`, so
+ *    the SAME id is re-derived on every reload, reconnect and gateway
+ *    restart without the client having to hold anything new.
+ *  - **Echoed back?** No, and it does not need to be: derivation means the
+ *    client presents what it already sends. Nothing is added to the frozen
+ *    wire contract, and `session.ready.sessionId` keeps meaning exactly what
+ *    it has always meant (this connection).
+ *  - **Mismatch?** A client MAY present `session.configure.conversationId`
+ *    (mobile does, when it has an anchor). It is honoured ONLY when it is
+ *    namespaced to the AUTHENTICATED principal; anything else falls back to
+ *    this principal's own surface partition and is logged. A client-supplied
+ *    string never becomes a partition key on trust alone. The store is
+ *    already one DB per user opened through a Capability, so this is
+ *    defense in depth over a bounded blast radius — not the only wall.
+ *
+ * A well-formed id for a partition this principal has never used yet simply
+ * starts empty, in their own DB. That is a new conversation, not an error.
+ */
+function resolveConversationId(
+  userId: string,
+  surfaceId: string,
+  presented: string | undefined,
+  sessionId: string,
+): string {
+  const surfaceConversationId = `${CONVERSATION_ID_PREFIX}${ID_SEGMENT_SEPARATOR}${userId}${ID_SEGMENT_SEPARATOR}${surfaceId}`;
+  if (presented === undefined) return surfaceConversationId;
+
+  const ownerPrefix = `${CONVERSATION_ID_PREFIX}${ID_SEGMENT_SEPARATOR}${userId}${ID_SEGMENT_SEPARATOR}`;
+  if (presented.startsWith(ownerPrefix)) {
+    log.info("session-configure.conversation.client-anchored", { sessionId, userId, conversationId: presented });
+    return presented;
+  }
+
+  log.warn("session-configure.conversation.foreign-id-refused", {
+    sessionId,
+    userId,
+    conversationId: surfaceConversationId,
+    presentedPreview: presented.slice(0, PRESENTED_ID_PREVIEW_MAX),
+    reason: "presented conversation id is not scoped to this principal — anchoring to its own surface partition",
+  });
+  return surfaceConversationId;
 }
 
 /**
@@ -271,11 +353,17 @@ export function handleSessionConfigure(
  *    neither is in this task's scope, and no gateway-side ordering can beat an
  *    async client fetch.
  */
-function sendConversationSnapshot(ws: ServerWebSocket<SessionData>, sessionId: string, userId: string): void {
+function sendConversationSnapshot(
+  ws: ServerWebSocket<SessionData>,
+  sessionId: string,
+  conversationId: string,
+  userId: string,
+): void {
   const runtime = ws.data.runtime;
   if (runtime === null) {
     log.warn("session-configure.no-conversation-snapshot", {
       sessionId,
+      conversationId,
       userId,
       reason: "no session runtime on this connection — no store to project",
     });
