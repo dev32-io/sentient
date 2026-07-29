@@ -4,9 +4,10 @@
 //   2. seq dedup on binary frames (cursor advances; replayed seq dropped).
 //   3. seq dedup on JSON frames (handler not called on dup; called on new seq).
 //   4. stream.resumed callback routing.
+//   5. Auth-failure routing (`auth.error` / `error` while authenticating).
 //
 // Pins: wire/protocol contract at the gateway↔SDK boundary (binary header
-// format) and FSM/invariant (seq dedup rule).
+// format, handshake failure frames) and FSM/invariant (seq dedup rule).
 // ---------------------------------------------------------------------------
 
 import { describe, expect, it, vi } from "vitest";
@@ -247,5 +248,81 @@ describe("dispatchMessage — stream.resumed", () => {
     dispatchMessage(deps, makeMessageEvent(msg), NOOP, NOOP);
 
     expect(deps.streamResumedCalls).toEqual([false]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Auth-failure routing
+//
+// Pins the gateway↔SDK wire contract for the handshake failure frame. The
+// gateway's auth gate has always closed the socket with `auth.error`
+// (`ws-auth-gate.ts`), and mobile decodes it — but this router only knew
+// `error`, so on the browser an auth failure was dropped: connect() stayed
+// pending until the unrelated 10s auth timeout, the real code/reason was lost,
+// and the reconnect loop (which stops only on lastErrorKind === "auth") kept
+// retrying a token that will never work.
+// ---------------------------------------------------------------------------
+
+describe("dispatchMessage — auth failure", () => {
+  function authErrorDeps(): ReturnType<typeof makeDeps> {
+    return makeDeps({ getStatus: () => "authenticating" as SDKStatus });
+  }
+
+  it("rejects connect with the server's reason when auth.error arrives", () => {
+    const deps = authErrorDeps();
+    const rejections: Error[] = [];
+
+    dispatchMessage(
+      deps,
+      makeMessageEvent(
+        JSON.stringify({ type: "auth.error", code: "token-validation-failed", message: "token expired" }),
+      ),
+      NOOP,
+      (err) => rejections.push(err),
+    );
+
+    expect(rejections.map((e) => e.message)).toEqual(["token expired"]);
+    expect(deps.setLastErrorKind).toHaveBeenCalledWith("auth");
+    expect(deps.setStatus).toHaveBeenCalledWith("error");
+  });
+
+  it("still rejects when auth.error carries no message", () => {
+    const deps = authErrorDeps();
+    const rejections: Error[] = [];
+
+    dispatchMessage(
+      deps,
+      makeMessageEvent(JSON.stringify({ type: "auth.error", code: "session-limit" })),
+      NOOP,
+      (err) => rejections.push(err),
+    );
+
+    expect(rejections).toHaveLength(1);
+    expect(deps.setLastErrorKind).toHaveBeenCalledWith("auth");
+  });
+
+  it("keeps routing the post-auth `error` frame as an auth failure while authenticating", () => {
+    const deps = authErrorDeps();
+    const rejections: Error[] = [];
+
+    dispatchMessage(
+      deps,
+      makeMessageEvent(JSON.stringify({ type: "error", code: "protocol_error", message: "Session not authenticated" })),
+      NOOP,
+      (err) => rejections.push(err),
+    );
+
+    expect(rejections.map((e) => e.message)).toEqual(["Session not authenticated"]);
+  });
+
+  it("does not hijack an auth.error that arrives after the session is ready", () => {
+    const deps = makeDeps();
+    const calls: unknown[] = [];
+    deps.messageHandlers.set("auth.error", new Set([(msg) => calls.push(msg)]));
+
+    dispatchMessage(deps, makeMessageEvent(JSON.stringify({ type: "auth.error", code: "auth-required" })), NOOP, NOOP);
+
+    expect(calls).toHaveLength(1);
+    expect(deps.setStatus).not.toHaveBeenCalled();
   });
 });

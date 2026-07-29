@@ -233,9 +233,13 @@ export const authOkSchema = z.object({
 export type AuthOkMessage = z.infer<typeof authOkSchema>;
 
 /** Sent immediately before the gateway closes the socket (RFC 6455 1008).
- *  `code` is the stable machine token the clients branch on (`auth-required`,
- *  `auth-timeout`, `session-limit`, `invalid-user-record`, or a token
- *  validation error); `message` is human-readable detail. */
+ *  Not a 2.0 addition: the auth gate has sent this frame since the initial
+ *  release — 2.0 only brought it under `gatewayMessageSchema`.
+ *  `code` is the stable machine token (`auth-required`, `auth-timeout`,
+ *  `session-limit`, `invalid-user-record`, or a token validation error).
+ *  Mobile classifies terminal vs retryable on it (`AuthErrorClass.kt`); web
+ *  stops its reconnect loop on any of them and surfaces `message`, which is
+ *  the human-readable detail. */
 export const authErrorSchema = z.object({
   type: z.literal("auth.error"),
   code: z.string(),

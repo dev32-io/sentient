@@ -27,6 +27,16 @@ type ErrorKind = "auth" | "network" | "timeout" | null;
 const BINARY_HEADER_BYTES = 9;
 const BINARY_TYPE_AUDIO = 0x01;
 
+/** Frame types that mean "the handshake failed", both only while the SDK is
+ *  still `authenticating`. `auth.error` is the auth gate's own rejection
+ *  (`ws-auth-gate.ts`, socket closed straight after); `error` covers the
+ *  frames sent between auth.ok and session.ready (ws-session-configure.ts,
+ *  ws-handlers.ts). Missing either one leaves connect() pending until the
+ *  unrelated auth timeout and loses the server's code/reason — and the
+ *  reconnect loop, which stops only on `lastErrorKind === "auth"`, keeps
+ *  retrying a token that will never work. */
+const AUTH_FAILURE_TYPES: ReadonlySet<string> = new Set(["auth.error", "error"]);
+
 export interface MessageRouterDeps {
   getStatus: () => SDKStatus;
   setStatus: (s: SDKStatus) => void;
@@ -137,7 +147,7 @@ function routeByType(
     handleAuthOk(deps, reject);
     return;
   }
-  if (type === "error" && status === "authenticating") {
+  if (AUTH_FAILURE_TYPES.has(type) && status === "authenticating") {
     handleAuthError(deps, msg, reject);
     return;
   }
@@ -166,6 +176,7 @@ function handleAuthError(deps: MessageRouterDeps, msg: Record<string, unknown>, 
   deps.timers.clearAll();
   deps.setLastErrorKind("auth");
   const reason = (msg.message as string) ?? "Auth failed";
+  sdkLog.warn("auth.failed", { frame: msg.type, code: msg.code });
   deps.setStatus("error");
   reject(new Error(reason));
 }

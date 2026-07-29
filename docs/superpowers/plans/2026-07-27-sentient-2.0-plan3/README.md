@@ -51,7 +51,7 @@ Task 1 is the trunk. It exists so that voice, permission, delegation, cancellati
 | `delegation.progress` | `{ taskId, turnId, agent, status: "running" \| "done" \| "error", note? }` | *(new)* |
 | `playback.stop` | `{ turnId, reason: "barge-in" \| "interrupt" }` | same frame, rekeyed `cycleId → turnId` |
 
-Retained unchanged: `auth.ok`, `session.ready`, `error`, `pong`, `session.expired`, `sessions.*`, `stream.resumed`. `conversation.snapshot` / `conversation.entry` are retained but rekeyed `cycleId → turnId`.
+Retained unchanged: `auth.ok`, `auth.error`, `session.ready`, `error`, `pong`, `session.expired`, `sessions.*`, `stream.resumed`. (`auth.error` predates this plan — the auth gate has sent it since the initial release and `shared/mobile-sdk` has always decoded it. It was missing from this list, not from the wire; Task 1 remediation only added its schema.) `conversation.snapshot` / `conversation.entry` are retained but rekeyed `cycleId → turnId`.
 
 ### Client → gateway
 
