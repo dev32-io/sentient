@@ -74,7 +74,8 @@ import type { OrchestratorServices } from "./phase-services.js";
 import { buildOrchestratorServices } from "./phase-services.js";
 
 const TEST_USER_ID = "u_deadbeef" as const; // valid per user-id.ts's /^u_[a-f0-9]{8}$/
-const TEST_SESSION_ID = "live-native-brain-text-session";
+const TEST_CONVERSATION_ID = "live-native-brain-text-conversation";
+const TEST_CONNECTION_ID = "live-native-brain-text-connection";
 const PONG_PROMPT = "Reply with exactly the word: pong";
 const TURN_TIMEOUT_MS = 60_000;
 
@@ -199,7 +200,12 @@ live("[@live] native orchestrator — text-only turn against the real active LLM
       mkdirSync(userHomeDir, { recursive: true });
 
       const emitter = recordingEmitter();
-      const { runtime } = orchestratorServices.createSessionRuntime(alice, TEST_SESSION_ID, emitter);
+      const { runtime } = orchestratorServices.createSessionRuntime({
+        principal: alice,
+        conversationId: TEST_CONVERSATION_ID,
+        connectionId: TEST_CONNECTION_ID,
+        emitter,
+      });
 
       try {
         expect(runtime.running).toBe(false);

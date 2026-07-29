@@ -33,7 +33,9 @@ import { createSessionRuntime } from "../runtime/session-runtime.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { BackgroundRegistry } from "../tools/background-registry.js";
 import type { ToolBroker } from "../tools/tool-broker.js";
+import { createConversationRuntimeRegistry } from "./conversation-runtime-registry.js";
 import { type ReplayRegistry, createReplayRegistry } from "./replay-registry.js";
+import { cleanupSession } from "./ws-handlers.js";
 import { type SessionData, createEmptySessionData } from "./ws-helpers.js";
 import { sendGatewayFrame } from "./ws-send.js";
 import { handleSessionConfigure } from "./ws-session-configure.js";
@@ -75,6 +77,7 @@ function asWs(ws: FakeWs): ServerWebSocket<SessionData> {
 function servicesWith(replayRegistry: ReplayRegistry): GatewayServices {
   return {
     replayRegistry,
+    conversationRuntimes: createConversationRuntimeRegistry(),
     webui: { playback: { min_eager_end_ms: 0, preempt_fadeout_ms: 0 } },
     createSessionRuntime: null,
   } as unknown as GatewayServices;
@@ -105,6 +108,7 @@ function servicesWithRuntime(replayRegistry: ReplayRegistry, ws: FakeWs): Snapsh
   } as unknown as SessionRuntime;
   spy.services = {
     replayRegistry,
+    conversationRuntimes: createConversationRuntimeRegistry(),
     webui: { playback: { min_eager_end_ms: 0, preempt_fadeout_ms: 0 } },
     profileStore: { get: async () => ({ ok: false, error: "no profile in this test" }) },
     createSynthesizerFor: () => null,
@@ -279,12 +283,13 @@ function servicesRecordingPartition(replayRegistry: ReplayRegistry, ws: FakeWs):
   } as unknown as SessionRuntime;
   spy.services = {
     replayRegistry,
+    conversationRuntimes: createConversationRuntimeRegistry(),
     webui: { playback: { min_eager_end_ms: 0, preempt_fadeout_ms: 0 } },
     profileStore: { get: async () => ({ ok: false, error: "no profile in this test" }) },
     createSynthesizerFor: () => null,
     stt: null,
-    createSessionRuntime: (_principal: unknown, partitionId: string) => {
-      spy.partitionIds.push(partitionId);
+    createSessionRuntime: ({ conversationId }: { conversationId: string }) => {
+      spy.partitionIds.push(conversationId);
       return { runtime, permissions: { denyAll: () => {} } };
     },
   } as unknown as GatewayServices;
@@ -367,6 +372,129 @@ describe("handleSessionConfigure — durable conversation identity", () => {
 });
 
 // ---------------------------------------------------------------------------
+// One live runtime per conversation.
+//
+// Making the conversation durable made it SHARED: two sockets can now name the
+// same store partition. replay-registry.ts already documents the window that
+// makes this routine rather than hypothetical — "a same-tab reload whose new
+// session.configure lands before the old socket's close event, or a TCP/NAT
+// drop Bun's idle timeout has not noticed yet" — and mints a fresh journal so
+// the two never share a seq counter. The runtime needs the same treatment for
+// a stronger reason: two live `SessionRuntime`s on one partition are two ReAct
+// loops appending to one append-only log with different views of the prior
+// context, plus two `bun:sqlite` handles on one WAL file.
+//
+// Newest connection wins, matching the registry's own stance on the same race.
+// ---------------------------------------------------------------------------
+
+interface MintedRuntime {
+  conversationId: string;
+  connectionId: string;
+  disposeCount: number;
+}
+
+interface LifecycleSpy {
+  services: GatewayServices;
+  /** One entry per mint, in call order. */
+  minted: MintedRuntime[];
+}
+
+/** Services whose runtime factory hands back a fresh disposal-counting stub
+ *  per call, so eviction is observable without a store or a provider. */
+function servicesTrackingRuntimes(replayRegistry: ReplayRegistry): LifecycleSpy {
+  const spy: LifecycleSpy = { minted: [], services: {} as GatewayServices };
+  spy.services = {
+    replayRegistry,
+    conversationRuntimes: createConversationRuntimeRegistry(),
+    webui: { playback: { min_eager_end_ms: 0, preempt_fadeout_ms: 0 } },
+    profileStore: { get: async () => ({ ok: false, error: "no profile in this test" }) },
+    createSynthesizerFor: () => null,
+    stt: null,
+    sessionManager: { unbindUser: () => {}, removeSession: () => {} },
+    createSessionRuntime: ({ conversationId, connectionId }: { conversationId: string; connectionId: string }) => {
+      const record: MintedRuntime = { conversationId, connectionId, disposeCount: 0 };
+      spy.minted.push(record);
+      const runtime = {
+        emitConversationSnapshot: () => {},
+        dispose: () => {
+          record.disposeCount += 1;
+        },
+      } as unknown as SessionRuntime;
+      return { runtime, permissions: { denyAll: () => {} } };
+    },
+  } as unknown as GatewayServices;
+  return spy;
+}
+
+describe("handleSessionConfigure — one live runtime per conversation", () => {
+  it("CONTRACT: a new connection on a live conversation evicts the previous connection's runtime", () => {
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const spy = servicesTrackingRuntimes(registry);
+
+    const stale = fakeAuthedWs("connection-1");
+    configure(stale, spy.services, SURFACE_A);
+    const fresh = fakeAuthedWs("connection-2");
+    configure(fresh, spy.services, SURFACE_A);
+
+    expect(spy.minted[0]?.disposeCount).toBe(1);
+    expect(stale.data.runtime).toBeNull();
+    expect(stale.data.permissions).toBeNull();
+    expect(spy.minted[1]?.disposeCount).toBe(0);
+    expect(fresh.data.runtime).not.toBeNull();
+  });
+
+  it("leaves a live runtime on a DIFFERENT conversation alone", () => {
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const spy = servicesTrackingRuntimes(registry);
+
+    const first = fakeAuthedWs("connection-1");
+    configure(first, spy.services, SURFACE_A);
+    const second = fakeAuthedWs("connection-2");
+    configure(second, spy.services, SURFACE_B);
+
+    expect(spy.minted[0]?.disposeCount).toBe(0);
+    expect(first.data.runtime).not.toBeNull();
+  });
+
+  it("keeps the runtime a re-configure on the SAME connection just minted", () => {
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const spy = servicesTrackingRuntimes(registry);
+
+    const ws = fakeAuthedWs("connection-1");
+    configure(ws, spy.services, SURFACE_A);
+    configure(ws, spy.services, SURFACE_A);
+
+    // The handler disposes the prior runtime itself; the newly minted one must
+    // not then be evicted by the claim it just made.
+    expect(spy.minted[0]?.disposeCount).toBe(1);
+    expect(spy.minted[1]?.disposeCount).toBe(0);
+    expect(ws.data.runtime).not.toBeNull();
+  });
+
+  it("CONTRACT: a superseded connection's teardown cannot deregister the live one", () => {
+    // Mirrors replay-registry's stale-lease guard: the close event of the
+    // socket a reload replaced lands AFTER the new socket configured.
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const spy = servicesTrackingRuntimes(registry);
+
+    const stale = fakeAuthedWs("connection-1");
+    configure(stale, spy.services, SURFACE_A);
+    const live = fakeAuthedWs("connection-2");
+    configure(live, spy.services, SURFACE_A);
+
+    cleanupSession(asWs(stale), spy.services);
+
+    // The live connection is still the registered owner, so a THIRD connection
+    // still evicts it — which it could not do if the stale teardown had
+    // dropped the entry.
+    const third = fakeAuthedWs("connection-3");
+    configure(third, spy.services, SURFACE_A);
+    expect(spy.minted[1]?.disposeCount).toBe(1);
+    expect(live.data.runtime).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // End-to-end reload durability, over a REAL on-disk store and a real
 // SessionRuntime (fake provider only — no network). This is spec §10
 // acceptance #9: a reconnect rebuilds the full feed from the store AND the
@@ -436,14 +564,19 @@ function servicesWithStoreBackedRuntime(
 ): GatewayServices {
   return {
     replayRegistry,
+    conversationRuntimes: createConversationRuntimeRegistry(),
     webui: { playback: { min_eager_end_ms: 0, preempt_fadeout_ms: 0 } },
     profileStore: { get: async () => ({ ok: false, error: "no profile in this test" }) },
     createSynthesizerFor: () => null,
     stt: null,
-    createSessionRuntime: (principal: never, partitionId: string, emitter: never) => ({
+    createSessionRuntime: ({
+      principal,
+      conversationId,
+      emitter,
+    }: { principal: never; conversationId: string; emitter: never }) => ({
       runtime: createSessionRuntime({
         principal,
-        sessionId: partitionId,
+        sessionId: conversationId,
         accessManager,
         provider,
         broker: noopBroker(),

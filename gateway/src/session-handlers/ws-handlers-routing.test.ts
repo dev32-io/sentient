@@ -12,6 +12,7 @@ import { createUserPrincipal } from "../identity/user-principal.js";
 import type { PermissionBroker } from "../runtime/permission-broker.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { Stimulus } from "../runtime/stimulus.js";
+import { createConversationRuntimeRegistry } from "./conversation-runtime-registry.js";
 import { createFrameJournal } from "./frame-journal.js";
 import { createReplayRegistry } from "./replay-registry.js";
 import { cleanupSession, handleWebSocketMessage } from "./ws-handlers.js";
@@ -71,11 +72,13 @@ function stubRuntime(): StubRuntime {
 // GatewayServices' large surface without exercising any of it.
 const unusedServices = {} as GatewayServices;
 
-// cleanupSession() dereferences sessionManager AND replayRegistry. A real
-// (tiny) registry is cheaper and more honest than a hand-rolled double.
+// cleanupSession() dereferences sessionManager, replayRegistry, and (once
+// session.configure has resolved a conversation) conversationRuntimes. Real
+// (tiny) registries are cheaper and more honest than hand-rolled doubles.
 const cleanupServices = {
   sessionManager: { unbindUser: () => {}, removeSession: () => {} },
   replayRegistry: createReplayRegistry({ maxBytesPerSurface: 65536, retentionMs: 1000 }),
+  conversationRuntimes: createConversationRuntimeRegistry(),
 } as unknown as GatewayServices;
 
 interface StubPermissions extends PermissionBroker {
@@ -301,6 +304,7 @@ describe("ws-handlers cleanup — replay journal", () => {
     const services = {
       sessionManager: { unbindUser: () => {}, removeSession: () => {} },
       replayRegistry: registry,
+      conversationRuntimes: createConversationRuntimeRegistry(),
     } as unknown as GatewayServices;
 
     const ws = fakeAuthedWs(null);

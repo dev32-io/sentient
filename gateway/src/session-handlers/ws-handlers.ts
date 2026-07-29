@@ -253,7 +253,8 @@ function handleSessionEnd(ws: ServerWebSocket<SessionData>, services: GatewaySer
  * principal + the client's surface id, so the next connection re-derives it
  * and the store hands the committed feed and the model's history straight
  * back (ws-session-configure.ts). Only the handle is torn down here; nothing
- * in the store is.
+ * in the store is. That shared partition is why this connection's claim on
+ * `services.conversationRuntimes` goes back here too.
  * The other thing that survives the disconnect is this surface's outbound
  * frame journal, parked in
  * `services.replayRegistry` for `session.replay_journal_retention_ms` so a
@@ -279,6 +280,14 @@ export function cleanupSession(ws: ServerWebSocket<SessionData>, services: Gatew
 
   ws.data.runtime?.dispose();
   ws.data.runtime = null;
+
+  // Hand this conversation's live-runtime claim back. Connection-guarded
+  // inside the registry: a socket that was already SUPERSEDED on this
+  // conversation (a reload whose new session.configure beat this close) must
+  // not deregister — or tear down — the connection that replaced it.
+  if (ws.data.conversationId !== null) {
+    services.conversationRuntimes.release(ws.data.conversationId, sessionId);
+  }
 
   // Detach the frame journal LAST, after the runtime has been disposed:
   // dispose() is synchronous, and anything it still writes to this socket

@@ -126,6 +126,12 @@ export interface ToolBrokerDeps {
   policy: PolicyEngine;
   store: SessionStore;
   principal: UserPrincipal;
+  /** The CONNECTION id (`ws.data.sessionId`), for log correlation and nothing
+   *  else — every `tool-broker.*` line below carries it so a dispatch is
+   *  traceable to the one socket that made it. It is NOT the durable
+   *  conversation the session store partitions on: two connections to the
+   *  same conversation (before and after a reload) must stay distinguishable
+   *  here. See `SessionRuntimeRequest` in runtime/session-handles.ts. */
   sessionId: string;
   /** name → runner. `delegateTask` (Task 5) registers itself here. */
   backgroundTools: Map<string, BackgroundToolRunner>;

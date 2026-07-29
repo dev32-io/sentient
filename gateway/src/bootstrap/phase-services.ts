@@ -34,7 +34,6 @@ import type { ApplyDeps } from "../apply/orchestrator.js";
 import { renderAndWrite } from "../apply/orchestrator.js";
 import type { StartupConfig } from "../config/startup-config.ts";
 import { SignalProvisioner } from "../devices/signal/signal-provisioner.js";
-import type { UserPrincipal } from "../identity/user-principal.js";
 import { type HealthPoller, createHealthPoller } from "../infrastructure/health-poller.js";
 import { type Log, getLog } from "../logging/logger.ts";
 import { createPersonalityStore } from "../profile-store/personality-store.js";
@@ -45,10 +44,8 @@ import { createOpenAIProvider } from "../provider/openai-provider.js";
 import type { ProviderClient } from "../provider/provider-client.js";
 import type { TTSProviderFactory } from "../providers/tts/tts-types.ts";
 import { createPermissionBroker } from "../runtime/permission-broker.js";
-import type { SessionHandles } from "../runtime/session-handles.js";
+import type { CreateSessionRuntime } from "../runtime/session-handles.js";
 import { createSessionRuntime as buildSessionRuntime } from "../runtime/session-runtime.js";
-import type { TurnEmitter } from "../runtime/turn-emitter.js";
-import type { TurnVoice } from "../runtime/turn-voice.js";
 import { createPolicyEngine } from "../security/policy-engine.js";
 import type { PolicyEngine } from "../security/policy-engine.js";
 import { loadMcpPolicy } from "../security/policy-loader.js";
@@ -140,13 +137,14 @@ export interface PhaseServicesOutput {
    *  either way the gateway still boots; only a session that actually needs
    *  the orchestrator fails, at construction, with a clear error. */
   readonly provider: ProviderClient | null;
-  /** Per-session runtime factory. `null` when `orchestrator:` is absent from
-   *  config (the whole native-orchestrator feature is off). Present-but-
-   *  no-provider is a DIFFERENT state (see `provider` above) — the factory
-   *  itself still exists in that case, and throws when actually invoked. */
-  readonly createSessionRuntime:
-    | ((principal: UserPrincipal, sessionId: string, emitter: TurnEmitter, voice?: TurnVoice | null) => SessionHandles)
-    | null;
+  /** Per-session runtime factory (`SessionRuntimeRequest` names its two ids
+   *  apart — the durable conversation the store partitions on, and the
+   *  connection id the logs correlate on). `null` when `orchestrator:` is
+   *  absent from config (the whole native-orchestrator feature is off).
+   *  Present-but-no-provider is a DIFFERENT state (see `provider` above) —
+   *  the factory itself still exists in that case, and throws when actually
+   *  invoked. */
+  readonly createSessionRuntime: CreateSessionRuntime | null;
 }
 
 export async function runPhaseServices(input: PhaseServicesInput): Promise<PhaseServicesOutput> {
@@ -561,9 +559,7 @@ export interface OrchestratorServices {
   accessManager: AccessManager;
   mcpClient: McpClient;
   provider: ProviderClient | null;
-  createSessionRuntime:
-    | ((principal: UserPrincipal, sessionId: string, emitter: TurnEmitter, voice?: TurnVoice | null) => SessionHandles)
-    | null;
+  createSessionRuntime: CreateSessionRuntime | null;
 }
 
 /**
@@ -600,9 +596,9 @@ export async function buildOrchestratorServices(
   // `definitions()` synchronous-read race (Task 4's residual) to something
   // Task 10's real WS round trip (session creation → first user message)
   // comfortably outlasts in practice; a hard guarantee would require making
-  // this factory async, which the locked signature
-  // (`createSessionRuntime(principal, sessionId, emitter): SessionRuntime`)
-  // does not allow. Noted as a residual, not silently dropped.
+  // this factory async, which its synchronous contract (`CreateSessionRuntime`
+  // in runtime/session-handles.ts) does not allow. Noted as a residual, not
+  // silently dropped.
   await warmMcpClient(mcpClient);
 
   if (!cfg.orchestrator) {
@@ -729,16 +725,15 @@ interface CreateSessionRuntimeFactoryDeps {
  *  a caller that specifically asked for a session runtime, never a reason to
  *  fail the whole gateway boot (that check lives HERE, at the point of
  *  actual use, not in `buildOrchestratorServices` above). */
-function buildCreateSessionRuntime(
-  deps: CreateSessionRuntimeFactoryDeps,
-): (principal: UserPrincipal, sessionId: string, emitter: TurnEmitter, voice?: TurnVoice | null) => SessionHandles {
+function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): CreateSessionRuntime {
   const { orchestratorCfg, accessManager, provider, mcpClient, policyEngine, delegationGuard, hermesRunner } = deps;
 
-  return (principal, sessionId, emitter, voice) => {
+  return ({ principal, conversationId, connectionId, emitter, voice }) => {
     if (!provider) {
       log.error("session-runtime.factory.no-provider", {
         userId: principal.userId,
-        sessionId,
+        conversationId,
+        connectionId,
         reason: "orchestrator configured but no active LLM key resolved from the secrets store",
       });
       throw new Error(
@@ -750,10 +745,12 @@ function buildCreateSessionRuntime(
     // because this is the only scope holding BOTH the session's emitter and
     // the orchestrator config; `ws-session-configure.ts` receives it back on
     // `SessionHandles` and parks it on `ws.data.permissions` so
-    // `permission.response` can route into it.
+    // `permission.response` can route into it. It gets `connectionId`, not the
+    // conversation: a prompt is settleable only by the socket that issued it,
+    // so that is the id its logs must name.
     const permissions = createPermissionBroker({
       emitter,
-      sessionId,
+      sessionId: connectionId,
       userId: principal.userId,
       timeoutMs: orchestratorCfg.permission.request_timeout_ms,
     });
@@ -794,7 +791,9 @@ function buildCreateSessionRuntime(
       policy: policyEngine,
       store: brokerStore,
       principal,
-      sessionId,
+      // Log correlation only (see `ToolBrokerDeps.sessionId`) — the CONNECTION,
+      // so a tool dispatch stays traceable to the one socket that made it.
+      sessionId: connectionId,
       backgroundTools,
       config: orchestratorCfg.tools,
       // Real L3 confirm round-trip (spec §5.3): emits `permission.request` to
@@ -805,11 +804,14 @@ function buildCreateSessionRuntime(
     });
     void broker.definitions(); // kick off this session's own MCP list-tools warm-up now, not on the first turn.
 
-    log.info("session-runtime.factory.build", { userId: principal.userId, sessionId });
+    log.info("session-runtime.factory.build", { userId: principal.userId, conversationId, connectionId });
 
     const runtime = buildSessionRuntime({
       principal,
-      sessionId,
+      // The store's own vocabulary for a partition is `sessionId`; the value
+      // is the DURABLE conversation, never this socket. See that field's doc
+      // comment in session-runtime.ts.
+      sessionId: conversationId,
       accessManager,
       provider,
       broker,

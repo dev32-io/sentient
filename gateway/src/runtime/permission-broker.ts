@@ -87,6 +87,12 @@ export interface PermissionBroker {
 
 export interface PermissionBrokerDeps {
   emitter: PermissionEmitter;
+  /** The CONNECTION id (`ws.data.sessionId`), for log correlation and nothing
+   *  else. It matches this broker's own scope — one per socket, settleable
+   *  only by that socket — and is deliberately NOT the durable conversation
+   *  the session store partitions on, which spans every reconnect and would
+   *  make two connections' prompts indistinguishable in the log. See
+   *  `SessionRuntimeRequest` in session-handles.ts. */
   sessionId: string;
   userId: string;
   /** `orchestrator.permission.request_timeout_ms` — never a literal here. */

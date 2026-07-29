@@ -45,10 +45,13 @@ const PRESENTED_ID_PREVIEW_MAX = 120;
 // Plan 2 Task 10 adds the one piece of orchestrator wiring that belongs
 // HERE rather than in the message router: minting this session's
 // `SessionRuntime` once the principal is known, via `services.
-// createSessionRuntime(principal, sessionId, WsTurnEmitter(ws))`. From this
-// point on, `ws.data.runtime` is the seam `text.input`/`interrupt`
-// (ws-handlers.ts) route through — see that file for the message-level
-// wiring, and ws-turn-emitter.ts for the outbound frame mapping.
+// createSessionRuntime({ principal, conversationId, connectionId, emitter })`
+// — see `SessionRuntimeRequest` (runtime/session-handles.ts) for why those
+// two ids are named apart, and the last paragraph below for what each one
+// keys. From this point on, `ws.data.runtime` is the seam
+// `text.input`/`interrupt` (ws-handlers.ts) route through — see that file for
+// the message-level wiring, and ws-turn-emitter.ts for the outbound frame
+// mapping.
 //
 // Plan 3 Task 6 makes that factory return a PAIR — `SessionHandles`
 // { runtime, permissions }. The permission broker is connection-scoped for
@@ -84,6 +87,12 @@ const PRESENTED_ID_PREVIEW_MAX = 120;
 // reload / reconnect / restart landed in a brand-new empty partition — the
 // snapshot above came back empty AND the model projection replayed nothing,
 // which is the whole of "the assistant forgot everything on reload".
+//
+// Because that id is durable it is also SHARED, so the runtime it keys is
+// claimed from `services.conversationRuntimes`: a newer connection on a
+// conversation a still-live socket holds evicts that socket's runtime instead
+// of running a second ReAct loop over the same append-only log. Same race,
+// same stance, as the frame journal above.
 // ---------------------------------------------------------------------------
 
 export function handleSessionConfigure(
@@ -144,6 +153,7 @@ export function handleSessionConfigure(
   // back empty and the model projection handed the LLM no history at all
   // (spec §10 acceptance #9).
   const conversationId = resolveConversationId(userId, surfaceId, configureConversationId, sessionId);
+  const priorConversationId = ws.data.conversationId;
   ws.data.conversationId = conversationId;
 
   // A repeat session.configure on the same connection must not leak the
@@ -154,12 +164,16 @@ export function handleSessionConfigure(
   // deliberately NOT torn down with them: it belongs to the surface, not to
   // the runtime, and losing it here would break the very replay this
   // handshake just promised.
+  //
+  // The claim on the PRIOR conversation goes back too — a re-configure onto a
+  // different surface must not leave this connection registered as the live
+  // owner of a conversation whose runtime it just disposed.
   if (ws.data.runtime) {
     log.info("session-configure.reconfigure", { sessionId, userId, reason: "disposing prior runtime" });
-    ws.data.permissions?.denyAll();
-    ws.data.permissions = null;
-    ws.data.runtime.dispose();
-    ws.data.runtime = null;
+    disposeSessionHandles(ws);
+    if (priorConversationId !== null) {
+      services.conversationRuntimes.release(priorConversationId, sessionId);
+    }
   }
 
   let hasVoice = false;
@@ -190,12 +204,25 @@ export function handleSessionConfigure(
           })
         : null;
       hasVoice = voice !== null;
-      // The factory's second parameter is the SESSION STORE's partition key —
-      // it reaches `SessionRuntimeDeps.sessionId`, which is the conversation,
-      // not this socket. See that field's doc comment in session-runtime.ts.
-      const handles = services.createSessionRuntime(principal, conversationId, emitter, voice);
+      // Both ids go in, named apart (`SessionRuntimeRequest`): the durable
+      // `conversationId` becomes the session store's partition key, while the
+      // connection-scoped `sessionId` reaches only the tool/permission
+      // brokers' log correlation. Swapping them is what emptied the store's
+      // partition on every reload.
+      const handles = services.createSessionRuntime({
+        principal,
+        conversationId,
+        connectionId: sessionId,
+        emitter,
+        voice,
+      });
       ws.data.runtime = handles.runtime;
       ws.data.permissions = handles.permissions;
+      // Take sole ownership of this conversation's live runtime. Claiming
+      // AFTER construction, not before, so a factory throw leaves whatever
+      // socket already holds the conversation running rather than killing it
+      // for a session that never materialised.
+      services.conversationRuntimes.claim(conversationId, sessionId, () => disposeSessionHandles(ws));
     } catch (err) {
       // Thrown only when the orchestrator IS configured but no active LLM
       // key resolved from the secrets store (see phase-services.ts's
@@ -265,6 +292,25 @@ export function handleSessionConfigure(
 
   sendGatewayFrame(ws, readyFrame);
   sendConversationSnapshot(ws, sessionId, conversationId, userId);
+}
+
+/**
+ * Tear down one connection's orchestrator handles and clear them off the
+ * socket. Two callers, one body: a re-`session.configure` on this connection,
+ * and the eviction hook a NEWER connection's claim fires on this one. Both
+ * must leave the socket in the same state — no runtime, no permission broker —
+ * so `text.input` answers `orchestrator_unavailable` (ws-handlers.ts) instead
+ * of feeding a disposed runtime, and `cleanupSession` finds nothing to redo.
+ *
+ * Permissions settle BEFORE the runtime is disposed: each open prompt is a
+ * promise the ReAct loop is awaiting inside `broker.dispatch`, and an
+ * unsettled one parks that turn for the full permission timeout.
+ */
+function disposeSessionHandles(ws: ServerWebSocket<SessionData>): void {
+  ws.data.permissions?.denyAll();
+  ws.data.permissions = null;
+  ws.data.runtime?.dispose();
+  ws.data.runtime = null;
 }
 
 /**
