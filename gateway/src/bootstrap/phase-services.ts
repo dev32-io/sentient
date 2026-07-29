@@ -32,6 +32,7 @@ import type { DevicesHandlerDeps } from "../api/handlers/devices.js";
 import { createApplyDeps } from "../apply/apply-deps.js";
 import type { ApplyDeps } from "../apply/orchestrator.js";
 import { renderAndWrite } from "../apply/orchestrator.js";
+import { resolveAssetRoot } from "../config/asset-root.ts";
 import type { StartupConfig } from "../config/startup-config.ts";
 import { SignalProvisioner } from "../devices/signal/signal-provisioner.js";
 import { type HealthPoller, createHealthPoller } from "../infrastructure/health-poller.js";
@@ -79,12 +80,6 @@ const log = getLog(["sentient", "bootstrap", "phase-services"]);
 // Fallback provider used in supervisord program env when a user's profile is
 // unreadable (corruption case).
 const FALLBACK_LLM_PROVIDER = "openrouter" as const;
-
-// Gateway project root (gateway/) — mirrors startup-config.ts's own
-// computation. `orchestrator.delegation.frontmatter_dir` ships as a relative
-// path (e.g. "./config/delegation") and needs resolving against this, not
-// against `process.cwd()`, which varies by launcher.
-const GATEWAY_ROOT = join(import.meta.dir, "..", "..");
 
 // Plan 2 walking-skeleton system prompt — deliberately minimal (a real
 // prompt-assembly layer, persona/profile-aware, is Plan 3's job; see
@@ -646,11 +641,12 @@ async function warmMcpClient(mcpClient: McpClient): Promise<void> {
 }
 
 /** `orchestrator.delegation.frontmatter_dir` ships relative
- *  (`./config/delegation`) — resolve against the gateway project root, not
- *  `process.cwd()` (which varies by launcher). Absolute overrides pass
- *  through untouched. */
+ *  (`./config/delegation`) — resolve against the runtime asset root, not
+ *  `process.cwd()` (which varies by launcher) and not `import.meta.dir`
+ *  (which is the embedded bundle inside a compiled binary). Absolute
+ *  overrides pass through untouched. */
 function resolveDelegationFrontmatterDir(frontmatterDir: string): string {
-  return frontmatterDir.startsWith("/") ? frontmatterDir : join(GATEWAY_ROOT, frontmatterDir);
+  return frontmatterDir.startsWith("/") ? frontmatterDir : join(resolveAssetRoot(), frontmatterDir);
 }
 
 /** Resolves the orchestrator's live `ProviderClient` from the operator's 1.0

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Result } from "@sentient/protocol";
+import { assetPath } from "../config/asset-root.ts";
 import { getLog } from "../logging/logger.js";
 import type { ModelProvider } from "../profile-store/profile-types.js";
 import { assertUserId } from "../user-auth/user-id.js";
@@ -13,14 +14,10 @@ const DEFAULT_SOCKET_PATH = "/data/supervisor/supervisor.sock";
 
 // ---------------------------------------------------------------------------
 // Signal-program template — loaded once at module init.
-// Lives at gateway/templates/program/program-signal.conf.tmpl.
-// GATEWAY_RUNTIME_DIR lets operators override the root at deploy time.
+// Lives at <asset root>/templates/program/program-signal.conf.tmpl; the root
+// is resolved (and validated) by config/asset-root.ts.
 // ---------------------------------------------------------------------------
-const GATEWAY_ROOT = process.env.GATEWAY_RUNTIME_DIR ?? join(import.meta.dir, "..", "..");
-const PROGRAM_SIGNAL_TMPL = readFileSync(
-  join(GATEWAY_ROOT, "templates", "program", "program-signal.conf.tmpl"),
-  "utf8",
-);
+const PROGRAM_SIGNAL_TMPL = readFileSync(assetPath("templates", "program", "program-signal.conf.tmpl"), "utf8");
 const STDERR_PREVIEW_MAX = 120;
 
 /** Offset added to the per-profile ACP port to derive the per-profile

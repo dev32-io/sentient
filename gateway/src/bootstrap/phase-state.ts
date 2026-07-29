@@ -9,6 +9,7 @@ import { type SecretsStore, createSecretsStore } from "../admin/secrets-store.js
 import { type SupervisordControl, createSupervisordControl } from "../admin/supervisord-control.js";
 import { type UnlockCode, createUnlockCode } from "../admin/unlock-code.js";
 import { type UserPortStore, createUserPortStore } from "../admin/user-port-store.js";
+import { assetPath, resolveAssetRoot } from "../config/asset-root.ts";
 import type { StartupConfig } from "../config/startup-config.ts";
 import { getLog } from "../logging/logger.ts";
 import { getGatewayRoot } from "../user-auth/paths.js";
@@ -92,11 +93,10 @@ async function loadSupervisordTemplates(templateDir: string): Promise<Supervisor
 export async function runPhaseState(cfg: StartupConfig): Promise<PhaseStateOutput> {
   // Path constants — derived once so downstream phases use the same values.
   const SENTIENT_HOME = process.env.SENTIENT_HOME ?? join(homedir(), ".sentient");
-  // Resolve via GATEWAY_RUNTIME_DIR so the path works under both dev
-  // (bun --hot src/main.ts → import.meta.dir = gateway/src/bootstrap) and
-  // bundled (bun dist/main.js → import.meta.dir = /app/dist).
-  const GATEWAY_RUNTIME_DIR = process.env.GATEWAY_RUNTIME_DIR ?? join(import.meta.dir, "..", "..");
-  const TEMPLATE_DIR = join(GATEWAY_RUNTIME_DIR, "templates");
+  // Asset root differs per deployment shape (repo checkout vs compiled
+  // binary); config/asset-root.ts owns that resolution and validates it.
+  const GATEWAY_RUNTIME_DIR = resolveAssetRoot();
+  const TEMPLATE_DIR = assetPath("templates");
   const gatewayVersion = packageJson.version;
   const hermesVersionPath = cfg.companions.hermes_version_path;
 

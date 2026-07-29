@@ -1,16 +1,15 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { assetPath, resolveAssetRoot } from "../config/asset-root.ts";
 import { getLog } from "../logging/logger.ts";
 
 const log = getLog(["sentient", "context", "system-prompt"]);
 
-const GATEWAY_ROOT = process.env.GATEWAY_RUNTIME_DIR ?? join(import.meta.dir, "..", "..");
-
 // Load from baked-in template dir at module init. Single read; never reloaded
-// at runtime since the template is fixed per build. Resolves via GATEWAY_ROOT
-// so it works under both dev (bun --hot src/main.ts) and bundled
-// (bun dist/main.js with GATEWAY_RUNTIME_DIR=/app).
-export const DEFAULT_PERSONA = readFileSync(join(GATEWAY_ROOT, "templates/persona/default.md"), "utf8").trim();
+// at runtime since the template is fixed per build. `assetPath` resolves the
+// root for every deployment shape (repo checkout, compiled binary) and fails
+// loudly rather than yielding a bogus absolute path — see config/asset-root.ts.
+export const DEFAULT_PERSONA = readFileSync(assetPath("templates", "persona", "default.md"), "utf8").trim();
 
 export interface LoadSystemPromptOptions {
   readonly personaFile?: string;
@@ -29,7 +28,7 @@ function tryRead(path: string, kind: string): string | undefined {
 }
 
 export function loadSystemPrompt(opts: LoadSystemPromptOptions): string {
-  const runtimeDir = opts.runtimeDir ?? GATEWAY_ROOT;
+  const runtimeDir = opts.runtimeDir ?? resolveAssetRoot();
   const personaFile = opts.personaFile ?? "persona.md";
   const parts: string[] = [];
 
@@ -47,7 +46,7 @@ export function loadSystemPrompt(opts: LoadSystemPromptOptions): string {
 // build error, and failing loudly at boot beats discovering it at the first
 // compaction, mid-conversation.
 export const DEFAULT_COMPACTION_SUMMARIZER = readFileSync(
-  join(GATEWAY_ROOT, "templates/prompts/compaction-summarizer.md"),
+  assetPath("templates", "prompts", "compaction-summarizer.md"),
   "utf8",
 ).trim();
 
@@ -55,7 +54,7 @@ export const DEFAULT_COMPACTION_SUMMARIZER = readFileSync(
  *  two-tier shape as `loadSystemPrompt`, so an operator can retune the
  *  summarizer without a rebuild. */
 export function loadCompactionSummarizerPrompt(opts: { runtimeDir?: string } = {}): string {
-  const runtimeDir = opts.runtimeDir ?? GATEWAY_ROOT;
+  const runtimeDir = opts.runtimeDir ?? resolveAssetRoot();
   const override = tryRead(join(runtimeDir, "system_prompts", "compaction_summarizer.md"), "compaction-summarizer");
   return override ?? DEFAULT_COMPACTION_SUMMARIZER;
 }

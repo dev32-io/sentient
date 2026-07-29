@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { McpCatalog, McpServerEntry } from "@sentient/config";
 import { stringify as yamlStringify } from "yaml";
+import { assetPath } from "../config/asset-root.ts";
 import { getLog } from "../logging/logger.js";
 import { writeFileAtomic } from "../user-auth/atomic-write.js";
 import { getHermesProfileDir } from "../user-auth/paths.js";
@@ -14,25 +15,22 @@ const log = getLog(["sentient", "gateway", "profile-store", "renderer"]);
 // ---------------------------------------------------------------------------
 // Template loading — done once at module init.
 //
-// Templates live in gateway/templates/profile/ relative to the gateway root.
-// GATEWAY_RUNTIME_DIR lets operators override the root at deploy time
-// (e.g. GATEWAY_RUNTIME_DIR=/app in Docker); falls back to two levels up from
-// this source file during local dev (import.meta.dir = gateway/src/profile-store).
+// Templates live in <asset root>/templates/profile/. The root differs per
+// deployment shape (repo checkout vs compiled binary); config/asset-root.ts
+// owns that resolution and fails loudly on a bogus root rather than letting
+// an ENOENT on a template be the first symptom.
 // ---------------------------------------------------------------------------
 
-const GATEWAY_ROOT = process.env.GATEWAY_RUNTIME_DIR ?? join(import.meta.dir, "..", "..");
-const TMPL_DIR = join(GATEWAY_ROOT, "templates", "profile");
-
-const HERMES_CONFIG_TMPL = readFileSync(join(TMPL_DIR, "hermes-config.yaml.tmpl"), "utf8");
+const HERMES_CONFIG_TMPL = readFileSync(assetPath("templates", "profile", "hermes-config.yaml.tmpl"), "utf8");
 
 // Per-provider model fragments. Each fragment is 2-space indented and
 // contains no trailing newline; the renderer appends "\n" between blocks.
 // Convention: {{model_id}} is always present; {{base_url}} only for providers
 // that need a configurable endpoint (ollama-cloud, custom).
 const MODEL_FRAGMENTS: Record<ModelProvider, string> = {
-  openrouter: readFileSync(join(TMPL_DIR, "model.openrouter.tmpl"), "utf8"),
-  "ollama-cloud": readFileSync(join(TMPL_DIR, "model.ollama-cloud.tmpl"), "utf8"),
-  custom: readFileSync(join(TMPL_DIR, "model.custom.tmpl"), "utf8"),
+  openrouter: readFileSync(assetPath("templates", "profile", "model.openrouter.tmpl"), "utf8"),
+  "ollama-cloud": readFileSync(assetPath("templates", "profile", "model.ollama-cloud.tmpl"), "utf8"),
+  custom: readFileSync(assetPath("templates", "profile", "model.custom.tmpl"), "utf8"),
 };
 
 // ---------------------------------------------------------------------------

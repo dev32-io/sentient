@@ -1,18 +1,17 @@
 import { promises as fs } from "node:fs";
 import { join } from "node:path";
 import type { Result } from "@sentient/protocol";
+import { assetPath } from "../config/asset-root.ts";
 import { getLog } from "../logging/logger.js";
 import { getSharedTemplatesDir } from "../user-auth/paths.js";
 
 const log = getLog(["sentient", "gateway", "profile-store", "template-loader"]);
 
-// Baked-in canonical templates ship in `gateway/templates/`. Image lays
-// them out at `<runtimeDir>/templates/`; local dev resolves the same
-// relative path from the repo. Operator overrides at
-// `<gatewayRoot>/shared/templates/<name>.md` win when present.
+// Baked-in canonical templates ship at `<asset root>/templates/` in every
+// deployment shape; config/asset-root.ts owns resolving that root. Operator
+// overrides at `<gatewayRoot>/shared/templates/<name>.md` win when present.
 function getBuiltinTemplatesDir(): string {
-  const runtimeDir = process.env.GATEWAY_RUNTIME_DIR ?? join(import.meta.dir, "..", "..");
-  return join(runtimeDir, "templates");
+  return assetPath("templates");
 }
 
 export type TemplateError = "not-found" | "io-error";
