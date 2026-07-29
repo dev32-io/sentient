@@ -44,7 +44,10 @@ function makeStub(): {
   return {
     calls,
     stub: {
-      listNetworks: async () => [{ Name: "sentient-internal" }, { Name: "sentient-external" }],
+      listNetworks: async () => [
+        { Name: "sentient-internal", Internal: true },
+        { Name: "sentient-external", Internal: false },
+      ],
       createNetwork: async (spec: unknown) => {
         calls.createNetwork.push(spec);
       },
@@ -205,10 +208,33 @@ test("SECURITY: an auto-created internal network carries the no-egress flag", as
 
 test("recreate does not recreate a network that already exists", async () => {
   const { stub, calls } = makeStub();
-  stub.listNetworks = async () => [{ Name: "sentient-internal" }];
+  stub.listNetworks = async () => [{ Name: "sentient-internal", Internal: true }];
   const drv = createDockerDriver({ docker: stub, networks: NETWORKS });
   const r = await drv.recreate(ms);
   expect(r.ok).toBe(true);
+  expect(calls.createNetwork).toEqual([]);
+});
+
+// SECURITY: the egress boundary is `sentient-internal` carrying docker's
+// Internal flag — nothing else enforces it, and after the loopback cutover it is
+// the ONLY hard confinement left (fetch-mcp and searxng-mcp had to join
+// sentient-external to be publishable, so searxng's internal-only membership is
+// the last no-route guarantee). A network that already exists is adopted by
+// name, and a same-named network created by hand or by an old compose file
+// (`docker network create sentient-internal`, Internal=false) is
+// indistinguishable in `docker network ls`. Adopting it would attach every addon
+// to a routable bridge while the topology still claims confinement. Fail closed
+// on the drift instead of trusting the name.
+test("SECURITY: recreate refuses an existing network whose internal flag drifted from the topology", async () => {
+  const { stub, calls } = makeStub();
+  stub.listNetworks = async () => [{ Name: "sentient-internal", Internal: false }];
+  const drv = createDockerDriver({ docker: stub, networks: NETWORKS });
+  const r = await drv.recreate(ms);
+  expect(r.ok).toBe(false);
+  if (r.ok) return;
+  expect(r.error.kind).toBe("policy-violation");
+  expect(r.error.reason).toContain("internal");
+  expect(calls.create.length).toBe(0);
   expect(calls.createNetwork).toEqual([]);
 });
 
@@ -242,7 +268,7 @@ test("recreate rejects template whose image is not in allowed_images", async () 
 
 test("listManaged returns only containers with sentient.managed=true label", async () => {
   const stub: DockerodeLike = {
-    listNetworks: async () => [{ Name: "sentient-internal" }],
+    listNetworks: async () => [{ Name: "sentient-internal", Internal: true }],
     createNetwork: async () => {},
     listContainers: async () => [
       { Id: "1", Labels: { "sentient.managed": "true", "sentient.service": "x" }, Names: ["/x"], State: "running" },
@@ -272,7 +298,7 @@ test("listManaged returns only containers with sentient.managed=true label", asy
 test("recreate tolerates 404 from remove (idempotent recreate)", async () => {
   const { calls } = makeStub();
   const stub: DockerodeLike = {
-    listNetworks: async () => [{ Name: "sentient-internal" }],
+    listNetworks: async () => [{ Name: "sentient-internal", Internal: true }],
     createNetwork: async () => {},
     listContainers: async () => [],
     getContainer: () => ({

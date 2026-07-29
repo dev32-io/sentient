@@ -41,7 +41,10 @@ export interface DockerodeLike {
       State: string;
     }>
   >;
-  listNetworks(): Promise<Array<{ Name: string }>>;
+  /** `Internal` is load-bearing, not informational: it is the egress boundary,
+   *  so ensureNetworks compares it against the declared topology before
+   *  adopting a network that already exists. */
+  listNetworks(): Promise<Array<{ Name: string; Internal: boolean }>>;
   createNetwork(spec: { Name: string; Driver: string; Internal: boolean }): Promise<unknown>;
   getContainer(id: string): {
     inspect(): Promise<unknown>;
@@ -176,17 +179,24 @@ async function recreate(
 }
 
 /** Create any of the service's networks that the daemon does not already have.
- *  Idempotent, and fail-closed on an undeclared network: without a declared
- *  `internal` flag we would be guessing at the egress boundary, and guessing
- *  wrong (defaulting to a routable bridge) silently bypasses egress-proxy. */
+ *  Idempotent, and fail-closed twice over:
+ *
+ *  - an UNDECLARED network has no known `internal` flag, so creating it would be
+ *    guessing at the egress boundary, and guessing wrong (a routable bridge)
+ *    silently bypasses egress-proxy;
+ *  - an EXISTING network is adopted by NAME, so its real `Internal` flag must be
+ *    checked against the topology. A hand-made or compose-made
+ *    `sentient-internal` with Internal=false looks identical in
+ *    `docker network ls` and would attach every addon to a routable bridge while
+ *    the topology still claims confinement. Refuse rather than adopt. */
 async function ensureNetworks(
   docker: DockerodeLike,
   declared: ManagedNetworks,
   ms: DockerManagedService,
 ): Promise<Result<undefined, DriverError>> {
-  let existing: Set<string>;
+  let existing: Map<string, boolean>;
   try {
-    existing = new Set((await docker.listNetworks()).map((n) => n.Name));
+    existing = new Map((await docker.listNetworks()).map((n) => [n.Name, n.Internal]));
   } catch (err) {
     return { ok: false, error: { kind: "create-failed", reason: `listNetworks: ${errMsg(err)}` } };
   }
@@ -198,7 +208,13 @@ async function ensureNetworks(
       log.warn("driver.network-undeclared", { service: ms.name, reason });
       return { ok: false, error: { kind: "policy-violation", reason } };
     }
-    if (existing.has(name)) continue;
+    const actualInternal = existing.get(name);
+    if (actualInternal === spec.internal) continue;
+    if (actualInternal !== undefined) {
+      const reason = `network ${name} exists with internal=${actualInternal} but the topology declares internal=${spec.internal} — the egress boundary would be silently wrong. Remove it (docker network rm ${name}) and let the gateway recreate it.`;
+      log.warn("driver.network-flag-drift", { service: ms.name, network: name, reason });
+      return { ok: false, error: { kind: "policy-violation", reason } };
+    }
     try {
       await docker.createNetwork({ Name: name, Driver: NETWORK_DRIVER, Internal: spec.internal });
     } catch (err) {
