@@ -128,6 +128,9 @@ async function recreate(
   const nets = await ensureNetworks(docker, networks, ms);
   if (!nets.ok) return nets;
 
+  const reachable = enforcePublishReachable(ms, networks);
+  if (!reachable.ok) return reachable;
+
   // Ensure the image is available BEFORE we tear down the existing container.
   // Public images (e.g. kalaksi/tinyproxy:latest) get pulled here; locally-
   // built `:local` tags fail to pull but exist on the host daemon — tolerate
@@ -204,6 +207,26 @@ async function ensureNetworks(
     log.info("driver.network-created", { service: ms.name, network: name, internal: spec.internal });
   }
   return { ok: true, value: undefined };
+}
+
+/** Refuse a publish that docker would accept and then silently discard.
+ *
+ *  Verified against the real daemon (docker 29.2.1): a container whose every
+ *  attached network is `internal: true` gets NO port mapping, even though
+ *  `HostConfig.PortBindings` reads back exactly as sent — `NetworkSettings.Ports`
+ *  comes back empty and the host port answers nothing. Attaching one non-internal
+ *  network before start makes the identical publish work.
+ *
+ *  Without this guard the misconfiguration surfaces a layer later, as a bare
+ *  connection-refused from the loopback health probe that names no cause. */
+function enforcePublishReachable(ms: DockerManagedService, declared: ManagedNetworks): Result<undefined, DriverError> {
+  if (ms.template.ports.length === 0) return { ok: true, value: undefined };
+  if (ms.template.networks.some((net) => declared[net]?.internal === false)) {
+    return { ok: true, value: undefined };
+  }
+  const reason = `${ms.name} publishes ${ms.template.ports.join(", ")} but every network it attaches (${ms.template.networks.join(", ")}) is internal — docker drops the publish silently. Attach a non-internal network, or drop the ports and reach it from inside the network.`;
+  log.warn("driver.publish-unreachable", { service: ms.name, reason });
+  return { ok: false, error: { kind: "policy-violation", reason } };
 }
 
 function enforcePolicy(ms: DockerManagedService): Result<undefined, DriverError> {

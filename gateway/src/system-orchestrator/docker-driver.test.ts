@@ -101,7 +101,8 @@ test("recreate sends spec with sentient.managed label", async () => {
 test("SECURITY: recreate publishes a loopback port as an explicit 127.0.0.1 PortBinding", async () => {
   const withPort: DockerManagedService = {
     ...ms,
-    template: { ...ms.template, ports: ["127.0.0.1:8086:8086"] },
+    config: { ...ms.config, networks: ["sentient-internal", "sentient-external"] },
+    template: { ...ms.template, networks: ["sentient-internal", "sentient-external"], ports: ["127.0.0.1:8086:8086"] },
   };
   const { stub, calls } = makeStub();
   const drv = createDockerDriver({ docker: stub, networks: NETWORKS });
@@ -126,6 +127,31 @@ test("SECURITY: recreate publishes nothing when the template declares no ports",
   };
   expect(spec.ExposedPorts).toEqual({});
   expect(spec.HostConfig?.PortBindings).toEqual({});
+});
+
+// EMPIRICAL INVARIANT, verified against the real daemon (docker 29.2.1): docker
+// SILENTLY DROPS port publishing for a container whose every attached network is
+// `internal: true`. `HostConfig.PortBindings` still reads back exactly as sent,
+// but `NetworkSettings.Ports` is EMPTY and the host port answers nothing —
+// `docker run -d --network sentient-internal -p 127.0.0.1:19991:8088` gave
+// `Ports={"8088/tcp":[]}`, while the identical run on the non-internal
+// `sentient-external` published and answered. So a template with `ports:` and
+// only-internal networks is unreachable, and the failure surfaces one layer
+// later as a bare ECONNREFUSED from the health probe that names nothing.
+// Fail closed at the driver, naming the cause.
+test("SECURITY: recreate refuses to publish a port when every attached network is internal", async () => {
+  const unreachable: DockerManagedService = {
+    ...ms,
+    template: { ...ms.template, ports: ["127.0.0.1:8088:8088"] },
+  };
+  const { stub, calls } = makeStub();
+  const drv = createDockerDriver({ docker: stub, networks: NETWORKS });
+  const r = await drv.recreate(unreachable);
+  expect(r.ok).toBe(false);
+  if (r.ok) return;
+  expect(r.error.kind).toBe("policy-violation");
+  expect(r.error.reason).toContain("internal");
+  expect(calls.create.length).toBe(0);
 });
 
 // Defence in depth: the template schema already rejects this shape, but the
