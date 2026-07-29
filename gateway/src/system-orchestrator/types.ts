@@ -149,8 +149,10 @@ export type DriverErrorKind =
 
 export type DriverError = { kind: DriverErrorKind; reason: string };
 
-/** One live unit of a managed service: a container for docker, a process for
- *  native. `id` is the container id or the OS pid rendered as a string. */
+/** One live unit of a managed service: a container for docker, a process group
+ *  for native. `id` is the handle that backend's own `remove()` accepts — a
+ *  container id for docker, the service name for native — so a reconciler can
+ *  reap what it lists without knowing which backend produced it. */
 export interface ManagedProcessInfo {
   id: string;
   service: ServiceName;

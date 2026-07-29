@@ -140,9 +140,10 @@ export function createNativeDriver(deps: NativeDriverDeps): NativeDriver {
 
     listManaged: async (): Promise<ManagedProcessInfo[]> => {
       const records = await deps.readPidFiles();
-      return records
-        .filter((r) => deps.isPidAlive(r.pid))
-        .map((r) => ({ id: String(r.pid), service: r.name, state: "running" }));
+      const live = records.filter((r) => deps.isPidAlive(r.pid));
+      log.debug("native.listed", { total: records.length, live: live.length });
+      // `id` is the service name, not the pid: it is what remove() accepts.
+      return live.map((r) => ({ id: r.name, service: r.name, state: "running" }));
     },
 
     reapOrphans: async (): Promise<void> => {

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { HealthIO } from "./health.js";
 import { createSystemOrchestrator } from "./orchestrator.js";
-import type { ManagedService, ServiceDriver } from "./types.js";
+import type { LaunchKind, ManagedService, ServiceDriver } from "./types.js";
 
 const ok = { ok: true, value: undefined } as const;
 function svc(name: string, deps: string[] = [], optional = false): ManagedService {
@@ -38,6 +38,12 @@ const happyDriver: ServiceDriver = {
   listManaged: async () => [],
 };
 
+/** Both backends resolve to the same stub — these tests exercise the apply
+ *  FSM, not the dispatch table. */
+function allBackends(driver: ServiceDriver): Record<LaunchKind, ServiceDriver> {
+  return { docker: driver, native: driver };
+}
+
 const healthyIO: HealthIO = {
   fetch: async () => ({ ok: true }),
   tcpProbe: async () => true,
@@ -53,7 +59,7 @@ test("orchestrator brings all services to ready when everything is healthy", asy
   ]);
   const orch = createSystemOrchestrator({
     registry: reg,
-    driver: happyDriver,
+    drivers: allBackends(happyDriver),
     healthIO: healthyIO,
     pollIntervalMs: 1,
     applyTimeoutMs: 10000,
@@ -81,7 +87,7 @@ test("optional service health failure leaves orchestrator ready, marks degraded"
   };
   const orch = createSystemOrchestrator({
     registry: reg,
-    driver: happyDriver,
+    drivers: allBackends(happyDriver),
     healthIO: sometimesHealthy,
     pollIntervalMs: 1,
     applyTimeoutMs: 500,
@@ -99,7 +105,7 @@ test("required service failure leaves orchestrator failed", async () => {
   };
   const orch = createSystemOrchestrator({
     registry: reg,
-    driver: failingDriver,
+    drivers: allBackends(failingDriver),
     healthIO: healthyIO,
     pollIntervalMs: 1,
     applyTimeoutMs: 100,
@@ -119,7 +125,7 @@ test("downstream of a failed required service is marked blocked-by-dep", async (
   };
   const orch = createSystemOrchestrator({
     registry: reg,
-    driver: failOnA,
+    drivers: allBackends(failOnA),
     healthIO: healthyIO,
     pollIntervalMs: 1,
     applyTimeoutMs: 100,
@@ -143,7 +149,7 @@ test("applySubset only touches the requested services", async () => {
   };
   const orch = createSystemOrchestrator({
     registry: reg,
-    driver: tracking,
+    drivers: allBackends(tracking),
     healthIO: healthyIO,
     pollIntervalMs: 1,
     applyTimeoutMs: 100,
@@ -156,7 +162,7 @@ test("getStatus reflects terminal state after applyAll resolves", async () => {
   const reg = new Map([["a", svc("a")]]);
   const orch = createSystemOrchestrator({
     registry: reg,
-    driver: happyDriver,
+    drivers: allBackends(happyDriver),
     healthIO: healthyIO,
     pollIntervalMs: 1,
     applyTimeoutMs: 100,
@@ -179,7 +185,7 @@ test("concurrent applyAll calls share a single in-flight apply", async () => {
   };
   const orch = createSystemOrchestrator({
     registry: reg,
-    driver: counting,
+    drivers: allBackends(counting),
     healthIO: healthyIO,
     pollIntervalMs: 1,
     applyTimeoutMs: 100,
@@ -196,7 +202,7 @@ test("dep-graph cycle leaves every service with a lastError reason", async () =>
   ]);
   const orch = createSystemOrchestrator({
     registry: reg,
-    driver: happyDriver,
+    drivers: allBackends(happyDriver),
     healthIO: healthyIO,
     pollIntervalMs: 1,
     applyTimeoutMs: 100,

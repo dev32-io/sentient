@@ -2,6 +2,7 @@ import { getLog } from "../logging/logger.js";
 import { type DepMap, blockedByFailedDeps, topoOrder } from "./dep-graph.js";
 import { type HealthIO, pollHealthy } from "./health.js";
 import type {
+  LaunchKind,
   ManagedService,
   OrchestratorStatus,
   ServiceDriver,
@@ -14,7 +15,9 @@ const log = getLog(["sentient", "system-orch", "orchestrator"]);
 
 export interface SystemOrchestratorDeps {
   registry: Map<ServiceName, ManagedService>;
-  driver: ServiceDriver;
+  /** One backend per launch kind. The apply loop dispatches on the service's
+   *  own `launch` discriminator, so it never learns which backend it is on. */
+  drivers: Record<LaunchKind, ServiceDriver>;
   healthIO: HealthIO;
   pollIntervalMs: number;
   applyTimeoutMs: number;
@@ -115,7 +118,7 @@ async function runApply(
     mark(statuses, name, "starting");
     emit(snapshot(statuses, "applying", startedAt));
 
-    const recr = await deps.driver.recreate(ms);
+    const recr = await deps.drivers[ms.config.launch].recreate(ms);
     if (!recr.ok) {
       const newState: ServiceState = ms.config.optional ? "degraded" : "failed";
       mark(statuses, name, newState, recr.error.reason);

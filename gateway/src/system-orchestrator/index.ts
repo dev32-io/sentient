@@ -5,10 +5,12 @@ import { getLog } from "../logging/logger.js";
 import { reconcileOnBoot } from "./boot-reconciler.js";
 import { type DockerodeLike, createDockerDriver } from "./docker-driver.js";
 import type { HealthIO } from "./health.js";
+import { createNativeDriver } from "./native-driver.js";
+import { createNativeIO } from "./native-io.js";
 import { createSystemOrchestrator } from "./orchestrator.js";
 import { buildServiceRegistry } from "./service-registry.js";
 import type { SecretAccessor } from "./template-loader.js";
-import type { ManagedService, OrchestratorStatus, ServiceName } from "./types.js";
+import type { LaunchKind, ManagedService, OrchestratorStatus, ServiceDriver, ServiceName } from "./types.js";
 
 const log = getLog(["sentient", "system-orch", "factory"]);
 
@@ -45,6 +47,9 @@ export interface FactoryDeps {
   /** Host-side env values (HOST_HOME, TZ, HOST_DOCKER_GID, HOST_CONFIG_DIR,
    *  MASS_LOCAL_IP) substituted into templates after secrets are tried. */
   hostEnv?: Record<string, string>;
+  /** User-owned, mutable dir where the native backend keeps one pid file per
+   *  service. Never under the root-owned code tree. */
+  nativeRunDir: string;
 }
 
 const EMPTY_STATUS: OrchestratorStatus = {
@@ -59,7 +64,12 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
 
   // Dockerode connects to /var/run/docker.sock by default.
   const docker = new Dockerode() as unknown as DockerodeLike;
-  const driver = createDockerDriver({ docker });
+  const nativeDriver = createNativeDriver(createNativeIO({ runDir: deps.nativeRunDir }));
+  // One backend per launch kind; everything above this line stays agnostic.
+  const drivers: Record<LaunchKind, ServiceDriver> = {
+    docker: createDockerDriver({ docker }),
+    native: nativeDriver,
+  };
 
   // Mutable cell — registry is rebuilt before each apply so newly-written
   // secrets and config edits flow through without a gateway restart.
@@ -100,7 +110,7 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
     }
     const orch = createSystemOrchestrator({
       registry: reg,
-      driver,
+      drivers,
       healthIO: deps.healthIO,
       pollIntervalMs: deps.pollIntervalMs,
       applyTimeoutMs: deps.applyTimeoutMs,
@@ -117,14 +127,19 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
     applyAll: async () => withFreshOrchestrator(async (o) => o.applyAll()),
     applySubset: async (names) => withFreshOrchestrator(async (o) => o.applySubset(names)),
     getStatus: () => lastStatus,
-    reconcile: async () =>
-      withFreshOrchestrator(async (o) =>
+    reconcile: async () => {
+      // A SIGKILLed gateway cannot run a shutdown hook, so native children from
+      // the previous process may still hold their ports. Reap before anything
+      // tries to bind them.
+      await nativeDriver.reapOrphans();
+      return withFreshOrchestrator(async (o) =>
         reconcileOnBoot({
-          driver,
+          drivers,
           registry: currentRegistry,
           orchestrator: { applyAll: () => o.applyAll() },
         }),
-      ),
+      );
+    },
     getRequiredServicesStatus: (gatewayVersion, hermesVersionPath, sttHealthUrl, ttsHealthUrl) =>
       resolveVersions(() => lastStatus, gatewayVersion, hermesVersionPath, sttHealthUrl, ttsHealthUrl),
   };

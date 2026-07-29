@@ -1,8 +1,14 @@
 import { expect, test } from "bun:test";
 import { reconcileOnBoot } from "./boot-reconciler.js";
-import type { ManagedProcessInfo, ManagedService, OrchestratorStatus, ServiceDriver } from "./types.js";
+import type { LaunchKind, ManagedProcessInfo, ManagedService, OrchestratorStatus, ServiceDriver } from "./types.js";
 
 const ok = { ok: true, value: undefined } as const;
+
+/** Both backends resolve to the same stub — these tests exercise the reap
+ *  decision, not the dispatch table. */
+function allBackends(driver: ServiceDriver): Record<LaunchKind, ServiceDriver> {
+  return { docker: driver, native: driver };
+}
 
 const ms = (name: string): ManagedService => ({
   name,
@@ -52,7 +58,7 @@ test("orphan containers (managed but not in registry) are removed", async () => 
       finishedAt: 1,
     }),
   };
-  await reconcileOnBoot({ driver, registry: reg, orchestrator: orch });
+  await reconcileOnBoot({ drivers: allBackends(driver), registry: reg, orchestrator: orch });
   expect(removeCalls.some((s) => s.includes("fake-service") || s === "2")).toBe(true);
 });
 
@@ -73,6 +79,6 @@ test("calls applyAll after orphan reap to bring up registry services", async () 
       return { state: "ready", services: [], startedAt: 0, finishedAt: 1 };
     },
   };
-  await reconcileOnBoot({ driver, registry: reg, orchestrator: orch });
+  await reconcileOnBoot({ drivers: allBackends(driver), registry: reg, orchestrator: orch });
   expect(applyCount).toBe(1);
 });

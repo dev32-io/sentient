@@ -11,12 +11,19 @@ import { makeSecretAccessor } from "./secret-accessor.ts";
 
 const log = getLog(["sentient", "bootstrap", "phase-orchestrator"]);
 
+/** ~/.sentient/run — one pid file per native managed service. */
+const NATIVE_RUN_SUBDIR = "run";
+
 export interface PhaseOrchestratorInput {
   readonly cfg: StartupConfig;
   readonly installState: InstallState;
   readonly secretsStore: SecretsStore | null;
   readonly internalSecretsStore: InternalSecretsStore;
   readonly gatewayRuntimeDir: string;
+  /** Root of the user-owned mutable state tree (~/.sentient). Code is
+   *  root-owned and immutable; anything the gateway writes at runtime — pid
+   *  files for native services included — lives here. */
+  readonly sentientHome: string;
   /** Container-side path that maps to the host's HOST_CONFIG_DIR. The
    *  gateway writes seed defaults here for services whose templates
    *  reference ${HOST_CONFIG_DIR}/* bind mounts (e.g. egress-proxy). */
@@ -88,6 +95,7 @@ export async function runPhaseOrchestrator(input: PhaseOrchestratorInput): Promi
         healthIO: defaultHealthIO,
         pollIntervalMs: 1000,
         applyTimeoutMs: 5 * 60 * 1000,
+        nativeRunDir: join(input.sentientHome, NATIVE_RUN_SUBDIR),
         hostEnv: {
           HOST_HOME: process.env.HOST_HOME ?? "",
           HOST_DOCKER_GID: process.env.HOST_DOCKER_GID ?? "",
@@ -101,6 +109,12 @@ export async function runPhaseOrchestrator(input: PhaseOrchestratorInput): Promi
           // mcp-<userId>.sock unix sockets). Same portability rule as
           // SUPERVISOR_DIR — host path on Linux, named-volume name on macOS.
           MCP_SOCKET_DIR: process.env.MCP_SOCKET_DIR ?? "",
+          // Root of the root-owned release tree that native services launch
+          // from (/opt/sentient/current in prod, the repo checkout in dev).
+          // Left empty until the native cutover sets it, in which case a
+          // native service's argv[0] stays a literal ${SENTIENT_CODE}/... and
+          // prepare() fails loudly instead of launching something unexpected.
+          SENTIENT_CODE: process.env.SENTIENT_CODE ?? "",
         },
       }).catch((err: unknown) => {
         log.warn("system-orchestrator.init-failed", {

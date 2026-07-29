@@ -193,6 +193,7 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     secretsStore,
     internalSecretsStore,
     gatewayRuntimeDir: state.gatewayRuntimeDir,
+    sentientHome: state.sentientHome,
     // Container-side path for seeding default service configs into the
     // host config dir BEFORE the orchestrator first recreates a container
     // whose template references ${HOST_CONFIG_DIR}/* bind mounts.
