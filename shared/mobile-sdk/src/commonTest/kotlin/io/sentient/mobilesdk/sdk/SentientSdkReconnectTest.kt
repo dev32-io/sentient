@@ -4,7 +4,8 @@
 //
 // KEEPER (per .claude/rules/testing.md): pins the WsTransport-signal →
 // ReconnectController wiring (the flagged critical path) and the
-// deriveMessages parity contract the native UIs depend on (tool+trigger drop).
+// deriveMessages parity contract the native UIs depend on (tool entries become
+// tiles, trigger entries drop).
 // Drives a FakeWebSocketEngine over runTest virtual time; the default delayFn
 // (kotlinx delay) is auto-advanced by runTest so the backoff is never waited
 // on for real.
@@ -12,7 +13,7 @@
 // NOTE: transcript_clears_when_matching_speech_user_entry_commits was deleted
 // because `transcript` is only exposed on the removed SdkState aggregate
 // (not on connection or timeline). The applyFeed → timeline projection is still
-// exercised indirectly via tool_and_trigger_feed_entries_are_dropped_from_messages.
+// exercised indirectly via the tool/trigger derivation test below.
 //
 // B1 caveat: FakeWebSocketEngine mints a FRESH session per open(); the reconnect
 // re-opens a new session and the harness helpers drive THAT (current) session.
@@ -197,14 +198,16 @@ class SentientSdkReconnectTest {
     }
 
     @Test
-    fun tool_and_trigger_feed_entries_are_dropped_from_timeline() = runTest {
+    fun tool_entries_become_tiles_and_trigger_entries_are_dropped_from_timeline() = runTest {
         val fake = FakeWebSocketEngine()
         val sdk = buildSdk(fake)
         connectToReady(sdk, fake)
 
         // A snapshot carrying user + tool + trigger + assistant entries. Per
-        // cycle-helpers.ts deriveMessages parity, ONLY user + assistant render;
-        // tool (surfaced via tasks) and trigger (Phase-2 sensor) are dropped.
+        // cycle-helpers.ts deriveMessages parity, only user + assistant are ROWS;
+        // a tool entry is a TILE on the reply that follows it (a replayed feed is
+        // the only source of tiles — no live turn.tool.update survives a reload),
+        // and trigger (Phase-2 sensor) is dropped outright.
         fake.emit(
             WsIncoming.Text(
                 "{\"type\":\"conversation.snapshot\",\"items\":[" +
@@ -217,6 +220,11 @@ class SentientSdkReconnectTest {
         sdk.timeline.first { it.isNotEmpty() }
 
         val roles = sdk.timeline.value.map { it.role }
-        assertEquals(listOf("user", "assistant"), roles, "tool+trigger must be dropped, msgs=${sdk.timeline.value}")
+        assertEquals(listOf("user", "assistant"), roles, "tool+trigger are not rows, msgs=${sdk.timeline.value}")
+        assertEquals(
+            listOf("speak"),
+            sdk.timeline.value.last().tools.map { it.toolName },
+            "the committed tool entry must render as a tile, msgs=${sdk.timeline.value}",
+        )
     }
 }
