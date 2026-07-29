@@ -41,6 +41,15 @@ OUT="dist/wheels"
 # macOS with Apple silicon) and there is no reason to raise it.
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-11.0}"
 
+# pip's wheel cache is keyed on the source URL ALONE — it happily serves a
+# wheel it built earlier under a different MACOSX_DEPLOYMENT_TARGET, which
+# silently defeats the pin above (observed: a cached macosx_26_0 numpy served
+# into a build that asked for 11.0). Keying the cache directory by the target
+# makes that impossible while still reusing downloads across runs. Valid: any
+# writable path; delete it to force a cold rebuild.
+PIP_CACHE_ROOT="${PIP_CACHE_ROOT:-$HOME/Library/Caches/sentient-python-wheels}"
+CACHE_DIR="$PIP_CACHE_ROOT/macos-$MACOSX_DEPLOYMENT_TARGET"
+
 # Highest macOS a PUBLISHED wheel in the vendored set may require. This is a
 # separate knob from the floor above because we do not control upstream tags:
 # mlx/mlx-metal publish macosx_14_0, _15_0 AND _26_0 wheels, and pip picks the
@@ -78,7 +87,7 @@ version_lte() {
   [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$1" ]
 }
 
-assert_platform_floor() {
+assert_wheels_install_on_target() {
   local service="$1" offenders=()
   local wheel tag version
   for wheel in "$OUT/$service"/*.whl; do
@@ -94,7 +103,7 @@ assert_platform_floor() {
     echo "Build on an older host, or raise WHEEL_MACOS_CEILING once the mini is confirmed that new." >&2
     return 1
   fi
-  echo "    platform floor OK: every $service wheel installs on macOS $WHEEL_MACOS_CEILING or newer"
+  echo "    target macOS OK: every $service wheel installs on macOS $WHEEL_MACOS_CEILING or newer"
 }
 
 build() {
@@ -105,9 +114,9 @@ build() {
   rm -rf "$OUT/$service"; mkdir -p "$OUT/$service"
   local unhashed; unhashed="$(mktemp)"
   grep -v -- '--hash=' "$REQ/$service.lock" | sed 's/[[:space:]]*\\$//' > "$unhashed"
-  "$py" -m pip wheel -r "$unhashed" -w "$OUT/$service"
+  "$py" -m pip wheel -r "$unhashed" -w "$OUT/$service" --cache-dir "$CACHE_DIR"
   rm -f "$unhashed"
-  assert_platform_floor "$service"
+  assert_wheels_install_on_target "$service"
   "$py" "$REHASH" --lock "$REQ/$service.lock" --wheels "$OUT/$service" \
     --service "$service" --requirements "$requirements" --venv "${requirements%/*}/.venv/bin/python"
 }
