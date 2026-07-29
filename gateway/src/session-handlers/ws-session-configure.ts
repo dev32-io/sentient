@@ -102,15 +102,18 @@ export function handleSessionConfigure(
   // already sequenced.
   const surfaceId = configureSurfaceId ?? configureDeviceId;
   const replayKey = `${userId}::${surfaceId}`;
-  if (ws.data.replayKey !== null && ws.data.replayKey !== replayKey) {
-    // A re-configure that moved this connection to a different surface —
-    // park the old surface's journal rather than orphaning it attached.
-    services.replayRegistry.release(ws.data.replayKey);
+  if (ws.data.replayLease !== null) {
+    // A re-configure on this same connection. Park whatever this connection
+    // already held FIRST — whether it names the same surface or a different
+    // one — so the acquire below sees a detached entry rather than reading
+    // this connection's own attachment as a rival live socket and minting a
+    // fresh journal underneath it.
+    services.replayRegistry.release(ws.data.replayLease);
   }
   const acquisition = services.replayRegistry.acquire(replayKey, configureResume?.epoch);
   ws.data.journal = acquisition.journal;
   ws.data.epoch = acquisition.epoch;
-  ws.data.replayKey = replayKey;
+  ws.data.replayLease = acquisition.lease;
 
   // A repeat session.configure on the same connection must not leak the
   // previous runtime's store handle or strand its open permission prompts —

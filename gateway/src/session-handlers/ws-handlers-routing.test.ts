@@ -253,12 +253,12 @@ describe("ws-handlers cleanup — replay journal", () => {
     const acquired = registry.acquire("u_deadbeef::surface-a", undefined);
     ws.data.journal = acquired.journal;
     ws.data.epoch = acquired.epoch;
-    ws.data.replayKey = "u_deadbeef::surface-a";
+    ws.data.replayLease = acquired.lease;
 
     cleanupSession(ws as unknown as ServerWebSocket<SessionData>, services);
 
     expect(ws.data.journal).toBeNull();
-    expect(ws.data.replayKey).toBeNull();
+    expect(ws.data.replayLease).toBeNull();
     // Parked, not destroyed — a reconnect at the same epoch still resumes.
     expect(registry.acquire("u_deadbeef::surface-a", acquired.epoch).resumed).toBe(true);
   });

@@ -213,11 +213,13 @@ function ensureSttSession(ws: ServerWebSocket<SessionData>, services: GatewaySer
 
 function handleSessionEnd(ws: ServerWebSocket<SessionData>, services: GatewayServices): void {
   if (!ws.data.sessionId) return;
-  // Explicit end: discard rather than park. Clearing replayKey here also
-  // stops cleanupSession below from re-releasing a key that no longer exists.
-  if (ws.data.replayKey !== null) {
-    services.replayRegistry.discard(ws.data.replayKey);
-    ws.data.replayKey = null;
+  // Explicit end: discard rather than park. Clearing the lease here also
+  // stops cleanupSession below from re-releasing an entry that no longer
+  // exists. The registry ignores the discard outright if a newer connection
+  // has since taken this surface over.
+  if (ws.data.replayLease !== null) {
+    services.replayRegistry.discard(ws.data.replayLease);
+    ws.data.replayLease = null;
   }
   cleanupSession(ws, services);
   ws.close(WS_NORMAL_CLOSURE, "Session ended");
@@ -263,10 +265,13 @@ export function cleanupSession(ws: ServerWebSocket<SessionData>, services: Gatew
   // dispose() is synchronous, and anything it still writes to this socket
   // must land in the journal so a reconnecting client replays it. The
   // journal OBJECT survives in the registry for the retention window; only
-  // this connection's handle on it is cleared.
-  if (ws.data.replayKey !== null) {
-    services.replayRegistry.release(ws.data.replayKey);
-    ws.data.replayKey = null;
+  // this connection's handle on it is cleared. Lease-guarded: if a newer
+  // connection already took this surface over (a reload whose configure beat
+  // this close), the release is a no-op instead of starting a retention
+  // countdown under the live connection's journal.
+  if (ws.data.replayLease !== null) {
+    services.replayRegistry.release(ws.data.replayLease);
+    ws.data.replayLease = null;
   }
   ws.data.journal = null;
   ws.data.epoch = 0;

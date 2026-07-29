@@ -4,6 +4,7 @@ import type { UserPrincipal } from "../identity/user-principal.js";
 import type { PermissionBroker } from "../runtime/permission-broker.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { FrameJournal } from "./frame-journal.js";
+import type { ReplayLease } from "./replay-registry.js";
 import type { SttSession } from "./stt-session.js";
 
 /**
@@ -88,12 +89,16 @@ export interface SessionData {
    */
   epoch: number;
   /**
-   * `${userId}::${surfaceId}` — the registry key for `journal`. Held here so
-   * `cleanupSession` can release the journal into its retention window
-   * without re-deriving the key from a principal that may already be gone.
-   * null until session.configure.
+   * This connection's ownership token for `journal` — the registry key
+   * (`${userId}::${surfaceId}`) plus the per-acquisition lease id. Held here
+   * so `cleanupSession` can release the journal into its retention window
+   * without re-deriving the key from a principal that may already be gone,
+   * and so a connection that has since been SUPERSEDED on that surface (a
+   * reload whose new socket configured before this one's close landed)
+   * cannot park or discard the journal the newer connection is filling — the
+   * registry rejects a stale lease. null until session.configure.
    */
-  replayKey: string | null;
+  replayLease: ReplayLease | null;
 }
 
 export function createEmptySessionData(): SessionData {
@@ -109,7 +114,7 @@ export function createEmptySessionData(): SessionData {
     stt: null,
     journal: null,
     epoch: 0,
-    replayKey: null,
+    replayLease: null,
   };
 }
 

@@ -12,8 +12,11 @@
 //     duplicate. Recovered path: raw ready → resumed ack → verbatim replay.
 //     Non-recovered path: resumed ack → stamped ready.
 //
-//  2. THE REGISTRY FSM — epoch mismatch forces a fresh stream, and a
-//     detached journal is reclaimed once its retention window expires.
+//  2. THE REGISTRY FSM — epoch mismatch forces a fresh stream, a detached
+//     journal is reclaimed once its retention window expires, and a surface
+//     has exactly ONE live owner: a second connection never shares a live
+//     journal (it would share the seq counter), and a superseded connection's
+//     release/discard cannot reach the journal that replaced it.
 //
 // Zero cost: FakeWs doubles, an injected clock, no provider/network I/O.
 
@@ -27,6 +30,9 @@ import { handleResumeOrFresh } from "./ws-resume.js";
 import { sendGatewayFrame } from "./ws-send.js";
 
 const decoder = new TextDecoder();
+
+const SURFACE_A = "u_deadbeef::surface-a";
+const SURFACE_B = "u_deadbeef::surface-b";
 
 interface FakeWs {
   data: SessionData;
@@ -82,7 +88,7 @@ describe("handleResumeOrFresh — recovered replay", () => {
     const readySent = handleResumeOrFresh({
       ws: asWs(ws),
       sessionId: "test-session",
-      surfaceKey: "u_deadbeef::surface-a",
+      surfaceKey: SURFACE_A,
       journal,
       epoch: 3,
       resumed: true,
@@ -115,7 +121,7 @@ describe("handleResumeOrFresh — recovered replay", () => {
     handleResumeOrFresh({
       ws: asWs(ws),
       sessionId: "test-session",
-      surfaceKey: "u_deadbeef::surface-a",
+      surfaceKey: SURFACE_A,
       journal,
       epoch: 3,
       resumed: true,
@@ -137,7 +143,7 @@ describe("handleResumeOrFresh — recovered replay", () => {
     handleResumeOrFresh({
       ws: asWs(ws),
       sessionId: "test-session",
-      surfaceKey: "u_deadbeef::surface-a",
+      surfaceKey: SURFACE_A,
       journal,
       epoch: 3,
       resumed: true,
@@ -161,7 +167,7 @@ describe("handleResumeOrFresh — fallbacks", () => {
     const readySent = handleResumeOrFresh({
       ws: asWs(ws),
       sessionId: "test-session",
-      surfaceKey: "u_deadbeef::surface-a",
+      surfaceKey: SURFACE_A,
       journal,
       epoch: 9,
       resumed: false,
@@ -183,7 +189,7 @@ describe("handleResumeOrFresh — fallbacks", () => {
     const readySent = handleResumeOrFresh({
       ws: asWs(ws),
       sessionId: "test-session",
-      surfaceKey: "u_deadbeef::surface-a",
+      surfaceKey: SURFACE_A,
       journal,
       epoch: 3,
       resumed: true,
@@ -204,7 +210,7 @@ describe("handleResumeOrFresh — fallbacks", () => {
     const readySent = handleResumeOrFresh({
       ws: asWs(ws),
       sessionId: "test-session",
-      surfaceKey: "u_deadbeef::surface-a",
+      surfaceKey: SURFACE_A,
       journal,
       epoch: 1,
       resumed: false,
@@ -220,11 +226,11 @@ describe("handleResumeOrFresh — fallbacks", () => {
 describe("ReplayRegistry — epoch + retention FSM", () => {
   it("returns the same journal and epoch when the resume epoch matches", () => {
     const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
-    const first = registry.acquire("u_deadbeef::surface-a", undefined);
+    const first = registry.acquire(SURFACE_A, undefined);
     first.journal.allocateText(() => "x");
-    registry.release("u_deadbeef::surface-a");
+    registry.release(first.lease);
 
-    const second = registry.acquire("u_deadbeef::surface-a", first.epoch);
+    const second = registry.acquire(SURFACE_A, first.epoch);
 
     expect(second.resumed).toBe(true);
     expect(second.epoch).toBe(first.epoch);
@@ -233,11 +239,11 @@ describe("ReplayRegistry — epoch + retention FSM", () => {
 
   it("mints a fresh journal and a NEW epoch when the resume epoch does not match", () => {
     const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
-    const first = registry.acquire("u_deadbeef::surface-a", undefined);
+    const first = registry.acquire(SURFACE_A, undefined);
     first.journal.allocateText(() => "x");
-    registry.release("u_deadbeef::surface-a");
+    registry.release(first.lease);
 
-    const second = registry.acquire("u_deadbeef::surface-a", first.epoch + 99);
+    const second = registry.acquire(SURFACE_A, first.epoch + 99);
 
     expect(second.resumed).toBe(false);
     expect(second.epoch).not.toBe(first.epoch);
@@ -246,8 +252,8 @@ describe("ReplayRegistry — epoch + retention FSM", () => {
 
   it("keeps surfaces of the same user isolated from each other", () => {
     const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
-    const tabA = registry.acquire("u_deadbeef::surface-a", undefined);
-    const tabB = registry.acquire("u_deadbeef::surface-b", undefined);
+    const tabA = registry.acquire(SURFACE_A, undefined);
+    const tabB = registry.acquire(SURFACE_B, undefined);
 
     expect(tabA.epoch).not.toBe(tabB.epoch);
     tabA.journal.allocateText(() => "x");
@@ -261,11 +267,11 @@ describe("ReplayRegistry — epoch + retention FSM", () => {
       retentionMs: 60_000,
       now: () => clock,
     });
-    const first = registry.acquire("u_deadbeef::surface-a", undefined);
-    registry.release("u_deadbeef::surface-a");
+    const first = registry.acquire(SURFACE_A, undefined);
+    registry.release(first.lease);
 
     clock += 60_001;
-    const second = registry.acquire("u_deadbeef::surface-a", first.epoch);
+    const second = registry.acquire(SURFACE_A, first.epoch);
 
     expect(second.resumed).toBe(false);
     expect(registry.size).toBe(1);
@@ -273,11 +279,73 @@ describe("ReplayRegistry — epoch + retention FSM", () => {
 
   it("discard drops the journal outright so a later resume cannot match it", () => {
     const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
-    const first = registry.acquire("u_deadbeef::surface-a", undefined);
-    registry.discard("u_deadbeef::surface-a");
+    const first = registry.acquire(SURFACE_A, undefined);
+    registry.discard(first.lease);
 
     expect(registry.size).toBe(0);
-    expect(registry.acquire("u_deadbeef::surface-a", first.epoch).resumed).toBe(false);
+    expect(registry.acquire(SURFACE_A, first.epoch).resumed).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Single-owner invariant. Two sockets are legitimately open on one surface
+// whenever a reload's session.configure lands before the old socket's close
+// event, or a TCP/NAT drop outlives the WS idle timeout — and the new one
+// presents a MATCHING epoch. Sharing the journal would share its seq counter:
+// each socket would see only the seqs IT allocated, and the client's resume
+// cursor reads the resulting jump as "already applied", so the missing frames
+// are never re-requested. Silent, permanent loss — exactly what this feature
+// exists to prevent, which is why these three cases are pinned.
+// ---------------------------------------------------------------------------
+describe("ReplayRegistry — single-owner invariant", () => {
+  it("never hands a live surface's journal to a second connection, even at a matching epoch", () => {
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const live = registry.acquire(SURFACE_A, undefined);
+    live.journal.allocateText(() => "x");
+
+    // No release: the first socket is still attached.
+    const rival = registry.acquire(SURFACE_A, live.epoch);
+
+    expect(rival.resumed).toBe(false);
+    expect(rival.epoch).not.toBe(live.epoch);
+    expect(rival.journal).not.toBe(live.journal);
+    expect(rival.journal.newestSeq).toBe(0);
+  });
+
+  it("ignores a release from a connection whose lease was superseded", () => {
+    let clock = 1_000;
+    const registry = createReplayRegistry({
+      maxBytesPerSurface: 1_000_000,
+      retentionMs: 60_000,
+      now: () => clock,
+    });
+    const superseded = registry.acquire(SURFACE_A, undefined);
+    const live = registry.acquire(SURFACE_A, superseded.epoch);
+    live.journal.allocateText(() => "x");
+
+    // The dead socket's close event finally lands, long after the takeover.
+    registry.release(superseded.lease);
+    clock += 60_001;
+    registry.acquire(SURFACE_B, undefined); // any acquire sweeps first
+
+    // The live journal was never detached, so no retention clock ran under it.
+    expect(registry.size).toBe(2);
+    registry.release(live.lease);
+    const reconnect = registry.acquire(SURFACE_A, live.epoch);
+    expect(reconnect.resumed).toBe(true);
+    expect(reconnect.journal.newestSeq).toBe(1);
+  });
+
+  it("ignores a discard from a connection whose lease was superseded", () => {
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const superseded = registry.acquire(SURFACE_A, undefined);
+    const live = registry.acquire(SURFACE_A, superseded.epoch);
+
+    registry.discard(superseded.lease);
+
+    expect(registry.size).toBe(1);
+    registry.release(live.lease);
+    expect(registry.acquire(SURFACE_A, live.epoch).resumed).toBe(true);
   });
 });
 

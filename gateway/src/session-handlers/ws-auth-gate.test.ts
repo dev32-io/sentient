@@ -39,7 +39,7 @@ function fakeWs(): FakeWs {
     stt: null,
     journal: null,
     epoch: 0,
-    replayKey: null,
+    replayLease: null,
   };
   const ws: FakeWs = {
     data,
