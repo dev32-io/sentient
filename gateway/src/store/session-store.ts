@@ -6,6 +6,16 @@
 //
 // Opened through a Capability, so the DB path is confined to its owner's home
 // directory. One file per user (spec §2.5, §2.6).
+//
+// CLOSED IS A NAMED STATE. `close()` finalizes every prepared statement, after
+// which bun:sqlite answers any further call with a bare "Statement has
+// finalized" — a message that names neither the store, the session, nor the
+// caller that outlived the handle. Since the one owner (runtime/
+// session-runtime.ts) closes on socket teardown while a turn may still be
+// settling, that message is the exact one an operator would be reading. So the
+// closed state is tracked here and reported as the invariant violation it is:
+// still a throw (a use-after-close is a caller bug, never a recoverable
+// condition to swallow), but one that says what failed and who owns it.
 
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
@@ -60,6 +70,8 @@ export interface SessionStore {
   readSession(sessionId: string): SessionEntry[];
   readSince(sessionId: string, afterSeq: number): SessionEntry[];
   listSessions(): Array<{ sessionId: string; startedAt: number; lastAt: number }>;
+  /** Release the handle. Idempotent. Every other method throws afterwards —
+   *  see this file's header. */
   close(): void;
 }
 
@@ -111,8 +123,18 @@ export function openSessionStore(cap: Capability): SessionStore {
     FROM entries GROUP BY session_id ORDER BY last_at DESC
   `);
 
+  let closed = false;
+
+  function assertOpen(op: string): void {
+    if (!closed) return;
+    throw new Error(
+      `session store used after close: ${op} on the handle for user ${cap.ownerUserId} — its owner (SessionRuntime) was disposed; the caller outlived it`,
+    );
+  }
+
   return {
     append(entry) {
+      assertOpen("append");
       const row = insert.get(
         entry.sessionId,
         entry.turnId,
@@ -136,12 +158,15 @@ export function openSessionStore(cap: Capability): SessionStore {
       return toEntry(row);
     },
     readSession(sessionId) {
+      assertOpen("readSession");
       return selectSession.all(sessionId).map(toEntry);
     },
     readSince(sessionId, afterSeq) {
+      assertOpen("readSince");
       return selectSince.all(sessionId, afterSeq).map(toEntry);
     },
     listSessions() {
+      assertOpen("listSessions");
       return selectSessions.all().map((r) => ({
         sessionId: r.session_id,
         startedAt: r.started_at,
@@ -149,6 +174,8 @@ export function openSessionStore(cap: Capability): SessionStore {
       }));
     },
     close() {
+      if (closed) return;
+      closed = true;
       db.close();
       log.info("store.closed", { userId: cap.ownerUserId });
     },

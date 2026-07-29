@@ -67,6 +67,27 @@
 // slices positionally from the latest marker, so a marker is only truthful
 // when the store's tail IS its boundary, which is only true between turns.
 // See runtime/compaction.ts's header.
+//
+// DISPOSED IS A TERMINAL STATE, AND IT IS LOAD-BEARING FOR THE PROCESS.
+// `dispose()` closes the bun:sqlite handle synchronously, so every later touch
+// of `store` — directly, or through `feed` / `cancellation` / `maybeCompact` —
+// raises "Statement has finalized". Two of this runtime's seams outlive the
+// dispose that closed the handle:
+//
+//   - the SETTLE CONTINUATION. `runTurn` is awaited on a DETACHED `.then`
+//     chain, so a turn still in flight when the socket dies (a tab closed or
+//     reloaded mid-reply, or the newer connection of a same-tab reload
+//     evicting the superseded one — conversation-runtime-registry.ts) settles
+//     AFTER `dispose()`. A throw there is an `unhandledRejection`, and Bun
+//     answers one by exiting the process: the whole gateway, for every
+//     connected user, because one tab reloaded.
+//   - the PUBLIC GESTURES. `submit` (the background-completion sink holds this
+//     runtime by reference), `bargeIn`, `interrupt`, `emitConversationSnapshot`.
+//
+// So every one of them is inert after `dispose()` — a WARN-logged no-op, not a
+// caught throw. Nothing is swallowed by that: a GENUINE store failure on a
+// live runtime still propagates to the one place a detached chain can be
+// caught (`settle` below) and is logged with its reason.
 
 import type { OrchestratorConfig } from "@sentient/config";
 import type { TurnTrigger } from "@sentient/protocol";
@@ -114,27 +135,30 @@ export interface SessionRuntime {
   readonly running: boolean;
   /** Aborts any in-flight turn's signal, CUTS this session's still-draining
    *  speech (audio outlives its turn, and the next `session.configure` mints a
-   *  fresh `TurnVoice` that could never reach it), stops the store handle, and
-   *  makes every subsequent `submit` a no-op. Idempotent. */
+   *  fresh `TurnVoice` that could never reach it), closes the store handle, and
+   *  makes EVERY subsequent method on this object a logged no-op — including
+   *  the settle continuation of a turn that was still in flight. Idempotent. */
   dispose(): void;
   /** Mic onset — the user starts speaking over the assistant (spec §4.7).
    *  Aborts the in-flight turn and commits its partial output as an assistant
    *  entry with `cutoff: "barge-in"`, but LEAVES any registered background
    *  task running. Cuts this session's speech and flushes client playback
    *  even when no turn is in flight — audio outlives its turn. See
-   *  `runtime/cancellation.ts`. */
+   *  `runtime/cancellation.ts`. A no-op after `dispose()`. */
   bargeIn(): void;
   /** UI Stop / Esc (spec §4.7). Aborts the in-flight turn, commits its
    *  partial output as an assistant entry with `cutoff: "interrupt"`, cuts
    *  speech + flushes client playback, AND cancels every background task for
    *  this session (`broker.background.cancelAll()`). The last two fire even
    *  with no turn in flight: a background task outlives the turn that
-   *  dispatched it, and so does the audio. See `runtime/cancellation.ts`. */
+   *  dispatched it, and so does the audio. See `runtime/cancellation.ts`.
+   *  A no-op after `dispose()`. */
   interrupt(): void;
   /** Publish this session's whole committed feed as `conversation.snapshot`
    *  and arm the live `conversation.entry` cursor at its tail. Called once
    *  per NON-recovered `session.configure` (ws-session-configure.ts) — a
-   *  recovered resume replays the exact frames the client missed instead. */
+   *  recovered resume replays the exact frames the client missed instead.
+   *  A no-op after `dispose()`. */
   emitConversationSnapshot(): void;
 }
 
@@ -316,6 +340,25 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     result: { completed: boolean; iterations: number },
     signal: AbortSignal,
   ): Promise<void> {
+    // A DISPOSED RUNTIME DOES NO SETTLE WORK — the first statement in this
+    // function, before anything can touch the store. `dispose()` already did
+    // this turn's teardown (aborted its controller, cut its speech) and closed
+    // the store handle; every line below reads or writes through that handle,
+    // and this continuation is detached, so a throw here kills the process
+    // rather than failing a request. Releasing the one-turn lock is the only
+    // thing left worth doing. See this file's header.
+    if (disposed) {
+      inFlight = null;
+      log.info("session-runtime.turn.settled-after-dispose", {
+        userId,
+        sessionId,
+        turnId,
+        completed: result.completed,
+        reason: "runtime disposed while this turn was in flight — store handle is closed, socket is gone",
+      });
+      return;
+    }
+
     // No more deltas for this turn — let the synthesizer finalize its tail.
     // Deliberately BEFORE the compaction await below: holding the turn's last
     // spoken words behind a summarizer round trip would stall the reply the
@@ -363,34 +406,43 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     // one already has `signal.aborted`, so cancellation.ts's
     // `signal.aborted || turn.settled` guard no-ops either way (it still
     // reaches interrupt's unconditional `background.cancelAll()`).
-    if (!disposed) {
-      try {
-        await maybeCompact({
-          store,
-          provider,
-          sessionId,
-          userId,
-          turnId,
-          config: config.compaction,
-          summarizerPrompt: COMPACTION_SUMMARIZER_PROMPT,
-          signal,
-        });
-      } catch (err) {
-        // maybeCompact's contract is "never throws" — a backstop only, so a
-        // bug there can never wedge the one-turn guard open forever.
-        log.error("session-runtime.compaction.threw", {
-          userId,
-          sessionId,
-          turnId,
-          reason: err instanceof Error ? err.message : String(err),
-        });
-      }
+    // No `disposed` re-check is needed to REACH here — the guard at the top of
+    // this function is the only one, and nothing above awaits.
+    try {
+      await maybeCompact({
+        store,
+        provider,
+        sessionId,
+        userId,
+        turnId,
+        config: config.compaction,
+        summarizerPrompt: COMPACTION_SUMMARIZER_PROMPT,
+        signal,
+      });
+    } catch (err) {
+      // maybeCompact's contract is "never throws" — a backstop only, so a
+      // bug there can never wedge the one-turn guard open forever. It is also
+      // where a `dispose()` landing DURING the summarizer round trip surfaces:
+      // the store handle closes under it and its next append throws.
+      log.error("session-runtime.compaction.threw", {
+        userId,
+        sessionId,
+        turnId,
+        reason: err instanceof Error ? err.message : String(err),
+      });
     }
 
     inFlight = null;
 
+    // Re-checked, not redundant: `maybeCompact` above is an await, so a
+    // `dispose()` can land inside it. `nextTurnTrigger()` reads the store.
     if (disposed) {
-      log.debug("session-runtime.turn.settled-after-dispose", { userId, sessionId, turnId });
+      log.info("session-runtime.turn.disposed-during-settle", {
+        userId,
+        sessionId,
+        turnId,
+        reason: "runtime disposed while this turn was compacting — no follow-up turn",
+      });
       return;
     }
 
@@ -406,6 +458,27 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
       });
       startTurn(nextTurnId, trigger);
     }
+  }
+
+  /**
+   * The ONE boundary where this runtime's async work is detached — nothing
+   * awaits `runTurn`'s `.then` chain, so a rejection escaping it is a
+   * process-level `unhandledRejection` and Bun exits on those. Per
+   * .claude/rules/error-handling.md the catch belongs here and only here;
+   * `onTurnSettled` itself is expected not to throw (the disposed case returns
+   * early rather than throwing), which is what keeps this a backstop that
+   * REPORTS an unexpected store/feed failure instead of a blanket that hides
+   * routine ones. Mirrors session-handlers/stt-session.ts's `detach`.
+   */
+  function settle(turnId: string, result: { completed: boolean; iterations: number }, signal: AbortSignal): void {
+    onTurnSettled(turnId, result, signal).catch((err: unknown) => {
+      log.error("session-runtime.turn.settle-threw", {
+        userId,
+        sessionId,
+        turnId,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    });
   }
 
   function startTurn(turnId: string, trigger: TurnTrigger): void {
@@ -476,9 +549,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     };
 
     runTurn(loopDeps, { turnId, signal: controller.signal }).then(
-      (result) => {
-        void onTurnSettled(turnId, result, controller.signal);
-      },
+      (result) => settle(turnId, result, controller.signal),
       (err: unknown) => {
         // react-loop.ts's contract is "never throw" — this is a defensive
         // backstop only, so a bug elsewhere can never wedge the one-turn
@@ -489,7 +560,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
           turnId,
           reason: err instanceof Error ? err.message : String(err),
         });
-        void onTurnSettled(turnId, { completed: false, iterations: 0 }, controller.signal);
+        settle(turnId, { completed: false, iterations: 0 }, controller.signal);
       },
     );
   }
@@ -520,6 +591,28 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     feed.publishSettled();
     log.info("session-runtime.submit.start-turn", { userId, sessionId, kind: stimulus.kind, seq: entry.seq, turnId });
     startTurn(turnId, stimulusTrigger(stimulus));
+  }
+
+  /**
+   * Wraps a no-argument public gesture so it becomes a WARN-logged no-op once
+   * the runtime is disposed. Every one of them reaches the store (a cutoff
+   * append, a committed-feed publish, a snapshot read) and the handle is
+   * closed by then. `submit` keeps its own guard because it logs the stimulus
+   * kind it dropped. See this file's header.
+   */
+  function whenLive(op: string, gesture: () => void): () => void {
+    return () => {
+      if (disposed) {
+        log.warn("session-runtime.gesture.disposed", {
+          userId,
+          sessionId,
+          op,
+          reason: "runtime disposed; store handle is closed and the socket is gone",
+        });
+        return;
+      }
+      gesture();
+    };
   }
 
   function dispose(): void {
@@ -555,8 +648,8 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
       return inFlight !== null;
     },
     dispose,
-    bargeIn: cancellation.bargeIn,
-    interrupt: cancellation.interrupt,
-    emitConversationSnapshot: () => feed.snapshot(),
+    bargeIn: whenLive("bargeIn", cancellation.bargeIn),
+    interrupt: whenLive("interrupt", cancellation.interrupt),
+    emitConversationSnapshot: whenLive("emitConversationSnapshot", () => feed.snapshot()),
   };
 }

@@ -1565,3 +1565,113 @@ describe("SessionRuntime — cancellation reaches the audio tail", () => {
     expect(emitter.events.some((e) => e.type === "playbackStop")).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Case: dispose() lands WHILE a turn is in flight — a tab closed or reloaded
+// mid-reply (server.ts's close hook → cleanupSession), or the newer connection
+// of a same-tab reload evicting the superseded one before its close event
+// fires (conversation-runtime-registry.ts).
+//
+// PROCESS-LEVEL INVARIANT, not a cosmetic one. `dispose()` closes the
+// bun:sqlite handle SYNCHRONOUSLY, but the turn's settle continuation runs
+// LATER, on `runTurn`'s detached `.then` chain. Any store read there raises
+// "Statement has finalized"; inside a detached promise that is an
+// `unhandledRejection`, and Bun answers one by EXITING the process — the whole
+// gateway, for every connected user, because one tab reloaded.
+//
+// The assertion mechanism is the test runner itself: Bun surfaces an escaped
+// rejection as a failure of whichever test is running, so a settle path that
+// throws cannot make this file pass. The explicit expectations below pin the
+// second half — a disposed runtime stops doing work rather than merely
+// surviving it: no terminal frame at a socket that is gone, no committed-feed
+// publish against a closed handle, and the one-turn lock released so nothing
+// leaks.
+// ---------------------------------------------------------------------------
+
+describe("SessionRuntime — dispose while a turn is in flight", () => {
+  it("INVARIANT: a turn that settles after dispose() neither throws nor emits", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/dispose-in-flight` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    // Park the turn mid-stream so dispose() lands with `inFlight` still set —
+    // exactly the state a mid-reply tab close leaves behind.
+    let signalStreamStarted: (() => void) | undefined;
+    const streamStarted = new Promise<void>((resolve) => {
+      signalStreamStarted = resolve;
+    });
+    let releaseStream: (() => void) | undefined;
+    const streamGate = new Promise<void>((resolve) => {
+      releaseStream = resolve;
+    });
+
+    const provider = fakeProvider(async function* () {
+      yield { type: "text", content: "half a reply" };
+      signalStreamStarted?.();
+      await streamGate;
+      yield { type: "done", finishReason: "stop" };
+    });
+
+    const emitter = recordingEmitter();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-dispose-in-flight",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter,
+      systemPrompt: "test",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "tell me a story" });
+    await streamStarted;
+    expect(runtime.running).toBe(true);
+
+    runtime.dispose(); // closes the store handle; the turn is still in flight
+    releaseStream?.(); // the settle continuation now runs against that closed handle
+
+    await waitUntilIdle(runtime);
+
+    expect(emitter.events.filter((e) => e.type === "turnCompleted")).toHaveLength(0);
+    expect(emitter.events.filter((e) => e.type === "conversationEntry" && e.turnId !== "")).toHaveLength(1);
+  });
+
+  it("INVARIANT: dispose() stays idempotent and leaves every gesture inert", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/dispose-idempotent` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = fakeProvider(async function* () {
+      yield { type: "text", content: "done" };
+      yield { type: "done", finishReason: "stop" };
+    });
+    const emitter = recordingEmitter();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-dispose-idempotent",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter,
+      systemPrompt: "test",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "hi" });
+    await waitUntilIdle(runtime);
+
+    runtime.dispose();
+    const eventCount = emitter.events.length;
+
+    // A stale caller — a background completion, a late STT turn_started, a
+    // reconnect racing the close — must not reach the closed handle.
+    expect(() => runtime.dispose()).not.toThrow();
+    expect(() => runtime.bargeIn()).not.toThrow();
+    expect(() => runtime.interrupt()).not.toThrow();
+    expect(() => runtime.emitConversationSnapshot()).not.toThrow();
+    expect(() => runtime.submit({ kind: "conversational", text: "anyone there?" })).not.toThrow();
+
+    expect(emitter.events).toHaveLength(eventCount);
+  });
+});
