@@ -14,9 +14,12 @@ import os
 import stat
 import subprocess
 import tarfile
+from pathlib import Path
 
 import pytest
 from setup_prod import (
+    INSTALL_VENV_SCRIPT,
+    SERVICE_SOURCES,
     HealthProbe,
     InstallError,
     Installer,
@@ -26,6 +29,7 @@ from setup_prod import (
     ensure_state_dirs,
     read_release_version,
     resolve_operator,
+    stage_native_services,
     verify_tarball_checksum,
 )
 
@@ -608,3 +612,92 @@ def test_kickstart_restarts_an_already_loaded_job(tmp_path):
     launchctl = [argv for argv in recorded if argv[0] == "launchctl"]
     assert [argv[1] for argv in launchctl] == ["print", "kickstart"]
     assert "-k" in launchctl[-1], "must restart, not no-op on an already-running job"
+
+
+# --- native python services (cross-process layout contract) --------------------
+#
+# `gateway/config.yaml` spawns these directly:
+#   exec:  ["${SENTIENT_CODE}/whisper-stt/venv/bin/python", "-m", "whisper_stt"]
+#   env:   PYTHONPATH: "${SENTIENT_CODE}/whisper-stt/src"
+# with SENTIENT_CODE=/opt/sentient/current. The installer is the only thing that
+# puts those paths on disk, and `scripts/build-gateway.sh` stages ONLY bin/ and
+# share/ — so if these two sides drift, both native services fail at every boot
+# with ModuleNotFoundError or a missing interpreter.
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_release_layout_matches_the_native_exec_contract():
+    """Bind the installer's layout to the config that consumes it."""
+    config = (REPO_ROOT / "gateway/config.yaml").read_text()
+
+    for service, spec in SERVICE_SOURCES.items():
+        assert f"${{SENTIENT_CODE}}/{service}/venv/bin/python" in config, service
+        assert f"${{SENTIENT_CODE}}/{service}/src" in config, service
+        assert f'"-m", "{spec["module"]}"' in config, service
+
+
+def test_the_staged_src_tree_actually_contains_the_module_it_runs(tmp_path):
+    """PYTHONPATH points at `<release>/<svc>/src`, and the service is started with
+    `-m <module>`. Copying one directory level too high (the service root instead
+    of its `src/`) leaves PYTHONPATH valid but the module unimportable — a boot
+    failure that looks nothing like a packaging mistake."""
+    repo = tmp_path / "repo"
+    for spec in SERVICE_SOURCES.values():
+        module = repo / spec["src"] / spec["module"]
+        module.mkdir(parents=True)
+        (module / "__init__.py").write_text("")
+        (module / "__pycache__").mkdir()
+        (module / "__pycache__/stale.pyc").write_text("stale")
+    installer = repo / INSTALL_VENV_SCRIPT
+    installer.parent.mkdir(parents=True)
+    installer.write_text("#!/bin/sh\nexit 0\n")
+    release = tmp_path / "opt/1.13.0"
+    recorded = []
+
+    stage_native_services(repo, release, wheels_root=repo / "dist/wheels",
+                          runner=_recording_runner(recorded))
+
+    for service, spec in SERVICE_SOURCES.items():
+        staged = release / service / "src"
+        assert (staged / spec["module"] / "__init__.py").is_file(), service
+        assert not (staged / spec["module"] / "__pycache__").exists(), "no stale bytecode"
+
+
+def test_staging_installs_each_venv_from_vendored_wheels(tmp_path):
+    """The venv must come from the offline helper with a per-service wheels dir —
+    nothing may fetch at deploy time."""
+    repo = tmp_path / "repo"
+    for spec in SERVICE_SOURCES.values():
+        (repo / spec["src"] / spec["module"]).mkdir(parents=True)
+    installer = repo / INSTALL_VENV_SCRIPT
+    installer.parent.mkdir(parents=True)
+    installer.write_text("#!/bin/sh\nexit 0\n")
+    release = tmp_path / "opt/1.13.0"
+    wheels = repo / "dist/wheels"
+    recorded = []
+
+    stage_native_services(repo, release, wheels_root=wheels,
+                          runner=_recording_runner(recorded))
+
+    for service in SERVICE_SOURCES:
+        assert [
+            str(installer), service,
+            str(release / service / "venv"), str(wheels / service),
+        ] in recorded, service
+
+
+def test_staging_refuses_a_release_missing_its_service_source(tmp_path):
+    """Fail here, loudly, rather than producing a release whose native services
+    cannot start."""
+    repo = tmp_path / "repo"
+    installer = repo / INSTALL_VENV_SCRIPT
+    installer.parent.mkdir(parents=True)
+    installer.write_text("#!/bin/sh\nexit 0\n")
+
+    with pytest.raises(InstallError) as e:
+        stage_native_services(repo, tmp_path / "opt/1.13.0",
+                              wheels_root=repo / "dist/wheels",
+                              runner=_recording_runner([]))
+
+    assert "whisper-stt" in str(e.value) or "local-tts" in str(e.value)

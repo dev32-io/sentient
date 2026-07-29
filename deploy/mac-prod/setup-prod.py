@@ -98,6 +98,33 @@ PLIST_MODE = 0o644
 SUDO_USER_VAR = "SUDO_USER"
 ROOT_USER = "root"
 
+# --- native python services --------------------------------------------------
+# `gateway/config.yaml` starts each of these as
+#   ["${SENTIENT_CODE}/<service>/venv/bin/python", "-m", "<module>"]
+# with PYTHONPATH="${SENTIENT_CODE}/<service>/src". The keys below ARE those
+# `<service>` path segments and must not drift from that config — the layout is
+# a cross-process contract, pinned by
+# tests/test_setup_prod.py::test_release_layout_matches_the_native_exec_contract.
+SERVICE_SOURCES = {
+    "whisper-stt": {
+        "src": "capabilityServices/WhisperSTTService/src",
+        "module": "whisper_stt",
+    },
+    "local-tts": {
+        "src": "capabilityServices/LocalTTSService/src",
+        "module": "local_tts",
+    },
+}
+SERVICE_SRC_DIR = "src"
+SERVICE_VENV_DIR = "venv"
+# Installs with --no-index from vendored wheels: nothing fetches at deploy time.
+INSTALL_VENV_SCRIPT = "deploy/mac-prod/native/install-venv.sh"
+# Per-service vendored wheels, produced by scripts/build-python-wheels.sh.
+WHEELS_ROOT = "dist/wheels"
+# Build-host artefacts, never part of a release: stale bytecode can shadow the
+# real sources, and egg-info describes the build tree rather than the release.
+STAGE_EXCLUDES = ("__pycache__", "*.pyc", "*.egg-info")
+
 # --- state layout ------------------------------------------------------------
 # Mutable, operator-owned state. Mirrors what the compose deploy bind-mounted,
 # so an existing mini keeps every path it already has. Relative to ~/.sentient.
@@ -301,6 +328,48 @@ class RealFs:
             staging.unlink()
         staging.symlink_to(self._root / version)
         staging.replace(self._root / CURRENT_LINK)
+
+
+def stage_native_services(repo: Path, release: Path, wheels_root: Path, runner=subprocess.run) -> None:
+    """Lay down each native Python service's source tree and offline venv.
+
+    `scripts/build-gateway.sh` stages only `bin/` and `share/`, so this is the
+    only thing that puts `<release>/<service>/{src,venv}` on disk — the exact
+    paths `gateway/config.yaml` names under `${SENTIENT_CODE}`. Without it both
+    native services fail at every boot.
+
+    The venv is built by `native/install-venv.sh`, which installs with
+    `--no-index` from the per-service vendored wheels: nothing fetches at deploy
+    time.
+    """
+    helper = repo / INSTALL_VENV_SCRIPT
+    if not helper.is_file():
+        raise InstallError(f"missing the offline venv helper {helper}")
+
+    for service, spec in SERVICE_SOURCES.items():
+        source = repo / spec["src"]
+        if not (source / spec["module"]).is_dir():
+            raise InstallError(
+                f"{service}: no {spec['module']} package under {source} — the release "
+                "would start with an unimportable module"
+            )
+
+        staged = release / service / SERVICE_SRC_DIR
+        if staged.exists():
+            shutil.rmtree(staged)
+        staged.parent.mkdir(parents=True, exist_ok=True)
+        # Bytecode and build metadata are the build host's, not the release's;
+        # copying them ships staleness and can shadow the real sources.
+        shutil.copytree(source, staged, ignore=shutil.ignore_patterns(*STAGE_EXCLUDES))
+
+        runner(
+            [
+                str(helper), service,
+                str(release / service / SERVICE_VENV_DIR),
+                str(wheels_root / service),
+            ],
+            check=True,
+        )
 
 
 def resolve_operator(environ) -> str:
