@@ -54,6 +54,23 @@ export interface ConversationHistoryConfig {
 //   - After clear, normal appends resume.
 //
 // conversation.snapshot still works for the initial connect path — no change.
+//
+// MIRROR LIFETIME — attach/detach are TRANSPORT lifecycle, not session
+// lifecycle, so neither touches the mirror. A reconnect detaches every
+// connector (sdk-close-handler.teardownWsForReconnect) and re-attaches them on
+// the next session.ready; on the normal `recovered:true` path the gateway
+// replays ONLY the frames the client missed and deliberately sends NO
+// conversation.snapshot (ws-session-configure.ts: "its mirror is still
+// intact"). Clearing here would leave nothing to refill it, so the next
+// replayed conversation.entry would become the whole visible chat. Mobile
+// already behaves this way — its connectors survive the reconnect and
+// decideOnResumed(true) is PRESERVE.
+//
+// What DOES clear the mirror, all of them real session boundaries:
+//   - conversation.snapshot          → replaces it (fresh / non-recovered connect)
+//   - session.switched → REST load   → replaces it (conversation switch)
+//   - reset()                        → empties it (identity teardown; called by
+//                                      SentientSDK.disconnect)
 // ---------------------------------------------------------------------------
 
 export class ConversationHistoryConnector implements Connector {
@@ -65,7 +82,9 @@ export class ConversationHistoryConnector implements Connector {
   private unsubs: (() => void)[] = [];
   private mirror: CommittedFeedItem[] = [];
   // Generation gate: bumped on session.switched so a stale fetch for an earlier
-  // session cannot overwrite the current mirror.
+  // session cannot overwrite the current mirror. Monotonic for the connector's
+  // whole life — never rewound by attach/detach, or a fetch issued before a
+  // reconnect could be mistaken for the current generation after it.
   private switchGen = 0;
   // Set on session.switched until REST load resolves. Entries received during
   // this window are dropped (they belong to the outgoing session).
@@ -82,10 +101,6 @@ export class ConversationHistoryConnector implements Connector {
   }
 
   attach(sdk: SentientSDKInternal): void {
-    this.mirror = [];
-    this.awaitingSnapshot = false;
-    this.switchGen = 0;
-
     this.unsubs.push(
       sdk.onMessage("conversation.snapshot", (msg: unknown) => {
         const m = msg as { items?: ConversationFeedItem[] };
@@ -127,12 +142,23 @@ export class ConversationHistoryConnector implements Connector {
     );
   }
 
+  /** Drop the socket subscriptions only. Session state (mirror, switch gate)
+   *  survives — see MIRROR LIFETIME above. */
   detach(): void {
     for (const unsub of this.unsubs) unsub();
     this.unsubs = [];
+  }
+
+  /**
+   * Drop all session state. This is the identity/session teardown path —
+   * `SentientSDK.disconnect()` calls it — and the ONLY clear that is not a
+   * replacement by a fresher feed. A reconnect must never reach it.
+   */
+  reset(): void {
+    const previousCount = this.mirror.length;
     this.mirror = [];
     this.awaitingSnapshot = false;
-    this.switchGen = 0;
+    log.info("mirror.reset", { reason: "session identity teardown", previousCount });
   }
 
   private loadHistoryFromRest(sessionId: string, gen: number): void {

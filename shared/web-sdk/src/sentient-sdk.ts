@@ -64,6 +64,21 @@ type ErrorKind = "auth" | "network" | "timeout" | null;
 
 const NOOP_RELEASE = (): void => {};
 
+/**
+ * A connector that holds SESSION state outliving the socket — today only the
+ * conversation mirror. `detach` is transport teardown and runs on every
+ * reconnect; `reset` is session teardown and runs only when the consumer
+ * disconnects. Kept as a structural opt-in so connectors with no session state
+ * (the audio, input and status connectors) declare nothing.
+ */
+interface ResettableConnector {
+  reset(): void;
+}
+
+function isResettable(connector: Connector): connector is Connector & ResettableConnector {
+  return typeof (connector as Partial<ResettableConnector>).reset === "function";
+}
+
 export class SentientSDK {
   private readonly config: SentientSDKConfig;
   private readonly connectors: Connector[] = [];
@@ -165,6 +180,10 @@ export class SentientSDK {
     this.timers.clearAll();
     this.clearStaleResumeTimer();
     this.detachAll();
+    // Consumer-driven teardown ends the SESSION, not just the socket — so this
+    // is the one path that drops connector session state. The reconnect path
+    // (teardownWsForReconnect / softCloseForIdle) detaches only.
+    this.resetAll();
     this.presence?.dispose();
     this.pendingPresenceReconnect = false;
     this.isReconnectCycle = false;
@@ -230,6 +249,12 @@ export class SentientSDK {
     for (const connector of this.connectors) connector.detach();
     this.messageHandlers.clear();
     this.binaryHandlers.clear();
+  }
+
+  private resetAll(): void {
+    for (const connector of this.connectors) {
+      if (isResettable(connector)) connector.reset();
+    }
   }
 
   private addMessageHandler(type: string, handler: (msg: unknown) => void): () => void {

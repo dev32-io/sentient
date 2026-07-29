@@ -132,7 +132,7 @@ describe("ConversationHistoryConnector", () => {
     expect(connector.items()).toEqual([]);
   });
 
-  it("resets the mirror on detach", () => {
+  it("keeps the mirror across detach — detach is transport teardown, not session teardown", () => {
     const connector = new ConversationHistoryConnector();
     const internal = createMockInternal();
     connector.attach(internal);
@@ -141,18 +141,60 @@ describe("ConversationHistoryConnector", () => {
     expect(connector.items()).toHaveLength(1);
 
     connector.detach();
-    expect(connector.items()).toEqual([]);
+    expect(connector.items()).toHaveLength(1);
   });
 
-  it("subsequent attach resets the mirror for the new session", () => {
-    const connector = new ConversationHistoryConnector();
-    const internal1 = createMockInternal();
-    connector.attach(internal1);
-    internal1.messageHandlers.get("conversation.entry")?.({ type: "conversation.entry", item: userItem("hi") });
+  it("stops delivering entries after detach", () => {
+    const onEntry = vi.fn();
+    const connector = new ConversationHistoryConnector({ onEntry });
+    const internal = createMockInternal();
+    connector.attach(internal);
     connector.detach();
 
+    expect(internal.messageHandlers.size).toBe(0);
+    expect(onEntry).not.toHaveBeenCalled();
+  });
+
+  // The reconnect FSM: teardownWsForReconnect detaches every connector, the
+  // reconnect re-attaches them on session.ready, and a `recovered:true` resume
+  // replays ONLY the frames the client missed — deliberately no
+  // conversation.snapshot (ws-session-configure.ts). If attach cleared the
+  // mirror, the next replayed entry would be the ONLY item the UI ever sees
+  // and the whole chat would collapse to a single bubble.
+  it("preserves the mirror across a reconnect detach/attach cycle and appends the replayed entries", () => {
+    const onUpdate = vi.fn();
+    const connector = new ConversationHistoryConnector({ onUpdate });
+    const internal1 = createMockInternal();
+    connector.attach(internal1);
+    internal1.messageHandlers.get("conversation.snapshot")?.({
+      type: "conversation.snapshot",
+      items: [userItem("hi"), assistantItem("hello")],
+    });
+    expect(connector.items()).toHaveLength(2);
+
+    // Reconnect: teardown detaches, session.ready re-attaches.
+    connector.detach();
     const internal2 = createMockInternal();
     connector.attach(internal2);
+
+    // recovered:true replay — the missed entry only, no snapshot.
+    internal2.messageHandlers.get("conversation.entry")?.({
+      type: "conversation.entry",
+      item: userItem("and again", 3),
+    });
+
+    expect(connector.items().map((i) => i.kind)).toEqual(["user", "assistant", "user"]);
+    expect(onUpdate).toHaveBeenLastCalledWith(expect.arrayContaining([expect.objectContaining({ kind: "assistant" })]));
+  });
+
+  it("reset() clears the mirror on a genuine session/identity teardown", () => {
+    const connector = new ConversationHistoryConnector();
+    const internal = createMockInternal();
+    connector.attach(internal);
+    internal.messageHandlers.get("conversation.entry")?.({ type: "conversation.entry", item: userItem("hi") });
+    expect(connector.items()).toHaveLength(1);
+
+    connector.reset();
     expect(connector.items()).toEqual([]);
   });
 });
