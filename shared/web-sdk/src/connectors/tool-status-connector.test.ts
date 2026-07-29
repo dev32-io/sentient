@@ -87,4 +87,57 @@ describe("ToolStatusConnector", () => {
 
     expect(connector.list()[0]?.taskId).toBe("task-42");
   });
+
+  // The reconnect FSM, same invariant ConversationHistoryConnector pins: a
+  // `recovered:true` resume replays ONLY the frames the client missed, so a
+  // connector that wipes its cache on re-attach loses every tile the gateway
+  // will never re-send. It also desyncs the two tool-tile sources — the
+  // committed mirror survives the same reconnect, and webui's cycle-helpers
+  // joins the two per turn by dispatch position, so a truncated live list
+  // makes a still-running call unrenderable.
+  it("keeps live tool calls across a reconnect detach/attach cycle", () => {
+    const connector = new ToolStatusConnector();
+    const first = createMockSDK();
+    connector.attach(first.sdk);
+    first.emit("turn.tool.update", {
+      turnId: "t-1",
+      toolCallId: "tc-1",
+      toolName: "get_weather",
+      status: "done",
+      argsPreview: "{}",
+      startedAtMs: 1000,
+    });
+
+    connector.detach();
+    const second = createMockSDK();
+    connector.attach(second.sdk);
+    second.emit("turn.tool.update", {
+      turnId: "t-1",
+      toolCallId: "tc-2",
+      toolName: "set_lights",
+      status: "running",
+      argsPreview: "{}",
+      startedAtMs: 1200,
+    });
+
+    expect(connector.list().map((c) => c.toolCallId)).toEqual(["tc-1", "tc-2"]);
+  });
+
+  it("reset() drops live tool calls on a session/identity teardown", () => {
+    const connector = new ToolStatusConnector();
+    const mock = createMockSDK();
+    connector.attach(mock.sdk);
+    mock.emit("turn.tool.update", {
+      turnId: "t-1",
+      toolCallId: "tc-1",
+      toolName: "get_weather",
+      status: "done",
+      argsPreview: "{}",
+      startedAtMs: 1000,
+    });
+
+    connector.reset();
+
+    expect(connector.list()).toEqual([]);
+  });
 });

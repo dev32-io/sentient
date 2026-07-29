@@ -25,16 +25,20 @@ function assistantEntry(content: string, ts: number, turnId?: string): Committed
   return turnId === undefined ? base : { ...base, turnId };
 }
 
-function toolEntry(toolName: string, ts: number, turnId?: string): CommittedFeedItem {
+function toolEntry(toolName: string, ts: number, turnId?: string, summary?: string): CommittedFeedItem {
   const base: CommittedFeedItem = {
     entryId: `e-${ts}`,
     ts,
     kind: "tool",
     toolName,
     status: "finished",
-    summary: `${toolName} result`,
+    summary: summary ?? `${toolName} result`,
   };
   return turnId === undefined ? base : { ...base, turnId };
+}
+
+function tilesOf(messages: readonly ChatMessage[]): ToolCallSnapshotItem[] {
+  return messages.flatMap((m) => [...(m.tools ?? [])]);
 }
 
 function liveTool(toolName: string, toolCallId: string, startedAtMs: number, turnId = TURN): ToolCallSnapshotItem {
@@ -129,6 +133,72 @@ describe("cycle-helpers — committed tool tiles", () => {
 
     expect(live).toEqual(replay);
     expect(replay).toEqual(["now the lights::get_weather", "done::set_lights"]);
+  });
+
+  // The live/committed join is per turn and positional (the two frames share no
+  // tool-call id), so it rests on the live list being COMPLETE for its turn.
+  // ToolStatusConnector keeps its cache across a reconnect for exactly this
+  // reason; this pins the case that used to break — a call dispatched after a
+  // reconnect, in a turn whose earlier calls are already committed.
+  it("renders a still-running call whose turn already has committed tiles", () => {
+    const messages = render(
+      [
+        userEntry("weather then lights", 1),
+        toolEntry("get_weather", 2, TURN),
+        toolEntry("set_lights", 3, TURN),
+        assistantEntry("checking one more thing", 4, TURN),
+      ],
+      [
+        liveTool("get_weather", "call-1", 2),
+        liveTool("set_lights", "call-2", 3),
+        { ...liveTool("send_message", "call-3", 5), status: "running" },
+      ],
+    );
+
+    expect(renderedTiles(messages)).toEqual([
+      "checking one more thing::get_weather",
+      "checking one more thing::set_lights",
+      "checking one more thing::send_message",
+    ]);
+  });
+
+  // Degraded path: the live list is SHORTER than the turn's committed list, so
+  // the positional join cannot align the two (the client lost live frames the
+  // gateway will not resend). The committed tiles stay — dropping the
+  // unalignable live ones is what keeps a tile from rendering twice, once per
+  // source, since their ids differ.
+  it("keeps every committed tile and duplicates none when a turn's live list is truncated", () => {
+    const messages = render(
+      [
+        userEntry("weather then lights", 1),
+        toolEntry("get_weather", 2, TURN),
+        toolEntry("set_lights", 3, TURN),
+        assistantEntry("done", 4, TURN),
+      ],
+      [{ ...liveTool("send_message", "call-3", 5), status: "running" }],
+    );
+
+    expect(renderedTiles(messages)).toEqual(["done::get_weather", "done::set_lights"]);
+  });
+
+  it("never presents a committed tool result as the call's arguments", () => {
+    const messages = render(
+      [userEntry("weather?", 1), toolEntry("get_weather", 2, TURN, '{"tempC":20}'), assistantEntry("20°", 3, TURN)],
+      [],
+    );
+
+    const tile = tilesOf(messages)[0];
+    expect(tile?.argsPreview).toBe("");
+    expect(tile?.resultPreview).toBe('{"tempC":20}');
+  });
+
+  it("bounds the committed result preview — the wire never truncates it", () => {
+    const messages = render(
+      [userEntry("weather?", 1), toolEntry("get_weather", 2, TURN, "x".repeat(5_000)), assistantEntry("20°", 3, TURN)],
+      [],
+    );
+
+    expect(tilesOf(messages)[0]?.resultPreview).toHaveLength(120);
   });
 
   it("drops a committed tile that no reply follows — the next user turn is a hard boundary", () => {

@@ -1,6 +1,9 @@
 import type { ConversationToolStatus, ConversationUserChannel, TurnToolStatus } from "@sentient/protocol";
 import type { CommittedFeedItem, InFlightMessage, ToolCallSnapshotItem } from "@sentient/web-sdk";
+import { createLogger } from "@sentient/web-sdk";
 import type { ChatMessage } from "../types.ts";
+
+const log = createLogger(["sentient", "webui", "cycle-helpers"]);
 
 // ---------------------------------------------------------------------------
 // CycleStatus — coarser UI state derived from cognition + audio + tasks
@@ -65,16 +68,39 @@ export function deriveCycleStatus(inputs: CycleStatusInputs): CycleStatus {
 // Invariant B) holds on the wire and fails at the rendered layer, which is the
 // layer the reload-convergence E2E oracle reads.
 //
-// The two frames share NO tool-call id: the committed item's only id is its
+// THE JOIN IS POSITIONAL, AND THAT IS A COMPROMISE — read this before changing
+// it. The two frames share NO tool-call id: the committed item's only id is its
 // `entryId` (the store seq — the wire deliberately strips tool plumbing from
 // the ITEM, see shared/protocol/src/conversation.ts), while the live frame
-// carries the provider's `toolCallId`. What they DO share is `turnId`
-// (frame-level on `conversation.entry`, item-level on `turn.tool.update`) and
-// the gateway's dispatch order. So the join is per turn: a turn's committed
-// tiles are its first N calls, and the live list's tail beyond N is the calls
-// not yet committed. At every turn boundary the gateway publishes all
-// outstanding tiles (conversation-feed.publishAll), so that tail empties and
-// the rendered strip converges exactly on what a reload would show.
+// carries the provider's `toolCallId`. An id-based join is what this merge
+// wants and it is not available without a wire change: adding `toolCallId` to
+// `conversationFeedToolItemSchema` + `conversation-feed.toWireItem`, which is a
+// change to a frozen contract.
+//
+// What the two DO share is `turnId` (frame-level on `conversation.entry`,
+// item-level on `turn.tool.update`) and the gateway's dispatch order. So the
+// join is per turn: a turn's committed tiles are its first N calls, and the
+// live list's tail beyond N is the calls not yet committed. At every turn
+// boundary the gateway publishes all outstanding tiles
+// (conversation-feed.publishAll), so that tail empties and the rendered strip
+// converges exactly on what a reload would show.
+//
+// TWO CROSS-PACKAGE INVARIANTS HOLD IT UP. Neither is expressible as a type,
+// so both are pinned by cycle-helpers.test.ts / tool-status-connector.test.ts
+// instead:
+//
+//   1. SEQUENTIAL DISPATCH — gateway/src/runtime/react-loop.ts's
+//      `dispatchToolCalls` is a `for` loop with `await` inside, so a turn's
+//      calls are dispatched, and their store entries appended, strictly one at
+//      a time in the order `startedAtMs` reflects. Make tool dispatch
+//      concurrent (parallel `tool_calls`, or a commit that beats its own
+//      dispatch) and this join silently desyncs: a running call gets skipped as
+//      "already committed" while a committed one is re-added as live and
+//      renders twice. That change REQUIRES the id-based join above.
+//   2. COMPLETE LIVE LIST — ToolStatusConnector keeps its cache across a
+//      reconnect (its CACHE LIFETIME header), so a turn's live list is never a
+//      partial suffix of its dispatch sequence. If it ever is,
+//      `uncommittedLiveTiles` degrades loudly rather than duplicating tiles.
 //
 // Placement is feed order for both sources: a tile anchors to the assistant
 // bubble that FOLLOWS it (the reply its result fed), and never crosses the
@@ -99,6 +125,13 @@ const COMMITTED_TOOL_STATUS: Record<ConversationToolStatus, TurnToolStatus> = {
  *  reloaded feed's tiles are always kept. */
 const NO_TURN_ID = "";
 
+/** Upper bound on the result text a committed tile shows. Mirrors the 120-char
+ *  bound the gateway puts on the LIVE tile's argsPreview (react-loop.ts's
+ *  ARGS_PREVIEW_LEN); the committed `summary` is a raw tool result and is NOT
+ *  truncated anywhere on the wire, so an unbounded JSON blob would otherwise
+ *  land in a UI element sized for a one-line preview. */
+const RESULT_PREVIEW_LEN = 120;
+
 function toCommittedTile(item: CommittedFeedItem & { kind: "tool" }): ToolCallSnapshotItem {
   return {
     // The gateway-owned entryId IS the tile identity — stable across the live
@@ -107,7 +140,13 @@ function toCommittedTile(item: CommittedFeedItem & { kind: "tool" }): ToolCallSn
     toolName: item.toolName,
     turnId: item.turnId ?? NO_TURN_ID,
     status: COMMITTED_TOOL_STATUS[item.status],
-    argsPreview: item.summary,
+    // The committed item carries the tool's RESULT and never its arguments:
+    // `summary` is the tool_result's stored content, folded into the tile by
+    // gateway/src/store/client-projection.ts. Feeding it to `argsPreview` put
+    // the output in the field the UI renders as the call's input, so tapping a
+    // pill showed arguments live and a raw result blob after a reload.
+    argsPreview: "",
+    resultPreview: item.summary.slice(0, RESULT_PREVIEW_LEN),
     startedAtMs: item.ts,
   };
 }
@@ -129,6 +168,42 @@ function mergeTiles(
   return [...byId.values()].sort((a, b) => a.startedAtMs - b.startedAtMs);
 }
 
+/** Truncations already reported, keyed `${turnId}:${live}/${committed}`.
+ *  `attachToolsToAssistantMessages` re-runs on every token, so an unguarded
+ *  warn would repeat for the whole turn. Cleared wholesale past the cap so a
+ *  long-lived tab cannot grow it without bound. */
+const reportedTruncations = new Set<string>();
+const MAX_REPORTED_TRUNCATIONS = 100;
+
+/**
+ * A turn holding FEWER live tiles than committed ones breaks the positional
+ * join's premise (invariant 2 in this file's header): the live list is a
+ * partial suffix of the turn's dispatch sequence, so nothing here can tell
+ * which live tile lines up with which committed one. Report it once per
+ * distinct shape — the caller then keeps the committed tiles and drops the
+ * unalignable live ones, which is the choice that cannot render one call twice.
+ */
+function reportTruncatedLiveList(
+  live: readonly ToolCallSnapshotItem[],
+  committedByTurnId: ReadonlyMap<string, number>,
+): void {
+  const liveByTurnId = countByTurnId(live);
+  for (const [turnId, committed] of committedByTurnId) {
+    const liveCount = liveByTurnId.get(turnId) ?? 0;
+    if (liveCount === 0 || liveCount >= committed) continue;
+    const key = `${turnId}:${liveCount}/${committed}`;
+    if (reportedTruncations.has(key)) continue;
+    if (reportedTruncations.size >= MAX_REPORTED_TRUNCATIONS) reportedTruncations.clear();
+    reportedTruncations.add(key);
+    log.warn("tool-tiles.live-list-truncated", {
+      reason: "fewer live tiles than committed for this turn — the dispatch-position join cannot align them",
+      turnId,
+      liveCount,
+      committedCount: committed,
+    });
+  }
+}
+
 /**
  * The live tiles that have NOT been committed yet. Both lists are in gateway
  * dispatch order, so a turn's first N live tiles are exactly the N already
@@ -140,6 +215,7 @@ function uncommittedLiveTiles(
   live: readonly ToolCallSnapshotItem[],
   committedByTurnId: ReadonlyMap<string, number>,
 ): ToolCallSnapshotItem[] {
+  reportTruncatedLiveList(live, committedByTurnId);
   const seenByTurnId = new Map<string, number>();
   const remaining: ToolCallSnapshotItem[] = [];
   for (const tile of live) {

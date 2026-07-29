@@ -572,6 +572,16 @@ html.is-paused *::after {
   font-size: 12.5px;
   color: var(--color-ink);
 }
+/* Names which half of the round trip is below it: a live tile shows the call's
+   arguments, a committed (replayed) tile shows its result. */
+.tool-inline-detail__label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink-3);
+}
 .tool-inline-detail__preview {
   display: block;
   margin: 0;

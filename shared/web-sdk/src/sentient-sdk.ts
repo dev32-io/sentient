@@ -65,11 +65,12 @@ type ErrorKind = "auth" | "network" | "timeout" | null;
 const NOOP_RELEASE = (): void => {};
 
 /**
- * A connector that holds SESSION state outliving the socket — today only the
- * conversation mirror. `detach` is transport teardown and runs on every
- * reconnect; `reset` is session teardown and runs only when the consumer
+ * A connector that holds SESSION state outliving the socket — today the
+ * conversation mirror and the live tool-call cache, the two halves the UI
+ * merges into one rendered strip. `detach` is transport teardown and runs on
+ * every reconnect; `reset` is session teardown and runs only when the consumer
  * disconnects. Kept as a structural opt-in so connectors with no session state
- * (the audio, input and status connectors) declare nothing.
+ * (the audio and input connectors) declare nothing.
  */
 interface ResettableConnector {
   reset(): void;

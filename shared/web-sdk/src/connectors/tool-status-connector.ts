@@ -11,8 +11,20 @@ export interface ToolCallSnapshotItem {
   /** The turn that issued the call — used to group tool pills under a bubble. */
   readonly turnId: string;
   readonly status: TurnToolStatus;
-  /** Short gateway-derived preview of the call's arguments. */
+  /** Short gateway-derived preview of the call's arguments. Empty on a tile
+   *  built from the committed feed — that frame carries no arguments. */
   readonly argsPreview: string;
+  /**
+   * COMMITTED-FEED TILES ONLY — set by the client that rebuilds a tile from a
+   * `kind:"tool"` conversation item, never by this connector.
+   *
+   * The two tile sources carry opposite halves of the round trip: the live
+   * `turn.tool.update` frame has the call's ARGUMENTS and never its result,
+   * while a committed feed item has the RESULT (`summary`) and never the
+   * arguments. A tile therefore fills in whichever half it was built from, and
+   * the UI must render them as the different things they are.
+   */
+  readonly resultPreview?: string;
   readonly startedAtMs: number;
   /** Present once the call reaches a terminal status. */
   readonly endedAtMs?: number;
@@ -41,6 +53,20 @@ export interface ToolStatusConnectorConfig {
 // Replaces the retired TaskStatusConnector and its task-update dialect: the
 // key is now toolCallId (every call has one) and taskId is optional
 // (background tools only).
+//
+// CACHE LIFETIME — attach/detach are TRANSPORT lifecycle, not session
+// lifecycle, so neither touches the call map. A reconnect detaches every
+// connector (sdk-close-handler.teardownWsForReconnect) and re-attaches them on
+// the next session.ready; the normal `recovered:true` resume then replays ONLY
+// the frames the client missed. Clearing here dropped every tile the client had
+// already seen — the gateway never re-sends those — and left the tool strip
+// desynced from the committed mirror, which survives the same reconnect
+// (ConversationHistoryConnector). webui's cycle-helpers joins the two sources
+// per turn by dispatch position, so a truncated live list is not merely missing
+// tiles: it makes a still-running call unrenderable until it commits.
+//
+// `reset()` is the session/identity teardown path (SentientSDK.disconnect) and
+// the only clear. A reconnect must never reach it.
 // ---------------------------------------------------------------------------
 
 export class ToolStatusConnector implements Connector {
@@ -60,8 +86,6 @@ export class ToolStatusConnector implements Connector {
   }
 
   attach(sdk: SentientSDKInternal): void {
-    this.calls = new Map();
-
     this.unsubs.push(
       sdk.onMessage("turn.tool.update", (msg: unknown) => {
         const m = msg as {
@@ -105,9 +129,17 @@ export class ToolStatusConnector implements Connector {
     );
   }
 
+  /** Drop the socket subscriptions only. The call cache survives — see CACHE
+   *  LIFETIME above. */
   detach(): void {
     for (const unsub of this.unsubs) unsub();
     this.unsubs = [];
+  }
+
+  /** Drop all session state. `SentientSDK.disconnect()` is the one caller. */
+  reset(): void {
+    const previousCount = this.calls.size;
     this.calls = new Map();
+    log.info("tool-status.reset", { reason: "session identity teardown", previousCount });
   }
 }
