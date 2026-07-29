@@ -10,7 +10,14 @@ import { createNativeIO } from "./native-io.js";
 import { createSystemOrchestrator } from "./orchestrator.js";
 import { buildServiceRegistry } from "./service-registry.js";
 import type { SecretAccessor } from "./template-loader.js";
-import type { LaunchKind, ManagedService, OrchestratorStatus, ServiceDriver, ServiceName } from "./types.js";
+import {
+  type LaunchKind,
+  MANAGED_NETWORK_TOPOLOGY,
+  type ManagedService,
+  type OrchestratorStatus,
+  type ServiceDriver,
+  type ServiceName,
+} from "./types.js";
 
 const log = getLog(["sentient", "system-orch", "factory"]);
 
@@ -67,7 +74,7 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
   const nativeDriver = createNativeDriver(createNativeIO({ runDir: deps.nativeRunDir }));
   // One backend per launch kind; everything above this line stays agnostic.
   const drivers: Record<LaunchKind, ServiceDriver> = {
-    docker: createDockerDriver({ docker }),
+    docker: createDockerDriver({ docker, networks: MANAGED_NETWORK_TOPOLOGY }),
     native: nativeDriver,
   };
 

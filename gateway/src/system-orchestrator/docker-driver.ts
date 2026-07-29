@@ -6,6 +6,7 @@ import {
   type DriverError,
   LOOPBACK_PORT_RE,
   LOOPBACK_PORT_REASON,
+  type ManagedNetworks,
   type ManagedProcessInfo,
   type ManagedService,
   type ServiceDriver,
@@ -22,6 +23,10 @@ const LABEL_SERVICE = "sentient.service";
 const LOOPBACK_HOST_IP = "127.0.0.1";
 /** Docker keys ExposedPorts/PortBindings by `<port>/<proto>`; addons are TCP. */
 const PORT_PROTO = "tcp";
+/** Driver for any network the gateway auto-creates. `bridge` is what the compose
+ *  files declared before the cutover — the addons are single-host, so overlay
+ *  and macvlan buy nothing and macvlan cannot be `internal`. */
+const NETWORK_DRIVER = "bridge";
 
 /** Narrow surface we need from dockerode — keeps tests free of any real socket.
  *  `pull` returns dockerode's progress stream; the caller drains it via
@@ -36,6 +41,8 @@ export interface DockerodeLike {
       State: string;
     }>
   >;
+  listNetworks(): Promise<Array<{ Name: string }>>;
+  createNetwork(spec: { Name: string; Driver: string; Internal: boolean }): Promise<unknown>;
   getContainer(id: string): {
     inspect(): Promise<unknown>;
     remove(opts?: { force?: boolean }): Promise<void>;
@@ -57,12 +64,16 @@ export interface DockerodeLike {
 
 export interface DockerDriverDeps {
   docker: DockerodeLike;
+  /** Declared addon network topology, keyed by network name. The driver creates
+   *  any declared network that is missing and refuses any network absent from
+   *  this map — see ensureNetworks. */
+  networks: ManagedNetworks;
 }
 
 export function createDockerDriver(deps: DockerDriverDeps): ServiceDriver {
   return {
     prepare: (ms) => prepare(deps.docker, ms),
-    recreate: (ms) => recreate(deps.docker, ms),
+    recreate: (ms) => recreate(deps.docker, deps.networks, ms),
     start: async (name) => {
       try {
         await deps.docker.getContainer(name).start();
@@ -99,7 +110,11 @@ async function prepare(docker: DockerodeLike, ms: ManagedService): Promise<Resul
   return ensureImageAvailable(docker, ms.template.image);
 }
 
-async function recreate(docker: DockerodeLike, ms: ManagedService): Promise<Result<undefined, DriverError>> {
+async function recreate(
+  docker: DockerodeLike,
+  networks: ManagedNetworks,
+  ms: ManagedService,
+): Promise<Result<undefined, DriverError>> {
   if (!isDockerService(ms)) return wrongBackend(ms);
   const policy = enforcePolicy(ms);
   if (!policy.ok) return policy;
@@ -109,6 +124,9 @@ async function recreate(docker: DockerodeLike, ms: ManagedService): Promise<Resu
   // refuse to create its replacement.
   const published = buildPortPublishing(ms);
   if (!published.ok) return published;
+
+  const nets = await ensureNetworks(docker, networks, ms);
+  if (!nets.ok) return nets;
 
   // Ensure the image is available BEFORE we tear down the existing container.
   // Public images (e.g. kalaksi/tinyproxy:latest) get pulled here; locally-
@@ -151,6 +169,40 @@ async function recreate(docker: DockerodeLike, ms: ManagedService): Promise<Resu
     return { ok: false, error: { kind: "start-failed", reason: errMsg(err) } };
   }
   log.info("driver.recreated", { service: ms.name, id: created.id });
+  return { ok: true, value: undefined };
+}
+
+/** Create any of the service's networks that the daemon does not already have.
+ *  Idempotent, and fail-closed on an undeclared network: without a declared
+ *  `internal` flag we would be guessing at the egress boundary, and guessing
+ *  wrong (defaulting to a routable bridge) silently bypasses egress-proxy. */
+async function ensureNetworks(
+  docker: DockerodeLike,
+  declared: ManagedNetworks,
+  ms: DockerManagedService,
+): Promise<Result<undefined, DriverError>> {
+  let existing: Set<string>;
+  try {
+    existing = new Set((await docker.listNetworks()).map((n) => n.Name));
+  } catch (err) {
+    return { ok: false, error: { kind: "create-failed", reason: `listNetworks: ${errMsg(err)}` } };
+  }
+
+  for (const name of ms.template.networks) {
+    const spec = declared[name];
+    if (spec === undefined) {
+      const reason = `network ${name} is not in MANAGED_NETWORK_TOPOLOGY`;
+      log.warn("driver.network-undeclared", { service: ms.name, reason });
+      return { ok: false, error: { kind: "policy-violation", reason } };
+    }
+    if (existing.has(name)) continue;
+    try {
+      await docker.createNetwork({ Name: name, Driver: NETWORK_DRIVER, Internal: spec.internal });
+    } catch (err) {
+      return { ok: false, error: { kind: "create-failed", reason: `createNetwork ${name}: ${errMsg(err)}` } };
+    }
+    log.info("driver.network-created", { service: ms.name, network: name, internal: spec.internal });
+  }
   return { ok: true, value: undefined };
 }
 

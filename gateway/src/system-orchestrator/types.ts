@@ -16,6 +16,32 @@ export const HealthCheckSchema = z.union([
 ]);
 export type HealthCheck = z.infer<typeof HealthCheckSchema>;
 
+/** Docker network topology the addons attach to. The gateway is the host
+ *  orchestrator now, so nothing upstream creates these — `docker compose up`
+ *  creates no networks when every remaining compose service is build-only. The
+ *  gateway therefore creates them itself, and needs each network's egress
+ *  posture declared rather than guessed: `internal: true` is what confines an
+ *  addon to the egress-proxy hop. */
+export interface ManagedNetworkConfig {
+  /** docker's `Internal` flag — true blocks all egress from the network. */
+  internal: boolean;
+}
+
+export type ManagedNetworks = Readonly<Record<string, ManagedNetworkConfig>>;
+
+/** The closed set of addon networks, and the ONLY place their egress posture is
+ *  declared. Deliberately NOT a config key: `internal: true` on
+ *  sentient-internal is the security invariant that forces every MCP through
+ *  egress-proxy, and an operator flipping it in YAML would void that boundary
+ *  invisibly (a non-internal network looks identical in `docker network ls`).
+ *  Per-service network MEMBERSHIP stays operator-declared in
+ *  `config.yaml#managed_services.<svc>.networks`; the driver fails closed on
+ *  any membership naming a network outside this map. */
+export const MANAGED_NETWORK_TOPOLOGY: ManagedNetworks = Object.freeze({
+  "sentient-internal": { internal: true },
+  "sentient-external": { internal: false },
+});
+
 /** Which backend supervises a managed service: a docker container, or a plain
  *  host process the gateway spawns itself. */
 export const LaunchKindSchema = z.enum(["docker", "native"]);
