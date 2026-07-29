@@ -727,6 +727,8 @@ def parse_args(argv):
                          help=f"vendored wheels root (default <repo>/{WHEELS_ROOT})")
     install.add_argument("--plist", type=Path, default=None,
                          help=f"launchd plist (default <repo>/{PLIST_SOURCE})")
+    install.add_argument("--launchd-dir", type=Path, default=LAUNCHD_DIR,
+                         help=f"where the plist is installed (default {LAUNCHD_DIR})")
     install.add_argument("--home", type=Path, default=None,
                          help="operator home holding ~/.sentient (default the operator's)")
     install.add_argument("--ca-bundle", type=Path, default=None,
@@ -756,7 +758,7 @@ def run_install(args) -> None:
     ok(f"{home / STATE_ROOT} ready")
 
     info("installing the launchd daemon")
-    launchd = RealLaunchd(plist, operator=operator)
+    launchd = RealLaunchd(plist, operator=operator, daemon_dir=args.launchd_dir)
     launchd.install_plist()
     ok(f"{launchd.installed_plist}")
 
@@ -802,6 +804,11 @@ def main(argv=None) -> int:
         return EXIT_INSTALL_FAILED
     except subprocess.CalledProcessError as e:
         fail(f"command failed: {' '.join(str(part) for part in e.cmd)}")
+        return EXIT_INSTALL_FAILED
+    except OSError as e:
+        # Almost always "not running under sudo": writing /opt/sentient and
+        # /Library/LaunchDaemons both need root. Name it rather than tracebacking.
+        fail(f"{e} — run this with sudo, or point --opt-root/--launchd-dir at a writable tree")
         return EXIT_INSTALL_FAILED
     return EXIT_OK
 
