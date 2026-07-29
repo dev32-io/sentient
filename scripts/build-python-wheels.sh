@@ -21,7 +21,11 @@ resolve_python() {
   local pyver="$1" override_var="$2"
   local override="${!override_var:-}"
   local py="${override:-$(command -v "python$pyver" 2>/dev/null || true)}"
-  if [ -z "$py" ]; then
+  # `command -v brew` guard is load-bearing, not defensive noise: under
+  # `set -e` a bare assignment from a missing command aborts the whole script
+  # with bash's own "brew: command not found" / exit 127, so the named-cause
+  # message below would never print on a Homebrew-less host.
+  if [ -z "$py" ] && command -v brew >/dev/null 2>&1; then
     py="$(brew --prefix "python@$pyver" 2>/dev/null)/bin/python$pyver"
   fi
   if [ ! -x "$py" ] && ! command -v "$py" >/dev/null 2>&1; then

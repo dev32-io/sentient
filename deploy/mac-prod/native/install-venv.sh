@@ -23,7 +23,11 @@ esac
 
 OVERRIDE="${!OVERRIDE_VAR:-}"
 PY="${OVERRIDE:-$(command -v "python$PYVER" 2>/dev/null || true)}"
-if [ -z "$PY" ]; then
+# `command -v brew` guard is load-bearing, not defensive noise: under `set -e`
+# a bare assignment from a missing command aborts the whole script with bash's
+# own "brew: command not found" / exit 127, so the named-cause message below
+# would never print on a Homebrew-less host.
+if [ -z "$PY" ] && command -v brew >/dev/null 2>&1; then
   PY="$(brew --prefix "python@$PYVER" 2>/dev/null)/bin/python$PYVER"
 fi
 if [ ! -x "$PY" ] && ! command -v "$PY" >/dev/null 2>&1; then
