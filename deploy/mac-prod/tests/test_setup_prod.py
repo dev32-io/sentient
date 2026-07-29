@@ -21,9 +21,11 @@ from setup_prod import (
     InstallError,
     Installer,
     RealFs,
+    RealLaunchd,
     build_tls_context,
     ensure_state_dirs,
     read_release_version,
+    resolve_operator,
     verify_tarball_checksum,
 )
 
@@ -510,3 +512,99 @@ def test_current_survives_a_tmp_symlink_left_by_a_crashed_run(tmp_path):
 
     assert fs.current == "1.13.0"
     assert (opt / "current").is_symlink()
+
+
+# --- launchd (privilege boundary + fresh-install ordering) ---------------------
+#
+# The real plist is `deploy/mac-prod/io.sentient.gateway.plist`, owned by the
+# native-cutover task. These tests use a synthetic plist of the same shape so
+# the substitution and load ordering are pinned independently of that file.
+
+SYNTHETIC_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>Label</key><string>io.sentient.gateway</string>
+<key>UserName</key><string>OPERATOR</string>
+<key>GATEWAY_CONFIG_PATH</key><string>/Users/OPERATOR/.sentient/gateway/config/config.yaml</string>
+<key>StandardOutPath</key><string>/Users/OPERATOR/.sentient/gateway/logs/stdout.log</string>
+</dict></plist>
+"""
+
+
+def _recording_runner(recorded, fails=()):
+    """Capture argv; fail the subcommands named in `fails`."""
+    def runner(argv, **kwargs):
+        recorded.append(list(argv))
+        if len(argv) > 1 and argv[1] in fails:
+            raise subprocess.CalledProcessError(1, argv)
+        return subprocess.CompletedProcess(argv, 0)
+    return runner
+
+
+def test_the_daemon_user_is_never_root():
+    """The plist's UserName comes from here.
+
+    If it resolved to `root` the gateway would run privileged and could rewrite
+    its own binary under /opt — which is the exact invariant the root-owned code
+    tree exists to enforce. Guessing an operator is worse than refusing.
+    """
+    assert resolve_operator({"SUDO_USER": "kevinye"}) == "kevinye"
+
+    for hostile in ({}, {"SUDO_USER": ""}, {"SUDO_USER": "root"}):
+        with pytest.raises(InstallError) as e:
+            resolve_operator(hostile)
+        assert "operator" in str(e.value).lower()
+
+
+def test_installing_the_plist_leaves_no_operator_placeholder(tmp_path):
+    """A surviving `OPERATOR` is not a cosmetic defect: UserName would name a
+    user that does not exist, and GATEWAY_CONFIG_PATH would point at
+    /Users/OPERATOR/... so the gateway would boot against no config."""
+    source = tmp_path / "io.sentient.gateway.plist"
+    source.write_text(SYNTHETIC_PLIST)
+    daemons = tmp_path / "LaunchDaemons"
+    daemons.mkdir()
+    recorded = []
+    ld = RealLaunchd(source, operator="kevinye", daemon_dir=daemons,
+                     runner=_recording_runner(recorded))
+
+    ld.install_plist()
+
+    installed = (daemons / "io.sentient.gateway.plist").read_text()
+    assert "OPERATOR" not in installed
+    assert installed.count("kevinye") == 3, "UserName and both /Users paths"
+    assert ["chown", "root:wheel", str(daemons / "io.sentient.gateway.plist")] in recorded
+    assert stat.S_IMODE((daemons / "io.sentient.gateway.plist").stat().st_mode) == 0o644
+
+
+def test_kickstart_bootstraps_an_unloaded_job_before_restarting_it(tmp_path):
+    """On a fresh mini the job is not in the system domain yet, and
+    `launchctl kickstart` on an unloaded label FAILS — so the very first install
+    would die here if it did not bootstrap first."""
+    source = tmp_path / "io.sentient.gateway.plist"
+    source.write_text(SYNTHETIC_PLIST)
+    daemons = tmp_path / "LaunchDaemons"
+    daemons.mkdir()
+    recorded = []
+    ld = RealLaunchd(source, operator="kevinye", daemon_dir=daemons,
+                     runner=_recording_runner(recorded, fails=("print",)))
+
+    ld.kickstart()
+
+    subcommands = [argv[1] for argv in recorded if argv[0] == "launchctl"]
+    assert subcommands == ["print", "bootstrap"], "bootstrap replaces the kickstart"
+
+
+def test_kickstart_restarts_an_already_loaded_job(tmp_path):
+    source = tmp_path / "io.sentient.gateway.plist"
+    source.write_text(SYNTHETIC_PLIST)
+    daemons = tmp_path / "LaunchDaemons"
+    daemons.mkdir()
+    recorded = []
+    ld = RealLaunchd(source, operator="kevinye", daemon_dir=daemons,
+                     runner=_recording_runner(recorded))
+
+    ld.kickstart()
+
+    launchctl = [argv for argv in recorded if argv[0] == "launchctl"]
+    assert [argv[1] for argv in launchctl] == ["print", "kickstart"]
+    assert "-k" in launchctl[-1], "must restart, not no-op on an already-running job"

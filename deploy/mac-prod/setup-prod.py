@@ -82,6 +82,22 @@ CODE_MODE = "755"
 # extended attributes. Metadata, not content — never a version directory.
 APPLEDOUBLE_PREFIX = "._"
 
+# --- launchd -----------------------------------------------------------------
+# A LaunchDaemon in the `system` domain, not a LaunchAgent: the gateway must be
+# up with nobody logged in.
+LAUNCHD_LABEL = "io.sentient.gateway"
+LAUNCHD_DOMAIN = "system"
+LAUNCHD_DIR = Path("/Library/LaunchDaemons")
+# The plist ships with this literal standing in for the operator's account name;
+# the installer substitutes it. See deploy/mac-prod/io.sentient.gateway.plist.
+OPERATOR_PLACEHOLDER = "OPERATOR"
+PLIST_OWNER = "root:wheel"
+# 0644: root writes, everyone reads. Anyone who can WRITE this file chooses what
+# root launches at boot, so group/world write is a privilege-escalation hole.
+PLIST_MODE = 0o644
+SUDO_USER_VAR = "SUDO_USER"
+ROOT_USER = "root"
+
 # --- state layout ------------------------------------------------------------
 # Mutable, operator-owned state. Mirrors what the compose deploy bind-mounted,
 # so an existing mini keeps every path it already has. Relative to ~/.sentient.
@@ -285,6 +301,99 @@ class RealFs:
             staging.unlink()
         staging.symlink_to(self._root / version)
         staging.replace(self._root / CURRENT_LINK)
+
+
+def resolve_operator(environ) -> str:
+    """The unprivileged user the daemon runs as.
+
+    Substituted into the plist's `UserName`, so `root` here would run the whole
+    gateway privileged — and a privileged gateway can rewrite its own binary
+    under /opt, which is precisely what the root-owned code tree exists to
+    prevent. There is no fallback: guessing an operator is worse than refusing.
+    """
+    operator = str(environ.get(SUDO_USER_VAR) or "").strip()
+    if not operator or operator == ROOT_USER:
+        raise InstallError(
+            f"cannot determine the operator account from ${SUDO_USER_VAR} (got "
+            f"{operator or 'nothing'!r}). Run this with `sudo` from the operator's "
+            "own login; the gateway must never run as root."
+        )
+    return operator
+
+
+class RealLaunchd:
+    """The `io.sentient.gateway` LaunchDaemon.
+
+    A LaunchDaemon, not a LaunchAgent: the gateway must be up with no one logged
+    in. The plist is root-owned and points at the fixed `current/` path, so it is
+    installed once and a version flip is just a restart.
+    """
+
+    def __init__(
+        self,
+        plist_source: Path,
+        operator: str,
+        label: str = LAUNCHD_LABEL,
+        daemon_dir: Path = LAUNCHD_DIR,
+        runner=subprocess.run,
+    ):
+        self._source = Path(plist_source)
+        self._operator = operator
+        self._label = label
+        self._dir = Path(daemon_dir)
+        self._run = runner
+
+    @property
+    def installed_plist(self) -> Path:
+        return self._dir / f"{self._label}.plist"
+
+    def install_plist(self) -> None:
+        try:
+            template = self._source.read_text()
+        except OSError as e:
+            raise InstallError(f"cannot read the launchd plist {self._source}: {e}") from e
+
+        rendered = template.replace(OPERATOR_PLACEHOLDER, self._operator)
+        if OPERATOR_PLACEHOLDER in rendered:
+            raise InstallError(
+                f"plist still contains {OPERATOR_PLACEHOLDER} after substitution — "
+                "refusing to install a daemon whose user and paths are placeholders"
+            )
+
+        target = self.installed_plist
+        target.write_text(rendered)
+        # Root-owned and not group/world writable: anyone who can edit this file
+        # chooses what root launches at boot.
+        self._run(["chown", PLIST_OWNER, str(target)], check=True)
+        target.chmod(PLIST_MODE)
+
+    def _is_loaded(self) -> bool:
+        try:
+            self._run(
+                ["launchctl", "print", f"{LAUNCHD_DOMAIN}/{self._label}"],
+                check=True, capture_output=True,
+            )
+            return True
+        except subprocess.CalledProcessError:
+            return False
+
+    def kickstart(self) -> None:
+        """Restart the daemon, bootstrapping it first if it is not loaded yet.
+
+        `launchctl kickstart` FAILS on a label that is not in the system domain,
+        so a fresh mini has to be bootstrapped — and bootstrap itself starts the
+        job, which is why it replaces the kickstart rather than preceding it.
+        """
+        if not self._is_loaded():
+            self._run(
+                ["launchctl", "bootstrap", LAUNCHD_DOMAIN, str(self.installed_plist)],
+                check=True,
+            )
+            return
+        self._run(
+            ["launchctl", "kickstart", "-k", f"{LAUNCHD_DOMAIN}/{self._label}"],
+            check=True,
+        )
 
 
 def build_tls_context(ca_bundle: Path) -> ssl.SSLContext:
