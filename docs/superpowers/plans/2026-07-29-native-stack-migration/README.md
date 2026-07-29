@@ -34,6 +34,28 @@ Every task's requirements implicitly include this section.
 
 ---
 
+## Execution Resilience (binding — read before starting any task)
+
+Long agent runs get killed mid-flight by usage limits. Measured on the previous plan: **loss was exactly proportional to time-since-last-commit.** One kill kept everything because the implementer had committed; another lost 356k tokens of work because two agents were ~17 minutes in with a clean tree. These rules shrink the blast radius rather than pretending kills won't happen.
+
+- **Commit after EVERY red→green cycle, not at task end.** The moment a test goes green and the gate passes, commit. Worst case a kill then costs one cycle instead of a whole task. Commit messages may be small and incremental — the branch is squashed at merge.
+- **Every task starts with a STATE PROBE.** Before doing any work, determine what is already done by inspecting the repo — not by assuming you are starting fresh:
+  ```bash
+  git log --oneline -15
+  git status --short
+  # then the task's own markers, e.g.:
+  ls gateway/src/system-orchestrator/native-driver.ts 2>/dev/null && echo "step 9 done"
+  ```
+  Report which step you are resuming at. A resumed agent re-derives position from the repo, never from lost context.
+- **Append to your report file after each commit**, not once at the end. A kill that preserves commits but loses the reasoning still costs the reviewer their context.
+- **Append one line to `.superpowers/sdd/progress.md` after each commit:** `<task>: <step> complete (<sha>)`. The ledger is the recovery map; a per-task granularity is too coarse to resume mid-task.
+- **Never leave the tree dirty at a natural pause.** If a cycle is green, commit it before starting the next.
+- **Idempotence:** re-running a completed step must be safe. Write steps so a resumed agent that redoes one step loses nothing.
+
+Cost, stated honestly: the pre-commit hook runs repo-wide lint + typecheck (~5s), so a 17-step task pays ~85s in hook time. That is cheap against re-running a killed task.
+
+---
+
 ## File Ownership & Wave Structure
 
 Parallelism is bounded by **file ownership**, not task count. In the previous plan two agents both needed `session-runtime.ts`; the collision cost ~20 minutes of blocked commits and blurred attribution. Wave boundaries below are drawn from actual file sets, verified against each task body.
