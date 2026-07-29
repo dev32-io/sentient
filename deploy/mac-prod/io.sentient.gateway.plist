@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Sentient gateway — launchd job definition (TEMPLATE).
+
+  A LaunchDaemon in the `system` domain, NOT a LaunchAgent. `~/Library/LaunchAgents/`
+  is writable by the very user the job runs as, which is the same hole the
+  root-owned-code layout exists to close: anyone who can write the job definition
+  chooses what launches at boot. This file is root:wheel 0644 in
+  /Library/LaunchDaemons/, and the job itself runs UNPRIVILEGED via `UserName`.
+
+  Every literal `OPERATOR` below is a placeholder. deploy/mac-prod/setup-prod.py
+  substitutes the operator's account name at install time and REFUSES to install
+  a plist that still contains the placeholder — never install this file by hand.
+
+  ProgramArguments points at the fixed `current/` symlink, so a version flip is a
+  symlink swap plus `launchctl kickstart -k`; the plist itself is installed once.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>            <string>io.sentient.gateway</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/sentient/current/bin/sentient-gateway</string>
+  </array>
+
+  <!-- Root-owned plist, unprivileged execution. The gateway needs no root: it
+       reads root-owned code, writes only the operator's ~/.sentient state, and
+       talks to Docker Desktop over the operator's docker socket. -->
+  <key>UserName</key>         <string>OPERATOR</string>
+
+  <key>RunAtLoad</key>        <true/>
+  <!-- Restart on exit, always. The gateway supervises the native addons as its
+       own children, so its death takes voice down until launchd revives it. -->
+  <key>KeepAlive</key>        <true/>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- launchd jobs inherit NOTHING from a login shell, so every path the
+         gateway resolves from the environment is spelled out here. -->
+
+    <!-- Staged assets: templates/, system_prompts/, persona.md, webui/. The
+         compiled binary embeds no assets, so this must point at the unpacked
+         share/ dir or asset resolution fails loudly at boot. -->
+    <key>GATEWAY_RUNTIME_DIR</key>            <string>/opt/sentient/current/share</string>
+    <!-- Operator-editable config, deliberately in mutable state, not in code. -->
+    <key>GATEWAY_CONFIG_PATH</key>            <string>/Users/OPERATOR/.sentient/gateway/config/config.yaml</string>
+    <!-- Root of the root-owned release tree. config.yaml#managed_services
+         expands ${SENTIENT_CODE} into each native addon's argv[0] and
+         PYTHONPATH; unset, those stay literal and prepare() refuses to spawn. -->
+    <key>SENTIENT_CODE</key>                  <string>/opt/sentient/current</string>
+
+    <!-- HOME is what os.homedir() reads, and ~/.sentient is derived from it:
+         state.yaml, secrets/keys.yaml, certs/, users, per-user data. Set
+         explicitly rather than trusting launchd's user-record lookup. -->
+    <key>HOME</key>                           <string>/Users/OPERATOR</string>
+    <!-- Host paths substituted into gateway/templates/services/*.yaml. Docker
+         bind-mount sources must be real HOST paths — the daemon creates addon
+         containers through the docker socket, so a container-internal path here
+         would mount the wrong thing (or an empty auto-created dir). -->
+    <key>HOST_HOME</key>                      <string>/Users/OPERATOR</string>
+    <key>HOST_CONFIG_DIR</key>                <string>/Users/OPERATOR/.sentient/gateway/config</string>
+    <!-- Per-user HERMES_HOME root. The in-code default is a container path, so
+         leaving this unset points per-user provisioning at a path that does not
+         exist on the host. -->
+    <key>SENTIENT_HOST_GATEWAY_DATA_DIR</key> <string>/Users/OPERATOR/.sentient/gateway/data</string>
+
+    <!-- Wall-clock timezone. The assistant renders "current time" into the
+         prompt, so a wrong value makes it confidently answer the wrong time.
+         Edit to the mini's own zone (any tz database name). -->
+    <key>TZ</key>                             <string>America/Vancouver</string>
+
+    <!-- delegateTask execs `hermes` BY NAME (gateway/src/tools/hermes-runner.ts),
+         so the operator's hermes launcher dir must be on PATH. This is the whole
+         reason the gateway had to leave its container: a containerised gateway
+         has no filesystem in common with the hermes install. -->
+    <key>PATH</key>                           <string>/Users/OPERATOR/.local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
+
+  <!-- Crash output and anything that escapes the tagged logger. The gateway's
+       own daily-rotated log is gateway/logs/YYYY-MM-DD.log beside these. -->
+  <key>StandardOutPath</key>  <string>/Users/OPERATOR/.sentient/gateway/logs/stdout.log</string>
+  <key>StandardErrorPath</key><string>/Users/OPERATOR/.sentient/gateway/logs/stderr.log</string>
+</dict>
+</plist>
