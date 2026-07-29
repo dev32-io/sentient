@@ -26,16 +26,29 @@ Invariants this script exists to hold:
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import os
 import shutil
 import ssl
 import subprocess
+import sys
 import tarfile
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path, PurePosixPath
+
+# This script lives at <repo>/deploy/mac-prod/setup-prod.py and is run from the
+# checkout, which supplies the service sources, the wheels and the plist.
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+# Seed for a fresh host only — ensure_state_dirs never overwrites an existing one.
+TEMPLATE_CONFIG = "gateway/config.yaml"
+PLIST_SOURCE = "deploy/mac-prod/io.sentient.gateway.plist"
+# scripts/build-gateway.sh writes `<tarball>.sha256` beside the tarball.
+CHECKSUM_SUFFIX = ".sha256"
+EXIT_OK = 0
+EXIT_INSTALL_FAILED = 1
 
 # Read the tarball in fixed-size blocks so a multi-hundred-MB release never
 # lands in memory in one piece. Valid: any power of two >= 4096; 1 MiB is the
@@ -132,6 +145,10 @@ STAGE_EXCLUDES = ("__pycache__", "*.pyc", "*.egg-info")
 # --- state layout ------------------------------------------------------------
 # Mutable, operator-owned state. Mirrors what the compose deploy bind-mounted,
 # so an existing mini keeps every path it already has. Relative to ~/.sentient.
+STATE_ROOT = ".sentient"
+# The gateway mints its own self-signed CA here on first boot; the health probe
+# pins this file as its trust anchor. Source of truth: shared/tls/src/tls.ts.
+CERT_RELATIVE = "certs/cert.pem"
 STATE_DIRS = (
     "gateway/config",
     "gateway/logs",
@@ -197,7 +214,7 @@ def ensure_state_dirs(home: Path, template_config: Path, chown=None) -> None:
     a permission error rather than here.
     """
     handed_back = chown or (lambda _path: None)
-    root = home / ".sentient"
+    root = home / STATE_ROOT
 
     for relative in ("",) + STATE_DIRS:
         path = root / relative if relative else root
@@ -666,3 +683,128 @@ class Installer:
                 "— the service is down and needs manual intervention"
             )
         raise InstallError(f"{failed} failed health; rolled back to {previous}")
+
+
+# --- operator-facing output ---------------------------------------------------
+# Matches the helper shape in deploy/setup-prod.py: this is a CLI whose stdout IS
+# the operator interface. Every step, refusal and fallback names its reason so a
+# failed deploy can be diagnosed from the transcript alone.
+BOLD, GREEN, YELLOW, RED, RESET = "\033[1m", "\033[32m", "\033[33m", "\033[31m", "\033[0m"
+
+
+def info(message: str) -> None:
+    print(f"{BOLD}==>{RESET} {message}")
+
+
+def ok(message: str) -> None:
+    print(f"  {GREEN}✓{RESET} {message}")
+
+
+def warn(message: str) -> None:
+    print(f"  {YELLOW}!{RESET} {message}", file=sys.stderr)
+
+
+def fail(message: str) -> None:
+    print(f"  {RED}✗{RESET} {message}", file=sys.stderr)
+
+
+def parse_args(argv):
+    parser = argparse.ArgumentParser(
+        prog="setup-prod.py",
+        description="Install or upgrade the native Sentient gateway on this host.",
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+    install = commands.add_parser("install", help="install a release tarball")
+    install.add_argument("tarball", type=Path, help="dist/gateway/<version>.tar.gz")
+    # Overrides exist for staging a release somewhere other than the live tree.
+    # There is deliberately no flag that skips verification, the health gate or
+    # the rollback — those are the reasons this script exists.
+    install.add_argument("--opt-root", type=Path, default=OPT,
+                         help=f"release tree root (default {OPT})")
+    install.add_argument("--repo", type=Path, default=REPO_ROOT,
+                         help="checkout supplying service sources and the plist")
+    install.add_argument("--wheels", type=Path, default=None,
+                         help=f"vendored wheels root (default <repo>/{WHEELS_ROOT})")
+    install.add_argument("--plist", type=Path, default=None,
+                         help=f"launchd plist (default <repo>/{PLIST_SOURCE})")
+    install.add_argument("--home", type=Path, default=None,
+                         help="operator home holding ~/.sentient (default the operator's)")
+    install.add_argument("--ca-bundle", type=Path, default=None,
+                         help="TLS anchor for the health probe (default <home>/.sentient/certs/cert.pem)")
+    install.add_argument("--health-url", default=DEFAULT_HEALTH_URL)
+    install.add_argument("--keep", type=int, default=RELEASES_TO_KEEP,
+                         help=f"past releases to retain (default {RELEASES_TO_KEEP})")
+    install.add_argument("--operator", default=None,
+                         help="account the daemon runs as (default $SUDO_USER)")
+    return parser.parse_args(argv)
+
+
+def run_install(args) -> None:
+    operator = args.operator or resolve_operator(os.environ)
+    home = args.home or Path(f"/Users/{operator}")
+    repo = args.repo
+    wheels = args.wheels or repo / WHEELS_ROOT
+    plist = args.plist or repo / PLIST_SOURCE
+    ca_bundle = args.ca_bundle or home / STATE_ROOT / CERT_RELATIVE
+
+    version = read_release_version(args.tarball)
+    info(f"installing gateway {version} for operator {operator}")
+
+    info("seeding operator state")
+    ensure_state_dirs(home, repo / TEMPLATE_CONFIG,
+                      chown=lambda path: shutil.chown(path, user=operator))
+    ok(f"{home / STATE_ROOT} ready")
+
+    info("installing the launchd daemon")
+    launchd = RealLaunchd(plist, operator=operator)
+    launchd.install_plist()
+    ok(f"{launchd.installed_plist}")
+
+    fs = RealFs(args.opt_root)
+    previous = fs.current
+    probe = HealthProbe(args.health_url, ca_bundle)
+
+    def prepare(staged: str) -> None:
+        info(f"staging native services into {version}")
+        stage_native_services(repo, args.opt_root / staged, wheels)
+        ok("whisper-stt + local-tts venvs built from vendored wheels")
+
+    def health() -> bool:
+        healthy = probe.wait()
+        (ok if healthy else fail)(probe.last_reason)
+        return healthy
+
+    installer = Installer(
+        fs=fs,
+        launchd=launchd,
+        health=health,
+        verify_checksum=lambda tarball: verify_tarball_checksum(
+            tarball, tarball.with_suffix(tarball.suffix + CHECKSUM_SUFFIX)
+        ),
+        prepare=prepare,
+    )
+    info(f"verifying and installing (previous: {previous or 'none'})")
+    installer.install(version, args.tarball)
+    ok(f"gateway {version} is live and healthy")
+
+    # Protect the version we just replaced: it is the rollback target for a
+    # future failed upgrade, and prune must never be what removes it.
+    fs.prune(keep=args.keep, protect=(previous,) if previous else ())
+    ok(f"kept the {args.keep} most recent releases")
+
+
+def main(argv=None) -> int:
+    args = parse_args(argv)
+    try:
+        run_install(args)
+    except InstallError as e:
+        fail(str(e))
+        return EXIT_INSTALL_FAILED
+    except subprocess.CalledProcessError as e:
+        fail(f"command failed: {' '.join(str(part) for part in e.cmd)}")
+        return EXIT_INSTALL_FAILED
+    return EXIT_OK
+
+
+if __name__ == "__main__":
+    sys.exit(main())
