@@ -9,9 +9,30 @@ exercised through the FSM against a real temp filesystem rather than mocked.
 from __future__ import annotations
 
 import hashlib
+import ssl
+import subprocess
 
 import pytest
-from setup_prod import InstallError, Installer, verify_tarball_checksum
+from setup_prod import (
+    HealthProbe,
+    InstallError,
+    Installer,
+    build_tls_context,
+    verify_tarball_checksum,
+)
+
+
+class _FakeResponse:
+    """Minimal stand-in for the urlopen context manager."""
+
+    def __init__(self, status):
+        self.status = status
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
 
 
 class FakeFs:
@@ -183,3 +204,104 @@ def test_malformed_sidecar_fails_closed(tmp_path):
     sidecar.write_text("not-a-digest\n")
 
     assert verify_tarball_checksum(tarball, sidecar) is False
+
+
+# --- TLS health gate (security boundary) --------------------------------------
+#
+# The gateway serves HTTPS with a self-signed cert it mints into
+# ~/.sentient/certs/cert.pem (CN=sentient, CA:TRUE, SAN localhost + 127.0.0.1 —
+# verified on the live host). The probe pins THAT file as its trust anchor.
+# `verify=False` is never an option: an installer is exactly the kind of script
+# that gets copied to a target that is not loopback.
+
+
+def _self_signed(tmp_path, san="DNS:localhost,IP:127.0.0.1"):
+    cert, key = tmp_path / "cert.pem", tmp_path / "key.pem"
+    subprocess.run(
+        ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+         "-keyout", str(key), "-out", str(cert), "-subj", "/CN=sentient",
+         "-addext", f"subjectAltName={san}"],
+        check=True, capture_output=True,
+    )
+    return cert
+
+
+def test_health_probe_context_requires_verification_and_hostname_match(tmp_path):
+    ctx = build_tls_context(_self_signed(tmp_path))
+
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+    assert ctx.check_hostname is True
+
+
+def test_health_probe_without_a_ca_bundle_fails_closed(tmp_path):
+    """No trust anchor must mean 'refuse', never 'skip verification'."""
+    with pytest.raises(InstallError) as e:
+        build_tls_context(tmp_path / "absent.pem")
+
+    assert "absent.pem" in str(e.value)
+
+
+def test_tls_trust_failure_is_reported_not_retried(tmp_path):
+    """A cert the probe cannot trust is a permanent condition.
+
+    Burning the whole retry budget on it hides the cause behind a timeout, and
+    the tempting "fix" for a timeout is to disable verification. Fail fast with
+    the real reason instead.
+    """
+    calls = []
+
+    def opener(request, timeout, context):
+        calls.append(request)
+        raise ssl.SSLCertVerificationError("certificate verify failed: self-signed certificate")
+
+    probe = HealthProbe(
+        url="https://127.0.0.1:8888/api/v1/health",
+        ca_bundle=_self_signed(tmp_path),
+        opener=opener,
+        attempts=10,
+        interval_seconds=0,
+    )
+
+    assert probe.wait() is False
+    assert len(calls) == 1, "a trust failure must not be retried"
+    assert "tls" in probe.last_reason.lower()
+
+
+def test_health_probe_retries_while_the_gateway_is_still_booting(tmp_path):
+    """launchd returns before the process is listening; the gate must wait."""
+    attempts = iter([ConnectionRefusedError(), ConnectionRefusedError(), None])
+
+    def opener(request, timeout, context):
+        outcome = next(attempts)
+        if outcome is not None:
+            raise outcome
+        return _FakeResponse(200)
+
+    probe = HealthProbe(
+        url="https://127.0.0.1:8888/api/v1/health",
+        ca_bundle=_self_signed(tmp_path),
+        opener=opener,
+        attempts=5,
+        interval_seconds=0,
+    )
+
+    assert probe.wait() is True
+
+
+def test_health_probe_gives_up_within_its_budget(tmp_path):
+    calls = []
+
+    def opener(request, timeout, context):
+        calls.append(request)
+        raise ConnectionRefusedError()
+
+    probe = HealthProbe(
+        url="https://127.0.0.1:8888/api/v1/health",
+        ca_bundle=_self_signed(tmp_path),
+        opener=opener,
+        attempts=4,
+        interval_seconds=0,
+    )
+
+    assert probe.wait() is False
+    assert len(calls) == 4, "bounded retry budget — never an unbounded wait"

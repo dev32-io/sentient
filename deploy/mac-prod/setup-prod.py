@@ -27,6 +27,10 @@ Invariants this script exists to hold:
 from __future__ import annotations
 
 import hashlib
+import ssl
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 # Read the tarball in fixed-size blocks so a multi-hundred-MB release never
@@ -36,6 +40,26 @@ HASH_CHUNK_BYTES = 1024 * 1024
 # A sha256 hex digest is exactly 64 hex characters. Anything else in the digest
 # field of the sidecar is malformed, not a mismatch.
 SHA256_HEX_LEN = 64
+
+# --- health gate tunables ----------------------------------------------------
+# These live here rather than in gateway/config.yaml on purpose: the installer
+# runs BEFORE the gateway it is installing can be asked anything, and it must
+# behave identically on a host whose config is broken. Every one is overridable
+# from the command line.
+#
+# Loopback, and 127.0.0.1 rather than `localhost`: the gateway's self-signed
+# cert carries both `DNS:localhost` and `IP:127.0.0.1` in its SAN, and the
+# numeric form cannot be redirected by /etc/hosts.
+DEFAULT_HEALTH_URL = "https://127.0.0.1:8888/api/v1/health"
+# launchd returns as soon as it has forked; the gateway then loads config,
+# mints certs and binds. Valid: 1..600 attempts. 45 x 2s = 90s, comfortably
+# past a cold start that has to generate a certificate.
+HEALTH_ATTEMPTS = 45
+HEALTH_INTERVAL_SECONDS = 2
+# Hard per-request timeout so a half-open socket cannot stall the install.
+# Valid: 1..60 seconds.
+HEALTH_TIMEOUT_SECONDS = 5
+HTTP_OK = 200
 
 
 class InstallError(Exception):
@@ -73,6 +97,95 @@ def verify_tarball_checksum(tarball: Path, sidecar: Path) -> bool:
     try:
         return sha256_of(tarball) == digest
     except OSError:
+        return False
+
+
+def build_tls_context(ca_bundle: Path) -> ssl.SSLContext:
+    """Trust context for the health probe, pinned to the gateway's own cert.
+
+    The gateway mints a self-signed CA into `~/.sentient/certs/cert.pem` on
+    first boot, so that file — not the system trust store — is the anchor.
+
+    There is deliberately no "skip verification" path. An installer is exactly
+    the kind of script that gets copied to a target that is not loopback, and a
+    `verify=False` written here would travel with it. A missing bundle means
+    the install is broken anyway, so it fails closed with a named cause.
+    """
+    if not ca_bundle.is_file():
+        raise InstallError(
+            f"TLS trust anchor {ca_bundle} not found — cannot verify the gateway's "
+            "health endpoint. Point --ca-bundle at the gateway's cert.pem; verification "
+            "is never disabled."
+        )
+    context = ssl.create_default_context(cafile=str(ca_bundle))
+    context.check_hostname = True
+    context.verify_mode = ssl.CERT_REQUIRED
+    return context
+
+
+class HealthProbe:
+    """Poll the gateway's health endpoint over verified TLS, with a bounded budget.
+
+    Two failure shapes are treated differently, because the right response
+    differs: a refused connection means "not up *yet*" and is retried, while a
+    TLS trust failure is permanent and is reported immediately. Retrying a
+    trust failure would hide it behind a timeout, and the tempting fix for a
+    timeout is to turn verification off.
+    """
+
+    def __init__(
+        self,
+        url: str,
+        ca_bundle: Path,
+        opener=None,
+        attempts: int = HEALTH_ATTEMPTS,
+        interval_seconds: float = HEALTH_INTERVAL_SECONDS,
+        timeout_seconds: float = HEALTH_TIMEOUT_SECONDS,
+    ):
+        self._url = url
+        self._ca_bundle = ca_bundle
+        self._opener = opener or urllib.request.urlopen
+        self._attempts = attempts
+        self._interval = interval_seconds
+        self._timeout = timeout_seconds
+        self.last_reason = "not probed"
+
+    def _attempt(self) -> tuple[bool, bool, str]:
+        """Return (healthy, retryable, reason) for a single request."""
+        context = build_tls_context(self._ca_bundle)
+        try:
+            with self._opener(self._url, timeout=self._timeout, context=context) as response:
+                status = getattr(response, "status", None)
+                if status == HTTP_OK:
+                    return (True, False, f"{self._url} returned {HTTP_OK}")
+                return (False, True, f"{self._url} returned HTTP {status}")
+        except ssl.SSLError as e:
+            return (False, False, f"TLS verification failed against {self._ca_bundle}: {e}")
+        except urllib.error.HTTPError as e:
+            return (False, True, f"{self._url} returned HTTP {e.code}")
+        except urllib.error.URLError as e:
+            # urlopen wraps the real cause; a TLS failure arrives here in
+            # production even though the raw form is raised under test.
+            if isinstance(e.reason, ssl.SSLError):
+                return (
+                    False,
+                    False,
+                    f"TLS verification failed against {self._ca_bundle}: {e.reason}",
+                )
+            return (False, True, f"{self._url} unreachable: {e}")
+        except OSError as e:
+            return (False, True, f"{self._url} unreachable: {e}")
+
+    def wait(self) -> bool:
+        for attempt in range(1, self._attempts + 1):
+            healthy, retryable, reason = self._attempt()
+            self.last_reason = reason
+            if healthy:
+                return True
+            if not retryable:
+                return False
+            if attempt < self._attempts:
+                time.sleep(self._interval)
         return False
 
 
