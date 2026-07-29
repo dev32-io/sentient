@@ -12,3 +12,9 @@ env:
   MUSIC_ASSISTANT_TOKEN: ${MUSIC_ASSISTANT_TOKEN}
 mem_limit_bytes: 268435456
 cpus: 0.5
+# Host publishing. LOOPBACK ONLY: the gateway is a native host process now, so
+# docker DNS is gone and Docker Desktop bridge IPs are not host-routable. A bare
+# "8668:8668" would bind 0.0.0.0 and put this addon on the LAN.
+# native gateway dials http://127.0.0.1:8668/mcp.
+ports:
+  - "127.0.0.1:8668:8668"

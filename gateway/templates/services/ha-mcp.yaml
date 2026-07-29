@@ -14,3 +14,9 @@ command: [ha-mcp-web]
 env:
   HOMEASSISTANT_URL: ${HOMEASSISTANT_URL}
   HOMEASSISTANT_TOKEN: ${HOMEASSISTANT_TOKEN}
+# Host publishing. LOOPBACK ONLY: the gateway is a native host process now, so
+# docker DNS is gone and Docker Desktop bridge IPs are not host-routable. A bare
+# "8086:8086" would bind 0.0.0.0 and put this addon on the LAN.
+# native gateway dials http://127.0.0.1:8086/mcp.
+ports:
+  - "127.0.0.1:8086:8086"

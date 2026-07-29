@@ -149,9 +149,12 @@ orchestrator:
 # ---------------------------------------------------------------------------
 stt:
   provider: local-stt
-  # WS endpoint. In Pi docker-compose this resolves via service name;
-  # for local dev override to ws://localhost:8766.
-  url: ws://sentient-stt-service:8766
+  # WS endpoint. The gateway is a native host process and whisper-stt is a
+  # native managed service bound to loopback, so this is a plain localhost dial
+  # — no docker DNS, and no container-to-host hop. Port must match
+  # managed_services.whisper-stt's healthcheck and the service's own
+  # server.port (capabilityServices/WhisperSTTService/config).
+  url: ws://127.0.0.1:8768
 
   # Language drives the pause-renderer template and the system-prompt
   # language hint file (gateway/system_prompts/language-prompt-<lang>.md).
@@ -179,13 +182,14 @@ stt:
 # normalization, paragraph aggregation) service-side. No gateway-side
 # aggregation stage or knobs exist for this pipeline.
 #
-# `url` is the native local-tts service. It needs Metal/MLX GPU access, so
-# it runs on the host (not containerized) — reached via host.docker.internal,
-# same pattern as native-whisper STT. format=opus @ 48000 is the local-tts
-# live-path contract (see local-tts-provider.ts's LIVE_ENCODING/LIVE_SAMPLE_RATE).
+# `url` is the native local-tts service. It needs Metal/MLX GPU access, so it
+# runs on the host (not containerized) — and so does the gateway now, which
+# retires the old container-to-host bridge hop in favour of a plain
+# loopback dial. format=opus @ 48000 is the local-tts live-path contract
+# (see local-tts-provider.ts's LIVE_ENCODING/LIVE_SAMPLE_RATE).
 # ---------------------------------------------------------------------------
 tts:
-  url: ws://host.docker.internal:8770 # local-tts (LocalTTSService) WS endpoint
+  url: ws://127.0.0.1:8770         # local-tts (LocalTTSService) WS endpoint, loopback-bound
   voice_id: default                  # gateway-wide fallback voice. Per-user voice from profile.json#voice.id wins.
   format: opus                       # ONLY valid value (schema-enforced) — gateway live path is opus-only; end-to-end opus pivot (OGG-Opus → ogg-opus-decoder WASM in webui).
   sample_rate: 48000                 # Opus standard rate.
@@ -354,8 +358,8 @@ providers:
 # degrades to "unknown" independently on error; the other keeps resolving.
 # ---------------------------------------------------------------------------
 companions:
-  stt_health_url: http://sentient-stt-service:8767/health   # STT /health endpoint; returns {"version":"..."}
-  tts_health_url: http://host.docker.internal:8771/health   # local-tts /health endpoint (host-run service); returns {"version":"..."}
+  stt_health_url: http://127.0.0.1:8769/health   # whisper-stt /health endpoint (native, loopback); returns {"version":"..."}
+  tts_health_url: http://127.0.0.1:8771/health   # local-tts /health endpoint (native, loopback); returns {"version":"..."}
   hermes_version_path: /data/supervisor/.versions/hermes    # file hermes writes on boot into the shared volume
   version_cache_ttl_ms: 300000    # cache resolved versions for 5 min; 10000–3600000
   version_fetch_timeout_ms: 3000  # per-source HTTP timeout for STT health fetch; 500–30000
@@ -377,7 +381,7 @@ companions:
 mcp_catalog:
   home_assistant:
     transport: http
-    url: http://sentient-ha-mcp:8086/mcp
+    url: http://127.0.0.1:8086/mcp
     timeout: 30
     connect_timeout: 5
     description: Home Assistant smart-home control via ha-mcp sidecar.
@@ -437,7 +441,7 @@ mcp_catalog:
   # the upstream uses raw WS that tinyproxy CONNECT cannot proxy.
   music_assistant:
     transport: http
-    url: http://sentient-ma-mcp:8668/mcp
+    url: http://127.0.0.1:8668/mcp
     timeout: 30
     connect_timeout: 5
     description: Music Assistant playback control.
@@ -467,7 +471,7 @@ mcp_catalog:
   # Outbound HTTP fetches route through egress-proxy.
   fetch:
     transport: http
-    url: http://sentient-fetch-mcp:8088/mcp
+    url: http://127.0.0.1:8088/mcp
     timeout: 30
     connect_timeout: 5
     description: Fetch URL contents as markdown.
@@ -482,7 +486,7 @@ mcp_catalog:
   # fans out across configured upstream engines via egress-proxy.
   searxng:
     transport: http
-    url: http://sentient-searxng-mcp:8087/mcp
+    url: http://127.0.0.1:8087/mcp
     timeout: 30
     connect_timeout: 5
     description: SearXNG metasearch web search.
@@ -508,9 +512,15 @@ managed_services:
     template: egress-proxy.yaml
     allowed_images: ["kalaksi/tinyproxy:latest"]
     networks: ["sentient-internal", "sentient-external"]
+    # egress-proxy is the ONE addon that stays unpublished. It is an OUTBOUND
+    # path — nothing on the host dials it, only sibling containers do — so
+    # publishing it would add host attack surface for zero reachability gain.
+    # The consequence is that the native gateway has no route on which to probe
+    # it, hence `noop`: recreate-success implies ready and docker's
+    # restart-policy detects crashes. Same trade-off, same reason, as the
+    # supervisord-only container that used to sit below this entry.
     healthcheck:
-      tcp: "sentient-egress-proxy:3128"
-      timeout_ms: 30000
+      noop: true
     depends_on: []
     optional: false
 
@@ -556,7 +566,7 @@ managed_services:
       HA_LOCAL_HOST: home_assistant.url:host
       HA_LOCAL_IP: home_assistant.local_ip
     healthcheck:
-      tcp: "sentient-ha-mcp:8086"
+      tcp: "127.0.0.1:8086"
       timeout_ms: 30000
     depends_on: ["egress-proxy"]
     optional: true
@@ -576,7 +586,7 @@ managed_services:
       MASS_LOCAL_HOST: music_assistant.url:host
       MASS_LOCAL_IP: music_assistant.local_ip
     healthcheck:
-      tcp: "sentient-ma-mcp:8668"
+      tcp: "127.0.0.1:8668"
       timeout_ms: 30000
     depends_on: []
     optional: true
@@ -586,7 +596,7 @@ managed_services:
     allowed_images: ["sentient/fetch-mcp:local"]
     networks: ["sentient-internal"]
     healthcheck:
-      tcp: "sentient-fetch-mcp:8088"
+      tcp: "127.0.0.1:8088"
       timeout_ms: 30000
     depends_on: ["egress-proxy"]
     optional: false
@@ -598,7 +608,7 @@ managed_services:
     secrets:
       SEARXNG_SECRET: internal.searxng_secret
     healthcheck:
-      tcp: "sentient-searxng:8080"
+      tcp: "127.0.0.1:8080"
       timeout_ms: 30000
     depends_on: ["egress-proxy"]
     optional: false
@@ -608,7 +618,7 @@ managed_services:
     allowed_images: ["sentient/searxng-mcp:local"]
     networks: ["sentient-internal"]
     healthcheck:
-      tcp: "sentient-searxng-mcp:8087"
+      tcp: "127.0.0.1:8087"
       timeout_ms: 30000
     depends_on: ["searxng"]
     optional: false
@@ -625,7 +635,19 @@ managed_services:
     # fails loudly rather than launching an unexpected binary.
     exec: ["${SENTIENT_CODE}/whisper-stt/venv/bin/python", "-m", "whisper_stt"]
     python: "3.14"                                  # pinned; prepare() verifies before start
-    healthcheck: { tcp: "127.0.0.1:8766", timeout_ms: 30000 }   # STT WS port
+    # CODE under ${SENTIENT_CODE} (root-owned, immutable), STATE under
+    # ${HOST_HOME}/.sentient (user-owned, mutable) — the layout invariant. Both
+    # placeholders come from the gateway's own process env; the launchd plist
+    # (deploy/mac-prod/io.sentient.gateway.plist) sets them.
+    env:
+      PYTHONPATH: "${SENTIENT_CODE}/whisper-stt/src"
+      WHISPER_STT_CONFIG_PATH: "${HOST_HOME}/.sentient/whisper-stt/config/config.yaml"
+      WHISPER_STT_MODEL_DIR: "${HOST_HOME}/.sentient/whisper-stt/models"
+      WHISPER_STT_LOG_DIR: "${HOST_HOME}/.sentient/whisper-stt/logs"
+      WHISPER_STT_RECORDING_DIR: "${HOST_HOME}/.sentient/whisper-stt/recordings"
+    # 8768 is the WhisperSTTService WS port (server.port in its config), NOT the
+    # retired containerized SenseVoice service's 8766. Must match stt.url above.
+    healthcheck: { tcp: "127.0.0.1:8768", timeout_ms: 30000 }   # STT WS port
     depends_on: []
     optional: false
 
@@ -633,6 +655,12 @@ managed_services:
     launch: native
     exec: ["${SENTIENT_CODE}/local-tts/venv/bin/python", "-m", "local_tts"]
     python: "3.11"                                  # 3.11 REQUIRED: mlx-audio ships no 3.14 wheels
-    healthcheck: { tcp: "127.0.0.1:8770", timeout_ms: 30000 }   # TTS WS port
+    env:
+      PYTHONPATH: "${SENTIENT_CODE}/local-tts/src"
+      LOCAL_TTS_CONFIG_PATH: "${HOST_HOME}/.sentient/local-tts/config/config.yaml"
+      LOCAL_TTS_MODEL_DIR: "${HOST_HOME}/.sentient/local-tts/models"
+      LOCAL_TTS_LOG_DIR: "${HOST_HOME}/.sentient/local-tts/logs"
+      LOCAL_TTS_VOICE_DIR: "${HOST_HOME}/.sentient/local-tts/voices"
+    healthcheck: { tcp: "127.0.0.1:8770", timeout_ms: 30000 }   # TTS WS port; must match tts.url above
     depends_on: []
     optional: false

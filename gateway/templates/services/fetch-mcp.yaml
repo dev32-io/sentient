@@ -13,3 +13,9 @@ env:
   FETCH_IGNORE_ROBOTS_TXT: "true"   # "true"/"1"/"yes" skip robots.txt; "false" respect it
 mem_limit_bytes: 268435456    # 256 MiB — python + readabilipy fetch workload
 cpus: 0.5
+# Host publishing. LOOPBACK ONLY: the gateway is a native host process now, so
+# docker DNS is gone and Docker Desktop bridge IPs are not host-routable. A bare
+# "8088:8088" would bind 0.0.0.0 and put this addon on the LAN.
+# native gateway dials http://127.0.0.1:8088/mcp.
+ports:
+  - "127.0.0.1:8088:8088"

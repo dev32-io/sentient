@@ -5,3 +5,9 @@ env:
   SEARXNG_URL: http://sentient-searxng:8080
 mem_limit_bytes: 134217728    # 128 MiB — thin HTTP adapter
 cpus: 0.25
+# Host publishing. LOOPBACK ONLY: the gateway is a native host process now, so
+# docker DNS is gone and Docker Desktop bridge IPs are not host-routable. A bare
+# "8087:8087" would bind 0.0.0.0 and put this addon on the LAN.
+# native gateway dials http://127.0.0.1:8087/mcp.
+ports:
+  - "127.0.0.1:8087:8087"
