@@ -579,7 +579,19 @@ managed_services:
   fetch-mcp:
     template: fetch-mcp.yaml
     allowed_images: ["sentient/fetch-mcp:local"]
-    networks: ["sentient-internal"]
+    # sentient-external joins for REACHABILITY, not for egress. The native
+    # gateway dials this MCP on 127.0.0.1:8088, and docker SILENTLY DROPS the
+    # publish when every attached network is `internal: true` — verified on
+    # docker 29.2.1: NetworkSettings.Ports reads back EMPTY and the host port
+    # answers nothing, while the identical container with one non-internal
+    # network publishes and answers. Outbound fetches still go through
+    # egress-proxy (HTTP_PROXY/HTTPS_PROXY in fetch-mcp.yaml). What this
+    # membership costs is the HARD backstop: a container ignoring those env
+    # vars could now reach the internet directly instead of being routed. The
+    # boundary-preserving alternatives are new components, not config edits — a
+    # loopback ingress forwarder in front of an internal-only MCP, or MCP over
+    # a bind-mounted unix socket — and neither is built yet.
+    networks: ["sentient-internal", "sentient-external"]
     healthcheck:
       tcp: "127.0.0.1:8088"
       timeout_ms: 30000
@@ -589,19 +601,37 @@ managed_services:
   searxng:
     template: searxng.yaml
     allowed_images: ["searxng/searxng:latest"]
+    # STAYS internal-only, and publishes NO host port (searxng.yaml declares no
+    # `ports:`). Nothing on the host dials searxng — its only consumer is the
+    # sibling searxng-mcp over sentient-internal — so it keeps the hard
+    # no-egress backstop that fetch-mcp and searxng-mcp had to trade away for
+    # host reachability. Upstream engine traffic goes through egress-proxy,
+    # declared in searxng/settings.yml#outgoing.proxies (searxng's httpx ignores
+    # HTTP_PROXY env, so the env vars alone would not route it).
     networks: ["sentient-internal"]
     secrets:
       SEARXNG_SECRET: internal.searxng_secret
+    # No host-reachable port to probe (see above), hence `noop` — the same
+    # trade-off, for the same reason, as egress-proxy above: recreate-success
+    # implies ready and docker's restart policy detects crashes. A searxng that
+    # is up but not yet serving surfaces as a failed search_web tool call, not
+    # as a boot failure.
     healthcheck:
-      tcp: "127.0.0.1:8080"
-      timeout_ms: 30000
+      noop: true
     depends_on: ["egress-proxy"]
     optional: false
 
   searxng-mcp:
     template: searxng-mcp.yaml
     allowed_images: ["sentient/searxng-mcp:local"]
-    networks: ["sentient-internal"]
+    # sentient-external joins for REACHABILITY only — same docker behaviour as
+    # fetch-mcp above (internal-only ⇒ publish silently dropped), and the
+    # gateway dials this MCP on 127.0.0.1:8087. This adapter makes NO outbound
+    # internet call of its own: its one upstream is sentient-searxng over
+    # sentient-internal, so the egress it gains is unused capability, not a used
+    # path. Same follow-up applies — an ingress forwarder or unix-socket
+    # transport would let it go back to internal-only.
+    networks: ["sentient-internal", "sentient-external"]
     healthcheck:
       tcp: "127.0.0.1:8087"
       timeout_ms: 30000

@@ -12,9 +12,10 @@ volumes:
   - ${HOST_CONFIG_DIR}/searxng/settings.yml:/etc/searxng/settings.yml:ro
 mem_limit_bytes: 536870912    # 512 MiB — searxng's resident set
 cpus: 0.5
-# Host publishing. LOOPBACK ONLY: the gateway is a native host process now, so
-# docker DNS is gone and Docker Desktop bridge IPs are not host-routable. A bare
-# "8080:8080" would bind 0.0.0.0 and put this addon on the LAN.
-# native gateway health-probes it; searxng-mcp still dials it over sentient-internal.
-ports:
-  - "127.0.0.1:8080:8080"
+# NO host publishing, deliberately. Nothing on the host dials searxng: its only
+# consumer is the sibling searxng-mcp over sentient-internal, and its upstream
+# engine traffic goes out through egress-proxy. Publishing it would force a
+# non-internal network on (docker drops a publish when every attached network is
+# internal), which would hand the container that talks to ten third-party search
+# engines a direct route off the proxy. Health is `noop` in config.yaml for the
+# same reason — there is no host-side port to probe.

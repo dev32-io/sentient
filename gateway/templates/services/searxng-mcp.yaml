@@ -1,6 +1,10 @@
 image: sentient/searxng-mcp:local
 container_name: sentient-searxng-mcp
-networks: [sentient-internal]
+# sentient-external joins so the loopback publish below actually takes effect:
+# docker drops port publishing entirely when every attached network is
+# `internal: true`. This adapter dials only sentient-searxng, over
+# sentient-internal — see config.yaml#managed_services.searxng-mcp.
+networks: [sentient-internal, sentient-external]
 env:
   SEARXNG_URL: http://sentient-searxng:8080
 mem_limit_bytes: 134217728    # 128 MiB — thin HTTP adapter

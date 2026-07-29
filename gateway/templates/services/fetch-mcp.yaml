@@ -1,6 +1,10 @@
 image: sentient/fetch-mcp:local
 container_name: sentient-fetch-mcp
-networks: [sentient-internal]
+# sentient-external joins so the loopback publish below actually takes effect:
+# docker drops port publishing entirely when every attached network is
+# `internal: true`. Egress still routes through egress-proxy via the env below;
+# see config.yaml#managed_services.fetch-mcp for what that trade costs.
+networks: [sentient-internal, sentient-external]
 env:
   HTTP_PROXY: http://sentient-egress-proxy:3128
   HTTPS_PROXY: http://sentient-egress-proxy:3128
