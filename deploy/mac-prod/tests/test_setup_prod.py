@@ -17,6 +17,7 @@ import tarfile
 from pathlib import Path
 
 import pytest
+import setup_prod
 from setup_prod import (
     INSTALL_VENV_SCRIPT,
     SERVICE_SOURCES,
@@ -224,6 +225,37 @@ def test_rollback_target_missing_on_disk_is_reported_not_attempted():
     assert ld.kicks == 1
 
 
+def test_a_health_probe_that_raises_still_rolls_back():
+    """A health check that BLOWS UP is "not verified", not "skip the rollback".
+
+    The probe touches the filesystem (its TLS anchor) and the network, so it can
+    raise. Before this was guarded, an absent anchor on a fresh host raised out
+    of `install()` with `current` already flipped to the new version and zero
+    rollback restarts — the exception took the rollback path with it.
+    """
+    fs, ld = FakeFs(), FakeLaunchd()
+    fs.point_current_at("1.12.0")
+    fs.installed.append("1.12.0")
+    outcomes = iter([InstallError("TLS trust anchor /x/cert.pem not found"), True])
+
+    def health():
+        outcome = next(outcomes)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    inst = Installer(fs=fs, launchd=ld, health=health, verify_checksum=lambda p: True)
+
+    with pytest.raises(InstallError) as e:
+        inst.install("1.13.0", tarball="x.tar.gz")
+
+    assert fs.current == "1.12.0", "an unverified release must not be left current"
+    assert ld.kicks == 2, "must restart once for the install and once for the rollback"
+    message = str(e.value)
+    assert "rolled back to 1.12.0" in message
+    assert "cert.pem" in message, "the operator must still see what broke the health check"
+
+
 # --- checksum gate (supply-chain boundary) -----------------------------------
 #
 # `scripts/build-gateway.sh` writes the sidecar with
@@ -370,6 +402,61 @@ def test_health_probe_gives_up_within_its_budget(tmp_path):
 
     assert probe.wait() is False
     assert len(calls) == 4, "bounded retry budget — never an unbounded wait"
+
+
+def test_health_probe_waits_for_a_certificate_the_gateway_has_not_minted_yet(
+    tmp_path, monkeypatch
+):
+    """The fresh-install race: the anchor does not exist when probing starts.
+
+    `~/.sentient/certs/cert.pem` is minted by the gateway this installer just
+    kickstarted, so on a genuinely fresh mini the FIRST probe of virtually every
+    install finds no anchor. That is "not up yet", identical to a refused
+    connection — not a misconfiguration to abort on.
+    """
+    anchor = tmp_path / "certs" / "cert.pem"
+    minted = _self_signed(tmp_path)
+
+    def mint_while_waiting(_seconds):
+        anchor.parent.mkdir(parents=True, exist_ok=True)
+        anchor.write_bytes(minted.read_bytes())
+
+    monkeypatch.setattr(setup_prod.time, "sleep", mint_while_waiting)
+
+    probe = HealthProbe(
+        url="https://127.0.0.1:8888/api/v1/health",
+        ca_bundle=anchor,
+        opener=lambda request, timeout, context: _FakeResponse(200),
+        attempts=5,
+        interval_seconds=0,
+    )
+
+    assert probe.wait() is True, "must retry until the gateway mints its certificate"
+
+
+def test_a_certificate_that_never_appears_fails_closed_within_the_budget(tmp_path):
+    """Retrying a missing anchor must never become "give up and skip verification".
+
+    The budget bounds the wait, `wait()` reports False, and the endpoint is never
+    contacted without a trust context.
+    """
+    calls = []
+
+    def opener(request, timeout, context):
+        calls.append(request)
+        return _FakeResponse(200)
+
+    probe = HealthProbe(
+        url="https://127.0.0.1:8888/api/v1/health",
+        ca_bundle=tmp_path / "never-minted.pem",
+        opener=opener,
+        attempts=3,
+        interval_seconds=0,
+    )
+
+    assert probe.wait() is False
+    assert calls == [], "no request may be made without a verified trust anchor"
+    assert "never-minted.pem" in probe.last_reason, "the reason must name the missing anchor"
 
 
 # --- user-owned state (data-loss + privilege boundary) ------------------------

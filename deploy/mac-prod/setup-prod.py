@@ -546,11 +546,22 @@ def build_tls_context(ca_bundle: Path) -> ssl.SSLContext:
 class HealthProbe:
     """Poll the gateway's health endpoint over verified TLS, with a bounded budget.
 
-    Two failure shapes are treated differently, because the right response
-    differs: a refused connection means "not up *yet*" and is retried, while a
-    TLS trust failure is permanent and is reported immediately. Retrying a
-    trust failure would hide it behind a timeout, and the tempting fix for a
-    timeout is to turn verification off.
+    Failure shapes are classified, because the right response differs:
+
+    * a refused connection means "not up *yet*" and is retried;
+    * an anchor that is not readable yet is also "not *yet*" — on a genuinely
+      fresh host `~/.sentient/certs/cert.pem` does not exist until the gateway
+      this installer just started mints it, so the FIRST probe of every fresh
+      install races that file into existence and MUST retry;
+    * a TLS trust failure *against a cert the gateway served* is permanent and
+      is reported immediately. Retrying it would hide it behind a timeout, and
+      the tempting fix for a timeout is to turn verification off.
+
+    Retrying a missing anchor never weakens the boundary: verification is still
+    required on every attempt, and if the anchor never appears the budget runs
+    out and `wait()` returns False naming it. The cost is that a genuinely
+    wrong `--ca-bundle` path is reported after the budget rather than instantly
+    — the price of not aborting every fresh install on a race.
     """
 
     def __init__(
@@ -570,9 +581,28 @@ class HealthProbe:
         self._timeout = timeout_seconds
         self.last_reason = "not probed"
 
+    def _trust(self) -> tuple[ssl.SSLContext | None, str]:
+        """Load the pinned anchor, or say why it is not usable *yet*.
+
+        Never raises: a probe that cannot load its anchor is a retryable "not
+        ready" verdict, not an exception. Raising here would escape `wait()`,
+        escape the caller's health closure, and take `Installer.install()`'s
+        rollback path with it — leaving an unverified release `current`.
+        """
+        try:
+            return (build_tls_context(self._ca_bundle), "")
+        except InstallError as e:
+            return (None, str(e))
+        except OSError as e:
+            # ssl.SSLError is an OSError: a cert file caught mid-write parses as
+            # garbage, and the next attempt sees the finished file.
+            return (None, f"TLS trust anchor {self._ca_bundle} is not loadable yet: {e}")
+
     def _attempt(self) -> tuple[bool, bool, str]:
         """Return (healthy, retryable, reason) for a single request."""
-        context = build_tls_context(self._ca_bundle)
+        context, trust_reason = self._trust()
+        if context is None:
+            return (False, True, trust_reason)
         try:
             with self._opener(self._url, timeout=self._timeout, context=context) as response:
                 status = getattr(response, "status", None)
@@ -639,7 +669,7 @@ class Installer:
             raise InstallError(f"checksum mismatch for {tarball}; refusing to install")
 
         # Idempotent: an identical, healthy install must not bounce the service.
-        if previous == version and self._health():
+        if previous == version and self._is_healthy()[0]:
             return
 
         self._fs.unpack(version, tarball)
@@ -650,12 +680,28 @@ class Installer:
         self._fs.point_current_at(version)
         self._launchd.kickstart()
 
-        if self._health():
+        healthy, cause = self._is_healthy()
+        if healthy:
             return
 
-        self._roll_back(failed=version, previous=previous)
+        self._roll_back(failed=version, previous=previous, cause=cause)
 
-    def _roll_back(self, failed, previous):
+    def _is_healthy(self) -> tuple[bool, str | None]:
+        """Health as a verdict, never as an exception. Returns (healthy, cause).
+
+        `health` is an injected collaborator that touches the filesystem and the
+        network, so it CAN raise. The only safe reading of a raise is "not
+        verified", because the alternative is the exception unwinding past
+        `_roll_back` and leaving an unverified release `current` with the
+        service pointed at it. Observed: an absent TLS anchor on a fresh host
+        aborted the install with `current` already flipped and zero restarts.
+        """
+        try:
+            return (bool(self._health()), None)
+        except (InstallError, OSError) as e:
+            return (False, f"health check could not complete: {e}")
+
+    def _roll_back(self, failed, previous, cause=None):
         """Restore `previous` and re-verify it. Always raises — the install failed.
 
         Each refusal below is a case where flipping the symlink would make
@@ -663,31 +709,37 @@ class Installer:
         attempted. A rollback that leaves launchd pointing at nothing is the
         one outcome worse than a bad release.
         """
+        # Carried through every exit: the operator's whole diagnosis of a failed
+        # deploy is this one line.
+        detail = f" [{cause}]" if cause else ""
         if previous is None:
             raise InstallError(
-                f"{failed} failed health and there is no previous version to roll back to"
+                f"{failed} failed health and there is no previous version to roll back "
+                f"to{detail}"
             )
         if previous == failed:
             raise InstallError(
                 f"{failed} failed health and it was already the current version, so there "
                 "is no distinct build to revert to — the service is down and needs manual "
-                "intervention"
+                f"intervention{detail}"
             )
         if not self._fs.has_version(previous):
             raise InstallError(
                 f"{failed} failed health and the rollback target {previous} is not on disk "
                 "— refusing to point `current` at a missing directory; the service is down "
-                "and needs manual intervention"
+                f"and needs manual intervention{detail}"
             )
 
         self._fs.point_current_at(previous)
         self._launchd.kickstart()
-        if not self._health():
+        healthy, rollback_cause = self._is_healthy()
+        if not healthy:
+            rollback_detail = f" [rollback: {rollback_cause}]" if rollback_cause else ""
             raise InstallError(
                 f"{failed} failed health AND the rollback to {previous} also failed health "
-                "— the service is down and needs manual intervention"
+                f"— the service is down and needs manual intervention{detail}{rollback_detail}"
             )
-        raise InstallError(f"{failed} failed health; rolled back to {previous}")
+        raise InstallError(f"{failed} failed health; rolled back to {previous}{detail}")
 
 
 # --- operator-facing output ---------------------------------------------------
