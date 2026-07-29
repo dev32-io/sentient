@@ -21,6 +21,12 @@ import {
 
 const log = getLog(["sentient", "system-orch", "native-driver"]);
 
+/** The lowest pid that can possibly be a child this driver spawned. kill(2)
+ *  reads pid 0 as "every process in the CALLER's own process group" and pid 1
+ *  as init/launchd, so signalling either would take down the gateway itself
+ *  instead of a service. Anything below this is refused, never signalled. */
+export const MIN_PLAUSIBLE_PID = 2;
+
 /** A live child. `exited` resolves with the exit code; the driver only awaits
  *  it to log, never to gate a lifecycle transition. */
 export interface NativeProcess {
@@ -100,6 +106,16 @@ export function createNativeDriver(deps: NativeDriverDeps): NativeDriver {
       return { ok: false, error: { kind: "spawn-failed", reason } };
     }
 
+    // A backend cannot always produce a real pid: node leaves `child.pid`
+    // undefined when exec fails and only reports it on a later 'error' event.
+    // Recording that as running would report a launch that never happened and
+    // leave an unsignallable pid in the map — see MIN_PLAUSIBLE_PID.
+    if (!isPlausiblePid(proc.pid)) {
+      const reason = `spawn returned no usable pid (${proc.pid})`;
+      log.warn("native.spawn-no-pid", { service: ms.name, pid: proc.pid, reason });
+      return { ok: false, error: { kind: "spawn-failed", reason } };
+    }
+
     known.set(ms.name, ms);
     running.set(ms.name, proc);
     await deps.writePidFile(ms.name, proc.pid);
@@ -154,7 +170,7 @@ export function createNativeDriver(deps: NativeDriverDeps): NativeDriver {
           pid,
           reason: "pid file survived a gateway restart",
         });
-        deps.killPid(pid);
+        killChild(deps, name, pid);
         await deps.removePidFile(name);
       }
     },
@@ -212,10 +228,26 @@ async function stopIfRunning(
   const proc = running.get(name);
   if (proc) {
     log.info("native.stopping", { service: name, pid: proc.pid });
-    deps.killPid(proc.pid);
+    killChild(deps, name, proc.pid);
     running.delete(name);
   }
   await deps.removePidFile(name);
+}
+
+function isPlausiblePid(pid: number): boolean {
+  return Number.isInteger(pid) && pid >= MIN_PLAUSIBLE_PID;
+}
+
+/** The single choke point for every signal this driver sends. Both sources of
+ *  a pid — the in-memory `running` map and the on-disk pid files — pass through
+ *  here, so no lifecycle path can reach kill(2) with a pid that addresses the
+ *  gateway's own process group. */
+function killChild(deps: NativeDriverDeps, name: ServiceName, pid: number): void {
+  if (!isPlausiblePid(pid)) {
+    log.warn("native.kill-refused", { service: name, pid, reason: "pid cannot be a spawned child" });
+    return;
+  }
+  deps.killPid(pid);
 }
 
 /** Log the exit and drop the handle. Restart is the orchestrator's call (a

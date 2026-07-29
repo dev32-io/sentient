@@ -86,6 +86,50 @@ describe("native-driver", () => {
     expect(r.error.reason).toContain("3.11");
   });
 
+  it("INVARIANT: a spawn that yields no usable pid fails instead of recording a phantom process", async () => {
+    const written: number[] = [];
+    const driver = createNativeDriver(
+      stubDeps({
+        // The seam is typed `pid: number`, but a backend cannot always produce
+        // a real one: node leaves `child.pid` undefined when exec fails
+        // (missing binary, EACCES, bad shebang) and reports it asynchronously.
+        spawn: () => ({ pid: 0, exited: new Promise<number>(() => {}), kill: () => {} }),
+        writePidFile: async (_name, pid) => {
+          written.push(pid);
+        },
+      }),
+    );
+
+    const r = await driver.recreate(nativeService("whisper-stt", ["/bin/echo"]));
+
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.kind).toBe("spawn-failed");
+    expect(written).toEqual([]);
+  });
+
+  it("INVARIANT: no lifecycle path signals pid 0 — that is the gateway's OWN process group", async () => {
+    const killed: number[] = [];
+    const driver = createNativeDriver(
+      stubDeps({
+        spawn: () => ({ pid: 0, exited: new Promise<number>(() => {}), kill: () => {} }),
+        readPidFiles: async () => [{ name: "local-tts", pid: 0 }],
+        killPid: (pid) => {
+          killed.push(pid);
+        },
+      }),
+    );
+
+    await driver.recreate(nativeService("local-tts", ["/bin/echo"]));
+    await driver.stop("local-tts");
+    await driver.remove("local-tts");
+    await driver.reapOrphans();
+
+    // kill(2): pid 0 addresses the CALLER's process group, so a single leaked
+    // killPid(0) would SIGTERM the gateway while restarting one service.
+    expect(killed).toEqual([]);
+  });
+
   it("INVARIANT: recreate never spawns when prepare fails", async () => {
     const spawned: Spawned[] = [];
     const driver = createNativeDriver(

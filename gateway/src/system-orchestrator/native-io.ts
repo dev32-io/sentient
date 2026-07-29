@@ -6,7 +6,13 @@ import { constants } from "node:fs";
 import { access, mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getLog } from "../logging/logger.js";
-import type { NativeDriverDeps, NativePidRecord, NativeProcess, NativeSpawnOptions } from "./native-driver.js";
+import {
+  MIN_PLAUSIBLE_PID,
+  type NativeDriverDeps,
+  type NativePidRecord,
+  type NativeProcess,
+  type NativeSpawnOptions,
+} from "./native-driver.js";
 import type { ServiceName } from "./types.js";
 
 const log = getLog(["sentient", "system-orch", "native-io"]);
@@ -71,8 +77,19 @@ function spawnDetached(cmd: string[], opts: NativeSpawnOptions): NativeProcess {
     });
   });
 
+  // An exec-time failure (missing binary, EACCES, broken shebang) does NOT
+  // throw from spawn(): node leaves `pid` undefined and emits 'error' later.
+  // The listener above is already attached, so that late event is handled;
+  // what must not happen is returning a process whose pid was invented, which
+  // would record a launch that never occurred. The driver turns this into a
+  // spawn-failed Result.
+  if (child.pid === undefined) {
+    log.warn("io.spawn-no-pid", { bin, reason: "exec failed; node reports the cause asynchronously" });
+    throw new Error(`spawn produced no pid for ${bin}`);
+  }
+
   return {
-    pid: child.pid ?? 0,
+    pid: child.pid,
     exited,
     kill: (signal?: string) => {
       child.kill((signal ?? "SIGTERM") as NodeJS.Signals);
@@ -157,7 +174,7 @@ async function readPidFiles(runDir: string): Promise<NativePidRecord[]> {
 async function readPid(path: string, name: ServiceName): Promise<number | null> {
   try {
     const pid = Number.parseInt((await readFile(path, "utf8")).trim(), 10);
-    if (Number.isInteger(pid) && pid > 1) return pid;
+    if (Number.isInteger(pid) && pid >= MIN_PLAUSIBLE_PID) return pid;
     log.warn("io.pid-file-invalid", { service: name, reason: "not a plausible pid" });
     return null;
   } catch (err) {
@@ -180,6 +197,13 @@ async function removePidFile(runDir: string, name: ServiceName): Promise<void> {
  *  own worker children too. Falls back to the single pid when the group is
  *  already gone. Never throws — a dead pid is the desired end state. */
 function killPid(pid: number): void {
+  // Last line of defence at the syscall itself: `-0 === 0` in JS, so kill(-0)
+  // is kill(0), which POSIX defines as "signal the CALLER's whole process
+  // group" — the gateway would SIGTERM itself. Refuse below MIN_PLAUSIBLE_PID.
+  if (!Number.isInteger(pid) || pid < MIN_PLAUSIBLE_PID) {
+    log.warn("io.kill-refused", { pid, reason: "pid addresses the caller's own group or init, not a child" });
+    return;
+  }
   try {
     process.kill(-pid, "SIGTERM");
     log.info("io.group-terminated", { pid });
