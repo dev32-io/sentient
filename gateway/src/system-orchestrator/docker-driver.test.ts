@@ -33,13 +33,22 @@ const ms: DockerManagedService = {
 
 function makeStub(): {
   stub: DockerodeLike;
-  calls: { create: unknown[]; remove: unknown[]; start: unknown[]; createNetwork: unknown[] };
+  calls: {
+    create: unknown[];
+    remove: unknown[];
+    start: Array<{ netConnectsAtStart: number }>;
+    createNetwork: unknown[];
+    netConnect: Array<{ network: string; container: string }>;
+  };
 } {
   const calls = {
     create: [] as unknown[],
     remove: [] as unknown[],
-    start: [] as unknown[],
+    // `netConnectsAtStart` snapshots how many extra networks were attached
+    // before the container was started — see the two-network attach test.
+    start: [] as Array<{ netConnectsAtStart: number }>,
     createNetwork: [] as unknown[],
+    netConnect: [] as Array<{ network: string; container: string }>,
   };
   return {
     calls,
@@ -60,7 +69,7 @@ function makeStub(): {
           calls.remove.push(opts);
         },
         start: async () => {
-          calls.start.push({});
+          calls.start.push({ netConnectsAtStart: calls.netConnect.length });
         },
         stop: async () => {},
       }),
@@ -69,7 +78,7 @@ function makeStub(): {
         return {
           id: "abc",
           start: async () => {
-            calls.start.push({});
+            calls.start.push({ netConnectsAtStart: calls.netConnect.length });
           },
         };
       },
@@ -81,7 +90,11 @@ function makeStub(): {
       modem: {
         followProgress: (_stream, onFinished) => onFinished(null, []),
       },
-      getNetwork: () => ({ connect: async () => {} }),
+      getNetwork: (name: string) => ({
+        connect: async (opts: { Container: string }) => {
+          calls.netConnect.push({ network: name, container: opts.Container });
+        },
+      }),
     },
   };
 }
@@ -157,6 +170,38 @@ test("SECURITY: recreate refuses to publish a port when every attached network i
   expect(calls.create.length).toBe(0);
 });
 
+// WIRE CONTRACT (docker Engine API) + SECURITY. `ingress-proxy` is the ONLY
+// container that spans sentient-internal and sentient-external, and the whole
+// addon ingress path depends on it holding BOTH: external carries the publish
+// (docker drops it when every attached network is internal, see above),
+// internal carries the hop to the confined MCPs. Docker honours only the FIRST
+// entry of NetworkingConfig.EndpointsConfig at create time, so the rest must go
+// through network.connect — and before start(), or nginx boots resolving
+// upstreams on a network it is not yet on. A regression here is silent: the
+// container comes up on one network and either loses its publish or cannot
+// reach anything it fronts.
+test("SECURITY: a two-network service attaches the second network via connect BEFORE start", async () => {
+  const spanning: DockerManagedService = {
+    ...ms,
+    name: "ingress-proxy",
+    config: { ...ms.config, networks: ["sentient-internal", "sentient-external"] },
+    template: {
+      ...ms.template,
+      container_name: "sentient-ingress-proxy",
+      networks: ["sentient-internal", "sentient-external"],
+      ports: ["127.0.0.1:8088:8088"],
+    },
+  };
+  const { stub, calls } = makeStub();
+  const drv = createDockerDriver({ docker: stub, networks: NETWORKS });
+  const r = await drv.recreate(spanning);
+  expect(r.ok).toBe(true);
+  // First network rides the create spec; every later one is a connect call.
+  expect(calls.netConnect).toEqual([{ network: "sentient-external", container: "abc" }]);
+  expect(calls.start.length).toBe(1);
+  expect(calls.start[0]?.netConnectsAtStart).toBe(1);
+});
+
 // Defence in depth: the template schema already rejects this shape, but the
 // driver is the last hop before the docker socket and must fail closed rather
 // than hand the daemon a binding it would resolve to 0.0.0.0.
@@ -216,10 +261,10 @@ test("recreate does not recreate a network that already exists", async () => {
 });
 
 // SECURITY: the egress boundary is `sentient-internal` carrying docker's
-// Internal flag — nothing else enforces it, and after the loopback cutover it is
-// the ONLY hard confinement left (fetch-mcp and searxng-mcp had to join
-// sentient-external to be publishable, so searxng's internal-only membership is
-// the last no-route guarantee). A network that already exists is adopted by
+// Internal flag — nothing else enforces it. Every MCP is confined to it and
+// reached through `ingress-proxy`, so this one flag is what makes fetch-mcp's
+// direct egress impossible rather than merely discouraged. A network that
+// already exists is adopted by
 // name, and a same-named network created by hand or by an old compose file
 // (`docker network create sentient-internal`, Internal=false) is
 // indistinguishable in `docker network ls`. Adopting it would attach every addon
