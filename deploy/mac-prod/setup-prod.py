@@ -713,6 +713,14 @@ def fail(message: str) -> None:
     print(f"  {RED}✗{RESET} {message}", file=sys.stderr)
 
 
+def positive_int(raw: str) -> int:
+    """At least 1. A zero-attempt health budget would silently disable the gate."""
+    value = int(raw)
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1, got {value}")
+    return value
+
+
 def parse_args(argv):
     parser = argparse.ArgumentParser(
         prog="setup-prod.py",
@@ -739,6 +747,13 @@ def parse_args(argv):
     install.add_argument("--ca-bundle", type=Path, default=None,
                          help="TLS anchor for the health probe (default <home>/.sentient/certs/cert.pem)")
     install.add_argument("--health-url", default=DEFAULT_HEALTH_URL)
+    # The default budget suits a cold start that has to mint a certificate. A
+    # slower host may need more; a rehearsal wants less. Neither can disable the
+    # gate — a budget of 0 attempts is rejected by argparse's type below.
+    install.add_argument("--health-attempts", type=positive_int, default=HEALTH_ATTEMPTS,
+                         help=f"health probes before giving up (default {HEALTH_ATTEMPTS})")
+    install.add_argument("--health-interval", type=float, default=HEALTH_INTERVAL_SECONDS,
+                         help=f"seconds between probes (default {HEALTH_INTERVAL_SECONDS})")
     install.add_argument("--keep", type=int, default=RELEASES_TO_KEEP,
                          help=f"past releases to retain (default {RELEASES_TO_KEEP})")
     install.add_argument("--operator", default=None,
@@ -769,7 +784,9 @@ def run_install(args) -> None:
 
     fs = RealFs(args.opt_root)
     previous = fs.current
-    probe = HealthProbe(args.health_url, ca_bundle)
+    probe = HealthProbe(args.health_url, ca_bundle,
+                        attempts=args.health_attempts,
+                        interval_seconds=args.health_interval)
 
     def prepare(staged: str) -> None:
         info(f"staging native services into {version}")
