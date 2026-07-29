@@ -28,6 +28,7 @@ const ms = (name: string): ManagedService => ({
     networks: ["sentient-internal"],
     env: {},
     volumes: [],
+    ports: [],
     extra_hosts: [],
     group_add: [],
   },

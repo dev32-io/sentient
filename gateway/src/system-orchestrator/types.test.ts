@@ -78,12 +78,32 @@ test("ServiceTemplateSchema parses a minimal spec", () => {
   expect(r.success).toBe(true);
 });
 
-test("ServiceTemplateSchema rejects port bindings", () => {
-  const r = ServiceTemplateSchema.safeParse({
-    image: "alpine:latest",
-    container_name: "test",
-    networks: ["sentient-internal"],
-    ports: ["80:80"],
-  });
+// SECURITY: the gateway is native now, so it reaches addons over published
+// host ports instead of docker DNS. Docker's DEFAULT bind for a bare
+// "8086:8086" is 0.0.0.0 — that would put every MCP on the LAN. The schema is
+// the boundary that makes the loopback bind mandatory rather than a habit.
+const portBase = {
+  image: "sentient/ha-mcp:local",
+  container_name: "sentient-ha-mcp",
+  networks: ["sentient-internal"],
+};
+
+test("SECURITY: ServiceTemplateSchema accepts a loopback-bound port mapping", () => {
+  const r = ServiceTemplateSchema.safeParse({ ...portBase, ports: ["127.0.0.1:8086:8086"] });
+  expect(r.success).toBe(true);
+});
+
+test("SECURITY: ServiceTemplateSchema rejects a port mapping with no bind address", () => {
+  const r = ServiceTemplateSchema.safeParse({ ...portBase, ports: ["8086:8086"] });
+  expect(r.success).toBe(false);
+});
+
+test("SECURITY: ServiceTemplateSchema rejects an explicitly wildcard-bound port mapping", () => {
+  const r = ServiceTemplateSchema.safeParse({ ...portBase, ports: ["0.0.0.0:8086:8086"] });
+  expect(r.success).toBe(false);
+});
+
+test("SECURITY: ServiceTemplateSchema rejects a LAN-IP-bound port mapping", () => {
+  const r = ServiceTemplateSchema.safeParse({ ...portBase, ports: ["192.168.1.40:8086:8086"] });
   expect(r.success).toBe(false);
 });

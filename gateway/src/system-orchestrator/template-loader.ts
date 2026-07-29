@@ -1,9 +1,12 @@
 import type { Result } from "@sentient/protocol";
 import { parse as parseYaml } from "yaml";
 import { getLog } from "../logging/logger.js";
-import { type ServiceTemplate, ServiceTemplateSchema } from "./types.js";
+import { LOOPBACK_PORT_RE, LOOPBACK_PORT_REASON, type ServiceTemplate, ServiceTemplateSchema } from "./types.js";
 
 const log = getLog(["sentient", "system-orch", "template-loader"]);
+
+/** Max chars of an offending port entry echoed into a log/error. */
+const PORT_PREVIEW_MAX = 40;
 
 export interface SecretAccessor {
   /** Returns the secret value for a dotted path like
@@ -61,13 +64,12 @@ export async function loadServiceTemplate(input: LoadTemplateInput): Promise<Res
     return { ok: false, error: { kind: "parse-error", reason } };
   }
 
-  // Reject port-binding shapes BEFORE schema parse so the error is specific.
-  if (parsed && typeof parsed === "object" && "ports" in (parsed as Record<string, unknown>)) {
-    return {
-      ok: false,
-      error: { kind: "policy-violation", reason: "ports field is forbidden" },
-    };
-  }
+  // Reject non-loopback port publishing BEFORE schema parse so the error names
+  // the security rule rather than surfacing as a generic zod message. The
+  // schema enforces the same shape (defence in depth) — both read
+  // LOOPBACK_PORT_RE so the two layers cannot drift.
+  const portPolicy = enforceLoopbackPorts(parsed);
+  if (!portPolicy.ok) return portPolicy;
 
   const result = ServiceTemplateSchema.safeParse(parsed);
   if (!result.success) {
@@ -76,6 +78,24 @@ export async function loadServiceTemplate(input: LoadTemplateInput): Promise<Res
     return { ok: false, error: { kind: "schema-error", reason } };
   }
   return { ok: true, value: result.data };
+}
+
+/** Every published port must bind loopback. A bare `"8086:8086"` publishes on
+ *  0.0.0.0 (docker's default), which would put the addon on the LAN. */
+function enforceLoopbackPorts(parsed: unknown): Result<undefined, TemplateError> {
+  if (!parsed || typeof parsed !== "object") return { ok: true, value: undefined };
+  const ports = (parsed as Record<string, unknown>).ports;
+  if (ports === undefined) return { ok: true, value: undefined };
+  if (!Array.isArray(ports)) {
+    return { ok: false, error: { kind: "policy-violation", reason: `ports must be a list; ${LOOPBACK_PORT_REASON}` } };
+  }
+  for (const entry of ports) {
+    if (typeof entry === "string" && LOOPBACK_PORT_RE.test(entry)) continue;
+    const preview = String(entry).slice(0, PORT_PREVIEW_MAX);
+    log.warn("template.port-policy-violation", { port: preview, reason: LOOPBACK_PORT_REASON });
+    return { ok: false, error: { kind: "policy-violation", reason: `${LOOPBACK_PORT_REASON}; got ${preview}` } };
+  }
+  return { ok: true, value: undefined };
 }
 
 /** Resolve `${VAR}` placeholders from host env only — no secret bindings, no

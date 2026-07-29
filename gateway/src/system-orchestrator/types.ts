@@ -63,7 +63,17 @@ export const ManagedServiceConfigSchema = z.preprocess(
 );
 export type ManagedServiceConfig = z.infer<typeof ManagedServiceConfigSchema>;
 
-/** Parsed YAML template body. The orchestrator forbids `ports`. Any volume
+/** Host port publishing, `127.0.0.1:<host>:<container>`. The gateway is native
+ *  now, so it can no longer reach addons over the docker network — on macOS
+ *  Docker Desktop bridge IPs are not host-routable, so publishing is
+ *  unavoidable. It MUST bind loopback: docker's default bind for a bare
+ *  "8086:8086" is 0.0.0.0, which would expose every MCP to the LAN. */
+export const LOOPBACK_PORT_RE = /^127\.0\.0\.1:\d{1,5}:\d{1,5}$/;
+export const LOOPBACK_PORT_REASON = "ports must bind 127.0.0.1 explicitly (127.0.0.1:host:container)";
+
+const LoopbackPortSchema = z.string().regex(LOOPBACK_PORT_RE, LOOPBACK_PORT_REASON);
+
+/** Parsed YAML template body. `ports` are loopback-only (see above). Any volume
  *  must be bind-mountable from a path the gateway controls. */
 export const ServiceTemplateSchema = z.object({
   image: z.string().min(1),
@@ -76,8 +86,7 @@ export const ServiceTemplateSchema = z.object({
   mem_limit_bytes: z.number().int().positive().optional(),
   cpus: z.number().positive().optional(),
   group_add: z.array(z.string()).optional().default([]),
-  // The presence of `ports` (host port mapping) is a policy violation.
-  ports: z.never().optional(),
+  ports: z.array(LoopbackPortSchema).optional().default([]),
 });
 export type ServiceTemplate = z.infer<typeof ServiceTemplateSchema>;
 

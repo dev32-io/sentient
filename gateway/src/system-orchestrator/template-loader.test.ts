@@ -59,7 +59,10 @@ test("returns parse-error for bad yaml", async () => {
   expect(r.error.kind).toBe("parse-error");
 });
 
-test("returns policy-violation when template carries ports", async () => {
+// SECURITY: a template may publish a host port only on loopback. Docker's
+// default bind for a bare "80:80" is 0.0.0.0 — LAN-wide exposure of an addon
+// that is supposed to be reachable only by the native gateway.
+test("SECURITY: returns policy-violation when a template port omits the loopback bind", async () => {
   const r = await loadServiceTemplate({
     yamlBody: `image: alpine\ncontainer_name: x\nnetworks: [sentient-internal]\nports: ["80:80"]\n`,
     secretBindings: {},
@@ -68,6 +71,28 @@ test("returns policy-violation when template carries ports", async () => {
   expect(r.ok).toBe(false);
   if (r.ok) return;
   expect(r.error.kind).toBe("policy-violation");
+});
+
+test("SECURITY: returns policy-violation when a template port binds the wildcard address", async () => {
+  const r = await loadServiceTemplate({
+    yamlBody: `image: alpine\ncontainer_name: x\nnetworks: [sentient-internal]\nports: ["0.0.0.0:80:80"]\n`,
+    secretBindings: {},
+    secrets: accessor,
+  });
+  expect(r.ok).toBe(false);
+  if (r.ok) return;
+  expect(r.error.kind).toBe("policy-violation");
+});
+
+test("accepts a loopback-bound template port", async () => {
+  const r = await loadServiceTemplate({
+    yamlBody: `image: alpine\ncontainer_name: x\nnetworks: [sentient-internal]\nports: ["127.0.0.1:8086:8086"]\n`,
+    secretBindings: {},
+    secrets: accessor,
+  });
+  expect(r.ok).toBe(true);
+  if (!r.ok) return;
+  expect(r.value.ports).toEqual(["127.0.0.1:8086:8086"]);
 });
 
 test("missing-secret error carries envVar + path payload", async () => {

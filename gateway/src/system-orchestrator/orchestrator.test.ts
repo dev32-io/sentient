@@ -23,6 +23,7 @@ function svc(name: string, deps: string[] = [], optional = false): ManagedServic
       networks: ["sentient-internal"],
       env: {},
       volumes: [],
+      ports: [],
       extra_hosts: [],
       group_add: [],
     },

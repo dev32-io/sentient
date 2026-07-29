@@ -20,6 +20,7 @@ const ms: DockerManagedService = {
     networks: ["sentient-internal"],
     env: { HOMEASSISTANT_TOKEN: "tok" },
     volumes: [],
+    ports: [],
     extra_hosts: [],
     group_add: [],
   },
