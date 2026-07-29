@@ -12,6 +12,7 @@ import { createUserPrincipal } from "../identity/user-principal.js";
 import type { PermissionBroker } from "../runtime/permission-broker.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { Stimulus } from "../runtime/stimulus.js";
+import { createFrameJournal } from "./frame-journal.js";
 import { createReplayRegistry } from "./replay-registry.js";
 import { cleanupSession, handleWebSocketMessage } from "./ws-handlers.js";
 import { type SessionData, createEmptySessionData } from "./ws-helpers.js";
@@ -224,6 +225,58 @@ describe("ws-handlers routing — permission.response", () => {
     ).resolves.toBeUndefined();
 
     expect(ws.sent).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Journal discipline for the two frames this router emits. Which send helper
+// each one takes is a wire-contract decision, not style:
+//
+//   - `error` is the gateway's substantive answer to a client action — an
+//     `orchestrator_unavailable` is the ONLY signal that a `text.input` went
+//     nowhere. A socket that drops before the client reads it must replay it,
+//     so it is seq-stamped AND journaled like every other content frame.
+//   - `pong` is a transport-liveness ack carrying no payload. Replaying a
+//     stale pong tells a reconnected client nothing (it re-pings on its own
+//     schedule), and journaling a periodic keepalive would burn seq numbers
+//     and evict real replayable content from the byte-capped journal. So it
+//     is validated but neither stamped nor journaled — the same class as
+//     `stream.resumed`.
+// ---------------------------------------------------------------------------
+
+describe("ws-handlers outbound frames — journal discipline", () => {
+  it("seq-stamps and journals an error frame so a reconnect replays it", async () => {
+    const ws = fakeAuthedWs(null);
+    const journal = createFrameJournal({ maxBytes: 65536 });
+    ws.data.journal = journal;
+    ws.data.epoch = 7;
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({ type: "text.input", text: "no runtime yet" }),
+      unusedServices,
+    );
+
+    expect(ws.sent).toEqual([
+      { type: "error", code: "orchestrator_unavailable", message: expect.any(String), seq: 1, epoch: 7 },
+    ]);
+    expect(journal.newestSeq).toBe(1);
+  });
+
+  it("sends pong unstamped and unjournaled so keepalives never consume the replay window", async () => {
+    const ws = fakeAuthedWs(null);
+    const journal = createFrameJournal({ maxBytes: 65536 });
+    ws.data.journal = journal;
+    ws.data.epoch = 7;
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({ type: "ping" }),
+      unusedServices,
+    );
+
+    expect(ws.sent).toEqual([{ type: "pong" }]);
+    expect(journal.newestSeq).toBe(0);
   });
 });
 

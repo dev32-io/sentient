@@ -23,12 +23,20 @@
 //   - `sendAudioFrame` draws its 9-byte-header seq from the SAME journal.
 //     One seq space for JSON and binary, because both client SDKs feed one
 //     resume cursor from both paths (reconciliation R7).
-//   - `sendUnsequencedFrame` is the deliberate escape hatch used ONLY by the
-//     resume handshake (ws-resume.ts): still validated, but neither stamped
-//     nor journaled. A seq-stamped `session.ready` on the recovered path
-//     would advance the client's cursor past the replay window and it would
-//     drop every replayed frame; `stream.resumed` is a handshake ack, not
-//     replayable content.
+//   - `sendUnsequencedFrame` is the deliberate escape hatch for frames that
+//     are NOT replayable content: still validated, but neither stamped nor
+//     journaled. Two callers, and the bar for a third is high.
+//       * the resume handshake (ws-resume.ts) — a seq-stamped `session.ready`
+//         on the recovered path would advance the client's cursor past the
+//         replay window and it would drop every replayed frame, and
+//         `stream.resumed` is a handshake ack, not content;
+//       * `pong` (ws-handlers.ts) — a transport-liveness ack with no payload.
+//         Replaying a stale pong tells a reconnected client nothing, and
+//         journaling a periodic keepalive would burn seq numbers and evict
+//         real content from the byte-capped journal.
+//     Everything else — including `error`, the gateway's substantive answer to
+//     a client action — takes `sendGatewayFrame`, because a client that never
+//     sees it has no other way to learn its request went nowhere.
 //
 // ORDER MATTERS: validate FIRST, stamp SECOND. Stamping before validation
 // would let a rejected frame consume a seq and tear a permanent hole in the
@@ -121,8 +129,10 @@ export function sendGatewayFrame(ws: ServerWebSocket<SessionData>, frame: Gatewa
 }
 
 /**
- * Validate and write WITHOUT a seq stamp and WITHOUT journaling. Resume
- * handshake only (ws-resume.ts) — see this file's header for why.
+ * Validate and write WITHOUT a seq stamp and WITHOUT journaling — for frames
+ * that must never be replayed. Resume handshake (ws-resume.ts) and `pong`
+ * (ws-handlers.ts) only; see this file's header for why each qualifies and
+ * why `error` does not.
  *
  * @returns true if the frame reached the socket.
  */

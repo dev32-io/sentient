@@ -7,6 +7,7 @@ import type { SttSession } from "./stt-session.js";
 import { handleAuthMessage, scheduleAuthTimeout } from "./ws-auth-gate.js";
 import type { SessionData } from "./ws-helpers.js";
 import { sendError } from "./ws-helpers.js";
+import { sendUnsequencedFrame } from "./ws-send.js";
 import { handleSessionConfigure } from "./ws-session-configure.js";
 
 export type { SessionData };
@@ -106,7 +107,13 @@ export async function handleWebSocketMessage(
 
   switch (msg.type) {
     case "ping":
-      ws.send(JSON.stringify({ type: "pong" }));
+      // Validated, but deliberately NEITHER seq-stamped NOR journaled. A pong
+      // is a transport-liveness ack with no payload: replaying a stale one
+      // tells a reconnected client nothing (it re-pings on its own schedule),
+      // and journaling a periodic keepalive would burn seq numbers and evict
+      // real replayable content from the byte-capped journal. Same class as
+      // `stream.resumed` — see ws-send.ts's header.
+      sendUnsequencedFrame(ws, { type: "pong" });
       return;
 
     case "session.configure":

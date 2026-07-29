@@ -6,6 +6,9 @@ import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { FrameJournal } from "./frame-journal.js";
 import type { ReplayLease } from "./replay-registry.js";
 import type { SttSession } from "./stt-session.js";
+// ws-send.ts imports only the `SessionData` TYPE back from this file, which the
+// transpiler erases — so this is a compile-time edge, never a runtime cycle.
+import { sendGatewayFrame } from "./ws-send.js";
 
 /**
  * Per-connection WS state. Post-purge minimal form (spec §9 Task 1) — holds
@@ -118,8 +121,20 @@ export function createEmptySessionData(): SessionData {
   };
 }
 
+/**
+ * Send the shared `error` frame.
+ *
+ * Goes through `sendGatewayFrame`, so it is validated against
+ * `gatewayMessageSchema`, seq-stamped and journaled like every other content
+ * frame — an error is the gateway's substantive answer to a client action
+ * (`orchestrator_unavailable` is the ONLY signal that a `text.input` went
+ * nowhere), so a socket that drops before the client reads it must replay it.
+ * Frames sent before session.configure have no journal yet and fall back to an
+ * unstamped write inside that helper, which is correct: the client has no
+ * resume cursor at that point either.
+ */
 export function sendError(ws: ServerWebSocket<SessionData>, code: string, message: string): void {
-  ws.send(JSON.stringify({ type: "error", code, message }));
+  sendGatewayFrame(ws, { type: "error", code, message });
 }
 
 export function errorMessage(error: unknown, fallback: string): string {
