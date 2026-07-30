@@ -1,0 +1,12 @@
+07-30 05:28:07.330 17277 17300 I sentient.mobile-sdk.sdk.orchestrator: status from=AUTHENTICATING to=READY
+07-30 05:28:07.348 17277 17300 I sentient.mobile-sdk.sdk.orchestrator: hasSession.set trigger=ready
+07-30 05:28:07.362 17277 17300 I sentient.mobile-sdk.sdk.orchestrator: ready.first-connect anchored=null
+07-30 05:28:07.367 17277 17300 I sentient.mobile-sdk.sdk.orchestrator: ready.first-connect.retry-pending-mint
+07-30 05:28:07.379 17277 17300 I sentient.mobile-sdk.connector.sessions: sendNew requestId=668a51f1ace71686
+07-30 05:28:07.383 17277 17300 I sentient.mobile-sdk.sdk.orchestrator: connect.ready
+07-30 05:28:07.403 17277 17277 I sentient.mobile-sdk.data.send-message: flush-skipped reason=no-id-attached
+07-30 05:28:11.744 17277 17277 D sentient.mobile-sdk.android.chat-viewmodel: onComposerFocus
+07-30 05:28:11.747 17277 17277 I sentient.mobile-sdk.sdk.orchestrator: ensureConnected status=READY
+07-30 05:28:11.762 17277 17301 I sentient.mobile-sdk.sdk.orchestrator: foreground.probe-pong (socket alive)
+07-30 05:28:19.996 17277 17277 I sentient.mobile-sdk.android.chat-viewmodel: send len=16 pendingId=692d97a3-5ed2-4b2f-b192-f6ce71efe476
+07-30 05:28:19.997 17277 17277 I sentient.mobile-sdk.data.send-message: flush-skipped reason=no-id-attached

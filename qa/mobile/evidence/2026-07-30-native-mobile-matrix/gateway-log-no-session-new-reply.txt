@@ -1,0 +1,16 @@
+2026-07-30T05:28:06.422 INFO  [ws] session-opened | sessionId="s-ms7hoql2-2zdcpts6"
+2026-07-30T05:28:06.890 INFO  [gateway:session-handlers:ws-auth-gate] auth.ok | sessionId="s-ms7hoql2-2zdcpts6" userId="u_0417d3b0"
+2026-07-30T05:28:07.406 INFO  [ws:replay-registry] replay-registry.fresh | surfaceKey="u_0417d3b0::37230a32-1577-4f06-8043-559514595849" epoch=3 priorEpoch=1 leaseId=3 reason="no-resume-requested"
+2026-07-30T05:28:07.406 INFO  [bootstrap:text-stream-synthesizer] text-stream-synthesizer-created
+2026-07-30T05:28:07.407 WARN  [tools:mcp-client] mcp.entry.stdio-skipped | serverName="gateway" reason="v1 only dials http transport"
+2026-07-30T05:28:07.407 INFO  [bootstrap:phase-services] session-runtime.factory.build | userId="u_0417d3b0" conversationId="c::u_0417d3b0::37230a32-1577-4f06-8043-559514595849" connectionId="s-ms7hoql2-2zdcpts6"
+2026-07-30T05:28:07.407 INFO  [store:session-store] store.opened | userId="u_0417d3b0"
+2026-07-30T05:28:07.408 INFO  [ws:session-configure] session-configured | sessionId="s-ms7hoql2-2zdcpts6" userId="u_0417d3b0" capabilities=text.input,audio.input,audio.output,conversation.history,message.stream,cognition.status,session.preferences,task.status,sessions,turn.error,permission.prompt,delegation.progress,stream.resume clientType="mobile" language="en" deviceId="37230a32-1577-4f06-8043-559514595849" surfaceId="37230a32-1577-4f06-8043-559514595849" hasRuntime=true hasVoice=true epoch=3 resumed=false requestedResumeLastSeq=null conversationId="c::u_0417d3b0::37230a32-1577-4f06-8043-559514595849"
+2026-07-30T05:28:07.408 INFO  [ws:turn-emitter] turn-emitter.conversation-snapshot | sessionId="s-ms7hoql2-2zdcpts6" itemCount=0
+2026-07-30T05:28:07.408 INFO  [runtime:conversation-feed] conversation-feed.snapshot | userId="u_0417d3b0" sessionId="c::u_0417d3b0::37230a32-1577-4f06-8043-559514595849" itemCount=0 throughSeq=0
+2026-07-30T05:28:07.408 INFO  [session-handlers:voice-prefs] voice-prefs.loaded | sessionId="s-ms7hoql2-2zdcpts6" userId="u_0417d3b0" voiceId="default" speak=true
+2026-07-30T05:28:07.418 WARN  [tools:mcp-client] mcp.list-tools.failed | serverName="music_assistant" reason="Streamable HTTP error: Error POSTing to endpoint: {"jsonrpc":"2.0","id":"server-error","error":{"code":-32600,"message":"Session not found"}}" elapsedMs=11
+2026-07-30T05:28:07.434 INFO  [tools:mcp-client] mcp.list-tools.ok | serverName="fetch" totalCount=1 filteredCount=1 elapsedMs=27
+2026-07-30T05:28:07.446 INFO  [tools:mcp-client] mcp.list-tools.ok | serverName="searxng" totalCount=5 filteredCount=1 elapsedMs=39
+2026-07-30T05:28:07.453 INFO  [tools:mcp-client] mcp.list-tools.ok | serverName="home_assistant" totalCount=78 filteredCount=16 elapsedMs=46
+2026-07-30T05:28:07.453 INFO  [tools:tool-broker] tool-broker.mcp-warmup.ok | sessionId="s-ms7hoql2-2zdcpts6" toolCount=18
