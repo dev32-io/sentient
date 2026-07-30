@@ -1,23 +1,22 @@
-# Mobile viewport (390×844) — light spot-check, not a full re-drive
+# Mobile viewport (390×844) — SUPERSEDED by the full re-drive
 
-Given the budget already spent on the desktop matrix (11 rows, several
-multi-restart investigations), this is a targeted visual/functional check
-at the mobile-sized viewport, not a second full pass of every case —
-flagging that scope reduction honestly rather than silently skipping it
-or overclaiming full coverage.
+**Read `qa/web/evidence/2026-07-30-mobile-390-matrix/` instead.** This dir was the first pass's
+single-screenshot spot-check, which explicitly did not cover the matrix at mobile width. The
+matrix has since been driven for real at 390×844 — 7 rows PASS, 3 rows recorded as
+viewport-independent with the reasoning, 4 BLOCKED at every viewport — and one real mobile-only
+defect (`.app-shell` overflows 390 by 53 px and one header tap shifts the app off-screen
+irrecoverably) was found in the process.
 
-**Checked:** chat renders correctly at 390×844 (Grace's session, carried
-over from `multi-user-isolation`) — message bubbles, composer, and the
-suggestion-chip row all lay out without horizontal page overflow. One
-cosmetic note: the suggestion-chip row ("Good night routine" / "Who was
-at the door at 3pm?" / "Lower the kitchen lights 30%") runs wider than
-the viewport and the last chip is visually truncated at the edge — looks
-like an intentional horizontally-scrollable row (matches the desktop
-layout's chip row shape), not a broken one, but not scrolled/tapped to
-confirm. Screenshot: `mobile-390x844.png`.
+Kept only for the two corrections it earned:
 
-**Not covered here** (would need a second full pass): permission-confirm
-dialog layout at 390px, delegation-progress tiles, the reload-convergence
-/ compaction-continue rows at mobile width. Flagging for Task 10 or a
-follow-up mobile-focused web pass rather than claiming coverage that
-wasn't actually driven.
+1. **Its screenshot was taken in a stale layout.** The check resized an already-loaded page
+   without reloading, so the app painted with desktop geometry — which is why the shot showed the
+   suggestion-chip row apparently truncated. Resize must always be followed by a reload before
+   asserting anything about layout (now written up in `agents/docs/testing-knowledge.md` →
+   "Mobile-sized viewport (390×844)").
+2. **Its open question is answered.** The chip row is `overflow-x: auto` with
+   `scrollWidth 511 > clientWidth 370` — an intentionally scrollable row, not a broken one. Same
+   for the tool-pill strip (`scrollWidth 344 > clientWidth 332`).
+
+`mobile-390x844.png` (local only — `*.png` is gitignored repo-wide) is the stale-layout
+screenshot: evidence of the driver artifact, not of the product's mobile layout.
