@@ -1,4 +1,5 @@
 import type { HermesConfig } from "@sentient/config";
+import { selectDelegatedAllowTier } from "../external-tools/delegated-tool-tier.js";
 import { getLog } from "../logging/logger.js";
 import type { ActiveSessionLookup } from "../mcp-host/active-session-lookup.js";
 import type { McpServerDeps } from "../mcp-host/mcp-server.js";
@@ -15,6 +16,11 @@ import type { UserStore } from "../user-auth/user-store.js";
 const log = getLog(["sentient", "bootstrap", "mcp-host"]);
 
 export interface McpHost {
+  /** Tools this host advertises on the per-user sockets — i.e. the exact
+   *  surface a delegated agent holds. Narrowed to the `allow` tier; see the
+   *  registry construction below for why that narrowing is the security
+   *  boundary and not a nicety. */
+  readonly delegatedToolNames: readonly string[];
   start(): Promise<void>;
   stop(): Promise<void>;
   /** Open a Unix listener for a freshly-provisioned user. Idempotent — a
@@ -37,12 +43,28 @@ export async function createMcpHost(options: McpHostOptions): Promise<McpHost> {
   const { config, router, userStore, audio, userSettings, policy } = options;
   const basePath = config.mcp_host.socket_path;
 
-  const registry = createToolRegistry([
+  // These sockets serve exactly ONE consumer: the delegated Hermes one-shot.
+  // The gateway's own ReAct loop reaches its tools through `tools/tool-broker`
+  // and `tools/mcp-client` (which skips stdio catalog entries outright), so
+  // narrowing here narrows the SUB-AGENT's authority and nothing else.
+  //
+  // Why narrow at all: a delegated call arrives with no human attached, so the
+  // PDP's `confirm` verdict has nobody to prompt and `mcp-server.ts`
+  // auto-approves it. Advertising a `confirm`-tier tool on this socket is
+  // therefore equivalent to granting it unmediated. The tier comes from
+  // `mcp-policy.yaml` at runtime — never a second list.
+  const hostedTools = [
     createIdentifyUserTool({ userStore }),
     createPauseAudioTool({ audio, router }),
     createResumeAudioTool({ audio, router }),
     createUpdateUserSettingsTool({ controls: userSettings, router }),
-  ]);
+  ];
+  const delegatedToolNames = selectDelegatedAllowTier(
+    policy,
+    hostedTools.map((tool) => tool.def.name),
+  );
+  const delegated = new Set(delegatedToolNames);
+  const registry = createToolRegistry(hostedTools.filter((tool) => delegated.has(tool.def.name)));
 
   function buildListener(userId: string): UnixSocketListener {
     const socketPath = resolveMcpSocketPath(userId, basePath);
@@ -69,9 +91,11 @@ export async function createMcpHost(options: McpHostOptions): Promise<McpHost> {
   log.info("mcp-host-created", {
     users: initialUserIds,
     toolCount: registry.list().length,
+    delegatedToolNames,
   });
 
   return {
+    delegatedToolNames,
     async start() {
       await Promise.all(Array.from(listenersByUser.values()).map((l) => l.start()));
       started = true;

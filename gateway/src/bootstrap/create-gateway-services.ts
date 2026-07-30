@@ -34,6 +34,7 @@ import { type ReplayRegistry, createReplayRegistry } from "../session-handlers/r
 import type { SessionControlsRegistry } from "../session-handlers/session-controls-registry.js";
 import type { GatewayTlsMaterial } from "../session-handlers/ws-handlers.ts";
 import type { SystemOrchestratorService } from "../system-orchestrator/index.js";
+import type { OrchestratorStatus } from "../system-orchestrator/types.js";
 import type { McpClient } from "../tools/mcp-client.js";
 import type { TextStreamSynthesizer } from "../tts/text-stream-synthesizer.ts";
 import { type AuthService, createAuthService } from "../user-auth/auth-service.ts";
@@ -122,6 +123,10 @@ export interface GatewayServices {
   readonly userLifecycle: UserLifecycle;
   readonly buildPersonalityStore: (userId: string) => PersonalityStore;
   readonly systemOrchestrator: SystemOrchestratorService | null;
+  /** Apply-complete signal for the boot reconcile — see phase-orchestrator.ts.
+   *  `null` when no reconcile ran. Startup steps that write configuration
+   *  pointing at an addon MUST wait on this or skip. */
+  readonly bootReconcile: Promise<OrchestratorStatus> | null;
   /** Returns the shared Hermes bearer token used for per-user ACP / plugin auth. */
   readonly hermesApiKey: () => string;
   resolveProfileDir(userId: string): string;
@@ -163,7 +168,7 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
 
   const services = await runPhaseServices({ cfg, auth, secretsStore });
 
-  const { systemOrchestrator } = await runPhaseOrchestrator({
+  const { systemOrchestrator, bootReconcile } = await runPhaseOrchestrator({
     cfg,
     installState,
     secretsStore,
@@ -233,6 +238,7 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     userLifecycle: services.userLifecycle,
     buildPersonalityStore: services.buildPersonalityStore,
     systemOrchestrator,
+    bootReconcile,
     hermesApiKey: () => internalSecretsStore.getHermesAuthTokenSync(),
     resolveProfileDir: getHermesProfileDir,
     accessManager: services.accessManager,

@@ -151,6 +151,12 @@ orchestrator:
     # small files and exits; anything past this is a wedged CLI, not a slow
     # one. Range 1000-120000.
     hermes_profile_create_timeout_ms: 30000
+    # Deadline for one `hermes mcp add` / `hermes config get` (ms) — the calls
+    # that register the gateway's per-user MCP socket on a Hermes profile so a
+    # delegated task has gateway tools at all. `mcp add` connects to the socket
+    # and lists its tools before saving, so it is slower than a config write.
+    # Range 1000-120000.
+    hermes_mcp_register_timeout_ms: 30000
   compaction:
     enabled: true                            # master switch; false = never compact (window grows until the provider rejects the request)
     # Estimated model-window tokens (chars/4 heuristic, see compaction.ts)

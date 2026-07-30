@@ -7,6 +7,7 @@ import type { StartupConfig } from "../config/startup-config.ts";
 import { getLog } from "../logging/logger.ts";
 import { defaultHealthIO } from "../system-orchestrator/health-io.js";
 import { type SystemOrchestratorService, createSystemOrchestratorService } from "../system-orchestrator/index.js";
+import type { OrchestratorStatus } from "../system-orchestrator/types.js";
 import { makeSecretAccessor } from "./secret-accessor.ts";
 
 const log = getLog(["sentient", "bootstrap", "phase-orchestrator"]);
@@ -32,6 +33,17 @@ export interface PhaseOrchestratorInput {
 
 export interface PhaseOrchestratorOutput {
   readonly systemOrchestrator: SystemOrchestratorService | null;
+  /**
+   * Settles when the boot reconcile — the apply that brings docker and native
+   * addons up — has finished. `null` when no reconcile was started at all
+   * (orchestrator absent, or a fresh install where the wizard owns the first
+   * apply).
+   *
+   * This is the apply-complete signal any startup step that depends on the
+   * internal dependencies being live must wait on. It is deliberately NOT
+   * awaited here: boot must not block on container bringup.
+   */
+  readonly bootReconcile: Promise<OrchestratorStatus> | null;
 }
 
 /** Files under <runtimeDir>/templates/services/<service>/ that need to be
@@ -138,18 +150,20 @@ export async function runPhaseOrchestrator(input: PhaseOrchestratorInput): Promi
   // because the wizard owns the first applyAll, and pre-applying here makes
   // the bringup screen flash through too fast for the user to see what's
   // happening. Fire-and-forget once we do run it.
+  let bootReconcile: Promise<OrchestratorStatus> | null = null;
   if (systemOrchestrator) {
     const installed = await installState.load();
     if (installed.bootstrap_complete) {
-      void systemOrchestrator.reconcile().catch((err: unknown) => {
+      bootReconcile = systemOrchestrator.reconcile().catch((err: unknown) => {
         log.warn("boot-reconcile.failed", {
           reason: err instanceof Error ? err.message : String(err),
         });
+        return systemOrchestrator.getStatus();
       });
     } else {
       log.info("boot-reconcile.skipped", { reason: "bootstrap-incomplete" });
     }
   }
 
-  return { systemOrchestrator };
+  return { systemOrchestrator, bootReconcile };
 }

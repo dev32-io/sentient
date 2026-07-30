@@ -1,6 +1,8 @@
 import { createGatewayServices } from "./bootstrap/create-gateway-services.ts";
 import { createMcpHost } from "./bootstrap/create-mcp-host.ts";
 import { loadLoggingConfig, loadStartupConfig } from "./config/startup-config.ts";
+import { configureExternalTools } from "./external-tools/external-tool.ts";
+import { createHermesExternalTool } from "./external-tools/hermes-external-tool.ts";
 import { createGatewayLogger, getLog } from "./logging/logger.ts";
 import { createUnavailableSessionLookup } from "./mcp-host/active-session-lookup.ts";
 import type { UpdateUserSettingsPatch } from "./mcp-host/tools/update-user-settings.js";
@@ -91,6 +93,45 @@ if (config.hermes) {
   services.userLifecycle.onDeleted((userId) => hostRef.removeUser(userId));
 
   await mcpHost.start();
+
+  // -------------------------------------------------------------------------
+  // External tools — the LAST startup step (defect D11).
+  //
+  // An external tool is one the gateway does not supervise: no lifecycle, no
+  // port, no health check. Hermes is the first. It must be configured AFTER
+  // the gateway's own dependencies are up, because registering a per-user MCP
+  // before its socket is listening writes config pointing at nothing — silent,
+  // and indistinguishable from the defect being fixed. Hence: after
+  // `mcpHost.start()` above, and gated on the orchestrator's apply-complete
+  // signal inside the handler.
+  // -------------------------------------------------------------------------
+  if (config.orchestrator) {
+    const hermesTool = createHermesExternalTool({
+      delegatedTools: hostRef.delegatedToolNames,
+      timeoutMs: config.orchestrator.delegation.hermes_mcp_register_timeout_ms,
+      socketBasePath: config.hermes.mcp_host.socket_path,
+    });
+    // Registered after the addUser listener above, and `emitCreated` fans out
+    // in insertion order, so a new user's socket is listening before anything
+    // points hermes at it.
+    services.userLifecycle.onCreated(async (userId) => {
+      await hermesTool.configure(userId);
+    });
+
+    void configureExternalTools({
+      tools: [hermesTool],
+      listUserIds: async () => {
+        const users = await services.auth.users.list();
+        if (users.ok) return users.value.map((u) => u.userId);
+        log.warn("external-tools.user-list-failed", { error: users.error });
+        return [];
+      },
+      internalDependenciesReady: async () => {
+        if (!services.bootReconcile) return false;
+        return (await services.bootReconcile).state === "ready";
+      },
+    });
+  }
 }
 
 // Graceful shutdown. The addon health watchdog is stopped FIRST: a tick that

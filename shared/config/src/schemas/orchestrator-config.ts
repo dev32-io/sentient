@@ -55,6 +55,11 @@ export const orchestratorConfigSchema = z.object({
     hermes_source_profile: z.string().min(1).default("default"),
     // Deadline for one `hermes profile create` (ms). Range 1000-120000.
     hermes_profile_create_timeout_ms: z.number().int().min(1000).max(120000).default(30000),
+    // Deadline for one `hermes mcp add` / `hermes config get` invocation used
+    // to register the gateway's MCP on a user's Hermes profile (ms). `mcp add`
+    // dials the socket and lists its tools before saving, so this is longer
+    // than a pure config write. Range 1000-120000.
+    hermes_mcp_register_timeout_ms: z.number().int().min(1000).max(120000).default(30000),
   }),
   compaction: z
     .object({
