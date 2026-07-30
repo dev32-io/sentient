@@ -2,30 +2,41 @@ appId: io.dev32.sentient.debug
 tags:
   - voice-loop
   - fault-armed
+  - physical-only
 ---
-# 08-voice-loop — fixture-audio mic uplink via FaultAwareCaptureAdapter.
-# No-relaunch flow: the runner pushes the fixture to the app cache + arms the
-# fixture fault on the RUNNING app BEFORE this flow, then greps logcat for
-# "fixture-utterance" + "startMic" after. Excluded from the default batch
-# (fault-armed); run by the runner's orchestration phase.
+# 08-voice-loop — mic uplink CONTROL PLANE. What it can prove today and no more:
+# pressing the mic opens and closes an STT uplink on the gateway without crashing
+# the app. It does NOT prove a voice turn and must not be read as if it did.
 #
-# Fixture plumbing is WIRED; the full STT→LLM→TTS loop needs a real SPEECH fixture
-# (silence-500ms.pcm exercises only injection + the Opus encoder path — STT sees
-# silence → no transcript → no Hermes cycle → no assistant bubble to assert).
+# TWO independent blockers, both measured 2026-07-30 (native-stack migration
+# Task 10). Full write-up: ../../fixtures/README.md.
 #
-# Pre-condition (runner, app already running):
-#   1. composer-input visible.
-#   2. Fixture pushed to the app cache via run-as.
-#   3. adb shell am broadcast -a io.sentient.debug.FAULT -p io.dev32.sentient.debug
-#        --es kind fixture --es name sentient-fixture.pcm
+#   1. The fixture-injection channel is GONE. `FaultHooks` (mobile-sdk) kept only
+#      armExpiredToken / armMalformedFrame after the VoiceAudio refactor, and
+#      DebugFaultReceiver routes every other kind to `fault.broadcast.unknown-kind`.
+#      `--es kind fixture` is therefore accepted by adb (result=0) and then
+#      discarded; the mic keeps capturing the emulator's silent input device. No
+#      code can emit the `fixture-utterance` line the old runner phase grepped for.
+#   2. The mic is HOLD-to-talk, not a toggle. Maestro's tapOn produces
+#      pressMic -> releaseMic ~147ms apart => `record-stop captured=1`, and
+#      gateway-side `stt.audio-start` -> `stt.audio-end` 180ms apart with no
+#      transcript. Even with injection restored, a tap is far too short.
+#
+# Now tagged `physical-only` as well as `fault-armed`, so it stays out of every
+# batch: a real voice round-trip needs a real device with a real mic and speaker.
+# Kept, not deleted — the surface returns, and the speech fixture beside it is
+# already proven against the live STT service.
+#
+# Pre-condition (runner, app already running): composer-input visible.
 - assertVisible: { id: "composer-input" }
-# tap mic to start the fixture-fed uplink.
+# Press the mic: opens the uplink (gateway logs stt.audio-start + stt.connecting);
+# the hold ends on release (stt.audio-end). Control plane only.
 - tapOn: { id: "chat-mic" }
 - assertVisible: { id: "chat-mic" }
-# let the fixture drain through the pipeline.
+# The mic control survives the press/release round-trip.
 - extendedWaitUntil:
     visible: { id: "chat-mic" }
     timeout: 3000
 - tapOn: { id: "chat-mic" }
-# app must still be alive (no crash from fixture injection).
+# App must still be alive (no crash from the uplink open/close).
 - assertVisible: { id: "composer-input" }

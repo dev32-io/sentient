@@ -295,13 +295,20 @@ arm_fault() {
   sleep 1
 }
 
+# push_and_arm_fixture - DORMANT. Kept as the shape the capability had, called by
+# nothing, because the SDK end of it was deleted by the VoiceAudio refactor:
+# FaultHooks now exposes only armExpiredToken/armMalformedFrame, and
+# DebugFaultReceiver sends every other kind to `fault.broadcast.unknown-kind`.
+# The push still works; the arm is silently discarded. Re-enable ONLY together
+# with a fixture capture source in the SDK's voice engine — details, the proven
+# speech fixture, and the hold-vs-tap blocker: qa/mobile/fixtures/README.md.
 push_and_arm_fixture() {
-  local fixture_local="$FIXTURES_DIR/silence-500ms.pcm"
+  local fixture_local="$FIXTURES_DIR/speech-what-is-two-plus-two.pcm"
   local cache_path="/data/user/0/$ANDROID_APP/cache/sentient-fixture.pcm"
   info "  Pushing fixture to app cache: $cache_path"
   cat "$fixture_local" | adb -s "$ANDROID_DEVICE" shell "run-as $ANDROID_APP sh -c 'cat > $cache_path'" 2>/dev/null \
     || info "  WARNING: fixture push via run-as failed"
-  adb -s "$ANDROID_DEVICE" shell am broadcast -a io.sentient.debug.FAULT -p "$ANDROID_APP" --es kind fixture --es name sentient-fixture.pcm 2>/dev/null || true
+  flag "  fixture arm is a NO-OP on this build (SDK has no fixture capture source) - not asserting on it"
   sleep 1
 }
 
@@ -464,15 +471,15 @@ fault_phase_android() {
     grep_logcat_for "fault\.malformed-frame|decode-failed" "decode-failed" || BATCH_RESULT=1
   else fail "  20-malformed-frame"; BATCH_RESULT=1; fi
 
-  # 08-voice-loop ? push fixture + arm, then run.
-  echo ""; info "-> 08-voice-loop"
-  adb -s "$ANDROID_DEVICE" logcat -c 2>/dev/null || true
-  push_and_arm_fixture
-  if run_one "08-voice-loop"; then pass "  08-voice-loop"; sleep 1
-    grep_logcat_for "fixture-utterance" "fixture-utterance" || BATCH_RESULT=1
-    grep_logcat_for "startMic" "startMic" || BATCH_RESULT=1
-    flag "  08-voice-loop: FULL STT->LLM->TTS needs a real speech fixture (silence only here)"
-  else fail "  08-voice-loop"; BATCH_RESULT=1; fi
+  # 08-voice-loop - mic uplink CONTROL PLANE only. It is now also tagged
+  # physical-only, so it is not in any batch and this phase does not arm a fixture:
+  # the fixture-injection channel no longer exists in the SDK (FaultHooks kept only
+  # expired/malformed; DebugFaultReceiver logs fault.broadcast.unknown-kind for
+  # anything else), so `--es kind fixture` is delivered and discarded. Greping for
+  # `fixture-utterance` used to fail this phase against a log line no code emits.
+  # A real voice round-trip is a physical-device case. See qa/mobile/fixtures/README.md.
+  echo ""; info "-> 08-voice-loop (control plane; SKIPPED - physical-only)"
+  flag "  08-voice-loop: real STT->LLM->TTS needs (a) a fixture capture source back in the SDK and (b) a HELD mic (tapOn = ~147ms = 1 frame). Physical device case -> handover."
 
   # 58b-update-footer-offline ? self-navigating; kill net around it.
   echo ""; info "-> 58b-update-footer-offline (network kill)"
