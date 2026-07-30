@@ -138,6 +138,19 @@ orchestrator:
   delegation:
     frontmatter_dir: ./config/delegation     # static per-agent envelope dir (relative to gateway/)
     hermes_timeout_ms: 600000                # per Hermes one-shot (1000-3600000)
+    # Hermes profile every NEW gateway user's own profile is cloned from
+    # (`hermes profile create <userId> --clone-from <this>`). The clone is what
+    # carries provider + model + credentials across, so this must name a
+    # profile the operator has already configured and can answer a prompt —
+    # verify with `hermes -p <this> -z "say ok"`. Without the clone a fresh
+    # profile has no bound model and a delegated task dies on HTTP 401. The
+    # gateway never reads or stores a Hermes credential itself; Hermes copies
+    # its own. "default" is the profile `hermes setup` creates.
+    hermes_source_profile: default
+    # Deadline for one `hermes profile create` invocation (ms). It writes a few
+    # small files and exits; anything past this is a wedged CLI, not a slow
+    # one. Range 1000-120000.
+    hermes_profile_create_timeout_ms: 30000
   compaction:
     enabled: true                            # master switch; false = never compact (window grows until the provider rejects the request)
     # Estimated model-window tokens (chars/4 heuristic, see compaction.ts)

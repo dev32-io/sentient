@@ -5,6 +5,7 @@ import { ensureTlsMaterial } from "@sentient/tls";
 import { type AccessManager, createAccessManager } from "../access/access-manager.js";
 import { archiveUserDir } from "../admin/archive-user-dir.js";
 import { renderConfigsForExistingUsers } from "../admin/boot-migration.js";
+import { createHermesProfileProvisioner } from "../admin/hermes-profile-provisioner.js";
 import type { SecretsStore } from "../admin/secrets-store.js";
 import { createUserLifecycle } from "../admin/user-lifecycle.js";
 import type { UserLifecycle } from "../admin/user-lifecycle.js";
@@ -146,6 +147,17 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
   const renderInitialInnerProfileFor = buildRenderInnerProfile(applyDeps, { writeSoul: true });
   const userLifecycle = createUserLifecycle();
 
+  // Registers each new user with the Hermes CLI's own profile store. Separate
+  // from renderInnerProfile above: that writes the profile DIR, this makes
+  // hermes recognize the profile NAME. Both are required before a delegateTask
+  // can run — see admin/hermes-profile-provisioner.ts.
+  const hermesProfiles = cfg.orchestrator
+    ? createHermesProfileProvisioner({
+        sourceProfile: cfg.orchestrator.delegation.hermes_source_profile,
+        timeoutMs: cfg.orchestrator.delegation.hermes_profile_create_timeout_ms,
+      })
+    : null;
+
   let userProvisioner: UserProvisioner | null = null;
   if (cfg.hermes && secretsStore) {
     userProvisioner = createUserProvisioner({
@@ -162,6 +174,15 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
       now: () => new Date(),
       archiveUserDir,
       renderInnerProfile: renderInitialInnerProfileFor,
+      // Null when the orchestrator block is absent: there is no native loop, so
+      // no delegateTask, so nothing to provision for. Reported as a skip rather
+      // than silently succeeding.
+      createHermesProfile: hermesProfiles
+        ? (userId) => hermesProfiles.create(userId)
+        : async (userId) => {
+            log.warn("hermes-profile.skipped", { userId, reason: "orchestrator-not-configured" });
+            return { ok: false, error: "cli-error" as const };
+          },
       userLifecycle,
     });
   }
@@ -182,6 +203,9 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     await renderConfigsForExistingUsers({
       userStore: auth.users,
       renderInnerProfile: renderInnerProfileFor,
+      createHermesProfile: hermesProfiles
+        ? (userId) => hermesProfiles.create(userId)
+        : async () => ({ ok: false, error: "cli-error" as const }),
     });
   }
 

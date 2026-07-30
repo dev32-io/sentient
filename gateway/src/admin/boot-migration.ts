@@ -15,6 +15,13 @@ export interface RenderConfigsDeps {
    *  are no-ops (atomic write replaces the file with byte-identical content).
    *  Wired in phase-services from `renderAndWrite(applyDeps, userId)`. */
   renderInnerProfile: (userId: string) => Promise<Result<undefined, "render-error" | "write-error">>;
+  /** Registers the user with the Hermes CLI's own profile store — the second,
+   *  separate half of what a delegation needs (see
+   *  admin/hermes-profile-provisioner.ts). Backfills installs whose users were
+   *  created before that registration existed: without it, every pre-existing
+   *  user keeps failing `delegateTask` with "Profile does not exist" forever,
+   *  because nothing else ever revisits them. */
+  createHermesProfile: (userId: string) => Promise<Result<void, "cli-error">>;
 }
 
 /**
@@ -51,5 +58,11 @@ export async function renderConfigsForExistingUsers(deps: RenderConfigsDeps): Pr
       continue;
     }
     log.info("renderConfigs.rendered", { userId: user.userId });
+    // Best-effort backfill. An already-registered profile makes the CLI exit
+    // non-zero, which is the expected steady state on every boot after the
+    // first, so this is DEBUG rather than WARN — the provisioner already logs
+    // the real detail at its own level.
+    const h = await deps.createHermesProfile(user.userId);
+    if (!h.ok) log.debug("renderConfigs.hermes-profile-skipped", { userId: user.userId, reason: h.error });
   }
 }

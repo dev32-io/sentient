@@ -39,6 +39,7 @@ interface Overrides {
   archiveResult?: Result<void, "io-error">;
   removeProfileResult?: Result<void, "not-found" | "io-error">;
   renderInnerProfileResult?: Result<void, "render-error" | "write-error">;
+  createHermesProfileResult?: Result<void, "cli-error">;
 }
 
 /** Sample profile used in test fixtures — mirrors what the wizard would supply
@@ -128,6 +129,10 @@ function buildMocks(overrides?: Overrides): MockDeps {
       log("renderInnerProfile", userId);
       return overrides?.renderInnerProfileResult ?? okVoid;
     },
+    createHermesProfile: async (userId: string) => {
+      log("createHermesProfile", userId);
+      return overrides?.createHermesProfileResult ?? okVoid;
+    },
     userLifecycle: {
       onCreated: () => {},
       onDeleted: () => {},
@@ -146,6 +151,54 @@ function buildMocks(overrides?: Overrides): MockDeps {
 }
 
 describe("UserProvisioner", () => {
+  // DELEGATION INVARIANT. `hermes -p <userId>` refuses to run at all until the
+  // Hermes CLI has a profile REGISTERED under that name in its own store
+  // (~/.hermes/profiles/<userId>) — a different tree from the gateway-side
+  // render `renderInnerProfile` writes. The deleted supervisord program spec
+  // was the only thing that ever ran `hermes profile create`, and the native
+  // cutover removed it without a replacement, so every gateway-provisioned
+  // user got `Profile '<userId>' does not exist` on its FIRST delegateTask —
+  // for the whole life of the install. See
+  // qa/web/evidence/2026-07-30-delegate-hermes-bg/README.md.
+  it("createUser registers the user with the hermes CLI before announcing it", async () => {
+    const { callLog, provisioner } = buildMocks();
+
+    const result = await provisioner.createUser({
+      displayName: "New",
+      pin: "1234",
+      isAdmin: false,
+      profile: BRIDGE_PROFILE,
+    });
+
+    expect(result.ok).toBe(true);
+    const cliIdx = callLog.findIndex((c) => c.method === "createHermesProfile");
+    const emitIdx = callLog.findIndex((c) => c.method === "userLifecycle.emitCreated");
+    expect(cliIdx).toBeGreaterThanOrEqual(0);
+    expect(callLog[cliIdx]?.args[0]).toBe(NEW_ID);
+    expect(cliIdx).toBeLessThan(emitIdx);
+  });
+
+  // FAIL-SOFT INVARIANT. Hermes is an OPTIONAL delegated agent, not part of
+  // the gateway's own turn loop, and the operator may not have configured it
+  // at all. A CLI failure must degrade `delegateTask` for that user, never
+  // fail (or roll back) the user creation itself.
+  it("createUser still succeeds when the hermes CLI registration fails", async () => {
+    const { callLog, provisioner } = buildMocks({
+      createHermesProfileResult: err("cli-error" as const),
+    });
+
+    const result = await provisioner.createUser({
+      displayName: "New",
+      pin: "1234",
+      isAdmin: false,
+      profile: BRIDGE_PROFILE,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(callLog.some((c) => c.method === "userStore.remove")).toBe(false);
+    expect(callLog.some((c) => c.method === "userLifecycle.emitCreated")).toBe(true);
+  });
+
   it("createUser renders the hermes profile BEFORE announcing the user", async () => {
     const { callLog, provisioner } = buildMocks();
 

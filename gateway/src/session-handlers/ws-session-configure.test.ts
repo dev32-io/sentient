@@ -517,7 +517,12 @@ function testOrchestratorConfig(): OrchestratorConfig {
     loop: { max_iterations: 4 },
     permission: { request_timeout_ms: 120000 },
     tools: { foreground_timeout_ms: 30000, max_concurrent_background_tasks: 50 },
-    delegation: { frontmatter_dir: "./config/delegation", hermes_timeout_ms: 600000 },
+    delegation: {
+      frontmatter_dir: "./config/delegation",
+      hermes_timeout_ms: 600000,
+      hermes_source_profile: "default",
+      hermes_profile_create_timeout_ms: 30000,
+    },
     compaction: { enabled: false, compact_threshold_tokens: 24000, keep_recent_turns: 4 },
   };
 }

@@ -49,6 +49,12 @@ export const orchestratorConfigSchema = z.object({
     frontmatter_dir: z.string().default("./config/delegation"),
     // Deadline for a single Hermes one-shot invocation (ms). Long-running.
     hermes_timeout_ms: z.number().int().min(1000).max(3600000).default(600000),
+    // Configured Hermes profile that each new per-user profile is cloned from,
+    // so the clone inherits provider + model + credentials. The gateway never
+    // holds a Hermes credential; Hermes copies its own.
+    hermes_source_profile: z.string().min(1).default("default"),
+    // Deadline for one `hermes profile create` (ms). Range 1000-120000.
+    hermes_profile_create_timeout_ms: z.number().int().min(1000).max(120000).default(30000),
   }),
   compaction: z
     .object({

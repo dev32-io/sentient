@@ -45,6 +45,14 @@ export interface UserProvisionerDeps {
    *  `hermes-runner` spawns `hermes -p <userId>` with `cwd` set to that dir,
    *  so it must exist and carry a model config before the first delegation. */
   renderInnerProfile: (userId: string) => Promise<Result<void, "render-error" | "write-error">>;
+  /** Register the user with the Hermes CLI's OWN profile store, which is a
+   *  different tree from the gateway-side render above. `hermes -p <userId>`
+   *  refuses to start at all until that registration exists, so without this
+   *  every gateway-provisioned user fails its first `delegateTask` with
+   *  "Profile '<userId>' does not exist" — for the life of the install. The
+   *  deleted supervisord program spec used to run it as a self-bootstrapping
+   *  prefix; the native cutover removed the daemon and this replaces it. */
+  createHermesProfile: (userId: string) => Promise<Result<void, "cli-error">>;
   /** Fan-out for user lifecycle events. McpHost subscribes here to add/remove
    *  per-user MCP sockets in lockstep with create/delete. Listener errors are
    *  swallowed and logged — they do NOT roll back the user op. */
@@ -145,6 +153,19 @@ async function createUserWithRollback(
     log.warn("createUser.render-failed", { userId, error: renderResult.error });
     await rollbackProfileAndUser(deps, userId);
     return { ok: false, error: "apply-error" };
+  }
+
+  // Register the user with the Hermes CLI itself. FAIL-SOFT, deliberately:
+  // Hermes is an optional DELEGATED agent, not part of the gateway's own turn
+  // loop, and the operator may never have configured it. A failure here must
+  // degrade `delegateTask` for this user, never fail or roll back the user.
+  const hermesResult = await deps.createHermesProfile(userId);
+  if (!hermesResult.ok) {
+    log.warn("createUser.hermes-profile-failed", {
+      userId,
+      reason: hermesResult.error,
+      degrades: "delegateTask",
+    });
   }
 
   // Notify lifecycle subscribers (e.g. McpHost, which opens this user's

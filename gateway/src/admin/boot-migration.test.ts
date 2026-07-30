@@ -32,6 +32,7 @@ describe("renderConfigsForExistingUsers", () => {
     const calls: string[] = [];
     await renderConfigsForExistingUsers({
       userStore,
+      createHermesProfile: async () => ({ ok: true as const, value: undefined }),
       renderInnerProfile: async (userId) => {
         calls.push(userId);
         return { ok: true as const, value: undefined };
@@ -45,6 +46,7 @@ describe("renderConfigsForExistingUsers", () => {
     const calls: string[] = [];
     await renderConfigsForExistingUsers({
       userStore,
+      createHermesProfile: async () => ({ ok: true as const, value: undefined }),
       renderInnerProfile: async (userId) => {
         calls.push(userId);
         return { ok: true as const, value: undefined };
@@ -58,6 +60,7 @@ describe("renderConfigsForExistingUsers", () => {
     const calls: string[] = [];
     await renderConfigsForExistingUsers({
       userStore,
+      createHermesProfile: async () => ({ ok: true as const, value: undefined }),
       renderInnerProfile: async (userId) => {
         calls.push(userId);
         if (userId === U2) return { ok: false as const, error: "render-error" };
