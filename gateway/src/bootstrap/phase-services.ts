@@ -4,11 +4,7 @@ import type { OrchestratorConfig } from "@sentient/config";
 import { ensureTlsMaterial } from "@sentient/tls";
 import { type AccessManager, createAccessManager } from "../access/access-manager.js";
 import { archiveUserDir } from "../admin/archive-user-dir.js";
-import {
-  migrateUnboundUsers,
-  renderConfigsForExistingUsers,
-  renderProgramsForExistingUsers,
-} from "../admin/boot-migration.js";
+import { renderConfigsForExistingUsers } from "../admin/boot-migration.js";
 import { chownUserDirToHermes } from "../admin/chown-hermes.js";
 import type { InternalSecretsStore } from "../admin/internal-secrets-store.js";
 import { type KeyRotationOrchestrator, createKeyRotation } from "../admin/key-rotation.js";
@@ -243,11 +239,6 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     );
   }
 
-  // Boot migration: bind any existing users that lack a port binding.
-  if (cfg.hermes && userPortStore) {
-    await migrateUnboundUsers({ userStore: auth.users, userPortStore });
-  }
-
   // Boot migration: rename per-user tools.enabled.duckduckgo →
   // tools.enabled.searxng + tools.enabled.fetch. Idempotent.
   if (cfg.hermes) {
@@ -256,26 +247,14 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
 
   // Re-render the inner Hermes profile (config.yaml + SOUL.md) for every
   // existing user. Idempotent — picks up template changes (e.g. model
-  // section schema bumps) without an explicit migration. Runs BEFORE
-  // renderProgramsForExistingUsers so the program upsert sees the latest
-  // provider, mirroring the user-creation order.
+  // section schema bumps) without an explicit migration. This is the
+  // profile rendering `hermes-runner` depends on: it spawns
+  // `hermes -p <userId>` with `cwd` = the profile dir, so the dir must
+  // already carry a rendered config.yaml before the first delegation.
   if (cfg.hermes) {
     await renderConfigsForExistingUsers({
       userStore: auth.users,
       renderInnerProfile: renderInnerProfileFor,
-    });
-  }
-
-  // Render supervisord programs for every existing user. Idempotent.
-  if (cfg.hermes && userPortStore && supervisordControl) {
-    await renderProgramsForExistingUsers({
-      userStore: auth.users,
-      userPortStore,
-      supervisordControl,
-      internalSecrets: internalSecretsStore,
-      profileStore,
-      resolveTimezone: tzForPrograms,
-      resolveHermesHome: resolveHermesHomeFor,
     });
   }
 
