@@ -14,7 +14,6 @@ import io.sentient.mobilesdk.settings.ApplyResult
 import io.sentient.mobilesdk.settings.CloneFromFishRequest
 import io.sentient.mobilesdk.settings.CloneFromFishResult
 import io.sentient.mobilesdk.settings.CreateUserRequest
-import io.sentient.mobilesdk.settings.DevicesResponse
 import io.sentient.mobilesdk.settings.FishResult
 import io.sentient.mobilesdk.settings.FishVoiceEntry
 import io.sentient.mobilesdk.settings.FishVoicePage
@@ -34,8 +33,6 @@ import io.sentient.mobilesdk.settings.ProfileVoiceRef
 import io.sentient.mobilesdk.settings.SecretsStatus
 import io.sentient.mobilesdk.settings.ServicesVersions
 import io.sentient.mobilesdk.settings.ServicesVersionsFeatures
-import io.sentient.mobilesdk.settings.SignalLinkStartResponse
-import io.sentient.mobilesdk.settings.SignalLinkStatusResponse
 import io.sentient.mobilesdk.settings.SoulDefaultDoc
 import io.sentient.mobilesdk.settings.SoulDoc
 import io.sentient.mobilesdk.settings.UserSummary
@@ -60,7 +57,6 @@ fun sampleProfile(
     tools = ProfileTools(enabled = emptyMap(), toolsets = null),
     compression = ProfileCompression(threshold = 0.5),
     advanced = ProfileAdvanced(extraSystemPrompt = "", maxTokens = 1024, reasoningEffort = "minimal"),
-    devices = null,
 )
 
 /** ProfileRepository fake — programmable per-op, records calls + args for assertions. */
@@ -144,23 +140,6 @@ class FakeAccountRepository : AccountRepository {
     override suspend fun updateDisplayName(displayName: String) = updateResult
     override suspend fun changePin(currentPin: String, newPin: String) = changePinResult
     override suspend fun logout() = logoutResult
-}
-
-/** DevicesRepository fake — pollLinkStatus reads programmed statuses in order. */
-class FakeDevicesRepository(
-    private val statuses: List<SentientResult<SignalLinkStatusResponse>> = emptyList(),
-) : DevicesRepository {
-    var statusCalls = 0
-
-    override suspend fun getDevices() = SentientResult.Success(DevicesResponse())
-    override suspend fun signalLinkStart() = SentientResult.Success(SignalLinkStartResponse(qrDataUrl = "data:x"))
-    override suspend fun signalLinkCancel() = SentientResult.Success(Unit)
-    override suspend fun signalLinkStatus(): SentientResult<SignalLinkStatusResponse> {
-        val i = statusCalls.coerceAtMost(statuses.lastIndex)
-        statusCalls++
-        return statuses.getOrElse(i) { SentientResult.Success(SignalLinkStatusResponse(state = "idle")) }
-    }
-    override suspend fun signalUnlink() = SentientResult.Success(Unit)
 }
 
 /** AdminRepository fake — thin, all-success. Records the last createUser request for assertions. */

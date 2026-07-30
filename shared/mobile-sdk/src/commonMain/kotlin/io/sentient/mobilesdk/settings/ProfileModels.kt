@@ -8,14 +8,12 @@
 // and round-trips through updateMe untouched — mirroring the web-sdk resilience
 // contract. Canonical value sets live in [ProfileEnums] for the UI layer.
 //
-// Snake_case wire fields (account_masked, linked_at) carry @SerialName. Optional
-// zod fields (tools.toolsets, devices, signal.*) are nullable with null defaults;
+// Optional zod fields (tools.toolsets) are nullable with null defaults;
 // settingsBodyJson omits nulls on the way back out so `.optional()` validation
-// passes.
+// passes. A snake_case wire field would need an explicit @SerialName.
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.settings
 
-import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /** Canonical value sets for the string-typed profile fields (UI selectors). */
@@ -38,7 +36,6 @@ data class ProfileV1(
     val tools: ProfileTools,
     val compression: ProfileCompression,
     val advanced: ProfileAdvanced,
-    val devices: ProfileDevices? = null,
 )
 
 @Serializable
@@ -74,14 +71,4 @@ data class ProfileAdvanced(
     val extraSystemPrompt: String,
     val maxTokens: Int,
     val reasoningEffort: String,
-)
-
-@Serializable
-data class ProfileDevices(val signal: ProfileSignal? = null)
-
-@Serializable
-data class ProfileSignal(
-    val paired: Boolean,
-    @SerialName("account_masked") val accountMasked: String? = null,
-    @SerialName("linked_at") val linkedAt: String? = null,
 )

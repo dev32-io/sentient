@@ -36,8 +36,7 @@ private const val PROFILE_JSON = """{
   "persona":{"template":"default","overrides":""},
   "tools":{"enabled":{"home-assistant":[]},"toolsets":["memory","web"]},
   "compression":{"threshold":0.5},
-  "advanced":{"extraSystemPrompt":"","maxTokens":1024,"reasoningEffort":"minimal"},
-  "devices":{"signal":{"paired":true,"account_masked":"+1•••••1234","linked_at":"2026-07-01T00:00:00Z"}}
+  "advanced":{"extraSystemPrompt":"","maxTokens":1024,"reasoningEffort":"minimal"}
 }"""
 
 private fun profileClient(engine: MockEngine): ProfileHttpClient =
@@ -71,7 +70,6 @@ class ProfileHttpClientTest {
         assertEquals("openrouter", p.model.provider)
         assertEquals("local-tts", p.voice.provider)
         assertEquals(listOf("memory", "web"), p.tools.toolsets)
-        assertEquals("+1•••••1234", p.devices?.signal?.accountMasked)
         assertEquals("Bearer tok", auth)
     }
 
@@ -92,14 +90,12 @@ class ProfileHttpClientTest {
             tools = ProfileTools(enabled = emptyMap(), toolsets = null),
             compression = ProfileCompression(0.5),
             advanced = ProfileAdvanced("", 1024, "minimal"),
-            devices = null,
         )
         profileClient(engine).updateMe(profile)
         val sent = body ?: ""
         assertTrue(sent.contains("\"userId\":\"u_x\""), "body=$sent")
         // explicitNulls=false: null optionals must be ABSENT, never `null` (zod .optional() rejects null).
         assertFalse(sent.contains("toolsets"), "toolsets must be omitted: $sent")
-        assertFalse(sent.contains("devices"), "devices must be omitted: $sent")
     }
 
     @Test
@@ -113,7 +109,7 @@ class ProfileHttpClientTest {
                 ProfileModelRef("custom", "m"), ProfileVoiceRef("local-tts", "default"),
                 ProfileAudio(true, "voice"), ProfilePersona("default", ""),
                 ProfileTools(emptyMap(), null), ProfileCompression(0.5),
-                ProfileAdvanced("", 1024, "minimal"), null,
+                ProfileAdvanced("", 1024, "minimal"),
             ),
         )
         assertIs<AuthResult.Failure>(result)

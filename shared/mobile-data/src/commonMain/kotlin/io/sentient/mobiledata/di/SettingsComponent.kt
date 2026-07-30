@@ -30,32 +30,27 @@ package io.sentient.mobiledata.di
 import io.ktor.client.HttpClient
 import io.sentient.mobiledata.data.settings.AccountRepository
 import io.sentient.mobiledata.data.settings.AdminRepository
-import io.sentient.mobiledata.data.settings.DevicesRepository
 import io.sentient.mobiledata.data.settings.ProfileRepository
 import io.sentient.mobiledata.data.settings.SdkAccountRepository
 import io.sentient.mobiledata.data.settings.SdkAdminRepository
-import io.sentient.mobiledata.data.settings.SdkDevicesRepository
 import io.sentient.mobiledata.data.settings.SdkProfileRepository
 import io.sentient.mobiledata.data.settings.SdkVoicesRepository
 import io.sentient.mobiledata.data.settings.VoicesRepository
 import io.sentient.mobiledata.usecase.settings.AccountUseCases
 import io.sentient.mobiledata.usecase.settings.AdminUseCases
 import io.sentient.mobiledata.usecase.settings.ApplyProfileChangeUseCase
-import io.sentient.mobiledata.usecase.settings.DevicesUseCases
 import io.sentient.mobiledata.usecase.settings.ObserveSettingsAccessUseCase
 import io.sentient.mobiledata.usecase.settings.VoicesUseCases
 import io.sentient.mobilesdk.auth.AuthClient
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.AudioPreferencesPatch
 import io.sentient.mobilesdk.settings.AdminHttpClient
-import io.sentient.mobilesdk.settings.DevicesHttpClient
 import io.sentient.mobilesdk.settings.FishHttpClient
 import io.sentient.mobilesdk.settings.ProfileEditHttpClient
 import io.sentient.mobilesdk.settings.ProfileHttpClient
 import io.sentient.mobilesdk.settings.ProvidersHttpClient
 import io.sentient.mobilesdk.settings.ServicesVersionsHttpClient
 import io.sentient.mobilesdk.settings.VoicesHttpClient
-import kotlinx.coroutines.delay
 
 /**
  * Settings slice of the connection scope. Constructor-injects everything; exposes
@@ -71,8 +66,6 @@ class SettingsComponent(
     onTokenRefreshed: (String) -> Unit = {},
     /** Clear local session on logout. */
     onLoggedOut: () -> Unit = {},
-    /** Injected delay for the device link-status poll loop (tests advance virtual time). */
-    delayFn: suspend (Long) -> Unit = { delay(it) },
 ) {
     private val log = createLogger("data", "settings", "component")
 
@@ -83,7 +76,6 @@ class SettingsComponent(
     private val voicesHttp = VoicesHttpClient(httpClient, gatewayWsUrl, token)
     private val fishHttp = FishHttpClient(httpClient, gatewayWsUrl, token)
     private val servicesVersionsHttp = ServicesVersionsHttpClient(httpClient, gatewayWsUrl, token)
-    private val devicesHttp = DevicesHttpClient(httpClient, gatewayWsUrl, token)
     private val adminHttp = AdminHttpClient(httpClient, gatewayWsUrl, token)
     private val authClient = AuthClient(gatewayWsUrl, httpClient)
 
@@ -91,7 +83,6 @@ class SettingsComponent(
     val profileRepository: ProfileRepository = SdkProfileRepository(profileHttp, profileEditHttp, providersHttp)
     val voicesRepository: VoicesRepository = SdkVoicesRepository(voicesHttp, fishHttp, servicesVersionsHttp)
     val accountRepository: AccountRepository = SdkAccountRepository(authClient, token)
-    val devicesRepository: DevicesRepository = SdkDevicesRepository(devicesHttp)
     val adminRepository: AdminRepository = SdkAdminRepository(adminHttp)
 
     // ── Usecases (VM-facing) ──
@@ -99,7 +90,6 @@ class SettingsComponent(
     val observeSettingsAccess = ObserveSettingsAccessUseCase(accountRepository, voicesRepository)
     val voices = VoicesUseCases(voicesRepository, profileRepository)
     val account = AccountUseCases(accountRepository, onTokenRefreshed, onLoggedOut)
-    val devices = DevicesUseCases(devicesRepository, delayFn)
     val admin = AdminUseCases(adminRepository, profileRepository)
 
     init {
