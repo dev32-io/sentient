@@ -1,6 +1,6 @@
 # Gateway
 
-Bun/TypeScript voice gateway. Orchestrates STT→LLM→TTS streaming pipeline on Raspberry Pi 5.
+Bun/TypeScript voice gateway. Orchestrates STT→LLM→TTS streaming pipeline. Ships as a compiled native binary supervised by `launchd` on the production Mac mini (the Pi 5 deploy is retired) — not a Docker container. See `deploy/README.md`.
 
 ## MANDATORY — Read Rules First
 
@@ -16,6 +16,7 @@ Rules live at the repo root: cross-cutting at `.claude/rules/*.md`, gateway-spec
 - STT: local STTService (gateway dials over WS)
 - TTS: local-tts / LocalTTSService (gateway dials over WS)
 - Validation: zod
+- Deploy: `gateway/src/system-orchestrator/` is the host orchestrator — it supervises docker addons (MCP tool servers, searxng, signal-cli, egress-proxy/ingress-proxy) and native addons (whisper-stt, local-tts) through one registry, one dependency graph, one health model. Dev: `bun --hot src/main.ts`, unchanged. Prod: compiled binary under `launchd` — see `deploy/README.md`.
 
 ## Commands
 

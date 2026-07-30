@@ -51,9 +51,19 @@ All `bun run` commands, test scripts, and quality-gate hooks depend on this.
 
 See `docs/mobile-release.md` for one-time setup (keystore, `scripts/release.local.conf`, signing).
 
+## Gateway deploy
+
+    ./scripts/build-gateway.sh [--release]   — compiled native binary -> dist/gateway/<version>.tar.gz
+    sudo python3 deploy/mac-prod/setup-prod.py install dist/gateway/<version>.tar.gz
+                                              — install/upgrade; health-gated, auto-rollback on failure
+
+Addon images (MCPs, searxng, signal-cli, ingress-proxy) still build via compose — see `deploy/README.md`.
+
 ## Architecture
 
 The gateway is becoming a **native LLM orchestrator** (Sentient 2.0, in progress on `feature/native-orchestrator` — canonical design: `docs/superpowers/specs/2026-07-23-sentient-2.0-native-orchestrator-design.md`). The gateway owns the entire agent harness — system prompt, ReAct loop, tool-call format, permission mediation, prompt caching, and compaction — calling an OpenAI-compatible LLM provider directly over HTTP. Hermes is demoted from the agent runtime to **one delegated tool** (`delegateTask(agent: "hermes", taskPrompt)`, a background tool) in a general delegation category; it no longer owns the LLM call, the agent loop, or session state.
+
+**Deployment topology** (native-stack migration, design: `docs/superpowers/specs/2026-07-29-native-stack-migration-design.md`): the gateway itself ships as a compiled native binary (`bun build --compile`) supervised by `launchd` on the production Mac mini — it is not a Docker container. It is the **host orchestrator**: `gateway/src/system-orchestrator/` supervises docker addons (MCP tool servers, searxng, signal-cli, egress-proxy/ingress-proxy) and native addons (whisper-stt, local-tts) through one registry, one dependency graph, and one health model, dialing every docker addon over loopback. Hermes is never a managed service — no lifecycle, no port, no health check — it is a one-shot exec (`hermes -p <userId> -z <prompt>`), which is why the gateway and Hermes must share a filesystem. See `deploy/README.md`.
 
 Key patterns:
 - Single WebSocket per client (binary audio + JSON control).
