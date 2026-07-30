@@ -116,10 +116,10 @@ Full checklist with exact steps and expected log lines: `docs/superpowers/handof
 - `steer-followup-audio`, audio half — the text half is verified. The WS-seam harness negotiates no `audio.output`, so the audio half needs a real browser session.
 - `interrupt`, browser-Stop trigger — the abort path is verified server-side; driving the actual UI control needs a logged-in browser.
 
-**Native rows left undriven, with the reason:**
+**Native rows left undriven, or driven but only partly asserted — with the reason:**
 
-- `voice-roundtrip` — needs a fixture capture source back in the SDK voice engine plus a `kind=fixture` arm in `DebugFaultReceiver`, and a physically held mic.
-- `05-interrupt` — blocked behind D12, then needs the TTS audio-state gate. (Its old "no reachable local-tts on the device" premise was **wrong** — the gateway dials local-tts over loopback.)
+- `voice-roundtrip` — undriven. Needs a fixture capture source back in the SDK voice engine plus a `kind=fixture` arm in `DebugFaultReceiver`, and a physically held mic.
+- `05-interrupt` — **driven and green on both platforms** (task 9e: Android 27s, iOS 41s), but it asserts send → stream → app-alive only; the interrupt **arm** is still unasserted. Live blocker: `chat-interrupt` is gated on TTS audio state, not cognition, so the session needs `speak=true` plus an armed audio downlink before the button exists to tap. Two dead reasons — do not re-quote either: D12 is **closed**, and the old "no reachable local-tts on the device" premise was **wrong** (the gateway dials local-tts over loopback).
 - **iOS `settings-soul` batch was never run.** The Android run root-caused all four failures and the fixes are shared-shape, but the iOS `45*/47/48/49` wait-budget edits are syntax- and shape-verified only, never driven on a simulator.
 - `42-settings-non-admin-gate` — undriven on both platforms. It needs the temp user that `41-members-add-cap` creates, and `41` is blocked by the 3-user household cap.
 

@@ -7,16 +7,17 @@ env:
 ---
 # 12-permission-confirm — the iOS arm of `permission-confirm` (spec §9.2). Twin of
 # android/12-permission-confirm.yaml; read that header for the full rationale, the
-# expected gateway log trail, and the D12 blocker.
+# expected gateway log trail, and the D13 note that keeps the Android twin red.
 #
 # Short version:
 #   * The predecessor spec's matrix had NO native permission case — a real gap.
 #   * A side-effecting tool (ha_call_service) must block on the L3 confirm prompt;
 #     the model's own tool call is never an authorisation decision.
-#   * BLOCKED BY D12 as of 2026-07-30: the gateway never answers `session.new`, so
-#     the mobile outbox never drains and no send reaches the gateway. Committed red
-#     on purpose — it should pass unchanged once D12 is fixed. Diagnosis:
-#     qa/mobile/evidence/2026-07-30-native-mobile-matrix/README.md
+#   * STATUS 2026-07-30 (Task 9e): PASSES in 30s, driven UNCHANGED once D12 was
+#     closed — `permission-request` → tap → `permission-resolved outcome="allowed"`.
+#     That round trip is the proof the gateway's L3 path works from a device, which
+#     is what localises the Android twin's red to the client (D13, a test-id export
+#     bug). Evidence: qa/mobile/evidence/2026-07-30-t9e-session-new/
 #
 # iOS renders the prompt as a SwiftUI `alert`, not an in-tree dialog, and its ids
 # are `permission-allow` / `permission-deny` — WITHOUT the `chat-` prefix the

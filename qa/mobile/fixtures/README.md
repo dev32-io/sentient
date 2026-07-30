@@ -65,10 +65,11 @@ A flow that only taps the mic cannot produce a turn even once injection returns.
 
 Worth knowing: the STT path calls `runtime.submit()` **server-side**
 (`gateway/src/session-handlers/stt-session.ts:119`), so it does not pass through
-the client outbox. That matters because the *text* path is currently blocked by
-defect D12 (the gateway never answers `session.new`, so the outbox never drains —
-`qa/mobile/evidence/2026-07-30-native-mobile-matrix/README.md`) while the voice
-path would not be.
+the client outbox. That mattered while defect D12 blocked the *text* path (the
+gateway never answered `session.new`, so the outbox never drained); the voice path
+never was. **D12 is CLOSED** (2026-07-30, plan task 9e —
+`qa/mobile/evidence/2026-07-30-t9e-session-new/`), so neither path is blocked by it
+now; the voice blockers are (1) and (2) above.
 
 Until (1) and (2) exist, `voice-roundtrip` on native is a real-device case:
 simulators and emulators have no usable audio path, which is what the

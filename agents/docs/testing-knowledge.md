@@ -815,15 +815,21 @@ captured=1`, and gateway-side `stt.audio-start`→`stt.audio-end` 180 ms apart.
 A real speech fixture now exists and is proven at the service seam
 (`transcript_ready {"text": "What is 2 plus 2?", "decodeMs": 439.751}`) —
 `qa/mobile/fixtures/README.md` has the regeneration + validation recipe.
-Note the voice path calls `runtime.submit()` **server-side**, so it would not be
-blocked by D12.
+Note the voice path calls `runtime.submit()` **server-side**, so it was never
+blocked by D12 (which is closed anyway — task 9e).
 
-### interrupt (native) — unproven, and the old stated reason was WRONG
-The flow header blamed "no local-tts reachable from the device". local-tts is
-dialled by the **gateway** over loopback; the device only receives the downlink.
-The real blockers are D12, then `chat-interrupt` being gated on TTS audio state
-(`isSpeaking || PROCESSING/ASSISTANT_SPEAKING/INTERRUPTING`) rather than cognition,
-so the session needs `speak=true` plus an armed downlink before the button exists.
+### interrupt (native) — the flow PASSES; the interrupt ARM is still unasserted
+`05-interrupt` is **green on both platforms** since task 9e (Android 27s, iOS 41s),
+driven, not statically edited. Read what it actually asserts: send → a streaming
+`assistant-bubble` → app alive. It never taps `chat-interrupt`, so a green row here
+is NOT evidence that interrupt works.
+Two stated blockers are dead and must not be re-quoted. (1) "No local-tts reachable
+from the device" was always wrong — local-tts is dialled by the **gateway** over
+loopback and the device only receives the downlink. (2) **D12 is CLOSED** (task 9e);
+it is not a reason for anything to stay undriven.
+The one live blocker: `chat-interrupt` is gated on TTS audio state (`isSpeaking ||
+PROCESSING/ASSISTANT_SPEAKING/INTERRUPTING`) rather than cognition, so the session
+needs `speak=true` plus an armed downlink before the button exists to tap.
 
 ### STT dial retry has no backoff (observation, NOT filed as a defect)
 Against a hung STT, the gateway logged 33 `stt.connect-failed` in 751 ms — one
@@ -848,7 +854,7 @@ collapsing them into one verdict is how an unrun static edit ships looking green
 | `reload-convergence` | not re-driven | not re-driven | unblocked by 9e, but read D14 first |
 | `restart-persistence` | not re-driven | not re-driven | unblocked by 9e, but read D14 first |
 | `voice-roundtrip` | → Task 11 | → Task 11 | fixture channel deleted + hold-vs-tap |
-| `interrupt` (native) | **PASS** (9e) | **PASS** (9e) | `05-interrupt` 27s / 41s — the D12 half is gone |
+| `interrupt` (native) | **PASS** (9e) | **PASS** (9e) | `05-interrupt` 27s / 41s — D12 closed. Asserts send→stream→alive ONLY; the interrupt tap is still unasserted (TTS audio-state gate) |
 | barge-in / acoustic | → Task 11 | → Task 11 | `physical-only`; needs real mic + speaker |
 | `40-settings-root` | PASS 19s | PASS 16s | the Task 6b static edit, now proven on both |
 | `56-secrets-presence` | PASS 29s | PASS 20s | |

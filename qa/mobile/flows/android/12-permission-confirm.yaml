@@ -24,16 +24,20 @@ env:
 # Deny arm -> outcome="denied" + tool-broker.dispatch.denied; the 120 s timeout arm
 # is a web-only case (a 2-minute native flow is not worth the batch time).
 #
-# ⚠️ BLOCKED BY D12 AS OF 2026-07-30 — this flow CANNOT pass yet, and that is the
-# point of committing it red rather than not committing it. The gateway never
-# answers `session.new` (ws-handlers.ts routes it to `default:` and only logs
-# `message-unhandled`), so `SendMessageUseCase.flushIfReady` never drains the
-# outbox — no mobile text send reaches the gateway at all, so no tool call and no
-# prompt. Full diagnosis + repro:
-#   qa/mobile/evidence/2026-07-30-native-mobile-matrix/README.md
-# Every other flow tagged `chat` fails the same way for the same reason, so the
-# `chat` batch being red IS D12's signature. When D12 is fixed, this flow should
-# pass unchanged.
+# ⚠️ STATUS 2026-07-30 (Task 9e): D12 is CLOSED. The send now reaches the gateway,
+# the model calls the tool, and the PDP raises a real prompt. This flow is STILL RED
+# on Android — for a NEW and different reason, D13. Do not re-diagnose it as D12.
+# D13: `uiautomator dump` taken while the dialog is on screen shows EVERY node with
+# `resource-id=""`, so `id: chat-permission-allow` can never resolve; the tap times
+# out and the gateway logs `dispatch.denied reason="permission request timed out"`.
+# Cause: `testTagsAsResourceId` is enabled once, on AppNavHost.kt's `Surface`, and a
+# Compose `AlertDialog` composes into its own window outside that subtree. Fix is
+# one line in android/** — the same `Modifier.semantics { testTagsAsResourceId =
+# true }` that settings/components/RowSelect.kt:87 already applies for this exact
+# trap. DO NOT EDIT THIS FLOW: its ids ARE the ids in the source.
+# The iOS twin PASSES (30s), which proves the gateway's L3 round trip end to end
+# from a device and localises this red to the client.
+# Evidence: qa/mobile/evidence/2026-07-30-t9e-session-new/ (§ D13).
 #
 # SELECTOR NOTE (spec correction): the ids are NOT symmetric across platforms.
 # Android: chat-permission-allow / chat-permission-deny (PermissionPromptDialog.kt).
