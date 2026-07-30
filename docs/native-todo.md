@@ -14,23 +14,20 @@ Status as of 2026-07-30, branch `feature/native-orchestrator`.
 
 ## 1. Open defects
 
-### D11 — the delegated Hermes has no tools (decided, ready to build)
+### ~~D11 — the delegated Hermes has no tools~~ — CLOSED 2026-07-30 (plan task 9d)
 
-The gateway renders `mcp_servers` + `enabled_toolsets` into `~/.sentient/gateway/<id>/profiles/<id>/`; Hermes reads `~/.hermes/profiles/<id>/`. The bridge between them was `HERMES_HOME` in the supervisord program env — **deleted by our own native cutover**. The render has been dead output ever since, so every delegated agent on every fresh install has zero gateway/HA/MA/searxng tools.
+`gateway/src/external-tools/` is a generic **external-tool configuration handler** — an external tool is one the gateway does not supervise (no lifecycle, port or health check), Hermes being the first of them. It runs as the last startup step, after `mcpHost.start()` and gated on the system orchestrator's boot-reconcile **completion**; a null signal skips loudly (`external-tools.skipped`) instead of registering against sockets nothing serves. Registration is `hermes -p <id> mcp add gateway --command nc --args -U <resolveMcpSocketPath(id)>` through hermes's public CLI, read back afterwards because exit 0 is not evidence. The `hermes-profile.bridge.not-live` detector is deleted.
 
-Contained, not silent: `hermes-profile.bridge.not-live` WARNs once per user per boot with `reason`, `renderedRoot`, `defect="D11"`. Deleting that guard is the exit criterion of the fix, not its start.
+Live-verified on `u_1eee01a4`, never hand-patched: `hermes.register.start` → `hermes.register.ok`, and its delegated agent now lists `mcp__gateway__pause_audio` and `mcp__gateway__resume_audio` and does **not** list `mcp__gateway__identify_user` or `mcp__gateway__update_user_settings`. Full close: `qa/web/evidence/2026-07-30-t9c-verification-gaps/README.md` § "D11 — the close".
 
-**Decisions taken (2026-07-30):**
-- Hermes dials the MCP servers **directly**. No gateway proxy — the proxy is over-complicated for the value today, and only starts earning its complexity if the delegated agent ever needs write tools.
-- Registration happens at **gateway startup**, through a **generic "configure external tool" handler**, sequenced *after* the system-orchestrator finishes bringing up internal dependencies (docker addons, native addons, MCP servers). Generic because Hermes is the first external tool, not the only one.
-- Registered surface is the **`allow` tier of `gateway/mcp-policy.yaml` only** — reads, searches, HA state, MA browse. `confirm` and `deny` tier tools stay gateway-only.
+**Two decisions from the original write-up did not survive contact and are corrected here:**
 
-**Why the tier filter, and what it costs:** because Hermes dials those servers itself, the gateway's PDP/PEP never sees the call — no `confirm` prompt, no argument-value check. `delegateTask` exists to go read the web (searxng, fetch), which is a prompt-injection surface; an injected page telling the delegated agent to turn off the alarm would otherwise execute unmediated. The filter is one `.filter()` over the same list, so it costs nothing now.
+1. *"The filter is one `.filter()` over the same list, so it costs nothing now"* — **wrong**, and it constrains what could ship. `hermes mcp add` grants a server's WHOLE advertised surface: the CLI has no non-interactive per-tool filter (selection is a curses checklist), and `hermes config set` cannot write a list — it coerces only bool/int/float, so `config set mcp_servers.gateway.tools.include '["a","b"]'` stores the string. The catalog's `tools.include` is a gateway-side filter that never reaches hermes. Registering `home_assistant` would therefore grant ha-mcp's ~84 upstream tools and `searxng` its 5 (one tiered). Both exceed the `allow` tier, so neither is registered; only the gateway's own MCP, whose surface the gateway controls, is.
+2. Consequently *"reads, searches, HA state, MA browse"* is **not** what the delegated agent got. It got the gateway's allow-tier tools only. Delegation still works — it dispatches, runs a real credentialed hermes and returns a completion — it simply has no HA/MA/web MCP.
 
-**The real answer, deferred:** a delegated tool is *intended* to be dangerously capable, and the `allow` tier is a blunt instrument for that. What this actually wants is a **separate permission surface for delegated tools** — its own settings page, tuned independently of the tool settings that govern Sentient's own orchestrator layer. That is a genuine security design (what does a sub-agent inherit, can it be scoped per-delegation, does a confirm prompt reach the delegator mid-delegation, what does revocation mean once a subprocess is running), and it deserves its own spec. **It does not block current work.**
-
-Task body: `docs/superpowers/plans/2026-07-29-native-stack-migration/task-9d-hermes-profile-bridge.md`.
-Full diagnosis: `qa/web/evidence/2026-07-30-t9c-verification-gaps/README.md` § D11.
+**What that leaves open, in the order it would sensibly land:**
+- **Per-server tool scoping for a delegated agent.** Needs either a hermes CLI that can set an include list non-interactively (upstream ask), or the gateway proxying those MCPs so its own PDP sees the call — the proxy the owner ruled over-complicated when the filter looked free. It no longer is free, so the trade-off is worth re-deciding before granting HA/MA/web to a sub-agent.
+- **The real answer, still deferred:** a delegated tool is *intended* to be dangerously capable, and the `allow` tier is a blunt instrument. What this wants is a **separate permission surface for delegated tools**, tuned independently of the tool settings that govern Sentient's own orchestrator layer — what a sub-agent inherits, whether it can be scoped per-delegation, whether a confirm prompt reaches the delegator mid-delegation, what revocation means once a subprocess is running. Its own spec. **It does not block current work.**
 
 ### ~~D12 — the gateway never answers `session.new`~~ — CLOSED 2026-07-30 (plan task 9e)
 
@@ -75,9 +72,11 @@ The alternative was rejected on evidence: minting a fresh partition per `session
 
 These three go with the multi-conversation project in §2, not to Task 11.
 
-### Stale personality entry becomes live once D11 lands
+### ~~Stale personality entry becomes live once D11 lands~~ — CLOSED 2026-07-30 (plan task 9d)
 
-After deleting a personality, the rendered `config.yaml` keeps a `personalities: {<name>: ""}` entry. Harmless **today** only because D11 makes that file dead output. The moment the profile bridge works, it stops being harmless. Fix it with D11, not after.
+Both writers now reject an empty personality body (`invalid-body` → 422) and `preserveAgentSections` drops the entries older builds wrote, so an existing install converges on the next boot re-render. Verified live: `preserve.dropped-personalities | dropped=1`, and the affected user's rendered config.yaml no longer carries a `personalities` key.
+
+Framing correction: it is **not** left behind by a delete. `personality-store.remove` was reproduced against a temp profile and removes the key cleanly. The live artifact was an empty-bodied personality that was *written* that way, which the add/update path accepted.
 
 ---
 

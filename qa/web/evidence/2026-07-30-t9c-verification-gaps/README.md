@@ -96,11 +96,11 @@ not fixed — D11 below.
 
 ---
 
-## D11 (OPEN, FUNCTIONAL) — the delegated agent has no gateway/HA/MA/searxng tools, for any user
+## ~~D11~~ — CLOSED 2026-07-30 (plan task 9d) — the delegated agent had no gateway tools, for any user
 
-**This is the tracked record for D11.** It is not a residual of a closed defect: it is the still-open
-cause of the same symptom the `delegate-hermes-bg` chain has now chased twice (D5 → D8 → D11). The
-socket half was necessary and is fixed; this half is not, and nobody has decided how to fix it.
+**This is the tracked record for D11.** The diagnosis below is kept verbatim because it is the
+symptom the `delegate-hermes-bg` chain chased three times (D5 → D8 → D11); the close is at the
+bottom of this section. Read the close before acting on anything above it.
 
 ### Symptom, measured
 Ask the delegated agent what it can call:
@@ -162,7 +162,7 @@ Natural home: `gateway/src/admin/hermes-profile-provisioner.ts`, right after `pr
 --clone-from`, driven off `config.yaml#mcp_catalog` + `resolveMcpSocketPath`. The boot backfill
 already re-runs the provisioner for every existing user, so it would backfill for free.
 
-### Why it is NOT implemented — an escalated decision, reserved for the human
+### Why it was NOT implemented at the time — an escalated decision, reserved for the human
 Two questions the task never scoped, both of which change what ships:
 - **When:** register once at provision, or reconcile on every profile change / every boot?
 - **What:** the gateway MCP only, or the user's whole enabled `mcp_catalog` (HA, MA, searxng, fetch)
@@ -205,3 +205,95 @@ Live-verified in the real gateway log for all three local users, on two consecut
 - **`hermes.mcp_host.socket_path` and `mcp_catalog.gateway.args` are still two places** spelling the
   same path. Cross-referenced by comment; nothing mechanically enforces agreement. Deriving the
   catalog arg from `resolveMcpSocketPath` (which the D11 fix would do anyway) closes it.
+
+---
+
+## D11 — the close, with live proof (task 9d)
+
+### What shipped
+- `gateway/src/external-tools/` — a **generic external-tool configuration handler**. An external
+  tool is one the gateway does not supervise (no lifecycle, port or health check). Hermes is the
+  first, deliberately not the only one; `ExternalTool` is the seam a second attaches to.
+- It runs as the **last startup step**, after `mcpHost.start()` and gated on the system
+  orchestrator's boot-reconcile apply-**completion**. A null signal (no orchestrator, or a fresh
+  install where the wizard owns the first apply) skips loudly — `external-tools.skipped` — rather
+  than registering against sockets nothing serves.
+- Registration is `hermes -p <id> mcp add gateway --command nc --args -U <resolveMcpSocketPath(id)>`,
+  state is read with `hermes -p <id> config get mcp_servers --json`, and the result is **read back**
+  — exit 0 is not evidence (that was D8's whole lesson). Hermes's public CLI only; nothing writes
+  into `~/.hermes/**` and no Hermes credential is ever read.
+- The gateway's per-user MCP sockets now advertise only the **`allow` tier of `mcp-policy.yaml`**,
+  derived through the same `PolicyEngine` the gateway's own loop uses — never a second list.
+- `admin/hermes-profile-bridge.ts` and its `hermes-profile.bridge.not-live` WARN are **deleted**.
+  The `HERMES_HOME` question it detected is no longer the question that matters.
+
+### The registered surface is smaller than this note originally assumed, and why
+`hermes mcp add` grants a server's **whole advertised surface**. Its CLI has no non-interactive
+per-tool filter: tool selection lives behind a curses checklist (`hermes_cli/mcp_config.py`), and
+`hermes config set` cannot write a list — it coerces only bool/int/float, so
+`config set mcp_servers.gateway.tools.include '["a","b"]'` stores the **string** `'["a","b"]'`
+(measured on a throwaway profile). The catalog's `tools.include` is a GATEWAY-side filter that never
+reaches hermes.
+
+So registering `home_assistant` would hand the delegated agent ha-mcp's ~84 upstream tools, and
+`searxng` its 5 (only `search_web` is tiered). Both exceed the `allow` tier the owner scoped, so
+neither is registered. The gateway hosts its own per-user socket and therefore controls that
+surface exactly — it is the one server registrable within the tier. Follow-up in
+`docs/native-todo.md` § 1.
+
+### Live proof — `u_1eee01a4` (Grace), never hand-patched
+Backfill driven as the matrix specifies: stop gateway → `hermes -p u_1eee01a4 mcp remove gateway`
+→ boot.
+
+```
+WARN [external-tools:hermes-cli] hermes-cli.non-zero-exit | step="list" userId="u_1eee01a4" code=1 preview="Config key not set: mcp_servers
+INFO [external-tools:hermes]     hermes.register.start   | userId="u_1eee01a4" server="gateway" socketPath="/Users/kevinye/.sentient/run/mcp-u_1eee01a4.sock" tools=pause_audio,resume_audio
+INFO [external-tools:hermes]     hermes.register.ok      | userId="u_1eee01a4" server="gateway" tools=pause_audio,resume_audio
+INFO [external-tools:handler]    external-tools.done     | tools=hermes users=3
+```
+The other two users took the already-registered branch — one `config get`, no re-add.
+
+```
+$ hermes -p u_1eee01a4 mcp list
+  gateway   nc -U /Users/kevinye/.sen...   all   ✓ enabled
+```
+
+**The assertion is tool names, in BOTH directions** —
+`hermes -p u_1eee01a4 -z "List the exact names of every tool you can call, then stop."` → 30 tools:
+
+- PRESENT: `mcp__gateway__pause_audio`, `mcp__gateway__resume_audio`.
+- ABSENT: `mcp__gateway__identify_user`, `mcp__gateway__update_user_settings` — the two
+  confirm-tier tools. The tier filter holds on the wire, not only in a unit test.
+- The symptom measured at the top of this section was **28 tools, all hermes builtins, zero
+  gateway**. It is now 28 + exactly the 2 allow-tier gateway tools.
+
+`u_0417d3b0` (Ada), also never hand-patched, carries the same registration.
+
+### The gate is apply-COMPLETION, not apply-success — found by the first live boot
+The first implementation required `state === "ready"`. Real boot:
+
+```
+WARN [system-orch:native-driver] native.prepare-failed | service="whisper-stt" reason="argv[0] is not an executable file: /whisper-stt/venv/bin/python"
+INFO [system-orch:orchestrator]  apply.complete | state="failed"
+WARN [external-tools:handler]    external-tools.skipped | reason="internal dependencies never reported ready…"
+```
+
+`SENTIENT_CODE` is set only by the launchd plist, so **every dev boot** reports `failed` and the
+feature would never have run outside prod — and in prod one unconfigured addon would permanently
+deny every user their delegated tools. A failed addon apply does not remove the gateway's own MCP
+sockets. Gate is now completion, with `external-tools.degraded-apply` naming the state.
+
+### Two residuals from the list above, closed with it
+- **`hermes.mcp_host.socket_path` and `mcp_catalog.gateway.args` spelling the same path twice** —
+  the registration derives its socket from `resolveMcpSocketPath` and a test pins that, so the
+  live dialling side no longer depends on the catalog string agreeing.
+- **Stale `personalities: {<name>: ""}`** — was harmless only while this render was dead output.
+  Both writers now reject an empty body (`invalid-body` → 422) and `preserveAgentSections` drops
+  the entries older builds wrote, so an existing install converges on the next boot re-render.
+  Verified live: `preserve.dropped-personalities | dropped=1`, and `u_0417d3b0`'s rendered
+  config.yaml now has no `personalities` key at all.
+
+  Note the framing correction: the task body said the entry is left behind **by a delete**. It is
+  not — `personality-store.remove` was reproduced against a temp profile and removes the key
+  cleanly, leaving `personalities: {}`. The live artifact is an **empty-bodied personality that was
+  written that way**, which the add/update path accepted. Fixed at the writers and at the render.
