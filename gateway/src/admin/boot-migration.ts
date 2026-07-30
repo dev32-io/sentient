@@ -37,7 +37,12 @@ export interface RenderConfigsDeps {
  *
  * Nothing needs restarting afterwards: Hermes is a one-shot exec
  * (`hermes -p <userId> -z <prompt>`, see tools/hermes-runner.ts) whose `cwd`
- * IS the profile dir, so every delegation re-reads whatever this wrote.
+ * IS this dir, so every delegation starts from whatever this wrote.
+ *
+ * Caveat, load-bearing: hermes does NOT read its config.yaml (model,
+ * `mcp_servers`, `enabled_toolsets`) from `cwd` — it reads its own profile
+ * store. Until open defect D11 is closed, re-rendering here does not change
+ * what tools the delegated agent has. See `admin/hermes-profile-bridge.ts`.
  */
 export async function renderConfigsForExistingUsers(deps: RenderConfigsDeps): Promise<void> {
   const usersResult = await deps.userStore.list();

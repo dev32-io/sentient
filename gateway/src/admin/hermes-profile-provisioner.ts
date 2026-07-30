@@ -3,9 +3,13 @@
 // WHY THIS EXISTS. There are TWO profile trees, and the gateway used to write
 // only one of them:
 //   1. the gateway-side render — `profile-store`'s `renderInnerProfile` writes
-//      config.yaml + SOUL.md into `<HERMES_HOME>/profiles/<userId>/`, which is
-//      the `cwd` hermes-runner spawns `hermes -p <userId>` in;
+//      config.yaml + SOUL.md into `getHermesProfileDir(userId)`, which is the
+//      `cwd` hermes-runner spawns `hermes -p <userId>` in;
 //   2. Hermes's OWN profile registration, which `hermes profile create` makes.
+// Tree (1) is NOT the tree hermes reads its config.yaml from — that is the open
+// defect D11; `hermes-profile-bridge.ts` carries the root cause and this module
+// logs its detector below. Do not read the first bullet as "hermes picks the
+// render up"; two waves of defect-chasing already read it that way.
 // Writing (1) without (2) produces a directory that hermes will not use:
 // `hermes -p <userId>` exits non-zero with "Profile '<userId>' does not exist.
 // Create it with: hermes profile create <userId>" before it ever reads a
@@ -28,6 +32,11 @@
 
 import type { Result } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
+import {
+  HERMES_PROFILE_BRIDGE_CONSEQUENCE,
+  HERMES_PROFILE_BRIDGE_DEFECT,
+  checkHermesProfileBridge,
+} from "./hermes-profile-bridge.js";
 
 const log = getLog(["sentient", "gateway", "admin", "hermes-profile"]);
 
@@ -83,6 +92,23 @@ export function createHermesProfileProvisioner(deps: HermesProfileProvisionerDep
   const spawn = deps.spawn ?? ((argv, options) => Bun.spawn([...argv], options) as unknown as CliProcess);
 
   async function create(userId: string): Promise<Result<void, "cli-error">> {
+    // Runs on user creation AND on every boot for every existing user (the
+    // backfill in admin/boot-migration.ts), which is exactly the cadence a
+    // still-open environment fault should be re-announced at. Checked before
+    // the spawn: the bridge is a property of the environment, so it is worth
+    // saying even on an install where the hermes binary is missing entirely.
+    const bridge = checkHermesProfileBridge(userId);
+    if (!bridge.isLive) {
+      log.warn("hermes-profile.bridge.not-live", {
+        userId,
+        reason: bridge.reason,
+        renderedRoot: bridge.renderedRoot,
+        hermesHome: bridge.hermesHome,
+        defect: HERMES_PROFILE_BRIDGE_DEFECT,
+        consequence: HERMES_PROFILE_BRIDGE_CONSEQUENCE,
+      });
+    }
+
     // `--no-alias` skips the wrapper script hermes would otherwise drop on
     // PATH per profile: a per-user shell shim is a shell surface nobody asked
     // for, and one per family member would accumulate forever.

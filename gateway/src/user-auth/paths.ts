@@ -24,10 +24,18 @@ export function getUserProfileDir(userId: string): string {
 }
 
 /**
- * Hermes-consumed profile dir for a user. Hermes reads SOUL.md + config.yaml
- * from `<HERMES_HOME>/profiles/<userId>/`, where HERMES_HOME equals
- * `getUserProfileDir(userId)` per the supervisord program env. The apply
- * orchestrator writes rendered output here so hermes picks it up on restart.
+ * The gateway-side render target for a user's Hermes profile: config.yaml +
+ * SOUL.md land here, and `tools/hermes-runner.ts` spawns `hermes -p <userId>`
+ * with this as its `cwd`.
+ *
+ * It is NOT, currently, the directory hermes reads its config.yaml from. Hermes
+ * resolves that from `$HERMES_HOME/profiles/<userId>/`; the bridge used to be
+ * `HERMES_HOME` in the supervisord program env, which the native cutover
+ * deleted along with the daemon. Open defect D11 — root cause, hand-verified
+ * fix route and the reason it is unresolved live in
+ * `admin/hermes-profile-bridge.ts`, whose detector logs
+ * `hermes-profile.bridge.not-live` on every provision. Do not restate the old
+ * claim here: it is what sent two waves of defect-chasing to the wrong layer.
  */
 export function getHermesProfileDir(userId: string): string {
   return join(getUserProfileDir(userId), "profiles", userId);

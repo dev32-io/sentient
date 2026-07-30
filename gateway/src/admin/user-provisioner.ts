@@ -41,9 +41,13 @@ export interface UserProvisionerDeps {
   now: () => Date;
   archiveUserDir: (userId: string) => Promise<Result<void, "io-error">>;
   /** Render config.yaml + SOUL.md to the inner Hermes profile dir
-   *  (`<HERMES_HOME>/profiles/<userId>/`). Load-bearing for delegateTask:
-   *  `hermes-runner` spawns `hermes -p <userId>` with `cwd` set to that dir,
-   *  so it must exist and carry a model config before the first delegation. */
+   *  (`getHermesProfileDir(userId)`). `hermes-runner` spawns
+   *  `hermes -p <userId>` with `cwd` set to that dir, so the dir must exist
+   *  before the first delegation. What it must NOT be assumed to do is bind the
+   *  delegated agent's model or MCP tools: hermes reads its config.yaml from its
+   *  own store, not from this one — open defect D11, see
+   *  `admin/hermes-profile-bridge.ts`. The model/credential the delegation
+   *  actually uses comes from `createHermesProfile`'s `--clone-from`. */
   renderInnerProfile: (userId: string) => Promise<Result<void, "render-error" | "write-error">>;
   /** Register the user with the Hermes CLI's OWN profile store, which is a
    *  different tree from the gateway-side render above. `hermes -p <userId>`
