@@ -236,6 +236,10 @@ function stimulusText(stimulus: Stimulus): string {
   return stimulus.kind === "conversational" ? stimulus.text : stimulus.note;
 }
 
+function stimulusPendingId(stimulus: Stimulus): string | undefined {
+  return stimulus.kind === "conversational" ? stimulus.pendingId : undefined;
+}
+
 export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   const { principal, sessionId, accessManager, provider, broker, emitter, systemPrompt, config } = deps;
   const voice = deps.voice ?? null;
@@ -339,7 +343,22 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
       ...blankEntry(sessionId, turnId),
       kind: stimulusEntryKind(stimulus),
       text: stimulusText(stimulus),
+      pendingId: stimulusPendingId(stimulus) ?? null,
     });
+  }
+
+  /**
+   * The entry this session already committed for this stimulus's `pendingId`,
+   * or null when there is none (or the stimulus carries no id at all).
+   *
+   * The store IS the idempotency record — durable, so a resend after a
+   * reconnect, a process restart or a redeploy still matches. The old
+   * implementation kept a 256-entry in-memory Set on the session object, which
+   * lost the record on every one of those.
+   */
+  function alreadyCommitted(stimulus: Stimulus): SessionEntry | null {
+    const pendingId = stimulusPendingId(stimulus);
+    return pendingId === undefined ? null : store.findByPendingId(sessionId, pendingId);
   }
 
   async function onTurnSettled(turnId: string, result: TurnOutcome, signal: AbortSignal): Promise<void> {
@@ -581,6 +600,24 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   function submit(stimulus: Stimulus): void {
     if (disposed) {
       log.warn("session-runtime.submit.disposed", { userId, sessionId, kind: stimulus.kind });
+      return;
+    }
+
+    // IDEMPOTENT RESEND. The client resends a message whose optimistic bubble
+    // has not reconciled, so the same pendingId can arrive many times. Commit
+    // it once — but ANSWER every arrival, or the outbox never settles and the
+    // visible duplicate becomes an invisible hang, which is strictly worse.
+    // Ahead of the `inFlight` branch: a resend must neither steer a running
+    // turn nor start a new one.
+    const committed = alreadyCommitted(stimulus);
+    if (committed) {
+      feed.republish(committed);
+      log.info("session-runtime.submit.resend", {
+        userId,
+        sessionId,
+        seq: committed.seq,
+        reason: "pendingId already committed in this session; re-echoed without a second entry",
+      });
       return;
     }
 

@@ -154,7 +154,14 @@ export async function handleWebSocketMessage(
         sendError(ws, "orchestrator_unavailable", "Native orchestrator is not available for this session");
         return;
       }
-      ws.data.runtime.submit({ kind: "conversational", text: msg.text });
+      // `pendingId` is threaded, NOT acted on here: the idempotency decision
+      // belongs where the store append happens (SessionRuntime), so a resend
+      // is recorded and re-echoed rather than silently swallowed by the router.
+      ws.data.runtime.submit({
+        kind: "conversational",
+        text: msg.text,
+        ...(msg.pendingId === undefined ? {} : { pendingId: msg.pendingId }),
+      });
       return;
 
     case "interrupt":

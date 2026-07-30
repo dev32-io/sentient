@@ -1446,6 +1446,116 @@ describe("SessionRuntime — committed-feed producer", () => {
     await waitUntilIdle(reconnected);
     reconnected.dispose();
   });
+
+  it("INVARIANT: the same pendingId is committed once, however many times it arrives", async () => {
+    // The client resends whenever its optimistic entry has not reconciled —
+    // on reconnect, on retry, on every connection.state emission. Committing
+    // each arrival duplicated the message 2-30x in the store (defect D14).
+    const am = createAccessManager({ userDataRoot: `${ROOT}/feed-dedup` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = fakeProvider(async function* () {
+      yield { type: "text", content: "once" };
+      yield { type: "done", finishReason: "stop" };
+    });
+    const emitter = recordingEmitter();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-feed-dedup",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter,
+      systemPrompt: "test",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "hello", pendingId: "p1" });
+    await waitUntilIdle(runtime);
+    runtime.submit({ kind: "conversational", text: "hello", pendingId: "p1" });
+    await waitUntilIdle(runtime);
+    runtime.dispose();
+
+    const store = openSessionStore(am.grant(alice, "session-store"));
+    const userEntries = store.readSession("sess-feed-dedup").filter((e) => e.kind === "user");
+    expect(userEntries.map((e) => e.pendingId)).toEqual(["p1"]);
+    store.close();
+
+    // …and the resend was still ANSWERED. A silent drop leaves the client's
+    // outbox retrying forever — an invisible hang is worse than the visible
+    // duplicate it replaces. Same entryId, so the connector updates in place.
+    const userEchoes = emitter.events.filter((e) => e.type === "conversationEntry" && e.item?.kind === "user");
+    expect(userEchoes).toHaveLength(2);
+    expect(userEchoes.map((e) => e.item?.entryId)).toEqual([
+      userEchoes[0]?.item?.entryId ?? "",
+      userEchoes[0]?.item?.entryId ?? "",
+    ]);
+    expect(userEchoes.map((e) => (e.item?.kind === "user" ? e.item.pendingId : null))).toEqual(["p1", "p1"]);
+  });
+
+  it("INVARIANT: a resend does NOT start a second turn", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/feed-dedup-turn` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = fakeProvider(async function* () {
+      yield { type: "text", content: "once" };
+      yield { type: "done", finishReason: "stop" };
+    });
+    const emitter = recordingEmitter();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-dedup-turn",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter,
+      systemPrompt: "test",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "hello", pendingId: "p9" });
+    await waitUntilIdle(runtime);
+    runtime.submit({ kind: "conversational", text: "hello", pendingId: "p9" });
+    await waitUntilIdle(runtime);
+    runtime.dispose();
+
+    expect(emitter.events.filter((e) => e.type === "turnStarted")).toHaveLength(1);
+  });
+
+  it("does not dedup a conversational stimulus that carries no pendingId", async () => {
+    // Spoken turns and background completions have no client id to dedup on;
+    // two identical utterances are two real messages.
+    const am = createAccessManager({ userDataRoot: `${ROOT}/feed-no-pending` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = fakeProvider(async function* () {
+      yield { type: "text", content: "ok" };
+      yield { type: "done", finishReason: "stop" };
+    });
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-no-pending",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter: recordingEmitter(),
+      systemPrompt: "test",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "same words" });
+    await waitUntilIdle(runtime);
+    runtime.submit({ kind: "conversational", text: "same words" });
+    await waitUntilIdle(runtime);
+    runtime.dispose();
+
+    const store = openSessionStore(am.grant(alice, "session-store"));
+    expect(store.readSession("sess-no-pending").filter((e) => e.kind === "user")).toHaveLength(2);
+    store.close();
+  });
 });
 
 // ---------------------------------------------------------------------------

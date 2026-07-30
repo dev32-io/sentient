@@ -10,7 +10,22 @@
 // store is the queue"), which is what makes every stimulus source steer for
 // free, regardless of where it landed from.
 
-export type Stimulus = { kind: "conversational"; text: string } | { kind: "background-completion"; note: string };
+export type Stimulus =
+  | {
+      kind: "conversational";
+      text: string;
+      /**
+       * The client's own id for this message, when the source has one — a
+       * typed `text.input` does, a spoken turn does not. It rides on the
+       * stimulus rather than on the transport because the idempotency
+       * decision belongs where the store append happens (SessionRuntime), not
+       * in the frame router: a guard in the router would suppress the resend
+       * without recording anything, which is how the round trip was lost the
+       * first time.
+       */
+      pendingId?: string;
+    }
+  | { kind: "background-completion"; note: string };
 
 /**
  * A stimulus producer. `emit` is called once per stimulus observed; the
