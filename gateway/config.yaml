@@ -317,8 +317,20 @@ hermes:
   # bootstrap/create-mcp-host.ts.
   mcp_host:
     transport: unix_socket
-    # Base directory for per-user sockets. Actual paths are /run/sentient/mcp-<userId>.sock
-    socket_path: "/run/sentient/mcp.sock"
+    # Base path for the per-user sockets: only the DIRECTORY is used, the actual
+    # paths are always <dir>/mcp-<userId>.sock. MUST be an absolute, user-owned,
+    # writable directory — this was /run/sentient/mcp.sock while Hermes ran in a
+    # container with a bind-mount there; on a native macOS host /run does not
+    # exist and its parent is SIP-read-only, so no socket could ever open and
+    # every delegated Hermes ran with ZERO gateway tools. Keep the total path
+    # under 104 bytes (the sun_path ABI limit); mcp-host/socket-path.ts logs an
+    # error if a userId pushes it over.
+    #
+    # ONE PATH, TWO SIDES — the gateway LISTENS here and the rendered Hermes
+    # profile DIALS it via mcp_catalog.gateway.args below. Both spell it with
+    # the same ${HOME} so they cannot drift; changing one without the other
+    # fails SILENTLY (hermes connects to nothing and reports no tools).
+    socket_path: "${HOME}/.sentient/run/mcp.sock"
 
 # ---------------------------------------------------------------------------
 # Auth — user-facing login (PIN + PASETO token)
@@ -411,11 +423,18 @@ mcp_catalog:
         - ha_config_remove_calendar_event
 
   # Gateway-hosted MCP — exposes per-user tools (identify_user, channel
-  # control, audio control). One Unix socket per Hermes slot.
+  # control, audio control). One Unix socket per user; `nc -U` bridges the
+  # delegated Hermes's stdio MCP transport onto that socket.
+  #
+  # THIS IS THE DIALLING SIDE of hermes.mcp_host.socket_path above — the two
+  # MUST name the same directory. `${HOME}` is expanded once at config load
+  # (shared/config/loader.ts) so both sides derive from the one value; `nc` gets
+  # its path as argv with no shell, so a literal `~` here would NOT expand.
+  # {{userId}} is substituted per user at profile render time.
   gateway:
     transport: stdio
     command: nc
-    args: ["-U", "/run/sentient/mcp-{{userId}}.sock"]
+    args: ["-U", "${HOME}/.sentient/run/mcp-{{userId}}.sock"]
     description: Sentient gateway tools (identify, audio, channel).
     tools:
       include:

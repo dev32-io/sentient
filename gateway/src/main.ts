@@ -37,8 +37,10 @@ log.info("gateway-started", { host: server.hostname, port: server.port });
 // MCP host server — Phase 1.7+
 // ---------------------------------------------------------------------------
 // When hermes config is present, start one Unix socket per enabled user
-// profile: /run/sentient/mcp-<userId>.sock. Each socket carries a userId
-// binding so tools (identify_user, pause_audio, etc.) can resolve sessions.
+// profile: <hermes.mcp_host.socket_path dir>/mcp-<userId>.sock, resolved by
+// mcp-host/socket-path.ts (default `~/.sentient/run/`). Each socket carries a
+// userId binding so tools (identify_user, pause_audio, etc.) can resolve
+// sessions.
 // ---------------------------------------------------------------------------
 
 let mcpHost: Awaited<ReturnType<typeof createMcpHost>> | null = null;

@@ -24,7 +24,13 @@ export type HermesWebTools = z.infer<typeof hermesWebToolsSchema>;
 
 export const hermesMcpHostSchema = z.object({
   transport: z.enum(["unix_socket", "http"]).default("unix_socket"),
-  socket_path: z.string().default("/run/sentient/mcp.sock"),
+  /** Base path for the gateway's per-user MCP sockets; only its directory is
+   *  used. The default anchors on `~` (expanded by `mcp-host/socket-path.ts`)
+   *  because the state root is the only writable anchor that holds in a repo
+   *  checkout AND in a compiled binary under launchd. It was
+   *  `/run/sentient/mcp.sock` for the containerized Hermes — `/run` does not
+   *  exist on a native macOS host, so every socket silently failed to open. */
+  socket_path: z.string().default("~/.sentient/run/mcp.sock"),
 });
 export type HermesMcpHost = z.infer<typeof hermesMcpHostSchema>;
 

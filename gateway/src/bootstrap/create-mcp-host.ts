@@ -2,6 +2,7 @@ import type { HermesConfig } from "@sentient/config";
 import { getLog } from "../logging/logger.js";
 import type { ActiveSessionLookup } from "../mcp-host/active-session-lookup.js";
 import type { McpServerDeps } from "../mcp-host/mcp-server.js";
+import { resolveMcpSocketPath } from "../mcp-host/socket-path.js";
 import { createToolRegistry } from "../mcp-host/tool-registry.js";
 import type { AudioControls } from "../mcp-host/tools/audio-tools.js";
 import { createPauseAudioTool, createResumeAudioTool } from "../mcp-host/tools/audio-tools.js";
@@ -32,12 +33,6 @@ export interface McpHostOptions {
   policy: PolicyEngine;
 }
 
-/** Derive per-user socket path from the base path. */
-function userSocketPath(basePath: string, userId: string): string {
-  const dir = basePath.substring(0, basePath.lastIndexOf("/") + 1);
-  return `${dir}mcp-${userId}.sock`;
-}
-
 export async function createMcpHost(options: McpHostOptions): Promise<McpHost> {
   const { config, router, userStore, audio, userSettings, policy } = options;
   const basePath = config.mcp_host.socket_path;
@@ -50,7 +45,7 @@ export async function createMcpHost(options: McpHostOptions): Promise<McpHost> {
   ]);
 
   function buildListener(userId: string): UnixSocketListener {
-    const socketPath = userSocketPath(basePath, userId);
+    const socketPath = resolveMcpSocketPath(userId, basePath);
     const deps: McpServerDeps = {
       registry,
       policy,
@@ -81,7 +76,7 @@ export async function createMcpHost(options: McpHostOptions): Promise<McpHost> {
       await Promise.all(Array.from(listenersByUser.values()).map((l) => l.start()));
       started = true;
       log.info("mcp-host-started", {
-        sockets: Array.from(listenersByUser.keys()).map((id) => userSocketPath(basePath, id)),
+        sockets: Array.from(listenersByUser.keys()).map((id) => resolveMcpSocketPath(id, basePath)),
       });
     },
     async stop() {
@@ -99,7 +94,7 @@ export async function createMcpHost(options: McpHostOptions): Promise<McpHost> {
       listenersByUser.set(userId, listener);
       if (started) {
         await listener.start();
-        log.info("addUser.listener-started", { userId, socketPath: userSocketPath(basePath, userId) });
+        log.info("addUser.listener-started", { userId, socketPath: resolveMcpSocketPath(userId, basePath) });
       }
     },
     async removeUser(userId: string) {
