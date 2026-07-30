@@ -69,6 +69,17 @@ services:
     pull_policy: never
     profiles: ["build-only"]
 
+  # Not an MCP: the loopback ingress that lets the two MCPs above stay
+  # internal-only (docker drops port publishing when every attached network is
+  # internal). Required, not optional — without this image on the daemon nothing
+  # on the host can reach fetch-mcp or searxng-mcp at all.
+  ingress-proxy:
+    build:
+      context: ../../gateway/mcp/ingress-proxy
+    image: sentient/ingress-proxy:local
+    pull_policy: never
+    profiles: ["build-only"]
+
   signal-cli:
     build:
       context: ../..

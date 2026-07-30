@@ -1,17 +1,13 @@
 image: sentient/searxng-mcp:local
 container_name: sentient-searxng-mcp
-# sentient-external joins so the loopback publish below actually takes effect:
-# docker drops port publishing entirely when every attached network is
-# `internal: true`. This adapter dials only sentient-searxng, over
-# sentient-internal — see config.yaml#managed_services.searxng-mcp.
-networks: [sentient-internal, sentient-external]
+# INTERNAL ONLY. This adapter's one upstream is sentient-searxng, reached over
+# sentient-internal, so it needs no route out at all — and now that
+# ingress-proxy owns its host publish, it does not need one to be reachable
+# either.
+networks: [sentient-internal]
 env:
   SEARXNG_URL: http://sentient-searxng:8080
 mem_limit_bytes: 134217728    # 128 MiB — thin HTTP adapter
 cpus: 0.25
-# Host publishing. LOOPBACK ONLY: the gateway is a native host process now, so
-# docker DNS is gone and Docker Desktop bridge IPs are not host-routable. A bare
-# "8087:8087" would bind 0.0.0.0 and put this addon on the LAN.
-# native gateway dials http://127.0.0.1:8087/mcp.
-ports:
-  - "127.0.0.1:8087:8087"
+# NO `ports:` — see fetch-mcp.yaml. The native gateway still dials
+# http://127.0.0.1:8087/mcp; ingress-proxy owns that publish.

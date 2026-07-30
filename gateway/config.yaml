@@ -524,6 +524,30 @@ managed_services:
     depends_on: []
     optional: false
 
+  ingress-proxy:
+    template: ingress-proxy.yaml
+    allowed_images: ["sentient/ingress-proxy:local"]
+    # The inverse of egress-proxy, and the ONE service that spans both networks
+    # so that no MCP has to. Docker silently drops port publishing when every
+    # attached network is `internal: true` (verified on docker 29.2.1:
+    # NetworkSettings.Ports reads back EMPTY and the host port answers nothing),
+    # which made loopback reachability and network-enforced egress confinement
+    # mutually exclusive FOR ONE CONTAINER. This is that one container: it holds
+    # the publishes, forwards inward over sentient-internal, and lets fetch-mcp
+    # and searxng-mcp go back to internal-only.
+    networks: ["sentient-internal", "sentient-external"]
+    # Probes the ingress path the gateway itself uses. One nginx process serves
+    # both listeners, so :8088 answering means :8087 does too.
+    healthcheck:
+      tcp: "127.0.0.1:8088"
+      timeout_ms: 30000
+    # Deliberately EMPTY. nginx resolves its upstreams at request time (see
+    # nginx.conf's resolver), so it does not need the services it fronts to
+    # exist yet — and depending on them would let one broken addon block the
+    # shared ingress and take the other addon's reachability with it.
+    depends_on: []
+    optional: false
+
   # NOT here, deliberately:
   #   sentient-hermes — hermes has no lifecycle in 2.0. It is `hermes -p <userId>
   #     -z <prompt>`, spawned and exited by delegateTask (gateway/src/tools/
@@ -579,33 +603,33 @@ managed_services:
   fetch-mcp:
     template: fetch-mcp.yaml
     allowed_images: ["sentient/fetch-mcp:local"]
-    # sentient-external joins for REACHABILITY, not for egress. The native
-    # gateway dials this MCP on 127.0.0.1:8088, and docker SILENTLY DROPS the
-    # publish when every attached network is `internal: true` — verified on
-    # docker 29.2.1: NetworkSettings.Ports reads back EMPTY and the host port
-    # answers nothing, while the identical container with one non-internal
-    # network publishes and answers. Outbound fetches still go through
-    # egress-proxy (HTTP_PROXY/HTTPS_PROXY in fetch-mcp.yaml). What this
-    # membership costs is the HARD backstop: a container ignoring those env
-    # vars could now reach the internet directly instead of being routed. The
-    # boundary-preserving alternatives are new components, not config edits — a
-    # loopback ingress forwarder in front of an internal-only MCP, or MCP over
-    # a bind-mounted unix socket — and neither is built yet.
-    networks: ["sentient-internal", "sentient-external"]
+    # INTERNAL ONLY. This is the addon that dereferences attacker-chosen URLs,
+    # so it gets the HARD backstop: with no non-internal network it has no route
+    # off the bridge, and egress-proxy is not a policy it could ignore but the
+    # only way out. It publishes nothing — ingress-proxy holds its host port and
+    # forwards inward, which is what buys back this membership.
+    networks: ["sentient-internal"]
+    # `noop`, for the same reason as searxng below: nothing on the host can reach
+    # this container directly any more. Probing 127.0.0.1:8088 would probe
+    # ingress-proxy, which listens whether or not this MCP is alive — a green
+    # light for a dead service. A dead fetch-mcp surfaces as a failed `fetch`
+    # tool call (nginx 502), not as a boot failure.
     healthcheck:
-      tcp: "127.0.0.1:8088"
-      timeout_ms: 30000
-    depends_on: ["egress-proxy"]
+      noop: true
+    # ingress-proxy is a dependency for REACHABILITY: without it this MCP is up
+    # but undialable, and blocked-by-dep names that cause instead of showing a
+    # green service the gateway cannot talk to.
+    depends_on: ["egress-proxy", "ingress-proxy"]
     optional: false
 
   searxng:
     template: searxng.yaml
     allowed_images: ["searxng/searxng:latest"]
-    # STAYS internal-only, and publishes NO host port (searxng.yaml declares no
-    # `ports:`). Nothing on the host dials searxng — its only consumer is the
-    # sibling searxng-mcp over sentient-internal — so it keeps the hard
-    # no-egress backstop that fetch-mcp and searxng-mcp had to trade away for
-    # host reachability. Upstream engine traffic goes through egress-proxy,
+    # Internal-only, and publishes NO host port (searxng.yaml declares no
+    # `ports:`) — and unlike the two MCPs it needs no ingress-proxy entry either,
+    # because nothing on the host dials searxng at all: its only consumer is the
+    # sibling searxng-mcp over sentient-internal.
+    # Upstream engine traffic goes through egress-proxy,
     # declared in searxng/settings.yml#outgoing.proxies (searxng's httpx ignores
     # HTTP_PROXY env, so the env vars alone would not route it).
     networks: ["sentient-internal"]
@@ -624,18 +648,16 @@ managed_services:
   searxng-mcp:
     template: searxng-mcp.yaml
     allowed_images: ["sentient/searxng-mcp:local"]
-    # sentient-external joins for REACHABILITY only — same docker behaviour as
-    # fetch-mcp above (internal-only ⇒ publish silently dropped), and the
-    # gateway dials this MCP on 127.0.0.1:8087. This adapter makes NO outbound
-    # internet call of its own: its one upstream is sentient-searxng over
-    # sentient-internal, so the egress it gains is unused capability, not a used
-    # path. Same follow-up applies — an ingress forwarder or unix-socket
-    # transport would let it go back to internal-only.
-    networks: ["sentient-internal", "sentient-external"]
+    # INTERNAL ONLY. Its one upstream is sentient-searxng over
+    # sentient-internal, so it never needed egress — it only ever carried
+    # sentient-external to make its own publish take effect, and ingress-proxy
+    # owns that publish now.
+    networks: ["sentient-internal"]
+    # `noop` — see fetch-mcp above. 127.0.0.1:8087 is ingress-proxy's listener,
+    # so probing it would report on the proxy, not on this adapter.
     healthcheck:
-      tcp: "127.0.0.1:8087"
-      timeout_ms: 30000
-    depends_on: ["searxng"]
+      noop: true
+    depends_on: ["searxng", "ingress-proxy"]
     optional: false
 
   # Native (non-container) services. `launch: native` swaps the docker backend

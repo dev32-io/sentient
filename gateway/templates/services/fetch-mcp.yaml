@@ -1,11 +1,13 @@
 image: sentient/fetch-mcp:local
 container_name: sentient-fetch-mcp
-# sentient-external joins so the loopback publish below actually takes effect:
-# docker drops port publishing entirely when every attached network is
-# `internal: true`. Egress still routes through egress-proxy via the env below;
-# see config.yaml#managed_services.fetch-mcp for what that trade costs.
-networks: [sentient-internal, sentient-external]
+# INTERNAL ONLY, and that is the whole point: this container dereferences
+# attacker-chosen URLs, so `internal: true` makes its egress physically
+# impossible rather than merely routed. Every outbound fetch has to go through
+# egress-proxy because there is no other route out.
+networks: [sentient-internal]
 env:
+  # Belt and braces: the network has no route out, so these only pick the hop —
+  # a container ignoring them reaches nothing, it does not reach the internet.
   HTTP_PROXY: http://sentient-egress-proxy:3128
   HTTPS_PROXY: http://sentient-egress-proxy:3128
   NO_PROXY: localhost,127.0.0.1
@@ -17,9 +19,7 @@ env:
   FETCH_IGNORE_ROBOTS_TXT: "true"   # "true"/"1"/"yes" skip robots.txt; "false" respect it
 mem_limit_bytes: 268435456    # 256 MiB — python + readabilipy fetch workload
 cpus: 0.5
-# Host publishing. LOOPBACK ONLY: the gateway is a native host process now, so
-# docker DNS is gone and Docker Desktop bridge IPs are not host-routable. A bare
-# "8088:8088" would bind 0.0.0.0 and put this addon on the LAN.
-# native gateway dials http://127.0.0.1:8088/mcp.
-ports:
-  - "127.0.0.1:8088:8088"
+# NO `ports:` — deliberately, and docker would drop them anyway on an
+# internal-only container. The native gateway still dials
+# http://127.0.0.1:8088/mcp; ingress-proxy owns that publish and forwards inward
+# over sentient-internal (gateway/templates/services/ingress-proxy.yaml).
