@@ -57,8 +57,14 @@ type TransportHealth = "alive" | "dead";
  * leaves usability UNPROVEN, so the transport is presumed dead. The cost of
  * being wrong that way is one redial on next use; the cost of the other way
  * is a permanently dead tool surface.
+ *
+ * Exported so the `ConnectionClosed` carve-out can be pinned directly: the SDK
+ * raises that one LOCALLY, when the transport closes under an in-flight
+ * request, and by then whoever closed the transport has already dropped it from
+ * the pool — so `dropIfCurrent` makes both classifications look identical from
+ * outside `callTool`. The carve-out is unobservable end-to-end.
  */
-function classifyTransport(err: unknown, signal: AbortSignal | undefined): TransportHealth {
+export function classifyTransport(err: unknown, signal: AbortSignal | undefined): TransportHealth {
   if (signal?.aborted) return "alive";
   if (err instanceof McpError) return err.code === ErrorCode.ConnectionClosed ? "dead" : "alive";
   return "dead";

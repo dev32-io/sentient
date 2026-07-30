@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { McpCatalog } from "@sentient/config";
-import { createMcpClient, filterByAllowlist } from "./mcp-client.js";
+import { classifyTransport, createMcpClient, filterByAllowlist } from "./mcp-client.js";
 
 const tools = [
   { serverName: "ha", name: "ha_get_state", description: "", inputSchema: {} },
@@ -205,6 +206,24 @@ describe("a catalog server that restarts under the client", () => {
     const after = await client.callTool("music_assistant", "ma_search", {}, new AbortController().signal);
     expect(after.content).toBe("played");
     expect(peer.initializeCount()).toBe(1);
+  });
+});
+
+// The one carve-out in the eviction rule, and the only branch of it the wire
+// tests above cannot reach. `McpError` normally proves the peer answered, which
+// KEEPS the transport — except for `ConnectionClosed`, which the SDK raises
+// LOCALLY when the transport closes with a request still in flight
+// (`protocol.js:263` rejects every pending response handler with it). By the
+// time that error surfaces, whoever closed the transport has already dropped it
+// from the pool, so `dropIfCurrent` makes "dead" and "alive" produce the same
+// observable result through `callTool` — hence the classifier is pinned here
+// directly. The inverse (any other `McpError` keeps the transport) is pinned
+// end-to-end by "keeps the transport when the peer answers a call with a
+// JSON-RPC error" above; together the two make the carve-out non-droppable.
+describe("classifyTransport", () => {
+  it("treats a locally-raised ConnectionClosed as a dead transport, not as a peer answer", () => {
+    const closed = new McpError(ErrorCode.ConnectionClosed, "Connection closed");
+    expect(classifyTransport(closed, undefined)).toBe("dead");
   });
 });
 
