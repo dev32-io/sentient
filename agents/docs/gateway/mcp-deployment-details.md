@@ -172,8 +172,8 @@ starts and health-checks the containers from a `managed_services` entry in
 not `docker compose up`.
 
 Getting a container's loopback port published is **asymmetric by design** —
-follow the decision procedure in `.claude/rules/gateway/mcp-deployment.md`,
-not a flat "publish/don't publish" list. Two concrete examples, both real:
+which side an addon lands on turns on the egress question the rules ask, not
+on a flat "publish/don't publish" list. Two concrete examples, both real:
 
 - **`ha-mcp` / `ma-mcp`** — attach `sentient-external` (they dial Home
   Assistant / Music Assistant on the LAN, so they need routable egress *by
