@@ -24,7 +24,6 @@ import io.sentient.android.settings.SettingsViewModel
 import io.sentient.android.settings.account.AccountScreen
 import io.sentient.android.settings.advanced.AdvancedScreen
 import io.sentient.android.settings.audio.AudioScreen
-import io.sentient.android.settings.devices.DevicesScreen
 import io.sentient.android.settings.diagnostics.DiagnosticsScreen
 import io.sentient.android.settings.members.MembersScreen
 import io.sentient.android.settings.memory.MemoryScreen
@@ -55,7 +54,6 @@ fun NavGraphBuilder.settingsDestinations(nav: NavHostController) {
     systemPromptDestination(nav)
     advancedDestination(nav)
     accountDestination(nav)
-    devicesDestination(nav)
     membersDestination(nav)
     secretsDestination(nav)
     diagnosticsDestination(nav)
@@ -184,12 +182,6 @@ private fun NavGraphBuilder.advancedDestination(nav: NavHostController) {
 private fun NavGraphBuilder.accountDestination(nav: NavHostController) {
     composable(Routes.SETTINGS_ACCOUNT) {
         AccountScreen(vm = koinViewModel(), onBack = { nav.popBackStack() })
-    }
-}
-
-private fun NavGraphBuilder.devicesDestination(nav: NavHostController) {
-    composable(Routes.SETTINGS_DEVICES) {
-        DevicesScreen(vm = koinViewModel(), onBack = { nav.popBackStack() })
     }
 }
 

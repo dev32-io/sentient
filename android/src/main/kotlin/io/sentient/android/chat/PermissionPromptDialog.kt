@@ -3,7 +3,7 @@
 // §5.3). Shown when the model wants to run a side-effecting tool and the PDP needs
 // a user decision. Pure/stateless — [request] + Allow/Deny callbacks are hoisted
 // from ChatViewModel via ChatContent/ChatHost, mirroring AddMemberDialog /
-// ChangePinDialog / SignalLinkDialog's state-in/callbacks-out shape. Allow uses the
+// ChangePinDialog's state-in/callbacks-out shape. Allow uses the
 // canonical confirmButton TextButton; Deny uses DangerButton (the destructive-
 // affordance style) instead of a plain TextButton — this is a real decision, not
 // "Cancel": declining blocks the tool and the model is told the user refused.

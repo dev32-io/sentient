@@ -122,8 +122,7 @@ final class AdvancedViewModel {
                 extraSystemPrompt: extraSystemPrompt,
                 maxTokens: Int32(maxTokens.rounded()),
                 reasoningEffort: reasoningEffort
-            ),
-            devices: o.devices
+            )
         )
     }
 }

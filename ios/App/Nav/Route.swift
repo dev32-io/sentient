@@ -39,7 +39,6 @@ enum Route: Hashable {
 
     // ── Settings · User group ──
     case settingsAccount
-    case settingsDevices
 
     // ── Settings · Admin group (gated on me.isAdmin) ──
     case settingsMembers

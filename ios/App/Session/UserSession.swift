@@ -37,7 +37,7 @@ final class UserSession: ObservableObject {
     /// The settings slice of this connection scope (built beside `component` inside
     /// the KMP `IosUserSession`). Per-screen settings ViewModels resolve their
     /// usecases from here — `settings.observeSettingsAccess`, `settings.voices`,
-    /// `settings.applyProfileChange`, `settings.account`, `settings.devices`,
+    /// `settings.applyProfileChange`, `settings.account`,
     /// `settings.admin` — never the SDK or a repository directly.
     var settings: SettingsComponent { inner.settings }
 

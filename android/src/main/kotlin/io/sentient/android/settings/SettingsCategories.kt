@@ -17,7 +17,6 @@ import io.sentient.android.settings.icons.Cpu
 import io.sentient.android.settings.icons.Diagnostics
 import io.sentient.android.settings.icons.Drama
 import io.sentient.android.settings.icons.Key
-import io.sentient.android.settings.icons.Phone
 import io.sentient.android.settings.icons.SettingsIcons
 import io.sentient.android.settings.icons.SlidersH
 import io.sentient.android.settings.icons.UserCircle
@@ -65,7 +64,6 @@ object SettingsGroups {
         title = USER,
         categories = listOf(
             SettingsCategory("account", "Account", SettingsIcons.UserCircle, Routes.SETTINGS_ACCOUNT),
-            SettingsCategory("devices", "Devices", SettingsIcons.Phone, Routes.SETTINGS_DEVICES),
         ),
     )
 

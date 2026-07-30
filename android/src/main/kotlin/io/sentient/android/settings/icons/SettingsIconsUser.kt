@@ -29,21 +29,6 @@ val SettingsIcons.UserCircle: ImageVector
         return built
     }
 
-private var _phone: ImageVector? = null
-
-/** phone.tsx — Devices category icon. */
-val SettingsIcons.Phone: ImageVector
-    get() {
-        _phone?.let { return it }
-        val built = strokeIcon(
-            name = "Phone",
-            pathData = "M9 2L15 2A2 2 0 0 1 17 4L17 20A2 2 0 0 1 15 22L9 22A2 2 0 0 1 7 20L7 4A2 2 0 0 1 9 2Z " +
-                "M11 18h2",
-        )
-        _phone = built
-        return built
-    }
-
 private var _usersGroup: ImageVector? = null
 
 /** users-group.tsx — Members (admin) category icon. */

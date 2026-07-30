@@ -192,8 +192,7 @@ final class ToolsViewModel {
             persona: o.persona,
             tools: ProfileTools(enabled: draftEnabled, toolsets: draftToolsets),
             compression: o.compression,
-            advanced: o.advanced,
-            devices: o.devices
+            advanced: o.advanced
         )
     }
 }

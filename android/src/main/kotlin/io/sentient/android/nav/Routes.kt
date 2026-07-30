@@ -33,7 +33,6 @@ object Routes {
     const val SETTINGS_SYSTEM_PROMPT = "settings/system-prompt"
     const val SETTINGS_ADVANCED = "settings/advanced"
     const val SETTINGS_ACCOUNT = "settings/account"
-    const val SETTINGS_DEVICES = "settings/devices"
     const val SETTINGS_MEMBERS = "settings/members"
     const val SETTINGS_SECRETS = "settings/secrets"
     const val SETTINGS_DIAGNOSTICS = "settings/diagnostics"

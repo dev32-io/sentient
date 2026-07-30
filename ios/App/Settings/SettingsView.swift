@@ -63,7 +63,6 @@ private let soulItems: [CategoryItem] = [
 
 private let userItems: [CategoryItem] = [
     .init(icon: .account, title: "Account", route: .settingsAccount, key: "account"),
-    .init(icon: .devices, title: "Devices", route: .settingsDevices, key: "devices"),
 ]
 
 private let adminItems: [CategoryItem] = [
