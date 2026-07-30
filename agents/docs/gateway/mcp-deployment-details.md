@@ -7,9 +7,12 @@ and exact compose snippets for the MCP-container standard.
 
 The pre-standard layout had two MCP shapes:
 
-- **HTTP MCPs** (`ha-mcp`) — long-running container, gateway dials
-  `http://ha-mcp:8086/mcp`. Clean isolation, restart by docker, network
-  posture controlled at the compose layer.
+- **HTTP MCPs** (`ha-mcp`) — long-running container, gateway dials it over
+  HTTP. Clean isolation, restart by docker, network posture controlled at
+  the compose layer. (At the time: docker DNS, `http://ha-mcp:8086/mcp`. The
+  gateway is a native host process now, so this is loopback,
+  `http://127.0.0.1:8086/mcp` — see "The loopback-only publish topology"
+  below for the current dial pattern.)
 - **stdio MCPs** (`music-assistant-mcp`, `mcp-server-fetch`, `searxng-mcp-server`) — Python
   packages installed inside `sentient-hermes`, spawned per session by
   supervisord-managed Hermes workers via `command:` config. They
@@ -30,15 +33,17 @@ without auth. The defense:
 
 - MCP containers join `sentient-internal` only (or `sentient-internal` +
   `sentient-external` when LAN egress is needed).
-- No host port is published. The docker bridge isolates the MCP from
-  the LAN; only containers on the same internal network (hermes,
-  gateway) can dial it.
+- Any published port binds `127.0.0.1` explicitly — the LAN never reaches an
+  MCP directly, only the gateway's `8888` is LAN-facing. Whether a container
+  publishes its own loopback port or stays internal-only behind
+  `ingress-proxy` follows the decision procedure below, not a flat rule.
 - We trust the MCP code itself. We chose to install it; we trust its
   tool surface. The boundary is reachability, not in-container behavior.
 
-The foot-gun is `ports:` — anyone adding `ports: ["8086:8086"]` "for
-debugging" punches a hole through the LAN isolation. Comment the
-compose block to call this out.
+The foot-gun is now a **missing** `127.0.0.1:` prefix — `ports: ["8086:8086"]`
+binds `0.0.0.0` by docker default and puts the MCP on the LAN. Comment the
+compose block / template to call this out, and see `enforcePublishReachable`
+in `docker-driver.ts` for the automated guard.
 
 ## Compose template
 
@@ -48,8 +53,11 @@ ma-mcp:
     context: ../mcp/ma-mcp
   image: sentient/ma-mcp:local
   container_name: sentient-ma-mcp
-  # DO NOT add `ports:` — breaks LAN isolation. The container is reachable
-  # only from inside `sentient-internal` (hermes / gateway).
+  # LOOPBACK ONLY. sentient-external gives this container LAN reach by
+  # design (it dials Music Assistant), so a direct loopback publish adds no
+  # new exposure — the native gateway dials it at 127.0.0.1:8668/mcp.
+  ports:
+    - "127.0.0.1:8668:8668"
   networks: [sentient-internal, sentient-external]
   environment:
     MUSIC_ASSISTANT_URL: http://mass.local:8095
@@ -83,13 +91,20 @@ The fork wraps tools in a `with_reconnect` retry decorator and
 re-checks `connection.connected` on each `get_client()` call.
 
 For a pure-HTTP MCP that talks to the internet (e.g. fetch-mcp), drop
-`sentient-external` and route through `egress-proxy` instead:
+`sentient-external` and route through `egress-proxy` instead. This is the
+**internal-only** shape: no `ports:` at all, reached inbound via
+`ingress-proxy` (see "The loopback-only publish topology" above) —
+`egress-proxy` below is the OUTBOUND path, unrelated to how the gateway
+reaches the container:
 
 ```yaml
 fetch-mcp:
   build:
     context: ../../gateway/mcp/fetch-mcp
   image: sentient/fetch-mcp:local
+  # NO `ports:` — deliberately, and docker would drop them anyway on an
+  # internal-only container. ingress-proxy owns the loopback publish and
+  # forwards inward; the native gateway still dials http://127.0.0.1:8088/mcp.
   networks: [sentient-internal]
   depends_on: [egress-proxy]
   environment:
@@ -114,12 +129,13 @@ Dockerfile so the container is reproducible.
 
 ## User config references
 
-Renderer output (post-standard):
+Renderer output (post-standard, post-native-migration — loopback, not
+docker DNS; see `gateway/config.yaml#mcp_catalog`):
 
 ```yaml
 mcp_servers:
   music_assistant:
-    url: http://ma-mcp:8668/mcp
+    url: http://127.0.0.1:8668/mcp
     timeout: 30
     connect_timeout: 5
     tools:
@@ -143,20 +159,63 @@ NXDOMAIN from inside containers. Two options:
 
 Pick (1) by default.
 
+## The loopback-only publish topology (post native-stack migration)
+
+The gateway is a native host process now — it dials every MCP over
+`http://127.0.0.1:<port>/mcp`, never docker DNS. `deploy/docker/` (the
+old Linux compose that also ran the gateway itself) is **removed**; the
+service blocks below live only in `deploy/macos/docker-compose.yml` and
+`deploy/mac-prod/docker-compose.yml`, and even there they're `build-only` —
+the gateway's own orchestrator (`gateway/src/system-orchestrator/`) creates,
+starts and health-checks the containers from a `managed_services` entry in
+`gateway/config.yaml` plus a template at `gateway/templates/services/<name>.yaml`,
+not `docker compose up`.
+
+Getting a container's loopback port published is **asymmetric by design** —
+follow the decision procedure in `.claude/rules/gateway/mcp-deployment.md`,
+not a flat "publish/don't publish" list. Two concrete examples, both real:
+
+- **`ha-mcp` / `ma-mcp`** — attach `sentient-external` (they dial Home
+  Assistant / Music Assistant on the LAN, so they need routable egress *by
+  design*) and publish their own loopback port directly
+  (`gateway/templates/services/ha-mcp.yaml`): a direct publish adds no new
+  exposure on a container that already has LAN reach.
+- **`fetch-mcp` / `searxng-mcp`** — `sentient-internal`-only, no `ports:` at
+  all. `fetch-mcp` dereferences attacker-chosen URLs, so its egress
+  confinement must be **network-enforced** (physically no route out except
+  `egress-proxy`), not just `HTTP_PROXY`-advisable. Reachability comes from
+  `ingress-proxy` (`gateway/templates/services/ingress-proxy.yaml`), an nginx
+  container that spans both networks and forwards the loopback port inward
+  over docker's embedded DNS (a literal upstream would go stale on the next
+  addon recreate, since docker assigns it a new bridge IP).
+
+**Why `ingress-proxy` has to exist at all:** docker silently drops port
+publishing the moment *every* network a container is attached to is
+`internal: true` — there is no error, the port mapping just comes back
+empty (`NetworkSettings.Ports={}`). An internal-only MCP therefore cannot
+publish its own port under any `ports:` spelling; something that straddles
+both networks has to forward on its behalf. `enforcePublishReachable` in
+`docker-driver.ts` fails the apply loudly if a template is ever shaped to
+hit this silently (all-internal networks + a `ports:` entry).
+
 ## Migration checklist
 
 When converting a `command:`-shaped MCP to the standard:
 
 1. Add `gateway/mcp/<name>/Dockerfile` that installs the package,
    pins version, and runs FastMCP HTTP on a fixed port.
-2. Add the service block to `deploy/docker/docker-compose.yml` (and
-   `deploy/mac-prod/docker-compose.yml`). Mirror the network/`extra_hosts`
-   posture from the rules.
+2. Add a `managed_services` entry to `gateway/config.yaml` and a template at
+   `gateway/templates/services/<name>.yaml` (see the two examples above for
+   the internal-vs-external egress decision). Add the image to the
+   `build-only` profile in `deploy/macos/docker-compose.yml` and
+   `deploy/mac-prod/docker-compose.yml` so `docker compose --profile
+   build-only build` bakes it.
 3. Update `gateway/src/profile-store/profile-renderer.ts` to emit
    `url:` for that MCP. Remove the legacy `command/args/env` branch
    for that server's slug.
 4. Remove the per-user `MA_*` / similar env-var wiring from rendered
    config; the container owns those now.
-5. Smoke-test from inside `sentient-hermes`:
-   `nc -vz <service-name> 8086` then a real `tools/list` round-trip via
-   the existing MCP client.
+5. Smoke-test from the gateway host:
+   `curl http://127.0.0.1:<port>/mcp` (direct or via `ingress-proxy`,
+   per the decision above) then a real `tools/list` round-trip via the
+   existing MCP client.

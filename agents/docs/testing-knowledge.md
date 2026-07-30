@@ -10,6 +10,19 @@ Each `### Case` entry has a scenario, a "why added" reason, callable
 steps, and the expected user-visible + log-trail outcome. New reusable
 cases are appended here, indexed by the surface they exercise.
 
+> **Native-stack migration banner (2026-07-29):** every method and case
+> below was authored against a **containerized gateway** (`docker compose
+> ... gateway`
+> bring-up/restart) and the **retired cerebrum/cycle wire** (`cycleId`,
+> ACP-router framing). Neither reflects current reality — the gateway is a
+> native binary under `launchd`/`bun --hot`, addons are docker-only, and the
+> wire is 2.0's `turnId` / `turn.*` frames. Do not hand-fix each case's
+> commands piecemeal; the native-stack migration plan's Tasks 9/10
+> re-ground every case that survives against the current stack and wire as
+> part of executing the 2.0 E2E matrix. Until then, treat the *scenario* and
+> *why added* fields as still valid and the literal bring-up/restart
+> commands and `cycleId` references as historical.
+
 ## Methods
 
 Tools and techniques this project uses to verify changes on each surface,
