@@ -9,7 +9,7 @@ tags:
 # virtual Ethernet, not WiFi, so `adb svc wifi disable` does NOT drop the gateway
 # WebSocket. On a PHYSICAL device the runner disables WiFi BEFORE launching this
 # flow; on the emulator the runner skips it. (Alternative emulator path: stop the
-# Docker gateway container — higher-impact, tested separately.) Excluded from the
+# native gateway process — higher-impact, tested separately.) Excluded from the
 # default batch via the physical-only tag.
 #
 # Pre-condition (set by the runner): gateway unreachable; the app's SDK loses its

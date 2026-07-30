@@ -3,7 +3,7 @@ tags:
   - settings-soul
   - fault-armed
 ---
-# 60-model-offline-save — Model page with the gateway container STOPPED: pick a
+# 60-model-offline-save — Model page with the native gateway process STOPPED: pick a
 # different model and Save. Failure surfaces inline; the draft is kept (not
 # silently discarded), no crash.
 #

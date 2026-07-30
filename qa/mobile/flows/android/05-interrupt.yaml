@@ -5,13 +5,26 @@ tags:
 # 05-interrupt — send a long-reply prompt, assert streaming starts, confirm no
 # crash. Batch-safe.
 #
-# ⚠ FLAG (Android + iOS): the chat-interrupt button is gated on TTS audio state
-# (canInterrupt = connection.isSpeaking || audioState PROCESSING/ASSISTANT_SPEAKING/
-# INTERRUPTING), NOT on text-streaming cognition state. In a TTS-disabled session
-# (default emulator setup without a reachable local-tts service) the interrupt
-# button never appears during text streaming — so this flow can only prove the
-# send→stream path + no-crash here, not the interrupt tap. Full interrupt E2E
-# needs TTS enabled on a device with a reachable local-tts service.
+# INTERRUPT ARM: STILL UNPROVEN — reason CORRECTED 2026-07-30 (native-stack
+# migration Task 10). The old header blamed "a reachable local-tts service on the
+# device". That premise is wrong: local-tts is dialled by the GATEWAY
+# (ws://127.0.0.1:8770, loopback, host-side); the device only receives the audio
+# downlink over its existing WS. Device reachability was never the blocker.
+#
+# The real blockers, in order:
+#   1. D12 — the gateway never answers `session.new`, so the mobile outbox never
+#      drains and no send reaches the gateway at all. Nothing streams, so there is
+#      nothing to interrupt. See
+#      qa/mobile/evidence/2026-07-30-native-mobile-matrix/README.md.
+#   2. Once D12 is fixed: `chat-interrupt` is gated on TTS audio state
+#      (canInterrupt = connection.isSpeaking || audioState
+#      PROCESSING/ASSISTANT_SPEAKING/INTERRUPTING), NOT on text-streaming
+#      cognition. The session must therefore have `speak=true` AND an armed audio
+#      downlink (the downlink is lazy-armed on the first `audio.start`) before the
+#      button exists to tap.
+# Handed to Task 11 with those two steps rather than left asserting nothing while
+# looking green: the assertions below are honest about covering send->stream+alive
+# ONLY, and the flow does not pretend to tap interrupt.
 - launchApp
 - runFlow:
     when: { visible: { id: "login-backend-setup" } }
@@ -21,7 +34,9 @@ tags:
 - inputText: "tell me a very long story about the history of computing in great detail"
 - tapOn: { id: "chat-send" }
 - hideKeyboard
-# streaming bubble proves send→gateway→Hermes works — LLM budget.
+# streaming bubble proves send -> gateway -> native ReAct loop -> turn.text.delta.
+# LLM round-trip budget (the provider call, not a Hermes hop — Hermes is only a
+# delegated tool on 2.0).
 - extendedWaitUntil:
     visible: { id: "assistant-bubble" }
     timeout: 40000

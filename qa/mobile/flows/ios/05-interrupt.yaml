@@ -2,12 +2,15 @@ appId: io.dev32.sentient.debug
 tags:
   - chat
 ---
-# 05-interrupt — send a long-reply prompt, assert streaming starts, interrupt.
+# 05-interrupt — send a long-reply prompt, assert streaming starts, app alive.
 #
-# FLAG (iOS): Same limitation as Android — chat-interrupt is gated on TTS audio
-# state (isSpeaking || audioState == PROCESSING/ASSISTANT_SPEAKING), NOT
-# cognition. In TTS-disabled sessions the button does not appear, so this flow
-# asserts the send→stream path + app-alive rather than the interrupt button.
+# INTERRUPT ARM: STILL UNPROVEN — see android/05-interrupt.yaml for the corrected
+# reason. Short version: local-tts is dialled by the GATEWAY over loopback, so
+# "no local-tts reachable from the device" was never the blocker. The real ones are
+# (1) D12, which stops any mobile send reaching the gateway, and (2) chat-interrupt
+# being gated on TTS audio state rather than cognition, so the session needs
+# speak=true plus an armed audio downlink before the button exists. Handed to
+# Task 11.
 - runFlow: _helpers/login.yaml
 - tapOn:
     id: "composer-input"
@@ -16,7 +19,8 @@ tags:
     id: "chat-send"
 - tapOn:
     id: "chat-message-list"
-# streaming bubble proves send→gateway→Hermes path — Hermes LLM round-trip, slow.
+# streaming bubble proves send -> gateway -> native ReAct loop. Provider round-trip,
+# genuinely slow (not a Hermes hop — Hermes is only a delegated tool on 2.0).
 - extendedWaitUntil:
     visible: { id: "assistant-bubble" }
     timeout: 60000

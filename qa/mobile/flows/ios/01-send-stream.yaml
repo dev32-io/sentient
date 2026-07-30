@@ -3,7 +3,8 @@ tags:
   - chat
 ---
 # 01-send-stream — type a message, send it, verify the assistant replies. Covers
-# the full text-send → gateway → Hermes → streaming bubble path.
+# the full text-send -> gateway -> native ReAct loop -> streaming bubble path
+# (Hermes is only a delegated tool on 2.0, never the agent runtime).
 #
 # iOS: composer-input (accessibilityIdentifier on the Composer TextField).
 # assistant-bubble appears once the gateway streams the first token. After send,
@@ -18,7 +19,7 @@ tags:
 # Dismiss keyboard by tapping the message list area so the assistant bubble shows.
 - tapOn:
     id: "chat-message-list"
-# assistant reply — Hermes LLM round-trip, genuinely slow.
+# assistant reply — provider round-trip inside the gateway's own loop, genuinely slow.
 - extendedWaitUntil:
     visible: { id: "assistant-bubble" }
     timeout: 60000

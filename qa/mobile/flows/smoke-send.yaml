@@ -1,7 +1,7 @@
 appId: io.dev32.sentient.debug
 ---
 # Smoke: send a text message and confirm the assistant streams a reply.
-# Verifies the end-to-end streaming fix (text.input -> gateway -> Hermes -> events -> ChatContent live bubble).
+# Verifies end-to-end streaming (text.input -> gateway native ReAct loop -> turn.* frames -> ChatContent live bubble).
 - launchApp
 - assertVisible:
     id: "composer-input"
@@ -10,7 +10,7 @@ appId: io.dev32.sentient.debug
 - inputText: "what time is it in tokyo right now"
 - tapOn:
     id: "chat-send"
-# assistant bubble should appear and stream a reply within the cycle window
+# assistant bubble should appear and stream a reply within the turn window
 - extendedWaitUntil:
     visible:
       id: "assistant-bubble"

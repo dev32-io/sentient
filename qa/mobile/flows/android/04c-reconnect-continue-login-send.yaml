@@ -5,7 +5,7 @@ tags:
 ---
 # 04c (part 1/2) — warm-reconnect conversation continuity, FIRST turn.
 #
-# Validates: on a WARM WS reconnect the next message CONTINUES the same Hermes
+# Validates: on a WARM WS reconnect the next message CONTINUES the same
 # conversation (gateway logs `resume.reanchor source=configure`, dispatch.end
 # conversationId unchanged, NO dispatch.session-new.lazy). This flow only
 # establishes the conversation (login + one turn the follow-up references). The
