@@ -37,7 +37,11 @@ tags:
     point: "20%,71%"
 - assertVisible: { id: "settings-advanced-save" }
 - tapOn: { id: "settings-advanced-save" }
-# SLOW apply/restart budget.
+# apply completes in 5-12 ms on 2.0 (measured: `apply:orchestrator apply.ready
+# elapsedMs=5..12`, 4 samples 2026-07-30). There is no supervisord and no Hermes
+# worker to restart, so the old 45 s budget was padding that would have let a 30 s
+# hang pass. 8000 ms = ~600x the measured server time, enough for the emulator/sim
+# re-fetch + recomposition, tight enough to catch a real stall.
 - extendedWaitUntil:
     notVisible: { id: "settings-apply-notice" }
-    timeout: 45000
+    timeout: 8000

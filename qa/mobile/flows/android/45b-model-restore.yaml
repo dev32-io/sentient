@@ -39,8 +39,19 @@ tags:
 - tapOn: { id: "settings-model-card-deepseek-v4-flash:cloud" }
 - assertVisible: { id: "settings-model-save" }
 - tapOn: { id: "settings-model-save" }
-- assertVisible: { id: "settings-apply-notice" }
-# SLOW apply/restart budget.
+# The apply notice is a ~10 ms transient on 2.0 (apply.ready elapsedMs=5..12), so a
+# hard assertVisible here is a race the runner loses — it FAILED that way on
+# 2026-07-30 while the save itself was fine. Optional, exactly like 47/48; the
+# real proof of the save is the persisted value asserted further down.
+- extendedWaitUntil:
+    visible: { id: "settings-apply-notice" }
+    timeout: 3000
+    optional: true
+# apply completes in 5-12 ms on 2.0 (measured: `apply:orchestrator apply.ready
+# elapsedMs=5..12`, 4 samples 2026-07-30). There is no supervisord and no Hermes
+# worker to restart, so the old 45 s budget was padding that would have let a 30 s
+# hang pass. 8000 ms = ~600x the measured server time, enough for the emulator/sim
+# re-fetch + recomposition, tight enough to catch a real stall.
 - extendedWaitUntil:
     notVisible: { id: "settings-apply-notice" }
-    timeout: 45000
+    timeout: 8000
