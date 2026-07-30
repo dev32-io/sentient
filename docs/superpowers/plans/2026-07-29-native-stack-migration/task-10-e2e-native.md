@@ -86,3 +86,43 @@ Acoustic barge-in on a real device needs a real mic and speaker — simulators h
 git commit -m "test(e2e): native mobile matrix re-grounded on the turn wire" -- \
   qa/mobile/ agents/docs/testing-knowledge.md
 ```
+
+---
+
+## Addendum — what changed after this task was written
+
+Waves 3–5 landed between this body and your dispatch. Four things it could not know:
+
+- [ ] **Step 10: Re-baseline the five flows whose waits cite a supervisord restart**
+
+`qa/mobile/flows/45*`, `45b`, `47`, `48`, `49` carry long `waitFor` budgets justified in comments by "gateway container restarting under supervisord". **There is no supervisord and no container any more** — the native gateway is a launchd job (dev: `bun --hot`, which reloads in well under a second). Those budgets are now unjustified padding that hides real regressions and inflates every batch.
+
+Re-time each against the native stack and lower the budget to what the native path actually needs, updating the justifying comment to match reality. Where a wait is still genuinely long, say *why* in native terms. Do **not** blanket-set them to 3000 ms without measuring — a wait that is too short is a flake generator, and a flaky suite gets ignored, which is worse than a slow one.
+
+- [ ] **Step 11: Validate the four settings flows Task 6b edited statically**
+
+Task 6b removed signal-cli and edited four settings flows **without running them** — its report says so honestly. They have never executed since. This is the run that proves them:
+
+```bash
+./qa/mobile/run-e2e.sh all --tags settings-root,settings-admin
+```
+Expect residuals. A statically-edited Maestro flow that has never run is a guess: an assertion on a row that no longer exists fails at the selector, not at the assertion, so read the failure carefully before assuming the *product* broke. Task 6b's sibling defect is the precedent — a CSS deletion it believed was clean broke a live pane, and only a real run caught it.
+
+- [ ] **Step 12: Treat the Hermes-shaped settings as expected-inert, not as failures**
+
+Soul, personality and long-term memory were built against Hermes as the agent runtime. On 2.0 the gateway owns the loop and those surfaces are **deliberately inert** — the UI stays, the functionality transitions to gateway-owned in a later spec. That is the project owner's explicit decision, not a defect.
+
+So: a flow asserting one of those settings *renders and persists* should pass. A flow asserting it *changes the assistant's behaviour* cannot pass on 2.0 — mark the row `EXPECTED-INERT (2.0)` with a one-line pointer to this step. **Never** delete such a flow (the surface returns), and never file it as a bug.
+
+- [ ] **Step 13: Check whether Task 9c moved the MCP socket path**
+
+Task 9c relocates the per-user MCP socket off SIP-readonly `/run`. If any mobile flow or fixture asserts a socket path or a tool-availability log line, re-read the value from `gateway/config.yaml` rather than the path this body or an older flow hardcodes.
+
+```bash
+git log --oneline -8            # did 9c land?
+grep -n "socket_path" gateway/config.yaml
+```
+
+- [ ] **Step 14: Report honestly, per row**
+
+Every row lands as PASS with evidence, FAIL with evidence, `EXPECTED-INERT (2.0)`, or handed to Task 11 with the exact reason and repro steps. There is no fifth outcome. A row you could not drive is worth more to the owner marked undriven than flipped green — the entire reason this migration exists is that 1100 green unit tests never surfaced ten defects that one real run found.
