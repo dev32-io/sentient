@@ -452,7 +452,7 @@ export interface CompactionGate {
  *  transient rate limit, an operator fixing a token budget and restarting
  *  nothing) all resolve on their own, and a session that stopped trying would
  *  grow its window until the provider rejected the request outright. */
-export function createCompactionGate(maxConsecutiveFailures: number): CompactionGate {
+export function createCompactionGate(maxConsecutiveFailures: number, maxBackoffTurns: number): CompactionGate {
   let failures = 0;
   let turnsToSkip = 0;
 
@@ -479,8 +479,11 @@ export function createCompactionGate(maxConsecutiveFailures: number): Compaction
         });
         return;
       }
-      // 1, 2, 4, 8 … turn boundaries skipped before the next attempt.
-      turnsToSkip = 2 ** (failures - maxConsecutiveFailures);
+      // 1, 2, 4, 8 … turn boundaries skipped before the next attempt, CAPPED.
+      // Uncapped doubling reaches "never" in about twenty more failures, which
+      // is the permanent give-up this gate is documented not to be.
+      const uncapped = 2 ** (failures - maxConsecutiveFailures);
+      turnsToSkip = Math.min(uncapped, maxBackoffTurns);
       log.error("compaction.failing-repeatedly", {
         failures,
         reason: outcome.reason,
@@ -488,6 +491,11 @@ export function createCompactionGate(maxConsecutiveFailures: number): Compaction
         // budget, anything else is a provider or prompt problem.
         finishReason: outcome.finishReason,
         nextAttemptAfterTurns: turnsToSkip,
+        // Surfaced the moment the ceiling binds: past here the interval stops
+        // growing, so this line is the only signal distinguishing "backing off"
+        // from "backed off as far as it ever will".
+        backoffCapped: uncapped >= maxBackoffTurns,
+        maxBackoffTurns,
         impact: "the model window is not being bounded; context keeps growing",
       });
     },

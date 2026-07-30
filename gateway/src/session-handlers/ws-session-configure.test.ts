@@ -529,6 +529,7 @@ function testOrchestratorConfig(): OrchestratorConfig {
       keep_recent_turns: 4,
       summarizer_max_output_tokens: 4000,
       max_consecutive_failures: 3,
+      max_backoff_turns: 16,
     },
   };
 }

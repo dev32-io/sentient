@@ -27,6 +27,7 @@ const config: OrchestratorConfig["compaction"] = {
   keep_recent_turns: 1,
   summarizer_max_output_tokens: 4000,
   max_consecutive_failures: 3,
+  max_backoff_turns: 16,
 };
 
 /** ~1250 estimated tokens of latin filler — comfortably over the threshold. */
@@ -315,7 +316,7 @@ describe("compaction gate — a failing summarizer must not thrash", () => {
   } as const;
 
   it("INVARIANT: past max_consecutive_failures it stops attempting at every turn boundary", () => {
-    const gate = createCompactionGate(3);
+    const gate = createCompactionGate(3, 16);
     // maybeCompact runs at EVERY turn end, so an ungated failure is one real
     // provider call per turn, forever, while the window it should bound grows.
     for (let i = 0; i < 3; i += 1) {
@@ -331,8 +332,26 @@ describe("compaction gate — a failing summarizer must not thrash", () => {
     expect(gate.shouldAttempt()).toBe(true);
   });
 
+  // INVARIANT (defect D10). `2 ** (failures - max)` doubled forever: after ~20
+  // extra failures the next attempt is 1M turn boundaries away, which in a long
+  // session is indistinguishable from the permanent give-up the comment above
+  // says this gate deliberately is NOT. The cap makes the widening stop, and it
+  // must be VISIBLE when it does — a silent ceiling is the same failure wearing
+  // a smaller number.
+  it("INVARIANT: the backoff stops widening at max_backoff_turns instead of doubling forever", () => {
+    const cap = 4;
+    const gate = createCompactionGate(1, cap);
+    // Failure 1 arms 2**0 = 1, then 2, then 4, then the cap holds at 4.
+    for (const expected of [1, 2, 4, 4, 4]) {
+      gate.record(failed);
+      let skipped = 0;
+      while (!gate.shouldAttempt()) skipped += 1;
+      expect(skipped).toBe(expected);
+    }
+  });
+
   it("INVARIANT: a success clears the streak, and a normal below-threshold turn never counts as one", () => {
-    const gate = createCompactionGate(2);
+    const gate = createCompactionGate(2, 16);
     gate.record(failed);
     gate.record(succeeded);
     // Streak cleared: two more failures are needed to back off again.
@@ -340,7 +359,7 @@ describe("compaction gate — a failing summarizer must not thrash", () => {
     gate.record(failed);
     expect(gate.shouldAttempt()).toBe(true);
 
-    const idle = createCompactionGate(1);
+    const idle = createCompactionGate(1, 16);
     // below-threshold is the steady state at most turn boundaries.
     const idleOutcome = {
       compacted: false,

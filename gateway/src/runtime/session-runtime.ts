@@ -249,7 +249,10 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   let lastProcessedSeq = 0;
   // Per-session: a summarizer that keeps failing must not burn one provider
   // call at every single turn boundary forever. See compaction.ts.
-  const compactionGate = createCompactionGate(config.compaction.max_consecutive_failures);
+  const compactionGate = createCompactionGate(
+    config.compaction.max_consecutive_failures,
+    config.compaction.max_backoff_turns,
+  );
   let disposed = false;
   // The most recent turn this session started, kept AFTER it settles. Audio
   // outlives its turn, so a cancel landing in the tail window still has to

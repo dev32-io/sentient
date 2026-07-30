@@ -178,6 +178,12 @@ orchestrator:
     # every turn boundary, logs a single ERROR with the reason, and retries on
     # an exponentially widening turn interval instead. Range 1-20.
     max_consecutive_failures: 3
+    # Ceiling on that widening interval, in turn boundaries. Uncapped, the
+    # 2^n doubling reaches ~1M turns after ~20 more failures — indistinguishable
+    # from the permanent give-up this gate is documented NOT to be. On hitting
+    # the cap the ERROR line carries backoffCapped=true, so a stalled summarizer
+    # stays visible. Range 1-256.
+    max_backoff_turns: 16
 
 # ---------------------------------------------------------------------------
 # STT — local-stt service (Silero VAD + Smart-Turn v3 + SenseVoice-Small)

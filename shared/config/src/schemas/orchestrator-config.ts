@@ -88,6 +88,15 @@ export const orchestratorConfigSchema = z.object({
       // interval instead, so a permanently-failing summarizer costs one
       // provider call per 2^n turns rather than one per turn. Range 1-20.
       max_consecutive_failures: z.number().int().min(1).max(20).default(3),
+      // Ceiling on that exponentially widening retry interval, in turn
+      // boundaries. Without one, `2 ** (failures - max_consecutive_failures)`
+      // doubles forever: ~20 further failures puts the next attempt a million
+      // turns away, which in a long session IS the permanent give-up the gate
+      // is documented not to be. On reaching the cap the runtime logs one
+      // ERROR naming it, so a stalled summarizer is visible rather than silent.
+      // Keep well above max_consecutive_failures and low enough that a
+      // recovered provider is retried within one sitting. Range 1-256.
+      max_backoff_turns: z.number().int().min(1).max(256).default(16),
     })
     .default({}),
 });
