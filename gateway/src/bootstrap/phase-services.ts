@@ -7,7 +7,6 @@ import { archiveUserDir } from "../admin/archive-user-dir.js";
 import { renderConfigsForExistingUsers } from "../admin/boot-migration.js";
 import { chownUserDirToHermes } from "../admin/chown-hermes.js";
 import type { InternalSecretsStore } from "../admin/internal-secrets-store.js";
-import { type KeyRotationOrchestrator, createKeyRotation } from "../admin/key-rotation.js";
 import {
   type ProfileRestartOrchestrator,
   createProfileRestartOrchestrator,
@@ -73,10 +72,6 @@ import { asStrictFactory, createTtsService } from "./tts-factory.ts";
 
 const log = getLog(["sentient", "bootstrap", "phase-services"]);
 
-// Fallback provider used in supervisord program env when a user's profile is
-// unreadable (corruption case).
-const FALLBACK_LLM_PROVIDER = "openrouter" as const;
-
 // Plan 2 walking-skeleton system prompt — deliberately minimal (a real
 // prompt-assembly layer, persona/profile-aware, is Plan 3's job; see
 // clean-code.md's rule on loading large prompt content from .md files,
@@ -103,7 +98,6 @@ export interface PhaseServicesOutput {
   readonly healthPoller: HealthPoller;
   readonly sessionRouter: SessionRouter | null;
   readonly userProvisioner: UserProvisioner | null;
-  readonly keyRotation: KeyRotationOrchestrator | null;
   readonly userLifecycle: UserLifecycle;
   readonly profileRestartOrchestrator: ProfileRestartOrchestrator;
   readonly buildPersonalityStore: (userId: string) => PersonalityStore;
@@ -226,19 +220,6 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     });
   }
 
-  let keyRotation: KeyRotationOrchestrator | null = null;
-  if (cfg.hermes && userPortStore && supervisordControl) {
-    keyRotation = buildKeyRotation(
-      cfg,
-      userPortStore,
-      supervisordControl,
-      profileStore,
-      internalSecretsStore,
-      tzForPrograms,
-      resolveHermesHomeFor,
-    );
-  }
-
   // Boot migration: rename per-user tools.enabled.duckduckgo →
   // tools.enabled.searxng + tools.enabled.fetch. Idempotent.
   if (cfg.hermes) {
@@ -302,7 +283,6 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     healthPoller,
     sessionRouter,
     userProvisioner,
-    keyRotation,
     userLifecycle,
     profileRestartOrchestrator,
     buildPersonalityStore,
@@ -471,48 +451,6 @@ function buildDevicesHandlerDeps(
     cleanupOnFail: (userId) => provisioner.cleanup(userId),
     unpair: (userId) => provisioner.unpair(userId),
   };
-}
-
-function buildKeyRotation(
-  cfg: StartupConfig,
-  userPortStore: UserPortStore,
-  supervisordControl: SupervisordControl,
-  profileStore: ProfileStore,
-  internalSecretsStore: InternalSecretsStore,
-  tzForPrograms: () => string,
-  resolveHermesHomeFor: (userId: string) => string,
-): KeyRotationOrchestrator {
-  return createKeyRotation({
-    async listUsers() {
-      const r = await userPortStore.list();
-      if (!r.ok) return [];
-      return r.value.map((b) => b.userId);
-    },
-    async reprovisionUser(userId) {
-      const port = await userPortStore.resolvePort(userId);
-      if (port === null) return { ok: false, reason: "no-port-binding" };
-      const profileResult = await profileStore.get(userId);
-      const provider = profileResult.ok ? profileResult.value.model.provider : FALLBACK_LLM_PROVIDER;
-      const signalPaired = profileResult.ok ? profileResult.value.devices?.signal?.paired === true : false;
-      const upsertResult = await supervisordControl.upsertProgram({
-        userId,
-        port,
-        token: internalSecretsStore.getHermesAuthTokenSync(),
-        timezone: tzForPrograms(),
-        provider,
-        hermesHome: resolveHermesHomeFor(userId),
-        signalPaired,
-      });
-      if (!upsertResult.ok) return { ok: false, reason: upsertResult.error.reason };
-      const restartResult = await supervisordControl.restartProfile(
-        userId,
-        cfg.apply.profile_restart_timeout_ms,
-        signalPaired,
-      );
-      if (!restartResult.ok) return { ok: false, reason: restartResult.error.reason };
-      return { ok: true };
-    },
-  });
 }
 
 // ---------------------------------------------------------------------------

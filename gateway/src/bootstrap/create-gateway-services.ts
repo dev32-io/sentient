@@ -11,7 +11,6 @@ import type {
 } from "@sentient/config";
 import type { AccessManager } from "../access/access-manager.js";
 import type { InstallState } from "../admin/install-state.js";
-import type { KeyRotationOrchestrator } from "../admin/key-rotation.js";
 import type { ProfileRestartOrchestrator } from "../admin/profile-restart-orchestrator.js";
 import type { SecretsStore } from "../admin/secrets-store.js";
 import type { LlmProvider } from "../admin/secrets-store.js";
@@ -129,7 +128,6 @@ export interface GatewayServices {
   readonly userPortStore: UserPortStore | null;
   readonly secretsStore: SecretsStore | null;
   readonly userProvisioner: UserProvisioner | null;
-  readonly keyRotation: KeyRotationOrchestrator | null;
   readonly userLifecycle: UserLifecycle;
   readonly profileRestartOrchestrator: ProfileRestartOrchestrator;
   readonly buildPersonalityStore: (userId: string) => PersonalityStore;
@@ -256,7 +254,6 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     userPortStore,
     secretsStore,
     userProvisioner: services.userProvisioner,
-    keyRotation: services.keyRotation,
     userLifecycle: services.userLifecycle,
     profileRestartOrchestrator: services.profileRestartOrchestrator,
     buildPersonalityStore: services.buildPersonalityStore,
