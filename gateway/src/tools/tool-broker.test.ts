@@ -51,6 +51,7 @@ function fakeStore(): SessionStore {
     },
     readSession: () => [],
     readSince: () => [],
+    findByPendingId: () => null,
     listSessions: () => [],
     close: () => {},
   };

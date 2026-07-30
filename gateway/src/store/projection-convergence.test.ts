@@ -32,6 +32,7 @@ function entry(overrides: Partial<NewSessionEntry>): NewSessionEntry {
     toolArgs: null,
     cutoff: null,
     compactedThroughSeq: null,
+    pendingId: null,
     ...overrides,
   };
 }

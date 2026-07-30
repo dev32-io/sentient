@@ -500,6 +500,9 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       readSince: () => {
         throw new Error("ToolBroker.store is interface-parity only and must not be used");
       },
+      findByPendingId: () => {
+        throw new Error("ToolBroker.store is interface-parity only and must not be used");
+      },
       listSessions: () => {
         throw new Error("ToolBroker.store is interface-parity only and must not be used");
       },

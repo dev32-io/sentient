@@ -18,6 +18,7 @@ function e(partial: Partial<SessionEntry>): SessionEntry {
     toolArgs: null,
     cutoff: null,
     compactedThroughSeq: null,
+    pendingId: null,
     ...partial,
   };
 }

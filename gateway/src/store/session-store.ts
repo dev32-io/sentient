@@ -23,6 +23,7 @@ import path from "node:path";
 import { type Capability, capabilityCoversPath } from "../access/capability.js";
 import { getLog } from "../logging/logger.js";
 import type { NewSessionEntry, SessionEntry } from "./entry-types.js";
+import { migrateStore } from "./migrate-store.js";
 import { STORE_DDL } from "./schema.js";
 
 const log = getLog(["sentient", "store", "session-store"]);
@@ -46,6 +47,7 @@ interface EntryRow {
   tool_args: string | null;
   cutoff: string | null;
   compacted_through_seq: number | null;
+  pending_id: string | null;
 }
 
 function toEntry(row: EntryRow): SessionEntry {
@@ -61,6 +63,7 @@ function toEntry(row: EntryRow): SessionEntry {
     toolArgs: row.tool_args,
     cutoff: row.cutoff as SessionEntry["cutoff"],
     compactedThroughSeq: row.compacted_through_seq,
+    pendingId: row.pending_id,
   };
 }
 
@@ -69,6 +72,10 @@ export interface SessionStore {
   append(entry: NewSessionEntry): SessionEntry;
   readSession(sessionId: string): SessionEntry[];
   readSince(sessionId: string, afterSeq: number): SessionEntry[];
+  /** The entry this session already committed for [pendingId], or null. This
+   *  is the idempotency record for a client resend — durable rather than a
+   *  process-lifetime set, so it survives reconnect, restart and redeploy. */
+  findByPendingId(sessionId: string, pendingId: string): SessionEntry | null;
   listSessions(): Array<{ sessionId: string; startedAt: number; lastAt: number }>;
   /** Release the handle. Idempotent. Every other method throws afterwards —
    *  see this file's header. */
@@ -91,7 +98,8 @@ export function openSessionStore(cap: Capability): SessionStore {
 
   const db = new Database(dbPath, { create: true });
   db.exec(STORE_DDL);
-  log.info("store.opened", { userId: cap.ownerUserId });
+  const schemaVersion = migrateStore(db, cap.ownerUserId);
+  log.info("store.opened", { userId: cap.ownerUserId, schemaVersion });
 
   const insert = db.query<
     EntryRow,
@@ -106,17 +114,21 @@ export function openSessionStore(cap: Capability): SessionStore {
       string | null,
       string | null,
       number | null,
+      string | null,
     ]
   >(`
     INSERT INTO entries
-      (session_id, turn_id, kind, created_at, text, tool_call_id, tool_name, tool_args, cutoff, compacted_through_seq)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (session_id, turn_id, kind, created_at, text, tool_call_id, tool_name, tool_args, cutoff, compacted_through_seq, pending_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     RETURNING *
   `);
 
   const selectSession = db.query<EntryRow, [string]>("SELECT * FROM entries WHERE session_id = ? ORDER BY seq ASC");
   const selectSince = db.query<EntryRow, [string, number]>(
     "SELECT * FROM entries WHERE session_id = ? AND seq > ? ORDER BY seq ASC",
+  );
+  const selectByPendingId = db.query<EntryRow, [string, string]>(
+    "SELECT * FROM entries WHERE session_id = ? AND pending_id = ? ORDER BY seq ASC LIMIT 1",
   );
   const selectSessions = db.query<{ session_id: string; started_at: number; last_at: number }, []>(`
     SELECT session_id, MIN(created_at) AS started_at, MAX(created_at) AS last_at
@@ -146,6 +158,7 @@ export function openSessionStore(cap: Capability): SessionStore {
         entry.toolArgs,
         entry.cutoff,
         entry.compactedThroughSeq,
+        entry.pendingId,
       );
       if (!row) throw new Error("append returned no row");
       log.debug("entry.appended", {
@@ -164,6 +177,11 @@ export function openSessionStore(cap: Capability): SessionStore {
     readSince(sessionId, afterSeq) {
       assertOpen("readSince");
       return selectSince.all(sessionId, afterSeq).map(toEntry);
+    },
+    findByPendingId(sessionId, pendingId) {
+      assertOpen("findByPendingId");
+      const row = selectByPendingId.get(sessionId, pendingId);
+      return row ? toEntry(row) : null;
     },
     listSessions() {
       assertOpen("listSessions");

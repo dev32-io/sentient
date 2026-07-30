@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import type { Capability } from "../access/capability.js";
@@ -25,9 +26,30 @@ function entry(overrides: Partial<NewSessionEntry> = {}): NewSessionEntry {
     toolArgs: null,
     cutoff: null,
     compactedThroughSeq: null,
+    pendingId: null,
     ...overrides,
   };
 }
+
+// The DDL as it shipped before the pending_id migration — a verbatim copy, not a
+// reference to STORE_DDL, so this test keeps describing the schema real users
+// already have on disk even after STORE_DDL is edited again.
+const PRE_MIGRATION_DDL = `
+CREATE TABLE IF NOT EXISTS entries (
+  seq                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id            TEXT    NOT NULL,
+  turn_id               TEXT    NOT NULL,
+  kind                  TEXT    NOT NULL,
+  created_at            INTEGER NOT NULL,
+  text                  TEXT,
+  tool_call_id          TEXT,
+  tool_name             TEXT,
+  tool_args             TEXT,
+  cutoff                TEXT,
+  compacted_through_seq INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_entries_session_seq ON entries (session_id, seq);
+`;
 
 afterAll(() => rmSync(ROOT, { recursive: true, force: true }));
 
@@ -116,6 +138,53 @@ describe("SessionStore", () => {
     const appended = store.append(entry({ sessionId: "fresh", text: "hi" }));
     expect(appended.seq).toBeGreaterThan(0);
     expect(existsSync(freshRoot)).toBe(true);
+    store.close();
+  });
+
+  it("MIGRATION: a database created by the OLD DDL opens, migrates in place, and keeps its rows", () => {
+    // Every per-user database under ~/.sentient already exists, so a new column
+    // in STORE_DDL reaches NONE of them: `CREATE TABLE IF NOT EXISTS` is not a
+    // migration. This is the case a fresh-DB test structurally cannot see.
+    const legacyRoot = `${ROOT}/u_cccccccc`;
+    mkdirSync(legacyRoot, { recursive: true });
+    const legacy = new Database(`${legacyRoot}/sessions.db`, { create: true });
+    legacy.exec(PRE_MIGRATION_DDL);
+    legacy.exec(
+      "INSERT INTO entries (session_id, turn_id, kind, created_at, text) VALUES ('old', 't0', 'user', 5, 'legacy row')",
+    );
+    legacy.close();
+
+    const legacyCap: Capability = Object.freeze({
+      ownerUserId: "u_cccccccc",
+      resource: "session-store",
+      rootPath: legacyRoot,
+    });
+    const store = openSessionStore(legacyCap);
+    const rows = store.readSession("old");
+    expect(rows.map((r) => r.text)).toEqual(["legacy row"]);
+    expect(rows[0]?.pendingId).toBeNull();
+    // …and the migrated column is usable, which is what the first query naming
+    // it would otherwise fail on at runtime, on real users only.
+    const appended = store.append(entry({ sessionId: "old", text: "new row", pendingId: "p-legacy" }));
+    expect(appended.pendingId).toBe("p-legacy");
+    expect(store.findByPendingId("old", "p-legacy")?.seq).toBe(appended.seq);
+    store.close();
+  });
+
+  it("MIGRATION: re-opening an already-migrated database is a no-op", () => {
+    const store = openSessionStore(cap);
+    store.append(entry({ sessionId: "idem", text: "a", pendingId: "p-idem" }));
+    store.close();
+    const reopened = openSessionStore(cap);
+    expect(reopened.findByPendingId("idem", "p-idem")?.text).toBe("a");
+    reopened.close();
+  });
+
+  it("findByPendingId is scoped to its session and returns null for an unseen id", () => {
+    const store = openSessionStore(cap);
+    store.append(entry({ sessionId: "scopeA", text: "a", pendingId: "p-scope" }));
+    expect(store.findByPendingId("scopeB", "p-scope")).toBeNull();
+    expect(store.findByPendingId("scopeA", "never-sent")).toBeNull();
     store.close();
   });
 

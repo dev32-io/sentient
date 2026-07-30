@@ -34,6 +34,14 @@ export interface SessionEntry {
   cutoff: CutoffKind | null;
   /** On a compaction entry: the highest seq the summary covers. */
   compactedThroughSeq: number | null;
+  /**
+   * The client's own id for this message, on a `user` entry that arrived with
+   * one; null everywhere else. Two jobs, both of which need it DURABLE rather
+   * than held in a process-lifetime set: it makes a resend idempotent (the
+   * store already knows this message was committed), and it is echoed back on
+   * the committed feed so the client can drop its optimistic bubble.
+   */
+  pendingId: string | null;
 }
 
 export type NewSessionEntry = Omit<SessionEntry, "seq">;
@@ -50,4 +58,5 @@ export const sessionEntrySchema = z.object({
   toolArgs: z.string().nullable(),
   cutoff: z.enum(["interrupt", "barge-in"]).nullable(),
   compactedThroughSeq: z.number().int().nonnegative().nullable(),
+  pendingId: z.string().nullable(),
 });

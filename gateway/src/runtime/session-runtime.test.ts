@@ -429,6 +429,7 @@ describe("SessionRuntime — delegateTask fire-and-steer loop closes end to end"
         },
         readSession: () => [],
         readSince: () => [],
+        findByPendingId: () => null,
         listSessions: () => [],
         close: () => {},
       },

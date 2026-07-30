@@ -144,6 +144,7 @@ function commitCutoffEntry(deps: CancellationDeps, turn: CancellableTurn, cutoff
     toolArgs: null,
     cutoff,
     compactedThroughSeq: null,
+    pendingId: null,
   };
   const appended = deps.store.append(entry);
   log.info("cancellation.cutoff.committed", {

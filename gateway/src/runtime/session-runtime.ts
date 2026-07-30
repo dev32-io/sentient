@@ -220,6 +220,7 @@ function blankEntry(sessionId: string, turnId: string): Omit<NewSessionEntry, "k
     toolArgs: null,
     cutoff: null,
     compactedThroughSeq: null,
+    pendingId: null,
   };
 }
 

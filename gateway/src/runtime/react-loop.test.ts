@@ -47,6 +47,7 @@ function seedUserMessage(store: ReturnType<typeof openSessionStore>, sessionId: 
     toolArgs: null,
     cutoff: null,
     compactedThroughSeq: null,
+    pendingId: null,
   };
   store.append(entry);
 }

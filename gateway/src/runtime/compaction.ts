@@ -405,6 +405,7 @@ export async function maybeCompact(deps: CompactionDeps): Promise<CompactionOutc
     toolArgs: null,
     cutoff: null,
     compactedThroughSeq: boundarySeq,
+    pendingId: null,
   };
   const appended = store.append(marker);
   // Lengths and ids only — the marker text is verbatim conversation content
