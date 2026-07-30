@@ -11,7 +11,7 @@
 #   - Bubble speaking-wave + avatar ripple (voice/TTS state)
 #
 # Prerequisites:
-#   - Local gateway running at localhost:8888 (docker compose up in deploy/macos)
+#   - Local gateway running at localhost:8888 (native: cd gateway && bun --hot src/main.ts)
 #   - Simulator booted (iPhone 16, iOS 17+)
 #   - App installed (see ios/build instructions in CLAUDE.md)
 #   - Backend configured to host=localhost port=8888 security=plainWs

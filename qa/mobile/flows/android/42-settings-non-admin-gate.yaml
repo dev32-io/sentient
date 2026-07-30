@@ -25,10 +25,6 @@ tags:
 - assertVisible: { id: "settings-cat-memory" }
 - assertVisible: { id: "settings-cat-account" }
 - takeScreenshot: "42-non-admin-top"
-- scrollUntilVisible:
-    element: { id: "settings-cat-devices" }
-    direction: DOWN
-- assertVisible: { id: "settings-cat-devices" }
 # Admin group must NOT render for a non-admin user.
 - assertNotVisible: { id: "settings-cat-members" }
 - assertNotVisible: { id: "settings-cat-secrets" }

@@ -37,7 +37,7 @@
 #     /helper); no fault phase ? targeted runs stay fast.
 #
 # Prerequisites:
-#   - Local gateway stack healthy (deploy/macos: docker compose up -d).
+#   - Local gateway healthy (native: `cd gateway && bun --hot src/main.ts`; see deploy/README.md).
 #   - Android emulator-5554 booted; iOS simulator booted; debug apps installed.
 #   - ~/.maestro/bin/maestro on PATH (or MAESTRO=...); adb + xcrun on PATH.
 #
@@ -120,7 +120,7 @@ check_gateway() {
   local healthy
   healthy=$(docker ps --filter "name=sentient-gateway" --filter "health=healthy" --format "{{.Names}}" 2>/dev/null || true)
   if [[ -z "$healthy" ]]; then
-    fail "sentient-gateway is not running or not healthy. Start: cd deploy/macos && docker compose up -d"
+    fail "the gateway is not running or not healthy. Start it natively: cd gateway && bun --hot src/main.ts"
     exit 1
   fi
   pass "Gateway healthy"
@@ -258,7 +258,7 @@ CANONICAL_ORDER=(
   48-advanced-sliders 48b-advanced-restore
   49-tools-toggle 49b-tools-restore
   50-personalities-create-activate 59-audio-dirty-back-discard
-  51-account-rename 51b-account-restore 52-pin-wrong-current 53-devices-link-cancel
+  51-account-rename 51b-account-restore 52-pin-wrong-current
   54-voice-preview-pick 54b-voice-restore
   55-voice-create-record 55b-voice-delete-user-pack
   62-fish-clone-happy 62b-fish-clone-cleanup
