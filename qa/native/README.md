@@ -1,13 +1,15 @@
 # Native-stack QA harness
 
-Verification that only a real docker daemon can give. Everything here mutates
-containers, so it is **local dev stack only** — never `mini0.lan` /
-`sentient.dev32.io`, where agent actions are observational.
+Verification that only a real docker daemon (or a real gateway process) can
+give. Everything here mutates containers or spawns real processes, so it is
+**local dev stack only** — never `mini0.lan` / `sentient.dev32.io`, where
+agent actions are observational.
 
 | File | What it does |
 |---|---|
 | `apply-addons.ts` | Drives the **real** system orchestrator against the shipped `gateway/config.yaml` + `gateway/templates/services/`. Applies the named services as a subset, in dependency order, and exits non-zero unless every required one reaches `ready`. |
 | `verify-ingress-confinement.sh` | Proves both halves of the ingress-proxy design: the gateway can reach the MCPs, and the MCPs still cannot egress. |
+| `evidence/<date>-<case>/` | Per-case captured output + log excerpts for the six migration E2E cases below (gitignored — see `.gitignore` in this dir). |
 
 ```bash
 source scripts/env.sh
@@ -111,3 +113,51 @@ and asserts the proxy was never restarted. This is what justifies the runtime
 name, nginx resolves once at startup and caches for the process lifetime, so
 after any addon recreate it would keep dialling a dead address with no error
 until a tool call failed.
+
+---
+
+## Migration E2E cases (2026-07-29, native-stack-migration Task 8)
+
+Six cases proving the migration itself — these run **before** the 2.0 web/native
+matrices (Tasks 9/10), because a red migration case makes every later row
+untrustworthy. Full per-case evidence: `evidence/2026-07-29-<case>/README.md`.
+
+**No root on this dev box** (confirmed: `sudo -n true` / non-interactive `sudo`
+both refuse — no cached credential, no askpass helper; T4 and T5 hit and
+documented the identical wall). Cases that fundamentally require root are
+BLOCKED with a real rootless substitute run wherever one exists and can prove
+the same code path; cases that don't need root were driven for real, including
+against a genuine (if unprivileged) `launchd` job — see each evidence README
+for exactly what ran and why.
+
+| Case | Result | Notes |
+|---|---|---|
+| `native-addon-lifecycle` | **PASS** | Driven under a rootless `gui/<uid>` launchd rehearsal (real compiled binary, `KeepAlive=true`). Startup: both `native.started` + `registry.built` real. Shutdown: "no orphans" holds, but via `KeepAlive` auto-restart + next-boot `reapOrphans()` — the gateway's own SIGTERM handler does not itself stop the native children. |
+| `addon-crash-restart` | **FAIL** | Confirmed real defect: no periodic health-watch/re-apply loop exists anywhere in `system-orchestrator/` — `applyAll()`/`applySubset()` are called only at boot, from the manual `POST /api/v1/apply`, or from the setup wizard. A crashed addon stays down (verified 65s, zero recovery) until an operator manually re-triggers apply. |
+| `loopback-only-exposure` | **FAIL** | whisper-stt (native) answers on the LAN — `capabilityServices/WhisperSTTService/config/config.example.yaml` still has the pre-migration container-era `host: "0.0.0.0"` (local-tts's equivalent already correctly says `127.0.0.1`). **Blocks Tasks 9/10 per the task's own gate until fixed.** |
+| `code-immutability` | **BLOCKED** | No rootless equivalent exists — the assertion IS root ownership. Needs a real `sudo setup-prod.py install` first-run (mini or an agent with real sudo). |
+| `upgrade-rollback` | **PARTIAL** | Installer FSM (checksum, health-gate, rollback, idempotency, prune, config-preservation) proven for real via `deploy/mac-prod/tests/e2e-install.sh` (T5's rootless harness) against a real built release. Root-only remainder (`chown -R root:wheel`, the `system` domain, `UserName` switching) still needs a real first run. |
+| `offline-install` | **BLOCKED** | Same root wall as above. Structural evidence only: `install-venv.sh` uses `pip install --no-index --find-links=`, making PyPI access impossible regardless of network state (already proven live by T3). Did not toggle Wi-Fi off — moot given the root block, and a needless risk to this box's own connectivity. |
+
+Two collateral defects surfaced while getting `native-addon-lifecycle` to boot
+cleanly under real launchd conditions (no `WorkingDirectory`, compiled-binary
+`import.meta.dir` is bunfs-virtual) — both outside `qa/**`, not fixed here, see
+that case's evidence README for the full trace:
+- `startup-config.ts` defaults `LOG_DIR`/`GATEWAY_CERTS_DIR` to relative paths
+  that resolve to `/logs` / `/certs` (EROFS, crash-loops) unless the plist sets
+  them explicitly — the shipped `deploy/mac-prod/io.sentient.gateway.plist`
+  currently doesn't.
+- `create-gateway-services.ts` defaults `hostConfigDirContainerPath` to a
+  literal `/sentient` (a pre-migration "inside the container" assumption) when
+  `SENTIENT_HOME` is unset, instead of the real host config dir.
+
+## One-time migration case: releasing the moved host ports
+
+`docker rm -f sentient-fetch-mcp sentient-searxng-mcp` (see the "One-time
+migration" section above) is itself a migration case, not just a pre-step: any
+host that ran the pre-ingress-proxy shape needs it exactly once before the new
+topology can apply. Already proven idempotent and a no-op on a host that never
+ran the old shape — see the "Recorded run" transcript above, and re-confirmed
+during this Task 8 run (the same box, same ports, already-migrated: `docker ps`
+showed `sentient-ingress-proxy` holding `127.0.0.1:8087-8088` and
+`fetch-mcp`/`searxng-mcp` publishing no host port at all).

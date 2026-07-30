@@ -261,6 +261,64 @@ After upgrading across the v0.1.0 → v0.2.0 install-state schema bump:
 3. Expect: `schema_version: "0.2.0"`, `wizard_cursor: "admin"`.
 4. Repeat with `bootstrap_complete: true`. Expect: `wizard_cursor: "finish"`.
 
+## Native-stack migration (Task 8, `qa/native/`)
+
+Six cases proving the migration itself (native gateway + native/docker addon
+supervision + the installer), run BEFORE the 2.0 web/native matrices — a red
+migration case makes every later row untrustworthy. Full runnable commands and
+2026-07-29 results (2 PASS, 2 real FAIL, 2 root-BLOCKED) are in
+`qa/native/README.md`'s "Migration E2E cases" section; per-case evidence in
+`qa/native/evidence/<date>-<case>/` (gitignored, regenerate by re-running).
+Pre-state for every case: native gateway installed per the installer task,
+addons up via `docker compose ... --profile build-only build` +
+`qa/native/apply-addons.ts`, `launchctl print system/io.sentient.gateway`
+(or, rootless, a `gui/<uid>` rehearsal per `deploy/mac-prod/tests/
+test_launchd_live.py`'s pattern) showing `state = running`.
+
+### `native-addon-lifecycle`
+
+1. Confirm no `whisper_stt`/`local_tts` processes running.
+2. Start/kickstart the gateway. Wait ~20-25s.
+3. Expect: `pgrep -fl "whisper_stt|local_tts"` shows both; `[system-orch:native-driver] native.started` ×2 with pids; `[system-orch:service-registry] registry.built` listing both.
+4. SIGTERM the gateway job. Within 5s, both processes gone.
+5. Log trail for step 4: `[sentient] shutdown | signal="SIGTERM"` then (via the NEXT boot's `reapOrphans()`, not the terminating process itself) `native.orphan-reaped` for both — orphans are cleaned by `KeepAlive`'s auto-restart, not a proactive SIGTERM handler. A supervisor without auto-restart (or a permanent `launchctl bootout`) would NOT self-clean.
+
+### `addon-crash-restart`
+
+1. Gateway running, both addons healthy.
+2. `kill -9` the local-tts pid.
+3. Wait ≥60s (15s is NOT enough to conclude — see below).
+4. **As of 2026-07-29: FAILS.** No periodic health-watch/re-apply loop exists in `gateway/src/system-orchestrator/` — `applyAll()`/`applySubset()` are called only at boot, from the manual `POST /api/v1/apply`, or from the setup wizard. The crashed addon stays down until an operator manually re-triggers apply (`launchctl kickstart -k` or the apply endpoint). See `qa/native/evidence/2026-07-29-addon-crash-restart/`.
+
+### `loopback-only-exposure` — security assertion, prove both directions
+
+1. Probe every addon port (docker AND native) on `127.0.0.1` and the host's LAN IP; probe gateway `8888` on both.
+2. Expect: every addon loopback-answers/LAN-refuses; gateway answers both.
+3. **As of 2026-07-29: FAILS for whisper-stt** (native, port 8768) — answers on the LAN. Root cause: `capabilityServices/WhisperSTTService/config/config.example.yaml` still has the pre-migration container-era `host: "0.0.0.0"` (local-tts's equivalent already correctly says `127.0.0.1`). **Blocks Tasks 9/10 per the migration task's own gate until fixed.**
+
+### `code-immutability`
+
+Attempt to write the installed binary as the service user. Expect `Permission denied`; binary + parent dirs `root:wheel`. Needs a real root-owned `/opt/sentient` install — no rootless equivalent exists for this one (the assertion IS root ownership). BLOCKED without real sudo.
+
+### `upgrade-rollback`
+
+Install a release that fails health; expect the installer reverts `current` and the service is healthy on the previous version. The FSM (checksum, health-gate, rollback, idempotency, prune, config-preservation) is provable rootless via `bash deploy/mac-prod/tests/e2e-install.sh <workdir>` (stubs only `launchctl`/`chown`, both root-only) — ran clean 2026-07-29, including the exact rollback case. The `chown -R root:wheel` / `system` domain / `UserName`-switching remainder still needs a real first run.
+
+### `offline-install`
+
+Run the installer with networking disabled; expect success (nothing fetches at deploy). Root-blocked same as above. Structural substitute: `deploy/mac-prod/native/install-venv.sh` uses `pip install --no-index --find-links=`, making PyPI access impossible regardless of network state — proven live already. Do not toggle the host's Wi-Fi off to "test harder" once the case is already root-blocked; it adds no coverage and risks the box's own connectivity.
+
+### `release-host-ports` (one-time migration, not a numbered case above but worth its own entry)
+
+Any host that ran the pre-ingress-proxy shape has `sentient-fetch-mcp`/
+`sentient-searxng-mcp` still holding `127.0.0.1:8088`/`:8087` directly, which
+blocks `ingress-proxy` from binding them (`port is already allocated`). Fix:
+`docker rm -f sentient-fetch-mcp sentient-searxng-mcp` — the orchestrator
+recreates both under the new topology on the next apply. Idempotent, no-op on
+a host that never ran the old shape. Cannot be expressed as a `depends_on`
+(`ingress-proxy` must precede the MCPs for reachability, so waiting on them
+would be a cycle) — see `qa/native/README.md`'s "One-time migration" section.
+
 ## Mobile (Android emulator + iOS simulator via Maestro)
 
 **Tool:** Maestro CLI against a running Android emulator (`avd`) or iOS simulator (`xcrun simctl`), driven through the committed flow library at `qa/mobile/flows/{android,ios}/*.yaml` (97 flows, refactored 2026-07-17, commit `204f728`) via `qa/mobile/run-e2e.sh`. The old "write to `/tmp/<flow>.yaml` at run time, never commit" convention is retired for this library — flows here ARE the committed artifact. Evidence screenshots → `qa/mobile/screens/` (gitignored).
