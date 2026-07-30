@@ -130,10 +130,18 @@ the same code path; cases that don't need root were driven for real, including
 against a genuine (if unprivileged) `launchd` job — see each evidence README
 for exactly what ran and why.
 
+`addon-crash-restart` and `loopback-only-exposure` both FAILED on their first
+drive. Task 8b fixed what they found and **re-drove both against a real running
+stack** — the rows below carry the re-drive result and name the fix commit; each
+evidence README keeps the original failure analysis underneath, since that is the
+record of why the fix was needed. `code-immutability` and `offline-install`
+remain BLOCKED on genuine root and are T11 operator-handoff items, not things to
+force from an unprivileged agent.
+
 | Case | Result | Notes |
 |---|---|---|
 | `native-addon-lifecycle` | **PASS** | Driven under a rootless `gui/<uid>` launchd rehearsal (real compiled binary, `KeepAlive=true`). Startup: both `native.started` + `registry.built` real. Shutdown: "no orphans" holds, but via `KeepAlive` auto-restart + next-boot `reapOrphans()` — the gateway's own SIGTERM handler does not itself stop the native children. |
-| `addon-crash-restart` | **FAIL** | Confirmed real defect: no periodic health-watch/re-apply loop exists anywhere in `system-orchestrator/` — `applyAll()`/`applySubset()` are called only at boot, from the manual `POST /api/v1/apply`, or from the setup wizard. A crashed addon stays down (verified 65s, zero recovery) until an operator manually re-triggers apply. |
+| `addon-crash-restart` | **PASS** (re-driven 23:48 after fix `5e585db`) | Originally FAILED: no periodic health-watch existed, so a crashed addon stayed down (verified 65s, zero recovery). Re-driven with the gateway as **sole** supervisor (both addon LaunchAgents booted out, so `KeepAlive` could not fake the recovery). `kill -9` local-tts → `native.exited` 23:48:38 → `service.unhealthy reason="health-probe-failed" attempt=1` 23:48:52 → `apply.start targets=local-tts mode="subset"` → `native.started pid=65557` → ready 23:48:55 (+16.9s) → `service.recovered reason="healthy-after-reapply"`. Healthy sibling never touched; new process still binds `127.0.0.1`. Docker driver proved separately via `docker rm -f sentient-ha-mcp` (restart policy cannot cover a removed container) → recreated in 3.3s. |
 | `loopback-only-exposure` | **PASS** (re-driven 23:45 after fix `68d67fd`) | Originally FAILED: whisper-stt bound `*:8768` because its `config.example.yaml` still carried the container-era `host: "0.0.0.0"`. Re-driven against the real stack with the gateway as sole supervisor: all 8 addon ports (4 docker, 4 native — WS **and** health) answer on loopback and refuse on `192.168.0.197`; `lsof` confirms `127.0.0.1:` binds, not `*:`. The gateway's own `*:8888` is the only wildcard listener, as required. |
 | `code-immutability` | **BLOCKED** | No rootless equivalent exists — the assertion IS root ownership. Needs a real `sudo setup-prod.py install` first-run (mini or an agent with real sudo). |
 | `upgrade-rollback` | **PARTIAL** | Installer FSM (checksum, health-gate, rollback, idempotency, prune, config-preservation) proven for real via `deploy/mac-prod/tests/e2e-install.sh` (T5's rootless harness) against a real built release. Root-only remainder (`chown -R root:wheel`, the `system` domain, `UserName` switching) still needs a real first run. |
@@ -141,15 +149,20 @@ for exactly what ran and why.
 
 Two collateral defects surfaced while getting `native-addon-lifecycle` to boot
 cleanly under real launchd conditions (no `WorkingDirectory`, compiled-binary
-`import.meta.dir` is bunfs-virtual) — both outside `qa/**`, not fixed here, see
-that case's evidence README for the full trace:
-- `startup-config.ts` defaults `LOG_DIR`/`GATEWAY_CERTS_DIR` to relative paths
-  that resolve to `/logs` / `/certs` (EROFS, crash-loops) unless the plist sets
-  them explicitly — the shipped `deploy/mac-prod/io.sentient.gateway.plist`
-  currently doesn't.
-- `create-gateway-services.ts` defaults `hostConfigDirContainerPath` to a
+`import.meta.dir` is bunfs-virtual). Both were **fixed in `f46e780`**; the trace
+that found them is in that case's evidence README:
+- `startup-config.ts` defaulted `LOG_DIR`/`GATEWAY_CERTS_DIR` to relative paths
+  that resolved to `/logs` / `/certs` (EROFS, crash-loops) unless the plist set
+  them explicitly, which the shipped plist didn't. Both now default to absolute
+  paths under `~/.sentient/gateway/`, and the plist sets them too.
+- `create-gateway-services.ts` defaulted `hostConfigDirContainerPath` to a
   literal `/sentient` (a pre-migration "inside the container" assumption) when
-  `SENTIENT_HOME` is unset, instead of the real host config dir.
+  `SENTIENT_HOME` was unset; it now reuses the already-resolved state root.
+
+Re-confirmed live during the Task 8b re-drive, on a rehearsal plist carrying
+**no** `LOG_DIR`/`GATEWAY_CERTS_DIR` at all: the gateway logged to
+`~/.sentient/gateway/logs/2026-07-29.log` and nothing was created at `/logs` or
+`/certs`.
 
 ## One-time migration case: releasing the moved host ports
 
