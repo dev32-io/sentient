@@ -715,32 +715,49 @@ SDK first — the pre-2.0 installed builds predate the `turn.*` wire. Evidence:
 - The `settings-admin` trio (41/42/43) needs a **one-user household**; at the
   3-user cap "Add user" is correctly disabled and 41 dies at the dialog.
 
-### native-turn-happy / native-tool-call / permission-confirm (native) — FAIL, defect D12
+### native-turn-happy — D12 CLOSED (task 9e), and what it was hiding
 **Scenario:** any text send from Android or iOS.
-**Result: FAIL on both platforms — no mobile text send can reach the gateway on 2.0.**
-`ws-handlers.ts` routes `session.new` to `default:` (`message-unhandled`), and
-nothing in `gateway/src` emits `session.created`/`session.switched` even though
-both are in the frozen protocol (`shared/protocol/src/sessions.ts:40,57`). The KMP
-`SendMessageUseCase` gates its outbox drain on the id those frames set, so the send
-dies on the device:
-```
-connector.sessions: sendNew requestId=…
-data.send-message: flush-skipped reason=no-id-attached
-android.chat-viewmodel: send len=16 pendingId=…
-data.send-message: flush-skipped reason=no-id-attached
-```
-Gateway side the trail simply stops after `tool-broker.mcp-warmup.ok` — no
-`text.input`, no `react-loop.start`. The web matrix cannot catch this: the gate is
-mobile-only. **The whole `chat` tag being red is D12's signature** — do not
-re-diagnose each flow.
+**Was:** FAIL on both platforms — `ws-handlers.ts` routed `session.new` to `default:`, nothing
+emitted `session.created`, and the KMP `SendMessageUseCase` gates its outbox drain on the id that
+frame sets, so every send died on the device at `flush-skipped reason=no-id-attached`.
+**Now: PASS on both platforms.** `session.new` is answered with `session.created` carrying the
+connection's durable conversation id (`gateway/src/session-handlers/ws-session-new.ts`); the device
+line is now `data.send-message: flush count=1 sessionId=c::<userId>::<surfaceId>`. Android `chat`
+went 0/6 → 5/6 and iOS 0/5 → 4/5 with **every flow unedited**. Evidence:
+`qa/mobile/evidence/2026-07-30-t9e-session-new/`.
 
-### permission-confirm (native) — the case the spec never had
-The predecessor matrix named only web viewports. `qa/mobile/flows/{android,ios}/12-permission-confirm.yaml`
-is the native arm, committed **red** behind D12 so the gap stays visible.
-Selectors are **not symmetric**: Android `chat-permission-allow` / `chat-permission-deny`
-(`PermissionPromptDialog.kt`), iOS `permission-allow` / `permission-deny`
-(`ChatPermissionAlert.swift`), and iOS has no description testTag (SwiftUI alert
-`message`, assert by text).
+**Read this before trusting a green `chat` batch.** D12 was masking three further defects, and two
+of them are still open — a passing row here does not mean the path is clean:
+- **D14** — the gateway does not echo or dedup `pendingId`, so the outbox never reconciles and
+  re-sends on every `connection.state` emission. Every mobile message is committed **2–6 times**.
+  Rows that assert "a reply appeared" pass anyway; anything that reads the store, the model window
+  or a turn count is reading polluted data.
+- **D15** — "+" does not reset the server-side conversation, so a "new" chat inherits the previous
+  one's context.
+- **D13** — Android's permission dialog exports no test ids (below).
+None of the three is a reason to re-diagnose a red `chat` row as D12 again. D12 is closed.
+
+### permission-confirm (native) — PASS on iOS, blocked on Android by D13 (a harness-visibility bug)
+`qa/mobile/flows/{android,ios}/12-permission-confirm.yaml` is the native arm the predecessor spec
+never had. **iOS PASSES** (30s) — `permission-request` → user tap → `permission-resolved
+outcome="allowed"` — which proves the gateway's L3 round trip end to end from a device and localises
+the Android red to the client.
+
+**Android fails for a reason no budget change can fix.** The dialog renders and the app logs
+`permission.pending.changed hasPending=true`, but `uiautomator dump` while it is up shows **every
+node with `resource-id=""`** — so `id: chat-permission-allow` can never resolve. `testTagsAsResourceId`
+is enabled once, on `AppNavHost.kt:77`'s `Surface`; a Compose `AlertDialog` composes into its own
+window outside that subtree, so the flag never reaches `PermissionPromptDialog.kt`. The repo already
+solved this exact trap for its dropdown at `settings/components/RowSelect.kt:87` ("the app-root
+testTagsAsResourceId does NOT reach it, so re-enable it here"). Fix is one line in `android/**`;
+**do not edit the flow** — its ids are the ids in the source, they are simply not exported.
+
+**Durable rule:** any Compose surface in its OWN WINDOW — `AlertDialog`, `DropdownMenu`,
+`ModalBottomSheet`, `Popup` — needs its own `Modifier.semantics { testTagsAsResourceId = true }`.
+A testTag that is present in Kotlin and absent from the UIAutomator dump is this, every time.
+Selectors are also **not symmetric** across platforms: Android `chat-permission-allow` /
+`chat-permission-deny`, iOS `permission-allow` / `permission-deny` (`ChatPermissionAlert.swift`),
+and iOS has no description testTag (SwiftUI alert `message`, assert by text).
 
 ### settings apply — the 45 s budgets were padding for a machine that no longer exists
 `apply:orchestrator apply.ready elapsedMs=5..12` (4 samples). No supervisord, no
@@ -822,14 +839,16 @@ collapsing them into one verdict is how an unrun static edit ships looking green
 | Row / flow | Android | iOS | Note |
 |---|---|---|---|
 | login / auth (T1) | PASS | PASS | `login-avatar-${QA_USER_ID}` → `composer-input` |
-| `native-turn-happy` | FAIL | FAIL | D12 — `flush-skipped reason=no-id-attached` |
-| `native-tool-call` | FAIL (blocked) | FAIL (blocked) | needs a turn; D12 |
-| `permission-confirm` (native) | FAIL (blocked) | FAIL (blocked) | case AUTHORED, committed red behind D12 |
-| `steer-followup-audio` | FAIL (blocked) | FAIL (blocked) | D12 |
-| `reload-convergence` | FAIL (blocked) | FAIL (blocked) | no committed history to converge on |
-| `restart-persistence` | FAIL (blocked) | FAIL (blocked) | nothing to persist without a turn |
+| `native-turn-happy` | **PASS** (9e) | **PASS** (9e) | D12 closed; `01-send-stream` 17s / 31s |
+| `native-tool-call` | FAIL — D13 | **PASS** (9e) | iOS: `dispatch.foreground.done` then a reply. Android: reached the PDP, prompt un-tappable, `dispatch.denied reason="permission request timed out"`. **No `allow`-tier tool was exercised on either platform** — the only tool the model chose was `confirm`-tier |
+| `permission-confirm` (native) | **FAIL — D13** | **PASS** (9e) | Android dialog exports no resource-id; iOS 30s |
+| `new-chat` (`03` / `verify-newchat`) | **PASS** (9e) | **PASS** (9e) | composer returns; server thread NOT reset (D15) |
+| `01-newchat` (iOS only) | — | **FAIL — D15** | asserts a fresh chain 2.0 does not provide |
+| `steer-followup-audio` | not re-driven | not re-driven | unblocked by 9e; needs its own drive |
+| `reload-convergence` | not re-driven | not re-driven | unblocked by 9e, but read D14 first |
+| `restart-persistence` | not re-driven | not re-driven | unblocked by 9e, but read D14 first |
 | `voice-roundtrip` | → Task 11 | → Task 11 | fixture channel deleted + hold-vs-tap |
-| `interrupt` (native) | → Task 11 | → Task 11 | D12, then the TTS-state gate |
+| `interrupt` (native) | **PASS** (9e) | **PASS** (9e) | `05-interrupt` 27s / 41s — the D12 half is gone |
 | barge-in / acoustic | → Task 11 | → Task 11 | `physical-only`; needs real mic + speaker |
 | `40-settings-root` | PASS 19s | PASS 16s | the Task 6b static edit, now proven on both |
 | `56-secrets-presence` | PASS 29s | PASS 20s | |

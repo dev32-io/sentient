@@ -32,13 +32,33 @@ Contained, not silent: `hermes-profile.bridge.not-live` WARNs once per user per 
 Task body: `docs/superpowers/plans/2026-07-29-native-stack-migration/task-9d-hermes-profile-bridge.md`.
 Full diagnosis: `qa/web/evidence/2026-07-30-t9c-verification-gaps/README.md` § D11.
 
-### D12 — the gateway never answers `session.new`
+### ~~D12 — the gateway never answers `session.new`~~ — CLOSED 2026-07-30 (plan task 9e)
 
-`gateway/src/session-handlers/ws-handlers.ts:189` routes `session.new` and `conversation.activate` to the `default:` arm with "not yet wired". **Every mobile text send is blocked on both platforms** — the client waits for a reply that never comes. Seven Android rows in the native matrix are red on this one cause, plus `12-permission-confirm` on both platforms.
+`gateway/src/session-handlers/ws-session-new.ts` answers it with `session.created` carrying this connection's durable conversation id. Device-verified on both platforms with every flow unedited: Android `chat` 0/6 → 5/6, iOS 0/5 → 4/5, `data.send-message: flush count=1 sessionId=c::…` replacing `flush-skipped reason=no-id-attached`. Evidence: `qa/mobile/evidence/2026-07-30-t9e-session-new/`.
 
-Both response frames already exist in the frozen protocol: `session.created` and `session.switched` at `shared/protocol/src/sessions.ts:40,57`. The fix is to answer, not to design.
+**Only the `session.new` half closed.** `conversation.activate` remains deliberately unanswered — see §2, where the reason is now precise rather than "later scope".
 
-Note the split: answering `session.new` unblocks **creating** a conversation. Switching to a **past** conversation additionally needs the history-load REST route — `GET /sessions/:id/messages`, which `ws-session-configure.ts:385` records as deliberately unserved. See §2.
+D12 was masking three further defects, filed below as D13/D14/D15. Do not read a green `chat` batch as a clean path.
+
+### D13 — the Android permission dialog exports no test ids, so `12-permission-confirm` cannot be driven
+
+The dialog renders and works for a human; `uiautomator dump` while it is open shows **every node with `resource-id=""`**, so `id: chat-permission-allow` can never resolve and Maestro times out. `testTagsAsResourceId` is enabled once, on `android/.../nav/AppNavHost.kt:77`'s `Surface`; a Compose `AlertDialog` composes into its own window outside that subtree, so the flag never reaches `PermissionPromptDialog.kt`.
+
+Fix is one line — the same `Modifier.semantics { testTagsAsResourceId = true }` that `android/.../settings/components/RowSelect.kt:87` already applies to its dropdown for exactly this reason. **Do not edit the flow**: its ids are the ids in the source. iOS needs nothing (the twin passes; SwiftUI alerts carry `accessibilityIdentifier` through).
+
+### D14 — every mobile message is committed 2–6 times (`pendingId` round trip deleted by our own purge)
+
+The KMP outbox's contract is *"the gateway dedups by pendingId"* — stated three times in `OutboundCache.kt`. It does not. `pendingId` is in the wire schema (`shared/protocol/src/messages.ts:150`), `grep -rn pendingId gateway/src` returns zero non-test hits, and the `entries` table has no `pending_id` column, so the committed echo cannot carry one even in principle. The entry therefore never reconciles, `ChatViewModel` re-runs `flushIfReady` on every `connection.state` emission, and the same message is re-sent — then swept to `FAILED`, showing a **Retry chip under a message that was delivered**. Measured 2× on a plain turn and 6× across a long one.
+
+A regression of the 2.0 legacy purge, not of task 9e: `git log -S pendingId -- gateway/src` shows `6c7bc1c` (dedup) and `aef5e0c` (echo on the feed) both removed by `10bd446`. D12 hid it — nothing was ever sent.
+
+**Do not fix this with a dedupe guard in the router.** That is the D7 mistake from NM-T9c: the projection was the bug and a guard would have masked it. Restore the round trip — persist `pendingId` on the user entry, echo it on `conversation.entry` — which crosses the store schema and both projections.
+
+### D15 — "+ new chat" does not reset the server-side conversation
+
+A surface has exactly one durable conversation on 2.0, so `session.new` is answered with the existing id: "+" clears the client's mirror but leaves the server thread and its context. Observed consequence, not theoretical — `ios/01-newchat.yaml` sends `what is 8 plus 9` into a fresh-looking chat and the model calls `ha_call_service`, resuming the *previous* conversation's task, so the turn parks on a permission prompt and no reply ever renders.
+
+The alternative was rejected on evidence: minting a fresh partition per `session.new` would fork on **every app launch** (the chat route's default `sessionId` is null, so `ChatViewModel.init` fires `sendNewChat()` with no user tap — and the VM initialises twice per launch), destroying `reload-convergence` and `restart-persistence`. Closing this properly is the multi-conversation project in §2. `01-newchat` is left red as its standing acceptance test.
 
 ### Stale personality entry becomes live once D11 lands
 
@@ -48,7 +68,10 @@ After deleting a personality, the rendered `config.yaml` keeps a `personalities:
 
 ## 2. Deferred by scope
 
-- **Multi-conversation** — session switching and past-chat history need the sessions REST surface (`GET /sessions/:id/messages`) plus the `sessions.*` frames wired end to end. Its own project. Reload and reconnect *within one conversation* are verified and green.
+- **Multi-conversation** — session switching and past-chat history need the sessions REST surface (`GET /sessions/:id/messages`) plus the `sessions.*` frames wired end to end. Its own project. Reload and reconnect *within one conversation* are verified and green. Three things are parked here, not merely "later":
+  - **`conversation.activate` is answered by nobody, deliberately.** Its only reply is `session.switched`, which both SDKs read as "refetch history over `GET /sessions/:id/messages`"; that route is unserved and mobile's failure branch is `SdkConnectors.loadHistoryForSession` → `replaceMirror(emptyList())`. Answering would **wipe the visible chat** — and not only on a user's switch: `SentientSdk.reestablishAnchoredSession` fires an activate on every reconnect that carries an anchor without a resume cursor, a path that task 9e's `session.new` answer newly arms. The gateway re-anchors from `session.configure.conversationId` on that same reconnect anyway, so leaving it unhandled costs nothing. It becomes answerable when the history route lands, not before. Reason recorded in `ws-handlers.ts`'s `default:` arm and pinned by a test.
+  - **"+ new chat" does not reset the server-side thread** — D15 in §1.
+  - **`session.new` returns the surface's existing conversation id**, deliberately, because mobile fires it on every launch. See `gateway/src/session-handlers/ws-session-new.ts`.
 - **Hermes-shaped settings are expected-inert on 2.0** — soul, personality and long-term memory were built against Hermes as the agent runtime. The gateway owns the loop now, so those screens render and persist but do not change behaviour. Keep the UI; the functionality transitions to gateway-owned in a later spec. An operator testing personality and finding it does nothing must be able to tell "as designed, for now" from "broken" — this is the single most likely thing to be misfiled as a bug.
 - **Signal** — removed outright as dead weight. Nothing to verify, nothing to restore.
 - **Per-user long-term memory, skills, recursive sub-agents** — named in the 2.0 design, specified in their own later specs. Out of scope for the walking skeleton.

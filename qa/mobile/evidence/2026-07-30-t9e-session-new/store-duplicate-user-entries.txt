@@ -1,0 +1,18 @@
+100|user|what is 2 plus 2
+101|user|what is 2 plus 2
+102|user|tell me a very long story about the hist
+103|user|tell me a very long story about the hist
+104|user|turn on the kitchen light
+105|user|turn on the kitchen light
+106|assistant|Here are the quick answers and the light
+107|user|turn on the kitchen light
+108|user|turn on the kitchen light
+109|assistant|**}
+110|user|turn on the kitchen light
+111|user|turn on the kitchen light
+112|assistant|**
+
+The user wants to turn on the kitche
+113|tool_call|
+114|tool_result|
+115|tool_call|
