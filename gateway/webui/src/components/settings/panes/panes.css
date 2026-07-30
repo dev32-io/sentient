@@ -776,6 +776,16 @@
   margin-bottom: 14px;
 }
 
+/* Auto side margins center the code inside the flex row. The quiet zone stays a
+   literal white — not a theme token — so the code keeps scanner contrast in dark mode. */
+.settings-v2 .get-app-qr-img {
+  display: block;
+  margin: 12px auto;
+  background: #fff;
+  padding: 8px;
+  border-radius: 6px;
+}
+
 .settings-v2 .get-app-url {
   display: block;
   font-family: var(--font-mono);

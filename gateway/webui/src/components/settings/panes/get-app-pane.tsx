@@ -32,7 +32,7 @@ export function GetAppPane(): JSX.Element {
         </div>
         <div class="get-app-qr">
           <img
-            class="qr-canvas"
+            class="get-app-qr-img"
             src="/download/qr.png"
             width={200}
             height={200}
