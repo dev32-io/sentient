@@ -1,7 +1,6 @@
 import { createGatewayServices } from "./bootstrap/create-gateway-services.ts";
 import { createMcpHost } from "./bootstrap/create-mcp-host.ts";
 import { loadLoggingConfig, loadStartupConfig } from "./config/startup-config.ts";
-import { configureExternalTools } from "./external-tools/external-tool.ts";
 import { createHermesExternalTool } from "./external-tools/hermes-external-tool.ts";
 import { createGatewayLogger, getLog } from "./logging/logger.ts";
 import { createUnavailableSessionLookup } from "./mcp-host/active-session-lookup.ts";
@@ -95,56 +94,29 @@ if (config.hermes) {
   await mcpHost.start();
 
   // -------------------------------------------------------------------------
-  // External tools — the LAST startup step (defect D11).
+  // External tools — bound here, RUN at dispatch (defect D11, task 9g).
   //
   // An external tool is one the gateway does not supervise: no lifecycle, no
-  // port, no health check. Hermes is the first. It must be configured AFTER
-  // the gateway's own dependencies are up, because registering a per-user MCP
-  // before its socket is listening writes config pointing at nothing — silent,
-  // and indistinguishable from the defect being fixed. Hence: after
-  // `mcpHost.start()` above, and gated on the orchestrator's apply-complete
-  // signal inside the handler.
+  // port, no health check. Hermes is the first. Task 9d configured it once per
+  // user per boot; that leaves a drift window — the user edits their own hermes
+  // profile at 10am and every delegation until the next restart silently gets
+  // nothing. So this composition root only BINDS the tool; `delegateTask` runs
+  // it in its setup phase, immediately before spawning the delegated agent.
+  // There is deliberately no boot-time run and no user-created hook: two
+  // writers of one profile entry is a race with no owner.
+  //
+  // Binding here (and not in `phase-services.ts`) is what the late-bound slot
+  // exists for — the tool needs the MCP host's delegated surface, and the host
+  // needs the composition root's user store. See external-tool-slot.ts.
   // -------------------------------------------------------------------------
   if (config.orchestrator) {
-    const hermesTool = createHermesExternalTool({
-      delegatedTools: hostRef.delegatedToolNames,
-      timeoutMs: config.orchestrator.delegation.hermes_mcp_register_timeout_ms,
-      socketBasePath: config.hermes.mcp_host.socket_path,
-    });
-    // Registered after the addUser listener above, and `emitCreated` fans out
-    // in insertion order, so a new user's socket is listening before anything
-    // points hermes at it.
-    services.userLifecycle.onCreated(async (userId) => {
-      await hermesTool.configure(userId);
-    });
-
-    void configureExternalTools({
-      tools: [hermesTool],
-      listUserIds: async () => {
-        const users = await services.auth.users.list();
-        if (users.ok) return users.value.map((u) => u.userId);
-        log.warn("external-tools.user-list-failed", { error: users.error });
-        return [];
-      },
-      internalDependenciesReady: async () => {
-        // The gate is apply-COMPLETION, not apply-success. A failed addon
-        // apply does not remove the gateway's own per-user MCP sockets —
-        // `mcpHost.start()` above opened those — so requiring `ready` would
-        // let one unconfigured addon permanently deny every user their
-        // delegated tools. In dev that is the NORMAL state: the native addons
-        // resolve argv[0] from ${SENTIENT_CODE}, which only the launchd plist
-        // sets, so every dev boot reports `failed`.
-        if (!services.bootReconcile) return false;
-        const status = await services.bootReconcile;
-        if (status.state !== "ready") {
-          log.warn("external-tools.degraded-apply", {
-            state: status.state,
-            reason: "addon apply did not reach ready; registering anyway because the MCP sockets are gateway-owned",
-          });
-        }
-        return true;
-      },
-    });
+    services.delegatedExternalTool.set(
+      createHermesExternalTool({
+        hostedDelegatedTools: hostRef.delegatedToolNames,
+        timeoutMs: config.orchestrator.delegation.hermes_mcp_register_timeout_ms,
+        socketBasePath: config.hermes.mcp_host.socket_path,
+      }),
+    );
   }
 }
 

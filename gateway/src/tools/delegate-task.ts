@@ -24,6 +24,7 @@
 // the turnId context this file does not and appends a fresh `trigger` entry,
 // NEVER a second `tool_result` for `inv.toolCallId`.
 
+import type { ExternalTool } from "../external-tools/external-tool.js";
 import { getLog } from "../logging/logger.js";
 import type { UserId } from "../user-auth/user-id.js";
 import type { DelegationGuard } from "./delegation-guard.js";
@@ -63,6 +64,15 @@ export interface DelegateTaskDeps {
   hermesRunner: HermesRunner;
   /** The session's principal — delegated to Hermes as `-p <userId>`. */
   userId: UserId;
+  /**
+   * The delegated worker's own configuration, verified and repaired in the
+   * setup phase below — for Hermes, the gateway's per-user MCP entry on its
+   * profile (`external-tools/hermes-external-tool.ts`).
+   *
+   * Optional and null-tolerant: a dev/headless composition root with no
+   * `orchestrator:` block has nothing to provide, and the delegation still runs.
+   */
+  externalTool?: ExternalTool | null;
 }
 
 type ParsedDelegateArgs = { agent: string; taskPrompt: string };
@@ -85,6 +95,45 @@ function errorResult(content: string): ToolResult {
 
 export function createDelegateTaskRunner(deps: DelegateTaskDeps): BackgroundToolRunner {
   const { guard, hermesRunner, userId } = deps;
+  const externalTool = deps.externalTool ?? null;
+
+  /**
+   * Setup phase — runs INSIDE the result promise, i.e. after `run` has already
+   * handed the broker its `{ taskId }`, and strictly BEFORE the spawn. Hermes
+   * reads its MCP config at startup, so providing after the spawn is the same
+   * as not providing at all.
+   *
+   * NEVER fails the delegation. A provisioning failure (CLI down, timeout,
+   * read-back mismatch) leaves the delegated agent with fewer tools, which is
+   * degraded; refusing to run at all is broken. The `provide` contract says it
+   * does not throw — the catch is here anyway, because a throw would reject the
+   * runner's result promise and the broker would report the whole delegation as
+   * failed on a bookkeeping error.
+   */
+  async function runSetupPhase(taskId: string): Promise<void> {
+    if (!externalTool) {
+      log.debug("delegate-task.setup.no-external-tool", { taskId, userId });
+      return;
+    }
+    try {
+      const outcome = await externalTool.provide(userId);
+      if (outcome.ok) return;
+      log.warn("delegate-task.setup.failed", {
+        taskId,
+        userId,
+        tool: externalTool.name,
+        error: outcome.error,
+        reason: "dispatching anyway; the delegated agent runs with fewer tools rather than not at all",
+      });
+    } catch (err: unknown) {
+      log.warn("delegate-task.setup.threw", {
+        taskId,
+        userId,
+        tool: externalTool.name,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 
   function run(inv: ToolInvocation, taskId: string): { cancel: () => void; result: Promise<ToolResult> } {
     const parsed = parseArgs(inv.args);
@@ -108,15 +157,17 @@ export function createDelegateTaskRunner(deps: DelegateTaskDeps): BackgroundTool
     const onInvAbort = () => controller.abort();
     inv.signal.addEventListener("abort", onInvAbort, { once: true });
 
-    const result = hermesRunner.run(userId, taskPrompt, controller.signal).then((outcome): ToolResult => {
-      inv.signal.removeEventListener("abort", onInvAbort);
-      if (outcome.ok) {
-        log.info("delegate-task.run.ok", { taskId, agent, outputLength: outcome.output.length });
-        return { content: outcome.output, isError: false };
-      }
-      log.warn("delegate-task.run.failed", { taskId, agent, reason: outcome.error });
-      return { content: outcome.error, isError: true };
-    });
+    const result = runSetupPhase(taskId)
+      .then(() => hermesRunner.run(userId, taskPrompt, controller.signal))
+      .then((outcome): ToolResult => {
+        inv.signal.removeEventListener("abort", onInvAbort);
+        if (outcome.ok) {
+          log.info("delegate-task.run.ok", { taskId, agent, outputLength: outcome.output.length });
+          return { content: outcome.output, isError: false };
+        }
+        log.warn("delegate-task.run.failed", { taskId, agent, reason: outcome.error });
+        return { content: outcome.error, isError: true };
+      });
 
     return { cancel: () => controller.abort(), result };
   }

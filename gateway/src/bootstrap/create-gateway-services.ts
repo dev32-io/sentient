@@ -20,6 +20,7 @@ import type { TestProviderResult } from "../api/wizard/index.ts";
 import type { ApplyDeps } from "../apply/orchestrator.js";
 import type { SessionManager } from "../auth/session-manager.ts";
 import type { StartupConfig } from "../config/startup-config.ts";
+import type { ExternalToolSlot } from "../external-tools/external-tool-slot.js";
 import { getLog } from "../logging/logger.ts";
 import type { PersonalityStore } from "../profile-store/personality-store.js";
 import type { ProfileStore } from "../profile-store/profile-store.ts";
@@ -151,6 +152,11 @@ export interface GatewayServices {
    *  config.yaml. When present but `provider` is null, calling it throws a
    *  clear error rather than the gateway failing to boot. */
   readonly createSessionRuntime: CreateSessionRuntime | null;
+  /** Late-bound holder for the delegated worker's own configuration
+   *  (`external-tools/external-tool-slot.ts`). Filled in `main.ts` right after
+   *  the MCP host exists, because the host is what knows the delegated tool
+   *  surface — and read per session by `delegateTask`'s setup phase. */
+  readonly delegatedExternalTool: ExternalToolSlot;
 }
 
 export async function createGatewayServices(cfg: StartupConfig): Promise<GatewayServices> {
@@ -245,5 +251,6 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     mcpClient: services.mcpClient,
     provider: services.provider,
     createSessionRuntime: services.createSessionRuntime,
+    delegatedExternalTool: services.delegatedExternalTool,
   };
 }

@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import type { Result } from "@sentient/protocol";
+import type { ExternalTool, ExternalToolError } from "../external-tools/external-tool.js";
 import type { UserId } from "../user-auth/user-id.js";
 import { createDelegateTaskRunner, delegateTaskDefinition } from "./delegate-task.js";
 import type { DelegationDecision, DelegationGuard } from "./delegation-guard.js";
@@ -124,7 +126,7 @@ describe("delegateTask runner — guard gates every invocation before hermesRunn
     expect(hermesRunner.callCount()).toBe(0);
   });
 
-  it("cancel() aborts the signal passed into hermesRunner.run", () => {
+  it("cancel() aborts the signal passed into hermesRunner.run", async () => {
     let capturedSignal: AbortSignal | undefined;
     const hermesRunner: HermesRunner = {
       run: (_userId, _prompt, signal) => {
@@ -136,9 +138,120 @@ describe("delegateTask runner — guard gates every invocation before hermesRunn
     const runner = createDelegateTaskRunner({ guard, hermesRunner, userId });
 
     const { cancel } = runner.run(makeInvocation({ agent: "hermes", taskPrompt: "do it" }), "task-1");
+    await settle(); // the setup phase runs off-turn; the spawn happens after it
 
     expect(capturedSignal?.aborted).toBe(false);
     cancel();
     expect(capturedSignal?.aborted).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Dispatch-time setup phase (task 9g, owner's Correction 1)
+// ---------------------------------------------------------------------------
+// Task 9d provided the gateway's MCP entry once per user per boot. A user who
+// edits their own profile at 10am then got a tool-less delegated agent until the
+// next restart — D8's failure mode wearing a fourth hat. Providing it at the
+// moment of use makes that drift structurally impossible.
+
+/** Flush every pending microtask AND the timer queue, so assertions can see the
+ *  off-turn setup phase complete without racing it. */
+function settle(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function fakeExternalTool(outcome: Result<void, ExternalToolError>, log: string[]): ExternalTool {
+  return {
+    name: "hermes",
+    async provide(id) {
+      log.push(`provide:${id}`);
+      return outcome;
+    },
+  };
+}
+
+function loggingRunner(log: string[], result: HermesRunResult): HermesRunner {
+  return {
+    async run(id) {
+      log.push(`spawn:${id}`);
+      return result;
+    },
+  };
+}
+
+describe("delegateTask runner — the dispatch-time setup phase", () => {
+  const OK: Result<void, ExternalToolError> = { ok: true, value: undefined };
+
+  // INVARIANT: ordering IS the requirement. Providing after the spawn is the
+  // same as not providing at all — hermes reads its MCP config at startup.
+  it("verifies and repairs the gateway MCP entry before spawning the agent", async () => {
+    const order: string[] = [];
+    const runner = createDelegateTaskRunner({
+      guard: fakeGuard({ action: "allow" }),
+      hermesRunner: loggingRunner(order, { ok: true, output: "done" }),
+      userId,
+      externalTool: fakeExternalTool(OK, order),
+    });
+
+    await runner.run(makeInvocation({ agent: "hermes", taskPrompt: "do it" }), "task-1").result;
+
+    expect(order).toEqual([`provide:${userId}`, `spawn:${userId}`]);
+  });
+
+  // INVARIANT: degraded beats broken. A delegated agent with fewer tools still
+  // does useful work; one that refuses to run is a user-visible failure caused
+  // by our own bookkeeping.
+  it("dispatches anyway when providing the entry fails", async () => {
+    const order: string[] = [];
+    const runner = createDelegateTaskRunner({
+      guard: fakeGuard({ action: "allow" }),
+      hermesRunner: loggingRunner(order, { ok: true, output: "done" }),
+      userId,
+      externalTool: fakeExternalTool({ ok: false, error: "cli-error" }, order),
+    });
+
+    const toolResult = await runner.run(makeInvocation({ agent: "hermes", taskPrompt: "do it" }), "task-1").result;
+
+    expect(order).toEqual([`provide:${userId}`, `spawn:${userId}`]);
+    expect(toolResult).toEqual({ content: "done", isError: false });
+  });
+
+  // Same invariant, harsher input: `provide` is contractually non-throwing, but
+  // a throw escaping here would reject the runner's result promise and the
+  // broker would report the whole delegation as failed.
+  it("dispatches anyway when providing the entry throws", async () => {
+    const order: string[] = [];
+    const runner = createDelegateTaskRunner({
+      guard: fakeGuard({ action: "allow" }),
+      hermesRunner: loggingRunner(order, { ok: true, output: "done" }),
+      userId,
+      externalTool: {
+        name: "hermes",
+        provide() {
+          order.push("provide:threw");
+          return Promise.reject(new Error("boom"));
+        },
+      },
+    });
+
+    const toolResult = await runner.run(makeInvocation({ agent: "hermes", taskPrompt: "do it" }), "task-1").result;
+
+    expect(order).toEqual(["provide:threw", `spawn:${userId}`]);
+    expect(toolResult).toEqual({ content: "done", isError: false });
+  });
+
+  // A denied delegation must not touch the user's hermes profile at all.
+  it("does not provide anything when the guard denies", async () => {
+    const order: string[] = [];
+    const runner = createDelegateTaskRunner({
+      guard: fakeGuard({ action: "deny", reason: "nope" }),
+      hermesRunner: loggingRunner(order, { ok: true, output: "done" }),
+      userId,
+      externalTool: fakeExternalTool(OK, order),
+    });
+
+    await runner.run(makeInvocation({ agent: "hermes", taskPrompt: "do it" }), "task-1").result;
+
+    expect(order).toEqual([]);
   });
 });

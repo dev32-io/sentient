@@ -21,6 +21,7 @@ import type { ApplyDeps } from "../apply/orchestrator.js";
 import { renderAndWrite } from "../apply/orchestrator.js";
 import { resolveAssetRoot } from "../config/asset-root.ts";
 import type { StartupConfig } from "../config/startup-config.ts";
+import { type ExternalToolSlot, createExternalToolSlot } from "../external-tools/external-tool-slot.js";
 import { getLog } from "../logging/logger.ts";
 import { createPersonalityStore } from "../profile-store/personality-store.js";
 import type { PersonalityStore } from "../profile-store/personality-store.js";
@@ -109,6 +110,9 @@ export interface PhaseServicesOutput {
    *  the factory itself still exists in that case, and throws when actually
    *  invoked. */
   readonly createSessionRuntime: CreateSessionRuntime | null;
+  /** Late-bound holder for the delegated worker's own configuration — filled
+   *  in `main.ts` once the MCP host exists (task 9g). */
+  readonly delegatedExternalTool: ExternalToolSlot;
 }
 
 export async function runPhaseServices(input: PhaseServicesInput): Promise<PhaseServicesOutput> {
@@ -125,10 +129,8 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     return createTextStreamSynthesizer(cfg, sessionFactory);
   };
 
-  const { accessManager, mcpClient, provider, createSessionRuntime } = await buildOrchestratorServices(
-    cfg,
-    secretsStore,
-  );
+  const { accessManager, mcpClient, provider, createSessionRuntime, delegatedExternalTool } =
+    await buildOrchestratorServices(cfg, secretsStore);
 
   const profileStore = createProfileStore();
   const templateLoader = createTemplateLoader();
@@ -236,6 +238,7 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     mcpClient,
     provider,
     createSessionRuntime,
+    delegatedExternalTool,
   };
 }
 
@@ -279,6 +282,10 @@ export interface OrchestratorServices {
   mcpClient: McpClient;
   provider: ProviderClient | null;
   createSessionRuntime: CreateSessionRuntime | null;
+  /** Filled once at boot by whoever owns the MCP host — see
+   *  `external-tools/external-tool-slot.ts` for why this one hop is
+   *  late-bound. Read at session-creation time by `delegateTask`'s runner. */
+  delegatedExternalTool: ExternalToolSlot;
 }
 
 /**
@@ -301,6 +308,7 @@ export async function buildOrchestratorServices(
 ): Promise<OrchestratorServices> {
   const accessManager = createAccessManager({ userDataRoot: cfg.access.user_data_root });
   const mcpClient = createMcpClient(cfg.mcpCatalog, {});
+  const delegatedExternalTool = createExternalToolSlot();
 
   // MCP-warm-before-first-call (Task 4 residual — see tool-broker.ts's
   // `ensureMcpWarm` doc comment and Task 4's own report: "a residual for
@@ -322,7 +330,7 @@ export async function buildOrchestratorServices(
 
   if (!cfg.orchestrator) {
     log.info("orchestrator.disabled", { reason: "no orchestrator: block in config.yaml" });
-    return { accessManager, mcpClient, provider: null, createSessionRuntime: null };
+    return { accessManager, mcpClient, provider: null, createSessionRuntime: null, delegatedExternalTool };
   }
 
   const orchestratorCfg = cfg.orchestrator;
@@ -346,9 +354,10 @@ export async function buildOrchestratorServices(
     policyEngine,
     delegationGuard,
     hermesRunner,
+    delegatedExternalTool,
   });
 
-  return { accessManager, mcpClient, provider, createSessionRuntime };
+  return { accessManager, mcpClient, provider, createSessionRuntime, delegatedExternalTool };
 }
 
 /** Warms the shared MCP client's per-server transport connections. Never
@@ -435,6 +444,7 @@ interface CreateSessionRuntimeFactoryDeps {
   policyEngine: PolicyEngine;
   delegationGuard: DelegationGuard;
   hermesRunner: HermesRunner;
+  delegatedExternalTool: ExternalToolSlot;
 }
 
 /** The per-session factory itself. Synchronous (matches the locked
@@ -447,6 +457,7 @@ interface CreateSessionRuntimeFactoryDeps {
  *  actual use, not in `buildOrchestratorServices` above). */
 function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): CreateSessionRuntime {
   const { orchestratorCfg, accessManager, provider, mcpClient, policyEngine, delegationGuard, hermesRunner } = deps;
+  const { delegatedExternalTool } = deps;
 
   return ({ principal, conversationId, connectionId, emitter, voice }) => {
     if (!provider) {
@@ -478,7 +489,14 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
     const backgroundTools = new Map<string, BackgroundToolRunner>();
     backgroundTools.set(
       delegateTaskDefinition.name,
-      createDelegateTaskRunner({ guard: delegationGuard, hermesRunner, userId: principal.userId }),
+      createDelegateTaskRunner({
+        guard: delegationGuard,
+        hermesRunner,
+        userId: principal.userId,
+        // Read per session, not per boot: the slot is filled while the gateway
+        // starts and this closure runs on every WS connect long afterwards.
+        externalTool: delegatedExternalTool.get(),
+      }),
     );
 
     // `ToolBrokerDeps.store` is interface-parity only — tool-broker.ts never
