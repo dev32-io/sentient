@@ -261,27 +261,6 @@ downloads:
   public_base_url: https://sentient.dev32.io
 
 # ---------------------------------------------------------------------------
-# Cerebrum — legacy cognitive-cycle keys. The gateway's Hermes-cycle
-# dispatch brain (cerebrum/, hermes-adapter-client/, salience/) was purged;
-# these three keys are kept as-is for Plan 2, which rehomes them under a
-# new `orchestrator:` section. Do not add new keys under `cerebrum:`.
-# ---------------------------------------------------------------------------
-cerebrum:
-  cycle:
-    max_iterations: 10                # ReAct loop cap: consecutive auto-triggered cycles between external stimuli
-    history_max_tokens: 4096          # per-cycle token budget for the conversation-history transcript layer
-
-  # OOM guard for the in-memory ConversationHistory log. Per-cycle token
-  # fitting is separate (see cycle.history_max_tokens).
-  conversation_history:
-    max_entries: 10000                # FIFO cap; evicts oldest once exceeded
-
-  # Bypass the family-friendly persona guardrails for local / uncensored-model
-  # testing. When true, loads system_prompts/system_prompt_unlimited.md (STT +
-  # TTS mechanics only) and skips persona.md. Keep false in production.
-  unlimited_mode: false
-
-# ---------------------------------------------------------------------------
 # Hermes — per-user Hermes WORKER PROCESS deployment. Distinct from the
 # cognitive-cycle dispatch brain purged above: `worker` / `mcp_host` are
 # still read by retained code (session-router.ts, admin/, apply/,
@@ -339,7 +318,6 @@ apply:
   # orchestrator waits up to this long for the WS adapter to come back online.
   profile_restart_timeout_ms: 30000      # 5000–60000
   profile_restart_poll_interval_ms: 250  # 50–1000
-  dispatch_ping_timeout_ms: 8000         # max wait for ping→pong after pool upsert (user creation); 1000–30000
 
 # ---------------------------------------------------------------------------
 # Providers — external catalog endpoints + cache TTLs

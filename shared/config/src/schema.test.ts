@@ -338,7 +338,6 @@ describe("gateway config — auth/apply/providers sections", () => {
 describe("applyConfigSchema", () => {
   it("parses an empty object to the simplified default shape", () => {
     expect(applyConfigSchema.parse({})).toEqual({
-      dispatch_ping_timeout_ms: 8000,
       docker_restart_timeout_ms: 30000,
       health_check_timeout_ms: 90000,
       health_poll_interval_ms: 1000,

@@ -12,7 +12,6 @@ const APPLY_CONFIG: ApplyConfig = {
   health_poll_interval_ms: 1000,
   profile_restart_timeout_ms: 30000,
   profile_restart_poll_interval_ms: 250,
-  dispatch_ping_timeout_ms: 8000,
 };
 
 const FAKE_TOKEN = "a".repeat(64);

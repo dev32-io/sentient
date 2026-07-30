@@ -138,58 +138,6 @@ export const loggingConfigSchema = z.object({
 export type LoggingConfig = z.output<typeof loggingConfigSchema>;
 
 // ---------------------------------------------------------------------------
-// Cerebrum — cognitive cycle orchestration
-// ---------------------------------------------------------------------------
-
-export const cerebrumCycleConfigSchema = z.object({
-  debounce_window_ms: z.number().int().min(10).max(5000).default(80),
-  standard_threshold: z.number().min(0).max(100).default(50),
-  immediate_wake_threshold: z.number().min(0).max(200).default(100),
-  max_per_hour: z.number().int().min(1).max(1000).default(120),
-  max_iterations: z.number().int().min(1).max(50).default(10),
-  max_iter_warn_ahead: z.number().int().min(1).max(20).default(3),
-  history_max_tokens: z.number().int().min(256).max(32768).default(4096),
-});
-
-export type CerebrumCycleConfig = z.output<typeof cerebrumCycleConfigSchema>;
-
-export const cerebrumTaskTableConfigSchema = z.object({
-  // Last N completed tasks to include alongside running tasks in the
-  // per-cycle task table. Raising this gives the model longer recall of
-  // what it's done; lowering it saves tokens.
-  window: z.number().int().min(1).max(500).default(30),
-});
-
-export type CerebrumTaskTableConfig = z.output<typeof cerebrumTaskTableConfigSchema>;
-
-export const cerebrumConversationHistoryConfigSchema = z.object({
-  // Hard cap on in-memory history entries (FIFO eviction). OOM guard only;
-  // per-cycle token budget is controlled by cycle.history_max_tokens.
-  // At default 10000 entries × ~300 B/entry the memory ceiling is ~3-5 MB,
-  // plenty of headroom for realistic family-voice-assistant sessions.
-  max_entries: z.number().int().min(100).max(1_000_000).default(10_000),
-});
-
-export type CerebrumConversationHistoryConfig = z.output<typeof cerebrumConversationHistoryConfigSchema>;
-
-export const cerebrumConfigSchema = z.object({
-  // Sole supported provider since Phase 1.9. The "in-process" cerebrum
-  // (CognitiveCycle / TaskManager / effects) was deleted; only Hermes
-  // remains. Kept as a single-value enum for future provider plugins.
-  provider: z.literal("hermes").default("hermes"),
-  cycle: cerebrumCycleConfigSchema.default({}),
-  task_table: cerebrumTaskTableConfigSchema.default({}),
-  conversation_history: cerebrumConversationHistoryConfigSchema.default({}),
-  // Bypass the family-friendly persona guardrails. When true, loads
-  // `system_prompts/system_prompt_unlimited.md` (STT + TTS mechanics only,
-  // no safety/behavior rules) instead of `persona.md` + `system_prompt.md`.
-  // Use for testing local / uncensored models; keep `false` in production.
-  unlimited_mode: z.boolean().default(false),
-});
-
-export type CerebrumConfig = z.output<typeof cerebrumConfigSchema>;
-
-// ---------------------------------------------------------------------------
 // WebUI — client-side playback tuning relayed via session.ready
 // ---------------------------------------------------------------------------
 
@@ -253,9 +201,6 @@ export const applyConfigSchema = z.object({
   // Cadence between WS-readiness polls during the profile-restart orchestrator's
   // polling phase. Range: 50–1000.
   profile_restart_poll_interval_ms: z.number().int().min(50).default(250),
-  // Max wait for a ping→pong round-trip after pool upsert during user creation,
-  // confirming the new worker can accept dispatches. Range: 1000–30000.
-  dispatch_ping_timeout_ms: z.number().int().min(1000).default(8000),
 });
 
 export type ApplyConfig = z.output<typeof applyConfigSchema>;
@@ -349,7 +294,6 @@ export const gatewayConfigSchema = z.object({
   logging: loggingConfigSchema.default({}),
   stt: sttConfigSchema,
   tts: ttsConfigSchema,
-  cerebrum: cerebrumConfigSchema.default({}),
   webui: webuiConfigSchema.default({}),
   hermes: hermesConfigSchema.optional(),
   auth: authConfigSchema.default({}),

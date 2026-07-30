@@ -4,7 +4,6 @@ import type {
   AccessConfig as AccessYaml,
   ApplyConfig as ApplyYaml,
   AuthConfig as AuthYaml,
-  CerebrumConfig as CerebrumYaml,
   CompanionsConfig as CompanionsYaml,
   DownloadsConfig as DownloadsYaml,
   HermesBuiltinTools,
@@ -90,7 +89,6 @@ export interface StartupConfig {
    *  per-session voice override is Plan 2's concern (SessionRuntime). */
   tts: TTSYaml;
 
-  cerebrum: CerebrumYaml;
   webui: WebuiYaml;
   hermes: HermesYaml | undefined;
   auth: AuthYaml;
@@ -165,7 +163,6 @@ export function loadStartupConfig(): StartupConfig {
     // down/unreachable service degrades gracefully at synth time, not boot.
     tts: cfg.tts,
 
-    cerebrum: cfg.cerebrum,
     webui: cfg.webui,
     hermes: cfg.hermes,
     auth: cfg.auth,
