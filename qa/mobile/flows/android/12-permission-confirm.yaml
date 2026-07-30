@@ -1,0 +1,67 @@
+appId: io.dev32.sentient.debug
+tags:
+  - chat
+env:
+  # See _helpers/login.yaml for why the avatar id is a variable.
+  QA_USER_ID: u_0417d3b0
+---
+# 12-permission-confirm — the NATIVE arm of `permission-confirm` (spec §9.2).
+#
+# WHY THIS FILE EXISTS: the predecessor spec's matrix names only WEB viewports for
+# `permission-confirm-web`. There was no native case at all — a genuine gap in the
+# spec, not a deliberate omission. This is that case, for Android; the iOS twin is
+# ios/12-permission-confirm.yaml.
+#
+# Scenario: ask for something that needs a SIDE-EFFECTING tool (ha_call_service).
+# The gateway's L3 PEP must block on a real confirm prompt rather than let the
+# model's tool call authorise itself, the app must surface it as a decision-required
+# dialog, and Allow must let the tool dispatch.
+#
+# Expected gateway log trail:
+#   runtime:permission-broker  permission-broker.request  timeoutMs=120000
+#   runtime:permission-broker  permission-resolved        outcome="allowed"
+#   tools:tool-broker          tool-broker.pdp.decision   action="allow"
+# Deny arm -> outcome="denied" + tool-broker.dispatch.denied; the 120 s timeout arm
+# is a web-only case (a 2-minute native flow is not worth the batch time).
+#
+# ⚠️ BLOCKED BY D12 AS OF 2026-07-30 — this flow CANNOT pass yet, and that is the
+# point of committing it red rather than not committing it. The gateway never
+# answers `session.new` (ws-handlers.ts routes it to `default:` and only logs
+# `message-unhandled`), so `SendMessageUseCase.flushIfReady` never drains the
+# outbox — no mobile text send reaches the gateway at all, so no tool call and no
+# prompt. Full diagnosis + repro:
+#   qa/mobile/evidence/2026-07-30-native-mobile-matrix/README.md
+# Every other flow tagged `chat` fails the same way for the same reason, so the
+# `chat` batch being red IS D12's signature. When D12 is fixed, this flow should
+# pass unchanged.
+#
+# SELECTOR NOTE (spec correction): the ids are NOT symmetric across platforms.
+# Android: chat-permission-allow / chat-permission-deny (PermissionPromptDialog.kt).
+# iOS:     permission-allow      / permission-deny      (ChatPermissionAlert.swift).
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- assertVisible: { id: "composer-input" }
+- tapOn: { id: "composer-input" }
+- inputText: "turn on the kitchen light"
+- tapOn: { id: "chat-send" }
+- hideKeyboard
+# The prompt only appears after a provider round-trip decides to call the tool —
+# that is an LLM round-trip, so this budget is genuinely long. The broker's own
+# timeout is 120 s (permission-broker.request timeoutMs=120000), so 40 s here
+# cannot race the expiry.
+- extendedWaitUntil:
+    visible: { id: "chat-permission-allow" }
+    timeout: 40000
+- assertVisible: { id: "chat-permission-description" }
+- takeScreenshot: "12-permission-prompt"
+# --- Allow arm: the tool dispatches and the turn finishes with a real answer ---
+- tapOn: { id: "chat-permission-allow" }
+- extendedWaitUntil:
+    notVisible: { id: "chat-permission-allow" }
+    timeout: 3000
+- extendedWaitUntil:
+    visible: { id: "assistant-bubble" }
+    timeout: 40000
+- takeScreenshot: "12-permission-allowed"

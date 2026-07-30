@@ -336,6 +336,9 @@ CANONICAL_ORDER=(
   verify-newchat
   01-chat-send 01-send-stream 02-drawer 03-new-chat 05-interrupt
   06-switch-session 07-rename-delete 10-outbox 11-mic-control
+  # 12 is the native permission-confirm case (both platforms). Ordered after the
+  # plain chat flows: it needs a working send, so if those are red it is red too.
+  12-permission-confirm
   40-settings-root
   44-audio-fast-save 44b-audio-restore
   45-model-slow-save 45b-model-restore

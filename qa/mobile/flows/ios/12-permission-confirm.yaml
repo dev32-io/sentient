@@ -1,0 +1,46 @@
+appId: io.dev32.sentient.debug
+tags:
+  - chat
+env:
+  # See _helpers/login.yaml for why the avatar id is a variable.
+  QA_USER_ID: u_0417d3b0
+---
+# 12-permission-confirm — the iOS arm of `permission-confirm` (spec §9.2). Twin of
+# android/12-permission-confirm.yaml; read that header for the full rationale, the
+# expected gateway log trail, and the D12 blocker.
+#
+# Short version:
+#   * The predecessor spec's matrix had NO native permission case — a real gap.
+#   * A side-effecting tool (ha_call_service) must block on the L3 confirm prompt;
+#     the model's own tool call is never an authorisation decision.
+#   * BLOCKED BY D12 as of 2026-07-30: the gateway never answers `session.new`, so
+#     the mobile outbox never drains and no send reaches the gateway. Committed red
+#     on purpose — it should pass unchanged once D12 is fixed. Diagnosis:
+#     qa/mobile/evidence/2026-07-30-native-mobile-matrix/README.md
+#
+# iOS renders the prompt as a SwiftUI `alert`, not an in-tree dialog, and its ids
+# are `permission-allow` / `permission-deny` — WITHOUT the `chat-` prefix the
+# Android testTags carry. There is no iOS equivalent of Android's
+# `chat-permission-description` tag: the tool name + description are the alert's
+# `message`, so the body is asserted by text, not by id.
+- runFlow: _helpers/login.yaml
+- assertVisible: { id: "composer-input" }
+- tapOn: { id: "composer-input" }
+- inputText: "turn on the kitchen light"
+- tapOn: { id: "chat-send" }
+# LLM round-trip before the tool call is proposed — genuinely long. Well inside the
+# broker's own 120 s timeout (permission-broker.request timeoutMs=120000).
+- extendedWaitUntil:
+    visible: { id: "permission-allow" }
+    timeout: 40000
+- assertVisible: "Allow this action?"
+- takeScreenshot: "12-permission-prompt"
+# --- Allow arm ---
+- tapOn: { id: "permission-allow" }
+- extendedWaitUntil:
+    notVisible: { id: "permission-allow" }
+    timeout: 3000
+- extendedWaitUntil:
+    visible: { id: "assistant-bubble" }
+    timeout: 40000
+- takeScreenshot: "12-permission-allowed"
