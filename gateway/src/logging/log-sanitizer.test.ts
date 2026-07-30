@@ -84,10 +84,21 @@ describe("sanitizeMessage", () => {
     expect(out).toContain("model: x");
   });
 
+  // Asserted on the EXACT output, not just `not.toContain`: the quoted form used
+  // to leave its closing quote behind (`apiKey=[REDACTED]"`), which a
+  // not-toContain assertion cannot see. A malformed log line is a parsing
+  // hazard for anything reading the log downstream.
   it("SECURITY: scrubs inline secret assignments regardless of separator or quoting", () => {
-    expect(sanitizeMessage('apiKey="AAAAAAAAAAAAAAAAAAAA"')).not.toContain("AAAAAAAAAAAAAAAAAAAA");
-    expect(sanitizeMessage("access_token=BBBBBBBBBBBBBBBBBBBB")).not.toContain("BBBBBBBBBBBBBBBBBBBB");
-    expect(sanitizeMessage("password: CCCCCCCCCCCCCCCCCCCC")).not.toContain("CCCCCCCCCCCCCCCCCCCC");
+    expect(sanitizeMessage('apiKey="AAAAAAAAAAAAAAAAAAAA"')).toBe("apiKey=[REDACTED]");
+    expect(sanitizeMessage("apiKey='AAAAAAAAAAAAAAAAAAAA'")).toBe("apiKey=[REDACTED]");
+    expect(sanitizeMessage("access_token=BBBBBBBBBBBBBBBBBBBB")).toBe("access_token=[REDACTED]");
+    expect(sanitizeMessage("password: CCCCCCCCCCCCCCCCCCCC")).toBe("password: [REDACTED]");
+  });
+
+  // A mismatched quote must not make the pattern fail to match — that would
+  // fail OPEN and print the credential.
+  it("SECURITY: still redacts when the quoting is malformed", () => {
+    expect(sanitizeMessage("apiKey='DDDDDDDDDDDDDDDDDDDD\"")).not.toContain("DDDDDDDDDDDDDDDDDDDD");
   });
 
   // The pattern list covered sentient's OWN auth shapes (PASETO, sentient-auth

@@ -13,12 +13,18 @@ const SENTIENT_AUTH_KEY_PATTERN = /sak_[A-Za-z0-9_-]{10,}/g;
  * the text was previously logged verbatim. Truncating that preview bounds its
  * volume, not its content — a key at char 10 survives any cap.
  *
- * Groups: 1 = key, 2 = separator, 3 = opening quote (if any). The value is
- * dropped. Value stops at whitespace or a yaml/json terminator so the rest of
- * the line survives.
+ * Groups: 1 = key, 2 = separator. The value and BOTH of its quotes are dropped
+ * as one unit — an earlier form captured the opening quote in a group the
+ * replacement never consumed, leaving `apiKey=[REDACTED]"` in the line. Both
+ * quotes are matched independently rather than by backreference, so a
+ * mismatched pair still redacts instead of failing to match (a failed match
+ * here fails OPEN and prints the credential).
+ *
+ * The value stops at whitespace or a yaml/json terminator so the rest of the
+ * line survives.
  */
 const INLINE_SECRET_ASSIGNMENT =
-  /\b(api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|password|passwd)\b(\s*[:=]\s*)(["']?)[^\s"',}\]]+/gi;
+  /\b(api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|password|passwd)\b(\s*[:=]\s*)["']?[^\s"',}\]]+["']?/gi;
 
 /**
  * Bare LLM-provider API keys, which carry a vendor prefix and no key name —
