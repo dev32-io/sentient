@@ -1,5 +1,11 @@
 # compaction-continue — trigger mechanism PASS; summarizer FAILS (real defect, 2/2)
 
+> **SUPERSEDED — the summarizer defect below is FIXED and the row now PASSES.**
+> T9b gave the summarizer its own budget (`summarizer_max_output_tokens: 4000`, `ed286b4`) and it was
+> re-driven against the real model 2/2: `compaction.committed`. Read
+> **`RE-DRIVE-T9b.md`** (same dir) for the current result; this file is kept for the original
+> diagnosis only. Do not cite it as a live failure.
+
 ## The tuned threshold fires correctly — Step 3's work is validated
 
 Grew a real session (mixed turns, tool calls, several long essays) past
