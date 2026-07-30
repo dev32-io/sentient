@@ -175,6 +175,31 @@ check_qa_user() {
   pass "QA fixture user $QA_USER_ID present"
 }
 
+# check_admin_trio_precondition - name the settings-admin pre-state BEFORE the run.
+#
+# WHY THIS EXISTS: 41-members-add-cap adds two users to walk the household 1/3 ->
+# 3/3, so it is only driveable from a ONE-user household. Against a household
+# already at the cap, "Add user" is correctly DISABLED, the tap no-ops, and the
+# flow dies at `settings-members-add-name is visible` -- a SELECTOR failure that
+# reads like a broken Add-user sheet and is not one. 42 (logs in as the Temp1 that
+# 41 creates) and 43 (deletes it) then cascade off it. Driven on both platforms
+# 2026-07-30: Android and iOS fail identically, from pre-state, not from product.
+# Same doctrine as check_qa_user: turn a mystery selector failure into one named
+# diagnostic before any JVM starts. Advisory, not fatal -- settings-admin batches
+# also carry 40/56, which legitimately pass at any household size.
+HOUSEHOLD_MAX_USERS_FOR_ADMIN_TRIO=1
+check_admin_trio_precondition() {
+  [[ "$INCLUDE_TAGS" == *"settings-admin"* || -z "$INCLUDE_TAGS" ]] || return 0
+  local users count
+  users=$(curl -sk -m 5 "$GATEWAY_USERS_URL" 2>/dev/null || echo "")
+  count=$(grep -o '"userId":"[^"]*"' <<<"$users" | wc -l | tr -d ' ')
+  [[ "$count" == "$HOUSEHOLD_MAX_USERS_FOR_ADMIN_TRIO" ]] && return 0
+  flag "PRE-STATE: household holds $count users; 41/42/43 need exactly $HOUSEHOLD_MAX_USERS_FOR_ADMIN_TRIO."
+  flag "  41 will fail at 'settings-members-add-name is visible' (Add user correctly DISABLED at the cap)."
+  flag "  42/43 then cascade. This is PRE-STATE, not a product defect -- do not file it as one."
+  flag "  Satisfy it by deleting the extra members through the Members UI first."
+}
+
 # reset_gateway - restart the LOCAL gateway to clear per-user WS session state.
 # Each launchApp opens a WS session; the gateway caps a user at 40 concurrent
 # sessions and only archives idle ones after ~30 min, so many rapid batch launches
@@ -590,6 +615,7 @@ echo ""
 
 check_gateway
 check_qa_user
+check_admin_trio_precondition
 if should_reset_gateway; then reset_gateway; fi
 BATCH_RESULT=0
 
