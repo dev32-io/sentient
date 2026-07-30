@@ -49,8 +49,9 @@
 #
 # iOS specifics: IOS_DEVICE auto-detects the booted sim (override via env). Mic
 # permission is granted with `xcrun simctl privacy`. iOS has no adb-broadcast fault
-# channel, so its fault phase is gateway-stop orchestration (58b/60 via docker
-# stop; 04c continuity via docker restart between parts); 08/18/20 are Android-only.
+# channel, so its fault phase is gateway-stop orchestration (58b/60 via gw_stop;
+# 04c continuity via gw_restart between parts) -- native process, not a container
+# (see the "Gateway lifecycle" block below); 08/18/20 are Android-only.
 #
 # Exit code: 0 if every selected flow passed, 1 otherwise.
 # ---------------------------------------------------------------------------
@@ -114,13 +115,31 @@ fail() { echo -e "${RED}[FAIL]${NC} $*"; }
 info() { echo -e "${YELLOW}[INFO]${NC} $*"; }
 flag() { echo -e "${YELLOW}[FLAG]${NC} $*"; }
 
+# -- Gateway lifecycle -----------------------------------------------------------
+# The gateway is a native host process now, not a container (native-stack
+# migration, 2026-07-29) -- there is no `sentient-gateway` to `docker ps` /
+# stop / start / restart any more. Dev: `cd gateway && bun --hot src/main.ts`
+# (see deploy/README.md "Local dev -- macOS"); prod: launchd, never touched by
+# this LOCAL-ONLY harness. These helpers manage the dev process directly: probe
+# its health endpoint, and find/signal whatever is bound to :8888 rather than a
+# container name. gw_start relaunches it exactly the documented dev way -- STT/TTS
+# keep working regardless, since the gateway dials whichever native-addon
+# processes already own their ports, independent of this restart.
+GATEWAY_HEALTH_URL="https://127.0.0.1:8888/api/v1/health"
+GATEWAY_PORT=8888
+GATEWAY_DEV_LOG="$REPO_ROOT/qa/mobile/logs/gateway-dev.log"
+
+gateway_health_code() {
+  curl -sk -o /dev/null -m 3 -w "%{http_code}" "$GATEWAY_HEALTH_URL" 2>/dev/null || echo "000"
+}
+
 # -- Pre-flight ----------------------------------------------------------------
 check_gateway() {
-  info "Checking local gateway stack..."
-  local healthy
-  healthy=$(docker ps --filter "name=sentient-gateway" --filter "health=healthy" --format "{{.Names}}" 2>/dev/null || true)
-  if [[ -z "$healthy" ]]; then
-    fail "the gateway is not running or not healthy. Start it natively: cd gateway && bun --hot src/main.ts"
+  info "Checking local gateway..."
+  local code
+  code=$(gateway_health_code)
+  if [[ "$code" != "200" ]]; then
+    fail "the gateway is not running or not healthy at $GATEWAY_HEALTH_URL (got HTTP $code). Start it natively: cd gateway && bun --hot src/main.ts"
     exit 1
   fi
   pass "Gateway healthy"
@@ -134,28 +153,41 @@ check_gateway() {
 # --fresh-gateway before a large run. LOCAL dev stack only (never prod).
 reset_gateway() {
   info "Restarting gateway (--fresh-gateway: clear per-user WS session cap)..."
-  docker restart sentient-gateway >/dev/null 2>&1 || true
-  local i s
-  for i in $(seq 1 40); do
-    s=$(docker inspect --format '{{.State.Health.Status}}' sentient-gateway 2>/dev/null || true)
-    [[ "$s" == "healthy" ]] && break
-    sleep 3
-  done
-  pass "Gateway restarted + healthy"
+  if gw_restart; then
+    pass "Gateway restarted + healthy"
+  else
+    fail "gateway did not come back healthy within budget -- check $GATEWAY_DEV_LOG"
+    exit 1
+  fi
 }
 
 # Gateway stop/start/restart helpers used by the fault phases (offline / reconnect).
 gw_wait_healthy() {
-  local i s
+  local i
   for i in $(seq 1 40); do
-    s=$(docker inspect --format '{{.State.Health.Status}}' sentient-gateway 2>/dev/null || true)
-    [[ "$s" == "healthy" ]] && return 0
+    [[ "$(gateway_health_code)" == "200" ]] && return 0
     sleep 2
   done
+  return 1
 }
-gw_stop() { docker stop sentient-gateway >/dev/null 2>&1 || true; }
-gw_start() { docker start sentient-gateway >/dev/null 2>&1 || true; gw_wait_healthy; }
-gw_restart() { docker restart sentient-gateway >/dev/null 2>&1 || true; gw_wait_healthy; }
+# pid of whatever is LISTENing on the gateway port; empty (not an error) when none.
+gw_pid() { lsof -ti "tcp:${GATEWAY_PORT}" -sTCP:LISTEN 2>/dev/null | head -1 || true; }
+gw_stop() {
+  local pid i
+  pid=$(gw_pid)
+  [[ -n "$pid" ]] && kill -TERM "$pid" 2>/dev/null
+  for i in $(seq 1 20); do
+    [[ -z "$(gw_pid)" ]] && return 0
+    sleep 1
+  done
+  return 1
+}
+gw_start() {
+  mkdir -p "$(dirname "$GATEWAY_DEV_LOG")"
+  ( cd "$REPO_ROOT/gateway" && nohup bun --hot src/main.ts >>"$GATEWAY_DEV_LOG" 2>&1 & )
+  gw_wait_healthy
+}
+gw_restart() { gw_stop; gw_start; }
 
 check_android() {
   info "Checking Android $ANDROID_DEVICE..."
