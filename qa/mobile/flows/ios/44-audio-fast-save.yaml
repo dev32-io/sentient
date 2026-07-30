@@ -10,9 +10,18 @@ tags:
 #
 # DEFECT (iOS, confirmed live): RowToggle's accessibilityIdentifier sits on the
 # outer HStack and every descendant (label Text, sub Text, the native Toggle)
-# inherits the same id "settings-audio-tts" — `tapOn: id:` lands on the label
-# (which does not respond) and silently no-ops. Point-tap the switch's actual
-# on-screen position instead.
+# inherits the same id "settings-audio-tts" — `tapOn: id:` resolves to the ROW's
+# bounds centre, which is the label (it does not respond) and silently no-ops.
+# Point-tap the switch's actual on-screen position instead.
+#
+# ⚠️ CALIBRATION BASIS — a percentage point-tap is device-GEOMETRY dependent, so
+# state what it was measured against or the next sim silently breaks it.
+# Measured 2026-07-30 on iPhone 17 / iOS 26.5, screen 402x874, switch bounds
+# [305,214][366,242] -> centre (335,228) = 83.5%, 26.1%.
+# The previous "85%,24%" resolved to (342,210) — 4 px ABOVE the switch's top
+# edge — so it missed, the form never dirtied, and 44/44b/59 all died at
+# `settings-audio-save is visible`. Re-measure with Maestro `inspect_screen` if
+# the sim model changes; do NOT nudge the number by guesswork.
 - runFlow: _helpers/open-settings.yaml
 - tapOn:
     id: "settings-cat-audio"
@@ -28,7 +37,7 @@ tags:
     visible: { id: "settings-audio-tts" }
     timeout: 3000
 - tapOn:
-    point: "85%,24%"
+    point: "83%,26%"
 # Save appears after the toggle state-update — wait for it (an immediate
 # assertVisible races the render and flakes).
 - extendedWaitUntil:
