@@ -61,6 +61,17 @@ one-off race.
    would only surface as "TTS got a bit slower/flakier every so often" on
    a long session with many delegated tasks, or as a slow accumulation of
    idle local-tts connections on that service.
+4. **Second correction, found while driving `interrupt` next:** the hang
+   is not unrecoverable. Clicking the webui's Interrupt button (even with
+   no turn in flight) still runs `stopPlayback` unconditionally per
+   `cancellation.ts`'s own design ("speech outlives its turn... runs on
+   EVERY call") — confirmed live, it cleanly tore down the exact hung WS
+   from this bug: `cancellation.no-turn-in-flight` → `turn-voice.audio.
+   cancel` → `synthesize-aborted frameCount=0` → `ws-closed`. See
+   `../2026-07-30-interrupt/README.md`. So the practical severity is
+   "stays open until the user's next Stop click, or forever in a session
+   that never clicks Stop again" — real, worth fixing at the source, but
+   not a permanent per-occurrence leak requiring a gateway restart.
 
 ## Fix shape (not applied — out of T9's file ownership, `gateway/src/runtime/**` is not owned by this task)
 
