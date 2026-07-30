@@ -79,6 +79,24 @@ A regression of the 2.0 legacy purge, not of task 9e: `git log -S pendingId -- g
 
 **Do not fix this with a dedupe guard in the router.** That is the D7 mistake from NM-T9c: the projection was the bug and a guard would have masked it. Restore the round trip — persist `pendingId` on the user entry, echo it on `conversation.entry` — which crosses the store schema and both projections.
 
+### The gateway restart hangs before `local-tts` starts (P1, operator-verifiable only)
+
+Reproduced 2 of 2 consecutive restarts during E2E: on gateway restart `whisper-stt` starts fine, then `local-tts` produces **no log line at all** — not started, not failed, nothing — and the boot sequence stops. Because boot never completes, the post-boot health watchdog never starts, so **nothing self-heals**. On the mini under launchd this presents as "TTS is dead after a restart, forever, until someone notices."
+
+Not reproducible on the dev box, and that is itself the reason an agent cannot close it: the dev gateway runs without `SENTIENT_CODE`, so it never supervises the native services at all (§ 5). The production plist sets it. **No fix has landed** — no commit has touched the orchestrator's native driver since the hang was found — so treat it as live.
+
+Investigation: `qa/web/evidence/2026-07-30-native-restart-tts-hang/README.md`. Operator check: handoff checklist § 5.
+
+### Small code and documentation debt found in passing
+
+None of it affects behaviour; all was found during the migration and would otherwise be lost.
+
+- `deploy/mac-prod/README.md:50-51` still documents the `/data/supervisor` named docker volume, which no longer exists.
+- `gateway/src/tools/hermes-runner.ts:3` cites `admin/supervisord-control.ts`, deleted in this migration.
+- `gateway/src/system-orchestrator/orchestrator.ts:161` logs `counts=[object Object]` — needs a spread so the boot summary is readable.
+- `gateway/src/system-orchestrator/types.ts:40` hardcodes the network topology in TypeScript; per the every-tunable-in-YAML rule it belongs in config.
+- `shared/mobile-sdk/.../settings/AdminModels.kt:19` keeps a vestigial `port` field describing a per-user worker slot that no longer exists.
+
 ### D15 — "+ new chat" does not reset the server-side conversation
 
 A surface has exactly one durable conversation on 2.0, so `session.new` is answered with the existing id: "+" clears the client's mirror but leaves the server thread and its context. Observed consequence, not theoretical — `ios/01-newchat.yaml` sends `what is 8 plus 9` into a fresh-looking chat and the model calls `ha_call_service`, resuming the *previous* conversation's task, so the turn parks on a permission prompt and no reply ever renders.

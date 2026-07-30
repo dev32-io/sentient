@@ -619,7 +619,7 @@ affects behaviour; all of it should migrate into `docs/native-todo.md`.
 Every deferral raised anywhere in this migration — in the task plans, in the agent reports, in the run
 ledger, and in `docs/native-todo.md` — was collected and cross-checked against this document:
 **30 found, 30 written, each appearing exactly once.** Sixteen are action items, carried by the
-fourteen numbered sections §0–§13; fourteen are the no-action records above. Two deferrals share a
+fourteen numbered sections §0–§13; sixteen are the no-action records above. Two deferrals share a
 section with another rather than getting their own, because the same single action verifies both:
 the database schema-ahead branch sits inside §3 (a rollback is the only thing that executes it), and
 the automated voice fixture channel sits inside §9 (which is the same round-trip, driven by hand).
