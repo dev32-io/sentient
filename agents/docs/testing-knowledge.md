@@ -571,6 +571,12 @@ under `qa/web/evidence/2026-07-30-<case>/`. Log tags:
 `[runtime:compaction]`. See the migration banner near the top of this file
 for the full bring-up + re-grounding notes.
 
+Both viewports are in scope for every case here (`.claude/rules/e2e-testing.md`):
+desktop 1280×900 and mobile-sized 390×844. The 390 re-drive of this whole
+section lives in `qa/web/evidence/2026-07-30-mobile-390-matrix/` — read
+**Mobile-sized viewport (390×844)** at the end of this section before driving
+it, the resize-only shortcut produces false layout findings.
+
 **Driving quirk worth knowing:** in this environment, `browser_click` on
 a fresh element sometimes silently no-ops (composer Send, PIN-pad digits)
 — confirmed NOT tied to `page.evaluate(() => el.click())`, which worked
@@ -629,6 +635,52 @@ only the screenshot) before concluding a real bug.
 ### multi-user-isolation
 **Scenario:** A second member's session shares nothing with the first — no client-side history leakage, no server-side conversation crossover, no cross-user API access.
 **Expected:** on identity switch, `sdk.connectors.conversation-history mirror.reset reason="session identity teardown" previousCount=<n>` (Ada's entries explicitly discarded, not hidden); the new user's WS connect opens `conversation-feed.snapshot itemCount=0` on a distinct `conversationId`/sqlite store; a direct REST probe from the non-admin user's own real token gets `403` on an admin-only endpoint.
+
+### Mobile-sized viewport (390×844) — how to drive it, and what is already known
+
+**Resize alone is NOT a mobile check — always reload after resizing.**
+`browser_resize(390,844)` on an already-loaded page leaves a stale layout:
+the app paints with the desktop-width geometry, and a screenshot taken then
+shows the whole shell clipped ~53px to the left (bubble text cut mid-word,
+composer placeholder reading "sage Sentient"). That is a driver artifact,
+not the product. Sequence is always `browser_resize(390,844)` →
+`browser_navigate(<url>)` → assert.
+
+**Assert overflow numerically, not by eye.** Per screen:
+`document.documentElement.scrollWidth > clientWidth` for page overflow, plus
+`el.scrollWidth - el.clientWidth` on the app shell and any strip. Eyeballing
+a screenshot cannot distinguish an intentionally scrollable row from a break.
+
+Measured-intentional at 390 (do not re-report these as defects):
+`.suggestion-chips` is `overflow-x: auto` with `scrollWidth 511 > clientWidth 370`;
+`.tool-strip__pills` is `overflow-x: auto` with `scrollWidth 344 > clientWidth 332`.
+A pill or chip clipped at the right edge is the design.
+
+Green at 390 as of 2026-07-30 (driven as a non-admin member, real stack):
+`native-turn-happy`, `native-tool-call`, `permission-confirm-web` Allow + Deny
+(the dialog is a full-width bottom sheet, `.app-dialog`, buttons 348×47 —
+comfortable tap targets), `interrupt` turn+TTS-stop (Interrupt control is
+28×28 at x341-369, in-viewport; server saw the click 7ms later and aborted
+mid-synthesis at `frameCount=3`), `reload-convergence` (14/14 articles,
+4/4 tool pills, `conversation-snapshot itemCount=18`), and the data-isolation
+arm of `multi-user-isolation`.
+
+Viewport-independent by construction — do not spend a drive re-proving these
+at 390: the `permission-confirm-web` 120s timeout (server-side
+`permission-broker` deadline), `compaction-continue`'s trigger (server-side
+token threshold), and `restart-persistence`'s resume protocol (transport
+layer; the mobile `reload-convergence` row already exercises the same
+snapshot path). Record the reasoning rather than the row.
+
+**Known defect at 390 (webui CSS, not fixed — outside `qa/web/**` ownership):**
+`.app-shell` computes `overflow-x: hidden` with `scrollWidth 443 > clientWidth 390`,
+so the layout does not fit a 390px viewport. One click on the right-most header
+control (`.user-menu__trigger`) scrolls the shell to `scrollLeft = 53` and the
+whole app stays shifted — the `Past chats` button moves to x −39…5 (untappable)
+and the left 53px of every bubble/placeholder is clipped mid-glyph. Because
+overflow is `hidden` there is no scrollbar and no pan gesture to undo it; only a
+reload restores the layout. Zero overflow at 1280×900, so it is mobile-only.
+Repro + measurements: `qa/web/evidence/2026-07-30-mobile-390-matrix/README.md`.
 
 ### Native-restart local-tts hang (found, not a numbered case — real defect)
 **Scenario:** On a real gateway process restart, the native driver's `local-tts` spawn can hang completely — no `native.started`, no `native.prepare-failed`, `apply.complete` never fires, so the post-boot health watchdog never even starts. Reproduced 2 of 2 consecutive restarts in this drive; ruled out the command itself (clean manual run, ~3s) and port conflicts (`lsof`/`ps` both clean). Full diagnosis: `qa/web/evidence/2026-07-30-native-restart-tts-hang/README.md`. A P1 for whoever owns `gateway/src/system-orchestrator/**`.
