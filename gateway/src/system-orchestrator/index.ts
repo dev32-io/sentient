@@ -203,7 +203,16 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
       return probeOnce(ms.config.healthcheck, deps.healthIO);
     },
     reapply: async (name) => {
-      await applySubsetSerialized(new Set([name]));
+      const status = await applySubsetSerialized(new Set([name]));
+      // Surface the RESULT on the watchdog's own trail. Without this the only
+      // record of why a recovery failed is the driver's line, which carries no
+      // attempt number to tie it to the watchdog's back-off sequence.
+      const svc = status.services.find((s) => s.name === name);
+      log.info("health-watch.reapplied", {
+        service: name,
+        state: svc?.state ?? "unknown",
+        reason: svc?.lastError ?? null,
+      });
     },
     isApplyInFlight: () => applyDepth > 0,
   });

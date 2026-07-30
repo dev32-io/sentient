@@ -169,7 +169,11 @@ export function createHealthWatch(deps: HealthWatchDeps): HealthWatch {
     states.set(name, { attempts: attempt, nextAttemptAt: now + backoffMs, gaveUp: false });
     try {
       await deps.reapply(name);
-      log.info("reapply.done", { service: name, attempt, nextRetryInMs: backoffMs });
+      // "dispatched", NOT "succeeded". reapply resolves when the apply call
+      // returns, and an apply whose recreate FAILED still returns normally.
+      // Only the next tick's probe can declare recovery, so claiming success
+      // here would read as a green line in a trail that is actually failing.
+      log.info("reapply.dispatched", { service: name, attempt, nextRetryInMs: backoffMs });
     } catch (err: unknown) {
       log.warn("reapply.failed", {
         service: name,
