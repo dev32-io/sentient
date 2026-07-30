@@ -689,3 +689,101 @@ Repro + measurements: `qa/web/evidence/2026-07-30-mobile-390-matrix/README.md`.
 
 ### Native-restart local-tts hang (found, not a numbered case — real defect)
 **Scenario:** On a real gateway process restart, the native driver's `local-tts` spawn can hang completely — no `native.started`, no `native.prepare-failed`, `apply.complete` never fires, so the post-boot health watchdog never even starts. Reproduced 2 of 2 consecutive restarts in this drive; ruled out the command itself (clean manual run, ~3s) and port conflicts (`lsof`/`ps` both clean). Full diagnosis: `qa/web/evidence/2026-07-30-native-restart-tts-hang/README.md`. A P1 for whoever owns `gateway/src/system-orchestrator/**`.
+
+## Sentient 2.0 turn wire — NATIVE mobile (Maestro)
+
+Driven 2026-07-30 (native-stack migration Task 10) against the local dev stack:
+native gateway `bun --hot src/main.ts` on `:8888` (binds `0.0.0.0`), docker
+addons on loopback, native whisper-stt + local-tts both healthy. Devices:
+Android `emulator-5554` (Pixel_3a_API_34, dials `10.0.2.2:8888`) and iOS sim
+`iPhone 17 / iOS 26.5` (shares the host network). Both apps rebuilt from the 2.0
+SDK first — the pre-2.0 installed builds predate the `turn.*` wire. Evidence:
+`qa/mobile/evidence/2026-07-30-native-mobile-matrix/`.
+
+**Bring-up notes that cost real time — read before driving this suite:**
+- `SENTIENT_CODE` is unset in dev, so `managed_services.{whisper-stt,local-tts}`
+  expand to `/whisper-stt/venv/bin/python` and log
+  `native.prepare-failed … argv[0] is not an executable file`. Stage a tree of
+  symlinks (`<code>/{whisper-stt,local-tts}/{venv,src}` →
+  `capabilityServices/{WhisperSTTService,LocalTTSService}/{.venv,src}`) and export it.
+  STT/TTS still answer either way — the providers dial the ports directly.
+- The login-picker avatar id is **server-minted** and does not survive a state
+  reset. It is now the Maestro env var `QA_USER_ID` (default `u_0417d3b0`), and
+  `run-e2e.sh check_qa_user` pre-flights it against `GET /api/v1/auth/users`
+  before any JVM starts. A stale id fails at the SELECTOR, which looks like a
+  product regression and is not one.
+- The `settings-admin` trio (41/42/43) needs a **one-user household**; at the
+  3-user cap "Add user" is correctly disabled and 41 dies at the dialog.
+
+### native-turn-happy / native-tool-call / permission-confirm (native) — FAIL, defect D12
+**Scenario:** any text send from Android or iOS.
+**Result: FAIL on both platforms — no mobile text send can reach the gateway on 2.0.**
+`ws-handlers.ts` routes `session.new` to `default:` (`message-unhandled`), and
+nothing in `gateway/src` emits `session.created`/`session.switched` even though
+both are in the frozen protocol (`shared/protocol/src/sessions.ts:40,57`). The KMP
+`SendMessageUseCase` gates its outbox drain on the id those frames set, so the send
+dies on the device:
+```
+connector.sessions: sendNew requestId=…
+data.send-message: flush-skipped reason=no-id-attached
+android.chat-viewmodel: send len=16 pendingId=…
+data.send-message: flush-skipped reason=no-id-attached
+```
+Gateway side the trail simply stops after `tool-broker.mcp-warmup.ok` — no
+`text.input`, no `react-loop.start`. The web matrix cannot catch this: the gate is
+mobile-only. **The whole `chat` tag being red is D12's signature** — do not
+re-diagnose each flow.
+
+### permission-confirm (native) — the case the spec never had
+The predecessor matrix named only web viewports. `qa/mobile/flows/{android,ios}/12-permission-confirm.yaml`
+is the native arm, committed **red** behind D12 so the gap stays visible.
+Selectors are **not symmetric**: Android `chat-permission-allow` / `chat-permission-deny`
+(`PermissionPromptDialog.kt`), iOS `permission-allow` / `permission-deny`
+(`ChatPermissionAlert.swift`), and iOS has no description testTag (SwiftUI alert
+`message`, assert by text).
+
+### settings apply — the 45 s budgets were padding for a machine that no longer exists
+`apply:orchestrator apply.ready elapsedMs=5..12` (4 samples). No supervisord, no
+Hermes worker to restart. Consequences, both real regressions the padding hid:
+`settings-apply-notice` is now a ~10 ms transient, so a hard `assertVisible` on it
+is a race the runner loses (45/45b failed exactly that way); and every
+`notVisible` budget is now **8000 ms**, not 45000. Untouched on purpose: `04c`
+(real LLM round-trip) and `60`/`61` (offline recovery).
+
+### personality activate — a flow that asserted a DEFECT as its expected outcome
+`50-personalities-create-activate` asserted "Activate wipes the personality
+(DEFECT-4)". That race was the supervisord restart; it is gone, the personality
+survives (`profiles/<user>/config.yaml` still lists it), and the flow failed
+**because the bug was fixed**. Re-grounded to assert survival + a real delete.
+
+### EXPECTED-INERT (2.0) — soul / personality / long-term memory
+These render and persist but do not change assistant behaviour: the gateway owns
+the loop and those surfaces transition in a later spec. A flow asserting
+render/persist MUST still pass (`46-memory-cap`, `47`, `50` all do). Only a
+behaviour assertion is inert. Never delete such a flow.
+
+### voice-roundtrip (native) — NOT DRIVABLE, handed to Task 11
+Two independent blockers. (1) The fixture-injection channel is **gone**:
+`FaultHooks` kept only `armExpiredToken`/`armMalformedFrame`, and
+`DebugFaultReceiver` logs `fault.broadcast.unknown-kind` for anything else, so
+`--es kind fixture` is delivered and discarded. (2) The mic is **hold**-to-talk:
+Maestro's `tapOn` gives `pressMic`→`releaseMic` ~147 ms apart, `record-stop
+captured=1`, and gateway-side `stt.audio-start`→`stt.audio-end` 180 ms apart.
+A real speech fixture now exists and is proven at the service seam
+(`transcript_ready {"text": "What is 2 plus 2?", "decodeMs": 439.751}`) —
+`qa/mobile/fixtures/README.md` has the regeneration + validation recipe.
+Note the voice path calls `runtime.submit()` **server-side**, so it would not be
+blocked by D12.
+
+### interrupt (native) — unproven, and the old stated reason was WRONG
+The flow header blamed "no local-tts reachable from the device". local-tts is
+dialled by the **gateway** over loopback; the device only receives the downlink.
+The real blockers are D12, then `chat-interrupt` being gated on TTS audio state
+(`isSpeaking || PROCESSING/ASSISTANT_SPEAKING/INTERRUPTING`) rather than cognition,
+so the session needs `speak=true` plus an armed downlink before the button exists.
+
+### STT dial retry has no backoff (observation, NOT filed as a defect)
+Against a hung STT, the gateway logged 33 `stt.connect-failed` in 751 ms — one
+retry per mic frame. That is documented, deliberate design
+(`stt-session.ts:10-19`: "no timers, no backoff constants, no new config") and it
+self-heals within one frame. Recorded for the owner, not filed.

@@ -7,8 +7,13 @@ tags:
 # 3/3), then verify "Add user" is disabled at the 3-user cap. Self-navigating.
 # COUPLED TRIO: run adjacent + in order with 42 (non-admin gate, logs in as the
 # created Temp1) and 43 (deletes both temps, restores Kevin's admin session).
-# Requires a clean 1-user (Kevin-only) baseline; a leftover temp from a failed
-# prior run makes the cap assertion fail.
+# ⚠️ HARD PRECONDITION — the household must hold EXACTLY ONE user (this flow adds
+# two). Verified 2026-07-30: with three users already present, "Add user" is
+# correctly DISABLED, the tap no-ops, and the flow dies at
+# `settings-members-add-name is visible` — which reads like a broken Add-user
+# sheet and is not one. 42/43 then cascade off it.
+# Check before running:  curl -sk https://127.0.0.1:8888/api/v1/auth/users
+# Satisfy it by deleting the extra members through the Members UI first.
 - runFlow: _helpers/open-settings.yaml
 - tapOn:
     id: "settings-cat-members"
