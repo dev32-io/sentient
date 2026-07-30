@@ -41,9 +41,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.window.DialogProperties
 import io.sentient.android.settings.components.DangerButton
@@ -61,6 +64,7 @@ private const val MS_PER_SECOND = 1_000L
 private const val SECONDS_PER_MINUTE = 60L
 private const val PREVIEW_EXPIRES_IN_MS = 120_000L
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun PermissionPromptDialog(
     request: PermissionPrompt,
@@ -72,7 +76,12 @@ fun PermissionPromptDialog(
     AlertDialog(
         onDismissRequest = {}, // no-op — see file header: this is a decision gate, not a notice.
         properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
-        modifier = Modifier.testTag("chat-permission-dialog"),
+        // The dialog renders in its OWN window, a SEPARATE semantics owner — the
+        // app-root testTagsAsResourceId (nav/AppNavHost.kt) does NOT reach it, so
+        // re-enable it here or uiautomator/Maestro sees every node with
+        // resource-id="" and no `chat-permission-*` id can ever resolve. Same
+        // reason settings/components/RowSelect.kt does it for its dropdown popup.
+        modifier = Modifier.semantics { testTagsAsResourceId = true }.testTag("chat-permission-dialog"),
         title = { Text("Allow this action?") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(tokens.space.sm)) {
