@@ -1,4 +1,4 @@
-# D12 closed — `session.new` answered; two defects it was masking (2026-07-30, plan task 9e)
+# D12 closed — `session.new` answered; three defects it was masking (2026-07-30, plan task 9e)
 
 Driven against the local dev stack: native gateway `bun --hot src/main.ts` on `:8888`, docker addons
 on loopback, native whisper-stt `:8768` + local-tts `:8770` both listening. Devices: Android
@@ -64,9 +64,10 @@ gateway's whole L3 round-trip works from a device (`permission-request` →
 
 ## D13 (NEW) — the Android permission dialog exports no test ids to UIAutomator
 
-**Not a product bug for a human; a total blocker for Maestro.** The dialog renders correctly — see
-`android-permission-dialog-rendered.png` (title, tool name, reason, "Expires in 1:36", Deny/Allow).
-The gateway sent it and the app received it:
+**Not a product bug for a human; a total blocker for Maestro.** The dialog renders correctly — title,
+tool name, reason, a live "Expires in 1:36" countdown, Deny/Allow (screenshot taken during the drive;
+`*.png` is gitignored repo-wide, `.gitignore:82`, so the flattened hierarchy dump below is the
+committed artifact). The gateway sent it and the app received it:
 
 ```
 gateway  INFO [ws:turn-emitter] turn-emitter.permission-request | requestId="ede4b7ad-…" toolName="ha_call_service"
@@ -117,7 +118,7 @@ Consequence chain:
 3. `ChatViewModel` re-runs `flushIfReady` on **every** `connection.state` emission (status,
    `isSpeaking`, …) and `queued()` still returns the entry → re-send.
 4. After `unackedTimeoutMs` the entry is swept to `FAILED` → a **Retry chip under a message that
-   was delivered** (visible in `android-permission-dialog-rendered.png`).
+   was delivered** (observed on screen during the drive).
 
 Measured (`store-duplicate-user-entries.txt`), one Android `chat` batch:
 ```
