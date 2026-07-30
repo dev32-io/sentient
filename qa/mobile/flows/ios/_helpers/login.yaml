@@ -1,8 +1,15 @@
 appId: io.dev32.sentient.debug
 tags:
   - helper
+env:
+  # QA_USER_ID — see the Android helper's header for the full story. Short
+  # version: this is a SERVER-MINTED id that does not survive a gateway state
+  # reset, so it is a variable with a pre-flighted default rather than a literal
+  # baked into 40+ flows. Override per run with `-e QA_USER_ID=<id>`.
+  QA_USER_ID: u_0417d3b0
 ---
-# _helpers/login.yaml — reusable conditional login subflow (Kevin, PIN 1234).
+# _helpers/login.yaml — reusable conditional login subflow (admin QA fixture
+# user, PIN 1234).
 #
 # launchApp (no clearState): persisted token → chat directly; no token →
 # "Who's here?" login screen. The conditional block logs in ONLY when the login
@@ -18,7 +25,7 @@ tags:
       visible: "Who's here?"
     commands:
       - tapOn:
-          id: "login-avatar-u_8c866990"    # Kevin avatar (stable resource-id)
+          id: "login-avatar-${QA_USER_ID}"  # admin QA fixture avatar
       - extendedWaitUntil:
           visible: { id: "pin-key-1" }
           timeout: 3000

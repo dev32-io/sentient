@@ -127,7 +127,12 @@ flag() { echo -e "${YELLOW}[FLAG]${NC} $*"; }
 # keep working regardless, since the gateway dials whichever native-addon
 # processes already own their ports, independent of this restart.
 GATEWAY_HEALTH_URL="https://127.0.0.1:8888/api/v1/health"
+GATEWAY_USERS_URL="https://127.0.0.1:8888/api/v1/auth/users"
 GATEWAY_PORT=8888
+# QA_USER_ID - the login-picker avatar every authed flow taps. Server-minted, so
+# it is passed to Maestro as an env var (each login helper declares the same
+# default) and pre-flighted by check_qa_user before any JVM starts.
+QA_USER_ID="${QA_USER_ID:-u_0417d3b0}"
 GATEWAY_DEV_LOG="$REPO_ROOT/qa/mobile/logs/gateway-dev.log"
 
 gateway_health_code() {
@@ -144,6 +149,30 @@ check_gateway() {
     exit 1
   fi
   pass "Gateway healthy"
+}
+
+# check_qa_user - prove the login-picker avatar the flows tap actually exists.
+#
+# WHY THIS EXISTS: QA_USER_ID is a SERVER-MINTED id. The native-stack cutover
+# moved the gateway state root and the previous fixture user did not come with
+# it; every authed flow then failed at `tapOn: login-avatar-<id>` — a SELECTOR
+# failure that reads like a product regression. This turns that into one clear
+# diagnostic before any JVM starts. Override with QA_USER_ID=<id> in the env.
+check_qa_user() {
+  info "Checking QA fixture user $QA_USER_ID..."
+  local users
+  users=$(curl -sk -m 5 "$GATEWAY_USERS_URL" 2>/dev/null || echo "")
+  if [[ -z "$users" ]]; then
+    fail "could not read $GATEWAY_USERS_URL — cannot verify the QA fixture user."
+    exit 1
+  fi
+  if ! grep -q "\"$QA_USER_ID\"" <<<"$users"; then
+    fail "QA fixture user $QA_USER_ID is NOT in the gateway's login list. The flows will fail at the avatar selector, not at their assertions."
+    printf '       gateway knows: %s\n' "$(grep -o '"userId":"[^"]*"' <<<"$users" | cut -d'"' -f4 | tr '\n' ' ')"
+    printf '       fix: re-run with QA_USER_ID=<an existing admin id>, or recreate the fixture user.\n'
+    exit 1
+  fi
+  pass "QA fixture user $QA_USER_ID present"
 }
 
 # reset_gateway - restart the LOCAL gateway to clear per-user WS session state.
@@ -384,7 +413,7 @@ run_batch() {
   set +e
   # Explicit ordered files (deterministic). --exclude-tags helper is belt-and-braces
   # (helpers live in _helpers/ and are never in the resolved list anyway).
-  "$MAESTRO" --device "$device" test "${selected[@]}" --exclude-tags helper 2>&1 | tee "$out"
+  "$MAESTRO" --device "$device" test -e "QA_USER_ID=$QA_USER_ID" "${selected[@]}" --exclude-tags helper 2>&1 | tee "$out"
   local rc=${PIPESTATUS[0]}
   set -e
   end=$(date +%s); elapsed=$((end - start))
@@ -418,7 +447,7 @@ android_log_trail() {
 
 # -- Fault-armed phase (Android only) ------------------------------------------
 run_flow_file() { # <device> <platform> <basename> ; returns maestro rc
-  "$MAESTRO" --device "$1" test "$FLOWS_DIR/$2/$3.yaml"
+  "$MAESTRO" --device "$1" test -e "QA_USER_ID=$QA_USER_ID" "$FLOWS_DIR/$2/$3.yaml"
 }
 run_one() { run_flow_file "$ANDROID_DEVICE" android "$1"; }   # android fault phase
 
@@ -550,6 +579,7 @@ echo "Target: $TARGET   tags: [${INCLUDE_TAGS:-<all>}]   fault: $RUN_FAULT"
 echo ""
 
 check_gateway
+check_qa_user
 if should_reset_gateway; then reset_gateway; fi
 BATCH_RESULT=0
 
