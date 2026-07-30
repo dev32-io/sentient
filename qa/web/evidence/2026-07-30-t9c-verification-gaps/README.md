@@ -297,3 +297,32 @@ sockets. Gate is now completion, with `external-tools.degraded-apply` naming the
   not — `personality-store.remove` was reproduced against a temp profile and removes the key
   cleanly, leaving `personalities: {}`. The live artifact is an **empty-bodied personality that was
   written that way**, which the add/update path accepted. Fixed at the writers and at the render.
+
+---
+
+## D11's follow-up — CLOSED 2026-07-30 (plan task 9g). Two of the notes above are now wrong.
+
+Full evidence: `qa/web/evidence/2026-07-30-t9g-delegate-proxy-tier/README.md`.
+
+**Correction to "The registered surface is smaller than this note originally assumed".** That section
+concluded the delegated agent gets the gateway's hosted allow tier and nothing else, because
+`hermes mcp add` grants a server's whole upstream surface and its CLI has no non-interactive per-tool
+filter. The CLI limitation stands and was re-confirmed against `hermes_cli/mcp_config.py`. The
+conclusion does not: the gateway now **proxies** the allow tier through its own per-user socket,
+whose surface it controls exactly. Live on `u_1eee01a4`, the delegated agent lists
+`mcp__gateway__search_web`, `mcp__gateway__fetch` and ten `mcp__gateway__ha_*` read tools alongside
+`pause_audio`/`resume_audio` — and none of `ha_call_service`, `ha_bulk_control`, the todo/calendar
+writes, `ma_queue*`, `identify_user`, `update_user_settings` or `delegateTask`.
+
+**Correction to the registration timing.** 9d registered once per user per boot. It now runs in
+`delegateTask`'s setup phase, immediately before the spawn, and compares the entry's CONTENT
+(command + args + enabled) rather than returning on the name. Live: a `gateway` entry drifted to a
+stale socket and left `enabled: false` was repaired in 820 ms
+(`hermes.register.start | verdict="drifted"` → `hermes.register.ok | repairedFrom="drifted"`) while a
+user-owned `qa-decoy` server in the same map survived byte-identical.
+
+**A new finding that outranks both.** The first live `tools/list` on the delegated socket hung: the
+gateway's MCP host ignored `socket.write`'s byte count and truncated any reply larger than one write
+(measured `written=8192 length=31604`), and a truncated JSON-RPC line has no newline, so the peer
+waits forever instead of erroring. Latent since the host was written and invisible only while its
+surface was two tools. Fixed in `3f3675b`; the regression test fails by timeout against the old code.
