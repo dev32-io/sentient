@@ -40,15 +40,23 @@ Full diagnosis: `qa/web/evidence/2026-07-30-t9c-verification-gaps/README.md` § 
 
 D12 was masking three further defects, filed below as D13/D14/D15. Do not read a green `chat` batch as a clean path.
 
-### D13 — the Android permission dialog exports no test ids, so `12-permission-confirm` cannot be driven
+### ~~D13 — the Android permission dialog exports no test ids~~ — CLOSED 2026-07-30 (plan task 9f)
 
-The dialog renders and works for a human; `uiautomator dump` while it is open shows **every node with `resource-id=""`**, so `id: chat-permission-allow` can never resolve and Maestro times out. `testTagsAsResourceId` is enabled once, on `android/.../nav/AppNavHost.kt:77`'s `Surface`; a Compose `AlertDialog` composes into its own window outside that subtree, so the flag never reaches `PermissionPromptDialog.kt`.
+`PermissionPromptDialog.kt`'s `AlertDialog` now carries its own `Modifier.semantics { testTagsAsResourceId = true }` — a Compose dialog composes into its **own window**, a separate semantics owner, so the flag set once on `AppNavHost.kt`'s `Surface` never reached it and `uiautomator dump` showed every node with `resource-id=""`. `android/12-permission-confirm` is green **unedited** (24 s), full arm driven: prompt → `chat-permission-allow` tap → dialog gone → assistant reply.
 
-Fix is one line — the same `Modifier.semantics { testTagsAsResourceId = true }` that `android/.../settings/components/RowSelect.kt:87` already applies to its dropdown for exactly this reason. **Do not edit the flow**: its ids are the ids in the source. iOS needs nothing (the twin passes; SwiftUI alerts carry `accessibilityIdentifier` through).
+**Durable rule, now in `agents/docs/testing-knowledge.md`:** any Compose surface in its own window — `AlertDialog`, `DropdownMenu`, `ModalBottomSheet`, `Popup` — needs its own copy of that modifier.
 
-### D14 — every mobile message is committed 2–6 times (`pendingId` round trip deleted by our own purge)
+### ~~D14 — every mobile message is committed 2–6 times~~ — CLOSED 2026-07-30 (plan task 9f)
 
-The KMP outbox's contract is *"the gateway dedups by pendingId"* — stated three times in `OutboundCache.kt`. It does not. `pendingId` is in the wire schema (`shared/protocol/src/messages.ts:150`), `grep -rn pendingId gateway/src` returns zero non-test hits, and the `entries` table has no `pending_id` column, so the committed echo cannot carry one even in principle. The entry therefore never reconciles, `ChatViewModel` re-runs `flushIfReady` on every `connection.state` emission, and the same message is re-sent — then swept to `FAILED`, showing a **Retry chip under a message that was delivered**. Measured 2× on a plain turn and 6× across a long one.
+The round trip is restored on the store substrate, all three halves — persist, echo, dedupe:
+
+- `entries.pending_id`, added by a **`user_version` migration ladder** over a now-FROZEN baseline DDL (`gateway/src/store/schema.ts`, `migrate-store.ts`). `CREATE TABLE IF NOT EXISTS` is not a migration: every per-user database under `~/.sentient` already existed at `user_version=0` with no such column. Freezing the baseline means a fresh database and a long-lived one run the **same** migration code, so a fresh-DB test can no longer pass while a real user's fails.
+- The echo rides `projectForClient`, the single path both `conversation.entry` and `conversation.snapshot` use, so `render(replay) == render(live)` holds for `pendingId` structurally — a reconnect cannot resurrect a duplicate the client already settled.
+- Dedupe lives in `SessionRuntime.submit` (where the store append happens), **not** in the router, and a duplicate is **re-echoed** via `feed.republish` rather than dropped: committed once, answered every time. A silent drop would leave the client's outbox retrying forever.
+
+Device-verified on `emulator-5554` against the live store, counting rows rather than eyeballing the screen. Pre-fix, on the same flow and the same message: 2 rows, one turn, no `pending_id`. Post-fix: **0 duplicate `(session_id, pending_id)` groups** across 10 sends; every same-text pair carries a *distinct* `pending_id`, i.e. they are genuinely separate sends. The worst pre-fix group in the polluted store was **30×** one message, not the 2–6× first reported.
+
+Historical description, kept because the diagnosis is what made the fix findable — the KMP outbox's contract is *"the gateway dedups by pendingId"* — stated three times in `OutboundCache.kt`. It does not. `pendingId` is in the wire schema (`shared/protocol/src/messages.ts:150`), `grep -rn pendingId gateway/src` returns zero non-test hits, and the `entries` table has no `pending_id` column, so the committed echo cannot carry one even in principle. The entry therefore never reconciles, `ChatViewModel` re-runs `flushIfReady` on every `connection.state` emission, and the same message is re-sent — then swept to `FAILED`, showing a **Retry chip under a message that was delivered**. Measured 2× on a plain turn and 6× across a long one.
 
 A regression of the 2.0 legacy purge, not of task 9e: `git log -S pendingId -- gateway/src` shows `6c7bc1c` (dedup) and `aef5e0c` (echo on the feed) both removed by `10bd446`. D12 hid it — nothing was ever sent.
 
@@ -59,6 +67,13 @@ A regression of the 2.0 legacy purge, not of task 9e: `git log -S pendingId -- g
 A surface has exactly one durable conversation on 2.0, so `session.new` is answered with the existing id: "+" clears the client's mirror but leaves the server thread and its context. Observed consequence, not theoretical — `ios/01-newchat.yaml` sends `what is 8 plus 9` into a fresh-looking chat and the model calls `ha_call_service`, resuming the *previous* conversation's task, so the turn parks on a permission prompt and no reply ever renders.
 
 The alternative was rejected on evidence: minting a fresh partition per `session.new` would fork on **every app launch** (the chat route's default `sessionId` is null, so `ChatViewModel.init` fires `sendNewChat()` with no user tap — and the VM initialises twice per launch), destroying `reload-convergence` and `restart-persistence`. Closing this properly is the multi-conversation project in §2. `01-newchat` is left red as its standing acceptance test.
+
+**Blast radius is wider than `01-newchat` — measured 2026-07-30 (task 9f), first drive of the `session` tag on 2.0.** With D14 closed the QA store was reset to a clean partition, which exposed that three more Android flows cannot be satisfied on 2.0 at all. None is a regression; all three are the same missing surface:
+
+- `06-switch-session` and `07-rename-delete` need at least one `history-row-<sessionId>`. The drawer's list, rename, delete and search are `GET/PATCH/DELETE /api/v1/sessions*` (`shared/mobile-sdk/.../SessionsHttpClient.kt`), and **the 2.0 gateway serves no `/api/v1/sessions` route at all** — `grep -rn "api/v1/sessions" gateway/src` is empty and `ws-handlers.ts:212` says so in prose. The drawer is therefore empty by construction, whatever the store holds. Both flows FAIL with `Element not found: Id matching regex: .*history-row-.*`.
+- `10-outbox` asserts `message-bubble-0`, and that tag is the **list index** (`MessageBubble.kt:68`), so index 0 is the oldest message in the conversation. Written when a fresh chat started empty; on 2.0 one durable conversation never resets, so index 0 is permanently off-screen and the flow can only pass on a fresh install. It needs re-grounding onto the newest bubble, which is the multi-conversation project's call, not a budget change.
+
+These three go with the multi-conversation project in §2, not to Task 11.
 
 ### Stale personality entry becomes live once D11 lands
 

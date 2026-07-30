@@ -726,31 +726,30 @@ line is now `data.send-message: flush count=1 sessionId=c::<userId>::<surfaceId>
 went 0/6 → 5/6 and iOS 0/5 → 4/5 with **every flow unedited**. Evidence:
 `qa/mobile/evidence/2026-07-30-t9e-session-new/`.
 
-**Read this before trusting a green `chat` batch.** D12 was masking three further defects, and two
-of them are still open — a passing row here does not mean the path is clean:
-- **D14** — the gateway does not echo or dedup `pendingId`, so the outbox never reconciles and
-  re-sends on every `connection.state` emission. Every mobile message is committed **2–6 times**.
-  Rows that assert "a reply appeared" pass anyway; anything that reads the store, the model window
-  or a turn count is reading polluted data.
-- **D15** — "+" does not reset the server-side conversation, so a "new" chat inherits the previous
-  one's context.
-- **D13** — Android's permission dialog exports no test ids (below).
+**D12 was masking three further defects. Two are now closed (task 9f); one is deferred by design:**
+- **D14 — CLOSED.** `pendingId` is persisted on the user entry, echoed on the committed feed and
+  deduped in `SessionRuntime.submit`. Store reads and turn counts are trustworthy again. Measured
+  0 duplicate `(session_id, pending_id)` groups over 10 device sends, against 2× on the identical
+  message pre-fix and a 30× worst group in the polluted store.
+- **D13 — CLOSED.** Android's permission dialog exports its test ids (below).
+- **D15 — OPEN, deferred to the multi-conversation project.** "+" does not reset the server-side
+  conversation, so a "new" chat inherits the previous one's context. Its blast radius is wider than
+  `01-newchat`: see the `session`-tag rows below.
 None of the three is a reason to re-diagnose a red `chat` row as D12 again. D12 is closed.
 
-### permission-confirm (native) — PASS on iOS, blocked on Android by D13 (a harness-visibility bug)
+### permission-confirm (native) — PASS on BOTH platforms since task 9f (D13 closed)
 `qa/mobile/flows/{android,ios}/12-permission-confirm.yaml` is the native arm the predecessor spec
 never had. **iOS PASSES** (30s) — `permission-request` → user tap → `permission-resolved
 outcome="allowed"` — which proves the gateway's L3 round trip end to end from a device and localises
 the Android red to the client.
 
-**Android fails for a reason no budget change can fix.** The dialog renders and the app logs
-`permission.pending.changed hasPending=true`, but `uiautomator dump` while it is up shows **every
-node with `resource-id=""`** — so `id: chat-permission-allow` can never resolve. `testTagsAsResourceId`
-is enabled once, on `AppNavHost.kt:77`'s `Surface`; a Compose `AlertDialog` composes into its own
-window outside that subtree, so the flag never reaches `PermissionPromptDialog.kt`. The repo already
-solved this exact trap for its dropdown at `settings/components/RowSelect.kt:87` ("the app-root
-testTagsAsResourceId does NOT reach it, so re-enable it here"). Fix is one line in `android/**`;
-**do not edit the flow** — its ids are the ids in the source, they are simply not exported.
+**Android was red for a reason no budget change could fix, and is now green (24 s, flow UNEDITED).**
+The dialog always rendered and the app always logged `permission.pending.changed hasPending=true`,
+but `uiautomator dump` showed **every node with `resource-id=""`** — so `id: chat-permission-allow`
+could never resolve. `testTagsAsResourceId` was enabled once, on `AppNavHost.kt:77`'s `Surface`, and
+a Compose `AlertDialog` composes into its own window outside that subtree. `PermissionPromptDialog.kt`
+now sets it on the dialog's own modifier, exactly as `settings/components/RowSelect.kt:87` already did
+for its dropdown. The flow was never edited — its ids were the ids in the source all along.
 
 **Durable rule:** any Compose surface in its OWN WINDOW — `AlertDialog`, `DropdownMenu`,
 `ModalBottomSheet`, `Popup` — needs its own `Modifier.semantics { testTagsAsResourceId = true }`.
@@ -758,6 +757,28 @@ A testTag that is present in Kotlin and absent from the UIAutomator dump is this
 Selectors are also **not symmetric** across platforms: Android `chat-permission-allow` /
 `chat-permission-deny`, iOS `permission-allow` / `permission-deny` (`ChatPermissionAlert.swift`),
 and iOS has no description testTag (SwiftUI alert `message`, assert by text).
+
+### assertVisible means ON SCREEN — with the IME up, the chat viewport is ~300 px
+`01-chat-send` was the only chat flow without `hideKeyboard`, and it went red on a message that was
+committed, echoed and rendered. `MessageList`'s `animateScrollToItem(lastIndex)` aligns the last
+row's TOP with the viewport top, and with the keyboard open that viewport is a few hundred pixels —
+so the bubble under test sits above the fold and `assertVisible` (which requires an on-screen node)
+fails. Measured both ways the same minute on `emulator-5554`: without `hideKeyboard`, FAIL even at a
+15 s budget; with it, PASS. **Rule: any flow asserting a chat bubble calls `hideKeyboard` first.**
+It became reachable only when D14's fix stopped the optimistic bubble lingering as a second copy of
+the same text — a red that appears the moment a duplicate stops being painted is a flow that was
+passing on the duplicate.
+
+### migrating the session store — a fresh-DB test cannot see the bug that matters
+`gateway/src/store/schema.ts` had no migration mechanism: no `user_version`, no `ALTER TABLE`, just
+`CREATE TABLE IF NOT EXISTS`. Every per-user database under `~/.sentient` already exists, so a column
+added to the DDL reaches **none** of them and the first query naming it fails at runtime for real
+users while every fresh-database test stays green. That is how D14's `pending_id` went missing.
+Now a `user_version` ladder over a **frozen** baseline DDL: fresh and long-lived databases run the
+same migration code, so the fresh-DB test covers the real path. **When you touch this schema:** never
+edit `STORE_DDL`, add a `StoreMigration`; and write the test that opens a database built from a
+verbatim copy of the OLD DDL, not a reference to the current one. Verified against a real 166-row
+pre-migration artifact: `user_version` 0 → 1, column added, all rows intact, reads still serve.
 
 ### settings apply — the 45 s budgets were padding for a machine that no longer exists
 `apply:orchestrator apply.ready elapsedMs=5..12` (4 samples). No supervisord, no
@@ -846,13 +867,15 @@ collapsing them into one verdict is how an unrun static edit ships looking green
 |---|---|---|---|
 | login / auth (T1) | PASS | PASS | `login-avatar-${QA_USER_ID}` → `composer-input` |
 | `native-turn-happy` | **PASS** (9e) | **PASS** (9e) | D12 closed; `01-send-stream` 17s / 31s |
-| `native-tool-call` | FAIL — D13 | **PASS** (9e) | iOS: `dispatch.foreground.done` then a reply. Android: reached the PDP, prompt un-tappable, `dispatch.denied reason="permission request timed out"`. **No `allow`-tier tool was exercised on either platform** — the only tool the model chose was `confirm`-tier |
-| `permission-confirm` (native) | **FAIL — D13** | **PASS** (9e) | Android dialog exports no resource-id; iOS 30s |
+| `native-tool-call` | **PASS** (9f) | **PASS** (9e) | Android unblocked by D13's close: prompt → Allow → `assistant-bubble`. **No `allow`-tier tool has been exercised on either platform** — the only tool the model chose was `confirm`-tier |
+| `permission-confirm` (native) | **PASS** (9f) 24s | **PASS** (9e) 30s | D13 closed — the dialog exports its own testTags; flow UNEDITED |
 | `new-chat` (`03` / `verify-newchat`) | **PASS** (9e) | **PASS** (9e) | composer returns; server thread NOT reset (D15) |
 | `01-newchat` (iOS only) | — | **FAIL — D15** | asserts a fresh chain 2.0 does not provide |
-| `steer-followup-audio` | not re-driven | not re-driven | unblocked by 9e; needs its own drive |
-| `reload-convergence` | not re-driven | not re-driven | unblocked by 9e, but read D14 first |
-| `restart-persistence` | not re-driven | not re-driven | unblocked by 9e, but read D14 first |
+| `steer-followup-audio` | → Task 11 | → Task 11 | text half already PASS on web. The AUDIO half needs the downlink, which is lazy-armed on `audio.start`; the mic is hold-to-talk and Maestro's tap gives ~147 ms — the same harness blocker as `voice-roundtrip`, on the same seam |
+| `reload-convergence` | **PASS** (9f) | — | Re-driven with D14 closed, so the store is no longer polluted. `projectForClient` over the live DB = 25 items; device cold relaunch logs `snapshot-legacy count=25`; gateway logs `turn-emitter.conversation-snapshot itemCount=25`. Counted, not eyeballed |
+| `restart-persistence` | **PASS** (9f) | — | Real native gateway process restart (kill + `bun --hot src/main.ts`), then cold relaunch: `resume.not-recovered reason="fresh-journal-or-epoch-mismatch"` → `conversation-snapshot itemCount=25`, unchanged across the restart. `store.opened schemaVersion=1` on every open |
+| `session` tag — `06-switch-session`, `07-rename-delete` | **FAIL** (9f) | — | Not a regression: **the 2.0 gateway serves no `/api/v1/sessions` route** (`grep -rn "api/v1/sessions" gateway/src` is empty; `ws-handlers.ts:212` says so). The drawer's list/rename/delete/search all dial it, so zero `history-row-*` render whatever the store holds → multi-conversation project, not Task 11 |
+| `10-outbox` | **FAIL** (9f) | — | Not a regression: `message-bubble-0` is the **list index** (`MessageBubble.kt:68`), so index 0 is the oldest message. Written for an empty chat; on 2.0 one durable conversation never resets (D15), so it is permanently off-screen. Needs re-grounding onto the newest bubble → multi-conversation project |
 | `voice-roundtrip` | → Task 11 | → Task 11 | fixture channel deleted + hold-vs-tap |
 | `interrupt` (native) | **PASS** (9e) | **PASS** (9e) | `05-interrupt` 27s / 41s — D12 closed. Asserts send→stream→alive ONLY; the interrupt tap is still unasserted (TTS audio-state gate) |
 | barge-in / acoustic | → Task 11 | → Task 11 | `physical-only`; needs real mic + speaker |
