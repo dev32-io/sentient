@@ -1,0 +1,26 @@
+2026-07-30T01:32:01.902 INFO  [ws:turn-emitter] turn-emitter.conversation-snapshot | sessionId="s-ms79955m-ihljqpjh" itemCount=2
+2026-07-30T01:34:35.193 INFO  [runtime:turn-voice] turn-voice.audio.cancel | sessionId="s-ms79955m-ihljqpjh" turnIds= reason="user cancel gesture — barge-in or interrupt"
+2026-07-30T01:34:35.308 INFO  [ws:turn-emitter] turn-emitter.conversation-snapshot | sessionId="s-ms79cfja-81e6uf3w" itemCount=2
+2026-07-30T01:38:03.002 INFO  [runtime:turn-voice] turn-voice.audio.cancel | sessionId="s-ms79cfja-81e6uf3w" turnIds= reason="user cancel gesture — barge-in or interrupt"
+2026-07-30T01:38:03.157 INFO  [ws:turn-emitter] turn-emitter.conversation-snapshot | sessionId="s-ms79gvws-qt2n7yn8" itemCount=2
+2026-07-30T01:38:36.511 INFO  [runtime:turn-voice] turn-voice.audio.cancel | sessionId="s-ms79gvws-qt2n7yn8" turnIds= reason="user cancel gesture — barge-in or interrupt"
+2026-07-30T01:38:36.615 INFO  [ws:turn-emitter] turn-emitter.conversation-snapshot | sessionId="s-ms79hlq9-vpe2ld86" itemCount=2
+2026-07-30T01:38:46.187 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-ms79hlq9-vpe2ld86" turnId="524cad16-7cb0-41fe-be82-262103891653"
+2026-07-30T01:38:46.188 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-ms79hlq9-vpe2ld86" turnId="524cad16-7cb0-41fe-be82-262103891653" trigger="user"
+2026-07-30T01:38:46.188 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_1eee01a4" sessionId="c::u_1eee01a4::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="524cad16-7cb0-41fe-be82-262103891653" trigger="user" lastProcessedSeq=3
+2026-07-30T01:38:46.188 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_1eee01a4::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="524cad16-7cb0-41fe-be82-262103891653" maxIterations=10 toolCount=19
+2026-07-30T01:38:46.189 INFO  [provider:openai] stream-start | model="gpt-oss:20b-cloud" messageCount=4 toolCount=19
+2026-07-30T01:38:46.189 INFO  [tts:local-tts-socket] ws-open-requested | url="ws://127.0.0.1:8770/?format=opus&sample_rate=48000&voice=default"
+2026-07-30T01:38:46.192 INFO  [tts:local-tts-socket] ws-opened
+2026-07-30T01:38:46.193 INFO  [tts:local-tts] ready-received | format="opus" sampleRate=48000 voice="default"
+2026-07-30T01:38:47.451 INFO  [provider:openai] stream-end | durationMs=1262 finishReason="stop" promptTokens=8884 cachedTokens=0 completionTokens=33 cacheHitRatio=0
+2026-07-30T01:38:47.451 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_1eee01a4::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="524cad16-7cb0-41fe-be82-262103891653" iteration=1 forceFinal=false finishReason="stop" toolCallCount=0 textLength=14 cacheHitRatio=0
+2026-07-30T01:38:47.451 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_1eee01a4::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="524cad16-7cb0-41fe-be82-262103891653" iterations=1 forceFinal=false
+2026-07-30T01:38:47.452 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_1eee01a4" sessionId="c::u_1eee01a4::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="524cad16-7cb0-41fe-be82-262103891653" completed=true iterations=1
+2026-07-30T01:38:47.452 INFO  [ws:turn-emitter] turn-emitter.turn-completed | sessionId="s-ms79hlq9-vpe2ld86" turnId="524cad16-7cb0-41fe-be82-262103891653"
+2026-07-30T01:38:48.444 INFO  [ws:turn-emitter] turn-emitter.audio-start | sessionId="s-ms79hlq9-vpe2ld86" turnId="524cad16-7cb0-41fe-be82-262103891653" encoding="opus" sampleRate=48000
+2026-07-30T01:38:48.444 INFO  [runtime:turn-voice] turn-voice.audio.start | sessionId="s-ms79hlq9-vpe2ld86" turnId="524cad16-7cb0-41fe-be82-262103891653" encoding="opus" sampleRate=48000 firstFrameMs=2255
+2026-07-30T01:38:48.508 INFO  [tts:local-tts] dispose
+2026-07-30T01:38:48.509 INFO  [tts:local-tts-socket] ws-closed
+2026-07-30T01:38:48.509 INFO  [ws:turn-emitter] turn-emitter.audio-done | sessionId="s-ms79hlq9-vpe2ld86" turnId="524cad16-7cb0-41fe-be82-262103891653" framesSent=2
+2026-07-30T01:38:48.509 INFO  [runtime:turn-voice] turn-voice.audio.done | sessionId="s-ms79hlq9-vpe2ld86" turnId="524cad16-7cb0-41fe-be82-262103891653" frameCount=2 bytesSent=16307 elapsedMs=2320

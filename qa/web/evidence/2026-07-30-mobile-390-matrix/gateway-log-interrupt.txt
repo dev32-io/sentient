@@ -1,0 +1,26 @@
+2026-07-30T01:41:41.312 INFO  [runtime:session-runtime] session-runtime.submit.start-turn | userId="u_1eee01a4" sessionId="c::u_1eee01a4::2b9a32f5-292f-4e62-b38b-0502baf96220" kind="conversational" seq=13 turnId="2711f516-ee07-4a90-96df-b6e69f319bc7"
+2026-07-30T01:41:41.313 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-ms79hlq9-vpe2ld86" turnId="2711f516-ee07-4a90-96df-b6e69f319bc7"
+2026-07-30T01:41:41.313 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-ms79hlq9-vpe2ld86" turnId="2711f516-ee07-4a90-96df-b6e69f319bc7" trigger="user"
+2026-07-30T01:41:41.314 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_1eee01a4" sessionId="c::u_1eee01a4::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="2711f516-ee07-4a90-96df-b6e69f319bc7" trigger="user" lastProcessedSeq=13
+2026-07-30T01:41:41.315 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_1eee01a4::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="2711f516-ee07-4a90-96df-b6e69f319bc7" maxIterations=10 toolCount=19
+2026-07-30T01:41:41.316 INFO  [provider:openai] stream-start | model="gpt-oss:20b-cloud" messageCount=14 toolCount=19
+2026-07-30T01:41:41.317 INFO  [tts:local-tts-socket] ws-open-requested | url="ws://127.0.0.1:8770/?format=opus&sample_rate=48000&voice=default"
+2026-07-30T01:41:41.319 INFO  [tts:local-tts-socket] ws-opened
+2026-07-30T01:41:41.320 INFO  [tts:local-tts] ready-received | format="opus" sampleRate=48000 voice="default"
+2026-07-30T01:41:45.505 INFO  [provider:openai] stream-end | durationMs=4189 finishReason="stop" promptTokens=11928 cachedTokens=0 completionTokens=430 cacheHitRatio=0
+2026-07-30T01:41:45.506 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_1eee01a4::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="2711f516-ee07-4a90-96df-b6e69f319bc7" iteration=1 forceFinal=false finishReason="stop" toolCallCount=0 textLength=1898 cacheHitRatio=0
+2026-07-30T01:41:45.506 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_1eee01a4::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="2711f516-ee07-4a90-96df-b6e69f319bc7" iterations=1 forceFinal=false
+2026-07-30T01:41:45.507 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_1eee01a4" sessionId="c::u_1eee01a4::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="2711f516-ee07-4a90-96df-b6e69f319bc7" completed=true iterations=1
+2026-07-30T01:41:45.507 INFO  [ws:turn-emitter] turn-emitter.turn-completed | sessionId="s-ms79hlq9-vpe2ld86" turnId="2711f516-ee07-4a90-96df-b6e69f319bc7"
+2026-07-30T01:41:46.336 INFO  [ws:turn-emitter] turn-emitter.audio-start | sessionId="s-ms79hlq9-vpe2ld86" turnId="2711f516-ee07-4a90-96df-b6e69f319bc7" encoding="opus" sampleRate=48000
+2026-07-30T01:41:46.336 INFO  [runtime:turn-voice] turn-voice.audio.start | sessionId="s-ms79hlq9-vpe2ld86" turnId="2711f516-ee07-4a90-96df-b6e69f319bc7" encoding="opus" sampleRate=48000 firstFrameMs=5020
+2026-07-30T01:41:48.318 INFO  [runtime:cancellation] cancellation.no-turn-in-flight | userId="u_1eee01a4" sessionId="c::u_1eee01a4::2b9a32f5-292f-4e62-b38b-0502baf96220" cutoff="interrupt" cancelBackground=true
+2026-07-30T01:41:48.319 INFO  [runtime:turn-voice] turn-voice.audio.cancel | sessionId="s-ms79hlq9-vpe2ld86" turnIds=2711f516-ee07-4a90-96df-b6e69f319bc7 reason="user cancel gesture — barge-in or interrupt"
+2026-07-30T01:41:48.319 INFO  [ws:turn-emitter] turn-emitter.playback-stop | sessionId="s-ms79hlq9-vpe2ld86" turnId="2711f516-ee07-4a90-96df-b6e69f319bc7" reason="interrupt"
+2026-07-30T01:41:48.319 INFO  [runtime:session-runtime] session-runtime.playback.stop | userId="u_1eee01a4" sessionId="c::u_1eee01a4::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="2711f516-ee07-4a90-96df-b6e69f319bc7" cutoff="interrupt" cutTurnCount=1
+2026-07-30T01:41:48.319 INFO  [tools:background-registry] background-registry.cancel-all | taskIds= count=0
+2026-07-30T01:41:48.319 INFO  [runtime:cancellation] cancellation.background.cancel-all | userId="u_1eee01a4" sessionId="c::u_1eee01a4::2b9a32f5-292f-4e62-b38b-0502baf96220" cutoff="interrupt"
+2026-07-30T01:41:48.319 INFO  [tts:streaming-tts-synthesizer] synthesize-aborted | frameCount=3
+2026-07-30T01:41:48.319 INFO  [tts:local-tts] dispose
+2026-07-30T01:41:48.319 INFO  [tts:local-tts-socket] ws-closed
+2026-07-30T01:41:48.319 INFO  [runtime:turn-voice] turn-voice.audio.cancelled | sessionId="s-ms79hlq9-vpe2ld86" turnId="2711f516-ee07-4a90-96df-b6e69f319bc7" frameCount=3 bytesSent=39003
