@@ -151,10 +151,15 @@ orchestrator:
     # small files and exits; anything past this is a wedged CLI, not a slow
     # one. Range 1000-120000.
     hermes_profile_create_timeout_ms: 30000
-    # Deadline for one `hermes mcp add` / `hermes config get` (ms) — the calls
-    # that register the gateway's per-user MCP socket on a Hermes profile so a
-    # delegated task has gateway tools at all. `mcp add` connects to the socket
-    # and lists its tools before saving, so it is slower than a config write.
+    # Deadline for the WHOLE verify-and-provide phase (ms) that runs inside
+    # `delegateTask` immediately before the delegated agent is spawned: a
+    # `hermes config get`, a `hermes mcp add` if the entry is missing or has
+    # drifted, and a second `config get` to read the change back. The budget is
+    # shared across those calls, not granted to each, because this now sits on
+    # the hot path of a user-visible action — a wedged CLI must not become a
+    # wedged delegation. On expiry the delegation proceeds anyway with whatever
+    # tools the profile already had. `mcp add` connects to the socket and lists
+    # its tools before saving, so it is slower than a config write.
     # Range 1000-120000.
     hermes_mcp_register_timeout_ms: 30000
   compaction:
@@ -434,9 +439,23 @@ mcp_catalog:
         - ha_config_set_calendar_event
         - ha_config_remove_calendar_event
 
-  # Gateway-hosted MCP — exposes per-user tools (identify_user, channel
-  # control, audio control). One Unix socket per user; `nc -U` bridges the
-  # delegated Hermes's stdio MCP transport onto that socket.
+  # Gateway-hosted MCP — the SECOND TIER of MCP a delegated agent gets, on top
+  # of whatever the user configured for themselves. One Unix socket per user;
+  # `nc -U` bridges the delegated Hermes's stdio MCP transport onto it.
+  #
+  # It serves two kinds of tool, and `tools.include` below covers only the
+  # first:
+  #   * gateway-HOSTED tools (identify_user, audio control), implemented
+  #     in-process;
+  #   * PROXIED tools — the `allow` tier of the http entries in this same
+  #     catalog (HA reads, fetch, searxng), forwarded through the gateway's
+  #     ToolBroker so its PDP evaluates every delegated call.
+  # The proxied set is derived at runtime from `gateway/mcp-policy.yaml`, never
+  # listed here: a second spelling of "which tools are safe" is a thing that
+  # must agree with the policy file and eventually will not. Editing
+  # `tools.include` below does NOT change what a delegated agent can reach —
+  # the delegated surface is decided by mcp-policy.yaml plus this catalog's
+  # per-server `tools.include`.
   #
   # THIS IS THE DIALLING SIDE of hermes.mcp_host.socket_path above — the two
   # MUST name the same directory. `${HOME}` is expanded once at config load
