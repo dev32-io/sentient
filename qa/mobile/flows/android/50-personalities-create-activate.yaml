@@ -3,20 +3,36 @@ tags:
   - settings-soul
   - destructive-profile
 ---
-# 50-personalities-create-activate — Personalities page starting empty: create
-# "e2e-test", then Activate. Batch-safe. Self-restoring — see DEFECT-4.
+# 50-personalities-create-activate — Personalities page: create "e2e-test",
+# Activate it, assert it SURVIVES, then delete it (self-restoring).
 #
-# DEFECT-4 (backend, NOT mobile): Activate deterministically wipes the personality
-# (writeRendered() overwrites config.yaml with no agent.personalities section; the
-# personality-store read-modify-write loses the race on the SAME restart Activate
-# triggers). Reproduced live: create "e2e-test" (persists) → Activate → "Applying
-# — restarting…" (~13s) → list reverts to "No personalities yet." So the bug
-# itself restores the starting state — no restore pair needed.
+# 2026-07-30 (native-stack migration Task 10) — RE-GROUNDED. This flow used to
+# assert a DEFECT as its expected outcome:
 #
-# create() ALSO routes through the apply/restart FSM (every mutation restarts
-# Hermes); whether the personality survives its OWN creation restart is a timing
-# race (both outcomes observed). The create-phase waits tolerate either outcome;
-# the activate-phase wipe is the reliable asserted case.
+#   "DEFECT-4 (backend): Activate deterministically wipes the personality
+#    (writeRendered() overwrites config.yaml; the personality-store
+#    read-modify-write loses the race on the SAME restart Activate triggers)
+#    ... the list reverts to 'No personalities yet.'"
+#
+# That race was the supervisord restart. On 2.0 there is no restart (apply.ready
+# elapsedMs=5..12) and the wipe NO LONGER REPRODUCES: after a create+Activate the
+# rendered profile still holds it —
+#   ~/.sentient/gateway/<user>/profiles/<user>/config.yaml:
+#     personalities:
+#       e2e-test: ""
+# So the old final assertion ("No personalities yet") now fails BECAUSE THE BUG IS
+# GONE. Asserting the correct behaviour instead, and deleting the personality at
+# the end so the flow is genuinely re-runnable (the old version relied on the bug
+# to clean up after itself, which also left a stale e2e-test behind the moment the
+# bug stopped firing).
+#
+# EXPECTED-INERT (2.0): a personality renders, persists, and activates — but it
+# does not change the assistant's behaviour, because the gateway owns the loop now
+# and the personality surface transitions in a later spec. This flow asserts only
+# the render/persist half, which is the half that must pass.
+#
+# Pre-state tolerance: the opening empty-state check is `optional` so a leftover
+# from an interrupted run does not fail at the precondition.
 - launchApp
 - runFlow:
     when: { visible: { id: "login-backend-setup" } }
@@ -36,6 +52,7 @@ tags:
 - extendedWaitUntil:
     visible: "No personalities yet.*"
     timeout: 3000
+    optional: true
 - takeScreenshot: "50-personalities-empty"
 - tapOn: { id: "settings-personalities-new" }
 - tapOn: { id: "settings-personality-new-name" }
@@ -43,7 +60,7 @@ tags:
 # the soft keyboard covers "Create" below the fold — dismiss it first.
 - hideKeyboard
 - tapOn: { id: "settings-personality-create" }
-# create() also triggers a restart — let it settle either way (SLOW).
+# create() runs the apply path; it settles in ms on 2.0 (no restart).
 - extendedWaitUntil:
     visible: { id: "settings-apply-notice" }
     timeout: 3000
@@ -53,21 +70,28 @@ tags:
     timeout: 20000
     optional: true
 - takeScreenshot: "50-personalities-after-create"
-# only Activate if the personality survived create's own restart race; otherwise
-# the empty state already documents the same bug.
-- tapOn:
-    id: "settings-personality-activate-e2e-test"
-    optional: true
+# Activate: no longer optional — create persists reliably now that its apply is
+# not racing a restart.
+- assertVisible: { id: "settings-personality-activate-e2e-test" }
+- tapOn: { id: "settings-personality-activate-e2e-test" }
 - extendedWaitUntil:
     visible: { id: "settings-apply-notice" }
     timeout: 3000
     optional: true
-- takeScreenshot: "50-personalities-defect4-restarting"
-# SLOW restart budget.
+# apply is 5-12 ms on 2.0 (measured) — 8000 ms covers the emulator re-fetch.
 - extendedWaitUntil:
     notVisible: { id: "settings-apply-notice" }
-    timeout: 20000
+    timeout: 8000
+# THE re-grounded assertion: the personality SURVIVES Activate (DEFECT-4 fixed by
+# the native cutover). The old flow asserted "No personalities yet" here.
+- assertVisible: { id: "settings-personality-e2e-test" }
+- takeScreenshot: "50-personalities-survives-activate"
+# --- self-restore: delete it so the flow is re-runnable ---
+- tapOn: { id: "settings-personality-delete-e2e-test" }
 - extendedWaitUntil:
-    visible: "No personalities yet.*"
-    timeout: 10000
-- takeScreenshot: "50-personalities-defect4-wiped"
+    notVisible: { id: "settings-apply-notice" }
+    timeout: 8000
+- extendedWaitUntil:
+    notVisible: { id: "settings-personality-e2e-test" }
+    timeout: 8000
+- takeScreenshot: "50-personalities-restored"
