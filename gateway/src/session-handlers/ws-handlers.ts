@@ -9,6 +9,7 @@ import type { SessionData } from "./ws-helpers.js";
 import { sendError } from "./ws-helpers.js";
 import { sendUnsequencedFrame } from "./ws-send.js";
 import { handleSessionConfigure } from "./ws-session-configure.js";
+import { handleSessionNew } from "./ws-session-new.js";
 
 export type { SessionData };
 
@@ -59,8 +60,9 @@ export function openSession(ws: ServerWebSocket<SessionData>, services: GatewayS
 // isolation boundary — a frame can only ever settle a prompt this same
 // socket issued.
 //
-// `session.new` / `conversation.activate` (multi-conversation) are still
-// received-but-unhandled.
+// `session.new` (defect D12) answers with `session.created` naming this
+// connection's durable conversation — ws-session-new.ts. `conversation.activate`
+// stays received-but-unhandled on purpose; the `default:` arm says why.
 // ---------------------------------------------------------------------------
 
 export async function handleWebSocketMessage(
@@ -187,11 +189,36 @@ export async function handleWebSocketMessage(
       }
       return;
 
+    case "session.new":
+      // Answered with this connection's DURABLE conversation id, not a freshly
+      // minted partition — see ws-session-new.ts for why forking here would
+      // hand every mobile relaunch an empty conversation.
+      handleSessionNew(ws, msg.requestId);
+      return;
+
     default:
-      // session.new / conversation.activate still require the
-      // multi-conversation wiring landing in its own Plan 3 task. Received
-      // but unhandled.
-      log.debug("message-unhandled", { type: msg.type, reason: "not yet wired" });
+      // `conversation.activate` is deliberately LEFT UNANSWERED, and it is not
+      // the same call as session.new above.
+      //
+      // Its only reply frame is `session.switched`, and both client SDKs read
+      // that frame as "your conversation changed — refetch history over
+      // `GET /sessions/:id/messages`". This gateway does not serve that route
+      // (sessions CRUD is deferred with multi-conversation, docs/native-todo.md
+      // § 2), and mobile's fetch-failure branch is
+      // `SdkConnectors.loadHistoryForSession` → `replaceMirror(emptyList())`.
+      // So answering would WIPE THE VISIBLE CHAT — and not only on a user's
+      // switch: `SentientSdk.reestablishAnchoredSession` fires an activate on
+      // every reconnect that carries an anchor without a resume cursor, so the
+      // wipe would land on ordinary reconnects too.
+      //
+      // Unhandled costs nothing here: the gateway re-anchors the conversation
+      // from `session.configure.conversationId` on that same reconnect, which
+      // is the path that actually restores the thread. This arm becomes
+      // answerable when the history route lands, not before.
+      log.debug("message-unhandled", {
+        type: msg.type,
+        reason: "session.switched would trigger a client history refetch against an unserved REST route",
+      });
       return;
   }
 }

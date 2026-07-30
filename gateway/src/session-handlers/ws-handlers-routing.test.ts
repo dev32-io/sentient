@@ -6,6 +6,7 @@
 // branches so a cast stub is sufficient.
 
 import { describe, expect, it } from "bun:test";
+import { gatewayMessageSchema } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
@@ -281,6 +282,91 @@ describe("ws-handlers outbound frames — journal discipline", () => {
 
     expect(ws.sent).toEqual([{ type: "pong" }]);
     expect(journal.newestSeq).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// session.new / conversation.activate (defect D12). The wire contract being
+// pinned at the process boundary: a client that asks for a chat GETS AN
+// ANSWER. Both mobile SDKs gate their outbound queue on the id that answer
+// carries (`SendMessageUseCase.flushIfReady` → `attachedId`), so silence here
+// is not a missing nicety — it is every mobile text send dying on the device.
+//
+// The `conversation.activate` half is pinned as deliberately UNANSWERED, and
+// that is a product decision with teeth: mobile's history connector treats a
+// `session.switched` as "refetch over GET /sessions/:id/messages", a route
+// this gateway does not serve, and its 404 branch calls
+// `replaceMirror(emptyList())`. Answering would wipe the visible chat on
+// every activate — including the one every reconnect fires. See
+// ws-handlers.ts's `default:` arm for the full reasoning.
+// ---------------------------------------------------------------------------
+
+describe("ws-handlers routing — session.new", () => {
+  it("answers with a session.created carrying this connection's durable conversation id", async () => {
+    const ws = fakeAuthedWs(null);
+    ws.data.conversationId = "c::u_deadbeef::surface-a";
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({ type: "session.new", requestId: "r1" }),
+      unusedServices,
+    );
+
+    const reply = ws.sent.find((f) => (f as { type: string }).type === "session.created");
+    expect(reply).toBeDefined();
+    expect((reply as { sessionId: string }).sessionId).toBe("c::u_deadbeef::surface-a");
+    // The frame must survive the outbound validator, not merely be constructed —
+    // sendGatewayFrame DROPS anything gatewayMessageSchema rejects, which would
+    // look exactly like the silence this case exists to remove.
+    expect(gatewayMessageSchema.safeParse(reply).success).toBe(true);
+  });
+
+  it("seq-stamps and journals session.created so a reconnect replays the anchor", async () => {
+    const ws = fakeAuthedWs(null);
+    ws.data.conversationId = "c::u_deadbeef::surface-a";
+    const journal = createFrameJournal({ maxBytes: 65536 });
+    ws.data.journal = journal;
+    ws.data.epoch = 4;
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({ type: "session.new", requestId: "r1" }),
+      unusedServices,
+    );
+
+    expect(ws.sent).toEqual([
+      { type: "session.created", sessionId: "c::u_deadbeef::surface-a", ts: expect.any(Number), seq: 1, epoch: 4 },
+    ]);
+    expect(journal.newestSeq).toBe(1);
+  });
+
+  it("answers sessions.error when no conversation is bound yet, never silence", async () => {
+    const ws = fakeAuthedWs(null);
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({ type: "session.new", requestId: "r1" }),
+      unusedServices,
+    );
+
+    expect(ws.sent).toEqual([
+      { type: "sessions.error", requestId: "r1", code: "validation", message: expect.any(String) },
+    ]);
+  });
+});
+
+describe("ws-handlers routing — conversation.activate", () => {
+  it("stays unanswered while GET /sessions/:id/messages is unserved, so no client wipes its mirror", async () => {
+    const ws = fakeAuthedWs(null);
+    ws.data.conversationId = "c::u_deadbeef::surface-a";
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({ type: "conversation.activate", sessionId: "c::u_deadbeef::surface-a" }),
+      unusedServices,
+    );
+
+    expect(ws.sent).toEqual([]);
   });
 });
 
