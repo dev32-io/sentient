@@ -6,8 +6,19 @@ tags:
 # 41-members-add-cap — admin Members page: add two temp users (household 1/3 →
 # 3/3), then verify "Add user" is disabled at the 3-user cap. The temp users are
 # deleted by 43-members-delete-cleanup.yaml AFTER 42 uses one to log in.
-# executionOrder runs 41 → 42 → 43. Batch-safe (Kevin is admin via the standard
-# conditional login).
+# executionOrder runs 41 → 42 → 43. Batch-safe (the QA user is admin via the
+# standard conditional login).
+#
+# ⚠️ HARD PRECONDITION — the household must hold EXACTLY ONE user.
+# This flow adds two, so it only works from 1/3. Run it against a household that
+# is already at 3/3 and `settings-members-add` is (correctly) DISABLED, the tap
+# no-ops, and the flow dies on `"Display name" is visible` — which reads like a
+# broken Add-user dialog and is not one. Checked 2026-07-30 on the dev box: three
+# users existed, and the cap half of this flow was verified in isolation
+# (`assertVisible: {id: settings-members-add, enabled: false}` COMPLETED) while
+# the add half was not driveable.
+# Check before running:  curl -sk https://127.0.0.1:8888/api/v1/auth/users
+# Satisfy it by deleting the extra members through the Members UI first.
 #
 # ⚠️ NON-DETERMINISTIC IDS: the created users get server-random ids. 42 (Temp1
 # login) and 43 (delete-by-id) hardcode ids that MUST be re-synced via
