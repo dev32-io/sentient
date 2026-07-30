@@ -4,6 +4,17 @@ tags:
 ---
 # 01-chat-send — chat round-trip against the local gateway: type, send, and see
 # the echoed user message. Batch-safe: warm launchApp + conditional login.
+#
+# hideKeyboard is LOAD-BEARING, added 2026-07-30 (task 9f) — it was the only chat
+# flow missing it. With the IME up the chat viewport is ~300 px tall and
+# MessageList's animateScrollToItem(lastIndex) aligns the last row's TOP with the
+# viewport top, so the bubble under test can sit above the fold and
+# assertVisible (which requires an ON-SCREEN node) fails on a message that was
+# committed, echoed and rendered. Measured both ways on emulator-5554 the same
+# minute: identical send WITHOUT hideKeyboard → FAIL even at a 15 s budget;
+# WITH hideKeyboard → PASS. The visible-only miss became reachable when D14's
+# fix stopped the optimistic bubble from lingering as a second copy of the same
+# text — the assert is now satisfied by exactly one node instead of two.
 - launchApp
 - runFlow:
     when: { visible: { id: "login-backend-setup" } }
@@ -12,6 +23,7 @@ tags:
 - tapOn: { id: "composer-input" }
 - inputText: "what is 20 plus 22"
 - tapOn: { id: "chat-send" }
+- hideKeyboard
 - extendedWaitUntil:
     visible: "what is 20 plus 22"
     timeout: 3000
