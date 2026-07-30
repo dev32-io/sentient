@@ -55,6 +55,16 @@
          state.yaml, secrets/keys.yaml, certs/, users, per-user data. Set
          explicitly rather than trusting launchd's user-record lookup. -->
     <key>HOME</key>                           <string>/Users/OPERATOR</string>
+
+    <!-- Writable state dirs, spelled out so the deployed shape never depends on
+         a code-side default. launchd sets NO WorkingDirectory, so a RELATIVE
+         default ("logs") resolves against "/" and the gateway crash-loops on
+         EROFS before it can log the reason; deriving from import.meta.dir is no
+         better, because a compiled binary's is the virtual bunfs root. The code
+         now defaults both to ~/.sentient/gateway/* so a plist missing these
+         still boots — these entries are belt and braces, not the mechanism. -->
+    <key>LOG_DIR</key>                        <string>/Users/OPERATOR/.sentient/gateway/logs</string>
+    <key>GATEWAY_CERTS_DIR</key>              <string>/Users/OPERATOR/.sentient/gateway/certs</string>
     <!-- Host paths substituted into gateway/templates/services/*.yaml. Docker
          bind-mount sources must be real HOST paths — the daemon creates addon
          containers through the docker socket, so a container-internal path here

@@ -18,7 +18,7 @@
 
 ## Log File Location
 
-- **Local dev:** Logs write to `gateway/logs/` (relative to the gateway project root).
-- **Docker/deploy:** The `gateway/logs/` directory is mounted as a volume from the host. Same path inside the container.
-- **Timezone:** Log timestamps are UTC. Local time conversion is the reader's responsibility.
-- The file logger uses daily rotation: `gateway/logs/YYYY-MM-DD.log`.
+- **One path in every shape:** `~/.sentient/gateway/logs/` (override with `LOG_DIR`). Logs are mutable STATE, so they live under the user-owned state root, never in the code tree. Dev and prod agree; the launchd plist sets `LOG_DIR` explicitly anyway.
+- Never default a writable path to a RELATIVE one. launchd sets no `WorkingDirectory` and a compiled binary's `import.meta.dir` is the virtual bunfs root, so both `"logs"` and `join(import.meta.dir, "..", "..")` resolve against `/` and crash-loop on EROFS. Anchor on `resolveSentientHome()`.
+- **Timezone: LOCAL, not UTC** — `logging/format.ts` builds every timestamp from `getFullYear`/`getHours`/… , so both the line prefix and the daily rotation boundary follow the host's local clock. Grepping "today's log" with `date -u +%F` picks the wrong file for the hours either side of midnight.
+- The file logger uses daily rotation: `~/.sentient/gateway/logs/YYYY-MM-DD.log`.

@@ -36,6 +36,33 @@ export function expandHome(p: string): string {
   return p;
 }
 
+/**
+ * Root of the user-owned MUTABLE state tree (`~/.sentient`). Everything the
+ * gateway writes at runtime — logs, certs, secrets, per-user data — lives under
+ * here; code lives elsewhere and is root-owned and immutable.
+ *
+ * Every default derived from this MUST be absolute, and neither of the two
+ * obvious ways of spelling "next to the code" survives the shipped shape:
+ *   - a RELATIVE default ("logs") resolves against the process cwd, and launchd
+ *     sets no WorkingDirectory — so it became "/logs" and the gateway
+ *     crash-looped on EROFS before it could log why.
+ *   - `join(import.meta.dir, "..", "..")` is no better: a compiled binary's
+ *     import.meta.dir is the virtual bunfs root, so it resolves to "/" as well.
+ * `os.homedir()` is the one anchor that is correct in a repo checkout AND in a
+ * compiled binary under launchd. Mirrors phase-state.ts, which resolves the
+ * same root for the rest of bootstrap.
+ */
+export function resolveSentientHome(): string {
+  return process.env.SENTIENT_HOME ?? join(homedir(), ".sentient");
+}
+
+/** Absolute default for a writable gateway state dir, e.g. "logs" →
+ *  `~/.sentient/gateway/logs`. Kept beside `resolveSentientHome` so the two
+ *  callers below cannot drift apart. */
+function gatewayStateDir(...segments: string[]): string {
+  return join(resolveSentientHome(), "gateway", ...segments);
+}
+
 export interface LoggingConfig {
   logLevel: string;
   logDir: string;
@@ -117,7 +144,7 @@ export function loadLoggingConfig(): LoggingConfig {
   const cfg = loadGatewayConfig(configPath);
   return {
     logLevel: cfg.logging.level,
-    logDir: process.env.LOG_DIR ?? "logs",
+    logDir: process.env.LOG_DIR ?? gatewayStateDir("logs"),
     retentionDays: cfg.logging.retention_days,
     levelOverrides: cfg.logging.level_overrides,
   };
@@ -136,7 +163,7 @@ export function loadStartupConfig(): StartupConfig {
   return {
     logging: {
       logLevel: cfg.logging.level,
-      logDir: process.env.LOG_DIR ?? "logs",
+      logDir: process.env.LOG_DIR ?? gatewayStateDir("logs"),
       retentionDays: cfg.logging.retention_days,
       levelOverrides: cfg.logging.level_overrides,
     },
@@ -148,7 +175,7 @@ export function loadStartupConfig(): StartupConfig {
 
     webDistDir: process.env.WEB_DIST_DIR,
 
-    tls: { ...cfg.tls, certsDir: process.env.GATEWAY_CERTS_DIR ?? join(gatewayRoot, "certs") },
+    tls: { ...cfg.tls, certsDir: process.env.GATEWAY_CERTS_DIR ?? gatewayStateDir("certs") },
 
     session: cfg.session,
 

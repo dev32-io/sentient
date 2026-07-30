@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import type {
   AuthConfig,
   HermesBuiltinTools,
@@ -169,11 +170,13 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     internalSecretsStore,
     gatewayRuntimeDir: state.gatewayRuntimeDir,
     sentientHome: state.sentientHome,
-    // Container-side path for seeding default service configs into the
-    // host config dir BEFORE the orchestrator first recreates a container
-    // whose template references ${HOST_CONFIG_DIR}/* bind mounts.
-    // SENTIENT_HOME mirrors HOST_HOME/.sentient inside the container.
-    hostConfigDirContainerPath: `${process.env.SENTIENT_HOME ?? "/sentient"}/gateway/config`,
+    // Where default service configs are seeded before the orchestrator first
+    // recreates a container whose template references ${HOST_CONFIG_DIR}/*
+    // bind mounts. Reuses the state root phase-state already resolved, rather
+    // than re-reading SENTIENT_HOME with a DIFFERENT fallback: the old default
+    // here was a literal "/sentient", a path that only ever existed inside the
+    // retired gateway container and is unwritable on a native host.
+    hostConfigDirContainerPath: join(state.sentientHome, "gateway", "config"),
   });
 
   const routes = runPhaseRoutes({ cfg });
