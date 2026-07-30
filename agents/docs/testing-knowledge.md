@@ -750,6 +750,29 @@ is a race the runner loses (45/45b failed exactly that way); and every
 `notVisible` budget is now **8000 ms**, not 45000. Untouched on purpose: `04c`
 (real LLM round-trip) and `60`/`61` (offline recovery).
 
+**Verified on BOTH platforms, not extrapolated.** The re-baseline was first
+measured on Android and the 7 iOS twins were edited to match without a drive —
+a budget "verified" on one platform is a hypothesis on the other. The iOS batch
+was then run: `45, 45b, 48, 48b, 49, 49b` all PASS at 8000 ms, and `47` fails at
+a step *after* its first 8000 ms wait is already crossed, so the re-timing is not
+implicated there either. iOS-side server timing during that run: `apply.ready
+elapsedMs=6` / `elapsedMs=8`, inside the Android band. Evidence:
+`qa/mobile/evidence/2026-07-30-native-mobile-matrix/ios-settings-batches.txt`.
+
+### percentage point-taps carry an UNSTATED device-geometry dependency
+Where an accessibilityIdentifier is inherited by every descendant of a row (iOS
+`RowToggle`, personality cards), `tapOn: id:` resolves to the row's bounds centre
+— the label — and silently no-ops, so several iOS flows point-tap a percentage
+instead. That percentage is only valid for the screen it was measured on, and
+nothing in the flow said which one. On iPhone 17 / iOS 26.5 (402x874) the audio
+switch is `[305,214][366,242]`; the committed `85%,24%` resolved to (342,210),
+**4 px above the switch**, and `44`/`44b`/`59` all died at
+`settings-audio-save is visible` — which reads like a broken save and is not one.
+Re-measured to `83%,26%` = (334,227); all three pass. **Rule: a point-tap MUST
+record the sim model, the screen size, and the measured element bounds in a
+comment. Re-measure with Maestro `inspect_screen`; never nudge the number.**
+`50`'s `89%,21%` chevron is the same class, still red, still unmeasured.
+
 ### personality activate — a flow that asserted a DEFECT as its expected outcome
 `50-personalities-create-activate` asserted "Activate wipes the personality
 (DEFECT-4)". That race was the supervisord restart; it is gone, the personality
@@ -759,8 +782,11 @@ survives (`profiles/<user>/config.yaml` still lists it), and the flow failed
 ### EXPECTED-INERT (2.0) — soul / personality / long-term memory
 These render and persist but do not change assistant behaviour: the gateway owns
 the loop and those surfaces transition in a later spec. A flow asserting
-render/persist MUST still pass (`46-memory-cap`, `47`, `50` all do). Only a
-behaviour assertion is inert. Never delete such a flow.
+render/persist MUST still pass — `46-memory-cap` does on both platforms, and
+`47`/`50` do on Android. On iOS `47` and `50` are RED for reasons unrelated to
+inertness (a selector the keyboard hides, and an unmeasured point-tap); see the
+per-platform table below. Only a behaviour assertion is inert. Never delete such
+a flow, and never let `EXPECTED-INERT` absorb a red that has a real cause.
 
 ### voice-roundtrip (native) — NOT DRIVABLE, handed to Task 11
 Two independent blockers. (1) The fixture-injection channel is **gone**:
@@ -787,3 +813,34 @@ Against a hung STT, the gateway logged 33 `stt.connect-failed` in 751 ms — one
 retry per mic frame. That is documented, deliberate design
 (`stt-session.ts:10-19`: "no timers, no backoff constants, no new config") and it
 self-heals within one frame. Recorded for the owner, not filed.
+
+### Per-row status — PER PLATFORM, because "driven" is not a property of a row
+A row driven on Android and merely *edited* on iOS is two different states, and
+collapsing them into one verdict is how an unrun static edit ships looking green.
+`—` means the platform was never driven for that row; it is not a pass.
+
+| Row / flow | Android | iOS | Note |
+|---|---|---|---|
+| login / auth (T1) | PASS | PASS | `login-avatar-${QA_USER_ID}` → `composer-input` |
+| `native-turn-happy` | FAIL | FAIL | D12 — `flush-skipped reason=no-id-attached` |
+| `native-tool-call` | FAIL (blocked) | FAIL (blocked) | needs a turn; D12 |
+| `permission-confirm` (native) | FAIL (blocked) | FAIL (blocked) | case AUTHORED, committed red behind D12 |
+| `steer-followup-audio` | FAIL (blocked) | FAIL (blocked) | D12 |
+| `reload-convergence` | FAIL (blocked) | FAIL (blocked) | no committed history to converge on |
+| `restart-persistence` | FAIL (blocked) | FAIL (blocked) | nothing to persist without a turn |
+| `voice-roundtrip` | → Task 11 | → Task 11 | fixture channel deleted + hold-vs-tap |
+| `interrupt` (native) | → Task 11 | → Task 11 | D12, then the TTS-state gate |
+| barge-in / acoustic | → Task 11 | → Task 11 | `physical-only`; needs real mic + speaker |
+| `40-settings-root` | PASS 19s | PASS 16s | the Task 6b static edit, now proven on both |
+| `56-secrets-presence` | PASS 29s | PASS 20s | |
+| `41-members-add-cap` | FAIL — pre-state | FAIL — pre-state | 3-user household; cap half proven separately |
+| `42-settings-non-admin-gate` | FAIL — cascade | FAIL — cascade | driven at last; dies at the Temp1 41 never made |
+| `43-members-delete-cleanup` | FAIL — cascade | FAIL — cascade | |
+| `44` / `44b` / `59` audio | PASS | PASS (after fix) | iOS point-tap was 4 px off; re-measured |
+| `45` / `45b` model apply | PASS | PASS | 8000 ms budget verified on BOTH |
+| `46-memory-cap` | PASS (after fix) | PASS 1m50s | iOS already typed 9 chunks; Android needed the 9th |
+| `47-system-prompt-restore` | PASS | **FAIL** | iOS-only; dies AFTER the 8000 ms wait, at the Restore tap |
+| `48` / `48b` / `49` / `49b` | PASS | PASS | 8000 ms budget verified on BOTH |
+| `50-personalities` | PASS (re-grounded) | **FAIL** | iOS-only; unmeasured chevron point-tap + stale DEFECT-4 header |
+| soul / personality / memory behaviour | EXPECTED-INERT (2.0) | EXPECTED-INERT (2.0) | render+persist only |
+| delegated agent used a gateway tool | not asserted, by instruction | not asserted, by instruction | D11 — never assert it, never pass vacuously |
