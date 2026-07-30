@@ -571,15 +571,15 @@ one place work that could not be verified is allowed to live.
   installer renders its configuration; the set of external tools becomes declarative YAML rather than
   a special case; and a settings flow to inspect/enable/re-scope them.
 
-## B. Open defect — needs a code fix, currently being worked
+## B. Was an open defect — fixed while this checklist was being written
 
-- **A restarted addon container stays dead for the life of the gateway process.** The shared MCP
-  client caches one connection per tool server and only discards it when the *initial connect* fails —
-  never when a later call fails on an already-open connection. Since the orchestrator recreates the
-  music addon during every boot, that server's tools are silently missing until the gateway is
-  restarted, for the gateway's own loop as well as for delegated agents. This is under active repair
-  as plan task 9h. Confirm the fix landed before relying on it being closed:
-  `git log --oneline -- gateway/src/tools/mcp-client.ts`.
+- **A restarted addon container stayed dead for the life of the gateway process.** The shared MCP
+  client cached one connection per tool server and only discarded it when the *initial connect*
+  failed — never when a later call failed on an already-open connection. Since the orchestrator
+  recreates the music addon during every boot, that server's tools went silently missing until the
+  gateway was restarted, for the gateway's own loop as well as for delegated agents. **Fixed in
+  `0d60359`** ("evict a dead MCP transport instead of caching it forever"). Nothing to verify — it is
+  recorded here only so that an older note describing it as open does not send you looking.
 
 ## C. Drivable by an agent, simply not yet driven
 
