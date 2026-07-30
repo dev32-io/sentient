@@ -82,6 +82,13 @@ if (config.hermes) {
     audio: stubAudio,
     userSettings: userSettingsControls,
     policy: policyEngine,
+    // The proxied tier (task 9g): the delegated agent reaches the operator's
+    // `mcp_catalog` through the gateway's own socket, so every one of those
+    // calls passes the PDP. Same shared McpClient the gateway's own loop uses —
+    // never a second dialer to the same servers.
+    ...(config.orchestrator
+      ? { proxy: { mcpClient: services.mcpClient, toolsConfig: config.orchestrator.tools } }
+      : {}),
   });
 
   // Keep per-user MCP sockets in lockstep with admin user create/delete.

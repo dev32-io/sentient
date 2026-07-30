@@ -110,6 +110,45 @@ describe("handleRpc", () => {
     expect(result.content[0]?.text).toContain("not allowed");
   });
 
+  // WIRE CONTRACT on the delegated socket. The proxied catalog tier is derived
+  // at listing time, not cached at boot: an addon that came up after the gateway
+  // did must appear without a restart. A `tools/list` that answered from a stale
+  // registry would leave a delegated agent permanently tool-less on any boot
+  // that raced the addons — which is the whole class of defect D11 belonged to.
+  it("refreshes the dynamic tool tier before answering tools/list", async () => {
+    let refreshed = 0;
+    const dynamic: ToolHandler[] = [];
+    const refreshDeps = {
+      ...deps,
+      registry: {
+        list: () => dynamic.map((h) => h.def),
+        get: (name: string) => dynamic.find((h) => h.def.name === name) ?? null,
+      },
+      refreshTools: async () => {
+        refreshed += 1;
+        dynamic.push({
+          def: { name: "search_web", description: "", inputSchema: { type: "object" as const, properties: {} } },
+          async run() {
+            return { content: [{ type: "text" as const, text: "" }] };
+          },
+        });
+      },
+    };
+
+    const res = await handleRpc({ jsonrpc: "2.0", id: 7, method: "tools/list" }, "conn1", refreshDeps);
+
+    expect(refreshed).toBe(1);
+    expect((res?.result as { tools: Array<{ name: string }> }).tools.map((t) => t.name)).toEqual(["search_web"]);
+  });
+
+  it("answers tools/list from the previous surface when the refresh fails", async () => {
+    const failing = { ...deps, refreshTools: () => Promise.reject(new Error("all servers down")) };
+
+    const res = await handleRpc({ jsonrpc: "2.0", id: 8, method: "tools/list" }, "conn1", failing);
+
+    expect((res?.result as { tools: Array<{ name: string }> }).tools[0]?.name).toBe("echo");
+  });
+
   it("auto-approves tool call when policy returns confirm", async () => {
     const confirmPolicy: PolicyEngine = {
       evaluate(_ctx: PolicyContext): PolicyDecision {

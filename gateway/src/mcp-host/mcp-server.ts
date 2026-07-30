@@ -33,10 +33,40 @@ export interface McpServerDeps {
   registry: ToolRegistry;
   policy: PolicyEngine;
   contextFor(connectionId: string): ToolContext;
+  /**
+   * Re-derive any dynamic part of the registry before answering `tools/list`.
+   *
+   * The gateway's own hosted tools are fixed at construction, but the PROXIED
+   * catalog tier is not: an addon that came up after the gateway did would
+   * otherwise stay invisible until a restart, and one that went away would
+   * stay advertised. Awaited on the LIST path only — a `tools/call` names a
+   * tool the caller has already listed, and re-dialing the whole catalog
+   * before every call would put the catalog's connect timeouts on the inner
+   * loop of a delegated run.
+   *
+   * MUST NOT throw and MUST be bounded by its own implementation; a rejection
+   * here is caught and the previous surface answers.
+   */
+  refreshTools?: () => Promise<void>;
+}
+
+/** Refresh the dynamic tool tier without ever failing the listing: an
+ *  unreachable catalog leaves the previous surface in place, which degrades the
+ *  delegated agent to fewer tools rather than closing its connection. */
+async function refreshSafely(deps: McpServerDeps): Promise<void> {
+  if (!deps.refreshTools) return;
+  try {
+    await deps.refreshTools();
+  } catch (err: unknown) {
+    log.warn("tools/list.refresh-failed", {
+      reason: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 /**
- * Handle one JSON-RPC request. Pure (no I/O). Caller owns the transport.
+ * Handle one JSON-RPC request. The only I/O it may do is `refreshTools` on the
+ * listing path; the caller owns the transport.
  */
 export async function handleRpc(
   req: JsonRpcRequest,
@@ -58,6 +88,7 @@ export async function handleRpc(
   }
 
   if (req.method === "tools/list") {
+    await refreshSafely(deps);
     return {
       jsonrpc: "2.0",
       id,
