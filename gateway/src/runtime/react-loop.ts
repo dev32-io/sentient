@@ -290,10 +290,23 @@ async function consumeStream(
   };
 }
 
-export async function runTurn(
-  deps: ReactLoopDeps,
-  args: RunTurnArgs,
-): Promise<{ completed: boolean; iterations: number }> {
+export interface TurnOutcome {
+  completed: boolean;
+  iterations: number;
+  /** Store tail seq as of the LAST iteration's `readSession` — i.e. the
+   *  high-water mark this turn's final provider request actually included.
+   *
+   *  This is what makes a mid-loop steer single-shot. `SessionRuntime` used to
+   *  decide "is a back-to-back follow-up turn owed?" against a snapshot taken
+   *  at turn START, so any entry a steer appended mid-turn stayed "unprocessed"
+   *  for the rest of the turn's life and fired a second, empty turn even though
+   *  an iteration had already folded it in. Reporting what was really consumed
+   *  keeps spec §4.5's genuine case intact — a stimulus landing AFTER this seq
+   *  was never seen by the loop and still owes a new turn. */
+  consumedThroughSeq: number;
+}
+
+export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<TurnOutcome> {
   const { provider, broker, store, systemPrompt, sessionId, config, onTextDelta, onTurnCommitting } = deps;
   const { turnId, signal } = args;
 
@@ -305,21 +318,24 @@ export async function runTurn(
   log.info("react-loop.start", { sessionId, turnId, maxIterations, toolCount: tools.length });
 
   let iteration = 0;
+  let consumedThroughSeq = 0;
   while (iteration < maxIterations) {
     iteration += 1;
 
     if (signal.aborted) {
       log.info("react-loop.aborted-before-iteration", { sessionId, turnId, iteration });
-      return { completed: false, iterations: iteration - 1 };
+      return { completed: false, iterations: iteration - 1, consumedThroughSeq };
     }
 
     const forceFinal = iteration === maxIterations;
     // The re-read that makes steer free (spec §4.5): every iteration
     // rebuilds messages[] from the store, never from a cached prior value.
-    const messages: ChatMessage[] = [
-      { role: "system", content: systemPrompt },
-      ...projectForModel(store.readSession(sessionId)),
-    ];
+    const entries = store.readSession(sessionId);
+    // Recorded BEFORE the provider call, from the same read the request is
+    // built from, so it can never claim to have consumed an entry that landed
+    // during the stream.
+    consumedThroughSeq = entries[entries.length - 1]?.seq ?? consumedThroughSeq;
+    const messages: ChatMessage[] = [{ role: "system", content: systemPrompt }, ...projectForModel(entries)];
 
     log.debug("react-loop.iteration.start", {
       sessionId,
@@ -335,7 +351,7 @@ export async function runTurn(
 
     if (outcome.aborted) {
       log.info("react-loop.aborted-mid-stream", { sessionId, turnId, iteration });
-      return { completed: false, iterations: iteration };
+      return { completed: false, iterations: iteration, consumedThroughSeq };
     }
 
     log.info("react-loop.iteration.stream-done", {
@@ -353,7 +369,7 @@ export async function runTurn(
       store.append({ ...blankEntry(sessionId, turnId), kind: "assistant", text: outcome.text });
       onTurnCommitting?.(turnId);
       log.info("react-loop.completed", { sessionId, turnId, iterations: iteration, forceFinal });
-      return { completed: true, iterations: iteration };
+      return { completed: true, iterations: iteration, consumedThroughSeq };
     }
 
     // Narration that precedes a tool call in the SAME iteration (many
@@ -372,7 +388,7 @@ export async function runTurn(
     const dispatchedAll = await dispatchToolCalls(deps, sessionId, turnId, signal, outcome.toolCalls);
     if (!dispatchedAll) {
       log.info("react-loop.aborted-mid-dispatch", { sessionId, turnId, iteration });
-      return { completed: false, iterations: iteration };
+      return { completed: false, iterations: iteration, consumedThroughSeq };
     }
     // → goto 1: loop back to the top, re-reading the store fresh.
   }
@@ -383,5 +399,5 @@ export async function runTurn(
   // logged fallback rather than an unprovable-to-the-compiler implicit
   // `undefined` return.
   log.warn("react-loop.exhausted-without-final", { sessionId, turnId, iterations: iteration });
-  return { completed: false, iterations: iteration };
+  return { completed: false, iterations: iteration, consumedThroughSeq };
 }

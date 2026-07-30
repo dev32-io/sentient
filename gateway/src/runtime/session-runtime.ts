@@ -106,7 +106,7 @@ import { createCancellationControllers } from "./cancellation.js";
 import { maybeCompact } from "./compaction.js";
 import { createConversationFeed } from "./conversation-feed.js";
 import type { ReactLoopDeps } from "./react-loop.js";
-import { runTurn } from "./react-loop.js";
+import { type TurnOutcome, runTurn } from "./react-loop.js";
 import type { Stimulus } from "./stimulus.js";
 import type { TurnEmitter } from "./turn-emitter.js";
 import type { TurnVoice, TurnVoiceStream } from "./turn-voice.js";
@@ -335,11 +335,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     });
   }
 
-  async function onTurnSettled(
-    turnId: string,
-    result: { completed: boolean; iterations: number },
-    signal: AbortSignal,
-  ): Promise<void> {
+  async function onTurnSettled(turnId: string, result: TurnOutcome, signal: AbortSignal): Promise<void> {
     // A DISPOSED RUNTIME DOES NO SETTLE WORK — the first statement in this
     // function, before anything can touch the store. `dispose()` already did
     // this turn's teardown (aborted its controller, cut its speech) and closed
@@ -446,6 +442,13 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
       return;
     }
 
+    // Advance the high-water mark to what THIS turn's iterations actually fed
+    // the model, not the snapshot taken at its start. Without this, every
+    // stimulus a mid-loop steer appended still reads as unprocessed here and
+    // fires an empty phantom follow-up turn — one wasted LLM call and one
+    // dangling local-tts WebSocket per steer. `Math.max` because a turn that
+    // aborted before its first read reports 0.
+    lastProcessedSeq = Math.max(lastProcessedSeq, result.consumedThroughSeq);
     const trigger = nextTurnTrigger();
     if (trigger !== null) {
       const nextTurnId = crypto.randomUUID();
@@ -470,7 +473,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
    * REPORTS an unexpected store/feed failure instead of a blanket that hides
    * routine ones. Mirrors session-handlers/stt-session.ts's `detach`.
    */
-  function settle(turnId: string, result: { completed: boolean; iterations: number }, signal: AbortSignal): void {
+  function settle(turnId: string, result: TurnOutcome, signal: AbortSignal): void {
     onTurnSettled(turnId, result, signal).catch((err: unknown) => {
       log.error("session-runtime.turn.settle-threw", {
         userId,
@@ -560,7 +563,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
           turnId,
           reason: err instanceof Error ? err.message : String(err),
         });
-        settle(turnId, { completed: false, iterations: 0 }, controller.signal);
+        settle(turnId, { completed: false, iterations: 0, consumedThroughSeq: lastProcessedSeq }, controller.signal);
       },
     );
   }

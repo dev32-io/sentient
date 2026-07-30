@@ -288,7 +288,20 @@ describe("SessionRuntime — steer while running", () => {
     );
     expect(steeredMessage).toBeDefined();
 
+    // PHANTOM-TURN INVARIANT (spec §4.5's other half). The steer above was
+    // CONSUMED — iteration 2's messages[] provably contains it. It must not
+    // then also fire a back-to-back follow-up turn. `lastProcessedSeq` used to
+    // be snapshotted once at turn start, so every mid-loop steer stayed
+    // "newer" for the rest of the turn's life and `nextTurnTrigger()` saw it a
+    // second time after the turn ended: one wasted real LLM call producing an
+    // empty reply, plus a local-tts WebSocket opened for text that never comes
+    // and therefore never closed. Reproduced live and deterministically twice
+    // (qa/web/evidence/2026-07-30-steer-midloop/README.md).
     await waitUntilIdle(runtime);
+    // Two calls total: iteration 1 (tool_call) + iteration 2 (final answer).
+    // A third would be the phantom turn.
+    expect(provider.calls).toHaveLength(2);
+    expect(emitter.events.filter((e) => e.type === "turnStarted")).toHaveLength(1);
     runtime.dispose();
   });
 });

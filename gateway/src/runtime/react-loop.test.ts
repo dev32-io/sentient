@@ -132,7 +132,7 @@ describe("runTurn — text-only response", () => {
       { turnId: "turn-1", signal: new AbortController().signal },
     );
 
-    expect(result).toEqual({ completed: true, iterations: 1 });
+    expect(result).toMatchObject({ completed: true, iterations: 1 });
     expect(deltas.join("")).toBe("Hello, world");
     expect(provider.calls).toHaveLength(1);
 
@@ -196,7 +196,7 @@ describe("runTurn — one tool call", () => {
       { turnId: "turn-2", signal: new AbortController().signal },
     );
 
-    expect(result).toEqual({ completed: true, iterations: 2 });
+    expect(result).toMatchObject({ completed: true, iterations: 2 });
     expect(provider.calls).toHaveLength(2);
     expect(broker.dispatchCalls).toEqual([
       { toolCallId: "call_1", name: "get_weather", args: { city: "NYC" }, signal: expect.anything(), turnId: "turn-2" },
@@ -273,7 +273,7 @@ describe("runTurn — runaway tool-calling model", () => {
       { turnId: "turn-3", signal: new AbortController().signal },
     );
 
-    expect(result).toEqual({ completed: true, iterations: 3 });
+    expect(result).toMatchObject({ completed: true, iterations: 3 });
     expect(provider.calls).toHaveLength(3);
     // The 3rd (forced-final) call must have been offered NO tools.
     expect(provider.calls[2]?.tools).toEqual([]);
@@ -338,7 +338,7 @@ describe("runTurn — abort mid-stream", () => {
     }
 
     expect(threw).toBe(false);
-    expect(result).toEqual({ completed: false, iterations: 1 });
+    expect(result).toMatchObject({ completed: false, iterations: 1 });
     expect(store.readSession(sessionId)).toHaveLength(beforeCount); // no assistant entry committed
 
     store.close();
@@ -401,7 +401,7 @@ describe("runTurn — narration + tool call in the same iteration (convergence)"
       { turnId: "turn-5", signal: new AbortController().signal },
     );
 
-    expect(result).toEqual({ completed: true, iterations: 2 });
+    expect(result).toMatchObject({ completed: true, iterations: 2 });
     // The narration streamed live, same as before the fix (deltas span both
     // iterations of this turn: narration, then the terminal reply).
     expect(deltas.join("")).toBe("Let me check.It is sunny.");
