@@ -9,8 +9,8 @@ tags:
 #
 # The consultation point is wired; the reconnect trigger requires the runner (a
 # Maestro flow can't interleave shell). Runner sequence: ensure app running +
-# connected → arm expired-token fault → `docker stop sentient-gateway` (forces the
-# SDK to reconnect) → run THIS flow → restart the gateway after. On reconnect the
+# connected → arm expired-token fault → stop the native gateway process (forces
+# the SDK to reconnect) → run THIS flow → restart the gateway after. On reconnect the
 # next auth.ok is intercepted as expired → authExpired=true → login screen.
 #
 # Pre-condition (runner, app already running): composer-input visible; fault armed

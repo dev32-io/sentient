@@ -49,8 +49,9 @@
 #
 # iOS specifics: IOS_DEVICE auto-detects the booted sim (override via env). Mic
 # permission is granted with `xcrun simctl privacy`. iOS has no adb-broadcast fault
-# channel, so its fault phase is gateway-stop orchestration (58b/60 via gw_stop;
-# 04c continuity via gw_restart between parts) -- native process, not a container
+# channel, so its fault phase is gateway-stop orchestration (58b/60 via
+# gw_stop_or_flag; 04c continuity via gw_restart_or_flag between parts, same
+# wrappers the Android 18-auth-expired case uses) -- native process, not a container
 # (see the "Gateway lifecycle" block below); 08/18/20 are Android-only.
 #
 # Exit code: 0 if every selected flow passed, 1 otherwise.
@@ -188,6 +189,22 @@ gw_start() {
   gw_wait_healthy
 }
 gw_restart() { gw_stop; gw_start; }
+
+# Fault-phase call sites use these wrappers, never gw_stop/gw_start bare: those
+# return non-zero when they miss their budget, which under `set -e` would abort the
+# whole suite mid-phase. A missed budget is a degraded fault setup, not a harness
+# crash -> flag the reason, mark the batch failed, keep running the remaining flows.
+gw_stop_or_flag() {
+  if gw_stop; then return 0; fi
+  flag "  gateway still LISTENing on :$GATEWAY_PORT after the stop budget - the next flow may not see a DOWN gateway"
+  BATCH_RESULT=1
+}
+gw_start_or_flag() {
+  if gw_start; then return 0; fi
+  flag "  gateway did not come back healthy within budget - check $GATEWAY_DEV_LOG"
+  BATCH_RESULT=1
+}
+gw_restart_or_flag() { gw_stop_or_flag; gw_start_or_flag; }
 
 check_android() {
   info "Checking Android $ANDROID_DEVICE..."
@@ -460,20 +477,19 @@ fault_phase_android() {
   adb -s "$ANDROID_DEVICE" logcat -c 2>/dev/null || true
   arm_fault "expired"
   info "  Stopping gateway to force reconnect"
-  docker stop sentient-gateway >/dev/null 2>&1 || true
+  gw_stop_or_flag
   if run_one "18-auth-expired"; then pass "  18-auth-expired"; sleep 1
     grep_logcat_for "fault\.expired-token|hasSession\.clear" "expired-token / hasSession.clear" || BATCH_RESULT=1
   else fail "  18-auth-expired"; BATCH_RESULT=1; fi
   info "  Restarting gateway"
-  docker start sentient-gateway >/dev/null 2>&1 || true
-  until [[ "$(docker inspect --format '{{.State.Health.Status}}' sentient-gateway 2>/dev/null)" == "healthy" ]]; do sleep 2; done
+  gw_start_or_flag
   # 18 left the app on the login screen ? log back in so the device is usable after.
   run_one "login" >/dev/null 2>&1 || true
 
   # 04-reconnect ? emulator can't drop WiFi (physical-only). Flag; skip on emulator.
   echo ""; info "-> 04-reconnect"
   if [[ "$ANDROID_DEVICE" == emulator-* ]]; then
-    flag "  04-reconnect SKIPPED (emulator uses virtual Ethernet; WiFi toggle is a no-op). Needs a physical device or a Docker gateway stop."
+    flag "  04-reconnect SKIPPED (emulator uses virtual Ethernet; WiFi toggle is a no-op). Needs a physical device or a gateway stop (gw_stop_or_flag)."
   else
     flag "  04-reconnect on a physical device: disable WiFi, run 04, re-enable, run 04b (not automated here)."
   fi
@@ -506,23 +522,23 @@ fault_phase_ios() {
 
   # 58b-update-footer-offline: gateway DOWN -> "Check failed".
   echo ""; info "-> 58b-update-footer-offline (gateway stop)"
-  gw_stop
+  gw_stop_or_flag
   run_ios_one "58b-update-footer-offline" && pass "  58b-update-footer-offline" || { fail "  58b-update-footer-offline"; BATCH_RESULT=1; }
-  gw_start
+  gw_start_or_flag
 
   # 60-model-offline-save: setup while UP -> stop -> trigger -> start -> recover.
   echo ""; info "-> 60-model-offline-save (setup up -> stop -> trigger -> start -> recover)"
   if run_ios_one "60-model-offline-save-setup"; then
-    gw_stop
+    gw_stop_or_flag
     run_ios_one "60-model-offline-save-trigger" && pass "  60 trigger" || { fail "  60 trigger"; BATCH_RESULT=1; }
-    gw_start
+    gw_start_or_flag
     run_ios_one "60-model-offline-save-recover" && pass "  60 recover" || { fail "  60 recover"; BATCH_RESULT=1; }
   else fail "  60 setup"; BATCH_RESULT=1; fi
 
-  # 04c warm-continuity: login-send -> docker restart gateway (between) -> followup.
+  # 04c warm-continuity: login-send -> restart the native gateway (between) -> followup.
   echo ""; info "-> 04c warm-reconnect continuity (gateway restart between parts)"
   if run_ios_one "04c-reconnect-continue-login-send"; then
-    gw_restart
+    gw_restart_or_flag
     run_ios_one "04c-reconnect-continue-followup" && pass "  04c continuity" || { fail "  04c continuity"; flag "  verify gateway log: dispatch.end conversationId unchanged, NO dispatch.session-new.lazy"; BATCH_RESULT=1; }
   else fail "  04c part 1"; BATCH_RESULT=1; fi
 }

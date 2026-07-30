@@ -10,7 +10,7 @@ tags:
 # fault-armed (iOS): there is no sim broadcast fault channel — the runner
 # orchestrates the env fault. Because a stopped gateway can't populate the model
 # list, this flow does NOT self-navigate: the runner must login + open Settings →
-# Model WHILE the gateway is up, THEN `docker stop sentient-gateway`, THEN run
+# Model WHILE the gateway is up, THEN stop the native gateway process, THEN run
 # this flow. Restart the gateway + confirm recovery afterward (runner step). This
 # flow starts already on the Model screen with the list loaded.
 - tapOn:
