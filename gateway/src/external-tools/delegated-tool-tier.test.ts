@@ -3,9 +3,11 @@ import { createPolicyEngine } from "../security/policy-engine.js";
 import { loadMcpPolicy } from "../security/policy-loader.js";
 import { selectDelegatedAllowTier } from "./delegated-tool-tier.js";
 
-// SECURITY BOUNDARY. The delegated agent dials MCP servers itself, so the
-// gateway's PDP never sees those calls — this filter is the only control on
-// what authority a sub-agent inherits. It runs against the SHIPPED
+// SECURITY BOUNDARY, on one of the two delegated paths. For tools the gateway
+// HOSTS, mcp-server.ts auto-approves a confirm decision, so this filter is the
+// only control on what authority a sub-agent inherits. (For PROXIED catalog
+// tools the broker fails closed on confirm and the PDP genuinely mediates every
+// call — see proxied-catalog-tool.ts.) It runs against the SHIPPED
 // mcp-policy.yaml on purpose: a rule edit that promotes a write tool into the
 // delegated surface must fail here, not in production.
 describe("selectDelegatedAllowTier", () => {
