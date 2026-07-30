@@ -140,7 +140,19 @@ orchestrator:
     hermes_timeout_ms: 600000                # per Hermes one-shot (1000-3600000)
   compaction:
     enabled: true                            # master switch; false = never compact (window grows until the provider rejects the request)
-    compact_threshold_tokens: 24000          # estimated model-window tokens that trigger compaction at the next turn boundary (1000-1000000; ~40-60% of the model's context)
+    # Estimated model-window tokens (chars/4 heuristic, see compaction.ts)
+    # that trigger compaction at the next turn boundary (1000-1000000).
+    # gpt-oss:20b-cloud's REAL window is 131072 (verified 2026-07-30 against
+    # the OpenAI gpt-oss-20b model spec — the previous 24000 default was
+    # picked blind, before this was ever checked). 8000 (~6% of the real
+    # window) is deliberately conservative: it (a) fires inside a realistic
+    # multi-turn agent-driven E2E session without dozens of live-LLM round
+    # trips — see qa/web/evidence/2026-07-30-compaction-continue — and (b)
+    # bounds per-turn context growth for a latency-sensitive voice
+    # assistant, where a much larger threshold buys context depth nobody
+    # asked for at the cost of slower time-to-first-token on every turn
+    # once a session runs long.
+    compact_threshold_tokens: 8000
     keep_recent_turns: 4                     # most-recent turns copied VERBATIM into the summary marker rather than summarized away (0-50)
 
 # ---------------------------------------------------------------------------

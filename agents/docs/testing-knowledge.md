@@ -10,18 +10,32 @@ Each `### Case` entry has a scenario, a "why added" reason, callable
 steps, and the expected user-visible + log-trail outcome. New reusable
 cases are appended here, indexed by the surface they exercise.
 
-> **Native-stack migration banner (2026-07-29):** every method and case
-> below was authored against a **containerized gateway** (`docker compose
-> ... gateway`
-> bring-up/restart) and the **retired cerebrum/cycle wire** (`cycleId`,
-> ACP-router framing). Neither reflects current reality — the gateway is a
-> native binary under `launchd`/`bun --hot`, addons are docker-only, and the
-> wire is 2.0's `turnId` / `turn.*` frames. Do not hand-fix each case's
-> commands piecemeal; the native-stack migration plan's Tasks 9/10
-> re-ground every case that survives against the current stack and wire as
-> part of executing the 2.0 E2E matrix. Until then, treat the *scenario* and
-> *why added* fields as still valid and the literal bring-up/restart
-> commands and `cycleId` references as historical.
+> **Native-stack migration banner — re-grounded 2026-07-30 (Task 9, web).**
+> Cases below that named the retired cerebrum/cycle wire (`cycleId`,
+> `[cerebrum:attention-gate] cycle dispatched`, `cycle.done`,
+> `CycleAudioQueue`) have been rewritten onto the 2.0 wire: turns carry a
+> server-minted `turnId` (a uuid, not a counter — see
+> `runtime:react-loop react-loop.start turnId=...`), and the live log tags
+> are `[runtime:react-loop]`, `[runtime:session-runtime]`,
+> `[runtime:turn-voice]`, `[ws:turn-emitter]`, `[provider:openai]`,
+> `[tools:tool-broker]`, `[runtime:permission-broker]`,
+> `[security:policy-engine]`. Verified against a real driven turn
+> 2026-07-30 — see `qa/web/evidence/2026-07-30-native-turn-happy/`. One
+> thing that is NOT stale and was deliberately left alone: the **presence**
+> layer's `cycle.start` / `cycle.end` signal `kind` (idle-detector,
+> presence-source) is current, real code — a generic "an interaction cycle
+> ran" signal name, unrelated to the retired wire's `cycleId`. Bring-up is
+> also re-grounded: no more `docker compose ... gateway`; dev is
+> `cd gateway && bun --hot src/main.ts` (needs `SENTIENT_CODE` pointing at a
+> `<code>/whisper-stt/{venv,src}` + `<code>/local-tts/{venv,src}` layout for
+> the native addons — see the Native-stack migration section below) plus
+> `cd gateway/webui && bun run dev` (Vite, `:5173`, proxies `/api/v1` to the
+> gateway's `:8888`). Docker still fronts the MCP/searxng/proxy addons only.
+> Remaining containerized-era literal commands elsewhere in this file
+> (Setup Wizard walks, System-orchestrator Phase 6 section) are Task 10 /
+> follow-up scope, not re-driven here — treat their *scenario* and
+> *why added* fields as still valid and their literal `docker compose`
+> commands as historical until re-walked.
 
 ## Methods
 
@@ -58,18 +72,18 @@ One `###` subsection per case.
 3. Observe the composer task strip simultaneously.
 **Expected:** A tool pill appears on the bubble for the duration of the tool call; the composer strip shows the same pill as a persistent mirror until the cycle completes.
 
-### Distinct cycleId per turn + many-entry turn renders distinctly (web)
-**Scenario:** The gateway mints a server-unique `cycleId = String(Date.now())` per turn (one POSIX-ms id, never resetting on reconnect). Multiple turns each render under their own message; a single multi-tool turn renders every entry (intermediate narration + each tool pill + final answer) as its own row under ONE cycleId.
-**Why added:** Regression guard for the cycleId render-key fix (2026-06-14). The old `cycle-${counter}` reset to `cycle-1` on every `session.configure` (reconnect), aliasing turns onto one render row → "follow-up reply missing / previous shown" + stale-bottom-on-scroll. cycleId is cycle-meta only; committed history is keyed by `entryId`.
+### Distinct turnId per turn + many-entry turn renders distinctly (web)
+**Scenario:** The gateway mints a server-unique `turnId` (uuid) per turn, never resetting on reconnect. Multiple turns each render under their own message; a single multi-tool turn renders every entry (intermediate narration + each tool pill + final answer) as its own row under ONE turnId.
+**Why added:** Regression guard for the render-key discipline the old cycleId fix (2026-06-14, pre-2.0) established — a per-turn id that resets or aliases collapses turns onto one render row ("follow-up reply missing / previous shown" + stale-bottom-on-scroll). Re-grounded 2026-07-30 onto the 2.0 wire: `turnId` is minted once in `runtime:react-loop react-loop.start` and threaded through every frame of that turn (`turn.started` → `turn.text.delta`* → `conversation.entry` → `turn.completed` → `turn.audio.*`); committed history is keyed by `entryId`, turnId is turn-meta only — same shape as the old invariant, new names.
 **Steps:**
 1. Two turns, no reconnect (desktop 1280×900): send msg 1 → await reply; send msg 2 → await reply.
-2. Many-entry turn (desktop + mobile 390×844): send a multi-tool prompt (e.g. "search the web for X and summarize").
-**Expected user-visible:** both single-turn replies render under their own messages (no alias); every entry of the multi-tool turn renders as its own row (tool pill + answer), no rows collapse; streaming bubble grows in place then commits with no duplicate.
-**Expected log trail (gateway `~/.sentient/gateway/logs/YYYY-MM-DD.log`, local-date rotation):** each turn emits a DISTINCT numeric `[cerebrum:attention-gate] cycle dispatched | cycleId="<ms>"`; NO `cycleId="cycle-N"`. (The small-integer `[hermes-adapter-client:acp:per-profile-connection] cycle.start cycleId="N"` is Hermes' ACP-internal counter — a different namespace, ignore it.) Before/after proof: pre-fix turns logged `cycle-N`, post-fix turns log ms strings.
+2. Many-entry turn (desktop + mobile 390×844): send a multi-tool prompt (e.g. "what's the state of the kitchen light" — triggers `ha_get_state` then a follow-up tool call).
+**Expected user-visible:** both single-turn replies render under their own messages (no alias); every entry of the multi-tool turn renders as its own row (tool pill + answer), no rows collapse; streaming bubble grows in place (`turn.text.delta` chunks) then commits with no duplicate.
+**Expected log trail (gateway `~/.sentient/gateway/logs/YYYY-MM-DD.log`, LOCAL-time rotation — not UTC, see the native-stack migration section's log-trail trap):** each turn emits ONE `[runtime:react-loop] react-loop.start | turnId="<uuid>"` and that same `turnId` recurs on every subsequent line for the turn (`[ws:turn-emitter] turn-emitter.turn-started/turn-completed`, `[runtime:session-runtime] session-runtime.turn.start/turn.end`); two turns in the same session never share a `turnId`. Verified live 2026-07-30 — two real turns logged distinct uuids (`235ab571-…`, `5dc1691a-…`); see `qa/web/evidence/2026-07-30-native-turn-happy/gateway-log-excerpt.txt` and `2026-07-30-native-tool-call/gateway-log-excerpt.txt`.
 
-### Speaking state tracks audio drain, not cycle end
-**Scenario:** When the assistant returns a long spoken reply, the speaking indicator must remain lit through the final word of audio, not drop on `cycle.done`.
-**Why added:** Regression guard for the `onDrain` path — the speaking state needs to follow the playback adapter's drain signal, not the gateway-side `cycle.done` event (which fires before audio finishes playing).
+### Speaking state tracks audio drain, not turn end
+**Scenario:** When the assistant returns a long spoken reply, the speaking indicator must remain lit through the final word of audio, not drop on `turn.completed`.
+**Why added:** Regression guard for the `onDrain` path — the speaking state needs to follow the playback adapter's drain signal, not the gateway-side `turn.completed` frame (which fires before `turn.audio.start`/`turn.audio.done` — audio streams as a separate phase after the text turn settles, confirmed live: `turn.completed` then `turn-emitter.audio-start` land as two distinct log lines, sometimes seconds apart while local-tts synthesizes).
 **Steps:**
 1. Send a prompt that yields a long spoken reply (e.g. "tell me a story about ravens, ~200 words").
 2. Watch the speaking indicator while audio plays.
@@ -85,19 +99,19 @@ One `###` subsection per case.
 
 ### Interrupt button visibility bridge (AwaitingTracker FSM)
 **Scenario:** After clicking Send, the Interrupt button must appear within one render frame and stay visible continuously through the end of audio drain.
-**Why added:** There's a ~1–2 s gap between `cycle.done` (server-side) and `onAudioStart` (first TTS frame at the client). Without the AwaitingTracker FSM, the button flickers off in that gap.
+**Why added:** There's a real, measured gap between `turn.completed` (server-side, text settles) and `turn.audio.start`/`onAudioStart` (first TTS frame at the client) — live 2026-07-30 samples ranged ~0.9s to ~17s (local-tts synth time scales with reply length). Without the AwaitingTracker FSM, the button flickers off in that gap.
 **Steps:**
 1. Click Send on any prompt.
 2. Watch the Interrupt button continuously from click through end of TTS playback.
-**Expected:** Button appears within one frame, stays visible the entire time, drops only on `onPlaybackEnded`. If it flickers off between `cycle.done` and `onAudioStart`, the AwaitingTracker FSM isn't wired correctly. (See `agents/docs/gateway/webui/awaiting-tracker-fsm-details.md`.)
+**Expected:** Button appears within one frame, stays visible the entire time, drops only on `onPlaybackEnded`. If it flickers off between `turn.completed` and `onAudioStart`, the AwaitingTracker FSM isn't wired correctly. (See `agents/docs/gateway/webui/awaiting-tracker-fsm-details.md`.) AwaitingTracker itself is unchanged by the migration — still `gateway/webui/src/hooks/awaiting-tracker.ts`, disarms on client `audio-start`.
 
-### Cycle serialization (queued message does not overlap current TTS)
-**Scenario:** Two cycles' TTS streams must never play simultaneously. The first drains, then the second starts; or, if elapsed > `min_eager_end_ms`, the second preempts with a ~30 ms fade.
-**Why added:** Regression guard for the `CycleAudioQueue` preempt logic. A bug here causes overlapping speech, which is unintelligible and cannot be recovered from without a full reload.
+### Turn serialization (queued message does not overlap current TTS)
+**Scenario:** Two turns' TTS streams must never play simultaneously. The first drains, then the second starts; or, if elapsed > `min_eager_end_ms`, the second preempts with a ~30 ms fade.
+**Why added:** Regression guard for the preempt logic, now in `shared/web-sdk/src/turn-audio-queue.ts`'s `TurnAudioQueue` (renamed from `CycleAudioQueue` pre-2.0; live-confirmed 2026-07-30 via console tag `sentient.sdk.turn-audio-queue`, `slot-appended {turnId, depth}`). A bug here causes overlapping speech, which is unintelligible and cannot be recovered from without a full reload.
 **Steps:**
-1. Send "what's the weather"; wait for audio to start.
-2. While audio is playing, send "and turn off the kitchen light".
-**Expected:** First cycle's audio drains naturally OR (if elapsed exceeds `min_eager_end_ms`) the second cycle preempts with a brief fade. No overlap.
+1. Send "what's the state of the kitchen light"; wait for audio to start.
+2. While audio is playing, send a second prompt (e.g. "and search the web for today's date").
+**Expected:** First turn's audio drains naturally OR (if elapsed exceeds `min_eager_end_ms`) the second turn preempts with a brief fade. No overlap.
 
 ### Cross-turn tool pill persistence
 **Scenario:** Tool pills attached to a previous assistant bubble must persist across subsequent turns, scoped to that bubble's cycle.
