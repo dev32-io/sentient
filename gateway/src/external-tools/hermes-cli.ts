@@ -56,7 +56,8 @@ export interface CliOutput {
 export interface RunCliInput {
   readonly argv: readonly string[];
   readonly timeoutMs: number;
-  readonly spawn: CliSpawnFn;
+  /** Injected in tests so no unit test spawns a real `hermes`. */
+  readonly spawn?: CliSpawnFn;
   /** Answer to the CLI's interactive prompts, if it has any. */
   readonly stdin?: string;
   /** Log-only label so a caller's step is identifiable in the log trail. */
@@ -74,7 +75,8 @@ export function truncate(text: string): string {
  * a timeout and a non-zero exit all come back as typed errors the caller logs.
  */
 export async function runHermesCli(input: RunCliInput): Promise<Result<CliOutput, CliError>> {
-  const { argv, timeoutMs, spawn, step, userId } = input;
+  const { argv, timeoutMs, step, userId } = input;
+  const spawn = input.spawn ?? defaultCliSpawn;
   const startedAt = Date.now();
 
   let proc: CliProcess;
