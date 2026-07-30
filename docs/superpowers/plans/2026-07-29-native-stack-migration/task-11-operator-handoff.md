@@ -116,3 +116,28 @@ Cross-check the Step 1 list against the finished document: each item present, no
 git commit -m "docs(handoff): operator verification checklist for the native migration" -- \
   docs/superpowers/handoffs/
 ```
+
+---
+
+## Addendum — deferrals already accumulated
+
+The Step 1 sweep must find these. They are listed here so a missing one is a detectable failure rather than a silent loss. Confirm each is still open before writing it up — several may have been closed by a later wave.
+
+**Needs the operator's hands or a second machine** (goes in the main checklist):
+
+1. **`code-immutability`** — the root-owned-code negative check. Requires an interactive `sudo` the agent has no non-interactive path to. Steps: as the service user, attempt to write into `/opt/sentient/<version>/`; expect `Permission denied`.
+2. **`offline-install`** — install with networking disabled, proving the vendored wheels actually satisfy every dependency. Needs a real network-off toggle.
+3. **The root-only half of `upgrade-rollback`** — the agent verified the health-gate and the rollback logic; the privileged symlink flip needs root.
+4. **A pre-existing `whisper-stt` config on the mini binds `0.0.0.0`.** Task 8b fixed the *shipped example*; an install that predates it keeps the old live value, so the mini is exposing STT on the LAN until edited. Path: `~/.sentient/whisper-stt/config/config.yaml`, key `host`, set to `127.0.0.1`, then restart the addon. **Give this one its own numbered entry with a "do this first" marker — it is a live exposure, not a verification.**
+5. Whatever Task 10 hands over (acoustic cases, `05-interrupt.yaml`'s real tap if local-tts proved unreachable from the emulator, any `physical-only` row).
+6. **`steer-followup-audio`'s audio half**, if Task 9c could not drive it — the WS-seam harness negotiates no `audio.output`, so a real browser session is needed. Include Task 9c's exact stated reason, not a paraphrase.
+
+**Blocked by scope, not hardware** (goes in the separate Step 4 section — no operator action):
+
+7. **Signal pairing** — the runner was removed outright in Task 6b as dead weight. Not a gap; there is nothing to verify.
+8. **The Hermes-shaped settings — soul, personality, long-term memory — are expected-inert on 2.0.** The gateway now owns the agent loop, so those surfaces render and persist but do not change behaviour. The owner's decision: keep the UI, transition the functionality to gateway-owned in a later spec. Say this plainly — an operator who tests personality and finds it does nothing must be able to tell "as designed, for now" from "broken", and this is the single most likely thing for them to trip over.
+9. **session-switch / past-chat rows** — the seeded entry above already covers these.
+
+- [ ] **Step 7: Lead with the one thing that is not a verification**
+
+Item 4 changes a live security posture; everything else confirms work already done. Put it first, under its own heading, so an operator who reads only the top of the document still does the thing that matters.
