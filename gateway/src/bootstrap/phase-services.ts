@@ -5,17 +5,9 @@ import { ensureTlsMaterial } from "@sentient/tls";
 import { type AccessManager, createAccessManager } from "../access/access-manager.js";
 import { archiveUserDir } from "../admin/archive-user-dir.js";
 import { renderConfigsForExistingUsers } from "../admin/boot-migration.js";
-import { chownUserDirToHermes } from "../admin/chown-hermes.js";
-import type { InternalSecretsStore } from "../admin/internal-secrets-store.js";
-import {
-  type ProfileRestartOrchestrator,
-  createProfileRestartOrchestrator,
-} from "../admin/profile-restart-orchestrator.js";
 import type { SecretsStore } from "../admin/secrets-store.js";
-import type { SupervisordControl } from "../admin/supervisord-control.js";
 import { createUserLifecycle } from "../admin/user-lifecycle.js";
 import type { UserLifecycle } from "../admin/user-lifecycle.js";
-import type { UserPortStore } from "../admin/user-port-store.js";
 import {
   type UserProvisioner,
   createUserProvisioner,
@@ -30,8 +22,7 @@ import { renderAndWrite } from "../apply/orchestrator.js";
 import { resolveAssetRoot } from "../config/asset-root.ts";
 import type { StartupConfig } from "../config/startup-config.ts";
 import { SignalProvisioner } from "../devices/signal/signal-provisioner.js";
-import { type HealthPoller, createHealthPoller } from "../infrastructure/health-poller.js";
-import { type Log, getLog } from "../logging/logger.ts";
+import { getLog } from "../logging/logger.ts";
 import { createPersonalityStore } from "../profile-store/personality-store.js";
 import type { PersonalityStore } from "../profile-store/personality-store.js";
 import { type ProfileStore, createProfileStore } from "../profile-store/profile-store.ts";
@@ -46,8 +37,6 @@ import { createPolicyEngine } from "../security/policy-engine.js";
 import type { PolicyEngine } from "../security/policy-engine.js";
 import { loadMcpPolicy } from "../security/policy-loader.js";
 import type { GatewayTlsMaterial } from "../session-handlers/ws-handlers.ts";
-import { createSessionRouter } from "../session-router.js";
-import type { SessionRouter } from "../session-router.js";
 import type { SessionStore } from "../store/session-store.js";
 import { createDelegateTaskRunner, delegateTaskDefinition } from "../tools/delegate-task.js";
 import { createDelegationGuard, loadDelegationFrontmatterDir } from "../tools/delegation-guard.js";
@@ -82,9 +71,6 @@ export interface PhaseServicesInput {
   readonly cfg: StartupConfig;
   readonly auth: AuthService;
   readonly secretsStore: SecretsStore | null;
-  readonly internalSecretsStore: InternalSecretsStore;
-  readonly userPortStore: UserPortStore | null;
-  readonly supervisordControl: SupervisordControl | null;
 }
 
 export interface PhaseServicesOutput {
@@ -95,15 +81,11 @@ export interface PhaseServicesOutput {
   readonly applyDeps: ApplyDeps;
   readonly profileStore: ProfileStore;
   readonly templateLoader: TemplateLoader;
-  readonly healthPoller: HealthPoller;
-  readonly sessionRouter: SessionRouter | null;
   readonly userProvisioner: UserProvisioner | null;
   readonly userLifecycle: UserLifecycle;
-  readonly profileRestartOrchestrator: ProfileRestartOrchestrator;
   readonly buildPersonalityStore: (userId: string) => PersonalityStore;
-  /** Deps bag for `/api/v1/devices*` handlers. Null when hermes + supervisord
-   *  are not configured (e.g. headless / CI builds). */
-  readonly devicesHandlerDeps: DevicesHandlerDeps | null;
+  /** Deps bag for `/api/v1/devices*` handlers. */
+  readonly devicesHandlerDeps: DevicesHandlerDeps;
 
   // --- Native orchestrator composition root (spec §2.6, Plan 2 Task 9) ------
   // App-lifetime singletons + a per-session factory. See the header comment
@@ -133,7 +115,7 @@ export interface PhaseServicesOutput {
 }
 
 export async function runPhaseServices(input: PhaseServicesInput): Promise<PhaseServicesOutput> {
-  const { cfg, auth, secretsStore, internalSecretsStore, userPortStore, supervisordControl } = input;
+  const { cfg, auth, secretsStore } = input;
 
   const stt = cfg.stt ? createSttService(cfg) : null;
   const tts = createTtsService({ cfg });
@@ -153,34 +135,12 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
 
   const profileStore = createProfileStore();
   const templateLoader = createTemplateLoader();
-  const healthPoller = createHealthPoller();
-  const sessionRouter = buildSessionRouter(cfg, internalSecretsStore, userPortStore);
-  const supervisordForApply: Pick<SupervisordControl, "restartProfile" | "upsertProgram"> = supervisordControl ?? {
-    restartProfile: async (_userId, _timeoutMs, _signalPaired) => ({
-      ok: false,
-      error: { kind: "shell-failed", reason: "no hermes config" },
-    }),
-    upsertProgram: async (_input) => ({
-      ok: false,
-      error: { kind: "shell-failed", reason: "no hermes config" },
-    }),
-  };
-  const tzForPrograms = (): string => process.env.TZ ?? "UTC";
   const hostDataDir = process.env.SENTIENT_HOST_GATEWAY_DATA_DIR ?? "/data/profiles";
   const resolveHermesHomeFor = (userId: string): string => `${hostDataDir.replace(/\/+$/, "")}/${userId}`;
 
   const applyDeps: ApplyDeps = createApplyDeps({
     profileStore,
-    sessionRouter,
-    healthPoller,
     templateLoader,
-    applyConfig: cfg.apply,
-    hermes: cfg.hermes ?? null,
-    userPortStore,
-    internalSecretsStore,
-    supervisordControl: supervisordForApply,
-    resolveTimezone: tzForPrograms,
-    resolveHermesHome: resolveHermesHomeFor,
     mcpCatalog: cfg.mcpCatalog,
     secretsStore: secretsStore ?? null,
   });
@@ -190,15 +150,13 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
   //   - …Initial  → config.yaml + SOUL.md; used once at user creation.
   const renderInnerProfileFor = buildRenderInnerProfile(applyDeps, { writeSoul: false });
   const renderInitialInnerProfileFor = buildRenderInnerProfile(applyDeps, { writeSoul: true });
-  const bootstrapWorkerFor = buildBootstrapWorker(cfg, userPortStore, applyDeps, healthPoller, log);
   const userLifecycle = createUserLifecycle();
 
   let userProvisioner: UserProvisioner | null = null;
-  if (cfg.hermes && userPortStore && secretsStore && supervisordControl) {
+  if (cfg.hermes && secretsStore) {
     userProvisioner = createUserProvisioner({
       userStore: auth.users,
       profileStore,
-      userPortStore,
       argon2Params: {
         memoryKb: cfg.auth.argon2_memory_kb,
         iterations: cfg.auth.argon2_iterations,
@@ -208,14 +166,8 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
       makeUserId,
       randomAvatarTint,
       now: () => new Date(),
-      supervisordControl,
-      internalSecrets: internalSecretsStore,
-      resolveTimezone: tzForPrograms,
-      resolveHermesHome: resolveHermesHomeFor,
       archiveUserDir,
       renderInnerProfile: renderInitialInnerProfileFor,
-      chownUserDirToHermes,
-      bootstrapWorker: bootstrapWorkerFor,
       userLifecycle,
     });
   }
@@ -239,29 +191,10 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     });
   }
 
-  const profileRestartOrchestrator = createProfileRestartOrchestrator({
-    supervisord: supervisordForApply,
-    config: {
-      restartTimeoutMs: cfg.apply.profile_restart_timeout_ms,
-      pollIntervalMs: cfg.apply.profile_restart_poll_interval_ms,
-    },
-    resolveSignalPaired: async (userId) => {
-      const r = await profileStore.get(userId);
-      return r.ok ? r.value.devices?.signal?.paired === true : false;
-    },
-  });
-
   const buildPersonalityStore = (userId: string): PersonalityStore =>
     createPersonalityStore({ profileDir: getHermesProfileDir(userId) });
 
-  const devicesHandlerDeps = buildDevicesHandlerDeps(
-    profileStore,
-    userPortStore,
-    supervisordControl,
-    internalSecretsStore,
-    tzForPrograms,
-    resolveHermesHomeFor,
-  );
+  const devicesHandlerDeps = buildDevicesHandlerDeps(profileStore, resolveHermesHomeFor);
 
   log.info("phase-services-complete", {
     stt: stt !== null,
@@ -280,11 +213,8 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     applyDeps,
     profileStore,
     templateLoader,
-    healthPoller,
-    sessionRouter,
     userProvisioner,
     userLifecycle,
-    profileRestartOrchestrator,
     buildPersonalityStore,
     devicesHandlerDeps,
     accessManager,
@@ -297,25 +227,6 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function buildSessionRouter(
-  cfg: StartupConfig,
-  secrets: InternalSecretsStore,
-  userPortStore: UserPortStore | null,
-): SessionRouter | null {
-  // Legacy Hermes ACP router — maps a session to its per-user Hermes worker.
-  // The native orchestrator does NOT use it (SessionRuntime + the session
-  // store own session state); its only live consumer is the MCP host, itself
-  // gated on cfg.hermes in main.ts. Returning null instead of throwing lets
-  // the gateway boot and serve native-orchestrator turns with `hermes:`
-  // entirely absent from config.
-  if (!cfg.hermes || !userPortStore) return null;
-  return createSessionRouter({
-    hermes: cfg.hermes,
-    userPortStore,
-    apiKeyResolver: () => secrets.getHermesAuthTokenSync(),
-  });
-}
 
 // SOUL.md is user-editable via the System Prompt pane (writes the file
 // directly). Apply + boot-migration paths must regenerate config.yaml only;
@@ -334,64 +245,10 @@ function buildRenderInnerProfile(
   };
 }
 
-function buildBootstrapWorker(
-  cfg: StartupConfig,
-  userPortStore: UserPortStore | null,
-  applyDeps: ApplyDeps,
-  healthPoller: HealthPoller,
-  log: Log,
-): (
-  userId: string,
-  mode?: "strict" | "lazy",
-) => Promise<{ ok: true; value: "warm" | "dispatch-failed" | "deferred" } | { ok: false; error: "health-timeout" }> {
-  // The legacy custom-WS path used to ping/pong over a pooled connection
-  // here to confirm dispatch-readiness before returning. Under the ACP wire
-  // there is no long-lived gateway-owned connection — every WS-session
-  // dials the per-profile port on demand. We rely on supervisord reporting
-  // RUNNING + the per-profile /healthz responding to declare the worker
-  // warm; the first user message proves dispatch end-to-end.
-  // TODO(acp-rewire): wire an ACP `initialize` round-trip + `session/list`
-  // ping here so strict-mode account creation surfaces a `dispatch-failed`
-  // outcome on a broken worker. See acp-rewire-todo.md.
-  return async (userId, _mode = "lazy") => {
-    if (!cfg.hermes || !userPortStore) return { ok: true, value: "deferred" };
-    try {
-      const url = await applyDeps.resolveHealthUrl(userId);
-      const headers = await applyDeps.resolveHealthHeaders(userId);
-      const pollResult = await healthPoller.pollUntilHealthy(
-        url,
-        headers,
-        cfg.apply.health_check_timeout_ms,
-        cfg.apply.health_poll_interval_ms,
-      );
-      if (!pollResult.ok) {
-        log.warn("createUser.health-timeout", { userId, url, cause: pollResult.error });
-        return { ok: false, error: "health-timeout" };
-      }
-      log.info("createUser.health-ok", { userId, url });
-      log.warn("createUser.dispatch-ready-without-acp-probe", {
-        userId,
-        reason: "ACP wire has no eager ping — see acp-rewire-todo.md",
-      });
-      return { ok: true, value: "warm" };
-    } catch (err: unknown) {
-      const reason = err instanceof Error ? err.message : String(err);
-      log.warn("createUser.bootstrap-error", { userId, reason });
-      return { ok: false, error: "health-timeout" };
-    }
-  };
-}
-
 function buildDevicesHandlerDeps(
   profileStore: ProfileStore,
-  userPortStore: UserPortStore | null,
-  supervisordControl: SupervisordControl | null,
-  internalSecretsStore: InternalSecretsStore,
-  tzForPrograms: () => string,
   resolveHermesHomeFor: (userId: string) => string,
-): DevicesHandlerDeps | null {
-  if (!userPortStore || !supervisordControl) return null;
-
+): DevicesHandlerDeps {
   const provisioner = new SignalProvisioner({
     async getProfile(userId) {
       const r = await profileStore.get(userId);
@@ -403,40 +260,6 @@ function buildDevicesHandlerDeps(
       if (!r.ok) throw new Error(`profile save failed: ${r.error}`);
     },
     getHermesHome: resolveHermesHomeFor,
-    async renderAndWrite(userId) {
-      const port = await userPortStore.resolvePort(userId);
-      if (port === null) throw new Error(`no port binding for user ${userId}`);
-      const profileResult = await profileStore.get(userId);
-      if (!profileResult.ok) throw new Error(`profile not found: ${profileResult.error}`);
-      const profile = profileResult.value;
-      const r = await supervisordControl.upsertProgram({
-        userId,
-        port,
-        token: internalSecretsStore.getHermesAuthTokenSync(),
-        timezone: tzForPrograms(),
-        provider: profile.model.provider,
-        hermesHome: resolveHermesHomeFor(userId),
-        signalPaired: profile.devices?.signal?.paired === true,
-      });
-      if (!r.ok) throw new Error(`upsertProgram failed: ${r.error.reason}`);
-    },
-    async supervisorReread() {
-      // reread+update is triggered by upsertProgram already; this is a
-      // no-op pass-through that allows the provisioner to issue an extra
-      // reread after profile mutation without re-rendering.
-      // We call upsertProgram with the latest profile to stay idempotent —
-      // a standalone reread call would require a new SupervisordControl method.
-      // The provisioner only calls supervisorReread() immediately after
-      // renderAndWrite(), so the extra upsertProgram is harmless (idempotent).
-    },
-    async supervisorRestart(programs) {
-      const r = await supervisordControl.restartPrograms(programs);
-      if (!r.ok) throw new Error(`restartPrograms failed: ${r.error.reason}`);
-    },
-    async supervisorStopRemove(programs) {
-      const r = await supervisordControl.stopRemovePrograms(programs);
-      if (!r.ok) throw new Error(`stopRemovePrograms failed: ${r.error.reason}`);
-    },
   });
 
   return {

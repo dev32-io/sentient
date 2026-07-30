@@ -29,12 +29,6 @@ export interface SignalProvisionerDeps {
   readonly getProfile: (userId: string) => Promise<ProfileV1>;
   readonly setProfile: (profile: ProfileV1) => Promise<void>;
   readonly getHermesHome: (userId: string) => string;
-  /** Re-render and write the supervisor program file for this user, then
-   *  issue supervisorctl reread+update so the daemon picks up changes. */
-  readonly renderAndWrite: (userId: string) => Promise<void>;
-  readonly supervisorReread: () => Promise<void>;
-  readonly supervisorRestart: (programs: readonly string[]) => Promise<void>;
-  readonly supervisorStopRemove: (programs: readonly string[]) => Promise<void>;
 }
 
 function maskE164(num: string): string {
@@ -113,16 +107,18 @@ export class SignalProvisioner {
         },
       },
     });
-    await this.deps.renderAndWrite(userId);
-    await this.deps.supervisorReread();
-    // Restart only the gateway program so it re-reads the new SIGNAL_* env.
-    // ACP and dashboard stay running — the user session is unaffected.
-    await this.deps.supervisorRestart([`hermes-${userId}-gateway`]);
+    // The SIGNAL_* env is now on disk. Nothing to restart: the per-user
+    // `hermes-<uid>-gateway` supervisord program this used to bounce lived in
+    // the deleted `sentient-hermes` container. Signal delivery therefore has
+    // NO runner in the native stack yet — see this class's header note.
+    log.warn("finalize.no-runner-to-restart", {
+      userId,
+      reason: "per-user hermes-gateway program retired with the sentient-hermes container",
+    });
   }
 
-  /** Revert pairing state on failure: roll profile back to paired=false, clear
-   *  SIGNAL_* env, re-render supervisor conf, and stop the gateway program
-   *  IF it was running (paired was true). */
+  /** Revert pairing state on failure: roll profile back to paired=false and
+   *  clear the SIGNAL_* env. */
   async cleanup(userId: string): Promise<void> {
     log.info("cleanup-on-fail", { userId });
     const profile = await this.deps.getProfile(userId);
@@ -135,20 +131,10 @@ export class SignalProvisioner {
     }
     const hermesHome = this.deps.getHermesHome(userId);
     await clearSignalEnv(signalEnvPath(hermesHome, userId));
-    await this.deps.renderAndWrite(userId);
-    await this.deps.supervisorReread();
-    // Only stop the gateway program if it was ever rendered (wasPaired=true).
-    // After provision() became a no-op, cleanup mid-link sees paired=false,
-    // so the program doesn't exist — calling stopRemove on it would surface
-    // a confusing "no such process" error.
-    if (wasPaired) {
-      await this.deps.supervisorStopRemove([`hermes-${userId}-gateway`]);
-    }
   }
 
   /** Fully unpair: call signal-cli removeAccount for THIS user's account only,
-   *  clear env, roll back profile, re-render, and stop the hermes-gateway
-   *  program. sessions.db is not touched.
+   *  clear env and roll back the profile. sessions.db is not touched.
    *
    *  Critical: the shared sidecar holds every user's linked Signal account.
    *  We MUST pass this user's specific E.164 (read from their .env before
@@ -177,9 +163,6 @@ export class SignalProvisioner {
       ...profile,
       devices: { ...profile.devices, signal: { paired: false } },
     });
-    await this.deps.renderAndWrite(userId);
-    await this.deps.supervisorReread();
-    await this.deps.supervisorStopRemove([`hermes-${userId}-gateway`]);
     log.info("unpair-complete", { userId });
   }
 }

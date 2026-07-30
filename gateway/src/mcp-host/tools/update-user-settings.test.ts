@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { SessionRouter } from "../../session-router.js";
+import type { ActiveSessionLookup } from "../active-session-lookup.js";
 import { createUpdateUserSettingsTool } from "./update-user-settings.js";
 
 const fakeRouter = {
@@ -8,7 +8,7 @@ const fakeRouter = {
   get: vi.fn(),
   updateConversationId: vi.fn(),
   findActiveSessionFor: vi.fn(),
-} as unknown as SessionRouter;
+} as unknown as ActiveSessionLookup;
 
 const ctx = {
   sessionId: null,

@@ -103,7 +103,6 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
     tokens: services.auth.tokens,
     buildPersonalityStore: services.buildPersonalityStore,
     resolveProfileDir: services.resolveProfileDir,
-    restartOrchestrator: services.profileRestartOrchestrator,
     templateLoader: services.templateLoader,
   });
   const handleProfile = createProfileHandler({
@@ -329,6 +328,5 @@ function buildAdminDeps(
     tokenService,
     provisioner: services.userProvisioner ?? makeThrowProxy("UserProvisioner"),
     userStore: services.auth.users,
-    userPortStore: services.userPortStore ?? makeThrowProxy("UserPortStore"),
   };
 }

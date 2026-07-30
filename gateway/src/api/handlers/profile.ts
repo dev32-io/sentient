@@ -14,8 +14,6 @@ const HTTP_METHOD = 405;
 const HTTP_TOO_MANY = 429;
 const HTTP_UNPROCESSABLE = 422;
 const HTTP_INTERNAL = 500;
-const HTTP_BAD_GATEWAY = 502;
-const HTTP_TIMEOUT = 504;
 
 // Per-user serialization for apply. Concurrent `POST /api/v1/profile/apply`
 // races hit supervisorctl mid-restart (the second request sees the program
@@ -170,10 +168,6 @@ function mapApplyError(userId: string, error: ApplyError): Response {
       return Response.json({ error: "render-error", reason: error.reason }, { status: HTTP_UNPROCESSABLE });
     case "write-error":
       return Response.json({ error: "write-error", reason: error.reason }, { status: HTTP_UNPROCESSABLE });
-    case "docker-restart-failed":
-      return jsonError(HTTP_BAD_GATEWAY, "docker-restart-failed");
-    case "health-check-timeout":
-      return jsonError(HTTP_TIMEOUT, "health-check-timeout");
     default:
       return assertNever(error);
   }

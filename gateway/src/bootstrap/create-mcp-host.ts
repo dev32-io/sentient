@@ -1,5 +1,6 @@
 import type { HermesConfig } from "@sentient/config";
 import { getLog } from "../logging/logger.js";
+import type { ActiveSessionLookup } from "../mcp-host/active-session-lookup.js";
 import type { McpServerDeps } from "../mcp-host/mcp-server.js";
 import { createToolRegistry } from "../mcp-host/tool-registry.js";
 import type { AudioControls } from "../mcp-host/tools/audio-tools.js";
@@ -8,7 +9,6 @@ import { createIdentifyUserTool } from "../mcp-host/tools/identify-user.js";
 import { type UserSettingsControls, createUpdateUserSettingsTool } from "../mcp-host/tools/update-user-settings.js";
 import { type UnixSocketListener, createUnixSocketListener } from "../mcp-host/unix-socket-listener.js";
 import type { PolicyEngine } from "../security/policy-engine.js";
-import type { SessionRouter } from "../session-router.js";
 import type { UserStore } from "../user-auth/user-store.js";
 
 const log = getLog(["sentient", "bootstrap", "mcp-host"]);
@@ -25,7 +25,7 @@ export interface McpHost {
 
 export interface McpHostOptions {
   config: HermesConfig;
-  router: SessionRouter;
+  router: ActiveSessionLookup;
   userStore: UserStore;
   audio: AudioControls;
   userSettings: UserSettingsControls;

@@ -2,6 +2,7 @@ import { createGatewayServices } from "./bootstrap/create-gateway-services.ts";
 import { createMcpHost } from "./bootstrap/create-mcp-host.ts";
 import { loadLoggingConfig, loadStartupConfig } from "./config/startup-config.ts";
 import { createGatewayLogger, getLog } from "./logging/logger.ts";
+import { createActiveSessionLookup } from "./mcp-host/active-session-lookup.ts";
 import type { UpdateUserSettingsPatch } from "./mcp-host/tools/update-user-settings.js";
 import { createPolicyEngine } from "./security/policy-engine.js";
 import { loadMcpPolicy } from "./security/policy-loader.js";
@@ -42,11 +43,10 @@ log.info("gateway-started", { host: server.hostname, port: server.port });
 
 let mcpHost: Awaited<ReturnType<typeof createMcpHost>> | null = null;
 
-// `services.sessionRouter` is non-null exactly when `config.hermes` is set
-// (buildSessionRouter returns null otherwise) — the `&& sessionRouter` narrows
-// the now-nullable type for createMcpHost, which is the router's only consumer.
-if (config.hermes && services.sessionRouter) {
-  const sessionRouter = services.sessionRouter;
+// Gated on `config.hermes` for the socket path (`hermes.mcp_host.socket_path`),
+// which is the only thing the MCP host still needs from that block.
+if (config.hermes) {
+  const activeSessions = createActiveSessionLookup(services.sessionManager);
   // pause_audio / resume_audio are still stubs — we don't yet have a
   // pause/resume primitive on the audio pipeline (barge-in cancels, which
   // isn't the same). update_user_settings resolves via SessionControlsRegistry
@@ -72,7 +72,7 @@ if (config.hermes && services.sessionRouter) {
 
   mcpHost = await createMcpHost({
     config: config.hermes,
-    router: sessionRouter,
+    router: activeSessions,
     userStore: services.auth.users,
     audio: stubAudio,
     userSettings: userSettingsControls,

@@ -1,5 +1,4 @@
 import { z } from "zod";
-import type { UserPortStore } from "../../admin/user-port-store.ts";
 import type { UserProvisioner, UserSummary } from "../../admin/user-provisioner.ts";
 import { getLog } from "../../logging/logger.ts";
 import { applyProfileDefaults } from "../../profile-store/profile-defaults.js";
@@ -18,7 +17,6 @@ const HTTP_NOT_FOUND = 404;
 const HTTP_UNPROCESSABLE = 422;
 const HTTP_INTERNAL_ERROR = 500;
 const HTTP_BAD_GATEWAY = 502;
-const HTTP_SERVICE_UNAVAILABLE = 503;
 
 // --- Zod schemas ------------------------------------------------------------
 
@@ -45,7 +43,6 @@ const RESET_PIN_RE = /^\/api\/v1\/admin\/users\/([^/]+)\/reset-pin$/;
 export interface AdminDeps extends AdminAuthDeps {
   provisioner: UserProvisioner;
   userStore: UserStore;
-  userPortStore: UserPortStore;
 }
 
 // --- Handler ----------------------------------------------------------------
@@ -79,17 +76,14 @@ export function createAdminHandler(deps: AdminDeps): (req: Request) => Promise<R
 // --- GET /users (list with slot join) ---------------------------------------
 
 async function handleListUsers(deps: AdminDeps): Promise<Response> {
-  const [usersResult, bindingsResult] = await Promise.all([deps.userStore.list(), deps.userPortStore.list()]);
+  const usersResult = await deps.userStore.list();
   if (!usersResult.ok) return mapStoreError(usersResult.error);
-  if (!bindingsResult.ok) return mapBindingError(bindingsResult.error);
 
-  const portByUser = new Map(bindingsResult.value.map((b) => [b.userId, b.port]));
   const summaries: UserSummary[] = usersResult.value.map((u) => ({
     userId: u.userId,
     displayName: u.displayName,
     isAdmin: u.isAdmin,
     avatarTint: u.avatarTint,
-    port: portByUser.get(u.userId) ?? 0,
     createdAt: u.createdAt,
   }));
   return Response.json({ users: summaries }, { status: HTTP_OK });
@@ -160,14 +154,12 @@ async function handlePatchUser(deps: AdminDeps, req: Request, userId: string): P
     return mapStoreError("io-error");
   }
 
-  const port = (await deps.userPortStore.resolvePort(userId)) ?? 0;
   const rec = userResult.value;
   const summary: UserSummary = {
     userId: rec.userId,
     displayName: rec.displayName,
     isAdmin: rec.isAdmin,
     avatarTint: rec.avatarTint,
-    port,
     createdAt: rec.createdAt,
   };
   return Response.json({ user: summary }, { status: HTTP_OK });
@@ -175,7 +167,7 @@ async function handlePatchUser(deps: AdminDeps, req: Request, userId: string): P
 
 // --- Error mappers -----------------------------------------------------------
 
-type CreateError = "hash-error" | "io-error" | "apply-error" | "invalid-profile" | "worker-not-ready";
+type CreateError = "hash-error" | "io-error" | "apply-error" | "invalid-profile";
 type DeleteError = "not-found" | "last-admin" | "io-error";
 type ResetError = "hash-error" | "not-found" | "io-error";
 type ToggleError = "last-admin" | "not-found" | "io-error";
@@ -186,7 +178,6 @@ function mapCreateError(error: CreateError): Response {
     "io-error": { status: HTTP_INTERNAL_ERROR, code: "io-error" },
     "apply-error": { status: HTTP_BAD_GATEWAY, code: "apply-error" },
     "invalid-profile": { status: HTTP_UNPROCESSABLE, code: "invalid-profile" },
-    "worker-not-ready": { status: HTTP_SERVICE_UNAVAILABLE, code: "worker-not-ready" },
   };
   const entry = map[error];
   return jsonError(entry.status, entry.code, String(error));
@@ -211,10 +202,6 @@ function mapToggleError(error: ToggleError): Response {
 }
 
 function mapStoreError(error: string): Response {
-  return jsonError(HTTP_INTERNAL_ERROR, "io-error", error);
-}
-
-function mapBindingError(error: string): Response {
   return jsonError(HTTP_INTERNAL_ERROR, "io-error", error);
 }
 

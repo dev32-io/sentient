@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import type { UserPortBinding, UserPortStore } from "../../admin/user-port-store.js";
 import type {
   AdminToggleError,
   CreateError,
@@ -58,15 +57,6 @@ function makeUserStore(users: UserRecord[] = []): UserStore {
   };
 }
 
-function makeUserPortStore(bindings: UserPortBinding[] = []): UserPortStore {
-  return {
-    list: vi.fn(async () => ({ ok: true as const, value: bindings })),
-    bind: vi.fn(async (userId: string) => ({ ok: true as const, value: { userId, port: 8650 } })),
-    unbind: vi.fn(async () => ({ ok: true as const, value: undefined })),
-    resolvePort: vi.fn(async () => null),
-  };
-}
-
 function makeProvisioner(): UserProvisioner {
   return {
     createUser: vi.fn(async () => ({
@@ -76,7 +66,6 @@ function makeProvisioner(): UserProvisioner {
         displayName: "Bob",
         isAdmin: false,
         avatarTint: "sage" as const,
-        port: 8650,
         createdAt: "2026-04-25T00:00:00Z",
       },
     })),
@@ -91,7 +80,6 @@ function makeDeps(overrides?: Partial<AdminDeps>): AdminDeps {
     adminToken: ADMIN_TOKEN,
     provisioner: makeProvisioner(),
     userStore: makeUserStore(),
-    userPortStore: makeUserPortStore(),
     ...overrides,
   } as AdminDeps;
 }
@@ -120,12 +108,10 @@ const SAMPLE_PROFILE = {
 // --- Tests -------------------------------------------------------------------
 
 describe("GET /api/v1/admin/users", () => {
-  it("returns users joined with port bindings", async () => {
+  it("returns users without leaking the pin hash", async () => {
     const alice = sampleUser();
-    const bindings: UserPortBinding[] = [{ userId: "u_abc123", port: 8650 }];
     const deps = makeDeps({
       userStore: makeUserStore([alice]),
-      userPortStore: makeUserPortStore(bindings),
     });
     const handler = createAdminHandler(deps);
 
@@ -139,27 +125,7 @@ describe("GET /api/v1/admin/users", () => {
     const body = await res.json();
     expect(body.users).toHaveLength(1);
     expect(body.users[0].userId).toBe("u_abc123");
-    expect(body.users[0].port).toBe(8650);
     expect(body.users[0].pinHash).toBeUndefined();
-  });
-
-  it("returns users with port=0 when no binding exists", async () => {
-    const alice = sampleUser();
-    const deps = makeDeps({
-      userStore: makeUserStore([alice]),
-      userPortStore: makeUserPortStore([]),
-    });
-    const handler = createAdminHandler(deps);
-
-    const res = await handler(
-      new Request(adminUrl("/api/v1/admin/users"), {
-        headers: authHeader(),
-      }),
-    );
-
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.users[0].port).toBe(0);
   });
 
   it("returns 500 when userStore.list fails", async () => {
@@ -341,27 +307,6 @@ describe("POST /api/v1/admin/users", () => {
     expect(body.error).toBe("apply-error");
   });
 
-  it("returns 503 'worker-not-ready' when provisioner returns worker-not-ready", async () => {
-    const provisioner = makeProvisioner();
-    (provisioner.createUser as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ok: false,
-      error: "worker-not-ready" as CreateError,
-    });
-    const handler = createAdminHandler(makeDeps({ provisioner }));
-
-    const res = await handler(
-      new Request(adminUrl("/api/v1/admin/users"), {
-        method: "POST",
-        headers: authHeader(),
-        body: JSON.stringify({ displayName: "Bob", pin: "5678", isAdmin: false, profile: SAMPLE_PROFILE }),
-      }),
-    );
-
-    expect(res.status).toBe(503);
-    const body = await res.json();
-    expect(body.error).toBe("worker-not-ready");
-  });
-
   it("returns 422 'schema' when body is not valid JSON", async () => {
     const handler = createAdminHandler(makeDeps());
 
@@ -523,7 +468,7 @@ describe("POST /api/v1/admin/users/:id/reset-pin", () => {
 });
 
 describe("PATCH /api/v1/admin/users/:id", () => {
-  it("returns 200 with updated user (including port) when demoting a non-last admin", async () => {
+  it("returns 200 with the updated user when demoting a non-last admin", async () => {
     const alice = sampleUser({ isAdmin: true });
     const bob = sampleUser({ userId: "u_bob00000", isAdmin: true });
     const provisioner = makeProvisioner();
@@ -532,9 +477,7 @@ describe("PATCH /api/v1/admin/users/:id", () => {
       ok: true as const,
       value: { ...alice, isAdmin: false },
     });
-    const userPortStore = makeUserPortStore([{ userId: "u_abc123", port: 8650 }]);
-    (userPortStore.resolvePort as ReturnType<typeof vi.fn>).mockResolvedValue(8650);
-    const handler = createAdminHandler(makeDeps({ provisioner, userStore, userPortStore }));
+    const handler = createAdminHandler(makeDeps({ provisioner, userStore }));
 
     const res = await handler(
       new Request(adminUrl("/api/v1/admin/users/u_abc123"), {
@@ -547,7 +490,6 @@ describe("PATCH /api/v1/admin/users/:id", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.user.isAdmin).toBe(false);
-    expect(body.user.port).toBe(8650);
     expect(body.user.pinHash).toBeUndefined();
   });
 

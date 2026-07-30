@@ -1,4 +1,4 @@
-import type { SessionRouter } from "../../session-router.js";
+import type { ActiveSessionLookup } from "../active-session-lookup.js";
 import type { ToolHandler } from "../mcp-server.js";
 
 export interface AudioControls {
@@ -8,10 +8,10 @@ export interface AudioControls {
 
 export interface AudioToolsDeps {
   audio: AudioControls;
-  router: SessionRouter;
+  router: ActiveSessionLookup;
 }
 
-function resolveSession(router: SessionRouter, userId: string | null): string | null {
+function resolveSession(router: ActiveSessionLookup, userId: string | null): string | null {
   if (!userId) return null;
   return router.findActiveSessionFor(userId);
 }
