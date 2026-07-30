@@ -127,8 +127,22 @@ if (config.hermes) {
         return [];
       },
       internalDependenciesReady: async () => {
+        // The gate is apply-COMPLETION, not apply-success. A failed addon
+        // apply does not remove the gateway's own per-user MCP sockets —
+        // `mcpHost.start()` above opened those — so requiring `ready` would
+        // let one unconfigured addon permanently deny every user their
+        // delegated tools. In dev that is the NORMAL state: the native addons
+        // resolve argv[0] from ${SENTIENT_CODE}, which only the launchd plist
+        // sets, so every dev boot reports `failed`.
         if (!services.bootReconcile) return false;
-        return (await services.bootReconcile).state === "ready";
+        const status = await services.bootReconcile;
+        if (status.state !== "ready") {
+          log.warn("external-tools.degraded-apply", {
+            state: status.state,
+            reason: "addon apply did not reach ready; registering anyway because the MCP sockets are gateway-owned",
+          });
+        }
+        return true;
       },
     });
   }
