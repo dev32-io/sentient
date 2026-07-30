@@ -432,3 +432,146 @@ describe("runTurn — narration + tool call in the same iteration (convergence)"
     store.close();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Case 6: background tool dispatch (defect D7 — one request spawned TEN real
+// hermes subprocesses).
+//
+// MECHANISM, measured rather than assumed. The reported cause was "the
+// tool_result does not tell the model the work is under way". The real cause is
+// upstream of the wording: the background branch appended `tool_call` + a
+// `system` note and NO `tool_result`, so `projectForModel` — whose rule 3 pairs
+// tool_calls with the immediately-following run of tool_results — found the call
+// unreplied and DROPPED IT (`projection.dropped-unreplied-tool-calls`, 389
+// occurrences in one day of the live log). The model therefore never saw its own
+// dispatch at all, so it re-issued it every iteration until the loop converged.
+//
+// Two invariants, because either alone is insufficient: the round-trip fix keeps
+// the provider messages structurally valid, and the dedupe does not depend on
+// the model complying with text.
+// ---------------------------------------------------------------------------
+
+const delegateDef: ToolDefinition = {
+  name: "delegateTask",
+  description: "delegates to a sub-agent",
+  parameters: { type: "object", properties: {} },
+  category: "background",
+};
+
+describe("runTurn — background tool dispatch", () => {
+  it("CONTRACT: closes the tool round-trip so the model sees its own dispatch as role:tool", async () => {
+    const store = openSessionStore(cap);
+    const sessionId = "bg-round-trip";
+    seedUserMessage(store, sessionId, "ask hermes to summarise my week");
+
+    const provider = fakeProvider(async function* (callIndex) {
+      if (callIndex === 1) {
+        yield {
+          type: "tool_call",
+          toolCall: {
+            id: "call_bg1",
+            type: "function",
+            function: { name: "delegateTask", arguments: '{"agent":"hermes","taskPrompt":"summarise"}' },
+          },
+        };
+        yield { type: "done", finishReason: "tool_calls" };
+        return;
+      }
+      yield { type: "text", content: "Started that for you." };
+      yield { type: "done", finishReason: "stop" };
+    });
+
+    const broker = fakeBroker([delegateDef], async () => ({ taskId: "task-abc" }));
+
+    await runTurn(
+      {
+        provider,
+        broker,
+        store,
+        systemPrompt: "you are a test assistant",
+        sessionId,
+        config: loopConfig(10),
+        onTextDelta: () => {},
+        onToolUpdate: () => {},
+      },
+      { turnId: "turn-bg", signal: new AbortController().signal },
+    );
+
+    // The dispatch is answered in-block, so the projection keeps it.
+    const secondCallMessages = provider.calls[1]?.messages ?? [];
+    const toolMessage = secondCallMessages.find((m) => m.role === "tool");
+    expect(toolMessage?.tool_call_id).toBe("call_bg1");
+    expect(toolMessage?.content).toContain("task-abc");
+
+    // USER-SAFETY + LENGTH. The stored tool_result is not model-only text: the
+    // client projection folds it into the tool tile as `summary`, which the
+    // webui renders as `resultPreview` truncated at 120 chars
+    // (webui/hooks/cycle-helpers.ts). So the receipt must read as a fact about
+    // the task and must NOT carry agent-directed instructions, or a family
+    // member sees "do not call delegateTask again" in their transcript after a
+    // reload. Enforcement of no-refire lives in the dedupe guard below, which
+    // does not depend on the model reading anything.
+    expect(toolMessage?.content?.toLowerCase()).not.toContain("do not call");
+    expect(toolMessage?.content?.length ?? 0).toBeLessThanOrEqual(120);
+
+    const kinds = store.readSession(sessionId).map((e) => e.kind);
+    expect(kinds).toEqual(["user", "tool_call", "tool_result", "assistant"]);
+
+    store.close();
+  });
+
+  it("INVARIANT: the same background tool call is dispatched once per turn, not per iteration", async () => {
+    const store = openSessionStore(cap);
+    const sessionId = "bg-dedupe";
+    seedUserMessage(store, sessionId, "ask hermes to summarise my week");
+
+    // A model that ignores the tool_result and re-asks for the identical
+    // delegateTask on iterations 1..3, then answers.
+    const provider = fakeProvider(async function* (callIndex) {
+      if (callIndex <= 3) {
+        yield {
+          type: "tool_call",
+          toolCall: {
+            id: `call_bg${callIndex}`,
+            type: "function",
+            function: { name: "delegateTask", arguments: '{"agent":"hermes","taskPrompt":"summarise"}' },
+          },
+        };
+        yield { type: "done", finishReason: "tool_calls" };
+        return;
+      }
+      yield { type: "text", content: "Started that for you." };
+      yield { type: "done", finishReason: "stop" };
+    });
+
+    const dispatched: string[] = [];
+    const broker = fakeBroker([delegateDef], async (inv) => {
+      dispatched.push(inv.name);
+      return { taskId: `task-${dispatched.length}` };
+    });
+
+    await runTurn(
+      {
+        provider,
+        broker,
+        store,
+        systemPrompt: "you are a test assistant",
+        sessionId,
+        config: loopConfig(10),
+        onTextDelta: () => {},
+        onToolUpdate: () => {},
+      },
+      { turnId: "turn-bg-dedupe", signal: new AbortController().signal },
+    );
+
+    expect(dispatched).toHaveLength(1);
+
+    // Every repeat still gets a tool_result, or the projection would drop the
+    // call and we would be back to the refire we just fixed.
+    const entries = store.readSession(sessionId);
+    const resultIds = entries.filter((e) => e.kind === "tool_result").map((e) => e.toolCallId);
+    expect(resultIds).toEqual(["call_bg1", "call_bg2", "call_bg3"]);
+
+    store.close();
+  });
+});

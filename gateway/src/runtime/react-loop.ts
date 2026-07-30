@@ -146,12 +146,79 @@ function blankEntry(sessionId: string, turnId: string): Omit<NewSessionEntry, "k
   };
 }
 
+/** Longest a background receipt may be. The stored `tool_result` is NOT
+ *  model-only text: `client-projection.ts` folds it into the tool tile as
+ *  `summary` and the webui renders it as `resultPreview`, truncated at 120
+ *  (webui/hooks/cycle-helpers.ts). A receipt over the cap gets cut mid-sentence
+ *  in the user's transcript. Not config — it mirrors a UI constant. */
+const BACKGROUND_RECEIPT_MAX = 120;
+
+/** The `tool_result` text a background dispatch is answered with.
+ *
+ *  Deliberately a plain FACT about the task, with no instruction to the model in
+ *  it. Two reasons: a family member reads this string in their transcript after
+ *  a reload, and the thing that actually stops the refire is not wording — it is
+ *  that this entry EXISTS (so the projection stops dropping the call) plus the
+ *  per-turn guard, neither of which depends on model compliance. */
+function backgroundDispatchedText(taskId: string): string {
+  return `Dispatched in the background (taskId=${taskId}). Its result will arrive separately.`;
+}
+
+/** Same, for a repeat the per-turn guard refused to dispatch a second time. */
+function backgroundAlreadyRunningText(taskId: string): string {
+  return `Already running in the background (taskId=${taskId}). Not started again.`;
+}
+
+/** Per-turn identity of a background dispatch: same tool, same arguments. */
+function dispatchKey(toolName: string, rawArgs: string): string {
+  return `${toolName}::${rawArgs}`;
+}
+
+interface BackgroundReceipt {
+  toolCallId: string;
+  toolName: string;
+  argsPreview: string;
+  taskId: string;
+  text: string;
+}
+
+/** Answer a background `tool_call` and keep the client tile in the running
+ *  state — the tile settles when the completion stimulus lands, not here. */
+function appendBackgroundReceipt(
+  deps: Pick<ReactLoopDeps, "store" | "onToolUpdate">,
+  sessionId: string,
+  turnId: string,
+  receipt: BackgroundReceipt,
+): void {
+  const { toolCallId, toolName, argsPreview, taskId } = receipt;
+  const text = receipt.text.slice(0, BACKGROUND_RECEIPT_MAX);
+  deps.store.append({
+    ...blankEntry(sessionId, turnId),
+    kind: "tool_result",
+    toolCallId,
+    toolName,
+    toolArgs: text,
+  });
+  deps.onToolUpdate(turnId, { toolCallId, toolName, status: "running", taskId, argsPreview });
+}
+
 /**
  * Runs every tool call the model requested this iteration, in order.
- * Foreground calls append `tool_call` + `tool_result` (the full round-trip
- * the model needs to see, spec §5.2). Background calls append `tool_call` +
- * a `system` "task started" note — the eventual result is a later stimulus
- * (Task 7's job), never a second entry through this function.
+ *
+ * Every call — foreground or background — appends `tool_call` + `tool_result`.
+ * The complete round-trip is not optional for the background branch either:
+ * `projectForModel` pairs a tool_call only with the immediately-following run of
+ * tool_results and DROPS anything unreplied, so a background dispatch that
+ * appended a bare `system` note erased the model's own action from the next
+ * iteration's messages and it re-issued the call every time (defect D7 — one
+ * user request, ten real hermes subprocesses). A background `tool_result` is
+ * the dispatch receipt, never the task's output: the output arrives later as its
+ * own stimulus, appended as a `trigger` entry, never as a second tool_result for
+ * an already-answered id (see model-projection.ts rule 4).
+ *
+ * `backgroundByKey` carries (toolName, args) → taskId across the ITERATIONS of
+ * one turn, so a model that ignores the receipt still cannot start the same task
+ * twice. Model-independent by design: a prompt-only fix depends on compliance.
  *
  * Returns `false` the instant the signal aborts: stops before starting the
  * next call, appends nothing further, and the caller must stop looping.
@@ -162,6 +229,7 @@ async function dispatchToolCalls(
   turnId: string,
   signal: AbortSignal,
   toolCalls: ChatToolCall[],
+  backgroundByKey: Map<string, string>,
 ): Promise<boolean> {
   const { broker, store, onToolUpdate } = deps;
 
@@ -184,6 +252,27 @@ async function dispatchToolCalls(
     });
     onToolUpdate(turnId, { toolCallId, toolName, status: "running", argsPreview });
 
+    const key = dispatchKey(toolName, call.function.arguments);
+    const runningTaskId = backgroundByKey.get(key);
+    if (runningTaskId !== undefined) {
+      appendBackgroundReceipt(deps, sessionId, turnId, {
+        toolCallId,
+        toolName,
+        argsPreview,
+        taskId: runningTaskId,
+        text: backgroundAlreadyRunningText(runningTaskId),
+      });
+      log.warn("react-loop.tool-dispatch.background-duplicate-refused", {
+        sessionId,
+        turnId,
+        toolCallId,
+        toolName,
+        taskId: runningTaskId,
+        reason: "an identical background call is already running for this turn",
+      });
+      continue;
+    }
+
     const args = parseToolArgs(call.function.arguments, toolName, toolCallId);
     const invocation: ToolInvocation = { toolCallId, name: toolName, args, signal, turnId };
     const outcome = await broker.dispatch(invocation);
@@ -194,12 +283,14 @@ async function dispatchToolCalls(
     }
 
     if ("taskId" in outcome) {
-      store.append({
-        ...blankEntry(sessionId, turnId),
-        kind: "system",
-        text: `Task started: ${toolName} (taskId=${outcome.taskId})`,
+      backgroundByKey.set(key, outcome.taskId);
+      appendBackgroundReceipt(deps, sessionId, turnId, {
+        toolCallId,
+        toolName,
+        argsPreview,
+        taskId: outcome.taskId,
+        text: backgroundDispatchedText(outcome.taskId),
       });
-      onToolUpdate(turnId, { toolCallId, toolName, status: "running", taskId: outcome.taskId, argsPreview });
       log.info("react-loop.tool-dispatch.background", {
         sessionId,
         turnId,
@@ -315,6 +406,12 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
   const tools = broker.definitions().map(toProviderTool);
   const maxIterations = config.max_iterations;
 
+  // (toolName, args) -> taskId for background dispatches made by THIS turn.
+  // Turn-scoped on purpose: a later turn asking for the same delegation is a
+  // new user intent and must be allowed; the same iteration-loop asking twice
+  // is the D7 refire. Dropped with the turn, so nothing accumulates.
+  const backgroundByKey = new Map<string, string>();
+
   log.info("react-loop.start", { sessionId, turnId, maxIterations, toolCount: tools.length });
 
   let iteration = 0;
@@ -385,7 +482,7 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
       store.append({ ...blankEntry(sessionId, turnId), kind: "assistant", text: outcome.text });
     }
 
-    const dispatchedAll = await dispatchToolCalls(deps, sessionId, turnId, signal, outcome.toolCalls);
+    const dispatchedAll = await dispatchToolCalls(deps, sessionId, turnId, signal, outcome.toolCalls, backgroundByKey);
     if (!dispatchedAll) {
       log.info("react-loop.aborted-mid-dispatch", { sessionId, turnId, iteration });
       return { completed: false, iterations: iteration, consumedThroughSeq };
