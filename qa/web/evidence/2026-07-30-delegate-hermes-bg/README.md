@@ -1,11 +1,23 @@
 # delegate-hermes-bg — the ORIGINAL failing drive (superseded; the row now PASSES)
 
-> **CURRENT RESULT: PASS.** Read `RE-DRIVE-T9b.md` in this directory for the
-> outcome that stands — the first real delegated completion in the project's
-> history (5x `hermes-runner.run.ok`, 0x non-zero-exit). Both defects below were
-> fixed in NM-T9b (`07e6d99`); the delegated agent's missing gateway TOOLS were
-> a third, separate fault closed in NM-T9c (`36250cb`, socket off SIP-readonly
-> `/run`) with one residual, D11, filed in `.superpowers/sdd/progress.md`.
+> **CURRENT RESULT: PASS for this row — with one OPEN defect standing beside it.**
+> Read `RE-DRIVE-T9b.md` in this directory for the outcome that stands: the first
+> real delegated completions in the project's history (5x `hermes-runner.run.ok`,
+> 0x non-zero-exit). Both defects below were fixed in NM-T9b (`07e6d99`).
+>
+> **The delegated agent's missing gateway TOOLS are a THIRD fault and are NOT
+> closed.** NM-T9c (`36250cb`) fixed one *necessary* half — the per-user MCP
+> socket moved off SIP-read-only `/run` — and proved that socket end-to-end, but
+> only after registering the MCP with `hermes -p <id> mcp add` **by hand**. Out
+> of the box the delegated agent still reports **zero** gateway/HA/MA/searxng
+> tools for every user, because the gateway renders `mcp_servers` into
+> `~/.sentient/gateway/<id>/profiles/<id>/` while hermes reads
+> `~/.hermes/profiles/<id>/` — the `HERMES_HOME` bridge between them was deleted
+> with supervisord. Tracked as **D11** in
+> `../2026-07-30-t9c-verification-gaps/README.md` (see the D11 section: root
+> cause, the hand-proven fix route, the design decision left open on purpose, and
+> what T10 must not mis-attribute). A boot-time WARN
+> (`hermes-profile.bridge.not-live`, `092083c`) keeps it from shipping silently.
 >
 > Everything below is the historical failing drive, kept because the two repro
 > transcripts are the evidence for WHY the fixes look the way they do. It is not
