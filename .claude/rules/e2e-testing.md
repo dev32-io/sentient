@@ -5,7 +5,7 @@
 E2E smoke is part of feature development, not a follow-up step. A feature is not done until every smoke case is green.
 
 - The agent owns smoke. Driver by surface: web (webui) → Playwright MCP; native mobile (Android + iOS apps) → Maestro. Drive against the running local stack before declaring a feature done.
-- Smoke against a real running stack — addons via `docker compose -f deploy/macos/docker-compose.yml --profile build-only build` (bakes images; the gateway's own orchestrator creates/starts the containers), gateway via `launchctl` (prod) or `bun --hot src/main.ts` from `gateway/` (dev). Never smoke against mocks.
+- Smoke against a real running stack — addons via `docker compose -f deploy/mac-prod/docker-compose.yml --profile build-only build` (bakes images; the gateway's own orchestrator creates/starts the containers), gateway via `launchctl` (prod) or `bun --hot src/main.ts` from `gateway/` (dev). Never smoke against mocks.
 - Native mobile E2E is Maestro against a simulator/emulator (`android` CLI / `adb`, `xcrun simctl`) — NEVER Playwright. Driver, selectors, log trail, and fault-arming live in the details + mobile-testing rules.
 - Targeted tag-batch runs are THE execution model: one warm `maestro test` per selected tag set via `qa/mobile/run-e2e.sh --tags <t1,t2>`. NEVER one invocation per flow — cold JVM/device-attach cost is fixed per invocation and dominates at per-flow granularity.
 - Plans' and specs' e2e matrices reference native-mobile cases by surface tag (e.g. `settings-voice`, `reconnect`), not by flow filename — tags are the addressable unit.

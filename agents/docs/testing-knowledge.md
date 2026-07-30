@@ -34,7 +34,7 @@ and why those tools were chosen. One `###` subsection per surface.
 **Why this tool:** WebRTC AEC, AudioWorklet timing, jitter-buffer behaviour, and cycle-audio-queue state can only be exercised end-to-end in a real browser. Mocked playback misses these failure modes; they show up only as user-visible regressions.
 **How:**
 1. `source scripts/env.sh`
-2. `docker compose -f deploy/macos/docker-compose.yml build gateway && docker compose -f deploy/macos/docker-compose.yml up -d gateway`
+2. Start the gateway natively: `cd gateway && bun --hot src/main.ts` (addon images come from `docker compose -f deploy/mac-prod/docker-compose.yml --profile build-only build`)
 3. `until curl -sk -o /dev/null -w "%{http_code}" https://localhost:8888/ | grep -q 200; do sleep 1; done`
 4. Open `https://localhost:8888` in Chrome. Self-signed cert → click Advanced → Proceed.
 
@@ -242,7 +242,7 @@ the wizard handler. Wizard rejections look like `wizard.unlock.failed`,
 Run after any change touching `gateway/src/api/wizard/`, `gateway/src/admin/install-state.ts`, `gateway/templates/wizard/`, or the webui wizard components.
 
 1. `rm -rf ~/.sentient/`
-2. Bring up the stack: `cd deploy/macos && docker compose up -d`
+2. Bring up the stack: `cd gateway && bun --hot src/main.ts` (see `deploy/README.md`)
 3. Read the unlock code: `cat ~/.sentient/gateway/data/unlock-code` (or read from gateway log banner).
 4. Open `https://localhost:8888`, enter the unlock code.
 5. Walk fresh: `provider → voice → secrets → bringup → admin → finish`.

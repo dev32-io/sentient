@@ -120,7 +120,7 @@ in stock Hermes:
 
 `sentient-gateway` is not just a WebSocket terminator — it owns the
 lifecycle of every sibling container in the stack (Hermes, STT, all MCPs,
-egress proxy, signal-cli). The orchestrator at
+egress proxy). The orchestrator at
 `gateway/src/system-orchestrator/` drives dockerode over the bind-mounted
 `/var/run/docker.sock`. Each managed service is a YAML template under
 `gateway/templates/services/*.yaml` with `${HOST_*}` env and `${SECRET}`

@@ -164,8 +164,9 @@ Pick (1) by default.
 The gateway is a native host process now — it dials every MCP over
 `http://127.0.0.1:<port>/mcp`, never docker DNS. `deploy/docker/` (the
 old Linux compose that also ran the gateway itself) is **removed**; the
-service blocks below live only in `deploy/macos/docker-compose.yml` and
-`deploy/mac-prod/docker-compose.yml`, and even there they're `build-only` —
+service blocks below live only in `deploy/mac-prod/docker-compose.yml`
+(the dev-only `deploy/macos/` bakery is removed too), and even there they're
+`build-only` —
 the gateway's own orchestrator (`gateway/src/system-orchestrator/`) creates,
 starts and health-checks the containers from a `managed_services` entry in
 `gateway/config.yaml` plus a template at `gateway/templates/services/<name>.yaml`,
@@ -207,9 +208,8 @@ When converting a `command:`-shaped MCP to the standard:
 2. Add a `managed_services` entry to `gateway/config.yaml` and a template at
    `gateway/templates/services/<name>.yaml` (see the two examples above for
    the internal-vs-external egress decision). Add the image to the
-   `build-only` profile in `deploy/macos/docker-compose.yml` and
-   `deploy/mac-prod/docker-compose.yml` so `docker compose --profile
-   build-only build` bakes it.
+   `build-only` profile in `deploy/mac-prod/docker-compose.yml` so
+   `docker compose --profile build-only build` bakes it.
 3. Update `gateway/src/profile-store/profile-renderer.ts` to emit
    `url:` for that MCP. Remove the legacy `command/args/env` branch
    for that server's slug.

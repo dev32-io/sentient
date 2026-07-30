@@ -4,7 +4,7 @@
 
 **Goal:** Lift the gateway out of Docker into the native host-orchestrator role it already plays in code, so `delegateTask` works, and then execute the 2.0 E2E matrix it unblocks.
 
-**Architecture:** The gateway becomes a compiled native binary supervised by launchd. It supervises addons through one registry and one driver interface with two backends — `docker` (MCPs, searxng, signal-cli, egress-proxy) and a new `native` backend (whisper-stt, local-tts). Hermes is not a managed service: it is a one-shot exec, which is the whole reason the gateway must share a filesystem with it. Code lives root-owned under `/opt/sentient/<version>/`; mutable state stays user-owned under `~/.sentient/`.
+**Architecture:** The gateway becomes a compiled native binary supervised by launchd. It supervises addons through one registry and one driver interface with two backends — `docker` (MCPs, searxng, egress-proxy) and a new `native` backend (whisper-stt, local-tts). Hermes is not a managed service: it is a one-shot exec, which is the whole reason the gateway must share a filesystem with it. Code lives root-owned under `/opt/sentient/<version>/`; mutable state stays user-owned under `~/.sentient/`.
 
 **Tech Stack:** Bun 1.3.11 (`bun build --compile`), TypeScript strict, zod, dockerode, launchd, Python 3.11 (local-tts) / 3.14 (whisper-stt) with vendored wheels, Playwright MCP (web E2E), Maestro (native E2E).
 

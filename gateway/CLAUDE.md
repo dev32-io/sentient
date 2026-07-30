@@ -16,7 +16,7 @@ Rules live at the repo root: cross-cutting at `.claude/rules/*.md`, gateway-spec
 - STT: local STTService (gateway dials over WS)
 - TTS: local-tts / LocalTTSService (gateway dials over WS)
 - Validation: zod
-- Deploy: `gateway/src/system-orchestrator/` is the host orchestrator — it supervises docker addons (MCP tool servers, searxng, signal-cli, egress-proxy/ingress-proxy) and native addons (whisper-stt, local-tts) through one registry, one dependency graph, one health model. Dev: `bun --hot src/main.ts`, unchanged. Prod: compiled binary under `launchd` — see `deploy/README.md`.
+- Deploy: `gateway/src/system-orchestrator/` is the host orchestrator — it supervises docker addons (MCP tool servers, searxng, egress-proxy/ingress-proxy) and native addons (whisper-stt, local-tts) through one registry, one dependency graph, one health model. Dev: `bun --hot src/main.ts`, unchanged. Prod: compiled binary under `launchd` — see `deploy/README.md`.
 
 ## Commands
 

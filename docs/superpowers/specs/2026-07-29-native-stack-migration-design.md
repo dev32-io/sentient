@@ -22,8 +22,13 @@ The fix is to lift the gateway out of Docker into the host-manager role it alrea
 
 Addons are plugins the gateway starts, supervises and health-checks. Their packaging is an implementation detail *of the addon*, not of Sentient:
 
-- **Docker addons** — third-party or network-isolated software: the MCP servers, searxng, signal-cli, egress-proxy.
+- **Docker addons** — third-party or network-isolated software: the MCP servers, searxng, egress-proxy.
 - **Native addons** — host processes: whisper-stt, local-tts.
+
+> **Addendum 2026-07-29 (operator directive):** `signal-cli` was removed from the repo entirely
+> (Task 6b) as dead weight — it was never registered in `managed_services`, so it was never a live
+> addon. It is struck from the enumerations below rather than left as a service that no longer
+> exists. The historical Signal design lives in `2026-05-10-signal-device-pairing-design.md`.
 
 Both go through one registry, one dependency graph, one health model, one reconciler. Nothing is sideloaded at build time; everything is spawned at runtime.
 
@@ -31,7 +36,7 @@ Both go through one registry, one dependency graph, one health model, one reconc
 
 - The sessions REST surface / multi-conversation (`session.new`, `conversation.activate`, `sessions.*`). Still later scope; the E2E rows that need it are marked BLOCKED, not skipped.
 - Signing/notarising the compiled binary. Worth doing; not required for a LAN-only mini.
-- Migrating searxng or signal-cli off Docker. They are third-party; Docker is the right packaging for them.
+- Migrating searxng off Docker. It is third-party; Docker is the right packaging for it.
 
 ---
 
@@ -46,7 +51,6 @@ launchd  (root-owned plist, runs as the operator's user)
        ├─ DOCKER addons                via existing docker-driver.ts
        │    ├─ ha-mcp · ma-mcp · fetch-mcp · searxng-mcp
        │    ├─ searxng
-       │    ├─ signal-cli
        │    └─ egress-proxy            sole outbound path, unchanged
        └─ hermes                       NOT a managed service — one-shot exec per delegateTask
 ```
@@ -218,7 +222,7 @@ Idempotent — re-running is safe. Rollback is flipping the symlink and kickstar
 
 `profile-store`, `renderInnerProfile`, `renderConfigsForExistingUsers` **stay**. `hermes-runner` sets its subprocess `cwd` to `resolveProfileDir(userId)` and its own comment states "the profile must already exist" — the one-shot path still requires a rendered per-user hermes profile. Deleting profile rendering would break `delegateTask` in a way no unit test covers.
 
-All `gateway/mcp/*/Dockerfile`, searxng, signal-cli and egress-proxy stay: third-party or isolation-critical.
+All `gateway/mcp/*/Dockerfile`, searxng and egress-proxy stay: third-party or isolation-critical.
 
 ### 8.3 Config audit
 

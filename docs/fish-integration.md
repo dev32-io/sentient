@@ -43,7 +43,7 @@ providers:
 ```
 
 ```bash
-docker compose -f deploy/macos/docker-compose.yml restart gateway
+# the gateway is native — restart it where it runs (bun --hot, or launchctl in prod)
 ```
 
 Effects, verified end-to-end:

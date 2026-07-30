@@ -55,7 +55,7 @@ so the browser/cube/mobile clients never see ACP directly.
 `sentient-gateway` is not just a WS terminator — it owns the docker
 lifecycle of every sibling container: `sentient-hermes`, `stt-service`,
 `egress-proxy`, `ha-mcp`, `ma-mcp`, `searxng`, `searxng-mcp`,
-`fetch-mcp`, `signal-cli`. Implementation in
+`fetch-mcp`. Implementation in
 `gateway/src/system-orchestrator/`.
 
 How it works:
