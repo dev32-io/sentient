@@ -91,8 +91,8 @@ curl -sk https://127.0.0.1:8888/api/v1/auth/login -X POST \
 ```
 
 This is an environment obstacle, not a product defect. Every product fault these rows were
-*originally* blocked on is fixed and independently evidenced. One fault found DURING this task is
-not fixed — D11 below.
+*originally* blocked on is fixed and independently evidenced. The fault found DURING this task,
+D11, is now fixed too — see the closed section below.
 
 ---
 

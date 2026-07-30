@@ -50,7 +50,7 @@ export interface HermesExternalToolDeps {
    *  means there is nothing a delegated agent may hold, so nothing is
    *  registered. */
   readonly delegatedTools: readonly string[];
-  /** `orchestrator.delegation.hermes_cli_timeout_ms`. */
+  /** `orchestrator.delegation.hermes_mcp_register_timeout_ms`. */
   readonly timeoutMs: number;
   /** Operator-configured `hermes.mcp_host.socket_path`; only its directory is
    *  used. Passed straight to the mcp-host's own resolver so both sides of the
