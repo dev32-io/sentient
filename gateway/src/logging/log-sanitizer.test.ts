@@ -70,9 +70,43 @@ describe("sanitizeMessage", () => {
     expect(sanitizeMessage(msg)).toBe("token=[REDACTED] auth=[REDACTED]");
   });
 
+  // SECURITY BOUNDARY (defect D9). Captured subprocess output reaches logs as a
+  // plain `preview` property, so the key-name redaction never fires — only the
+  // message patterns stand between a dumped config and the log file. Truncation
+  // is a VOLUME control, not a content control: a credential at char 10
+  // survives any cap. `hermes profile create` prints a cloned profile's
+  // resolved config, so the yaml/env assignment shape must be scrubbed.
+  it("SECURITY: scrubs an inline api_key assignment out of a dumped config", () => {
+    const msg = "provider: ollama-cloud\n  api_key: gsk-live-not-a-real-credential-1234\n  model: x";
+    const out = sanitizeMessage(msg);
+    expect(out).not.toContain("gsk-live-not-a-real-credential-1234");
+    expect(out).toContain("api_key: [REDACTED]");
+    expect(out).toContain("model: x");
+  });
+
+  it("SECURITY: scrubs inline secret assignments regardless of separator or quoting", () => {
+    expect(sanitizeMessage('apiKey="AAAAAAAAAAAAAAAAAAAA"')).not.toContain("AAAAAAAAAAAAAAAAAAAA");
+    expect(sanitizeMessage("access_token=BBBBBBBBBBBBBBBBBBBB")).not.toContain("BBBBBBBBBBBBBBBBBBBB");
+    expect(sanitizeMessage("password: CCCCCCCCCCCCCCCCCCCC")).not.toContain("CCCCCCCCCCCCCCCCCCCC");
+  });
+
+  // The pattern list covered sentient's OWN auth shapes (PASETO, sentient-auth
+  // `sak_`) but not the LLM provider key shapes a delegated-agent credential
+  // actually has — the one class it needed to catch here.
+  it("SECURITY: scrubs a bare provider API key with no surrounding key name", () => {
+    const msg = "401 rejected key sk-or-v1-0123456789abcdef0123456789abcdef upstream";
+    const out = sanitizeMessage(msg);
+    expect(out).not.toContain("0123456789abcdef");
+    expect(out).toBe("401 rejected key [REDACTED] upstream");
+  });
+
   it("returns safe messages unchanged", () => {
     const msg = "user connected from 192.168.1.1";
     expect(sanitizeMessage(msg)).toBe(msg);
+  });
+
+  it("leaves a short non-secret hyphenated token alone", () => {
+    expect(sanitizeMessage("model sk-tiny loaded")).toBe("model sk-tiny loaded");
   });
 });
 

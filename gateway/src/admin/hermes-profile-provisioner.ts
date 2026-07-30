@@ -32,8 +32,21 @@ import { getLog } from "../logging/logger.js";
 const log = getLog(["sentient", "gateway", "admin", "hermes-profile"]);
 
 const HERMES_BIN = "hermes";
-/** Truncate captured CLI output before it reaches a log line or an error. */
-const OUTPUT_PREVIEW_MAX = 300;
+/**
+ * Truncate captured CLI output before it reaches a log line or an error. 120 is
+ * the project-wide preview cap (`.claude/rules/logging.md`); this used to sit at
+ * 300 in the one function whose own comment says the logged text is where a
+ * credential would appear.
+ *
+ * Truncation is NOT the control that protects the credential, and must not be
+ * mistaken for one: it bounds VOLUME, and a key at char 10 survives any cap.
+ * The content control is `logging/log-sanitizer.ts`, which now scrubs inline
+ * `api_key: …` assignments (the shape a dumped profile config has) and bare
+ * provider key prefixes before anything is written. Both apply here: the
+ * sanitizer removes the secret, the cap keeps a multi-KB config dump out of the
+ * log file.
+ */
+const OUTPUT_PREVIEW_MAX = 120;
 
 /** The subset of a spawned process this module touches — narrowed so the unit
  *  test never spawns a real `hermes`. Mirrors `tools/hermes-runner.ts`. */
