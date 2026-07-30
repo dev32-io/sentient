@@ -56,7 +56,7 @@ interface FakeProvider extends ProviderClient {
  *  so "the provider was never called" is assertable even though nothing
  *  consumes the stream. `onStream` runs at call time too — that is how the
  *  race case injects an append into the summarization window. */
-function fakeProvider(summary: string, onStream?: () => void): FakeProvider {
+function fakeProvider(summary: string, onStream?: () => void, finishReason = "stop"): FakeProvider {
   const calls: ProviderRequest[] = [];
   return {
     calls,
@@ -65,7 +65,7 @@ function fakeProvider(summary: string, onStream?: () => void): FakeProvider {
       onStream?.();
       return (async function* () {
         yield { type: "text", content: summary } as ProviderStreamChunk;
-        yield { type: "done", finishReason: "stop" } as ProviderStreamChunk;
+        yield { type: "done", finishReason } as ProviderStreamChunk;
       })();
     },
   };
@@ -273,6 +273,28 @@ describe("compaction — summarizer request shape", () => {
     expect(store.readSession(sessionId).some((e) => e.kind === "compaction")).toBe(false);
     store.close();
   });
+
+  it("CONTRACT: an empty summary carries the provider's terminal finishReason onto the outcome", async () => {
+    const store = openSessionStore(cap);
+    const sessionId = "case-empty-summary-diagnosis";
+    store.append(entry({ sessionId, turnId: "t1", kind: "user", text: LONG_TEXT }));
+    store.append(entry({ sessionId, turnId: "t1", kind: "assistant", text: LONG_TEXT }));
+    store.append(entry({ sessionId, turnId: "t2", kind: "user", text: "and now?" }));
+    store.append(entry({ sessionId, turnId: "t2", kind: "assistant", text: "here you go" }));
+
+    // Exactly what the real gpt-oss:20b-cloud failure looked like: the whole
+    // budget spent on the Harmony reasoning channel, terminal chunk says
+    // "length", zero visible text. Verified live 2/2 before the budget fix.
+    const outcome = await maybeCompact(deps(sessionId, store, fakeProvider("", undefined, "length")));
+
+    expect(outcome.reason).toBe("empty-summary");
+    // Without this the operator sees a bare "empty-summary" and cannot tell an
+    // exhausted output budget (raise summarizer_max_output_tokens) from a model
+    // that simply returned nothing. It is the one fact that makes the gate's
+    // loud ERROR actionable.
+    expect(outcome.finishReason).toBe("length");
+    store.close();
+  });
 });
 
 describe("compaction gate — a failing summarizer must not thrash", () => {
@@ -281,8 +303,16 @@ describe("compaction gate — a failing summarizer must not thrash", () => {
     reason: "empty-summary",
     estimatedTokens: 9000,
     compactedThroughSeq: null,
+    // The live shape: budget exhausted on the reasoning channel.
+    finishReason: "length",
   } as const;
-  const succeeded = { compacted: true, reason: "compacted", estimatedTokens: 9000, compactedThroughSeq: 61 } as const;
+  const succeeded = {
+    compacted: true,
+    reason: "compacted",
+    estimatedTokens: 9000,
+    compactedThroughSeq: 61,
+    finishReason: "stop",
+  } as const;
 
   it("INVARIANT: past max_consecutive_failures it stops attempting at every turn boundary", () => {
     const gate = createCompactionGate(3);
@@ -312,9 +342,15 @@ describe("compaction gate — a failing summarizer must not thrash", () => {
 
     const idle = createCompactionGate(1);
     // below-threshold is the steady state at most turn boundaries.
-    idle.record({ compacted: false, reason: "below-threshold", estimatedTokens: 10, compactedThroughSeq: null });
-    idle.record({ compacted: false, reason: "nothing-to-summarize", estimatedTokens: 10, compactedThroughSeq: null });
-    idle.record({ compacted: false, reason: "raced-with-append", estimatedTokens: 10, compactedThroughSeq: null });
+    const idleOutcome = {
+      compacted: false,
+      estimatedTokens: 10,
+      compactedThroughSeq: null,
+      finishReason: null,
+    } as const;
+    idle.record({ ...idleOutcome, reason: "below-threshold" });
+    idle.record({ ...idleOutcome, reason: "nothing-to-summarize" });
+    idle.record({ ...idleOutcome, reason: "raced-with-append", finishReason: "stop" });
     expect(idle.shouldAttempt()).toBe(true);
   });
 });

@@ -81,6 +81,17 @@ export interface CompactionOutcome {
   reason: CompactionReason;
   estimatedTokens: number;
   compactedThroughSeq: number | null;
+  /** The summarizer response's terminal `finish_reason`, or null when the
+   *  provider was never called / never reached its terminal chunk.
+   *
+   *  Carried on the OUTCOME, not just logged at the call site, because the
+   *  failure an operator actually sees is the gate's one loud
+   *  `compaction.failing-repeatedly` ERROR — and "empty-summary" alone does
+   *  not say whether the output budget was exhausted
+   *  (`"length"` → raise `summarizer_max_output_tokens`) or the model returned
+   *  nothing (`"stop"` → a prompt/model problem). Live 2/2 the answer was
+   *  `"length"`, and nothing in the logs said so. */
+  finishReason: string | null;
 }
 
 export interface CompactionDeps {
@@ -205,8 +216,19 @@ export function renderTranscript(entries: SessionEntry[]): string {
     .join("\n");
 }
 
-function skip(reason: CompactionReason, estimatedTokens: number): CompactionOutcome {
-  return { compacted: false, reason, estimatedTokens, compactedThroughSeq: null };
+function skip(
+  reason: CompactionReason,
+  estimatedTokens: number,
+  finishReason: string | null = null,
+): CompactionOutcome {
+  return { compacted: false, reason, estimatedTokens, compactedThroughSeq: null, finishReason };
+}
+
+/** What one summarization round trip produced. `finishReason` rides back with
+ *  the text because an empty `text` is only diagnosable together with it. */
+interface SummarizerResponse {
+  text: string;
+  finishReason: string | null;
 }
 
 /** One summarization round trip. Returns null on any provider failure — the
@@ -214,7 +236,7 @@ function skip(reason: CompactionReason, estimatedTokens: number): CompactionOutc
  *  a summarizer that can act is a side-effecting surface nobody mediates
  *  (spec §2.2). The per-request deadline is the ProviderClient's own
  *  (`orchestrator.provider.request_timeout_ms`). */
-async function summarize(deps: CompactionDeps, transcript: string): Promise<string | null> {
+async function summarize(deps: CompactionDeps, transcript: string): Promise<SummarizerResponse | null> {
   const messages: ChatMessage[] = [
     { role: "system", content: deps.summarizerPrompt },
     { role: "user", content: transcript },
@@ -229,10 +251,12 @@ async function summarize(deps: CompactionDeps, transcript: string): Promise<stri
     maxOutputTokens: deps.config.summarizer_max_output_tokens,
   });
   let summary = "";
+  let finishReason: string | null = null;
   try {
     for await (const chunk of stream) {
       if (deps.signal.aborted) break;
       if (chunk.type === "text") summary += chunk.content;
+      if (chunk.type === "done") finishReason = chunk.finishReason;
     }
   } catch (err) {
     log.warn("compaction.summarize.failed", {
@@ -245,7 +269,7 @@ async function summarize(deps: CompactionDeps, transcript: string): Promise<stri
   } finally {
     await stream.return(undefined);
   }
-  return summary;
+  return { text: summary, finishReason };
 }
 
 export async function maybeCompact(deps: CompactionDeps): Promise<CompactionOutcome> {
@@ -309,15 +333,43 @@ export async function maybeCompact(deps: CompactionDeps): Promise<CompactionOutc
     transcriptChars: transcript.length,
   });
 
-  const summary = await summarize(deps, transcript);
-  if (summary === null) return skip("provider-error", estimatedTokens);
+  const response = await summarize(deps, transcript);
+  if (response === null) return skip("provider-error", estimatedTokens);
+  const { text: summary, finishReason } = response;
   if (signal.aborted) {
     log.info("compaction.skipped", { userId, sessionId, turnId, reason: "aborted", boundarySeq });
-    return skip("aborted", estimatedTokens);
+    return skip("aborted", estimatedTokens, finishReason);
   }
   if (summary.trim().length === 0) {
-    log.warn("compaction.skipped", { userId, sessionId, turnId, reason: "empty-summary", boundarySeq });
-    return skip("empty-summary", estimatedTokens);
+    // `finishReason` + the budget it ran against are the whole diagnosis:
+    // "length" here means the model never reached its visible channel and the
+    // remedy is a bigger budget, not a retry.
+    log.warn("compaction.skipped", {
+      userId,
+      sessionId,
+      turnId,
+      reason: "empty-summary",
+      boundarySeq,
+      finishReason,
+      budgetTokens: config.summarizer_max_output_tokens,
+      remedy: "if finishReason is 'length', raise orchestrator.compaction.summarizer_max_output_tokens",
+    });
+    return skip("empty-summary", estimatedTokens, finishReason);
+  }
+  // A capped-but-non-empty summary still bounds the window, so it commits —
+  // but it is a degraded path (the text can stop mid-sentence) and the logging
+  // rules want every one of those named with a reason.
+  if (finishReason === "length") {
+    log.warn("compaction.summary-truncated", {
+      userId,
+      sessionId,
+      turnId,
+      boundarySeq,
+      finishReason,
+      budgetTokens: config.summarizer_max_output_tokens,
+      summaryChars: summary.length,
+      reason: "the summarizer hit its output budget; the summary may be cut short",
+    });
   }
 
   // Re-check + append are ONE synchronous block: Bun is single-threaded, so
@@ -367,7 +419,7 @@ export async function maybeCompact(deps: CompactionDeps): Promise<CompactionOutc
     summaryChars: summary.length,
     markerChars: markerText.length,
   });
-  return { compacted: true, reason: "compacted", estimatedTokens, compactedThroughSeq: boundarySeq };
+  return { compacted: true, reason: "compacted", estimatedTokens, compactedThroughSeq: boundarySeq, finishReason };
 }
 
 // ---------------------------------------------------------------------------
@@ -419,7 +471,12 @@ export function createCompactionGate(maxConsecutiveFailures: number): Compaction
       }
       failures += 1;
       if (failures < maxConsecutiveFailures) {
-        log.warn("compaction.attempt-failed", { failures, maxConsecutiveFailures, reason: outcome.reason });
+        log.warn("compaction.attempt-failed", {
+          failures,
+          maxConsecutiveFailures,
+          reason: outcome.reason,
+          finishReason: outcome.finishReason,
+        });
         return;
       }
       // 1, 2, 4, 8 … turn boundaries skipped before the next attempt.
@@ -427,6 +484,9 @@ export function createCompactionGate(maxConsecutiveFailures: number): Compaction
       log.error("compaction.failing-repeatedly", {
         failures,
         reason: outcome.reason,
+        // The remedy depends entirely on this: "length" is an exhausted output
+        // budget, anything else is a provider or prompt problem.
+        finishReason: outcome.finishReason,
         nextAttemptAfterTurns: turnsToSkip,
         impact: "the model window is not being bounded; context keeps growing",
       });
