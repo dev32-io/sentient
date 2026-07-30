@@ -28,6 +28,13 @@ export interface ProviderRequest {
   messages: ChatMessage[];
   tools: ProviderTool[];
   signal: AbortSignal;
+  /** Per-request output cap, overriding `orchestrator.provider.max_output_tokens`.
+   *  The configured value is an ANSWER cap tuned for a spoken reply; the
+   *  compaction summarizer is a different workload (digest a multi-thousand
+   *  token transcript, and on a reasoning model emit a whole reasoning channel
+   *  first) and needs its own, larger budget or it finishes with
+   *  finish_reason:"length" and no visible text at all. */
+  maxOutputTokens?: number;
 }
 
 export interface ProviderClient {

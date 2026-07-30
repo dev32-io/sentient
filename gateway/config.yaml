@@ -167,6 +167,17 @@ orchestrator:
     # once a session runs long.
     compact_threshold_tokens: 8000
     keep_recent_turns: 4                     # most-recent turns copied VERBATIM into the summary marker rather than summarized away (0-50)
+    # Output cap for the compaction summarizer specifically. The main loop's
+    # max_output_tokens is an ANSWER cap; a reasoning model (gpt-oss:20b emits
+    # a Harmony reasoning channel first) exhausts 1024 before producing any
+    # visible summary text, which failed compaction silently and forever
+    # (observed 2/2 live — qa/web/evidence/2026-07-30-compaction-continue).
+    # Range 512-8000.
+    summarizer_max_output_tokens: 4000
+    # Consecutive failed compactions before the runtime stops attempting one at
+    # every turn boundary, logs a single ERROR with the reason, and retries on
+    # an exponentially widening turn interval instead. Range 1-20.
+    max_consecutive_failures: 3
 
 # ---------------------------------------------------------------------------
 # STT — local-stt service (Silero VAD + Smart-Turn v3 + SenseVoice-Small)

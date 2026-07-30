@@ -523,7 +523,13 @@ function testOrchestratorConfig(): OrchestratorConfig {
       hermes_source_profile: "default",
       hermes_profile_create_timeout_ms: 30000,
     },
-    compaction: { enabled: false, compact_threshold_tokens: 24000, keep_recent_turns: 4 },
+    compaction: {
+      enabled: false,
+      compact_threshold_tokens: 24000,
+      keep_recent_turns: 4,
+      summarizer_max_output_tokens: 4000,
+      max_consecutive_failures: 3,
+    },
   };
 }
 

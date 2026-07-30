@@ -103,7 +103,7 @@ import type { ToolBroker } from "../tools/tool-broker.js";
 import type { UserId } from "../user-auth/user-id.js";
 import type { CancellableTurn } from "./cancellation.js";
 import { createCancellationControllers } from "./cancellation.js";
-import { maybeCompact } from "./compaction.js";
+import { createCompactionGate, maybeCompact } from "./compaction.js";
 import { createConversationFeed } from "./conversation-feed.js";
 import type { ReactLoopDeps } from "./react-loop.js";
 import { type TurnOutcome, runTurn } from "./react-loop.js";
@@ -247,6 +247,9 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
 
   let inFlight: InFlightTurn | null = null;
   let lastProcessedSeq = 0;
+  // Per-session: a summarizer that keeps failing must not burn one provider
+  // call at every single turn boundary forever. See compaction.ts.
+  const compactionGate = createCompactionGate(config.compaction.max_consecutive_failures);
   let disposed = false;
   // The most recent turn this session started, kept AFTER it settles. Audio
   // outlives its turn, so a cancel landing in the tail window still has to
@@ -405,16 +408,19 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     // No `disposed` re-check is needed to REACH here — the guard at the top of
     // this function is the only one, and nothing above awaits.
     try {
-      await maybeCompact({
-        store,
-        provider,
-        sessionId,
-        userId,
-        turnId,
-        config: config.compaction,
-        summarizerPrompt: COMPACTION_SUMMARIZER_PROMPT,
-        signal,
-      });
+      if (compactionGate.shouldAttempt()) {
+        const outcome = await maybeCompact({
+          store,
+          provider,
+          sessionId,
+          userId,
+          turnId,
+          config: config.compaction,
+          summarizerPrompt: COMPACTION_SUMMARIZER_PROMPT,
+          signal,
+        });
+        compactionGate.record(outcome);
+      }
     } catch (err) {
       // maybeCompact's contract is "never throws" — a backstop only, so a
       // bug there can never wedge the one-turn guard open forever. It is also

@@ -49,7 +49,13 @@ function testConfig(maxIterations = 10): OrchestratorConfig {
     // call at turn end, which would silently change the call-index
     // assertions those cases are built on. The compaction case below
     // builds its own config with it enabled.
-    compaction: { enabled: false, compact_threshold_tokens: 24000, keep_recent_turns: 4 },
+    compaction: {
+      enabled: false,
+      compact_threshold_tokens: 24000,
+      keep_recent_turns: 4,
+      summarizer_max_output_tokens: 4000,
+      max_consecutive_failures: 3,
+    },
   };
 }
 
@@ -976,7 +982,13 @@ describe("SessionRuntime — compaction at the turn boundary", () => {
       ...testConfig(),
       // keep_recent_turns 0 keeps the marker small, so the follow-up turn
       // lands back under the threshold and does not compact again.
-      compaction: { enabled: true, compact_threshold_tokens: 1000, keep_recent_turns: 0 },
+      compaction: {
+        enabled: true,
+        compact_threshold_tokens: 1000,
+        keep_recent_turns: 0,
+        summarizer_max_output_tokens: 4000,
+        max_consecutive_failures: 3,
+      },
     };
 
     const runtime = createSessionRuntime({

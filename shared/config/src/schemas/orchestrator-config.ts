@@ -75,6 +75,19 @@ export const orchestratorConfigSchema = z.object({
       // "after" an append-only marker. 0 = summarize everything.
       // Range 0-50.
       keep_recent_turns: z.number().int().min(0).max(50).default(4),
+      // Output cap for the SUMMARIZER request specifically. The loop's
+      // `provider.max_output_tokens` is an ANSWER cap; a reasoning model
+      // (gpt-oss:20b emits a Harmony reasoning channel before any visible
+      // text) exhausts 1024 on the transcript it is digesting and finishes
+      // with finish_reason:"length" and an EMPTY summary, which fails
+      // compaction silently and forever. Range 512-8000.
+      summarizer_max_output_tokens: z.number().int().min(512).max(8000).default(4000),
+      // Consecutive failed compaction attempts before the runtime stops
+      // retrying at every single turn boundary and logs one ERROR naming the
+      // reason. Past this it retries on an exponentially widening turn
+      // interval instead, so a permanently-failing summarizer costs one
+      // provider call per 2^n turns rather than one per turn. Range 1-20.
+      max_consecutive_failures: z.number().int().min(1).max(20).default(3),
     })
     .default({}),
 });

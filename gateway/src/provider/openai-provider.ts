@@ -33,7 +33,7 @@ export function createOpenAIProvider(cfg: OrchestratorConfig["provider"], apiKey
             messages: req.messages as OpenAI.Chat.ChatCompletionMessageParam[],
             stream: true,
             stream_options: { include_usage: true },
-            max_tokens: cfg.max_output_tokens,
+            max_tokens: req.maxOutputTokens ?? cfg.max_output_tokens,
             ...(hasTools ? { tools: req.tools as OpenAI.Chat.ChatCompletionTool[], tool_choice: "auto" as const } : {}),
           },
           { signal: req.signal },

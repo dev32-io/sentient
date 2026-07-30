@@ -219,7 +219,15 @@ async function summarize(deps: CompactionDeps, transcript: string): Promise<stri
     { role: "system", content: deps.summarizerPrompt },
     { role: "user", content: transcript },
   ];
-  const stream = deps.provider.stream({ messages, tools: [], signal: deps.signal });
+  const stream = deps.provider.stream({
+    messages,
+    tools: [],
+    signal: deps.signal,
+    // The summarizer's OWN budget, not the loop's answer cap — see the config
+    // key's comment. Without it a reasoning model spends the whole cap on its
+    // reasoning channel and returns finish_reason:"length" with no text.
+    maxOutputTokens: deps.config.summarizer_max_output_tokens,
+  });
   let summary = "";
   try {
     for await (const chunk of stream) {
@@ -360,4 +368,68 @@ export async function maybeCompact(deps: CompactionDeps): Promise<CompactionOutc
     markerChars: markerText.length,
   });
   return { compacted: true, reason: "compacted", estimatedTokens, compactedThroughSeq: boundarySeq };
+}
+
+// ---------------------------------------------------------------------------
+// Failure gate
+// ---------------------------------------------------------------------------
+
+/** Outcomes that mean "the attempt itself did not work", as opposed to "there
+ *  was correctly nothing to do". Only these count toward the failure streak:
+ *  `below-threshold` / `disabled` / `nothing-to-summarize` are the normal
+ *  steady state at most turn boundaries, and `unsafe-boundary` /
+ *  `raced-with-append` are deliberate one-turn deferrals whose own next
+ *  attempt is the designed retry. */
+const FAILURE_REASONS: ReadonlySet<CompactionReason> = new Set<CompactionReason>(["empty-summary", "provider-error"]);
+
+export interface CompactionGate {
+  /** False while backing off — the caller skips the whole attempt. */
+  shouldAttempt(): boolean;
+  /** Feed every outcome back, including the successful ones. */
+  record(outcome: CompactionOutcome): void;
+}
+
+/** maybeCompact runs at EVERY turn end, so a summarizer that cannot succeed
+ *  used to burn one real provider call per turn, forever, at `warn` — while
+ *  the model window it was supposed to bound kept growing. This makes the
+ *  failure loud once and then rare: after `max_consecutive_failures` the
+ *  interval between attempts doubles each time, so a permanently broken
+ *  summarizer costs one call per 2^n turns instead of one per turn.
+ *
+ *  Deliberately NOT a permanent give-up: the usual causes (provider outage, a
+ *  transient rate limit, an operator fixing a token budget and restarting
+ *  nothing) all resolve on their own, and a session that stopped trying would
+ *  grow its window until the provider rejected the request outright. */
+export function createCompactionGate(maxConsecutiveFailures: number): CompactionGate {
+  let failures = 0;
+  let turnsToSkip = 0;
+
+  return {
+    shouldAttempt(): boolean {
+      if (turnsToSkip <= 0) return true;
+      turnsToSkip -= 1;
+      return false;
+    },
+    record(outcome: CompactionOutcome): void {
+      if (!FAILURE_REASONS.has(outcome.reason)) {
+        if (failures > 0) log.info("compaction.recovered", { afterFailures: failures, reason: outcome.reason });
+        failures = 0;
+        turnsToSkip = 0;
+        return;
+      }
+      failures += 1;
+      if (failures < maxConsecutiveFailures) {
+        log.warn("compaction.attempt-failed", { failures, maxConsecutiveFailures, reason: outcome.reason });
+        return;
+      }
+      // 1, 2, 4, 8 … turn boundaries skipped before the next attempt.
+      turnsToSkip = 2 ** (failures - maxConsecutiveFailures);
+      log.error("compaction.failing-repeatedly", {
+        failures,
+        reason: outcome.reason,
+        nextAttemptAfterTurns: turnsToSkip,
+        impact: "the model window is not being bounded; context keeps growing",
+      });
+    },
+  };
 }

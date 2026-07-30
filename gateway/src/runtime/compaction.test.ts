@@ -7,7 +7,7 @@ import { projectForClient } from "../store/client-projection.js";
 import type { NewSessionEntry } from "../store/entry-types.js";
 import { projectForModel } from "../store/model-projection.js";
 import { openSessionStore } from "../store/session-store.js";
-import { maybeCompact } from "./compaction.js";
+import { createCompactionGate, maybeCompact } from "./compaction.js";
 
 const ROOT = "/tmp/sentient-compaction-test";
 mkdirSync(`${ROOT}/u_aaaaaaaa`, { recursive: true });
@@ -25,6 +25,8 @@ const config: OrchestratorConfig["compaction"] = {
   enabled: true,
   compact_threshold_tokens: 1000,
   keep_recent_turns: 1,
+  summarizer_max_output_tokens: 4000,
+  max_consecutive_failures: 3,
 };
 
 /** ~1250 estimated tokens of latin filler — comfortably over the threshold. */
@@ -224,5 +226,95 @@ describe("compaction — the producer of kind:'compaction' entries", () => {
     const messages = projectForModel(store.readSession(sessionId));
     expect(messages.some((m) => (m.content ?? "").includes("wait, also check the calendar"))).toBe(true);
     store.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D4: the summarizer's own budget, and not thrashing when it fails.
+// ---------------------------------------------------------------------------
+
+describe("compaction — summarizer request shape", () => {
+  it("CONTRACT: the summarizer request carries its OWN output budget, not the loop's answer cap", async () => {
+    const store = openSessionStore(cap);
+    const sessionId = "case-summarizer-budget";
+    store.append(entry({ sessionId, turnId: "t1", kind: "user", text: LONG_TEXT }));
+    store.append(entry({ sessionId, turnId: "t1", kind: "assistant", text: LONG_TEXT }));
+    store.append(entry({ sessionId, turnId: "t2", kind: "user", text: "and now?" }));
+    store.append(entry({ sessionId, turnId: "t2", kind: "assistant", text: "here you go" }));
+
+    const provider = fakeProvider("a summary");
+    const outcome = await maybeCompact(deps(sessionId, store, provider));
+
+    expect(outcome.compacted).toBe(true);
+    // gpt-oss:20b spends the whole cap on its Harmony reasoning channel and
+    // returns finish_reason:"length" with NO visible text when this is the
+    // loop's 1024 answer cap — observed 2/2 live.
+    expect(provider.calls[0]?.maxOutputTokens).toBe(config.summarizer_max_output_tokens);
+    store.close();
+  });
+
+  it("INVARIANT: an empty summary is never appended as a compaction entry", async () => {
+    const store = openSessionStore(cap);
+    const sessionId = "case-empty-summary";
+    store.append(entry({ sessionId, turnId: "t1", kind: "user", text: LONG_TEXT }));
+    store.append(entry({ sessionId, turnId: "t1", kind: "assistant", text: LONG_TEXT }));
+    store.append(entry({ sessionId, turnId: "t2", kind: "user", text: "and now?" }));
+    store.append(entry({ sessionId, turnId: "t2", kind: "assistant", text: "here you go" }));
+    const before = store.readSession(sessionId).length;
+
+    // What finish_reason:"length" on the reasoning channel looks like here.
+    const outcome = await maybeCompact(deps(sessionId, store, fakeProvider("   \n  ")));
+
+    expect(outcome.compacted).toBe(false);
+    expect(outcome.reason).toBe("empty-summary");
+    // A marker supersedes EVERY entry before it positionally, so an empty one
+    // would blank the model window while the client still rendered everything.
+    expect(store.readSession(sessionId).length).toBe(before);
+    expect(store.readSession(sessionId).some((e) => e.kind === "compaction")).toBe(false);
+    store.close();
+  });
+});
+
+describe("compaction gate — a failing summarizer must not thrash", () => {
+  const failed = {
+    compacted: false,
+    reason: "empty-summary",
+    estimatedTokens: 9000,
+    compactedThroughSeq: null,
+  } as const;
+  const succeeded = { compacted: true, reason: "compacted", estimatedTokens: 9000, compactedThroughSeq: 61 } as const;
+
+  it("INVARIANT: past max_consecutive_failures it stops attempting at every turn boundary", () => {
+    const gate = createCompactionGate(3);
+    // maybeCompact runs at EVERY turn end, so an ungated failure is one real
+    // provider call per turn, forever, while the window it should bound grows.
+    for (let i = 0; i < 3; i += 1) {
+      expect(gate.shouldAttempt()).toBe(true);
+      gate.record(failed);
+    }
+    // 3rd failure armed a 1-turn skip; the 4th a 2-turn skip.
+    expect(gate.shouldAttempt()).toBe(false);
+    expect(gate.shouldAttempt()).toBe(true);
+    gate.record(failed);
+    expect(gate.shouldAttempt()).toBe(false);
+    expect(gate.shouldAttempt()).toBe(false);
+    expect(gate.shouldAttempt()).toBe(true);
+  });
+
+  it("INVARIANT: a success clears the streak, and a normal below-threshold turn never counts as one", () => {
+    const gate = createCompactionGate(2);
+    gate.record(failed);
+    gate.record(succeeded);
+    // Streak cleared: two more failures are needed to back off again.
+    expect(gate.shouldAttempt()).toBe(true);
+    gate.record(failed);
+    expect(gate.shouldAttempt()).toBe(true);
+
+    const idle = createCompactionGate(1);
+    // below-threshold is the steady state at most turn boundaries.
+    idle.record({ compacted: false, reason: "below-threshold", estimatedTokens: 10, compactedThroughSeq: null });
+    idle.record({ compacted: false, reason: "nothing-to-summarize", estimatedTokens: 10, compactedThroughSeq: null });
+    idle.record({ compacted: false, reason: "raced-with-append", estimatedTokens: 10, compactedThroughSeq: null });
+    expect(idle.shouldAttempt()).toBe(true);
   });
 });
