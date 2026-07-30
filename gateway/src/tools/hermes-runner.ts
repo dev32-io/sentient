@@ -9,7 +9,7 @@
 // rule).
 //
 // CLI shape: `hermes -p <userId> -z <prompt>`. `-p` selects the per-user
-// profile (env-writer.ts's convention — the profile must already exist,
+// profile (profile-store's convention — the profile must already exist,
 // provisioned out-of-band). `-z`/`--oneshot` is the installed Hermes CLI's
 // one-shot flag: run a single prompt, print only the final response text to
 // stdout, no banner/spinner/session-id line — exactly the shape a

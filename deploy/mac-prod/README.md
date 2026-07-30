@@ -33,8 +33,8 @@ This folder simply targets the common case: everything on one macOS host.
 
 ## Layout
 
-Only the **gateway** is a long-running compose service. `hermes`, the MCPs
-and `signal-cli` are `build-only` — the gateway's orchestrator
+Only the **gateway** is a long-running compose service. `hermes` and the MCPs
+are `build-only` — the gateway's orchestrator
 creates/starts/recreates them at runtime over `/var/run/docker.sock`. Compose
 only builds their images. `stt-service` (SenseVoice) is gated behind the
 `stt-docker` profile: built/managed **only** when the docker-sensevoice STT
@@ -184,4 +184,6 @@ reads/writes regardless of host ownership.
 ## Dev vs prod
 
 - `deploy/mac-prod/` — this folder, release build (`BUILD_PROFILE=release`).
-- `deploy/macos/` — local Docker Desktop **dev** (debug build).
+- Local dev runs the gateway from the checkout (`cd gateway && bun --hot
+  src/main.ts`) against the SAME addon images this folder's `build-only`
+  profile bakes. There is no separate dev compose file.

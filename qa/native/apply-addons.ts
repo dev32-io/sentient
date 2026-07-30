@@ -27,10 +27,10 @@ import { createSystemOrchestratorService } from "../../gateway/src/system-orches
 
 const REPO_ROOT = join(import.meta.dir, "..", "..");
 const SENTIENT_HOME = join(homedir(), ".sentient");
-/** Where the gateway itself keeps internal-secrets.json — the plist's
- *  SENTIENT_HOST_GATEWAY_DATA_DIR. Pointing anywhere else makes the store
- *  GENERATE a fresh searxng secret instead of loading the live one, which then
- *  recreates searxng with a secret the gateway does not know. */
+/** Where the gateway itself keeps internal-secrets.json (`~/.sentient/gateway/
+ *  data`). Pointing anywhere else makes the store GENERATE a fresh searxng
+ *  secret instead of loading the live one, which then recreates searxng with a
+ *  secret the gateway does not know. */
 const GATEWAY_DATA_DIR = join(SENTIENT_HOME, "gateway", "data");
 /** Matches the gateway's own poll cadence + apply budget (phase-orchestrator). */
 const POLL_INTERVAL_MS = 1000;

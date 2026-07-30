@@ -61,10 +61,6 @@
          would mount the wrong thing (or an empty auto-created dir). -->
     <key>HOST_HOME</key>                      <string>/Users/OPERATOR</string>
     <key>HOST_CONFIG_DIR</key>                <string>/Users/OPERATOR/.sentient/gateway/config</string>
-    <!-- Per-user HERMES_HOME root. The in-code default is a container path, so
-         leaving this unset points per-user provisioning at a path that does not
-         exist on the host. -->
-    <key>SENTIENT_HOST_GATEWAY_DATA_DIR</key> <string>/Users/OPERATOR/.sentient/gateway/data</string>
 
     <!-- Wall-clock timezone. The assistant renders "current time" into the
          prompt, so a wrong value makes it confidently answer the wrong time.

@@ -79,11 +79,3 @@ services:
     image: sentient/ingress-proxy:local
     pull_policy: never
     profiles: ["build-only"]
-
-  signal-cli:
-    build:
-      context: ../..
-      dockerfile: deploy/signal-cli/Dockerfile
-    image: sentient/signal-cli:local
-    pull_policy: never
-    profiles: ["build-only"]

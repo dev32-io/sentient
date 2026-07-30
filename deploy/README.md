@@ -3,21 +3,25 @@
 The gateway itself is a **compiled native binary supervised by `launchd`** —
 not a Docker container. It is the host orchestrator: it creates, starts,
 health-checks and recreates every sibling addon itself, over the host docker
-socket for docker addons (MCP tool servers, searxng, signal-cli,
+socket for docker addons (MCP tool servers, searxng,
 egress-proxy/ingress-proxy) and via `Bun.spawn` for native addons
 (whisper-stt, local-tts). Hermes is never a managed service — it's a one-shot
 exec invoked only via `delegateTask`. **All provider keys, voice IDs, and
 admin secrets are entered through the webui setup wizard** on first launch —
 there is nothing to configure on disk.
 
-Two compose files. Neither has a long-running gateway service any more —
-their whole job is baking the `:local` image tags the gateway's orchestrator
-creates addon containers from:
+One compose file. It has no long-running gateway service — its whole job is
+baking the `:local` image tags the gateway's orchestrator creates addon
+containers from:
 
 | File | Purpose |
 |------|---------|
-| `deploy/mac-prod/docker-compose.yml` | **Production** addon image bakery — macOS Docker Desktop (Apple-silicon Mac mini). The supported deploy path. |
-| `deploy/macos/docker-compose.yml` | Local dev addon image bakery on macOS Docker Desktop. |
+| `deploy/mac-prod/docker-compose.yml` | Addon image bakery — macOS Docker Desktop (Apple-silicon). The one image list, used by prod AND local dev (`--profile build-only build`). |
+
+`deploy/macos/` (a second, local-dev-only bakery) was **removed** with the
+signal-cli removal: `signal-cli` was the only service it built, and
+`deploy/mac-prod/`'s `build-only` profile was already the complete superset of
+the same images.
 
 `deploy/docker/` (local dev on Linux) was **removed** with the native cutover.
 It was a single-service compose that ran the gateway itself from
@@ -44,7 +48,7 @@ native host process: whisper-stt and local-tts are `Bun.spawn`ed as local
 child processes of the gateway itself, not remote-capable, and both are
 Apple-silicon-only (Metal/MLX). Whatever host runs the gateway also runs
 native STT/TTS — that host must be Apple silicon. The docker-based addons
-(MCPs, searxng, signal-cli) remain plain containers and could in principle
+(MCPs, searxng) remain plain containers and could in principle
 point at a remote docker host, but the gateway + native addons cannot be
 split off the mini. `deploy/mac-prod/` targets the only supported shape —
 everything on one macOS host. (The retired `deploy/pi/` all-on-Pi compose was
@@ -81,8 +85,8 @@ cd ~/sentient
 docker compose -f deploy/mac-prod/docker-compose.yml --profile build-only build
 ```
 
-Produces the `:local` image tags for `ma-mcp`, `fetch-mcp`, `searxng-mcp`,
-`ingress-proxy` and `signal-cli` — the gateway's orchestrator creates
+Produces the `:local` image tags for `ma-mcp`, `fetch-mcp`, `searxng-mcp` and
+`ingress-proxy` — the gateway's orchestrator creates
 containers from these at startup; `up`/`down` are never used here. `ha-mcp`
 is a third-party image (`ghcr.io/homeassistant-ai/ha-mcp:stable`), pulled by
 the orchestrator directly, not built. **Re-run the build any time after
@@ -200,8 +204,7 @@ Two independent pieces: bake the addon images once, then run the gateway
 natively with hot reload — no build step for the gateway itself.
 
 ```bash
-# Addon images (full set, same as prod — deploy/macos/ only builds signal-cli
-# on its own; use mac-prod's build-only profile for the complete list):
+# Addon images (one list, shared with prod — there is no dev-only bakery):
 docker compose -f deploy/mac-prod/docker-compose.yml --profile build-only build
 
 # Gateway, from the checkout:
