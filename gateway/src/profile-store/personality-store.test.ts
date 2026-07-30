@@ -211,3 +211,26 @@ describe("personality-store.add/update/remove", () => {
     expect(after).toContain("warm:");
   });
 });
+
+// INVARIANT: a rendered personality never carries an empty body.
+//
+// It used to be harmless because defect D11 made the rendered config.yaml dead
+// output. Once registration exists the file is live, and an empty body is a
+// live, blank system prompt — plus `findActiveName` then matches ANY entry
+// against an empty `agent.system_prompt`, so the webui reports the wrong
+// personality as active. Both writers reject it, and `preserveAgentSections`
+// drops any entry an older build already wrote (see its own test).
+describe("personality-store empty-body guard", () => {
+  it("add rejects an empty body", async () => {
+    writeConfig("agent:\n  personalities: {}\n");
+    const store = createPersonalityStore({ profileDir: dir });
+    expect(await store.add("blank", "   ")).toEqual({ ok: false, error: "invalid-body" });
+  });
+
+  it("update rejects an empty body", async () => {
+    writeConfig("agent:\n  personalities:\n    calm: Be calm.\n");
+    const store = createPersonalityStore({ profileDir: dir });
+    expect(await store.update("calm", "")).toEqual({ ok: false, error: "invalid-body" });
+    expect(readFileSync(join(dir, "config.yaml"), "utf8")).toContain("Be calm.");
+  });
+});

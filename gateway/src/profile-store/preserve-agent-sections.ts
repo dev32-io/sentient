@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { type YAMLMap, isMap, parseDocument } from "yaml";
 import { getLog } from "../logging/logger.js";
+import { resolveBody } from "./personality-store.js";
 
 const log = getLog(["sentient", "gateway", "profile-store", "preserve-agent-sections"]);
 
@@ -12,7 +13,40 @@ const log = getLog(["sentient", "gateway", "profile-store", "preserve-agent-sect
 // library (agent.personalities) plus the active personality (agent.system_prompt).
 // ---------------------------------------------------------------------------
 
-const PRESERVED_AGENT_KEYS = ["personalities", "system_prompt"] as const;
+const PERSONALITIES_KEY = "personalities";
+const PRESERVED_AGENT_KEYS = [PERSONALITIES_KEY, "system_prompt"] as const;
+
+/**
+ * Drop personality entries whose body is empty, returning null when nothing
+ * survives (so the caller omits the key rather than emitting an empty map).
+ *
+ * An empty body was harmless only while the rendered config.yaml was dead
+ * output. Now that the gateway's MCP is registered on the delegated agent's
+ * profile the file is live, and an empty body is a live BLANK system prompt —
+ * plus `personality-store`'s `findActiveName` matches any such entry against an
+ * empty `agent.system_prompt`, so the webui reports the wrong personality as
+ * active. Both writers now reject an empty body; this repairs what older
+ * builds already wrote, on the next boot re-render.
+ */
+function dropEmptyBodies(node: YAMLMap): YAMLMap | null {
+  const kept = node.items.filter((item) => resolveBody(item.value).trim().length > 0);
+  if (kept.length === 0) {
+    log.info("preserve.dropped-personalities", {
+      dropped: node.items.length,
+      reason: "every personality body was empty; an empty body renders as a blank live system prompt",
+    });
+    return null;
+  }
+  if (kept.length === node.items.length) return node;
+  log.info("preserve.dropped-personalities", {
+    dropped: node.items.length - kept.length,
+    kept: kept.length,
+    reason: "empty personality body renders as a blank live system prompt",
+  });
+  const trimmed = node.clone() as YAMLMap;
+  trimmed.items = kept;
+  return trimmed;
+}
 
 /**
  * Splice the personality-owned `agent.personalities` + `agent.system_prompt`
@@ -39,6 +73,13 @@ export function preserveAgentSections(renderedYaml: string, existingYaml: string
     // map shape) so multi-line personality bodies round-trip unchanged.
     const node = existingAgent.get(key, true);
     if (node === undefined || node === null) continue;
+    if (key === PERSONALITIES_KEY && isMap(node)) {
+      const kept = dropEmptyBodies(node);
+      if (kept === null) continue;
+      renderedAgent.set(key, kept);
+      preserved++;
+      continue;
+    }
     renderedAgent.set(key, node);
     preserved++;
   }

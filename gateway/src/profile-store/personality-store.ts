@@ -19,6 +19,14 @@ const FILE_MODE = 0o600;
 
 const NAME_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
 
+/** An empty personality body is a live, BLANK system prompt once the rendered
+ *  config.yaml reaches hermes, and it makes `findActiveName` match any entry
+ *  against an empty `agent.system_prompt`. Rejected at both writers;
+ *  `preserve-agent-sections.ts` drops the ones older builds already wrote. */
+function isBlank(body: string): boolean {
+  return body.trim().length === 0;
+}
+
 export interface Personality {
   name: string;
   body: string;
@@ -29,12 +37,21 @@ export interface PersonalityList {
   activeName: string | null;
 }
 
-export type PersonalityStoreError = "io-error" | "parse-error" | "name-conflict" | "invalid-name" | "not-found";
+export type PersonalityStoreError =
+  | "io-error"
+  | "parse-error"
+  | "name-conflict"
+  | "invalid-name"
+  | "invalid-body"
+  | "not-found";
 
 export interface PersonalityStore {
   list(): Promise<Result<PersonalityList, "io-error" | "parse-error">>;
-  add(name: string, body: string): Promise<Result<void, "io-error" | "name-conflict" | "invalid-name" | "parse-error">>;
-  update(name: string, body: string): Promise<Result<void, "io-error" | "not-found" | "parse-error">>;
+  add(
+    name: string,
+    body: string,
+  ): Promise<Result<void, "io-error" | "name-conflict" | "invalid-name" | "invalid-body" | "parse-error">>;
+  update(name: string, body: string): Promise<Result<void, "io-error" | "not-found" | "invalid-body" | "parse-error">>;
   remove(name: string): Promise<Result<void, "io-error" | "not-found" | "parse-error">>;
 }
 
@@ -90,6 +107,7 @@ export function createPersonalityStore(deps: PersonalityStoreDeps): PersonalityS
 
     async add(name, body) {
       if (!NAME_PATTERN.test(name)) return { ok: false, error: "invalid-name" };
+      if (isBlank(body)) return { ok: false, error: "invalid-body" };
       const docResult = await loadDoc();
       if (!docResult.ok) return docResult;
       const map = ensurePersonalitiesMap(docResult.value);
@@ -100,6 +118,7 @@ export function createPersonalityStore(deps: PersonalityStoreDeps): PersonalityS
     },
 
     async update(name, body) {
+      if (isBlank(body)) return { ok: false, error: "invalid-body" };
       const docResult = await loadDoc();
       if (!docResult.ok) return docResult;
       const map = ensurePersonalitiesMap(docResult.value);

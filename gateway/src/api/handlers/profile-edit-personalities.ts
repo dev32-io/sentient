@@ -119,6 +119,8 @@ export function mapPersonalityError(error: PersonalityStoreError): Response {
       return jsonError(HTTP_CONFLICT, "name-conflict");
     case "invalid-name":
       return jsonError(HTTP_UNPROCESSABLE, "invalid-name");
+    case "invalid-body":
+      return jsonError(HTTP_UNPROCESSABLE, "invalid-body");
     case "not-found":
       return jsonError(HTTP_NOT_FOUND, "not-found");
     default:
