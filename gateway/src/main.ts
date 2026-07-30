@@ -30,10 +30,6 @@ if (!state.bootstrap_complete) {
   await services.unlockCode.clear(); // belt-and-braces if leftover
 }
 
-const server = createGatewayServer({ port: config.port, host: config.host, services });
-
-log.info("gateway-started", { host: server.hostname, port: server.port });
-
 // ---------------------------------------------------------------------------
 // MCP host server — Phase 1.7+
 // ---------------------------------------------------------------------------
@@ -126,6 +122,29 @@ if (config.hermes) {
     );
   }
 }
+
+// Unconditional, and a no-op once a tool was bound above: EVERY boot path must
+// settle the slot, or a `delegateTask` on a config with no `hermes:`/
+// `orchestrator:` block would wait on a settle that never comes.
+services.delegatedExternalTool.sealEmpty(
+  "no delegated external tool in this configuration (needs both a hermes: and an orchestrator: block)",
+);
+
+// ---------------------------------------------------------------------------
+// Accept traffic — LAST, and deliberately so.
+//
+// `Bun.serve()` starts taking WS connections synchronously, and a connection is
+// what builds a SessionRuntime with its `delegateTask` runner. Serving before
+// the external-tool slot settled is what let a client that reconnected inside
+// the boot window get a delegated agent with no gateway tools (see
+// external-tools/external-tool-slot.ts). The slot's settle-gated read already
+// makes that self-healing; starting the listener after the settle makes the
+// window itself unreachable, which also keeps that read's wait zero-length in
+// production.
+// ---------------------------------------------------------------------------
+const server = createGatewayServer({ port: config.port, host: config.host, services });
+
+log.info("gateway-started", { host: server.hostname, port: server.port });
 
 // Graceful shutdown. The addon health watchdog is stopped FIRST: a tick that
 // fires while the rest of the process is tearing down would re-apply a service

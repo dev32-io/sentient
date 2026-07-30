@@ -164,7 +164,13 @@ async function resolveOrchestratorServices(): Promise<OrchestratorServices> {
       })
     : null;
   if (secretsStore) await secretsStore.load();
-  return buildOrchestratorServices(cfg, secretsStore);
+  const services = await buildOrchestratorServices(cfg, secretsStore);
+  // Every composition root settles the external-tool slot before a session can
+  // exist — main.ts binds the real Hermes tool once the MCP host is up; this
+  // one has no MCP host, so it seals. Without this, a delegateTask the model
+  // happens to emit would wait on a settle that never comes.
+  services.delegatedExternalTool.sealEmpty("no MCP host in the @live text-brain composition");
+  return services;
 }
 
 const orchestratorServices = RUN_LIVE ? await resolveOrchestratorServices() : null;

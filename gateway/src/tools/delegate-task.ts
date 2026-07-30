@@ -24,7 +24,7 @@
 // the turnId context this file does not and appends a fresh `trigger` entry,
 // NEVER a second `tool_result` for `inv.toolCallId`.
 
-import type { ExternalTool } from "../external-tools/external-tool.js";
+import type { ExternalToolSource } from "../external-tools/external-tool-slot.js";
 import { getLog } from "../logging/logger.js";
 import type { UserId } from "../user-auth/user-id.js";
 import type { DelegationGuard } from "./delegation-guard.js";
@@ -65,14 +65,19 @@ export interface DelegateTaskDeps {
   /** The session's principal — delegated to Hermes as `-p <userId>`. */
   userId: UserId;
   /**
-   * The delegated worker's own configuration, verified and repaired in the
-   * setup phase below — for Hermes, the gateway's per-user MCP entry on its
-   * profile (`external-tools/hermes-external-tool.ts`).
+   * Source of the delegated worker's own configuration, verified and repaired
+   * in the setup phase below — for Hermes, the gateway's per-user MCP entry on
+   * its profile (`external-tools/hermes-external-tool.ts`).
+   *
+   * A SOURCE, not a tool: it is read per DISPATCH, never snapshotted at
+   * session construction. A session built during the boot window would
+   * otherwise bake in whatever the slot held at WS-connect time and stay
+   * tool-less for the life of the socket (see external-tool-slot.ts).
    *
    * Optional and null-tolerant: a dev/headless composition root with no
    * `orchestrator:` block has nothing to provide, and the delegation still runs.
    */
-  externalTool?: ExternalTool | null;
+  externalTool?: ExternalToolSource | null;
 }
 
 type ParsedDelegateArgs = { agent: string; taskPrompt: string };
@@ -95,7 +100,7 @@ function errorResult(content: string): ToolResult {
 
 export function createDelegateTaskRunner(deps: DelegateTaskDeps): BackgroundToolRunner {
   const { guard, hermesRunner, userId } = deps;
-  const externalTool = deps.externalTool ?? null;
+  const externalToolSource = deps.externalTool ?? null;
 
   /**
    * Setup phase — runs INSIDE the result promise, i.e. after `run` has already
@@ -109,10 +114,14 @@ export function createDelegateTaskRunner(deps: DelegateTaskDeps): BackgroundTool
    * does not throw — the catch is here anyway, because a throw would reject the
    * runner's result promise and the broker would report the whole delegation as
    * failed on a bookkeeping error.
+   *
+   * The tool is RESOLVED here, per dispatch, rather than captured when this
+   * runner was built: session construction races gateway boot, and a snapshot
+   * taken on the losing side of that race is permanent.
    */
   async function runSetupPhase(taskId: string, signal: AbortSignal): Promise<void> {
-    if (!externalTool) {
-      log.debug("delegate-task.setup.no-external-tool", { taskId, userId });
+    if (!externalToolSource) {
+      log.debug("delegate-task.setup.no-external-tool", { taskId, userId, reason: "no source bound" });
       return;
     }
     if (signal.aborted) {
@@ -120,6 +129,24 @@ export function createDelegateTaskRunner(deps: DelegateTaskDeps): BackgroundTool
         taskId,
         userId,
         reason: "cancelled before setup ran; a delegation that will not spawn must not touch the profile",
+      });
+      return;
+    }
+    const externalTool = await externalToolSource.resolve(signal);
+    if (signal.aborted) {
+      log.info("delegate-task.setup.skipped", {
+        taskId,
+        userId,
+        reason:
+          "cancelled while resolving the external tool; a delegation that will not spawn must not touch the profile",
+      });
+      return;
+    }
+    if (!externalTool) {
+      log.debug("delegate-task.setup.no-external-tool", {
+        taskId,
+        userId,
+        reason: "this configuration binds no external tool",
       });
       return;
     }

@@ -153,9 +153,10 @@ export interface GatewayServices {
    *  clear error rather than the gateway failing to boot. */
   readonly createSessionRuntime: CreateSessionRuntime | null;
   /** Late-bound holder for the delegated worker's own configuration
-   *  (`external-tools/external-tool-slot.ts`). Filled in `main.ts` right after
-   *  the MCP host exists, because the host is what knows the delegated tool
-   *  surface — and read per session by `delegateTask`'s setup phase. */
+   *  (`external-tools/external-tool-slot.ts`). Settled in `main.ts` right after
+   *  the MCP host exists — the host is what knows the delegated tool surface —
+   *  and BEFORE the server accepts a connection. Resolved per dispatch by
+   *  `delegateTask`'s setup phase. */
   readonly delegatedExternalTool: ExternalToolSlot;
 }
 

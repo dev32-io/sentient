@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { Result } from "@sentient/protocol";
+import { type ExternalToolSlot, createExternalToolSlot } from "../external-tools/external-tool-slot.js";
 import type { ExternalTool, ExternalToolError } from "../external-tools/external-tool.js";
 import type { UserId } from "../user-auth/user-id.js";
 import { createDelegateTaskRunner, delegateTaskDefinition } from "./delegate-task.js";
@@ -179,6 +180,13 @@ function loggingRunner(log: string[], result: HermesRunResult): HermesRunner {
   };
 }
 
+/** The steady state after boot: a real slot, already settled with `tool`. */
+function settledSlot(tool: ExternalTool): ExternalToolSlot {
+  const slot = createExternalToolSlot();
+  slot.set(tool);
+  return slot;
+}
+
 describe("delegateTask runner — the dispatch-time setup phase", () => {
   const OK: Result<void, ExternalToolError> = { ok: true, value: undefined };
 
@@ -190,7 +198,7 @@ describe("delegateTask runner — the dispatch-time setup phase", () => {
       guard: fakeGuard({ action: "allow" }),
       hermesRunner: loggingRunner(order, { ok: true, output: "done" }),
       userId,
-      externalTool: fakeExternalTool(OK, order),
+      externalTool: settledSlot(fakeExternalTool(OK, order)),
     });
 
     await runner.run(makeInvocation({ agent: "hermes", taskPrompt: "do it" }), "task-1").result;
@@ -207,7 +215,7 @@ describe("delegateTask runner — the dispatch-time setup phase", () => {
       guard: fakeGuard({ action: "allow" }),
       hermesRunner: loggingRunner(order, { ok: true, output: "done" }),
       userId,
-      externalTool: fakeExternalTool({ ok: false, error: "cli-error" }, order),
+      externalTool: settledSlot(fakeExternalTool({ ok: false, error: "cli-error" }, order)),
     });
 
     const toolResult = await runner.run(makeInvocation({ agent: "hermes", taskPrompt: "do it" }), "task-1").result;
@@ -225,13 +233,13 @@ describe("delegateTask runner — the dispatch-time setup phase", () => {
       guard: fakeGuard({ action: "allow" }),
       hermesRunner: loggingRunner(order, { ok: true, output: "done" }),
       userId,
-      externalTool: {
+      externalTool: settledSlot({
         name: "hermes",
         provide() {
           order.push("provide:threw");
           return Promise.reject(new Error("boom"));
         },
-      },
+      }),
     });
 
     const toolResult = await runner.run(makeInvocation({ agent: "hermes", taskPrompt: "do it" }), "task-1").result;
@@ -247,11 +255,87 @@ describe("delegateTask runner — the dispatch-time setup phase", () => {
       guard: fakeGuard({ action: "deny", reason: "nope" }),
       hermesRunner: loggingRunner(order, { ok: true, output: "done" }),
       userId,
-      externalTool: fakeExternalTool(OK, order),
+      externalTool: settledSlot(fakeExternalTool(OK, order)),
     });
 
     await runner.run(makeInvocation({ agent: "hermes", taskPrompt: "do it" }), "task-1").result;
 
     expect(order).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Boot ordering — the slot is read at DISPATCH, never snapshotted per session
+// ---------------------------------------------------------------------------
+// `Bun.serve()` accepts connections synchronously, and a connection is what
+// builds this runner. An earlier shape captured `slot.get()` once, at session
+// creation: a client that reconnected inside the gateway's boot window baked a
+// permanent `null` into its runner and every delegation on that socket silently
+// skipped verify-and-repair for the life of the session, with no self-heal.
+// These pin the read side of that fix; `main.ts` closes the window itself by
+// settling the slot before it starts serving.
+
+describe("delegateTask runner — the external tool is resolved per dispatch", () => {
+  const OK: Result<void, ExternalToolError> = { ok: true, value: undefined };
+
+  // INVARIANT: a session built before boot settled the slot still provides.
+  it("waits for an unsettled slot rather than dispatching as if there were no external tool", async () => {
+    const order: string[] = [];
+    const slot = createExternalToolSlot();
+    const runner = createDelegateTaskRunner({
+      guard: fakeGuard({ action: "allow" }),
+      hermesRunner: loggingRunner(order, { ok: true, output: "done" }),
+      userId,
+      externalTool: slot,
+    });
+
+    const { result } = runner.run(makeInvocation({ agent: "hermes", taskPrompt: "do it" }), "task-1");
+    await settle();
+    expect(order).toEqual([]); // neither provided nor spawned while the slot is pending
+
+    slot.set(fakeExternalTool(OK, order));
+    await result;
+
+    expect(order).toEqual([`provide:${userId}`, `spawn:${userId}`]);
+  });
+
+  // INVARIANT: every boot path settles, so "no external tool in this config"
+  // is a fast null and never an indefinite wait.
+  it("dispatches immediately when boot sealed the slot empty", async () => {
+    const order: string[] = [];
+    const slot = createExternalToolSlot();
+    slot.sealEmpty("no hermes: block in this configuration");
+    const runner = createDelegateTaskRunner({
+      guard: fakeGuard({ action: "allow" }),
+      hermesRunner: loggingRunner(order, { ok: true, output: "done" }),
+      userId,
+      externalTool: slot,
+    });
+
+    const toolResult = await runner.run(makeInvocation({ agent: "hermes", taskPrompt: "do it" }), "task-1").result;
+
+    expect(order).toEqual([`spawn:${userId}`]);
+    expect(toolResult).toEqual({ content: "done", isError: false });
+  });
+
+  // INVARIANT: the wait is cancellable. A wedged boot must never become a
+  // delegation that cannot be aborted.
+  it("stops waiting on a slot that never settles when the delegation is cancelled", async () => {
+    const order: string[] = [];
+    const runner = createDelegateTaskRunner({
+      guard: fakeGuard({ action: "allow" }),
+      hermesRunner: loggingRunner(order, { ok: true, output: "done" }),
+      userId,
+      externalTool: createExternalToolSlot(), // never settled
+    });
+
+    const { cancel, result } = runner.run(makeInvocation({ agent: "hermes", taskPrompt: "do it" }), "task-1");
+    await settle();
+    expect(order).toEqual([]);
+
+    cancel();
+    await result;
+
+    expect(order).toEqual([`spawn:${userId}`]); // released, and the profile was never touched
   });
 });

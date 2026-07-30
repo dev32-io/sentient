@@ -110,8 +110,9 @@ export interface PhaseServicesOutput {
    *  the factory itself still exists in that case, and throws when actually
    *  invoked. */
   readonly createSessionRuntime: CreateSessionRuntime | null;
-  /** Late-bound holder for the delegated worker's own configuration — filled
-   *  in `main.ts` once the MCP host exists (task 9g). */
+  /** Late-bound holder for the delegated worker's own configuration — settled
+   *  in `main.ts` once the MCP host exists, before the server accepts its
+   *  first connection (task 9g). */
   readonly delegatedExternalTool: ExternalToolSlot;
 }
 
@@ -282,9 +283,10 @@ export interface OrchestratorServices {
   mcpClient: McpClient;
   provider: ProviderClient | null;
   createSessionRuntime: CreateSessionRuntime | null;
-  /** Filled once at boot by whoever owns the MCP host — see
+  /** Settled exactly once at boot by whoever owns the MCP host — see
    *  `external-tools/external-tool-slot.ts` for why this one hop is
-   *  late-bound. Read at session-creation time by `delegateTask`'s runner. */
+   *  late-bound. Resolved per dispatch by `delegateTask`'s setup phase, never
+   *  snapshotted at session creation. */
   delegatedExternalTool: ExternalToolSlot;
 }
 
@@ -493,9 +495,12 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
         guard: delegationGuard,
         hermesRunner,
         userId: principal.userId,
-        // Read per session, not per boot: the slot is filled while the gateway
-        // starts and this closure runs on every WS connect long afterwards.
-        externalTool: delegatedExternalTool.get(),
+        // The SLOT, not its value. This closure runs on every WS connect,
+        // which is not ordered against boot filling the slot — snapshotting it
+        // here would hand a session that connected inside the boot window a
+        // permanent `null` and silently skip verify-and-repair on every one of
+        // its delegations. `delegateTask` resolves it per dispatch instead.
+        externalTool: delegatedExternalTool,
       }),
     );
 
