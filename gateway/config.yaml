@@ -261,37 +261,28 @@ downloads:
   public_base_url: https://sentient.dev32.io
 
 # ---------------------------------------------------------------------------
-# Hermes — per-user Hermes WORKER PROCESS deployment. Distinct from the
-# cognitive-cycle dispatch brain purged above: `worker` / `mcp_host` are
-# still read by retained code (session-router.ts, admin/, apply/,
-# bootstrap/create-mcp-host.ts) to provision and address each user's
-# supervisord-managed Hermes child. `ambient` and `home_assistant_observer`
-# are removed — they fed the deleted sensors/ ambient-event pipeline and
-# have no reader left in gateway/src.
+# Hermes — what the gateway still needs to know about Hermes now that Hermes
+# is NOT a managed service. It is a one-shot exec (`hermes -p <userId> -z
+# <prompt>`) behind delegateTask, so it has no port, container, or lifecycle:
+# the `worker:` block (container_name / url_template / port_base) and `tts:`
+# (markdown/emoji stripping) were deleted in the native-stack migration after
+# a per-key check found no reader for either.
+#
+# What remains is the two blocks with live readers.
 # ---------------------------------------------------------------------------
 hermes:
-  # Single Hermes worker template. Every user gets a supervisord-managed
-  # child inside the `sentient-hermes` overlay container. Port is allocated
-  # at user-create time (port_base + idx, monotonic, unbounded). The gateway
-  # dials url_template with {port} substituted from the user-port-store.
-  worker:
-    container_name: sentient-hermes
-    url_template: "http://sentient-hermes:{port}"
-    port_base: 8650
-
   web_tools:
     provider: searxng
     searxng:
       enabled: true
 
+  # The gateway's OWN MCP server, which the delegated Hermes dials back into
+  # (identify_user, pause_audio, update_user_settings). Read by
+  # bootstrap/create-mcp-host.ts.
   mcp_host:
     transport: unix_socket
     # Base directory for per-user sockets. Actual paths are /run/sentient/mcp-<userId>.sock
     socket_path: "/run/sentient/mcp.sock"
-
-  tts:
-    markdown_stripping_enabled: true
-    emoji_stripping_enabled: true
 
 # ---------------------------------------------------------------------------
 # Auth — user-facing login (PIN + PASETO token)
@@ -305,19 +296,6 @@ auth:
   argon2_memory_kb: 65536
   argon2_iterations: 3
   argon2_parallelism: 1
-
-# ---------------------------------------------------------------------------
-# Apply — settings-change orchestration (docker restart + health check)
-# ---------------------------------------------------------------------------
-apply:
-  docker_restart_timeout_ms: 30000   # max wait for `docker restart` to return
-  health_check_timeout_ms: 30000     # max wait for Hermes /health 200 after restart
-  health_poll_interval_ms: 1000      # poll cadence during health-checking state
-  # Phase D personality/SOUL restart orchestrator. Used after a SOUL.md or
-  # personality-structure edit triggers a per-user supervisord restart; the
-  # orchestrator waits up to this long for the WS adapter to come back online.
-  profile_restart_timeout_ms: 30000      # 5000–60000
-  profile_restart_poll_interval_ms: 250  # 50–1000
 
 # ---------------------------------------------------------------------------
 # Providers — external catalog endpoints + cache TTLs

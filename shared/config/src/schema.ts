@@ -178,34 +178,6 @@ export const authConfigSchema = z.object({
 export type AuthConfig = z.output<typeof authConfigSchema>;
 
 // ---------------------------------------------------------------------------
-// Apply — settings-change orchestration (docker restart + health check)
-// ---------------------------------------------------------------------------
-
-export const applyConfigSchema = z.object({
-  // Max wall time for `docker restart hermes-<user>` to return.
-  docker_restart_timeout_ms: z.number().int().min(5000).default(30000),
-  // Max wall time for Hermes /health to return 200 after the restart command.
-  // Hermes boot is not just process-up: MCP discovery (3–10s × N servers) +
-  // auxiliary-client provider detect + tool registration + session-db open
-  // all happen before /health flips to 200. Cold cache + busy upstream
-  // routinely pushes past 30s; the old default produced false-positive
-  // "agent didn't come back" UX in the apply-bar.
-  health_check_timeout_ms: z.number().int().min(1000).default(90000),
-  // Poll cadence for /health during the health-checking state.
-  health_poll_interval_ms: z.number().int().min(100).default(1000),
-  // Max wall time for the Phase D personality/SOUL profile-restart orchestrator
-  // to wait for the per-user WS adapter to come back online after supervisord
-  // restarts the Hermes process. Same boot-cost story as health_check_timeout_ms
-  // above — kept in the same neighbourhood. Range: 5000–120000.
-  profile_restart_timeout_ms: z.number().int().min(5000).default(90000),
-  // Cadence between WS-readiness polls during the profile-restart orchestrator's
-  // polling phase. Range: 50–1000.
-  profile_restart_poll_interval_ms: z.number().int().min(50).default(250),
-});
-
-export type ApplyConfig = z.output<typeof applyConfigSchema>;
-
-// ---------------------------------------------------------------------------
 // Providers — external catalog endpoints + cache TTLs
 // ---------------------------------------------------------------------------
 
@@ -297,7 +269,6 @@ export const gatewayConfigSchema = z.object({
   webui: webuiConfigSchema.default({}),
   hermes: hermesConfigSchema.optional(),
   auth: authConfigSchema.default({}),
-  apply: applyConfigSchema.default({}),
   providers: providersConfigSchema.default({}),
   // Co-deployed companion service configuration: version resolution URLs,
   // file paths, and cache knobs. Defaults work for the standard docker compose.

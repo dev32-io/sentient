@@ -2,7 +2,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
   AccessConfig as AccessYaml,
-  ApplyConfig as ApplyYaml,
   AuthConfig as AuthYaml,
   CompanionsConfig as CompanionsYaml,
   DownloadsConfig as DownloadsYaml,
@@ -92,7 +91,6 @@ export interface StartupConfig {
   webui: WebuiYaml;
   hermes: HermesYaml | undefined;
   auth: AuthYaml;
-  apply: ApplyYaml;
   providers: ProvidersYaml;
   companions: CompanionsYaml;
   mcpCatalog: McpCatalog;
@@ -166,7 +164,6 @@ export function loadStartupConfig(): StartupConfig {
     webui: cfg.webui,
     hermes: cfg.hermes,
     auth: cfg.auth,
-    apply: cfg.apply,
     providers: cfg.providers,
     companions: cfg.companions,
     mcpCatalog: cfg.mcp_catalog,

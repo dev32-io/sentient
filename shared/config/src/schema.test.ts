@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  applyConfigSchema,
   companionsConfigSchema,
   gatewayConfigSchema,
   loggingConfigSchema,
@@ -278,7 +277,7 @@ describe("gatewayConfigSchema webui field", () => {
   });
 });
 
-describe("gateway config — auth/apply/providers sections", () => {
+describe("gateway config — auth/providers sections", () => {
   const minimal = {
     stt: { provider: "local-stt" },
     tts: {},
@@ -304,21 +303,6 @@ describe("gateway config — auth/apply/providers sections", () => {
     expect(cfg.auth.argon2_parallelism).toBe(1);
   });
 
-  it("defaults apply.docker_restart_timeout_ms to 30000", () => {
-    const cfg = gatewayConfigSchema.parse(minimal);
-    expect(cfg.apply.docker_restart_timeout_ms).toBe(30000);
-  });
-
-  it("defaults apply.health_check_timeout_ms to 90000", () => {
-    const cfg = gatewayConfigSchema.parse(minimal);
-    expect(cfg.apply.health_check_timeout_ms).toBe(90000);
-  });
-
-  it("defaults apply.health_poll_interval_ms to 1000", () => {
-    const cfg = gatewayConfigSchema.parse(minimal);
-    expect(cfg.apply.health_poll_interval_ms).toBe(1000);
-  });
-
   it("defaults providers.ollama_cloud_base_url to https://ollama.com/v1", () => {
     const cfg = gatewayConfigSchema.parse(minimal);
     expect(cfg.providers.ollama_cloud_base_url).toBe("https://ollama.com/v1");
@@ -332,41 +316,6 @@ describe("gateway config — auth/apply/providers sections", () => {
   it("defaults providers.fish_cache_ttl_ms to 600000", () => {
     const cfg = gatewayConfigSchema.parse(minimal);
     expect(cfg.providers.fish_cache_ttl_ms).toBe(600000);
-  });
-});
-
-describe("applyConfigSchema", () => {
-  it("parses an empty object to the simplified default shape", () => {
-    expect(applyConfigSchema.parse({})).toEqual({
-      docker_restart_timeout_ms: 30000,
-      health_check_timeout_ms: 90000,
-      health_poll_interval_ms: 1000,
-      profile_restart_timeout_ms: 90000,
-      profile_restart_poll_interval_ms: 250,
-    });
-  });
-
-  it("rejects health_poll_interval_ms below 100", () => {
-    expect(applyConfigSchema.safeParse({ health_poll_interval_ms: 99 }).success).toBe(false);
-  });
-
-  it("rejects docker_restart_timeout_ms below 5000", () => {
-    expect(applyConfigSchema.safeParse({ docker_restart_timeout_ms: 4999 }).success).toBe(false);
-  });
-
-  it("rejects health_check_timeout_ms below 1000", () => {
-    expect(applyConfigSchema.safeParse({ health_check_timeout_ms: 999 }).success).toBe(false);
-  });
-
-  it("accepts custom values within bounds", () => {
-    const cfg = applyConfigSchema.parse({
-      docker_restart_timeout_ms: 45000,
-      health_check_timeout_ms: 20000,
-      health_poll_interval_ms: 500,
-    });
-    expect(cfg.docker_restart_timeout_ms).toBe(45000);
-    expect(cfg.health_check_timeout_ms).toBe(20000);
-    expect(cfg.health_poll_interval_ms).toBe(500);
   });
 });
 

@@ -4,27 +4,6 @@ import { z } from "zod";
 // Hermes Agent integration config — per spec v4 §5, §7, §9
 // ---------------------------------------------------------------------------
 
-/**
- * Worker template — single source of truth for how the gateway dials any
- * supervisord-managed Hermes child. Each user gets a unique port allocated
- * at user-create time (port_base + idx, monotonic, unbounded). Userland
- * URL = url_template with {port} substituted.
- *
- * Replaces the legacy `profiles: { alice|bob|family: {...} }` block — that
- * shape forced operator-named slots and capped concurrent users at the
- * number of YAML entries. The template form addresses workers by userId
- * everywhere; the user-port-store maps userId → port.
- */
-export const hermesWorkerSchema = z.object({
-  container_name: z.string().min(1),
-  url_template: z
-    .string()
-    .min(1)
-    .refine((v) => v.includes("{port}"), { message: "url_template must contain {port}" }),
-  port_base: z.number().int().min(1024).max(65535).default(8650),
-});
-export type HermesWorker = z.infer<typeof hermesWorkerSchema>;
-
 export const hermesWebToolsSchema = z
   .object({
     provider: z.enum(["searxng"]).default("searxng"),
@@ -49,16 +28,20 @@ export const hermesMcpHostSchema = z.object({
 });
 export type HermesMcpHost = z.infer<typeof hermesMcpHostSchema>;
 
-/** Full hermes: section of gateway config. */
+/** Full hermes: section of gateway config.
+ *
+ * Down to the two blocks with live readers. `worker:` (container_name /
+ * url_template / port_base) addressed the per-user supervisord-managed Hermes
+ * child inside the `sentient-hermes` container — no such process exists now
+ * that Hermes is a one-shot exec, and nothing read those keys. `tts:`
+ * (markdown/emoji stripping) had no reader either: the native orchestrator
+ * streams provider deltas straight into local-tts. */
 export const hermesConfigSchema = z.object({
-  worker: hermesWorkerSchema,
+  /** Read by `config/operator-config-migrator.ts` (the pre-0.1.0
+   *  duckduckgo → searxng rewrite). */
   web_tools: hermesWebToolsSchema,
+  /** Read by `bootstrap/create-mcp-host.ts` for the per-user socket base
+   *  path — the gateway's own MCP server, which Hermes dials back into. */
   mcp_host: hermesMcpHostSchema.default({}),
-  tts: z
-    .object({
-      markdown_stripping_enabled: z.boolean().default(true),
-      emoji_stripping_enabled: z.boolean().default(true),
-    })
-    .default({}),
 });
 export type HermesConfig = z.infer<typeof hermesConfigSchema>;

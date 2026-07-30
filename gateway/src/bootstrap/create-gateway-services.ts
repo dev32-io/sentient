@@ -1,5 +1,4 @@
 import type {
-  ApplyConfig,
   AuthConfig,
   HermesBuiltinTools,
   HermesConfig,
@@ -110,7 +109,6 @@ export interface GatewayServices {
   readonly authConfig: AuthConfig;
   readonly profileStore: ProfileStore;
   readonly templateLoader: TemplateLoader;
-  readonly applyConfig: ApplyConfig;
   readonly applyDeps: ApplyDeps;
   readonly providersConfig: ProvidersConfig;
   /** Fish Audio API key for the voice-browse proxy. Plain env var (not
@@ -227,7 +225,6 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     profileStore: services.profileStore,
     templateLoader: services.templateLoader,
     applyDeps: services.applyDeps,
-    applyConfig: cfg.apply,
     providersConfig: cfg.providers,
     fishApiKey: process.env.FISH_AUDIO_API_KEY ?? null,
     mcpCatalog: cfg.mcpCatalog,
