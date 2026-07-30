@@ -73,6 +73,27 @@ describe("UnixSocketListener", () => {
     expect(parsed.result.tools[0]?.name).toBe("ping");
   });
 
+  // BOOT-FATALITY INVARIANT. `Bun.listen({unix})` throws when the socket's
+  // parent path is unusable, and that throw used to escape `mcpHost.start()`
+  // at gateway boot: under a plain `bun`/compiled-binary run it KILLED the
+  // gateway; under `bun --hot` the process survived but its event loop could
+  // no longer fire timers, so the boot reconcile's health-poll sleep never
+  // resolved — `apply.complete` never fired, local-tts was never launched, and
+  // the post-boot health watchdog was never armed. Reproduced live 4/4 boots.
+  it("resolves instead of throwing when the socket path cannot be listened on", async () => {
+    // /dev/null is a character device, so it can be neither mkdir'd into nor
+    // used as a socket's parent directory.
+    const unusable = "/dev/null/nope/mcp-carol.sock";
+    const carol = createUnixSocketListener(unusable, "carol", {
+      registry,
+      policy: allowAllPolicy,
+      contextFor: () => ({ sessionId: null, userId: "carol", role: "user", sessionChannel: "voice" }),
+    });
+
+    await expect(carol.start()).resolves.toBeUndefined();
+    await expect(carol.stop()).resolves.toBeUndefined();
+  });
+
   it("provides userId from per-socket binding in tool context", async () => {
     const toolCalls: Array<{ userId: string | null }> = [];
     const contextRegistry: ToolRegistry = {
