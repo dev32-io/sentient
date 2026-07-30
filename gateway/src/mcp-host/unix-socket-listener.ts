@@ -25,13 +25,63 @@ export function createUnixSocketListener(socketPath: string, userId: string, dep
     ...(deps.refreshTools ? { refreshTools: deps.refreshTools } : {}),
   };
 
-  function openListener(): ReturnType<typeof Bun.listen<{ id: string; buffer: string }>> {
-    return Bun.listen<{ id: string; buffer: string }>({
+  /**
+   * The reply the peer has not taken yet.
+   *
+   * WHY THIS EXISTS — measured live 2026-07-30. `socket.write` accepts only
+   * what fits the socket's send buffer and RETURNS THE COUNT; the remainder is
+   * the caller's problem. This server used to ignore that return value, which
+   * was invisible while its whole surface was two hosted tools: a `tools/list`
+   * reply was a few hundred bytes and always went in one write. Attaching the
+   * proxied catalog tier makes that same reply ~31 KB, `write` took 8192 of it,
+   * and the delegated agent got NOTHING — the truncated line has no trailing
+   * newline, so the peer waits forever for a frame that will never complete.
+   * (`initialize`, at ~150 bytes, answered normally on the same socket, which
+   * is what isolated it from an "async handler can't write" theory.)
+   *
+   * So a reply is queued as BYTES, not text — a resumed write must not split a
+   * multi-byte UTF-8 sequence — and the tail is pushed from `drain`.
+   */
+  interface ConnectionState {
+    id: string;
+    buffer: string;
+    outbox: Uint8Array | null;
+  }
+
+  /** Push whatever the socket will take; keep the rest for the next `drain`. */
+  function flushOutbox(socket: { write(data: Uint8Array): number }, data: ConnectionState): void {
+    if (!data.outbox) return;
+    const written = socket.write(data.outbox);
+    if (written >= data.outbox.byteLength) {
+      data.outbox = null;
+      return;
+    }
+    // A non-positive return means the socket took nothing this round (closed or
+    // still full); either way the remainder stays queued for `drain`.
+    if (written > 0) data.outbox = data.outbox.subarray(written);
+    log.debug("reply-backpressured", { connectionId: data.id, userId, written, remaining: data.outbox.byteLength });
+  }
+
+  function enqueueReply(socket: { write(data: Uint8Array): number }, data: ConnectionState, payload: string): void {
+    const bytes = new TextEncoder().encode(payload);
+    if (!data.outbox) {
+      data.outbox = bytes;
+    } else {
+      const merged = new Uint8Array(data.outbox.byteLength + bytes.byteLength);
+      merged.set(data.outbox, 0);
+      merged.set(bytes, data.outbox.byteLength);
+      data.outbox = merged;
+    }
+    flushOutbox(socket, data);
+  }
+
+  function openListener(): ReturnType<typeof Bun.listen<ConnectionState>> {
+    return Bun.listen<ConnectionState>({
       unix: socketPath,
       socket: {
         open(socket) {
           const id = `conn-${++connSeq}`;
-          socket.data = { id, buffer: "" };
+          socket.data = { id, buffer: "", outbox: null };
           log.debug("open", { connectionId: id, userId });
         },
         async data(socket, chunk) {
@@ -43,9 +93,13 @@ export function createUnixSocketListener(socketPath: string, userId: string, dep
             const line = data.buffer.slice(0, idx);
             data.buffer = data.buffer.slice(idx + 1);
             const res = await respondTo(line, data.id);
-            if (res !== null) socket.write(`${res}\n`);
+            if (res !== null) enqueueReply(socket, data, `${res}\n`);
             idx = data.buffer.indexOf("\n");
           }
+        },
+        drain(socket) {
+          const data = socket.data;
+          if (data) flushOutbox(socket, data);
         },
         close(socket) {
           log.debug("close", { connectionId: socket.data?.id, userId });
