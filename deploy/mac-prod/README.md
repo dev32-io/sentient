@@ -4,6 +4,20 @@ The production deploy target: gateway + all sibling services on a single
 Apple-silicon Mac. **This replaces the retired Raspberry Pi deploy** — see
 [Why macOS](#why-macos).
 
+> **Native-stack migration banner (2026-07-29):** the gateway is a native
+> binary under `launchd` now, not a container. The only supported install is
+> [Native installer — first real run](#native-installer--first-real-run)
+> (`sudo python3 deploy/mac-prod/setup-prod.py install <tarball>`); compose
+> builds addon images only. **Do not follow** any section below that detects
+> `HOST_DOCKER_GID`, runs the top-level `python3 deploy/setup-prod.py`, or
+> brings the gateway up with `docker compose ... up -d` — those describe the
+> pre-migration flow. That top-level `deploy/setup-prod.py` and its
+> `native/stt-backend.py` / `native/tts-backend.py` value-rewriters (which
+> still patch `host.docker.internal` URLs into the gateway config — including
+> the STT-backend table below) have **no caller left outside this file**.
+> Whether they get deleted or re-grounded is an **open decision**, deliberately
+> not settled here. Until it is, treat those sections as historical.
+
 ## Why macOS
 
 The Pi 5 couldn't give local speech models enough headroom. Running the
