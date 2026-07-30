@@ -258,8 +258,7 @@ Fixed columns per the e2e rule: `Case | Viewport | Pre-state | Action | Expected
 | native-tool-call | web, native | yes — MCPs on loopback |
 | delegate-hermes-bg | web | yes — **newly unblocked** |
 | permission-confirm | web desktop+mobile, **native (spec-matrix gap — added)** | yes |
-| barge-in (UI stop arm) | web, native | yes |
-| barge-in (acoustic mic-onset arm) | web, native | **no → operator handoff §9.4** |
+| barge-in (acoustic, mic onset) | web, native | **no → operator handoff §9.4** — its ONLY production trigger is STT speech-onset |
 | interrupt | web | yes, incl. background-cancel arm (**newly unblocked**) |
 | steer-midloop | web | yes — **newly unblocked** |
 | steer-followup-audio | web, native | yes |
@@ -295,7 +294,7 @@ The agent's final deliverable is this checklist, pre-filled with exact steps and
 
 | # | Case | Why an agent cannot do it | Operator steps |
 |---|---|---|---|
-| 1 | **Acoustic barge-in** — real speech over live TTS | Needs a real microphone picking up real speaker output. Headless Chromium has no mic; fake-device flags do not reproduce acoustic echo, which is the actual thing under test. | With TTS speaking a long reply, speak over it. Expect: audio stops within ~200 ms, the partial reply is committed with `cutoff: "barge-in"`, and any background task keeps running. Log: `turn.aborted{cutoff:"barge-in"}` + `playback.stop`. |
+| 1 | **Acoustic barge-in** — real speech over live TTS | Needs a real microphone picking up real speaker output. Headless Chromium has no mic; fake-device flags do not reproduce acoustic echo, which is the actual thing under test. **This is barge-in's only arm.** An earlier revision of §9.2 above split it into a "UI stop arm" and an "acoustic arm" and marked the UI one agent-drivable. That was a PLANNING ERROR, not an implementation gap: `runtime.bargeIn()`'s only production caller is STT speech-onset (`stt-session.ts`), and the webui Stop button always yields `cutoff: "interrupt"` (covered by the separate `interrupt` row). There is no UI barge-in control to drive, and adding one purely to make a matrix row drivable would be a test-shaped feature. Do not reintroduce the row. | With TTS speaking a long reply, speak over it. Expect: audio stops within ~200 ms, the partial reply is committed with `cutoff: "barge-in"`, and any background task keeps running. Log: `turn.aborted{cutoff:"barge-in"}` + `playback.stop`. |
 | 2 | **Acoustic barge-in on a physical phone** | Simulators have no real audio path; the `physical-only` Maestro tag exists for exactly this. | Same as above on a real Android/iOS device. Confirms the client flushes its queue and does not resume. |
 | 3 | **LAN-exposure negative check from another device** | The agent probes the LAN IP from the mini itself, which proves the bind. Proving unreachability *from elsewhere* needs a second machine. | From a laptop on the same LAN: every MCP port must refuse; only `8888` answers. |
 | 4 | **Echo-cancellation quality under real acoustics** | Subjective, and hardware/room-dependent. | Hold a normal voice conversation; confirm the assistant does not barge-in on its own TTS. |
