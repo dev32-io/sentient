@@ -14,6 +14,22 @@ tags:
 # tags destructive-profile + restore apply — mutate then revert in one flow).
 # If a future profile's soul diverges from default, add a `PUT /profile/soul` +
 # `POST /profile/apply` restore step using content captured via GET beforehand.
+#
+# ⚠️ RED ON iOS — driven 2026-07-30 (settings-soul batch, 42s), failing at
+# `Element not found: Id matching regex: settings-system-prompt-restore`.
+# Scope of the failure, measured rather than assumed:
+#   - It dies at the "Restore default" tap BELOW, i.e. AFTER the first
+#     re-baselined 8000 ms apply wait was already crossed. The re-timed budget
+#     is NOT the cause; the marker edit + Save + apply all COMPLETED.
+#   - The id is present in the product: SystemPromptScreen.swift:99 puts
+#     .accessibilityIdentifier("settings-system-prompt-restore") on an
+#     unconditional Button, so this is not a stale selector either.
+# Leading hypothesis (UNVERIFIED, do not treat as fact): the multi-line marker
+# typed into the editor grows the card and the soft keyboard stays up, pushing
+# the button outside the rendered hierarchy Maestro can see. Next step is
+# `inspect_screen` at that exact point, then either hideKeyboard or a
+# scrollUntilVisible before the tap. Not guessed here — the Android twin passes,
+# so any edit must be driven on iOS before it is believed.
 - runFlow: _helpers/open-settings.yaml
 - tapOn:
     id: "settings-cat-system-prompt"
