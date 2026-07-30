@@ -72,6 +72,16 @@ The alternative was rejected on evidence: minting a fresh partition per `session
 
 These three go with the multi-conversation project in §2, not to Task 11.
 
+### `identify_user` and `update_user_settings` now have no caller at all
+
+Found while closing D11, and it predates that fix. Both tools are registered ONLY on the gateway's per-user MCP host (`bootstrap/create-mcp-host.ts`), which serves only the delegated agent — the gateway's own ReAct loop reaches tools through `tools/mcp-client.ts`, and that client dials **http transport only** and skips the stdio `mcp_catalog.gateway` entry outright (`mcp.entry.stdio-skipped`). So the gateway's own loop never had them.
+
+Task 9d's tier filter then withholds both from the delegated agent as well (`identify_user` is confirm/deny-tier, `update_user_settings` is confirm-tier). Net effect: the voice identity rebind and the settings write are unreachable on 2.0. That is correct per the delegated-tool decision but wrong as a product state.
+
+The fix is not to widen the delegated tier — it is to give the gateway's OWN loop a path to its own tools, which is what §2's "Hermes-shaped settings are expected-inert on 2.0" is already about. Land it with the delegate-tool permission surface above, or sooner if voice identity switching is wanted back.
+
+Note also that `pause_audio` / `resume_audio` — the two tools the delegated agent DOES now hold — are still stubs: `createUnavailableSessionLookup` means they fail closed with "no active session" until Plan 2 wires a real resolver together with a real audio pause primitive. The registration path is proven; the tools behind it are not yet useful.
+
 ### ~~Stale personality entry becomes live once D11 lands~~ — CLOSED 2026-07-30 (plan task 9d)
 
 Both writers now reject an empty personality body (`invalid-body` → 422) and `preserveAgentSections` drops the entries older builds wrote, so an existing install converges on the next boot re-render. Verified live: `preserve.dropped-personalities | dropped=1`, and the affected user's rendered config.yaml no longer carries a `personalities` key.
