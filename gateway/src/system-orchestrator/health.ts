@@ -40,6 +40,23 @@ export async function pollHealthy(input: PollHealthyInput): Promise<Result<undef
   return { ok: false, error: { kind: "timeout", lastError } };
 }
 
+/** ONE probe attempt, no polling and no startup grace. `pollHealthy` above is a
+ *  STARTUP gate — it retries until the service's `timeout_ms`, which is the
+ *  right shape when waiting for something to boot and the wrong shape for a
+ *  liveness check: on a dead service it would stall the caller for the whole
+ *  timeout. The post-boot watchdog (health-watch.ts) needs the liveness shape.
+ *  Throws nothing — an unreachable service is `false`, same as a failed probe. */
+export async function probeOnce(healthcheck: HealthCheck, io: HealthIO): Promise<boolean> {
+  try {
+    return await runProbe(healthcheck, io);
+  } catch (err) {
+    log.debug("health.probe-once-error", {
+      reason: err instanceof Error ? err.message : String(err),
+    });
+    return false;
+  }
+}
+
 async function runProbe(hc: HealthCheck, io: HealthIO): Promise<boolean> {
   if ("noop" in hc) return true;
   if ("url" in hc) {

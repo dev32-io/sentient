@@ -4,7 +4,8 @@ import Dockerode from "dockerode";
 import { getLog } from "../logging/logger.js";
 import { reconcileOnBoot } from "./boot-reconciler.js";
 import { type DockerodeLike, createDockerDriver } from "./docker-driver.js";
-import type { HealthIO } from "./health.js";
+import { createHealthWatch } from "./health-watch.js";
+import { type HealthIO, probeOnce } from "./health.js";
 import { createNativeDriver } from "./native-driver.js";
 import { createNativeIO } from "./native-io.js";
 import { createSystemOrchestrator } from "./orchestrator.js";
@@ -36,6 +37,9 @@ export interface SystemOrchestratorService {
   applySubset(names: ReadonlySet<ServiceName>): Promise<OrchestratorStatus>;
   getStatus(): OrchestratorStatus;
   reconcile(): Promise<OrchestratorStatus>;
+  /** Stops the post-boot health watchdog. Called on gateway shutdown so a
+   *  pending tick cannot re-apply into a torn-down driver. Idempotent. */
+  stopHealthWatch(): void;
   getRequiredServicesStatus(
     gatewayVersion: string,
     hermesVersionPath: string,
@@ -57,6 +61,14 @@ export interface FactoryDeps {
   /** User-owned, mutable dir where the native backend keeps one pid file per
    *  service. Never under the root-owned code tree. */
   nativeRunDir: string;
+  /** Post-boot health watchdog policy, from
+   *  `config.yaml#system_orchestrator`. See health-watch.ts for why apply()
+   *  alone cannot deliver "restart on crash". */
+  healthWatch: {
+    intervalMs: number;
+    maxAttempts: number;
+    backoffFactor: number;
+  };
 }
 
 const EMPTY_STATUS: OrchestratorStatus = {
@@ -83,6 +95,25 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
   let currentRegistry: Map<ServiceName, ManagedService> = new Map();
   let lastStatus: OrchestratorStatus = { ...EMPTY_STATUS };
 
+  // Applies are SERIALIZED. Each one rebuilds the shared `currentRegistry`
+  // cell, so two overlapping applies would interleave writes to it and could
+  // recreate the same container twice. The watchdog below makes overlap a
+  // routine possibility rather than an operator-only edge case, so the
+  // serialization is load-bearing, not defensive.
+  let applyChain: Promise<unknown> = Promise.resolve();
+  let applyDepth = 0;
+
+  function serializeApply<T>(fn: () => Promise<T>): Promise<T> {
+    applyDepth += 1;
+    // `then(fn, fn)` so a REJECTED predecessor still lets the next apply run —
+    // one failed apply must not wedge the chain for the process lifetime.
+    const run = applyChain.then(fn, fn);
+    applyChain = run.catch(() => undefined);
+    return run.finally(() => {
+      applyDepth -= 1;
+    });
+  }
+
   async function rebuildRegistry(): Promise<Map<ServiceName, ManagedService> | null> {
     const reg = await buildServiceRegistry({
       config: deps.managedServicesConfig,
@@ -98,8 +129,27 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
     return reg.value;
   }
 
+  /** `targets` names the services this apply actually touched, or null for an
+   *  applyAll. A subset apply reports every NON-target as "pending" (runApply
+   *  seeds all registry entries that way and only walks its targets), so
+   *  replacing `lastStatus` wholesale would blank the status page for every
+   *  service the apply never looked at. Keep the previous entry for those. */
+  function mergeStatus(
+    prev: OrchestratorStatus,
+    next: OrchestratorStatus,
+    targets: ReadonlySet<ServiceName> | null,
+  ): OrchestratorStatus {
+    if (targets === null) return next;
+    const prevByName = new Map(prev.services.map((s) => [s.name, s]));
+    return {
+      ...next,
+      services: next.services.map((s) => (targets.has(s.name) ? s : (prevByName.get(s.name) ?? s))),
+    };
+  }
+
   async function withFreshOrchestrator<T>(
     fn: (orch: ReturnType<typeof createSystemOrchestrator>) => Promise<T>,
+    targets: ReadonlySet<ServiceName> | null = null,
   ): Promise<T> {
     const reg = await rebuildRegistry();
     if (!reg) {
@@ -123,29 +173,67 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
       applyTimeoutMs: deps.applyTimeoutMs,
     });
     const result = await fn(orch);
-    lastStatus = orch.getStatus();
+    lastStatus = mergeStatus(lastStatus, orch.getStatus(), targets);
     return result;
   }
+
+  const applySubsetSerialized = (names: ReadonlySet<ServiceName>): Promise<OrchestratorStatus> =>
+    serializeApply(() => withFreshOrchestrator(async (o) => o.applySubset(names), names));
+
+  // ── Post-boot health watchdog ─────────────────────────────────────────────
+  // apply() runs at boot, from the admin endpoint and from the wizard — never
+  // when a service dies later. This is the other half of "restart on crash".
+  const healthWatch = createHealthWatch({
+    intervalMs: deps.healthWatch.intervalMs,
+    maxAttempts: deps.healthWatch.maxAttempts,
+    backoffFactor: deps.healthWatch.backoffFactor,
+    // A `noop` healthcheck means "recreate-success implies ready" — there is no
+    // probe to run, so such a service is unwatchable by construction (docker's
+    // own restart policy covers the containers configured that way).
+    listServices: () =>
+      Array.from(currentRegistry.values())
+        .filter((ms) => !("noop" in ms.config.healthcheck))
+        .map((ms) => ms.name),
+    probe: async (name) => {
+      const ms = currentRegistry.get(name);
+      if (!ms) {
+        log.debug("health-watch.probe-skipped", { service: name, reason: "not-in-registry" });
+        return true;
+      }
+      return probeOnce(ms.config.healthcheck, deps.healthIO);
+    },
+    reapply: async (name) => {
+      await applySubsetSerialized(new Set([name]));
+    },
+    isApplyInFlight: () => applyDepth > 0,
+  });
 
   return {
     get registry() {
       return currentRegistry;
     },
-    applyAll: async () => withFreshOrchestrator(async (o) => o.applyAll()),
-    applySubset: async (names) => withFreshOrchestrator(async (o) => o.applySubset(names)),
+    applyAll: async () => serializeApply(() => withFreshOrchestrator(async (o) => o.applyAll())),
+    applySubset: async (names) => applySubsetSerialized(names),
     getStatus: () => lastStatus,
+    stopHealthWatch: () => healthWatch.stop(),
     reconcile: async () => {
       // A SIGKILLed gateway cannot run a shutdown hook, so native children from
       // the previous process may still hold their ports. Reap before anything
       // tries to bind them.
       await nativeDriver.reapOrphans();
-      return withFreshOrchestrator(async (o) =>
-        reconcileOnBoot({
-          drivers,
-          registry: currentRegistry,
-          orchestrator: { applyAll: () => o.applyAll() },
-        }),
+      const status = await serializeApply(() =>
+        withFreshOrchestrator(async (o) =>
+          reconcileOnBoot({
+            drivers,
+            registry: currentRegistry,
+            orchestrator: { applyAll: () => o.applyAll() },
+          }),
+        ),
       );
+      // Arm the watchdog only once the boot reconcile has settled, so it never
+      // races the very apply that is bringing the fleet up. Idempotent.
+      healthWatch.start();
+      return status;
     },
     getRequiredServicesStatus: (gatewayVersion, hermesVersionPath, sttHealthUrl, ttsHealthUrl) =>
       resolveVersions(() => lastStatus, gatewayVersion, hermesVersionPath, sttHealthUrl, ttsHealthUrl),

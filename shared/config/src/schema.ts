@@ -5,6 +5,7 @@ import { hermesConfigSchema } from "./schemas/hermes-config";
 import { mcpCatalogSchema } from "./schemas/mcp-catalog";
 import { orchestratorConfigSchema } from "./schemas/orchestrator-config";
 import { storeConfigSchema } from "./schemas/store-config";
+import { systemOrchestratorConfigSchema } from "./schemas/system-orchestrator-config";
 
 // ---------------------------------------------------------------------------
 // Session — connection + inactivity limits
@@ -288,6 +289,11 @@ export const gatewayConfigSchema = z.object({
   // Each key is a service name; values are ManagedServiceConfig records
   // validated by the orchestrator's own schema at runtime.
   managed_services: z.record(z.string(), z.unknown()).optional(),
+  // Policy for the system orchestrator itself (health watchdog cadence and
+  // back-off) as opposed to the per-service map above. `.default({})` so an
+  // operator config.yaml predating this block keeps booting without an
+  // operator-config-migrator schema_version bump.
+  system_orchestrator: systemOrchestratorConfigSchema.default({}),
   // Public /download page + mobile OTA artifact serving. Always present;
   // defaults match the standard docker-compose volume layout. Override
   // artifacts_dir and public_base_url in config.yaml for your deployment.

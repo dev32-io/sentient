@@ -91,17 +91,17 @@ if (config.hermes) {
   await mcpHost.start();
 }
 
-// Graceful shutdown
-process.on("SIGINT", async () => {
-  log.info("shutdown", { signal: "SIGINT" });
+// Graceful shutdown. The addon health watchdog is stopped FIRST: a tick that
+// fires while the rest of the process is tearing down would re-apply a service
+// into a half-dismantled driver.
+async function shutdown(signal: string): Promise<never> {
+  log.info("shutdown", { signal });
+  services.systemOrchestrator?.stopHealthWatch();
   if (mcpHost) await mcpHost.stop();
   process.exit(0);
-});
+}
 
-process.on("SIGTERM", async () => {
-  log.info("shutdown", { signal: "SIGTERM" });
-  if (mcpHost) await mcpHost.stop();
-  process.exit(0);
-});
+process.on("SIGINT", () => void shutdown("SIGINT"));
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
 export { server };

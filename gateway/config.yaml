@@ -456,6 +456,28 @@ mcp_catalog:
         - search_web
 
 # ─────────────────────────────────────────────────────────────────────────
+# system_orchestrator
+# ─────────────────────────────────────────────────────────────────────────
+# Policy for the ORCHESTRATOR ITSELF, as opposed to the per-service map in
+# managed_services below. Note this is NOT the `orchestrator:` block further
+# up — that one is the native LLM agent loop. Two subsystems, one word.
+# (These knobs cannot live under managed_services: every key there must be a
+# service name, or the registry build fails.)
+system_orchestrator:
+  # How often the orchestrator re-probes addon health after boot and re-applies
+  # anything that has gone unhealthy. Range 5000-300000. Without this a crashed
+  # addon never recovers: apply() otherwise runs only at boot/admin/wizard.
+  health_watch_interval_ms: 15000
+  # Consecutive failed re-apply attempts before the watchdog gives up on one
+  # service and logs an ERROR naming it. Range 1-20. Stops a service that cannot
+  # start (bad config, port already taken) being recreated forever. Probing
+  # continues after a give-up, so fixing the cause re-arms the watchdog.
+  health_watch_max_attempts: 5
+  # Multiplier applied to the interval after each failed attempt, so retries
+  # widen instead of hammering. Range 1-10; 1 = fixed interval, no widening.
+  health_watch_backoff_factor: 2
+
+# ─────────────────────────────────────────────────────────────────────────
 # managed_services
 # ─────────────────────────────────────────────────────────────────────────
 # Policy layer for the system service orchestrator. Each entry binds a

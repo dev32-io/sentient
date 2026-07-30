@@ -13,6 +13,7 @@ import type {
   STTConfig as STTYaml,
   SessionConfig as SessionYaml,
   StoreConfig as StoreYaml,
+  SystemOrchestratorConfig as SystemOrchestratorYaml,
   TTSConfig as TTSYaml,
   TlsConfig as TlsYaml,
   WebuiConfig as WebuiYaml,
@@ -101,6 +102,9 @@ export interface StartupConfig {
   /** Optional managed-services map forwarded verbatim from YAML.
    *  Validated by the system orchestrator's own schema at runtime. */
   managedServices: Record<string, unknown> | undefined;
+  /** Policy for the system orchestrator itself — health-watchdog cadence and
+   *  back-off. Always defined (schema `.default({})`), unlike the map above. */
+  systemOrchestrator: SystemOrchestratorYaml;
   /** Public /download page + mobile OTA artifact serving. Always present;
    *  defaults to the standard docker-compose layout when not overridden. */
   downloads: DownloadsYaml;
@@ -169,6 +173,7 @@ export function loadStartupConfig(): StartupConfig {
     mcpCatalog: cfg.mcp_catalog,
     hermesBuiltinTools: cfg.hermes_builtin_tools,
     managedServices: cfg.managed_services,
+    systemOrchestrator: cfg.system_orchestrator,
     downloads: cfg.downloads,
   };
 }

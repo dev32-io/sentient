@@ -96,6 +96,14 @@ export async function runPhaseOrchestrator(input: PhaseOrchestratorInput): Promi
         pollIntervalMs: 1000,
         applyTimeoutMs: 5 * 60 * 1000,
         nativeRunDir: join(input.sentientHome, NATIVE_RUN_SUBDIR),
+        // Post-boot crash recovery. Operator-tunable in
+        // config.yaml#system_orchestrator; see system-orchestrator/health-watch.ts
+        // for why the apply path alone cannot deliver "restart on crash".
+        healthWatch: {
+          intervalMs: cfg.systemOrchestrator.health_watch_interval_ms,
+          maxAttempts: cfg.systemOrchestrator.health_watch_max_attempts,
+          backoffFactor: cfg.systemOrchestrator.health_watch_backoff_factor,
+        },
         hostEnv: {
           HOST_HOME: process.env.HOST_HOME ?? "",
           HOST_DOCKER_GID: process.env.HOST_DOCKER_GID ?? "",

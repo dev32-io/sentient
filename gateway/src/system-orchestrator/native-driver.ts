@@ -250,9 +250,12 @@ function killChild(deps: NativeDriverDeps, name: ServiceName, pid: number): void
   deps.killPid(pid);
 }
 
-/** Log the exit and drop the handle. Restart is the orchestrator's call (a
- *  health probe failure re-applies), never the driver's — a driver-local
- *  restart loop would race the apply loop. */
+/** Log the exit and drop the handle. Restart is never the driver's call — a
+ *  driver-local restart loop would race the apply loop. It belongs to
+ *  health-watch.ts, which probes each service on a timer and re-applies the
+ *  ones that have gone unhealthy. (This comment used to claim "a health probe
+ *  failure re-applies" while nothing outside the apply path ever re-probed, so
+ *  a crashed addon stayed dead. The watchdog is what made the claim true.) */
 function watchExit(name: ServiceName, proc: NativeProcess, running: Map<ServiceName, NativeProcess>): void {
   void proc.exited
     .then((code) => {
