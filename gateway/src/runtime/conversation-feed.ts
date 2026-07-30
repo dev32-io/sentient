@@ -74,6 +74,16 @@ export interface ConversationFeed {
   /** Publish everything outstanding, including tool tiles still waiting on a
    *  result that is never coming. Called at every turn boundary. */
   publishAll(): void;
+  /** Re-emit an ALREADY-published entry, leaving the cursor untouched.
+   *
+   *  One caller: a client resend of a `pendingId` this session already
+   *  committed (session-runtime.ts). The message must not be committed twice,
+   *  but it must still be ANSWERED — a silent drop leaves the client's outbox
+   *  retrying forever, which is worse than the duplicate it replaces. The
+   *  re-emitted frame carries the same `entryId`, so the KMP connector's
+   *  dedupe-by-entryId updates in place rather than appending a second
+   *  bubble. */
+  republish(entry: SessionEntry): void;
 }
 
 export interface ConversationFeedDeps {
@@ -94,7 +104,16 @@ function toWireItem(item: FeedItem, isUnresolvedTool: boolean): ConversationFeed
   const base = { entryId: item.id, ts: item.createdAt };
   switch (item.kind) {
     case "user":
-      return { ...base, kind: "user", channel: USER_CHANNEL, content: item.text };
+      return {
+        ...base,
+        kind: "user",
+        channel: USER_CHANNEL,
+        content: item.text,
+        // Echoed ONLY when the client supplied one. A spoken turn has no
+        // optimistic bubble to settle, so an empty-string placeholder would be
+        // a value the client would then try to reconcile against.
+        ...(item.pendingId === null ? {} : { pendingId: item.pendingId }),
+      };
     case "trigger":
       return { ...base, kind: "trigger", source: TRIGGER_SOURCE, summary: item.text };
     case "assistant":
@@ -210,6 +229,23 @@ export function createConversationFeed(deps: ConversationFeedDeps): Conversation
     },
     publishAll(): void {
       publish(true);
+    },
+    republish(entry: SessionEntry): void {
+      const item = projectForClient([entry])[0];
+      if (item === undefined) {
+        log.warn("conversation-feed.republish.not-renderable", {
+          userId,
+          sessionId,
+          seq: entry.seq,
+          kind: entry.kind,
+          reason: "the projection renders no feed item for this entry kind",
+        });
+        return;
+      }
+      // `false`: only a tool tile can be unresolved, and republish is only
+      // ever called with the `user` entry a resend matched.
+      emitter.conversationEntry(toWireItem(item, false), entry.turnId);
+      log.info("conversation-feed.republished", { userId, sessionId, seq: entry.seq, turnId: entry.turnId });
     },
   };
 }

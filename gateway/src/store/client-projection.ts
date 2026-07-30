@@ -22,6 +22,11 @@ export interface FeedItem {
   toolName: string | null;
   cutoff: CutoffKind | null;
   createdAt: number;
+  /** The client's own id for this message, on a `user` item that arrived with
+   *  one. Carried through so the committed echo can settle the client's
+   *  optimistic bubble — on the live entry AND on every later snapshot, which
+   *  is what keeps `render(replay) == render(live)` true of it. */
+  pendingId: string | null;
 }
 
 export function projectForClient(entries: SessionEntry[]): FeedItem[] {
@@ -57,6 +62,7 @@ export function projectForClient(entries: SessionEntry[]): FeedItem[] {
         toolName: entry.toolName,
         cutoff: null,
         createdAt: entry.createdAt,
+        pendingId: null,
       });
       continue;
     }
@@ -108,6 +114,7 @@ export function projectForClient(entries: SessionEntry[]): FeedItem[] {
       toolName: null,
       cutoff: entry.cutoff,
       createdAt: entry.createdAt,
+      pendingId: entry.pendingId,
     });
   }
 

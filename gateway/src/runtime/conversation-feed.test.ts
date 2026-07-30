@@ -235,6 +235,66 @@ describe("conversation feed — wire convergence", () => {
     store.close();
   });
 
+  it("WIRE: a committed user entry echoes the pendingId the client sent, live AND on replay", () => {
+    // Without the echo the client's optimistic bubble never reconciles, its
+    // outbox never settles, and the message is re-sent (defect D14). And if
+    // the echo were live-only, a reconnect's snapshot would resurrect the
+    // duplicate the client had already settled — render(replay) == render(live)
+    // is the contract, not an implementation detail.
+    const store = openStoreFor("pending-echo");
+    const sink = recordingSink();
+    const feed = createConversationFeed({ store, sessionId: SESSION_ID, userId: USER_ID, emitter: sink });
+
+    store.append(entry({ kind: "user", text: "hello", pendingId: "p1", createdAt: 7001 }));
+    store.append(entry({ kind: "assistant", text: "hi", createdAt: 7002 }));
+    feed.publishAll();
+
+    const live = applyFrames(sink.frames);
+    expect(live.map((i) => (i.kind === "user" ? i.pendingId : undefined))).toEqual(["p1", undefined]);
+    expect(live).toEqual(freshSnapshotOf(store));
+    store.close();
+  });
+
+  it("WIRE: a user entry with no pendingId omits the field entirely", () => {
+    const store = openStoreFor("pending-absent");
+    const sink = recordingSink();
+    const feed = createConversationFeed({ store, sessionId: SESSION_ID, userId: USER_ID, emitter: sink });
+    store.append(entry({ kind: "user", text: "spoken", createdAt: 7101 }));
+    feed.publishAll();
+    const item = sink.frames[0]?.items[0];
+    expect(item?.kind).toBe("user");
+    expect(Object.hasOwn(item as object, "pendingId")).toBe(false);
+    store.close();
+  });
+
+  it("WIRE: republish re-answers an already-published entry without advancing the cursor", () => {
+    // A duplicate send must still be ANSWERED — committed once, echoed every
+    // time. A silent drop swaps a visible duplicate for an invisible hang: the
+    // client's outbox retries forever. The re-emitted frame carries the SAME
+    // entryId, which is what makes it an update rather than a second bubble.
+    const store = openStoreFor("republish");
+    const sink = recordingSink();
+    const feed = createConversationFeed({ store, sessionId: SESSION_ID, userId: USER_ID, emitter: sink });
+
+    const committed = store.append(entry({ kind: "user", text: "hello", pendingId: "p1", createdAt: 7201 }));
+    feed.publishAll();
+    sink.frames.length = 0;
+
+    feed.republish(committed);
+    expect(sink.frames).toHaveLength(1);
+    const item = sink.frames[0]?.items[0];
+    expect(item?.entryId).toBe(String(committed.seq));
+    expect(item?.kind === "user" ? item.pendingId : null).toBe("p1");
+    expect(sink.frames[0]?.turnId).toBe(committed.turnId);
+
+    // The cursor is untouched, so the next real commit still publishes.
+    sink.frames.length = 0;
+    store.append(entry({ kind: "assistant", text: "hi", createdAt: 7202 }));
+    feed.publishAll();
+    expect(sink.frames.flatMap((f) => f.items).map((i) => i.entryId)).toEqual(["2"]);
+    store.close();
+  });
+
   it("carries each entry's OWN turnId on its frame so the client never invents the join key", () => {
     const store = openStoreFor("turn-id");
     const sink = recordingSink();
