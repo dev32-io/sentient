@@ -1,6 +1,17 @@
-# delegate-hermes-bg — never run before, found BROKEN (2 chained real defects)
+# delegate-hermes-bg — the ORIGINAL failing drive (superseded; the row now PASSES)
 
-**Result: BLOCKED on two real product defects, not a test-harness problem.**
+> **CURRENT RESULT: PASS.** Read `RE-DRIVE-T9b.md` in this directory for the
+> outcome that stands — the first real delegated completion in the project's
+> history (5x `hermes-runner.run.ok`, 0x non-zero-exit). Both defects below were
+> fixed in NM-T9b (`07e6d99`); the delegated agent's missing gateway TOOLS were
+> a third, separate fault closed in NM-T9c (`36250cb`, socket off SIP-readonly
+> `/run`) with one residual, D11, filed in `.superpowers/sdd/progress.md`.
+>
+> Everything below is the historical failing drive, kept because the two repro
+> transcripts are the evidence for WHY the fixes look the way they do. It is not
+> the current state of the row.
+
+**Result at the time: BLOCKED on two real product defects, not a test-harness problem.**
 Driven live via Playwright MCP against a real gateway + real hermes binary.
 Full transcript: `gateway-log-excerpt.txt` (gateway) plus a direct
 `hermes -p <userId> -z "..."` repro (bypasses the gateway entirely) below.
