@@ -110,9 +110,17 @@ export function createDelegateTaskRunner(deps: DelegateTaskDeps): BackgroundTool
    * runner's result promise and the broker would report the whole delegation as
    * failed on a bookkeeping error.
    */
-  async function runSetupPhase(taskId: string): Promise<void> {
+  async function runSetupPhase(taskId: string, signal: AbortSignal): Promise<void> {
     if (!externalTool) {
       log.debug("delegate-task.setup.no-external-tool", { taskId, userId });
+      return;
+    }
+    if (signal.aborted) {
+      log.info("delegate-task.setup.skipped", {
+        taskId,
+        userId,
+        reason: "cancelled before setup ran; a delegation that will not spawn must not touch the profile",
+      });
       return;
     }
     try {
@@ -157,7 +165,7 @@ export function createDelegateTaskRunner(deps: DelegateTaskDeps): BackgroundTool
     const onInvAbort = () => controller.abort();
     inv.signal.addEventListener("abort", onInvAbort, { once: true });
 
-    const result = runSetupPhase(taskId)
+    const result = runSetupPhase(taskId, controller.signal)
       .then(() => hermesRunner.run(userId, taskPrompt, controller.signal))
       .then((outcome): ToolResult => {
         inv.signal.removeEventListener("abort", onInvAbort);

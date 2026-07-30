@@ -16,7 +16,9 @@ Status as of 2026-07-30, branch `feature/native-orchestrator`.
 
 ### ~~D11 — the delegated Hermes has no tools~~ — CLOSED 2026-07-30 (plan task 9d)
 
-`gateway/src/external-tools/` is a generic **external-tool configuration handler** — an external tool is one the gateway does not supervise (no lifecycle, port or health check), Hermes being the first of them. It runs as the last startup step, after `mcpHost.start()` and gated on the system orchestrator's boot-reconcile **completion**; a null signal skips loudly (`external-tools.skipped`) instead of registering against sockets nothing serves. Registration is `hermes -p <id> mcp add gateway --command nc --args -U <resolveMcpSocketPath(id)>` through hermes's public CLI, read back afterwards because exit 0 is not evidence. The `hermes-profile.bridge.not-live` detector is deleted.
+`gateway/src/external-tools/` holds the generic **external tool** contract — an external tool is one the gateway does not supervise (no lifecycle, port or health check), Hermes being the first of them. Registration is `hermes -p <id> mcp add gateway --command nc --args -U <resolveMcpSocketPath(id)>` through hermes's public CLI, read back afterwards because exit 0 is not evidence. The `hermes-profile.bridge.not-live` detector is deleted.
+
+*Superseded by task 9g in one respect, kept here because the reasoning is what made the fix findable:* this originally ran as the last STARTUP step, gated on the system orchestrator's boot-reconcile completion. It now runs in `delegateTask`'s setup phase, at the moment of use, and the boot-time runner (and its `userLifecycle.onCreated` sibling) are deleted — see the follow-up section below.
 
 Live-verified on `u_1eee01a4`, never hand-patched: `hermes.register.start` → `hermes.register.ok`, and its delegated agent now lists `mcp__gateway__pause_audio` and `mcp__gateway__resume_audio` and does **not** list `mcp__gateway__identify_user` or `mcp__gateway__update_user_settings`. Full close: `qa/web/evidence/2026-07-30-t9c-verification-gaps/README.md` § "D11 — the close".
 
@@ -123,7 +125,7 @@ Deferred items, in the order they'd sensibly land:
 
 1. **Installer installs Hermes** — pinned version, verified, alongside the gateway's own install. Today it is assumed present on `PATH`.
 2. **Installer renders the tool's configuration** — profile registration and MCP wiring done once, at install, rather than reconciled per boot. The startup handler then degrades to a *check* that WARNs on drift instead of a *repair* that performs it.
-3. **A generic external-tool registry** — the startup handler is already written generically; make the set of external tools declarative (config, like `mcp_catalog`) rather than a Hermes special case, so adding a second delegated agent is a YAML edit.
+3. **A generic external-tool registry** — the `ExternalTool` contract is already generic (one interface, one `provide(userId)`); make the SET of external tools declarative (config, like `mcp_catalog`) rather than a Hermes special case, so adding a second delegated agent is a YAML edit plus one implementation. Note that since task 9g the caller is `delegateTask`, not a boot step, so the registry is keyed by delegated agent name rather than iterated at startup.
 4. **Settings + tweak flow** — how an operator inspects, enables, disables and re-scopes an external tool from the UI. Depends on the delegate-tool permission surface in §1/D11. Design later.
 
 ---

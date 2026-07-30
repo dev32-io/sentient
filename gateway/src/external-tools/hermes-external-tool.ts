@@ -95,7 +95,7 @@ export interface HermesExternalToolDeps {
 /** Parse `hermes -p <id> config get mcp_servers --json`. Prints a JSON object
  *  when the key is set and a plain "Config key not set: …" line when it is
  *  not, so anything unparseable means "no servers registered". */
-export function parseRegisteredServers(stdout: string): Record<string, GatewayEntry> {
+function parseRegisteredServers(stdout: string): Record<string, GatewayEntry> {
   try {
     const parsed: unknown = JSON.parse(stdout.trim());
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
@@ -115,7 +115,7 @@ function argsMatch(args: unknown, socketPath: string): boolean {
  * every other server in it belongs to the user and is never inspected, ranked,
  * pruned or reported on.
  */
-export function verifyGatewayEntry(servers: Record<string, GatewayEntry>, socketPath: string): EntryVerdict {
+function verifyGatewayEntry(servers: Record<string, GatewayEntry>, socketPath: string): EntryVerdict {
   const entry = servers[GATEWAY_SERVER_NAME];
   if (!entry) return "absent";
   if (entry.command !== SOCKET_BRIDGE_COMMAND) return "drifted";

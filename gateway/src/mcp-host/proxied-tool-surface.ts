@@ -52,10 +52,11 @@ export interface ProxiedToolSurfaceDeps {
   listCatalogTools(): Promise<McpToolRef[]>;
   policy: PolicyEngine;
   brokerFor(userId: string): ToolBroker | null;
-  /** Tool names the gateway serves in-process. A catalog tool with the same
-   *  name is DROPPED, never shadowed — the hosted one is the surface the
-   *  gateway controls exactly, and two handlers under one name would make the
-   *  PDP decision and the executed code disagree. */
+  /** EVERY name the gateway implements in-process — including the ones the
+   *  tier withholds. A catalog tool with a matching name is DROPPED, never
+   *  shadowed: two handlers under one name would make the PDP decision and the
+   *  executed code disagree, and a withheld hosted tool must not be quietly
+   *  re-granted by an upstream server that happens to use the same name. */
   hostedNames: ReadonlySet<string>;
 }
 
