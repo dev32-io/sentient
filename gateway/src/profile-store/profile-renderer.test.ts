@@ -281,27 +281,6 @@ describe("renderProfile (pure function)", () => {
     expect(r1.soulMarkdown).toBe(r2.soulMarkdown);
     expect(r1.hermesConfigYaml).toBe(r2.hermesConfigYaml);
   });
-
-  // Signal device pairing: gateway + cron blocks are conditional on
-  // profile.devices.signal.paired. Hermes' built-in defaults apply when unpaired.
-  it("omits gateway+cron blocks when Signal is not paired", () => {
-    const r = renderProfile(profile, templateBody, ctx);
-    expect(r.hermesConfigYaml).not.toContain("default_deliver: signal");
-    // No leftover placeholder
-    expect(r.hermesConfigYaml).not.toContain("{{gateway_signal_block}}");
-  });
-
-  it("includes gateway+cron blocks when Signal is paired", () => {
-    const paired: ProfileV1 = {
-      ...profile,
-      devices: { signal: { paired: true, account_masked: "+1•••••1234" } },
-    };
-    const r = renderProfile(paired, templateBody, ctx);
-    expect(r.hermesConfigYaml).toContain("platforms:");
-    expect(r.hermesConfigYaml).toMatch(/signal:\s*\n\s+enabled: true/);
-    expect(r.hermesConfigYaml).toContain("unauthorized_dm_behavior: ignore");
-    expect(r.hermesConfigYaml).toContain("default_deliver: signal");
-  });
 });
 
 describe("writeRendered (side-effect helper)", () => {

@@ -3,7 +3,6 @@ import type { AdminDeps } from "./api/handlers/admin.ts";
 import { createAdminHandler } from "./api/handlers/admin.ts";
 import { type ApplyHandlerDeps, createApplyHandler } from "./api/handlers/apply.ts";
 import { createAuthHandler } from "./api/handlers/auth.ts";
-import { createDevicesHandler } from "./api/handlers/devices.ts";
 import { createDiagnosticsHandler } from "./api/handlers/diagnostics.ts";
 import { renderDownloadPage } from "./api/handlers/downloads-page.ts";
 import { renderItmsPlist } from "./api/handlers/downloads-plist.ts";
@@ -168,9 +167,6 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
     systemOrchestrator: services.systemOrchestrator,
   });
   const handleApply = buildApplyHandler(services, services.auth.tokens);
-  const handleDevices = services.devicesHandlerDeps
-    ? createDevicesHandler({ tokens: services.auth.tokens, ...services.devicesHandlerDeps })
-    : async (_req: Request) => new Response("Service Unavailable", { status: 503 });
   const handleVoices = createVoicesHandler({
     tokens: services.auth.tokens,
     profileStore: services.profileStore,
@@ -215,7 +211,6 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
         handleWizard,
         handleSystemStatus,
         handleApply,
-        handleDevices,
         handleVoices,
         handleDiagnostics,
         handleStatic,

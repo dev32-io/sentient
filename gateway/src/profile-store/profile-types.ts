@@ -93,18 +93,6 @@ export const profileV1Schema = z.object({
     // as "minimal" via the schema default.
     reasoningEffort: reasoningEffortSchema.default("minimal"),
   }),
-  devices: z
-    .object({
-      signal: z
-        .object({
-          paired: z.boolean(),
-          // Display-only masked E.164, e.g. "+1•••••1234". Never the raw number.
-          account_masked: z.string().optional(),
-          linked_at: z.string().datetime().optional(),
-        })
-        .optional(),
-    })
-    .optional(),
 });
 
 export type ProfileV1 = z.output<typeof profileV1Schema>;

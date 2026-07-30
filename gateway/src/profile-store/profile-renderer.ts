@@ -240,35 +240,11 @@ function renderHermesYaml(profile: ProfileV1, ctx: RenderContext): string {
   // entirely. The patch closes that completeness gap.
   return HERMES_CONFIG_TMPL.replace("{{model_section}}", modelSection)
     .replace("{{compression_threshold}}", String(profile.compression.threshold))
-    .replace("{{gateway_signal_block}}", renderGatewaySignalBlock(profile))
     .replace("{{agent_block}}", agentBlock)
     .replace("{{mcp_servers_block}}", mcpEntries)
     .replace("{{max_tokens}}", String(profile.advanced.maxTokens))
     .replace("{{extra_system_prompt_block}}", extraBlock)
     .replace(/\n+$/, "\n");
-}
-
-// Emit the gateway.platforms.signal block + cron.default_deliver when the user
-// has paired Signal as a device. gateway.platforms.signal.enabled tells Hermes'
-// gateway runner to boot the Signal adapter; unauthorized_dm_behavior=ignore
-// disables Hermes' built-in DM pairing-code stranger-approval surface (we only
-// allow the user's own E.164 in SIGNAL_ALLOWED_USERS, set via .env on pair).
-// cron.default_deliver makes scheduled jobs deliver to Signal by default —
-// overridable per-job. Emit nothing when unpaired; Hermes' built-in defaults apply.
-function renderGatewaySignalBlock(profile: ProfileV1): string {
-  if (profile.devices?.signal?.paired !== true) return "";
-  return [
-    "gateway:",
-    "  platforms:",
-    "    signal:",
-    "      enabled: true",
-    "      extra:",
-    "        unauthorized_dm_behavior: ignore",
-    "  unauthorized_dm_behavior: ignore",
-    "cron:",
-    "  default_deliver: signal",
-    "",
-  ].join("\n");
 }
 
 // Emit the `agent:` block. Holds two fields:

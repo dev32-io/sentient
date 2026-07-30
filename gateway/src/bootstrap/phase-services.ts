@@ -15,13 +15,11 @@ import {
   randomAvatarTint,
 } from "../admin/user-provisioner.js";
 import { migrateWebToolsEnabled } from "../admin/web-tools-migrator.js";
-import type { DevicesHandlerDeps } from "../api/handlers/devices.js";
 import { createApplyDeps } from "../apply/apply-deps.js";
 import type { ApplyDeps } from "../apply/orchestrator.js";
 import { renderAndWrite } from "../apply/orchestrator.js";
 import { resolveAssetRoot } from "../config/asset-root.ts";
 import type { StartupConfig } from "../config/startup-config.ts";
-import { SignalProvisioner } from "../devices/signal/signal-provisioner.js";
 import { getLog } from "../logging/logger.ts";
 import { createPersonalityStore } from "../profile-store/personality-store.js";
 import type { PersonalityStore } from "../profile-store/personality-store.js";
@@ -84,8 +82,6 @@ export interface PhaseServicesOutput {
   readonly userProvisioner: UserProvisioner | null;
   readonly userLifecycle: UserLifecycle;
   readonly buildPersonalityStore: (userId: string) => PersonalityStore;
-  /** Deps bag for `/api/v1/devices*` handlers. */
-  readonly devicesHandlerDeps: DevicesHandlerDeps;
 
   // --- Native orchestrator composition root (spec §2.6, Plan 2 Task 9) ------
   // App-lifetime singletons + a per-session factory. See the header comment
@@ -135,8 +131,6 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
 
   const profileStore = createProfileStore();
   const templateLoader = createTemplateLoader();
-  const hostDataDir = process.env.SENTIENT_HOST_GATEWAY_DATA_DIR ?? "/data/profiles";
-  const resolveHermesHomeFor = (userId: string): string => `${hostDataDir.replace(/\/+$/, "")}/${userId}`;
 
   const applyDeps: ApplyDeps = createApplyDeps({
     profileStore,
@@ -194,8 +188,6 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
   const buildPersonalityStore = (userId: string): PersonalityStore =>
     createPersonalityStore({ profileDir: getHermesProfileDir(userId) });
 
-  const devicesHandlerDeps = buildDevicesHandlerDeps(profileStore, resolveHermesHomeFor);
-
   log.info("phase-services-complete", {
     stt: stt !== null,
     tts: tts !== null,
@@ -216,7 +208,6 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     userProvisioner,
     userLifecycle,
     buildPersonalityStore,
-    devicesHandlerDeps,
     accessManager,
     mcpClient,
     provider,
@@ -242,37 +233,6 @@ function buildRenderInnerProfile(
       return { ok: false, error: "render-error" };
     }
     return { ok: false, error: "write-error" };
-  };
-}
-
-function buildDevicesHandlerDeps(
-  profileStore: ProfileStore,
-  resolveHermesHomeFor: (userId: string) => string,
-): DevicesHandlerDeps {
-  const provisioner = new SignalProvisioner({
-    async getProfile(userId) {
-      const r = await profileStore.get(userId);
-      if (!r.ok) throw new Error(`profile not found: ${r.error}`);
-      return r.value;
-    },
-    async setProfile(profile) {
-      const r = await profileStore.save(profile);
-      if (!r.ok) throw new Error(`profile save failed: ${r.error}`);
-    },
-    getHermesHome: resolveHermesHomeFor,
-  });
-
-  return {
-    async getUserProfile(userId) {
-      const r = await profileStore.get(userId);
-      if (!r.ok) return {};
-      return r.value;
-    },
-    provisionSignalCli: (userId) => provisioner.provision(userId),
-    waitForSignalCliHealth: (userId) => provisioner.waitForHealth(userId),
-    finalizePair: (userId, account) => provisioner.finalize(userId, account),
-    cleanupOnFail: (userId) => provisioner.cleanup(userId),
-    unpair: (userId) => provisioner.unpair(userId),
   };
 }
 

@@ -15,7 +15,6 @@ import type { LlmProvider } from "../admin/secrets-store.js";
 import type { UnlockCode } from "../admin/unlock-code.js";
 import type { UserLifecycle } from "../admin/user-lifecycle.js";
 import type { UserProvisioner } from "../admin/user-provisioner.js";
-import type { DevicesHandlerDeps } from "../api/handlers/devices.js";
 import type { TestProviderResult } from "../api/wizard/index.ts";
 import type { ApplyDeps } from "../apply/orchestrator.js";
 import type { SessionManager } from "../auth/session-manager.ts";
@@ -122,9 +121,6 @@ export interface GatewayServices {
   readonly userLifecycle: UserLifecycle;
   readonly buildPersonalityStore: (userId: string) => PersonalityStore;
   readonly systemOrchestrator: SystemOrchestratorService | null;
-  /** Deps bag for the `/api/v1/devices*` handler. Null in headless / CI builds
-   *  where hermes + supervisordControl are not configured. */
-  readonly devicesHandlerDeps: DevicesHandlerDeps | null;
   /** Returns the shared Hermes bearer token used for per-user ACP / plugin auth. */
   readonly hermesApiKey: () => string;
   resolveProfileDir(userId: string): string;
@@ -234,7 +230,6 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     userLifecycle: services.userLifecycle,
     buildPersonalityStore: services.buildPersonalityStore,
     systemOrchestrator,
-    devicesHandlerDeps: services.devicesHandlerDeps,
     hermesApiKey: () => internalSecretsStore.getHermesAuthTokenSync(),
     resolveProfileDir: getHermesProfileDir,
     accessManager: services.accessManager,
