@@ -27,7 +27,6 @@ import { ToolsPane } from "./panes/tools-pane.tsx";
 import { AdvancedPane } from "./panes/advanced-pane.tsx";
 import { AccountPane } from "./panes/account-pane.tsx";
 import { MembersPane } from "./panes/members-pane.tsx";
-import { DevicesPane } from "./panes/devices-pane.tsx";
 import { SecretsPane } from "./panes/secrets-pane.tsx";
 import { GetAppPane } from "./panes/get-app-pane.tsx";
 
@@ -297,7 +296,6 @@ export function SettingsView({
           )}
           {tab === "account" && <AccountPane />}
           {tab === "members" && <MembersPane />}
-          {tab === "devices" && <DevicesPane />}
           {tab === "secrets" && <SecretsPane onMark={markImperative} />}
           {tab === "getApp" && <GetAppPane />}
         </div>

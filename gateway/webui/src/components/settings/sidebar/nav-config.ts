@@ -11,7 +11,6 @@ export type SidebarKey =
   | "advanced"
   | "account"
   | "members"
-  | "devices"
   | "secrets"
   | "getApp";
 
@@ -44,7 +43,6 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     group: "User",
     items: [
       { key: "account", label: "Account", icon: "user-circle" },
-      { key: "devices", label: "Devices", icon: "phone" },
       { key: "getApp", label: "Get the app", icon: "phone" },
     ],
   },
