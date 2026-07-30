@@ -6,6 +6,18 @@ Runs **after** Task 9 completes — one gateway owns `:8888` and one device per 
 
 Maestro **only**; never Playwright for native.
 
+> **Known open defect — read before writing any delegation case. Do not re-diagnose it.**
+> The delegated Hermes agent has **no gateway/HA/MA/searxng tools** on a fresh install (defect D11,
+> re-scoped into `task-9d-hermes-profile-bridge.md`, which is blocked on an owner decision). Dispatch,
+> steering, follow-up turns and cancellation ARE drivable and in scope here. What is NOT: asserting a
+> delegated agent *used* a gateway tool. Equally, do not let a delegation case pass **vacuously** on
+> "a reply came back" — that proves nothing about tool access and would bury the defect deeper. If you
+> see zero tools, it is this defect, not a new one; the symptom has already been chased to the wrong
+> layer twice. Full record: `qa/web/evidence/2026-07-30-t9c-verification-gaps/README.md` § D11.
+> Live check on the box you drive: `grep -c hermes-profile.bridge.not-live ~/.sentient/gateway/logs/$(date +%F).log`.
+> Local-dev caveat: `u_885ffeb7` on the dev Mac was hand-patched with `hermes mcp add` during NM-T9c,
+> so that ONE user has the 4 gateway tools. Do not generalise from it.
+
 **Files:**
 - Modify: `qa/mobile/flows/**` (re-ground existing flows, add new ones)
 - Modify: `qa/mobile/fixtures/README.md`

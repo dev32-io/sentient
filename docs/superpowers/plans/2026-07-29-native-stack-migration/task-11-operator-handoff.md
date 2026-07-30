@@ -137,6 +137,16 @@ The Step 1 sweep must find these. They are listed here so a missing one is a det
 7. **Signal pairing** — the runner was removed outright in Task 6b as dead weight. Not a gap; there is nothing to verify.
 8. **The Hermes-shaped settings — soul, personality, long-term memory — are expected-inert on 2.0.** The gateway now owns the agent loop, so those surfaces render and persist but do not change behaviour. The owner's decision: keep the UI, transition the functionality to gateway-owned in a later spec. Say this plainly — an operator who tests personality and finds it does nothing must be able to tell "as designed, for now" from "broken", and this is the single most likely thing for them to trip over.
 9. **session-switch / past-chat rows** — the seeded entry above already covers these.
+10. **OPEN DEFECT D11 — the delegated Hermes agent has no gateway/HA/MA/searxng tools on a fresh
+    install.** Not a verification gap and not out of scope: a real functional defect that is
+    re-scoped into its own task body, `task-9d-hermes-profile-bridge.md`, and deliberately **blocked
+    on an owner decision** (does a delegated sub-agent inherit the delegator's whole tool catalog, or
+    only the gateway MCP?). `delegateTask` itself works — it dispatches, runs a real credentialed
+    hermes and returns a real completion — so an operator sees delegation succeed while the delegated
+    agent is toolless. Say that distinction plainly, the same way item 8 separates
+    "as designed, for now" from "broken". Containment already shipped: `hermes-profile.bridge.not-live`
+    WARNs once per user on every boot (`grep` it in `~/.sentient/gateway/logs/`). Full record:
+    `qa/web/evidence/2026-07-30-t9c-verification-gaps/README.md` § D11.
 
 - [ ] **Step 7: Lead with the one thing that is not a verification**
 
