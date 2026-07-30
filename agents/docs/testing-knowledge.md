@@ -556,3 +556,79 @@ A voice pack carries a single optional `language` (one of Qwen's 10: zh/en/ja/ko
 
 ### lang-ui + lang-fish-import + lang-filter (operator — PIN + audio)
 **Scenario:** (a) Add-voice modal shows a **Language** single-select dropdown ("No language" default) next to Description; picking one + creating stores it → tile shows a flag badge. (b) Clone-from-Fish prefills the language from the Fish voice's `languages[0]` (∩ the 10; unsupported → unset). (c) The Voice-Packs **"All languages"** filter narrows the grid to packs whose `language` matches. (d) mobile 390 — filter + modal usable, no overflow. Reuses the Fish search `Select` + the shared `@sentient/config` LANGUAGE_DISPLAY map.
+
+## Sentient 2.0 turn wire — web (Playwright MCP)
+
+Reusable cases for the native orchestrator's turn lifecycle, driven live
+2026-07-30 (native-stack migration Task 9) against a real gateway
+(`bun --hot src/main.ts`, `SENTIENT_CODE` pointed at a staged
+`<code>/whisper-stt|local-tts/{venv,src}` layout) + Vite webui dev server.
+Full per-case evidence, gateway log excerpts and defect diagnoses live
+under `qa/web/evidence/2026-07-30-<case>/`. Log tags:
+`[runtime:react-loop]`, `[runtime:session-runtime]`, `[runtime:turn-voice]`,
+`[ws:turn-emitter]`, `[provider:openai]`, `[tools:tool-broker]`,
+`[runtime:permission-broker]`, `[runtime:cancellation]`,
+`[runtime:compaction]`. See the migration banner near the top of this file
+for the full bring-up + re-grounding notes.
+
+**Driving quirk worth knowing:** in this environment, `browser_click` on
+a fresh element sometimes silently no-ops (composer Send, PIN-pad digits)
+— confirmed NOT tied to `page.evaluate(() => el.click())`, which worked
+reliably every time. When a click seems to do nothing, don't assume the
+product is broken — retry via a script-dispatched click and check for a
+visual signal (e.g. PIN-pad fill dots aren't in the accessibility tree,
+only the screenshot) before concluding a real bug.
+
+### native-turn-happy
+**Scenario:** A plain text turn streams token-by-token and the committed bubble survives after `turn.completed`.
+**Why added:** the committed feed is new in 2.0 and was broken twice during development — this is the base-case regression guard.
+**Steps:** send any short prompt; watch the bubble grow via `turn.text.delta`; confirm it stays after `turn.completed` (no revert/duplicate).
+**Expected log trail:** one `turnId` (uuid) through `react-loop.start` → `provider:openai stream-start/stream-end` → `turn.completed` → `turn-voice.audio.start/done` (audio is a separate phase, starts after text settles — can be seconds later on a long reply).
+
+### native-tool-call
+**Scenario:** A prompt needing a foreground MCP read renders a running→done tool pill and a correct final answer.
+**Steps:** ask something needing a live HA/searxng/etc. read.
+**Expected log trail:** `tools:tool-broker tool-broker.pdp.decision action="allow"` → `mcp-client mcp.call-tool.ok` → `tool-dispatch.foreground`. A hallucinated tool name (small models do this) correctly hits `tool-broker.dispatch.unknown-tool` and the model self-corrects with a real tool — not a bug, the fail-safe working.
+
+### permission-confirm-web — all 3 arms
+**Scenario:** A side-effecting tool (e.g. `ha_call_service`) blocks on a real confirm dialog.
+**Steps:** trigger the tool; **Allow** it once, **Deny** it once, and once let the 120s timeout expire un-answered.
+**Expected log trail:** `runtime:permission-broker permission-broker.request timeoutMs=120000` → **Allow:** `permission-resolved outcome="allowed"` → tool dispatches. **Deny:** `outcome="denied"` → `tool-broker.dispatch.denied` → model informed, gives a coherent answer. **Timeout:** `outcome="timeout"` at exactly `request time + 120000ms` (verified to the ms) → tool dispatch shows `isError=true`.
+
+### interrupt (turn+TTS-stop arm)
+**Scenario:** Clicking Stop aborts the current turn's audio immediately, whether text is still streaming or already committed and mid-playback.
+**Steps:** click Stop while TTS is actively streaming.
+**Expected log trail:** `runtime:cancellation cancellation.abort` (or `cancellation.no-turn-in-flight` if text already settled — still valid, audio-stop runs unconditionally either way) → `turn-voice.audio.cancel` → `tts:streaming-tts-synthesizer synthesize-aborted` → `local-tts-socket ws-closed`, all within ~1ms of the click. `background-registry.cancel-all` always fires too, even with nothing to cancel.
+**Known BLOCKED sub-arm:** the background-task-cancel half needs a genuinely long-running `delegateTask` — currently untestable, see `delegate-hermes-bg` below.
+**`barge-in`, NOT this case:** the webui's Stop button always produces `cutoff="interrupt"`, never `"barge-in"` — `runtime.bargeIn()`'s only production caller is real STT speech-onset detection (`stt-session.ts`). There is no UI control that produces a `barge-in` cutoff; that whole case needs a real microphone, hand to Task 11.
+
+### steer-midloop (core mechanism)
+**Scenario:** A background-completion stimulus landing while a turn's react-loop is still running folds into that SAME turn/reply — one bubble, not two.
+**Expected log trail:** `session-runtime.submit.steer kind="background-completion"` appended mid-loop; the SAME `turnId` continues across iterations picking it up on the next provider call.
+**Known defect found alongside this (not fixed, out of `qa/web/**` ownership):** `session-runtime.ts`'s `nextTurnTrigger()` re-detects an already-consumed mid-loop steer as unconsumed (stale `lastProcessedSeq` snapshot) and spuriously fires an extra, empty follow-up turn every time this case fires — wastes one LLM call and leaves a dangling local-tts WebSocket open (recoverable via one Interrupt click, not a permanent leak). See `qa/web/evidence/2026-07-30-steer-midloop/README.md`.
+
+### delegate-hermes-bg / steer-followup-audio — BLOCKED, root-caused
+**Scenario intended:** `delegateTask` returns `{taskId}` immediately; a background completion arriving AFTER the dispatching turn's own final answer starts a back-to-back follow-up turn (new bubble, audio queued after the first finishes).
+**Currently BLOCKED, not a harness problem:** (1) no code path runs `hermes profile create <userId>` for a newly provisioned gateway user — `delegateTask` fails "Profile does not exist" for every fresh user; (2) even after creating the profile, it has no bound model/key, so Hermes fails in ~1-2s always (reproduced calling `hermes` directly, bypassing the gateway). Both together mean there is no way, on a fresh install, to get a background task that outlives its own dispatching turn. Full diagnosis: `qa/web/evidence/2026-07-30-delegate-hermes-bg/README.md`.
+
+### reload-convergence
+**Scenario:** `render(replay) == render(live)` — a hard reload shows the identical feed, including every entry kind (tool pills, permission-confirm outcomes, delegate errors), not just plain text turns.
+**Expected:** same article count + same tool-pill/code-element count before/after; server `turn-emitter.conversation-snapshot itemCount=<n>` matches.
+
+### restart-persistence
+**Scenario:** A real gateway process restart (native — the migration's actual path, not `docker restart`) preserves the full feed via the persisted store, even though the live-stream resume buffer correctly does NOT survive a restart.
+**Expected log trail:** `resume.not-recovered reason="fresh-journal-or-epoch-mismatch"` (correct — no resume buffer across a restart) → `turn-emitter.conversation-snapshot itemCount=<n>` (correct fallback — full history refetch). Client logs 4-5 reconnect attempts with backoff while the gateway is down, then succeeds.
+**Reminder:** `bun --hot` does NOT reload `config.yaml` — a config edit needs this same restart to take effect (only one `config-loaded` log line per process lifetime).
+
+### compaction-continue
+**Scenario:** Chatting past `orchestrator.compaction.compact_threshold_tokens` triggers `maybeCompact()` at the next turn boundary.
+**Drive tip:** track the real running total directly via `sqlite3 ~/.sentient/gateway/users/<userId>/sessions.db "SELECT SUM(LENGTH(text)+LENGTH(tool_args)) FROM entries WHERE kind != 'compaction'"` divided by ~4 — much faster than guessing from the chat transcript.
+**Expected log trail on trigger:** `runtime:compaction compaction.summarizing estimatedTokens=<n> thresholdTokens=<threshold>`.
+**Known defect found (gpt-oss:20b-cloud specific, not fixed — neither `max_output_tokens` nor `compaction.ts` are `qa/web/**`):** the summarizer call reliably hits `finishReason="length"` (exhausts `max_output_tokens: 1024` on Harmony's reasoning channel before any final-channel text) → `compaction.skipped reason="empty-summary"`. Reproduced 2/2 on independent gateway processes. `compaction.ts`'s own guard correctly refuses to commit a bogus marker, but the conversation just keeps growing past the threshold, silently, forever. See `qa/web/evidence/2026-07-30-compaction-continue/README.md`.
+
+### multi-user-isolation
+**Scenario:** A second member's session shares nothing with the first — no client-side history leakage, no server-side conversation crossover, no cross-user API access.
+**Expected:** on identity switch, `sdk.connectors.conversation-history mirror.reset reason="session identity teardown" previousCount=<n>` (Ada's entries explicitly discarded, not hidden); the new user's WS connect opens `conversation-feed.snapshot itemCount=0` on a distinct `conversationId`/sqlite store; a direct REST probe from the non-admin user's own real token gets `403` on an admin-only endpoint.
+
+### Native-restart local-tts hang (found, not a numbered case — real defect)
+**Scenario:** On a real gateway process restart, the native driver's `local-tts` spawn can hang completely — no `native.started`, no `native.prepare-failed`, `apply.complete` never fires, so the post-boot health watchdog never even starts. Reproduced 2 of 2 consecutive restarts in this drive; ruled out the command itself (clean manual run, ~3s) and port conflicts (`lsof`/`ps` both clean). Full diagnosis: `qa/web/evidence/2026-07-30-native-restart-tts-hang/README.md`. A P1 for whoever owns `gateway/src/system-orchestrator/**`.
