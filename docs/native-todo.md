@@ -79,6 +79,22 @@ A regression of the 2.0 legacy purge, not of task 9e: `git log -S pendingId -- g
 
 **Do not fix this with a dedupe guard in the router.** That is the D7 mistake from NM-T9c: the projection was the bug and a guard would have masked it. Restore the round trip — persist `pendingId` on the user entry, echo it on `conversation.entry` — which crosses the store schema and both projections.
 
+### P0 — native addon supervision has never worked, and its health model reports a FALSE GREEN
+
+Found 2026-07-31 on the dev box, once the environment was fixed so the orchestrator actually supervised its native addons for the first time.
+
+**The symptom chain:**
+1. `native.started service="whisper-stt" pid=N` → `native.exited pid=N code=1` roughly 400 ms later. Both addons, every attempt, including every health-watch retry.
+2. The cause of the exit: `whisper-stt` binds **two** ports (8768 WS, 8769), and a leftover from a previous gateway holds them. `OSError: [Errno 48] ... bind on address ('127.0.0.1', 8769)`.
+3. The leftovers exist because `spawnDetached` puts each addon in its **own process group** — deliberate, so a gateway crash does not take the addons down — and a gateway restart does not reap them. `reapOrphans()` only knows the pids it recorded, so anything started by a previous binary, a crashed run, or by hand is invisible to it.
+4. **The logged pid is not the listening pid.** `native.started pid=46977` while `lsof` shows 46636 holding the port. So the driver's own pid record does not identify the process it must later health-check or kill.
+
+**The part that makes this P0 rather than P2:** the health probe asks *"is something answering on this port"*, not *"is the child I started alive"*. A day-old orphan answered it, so the orchestrator reported `apply.complete state="ready"` with **both addons dead**. Every green reading of native supervision on this branch, including the one recorded as a milestone earlier today, was measuring an orphan.
+
+**Almost certainly the same mechanism as the `local-tts` restart hang below** — same driver, same detached-spawn, same reap gap. Treat them as one investigation, not two.
+
+**A fix has to cover all four:** reap by port and by service identity rather than only by recorded pid; record the pid that actually serves; make the health probe prove liveness of *our* child (pid check alongside the port probe); and decide deliberately what a second bind attempt means. Do not fix only the reap — a probe that passes against a foreign listener is what hid this for the whole branch.
+
 ### The gateway restart hangs before `local-tts` starts (P1, operator-verifiable only)
 
 Reproduced 2 of 2 consecutive restarts during E2E: on gateway restart `whisper-stt` starts fine, then `local-tts` produces **no log line at all** — not started, not failed, nothing — and the boot sequence stops. Because boot never completes, the post-boot health watchdog never starts, so **nothing self-heals**. On the mini under launchd this presents as "TTS is dead after a restart, forever, until someone notices."
