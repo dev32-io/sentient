@@ -18,6 +18,13 @@ export default defineConfig({
     exclude: ["@ricky0123/vad-web"],
   },
   server: {
+    // PINNED, and strict. Vite's default is to walk to the next free port, so a
+    // second dev server (or a leftover one) silently moves the UI to 5174 and
+    // every bookmark, E2E base URL and shared link breaks with "Unable to
+    // connect" — while a stale instance keeps answering on 5173. Failing to
+    // start is the correct outcome: it names the conflict instead of hiding it.
+    port: 5173,
+    strictPort: true,
     headers: {
       "Cross-Origin-Opener-Policy": "same-origin",
       "Cross-Origin-Embedder-Policy": "credentialless",
