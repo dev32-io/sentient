@@ -319,9 +319,30 @@ function buildCreateSpec(ms: DockerManagedService, published: PortPublishing): R
   };
 }
 
+/** Every managed container the daemon holds, or an EMPTY list when the daemon
+ *  cannot be reached at all.
+ *
+ *  Never rejects, on purpose. `listContainers` throws ENOENT/ECONNREFUSED when
+ *  Docker Desktop's daemon is not listening — routine on a mini that just
+ *  rebooted, because launchd starts the gateway before auto-login has started
+ *  Docker. Both consumers read this as "what does the backend still hold", and
+ *  for both of them an unreachable backend means "nothing this run may act on":
+ *  the boot reconciler reaps orphans (reap nothing) and the health watchdog
+ *  probes noop-healthcheck units (report not-running, so the next apply
+ *  recreates them). Rejecting instead took the whole boot reconcile down with
+ *  it — see index.ts's `reconcile`. */
 async function listManaged(docker: DockerodeLike): Promise<ManagedProcessInfo[]> {
   const filters = JSON.stringify({ label: [`${LABEL_MANAGED}=true`] });
-  const list = await docker.listContainers({ all: true, filters });
+  let list: Awaited<ReturnType<DockerodeLike["listContainers"]>>;
+  try {
+    list = await docker.listContainers({ all: true, filters });
+  } catch (err) {
+    log.warn("driver.list-managed-failed", {
+      reason: errMsg(err),
+      fallback: "empty list — the docker daemon is unreachable, so nothing is reaped or re-probed this pass",
+    });
+    return [];
+  }
   return list
     .filter((c) => c.Labels?.[LABEL_MANAGED] === "true")
     .map((c) => ({

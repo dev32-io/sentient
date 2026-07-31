@@ -93,6 +93,25 @@ test("rejects entry whose template uses a network not in config.networks", async
   expect(r.ok).toBe(false);
 });
 
+// CONTRACT: `readTemplate` is a bare readFile on the caller's side, so one
+// missing or renamed template file used to REJECT the whole registry build.
+// That rejection escaped the boot reconcile and left the post-boot health
+// watchdog unarmed for the process lifetime — a typed error keeps the failure
+// inside the Result the caller already handles.
+test("an unreadable template is a typed registry error, not a rejection", async () => {
+  const r = await buildServiceRegistry({
+    config: { "ha-mcp": cfg["ha-mcp"] },
+    readTemplate: async () => {
+      throw Object.assign(new Error("ENOENT: no such file or directory"), { code: "ENOENT" });
+    },
+    secrets,
+  });
+
+  expect(r.ok).toBe(false);
+  if (r.ok) return;
+  expect(r.error.kind).toBe("template-unreadable");
+});
+
 test("rejects unknown depends_on target", async () => {
   const bad = {
     "ha-mcp": { ...cfg["ha-mcp"], depends_on: ["does-not-exist"] },

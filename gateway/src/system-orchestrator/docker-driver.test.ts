@@ -340,6 +340,38 @@ test("listManaged returns only containers with sentient.managed=true label", asy
   expect(r[0]?.service).toBe("x");
 });
 
+test("CONTRACT: an unreachable docker daemon yields an empty list, never a rejection", async () => {
+  // launchd starts the gateway before auto-login has started Docker Desktop, so
+  // `listContainers` rejecting with ECONNREFUSED is a routine boot state. It
+  // used to escape all the way out of the boot reconcile, which then never
+  // armed the post-boot health watchdog — leaving every addon, docker AND
+  // native, with no crash recovery for the whole process lifetime.
+  const stub: DockerodeLike = {
+    listNetworks: async () => [{ Name: "sentient-internal", Internal: true }],
+    createNetwork: async () => {},
+    listContainers: async () => {
+      throw Object.assign(new Error("connect ENOENT /var/run/docker.sock"), { code: "ENOENT" });
+    },
+    getContainer: () => ({
+      inspect: async () => ({}),
+      remove: async () => {},
+      start: async () => {},
+      stop: async () => {},
+    }),
+    createContainer: async () => ({ id: "x", start: async () => {} }),
+    getImage: () => ({ inspect: async () => ({}) }),
+    pull: (async () => {
+      const { Readable } = await import("node:stream");
+      return Readable.from([]);
+    }) as unknown as DockerodeLike["pull"],
+    modem: { followProgress: (_s, onFinished) => onFinished(null, []) },
+    getNetwork: () => ({ connect: async () => {} }),
+  };
+  const drv = createDockerDriver({ docker: stub, networks: NETWORKS });
+
+  expect(await drv.listManaged()).toEqual([]);
+});
+
 test("recreate tolerates 404 from remove (idempotent recreate)", async () => {
   const { calls } = makeStub();
   const stub: DockerodeLike = {

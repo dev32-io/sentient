@@ -18,6 +18,7 @@ const log = getLog(["sentient", "system-orch", "service-registry"]);
 
 export type RegistryError =
   | { kind: "config-schema-error"; reason: string }
+  | { kind: "template-unreadable"; service: ServiceName; template: string; reason: string }
   | { kind: "template-error"; service: ServiceName; cause: TemplateError }
   | { kind: "policy-violation"; service: ServiceName; reason: string }
   | { kind: "invalid-dependency"; service: ServiceName; missing: ServiceName };
@@ -110,7 +111,19 @@ async function loadOneTemplate(
   cfg: DockerServiceConfig,
   input: BuildRegistryInput,
 ): Promise<Result<DockerManagedService, RegistryError>> {
-  const yamlBody = await input.readTemplate(cfg.template);
+  // A missing, renamed or unreadable template file is a REGISTRY error, not an
+  // exception: `readTemplate` is a bare `readFile` on the caller's side, and
+  // letting its rejection escape took the whole registry build — and with it
+  // the boot reconcile that owns arming the health watchdog — down over one
+  // file. Typed here so the optional-service branch below can still skip it.
+  let yamlBody: string;
+  try {
+    yamlBody = await input.readTemplate(cfg.template);
+  } catch (err: unknown) {
+    const reason = err instanceof Error ? err.message : String(err);
+    log.warn("registry.template-unreadable", { service: name, template: cfg.template, reason });
+    return { ok: false, error: { kind: "template-unreadable", service: name, template: cfg.template, reason } };
+  }
   const tplResult = await loadServiceTemplate({
     yamlBody,
     secretBindings: cfg.secrets,

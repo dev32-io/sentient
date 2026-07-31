@@ -71,6 +71,11 @@ export interface FactoryDeps {
   };
 }
 
+/** The one `ManagedProcessInfo.state` that counts as alive. A backend protocol
+ *  string (docker's container state, the native driver's own literal), not a
+ *  tunable. */
+const RUNNING_UNIT_STATE = "running";
+
 const EMPTY_STATUS: OrchestratorStatus = {
   state: "idle",
   services: [],
@@ -180,6 +185,27 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
   const applySubsetSerialized = (names: ReadonlySet<ServiceName>): Promise<OrchestratorStatus> =>
     serializeApply(() => withFreshOrchestrator(async (o) => o.applySubset(names), names));
 
+  /**
+   * Backend-level liveness for a service that declares no probe of its own.
+   *
+   * `healthcheck: noop` means "recreate-success implies ready" — there is no
+   * host-reachable port to dial (egress-proxy, searxng, fetch-mcp,
+   * searxng-mcp all sit behind a proxy). Those four used to be filtered OUT of
+   * the watch list on the grounds that docker's `unless-stopped` policy
+   * restarts them. That is true of a container that CRASHED and false of one
+   * that was never CREATED — which is exactly what a boot whose apply failed
+   * (docker's daemon still starting, a template that would not load) leaves
+   * behind, and nothing else ever retries it. So they are watched too, and the
+   * probe is the backend's OWN view of the unit rather than a network round
+   * trip: present and running, or the watchdog re-applies.
+   */
+  async function isUnitRunning(ms: ManagedService): Promise<boolean> {
+    const units = await drivers[ms.config.launch].listManaged();
+    const running = units.some((u) => u.service === ms.name && u.state === RUNNING_UNIT_STATE);
+    log.debug("health-watch.unit-probe", { service: ms.name, launch: ms.config.launch, running });
+    return running;
+  }
+
   // ── Post-boot health watchdog ─────────────────────────────────────────────
   // apply() runs at boot, from the admin endpoint and from the wizard — never
   // when a service dies later. This is the other half of "restart on crash".
@@ -187,19 +213,15 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
     intervalMs: deps.healthWatch.intervalMs,
     maxAttempts: deps.healthWatch.maxAttempts,
     backoffFactor: deps.healthWatch.backoffFactor,
-    // A `noop` healthcheck means "recreate-success implies ready" — there is no
-    // probe to run, so such a service is unwatchable by construction (docker's
-    // own restart policy covers the containers configured that way).
-    listServices: () =>
-      Array.from(currentRegistry.values())
-        .filter((ms) => !("noop" in ms.config.healthcheck))
-        .map((ms) => ms.name),
+    // EVERY registry entry, `noop` healthchecks included — see `isUnitRunning`.
+    listServices: () => Array.from(currentRegistry.keys()),
     probe: async (name) => {
       const ms = currentRegistry.get(name);
       if (!ms) {
         log.debug("health-watch.probe-skipped", { service: name, reason: "not-in-registry" });
         return true;
       }
+      if ("noop" in ms.config.healthcheck) return isUnitRunning(ms);
       return probeOnce(ms.config.healthcheck, deps.healthIO);
     },
     reapply: async (name) => {
@@ -226,23 +248,37 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
     getStatus: () => lastStatus,
     stopHealthWatch: () => healthWatch.stop(),
     reconcile: async () => {
-      // A SIGKILLed gateway cannot run a shutdown hook, so native children from
-      // the previous process may still hold their ports. Reap before anything
-      // tries to bind them.
-      await nativeDriver.reapOrphans();
-      const status = await serializeApply(() =>
-        withFreshOrchestrator(async (o) =>
-          reconcileOnBoot({
-            drivers,
-            registry: currentRegistry,
-            orchestrator: { applyAll: () => o.applyAll() },
-          }),
-        ),
-      );
-      // Arm the watchdog only once the boot reconcile has settled, so it never
-      // races the very apply that is bringing the fleet up. Idempotent.
-      healthWatch.start();
-      return status;
+      // ARMING THE WATCHDOG IS UNCONDITIONAL — hence the `finally`, not a line
+      // after the apply. The watchdog is the ONLY thing that recovers a service
+      // after boot, and a boot that went wrong is exactly when it is needed
+      // most. When a failure here could skip it, one unreachable docker daemon
+      // (launchd starts the gateway before auto-login starts Docker Desktop)
+      // left the whole fleet — including the native addons docker has nothing
+      // to do with — with no crash recovery for the entire process lifetime.
+      // The two throwing paths are closed at their source as well
+      // (docker-driver's `listManaged`, service-registry's template read); this
+      // is the structural guarantee that no third one can reopen the hole.
+      //
+      // Ordering is still respected on the happy path: `start()` runs after the
+      // apply has settled, so the watchdog never races the bringup, and it is
+      // idempotent.
+      try {
+        // A SIGKILLed gateway cannot run a shutdown hook, so native children
+        // from the previous process may still hold their ports. Reap before
+        // anything tries to bind them.
+        await nativeDriver.reapOrphans();
+        return await serializeApply(() =>
+          withFreshOrchestrator(async (o) =>
+            reconcileOnBoot({
+              drivers,
+              registry: currentRegistry,
+              orchestrator: { applyAll: () => o.applyAll() },
+            }),
+          ),
+        );
+      } finally {
+        healthWatch.start();
+      }
     },
     getRequiredServicesStatus: (gatewayVersion, hermesVersionPath, sttHealthUrl, ttsHealthUrl) =>
       resolveVersions(() => lastStatus, gatewayVersion, hermesVersionPath, sttHealthUrl, ttsHealthUrl),
