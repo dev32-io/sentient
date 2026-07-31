@@ -1,6 +1,9 @@
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { createGatewayServices } from "./bootstrap/create-gateway-services.ts";
 import { createMcpHost } from "./bootstrap/create-mcp-host.ts";
-import { loadLoggingConfig, loadStartupConfig } from "./config/startup-config.ts";
+import { type SingleInstanceIo, acquireSingleInstance, describeConflict } from "./bootstrap/single-instance.ts";
+import { loadLoggingConfig, loadStartupConfig, resolveSentientHome } from "./config/startup-config.ts";
 import { createHermesExternalTool } from "./external-tools/hermes-external-tool.ts";
 import { createGatewayLogger, getLog } from "./logging/logger.ts";
 import { createUnavailableSessionLookup } from "./mcp-host/active-session-lookup.ts";
@@ -8,6 +11,11 @@ import type { UpdateUserSettingsPatch } from "./mcp-host/tools/update-user-setti
 import { createPolicyEngine } from "./security/policy-engine.js";
 import { loadMcpPolicy } from "./security/policy-loader.js";
 import { createGatewayServer } from "./server.ts";
+
+/** `~/.sentient/run` — the gateway's own runtime handles: the per-user MCP
+ *  sockets, the native services' pid files, and the single-instance claim. */
+const RUN_SUBDIR = "run";
+const CLAIM_FILE = "gateway.claim";
 
 const loggingConfig = loadLoggingConfig();
 await createGatewayLogger({
@@ -20,6 +28,53 @@ await createGatewayLogger({
 
 const log = getLog(["sentient"]);
 const config = loadStartupConfig();
+
+// ---------------------------------------------------------------------------
+// Single-instance claim — FIRST, before anything that owns a machine-wide
+// singleton.
+//
+// `createGatewayServices` below starts the boot reconcile, which spawns and
+// supervises the native addons; `Bun.serve` further down opens the per-user
+// tool sockets and session stores. A second gateway fights over all three, and
+// on the native addons it presents as the defect this claim exists to stop: two
+// supervisors racing one port, each adopting the other's process as healthy.
+// The claim must therefore be taken before the orchestrator applies, not merely
+// before the listener binds.
+// ---------------------------------------------------------------------------
+const claimIo: SingleInstanceIo = {
+  readClaim: (path) => {
+    try {
+      return readFileSync(path, "utf8");
+    } catch {
+      return null; // absent is the normal first-boot case, not a failure
+    }
+  },
+  writeClaim: (path, body) => {
+    mkdirSync(join(resolveSentientHome(), RUN_SUBDIR), { recursive: true });
+    writeFileSync(path, body, "utf8");
+  },
+  removeClaim: (path) => rmSync(path, { force: true }),
+  isAlive: (pid) => {
+    try {
+      process.kill(pid, 0); // signal 0 = existence check, delivers nothing
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  now: () => Date.now(),
+  selfPid: process.pid,
+};
+
+const claim = acquireSingleInstance(join(resolveSentientHome(), RUN_SUBDIR, CLAIM_FILE), config.port, claimIo);
+if (!claim.ok) {
+  log.error("single-instance.refused", { reason: describeConflict(claim.heldBy, config.port, Date.now()) });
+  process.exit(1);
+}
+// Captured here, not read off `claim` inside shutdown(): a hoisted function
+// declaration is outside the guard's narrowing, so the union would resurface.
+const releaseInstanceClaim = claim.release;
+
 const services = await createGatewayServices(config);
 
 const state = await services.installState.load();
@@ -153,6 +208,10 @@ async function shutdown(signal: string): Promise<never> {
   log.info("shutdown", { signal });
   services.systemOrchestrator?.stopHealthWatch();
   if (mcpHost) await mcpHost.stop();
+  // Last, so the slot stays claimed for the whole teardown: a successor that
+  // starts while this process is still holding the tool sockets would hit the
+  // very conflict the claim exists to name.
+  releaseInstanceClaim();
   process.exit(0);
 }
 
