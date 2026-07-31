@@ -343,6 +343,78 @@ describe("native-driver", () => {
     expect(r.ok).toBe(true);
   });
 
+  it("SECURITY: a pid owned by ONE service never authorises signalling another service's port holder", async () => {
+    // Ownership is (service, pid), never a bare pid. The driver manages four
+    // native ports; a record proving pid 4242 is our whisper-stt child says
+    // nothing whatever about who is holding local-tts's 8770 — the pid may have
+    // been reused, or the match may be pure coincidence. Anything but this
+    // service's own record must be NAMED and refused, not signalled.
+    const killed: number[] = [];
+    const driver = createNativeDriver(
+      stubDeps({
+        readPidFiles: async () => [{ name: "whisper-stt", pid: 4242 }], // local-tts has no record
+        listeningPidFor: async () => 4242, // …yet 4242 is what holds local-tts's port
+        describePid: async () => "/usr/bin/python -m local_tts",
+        killPid: (pid) => {
+          killed.push(pid);
+        },
+      }),
+      FAST_SETTLE,
+    );
+
+    await driver.reapOrphans(); // claims 4242 for whisper-stt, and SIGTERMs it once
+    const r = await driver.recreate(portedService("local-tts", 8770));
+
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.kind).toBe("port-held");
+    expect(r.error.reason).toContain("NOT signalled");
+    // Exactly the reap's own SIGTERM — the local-tts launch added nothing.
+    expect(killed).toEqual([4242]);
+  });
+
+  it("SECURITY: ownership ends when our child exits, so a REUSED pid is refused, not killed", async () => {
+    // A record that outlives the process it names is an authorisation to kill a
+    // stranger. Pids are reused within hours on an always-on box, and the driver
+    // shells out to lsof/ps for four services on every 15 s watch tick, so it
+    // sees plenty of pid churn. Once our child is gone, its pid is gone with it.
+    const killed: number[] = [];
+    let endChild: (code: number) => void = () => {};
+    let holder: number | null = null;
+    const svc = portedService("whisper-stt", 8768);
+    const driver = createNativeDriver(
+      stubDeps({
+        spawn: () => ({
+          pid: 4242,
+          exited: new Promise<number>((resolve) => {
+            endChild = resolve;
+          }),
+          kill: () => {},
+          stderrTail: () => "",
+        }),
+        listeningPidFor: async () => holder,
+        describePid: async () => "/usr/local/bin/unrelated-daemon",
+        killPid: (pid) => {
+          killed.push(pid);
+        },
+      }),
+      FAST_SETTLE,
+    );
+
+    await driver.recreate(svc); // 4242 is ours…
+    endChild(1); // …until it dies
+    await new Promise<void>((resolve) => setTimeout(resolve, 0)); // let the exit watcher run
+    holder = 4242; // the OS hands 4242 to a stranger, which binds our port
+
+    const r = await driver.recreate(svc);
+
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.kind).toBe("port-held");
+    expect(r.error.reason).toContain("NOT signalled");
+    expect(killed).toEqual([]);
+  });
+
   it("INVARIANT: a refused launch does not delete the pid file recording a live child", async () => {
     // stopIfRunning used to remove the pid file unconditionally, so one failed
     // attempt on a fresh process destroyed the ownership record of a child that

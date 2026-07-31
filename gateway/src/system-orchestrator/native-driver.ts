@@ -127,8 +127,9 @@ export function createNativeDriver(deps: NativeDriverDeps, options: NativeDriver
   const running = new Map<ServiceName, NativeProcess>();
   const lastExit = new Map<ServiceName, LastExit>();
   // ═══ THE OWNERSHIP RECORD, and the whole basis for deciding what may be
-  // killed. A pid lands here only because THIS driver spawned it, or because it
-  // was read out of a pid file THIS gateway wrote under its own state root.
+  // killed. A pid lands here only because THIS driver spawned it for THIS
+  // service, or because it was read out of the pid file THIS gateway wrote for
+  // THIS service under its own state root.
   //
   // Everything else on a port is refused and named, never signalled. That
   // boundary is not caution for its own sake: on the dev box the holder was a
@@ -139,7 +140,34 @@ export function createNativeDriver(deps: NativeDriverDeps, options: NativeDriver
   // A refusal is loud, bounded and self-healing: the service is marked failed
   // with the holder named, the watchdog keeps probing cheaply, and the next
   // apply succeeds the moment the holder goes away.
-  const ourPids = new Set<number>();
+  //
+  // KEYED BY SERVICE, and exactly ONE slot per service. A flat set of pids was
+  // the same bug one level down: it authorised signalling ANY holder whose pid
+  // happened to match, so a record for whisper-stt spoke for local-tts's port,
+  // and nothing ever removed a pid, so every pid the driver had ever touched
+  // stayed "ours" for the life of the process. The OS reuses pids within hours
+  // on an always-on box; an entry that outlives the process it names is an
+  // authorisation to kill a stranger. One slot, because a service has at most
+  // one child of ours at a time — a newer pid REPLACES the older one — and the
+  // slot is released the moment the process it names is known to be gone.
+  const ownedPid = new Map<ServiceName, number>();
+
+  /** Record `pid` as this service's child, replacing whatever it named before. */
+  function claimOwnership(name: ServiceName, pid: number): void {
+    const previous = ownedPid.get(name);
+    if (previous === pid) return;
+    ownedPid.set(name, pid);
+    log.debug("native.ownership-claimed", { service: name, pid, previous: previous ?? null });
+  }
+
+  /** Drop the record once the process it names is gone. Never drops a slot that
+   *  has already moved on to a newer pid — a late exit watcher for a replaced
+   *  child must not disown the child that replaced it. */
+  function releaseOwnership(name: ServiceName, pid: number): void {
+    if (ownedPid.get(name) !== pid) return;
+    ownedPid.delete(name);
+    log.debug("native.ownership-released", { service: name, pid, reason: "the process we recorded is gone" });
+  }
 
   async function prepare(ms: ManagedService): Promise<Result<undefined, DriverError>> {
     const native = requireNative(ms);
@@ -186,11 +214,11 @@ export function createNativeDriver(deps: NativeDriverDeps, options: NativeDriver
 
     known.set(ms.name, ms);
     running.set(ms.name, proc);
-    ourPids.add(proc.pid);
+    claimOwnership(ms.name, proc.pid);
     await deps.writePidFile(ms.name, proc.pid);
     lastExit.delete(ms.name);
     log.info("native.started", { service: ms.name, pid: proc.pid, argc: ms.config.exec.length });
-    watchExit(ms.name, proc, running, lastExit);
+    watchExit(ms.name, proc, running, lastExit, releaseOwnership);
     return { ok: true, value: undefined };
   }
 
@@ -247,11 +275,14 @@ export function createNativeDriver(deps: NativeDriverDeps, options: NativeDriver
    * still says that process is ours. Reading in-memory FIRST keeps the common
    * path free of a filesystem hit.
    *
-   * Scoped to the service's OWN pid file, not to any of them, so a stale record
-   * for whisper-stt can never authorise signalling something on local-tts's port.
+   * BOTH halves are scoped to this service's own record — the in-memory slot for
+   * `name`, then the pid file for `name` — so a record for whisper-stt can never
+   * authorise signalling something on local-tts's port. A bare pid is not an
+   * identity: pids are reused, and the same number means different processes at
+   * different times, which is why neither half is consulted without the name.
    */
   async function isOurs(name: ServiceName, pid: number): Promise<boolean> {
-    if (ourPids.has(pid)) return true;
+    if (ownedPid.get(name) === pid) return true;
     const records = await deps.readPidFiles();
     const owned = records.some((r) => r.name === name && r.pid === pid);
     if (owned) {
@@ -260,7 +291,7 @@ export function createNativeDriver(deps: NativeDriverDeps, options: NativeDriver
         pid,
         reason: "a child of a previous gateway process survived; the pid file still records it",
       });
-      ourPids.add(pid);
+      claimOwnership(name, pid);
     }
     return owned;
   }
@@ -336,20 +367,25 @@ export function createNativeDriver(deps: NativeDriverDeps, options: NativeDriver
           pid,
           reason: "pid file survived a gateway restart",
         });
-        // A pid file this gateway wrote is the ownership record: claim the pid
-        // BEFORE signalling it, so the port wait that follows knows this holder
-        // is ours to escalate on rather than a foreign process to refuse.
-        if (isPlausiblePid(pid)) ourPids.add(pid);
         killChild(deps, name, pid);
         // SIGTERM is asynchronous, so the record is kept while the process it
         // names is still winding down. Dropping it there is how the ownership
         // evidence is lost: a gateway that then dies before its child leaves a
         // successor with nothing to prove that survivor is ours, and it refuses
         // its own port forever. A successful spawn overwrites the file anyway.
-        if (deps.isPidAlive(pid)) {
+        //
+        // A pid file this gateway wrote is the ownership record, so a survivor
+        // is claimed here too — the port wait that follows must know this holder
+        // is ours to escalate on rather than a foreign process to refuse. The
+        // claim is made only for a pid we could actually signal and only while
+        // that pid is still alive: claiming a dead pid is how a record outlives
+        // the process it names and starts speaking for whoever inherits it.
+        if (isPlausiblePid(pid) && deps.isPidAlive(pid)) {
+          claimOwnership(name, pid);
           log.info("native.pid-file-kept", { service: name, pid, reason: "process still alive after SIGTERM" });
           continue;
         }
+        releaseOwnership(name, pid);
         await deps.removePidFile(name);
       }
     },
@@ -505,10 +541,16 @@ function watchExit(
   proc: NativeProcess,
   running: Map<ServiceName, NativeProcess>,
   lastExit: Map<ServiceName, LastExit>,
+  /** Drop the ownership record. This is the ONLY authoritative "our child is
+   *  gone" signal the driver gets, so it is where a pid stops being ours — a
+   *  record kept past the exit is an authorisation to kill whoever the OS hands
+   *  that pid to next. */
+  releaseOwnership: (name: ServiceName, pid: number) => void,
 ): void {
   void proc.exited
     .then((code) => {
       if (running.get(name) === proc) running.delete(name);
+      releaseOwnership(name, proc.pid);
       // The child's OWN last words. Without this the line read "child process
       // ended", the real cause (an EADDRINUSE traceback) went to DEBUG that
       // production never enables, and the defect survived a whole branch.
@@ -522,6 +564,11 @@ function watchExit(
       });
     })
     .catch((err: unknown) => {
+      // The child's fate is now unknown, so the in-memory claim is dropped: an
+      // unverifiable pid must not authorise a kill. Nothing is lost if the child
+      // is really ours — the pid file still names it under this service, and the
+      // ownership check falls back to that record.
+      releaseOwnership(name, proc.pid);
       log.warn("native.exit-watch-failed", { service: name, pid: proc.pid, reason: errMsg(err) });
     });
 }
