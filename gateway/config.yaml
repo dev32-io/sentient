@@ -742,15 +742,21 @@ managed_services:
   whisper-stt:
     launch: native
     # argv[0] is the pinned interpreter; ${SENTIENT_CODE} resolves to the
-    # root-owned release dir (/opt/sentient/current) in prod, or the repo
-    # checkout in dev. An unresolved placeholder stays literal so prepare()
-    # fails loudly rather than launching an unexpected binary.
+    # root-owned release dir (/opt/sentient/current) in prod, or the staged tree
+    # in dev. Every ${VAR} in THIS file is resolved from the gateway's process
+    # env while the file is being loaded, and an unset var becomes the EMPTY
+    # STRING — it does not stay literal. (The "stays literal" rule belongs to
+    # templates/services/*.yaml, which are substituted later and elsewhere.) So
+    # an unset SENTIENT_CODE yields "/whisper-stt/venv/bin/python", which
+    # prepare() rejects as not executable; an unset HOST_HOME yielded
+    # "/.sentient/..." and both addons died on `config file not found` every
+    # boot. main.ts therefore defaults HOST_HOME before the first config read.
     exec: ["${SENTIENT_CODE}/whisper-stt/venv/bin/python", "-m", "whisper_stt"]
     python: "3.14"                                  # pinned; prepare() verifies before start
     # CODE under ${SENTIENT_CODE} (root-owned, immutable), STATE under
     # ${HOST_HOME}/.sentient (user-owned, mutable) — the layout invariant. Both
-    # placeholders come from the gateway's own process env; the launchd plist
-    # (deploy/mac-prod/io.sentient.gateway.plist) sets them.
+    # come from the gateway's own process env; the launchd plist
+    # (deploy/mac-prod/io.sentient.gateway.plist) sets them in prod.
     env:
       PYTHONPATH: "${SENTIENT_CODE}/whisper-stt/src"
       WHISPER_STT_CONFIG_PATH: "${HOST_HOME}/.sentient/whisper-stt/config/config.yaml"

@@ -1,4 +1,5 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { createGatewayServices } from "./bootstrap/create-gateway-services.ts";
 import { createMcpHost } from "./bootstrap/create-mcp-host.ts";
@@ -16,6 +17,22 @@ import { createGatewayServer } from "./server.ts";
  *  sockets, the native services' pid files, and the single-instance claim. */
 const RUN_SUBDIR = "run";
 const CLAIM_FILE = "gateway.claim";
+
+// ---------------------------------------------------------------------------
+// HOST_HOME must exist BEFORE the first config read, and this is the only place
+// early enough.
+//
+// `config.yaml` resolves every `${VAR}` against `process.env` while it is being
+// LOADED (shared/config/src/loader.ts), and a missing var becomes the empty
+// string — not a literal left for someone downstream to catch. The native
+// addons' paths are all `${HOST_HOME}/.sentient/…`, so with it unset both
+// services were launched pointing at `/.sentient/whisper-stt/config/config.yaml`
+// and died on `config file not found` within half a second, every boot. The
+// prod plist sets HOST_HOME explicitly to exactly this value; defaulting it
+// here is what makes a dev shell, a bare `bun src/main.ts` and the compiled
+// binary agree with prod instead of silently degrading.
+// ---------------------------------------------------------------------------
+process.env.HOST_HOME ||= homedir();
 
 const loggingConfig = loadLoggingConfig();
 await createGatewayLogger({
