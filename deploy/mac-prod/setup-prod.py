@@ -147,16 +147,28 @@ STAGE_EXCLUDES = ("__pycache__", "*.pyc", "*.egg-info")
 # so an existing mini keeps every path it already has. Relative to ~/.sentient.
 STATE_ROOT = ".sentient"
 # The gateway mints its own self-signed CA here on first boot; the health probe
-# pins this file as its trust anchor. Source of truth: shared/tls/src/tls.ts.
-CERT_RELATIVE = "certs/cert.pem"
+# pins this file as its trust anchor.
+#
+# SOURCE OF TRUTH IS THE GATEWAY, and it is `gateway/certs`, not `certs`:
+# `gateway/src/config/startup-config.ts` resolves the dir as
+# `GATEWAY_CERTS_DIR ?? gatewayStateDir("certs")` — i.e. `~/.sentient/gateway/
+# certs` — and io.sentient.gateway.plist sets that variable to exactly that
+# path. `shared/tls/src/tls.ts` only mkdir's whatever it is handed, so it never
+# pinned the location. This constant tracked the pre-native, container-era
+# `~/.sentient/certs` mount; against the native gateway the anchor never
+# appeared there and the health gate failed every install of a perfectly
+# healthy release.
+CERT_RELATIVE = "gateway/certs/cert.pem"
 STATE_DIRS = (
     "gateway/config",
     "gateway/logs",
     "gateway/clientLogs",
     "gateway/data",
     "gateway/users",
+    # Created here rather than left to the gateway's own mkdir so the trust
+    # anchor's parent exists, and is operator-owned, before the daemon boots.
+    "gateway/certs",
     "secrets",
-    "certs",
     "run",
 )
 # 0700: only the operator may traverse the secrets dir. 0600 on the key file
@@ -213,13 +225,37 @@ def ensure_state_dirs(home: Path, template_config: Path, chown=None) -> None:
     gateway cannot write at next boot — a failure that surfaces hours later as
     a permission error rather than here.
     """
-    handed_back = chown or (lambda _path: None)
+    give_back = chown or (lambda _path: None)
+    seen: set[Path] = set()
+
+    def handed_back(path: Path) -> None:
+        """Hand one path to the operator, once per run."""
+        if path in seen:
+            return
+        seen.add(path)
+        give_back(path)
+
     root = home / STATE_ROOT
 
-    for relative in ("",) + STATE_DIRS:
-        path = root / relative if relative else root
-        path.mkdir(parents=True, exist_ok=True)
-        handed_back(path)
+    root.mkdir(parents=True, exist_ok=True)
+    handed_back(root)
+    for relative in STATE_DIRS:
+        # ONE LEVEL AT A TIME, and hand back every level — never
+        # `mkdir(parents=True)`. That call creates INTERMEDIATE directories as
+        # a silent side effect and reports none of them, so `~/.sentient/
+        # gateway` (the parent of gateway/config, and the directory the gateway
+        # writes internal-secrets.json, users.json and auth-secret.key straight
+        # into) was created by root and never handed back. The daemon runs
+        # unprivileged as the operator, so its first boot died on EACCES and
+        # KeepAlive turned that into a crash loop.
+        #
+        # Handing back unconditionally, not only for paths this run created,
+        # also REPAIRS a host an earlier install left root-owned.
+        path = root
+        for part in PurePosixPath(relative).parts:
+            path = path / part
+            path.mkdir(exist_ok=True)
+            handed_back(path)
 
     secrets = root / "secrets"
     secrets.chmod(SECRETS_DIR_MODE)
@@ -532,8 +568,8 @@ class RealLaunchd:
 def build_tls_context(ca_bundle: Path) -> ssl.SSLContext:
     """Trust context for the health probe, pinned to the gateway's own cert.
 
-    The gateway mints a self-signed CA into `~/.sentient/certs/cert.pem` on
-    first boot, so that file — not the system trust store — is the anchor.
+    The gateway mints a self-signed CA into `~/.sentient/gateway/certs/cert.pem`
+    on first boot, so that file — not the system trust store — is the anchor.
 
     There is deliberately no "skip verification" path. An installer is exactly
     the kind of script that gets copied to a target that is not loopback, and a
@@ -559,7 +595,7 @@ class HealthProbe:
 
     * a refused connection means "not up *yet*" and is retried;
     * an anchor that is not readable yet is also "not *yet*" — on a genuinely
-      fresh host `~/.sentient/certs/cert.pem` does not exist until the gateway
+      fresh host `~/.sentient/gateway/certs/cert.pem` does not exist until the gateway
       this installer just started mints it, so the FIRST probe of every fresh
       install races that file into existence and MUST retry;
     * a TLS trust failure *against a cert the gateway served* is permanent and
@@ -811,7 +847,7 @@ def parse_args(argv):
     install.add_argument("--home", type=Path, default=None,
                          help="operator home holding ~/.sentient (default the operator's)")
     install.add_argument("--ca-bundle", type=Path, default=None,
-                         help="TLS anchor for the health probe (default <home>/.sentient/certs/cert.pem)")
+                         help="TLS anchor for the health probe (default <home>/.sentient/gateway/certs/cert.pem)")
     install.add_argument("--health-url", default=DEFAULT_HEALTH_URL)
     # The default budget suits a cold start that has to mint a certificate. A
     # slower host may need more; a rehearsal wants less. Neither can disable the

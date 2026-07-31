@@ -19,8 +19,13 @@ from pathlib import Path
 import pytest
 import setup_prod
 from setup_prod import (
+    CERT_RELATIVE,
     INSTALL_VENV_SCRIPT,
+    OPERATOR_PLACEHOLDER,
+    PLIST_SOURCE,
     SERVICE_SOURCES,
+    STATE_DIRS,
+    STATE_ROOT,
     HealthProbe,
     InstallError,
     Installer,
@@ -520,6 +525,13 @@ def test_state_created_under_sudo_is_handed_back_to_the_operator(tmp_path):
     created = {p for p in chowned}
     assert home / ".sentient" in created
     assert home / ".sentient/secrets" in created
+    # The INTERMEDIATE level, not just the leaf. `mkdir(parents=True)` used to
+    # create this one as an unreported side effect, leaving it root:wheel while
+    # the daemon runs as the operator — and the gateway writes
+    # internal-secrets.json, users.json and auth-secret.key straight into it,
+    # so first boot died on EACCES and KeepAlive made it a crash loop.
+    assert home / ".sentient/gateway" in created, "the intermediate level too"
+    assert home / ".sentient/gateway/config" in created
     assert home / ".sentient/gateway/config/config.yaml" in created, "the seeded config too"
 
 
@@ -775,6 +787,23 @@ def test_release_layout_matches_the_native_exec_contract():
         assert f"${{SENTIENT_CODE}}/{service}/venv/bin/python" in config, service
         assert f"${{SENTIENT_CODE}}/{service}/src" in config, service
         assert f'"-m", "{spec["module"]}"' in config, service
+
+
+def test_the_health_anchor_is_where_the_gateway_actually_mints_its_cert():
+    """Bind the pinned trust anchor to the daemon definition that places it.
+
+    The gateway resolves its certs dir as `GATEWAY_CERTS_DIR ?? ~/.sentient/
+    gateway/certs` (gateway/src/config/startup-config.ts) and the plist sets
+    that variable explicitly, so the plist IS the deployed location. When this
+    constant still named the container-era `~/.sentient/certs`, every install
+    of a perfectly healthy release burned the full 90 s health budget on an
+    anchor nothing would ever write, then failed with no rollback target.
+    """
+    certs_dir = Path(CERT_RELATIVE).parent.as_posix()
+    plist = (REPO_ROOT / PLIST_SOURCE).read_text()
+
+    assert f"/Users/{OPERATOR_PLACEHOLDER}/{STATE_ROOT}/{certs_dir}<" in plist
+    assert certs_dir in STATE_DIRS, "ensure_state_dirs must create the anchor's parent"
 
 
 def test_the_staged_src_tree_actually_contains_the_module_it_runs(tmp_path):

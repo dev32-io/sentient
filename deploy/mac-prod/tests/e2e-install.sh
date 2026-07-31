@@ -196,7 +196,7 @@ echo; echo "=== CASE 6: pruning keeps current + the rollback target ==="
 ls "$WORK/opt" | grep -v current | tr '\n' ' '; echo
 
 echo; echo "=== CASE 7: the anchor the gateway has not minted yet ==="
-# The fresh-host race: on a genuinely new mini ~/.sentient/certs/cert.pem does
+# The fresh-host race: on a genuinely new mini ~/.sentient/gateway/certs/cert.pem does
 # not exist until the gateway the installer just started mints it. The probe must
 # WAIT for it, not abort the install. Before this was fixed, the missing-anchor
 # error escaped install() past the rollback and left `current` on the new,
