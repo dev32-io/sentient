@@ -43,6 +43,26 @@ All `bun run` commands, test scripts, and quality-gate hooks depend on this.
     bun run typecheck     — TypeScript strict check
     bun run ci            — Full local CI (lint + typecheck + test)
 
+## Running and restarting the gateway
+
+**Two URLs, and they are not interchangeable.** In dev the gateway serves the **API only** — `https://localhost:8888/` legitimately 404s. The UI is vite (`http://localhost:5173`, or the next free port), which proxies `/api/v1` to the gateway. Open the vite URL, never `:8888`, unless you are calling the API directly.
+
+**Dev** — from the repo root, after `source scripts/env.sh`:
+
+    bun run dev                    # gateway + webui; Ctrl-C stops BOTH
+
+`bun --hot` reloads on save, so a code change needs no restart. Restart when you change `config.yaml`, an env var, or anything read once at boot. If `:8888` is already taken, an orphaned `bun --hot` from a previous run is the usual cause — `pkill -f "src/main.ts"`.
+
+**Prod (the mini)** — the gateway is a **LaunchDaemon**, not a container and not a shell job. Never start it by hand:
+
+    sudo launchctl kickstart -k system/io.sentient.gateway    # restart
+    launchctl print system/io.sentient.gateway | grep -E "state|username|path"
+    tail -f ~/.sentient/gateway/logs/$(date +%F).log
+
+`RunAtLoad` + `KeepAlive` mean it starts at boot and is restarted if it exits. Upgrades go through `deploy/mac-prod/setup-prod.py`, which is health-gated and rolls back — do not swap the binary underneath a running daemon.
+
+Auto-start at login is **not** configured, and it is not a one-line plist change: see `docs/native-todo.md` § 3 for the Docker-daemon ordering hazard.
+
 ## Mobile build/release
 
     ./scripts/ios-setup.sh           — local iOS dev: debug XCFramework + generate project

@@ -151,7 +151,15 @@ Deferred items, in the order they'd sensibly land:
 1. **Installer installs Hermes** — pinned version, verified, alongside the gateway's own install. Today it is assumed present on `PATH`.
 2. **Installer renders the tool's configuration** — profile registration and MCP wiring done once, at install, rather than reconciled per boot. The startup handler then degrades to a *check* that WARNs on drift instead of a *repair* that performs it.
 3. **A generic external-tool registry** — the `ExternalTool` contract is already generic (one interface, one `provide(userId)`); make the SET of external tools declarative (config, like `mcp_catalog`) rather than a Hermes special case, so adding a second delegated agent is a YAML edit plus one implementation. Note that since task 9g the caller is `delegateTask`, not a boot step, so the registry is keyed by delegated agent name rather than iterated at startup.
-4. **Settings + tweak flow** — how an operator inspects, enables, disables and re-scopes an external tool from the UI. Depends on the delegate-tool permission surface in §1/D11. Design later.
+4. **Auto-start at login — and the Docker-daemon ordering hazard it carries.** The gateway *is* the container orchestrator, so what it needs at startup is the **Docker daemon**, not any container. That distinction is what makes the ordering subtle:
+   - Prod installs a **LaunchDaemon** (`/Library/LaunchDaemons/`, system domain, `RunAtLoad` + `KeepAlive`, running unprivileged via `UserName`). System daemons start at **boot**. Docker Desktop is a per-user **GUI app** that starts at **login** — minutes later on a mini that boots to a login window, never at all if nobody logs in.
+   - A **LaunchAgent** (`gui/<uid>`) would start at login instead, but then it *races* Docker Desktop rather than following it.
+
+   The branch already softened this: a rejecting `listManaged` no longer stops boot, and the health watchdog now arms even when the reconcile fails. So the gateway survives a Docker-less start and retries. But `health-watch` gives up after `maxAttempts=5` with `backoffFactor=2` from 15 s — roughly 7 minutes of cover — and "gave up" is permanent until a restart. A mini that boots and sits at the login window for longer than that comes up with every docker addon down and nothing left trying.
+
+   So auto-start is not just a plist key. It needs one of: a launchd `KeepAlive`/`WatchPaths` condition on the Docker socket; the orchestrator distinguishing *"the Docker daemon is not up yet"* (retry indefinitely, slowly) from *"this service is broken"* (give up loudly); or an explicit login-item ordering with Docker Desktop declared as a prerequisite. Pick deliberately — the failure mode is silent and only visible hours later.
+
+5. **Settings + tweak flow** — how an operator inspects, enables, disables and re-scopes an external tool from the UI. Depends on the delegate-tool permission surface in §1/D11. Design later.
 
 ---
 
