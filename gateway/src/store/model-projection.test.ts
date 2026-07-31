@@ -185,8 +185,11 @@ describe("projectForModel", () => {
   describe("BLOCK ADJACENCY: rejects membership-only pairing across position breaks", () => {
     // Set-membership pairing (old bug) matched any call id in the slice to any
     // reply id in the slice, regardless of position. OpenAI requires role:"tool"
-    // to immediately follow the assistant that declared it, so any entry sitting
-    // between a tool_call run and its tool_result run must break the pairing.
+    // to immediately follow the assistant that declared it, so an entry sitting
+    // between a tool_call run and its tool_result run must break the pairing —
+    // with one exception, spelled out below: an external STIMULUS (user /
+    // trigger) is deferred past the block rather than closing it, because the
+    // store's tail is legitimately split open across the tool's own await.
 
     it("drops a tool_result that arrives before its tool_call", () => {
       const out = projectForModel([
@@ -197,15 +200,50 @@ describe("projectForModel", () => {
       expect(out.some((m) => m.role === "tool")).toBe(false);
     });
 
-    it("drops both sides when a user entry splits a call from its result", () => {
+    it("CONTRACT: a user message landing mid-dispatch is deferred, not allowed to break the round trip", () => {
+      // `dispatchToolCalls` appends the tool_call, awaits the tool, THEN appends
+      // the result — so the store's tail is split open for the whole call, and
+      // that is exactly the window spec §4.5's steer seam appends into.
+      // Dropping both halves here made the next iteration's messages[] hold no
+      // record the tool had ever run, and the model re-issued the identical
+      // call: the light switched twice.
       const out = projectForModel([
         e({ kind: "tool_call", toolCallId: "y1", toolName: "a", toolArgs: "{}" }),
         e({ kind: "user", text: "hold on" }),
         e({ kind: "tool_result", toolCallId: "y1", toolName: "a", toolArgs: '"r"' }),
       ]);
       assertValidToolPairing(out);
-      expect(out.some((m) => m.role === "tool")).toBe(false);
-      expect(out).toEqual([{ role: "user", content: "hold on" }]);
+      expect(out).toEqual([
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [{ id: "y1", type: "function", function: { name: "a", arguments: "{}" } }],
+        },
+        { role: "tool", tool_call_id: "y1", content: '"r"' },
+        { role: "user", content: "hold on" },
+      ]);
+    });
+
+    it("CONTRACT: a background completion landing mid-dispatch is deferred the same way", () => {
+      const out = projectForModel([
+        e({ kind: "tool_call", toolCallId: "y2", toolName: "a", toolArgs: "{}" }),
+        e({ kind: "trigger", text: "task t1 finished" }),
+        e({ kind: "tool_result", toolCallId: "y2", toolName: "a", toolArgs: '"r"' }),
+      ]);
+      assertValidToolPairing(out);
+      expect(out.filter((m) => m.role === "tool")).toHaveLength(1);
+      expect(out[out.length - 1]).toEqual({ role: "user", content: "task t1 finished" });
+    });
+
+    it("does not defer a stimulus past a block whose calls are all already answered", () => {
+      const out = projectForModel([
+        e({ kind: "tool_call", toolCallId: "y3", toolName: "a", toolArgs: "{}" }),
+        e({ kind: "tool_result", toolCallId: "y3", toolName: "a", toolArgs: '"r"' }),
+        e({ kind: "user", text: "and now this" }),
+        e({ kind: "assistant", text: "done" }),
+      ]);
+      assertValidToolPairing(out);
+      expect(out.map((m) => m.role)).toEqual(["assistant", "tool", "user", "assistant"]);
     });
 
     it("drops both sides when an assistant narration entry splits a call from its result", () => {

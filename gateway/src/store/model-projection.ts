@@ -11,13 +11,30 @@
 //     answered by that SAME run. Set-membership pairing (any call id in the
 //     slice intersected with any result id in the slice) is not enough — it
 //     lets a tool_result that arrived out of position (before its call, or
-//     separated from it by an intervening user/assistant/system entry) pair
-//     with a call it doesn't structurally follow, producing a message array
-//     the provider 400s on. This function pairs by BLOCK ADJACENCY instead: a
-//     run of tool_call entries is paired only with the immediately-following
-//     run of tool_result entries. Anything unmatched in either direction is
-//     dropped and logged — a dropped-but-computed result is real context
-//     loss, so it must never be silent.
+//     separated from it by an intervening assistant/system entry) pair with a
+//     call it doesn't structurally follow, producing a message array the
+//     provider 400s on. This function pairs by BLOCK ADJACENCY instead: a run
+//     of tool_call entries is paired with the following run of tool_result
+//     entries. Anything unmatched in either direction is dropped and logged —
+//     a dropped-but-computed result is real context loss, so it must never be
+//     silent.
+//  3b. A STIMULUS MAY LAND INSIDE AN OPEN BLOCK, and it does not break the
+//     pairing. `dispatchToolCalls` appends the `tool_call`, awaits the tool,
+//     then appends the `tool_result` — so the store's tail is split open for
+//     the whole duration of the call (an MCP round trip, or a confirm-tier
+//     prompt's full `request_timeout_ms`), and that is precisely the window
+//     spec §4.5's steer seam appends into: a background `delegateTask`
+//     completion, or the user's second message. Strict adjacency read that as
+//     "call unreplied, result orphaned" and dropped BOTH halves, so the next
+//     iteration's messages[] held no record the tool had ever run and the
+//     model re-issued the identical call — the light switched twice, the
+//     calendar event written twice. So a `user`/`trigger` entry (the two kinds
+//     an external stimulus can append — never the loop's own output) is
+//     DEFERRED past the block instead of closing it: the round trip stays
+//     contiguous, and the stimulus is emitted immediately after it, which is
+//     also when the model genuinely first sees it. Anything else — assistant
+//     narration, the next tool_call, a compaction marker — is the loop's own
+//     output and does close the block.
 //  4. Block adjacency means a result that lands AFTER its block has already
 //     closed has nowhere valid to attach: a second tool_result for an
 //     id this function already answered is superseded and dropped (logged,
@@ -34,6 +51,13 @@ import { getLog } from "../logging/logger.js";
 import type { SessionEntry } from "./entry-types.js";
 
 const log = getLog(["sentient", "store", "model-projection"]);
+
+/** The entry kinds an EXTERNAL stimulus can append (`SessionRuntime.submit` —
+ *  a person's message, or a background-task completion). They are the only
+ *  kinds that may land inside an open tool block without closing it; see
+ *  rule 3b in this file's header. Deliberately excludes every kind
+ *  react-loop.ts appends itself. */
+const DEFERRABLE_STIMULUS_KINDS = new Set<SessionEntry["kind"]>(["user", "trigger"]);
 
 export interface ChatToolCall {
   id: string;
@@ -73,9 +97,58 @@ function sliceFromLatestCompaction(entries: SessionEntry[]): {
   };
 }
 
+interface ToolBlock {
+  calls: SessionEntry[];
+  results: SessionEntry[];
+  /** Stimuli that landed between the calls and their results. Emitted AFTER
+   *  the block so every role:"tool" message stays adjacent to the assistant
+   *  message that declared it (rule 3b). */
+  deferred: SessionEntry[];
+  /** Index of the first entry past this block. */
+  next: number;
+}
+
 /**
- * Pairs one run of tool_call entries with the immediately-following run of
- * tool_result entries and pushes the resulting assistant + tool messages.
+ * Walks one tool block from `start`: its run of tool_call entries, then the
+ * results answering them, stepping over any stimulus that landed in between.
+ *
+ * The scan stops as soon as every declared id is answered, so an already-closed
+ * block never swallows later conversation. A run of trailing tool_results is
+ * still consumed after that point — a second result for an id already answered
+ * belongs to this block's supersede report, not to the orphan branch.
+ */
+function scanToolBlock(rest: SessionEntry[], start: number): ToolBlock {
+  const calls: SessionEntry[] = [];
+  const unanswered = new Set<string>();
+  let i = start;
+  for (let call = rest[i]; call?.kind === "tool_call"; call = rest[i]) {
+    calls.push(call);
+    if (call.toolCallId) unanswered.add(call.toolCallId);
+    i += 1;
+  }
+
+  const results: SessionEntry[] = [];
+  const deferred: SessionEntry[] = [];
+  while (i < rest.length) {
+    const entry = rest[i];
+    if (!entry) break;
+    if (entry.kind === "tool_result") {
+      results.push(entry);
+      if (entry.toolCallId) unanswered.delete(entry.toolCallId);
+      i += 1;
+      continue;
+    }
+    if (unanswered.size === 0 || !DEFERRABLE_STIMULUS_KINDS.has(entry.kind)) break;
+    deferred.push(entry);
+    i += 1;
+  }
+
+  return { calls, results, deferred, next: i };
+}
+
+/**
+ * Pairs one run of tool_call entries with the run of tool_result entries that
+ * answers it and pushes the resulting assistant + tool messages.
  * A call with no reply in this run, or a result with no matching call in
  * this run, is dropped (and logged) rather than emitted out of position.
  */
@@ -166,11 +239,18 @@ export function projectForModel(entries: SessionEntry[]): ChatMessage[] {
     }
 
     if (entry.kind === "tool_call") {
-      const callStart = i;
-      while (rest[i]?.kind === "tool_call") i += 1;
-      const resultStart = i;
-      while (rest[i]?.kind === "tool_result") i += 1;
-      emitToolBlock(messages, rest.slice(callStart, resultStart), rest.slice(resultStart, i));
+      const block = scanToolBlock(rest, i);
+      emitToolBlock(messages, block.calls, block.results);
+      if (block.deferred.length > 0) {
+        log.debug("projection.stimulus-deferred-past-tool-block", {
+          reason: "a stimulus landed between a tool_call and its result — emitted after the round trip",
+          seqs: block.deferred.map((s) => s.seq),
+        });
+      }
+      for (const stimulus of block.deferred) {
+        messages.push({ role: "user", content: stimulus.text ?? "" });
+      }
+      i = block.next;
       continue;
     }
 
