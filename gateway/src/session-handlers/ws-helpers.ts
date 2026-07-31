@@ -5,6 +5,7 @@ import type { PermissionBroker } from "../runtime/permission-broker.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { FrameJournal } from "./frame-journal.js";
 import type { ReplayLease } from "./replay-registry.js";
+import type { SessionVoicePrefs } from "./session-voice-prefs.js";
 import type { SttSession } from "./stt-session.js";
 // ws-send.ts imports only the `SessionData` TYPE back from this file, which the
 // transpiler erases — so this is a compile-time edge, never a runtime cycle.
@@ -93,6 +94,16 @@ export interface SessionData {
    */
   stt: SttSession | null;
   /**
+   * This connection's live audio/voice preferences (spec §6). Minted with the
+   * runtime in `handleSessionConfigure` and held here so
+   * `user.preferences.patch` (handle-preferences-patch.ts) can apply a mute
+   * toggle to the SESSION, not just to profile.json — `TurnVoice.begin`
+   * re-reads `shouldSpeak` per turn, but the profile is read once at
+   * session.configure. Null when the orchestrator is unconfigured or the
+   * runtime failed to construct; the patch is still persisted then.
+   */
+  voicePrefs: SessionVoicePrefs | null;
+  /**
    * This connection's outbound frame journal (Plan 3 Task 10, spec §11
    * slice 6). Acquired from `services.replayRegistry` in
    * `handleSessionConfigure`, so it is null for every frame sent before
@@ -135,6 +146,7 @@ export function createEmptySessionData(): SessionData {
     runtime: null,
     permissions: null,
     stt: null,
+    voicePrefs: null,
     journal: null,
     epoch: 0,
     replayLease: null,

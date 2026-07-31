@@ -187,7 +187,11 @@ export function handleSessionConfigure(
       // SessionRuntime on the turn's own AbortController, so barge-in and
       // interrupt cancel TTS through the same abort that stops the provider
       // stream. See runtime/turn-voice.ts's header.
+      // Parked on the socket too: `user.preferences.patch` applies a live mute
+      // toggle through it (handle-preferences-patch.ts), so it cannot stay a
+      // closure variable only this block can see.
       const voicePrefs = createSessionVoicePrefs(services.profileStore, userId, sessionId);
+      ws.data.voicePrefs = voicePrefs;
       const echoGuard = createMicEchoGuard(
         () => ws.data.stt,
         services.stt?.adapterConfig.ttsEchoCooldownMs ?? null,
@@ -311,6 +315,10 @@ function disposeSessionHandles(ws: ServerWebSocket<SessionData>): void {
   ws.data.permissions = null;
   ws.data.runtime?.dispose();
   ws.data.runtime = null;
+  // Minted with the runtime, cleared with it: the next session.configure
+  // hydrates a fresh one from the profile, and a stale handle here would apply
+  // a mute toggle to a `TurnVoice` no turn can ever reach.
+  ws.data.voicePrefs = null;
 }
 
 /**

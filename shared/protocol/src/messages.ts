@@ -19,6 +19,7 @@
  * frame); the gateway replies with stream.resumed.
  */
 
+import { audioPrefsPatchSchema } from "@sentient/audio-prefs";
 import { z } from "zod";
 import { conversationFeedItemSchema } from "./conversation.ts";
 import {
@@ -179,6 +180,28 @@ export const interruptSchema = z.object({
   type: z.literal("interrupt"),
 });
 
+// The in-chat mute / unmute toggle, and the settings Apply bar's live push
+// after a profile save. PAYLOAD-NESTED — that is the shape all three clients
+// have always sent (web-sdk's PreferencesConnector, mobile-sdk's
+// ClientMessage.UserPreferencesPatch, gateway/webui's TTS toggle), so the
+// nesting is the contract, not a preference.
+//
+// The payload is `@sentient/audio-prefs`' own patch schema rather than a copy:
+// the same object validates the profile's `audio` sub-tree and the
+// `update_user_settings` tool input, and a wire mirror that drifted from it
+// would accept a patch the profile store then rejects.
+//
+// The 2.0 purge deleted this frame's handler and never added it here, so every
+// tap was answered with `error{code:"protocol_error"}` — which neither SDK
+// renders after the handshake. Mobile's toggle writes nothing else at all, so
+// it was simply dead; web persisted over REST but the assistant kept speaking
+// for the rest of the session.
+export const userPreferencesPatchSchema = z.object({
+  type: z.literal("user.preferences.patch"),
+  payload: audioPrefsPatchSchema,
+});
+export type UserPreferencesPatch = z.infer<typeof userPreferencesPatchSchema>;
+
 // NOTE: the resume request is carried INSIDE session.configure (see
 // sessionConfigureSchema.resume) — there is no separate stream.resume frame.
 // The gateway → client reply is stream.resumed (below), still its own frame.
@@ -194,6 +217,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   interruptSchema,
   sessionNewSchema,
   conversationActivateSchema,
+  userPreferencesPatchSchema,
 ]);
 
 export type ClientMessage = z.infer<typeof clientMessageSchema>;

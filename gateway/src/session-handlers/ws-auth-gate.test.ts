@@ -40,6 +40,7 @@ function fakeWs(): FakeWs {
     runtime: null,
     permissions: null,
     stt: null,
+    voicePrefs: null,
     journal: null,
     epoch: 0,
     replayLease: null,

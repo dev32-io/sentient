@@ -1,7 +1,9 @@
+import type { AudioPrefsPatch } from "@sentient/audio-prefs";
 import { clientMessageSchema } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { getLog } from "../logging/logger.js";
+import { handlePreferencesPatch } from "./handle-preferences-patch.js";
 import { createSttSession } from "./stt-session.js";
 import type { SttSession } from "./stt-session.js";
 import { handleAuthMessage, scheduleAuthTimeout } from "./ws-auth-gate.js";
@@ -203,6 +205,14 @@ export async function handleWebSocketMessage(
       handleSessionNew(ws, msg.requestId);
       return;
 
+    case "user.preferences.patch":
+      // The in-chat mute toggle. Detached on purpose: the frame is
+      // fire-and-forget on all three SDKs (none reads a reply), and a profile
+      // write must not hold the router. The handler never throws — see
+      // handle-preferences-patch.ts.
+      applyPreferencesPatch(ws, services, msg.payload);
+      return;
+
     default:
       // `conversation.activate` is deliberately LEFT UNANSWERED, and it is not
       // the same call as session.new above.
@@ -252,6 +262,37 @@ function ensureSttSession(ws: ServerWebSocket<SessionData>, services: GatewaySer
   ws.data.stt = session;
   log.info("stt-session-created", { sessionId: ws.data.sessionId });
   return session;
+}
+
+/**
+ * Persist + live-apply one audio-preference patch for THIS connection's user.
+ *
+ * The router already gated on `authState === "authed"`, so the principal is
+ * set; the guard exists so a future reordering can never turn a missing
+ * principal into a write against an empty user id.
+ */
+function applyPreferencesPatch(
+  ws: ServerWebSocket<SessionData>,
+  services: GatewayServices,
+  patch: AudioPrefsPatch,
+): void {
+  const principal = ws.data.principal;
+  if (!principal) {
+    log.warn("user.preferences.patch.no-principal", {
+      sessionId: ws.data.sessionId,
+      reason: "authed connection without a principal — refusing to write a profile",
+    });
+    return;
+  }
+  void handlePreferencesPatch(
+    {
+      profileStore: services.profileStore,
+      voicePrefs: ws.data.voicePrefs,
+      userId: principal.userId,
+      sessionId: ws.data.sessionId ?? "unbound",
+    },
+    patch,
+  );
 }
 
 // ---------------------------------------------------------------------------

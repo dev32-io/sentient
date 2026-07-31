@@ -90,6 +90,7 @@
     "shared/protocol": {
       "name": "@sentient/protocol",
       "dependencies": {
+        "@sentient/audio-prefs": "workspace:*",
         "zod": "^3.24.0",
       },
       "devDependencies": {

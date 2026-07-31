@@ -1,5 +1,4 @@
-// Per-session voice preferences, read once from the authenticated user's
-// profile.json (spec §6). Two values:
+// Per-session voice preferences (spec §6). Two values:
 //   - voice.id     → the local-tts voice pack this session synthesizes with.
 //                    Null falls back to config.yaml's `tts.voice_id`.
 //   - audio.{ttsEnabled,channel} → whether this session speaks at all.
@@ -11,7 +10,14 @@
 // lands late is picked up by the next turn rather than being lost. Defaults
 // (no voice override, speaking enabled) match profileV1Schema's own defaults,
 // so an unreadable profile degrades to the gateway-wide voice, not silence.
+//
+// The audio half is also LIVE, not read-once: `applyAudio` folds in a
+// `user.preferences.patch` (handle-preferences-patch.ts) mid-session. Without
+// it, tapping mute persisted the preference but left the assistant speaking
+// for the rest of the session, because nothing re-read the profile until the
+// next `session.configure`.
 
+import { AUDIO_PREFS_DEFAULT, type AudioPrefs, type AudioPrefsPatch } from "@sentient/audio-prefs";
 import { getLog } from "../logging/logger.js";
 import type { ProfileStore } from "../profile-store/profile-store.js";
 
@@ -22,11 +28,15 @@ export interface SessionVoicePrefs {
   voiceId(): string | null;
   /** False when the user routed this profile to text or disabled TTS. */
   shouldSpeak(): boolean;
+  /** Fold a live audio patch over the hydrated values. Takes effect on the
+   *  NEXT turn — `TurnVoice.begin` re-reads `shouldSpeak` per turn, so a reply
+   *  already streaming finishes speaking rather than being cut mid-word. */
+  applyAudio(patch: AudioPrefsPatch): void;
 }
 
 export function createSessionVoicePrefs(store: ProfileStore, userId: string, sessionId: string): SessionVoicePrefs {
   let voiceId: string | null = null;
-  let speak = true;
+  let audio: AudioPrefs = AUDIO_PREFS_DEFAULT;
 
   void store
     .get(userId)
@@ -41,8 +51,14 @@ export function createSessionVoicePrefs(store: ProfileStore, userId: string, ses
         return;
       }
       voiceId = result.value.voice.id;
-      speak = result.value.audio.ttsEnabled && result.value.audio.channel === "voice";
-      log.info("voice-prefs.loaded", { sessionId, userId, voiceId, speak });
+      audio = result.value.audio;
+      log.info("voice-prefs.loaded", {
+        sessionId,
+        userId,
+        voiceId,
+        ttsEnabled: audio.ttsEnabled,
+        channel: audio.channel,
+      });
     })
     .catch((err: unknown) => {
       log.warn("voice-prefs.profile-read-threw", {
@@ -54,6 +70,18 @@ export function createSessionVoicePrefs(store: ProfileStore, userId: string, ses
 
   return {
     voiceId: () => voiceId,
-    shouldSpeak: () => speak,
+    shouldSpeak: () => audio.ttsEnabled && audio.channel === "voice",
+    applyAudio: (patch) => {
+      audio = {
+        ttsEnabled: patch.ttsEnabled ?? audio.ttsEnabled,
+        channel: patch.channel ?? audio.channel,
+      };
+      log.info("voice-prefs.audio-patched", {
+        sessionId,
+        userId,
+        ttsEnabled: audio.ttsEnabled,
+        channel: audio.channel,
+      });
+    },
   };
 }

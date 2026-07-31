@@ -263,6 +263,27 @@ describe("clientMessageSchema", () => {
     expect(result.success).toBe(true);
   });
 
+  // CONTRACT: the exact payload-nested shape all three clients send for the
+  // in-chat mute toggle (web-sdk PreferencesConnector, mobile-sdk
+  // ClientMessage.UserPreferencesPatch, gateway/webui's TTS toggle). The 2.0
+  // purge deleted the handler and left the frame out of this union, so every
+  // tap was answered with protocol_error — which neither SDK renders.
+  it("parses user.preferences.patch with a payload-nested audio patch", () => {
+    const result = clientMessageSchema.safeParse({
+      type: "user.preferences.patch",
+      payload: { ttsEnabled: false },
+    });
+    expect(result.success).toBe(true);
+    if (result.success && result.data.type === "user.preferences.patch") {
+      expect(result.data.payload.ttsEnabled).toBe(false);
+      expect(result.data.payload.channel).toBeUndefined();
+    }
+  });
+
+  it("rejects a user.preferences.patch whose fields are not nested under payload", () => {
+    expect(clientMessageSchema.safeParse({ type: "user.preferences.patch", ttsEnabled: false }).success).toBe(false);
+  });
+
   it("rejects removed auth type", () => {
     expect(clientMessageSchema.safeParse({ type: "auth", token: "t" }).success).toBe(false);
   });
