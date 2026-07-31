@@ -85,7 +85,20 @@ const claimIo: SingleInstanceIo = {
 
 const claim = acquireSingleInstance(join(resolveSentientHome(), RUN_SUBDIR, CLAIM_FILE), config.port, claimIo);
 if (!claim.ok) {
-  log.error("single-instance.refused", { reason: describeConflict(claim.heldBy, config.port, Date.now()) });
+  log.error("single-instance.refused", {
+    heldByPid: claim.heldBy.pid,
+    heldByPort: claim.heldBy.port,
+    wantedPort: config.port,
+    reason: "another sentient gateway already holds this machine's single instance slot",
+  });
+  // ONE LINE PER LINE, on purpose. describeConflict is a multi-line operator
+  // message ending in the two commands that resolve it, and the log formatter
+  // caps any single property at the ≤120-char preview — logging the whole block
+  // as one `reason` truncated it mid-sentence and the fix commands never
+  // printed. Verified by driving a real second instance.
+  for (const line of describeConflict(claim.heldBy, config.port, Date.now()).split("\n")) {
+    if (line.trim().length > 0) log.error("single-instance.conflict", { line });
+  }
   process.exit(1);
 }
 // Captured here, not read off `claim` inside shutdown(): a hoisted function
