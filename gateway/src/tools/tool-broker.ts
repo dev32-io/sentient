@@ -260,13 +260,28 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     return confirmed ? { action: "allow" } : { action: "deny", reason: `confirmation declined: ${reason}` };
   }
 
-  async function dispatchForeground(inv: ToolInvocation): Promise<ToolResult> {
+  /** EXISTENCE, resolved before the PDP ever runs. Returns null for a tool
+   *  name that is in neither the MCP catalog nor the background registry.
+   *
+   *  Order is the whole point. Observed live 3× in one day: the model called
+   *  `ha_search`, the catalog has `ha_search_entities`, the PDP prompted the
+   *  owner to authorize it, they approved — and only then did dispatch log
+   *  `unknown-tool`. A permission prompt asserts that the thing being
+   *  authorized is real; raising one for a hallucination spends the human's
+   *  attention on nothing and teaches them to click through the prompts that
+   *  DO guard something. A name that does not exist is a model error the loop
+   *  absorbs, not a decision anyone should be asked to make. */
+  async function resolveTarget(
+    inv: ToolInvocation,
+  ): Promise<{ kind: "background"; runner: BackgroundToolRunner } | { kind: "foreground"; serverName: string } | null> {
+    const runner = backgroundTools.get(inv.name);
+    if (runner) return { kind: "background", runner };
     await ensureMcpWarm();
     const serverName = mcpIndex?.get(inv.name);
-    if (!serverName) {
-      log.warn("tool-broker.dispatch.unknown-tool", { sessionId, tool: inv.name, toolCallId: inv.toolCallId });
-      return { content: `Unknown tool: ${inv.name}`, isError: true };
-    }
+    return serverName ? { kind: "foreground", serverName } : null;
+  }
+
+  async function dispatchForeground(inv: ToolInvocation, serverName: string): Promise<ToolResult> {
     // Plan 2: the foreground deadline is enforced per-server by the MCP client
     // (each catalog entry's `timeout`), which supersedes config.foreground_timeout_ms
     // at this layer. A broker-level per-call deadline (AbortSignal.timeout merged
@@ -378,6 +393,17 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
   }
 
   async function dispatch(inv: ToolInvocation): Promise<ToolResult | { taskId: string }> {
+    const target = await resolveTarget(inv);
+    if (!target) {
+      log.warn("tool-broker.dispatch.unknown-tool", {
+        sessionId,
+        tool: inv.name,
+        toolCallId: inv.toolCallId,
+        reason: "name is in neither the MCP catalog nor the background registry — answered before the PDP",
+      });
+      return { content: `Unknown tool: ${inv.name}`, isError: true };
+    }
+
     const decision = await resolveDecision(inv);
     if (decision.action === "deny") {
       log.warn("tool-broker.dispatch.denied", {
@@ -389,9 +415,8 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
       return { content: decision.reason, isError: true };
     }
 
-    const runner = backgroundTools.get(inv.name);
-    if (runner) return dispatchBackground(inv, runner);
-    return dispatchForeground(inv);
+    if (target.kind === "background") return dispatchBackground(inv, target.runner);
+    return dispatchForeground(inv, target.serverName);
   }
 
   function setBackgroundCompletionSink(sink: BackgroundCompletionSink): void {

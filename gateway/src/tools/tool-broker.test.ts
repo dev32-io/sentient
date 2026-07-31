@@ -240,6 +240,98 @@ describe("ToolBroker — unanswerable confirm (fail-closed reason passthrough)",
 });
 
 // ---------------------------------------------------------------------------
+// Existence before permission
+//
+// Observed live 3× in one day: the model called `ha_search`; the catalog has
+// `ha_search_entities`. The PDP prompted the owner to authorize a tool that
+// does not exist, they approved it, and only then did the broker log
+// `dispatch.unknown-tool`. A permission prompt is a claim that the thing being
+// authorized is real — asking a human to vouch for a hallucination trains them
+// to click through, and the prompt is the last line of defence for the tools
+// that ARE real.
+// ---------------------------------------------------------------------------
+
+describe("ToolBroker — a hallucinated tool never reaches the permission prompt", () => {
+  it("answers an unknown tool as a tool error without evaluating the policy or prompting", async () => {
+    const mcp = fakeMcp([weatherTool]);
+    const policy = fakePolicy({ action: "confirm", reason: "side-effecting tool" });
+    let confirmCalls = 0;
+    const broker = createToolBroker({
+      mcp,
+      policy,
+      store: fakeStore(),
+      principal,
+      sessionId: "session-1",
+      backgroundTools: new Map(),
+      config: toolsConfig,
+      requestConfirm: async () => {
+        confirmCalls += 1;
+        return true;
+      },
+    });
+
+    const result = await broker.dispatch(makeInvocation({ name: "ha_search" }));
+
+    if ("taskId" in result) throw new Error("expected a ToolResult, got a background handle");
+    expect(result).toEqual({ content: "Unknown tool: ha_search", isError: true });
+    expect(confirmCalls).toBe(0);
+    expect(policy.contexts).toHaveLength(0);
+    expect(mcp.callToolCalls).toHaveLength(0);
+  });
+
+  it("still prompts for a tool that EXISTS and matches no rule — fail-closed is a different path", async () => {
+    const mcp = fakeMcp([weatherTool]);
+    const policy = fakePolicy({ action: "confirm", reason: "no rule matched" });
+    let confirmCalls = 0;
+    const broker = createToolBroker({
+      mcp,
+      policy,
+      store: fakeStore(),
+      principal,
+      sessionId: "session-1",
+      backgroundTools: new Map(),
+      config: toolsConfig,
+      requestConfirm: async () => {
+        confirmCalls += 1;
+        return false;
+      },
+    });
+
+    const result = await broker.dispatch(makeInvocation({ name: "get_weather" }));
+
+    if ("taskId" in result) throw new Error("expected a ToolResult, got a background handle");
+    expect(confirmCalls).toBe(1);
+    expect(policy.contexts).toHaveLength(1);
+    expect(result).toMatchObject({ isError: true });
+    expect(result.content).toContain("confirmation declined");
+    expect(mcp.callToolCalls).toHaveLength(0);
+  });
+
+  it("a registered background tool is not unknown, even though the MCP catalog has never heard of it", async () => {
+    const runner: BackgroundToolRunner = {
+      definition: { name: "delegateTask", description: "", parameters: {}, category: "background" },
+      run: () => ({ cancel: () => {}, result: neverSettles<ToolResult>() }),
+    };
+    const policy = fakePolicy({ action: "allow" });
+    const broker = createToolBroker({
+      mcp: fakeMcp([weatherTool]),
+      policy,
+      store: fakeStore(),
+      principal,
+      sessionId: "session-1",
+      backgroundTools: new Map([["delegateTask", runner]]),
+      config: toolsConfig,
+      requestConfirm: async () => false,
+    });
+
+    const result = await broker.dispatch(makeInvocation({ name: "delegateTask" }));
+
+    expect(result).toHaveProperty("taskId");
+    expect(policy.contexts).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Background: taskId handle + cap
 // ---------------------------------------------------------------------------
 
