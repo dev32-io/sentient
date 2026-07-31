@@ -77,6 +77,15 @@ export function createDockerDriver(deps: DockerDriverDeps): ServiceDriver {
   return {
     prepare: (ms) => prepare(deps.docker, ms),
     recreate: (ms) => recreate(deps.docker, deps.networks, ms),
+
+    // Docker binds the published port itself, in dockerd, at container start:
+    // a container whose `127.0.0.1:N:N` is already held by a foreign process
+    // FAILS to start, and `recreate` returns create/start-failed. So for this
+    // backend a successful recreate IS the identity proof — the socket the
+    // healthcheck then dials cannot belong to anything but this container.
+    // The native backend has no such guarantee (nothing stops a second process
+    // from having bound the port first), which is why it does the real work.
+    verifyIdentity: async () => ({ ok: true, value: undefined }),
     start: async (name) => {
       try {
         await deps.docker.getContainer(name).start();

@@ -143,6 +143,19 @@ async function runApply(
       continue;
     }
 
+    // The probe above proved only that SOMETHING answers. Before calling this
+    // service ready, prove the answerer is the unit we just started — an
+    // orphan holding the port is how a whole fleet reported ready while both
+    // native addons were dead.
+    const identity = await deps.drivers[ms.config.launch].verifyIdentity(ms);
+    if (!identity.ok) {
+      const newState: ServiceState = ms.config.optional ? "degraded" : "failed";
+      mark(statuses, name, newState, identity.error.reason);
+      if (!ms.config.optional) failedRequired.add(name);
+      emit(snapshot(statuses, "applying", startedAt));
+      continue;
+    }
+
     mark(statuses, name, "ready");
     emit(snapshot(statuses, "applying", startedAt));
   }

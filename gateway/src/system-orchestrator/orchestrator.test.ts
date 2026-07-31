@@ -47,6 +47,7 @@ function nativeSvc(name: string): ManagedService {
 const happyDriver: ServiceDriver = {
   prepare: async () => ok,
   recreate: async () => ok,
+  verifyIdentity: async () => ok,
   start: async () => ok,
   stop: async () => ok,
   remove: async () => ok,
@@ -82,6 +83,33 @@ test("orchestrator brings all services to ready when everything is healthy", asy
   const r = await orch.applyAll();
   expect(r.state).toBe("ready");
   expect(r.services.find((s) => s.name === "a")?.state).toBe("ready");
+});
+
+test("SECURITY: a service whose port answers but whose identity fails is FAILED, never ready", async () => {
+  // The whole defect in one assertion. The health probe is green — a day-old
+  // orphan was answering it — and the apply used to call that `ready`, so the
+  // orchestrator reported a healthy fleet with both native addons dead.
+  const foreignHolder: ServiceDriver = {
+    ...happyDriver,
+    verifyIdentity: async () => ({
+      ok: false,
+      error: { kind: "identity-failed", reason: "foreign listener on port 8770: pid 9999" },
+    }),
+  };
+  const orch = createSystemOrchestrator({
+    registry: new Map([["local-tts", nativeSvc("local-tts")]]),
+    drivers: allBackends(foreignHolder),
+    healthIO: healthyIO,
+    pollIntervalMs: 1,
+    applyTimeoutMs: 10000,
+  });
+
+  const r = await orch.applyAll();
+
+  expect(r.state).toBe("failed");
+  const tts = r.services.find((s) => s.name === "local-tts");
+  expect(tts?.state).toBe("failed");
+  expect(tts?.lastError).toContain("foreign");
 });
 
 test("optional service health failure leaves orchestrator ready, marks degraded", async () => {

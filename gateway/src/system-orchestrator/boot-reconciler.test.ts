@@ -39,6 +39,7 @@ test("orphan containers (managed but not in registry) are removed", async () => 
   const driver: ServiceDriver = {
     prepare: async () => ok,
     recreate: async () => ok,
+    verifyIdentity: async () => ok,
     start: async () => ok,
     stop: async () => ok,
     remove: async (name) => {
@@ -73,6 +74,7 @@ test("CONTRACT: each backend's orphans are reaped through that backend's OWN dri
   const backend = (orphan: string, into: string[]): ServiceDriver => ({
     prepare: async () => ok,
     recreate: async () => ok,
+    verifyIdentity: async () => ok,
     start: async () => ok,
     stop: async () => ok,
     remove: async (id) => {
@@ -109,6 +111,7 @@ test("calls applyAll after orphan reap to bring up registry services", async () 
   const driver: ServiceDriver = {
     prepare: async () => ok,
     recreate: async () => ok,
+    verifyIdentity: async () => ok,
     start: async () => ok,
     stop: async () => ok,
     remove: async () => ok,

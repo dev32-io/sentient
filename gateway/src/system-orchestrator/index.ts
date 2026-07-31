@@ -221,8 +221,19 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
         log.debug("health-watch.probe-skipped", { service: name, reason: "not-in-registry" });
         return true;
       }
-      if ("noop" in ms.config.healthcheck) return isUnitRunning(ms);
-      return probeOnce(ms.config.healthcheck, deps.healthIO);
+      const live =
+        "noop" in ms.config.healthcheck
+          ? await isUnitRunning(ms)
+          : await probeOnce(ms.config.healthcheck, deps.healthIO);
+      if (!live) return false;
+      // Same contract the apply path gates on: liveness AND identity. Without
+      // this the watchdog would keep declaring a service healthy for as long as
+      // ANY process held its port, so a foreign listener would suppress
+      // recovery forever instead of triggering it.
+      const identity = await drivers[ms.config.launch].verifyIdentity(ms);
+      if (identity.ok) return true;
+      log.warn("health-watch.identity-failed", { service: name, reason: identity.error.reason });
+      return false;
     },
     reapply: async (name) => {
       const status = await applySubsetSerialized(new Set([name]));

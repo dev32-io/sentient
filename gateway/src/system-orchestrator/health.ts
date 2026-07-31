@@ -57,6 +57,31 @@ export async function probeOnce(healthcheck: HealthCheck, io: HealthIO): Promise
   }
 }
 
+/** The loopback port a healthcheck dials, or null when it names none (`noop`,
+ *  `exec`). It is the socket whose OWNER the identity check attributes, so it
+ *  has to come from the same declaration the liveness probe uses — deriving it
+ *  anywhere else would let the two drift and re-open the false green. */
+export function probePort(hc: HealthCheck): number | null {
+  if ("tcp" in hc) return parsePort(hc.tcp.slice(hc.tcp.lastIndexOf(":") + 1));
+  if ("url" in hc) {
+    try {
+      return parsePort(new URL(hc.url).port);
+    } catch {
+      log.warn("health.probe-url-unparseable", { reason: "healthcheck url is not a valid URL" });
+      return null;
+    }
+  }
+  return null;
+}
+
+function parsePort(raw: string): number | null {
+  const port = Number.parseInt(raw, 10);
+  return Number.isInteger(port) && port > 0 && port <= MAX_TCP_PORT ? port : null;
+}
+
+/** Highest valid TCP port. A protocol constant, not a tunable. */
+const MAX_TCP_PORT = 65535;
+
 async function runProbe(hc: HealthCheck, io: HealthIO): Promise<boolean> {
   if ("noop" in hc) return true;
   if ("url" in hc) {

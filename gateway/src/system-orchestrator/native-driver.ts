@@ -9,6 +9,7 @@
 // reapOrphans() at boot closes that hole.
 import type { Result } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
+import { probePort } from "./health.js";
 import {
   type DriverError,
   type ManagedProcessInfo,
@@ -64,6 +65,13 @@ export interface NativeDriverDeps {
   killPid(pid: number): void;
   /** True while the group leader is still alive. */
   isPidAlive(pid: number): boolean;
+  /** The pid owning the LISTENING socket on `port`, or null when nothing
+   *  listens. This is the identity half of the health contract — see
+   *  ServiceDriver.verifyIdentity. */
+  listeningPidFor(port: number): Promise<number | null>;
+  /** A short argv description of `pid`, for naming a foreign holder in a log
+   *  line. Null when the process is gone or unreadable. */
+  describePid(pid: number): Promise<string | null>;
 }
 
 export interface NativeDriver extends ServiceDriver {
@@ -124,8 +132,32 @@ export function createNativeDriver(deps: NativeDriverDeps): NativeDriver {
     return { ok: true, value: undefined };
   }
 
+  /** Health is liveness AND identity. Everything here answers one question:
+   *  is the thing on the other end of that socket the child WE started? */
+  async function verifyIdentity(ms: ManagedService): Promise<Result<undefined, DriverError>> {
+    const native = requireNative(ms);
+    if (!native.ok) return native;
+    const name = native.value.name;
+    const ourPid = running.get(name)?.pid ?? null;
+    const port = probePort(native.value.config.healthcheck);
+
+    if (port === null) return verifyByPidRecord(deps, name, ourPid);
+
+    const holder = await deps.listeningPidFor(port);
+    if (holder === null) return identityFailed(name, `nothing is listening on port ${port}`);
+    if (holder !== ourPid) {
+      const cmd = (await deps.describePid(holder)) ?? "unreadable";
+      const ours = ourPid === null ? "this gateway started no child for it" : `not our child pid ${ourPid}`;
+      return identityFailed(name, `foreign listener on port ${port}: pid ${holder} (${cmd}), ${ours}`);
+    }
+
+    log.debug("native.identity-ok", { service: name, port, pid: ourPid });
+    return { ok: true, value: undefined };
+  }
+
   return {
     prepare,
+    verifyIdentity,
 
     recreate: async (ms) => {
       const native = requireNative(ms);
@@ -175,6 +207,30 @@ export function createNativeDriver(deps: NativeDriverDeps): NativeDriver {
       }
     },
   };
+}
+
+function identityFailed(name: ServiceName, reason: string): Result<undefined, DriverError> {
+  log.warn("native.identity-failed", { service: name, reason });
+  return { ok: false, error: { kind: "identity-failed", reason } };
+}
+
+/** Fallback for a service whose probe names no port (`noop`, `exec`): there is
+ *  no socket to attribute, so the strongest honest claim left is "the child we
+ *  recorded is still alive". Never a bare pass — an unchecked check reporting
+ *  healthy is the defect this whole seam exists to close. */
+function verifyByPidRecord(
+  deps: NativeDriverDeps,
+  name: ServiceName,
+  ourPid: number | null,
+): Result<undefined, DriverError> {
+  if (ourPid === null) {
+    return identityFailed(name, "no child recorded and the healthcheck names no port to attribute");
+  }
+  if (!deps.isPidAlive(ourPid)) {
+    return identityFailed(name, `our recorded child pid ${ourPid} is not alive`);
+  }
+  log.debug("native.identity-ok-by-pid", { service: name, pid: ourPid, reason: "healthcheck names no port" });
+  return { ok: true, value: undefined };
 }
 
 /** Fail closed when a docker service reaches the native driver. A model- or

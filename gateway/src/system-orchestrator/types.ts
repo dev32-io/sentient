@@ -180,6 +180,9 @@ export type DriverErrorKind =
   | "image-missing"
   | "prepare-failed"
   | "spawn-failed"
+  // The port answers, but not with OUR unit on the other end — a leftover, a
+  // foreign daemon, or an impostor. Liveness passed and identity did not.
+  | "identity-failed"
   | "wrong-backend";
 
 export type DriverError = { kind: DriverErrorKind; reason: string };
@@ -201,6 +204,18 @@ export interface ServiceDriver {
    *  venv and its pinned interpreter (native). Idempotent. */
   prepare(ms: ManagedService): Promise<Result<undefined, DriverError>>;
   recreate(ms: ManagedService): Promise<Result<undefined, DriverError>>;
+  /**
+   * IDENTITY half of the health contract, run after the config healthcheck
+   * passes. A port probe proves only that *something* answers on 127.0.0.1:N;
+   * this proves the answerer is the unit this driver started.
+   *
+   * It exists because liveness alone let a day-old orphan hold whisper-stt's
+   * port while the orchestrator reported the fleet `ready` with both native
+   * addons dead. whisper-stt carries raw microphone audio and local-tts carries
+   * what the assistant says, so "whoever got to the port first" is not an
+   * acceptable answer for either.
+   */
+  verifyIdentity(ms: ManagedService): Promise<Result<undefined, DriverError>>;
   start(name: ServiceName): Promise<Result<undefined, DriverError>>;
   stop(name: ServiceName): Promise<Result<undefined, DriverError>>;
   remove(name: ServiceName): Promise<Result<undefined, DriverError>>;

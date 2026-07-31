@@ -29,6 +29,14 @@ const CHILD_LOG_PREVIEW_CHARS = 120;
 /** Exit code reported when the child was killed by a signal rather than
  *  exiting normally, so `exited` always resolves with a number. */
 const EXIT_CODE_SIGNALLED = -1;
+/** Deadline for the two local process-table lookups (`lsof`, `ps`). Same
+ *  fixed-deadline rationale as VERSION_PROBE_TIMEOUT_MS: a local exec that has
+ *  not answered in this long is wedged, and a health probe must never block on
+ *  it. Kept short because it runs on every watchdog tick. */
+const LSOF_TIMEOUT_MS = 3000;
+/** Cap on the argv preview of a foreign port holder. Under the ≤120-char log
+ *  preview rule, and it names a process, so it is truncated on principle. */
+const PROCESS_DESCRIPTION_CHARS = 120;
 
 const PYTHON_VERSION_RE = /(\d+\.\d+\.\d+)/;
 
@@ -47,7 +55,50 @@ export function createNativeIO(opts: NativeIOOptions): NativeDriverDeps {
     removePidFile: (name) => removePidFile(opts.runDir, name),
     killPid,
     isPidAlive,
+    listeningPidFor,
+    describePid,
   };
+}
+
+/** `lsof -nP -iTCP:<port> -sTCP:LISTEN -t` -> the pid owning the listening
+ *  socket. Exit 1 with no output is lsof's "no match", i.e. nothing listens —
+ *  a normal answer, not a failure. Only ONE pid is returned: two processes
+ *  cannot hold the same loopback listener without SO_REUSEPORT, which neither
+ *  native service sets, so a multi-line answer means the port is not what we
+ *  think it is and attributing it to the first line would be a guess. */
+function listeningPidFor(port: number): Promise<number | null> {
+  return new Promise((resolve) => {
+    execFile("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], { timeout: LSOF_TIMEOUT_MS }, (_err, stdout) => {
+      const lines = stdout
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0);
+      if (lines.length !== 1) {
+        if (lines.length > 1) {
+          log.warn("io.listener-ambiguous", { port, count: lines.length, reason: "more than one listening pid" });
+        }
+        resolve(null);
+        return;
+      }
+      const pid = Number.parseInt(lines[0] ?? "", 10);
+      resolve(Number.isInteger(pid) && pid >= MIN_PLAUSIBLE_PID ? pid : null);
+    });
+  });
+}
+
+/** `ps -o command= -p <pid>`, truncated, so a refusal can NAME the process it
+ *  refused to adopt. Never throws — an unreadable process is `null`. */
+function describePid(pid: number): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile("ps", ["-o", "command=", "-p", String(pid)], { timeout: LSOF_TIMEOUT_MS }, (err, stdout) => {
+      if (err) {
+        resolve(null);
+        return;
+      }
+      const cmd = stdout.trim().slice(0, PROCESS_DESCRIPTION_CHARS);
+      resolve(cmd.length > 0 ? cmd : null);
+    });
+  });
 }
 
 function spawnDetached(cmd: string[], opts: NativeSpawnOptions): NativeProcess {
