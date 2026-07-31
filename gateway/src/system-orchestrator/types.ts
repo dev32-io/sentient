@@ -183,6 +183,10 @@ export type DriverErrorKind =
   // The port answers, but not with OUR unit on the other end — a leftover, a
   // foreign daemon, or an impostor. Liveness passed and identity did not.
   | "identity-failed"
+  // Refused to launch: something the gateway did not start already holds the
+  // service's port, and killing a process we cannot identify as ours is not a
+  // decision an unattended supervisor gets to take. The reason names the holder.
+  | "port-held"
   | "wrong-backend";
 
 export type DriverError = { kind: DriverErrorKind; reason: string };

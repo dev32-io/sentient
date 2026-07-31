@@ -116,6 +116,13 @@ export async function runPhaseOrchestrator(input: PhaseOrchestratorInput): Promi
           maxAttempts: cfg.systemOrchestrator.health_watch_max_attempts,
           backoffFactor: cfg.systemOrchestrator.health_watch_backoff_factor,
         },
+        // A signalled process does not release its listening socket the instant
+        // it is signalled; launching onto a still-held port is what made both
+        // native addons die on EADDRINUSE every boot.
+        nativePortSettle: {
+          timeoutMs: cfg.systemOrchestrator.native_port_settle_timeout_ms,
+          pollMs: cfg.systemOrchestrator.native_port_settle_poll_ms,
+        },
         hostEnv: {
           HOST_HOME: process.env.HOST_HOME ?? "",
           HOST_DOCKER_GID: process.env.HOST_DOCKER_GID ?? "",

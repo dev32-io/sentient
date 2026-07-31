@@ -41,9 +41,14 @@ function stubDeps(over: Partial<NativeDriverDeps> = {}): NativeDriverDeps {
     isPidAlive: () => true,
     listeningPidFor: async () => null,
     describePid: async () => null,
+    sleep: async () => {},
     ...over,
   };
 }
+
+/** Settle knobs small enough that the port-wait loop costs nothing in a unit
+ *  test; `sleep` is stubbed out above, so these only bound the iteration count. */
+const FAST_SETTLE = { portSettleTimeoutMs: 40, portSettlePollMs: 10 };
 
 describe("native-driver", () => {
   it("INVARIANT: a started service is spawned into its OWN process group", async () => {
@@ -167,11 +172,16 @@ describe("native-driver", () => {
 
   it("SECURITY: a port answered by the child we started IS healthy", async () => {
     const svc = portedService("local-tts", 8770);
+    let holder: number | null = null; // free before the launch, bound by our child after
     const driver = createNativeDriver(
       stubDeps({
-        spawn: () => ({ pid: 4242, exited: new Promise<number>(() => {}), kill: () => {}, stderrTail: () => "" }),
-        listeningPidFor: async () => 4242,
+        spawn: () => {
+          holder = 4242;
+          return { pid: 4242, exited: new Promise<number>(() => {}), kill: () => {}, stderrTail: () => "" };
+        },
+        listeningPidFor: async () => holder,
       }),
+      FAST_SETTLE,
     );
     await driver.recreate(svc);
 
@@ -203,6 +213,83 @@ describe("native-driver", () => {
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.error.kind).toBe("identity-failed");
+  });
+
+  it("SECURITY: a foreign holder of a service's port is NAMED and refused, never killed", async () => {
+    // The judgement call, pinned. A process the gateway did not start is not
+    // ours to signal: on this very box the holder was the operator's own
+    // `io.dev32.sentient.whisper-stt` LaunchAgent with KeepAlive=true, whose
+    // argv is IDENTICAL to ours. Killing "whatever is on my port" would have
+    // started an unbounded kill/respawn storm against launchd.
+    const killed: number[] = [];
+    const driver = createNativeDriver(
+      stubDeps({
+        listeningPidFor: async () => 9999, // never ours: we recorded nothing
+        describePid: async () => "/usr/bin/python -m whisper_stt",
+        killPid: (pid) => {
+          killed.push(pid);
+        },
+      }),
+      FAST_SETTLE,
+    );
+
+    const r = await driver.recreate(portedService("whisper-stt", 8768));
+
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.kind).toBe("port-held");
+    expect(r.error.reason).toContain("9999");
+    expect(r.error.reason).toContain("whisper_stt");
+    expect(killed).toEqual([]);
+  });
+
+  it("INVARIANT: a leftover WE recorded is killed and waited out, then the port is reused", async () => {
+    // The other half of the same call: our own detached child from a previous
+    // gateway process IS identifiably ours — the pid file is the record — so it
+    // is reaped rather than reported, and the spawn waits for the socket to
+    // actually clear instead of racing it.
+    const killed: number[] = [];
+    let holder: number | null = 4242;
+    const driver = createNativeDriver(
+      stubDeps({
+        readPidFiles: async () => [{ name: "whisper-stt", pid: 4242 }],
+        listeningPidFor: async () => holder,
+        killPid: (pid) => {
+          killed.push(pid);
+          holder = null; // the group died; the socket is released
+        },
+        spawn: () => ({ pid: 5555, exited: new Promise<number>(() => {}), kill: () => {}, stderrTail: () => "" }),
+      }),
+      FAST_SETTLE,
+    );
+
+    await driver.reapOrphans();
+    const r = await driver.recreate(portedService("whisper-stt", 8768));
+
+    expect(killed).toContain(4242);
+    expect(r.ok).toBe(true);
+  });
+
+  it("INVARIANT: our own leftover that ignores SIGTERM is escalated to SIGKILL, never a foreign one", async () => {
+    const signals: Array<{ pid: number; signal: string | undefined }> = [];
+    const driver = createNativeDriver(
+      stubDeps({
+        readPidFiles: async () => [{ name: "whisper-stt", pid: 4242 }],
+        listeningPidFor: async () => 4242, // clings to the socket throughout
+        killPid: (pid, signal) => {
+          signals.push({ pid, signal });
+        },
+      }),
+      FAST_SETTLE,
+    );
+
+    await driver.reapOrphans();
+    const r = await driver.recreate(portedService("whisper-stt", 8768));
+
+    expect(signals.some((s) => s.signal === "SIGKILL" && s.pid === 4242)).toBe(true);
+    // Still refused: escalation is bounded, and a port we cannot free is not a
+    // port we may launch onto.
+    expect(r.ok).toBe(false);
   });
 
   it("INVARIANT: a dead child's stderr becomes the failure reason, not a bare exit code", async () => {

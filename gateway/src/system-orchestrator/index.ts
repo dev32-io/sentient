@@ -69,6 +69,14 @@ export interface FactoryDeps {
     maxAttempts: number;
     backoffFactor: number;
   };
+  /** How long a native launch waits for its port to be released by the previous
+   *  holder, and how often it re-checks. From `config.yaml#system_orchestrator`;
+   *  see native-driver.ts's `waitForPortFree` for why launching onto a held
+   *  socket is never acceptable. */
+  nativePortSettle: {
+    timeoutMs: number;
+    pollMs: number;
+  };
 }
 
 /** The one `ManagedProcessInfo.state` that counts as alive. A backend protocol
@@ -88,7 +96,10 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
 
   // Dockerode connects to /var/run/docker.sock by default.
   const docker = new Dockerode() as unknown as DockerodeLike;
-  const nativeDriver = createNativeDriver(createNativeIO({ runDir: deps.nativeRunDir }));
+  const nativeDriver = createNativeDriver(createNativeIO({ runDir: deps.nativeRunDir }), {
+    portSettleTimeoutMs: deps.nativePortSettle.timeoutMs,
+    portSettlePollMs: deps.nativePortSettle.pollMs,
+  });
   // One backend per launch kind; everything above this line stays agnostic.
   const drivers: Record<LaunchKind, ServiceDriver> = {
     docker: createDockerDriver({ docker, networks: MANAGED_NETWORK_TOPOLOGY }),

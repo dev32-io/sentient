@@ -9,6 +9,7 @@ import { getLog } from "../logging/logger.js";
 import {
   MIN_PLAUSIBLE_PID,
   type NativeDriverDeps,
+  type NativeKillSignal,
   type NativePidRecord,
   type NativeProcess,
   type NativeSpawnOptions,
@@ -61,6 +62,7 @@ export function createNativeIO(opts: NativeIOOptions): NativeDriverDeps {
     isPidAlive,
     listeningPidFor,
     describePid,
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   };
 }
 
@@ -272,11 +274,11 @@ async function removePidFile(runDir: string, name: ServiceName): Promise<void> {
   }
 }
 
-/** SIGTERM the whole process GROUP led by `pid` (negative pid = group). The
+/** Signal the whole process GROUP led by `pid` (negative pid = group). The
  *  group is why detached spawning matters: it takes down a python service's
  *  own worker children too. Falls back to the single pid when the group is
  *  already gone. Never throws — a dead pid is the desired end state. */
-function killPid(pid: number): void {
+function killPid(pid: number, signal: NativeKillSignal = "SIGTERM"): void {
   // Last line of defence at the syscall itself: `-0 === 0` in JS, so kill(-0)
   // is kill(0), which POSIX defines as "signal the CALLER's whole process
   // group" — the gateway would SIGTERM itself. Refuse below MIN_PLAUSIBLE_PID.
@@ -285,17 +287,17 @@ function killPid(pid: number): void {
     return;
   }
   try {
-    process.kill(-pid, "SIGTERM");
-    log.info("io.group-terminated", { pid });
+    process.kill(-pid, signal);
+    log.info("io.group-terminated", { pid, signal });
     return;
   } catch (err) {
-    log.debug("io.group-kill-failed", { pid, reason: errMsg(err) });
+    log.debug("io.group-kill-failed", { pid, signal, reason: errMsg(err) });
   }
   try {
-    process.kill(pid, "SIGTERM");
-    log.info("io.pid-terminated", { pid });
+    process.kill(pid, signal);
+    log.info("io.pid-terminated", { pid, signal });
   } catch (err) {
-    log.debug("io.pid-kill-failed", { pid, reason: errMsg(err) });
+    log.debug("io.pid-kill-failed", { pid, signal, reason: errMsg(err) });
   }
 }
 

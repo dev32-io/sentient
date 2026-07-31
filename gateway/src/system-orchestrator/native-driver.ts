@@ -28,6 +28,10 @@ const log = getLog(["sentient", "system-orch", "native-driver"]);
  *  instead of a service. Anything below this is refused, never signalled. */
 export const MIN_PLAUSIBLE_PID = 2;
 
+/** The only two signals this driver sends. SIGTERM asks; SIGKILL is the bounded
+ *  escalation for a child of OURS that ignored the ask. */
+export type NativeKillSignal = "SIGTERM" | "SIGKILL";
+
 /** A live child. `exited` resolves with the exit code; the driver only awaits
  *  it to log, never to gate a lifecycle transition. */
 export interface NativeProcess {
@@ -78,8 +82,9 @@ export interface NativeDriverDeps {
   writePidFile(name: ServiceName, pid: number): Promise<void>;
   readPidFiles(): Promise<NativePidRecord[]>;
   removePidFile(name: ServiceName): Promise<void>;
-  /** SIGTERM the whole process GROUP led by `pid`. Never throws. */
-  killPid(pid: number): void;
+  /** Signal the whole process GROUP led by `pid`, SIGTERM unless told
+   *  otherwise. Never throws. */
+  killPid(pid: number, signal?: NativeKillSignal): void;
   /** True while the group leader is still alive. */
   isPidAlive(pid: number): boolean;
   /** The pid owning the LISTENING socket on `port`, or null when nothing
@@ -89,6 +94,22 @@ export interface NativeDriverDeps {
   /** A short argv description of `pid`, for naming a foreign holder in a log
    *  line. Null when the process is gone or unreadable. */
   describePid(pid: number): Promise<string | null>;
+  sleep(ms: number): Promise<void>;
+}
+
+/** Fallbacks for the two port-settle knobs. The real values are operator-tunable
+ *  in `config.yaml#system_orchestrator` and the gateway always passes both
+ *  explicitly; these exist only so the driver is constructible standalone.
+ *  (Same arrangement as health-watch.ts's back-off defaults.) */
+const DEFAULT_PORT_SETTLE_TIMEOUT_MS = 8000;
+const DEFAULT_PORT_SETTLE_POLL_MS = 250;
+
+export interface NativeDriverOptions {
+  /** How long to wait for a service's declared port to be released after its
+   *  previous holder was signalled, before giving up on the launch. */
+  portSettleTimeoutMs?: number;
+  /** How often the port is re-checked while waiting. */
+  portSettlePollMs?: number;
 }
 
 export interface NativeDriver extends ServiceDriver {
@@ -98,11 +119,27 @@ export interface NativeDriver extends ServiceDriver {
   reapOrphans(): Promise<void>;
 }
 
-export function createNativeDriver(deps: NativeDriverDeps): NativeDriver {
+export function createNativeDriver(deps: NativeDriverDeps, options: NativeDriverOptions = {}): NativeDriver {
+  const settleTimeoutMs = options.portSettleTimeoutMs ?? DEFAULT_PORT_SETTLE_TIMEOUT_MS;
+  const settlePollMs = options.portSettlePollMs ?? DEFAULT_PORT_SETTLE_POLL_MS;
   // Last spec seen per service, so start() can re-launch after a stop().
   const known = new Map<ServiceName, NativeManagedService>();
   const running = new Map<ServiceName, NativeProcess>();
   const lastExit = new Map<ServiceName, LastExit>();
+  // ═══ THE OWNERSHIP RECORD, and the whole basis for deciding what may be
+  // killed. A pid lands here only because THIS driver spawned it, or because it
+  // was read out of a pid file THIS gateway wrote under its own state root.
+  //
+  // Everything else on a port is refused and named, never signalled. That
+  // boundary is not caution for its own sake: on the dev box the holder was a
+  // legacy `io.dev32.sentient.whisper-stt` LaunchAgent with KeepAlive=true and
+  // an argv byte-identical to ours, so an argv- or port-based kill rule would
+  // have entered an unbounded kill/respawn duel with launchd — taking STT down
+  // for the household while the log filled with successful-looking reaps.
+  // A refusal is loud, bounded and self-healing: the service is marked failed
+  // with the holder named, the watchdog keeps probing cheaply, and the next
+  // apply succeeds the moment the holder goes away.
+  const ourPids = new Set<number>();
 
   async function prepare(ms: ManagedService): Promise<Result<undefined, DriverError>> {
     const native = requireNative(ms);
@@ -115,6 +152,11 @@ export function createNativeDriver(deps: NativeDriverDeps): NativeDriver {
     if (!ready.ok) return ready;
 
     await stopIfRunning(deps, running, ms.name);
+    // Never launch onto a socket someone still holds: a doomed child that dies
+    // on EADDRINUSE is exactly the crash loop this task exists to end, and the
+    // holder's identity is the one thing the log must carry.
+    const free = await waitForPortFree(ms);
+    if (!free.ok) return free;
 
     let proc: NativeProcess;
     try {
@@ -144,11 +186,52 @@ export function createNativeDriver(deps: NativeDriverDeps): NativeDriver {
 
     known.set(ms.name, ms);
     running.set(ms.name, proc);
+    ourPids.add(proc.pid);
     await deps.writePidFile(ms.name, proc.pid);
     lastExit.delete(ms.name);
     log.info("native.started", { service: ms.name, pid: proc.pid, argc: ms.config.exec.length });
     watchExit(ms.name, proc, running, lastExit);
     return { ok: true, value: undefined };
+  }
+
+  /**
+   * Blocks until the service's declared port is free, or refuses.
+   *
+   * The two outcomes are deliberately asymmetric, because the two situations
+   * are: a holder that is OURS is a cleanup problem (signal it harder, wait for
+   * the socket to actually close — TCP does not release it the instant the
+   * process is signalled), while a holder that is NOT ours is a decision no
+   * unattended process should take on the operator's machine.
+   */
+  async function waitForPortFree(ms: NativeManagedService): Promise<Result<undefined, DriverError>> {
+    const port = probePort(ms.config.healthcheck);
+    if (port === null) return { ok: true, value: undefined };
+
+    let escalated = false;
+    for (let waitedMs = 0; ; waitedMs += settlePollMs) {
+      const holder = await deps.listeningPidFor(port);
+      if (holder === null) {
+        if (waitedMs > 0) log.info("native.port-settled", { service: ms.name, port, waitedMs });
+        return { ok: true, value: undefined };
+      }
+      if (!ourPids.has(holder)) return portHeld(deps, ms.name, port, holder);
+      if (waitedMs >= settleTimeoutMs) {
+        return portHeld(deps, ms.name, port, holder, "it is ours but did not release the socket");
+      }
+      // Ours, still holding: SIGTERM was already sent by the reap/stop path.
+      // Escalate ONCE, halfway through the budget, and only for a pid we own.
+      if (!escalated && waitedMs * 2 >= settleTimeoutMs) {
+        escalated = true;
+        log.warn("native.kill-escalated", {
+          service: ms.name,
+          pid: holder,
+          port,
+          reason: "our own child still held the port after SIGTERM",
+        });
+        killChild(deps, ms.name, holder, "SIGKILL");
+      }
+      await deps.sleep(settlePollMs);
+    }
   }
 
   /** Health is liveness AND identity. Everything here answers one question:
@@ -222,6 +305,10 @@ export function createNativeDriver(deps: NativeDriverDeps): NativeDriver {
           pid,
           reason: "pid file survived a gateway restart",
         });
+        // A pid file this gateway wrote is the ownership record: claim the pid
+        // BEFORE signalling it, so the port wait that follows knows this holder
+        // is ours to escalate on rather than a foreign process to refuse.
+        if (isPlausiblePid(pid)) ourPids.add(pid);
         killChild(deps, name, pid);
         await deps.removePidFile(name);
       }
@@ -251,6 +338,22 @@ function lastStderrLine(tail: string): string {
 function identityFailed(name: ServiceName, reason: string): Result<undefined, DriverError> {
   log.warn("native.identity-failed", { service: name, reason });
   return { ok: false, error: { kind: "identity-failed", reason } };
+}
+
+/** A refusal to launch, with the holder NAMED. ERROR rather than WARN: it needs
+ *  a human, and the pid + argv are the whole point — an operator who cannot
+ *  identify the holder cannot clear it. */
+async function portHeld(
+  deps: NativeDriverDeps,
+  name: ServiceName,
+  port: number,
+  holder: number,
+  qualifier = "it is not a child of this gateway, so it was NOT signalled",
+): Promise<Result<undefined, DriverError>> {
+  const cmd = (await deps.describePid(holder)) ?? "unreadable";
+  const reason = `port ${port} is held by pid ${holder} (${cmd}) — ${qualifier}`;
+  log.error("native.port-held", { service: name, port, holder, reason });
+  return { ok: false, error: { kind: "port-held", reason } };
 }
 
 /** Fallback for a service whose probe names no port (`noop`, `exec`): there is
@@ -338,12 +441,12 @@ function isPlausiblePid(pid: number): boolean {
  *  a pid — the in-memory `running` map and the on-disk pid files — pass through
  *  here, so no lifecycle path can reach kill(2) with a pid that addresses the
  *  gateway's own process group. */
-function killChild(deps: NativeDriverDeps, name: ServiceName, pid: number): void {
+function killChild(deps: NativeDriverDeps, name: ServiceName, pid: number, signal?: NativeKillSignal): void {
   if (!isPlausiblePid(pid)) {
     log.warn("native.kill-refused", { service: name, pid, reason: "pid cannot be a spawned child" });
     return;
   }
-  deps.killPid(pid);
+  deps.killPid(pid, signal);
 }
 
 /** Log the exit and drop the handle. Restart is never the driver's call — a
