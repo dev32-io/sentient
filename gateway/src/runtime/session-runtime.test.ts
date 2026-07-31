@@ -219,6 +219,97 @@ describe("SessionRuntime — idle submit", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Case 1b: a turn that FAILS still terminates. `turn.completed` / `turn.aborted`
+// are the only two frames that clear the client's live bubble, and
+// cancellation.ts fires `turn.aborted` only for a user gesture — so a provider
+// error used to end the turn with no terminal frame at all (UI spins forever)
+// and no store entry (a reload showed the question with no reply).
+// ---------------------------------------------------------------------------
+
+describe("SessionRuntime — a turn that fails without a user gesture", () => {
+  it("INVARIANT: terminates the turn and commits a durable record carrying the partial", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/case1b` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = fakeProvider(async function* () {
+      yield { type: "text", content: "partway through" };
+      throw new Error("upstream 502");
+    });
+    const emitter = recordingEmitter();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-1b",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter,
+      systemPrompt: "test",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "hello" });
+    await waitUntilIdle(runtime);
+
+    expect(emitter.events.filter((e) => e.type === "turnCompleted")).toHaveLength(1);
+    expect(emitter.events.filter((e) => e.type === "turnAborted")).toHaveLength(0);
+
+    const readback = openSessionStore(am.grant(alice, "session-store"));
+    const assistant = readback.readSession("sess-1b").filter((e) => e.kind === "assistant");
+    expect(assistant).toHaveLength(1);
+    expect(assistant[0]?.text).toContain("partway through");
+    // …AND a notice next to it. A bare partial reads as a complete answer.
+    expect(assistant[0]?.text).not.toBe("partway through");
+    expect(assistant[0]?.cutoff).toBeNull();
+
+    // The committed twin reaches the feed BEFORE the frame that clears the bubble.
+    const kinds = emitter.events.map((e) => e.type);
+    const committedIdx = emitter.events.findIndex(
+      (e) => e.type === "conversationEntry" && e.item?.kind === "assistant",
+    );
+    expect(committedIdx).toBeGreaterThan(-1);
+    expect(committedIdx).toBeLessThan(kinds.indexOf("turnCompleted"));
+
+    runtime.dispose();
+  });
+
+  it("INVARIANT: a user-cancelled turn still gets exactly one terminal frame, and it is turn.aborted", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/case1c` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    // Streams until the turn's own signal aborts, so interrupt() lands
+    // mid-stream rather than racing a generator that already finished.
+    const provider = fakeProvider(async function* (_call, req) {
+      yield { type: "text", content: "thinking" };
+      while (!req.signal.aborted) await new Promise((resolve) => setTimeout(resolve, 5));
+      yield { type: "done", finishReason: "stop" };
+    });
+    const emitter = recordingEmitter();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-1c",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter,
+      systemPrompt: "test",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "hello" });
+    await waitFor(() => emitter.events.some((e) => e.type === "textDelta"));
+    runtime.interrupt();
+    await waitUntilIdle(runtime);
+
+    expect(emitter.events.filter((e) => e.type === "turnAborted")).toHaveLength(1);
+    expect(emitter.events.filter((e) => e.type === "turnCompleted")).toHaveLength(0);
+
+    runtime.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Case 2: a second submit while a turn is running steers it — no parallel
 // loop, and the steered text reaches the running loop's next iteration.
 // ---------------------------------------------------------------------------

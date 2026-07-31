@@ -119,6 +119,13 @@ const log = getLog(["sentient", "runtime", "session-runtime"]);
  *  output (self-output must never re-trigger a turn). */
 const TURN_TRIGGER_KINDS = new Set<SessionEntry["kind"]>(["user", "trigger"]);
 
+/** Committed as the assistant's reply when a turn ends with no answer and no
+ *  user cancel — a provider 429/502, a dropped socket, an expired
+ *  `request_timeout_ms`, or a `runTurn` that threw. A family member reads this
+ *  in their own transcript after a reload, so it names the situation without
+ *  leaking a provider name, a status code or a stack trace. */
+const TURN_FAILURE_NOTICE = "Sorry — something went wrong while I was answering. Please try again.";
+
 // Resolved once at module load (operator override → baked-in template),
 // matching system-prompt-loader.ts's DEFAULT_PERSONA precedent: a missing
 // baked-in template is a boot-time failure, not a per-turn surprise.
@@ -361,6 +368,31 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     return pendingId === undefined ? null : store.findByPendingId(sessionId, pendingId);
   }
 
+  /**
+   * Commit the durable record of a turn that failed on its own — no user
+   * gesture, no answer. `react-loop.ts` commits nothing on that path and
+   * `cancellation.ts` only ever speaks for a barge-in/interrupt, so without
+   * this the transcript keeps the person's question with no reply and no
+   * reason next to it, on every later reload.
+   *
+   * Whatever partial text had already streamed rides along, so what the reload
+   * shows still matches what the person was looking at (spec §3.2 Invariant B).
+   */
+  function commitTurnFailure(turnId: string): void {
+    const partial = turnText;
+    turnText = ""; // durable now — a later cutoff commit must not re-append it.
+    const text = partial.length > 0 ? `${partial}\n\n${TURN_FAILURE_NOTICE}` : TURN_FAILURE_NOTICE;
+    const entry = store.append({ ...blankEntry(sessionId, turnId), kind: "assistant", text });
+    log.warn("session-runtime.turn.failure-committed", {
+      userId,
+      sessionId,
+      turnId,
+      seq: entry.seq,
+      partialLength: partial.length,
+      reason: "turn ended with no answer and no user cancel — committing a durable notice in its place",
+    });
+  }
+
   async function onTurnSettled(turnId: string, result: TurnOutcome, signal: AbortSignal): Promise<void> {
     // A DISPOSED RUNTIME DOES NO SETTLE WORK — the first statement in this
     // function, before anything can touch the store. `dispose()` already did
@@ -389,11 +421,32 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     const speech = inFlight?.turnId === turnId ? inFlight.speech : null;
     speech?.end();
 
+    // EVERY TURN ENDS WITH EXACTLY ONE TERMINAL FRAME. `turn.completed` and
+    // `turn.aborted` are the only two in the contract, and they are the only
+    // things that clear the client's live bubble and its awaitingResponse
+    // status. Three exits, three owners:
+    //
+    //   - completed naturally  → `turn.completed`, here;
+    //   - cut off by a user gesture (`signal.aborted`) → `turn.aborted`,
+    //     already emitted by cancellation.ts, which also committed the partial
+    //     with its cutoff kind. A second frame here would race it;
+    //   - FAILED — neither of the above. The provider errored, the socket
+    //     dropped, `request_timeout_ms` expired, or `runTurn` threw. Nobody
+    //     used to speak for this exit at all: it logged a WARN and stopped, so
+    //     the client spun until the user reloaded and the durable record held
+    //     the question with no reply. It is terminated with `turn.completed`
+    //     over the failure notice committed just below — the turn IS over, and
+    //     `turn.aborted` would be a lie (its cutoff vocabulary is exactly the
+    //     two user gestures) while a third terminal frame would break the
+    //     frozen wire contract.
+    const failed = !result.completed && !signal.aborted;
+    if (failed) commitTurnFailure(turnId);
+
     // Turn boundary: release everything still outstanding on the committed
     // feed — including a tool tile whose `tool_result` is never coming (a
-    // background dispatch) — BEFORE the terminal frame below. The client
-    // drops its live bubble on `turn.completed`, so the committed twin has to
-    // already be there or the reply visibly vanishes.
+    // background dispatch), and the failure notice above — BEFORE the terminal
+    // frame below. The client drops its live bubble on `turn.completed`, so the
+    // committed twin has to already be there or the reply visibly vanishes.
     feed.publishAll();
 
     log.info("session-runtime.turn.end", {
@@ -401,16 +454,23 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
       sessionId,
       turnId,
       completed: result.completed,
+      failed,
       iterations: result.iterations,
     });
 
-    if (result.completed) {
+    if (result.completed || failed) {
       emitter.turnCompleted(turnId);
     } else {
       // Cutoff-kind stamping (interrupt|barge-in) on the partial output is
-      // Task 8's job (spec §4.7) — this runtime only owns starting/clearing
-      // the AbortController the abort came through.
-      log.warn("session-runtime.turn.not-completed", { userId, sessionId, turnId, iterations: result.iterations });
+      // cancellation.ts's job (spec §4.7) — this runtime only owns
+      // starting/clearing the AbortController the abort came through.
+      log.info("session-runtime.turn.cut-off", {
+        userId,
+        sessionId,
+        turnId,
+        iterations: result.iterations,
+        reason: "aborted by a user gesture — cancellation.ts owns this turn's terminal frame",
+      });
     }
 
     // Compaction (spec §8, §3.4) runs HERE, in the one window where it is
