@@ -34,7 +34,24 @@ export interface NativeProcess {
   readonly pid: number;
   readonly exited: Promise<number>;
   kill(signal?: string): void;
+  /** The child's most recent stderr output, so an exit can say WHY. Empty when
+   *  the child printed nothing. The driver truncates before logging. */
+  stderrTail(): string;
 }
+
+/** Why a service's last child stopped. Kept after the process handle is gone so
+ *  a later "no live child" verdict can name the cause instead of just the
+ *  absence — a supervisor that reports "not running" without the exit reason
+ *  sends the operator to a log that was never written. */
+interface LastExit {
+  pid: number;
+  code: number;
+  stderr: string;
+}
+
+/** Cap on the stderr excerpt carried into a log line or an error reason. The
+ *  house rule caps previews at 120 chars; a python traceback is far longer. */
+const STDERR_REASON_CHARS = 120;
 
 export interface NativeSpawnOptions {
   /** Always true — see the file header. Kept explicit so the seam is testable. */
@@ -85,6 +102,7 @@ export function createNativeDriver(deps: NativeDriverDeps): NativeDriver {
   // Last spec seen per service, so start() can re-launch after a stop().
   const known = new Map<ServiceName, NativeManagedService>();
   const running = new Map<ServiceName, NativeProcess>();
+  const lastExit = new Map<ServiceName, LastExit>();
 
   async function prepare(ms: ManagedService): Promise<Result<undefined, DriverError>> {
     const native = requireNative(ms);
@@ -127,8 +145,9 @@ export function createNativeDriver(deps: NativeDriverDeps): NativeDriver {
     known.set(ms.name, ms);
     running.set(ms.name, proc);
     await deps.writePidFile(ms.name, proc.pid);
+    lastExit.delete(ms.name);
     log.info("native.started", { service: ms.name, pid: proc.pid, argc: ms.config.exec.length });
-    watchExit(ms.name, proc, running);
+    watchExit(ms.name, proc, running, lastExit);
     return { ok: true, value: undefined };
   }
 
@@ -140,14 +159,15 @@ export function createNativeDriver(deps: NativeDriverDeps): NativeDriver {
     const name = native.value.name;
     const ourPid = running.get(name)?.pid ?? null;
     const port = probePort(native.value.config.healthcheck);
+    const died = describeLastExit(lastExit.get(name));
 
-    if (port === null) return verifyByPidRecord(deps, name, ourPid);
+    if (port === null) return verifyByPidRecord(deps, name, ourPid, died);
 
     const holder = await deps.listeningPidFor(port);
-    if (holder === null) return identityFailed(name, `nothing is listening on port ${port}`);
+    if (holder === null) return identityFailed(name, `nothing is listening on port ${port}${died}`);
     if (holder !== ourPid) {
       const cmd = (await deps.describePid(holder)) ?? "unreadable";
-      const ours = ourPid === null ? "this gateway started no child for it" : `not our child pid ${ourPid}`;
+      const ours = ourPid === null ? `this gateway started no child for it${died}` : `not our child pid ${ourPid}`;
       return identityFailed(name, `foreign listener on port ${port}: pid ${holder} (${cmd}), ${ours}`);
     }
 
@@ -209,6 +229,25 @@ export function createNativeDriver(deps: NativeDriverDeps): NativeDriver {
   };
 }
 
+/** The clause appended to every "nothing of ours is there" verdict. Empty when
+ *  no child of ours has exited, so a first boot does not carry a stale cause. */
+function describeLastExit(exit: LastExit | undefined): string {
+  if (exit === undefined) return "";
+  const why = exit.stderr.length > 0 ? `: ${exit.stderr}` : "";
+  return ` — our last child (pid ${exit.pid}) exited code=${exit.code}${why}`;
+}
+
+/** The last non-empty stderr line, truncated. A python traceback's LAST line is
+ *  the exception; its first is boilerplate, so a head-truncated preview would
+ *  reliably cut off the one sentence that says what went wrong. */
+function lastStderrLine(tail: string): string {
+  const lines = tail
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  return (lines[lines.length - 1] ?? "").slice(0, STDERR_REASON_CHARS);
+}
+
 function identityFailed(name: ServiceName, reason: string): Result<undefined, DriverError> {
   log.warn("native.identity-failed", { service: name, reason });
   return { ok: false, error: { kind: "identity-failed", reason } };
@@ -222,9 +261,10 @@ function verifyByPidRecord(
   deps: NativeDriverDeps,
   name: ServiceName,
   ourPid: number | null,
+  died: string,
 ): Result<undefined, DriverError> {
   if (ourPid === null) {
-    return identityFailed(name, "no child recorded and the healthcheck names no port to attribute");
+    return identityFailed(name, `no child recorded and the healthcheck names no port to attribute${died}`);
   }
   if (!deps.isPidAlive(ourPid)) {
     return identityFailed(name, `our recorded child pid ${ourPid} is not alive`);
@@ -312,11 +352,26 @@ function killChild(deps: NativeDriverDeps, name: ServiceName, pid: number): void
  *  ones that have gone unhealthy. (This comment used to claim "a health probe
  *  failure re-applies" while nothing outside the apply path ever re-probed, so
  *  a crashed addon stayed dead. The watchdog is what made the claim true.) */
-function watchExit(name: ServiceName, proc: NativeProcess, running: Map<ServiceName, NativeProcess>): void {
+function watchExit(
+  name: ServiceName,
+  proc: NativeProcess,
+  running: Map<ServiceName, NativeProcess>,
+  lastExit: Map<ServiceName, LastExit>,
+): void {
   void proc.exited
     .then((code) => {
       if (running.get(name) === proc) running.delete(name);
-      log.warn("native.exited", { service: name, pid: proc.pid, code, reason: "child process ended" });
+      // The child's OWN last words. Without this the line read "child process
+      // ended", the real cause (an EADDRINUSE traceback) went to DEBUG that
+      // production never enables, and the defect survived a whole branch.
+      const stderr = lastStderrLine(proc.stderrTail());
+      lastExit.set(name, { pid: proc.pid, code, stderr });
+      log.warn("native.exited", {
+        service: name,
+        pid: proc.pid,
+        code,
+        reason: stderr.length > 0 ? stderr : "child process ended with no stderr output",
+      });
     })
     .catch((err: unknown) => {
       log.warn("native.exit-watch-failed", { service: name, pid: proc.pid, reason: errMsg(err) });

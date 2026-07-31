@@ -31,7 +31,7 @@ type Spawned = { cmd: string[]; opts: Record<string, unknown> };
 
 function stubDeps(over: Partial<NativeDriverDeps> = {}): NativeDriverDeps {
   return {
-    spawn: () => ({ pid: 1, exited: new Promise<number>(() => {}), kill: () => {} }),
+    spawn: () => ({ pid: 1, exited: new Promise<number>(() => {}), kill: () => {}, stderrTail: () => "" }),
     isExecutable: async () => true,
     probeInterpreterVersion: async () => null,
     writePidFile: async () => {},
@@ -52,7 +52,7 @@ describe("native-driver", () => {
       stubDeps({
         spawn: (cmd, opts) => {
           spawned.push({ cmd, opts: opts as unknown as Record<string, unknown> });
-          return { pid: 4242, exited: new Promise<number>(() => {}), kill: () => {} };
+          return { pid: 4242, exited: new Promise<number>(() => {}), kill: () => {}, stderrTail: () => "" };
         },
       }),
     );
@@ -105,7 +105,7 @@ describe("native-driver", () => {
         // The seam is typed `pid: number`, but a backend cannot always produce
         // a real one: node leaves `child.pid` undefined when exec fails
         // (missing binary, EACCES, bad shebang) and reports it asynchronously.
-        spawn: () => ({ pid: 0, exited: new Promise<number>(() => {}), kill: () => {} }),
+        spawn: () => ({ pid: 0, exited: new Promise<number>(() => {}), kill: () => {}, stderrTail: () => "" }),
         writePidFile: async (_name, pid) => {
           written.push(pid);
         },
@@ -124,7 +124,7 @@ describe("native-driver", () => {
     const killed: number[] = [];
     const driver = createNativeDriver(
       stubDeps({
-        spawn: () => ({ pid: 0, exited: new Promise<number>(() => {}), kill: () => {} }),
+        spawn: () => ({ pid: 0, exited: new Promise<number>(() => {}), kill: () => {}, stderrTail: () => "" }),
         readPidFiles: async () => [{ name: "local-tts", pid: 0 }],
         killPid: (pid) => {
           killed.push(pid);
@@ -146,7 +146,7 @@ describe("native-driver", () => {
     const svc = portedService("local-tts", 8770);
     const driver = createNativeDriver(
       stubDeps({
-        spawn: () => ({ pid: 4242, exited: new Promise<number>(() => {}), kill: () => {} }),
+        spawn: () => ({ pid: 4242, exited: new Promise<number>(() => {}), kill: () => {}, stderrTail: () => "" }),
         // Someone else owns the socket: an orphan, a stray launchd agent, or
         // an impostor sitting between the gateway and the family's audio.
         listeningPidFor: async () => 9999,
@@ -169,7 +169,7 @@ describe("native-driver", () => {
     const svc = portedService("local-tts", 8770);
     const driver = createNativeDriver(
       stubDeps({
-        spawn: () => ({ pid: 4242, exited: new Promise<number>(() => {}), kill: () => {} }),
+        spawn: () => ({ pid: 4242, exited: new Promise<number>(() => {}), kill: () => {}, stderrTail: () => "" }),
         listeningPidFor: async () => 4242,
       }),
     );
@@ -205,6 +205,38 @@ describe("native-driver", () => {
     expect(r.error.kind).toBe("identity-failed");
   });
 
+  it("INVARIANT: a dead child's stderr becomes the failure reason, not a bare exit code", async () => {
+    // The bind error that cost this branch a week was visible only when the
+    // service was run by hand: the driver piped the child's stderr to DEBUG,
+    // the gateway runs at INFO, and `native.exited` said "child process ended".
+    // A supervisor that cannot say WHY its child died is not a supervisor.
+    const svc = portedService("whisper-stt", 8768);
+    let killChild: (code: number) => void = () => {};
+    const driver = createNativeDriver(
+      stubDeps({
+        spawn: () => ({
+          pid: 4242,
+          exited: new Promise<number>((resolve) => {
+            killChild = resolve;
+          }),
+          kill: () => {},
+          stderrTail: () => "OSError: [Errno 48] error while attempting to bind on address ('127.0.0.1', 8768)",
+        }),
+      }),
+    );
+    await driver.recreate(svc);
+
+    killChild(1);
+    await Promise.resolve(); // let the exit watcher record it
+
+    const r = await driver.verifyIdentity(svc);
+
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.reason).toContain("Errno 48");
+    expect(r.error.reason).toContain("4242");
+  });
+
   it("INVARIANT: recreate never spawns when prepare fails", async () => {
     const spawned: Spawned[] = [];
     const driver = createNativeDriver(
@@ -212,7 +244,7 @@ describe("native-driver", () => {
         isExecutable: async () => false,
         spawn: (cmd, opts) => {
           spawned.push({ cmd, opts: opts as unknown as Record<string, unknown> });
-          return { pid: 1, exited: new Promise<number>(() => {}), kill: () => {} };
+          return { pid: 1, exited: new Promise<number>(() => {}), kill: () => {}, stderrTail: () => "" };
         },
       }),
     );

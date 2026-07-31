@@ -37,6 +37,10 @@ const LSOF_TIMEOUT_MS = 3000;
 /** Cap on the argv preview of a foreign port holder. Under the ≤120-char log
  *  preview rule, and it names a process, so it is truncated on principle. */
 const PROCESS_DESCRIPTION_CHARS = 120;
+/** Bytes of a child's stderr retained for the exit reason. Large enough to hold
+ *  a python traceback (whose LAST line is the exception), small enough that a
+ *  chatty service cannot grow the gateway's heap. */
+const STDERR_RING_CHARS = 4096;
 
 const PYTHON_VERSION_RE = /(\d+\.\d+\.\d+)/;
 
@@ -118,7 +122,11 @@ function spawnDetached(cmd: string[], opts: NativeSpawnOptions): NativeProcess {
   child.unref();
 
   pipeToLog(child.stdout, bin, "stdout");
-  pipeToLog(child.stderr, bin, "stderr");
+  // stderr is ALSO retained in a bounded ring: the gateway runs at INFO, the
+  // per-chunk echo below is DEBUG, and a child that dies on startup takes its
+  // only explanation with it. The driver reports this on `native.exited`.
+  const stderrRing = createStderrRing();
+  pipeToLog(child.stderr, bin, "stderr", stderrRing.push);
 
   const exited = new Promise<number>((resolve) => {
     child.once("exit", (code) => resolve(code ?? EXIT_CODE_SIGNALLED));
@@ -145,13 +153,34 @@ function spawnDetached(cmd: string[], opts: NativeSpawnOptions): NativeProcess {
     kill: (signal?: string) => {
       child.kill((signal ?? "SIGTERM") as NodeJS.Signals);
     },
+    stderrTail: stderrRing.read,
   };
 }
 
-function pipeToLog(stream: NodeJS.ReadableStream | null, bin: string, channel: "stdout" | "stderr"): void {
+/** Last `STDERR_RING_CHARS` of a child's stderr. Bounded so a service that logs
+ *  at DEBUG for a week cannot grow the gateway's heap; tail rather than head so
+ *  the retained text is the exception, not the banner that preceded it. */
+function createStderrRing(): { push: (text: string) => void; read: () => string } {
+  let buffer = "";
+  return {
+    push: (text: string) => {
+      buffer = (buffer + text).slice(-STDERR_RING_CHARS);
+    },
+    read: () => buffer,
+  };
+}
+
+function pipeToLog(
+  stream: NodeJS.ReadableStream | null,
+  bin: string,
+  channel: "stdout" | "stderr",
+  retain?: (text: string) => void,
+): void {
   if (!stream) return;
   stream.on("data", (chunk: Buffer) => {
-    const preview = chunk.toString("utf8").trim().slice(0, CHILD_LOG_PREVIEW_CHARS);
+    const text = chunk.toString("utf8");
+    retain?.(text);
+    const preview = text.trim().slice(0, CHILD_LOG_PREVIEW_CHARS);
     if (preview.length > 0) log.debug("io.child-output", { bin, channel, preview });
   });
 }
