@@ -171,7 +171,10 @@ async function runApply(
     failed: services.filter((s) => s.state === "failed").length,
     blocked: services.filter((s) => s.state === "blocked-by-dep").length,
   };
-  log.info("apply.complete", { state: finalState, durationMs: Date.now() - startedAt, counts });
+  // Spread, not nested: the formatter stringifies a nested object as
+  // "[object Object]", so the one line that summarises a whole boot said
+  // nothing. Read it dozens of times while chasing this task's defect.
+  log.info("apply.complete", { state: finalState, durationMs: Date.now() - startedAt, ...counts });
 
   return final;
 }

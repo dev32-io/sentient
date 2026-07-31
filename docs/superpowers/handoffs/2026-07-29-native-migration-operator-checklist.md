@@ -255,21 +255,35 @@ entirely — the addon images must already be baked locally.
 
 ## 5. Restart the gateway twice and confirm BOTH native services come back
 
-This is the highest-risk unknown in the whole migration, and the mini is the only place it can be
-tested.
+**This is no longer the highest-risk unknown — it was reproduced and fixed on the dev box (plan task
+13, 2026-07-31). Run it anyway as a confirmation, not as an investigation.**
 
-During E2E an agent hit a **reproducible hang (2 of 2 consecutive restarts)** where, on gateway
-restart, `whisper-stt` started fine and `local-tts` then produced *no log line at all* — not started,
-not failed, nothing — and the boot sequence simply stopped. Because the boot never completes, the
-post-boot health watchdog never starts either, so **nothing self-heals**. On the mini under launchd
-this would present as "TTS is just dead after a restart, forever, until someone notices." Full
-investigation: `qa/web/evidence/2026-07-30-native-restart-tts-hang/README.md`.
+What the restart "hang" actually was: services are applied sequentially in topo order, so
+`whisper-stt` failing its 30 s health gate is 30 s of silence before `local-tts` is even reached. The
+boot was not stuck; the log had nothing to emit because the driver discarded the child's stderr. Both
+addons were in fact dying on `[Errno 48] address already in use` every spawn, and the health probe —
+which asked only "is something answering on 8768" — was being answered by the leftover, so the
+orchestrator reported `ready` with both addons dead. Fixed: health is now liveness AND identity
+(`verifyIdentity` compares the pid owning the listening socket to the child we started), the reap
+waits for the port to clear, and `native.exited` carries the child's last stderr line.
 
-**Why not an agent:** it has not been reproducible on the dev machine since, because the dev gateway
-runs without `SENTIENT_CODE` set and therefore never supervises the native services at all. The
-production launchd plist *does* set it. The mini is the only environment where this path runs for
-real. No fix has landed — no commit has touched the orchestrator's native driver since the hang was
-found — so treat it as live until this check says otherwise.
+**FIRST, and this is the part that may still bite prod:** the root cause on the dev box was two
+**legacy per-user LaunchAgents** left over from before the migration, with `KeepAlive=true`, holding
+8768/8769/8770 and respawning within seconds of any kill:
+
+```bash
+launchctl list | grep -i dev32
+ls -la ~/Library/LaunchAgents/ | grep -i sentient
+```
+
+**Expect: no output from either.** If they are present, the gateway can never supervise its own
+native addons — remove them before anything else:
+
+```bash
+launchctl bootout gui/$(id -u)/io.dev32.sentient.whisper-stt
+launchctl bootout gui/$(id -u)/io.dev32.sentient.local-tts
+cd ~/Library/LaunchAgents && for f in io.dev32.sentient.*.plist; do mv "$f" "$f.pre-native-migration-disabled"; done
+```
 
 **Steps** — on the mini:
 
@@ -280,24 +294,31 @@ grep -E "native.started|native.prepare-failed|native.spawn-failed|apply.complete
   ~/.sentient/gateway/logs/$(date +%F).log | tail -10
 ```
 
-Then do it a second time — the first restart of a session has started cleanly before; the hang showed
-up on subsequent ones.
+Then do it a second time — on the dev box the failure showed up on restarts, not on a first boot.
 
 **Expect (log):** `native.started` for **both** `whisper-stt` **and** `local-tts`, followed by
-`apply.complete`. All three lines, both times.
+`apply.complete | state="ready"` in roughly 13 s. All three lines, both times.
 
-**Expect (observable):**
+**Expect (observable) — and this is the check that matters, not the ports alone:**
 
 ```bash
-lsof -nP -iTCP:8768 -iTCP:8770 -sTCP:LISTEN
+lsof -nP -iTCP:8768 -sTCP:LISTEN -t ; cat ~/.sentient/run/whisper-stt.pid
+lsof -nP -iTCP:8770 -sTCP:LISTEN -t ; cat ~/.sentient/run/local-tts.pid
 ```
-→ both ports listening on `127.0.0.1`.
+→ each pair prints the **same number**. A port that answers proves nothing on its own — that is
+precisely how a day-old orphan passed for a healthy service for an entire branch.
 
-**If it fails** — i.e. you get `native.started | service="whisper-stt"` and then silence, with no
-`apply.complete`: you have reproduced it. Capture the log window and note the elapsed time (the agent
-waited 140+ seconds with no progress and near-zero CPU, so it is a stuck `await`, not a busy loop).
-This is an open P1 defect needing a code fix in the gateway's native driver, not an operator action —
-restarting again is the only workaround. Please report it rather than working around it silently.
+**If it fails,** the log now names the cause rather than going silent. Three shapes to expect:
+
+- `native.port-held | service=… port=… holder=<pid>` — something the gateway did not start owns the
+  port and was deliberately **not** killed. The line carries the holder's pid and argv; stop it, and
+  the next apply (≤15 s) succeeds on its own.
+- `native.identity-failed | reason="foreign listener on port …"` — the port answers but not with our
+  child. Same action.
+- `native.exited | … reason="<the child's own last stderr line>"` — the service itself refused to
+  start; the reason is the python exception, so read it directly.
+
+Please still report any of these with the log window — but they are diagnosable now, not a mystery.
 
 ---
 

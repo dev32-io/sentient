@@ -8,7 +8,7 @@ Three kinds of entry, kept separate on purpose — the difference matters when d
 - **Deferred by scope** — the product is right for 2.0; the work is a later project.
 - **Operator handoff** — verified nowhere because an agent physically cannot; needs your hands or a second machine.
 
-Status as of 2026-07-30, branch `feature/native-orchestrator`.
+Status as of 2026-07-31, branch `feature/native-orchestrator`.
 
 ---
 
@@ -79,11 +79,26 @@ A regression of the 2.0 legacy purge, not of task 9e: `git log -S pendingId -- g
 
 **Do not fix this with a dedupe guard in the router.** That is the D7 mistake from NM-T9c: the projection was the bug and a guard would have masked it. Restore the round trip — persist `pendingId` on the user entry, echo it on `conversation.entry` — which crosses the store schema and both projections.
 
-### P0 — native addon supervision has never worked, and its health model reports a FALSE GREEN
+### ~~P0 — native addon supervision has never worked, and its health model reports a FALSE GREEN~~ — CLOSED 2026-07-31 (plan task 13)
 
-Found 2026-07-31 on the dev box, once the environment was fixed so the orchestrator actually supervised its native addons for the first time.
+**Both native addons come up, and `apply.complete state="ready"` now means it.** Live on the dev box: `native.started whisper-stt pid=95966` / `local-tts pid=96014`, `apply.complete state="ready" durationMs=13797`, and `lsof -nP -iTCP:8768 -iTCP:8770 -sTCP:LISTEN -t` returns **95966 / 96014** — the same pids the driver recorded in `~/.sentient/run/*.pid`. Three consecutive boots, one process per service, no orphan accumulation.
 
-**The symptom chain:**
+**Two of the four items in the original diagnosis were wrong, and the real root cause was neither.**
+
+1. **The root cause was two legacy per-user LaunchAgents**, not the driver. `~/Library/LaunchAgents/io.dev32.sentient.{whisper-stt,local-tts}.plist`, from the pre-migration era, carry `RunAtLoad` **and `KeepAlive=true`** and launch the OLD repo-tree venvs (`capabilityServices/*/.venv`). They held 8768/8769/8770, so every gateway child died on `[Errno 48]`, and launchd resurrected them within seconds of any kill — `reapOrphans()` could never have won, however perfect its pid record. Booted out and the plists renamed `*.plist.pre-native-migration-disabled` on the dev box. **If the mini has the same two agents, prod is in this exact state** — operator checklist § 5.
+2. **"The logged pid is not the listening pid" was a misreading.** Measured with the ports free, reproducing `spawnDetached`'s exact options: recorded pid **=** listening pid, for both services. `46977` vs `46636` were two unrelated processes — our child (already dead) and the LaunchAgent's (started earlier, hence the LOWER number, which no fork or exec can produce). What confused it: whisper-stt's homebrew python@3.14 is a macOS **framework build** that `execv`s itself into `Python.app/Contents/MacOS/Python`, so `ps` shows an argv[0] we never spawned — pid and pgid preserved. (It is also why `pkill -f "python -m whisper_stt"` silently misses it: `Python` ≠ `python`.)
+
+**What actually shipped, and why each piece is load-bearing:**
+
+- **Health is liveness AND identity.** `ServiceDriver.verifyIdentity` runs after the config healthcheck in *both* consumers — the apply path and the post-boot watchdog. The native backend resolves the pid owning the listening socket and compares it to the child it recorded; a mismatch, an absent record, or an empty port is `identity-failed` with the holder named. Docker returns ok, and it is a real argument rather than a stub: dockerd binds the published port itself at container start, so a successful `recreate` IS the proof. **The orchestrator can no longer report `ready` for a socket it does not own.**
+- **Reap only what is ours; name what is not.** A holder recorded in `~/.sentient/run/<svc>.pid` (or held in memory) is escalated SIGTERM → one SIGKILL and waited out. Anything else is refused with its pid and argv at ERROR and **never signalled** — because the holder on the dev box was launchd's own agent with an argv byte-identical to ours, and "kill whatever is on my port" would have opened an unbounded kill/respawn duel with launchd. The refusal is bounded, not a wedge: state `failed`, watchdog keeps probing, next apply succeeds the moment the holder goes.
+- **A launch waits for its port to actually clear.** SIGTERM does not release a listening socket synchronously; launching onto a still-held port is the other half of the EADDRINUSE loop. Tunables `native_port_settle_timeout_ms` / `native_port_settle_poll_ms`.
+- **The child's stderr is no longer discarded.** `native.exited`'s reason is the child's last stderr line. It earned its place on the very first boot after landing: it named a *second*, previously invisible defect — `${HOST_HOME}` in `config.yaml` resolves from `process.env` while the file is LOADED and an unset var becomes the empty string (it does **not** stay literal, contrary to the comment that sat beside it), so both addons were launched pointing at `/.sentient/…` and died on `config file not found`. `main.ts` now defaults `HOST_HOME` before the first config read.
+- **The single-instance guard is wired.** `bootstrap/single-instance.ts` landed in `ec8ce61` and nothing called it. `main.ts` claims the slot before `createGatewayServices` (which starts the supervision) and before `Bun.serve`, and prints the full conflict message — driving a real second instance showed the one-property form being cut at the 120-char preview, so the two commands that resolve it never printed.
+
+**Honest limit of the identity control.** It defends against silent adoption of a leftover, a foreign daemon, another local user, and a second gateway. It does **not** defend against a process running as the operator that races us to the port on purpose — same uid could also read the pid files or replace the venv. What changes for that attacker is that the substitution stops being silent: the holder's pid and argv are logged at ERROR and the service reads `failed`, never `ready`. `lsof`/`ps` are resolved by PATH, not by absolute path — a residual, not addressed here.
+
+**The original symptom chain, kept because the diagnosis is what made the fix findable:**
 1. `native.started service="whisper-stt" pid=N` → `native.exited pid=N code=1` roughly 400 ms later. Both addons, every attempt, including every health-watch retry.
 2. The cause of the exit: `whisper-stt` binds **two** ports (8768 WS, 8769), and a leftover from a previous gateway holds them. `OSError: [Errno 48] ... bind on address ('127.0.0.1', 8769)`.
 3. The leftovers exist because `spawnDetached` puts each addon in its **own process group** — deliberate, so a gateway crash does not take the addons down — and a gateway restart does not reap them. `reapOrphans()` only knows the pids it recorded, so anything started by a previous binary, a crashed run, or by hand is invisible to it.
@@ -91,17 +106,15 @@ Found 2026-07-31 on the dev box, once the environment was fixed so the orchestra
 
 **The part that makes this P0 rather than P2:** the health probe asks *"is something answering on this port"*, not *"is the child I started alive"*. A day-old orphan answered it, so the orchestrator reported `apply.complete state="ready"` with **both addons dead**. Every green reading of native supervision on this branch, including the one recorded as a milestone earlier today, was measuring an orphan.
 
-**Almost certainly the same mechanism as the `local-tts` restart hang below** — same driver, same detached-spawn, same reap gap. Treat them as one investigation, not two.
+*(The guess that this shared a mechanism with the restart hang below was right; both are closed by the same change.)*
 
-**A fix has to cover all four:** reap by port and by service identity rather than only by recorded pid; record the pid that actually serves; make the health probe prove liveness of *our* child (pid check alongside the port probe); and decide deliberately what a second bind attempt means. Do not fix only the reap — a probe that passes against a foreign listener is what hid this for the whole branch.
+### ~~The gateway restart hangs before `local-tts` starts~~ (P1) — CLOSED 2026-07-31 (plan task 13)
 
-### The gateway restart hangs before `local-tts` starts (P1, operator-verifiable only)
+**Driven on the dev box, which now supervises the native addons for real, and it was the same defect.** What looked like a hang was the apply loop working exactly as designed: services are applied sequentially in topo order, so `whisper-stt` failing its **30 s** health gate is 30 s of silence before `local-tts` is even reached — and with both addons failing every spawn, a boot took 67 s to report `apply.complete state="failed"`. Nothing was stuck; the log simply had no line to emit, because the child's stderr was being discarded (see above). With the causes fixed the same sequence takes 13 s and ends `ready`.
 
-Reproduced 2 of 2 consecutive restarts during E2E: on gateway restart `whisper-stt` starts fine, then `local-tts` produces **no log line at all** — not started, not failed, nothing — and the boot sequence stops. Because boot never completes, the post-boot health watchdog never starts, so **nothing self-heals**. On the mini under launchd this presents as "TTS is dead after a restart, forever, until someone notices."
+**Two consecutive restarts, driven:** `13:41:47 apply.complete state="ready"`, `13:43:37 apply.complete state="ready"`. Listening pids equal recorded pids both times, exactly one process per service, no orphan accumulation.
 
-Not reproducible on the dev box, and that is itself the reason an agent cannot close it: the dev gateway runs without `SENTIENT_CODE`, so it never supervises the native services at all (§ 5). The production plist sets it. **No fix has landed** — no commit has touched the orchestrator's native driver since the hang was found — so treat it as live.
-
-Investigation: `qa/web/evidence/2026-07-30-native-restart-tts-hang/README.md`. Operator check: handoff checklist § 5.
+Driving the restart case also **found a defect in the reap fix itself**, which is the reason to insist on this case rather than reason about it: children are detached on purpose, so they outlive a killed gateway, and the replacement met a live child it never spawned. Two paths threw away the only evidence that child was ours — `stopIfRunning` removed the pid file unconditionally, and `reapOrphans` removed it immediately after an *asynchronous* SIGTERM. The successor then classified its own predecessor's children as foreign and refused **forever** (observed live: `native.port-held` on both addons against pids 88050/88120, re-refused every 15 s). Ownership is now read from both records — in-memory handle first, then the service's own pid file — and the file is dropped only once the process it names is actually gone.
 
 ### Small code and documentation debt found in passing
 
@@ -109,7 +122,7 @@ None of it affects behaviour; all was found during the migration and would other
 
 - `deploy/mac-prod/README.md:50-51` still documents the `/data/supervisor` named docker volume, which no longer exists.
 - `gateway/src/tools/hermes-runner.ts:3` cites `admin/supervisord-control.ts`, deleted in this migration.
-- `gateway/src/system-orchestrator/orchestrator.ts:161` logs `counts=[object Object]` — needs a spread so the boot summary is readable.
+- ~~`gateway/src/system-orchestrator/orchestrator.ts:161` logs `counts=[object Object]`~~ — **fixed 2026-07-31 (task 13)**, spread into the line. It is now `ready=9 degraded=0 failed=0 blocked=0`, which is the one line that summarises a whole boot.
 - `gateway/src/system-orchestrator/types.ts:40` hardcodes the network topology in TypeScript; per the every-tunable-in-YAML rule it belongs in config.
 - `shared/mobile-sdk/.../settings/AdminModels.kt:19` keeps a vestigial `port` field describing a per-user worker slot that no longer exists.
 
