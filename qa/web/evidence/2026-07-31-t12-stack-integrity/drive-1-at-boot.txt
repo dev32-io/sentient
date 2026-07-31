@@ -1,0 +1,69 @@
+[stack-integrity] config=/Users/kevinye/Development/sentient/gateway/config.yaml
+[stack-integrity] runDir=/Users/kevinye/.sentient/run
+[stack-integrity] log=/Users/kevinye/.sentient/gateway/logs/2026-07-31.log (boot window starts line 2016)
+[stack-integrity] declared=9 services
+
+  PASS           egress-proxy (docker)
+      running  running
+      identity container-labelled
+      health   noop (no host-reachable port declared)
+      note     container=sentient-egress-proxy state=running
+
+  PASS           ingress-proxy (docker)
+      running  running
+      identity publishes 127.0.0.1:8088
+      health   tcp 127.0.0.1:8088 ok
+      note     container=sentient-ingress-proxy state=running
+      note     published=[127.0.0.1:8087,127.0.0.1:8088] declared=127.0.0.1:8088
+
+  PASS           ha-mcp (docker)
+      running  running
+      identity publishes 127.0.0.1:8086
+      health   tcp 127.0.0.1:8086 ok
+      note     container=sentient-ha-mcp state=running
+      note     published=[127.0.0.1:8086] declared=127.0.0.1:8086
+
+  PASS           ma-mcp (docker)
+      running  running
+      identity publishes 127.0.0.1:8668
+      health   tcp 127.0.0.1:8668 ok
+      note     container=sentient-ma-mcp state=running
+      note     published=[127.0.0.1:8668] declared=127.0.0.1:8668
+
+  PASS           fetch-mcp (docker)
+      running  running
+      identity container-labelled
+      health   noop (no host-reachable port declared)
+      note     container=sentient-fetch-mcp state=running
+
+  PASS           searxng (docker)
+      running  running
+      identity container-labelled
+      health   noop (no host-reachable port declared)
+      note     container=sentient-searxng state=running
+
+  PASS           searxng-mcp (docker)
+      running  running
+      identity container-labelled
+      health   noop (no host-reachable port declared)
+      note     container=sentient-searxng-mcp state=running
+
+  PASS           whisper-stt (native)
+      running  pid 18803
+      identity listening pid == recorded pid (18803)
+      health   tcp 127.0.0.1:8768 ok
+      note     recordedPid=18803 alive=true
+      note     listeningPids=[18803] on :8768
+
+  PASS           local-tts (native)
+      running  pid 18859
+      identity listening pid == recorded pid (18859)
+      health   tcp 127.0.0.1:8770 ok
+      note     recordedPid=18859 alive=true
+      note     listeningPids=[18859] on :8770
+
+[stack-integrity] log-window: clean
+  2026-07-31T14:13:12.105 INFO [system-orch:orchestrator] apply.complete | state="ready" durationMs=12798 ready=9 degraded…
+
+[stack-integrity] RESULT PASS — pass=9 fail=0 skip-optional=0 of 9 declared
+exit=0

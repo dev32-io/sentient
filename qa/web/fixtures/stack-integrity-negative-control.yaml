@@ -1,0 +1,47 @@
+# Negative control for qa/web/stack-integrity.ts.
+#
+# A green oracle is worth exactly what its failure mode is worth. `apply.complete
+# state="ready"` was green for a whole branch while both native addons were dead,
+# because the probe asked "does the port answer" instead of "is MY child alive".
+# So before trusting a PASS from stack-integrity, run it against this file and
+# confirm it FAILS — once per gate, for the right reason.
+#
+#   bun qa/web/stack-integrity.ts --config qa/web/fixtures/stack-integrity-negative-control.yaml
+#
+# Expected: exit 1, one FAIL per service below, each naming its own gate.
+# Nothing here is ever started; it exists only to be absent.
+managed_services:
+  # Gate: required docker service with no labelled container at all.
+  qa-absent-required:
+    template: nonexistent.yaml
+    allowed_images: ["nonexistent:local"]
+    networks: ["sentient-internal"]
+    healthcheck:
+      noop: true
+    depends_on: []
+    optional: false
+
+  # Gate: optional docker service absent — must NOT fail the run, must be
+  # counted and named so its absence cannot pass as coverage.
+  qa-absent-optional:
+    template: nonexistent.yaml
+    allowed_images: ["nonexistent:local"]
+    networks: ["sentient-internal"]
+    healthcheck:
+      noop: true
+    depends_on: []
+    optional: true
+
+  # Gate: IDENTITY. This declares the real ha-mcp container's published port as
+  # a NATIVE service's port. There is no ~/.sentient/run/qa-port-impostor.pid, so
+  # the "recorded pid owns the socket" gate has nothing to match — which is
+  # precisely the shape of the bug that hid: a live listener, owned by someone
+  # else.
+  qa-port-impostor:
+    launch: native
+    exec: ["/nonexistent/python", "-m", "nothing"]
+    python: "3.14"
+    env: {}
+    healthcheck: { tcp: "127.0.0.1:8086", timeout_ms: 30000 }
+    depends_on: []
+    optional: false
