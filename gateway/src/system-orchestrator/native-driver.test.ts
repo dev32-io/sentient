@@ -77,6 +77,7 @@ describe("native-driver", () => {
     const driver = createNativeDriver(
       stubDeps({
         readPidFiles: async () => [{ name: "local-tts", pid: 999 }],
+        isPidAlive: () => false, // the SIGTERM took: the record may go
         killPid: (pid) => {
           killed.push(pid);
         },
@@ -90,6 +91,27 @@ describe("native-driver", () => {
 
     expect(killed).toEqual([999]);
     expect(removed).toEqual(["local-tts"]);
+  });
+
+  it("INVARIANT: reapOrphans keeps the pid file of a process that outlived its SIGTERM", async () => {
+    // SIGTERM is asynchronous. Deleting the record while the process it names is
+    // still alive is how the ownership evidence gets lost: if the gateway then
+    // dies before the child does, its successor has no way left to prove that
+    // survivor is its own, and refuses its own port forever.
+    const removed: string[] = [];
+    const driver = createNativeDriver(
+      stubDeps({
+        readPidFiles: async () => [{ name: "local-tts", pid: 999 }],
+        isPidAlive: () => true, // still winding down
+        removePidFile: async (name) => {
+          removed.push(name);
+        },
+      }),
+    );
+
+    await driver.reapOrphans();
+
+    expect(removed).toEqual([]);
   });
 
   it("INVARIANT: prepare fails when the pinned interpreter does not match argv[0]", async () => {
@@ -290,6 +312,56 @@ describe("native-driver", () => {
     // Still refused: escalation is bounded, and a port we cannot free is not a
     // port we may launch onto.
     expect(r.ok).toBe(false);
+  });
+
+  it("INVARIANT: a survivor named by its pid file is OURS even though THIS process never spawned it", async () => {
+    // The restart case, found by driving it. Children are detached on purpose,
+    // so they outlive a killed gateway; the pid file under ~/.sentient/run is
+    // the only thing that still says they are ours. Without consulting it, the
+    // replacement gateway classified its own predecessor's children as foreign
+    // and refused forever — a permanent wedge, worse than the crash loop.
+    const killed: number[] = [];
+    let holder: number | null = 4242;
+    const driver = createNativeDriver(
+      stubDeps({
+        readPidFiles: async () => [{ name: "whisper-stt", pid: 4242 }],
+        listeningPidFor: async () => holder,
+        killPid: (pid) => {
+          killed.push(pid);
+          holder = null;
+        },
+        spawn: () => ({ pid: 5555, exited: new Promise<number>(() => {}), kill: () => {}, stderrTail: () => "" }),
+      }),
+      FAST_SETTLE,
+    );
+
+    // NO reapOrphans() first — this is the path where the boot reconcile has
+    // not run, or already cleared the file, and only the record remains.
+    const r = await driver.recreate(portedService("whisper-stt", 8768));
+
+    expect(killed).toContain(4242);
+    expect(r.ok).toBe(true);
+  });
+
+  it("INVARIANT: a refused launch does not delete the pid file recording a live child", async () => {
+    // stopIfRunning used to remove the pid file unconditionally, so one failed
+    // attempt on a fresh process destroyed the ownership record of a child that
+    // was still running — and every attempt after that saw a foreign holder.
+    const removed: string[] = [];
+    const driver = createNativeDriver(
+      stubDeps({
+        listeningPidFor: async () => 9999, // foreign: refuses
+        removePidFile: async (name) => {
+          removed.push(name);
+        },
+      }),
+      FAST_SETTLE,
+    );
+
+    const r = await driver.recreate(portedService("whisper-stt", 8768));
+
+    expect(r.ok).toBe(false);
+    expect(removed).toEqual([]);
   });
 
   it("INVARIANT: a dead child's stderr becomes the failure reason, not a bare exit code", async () => {

@@ -214,24 +214,55 @@ export function createNativeDriver(deps: NativeDriverDeps, options: NativeDriver
         if (waitedMs > 0) log.info("native.port-settled", { service: ms.name, port, waitedMs });
         return { ok: true, value: undefined };
       }
-      if (!ourPids.has(holder)) return portHeld(deps, ms.name, port, holder);
+      if (!(await isOurs(ms.name, holder))) return portHeld(deps, ms.name, port, holder);
       if (waitedMs >= settleTimeoutMs) {
         return portHeld(deps, ms.name, port, holder, "it is ours but did not release the socket");
       }
-      // Ours, still holding: SIGTERM was already sent by the reap/stop path.
-      // Escalate ONCE, halfway through the budget, and only for a pid we own.
-      if (!escalated && waitedMs * 2 >= settleTimeoutMs) {
-        escalated = true;
-        log.warn("native.kill-escalated", {
+      // Ours, still holding. Signal it on the FIRST pass too: the holder may be
+      // a survivor this process never spawned (children are detached, so they
+      // outlive a killed gateway) and nothing has asked it to stop yet.
+      // Escalate to SIGKILL once, halfway through the budget.
+      const escalate: boolean = !escalated && waitedMs * 2 >= settleTimeoutMs;
+      if (waitedMs === 0 || escalate) {
+        escalated = escalated || escalate;
+        log.warn(escalate ? "native.kill-escalated" : "native.port-holder-signalled", {
           service: ms.name,
           pid: holder,
           port,
-          reason: "our own child still held the port after SIGTERM",
+          reason: escalate ? "our own child still held the port after SIGTERM" : "our own child still holds the port",
         });
-        killChild(deps, ms.name, holder, "SIGKILL");
+        killChild(deps, ms.name, holder, escalate ? "SIGKILL" : "SIGTERM");
       }
       await deps.sleep(settlePollMs);
     }
+  }
+
+  /**
+   * Ownership, over BOTH records — the in-memory handle and the pid file.
+   *
+   * The pid file is the durable half and the restart case needs it: children
+   * are detached on purpose so a SIGKILLed gateway does not take the household's
+   * STT down with it, which means the replacement gateway meets a live child it
+   * never spawned. Its own `running` map is empty; only `~/.sentient/run/<svc>.pid`
+   * still says that process is ours. Reading in-memory FIRST keeps the common
+   * path free of a filesystem hit.
+   *
+   * Scoped to the service's OWN pid file, not to any of them, so a stale record
+   * for whisper-stt can never authorise signalling something on local-tts's port.
+   */
+  async function isOurs(name: ServiceName, pid: number): Promise<boolean> {
+    if (ourPids.has(pid)) return true;
+    const records = await deps.readPidFiles();
+    const owned = records.some((r) => r.name === name && r.pid === pid);
+    if (owned) {
+      log.info("native.ownership-from-pid-file", {
+        service: name,
+        pid,
+        reason: "a child of a previous gateway process survived; the pid file still records it",
+      });
+      ourPids.add(pid);
+    }
+    return owned;
   }
 
   /** Health is liveness AND identity. Everything here answers one question:
@@ -310,6 +341,15 @@ export function createNativeDriver(deps: NativeDriverDeps, options: NativeDriver
         // is ours to escalate on rather than a foreign process to refuse.
         if (isPlausiblePid(pid)) ourPids.add(pid);
         killChild(deps, name, pid);
+        // SIGTERM is asynchronous, so the record is kept while the process it
+        // names is still winding down. Dropping it there is how the ownership
+        // evidence is lost: a gateway that then dies before its child leaves a
+        // successor with nothing to prove that survivor is ours, and it refuses
+        // its own port forever. A successful spawn overwrites the file anyway.
+        if (deps.isPidAlive(pid)) {
+          log.info("native.pid-file-kept", { service: name, pid, reason: "process still alive after SIGTERM" });
+          continue;
+        }
         await deps.removePidFile(name);
       }
     },
@@ -425,11 +465,16 @@ async function stopIfRunning(
   name: ServiceName,
 ): Promise<void> {
   const proc = running.get(name);
-  if (proc) {
-    log.info("native.stopping", { service: name, pid: proc.pid });
-    killChild(deps, name, proc.pid);
-    running.delete(name);
-  }
+  // The pid file is removed ONLY when we actually stopped the child it names.
+  // Removing it unconditionally destroyed the ownership record of a child this
+  // process never spawned but which was still running (the restart case), and
+  // every attempt after that read its own predecessor's child as a foreign
+  // holder and refused — a permanent wedge. A successful spawn overwrites the
+  // file anyway, so nothing needs the eager delete.
+  if (!proc) return;
+  log.info("native.stopping", { service: name, pid: proc.pid });
+  killChild(deps, name, proc.pid);
+  running.delete(name);
   await deps.removePidFile(name);
 }
 
