@@ -525,6 +525,7 @@ function testOrchestratorConfig(): OrchestratorConfig {
       frontmatter_dir: "./config/delegation",
       hermes_timeout_ms: 600000,
       hermes_source_profile: "default",
+      hermes_delegation_profile: "default",
       hermes_profile_create_timeout_ms: 30000,
       hermes_mcp_register_timeout_ms: 30000,
     },

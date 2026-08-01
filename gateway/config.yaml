@@ -151,6 +151,24 @@ orchestrator:
     # gateway never reads or stores a Hermes credential itself; Hermes copies
     # its own. "default" is the profile `hermes setup` creates.
     hermes_source_profile: default
+    # The Hermes profile a delegation actually RUNS under (`hermes -p <this>`),
+    # and therefore whose provider credential it uses. Any profile name the
+    # operator has configured; verify with `hermes -p <this> -z "say ok"`.
+    #
+    # NOT the same knob as hermes_source_profile above, even when the value
+    # matches: that one is only the clone template used once at user creation.
+    # The clone copies a credential at a point in time and nothing re-syncs it,
+    # so reconfiguring Hermes silently strands every earlier clone — measured
+    # 2026-07-31, one of three per-user profiles answered `HTTP 401: User not
+    # found.` to every delegation while the other two worked.
+    #
+    # INTERIM (owner, 2026-07-31): one shared profile for every household
+    # member's delegations. Per-user isolation for delegated agents — what a
+    # delegated agent may see and act on per person — is product design and gets
+    # its own spec. Per-user CONTEXT is unaffected: the subprocess `cwd` is still
+    # the calling user's own profile dir, which is where hermes loads
+    # tools/memory/rules/AGENTS.md from.
+    hermes_delegation_profile: default
     # Deadline for one `hermes profile create` invocation (ms). It writes a few
     # small files and exits; anything past this is a wedged CLI, not a slow
     # one. Range 1000-120000.

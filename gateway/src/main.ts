@@ -249,6 +249,9 @@ if (config.hermes) {
   if (config.orchestrator) {
     services.delegatedExternalTool.set(
       createHermesExternalTool({
+        // The profile the delegation RUNS on, so the entry lands where the
+        // spawn will read it. The socket inside that entry is still per-user.
+        profile: config.orchestrator.delegation.hermes_delegation_profile,
         hostedDelegatedTools: hostRef.delegatedToolNames,
         timeoutMs: config.orchestrator.delegation.hermes_mcp_register_timeout_ms,
         socketBasePath: config.hermes.mcp_host.socket_path,

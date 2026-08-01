@@ -366,6 +366,7 @@ export async function buildOrchestratorServices(
   const promptClassifier = createPromptClassifier({ riskConfig: riskConfigSchema.parse({}) });
   const delegationGuard = createDelegationGuard({ frontmatter: delegationFrontmatter, classifier: promptClassifier });
   const hermesRunner = createHermesRunner({
+    profile: orchestratorCfg.delegation.hermes_delegation_profile,
     resolveProfileDir: getHermesProfileDir,
     timeoutMs: orchestratorCfg.delegation.hermes_timeout_ms,
   });

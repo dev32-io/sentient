@@ -320,6 +320,18 @@ Two consequences, both live:
 - The 401 came back as a 26-character task output that `delegate-task` logged as **`run.ok`**. A failed delegation must not read as success.
 - **Interim decision (owner, 2026-07-31): use the `default` profile for delegation.** Per-user isolation for delegated agents is product design — what a delegated agent may see and act on per household member — and belongs in its own spec, not in a credential-plumbing fix.
 
+**Landed 2026-07-31 (plan task 16, step 2) — the profile half. Still interim, and it moved the cost rather than removing it.**
+
+`orchestrator.delegation.hermes_delegation_profile` (default `default`) is the profile a delegation RUNS under. It is a *different knob* from `hermes_source_profile`, which is only the clone template used once at user creation — the same value today, two different questions, and conflating them is what would silently re-introduce the drift. The gateway still never reads or writes a Hermes credential; `HERMES_HOME` was tried and rejected (that directory has no `.env`/`auth.json`).
+
+Per-user CONTEXT is unaffected: the subprocess `cwd` is still the calling user's own profile dir, which is where hermes loads tools/memory/rules/AGENTS.md from. Only the credential is shared.
+
+**The coupling the fix had to resolve, which is worth reading before "just revert to per-user":** task 9g registers the gateway's per-user MCP socket on a hermes profile so the delegated agent holds the proxied `allow` tier. Registration therefore has to land on the profile that is actually spawned, or the delegated agent is silently tool-less — D11 approached from the other end. So `hermes-external-tool.ts` now writes to `hermes_delegation_profile` while the socket inside that entry stays per-user.
+
+**NEW, OPEN, and a direct consequence:** one shared profile holds ONE `gateway` entry, so two household members delegating within the same second race to repoint it and the loser's delegated agent can dial the winner's MCP socket — acting with the winner's ToolBroker and capability. Bounded, not harmless: the proxied delegated tier is reads plus `search_web`/`fetch`, all of it household-shared already, and no write tool is in it. Every repoint logs `hermes.register.repointed` at WARN so it is never silent. The real fix is the per-delegation permission surface in the D11 follow-up above, not a lock here.
+
+This is the **same render-once vs reconcile question** § 3 already owns (*external-tool installation and configuration*), now with a second instance: § 3 item 2 wants the installer to render a delegated tool's configuration once at install; the credential clone is exactly that shape, rendered once at user creation and never reconciled. Whatever § 3 decides has to answer both.
+
 ### The model you select in settings is ignored
 
 `ResolvedLlm` is `{provider, apiKey, baseUrl}` — **no model field**. `phase-services.ts:447` takes the model from `orchestratorCfg.provider.model`, i.e. `config.yaml`'s `gpt-oss:20b-cloud`, while the secrets store supplies only the provider and key. The settings UI showed `deepseek-v4-flash:cloud` while the runtime ran gpt-oss:20b.

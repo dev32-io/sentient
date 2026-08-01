@@ -75,6 +75,20 @@ interface GatewayEntry {
 type EntryVerdict = "ok" | "absent" | "drifted";
 
 export interface HermesExternalToolDeps {
+  /** `orchestrator.delegation.hermes_delegation_profile` — the Hermes profile a
+   *  delegation actually RUNS under, and therefore the one this entry has to
+   *  land on. It is NOT the userId: the per-user clones drift (see
+   *  tools/hermes-runner.ts's header), so delegation moved to one shared
+   *  profile, and registering on a profile nothing spawns would be D11's silent
+   *  tool-less delegation approached from the other end.
+   *
+   *  The SOCKET stays per-user — it is the calling user's own MCP host, whose
+   *  ToolBroker mediates every proxied call. One consequence is recorded in
+   *  docs/native-todo.md and is not fixed here: two household members
+   *  delegating within the same second race to repoint this one shared entry,
+   *  so the loser's delegated agent can dial the winner's socket. The proxied
+   *  tier is reads plus web fetch, which the household already shares. */
+  readonly profile: string;
   /** Tool names the gateway's MCP host advertises to a delegated agent from its
    *  OWN hosted set — already narrowed to the `allow` tier by
    *  `delegated-tool-tier.ts`. Empty means the gateway hosts nothing a delegated
@@ -110,6 +124,14 @@ function argsMatch(args: unknown, socketPath: string): boolean {
   return args[0] === SOCKET_BRIDGE_FLAG && args[1] === socketPath;
 }
 
+/** The socket path an existing entry currently points at, or null when there is
+ *  no entry or its `args` are not the `-U <path>` shape this module writes. */
+function currentSocketOf(entry: GatewayEntry | undefined): string | null {
+  if (!entry || !Array.isArray(entry.args) || entry.args.length !== 2) return null;
+  const [flag, path] = entry.args;
+  return flag === SOCKET_BRIDGE_FLAG && typeof path === "string" ? path : null;
+}
+
 /**
  * Classify OUR one entry. Reads the whole map only to look up a single key —
  * every other server in it belongs to the user and is never inspected, ranked,
@@ -137,7 +159,7 @@ export function createHermesExternalTool(deps: HermesExternalToolDeps): External
 
   async function readServers(userId: string, startedAt: number): Promise<Record<string, GatewayEntry>> {
     const listed = await runHermesCli({
-      argv: [HERMES_BIN, "-p", userId, "config", "get", "mcp_servers", "--json"],
+      argv: [HERMES_BIN, "-p", deps.profile, "config", "get", "mcp_servers", "--json"],
       timeoutMs: remainingMs(startedAt),
       spawn,
       step: "list",
@@ -158,14 +180,31 @@ export function createHermesExternalTool(deps: HermesExternalToolDeps): External
 
     const startedAt = Date.now();
     const socketPath = resolveMcpSocketPath(userId, deps.socketBasePath);
-    const verdict = verifyGatewayEntry(await readServers(userId, startedAt), socketPath);
+    const servers = await readServers(userId, startedAt);
+    const verdict = verifyGatewayEntry(servers, socketPath);
     if (verdict === "ok") {
-      log.debug("hermes.register.already", { userId, server: GATEWAY_SERVER_NAME, socketPath });
+      log.debug("hermes.register.already", { userId, profile: deps.profile, server: GATEWAY_SERVER_NAME, socketPath });
       return { ok: true, value: undefined };
+    }
+    // One shared profile, one `gateway` entry, N household members. Repointing
+    // it is correct — the delegation about to spawn must reach ITS user's
+    // broker — but it is also the observable face of the race recorded in
+    // docs/native-todo.md, so it is never silent.
+    const heldSocket = currentSocketOf(servers[GATEWAY_SERVER_NAME]);
+    if (heldSocket !== null && heldSocket !== socketPath) {
+      log.warn("hermes.register.repointed", {
+        userId,
+        profile: deps.profile,
+        server: GATEWAY_SERVER_NAME,
+        socketPath,
+        reason:
+          "the shared delegation profile's gateway entry pointed at another socket; repointing it at this user's MCP host",
+      });
     }
 
     log.info("hermes.register.start", {
       userId,
+      profile: deps.profile,
       server: GATEWAY_SERVER_NAME,
       socketPath,
       verdict,
@@ -175,7 +214,7 @@ export function createHermesExternalTool(deps: HermesExternalToolDeps): External
       argv: [
         HERMES_BIN,
         "-p",
-        userId,
+        deps.profile,
         "mcp",
         "add",
         GATEWAY_SERVER_NAME,

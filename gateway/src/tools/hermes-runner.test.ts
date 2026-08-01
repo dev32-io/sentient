@@ -3,6 +3,11 @@ import type { UserId } from "../user-auth/user-id.js";
 import { type HermesProcess, type SpawnFn, createHermesRunner } from "./hermes-runner.js";
 
 const userId = "u_aaaaaaaa" as UserId;
+// `orchestrator.delegation.hermes_delegation_profile`. Deliberately NOT the
+// userId: the per-user clones drift (one of three was answering HTTP 401 on
+// 2026-07-31 because `--clone-from` copies a credential at a point in time and
+// nothing re-syncs it), so a delegation runs on the operator's own profile.
+const DELEGATION_PROFILE = "default";
 
 function fakeProcess(overrides: Partial<HermesProcess> = {}): HermesProcess {
   return {
@@ -15,23 +20,35 @@ function fakeProcess(overrides: Partial<HermesProcess> = {}): HermesProcess {
 }
 
 describe("HermesRunner — never spawns a real hermes; spawn is always the injected fake", () => {
-  it("maps a zero exit code to ok:true, capturing stdout, using the -p/-z argv shape", async () => {
+  it("runs the delegation profile but keeps the caller's own profile dir as cwd", async () => {
     const calls: Array<{ argv: readonly string[]; cwd: string }> = [];
     const spawn: SpawnFn = (argv, opts) => {
       calls.push({ argv, cwd: opts.cwd });
       return fakeProcess({ stdout: "final answer" });
     };
-    const runner = createHermesRunner({ resolveProfileDir: (u) => `/profiles/${u}`, timeoutMs: 5000, spawn });
+    const runner = createHermesRunner({
+      profile: DELEGATION_PROFILE,
+      resolveProfileDir: (u) => `/profiles/${u}`,
+      timeoutMs: 5000,
+      spawn,
+    });
 
     const result = await runner.run(userId, "summarize my day", new AbortController().signal);
 
     expect(result).toEqual({ ok: true, output: "final answer" });
-    expect(calls).toEqual([{ argv: ["hermes", "-p", userId, "-z", "summarize my day"], cwd: `/profiles/${userId}` }]);
+    expect(calls).toEqual([
+      { argv: ["hermes", "-p", DELEGATION_PROFILE, "-z", "summarize my day"], cwd: `/profiles/${userId}` },
+    ]);
   });
 
   it("maps a non-zero exit code to ok:false with the captured stderr", async () => {
     const spawn: SpawnFn = () => fakeProcess({ exited: Promise.resolve(1), stderr: "boom" });
-    const runner = createHermesRunner({ resolveProfileDir: () => "/profiles/x", timeoutMs: 5000, spawn });
+    const runner = createHermesRunner({
+      profile: DELEGATION_PROFILE,
+      resolveProfileDir: () => "/profiles/x",
+      timeoutMs: 5000,
+      spawn,
+    });
 
     const result = await runner.run(userId, "do a thing", new AbortController().signal);
 
@@ -40,7 +57,12 @@ describe("HermesRunner — never spawns a real hermes; spawn is always the injec
 
   it("falls back to stdout preview when stderr is empty on a non-zero exit", async () => {
     const spawn: SpawnFn = () => fakeProcess({ exited: Promise.resolve(1), stdout: "partial trace", stderr: "" });
-    const runner = createHermesRunner({ resolveProfileDir: () => "/profiles/x", timeoutMs: 5000, spawn });
+    const runner = createHermesRunner({
+      profile: DELEGATION_PROFILE,
+      resolveProfileDir: () => "/profiles/x",
+      timeoutMs: 5000,
+      spawn,
+    });
 
     const result = await runner.run(userId, "do a thing", new AbortController().signal);
 
@@ -61,7 +83,12 @@ describe("HermesRunner — never spawns a real hermes; spawn is always the injec
           resolveExit(143);
         },
       });
-    const runner = createHermesRunner({ resolveProfileDir: () => "/profiles/x", timeoutMs: 5000, spawn });
+    const runner = createHermesRunner({
+      profile: DELEGATION_PROFILE,
+      resolveProfileDir: () => "/profiles/x",
+      timeoutMs: 5000,
+      spawn,
+    });
 
     const controller = new AbortController();
     const pending = runner.run(userId, "a long task", controller.signal);
@@ -78,7 +105,12 @@ describe("HermesRunner — never spawns a real hermes; spawn is always the injec
       spawnCalls += 1;
       return fakeProcess();
     };
-    const runner = createHermesRunner({ resolveProfileDir: () => "/profiles/x", timeoutMs: 5000, spawn });
+    const runner = createHermesRunner({
+      profile: DELEGATION_PROFILE,
+      resolveProfileDir: () => "/profiles/x",
+      timeoutMs: 5000,
+      spawn,
+    });
     const controller = new AbortController();
     controller.abort();
 
@@ -102,7 +134,12 @@ describe("HermesRunner — never spawns a real hermes; spawn is always the injec
           resolveExit(124);
         },
       });
-    const runner = createHermesRunner({ resolveProfileDir: () => "/profiles/x", timeoutMs: 5, spawn });
+    const runner = createHermesRunner({
+      profile: DELEGATION_PROFILE,
+      resolveProfileDir: () => "/profiles/x",
+      timeoutMs: 5,
+      spawn,
+    });
 
     const result = await runner.run(userId, "a very long task", new AbortController().signal);
 
@@ -114,7 +151,12 @@ describe("HermesRunner — never spawns a real hermes; spawn is always the injec
     const spawn: SpawnFn = () => {
       throw new Error("spawn hermes ENOENT");
     };
-    const runner = createHermesRunner({ resolveProfileDir: () => "/profiles/x", timeoutMs: 5000, spawn });
+    const runner = createHermesRunner({
+      profile: DELEGATION_PROFILE,
+      resolveProfileDir: () => "/profiles/x",
+      timeoutMs: 5000,
+      spawn,
+    });
 
     const result = await runner.run(userId, "task", new AbortController().signal);
 

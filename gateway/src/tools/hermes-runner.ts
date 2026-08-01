@@ -8,15 +8,25 @@
 // (`proc.kill()` on abort — never throw, per the AbortSignal decorator
 // rule).
 //
-// CLI shape: `hermes -p <userId> -z <prompt>`. `-p` selects the per-user
-// profile (profile-store's convention — the profile must already exist,
-// provisioned out-of-band). `-z`/`--oneshot` is the installed Hermes CLI's
-// one-shot flag: run a single prompt, print only the final response text to
-// stdout, no banner/spinner/session-id line — exactly the shape a
-// subprocess capture wants. `cwd` is the resolved profile dir: the one-shot
-// flag's own help text notes tools/memory/rules/AGENTS.md load from the
-// CWD, so this is not cosmetic — it is how per-user context reaches the
-// worker.
+// CLI shape: `hermes -p <delegationProfile> -z <prompt>`, with `cwd` set to the
+// CALLING user's own profile dir. The two are deliberately different things:
+//
+//   * `-p` picks the Hermes profile, which is where the provider credential
+//     lives. It used to be the userId. `hermes profile create --clone-from
+//     default` copies that credential at a point in time and nothing re-syncs
+//     it, so reconfiguring Hermes leaves earlier clones stale — measured
+//     2026-07-31, one of three per-user profiles answered `HTTP 401: User not
+//     found.` to every delegation. Interim decision (owner, same day): run the
+//     operator's configured profile, `orchestrator.delegation.
+//     hermes_delegation_profile`. Per-user isolation for delegated agents is
+//     product design and gets its own spec.
+//   * `cwd` stays the caller's profile dir, because `-z`'s own help text notes
+//     that tools/memory/rules/AGENTS.md load from the CWD. That is how per-user
+//     context still reaches the worker even though the credential is shared.
+//
+// `-z`/`--oneshot` runs a single prompt and prints only the final response text
+// to stdout — no banner, spinner or session-id line — exactly the shape a
+// subprocess capture wants.
 //
 // `spawn` is injected (default `Bun.spawn`) so the unit test can supply a
 // fake process without ever spawning a real `hermes` binary.
@@ -58,6 +68,10 @@ export type SpawnFn = (
 ) => HermesProcess;
 
 export interface HermesRunnerDeps {
+  /** `orchestrator.delegation.hermes_delegation_profile` — the Hermes profile
+   *  every delegation runs under, and therefore whose credential it uses. See
+   *  the file header for why this is not the userId. */
+  profile: string;
   resolveProfileDir(userId: string): string;
   /** Deadline for a single invocation (ms) — `delegation.hermes_timeout_ms`. */
   timeoutMs: number;
@@ -69,7 +83,7 @@ function truncate(text: string): string {
 }
 
 export function createHermesRunner(deps: HermesRunnerDeps): HermesRunner {
-  const { resolveProfileDir, timeoutMs } = deps;
+  const { profile, resolveProfileDir, timeoutMs } = deps;
   const spawn = deps.spawn ?? ((argv, options) => Bun.spawn([...argv], options) as unknown as HermesProcess);
 
   async function run(userId: UserId, prompt: string, signal: AbortSignal): Promise<HermesRunResult> {
@@ -79,9 +93,9 @@ export function createHermesRunner(deps: HermesRunnerDeps): HermesRunner {
     }
 
     const cwd = resolveProfileDir(userId);
-    const argv = [HERMES_BIN, PROFILE_FLAG, userId, ONE_SHOT_FLAG, prompt];
+    const argv = [HERMES_BIN, PROFILE_FLAG, profile, ONE_SHOT_FLAG, prompt];
     const startedAt = Date.now();
-    log.info("hermes-runner.run.start", { userId, cwd, timeoutMs });
+    log.info("hermes-runner.run.start", { userId, profile, cwd, timeoutMs });
 
     let proc: HermesProcess;
     try {

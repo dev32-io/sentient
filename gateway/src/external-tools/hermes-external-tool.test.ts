@@ -6,6 +6,11 @@ import { createHermesExternalTool } from "./hermes-external-tool.js";
 const USER = "u_deadbeef";
 const TIMEOUT_MS = 1000;
 const SOCKET = resolveMcpSocketPath(USER);
+/** `orchestrator.delegation.hermes_delegation_profile` — the profile a
+ *  delegation RUNS under, which is where the entry has to land. Deliberately
+ *  not the userId: registering on a profile nothing spawns is the same silent
+ *  tool-less delegation D11 was about, from the other end. */
+const PROFILE = "default";
 
 /** Fake `hermes` CLI. Records every argv and the stdin it was fed, and replays
  *  a canned stdout per call, so the unit test never spawns a real subprocess. */
@@ -52,9 +57,14 @@ describe("createHermesExternalTool", () => {
   // CLI. The socket argument must come from the same resolver the MCP host
   // listens on — a second spelling of that path is defect D8 wearing a new hat
   // and fails silently (hermes connects to nothing and reports no tools).
-  it("registers the gateway MCP with the socket the mcp-host listens on", async () => {
+  it("registers on the profile the delegation runs under, with the caller's own socket", async () => {
     const { spawn, argvs } = fakeCli([{ stdout: NOT_SET }, {}, { stdout: serversJson(HEALTHY) }]);
-    const tool = createHermesExternalTool({ hostedDelegatedTools: ["pause_audio"], timeoutMs: TIMEOUT_MS, spawn });
+    const tool = createHermesExternalTool({
+      profile: PROFILE,
+      hostedDelegatedTools: ["pause_audio"],
+      timeoutMs: TIMEOUT_MS,
+      spawn,
+    });
 
     const result = await tool.provide(USER);
 
@@ -62,7 +72,7 @@ describe("createHermesExternalTool", () => {
     expect(argvs[1]).toEqual([
       "hermes",
       "-p",
-      USER,
+      PROFILE,
       "mcp",
       "add",
       "gateway",
@@ -79,7 +89,12 @@ describe("createHermesExternalTool", () => {
   // hot path of a user-visible action.
   it("does not re-add an entry that already matches", async () => {
     const { spawn, argvs } = fakeCli([{ stdout: serversJson(HEALTHY) }]);
-    const tool = createHermesExternalTool({ hostedDelegatedTools: ["pause_audio"], timeoutMs: TIMEOUT_MS, spawn });
+    const tool = createHermesExternalTool({
+      profile: PROFILE,
+      hostedDelegatedTools: ["pause_audio"],
+      timeoutMs: TIMEOUT_MS,
+      spawn,
+    });
 
     const result = await tool.provide(USER);
 
@@ -97,7 +112,12 @@ describe("createHermesExternalTool", () => {
       {},
       { stdout: serversJson(HEALTHY) },
     ]);
-    const tool = createHermesExternalTool({ hostedDelegatedTools: ["pause_audio"], timeoutMs: TIMEOUT_MS, spawn });
+    const tool = createHermesExternalTool({
+      profile: PROFILE,
+      hostedDelegatedTools: ["pause_audio"],
+      timeoutMs: TIMEOUT_MS,
+      spawn,
+    });
 
     const result = await tool.provide(USER);
 
@@ -119,7 +139,12 @@ describe("createHermesExternalTool", () => {
       {},
       { stdout: serversJson(HEALTHY) },
     ]);
-    const tool = createHermesExternalTool({ hostedDelegatedTools: ["pause_audio"], timeoutMs: TIMEOUT_MS, spawn });
+    const tool = createHermesExternalTool({
+      profile: PROFILE,
+      hostedDelegatedTools: ["pause_audio"],
+      timeoutMs: TIMEOUT_MS,
+      spawn,
+    });
 
     expect((await tool.provide(USER)).ok).toBe(true);
     expect(argvs[1]).toContain("add");
@@ -131,7 +156,12 @@ describe("createHermesExternalTool", () => {
   // dispatch would be discovered by the user, not by a test — so assert it here.
   it("never names any server but its own, even when the user has others", async () => {
     const { spawn, argvs } = fakeCli([{ stdout: serversJson(DRIFTED_SOCKET) }, {}, { stdout: serversJson(HEALTHY) }]);
-    const tool = createHermesExternalTool({ hostedDelegatedTools: ["pause_audio"], timeoutMs: TIMEOUT_MS, spawn });
+    const tool = createHermesExternalTool({
+      profile: PROFILE,
+      hostedDelegatedTools: ["pause_audio"],
+      timeoutMs: TIMEOUT_MS,
+      spawn,
+    });
 
     await tool.provide(USER);
 
@@ -145,7 +175,12 @@ describe("createHermesExternalTool", () => {
   // Registration is only done when the entry is READ BACK and still matches.
   it("fails when the entry is still absent after a zero-exit add", async () => {
     const { spawn } = fakeCli([{ stdout: NOT_SET }, { code: 0 }, { stdout: NOT_SET }]);
-    const tool = createHermesExternalTool({ hostedDelegatedTools: ["pause_audio"], timeoutMs: TIMEOUT_MS, spawn });
+    const tool = createHermesExternalTool({
+      profile: PROFILE,
+      hostedDelegatedTools: ["pause_audio"],
+      timeoutMs: TIMEOUT_MS,
+      spawn,
+    });
 
     const result = await tool.provide(USER);
 
@@ -158,7 +193,12 @@ describe("createHermesExternalTool", () => {
       { code: 0 },
       { stdout: serversJson(DRIFTED_SOCKET) },
     ]);
-    const tool = createHermesExternalTool({ hostedDelegatedTools: ["pause_audio"], timeoutMs: TIMEOUT_MS, spawn });
+    const tool = createHermesExternalTool({
+      profile: PROFILE,
+      hostedDelegatedTools: ["pause_audio"],
+      timeoutMs: TIMEOUT_MS,
+      spawn,
+    });
 
     const result = await tool.provide(USER);
 
@@ -170,7 +210,7 @@ describe("createHermesExternalTool", () => {
   // no allow-tier tool must not be registered at all.
   it("registers nothing when no hosted tool survives the allow tier", async () => {
     const { spawn, argvs } = fakeCli([]);
-    const tool = createHermesExternalTool({ hostedDelegatedTools: [], timeoutMs: TIMEOUT_MS, spawn });
+    const tool = createHermesExternalTool({ profile: PROFILE, hostedDelegatedTools: [], timeoutMs: TIMEOUT_MS, spawn });
 
     const result = await tool.provide(USER);
 

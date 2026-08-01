@@ -2,8 +2,14 @@
 //
 // An EXTERNAL tool is one the gateway does not supervise: no lifecycle, no
 // port, no health check. Hermes is the first — invoked as a one-shot
-// `hermes -p <userId> -z <prompt>` by `delegateTask` — but deliberately not the
-// only one, so the shape here is an interface, not a Hermes special case.
+// `hermes -p <delegationProfile> -z <prompt>` by `delegateTask` — but
+// deliberately not the only one, so the shape here is an interface, not a
+// Hermes special case.
+//
+// `provide` still takes the USER, not the tool's own profile: the user is what
+// the gateway-side configuration is FOR (their MCP socket, their broker). Which
+// profile of the tool that configuration is written to is the tool's own
+// business and is injected at construction.
 //
 // AT DISPATCH, NOT AT BOOT (owner's decision, task 9g). Task 9d ran this once
 // per user per boot. That leaves a window: the user edits their own profile at

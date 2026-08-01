@@ -59,6 +59,13 @@ export const orchestratorConfigSchema = z.object({
     // so the clone inherits provider + model + credentials. The gateway never
     // holds a Hermes credential; Hermes copies its own.
     hermes_source_profile: z.string().min(1).default("default"),
+    // The Hermes profile a delegation actually RUNS under (`hermes -p <this>`),
+    // and therefore whose provider credential it uses. Distinct from
+    // `hermes_source_profile` above, which is only the clone template at user
+    // creation: a clone copies the credential once and nothing re-syncs it, so
+    // per-user profiles go stale and answer HTTP 401. Interim — per-user
+    // isolation for delegated agents is product design with its own spec.
+    hermes_delegation_profile: z.string().min(1).default("default"),
     // Deadline for one `hermes profile create` (ms). Range 1000-120000.
     hermes_profile_create_timeout_ms: z.number().int().min(1000).max(120000).default(30000),
     // Deadline for one `hermes mcp add` / `hermes config get` invocation used
