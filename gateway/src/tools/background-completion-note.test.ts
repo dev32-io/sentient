@@ -60,4 +60,14 @@ describe("composeBackgroundCompletionNote", () => {
     expect(note).toContain("failed");
     expect(note).toContain("aborted");
   });
+
+  // The note used to add "You dispatched it earlier with the delegateTask tool."
+  // — so the model narrated the dispatch instead of relaying the result: "Sure
+  // thing; I just sent Hermes another go-round." Naming the mechanism invites
+  // talking about the mechanism. The note's job is the ANSWER.
+  it("does not narrate the dispatch back at the model", () => {
+    const note = composeBackgroundCompletionNote({ ...BASE, output: "the answer", isError: false });
+    expect(note).not.toContain("You dispatched");
+    expect(note).not.toContain("delegateTask");
+  });
 });
