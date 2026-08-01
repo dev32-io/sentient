@@ -74,7 +74,20 @@ const log = getLog(["sentient", "bootstrap", "phase-services"]);
 // words. Read once per process, matching `loadSystemPrompt`'s own contract:
 // dev restarts on save (`bun --watch`) and prod restarts on deploy, so an
 // operator edit still lands without a rebuild.
-const SYSTEM_PROMPT = loadSystemPrompt({});
+//
+// LAZY, not module-scope: the loader's own "which file did I read" INFO lines
+// are emitted during the read, and at module-init time the file sink does not
+// exist yet — so a module-scope read logs to nowhere and an operator cannot
+// confirm from the log which prompt the gateway is running on. Same shape
+// `loadCompactionSummarizerPrompt` already has, and its lines DO reach the log.
+let systemPrompt: string | null = null;
+
+function resolveSystemPrompt(): string {
+  if (systemPrompt !== null) return systemPrompt;
+  systemPrompt = loadSystemPrompt({});
+  log.info("system-prompt.resolved", { chars: systemPrompt.length });
+  return systemPrompt;
+}
 
 export interface PhaseServicesInput {
   readonly cfg: StartupConfig;
@@ -571,7 +584,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       provider,
       broker,
       emitter,
-      systemPrompt: SYSTEM_PROMPT,
+      systemPrompt: resolveSystemPrompt(),
       config: orchestratorCfg,
       voice: voice ?? null,
     });
