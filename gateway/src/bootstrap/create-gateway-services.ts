@@ -25,7 +25,6 @@ import { getLog } from "../logging/logger.ts";
 import type { PersonalityStore } from "../profile-store/personality-store.js";
 import type { ProfileStore } from "../profile-store/profile-store.ts";
 import type { TemplateLoader } from "../profile-store/template-loader.ts";
-import type { ProviderClient } from "../provider/provider-client.js";
 import type { CreateSessionRuntime } from "../runtime/session-handles.js";
 import {
   type ConversationRuntimeRegistry,
@@ -46,6 +45,7 @@ import { runPhaseServices } from "./phase-services.ts";
 import { runPhaseState } from "./phase-state.ts";
 import type { SttService } from "./stt-factory.ts";
 import type { TtsService } from "./tts-factory.ts";
+import type { UserModelProvider } from "./user-model-provider.ts";
 
 const log = getLog(["sentient", "bootstrap"]);
 const TEST_PROVIDER_TIMEOUT_MS = 5000;
@@ -138,11 +138,14 @@ export interface GatewayServices {
   /** Shared MCP client dialing `mcp_catalog` — always present (a no-op with
    *  an empty catalog). */
   readonly mcpClient: McpClient;
-  /** The orchestrator's OpenAI-compatible provider, resolved from the
-   *  operator's ACTIVE secrets-store LLM (never an env var). `null` when
-   *  `orchestrator:` is absent from config, or present with no active key
-   *  configured yet — either way the gateway still boots. */
-  readonly provider: ProviderClient | null;
+  /** Mints the orchestrator's OpenAI-compatible client for one user, resolving
+   *  that user's own selected model (`profile.json#model`) against the
+   *  operator's ACTIVE secrets-store connection (never an env var). A factory
+   *  rather than one client because the KEY is household-wide and the MODEL is
+   *  not — see bootstrap/user-model-provider.ts. `null` when `orchestrator:` is
+   *  absent from config, or present with no active key configured yet — either
+   *  way the gateway still boots. */
+  readonly provider: UserModelProvider | null;
   /** Per-session runtime factory. Takes a `SessionRuntimeRequest`, whose two
    *  ids are named apart on purpose — `conversationId` is the durable store
    *  partition, `connectionId` is this socket and only ever reaches logs.

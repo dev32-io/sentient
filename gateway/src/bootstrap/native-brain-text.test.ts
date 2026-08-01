@@ -67,6 +67,7 @@ import { join } from "node:path";
 import { createSecretsStore } from "../admin/secrets-store.js";
 import { loadStartupConfig } from "../config/startup-config.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
+import { createProfileStore } from "../profile-store/profile-store.js";
 import type { ToolUpdate } from "../runtime/react-loop.js";
 import type { TurnEmitter } from "../runtime/turn-emitter.js";
 import type { CutoffKind } from "../store/entry-types.js";
@@ -164,7 +165,9 @@ async function resolveOrchestratorServices(): Promise<OrchestratorServices> {
       })
     : null;
   if (secretsStore) await secretsStore.load();
-  const services = await buildOrchestratorServices(cfg, secretsStore);
+  // Real store: the provider factory reads each user's selected model out of
+  // it, falling back to config.yaml when the test user has no profile.
+  const services = await buildOrchestratorServices(cfg, secretsStore, createProfileStore());
   // Every composition root settles the external-tool slot before a session can
   // exist — main.ts binds the real Hermes tool once the MCP host is up; this
   // one has no MCP host, so it seals. Without this, a delegateTask the model

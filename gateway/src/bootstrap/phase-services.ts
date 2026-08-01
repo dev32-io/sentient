@@ -28,8 +28,6 @@ import { createPersonalityStore } from "../profile-store/personality-store.js";
 import type { PersonalityStore } from "../profile-store/personality-store.js";
 import { type ProfileStore, createProfileStore } from "../profile-store/profile-store.ts";
 import { type TemplateLoader, createTemplateLoader } from "../profile-store/template-loader.ts";
-import { createOpenAIProvider } from "../provider/openai-provider.js";
-import type { ProviderClient } from "../provider/provider-client.js";
 import type { TTSProviderFactory } from "../providers/tts/tts-types.ts";
 import { createPermissionBroker } from "../runtime/permission-broker.js";
 import type { CreateSessionRuntime } from "../runtime/session-handles.js";
@@ -60,6 +58,7 @@ import type { SttService } from "./stt-factory.ts";
 import { createSttService } from "./stt-factory.ts";
 import type { TtsService } from "./tts-factory.ts";
 import { asStrictFactory, createTtsService } from "./tts-factory.ts";
+import { type UserModelProvider, createUserModelProvider } from "./user-model-provider.ts";
 
 const log = getLog(["sentient", "bootstrap", "phase-services"]);
 
@@ -117,13 +116,16 @@ export interface PhaseServicesOutput {
   /** Shared MCP client (spec §5.3) — dials every `mcp_catalog` entry lazily
    *  per-server; always constructed (harmless/no-op with an empty catalog). */
   readonly mcpClient: McpClient;
-  /** The native orchestrator's OpenAI-compatible provider, built from the
-   *  operator's ACTIVE secrets-store LLM (never an env var — see
-   *  resolve-provider-connection.ts). `null` when `orchestrator:` is absent
-   *  from config, OR it's present but no active LLM key is configured yet —
-   *  either way the gateway still boots; only a session that actually needs
-   *  the orchestrator fails, at construction, with a clear error. */
-  readonly provider: ProviderClient | null;
+  /** Mints the native orchestrator's OpenAI-compatible client for ONE user: the
+   *  connection (key + base URL) comes from the operator's ACTIVE secrets-store
+   *  LLM (never an env var — see resolve-provider-connection.ts), the MODEL from
+   *  that user's own `profile.json#model`. A factory rather than one client
+   *  because the key is household-wide and the model is not — see
+   *  user-model-provider.ts. `null` when `orchestrator:` is absent from config,
+   *  OR it's present but no active LLM key is configured yet — either way the
+   *  gateway still boots; only a session that actually needs the orchestrator
+   *  fails, at construction, with a clear error. */
+  readonly provider: UserModelProvider | null;
   /** Per-session runtime factory (`SessionRuntimeRequest` names its two ids
    *  apart — the durable conversation the store partitions on, and the
    *  connection id the logs correlate on). `null` when `orchestrator:` is
@@ -152,11 +154,13 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     return createTextStreamSynthesizer(cfg, sessionFactory);
   };
 
-  const { accessManager, mcpClient, provider, createSessionRuntime, delegatedExternalTool } =
-    await buildOrchestratorServices(cfg, secretsStore);
-
+  // BEFORE the orchestrator services: the provider factory resolves each user's
+  // selected model out of their profile, so it needs this store.
   const profileStore = createProfileStore();
   const templateLoader = createTemplateLoader();
+
+  const { accessManager, mcpClient, provider, createSessionRuntime, delegatedExternalTool } =
+    await buildOrchestratorServices(cfg, secretsStore, profileStore);
 
   const applyDeps: ApplyDeps = createApplyDeps({
     profileStore,
@@ -303,7 +307,7 @@ function buildRenderInnerProfile(
 export interface OrchestratorServices {
   accessManager: AccessManager;
   mcpClient: McpClient;
-  provider: ProviderClient | null;
+  provider: UserModelProvider | null;
   createSessionRuntime: CreateSessionRuntime | null;
   /** Settled exactly once at boot by whoever owns the MCP host — see
    *  `external-tools/external-tool-slot.ts` for why this one hop is
@@ -329,6 +333,7 @@ export interface OrchestratorServices {
 export async function buildOrchestratorServices(
   cfg: StartupConfig,
   secretsStore: SecretsStore | null,
+  profileStore: ProfileStore,
 ): Promise<OrchestratorServices> {
   const accessManager = createAccessManager({ userDataRoot: cfg.access.user_data_root });
   const mcpClient = createMcpClient(cfg.mcpCatalog, {});
@@ -358,7 +363,7 @@ export async function buildOrchestratorServices(
   }
 
   const orchestratorCfg = cfg.orchestrator;
-  const provider = await buildOrchestratorProvider(orchestratorCfg, secretsStore);
+  const provider = await buildOrchestratorProvider(orchestratorCfg, secretsStore, profileStore);
 
   const policyEngine = createPolicyEngine(loadMcpPolicy());
   const frontmatterDir = resolveDelegationFrontmatterDir(orchestratorCfg.delegation.frontmatter_dir);
@@ -407,17 +412,25 @@ function resolveDelegationFrontmatterDir(frontmatterDir: string): string {
   return frontmatterDir.startsWith("/") ? frontmatterDir : join(resolveAssetRoot(), frontmatterDir);
 }
 
-/** Resolves the orchestrator's live `ProviderClient` from the operator's 1.0
+/** Resolves the orchestrator's live provider CONNECTION from the operator's 1.0
  *  secrets store — see resolve-provider-connection.ts's header for why this
- *  is NEVER `process.env`. `null` covers every "not ready yet" case: no
- *  secrets store at all (hermes not configured), an unreadable keys.yaml, or
- *  an active provider with no key set — the gateway boots regardless; only a
- *  session that actually needs the orchestrator fails later, loudly, at
- *  construction (`buildCreateSessionRuntime` below). */
+ *  is NEVER `process.env` — and wraps it in the per-user model factory.
+ *
+ *  A factory, not one client, because the MODEL is per user: it lives in
+ *  `profile.json#model`, written by Settings → Model, while the secrets store
+ *  supplies only provider + key + base URL. Boot picking one model for the whole
+ *  household is the defect (see user-model-provider.ts's header).
+ *
+ *  `null` covers every "not ready yet" case: no secrets store at all (hermes not
+ *  configured), an unreadable keys.yaml, or an active provider with no key set —
+ *  the gateway boots regardless; only a session that actually needs the
+ *  orchestrator fails later, loudly, at construction
+ *  (`buildCreateSessionRuntime` below). */
 async function buildOrchestratorProvider(
   orchestratorCfg: OrchestratorConfig,
   secretsStore: SecretsStore | null,
-): Promise<ProviderClient | null> {
+  profileStore: ProfileStore,
+): Promise<UserModelProvider | null> {
   if (!secretsStore) {
     log.warn("orchestrator.provider.no-secrets-store", {
       reason: "secrets store absent (hermes not configured) — orchestrator provider unavailable",
@@ -442,13 +455,21 @@ async function buildOrchestratorProvider(
     return null;
   }
 
-  log.info("orchestrator.provider.resolved", {
+  // The MODEL is deliberately absent here. This line says which endpoint and
+  // credential the household will dial; `orchestrator.provider.resolved` — the
+  // line that names the model actually in use — is emitted per user by
+  // user-model-provider.ts, because that is the only place the answer exists.
+  log.info("orchestrator.provider.connected", {
     provider: conn.provider,
     baseUrlHost: safeUrlHost(conn.baseUrl),
     hasKey: true, // presence only — NEVER log conn.apiKey
-    model: orchestratorCfg.provider.model,
+    fallbackModel: orchestratorCfg.provider.model,
   });
-  return createOpenAIProvider({ ...orchestratorCfg.provider, base_url: conn.baseUrl }, conn.apiKey);
+  return createUserModelProvider({
+    providerCfg: orchestratorCfg.provider,
+    connection: conn,
+    profileStore,
+  });
 }
 
 /** Host only — never log a full URL that might (in a future provider) carry
@@ -464,7 +485,7 @@ function safeUrlHost(url: string): string {
 interface CreateSessionRuntimeFactoryDeps {
   orchestratorCfg: OrchestratorConfig;
   accessManager: AccessManager;
-  provider: ProviderClient | null;
+  provider: UserModelProvider | null;
   mcpClient: McpClient;
   policyEngine: PolicyEngine;
   delegationGuard: DelegationGuard;
@@ -582,7 +603,10 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       // comment in session-runtime.ts.
       sessionId: conversationId,
       accessManager,
-      provider,
+      // Bound to THIS session's user, so every request runs the model that user
+      // selected in Settings rather than one config.yaml value for the whole
+      // household. See user-model-provider.ts.
+      provider: provider.forUser(principal.userId),
       broker,
       emitter,
       systemPrompt: resolveSystemPrompt(),
