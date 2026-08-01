@@ -21,6 +21,7 @@ import type { ApplyDeps } from "../apply/orchestrator.js";
 import { renderAndWrite } from "../apply/orchestrator.js";
 import { resolveAssetRoot } from "../config/asset-root.ts";
 import type { StartupConfig } from "../config/startup-config.ts";
+import { loadSystemPrompt } from "../context/system-prompt-loader.ts";
 import { type ExternalToolSlot, createExternalToolSlot } from "../external-tools/external-tool-slot.js";
 import { getLog } from "../logging/logger.ts";
 import { createPersonalityStore } from "../profile-store/personality-store.js";
@@ -62,11 +63,18 @@ import { asStrictFactory, createTtsService } from "./tts-factory.ts";
 
 const log = getLog(["sentient", "bootstrap", "phase-services"]);
 
-// Plan 2 walking-skeleton system prompt — deliberately minimal (a real
-// prompt-assembly layer, persona/profile-aware, is Plan 3's job; see
-// clean-code.md's rule on loading large prompt content from .md files,
-// which does not yet apply to this one-liner placeholder).
-const DEFAULT_SYSTEM_PROMPT = "You are Sentient, a helpful family assistant.";
+// The harness's own system prompt: `system_prompts/system_prompt.md` for role,
+// scope and rules, plus `persona.md` (operator override; baked-in
+// `templates/persona/default.md` as the fallback) for character and tone.
+//
+// This used to be a one-line string literal here, and the .md files — which
+// describe a `speak` tool, a `configure` tool and a `[trigger/<source>]`
+// format, none of which have existed since the 2.0 purge — were loaded by
+// NOTHING. So a prompt rewrite was invisible and the model ran on eleven
+// words. Read once per process, matching `loadSystemPrompt`'s own contract:
+// dev restarts on save (`bun --watch`) and prod restarts on deploy, so an
+// operator edit still lands without a rebuild.
+const SYSTEM_PROMPT = loadSystemPrompt({});
 
 export interface PhaseServicesInput {
   readonly cfg: StartupConfig;
@@ -563,7 +571,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       provider,
       broker,
       emitter,
-      systemPrompt: DEFAULT_SYSTEM_PROMPT,
+      systemPrompt: SYSTEM_PROMPT,
       config: orchestratorCfg,
       voice: voice ?? null,
     });
