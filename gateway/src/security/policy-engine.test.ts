@@ -264,6 +264,17 @@ describe("shipped mcp-policy.yaml", () => {
   it("mediates a tool the file does not tier at all", () => {
     expect(decide("some_new_mcp_write_tool")).toBe("confirm");
   });
+
+  // The file used to tier this `allow`, deferring to the DelegationGuard — which
+  // classifies rather than prompts, so `low → allow` on every ordinary prompt
+  // and no human ever saw a delegation before it ran. Measured 2026-07-31: a
+  // prompt asking to write ~/.ssh/authorized_keys classified `low`. The guard is
+  // an injection scanner, not a risk classifier, and the delegated worker holds
+  // its own tool surface (its builtin write_file included) that the gateway's
+  // proxy tier never sees. Until a real tiered classifier lands, delegation asks.
+  it("mediates delegateTask, the one tool that hands a whole prompt to another agent", () => {
+    expect(decide("delegateTask")).toBe("confirm");
+  });
 });
 
 // ---------------------------------------------------------------------------

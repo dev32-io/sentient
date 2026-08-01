@@ -23,10 +23,38 @@
   color: var(--color-ink);
 }
 
+/* The argument values are what the user is actually approving, so they are
+   rendered in full and the PANEL bounds them — never a character budget in JS.
+   A long `delegateTask` taskPrompt scrolls here instead of losing its tail. */
 .permission-dialog__args {
   margin-top: var(--space-sm);
+  max-height: 40vh;
+  overflow-y: auto;
   font-size: var(--font-size-sm);
   color: var(--color-ink-2);
   word-break: break-word;
   white-space: pre-wrap;
+}
+
+.permission-dialog__args--empty {
+  font-style: italic;
+  color: var(--color-ink-3);
+}
+
+.permission-dialog__arg + .permission-dialog__arg {
+  margin-top: var(--space-sm);
+}
+
+.permission-dialog__arg-key {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.permission-dialog__arg-value {
+  margin: 2px 0 0;
+  font-family: monospace;
+  color: var(--color-ink);
 }

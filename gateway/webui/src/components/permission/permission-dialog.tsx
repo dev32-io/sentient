@@ -7,24 +7,22 @@ export interface PermissionDialogProps {
   onRespond(approved: boolean): void;
 }
 
-/** Longest argument value rendered inline before elision. */
-const ARG_VALUE_MAX = 80;
-
 function formatArgValue(value: unknown): string {
-  const raw = typeof value === "string" ? value : JSON.stringify(value);
-  return raw.length > ARG_VALUE_MAX ? `${raw.slice(0, ARG_VALUE_MAX)}…` : raw;
-}
-
-function summarizeArgs(args: Record<string, unknown>): string {
-  const entries = Object.entries(args);
-  if (entries.length === 0) return "(no arguments)";
-  return entries.map(([key, value]) => `${key}: ${formatArgValue(value)}`).join(", ");
+  return typeof value === "string" ? value : JSON.stringify(value);
 }
 
 /**
  * Blocking L3 `confirm` prompt (spec §7.1). Renders the tool name and the
  * ACTUAL argument values the PDP is mediating — the user approves what will
  * really happen, not a bare tool name.
+ *
+ * Values are rendered IN FULL, one per row. They used to be folded onto a
+ * single line and cut at 80 characters, which was fine for `ha_call_service`
+ * and wrong for the one tool where the argument IS the authority: approving a
+ * `delegateTask` means approving its `taskPrompt`, and a background agent then
+ * acts on that text unsupervised with its own tool surface. Eliding it hides
+ * exactly the tail that matters. Overflow is the panel's job (it scrolls) —
+ * never a character budget here.
  */
 export function PermissionDialog({ request, onRespond }: PermissionDialogProps): JSX.Element {
   // ESC / backdrop-click / the header close button all route through Dialog's
@@ -53,7 +51,18 @@ export function PermissionDialog({ request, onRespond }: PermissionDialogProps):
         <span class="permission-dialog__tool-label">Tool</span>
         <span class="permission-dialog__tool-name">{request.toolName}</span>
       </div>
-      <div class="permission-dialog__args">{summarizeArgs(request.args)}</div>
+      {Object.entries(request.args).length === 0 ? (
+        <p class="permission-dialog__args permission-dialog__args--empty">(no arguments)</p>
+      ) : (
+        <dl class="permission-dialog__args">
+          {Object.entries(request.args).map(([key, value]) => (
+            <div class="permission-dialog__arg" key={key}>
+              <dt class="permission-dialog__arg-key">{key}</dt>
+              <dd class="permission-dialog__arg-value">{formatArgValue(value)}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
     </Dialog>
   );
 }

@@ -197,15 +197,32 @@ rules:
     action: allow
     reason: "Session-local audio control"
 
-  # Delegation is its own security category (§2.3): the free-form taskPrompt is
-  # mediated by the DelegationGuard (static envelope + PromptClassifier) inside
-  # gateway/src/tools/delegate-task.ts, which fails closed on its own. A blanket
-  # PDP confirm here would double-prompt and is not what §2.3 specifies.
-  - name: allow_delegate_task
+  # Delegation is its own security category (§2.3), and it is the ONLY tool that
+  # hands a free-form instruction to another agent to act on unsupervised.
+  #
+  # This rule used to read `action: allow`, justified by "a blanket PDP confirm
+  # here would double-prompt". That rationale was wrong and is the reason the
+  # hole survived a whole branch: the DelegationGuard it deferred to does not
+  # prompt. It CLASSIFIES — `low → allow`, and its classifier is the injection
+  # scanner, which asks "does this prompt look like an attack on me", never "is
+  # this task dangerous to perform". Measured 2026-07-31, all four `low`:
+  # summarise the news / write a key into ~/.ssh/authorized_keys / delete every
+  # photo in my home directory / email the household roster outside. So every
+  # live dispatch logged `tier="low" action="allow"` and no human ever saw one.
+  # There was no first prompt to double.
+  #
+  # INTERIM, deliberately blunt. The destination is a tiered risk classifier
+  # that judges the proposed task against the agent's capability envelope
+  # (docs/native-todo.md § 1 carries the design and its reference); until that
+  # lands, one prompt before an unsupervised run beats none. The dialog renders
+  # the `taskPrompt` argument in full — that text IS the authority being
+  # granted, and the delegated worker also holds its own builtin tools (write_file
+  # among them) that the gateway's proxied allow-tier never sees.
+  - name: confirm_delegate_task
     tool: delegateTask
     condition: 'tool == "delegateTask"'
-    action: allow
-    reason: "Delegation is mediated by the DelegationGuard, not the tool PDP"
+    action: confirm
+    reason: "Runs this instruction as a background agent with its own tools, unsupervised until it finishes"
 
   # ─────────────────────────────────────────────────────────────────────
   # Write / side-effecting tier → confirm. The fail-closed default already
