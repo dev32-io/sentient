@@ -1,0 +1,93 @@
+# Step 6 — delegate-hermes-bg + steer-followup-audio (2026-07-31), unedited gateway log
+
+## Drive A — uncontended: completion lands AFTER turn 1's audio finished
+2026-07-31T18:25:11.390 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-ms9ocinv-t4hg09d7" turnId="43a6ec31-4be4-4320-8ceb-5e11743f7fe8"
+2026-07-31T18:25:11.390 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-ms9ocinv-t4hg09d7" turnId="43a6ec31-4be4-4320-8ceb-5e11743f7fe8" trigger="user"
+2026-07-31T18:25:11.390 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_1eee01a4" sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="43a6ec31-4be4-4320-8ceb-5e11743f7fe8" trigger="user" lastProcessedSeq=45
+2026-07-31T18:25:11.390 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="43a6ec31-4be4-4320-8ceb-5e11743f7fe8" maxIterations=10 toolCount=29
+2026-07-31T18:25:11.391 INFO  [tts:streaming-tts-synthesizer] synthesize-start
+2026-07-31T18:25:12.679 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-ms9ocinv-t4hg09d7" tool="delegateTask" toolCallId="call_fqiqkjrm" action="allow" reason="Delegation is mediated by the DelegationGuard, not the tool PDP" rule="allow_delegate_task"
+2026-07-31T18:25:12.681 INFO  [tools:delegate-task] delegate-task.run.guard-decision | taskId="fe8ea640-9fc4-453d-a412-213151fd529d" agent="hermes" action="allow"
+2026-07-31T18:25:13.028 INFO  [tools:hermes-runner] hermes-runner.run.start | userId="u_1eee01a4" cwd="/Users/kevinye/.sentient/gateway/u_1eee01a4/profiles/u_1eee01a4" timeoutMs=600000
+2026-07-31T18:25:13.718 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="43a6ec31-4be4-4320-8ceb-5e11743f7fe8" iterations=2 forceFinal=false
+2026-07-31T18:25:13.718 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_1eee01a4" sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="43a6ec31-4be4-4320-8ceb-5e11743f7fe8" completed=true failed=false iterations=2
+2026-07-31T18:25:14.575 INFO  [ws:turn-emitter] turn-emitter.audio-start | sessionId="s-ms9ocinv-t4hg09d7" turnId="43a6ec31-4be4-4320-8ceb-5e11743f7fe8" encoding="opus" sampleRate=48000
+2026-07-31T18:25:14.575 INFO  [runtime:turn-voice] turn-voice.audio.start | sessionId="s-ms9ocinv-t4hg09d7" turnId="43a6ec31-4be4-4320-8ceb-5e11743f7fe8" encoding="opus" sampleRate=48000 firstFrameMs=3184
+2026-07-31T18:25:16.561 INFO  [tts:streaming-tts-synthesizer] synthesize-done | frameCount=5
+2026-07-31T18:25:16.562 INFO  [ws:turn-emitter] turn-emitter.audio-done | sessionId="s-ms9ocinv-t4hg09d7" turnId="43a6ec31-4be4-4320-8ceb-5e11743f7fe8" framesSent=38
+2026-07-31T18:25:16.562 INFO  [runtime:turn-voice] turn-voice.audio.done | sessionId="s-ms9ocinv-t4hg09d7" turnId="43a6ec31-4be4-4320-8ceb-5e11743f7fe8" frameCount=5 bytesSent=51025 elapsedMs=5171
+2026-07-31T18:25:18.906 INFO  [tools:hermes-runner] hermes-runner.run.ok | userId="u_1eee01a4" elapsedMs=5878 outputLength=476
+2026-07-31T18:25:18.906 INFO  [tools:delegate-task] delegate-task.run.ok | taskId="fe8ea640-9fc4-453d-a412-213151fd529d" agent="hermes" outputLength=476
+2026-07-31T18:25:18.908 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-ms9ocinv-t4hg09d7" turnId="83c94d02-4040-47b1-8a96-8b3f0af7e819"
+2026-07-31T18:25:18.908 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-ms9ocinv-t4hg09d7" turnId="83c94d02-4040-47b1-8a96-8b3f0af7e819" trigger="background-completion"
+2026-07-31T18:25:18.908 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_1eee01a4" sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="83c94d02-4040-47b1-8a96-8b3f0af7e819" trigger="background-completion" lastProcessedSeq=49
+2026-07-31T18:25:18.909 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="83c94d02-4040-47b1-8a96-8b3f0af7e819" maxIterations=10 toolCount=29
+2026-07-31T18:25:18.909 INFO  [tts:streaming-tts-synthesizer] synthesize-start
+2026-07-31T18:25:20.070 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="83c94d02-4040-47b1-8a96-8b3f0af7e819" iterations=1 forceFinal=false
+2026-07-31T18:25:20.070 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_1eee01a4" sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="83c94d02-4040-47b1-8a96-8b3f0af7e819" completed=true failed=false iterations=1
+2026-07-31T18:25:20.908 INFO  [ws:turn-emitter] turn-emitter.audio-start | sessionId="s-ms9ocinv-t4hg09d7" turnId="83c94d02-4040-47b1-8a96-8b3f0af7e819" encoding="opus" sampleRate=48000
+2026-07-31T18:25:20.908 INFO  [runtime:turn-voice] turn-voice.audio.start | sessionId="s-ms9ocinv-t4hg09d7" turnId="83c94d02-4040-47b1-8a96-8b3f0af7e819" encoding="opus" sampleRate=48000 firstFrameMs=1999
+2026-07-31T18:25:23.249 INFO  [tts:streaming-tts-synthesizer] synthesize-done | frameCount=5
+2026-07-31T18:25:23.249 INFO  [ws:turn-emitter] turn-emitter.audio-done | sessionId="s-ms9ocinv-t4hg09d7" turnId="83c94d02-4040-47b1-8a96-8b3f0af7e819" framesSent=43
+2026-07-31T18:25:23.249 INFO  [runtime:turn-voice] turn-voice.audio.done | sessionId="s-ms9ocinv-t4hg09d7" turnId="83c94d02-4040-47b1-8a96-8b3f0af7e819" frameCount=5 bytesSent=58957 elapsedMs=4340
+2026-07-31T18:26:37.665 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-ms9ocinv-t4hg09d7" turnId="cc5c76b5-6233-4e7d-8010-02c51de3ab81"
+2026-07-31T18:26:37.665 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-ms9ocinv-t4hg09d7" turnId="cc5c76b5-6233-4e7d-8010-02c51de3ab81" trigger="user"
+2026-07-31T18:26:37.665 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_1eee01a4" sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="cc5c76b5-6233-4e7d-8010-02c51de3ab81" trigger="user" lastProcessedSeq=51
+2026-07-31T18:26:37.666 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="cc5c76b5-6233-4e7d-8010-02c51de3ab81" maxIterations=10 toolCount=29
+2026-07-31T18:26:37.667 INFO  [tts:streaming-tts-synthesizer] synthesize-start
+2026-07-31T18:26:40.077 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-ms9ocinv-t4hg09d7" tool="delegateTask" toolCallId="call_a79ghnh9" action="allow" reason="Delegation is mediated by the DelegationGuard, not the tool PDP" rule="allow_delegate_task"
+2026-07-31T18:26:40.078 INFO  [tools:delegate-task] delegate-task.run.guard-decision | taskId="5c4c790a-052f-4ece-b6bf-96437d61c329" agent="hermes" action="allow"
+2026-07-31T18:26:40.289 INFO  [tools:hermes-runner] hermes-runner.run.start | userId="u_1eee01a4" cwd="/Users/kevinye/.sentient/gateway/u_1eee01a4/profiles/u_1eee01a4" timeoutMs=600000
+2026-07-31T18:26:43.738 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="cc5c76b5-6233-4e7d-8010-02c51de3ab81" iterations=2 forceFinal=false
+2026-07-31T18:26:43.739 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_1eee01a4" sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="cc5c76b5-6233-4e7d-8010-02c51de3ab81" completed=true failed=false iterations=2
+2026-07-31T18:26:43.811 INFO  [tools:hermes-runner] hermes-runner.run.ok | userId="u_1eee01a4" elapsedMs=3522 outputLength=137
+2026-07-31T18:26:43.812 INFO  [tools:delegate-task] delegate-task.run.ok | taskId="5c4c790a-052f-4ece-b6bf-96437d61c329" agent="hermes" outputLength=137
+2026-07-31T18:26:43.813 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-ms9ocinv-t4hg09d7" turnId="62243fdf-c417-4390-95b0-8b0edca7a917"
+2026-07-31T18:26:43.813 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-ms9ocinv-t4hg09d7" turnId="62243fdf-c417-4390-95b0-8b0edca7a917" trigger="background-completion"
+2026-07-31T18:26:43.813 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_1eee01a4" sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="62243fdf-c417-4390-95b0-8b0edca7a917" trigger="background-completion" lastProcessedSeq=55
+2026-07-31T18:26:43.813 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="62243fdf-c417-4390-95b0-8b0edca7a917" maxIterations=10 toolCount=29
+2026-07-31T18:26:44.814 INFO  [ws:turn-emitter] turn-emitter.audio-start | sessionId="s-ms9ocinv-t4hg09d7" turnId="cc5c76b5-6233-4e7d-8010-02c51de3ab81" encoding="opus" sampleRate=48000
+2026-07-31T18:26:44.814 INFO  [runtime:turn-voice] turn-voice.audio.start | sessionId="s-ms9ocinv-t4hg09d7" turnId="cc5c76b5-6233-4e7d-8010-02c51de3ab81" encoding="opus" sampleRate=48000 firstFrameMs=7147
+2026-07-31T18:26:45.634 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="62243fdf-c417-4390-95b0-8b0edca7a917" iterations=1 forceFinal=false
+2026-07-31T18:26:45.635 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_1eee01a4" sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="62243fdf-c417-4390-95b0-8b0edca7a917" completed=true failed=false iterations=1
+2026-07-31T18:27:27.660 INFO  [tts:streaming-tts-synthesizer] synthesize-done | frameCount=43
+2026-07-31T18:27:27.660 INFO  [ws:turn-emitter] turn-emitter.audio-done | sessionId="s-ms9ocinv-t4hg09d7" turnId="cc5c76b5-6233-4e7d-8010-02c51de3ab81" framesSent=86
+2026-07-31T18:27:27.661 INFO  [runtime:turn-voice] turn-voice.audio.done | sessionId="s-ms9ocinv-t4hg09d7" turnId="cc5c76b5-6233-4e7d-8010-02c51de3ab81" frameCount=43 bytesSent=631909 elapsedMs=49994
+2026-07-31T18:27:27.661 INFO  [tts:streaming-tts-synthesizer] synthesize-start
+2026-07-31T18:27:28.706 INFO  [ws:turn-emitter] turn-emitter.audio-start | sessionId="s-ms9ocinv-t4hg09d7" turnId="62243fdf-c417-4390-95b0-8b0edca7a917" encoding="opus" sampleRate=48000
+2026-07-31T18:27:28.706 INFO  [runtime:turn-voice] turn-voice.audio.start | sessionId="s-ms9ocinv-t4hg09d7" turnId="62243fdf-c417-4390-95b0-8b0edca7a917" encoding="opus" sampleRate=48000 firstFrameMs=1045
+2026-07-31T18:27:30.906 INFO  [tts:streaming-tts-synthesizer] synthesize-done | frameCount=5
+2026-07-31T18:27:30.907 INFO  [ws:turn-emitter] turn-emitter.audio-done | sessionId="s-ms9ocinv-t4hg09d7" turnId="62243fdf-c417-4390-95b0-8b0edca7a917" framesSent=91
+2026-07-31T18:27:30.908 INFO  [runtime:turn-voice] turn-voice.audio.done | sessionId="s-ms9ocinv-t4hg09d7" turnId="62243fdf-c417-4390-95b0-8b0edca7a917" frameCount=5 bytesSent=47346 elapsedMs=3247
+
+## Drive B — CONTENDED: completion lands while turn 1 audio is still streaming
+2026-07-31T18:26:37.664 INFO  [runtime:session-runtime] session-runtime.submit.start-turn | userId="u_1eee01a4" sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" kind="conversational" seq=51 turnId="cc5c76b5-6233-4e7d-8010-02c51de3ab81"
+2026-07-31T18:26:37.665 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-ms9ocinv-t4hg09d7" turnId="cc5c76b5-6233-4e7d-8010-02c51de3ab81"
+2026-07-31T18:26:37.665 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-ms9ocinv-t4hg09d7" turnId="cc5c76b5-6233-4e7d-8010-02c51de3ab81" trigger="user"
+2026-07-31T18:26:37.665 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_1eee01a4" sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="cc5c76b5-6233-4e7d-8010-02c51de3ab81" trigger="user" lastProcessedSeq=51
+2026-07-31T18:26:37.666 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="cc5c76b5-6233-4e7d-8010-02c51de3ab81" maxIterations=10 toolCount=29
+2026-07-31T18:26:37.667 INFO  [tts:streaming-tts-synthesizer] synthesize-start
+2026-07-31T18:26:40.078 INFO  [tools:delegate-task] delegate-task.run.guard-decision | taskId="5c4c790a-052f-4ece-b6bf-96437d61c329" agent="hermes" action="allow"
+2026-07-31T18:26:40.289 INFO  [tools:hermes-runner] hermes-runner.run.start | userId="u_1eee01a4" cwd="/Users/kevinye/.sentient/gateway/u_1eee01a4/profiles/u_1eee01a4" timeoutMs=600000
+2026-07-31T18:26:43.738 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="cc5c76b5-6233-4e7d-8010-02c51de3ab81" iterations=2 forceFinal=false
+2026-07-31T18:26:43.739 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_1eee01a4" sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="cc5c76b5-6233-4e7d-8010-02c51de3ab81" completed=true failed=false iterations=2
+2026-07-31T18:26:43.811 INFO  [tools:hermes-runner] hermes-runner.run.ok | userId="u_1eee01a4" elapsedMs=3522 outputLength=137
+2026-07-31T18:26:43.812 INFO  [tools:delegate-task] delegate-task.run.ok | taskId="5c4c790a-052f-4ece-b6bf-96437d61c329" agent="hermes" outputLength=137
+2026-07-31T18:26:43.812 INFO  [runtime:session-runtime] session-runtime.submit.start-turn | userId="u_1eee01a4" sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" kind="background-completion" seq=55 turnId="62243fdf-c417-4390-95b0-8b0edca7a917"
+2026-07-31T18:26:43.813 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-ms9ocinv-t4hg09d7" turnId="62243fdf-c417-4390-95b0-8b0edca7a917"
+2026-07-31T18:26:43.813 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-ms9ocinv-t4hg09d7" turnId="62243fdf-c417-4390-95b0-8b0edca7a917" trigger="background-completion"
+2026-07-31T18:26:43.813 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_1eee01a4" sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="62243fdf-c417-4390-95b0-8b0edca7a917" trigger="background-completion" lastProcessedSeq=55
+2026-07-31T18:26:43.813 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="62243fdf-c417-4390-95b0-8b0edca7a917" maxIterations=10 toolCount=29
+2026-07-31T18:26:44.814 INFO  [ws:turn-emitter] turn-emitter.audio-start | sessionId="s-ms9ocinv-t4hg09d7" turnId="cc5c76b5-6233-4e7d-8010-02c51de3ab81" encoding="opus" sampleRate=48000
+2026-07-31T18:26:44.814 INFO  [runtime:turn-voice] turn-voice.audio.start | sessionId="s-ms9ocinv-t4hg09d7" turnId="cc5c76b5-6233-4e7d-8010-02c51de3ab81" encoding="opus" sampleRate=48000 firstFrameMs=7147
+2026-07-31T18:26:45.634 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="62243fdf-c417-4390-95b0-8b0edca7a917" iterations=1 forceFinal=false
+2026-07-31T18:26:45.635 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_1eee01a4" sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="62243fdf-c417-4390-95b0-8b0edca7a917" completed=true failed=false iterations=1
+2026-07-31T18:27:27.660 INFO  [tts:streaming-tts-synthesizer] synthesize-done | frameCount=43
+2026-07-31T18:27:27.660 INFO  [ws:turn-emitter] turn-emitter.audio-done | sessionId="s-ms9ocinv-t4hg09d7" turnId="cc5c76b5-6233-4e7d-8010-02c51de3ab81" framesSent=86
+2026-07-31T18:27:27.661 INFO  [runtime:turn-voice] turn-voice.audio.done | sessionId="s-ms9ocinv-t4hg09d7" turnId="cc5c76b5-6233-4e7d-8010-02c51de3ab81" frameCount=43 bytesSent=631909 elapsedMs=49994
+2026-07-31T18:27:27.661 INFO  [tts:streaming-tts-synthesizer] synthesize-start
+2026-07-31T18:27:28.706 INFO  [ws:turn-emitter] turn-emitter.audio-start | sessionId="s-ms9ocinv-t4hg09d7" turnId="62243fdf-c417-4390-95b0-8b0edca7a917" encoding="opus" sampleRate=48000
+2026-07-31T18:27:28.706 INFO  [runtime:turn-voice] turn-voice.audio.start | sessionId="s-ms9ocinv-t4hg09d7" turnId="62243fdf-c417-4390-95b0-8b0edca7a917" encoding="opus" sampleRate=48000 firstFrameMs=1045
+2026-07-31T18:27:30.906 INFO  [tts:streaming-tts-synthesizer] synthesize-done | frameCount=5
+2026-07-31T18:27:30.907 INFO  [ws:turn-emitter] turn-emitter.audio-done | sessionId="s-ms9ocinv-t4hg09d7" turnId="62243fdf-c417-4390-95b0-8b0edca7a917" framesSent=91
+2026-07-31T18:27:30.908 INFO  [runtime:turn-voice] turn-voice.audio.done | sessionId="s-ms9ocinv-t4hg09d7" turnId="62243fdf-c417-4390-95b0-8b0edca7a917" frameCount=5 bytesSent=47346 elapsedMs=3247
