@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { createGatewayServices } from "./bootstrap/create-gateway-services.ts";
 import { createMcpHost } from "./bootstrap/create-mcp-host.ts";
+import { claimSingleEvaluation, describeHotReloadRefusal } from "./bootstrap/single-evaluation.ts";
 import { type SingleInstanceIo, acquireSingleInstance, describeConflict } from "./bootstrap/single-instance.ts";
 import { loadLoggingConfig, loadStartupConfig, resolveSentientHome } from "./config/startup-config.ts";
 import { createHermesExternalTool } from "./external-tools/hermes-external-tool.ts";
@@ -44,6 +45,54 @@ await createGatewayLogger({
 });
 
 const log = getLog(["sentient"]);
+
+// ---------------------------------------------------------------------------
+// Single-EVALUATION guard — before the single-INSTANCE claim, because it is the
+// narrower question and the cheaper answer.
+//
+// The dev command is `bun --watch` (a real restart per change), not `bun --hot`.
+// The choice was measured, not assumed:
+//
+//   * A reload re-runs this whole file, so it re-runs `reconcile()` ->
+//     `reapOrphans()` + `applyAll()`, and `applyAll` calls `driver.recreate()`
+//     UNCONDITIONALLY for every service. So a `--hot` reload already pays the
+//     same ~12-15 s fleet churn a process restart pays (all 7 docker containers
+//     recreated, both native addons respawned). Its only saving is Bun's spawn
+//     plus module parse — 1.3 s of a ~15 s reload, under 10%.
+//   * `--watch` releases everything the kernel and the VM own: measured, its
+//     reloads reset `globalThis` and stop the previous evaluation's timers,
+//     while `--hot` leaves them all running (three probe timers still ticking
+//     concurrently after two reloads).
+//   * `--watch` keeps the same OS pid, so the single-instance claim below is a
+//     self-match across a reload — no release, no window for a second gateway.
+//   * Detached native children, docker containers and the claim are owned by
+//     the MACHINE, not by this evaluation, and survive either way.
+//
+// A teardown registry for `--hot` would have to dispose the watchdog, the MCP
+// host's per-user unix listeners, the signal handlers, the provider/STT/TTS
+// sockets and every future resource — and anything missed reproduces this
+// defect somewhere new. Buying under 10% of one reload with that standing
+// obligation is a bad trade for a process that owns unix sockets, detached
+// children and docker containers.
+//
+// This guard is what makes `bun --hot` typed from muscle memory fail loudly
+// instead of silently corrupting the machine's addon fleet.
+// ---------------------------------------------------------------------------
+const evaluation = claimSingleEvaluation(
+  globalThis as unknown as Record<PropertyKey, unknown>,
+  process.pid,
+  Date.now(),
+);
+if (!evaluation.ok) {
+  // ONE LINE PER LINE — same reason as the single-instance conflict below: the
+  // formatter caps any single property at the 120-char preview, so a multi-line
+  // operator message logged as one `reason` loses its fix commands.
+  for (const line of describeHotReloadRefusal(evaluation.previous, Date.now()).split("\n")) {
+    if (line.trim().length > 0) log.error("hot-reload.refused", { line });
+  }
+  process.exit(1);
+}
+
 const config = loadStartupConfig();
 
 // ---------------------------------------------------------------------------

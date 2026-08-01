@@ -51,7 +51,7 @@ All `bun run` commands, test scripts, and quality-gate hooks depend on this.
 
     bun run dev                    # gateway + webui; Ctrl-C stops BOTH
 
-`bun --hot` reloads on save, so a code change needs no restart. Restart when you change `config.yaml`, an env var, or anything read once at boot. If `:8888` is already taken, an orphaned `bun --hot` from a previous run is the usual cause — `pkill -f "src/main.ts"`.
+`bun --watch` **restarts the gateway process** on save — it does not hot-reload, and `bun --hot` must never be used here. A reload re-runs the composition root, and under `--hot` that arms a second addon supervisor inside the live process; they then reap and respawn each other's `whisper-stt` / `local-tts` children until nothing owns the ports. The gateway refuses a second in-process evaluation and exits 1 with the fix, so the failure is one legible line rather than a wedged stack. A restart also re-reads `config.yaml` and the env, so nothing needs a *manual* restart. If `:8888` is already taken, an orphaned run is the usual cause — `pkill -f "src/main.ts"`.
 
 **Prod (the mini)** — the gateway is a **LaunchDaemon**, not a container and not a shell job. Never start it by hand:
 
