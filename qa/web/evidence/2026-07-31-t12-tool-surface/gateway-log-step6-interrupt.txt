@@ -1,0 +1,28 @@
+# Step 6 — interrupt (browser Stop arm), unedited gateway log 2026-07-31
+
+2026-07-31T18:31:38.348 INFO  [tools:delegate-task] delegate-task.run.guard-decision | taskId="da57b4ef-eb74-4f59-8396-4ab96d5f4cb6" agent="hermes" action="allow"
+2026-07-31T18:31:38.561 INFO  [tools:hermes-runner] hermes-runner.run.start | userId="u_1eee01a4" cwd="/Users/kevinye/.sentient/gateway/u_1eee01a4/profiles/u_1eee01a4" timeoutMs=600000
+2026-07-31T18:31:47.979 INFO  [tts:local-tts-socket] ws-closed
+2026-07-31T18:31:47.979 INFO  [runtime:turn-voice] turn-voice.audio.done | sessionId="s-ms9ocinv-t4hg09d7" turnId="3f117a2a-4137-4eec-a64f-16e61e022d26" frameCount=52 bytesSent=705101 elapsedMs=64817
+2026-07-31T18:31:49.385 INFO  [runtime:turn-voice] turn-voice.audio.start | sessionId="s-ms9ocinv-t4hg09d7" turnId="a6571760-436a-46af-b533-42a32837bb5e" encoding="opus" sampleRate=48000 firstFrameMs=1406
+2026-07-31T18:31:53.677 INFO  [runtime:cancellation] cancellation.no-turn-in-flight | userId="u_1eee01a4" sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" cutoff="interrupt" cancelBackground=true
+2026-07-31T18:31:53.677 INFO  [runtime:turn-voice] turn-voice.audio.cancel | sessionId="s-ms9ocinv-t4hg09d7" turnIds=a6571760-436a-46af-b533-42a32837bb5e,ca36e899-0846-4c53-b8dc-c3d490033058 reason="user cancel gesture — barge-in or interrupt"
+2026-07-31T18:31:53.679 WARN  [tools:hermes-runner] hermes-runner.run.aborted | userId="u_1eee01a4" elapsedMs=15118
+2026-07-31T18:31:53.680 INFO  [tools:background-registry] background-registry.cancel-all | taskIds=da57b4ef-eb74-4f59-8396-4ab96d5f4cb6 count=1
+2026-07-31T18:31:53.680 INFO  [runtime:cancellation] cancellation.background.cancel-all | userId="u_1eee01a4" sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" cutoff="interrupt"
+2026-07-31T18:31:53.680 INFO  [tts:streaming-tts-synthesizer] synthesize-aborted | frameCount=5
+2026-07-31T18:31:53.681 INFO  [tts:local-tts-socket] ws-closed
+2026-07-31T18:31:53.681 INFO  [runtime:turn-voice] turn-voice.audio.cancelled | sessionId="s-ms9ocinv-t4hg09d7" turnId="a6571760-436a-46af-b533-42a32837bb5e" frameCount=5 bytesSent=61884
+2026-07-31T18:31:53.682 INFO  [runtime:turn-voice] turn-voice.audio.cancelled | sessionId="s-ms9ocinv-t4hg09d7" turnId="ca36e899-0846-4c53-b8dc-c3d490033058" frameCount=0 bytesSent=0
+2026-07-31T18:31:53.685 INFO  [tools:hermes-runner] hermes-runner.run.done-after-abort | userId="u_1eee01a4" elapsedMs=15124
+2026-07-31T18:31:53.686 WARN  [tools:delegate-task] delegate-task.run.failed | taskId="da57b4ef-eb74-4f59-8396-4ab96d5f4cb6" agent="hermes" reason="aborted"
+2026-07-31T18:31:56.143 INFO  [runtime:turn-voice] turn-voice.audio.start | sessionId="s-ms9ocinv-t4hg09d7" turnId="e18206b6-0b93-442e-98da-9fd30ceaf7a1" encoding="opus" sampleRate=48000 firstFrameMs=2448
+2026-07-31T18:31:59.483 INFO  [tts:local-tts-socket] ws-closed
+2026-07-31T18:31:59.484 INFO  [runtime:turn-voice] turn-voice.audio.done | sessionId="s-ms9ocinv-t4hg09d7" turnId="e18206b6-0b93-442e-98da-9fd30ceaf7a1" frameCount=5 bytesSent=59571 elapsedMs=5789
+
+# --- subprocess watcher (pgrep -P <gateway pid> every 200ms) ---
+samples=61
+FIRST: 18:31:38.3N pid=16239 cmd=/Users/kevinye/.hermes/hermes-agent/venv/bin/python3 /Users/kevinye/.hermes/hermes-agent/v
+LAST:  18:31:53.3N pid=16239 cmd=
+# hermes children observed after 18:31:54: 0
+# ps -p 16239 -> exit 1 (no such process)
