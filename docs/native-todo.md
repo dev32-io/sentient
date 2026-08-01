@@ -228,6 +228,14 @@ None of it affects behaviour; all was found during the migration and would other
 
 A surface has exactly one durable conversation on 2.0, so `session.new` is answered with the existing id: "+" clears the client's mirror but leaves the server thread and its context. Observed consequence, not theoretical — `ios/01-newchat.yaml` sends `what is 8 plus 9` into a fresh-looking chat and the model calls `ha_call_service`, resuming the *previous* conversation's task, so the turn parks on a permission prompt and no reply ever renders.
 
+**On the webui it does not even clear the mirror — reported by the owner 2026-08-01 and traced.** The header above says "+ clears the client's mirror". That is true of mobile and false of the web client, which is worse and reads as a dead button:
+
+- `sessions.newChat()` (`use-sessions.ts:139`) awaits `session.created` and assigns `currentId.value = sessionId`. The gateway returns the **existing** id, so the assignment is a no-op.
+- `use-voice-client.ts:625` handles `created` by clearing typewriter/drain state and then calling **`refreshMessages()`**, which re-reads the same unchanged conversation. Any clearing is immediately undone by design — that handler was written for mid-turn *switches*, where refetching is right.
+- `drawer.tsx:133`'s comment still describes the ACP-era mechanism (*"the gateway clears the chat pane synchronously (`switchFlow.switchTo("")`)"*). That code path no longer exists; the comment is why the button looks wired.
+
+So on web, "+" closes the drawer and nothing else happens. Same root cause, same fix, and it goes with the multi-conversation project — but it should not be described as a client-mirror reset when the web client visibly performs none.
+
 The alternative was rejected on evidence: minting a fresh partition per `session.new` would fork on **every app launch** (the chat route's default `sessionId` is null, so `ChatViewModel.init` fires `sendNewChat()` with no user tap — and the VM initialises twice per launch), destroying `reload-convergence` and `restart-persistence`. Closing this properly is the multi-conversation project in §2. `01-newchat` is left red as its standing acceptance test.
 
 **Blast radius is wider than `01-newchat` — measured 2026-07-30 (task 9f), first drive of the `session` tag on 2.0.** With D14 closed the QA store was reset to a clean partition, which exposed that three more Android flows cannot be satisfied on 2.0 at all. None is a regression; all three are the same missing surface:
@@ -390,6 +398,29 @@ Deferred items, in the order they'd sensibly land:
    So auto-start is not just a plist key. It needs one of: a launchd `KeepAlive`/`WatchPaths` condition on the Docker socket; the orchestrator distinguishing *"the Docker daemon is not up yet"* (retry indefinitely, slowly) from *"this service is broken"* (give up loudly); or an explicit login-item ordering with Docker Desktop declared as a prerequisite. Pick deliberately — the failure mode is silent and only visible hours later.
 
 5. **Settings + tweak flow** — how an operator inspects, enables, disables and re-scopes an external tool from the UI. Depends on the delegate-tool permission surface in §1/D11. Design later.
+
+---
+
+### 3a. The delegated-agent (Hermes) cluster — DEFERRED as one, 2026-08-01
+
+**Owner's decision and its reasoning.** `delegateTask` is proven as a background tool and foreground tools are proven outright, so the walking skeleton is feature-complete on the dimension these items sit on. What remains open against Hermes is **overwhelmingly environment setup** — which profile, which credential, which tools registered, which binary on `PATH` — and fixing each one in place buys a Hermes-shaped patch. The destination is the *capability* this section already owns, generalised: **Sentient sets an external tool up agentically, on request, with the user in the loop.** Every item below is then an instance of that flow rather than eight separate repairs, so they are deferred together and stay deferred until that flow is designed.
+
+That reframes items 1–3 above. They are written as installer work (*"the installer renders the tool's configuration once"*), and installer work is still the floor. But the same render/reconcile/verify code path is what an *agentic* setup would drive, so it should be designed as one mechanism with two entry points — install time and on request — not as an installer feature that later grows a UI.
+
+Deferred, each already recorded in full where it was found. This is the index, not a second copy:
+
+| # | Item | Recorded in | Shape |
+|---|---|---|---|
+| 1 | Per-user profile credential drift — `--clone-from` copies once, nothing reconciles, one profile returned `HTTP 401` | §1, *Per-user Hermes profiles drift* | setup |
+| 2 | Cross-user delegation repoint race — one shared profile holds one `gateway` MCP entry; concurrent delegations race to repoint it | §1, same entry (**NEW/OPEN**, introduced deliberately by the interim fix) | setup |
+| 3 | Per-user isolation for a delegated agent — what it may see and act on per household member | §1, same entry | product design |
+| 4 | Hermes builtins bypass the gateway proxy entirely (`write_file`, `terminal`, `browser_*`, …) — mediation cannot reach inside a delegated run | §1, *SECURITY — `delegateTask` has no user gate* | security |
+| 5 | The real delegation risk classifier — interim `confirm` gate shipped; Claude Code's auto-mode decomposition is the reference | §1, same entry | security |
+| 6 | `identify_user` / `update_user_settings` unreachable; `pause_audio` / `resume_audio` still stubs | §1, *`identify_user` and `update_user_settings` now have no caller* | wiring |
+| 7 | Whether a stronger model relays a `role:"system"` completion — measured 0/9 on gpt-oss:20b, and every such measurement predates the model-selection fix | §1, D16's 2026-07-31 note | measurement |
+| 8 | Hermes is assumed present on `PATH` — unpinned, unverified, not installed by us | §3 item 1 | setup |
+
+**What is NOT deferred with them:** the untrusted-content scanning boundary (§1, HIGH-PRIORITY SECURITY). A delegated agent reads the open web and its payload lands in a `role:"system"` message, so that item's priority comes from this cluster existing — deferring the cluster raises it rather than lowering it.
 
 ---
 
