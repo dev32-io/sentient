@@ -188,6 +188,28 @@ The user reads an acknowledgement of an answer they never receive, so from the o
 
 **Do not let a delegation E2E row pass on "a follow-up bubble appeared."** Read what it says. That vacuous-pass rule is already written into `agents/docs/testing-knowledge.md`.
 
+#### 2026-07-31 (plan task 15) — the diagnosis was right, three of the four causes are fixed, and the fourth is NOT the gateway's
+
+The suspicion above was correct on every mechanical point, and each is now closed:
+
+- ~~The completion was projected as `role:"user"`~~ — fixed. `model-projection.ts` gives a `trigger` entry `role:"system"` on **both** emission paths (rule 5 in that file). The second path — rule 3b's deferred one — is the path every completion takes while another delegation is still mid-dispatch, so a concurrent case would still have been broken by a one-line fix.
+- ~~The note was `"Delegated task <uuid> … completed: <payload>"`~~ — fixed. It now names the task, echoes the arguments it was dispatched with (compaction summarises the dispatch away, so a bare uuid binds to nothing), and fences the payload as data. See `tools/background-completion-note.ts`.
+- ~~The system prompt described a retired product and never mentioned background tasks~~ — rewritten, **and wired**: `loadSystemPrompt` had zero callers and the composition root passed an eleven-word string literal, so the `.md` files were dead text.
+- ~~The client dropped the completion entirely~~ — fixed. It renders as its own `SystemEventRow`, not a chat bubble.
+
+**What is still open is the model, and it is worth reading before anyone "fixes" the projection back.** Measured on `gpt-oss:20b` (local ollama; the dev stack runs `gpt-oss:20b-cloud`), same conversation tail, only the completion's role varied:
+
+| completion role | relayed the delegated content |
+|---|---|
+| `system` (correct, and what ships) | **0 / 9** — 2 A/B trials, 6 note-framing trials, 3 live browser drives |
+| `user` (the old, wrong shape) | **2 / 2** |
+
+The content is not being dropped or hoisted out of reach: asked directly, the model reproduces the payload and the task id verbatim under **both** roles. It *sees* it and declines to act on it — under `role:"system"` it answers as though the task were still running ("Got it—sending that request over to Hermes now"). Adding an explicit hand-off line to the note ("the person who asked has not seen this yet; your next reply is how they receive it") did not move it: 0/6.
+
+So this is a model-behaviour gap on a 20B open-weights model with the harmony format, not a gateway defect. `role:"system"` for an async result is the published convention (Telnyx's async-tools spec recommends it verbatim and explicitly does not bind it to a `tool_call_id`), and the shipped shape is the correct one. The open question is whether a stronger model closes it on its own — untested here, because the only other configured providers are paid and smoke does not burn them. **Test that before changing the projection.** If it must be closed on a weak model, the lever is the system prompt's "Background tasks" section or the note's framing, not the role — reverting the role reinstates "the person pasted this into the chat", which is a lie the model then acts on.
+
+**Security, restated because task 15 made it live:** the delegated payload now sits in a `role:"system"` message — the highest-trust role — and nothing scans it. Task 15's containment is framing only: the frame is ours, the payload sits inside a per-task fence whose marker carries the freshly-minted `taskId` (so a page a delegated agent read cannot forge a closing marker it has never seen), and the note says in as many words that the contents are data rather than instruction. That raises the cost of an injection; it does not stop one. The owed work is the inbound scanning boundary already specified below under *"HIGH-PRIORITY SECURITY — untrusted content enters the model context completely unscanned"*, which is now no longer hypothetical.
+
 ### ~~D7 — the model re-dispatches the same `delegateTask` 10× per request~~ — VERIFIED FIXED 2026-07-31 (plan task 12)
 
 Filed during T9b, where one user request spawned **ten** real hermes subprocesses and burned ten LLM iterations (classic background-tool refire: the tool returns `{taskId}` with no answer, the next iteration re-reads the store, the model sees a dispatch with no result and calls it again). The dedupe guard in `react-loop.ts` closed it. Re-driven from the webui on 2026-07-31: `grep -c hermes-runner.run.start` = **1** per request across three separate delegations. Evidence: `qa/web/evidence/2026-07-31-t12-tool-surface/STEP6-delegate-and-audio.md`.
@@ -237,7 +259,7 @@ Framing correction: it is **not** left behind by a delete. `personality-store.re
 
 **The injection scanner exists but only guards the outbound direction.** `scanForInjection` (6 regexes, `gateway/src/security/injection-scanner.ts`) is reached from exactly one path: `prompt-classifier.ts` → `delegation-guard.ts`, which risk-tiers the **`taskPrompt` we send TO Hermes**. Nothing scans what comes **back**: no tool result, no fetched page, no MCP response, no background completion. Zero inbound callers.
 
-That is the direction that matters. `delegateTask` sends Hermes to read the open web; `fetch` and `search_web` pull arbitrary pages; all of it lands in the model's context verbatim. Per the OpenAI Model Spec's chain of command (system > developer > user > **tool**), tool output is the *lowest*-trust input — and task 15 is about to render background results in a `role:"system"` frame, the *highest*-trust role. The frame must be ours and the payload must be quoted as data; that framing is necessary but not sufficient.
+That is the direction that matters. `delegateTask` sends Hermes to read the open web; `fetch` and `search_web` pull arbitrary pages; all of it lands in the model's context verbatim. Per the OpenAI Model Spec's chain of command (system > developer > user > **tool**), tool output is the *lowest*-trust input — and task 15 **has now shipped** background results in a `role:"system"` frame, the *highest*-trust role. The frame is ours and the payload is quoted as data inside a per-task fence; that framing is necessary but not sufficient, and it is the only thing standing here today.
 
 **What exists is also weak on its own terms.** Measured 2026-07-31:
 
