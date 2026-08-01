@@ -28,9 +28,40 @@
 // to stdout — no banner, spinner or session-id line — exactly the shape a
 // subprocess capture wants.
 //
+// HOW A FAILURE IS DETECTED, and why it is not the exit code. Measured against
+// hermes v0.19.0 on 2026-07-31: a delegation against a stale profile printed
+// `HTTP 401: User not found.` on **stdout**, wrote **nothing** to stderr, and
+// exited **0**. Three of the four obvious signals therefore carry nothing, and
+// the fourth is a trap:
+//
+//   * exit code — 0 on that failure. Still checked (a non-zero exit is real),
+//     but it cannot be the only check.
+//   * stderr — empty on that failure.
+//   * output LENGTH — the failure was 26 characters and a successful
+//     `-z "Reply with the single word: yes"` was **3**. There is no threshold
+//     here; "yes" is a legitimate answer and any length rule would reject it.
+//   * output SHAPE — matching `HTTP <code>:` is a heuristic over text a model
+//     may legitimately quote.
+//
+// So the runner asks hermes for its own verdict: `--usage-file <path>` writes a
+// JSON report whose help text promises it is written "even when the run fails",
+// and it carries `completed` / `failed` booleans. That is an explicit error
+// CHANNEL rather than an inference over the answer. The file is per-run,
+// unguessable, and removed afterwards.
+//
+// The one honest gap: a hermes too old to know `--usage-file` rejects the flag
+// and exits non-zero, so every delegation would fail loudly and legibly
+// (`hermes-runner.run.non-zero-exit` naming the usage error) rather than
+// silently. A report that is missing or unparseable after a ZERO exit is
+// fail-OPEN with a WARN — refusing an answer we have no evidence against is the
+// worse error, and the WARN keeps the blind spot visible.
+//
 // `spawn` is injected (default `Bun.spawn`) so the unit test can supply a
 // fake process without ever spawning a real `hermes` binary.
 
+import { unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { getLog } from "../logging/logger.js";
 import type { UserId } from "../user-auth/user-id.js";
 
@@ -39,7 +70,12 @@ const log = getLog(["sentient", "tools", "hermes-runner"]);
 const HERMES_BIN = "hermes";
 const PROFILE_FLAG = "-p";
 const ONE_SHOT_FLAG = "-z";
+const USAGE_FILE_FLAG = "--usage-file";
 const STDERR_PREVIEW_MAX = 500; // truncate captured stderr/stdout previews in the error message + logs
+
+/** Model-facing text when hermes reports a failed run but printed nothing
+ *  usable to explain it. */
+const OPAQUE_FAILURE = "the delegated agent reported a failed run with no output";
 
 export type HermesRunResult = { ok: true; output: string } | { ok: false; error: string };
 
@@ -82,6 +118,30 @@ function truncate(text: string): string {
   return text.length > STDERR_PREVIEW_MAX ? `${text.slice(0, STDERR_PREVIEW_MAX)}…` : text;
 }
 
+/** The report's verdict. `unknown` means the file was absent or unreadable —
+ *  a distinct outcome from "it says the run succeeded", because only one of
+ *  those two is evidence. */
+type RunVerdict = "succeeded" | "failed" | "unknown";
+
+/** Reads hermes's own `--usage-file` report. Never throws: this is bookkeeping
+ *  around a run that has already happened, and a temp-file problem must not turn
+ *  a good delegation into a failed one. */
+async function readVerdict(usagePath: string, userId: string): Promise<RunVerdict> {
+  try {
+    const parsed: unknown = JSON.parse(await Bun.file(usagePath).text());
+    if (parsed === null || typeof parsed !== "object") return "unknown";
+    const report = parsed as { failed?: unknown; completed?: unknown };
+    if (report.failed === true || report.completed === false) return "failed";
+    return report.completed === true ? "succeeded" : "unknown";
+  } catch (err) {
+    log.warn("hermes-runner.usage-report.unreadable", {
+      userId,
+      reason: err instanceof Error ? err.message : String(err),
+    });
+    return "unknown";
+  }
+}
+
 export function createHermesRunner(deps: HermesRunnerDeps): HermesRunner {
   const { profile, resolveProfileDir, timeoutMs } = deps;
   const spawn = deps.spawn ?? ((argv, options) => Bun.spawn([...argv], options) as unknown as HermesProcess);
@@ -93,7 +153,11 @@ export function createHermesRunner(deps: HermesRunnerDeps): HermesRunner {
     }
 
     const cwd = resolveProfileDir(userId);
-    const argv = [HERMES_BIN, PROFILE_FLAG, profile, ONE_SHOT_FLAG, prompt];
+    // Per-run and unguessable: two concurrent delegations must never read each
+    // other's verdict, and a stale file from a killed run must never be mistaken
+    // for this one's.
+    const usagePath = join(tmpdir(), `sentient-hermes-usage-${crypto.randomUUID()}.json`);
+    const argv = [HERMES_BIN, PROFILE_FLAG, profile, USAGE_FILE_FLAG, usagePath, ONE_SHOT_FLAG, prompt];
     const startedAt = Date.now();
     log.info("hermes-runner.run.start", { userId, profile, cwd, timeoutMs });
 
@@ -126,6 +190,9 @@ export function createHermesRunner(deps: HermesRunnerDeps): HermesRunner {
       ]);
       const elapsedMs = Date.now() - startedAt;
 
+      // Abort and timeout are decided WITHOUT the report: the child was killed,
+      // so a missing report says nothing, and warning about it on every barge-in
+      // would be noise. Cleanup still happens, in `finally`.
       if (signal.aborted) {
         log.info("hermes-runner.run.done-after-abort", { userId, elapsedMs });
         return { ok: false, error: "aborted" };
@@ -139,12 +206,34 @@ export function createHermesRunner(deps: HermesRunnerDeps): HermesRunner {
         log.warn("hermes-runner.run.non-zero-exit", { userId, code, elapsedMs, reasonLength: reason.length });
         return { ok: false, error: reason };
       }
+      // Exit 0 and hermes still says the run failed — the 401 case. The output
+      // is the explanation the user needs, so it is returned as the error text.
+      const verdict = await readVerdict(usagePath, userId);
+      if (verdict === "failed") {
+        const reason = truncate(stdout || stderr) || OPAQUE_FAILURE;
+        log.warn("hermes-runner.run.reported-failed", {
+          userId,
+          code,
+          elapsedMs,
+          reasonLength: reason.length,
+          reason: "hermes exited 0 but its usage report says the run failed",
+        });
+        return { ok: false, error: reason };
+      }
+      if (verdict === "unknown") {
+        log.warn("hermes-runner.run.verdict-unknown", {
+          userId,
+          elapsedMs,
+          reason: "no readable usage report — treating a zero exit as success, which is the pre-2026-07-31 blind spot",
+        });
+      }
 
-      log.info("hermes-runner.run.ok", { userId, elapsedMs, outputLength: stdout.length });
+      log.info("hermes-runner.run.ok", { userId, elapsedMs, verdict, outputLength: stdout.length });
       return { ok: true, output: stdout };
     } finally {
       clearTimeout(timeout);
       signal.removeEventListener("abort", onAbort);
+      await unlink(usagePath).catch(() => undefined);
     }
   }
 
