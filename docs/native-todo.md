@@ -393,6 +393,35 @@ Deferred items, in the order they'd sensibly land:
 
 ---
 
+## 3b. Privileged capability — DEFERRED, and deliberately so
+
+Recorded 2026-08-01 after an owner design discussion, while the reasoning is fresh. **Nothing here is scheduled.** When it is picked up it deserves its own spec and unhurried review — it is the most dangerous layer in the product, and the owner's instruction is that it gets real focus rather than being tacked onto a feature.
+
+**The question:** if Sentient is to install software, change system settings, or drive the machine, does the gateway ever need to run as root?
+
+**Answer: no — and root would buy less than it appears.** macOS gates capability on three independent axes, and root is only one of them:
+
+| Axis | Gates | Does root help? |
+|---|---|---|
+| **root / uid** | ports < 1024, `/Library`, other users' files, `pf`, `networksetup` | yes |
+| **TCC** | mic, camera, screen recording, accessibility, automation, Documents/Desktop | **no — root is denied too** |
+| **SIP** | `/run`, `/System`, `/usr` and other system paths | **no — root is denied too** |
+
+We already met SIP the hard way: D8 was `/run` being read-only *for root*, which forced the per-user MCP socket to move.
+
+Worked through against real examples:
+- **"install x from Homebrew"** — needs nothing. On Apple Silicon `/opt/homebrew` is user-owned and `brew` deliberately refuses sudo.
+- **"computer use"** — needs **TCC** grants and a **GUI session**, which root cannot provide. TCC consent is per-app and prompts in the user's session, so this points at a **LaunchAgent**, not at root, and possibly not at the gateway daemon at all.
+- **"change my network settings"** — the one genuine root case (`networksetup` for DNS, locations, interfaces).
+
+**The gateway must never be the root process, and the reason is specific to what it is.** It runs an LLM loop that ingests untrusted web content — a delegated agent reads arbitrary pages, and the scanning boundary above is still unbuilt. That is the single worst process on the machine to hold root. It would promote the untrusted-content item from important to existential.
+
+**The shape when we do build it: a privileged helper.** A small, separately-audited component exposing a **fixed, enumerated set of operations** — never "run this command" — invoked by the unprivileged gateway over a local socket. macOS has a first-class pattern for it (`SMJobBless`-style helper tools); Docker Desktop and VPN clients use the same shape.
+
+Why it fits this codebase specifically: it yields **two independent gates**. The PDP decides whether a request is permitted; the helper enforces that no operation outside its enumerated set can be expressed at all. A prompt injection that defeats the first still cannot invent an operation past the second. A root gateway collapses both into one. It also keeps the audit surface small — the helper is the only thing needing review when a privileged capability is added, rather than re-reasoning about a root process that also talks to the open web.
+
+**Related, same question at other layers:** the untrusted-content boundary (§1) and the delegated-tool permission surface (§1, D11 follow-up). All three ask *what authority does this hold, and who checks each use of it.*
+
 ## 4. Operator handoff — needs your hands or a second machine
 
 Full checklist with exact steps and expected log lines: `docs/superpowers/handoffs/2026-07-29-native-migration-operator-checklist.md` (written by plan task 11). Index only, here.
