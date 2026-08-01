@@ -38,7 +38,11 @@ function testConfig(maxIterations = 10): OrchestratorConfig {
     },
     loop: { max_iterations: maxIterations },
     permission: { request_timeout_ms: 120000 },
-    tools: { foreground_timeout_ms: 30000, max_concurrent_background_tasks: 50 },
+    tools: {
+      foreground_timeout_ms: 30000,
+      max_concurrent_background_tasks: 50,
+      background_completion_request_echo_chars: 240,
+    },
     delegation: {
       frontmatter_dir: "./config/delegation",
       hermes_timeout_ms: 600000,
@@ -528,7 +532,11 @@ describe("SessionRuntime — delegateTask fire-and-steer loop closes end to end"
       principal: alice,
       sessionId: "sess-3b",
       backgroundTools: new Map([["delegateTask", backgroundRunner]]),
-      config: { foreground_timeout_ms: 30000, max_concurrent_background_tasks: 5 },
+      config: {
+        foreground_timeout_ms: 30000,
+        max_concurrent_background_tasks: 5,
+        background_completion_request_echo_chars: 240,
+      },
       requestConfirm: async () => false,
     });
 

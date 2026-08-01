@@ -516,7 +516,11 @@ function testOrchestratorConfig(): OrchestratorConfig {
     },
     loop: { max_iterations: 4 },
     permission: { request_timeout_ms: 120000 },
-    tools: { foreground_timeout_ms: 30000, max_concurrent_background_tasks: 50 },
+    tools: {
+      foreground_timeout_ms: 30000,
+      max_concurrent_background_tasks: 50,
+      background_completion_request_echo_chars: 240,
+    },
     delegation: {
       frontmatter_dir: "./config/delegation",
       hermes_timeout_ms: 600000,

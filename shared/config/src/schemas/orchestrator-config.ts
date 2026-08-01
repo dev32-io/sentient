@@ -43,6 +43,12 @@ export const orchestratorConfigSchema = z.object({
     foreground_timeout_ms: z.number().int().min(1000).max(120000).default(30000),
     // Max concurrent background tasks per session (generous for family scale).
     max_concurrent_background_tasks: z.number().int().min(1).max(500).default(50),
+    // Chars of the ORIGINATING request echoed back into a background-task
+    // completion note, so the model can tell which of several in-flight tasks
+    // just came back without joining on the dispatch — which compaction
+    // summarises away. Too small and the echo stops identifying the task; too
+    // large and every completion re-pays for the dispatch. 32-2000.
+    background_completion_request_echo_chars: z.number().int().min(32).max(2000).default(240),
   }),
   delegation: z.object({
     // Per-agent frontmatter file dir (static delegation envelopes).

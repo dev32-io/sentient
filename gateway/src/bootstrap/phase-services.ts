@@ -38,6 +38,7 @@ import type { PolicyEngine } from "../security/policy-engine.js";
 import { loadMcpPolicy } from "../security/policy-loader.js";
 import type { GatewayTlsMaterial } from "../session-handlers/ws-handlers.ts";
 import type { SessionStore } from "../store/session-store.js";
+import { composeBackgroundCompletionNote } from "../tools/background-completion-note.js";
 import { createDelegateTaskRunner, delegateTaskDefinition } from "../tools/delegate-task.js";
 import { createDelegationGuard, loadDelegationFrontmatterDir } from "../tools/delegation-guard.js";
 import type { DelegationGuard } from "../tools/delegation-guard.js";
@@ -577,9 +578,14 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
     // tool-broker.ts's `setBackgroundCompletionSink` doc comment and
     // delegate-task.ts's file header for the full mechanism.
     broker.setBackgroundCompletionSink((result) => {
-      const note = result.isError
-        ? `Delegated task ${result.taskId} (${result.toolName}) failed: ${result.content}`
-        : `Delegated task ${result.taskId} (${result.toolName}) completed: ${result.content}`;
+      const note = composeBackgroundCompletionNote({
+        taskId: result.taskId,
+        toolName: result.toolName,
+        request: result.request,
+        output: result.content,
+        isError: result.isError,
+        requestEchoChars: orchestratorCfg.tools.background_completion_request_echo_chars,
+      });
       runtime.submit({ kind: "background-completion", note });
     });
 

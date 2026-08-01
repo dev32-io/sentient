@@ -62,6 +62,7 @@ const principal = createUserPrincipal("u_aaaaaaaa", "adult", "household-1");
 const toolsConfig: OrchestratorConfig["tools"] = {
   foreground_timeout_ms: 30000,
   max_concurrent_background_tasks: 1,
+  background_completion_request_echo_chars: 240,
 };
 
 function makeInvocation(overrides: Partial<ToolInvocation> = {}): ToolInvocation {
@@ -303,7 +304,11 @@ describe("ToolBroker — a hallucinated tool never reaches the permission prompt
     expect(confirmCalls).toBe(1);
     expect(policy.contexts).toHaveLength(1);
     expect(result).toMatchObject({ isError: true });
-    expect(result.content).toContain("confirmation declined");
+    // The model must be told a PERSON said no, not read back the policy
+    // rationale — a rule reads like something to route around, a person's
+    // answer does not. The system prompt promises "a tool result saying so".
+    expect(result.content).toContain("The user declined");
+    expect(result.content).toContain("Do not retry");
     expect(mcp.callToolCalls).toHaveLength(0);
   });
 
@@ -452,17 +457,28 @@ describe("ToolBroker — background completion sink", () => {
     const { promise, sink } = deferredSinkCall<{
       taskId: string;
       toolName: string;
+      request: Record<string, unknown>;
       content: string;
       isError: boolean;
     }>();
     broker.setBackgroundCompletionSink(sink);
 
-    const dispatchResult = await broker.dispatch(makeInvocation({ name: "delegateTask", toolCallId: "call-1" }));
+    const args = { agent: "hermes", taskPrompt: "explain a Fresnel lens" };
+    const dispatchResult = await broker.dispatch(makeInvocation({ name: "delegateTask", toolCallId: "call-1", args }));
     if (!("taskId" in dispatchResult)) throw new Error("expected a background handle");
     const { taskId } = dispatchResult;
 
     const settled = await promise;
-    expect(settled).toEqual({ taskId, toolName: "delegateTask", content: "the delegated output", isError: false });
+    // `request` rides along because a completion outlives the context that
+    // explains it: compaction summarises the dispatch away, and a bare taskId
+    // then binds to nothing — exactly when several tasks are in flight.
+    expect(settled).toEqual({
+      taskId,
+      toolName: "delegateTask",
+      request: args,
+      content: "the delegated output",
+      isError: false,
+    });
     // The slot is freed before (or at latest alongside) the sink firing —
     // never leaked because a sink happened to be bound.
     expect(broker.background.count()).toBe(0);

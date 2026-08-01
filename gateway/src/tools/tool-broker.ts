@@ -58,6 +58,17 @@ const NOTE_PREVIEW_LEN = 120;
 /** `delegateTask`'s worker name; any other background tool reports under its
  *  own tool name. Never throws on a malformed `args` — the guard/runner is
  *  what rejects a bad agent, not this display-only derivation. */
+/** What the model is told when a HUMAN answered the confirm prompt with "no".
+ *
+ *  It used to read `confirmation declined: <policy rationale>` — which names
+ *  the policy, not the person, and reads like a rule the model might argue
+ *  with or route around. A person said no. The system prompt promises the
+ *  model "you receive a tool result saying so"; this is that result, and it
+ *  has to be unambiguous about WHO decided. */
+function userDeclinedReason(toolName: string): string {
+  return `The user declined this ${toolName} call. Do not retry it; offer an alternative if one exists.`;
+}
+
 function delegationAgent(inv: ToolInvocation): string {
   const agent = inv.args.agent;
   return typeof agent === "string" && agent.length > 0 ? agent : inv.name;
@@ -82,14 +93,21 @@ export interface BackgroundToolRunner {
 }
 
 /** The settled outcome of a background tool run, handed to whatever sink
- *  `setBackgroundCompletionSink` installed. `toolName` + `taskId` let the
- *  sink build a readable stimulus note; `content`/`isError` are the
- *  runner's settled `ToolResult`, normalized (a rejected `result` promise
- *  becomes an `isError: true` entry here — the sink never has to handle a
- *  rejection itself). */
+ *  `setBackgroundCompletionSink` installed. `toolName` + `taskId` + `request`
+ *  let the sink build a stimulus note that identifies itself; `content`/
+ *  `isError` are the runner's settled `ToolResult`, normalized (a rejected
+ *  `result` promise becomes an `isError: true` entry here — the sink never
+ *  has to handle a rejection itself). */
 export interface BackgroundCompletionResult {
   taskId: string;
   toolName: string;
+  /** The dispatching invocation's arguments, forwarded verbatim so the note
+   *  can echo what was asked. Carried because a completion outlives the
+   *  context that explains it: compaction summarises the dispatch away, and a
+   *  bare taskId then binds to nothing — see background-completion-note.ts.
+   *  Forwarded as the raw object rather than a distilled string so this file
+   *  stays ignorant of any one tool's argument schema. */
+  request: Record<string, unknown>;
   content: string;
   isError: boolean;
 }
@@ -257,7 +275,7 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
       toolCallId: inv.toolCallId,
       confirmed,
     });
-    return confirmed ? { action: "allow" } : { action: "deny", reason: `confirmation declined: ${reason}` };
+    return confirmed ? { action: "allow" } : { action: "deny", reason: userDeclinedReason(inv.name) };
   }
 
   /** EXISTENCE, resolved before the PDP ever runs. Returns null for a tool
@@ -380,7 +398,13 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
           });
           return;
         }
-        completionSink({ taskId, toolName: inv.name, content: toolResult.content, isError: toolResult.isError });
+        completionSink({
+          taskId,
+          toolName: inv.name,
+          request: inv.args,
+          content: toolResult.content,
+          isError: toolResult.isError,
+        });
       });
 
     return { taskId };

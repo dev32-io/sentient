@@ -135,6 +135,10 @@ orchestrator:
   tools:
     foreground_timeout_ms: 30000             # per foreground tool call (1000-120000)
     max_concurrent_background_tasks: 50      # per session (1-500)
+    # Chars of the originating request echoed into a background completion, so
+    # the model can tell which in-flight task came back after compaction has
+    # summarised the dispatch away (32-2000).
+    background_completion_request_echo_chars: 240
   delegation:
     frontmatter_dir: ./config/delegation     # static per-agent envelope dir (relative to gateway/)
     hermes_timeout_ms: 600000                # per Hermes one-shot (1000-3600000)
