@@ -267,6 +267,15 @@ Framing correction: it is **not** left behind by a delete. `personality-store.re
 
 **The injection scanner exists but only guards the outbound direction.** `scanForInjection` (6 regexes, `gateway/src/security/injection-scanner.ts`) is reached from exactly one path: `prompt-classifier.ts` → `delegation-guard.ts`, which risk-tiers the **`taskPrompt` we send TO Hermes**. Nothing scans what comes **back**: no tool result, no fetched page, no MCP response, no background completion. Zero inbound callers.
 
+**And the policy file states the opposite, in writing, on exactly the two tools that fetch the open web.** Found 2026-08-01 during E2E round 2. `gateway/mcp-policy.yaml`, immediately above `allow_search_web` and `allow_fetch`:
+
+> `# Web reads. Content they return is untrusted and handled by the injection`
+> `# scanner (gateway/src/security/injection-scanner.ts), not by a prompt.`
+
+That is false. `grep -rn "scanForInjection" gateway/src` returns one non-test caller — `prompt-classifier.ts`, the outbound path. A reader auditing why `search_web` and `fetch` are auto-allowed finds a named file and a plausible mechanism, and stops looking. **This is the second instance of the same failure mode on this branch**, after `delegateTask`'s *"a blanket PDP confirm here would double-prompt"* rationale, which justified an `allow` by deferring to a guard that never prompted and survived a whole branch of review on the strength of its own comment.
+
+Fix the comment when the boundary lands, not before — deleting it now would leave the auto-allow with no stated rationale at all. Until then it is the strongest single argument for the boundary's priority: the control is already assumed to exist by the file that grants the authority.
+
 That is the direction that matters. `delegateTask` sends Hermes to read the open web; `fetch` and `search_web` pull arbitrary pages; all of it lands in the model's context verbatim. Per the OpenAI Model Spec's chain of command (system > developer > user > **tool**), tool output is the *lowest*-trust input — and task 15 **has now shipped** background results in a `role:"system"` frame, the *highest*-trust role. The frame is ours and the payload is quoted as data inside a per-task fence; that framing is necessary but not sufficient, and it is the only thing standing here today.
 
 **What exists is also weak on its own terms.** Measured 2026-07-31:

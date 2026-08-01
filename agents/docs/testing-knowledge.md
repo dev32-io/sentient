@@ -12,9 +12,16 @@ cases are appended here, indexed by the surface they exercise.
 
 > ## Local-stack credentials — read this before reporting a login blocker
 >
-> **The PIN for every user on the LOCAL DEV stack is `1234`.** It is a
+> **On the LOCAL DEV stack, log in as `Ada` — PIN `1234`.** It is a
 > local-only test credential, not a secret, and it is written here on
 > purpose so no agent ever stalls at the login gate again.
+>
+> **Only Ada.** Verified against the stored hashes 2026-08-01: `1234` is
+> Ada's PIN and is *not* Grace's or Delegate Proof's, whose PINs are the
+> owner's and are not written down anywhere. Earlier evidence files show
+> runs driven as Grace — that was a human typing a PIN, not something an
+> agent can reproduce. Never guess another user's PIN and never probe a
+> second account after one rejects you; pick Ada and move on.
 >
 > This is not hypothetical. Task 9c abandoned **two** matrix rows
 > (`steer-followup-audio`'s audio half, `interrupt`'s browser-Stop
