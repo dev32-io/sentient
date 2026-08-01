@@ -55,23 +55,40 @@ The gateway's own ReAct loop had **never** called `search_web` or `fetch` in any
 test before this run — that was the structural gap the task was written for.
 Both are now driven with a content oracle.
 
-## Coverage
+## Coverage — **4 / 28 → 6 / 28**
 
-**Before: 5 / 28. After: 9 / 28.**
+**The documented baseline of "5 tools exercised" was itself wrong by one, and
+finding that is part of this row's result.** The five named were
+`ha_get_overview`, `ha_get_state`, `ha_search`, `ha_call_service`, `search_web`.
+But **`ha_search` is not a tool** — it is the hallucinated name from step 5;
+the catalog has `ha_search_entities` (`gateway/config.yaml:422`), and
+`grep -n "ha_search\b"` matches nothing. The old count credited coverage to a
+tool that has never existed. Against a 28-tool catalog the honest prior figure
+is **4**.
 
-Newly exercised through the gateway's loop, with a content oracle:
-`ma_search`, `search_web`, `fetch`. `ha_get_state` was already counted but had
-only ever been observed at `isError=true`; this is its first verified-good
-drive. `ha_get_overview` was exercised by the ground-truth prober only, so it is
-**not** counted — the denominator counts tools driven through the gateway's own
-loop.
+| Tool | Status |
+|---|---|
+| `ha_get_overview` | prior |
+| `ha_get_state` | prior — but only ever observed at `isError=true`; **first verified-good drive** here |
+| `ha_call_service` | prior (`permission-confirm-web` allow arm) |
+| `search_web` | prior via the **delegated** path only; **now through the gateway's own loop** |
+| `ma_search` | **NEW** |
+| `fetch` | **NEW** |
+| ~~`ha_search`~~ | **not a tool — removed from the count** |
+
+Two genuinely new tools, one moved onto the gateway's own loop, one upgraded
+from broken to verified, and one struck as fictional. `delegateTask` was also
+exercised but is a background tool, not one of the 28. `ha_get_overview` was
+re-read by the ground-truth prober, but the prober bypasses the loop, so that
+does **not** count — the denominator counts tools driven through the gateway's
+own ReAct loop.
 
 The honest read: four of the five catalog servers now have a real row
-(`home_assistant`, `music_assistant`, `searxng`, `fetch`), but 19 of 28 tools
-remain untouched — the bulk being HA's 16-tool surface, of which only
-`ha_get_state` is verified. Per-server coverage is the win here; per-tool
-coverage is still thin, and calling it anything else would repeat the mistake
-this task exists to correct.
+(`home_assistant`, `music_assistant`, `searxng`, `fetch`), but **22 of 28 tools
+remain untouched** — mostly HA's 16-tool surface, of which only `ha_get_state`
+is verified. Per-server coverage is the win; per-tool coverage is still thin,
+and the number went **up by two, not by four**. Calling it anything else would
+repeat the mistake this task exists to correct.
 
 ## Safety
 

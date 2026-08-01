@@ -235,10 +235,31 @@ re-measure it, never copy it forward:
 
 Plus `delegateTask`, which is a background tool rather than an MCP server.
 
-**Coverage as of 2026-07-31: 5 / 28.** Unchanged by NM-T12 — see that task's
-report; the per-server rows could not be driven because the dev stack's native
-supervision was wedged (below) and the task's own rule is that a degraded stack
-is not a test bed.
+**Coverage as of 2026-07-31: 6 / 28**, driven by NM-T12's per-server rows
+(`qa/web/evidence/2026-07-31-t12-tool-surface/`). It went up by **two**, and the
+starting figure was not what the record claimed:
+
+**The old "5 exercised" counted a tool that does not exist.** The five named
+were `ha_get_overview`, `ha_get_state`, `ha_search`, `ha_call_service`,
+`search_web`. `ha_search` is the *hallucinated* name from the step-5 defect —
+the catalog has `ha_search_entities` (`gateway/config.yaml:422`) and
+`grep -n "ha_search\b" gateway/config.yaml` matches nothing. The honest prior
+figure was **4**. When a coverage number is assembled from what a model was
+observed calling, check each name against the catalog before counting it.
+
+| Tool | Status |
+|---|---|
+| `ha_get_overview` | prior |
+| `ha_get_state` | prior — but only ever at `isError=true`; first **verified-good** drive 2026-07-31 |
+| `ha_call_service` | prior (`permission-confirm-web` allow arm) |
+| `search_web` | prior via the **delegated** path only; now through the gateway's own loop |
+| `ma_search` | NEW 2026-07-31 |
+| `fetch` | NEW 2026-07-31 |
+
+Four of five catalog servers now have a real row, but **22 of 28 tools remain
+untouched**, mostly HA's 16-tool surface. Per-server coverage is the win;
+per-tool coverage is still thin. `delegateTask` is exercised too but is a
+background tool, not one of the 28.
 
 **The oracle matters more than the row.** `native-tool-call`'s own recorded
 evidence reads `toolName="ha_get_state" isError=true` — **and it passed**,
@@ -253,6 +274,31 @@ real home. Reads and temp-writes only: `ha_get_state` / `ha_get_overview` /
 `ma_search` / `ma_browse` yes; `ha_call_service` against a real device, and
 `ma_playback` / `ma_volume` at all, never. For a `confirm`-tier row, assert the
 **prompt and the deny path**, never the allow path.
+
+### tool-ha-read · tool-ma-read · tool-websearch · tool-fetch · tool-multi
+**Scenario:** one row per catalog **server**, each driven through the gateway's
+own ReAct loop in a real browser, each asserting the tool's RESULT.
+**Driver:** webui at `http://localhost:5173` (the vite dev server proxies
+`/api/v1` to the gateway with `secure:false`; hitting `https://localhost:8888`
+directly fails Playwright on `ERR_CERT_AUTHORITY_INVALID`, self-signed).
+**The oracle needs a second, independent path** — the gateway log carries
+`isError` and `contentLength` but deliberately **no result content**, so an
+oracle built only from logs can only re-assert what the gateway already
+believes. Use `bun qa/web/tool-truth.ts <server> <tool> '<json-args>'`, which
+dials the same MCP server directly (hand-rolled streamable-HTTP, not the
+gateway's SDK), then compare the on-screen reply to it. `--list` shows the
+dialable servers and the read-only allowlist.
+**Pass bar:** `isError=false` on BOTH `mcp.call-tool.ok` and
+`tool-broker.dispatch.foreground.done`, **and** the reply names a value the
+prober independently returned. Any `isError=true` is FAIL whatever the bubble says.
+**Gotchas found live:** `ma_search` nests its arguments under a `params` object
+(`{"params":{"query":…}}`) — a flat `{"query":…}` returns `isError=true` with a
+pydantic "Field required". `tool-multi` (two servers in one turn) runs
+`iterations=3` on one `turnId`.
+**Safety:** `tool-truth.ts`'s `READ_ONLY_TOOLS` is deliberately **stricter than
+`mcp-policy.yaml`'s allow tier** — that tier contains `ma_playback`,
+`ma_play_media` and `ma_volume`, prompt-free by design, which would start audio
+in the house. Never widen it for convenience.
 
 ## System orchestrator (Phase 6 setup wizard)
 
@@ -705,7 +751,8 @@ only the screenshot) before concluding a real bug.
 **Scenario:** Clicking Stop aborts the current turn's audio immediately, whether text is still streaming or already committed and mid-playback.
 **Steps:** click Stop while TTS is actively streaming.
 **Expected log trail:** `runtime:cancellation cancellation.abort` (or `cancellation.no-turn-in-flight` if text already settled — still valid, audio-stop runs unconditionally either way) → `turn-voice.audio.cancel` → `tts:streaming-tts-synthesizer synthesize-aborted` → `local-tts-socket ws-closed`, all within ~1ms of the click. `background-registry.cancel-all` always fires too, even with nothing to cancel.
-**background-task-cancel sub-arm — no longer blocked; primitive PROVEN, browser trigger not driven (NM-T9c):** the `cancelAll()` → `delegateTask.cancel` → `proc.kill()` link was driven against the real `hermes` binary with a task genuinely in flight (pid observed, then gone after the abort); the other three links were already unit-pinned. What is still un-driven is the *trigger* — a real webui Stop click during a delegated task — which needs an authenticated browser session. Row deliberately left un-flipped. Chain table + transcript: `qa/web/evidence/2026-07-30-t9c-verification-gaps/README.md`.
+**background-task-cancel sub-arm — DRIVEN AND PASSING (NM-T12, 2026-07-31).** The trigger is now exercised end to end from a real webui Stop click. **Make the oracle a pid, not a log line:** a gateway line saying "cancelled" is the gateway's opinion about itself, so sample `pgrep -P <gateway pid>` every 200 ms alongside the drive. Evidence: hermes child pid alive across **61 consecutive samples** (~15 s, so not a race against a process about to exit), Stop clicked while `hermes-runner.run.ok` had not fired, then `run.aborted` → `background-registry.cancel-all count=1` → `run.done-after-abort` → `delegate-task.run.failed reason="aborted"` in **9 ms**, and the pid failed `ps -p` (exit 1) with zero hermes children ever after. `qa/web/evidence/2026-07-31-t12-tool-surface/STEP6-interrupt.md`.
+**Reaching the button:** `canInterrupt = cycleStatus !== "idle" || runningTasks > 0` (`app.tsx:179`), so the control stays up while a background task runs even after the turn's text settles — dispatch a long delegation (a "3000-word essay" ask buys ~15 s) and click `button.interrupt-btn`. Expect `cancellation.no-turn-in-flight` rather than `cancellation.abort` on that path; it is correct, and `cancelBackground=true` is what carries the kill.
 **`barge-in`, NOT this case:** the webui's Stop button always produces `cutoff="interrupt"`, never `"barge-in"` — `runtime.bargeIn()`'s only production caller is real STT speech-onset detection (`stt-session.ts`). There is no UI control that produces a `barge-in` cutoff; that whole case needs a real microphone, hand to Task 11.
 
 ### steer-midloop (core mechanism)
@@ -716,7 +763,9 @@ only the screenshot) before concluding a real bug.
 ### delegate-hermes-bg — PASS · steer-followup-audio — PARTIAL (text half only)
 **Scenario:** `delegateTask` returns `{taskId}` immediately; a background completion arriving AFTER the dispatching turn's own final answer starts a back-to-back follow-up turn (new bubble, audio queued after the first finishes).
 **delegate-hermes-bg: PASS** (NM-T9b re-drive `74385db`) — 5x `hermes-runner.run.ok`, 0 non-zero exits, the first real delegated completions in the project. Both original blockers are fixed: the provisioner now runs `hermes profile create --clone-from <operator profile>` per user at creation and at boot backfill, so the profile exists AND inherits a model + credential. Evidence: `qa/web/evidence/2026-07-30-delegate-hermes-bg/RE-DRIVE-T9b.md` (the README beside it is the historical failing drive).
-**steer-followup-audio: PARTIAL — do not flip on the text half.** The steer / new-bubble half PASSES against the real model; the **audio-queueing** assertion is unverified because the WS-seam driver never negotiates `audio.output`, so no TTS downlink opens and there is no queue to observe. Absence of frames there is a harness property, not a product one. Re-drive recipe (mobile is the better surface — lazy-armed downlink): `qa/web/evidence/2026-07-30-t9c-verification-gaps/README.md`.
+**steer-followup-audio: PASS including the audio half (NM-T12, 2026-07-31).** A real browser negotiates `audio.output`, so the downlink the WS-seam driver never opened is simply there — no mobile surface needed. **An uncontended sample does not prove the queue.** The first drive had the completion land 2.3 s *after* turn 1's audio finished: that shows sequencing, and flipping on it would be this file's own false-green warning in a new costume. Force contention instead — ask for a delegation **plus** a long inline answer, so turn 1 has ~50 s of speech against a ~3.5 s hermes run. Then the oracle is exact: turn 2's `turn-voice.begin` fired at 18:26:43.813 and its text completed at 18:26:45.634, but its `synthesize-start` was held to **18:27:27.661 — the same millisecond as turn 1's `turn-voice.audio.done`**, 43.8 s later. The two audio windows do not overlap by a frame (86 frames/631909 B, then 91 frames/47346 B). Evidence: `qa/web/evidence/2026-07-31-t12-tool-surface/STEP6-delegate-and-audio.md`.
+**D7 (the 10× `delegateTask` refire) is fixed** — the same drives show `grep -c hermes-runner.run.start` = **1** per request, against ten in T9b.
+**OPEN — the follow-up bubble does not relay the delegated result.** Reproduced on both drives: `outputLength=476` then `137` come back non-empty, the follow-up turn runs, and its bubble only *acknowledges* ("Got it—thanks for the update!") without ever stating the answer the user asked for. The mechanism is green; the user-visible outcome is not. Do not let a delegation row pass on "a follow-up bubble appeared" — read what it says.
 **OPEN DEFECT D11 — the delegated agent has NO gateway/HA/MA/searxng tools, on any fresh install.** The gateway renders `mcp_servers` + `enabled_toolsets` into `~/.sentient/gateway/<id>/profiles/<id>/`; hermes reads `~/.hermes/profiles/<id>/`. The `HERMES_HOME` bridge between them was the supervisord program env, deleted in the native cutover, so the render is dead output. NM-T9c fixed one necessary half (per-user MCP socket off SIP-read-only `/run`) and proved that socket end-to-end, but only after a manual `hermes -p <id> mcp add`. **When driving any delegation case:** dispatch / steer / follow-up / cancel are all drivable, but never assert a delegated agent *used* a gateway tool, never file this as new, and never let a case pass vacuously on "a reply came back". Grep handle for the live symptom: `hermes-profile.bridge.not-live` (WARN, once per user per boot). Root cause, hand-proven fix route and the design decision left open on purpose: `qa/web/evidence/2026-07-30-t9c-verification-gaps/README.md` § D11.
 
 ### reload-convergence

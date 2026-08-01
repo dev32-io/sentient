@@ -177,6 +177,21 @@ Every `${VAR}` in every declared docker template is now checked at startup — n
 
 It reports the fact and **not** a cause. An earlier draft listed the host-env variables that happened to be empty; on this box that read `HOST_DOCKER_GID,TZ,SUPERVISOR_DIR,MCP_SOCKET_DIR` — four variables with nothing to do with an interpreter path. Pointing an operator at innocent names costs more than saying less.
 
+### D16 — the follow-up turn acknowledges a delegated result without ever relaying it
+
+Found 2026-07-31 (plan task 12, step 6), reproduced on **both** drives of `delegate-hermes-bg`. The whole background path is green: `delegateTask` dispatches, hermes runs, `delegate-task.run.ok` reports a non-empty payload (`outputLength=476`, then `137`), the completion steers a back-to-back follow-up turn (`trigger="background-completion"`), and that turn renders its own bubble with its own queued audio. What the bubble *says* is the defect:
+
+- asked for a two-sentence explanation of a Fresnel lens → *"Great! Let me know if you'd like to use that description somewhere, or if you need another quick explanation or a different topic."* — the explanation is never stated.
+- asked for one fact about Saturn → *"Got it—thanks for the update! If you have any further questions about Saturn or anything else, just let me know."* — the fact is never stated.
+
+The user reads an acknowledgement of an answer they never receive, so from the outside the feature looks broken even though every mechanism under it works. Likely the shape of the stimulus the background completion writes into the store — the model appears to read it as a *notification that a task finished* rather than as *the content it must now deliver*. Whoever picks this up should look at what `delegate-task`'s completion stimulus puts in the store and how the model projection renders it, not at the transport.
+
+**Do not let a delegation E2E row pass on "a follow-up bubble appeared."** Read what it says. That vacuous-pass rule is already written into `agents/docs/testing-knowledge.md`.
+
+### ~~D7 — the model re-dispatches the same `delegateTask` 10× per request~~ — VERIFIED FIXED 2026-07-31 (plan task 12)
+
+Filed during T9b, where one user request spawned **ten** real hermes subprocesses and burned ten LLM iterations (classic background-tool refire: the tool returns `{taskId}` with no answer, the next iteration re-reads the store, the model sees a dispatch with no result and calls it again). The dedupe guard in `react-loop.ts` closed it. Re-driven from the webui on 2026-07-31: `grep -c hermes-runner.run.start` = **1** per request across three separate delegations. Evidence: `qa/web/evidence/2026-07-31-t12-tool-surface/STEP6-delegate-and-audio.md`.
+
 ### Small code and documentation debt found in passing
 
 None of it affects behaviour; all was found during the migration and would otherwise be lost.
