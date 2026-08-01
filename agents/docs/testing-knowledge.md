@@ -210,7 +210,107 @@ a fresh baseline after a known-good run.
 the wizard handler. Wizard rejections look like `wizard.unlock.failed`,
 `wizard.provider.saved`, etc.
 
+## Tool-surface coverage — the denominator, and why it is the deliverable
+
+**Read this before writing another "the model called a tool" case.**
+
+Across every piece of web E2E evidence on this branch, **exactly five tools were
+ever exercised**: `ha_get_overview`, `ha_get_state`, `ha_search`,
+`ha_call_service`, and `search_web` once via the delegated path. The catalog has
+**28**. The gateway's own ReAct loop has never called `search_web` or `fetch` in
+a test. The cause was matrix design, not sloppiness: one row, `native-tool-call`,
+stood in for the entire tool surface, and the model happened to pick Home
+Assistant every time.
+
+**Denominator, measured 2026-07-31 from `mcp.list-tools.ok` on a live boot** —
+re-measure it, never copy it forward:
+
+| server | upstream tools | in catalog (`filteredCount`) |
+|---|---|---|
+| home_assistant | 78 | 16 |
+| music_assistant | 10 | 10 |
+| searxng | 5 | 1 |
+| fetch | 1 | 1 |
+| **total** | 94 | **28** |
+
+Plus `delegateTask`, which is a background tool rather than an MCP server.
+
+**Coverage as of 2026-07-31: 5 / 28.** Unchanged by NM-T12 — see that task's
+report; the per-server rows could not be driven because the dev stack's native
+supervision was wedged (below) and the task's own rule is that a degraded stack
+is not a test bed.
+
+**The oracle matters more than the row.** `native-tool-call`'s own recorded
+evidence reads `toolName="ha_get_state" isError=true` — **and it passed**,
+because its oracle was "a tool was dispatched". A row that cannot tell a working
+tool from a broken one is worse than no row: it reports coverage it does not
+have. Any new tool row must assert **result content** and fail on
+`isError=true`, capturing both `tool-broker.pdp.decision` and
+`tool-broker.dispatch.foreground.done` with `isError` and `contentLength`.
+
+**Safety, non-negotiable on this project.** The stack runs against the owner's
+real home. Reads and temp-writes only: `ha_get_state` / `ha_get_overview` /
+`ma_search` / `ma_browse` yes; `ha_call_service` against a real device, and
+`ma_playback` / `ma_volume` at all, never. For a `confirm`-tier row, assert the
+**prompt and the deny path**, never the allow path.
+
 ## System orchestrator (Phase 6 setup wizard)
+
+### Stack integrity — the declared services are the running ones, by identity
+**Scenario:** Read the service list from `config.yaml#managed_services` and
+assert every one is running, is the unit the orchestrator recorded, and passes
+its declared health probe — plus no `reapply.gave-up` in the current boot window.
+**Driver:** `bun qa/web/stack-integrity.ts` (add `--config <path>` /
+`--run-dir <path>` for negative controls, `--json` for machine output). Exit 0
+only when every gate passes.
+**Why added:** nothing anywhere asserted this, so `egress-proxy` could exhaust
+its retries with all 11 web cases still green. And the *identity* half exists
+because **"something is listening" is the oracle that hid broken native
+supervision for a whole branch** — two stray LaunchAgents held 8768/8769/8770,
+every gateway child died on `[Errno 48]`, and the TCP probe was answered by
+launchd's agent, so `apply.complete state="ready"` was true and meaningless.
+**Gates:**
+
+| | docker | native |
+|---|---|---|
+| running | a container labelled `sentient.service=<name>` is `running` | the pid in `~/.sentient/run/<name>.pid` is alive |
+| identity | **that** container publishes the declared probe port on loopback | the pid holding the LISTEN socket **is** the recorded pid, and is the only one |
+| health | TCP connect to the declared `healthcheck.tcp` | same |
+| quiet | no `reapply.gave-up`, and the boot's last `apply.complete` carries `state="ready" failed=0 blocked=0` | same |
+
+**Expected (healthy):** `RESULT PASS — pass=9 fail=0 skip-optional=0 of 9 declared`.
+**Run the negative control before trusting a green** — a guard nobody has watched
+fail is just another green light:
+`bun qa/web/stack-integrity.ts --config qa/web/fixtures/stack-integrity-negative-control.yaml --run-dir <scratch>`
+where `<scratch>/qa-port-impostor.pid` holds a live-but-wrong pid. Its impostor
+row reports `health tcp ... ok` and still FAILS, which is exactly the shape of
+the bug the weak oracle missed.
+**Evidence:** `qa/web/evidence/2026-07-31-t12-stack-integrity/`.
+
+### NEVER edit gateway source while driving E2E — `bun --hot` leaks a supervisor per reload
+**Why added:** learned by wedging the dev stack on 2026-07-31 in about ten
+minutes. `bun --hot src/main.ts` re-evaluates the module graph **in the same
+process**; nothing tears the old graph down, so every reload constructs another
+`SystemOrchestratorService` and calls `healthWatch.start()` again while the
+previous watchdog keeps ticking (`stopHealthWatch()` runs only on gateway
+shutdown, which a hot reload never performs). Twelve `health-watch started`
+lines in one process is what that looks like in the log.
+
+They then race for the native ports: **five `native.started service="whisper-stt"`
+lines landed within 10 ms**, pids 46537–46541, four of which were promptly
+signalled by the others; ownership records were lost, so the survivors read as
+foreign — `native.port-held ... it is not a child of this gateway` — and eight
+`reapply.gave-up reason="max-attempts-exhausted"` followed. It does **not**
+self-heal; only a real process restart clears it.
+
+**Rules:**
+- Finish all gateway source edits, then drive. Never interleave.
+- One edit at a time, and wait for `apply.complete` (~12 s) before the next.
+  Edits ~10 s apart are what tipped it over.
+- If you see `native.port-held` naming a pid whose `ps -o ppid=` is the gateway
+  itself, you are in this state. Restart the process; do not touch a source file
+  again hoping to reload out of it — that adds a supervisor.
+- Confirm with `bun qa/web/stack-integrity.ts` before believing any row.
 
 ### Cold-path smoke
 

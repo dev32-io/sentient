@@ -25,21 +25,23 @@ is the oracle that hid it. So this case asserts identity, not liveness:
 
 ## Files
 
-- `drive-1-at-boot.txt` — live stack, gateway boot of 14:12:58 (apply 14:13:12).
-- `drive-2-after-restart.txt` — same oracle re-driven after a deliberate gateway restart.
-- `negative-control.txt` — the oracle proving it can fail, run against
+- `drive-1-at-boot.txt` — live stack, gateway boot of 14:12:58 (apply 14:13:12). **PASS 9/9.**
+- `negative-control.txt` — the oracle proving it can fail, against
   `qa/web/fixtures/stack-integrity-negative-control.yaml`.
+- `drive-2-after-hot-reload-FAIL.txt` — the second drive. **It failed, and the
+  failure is real** — see below.
+- `gateway-log-hot-reload-wedge.txt` — the 309-line log trail behind that failure.
 
 ## Result
 
-| Drive | Pre-state | Expected user-visible | Actual |
+| Drive | Pre-state | Expected | Actual |
 |---|---|---|---|
-| 1 (at boot) | stack up since 14:12:58 | 9/9 declared services PASS, log window clean | `RESULT PASS — pass=9 fail=0 skip-optional=0 of 9 declared`, exit 0 |
-| 2 (after restart) | gateway restarted, addons re-applied | 9/9 PASS again, new pids matched | see `drive-2-after-restart.txt` |
-| negative control | fixture declares 3 services that are absent / impostor | exit 1, one FAIL per gate | `RESULT FAIL — pass=0 fail=2 skip-optional=1 of 3 declared`, exit 1 |
+| 1 (at boot) | stack up since 14:12:58, untouched | 9/9 PASS, log window clean | `RESULT PASS — pass=9 fail=0 skip-optional=0 of 9 declared`, exit 0 |
+| negative control | fixture declares 3 absent / impostor services | exit 1, one FAIL per gate | `RESULT FAIL — pass=0 fail=2 skip-optional=1 of 3 declared`, exit 1 |
+| 2 (after reload) | gateway hot-reloaded 6× by this task's source edits | 9/9 PASS | **`RESULT FAIL — pass=7 fail=2 of 9`** — caught a real regression, see below |
 
-**The negative control is the part that matters.** Its third row reproduces the
-exact shape of the bug that hid for a branch:
+**The negative control is the part that matters most.** Its third row reproduces
+the exact shape of the bug that hid for a branch:
 
 ```
   FAIL           qa-port-impostor (native)
@@ -51,13 +53,56 @@ exact shape of the bug that hid for a branch:
 `health` is green and the case still fails, because the process answering is not
 the process the orchestrator recorded. Under the old oracle that row was a pass.
 
-## Log trail (drive 1)
+## Drive 2 — the oracle caught a live regression the same day it was written
+
+Drive 2 is recorded as **FAIL, not deferred**. The stack was genuinely broken,
+and the row is doing its job:
 
 ```
-2026-07-31T14:13:06.904 INFO [system-orch:native-driver] native.started | service="whisper-stt" pid=18803 argc=3
-2026-07-31T14:13:10.037 INFO [system-orch:native-driver] native.started | service="local-tts"  pid=18859 argc=3
-2026-07-31T14:13:12.105 INFO [system-orch:orchestrator] apply.complete | state="ready" durationMs=12798 ready=9 degraded=0 failed=0 blocked=0
+  FAIL           whisper-stt (native)
+      running  pid 50534 is gone
+      identity IMPOSTOR OR ORPHAN: :8768 held by [], orchestrator recorded 50534
+      health   tcp UNREACHABLE
+
+  FAIL           local-tts (native)
+      running  pid 50545 is gone
+      identity IMPOSTOR OR ORPHAN: :8770 held by [50544], orchestrator recorded 50545
+      health   tcp 127.0.0.1:8770 ok        <-- healthy, wrong owner
+[stack-integrity] log-window: DIRTY
+  apply not clean: ... apply.complete | state="failed" durationMs=305667 ready=0 …
 ```
 
-`lsof -nP -iTCP:8768 -sTCP:LISTEN -t` → `18803`; `:8770` → `18859`. Recorded ==
-listening, on both.
+**Cause, filed as a P1 in `docs/native-todo.md`:** `bun --hot` re-evaluates the
+module graph in the same process and tears nothing down, so every reload
+constructs another `SystemOrchestratorService` and arms another `healthWatch`
+while the previous one keeps ticking (`stopHealthWatch()` only runs on gateway
+shutdown, which a hot reload never performs). Twelve `health-watch started`
+lines accumulated in one process. Five of them then started a `whisper-stt`
+child inside the same 10 ms:
+
+```
+17:15:09.229 native.started | service="whisper-stt" pid=46538
+17:15:09.229 native.started | service="whisper-stt" pid=46537
+17:15:09.231 native.started | service="whisper-stt" pid=46539
+17:15:09.237 native.started | service="whisper-stt" pid=46540
+17:15:09.239 native.started | service="whisper-stt" pid=46541
+```
+
+They signalled each other's children, lost the ownership record they all write to
+the same pid file, and the survivors then read as foreign
+(`native.port-held ... it is not a child of this gateway`) against pids whose
+`ps -o ppid=` is the gateway itself. Eight
+`reapply.gave-up reason="max-attempts-exhausted"` followed. It does not
+self-heal — editing another source file adds a supervisor rather than recovering.
+
+**Trigger, honestly: this task's own edits.** Six gateway source edits about
+ten seconds apart, while a single apply takes twelve. Task 13 fixed
+*"a successor process meets a predecessor's child"*; this is *"N supervisors
+inside ONE process meet each other's children"*, which no pid file can arbitrate
+because they all write the same one.
+
+**State left behind:** whisper-stt is DOWN (`:8768` empty) and local-tts is up on
+`:8770` as pid 50544 but unowned. A gateway **process** restart is required —
+the agent's `kill` of the dev stack was refused by the permission system, so
+this is left for the owner. `bun run dev` from the repo root after
+`source scripts/env.sh`.

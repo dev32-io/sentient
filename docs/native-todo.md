@@ -116,6 +116,49 @@ A regression of the 2.0 legacy purge, not of task 9e: `git log -S pendingId -- g
 
 Driving the restart case also **found a defect in the reap fix itself**, which is the reason to insist on this case rather than reason about it: children are detached on purpose, so they outlive a killed gateway, and the replacement met a live child it never spawned. Two paths threw away the only evidence that child was ours — `stopIfRunning` removed the pid file unconditionally, and `reapOrphans` removed it immediately after an *asynchronous* SIGTERM. The successor then classified its own predecessor's children as foreign and refused **forever** (observed live: `native.port-held` on both addons against pids 88050/88120, re-refused every 15 s). Ownership is now read from both records — in-memory handle first, then the service's own pid file — and the file is dropped only once the process it names is actually gone.
 
+### P1 — `bun --hot` leaks one orchestrator *and one watchdog* per reload, and the leak wedges native supervision — OPEN (found 2026-07-31, plan task 12)
+
+**Dev-only in effect, but `bun --hot src/main.ts` is the documented dev command** (`gateway/CLAUDE.md`), so every gateway developer is exposed and this is how a wedged dev stack gets misread as a product defect.
+
+A hot reload re-evaluates the module graph **inside the same process** and tears nothing down. So each reload constructs another `SystemOrchestratorService` and calls `healthWatch.start()` on it, while every previous watchdog keeps ticking — `stopHealthWatch()` is wired to gateway *shutdown*, which a hot reload never performs. Measured on one process on 2026-07-31: **twelve `[system-orch:health-watch] started` lines**, one per reload since 14:09.
+
+They then race each other for the native ports. Live, in one 10 ms window:
+
+```
+17:15:09.229 native.started | service="whisper-stt" pid=46538
+17:15:09.229 native.started | service="whisper-stt" pid=46537
+17:15:09.231 native.started | service="whisper-stt" pid=46539
+17:15:09.237 native.started | service="whisper-stt" pid=46540
+17:15:09.239 native.started | service="whisper-stt" pid=46541
+```
+
+Five supervisors, five children, one port. Four get signalled by the others; the ownership record that task 13 fixed is written and overwritten by instances that cannot see each other, so the survivor reads as foreign to the instance doing the port check — `native.port-held ... it is not a child of this gateway, so it was NOT signalled`, against a pid whose `ps -o ppid=` **is the gateway**. Eight `reapply.gave-up reason="max-attempts-exhausted"` follow, and **it does not self-heal**: touching another source file adds a thirteenth supervisor rather than recovering. Only a real process restart clears it.
+
+Task 13's diagnosis was right about the mechanism and incomplete about the population: it fixed *"a successor gateway process meets a predecessor's child"*. This is *"N supervisors inside ONE process meet each other's children"*, which no pid file can arbitrate because they all write the same one.
+
+**Candidate fixes, in preference order — none implemented:**
+1. Make the watchdog's lifetime a property of the *process*, not the module instance (a module-level singleton keyed on `globalThis`, which `--hot` preserves), so a reload replaces rather than adds.
+2. Register a teardown on Bun's hot-reload hook that calls `stopHealthWatch()` before the new graph arms its own.
+3. Failing both, refuse to arm a second watchdog when one is already running in this process, and say so at WARN.
+
+**Testing consequence, now in `agents/docs/testing-knowledge.md`:** never interleave gateway source edits with an E2E drive, and confirm with `bun qa/web/stack-integrity.ts` before believing any row.
+
+### ~~A hallucinated tool name reaches the human permission prompt~~ — CLOSED 2026-07-31 (plan task 12)
+
+Observed live 3× in one day: the model called `ha_search`; the catalog has `ha_search_entities`. The PDP prompted the owner to authorise it, they approved, and only **then** did `tool-broker` log `dispatch.unknown-tool`. A permission prompt asserts that the thing being authorised is real; spending the human's attention on a name that does not exist trains them to click through the prompts that do guard something.
+
+Existence is now resolved in `dispatch` **before** `resolveDecision` runs — the tool must be in the MCP index or the background registry — and an unknown name is answered as a tool error the ReAct loop absorbs, with no policy evaluation and no prompt. Fail-closed is untouched and separately pinned: a tool that *exists* and matches no rule still prompts.
+
+### ~~An unset substitution variable surfaces as a Docker 400, five retries later~~ — CLOSED 2026-07-31 (plan task 12)
+
+`phase-orchestrator.ts` built its `hostEnv` map with `process.env.X ?? ""`. Unset, `template-loader` leaves the `${VAR}` **literal** on purpose (an operator may rely on the container's own runtime env), so it rode verbatim into a bind-mount source and came back as a Docker 400 naming neither the variable nor the service.
+
+Every `${VAR}` in every declared docker template is now checked at startup — not just `HOST_CONFIG_DIR` — and boot stops with the variable, the service and the template named. Secret-bound names are deliberately excluded: a missing secret is the registry's business (it skips optional services and hard-fails required ones), and refusing to boot over an HA token the operator has not entered yet would be a worse bug.
+
+**The native half of the same fault cannot be caught that way, and that asymmetry is worth knowing.** `config.yaml`'s own `${VAR}`s are resolved by the CONFIG LOADER while the file is read (`shared/config/src/loader.ts`), and an unset one becomes the **empty string** — it never survives as a literal for anyone downstream to catch. Consequence: `substituteHostEnv` on a native service's `exec`/`env`/`cwd` in `service-registry.ts` is a no-op on config-sourced values, because they arrive already substituted. So that half is reported by its *effect* — an `exec[0]` that is not an executable file, logged loud at boot instead of twelve seconds into the apply. It logs and does not throw: the native driver already refuses to spawn it and self-heals once the code tree is staged.
+
+It reports the fact and **not** a cause. An earlier draft listed the host-env variables that happened to be empty; on this box that read `HOST_DOCKER_GID,TZ,SUPERVISOR_DIR,MCP_SOCKET_DIR` — four variables with nothing to do with an interpreter path. Pointing an operator at innocent names costs more than saying less.
+
 ### Small code and documentation debt found in passing
 
 None of it affects behaviour; all was found during the migration and would otherwise be lost.
@@ -227,5 +270,5 @@ Full checklist with exact steps and expected log lines: `docs/superpowers/handof
 ## 5. Observations recorded, deliberately not filed as defects
 
 - **STT dial retries once per mic frame with no backoff** — 33 attempts in 751 ms when the STT service is down. Documented, deliberate design in `stt-session.ts:10-19`. Recorded because it *looks* like a defect in a log and someone will eventually file it.
-- **`SENTIENT_CODE` is unset in dev**, so the dev gateway's orchestrator cannot supervise the native addons. STT/TTS were healthy and dialled directly either way. Consequence: the gateway process driving a dev E2E run is **not** the addon supervisor — do not read supervision behaviour off a dev run.
+- ~~**`SENTIENT_CODE` is unset in dev**, so the dev gateway's orchestrator cannot supervise the native addons.~~ **No longer true — corrected 2026-07-31 (task 12).** `scripts/env.sh` exports `SENTIENT_CODE` and `HOST_CONFIG_DIR`, and `scripts/dev-stage-code.sh` builds the prod-shaped tree, precisely so dev exercises the supervision path. The old advice ("do not read supervision behaviour off a dev run") now inverts: a dev run **is** the supervision path, which is why the `bun --hot` supervisor leak in §1 matters.
 - **The emulator reaches the gateway via `10.0.2.2` and the simulator via the shared host network**, so the `0.0.0.0` bind has never been exercised by a real LAN device. That is what the off-box probe in §4 is for.
