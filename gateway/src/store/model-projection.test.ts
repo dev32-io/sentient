@@ -70,6 +70,22 @@ describe("projectForModel", () => {
     ]);
   });
 
+  // D16. A `trigger` entry is a stimulus nobody typed — a background task
+  // completing today, a sensor reading or a scheduled wake later. Projected as
+  // role:"user" the model reads it as the person pasting a result into the
+  // chat and answers the person ("Great! Let me know if you'd like to use that
+  // description somewhere.") instead of relaying what came back. Observed live
+  // twice; the delegated content never reached the human at all.
+  it("INVARIANT: a background completion projects as system, never as the user", () => {
+    const out = projectForModel([
+      e({ kind: "user", text: "do the thing" }),
+      e({ kind: "trigger", text: "Background task t1 (delegateTask) completed." }),
+    ]);
+    const last = out.at(-1);
+    expect(last?.role).toBe("system");
+    expect(last?.content).toContain("t1");
+  });
+
   it("CONTRACT: emits a full tool round-trip (assistant tool_calls + role:tool result)", () => {
     const out = projectForModel([
       e({ kind: "user", text: "weather?" }),
@@ -232,7 +248,11 @@ describe("projectForModel", () => {
       ]);
       assertValidToolPairing(out);
       expect(out.filter((m) => m.role === "tool")).toHaveLength(1);
-      expect(out[out.length - 1]).toEqual({ role: "user", content: "task t1 finished" });
+      // D16 applies on the DEFERRED path too — and this is the path a
+      // completion takes whenever a second delegation is still mid-dispatch,
+      // i.e. every concurrent case. Fixing only the straight-line branch
+      // leaves the concurrent case projecting the task as the person.
+      expect(out[out.length - 1]).toEqual({ role: "system", content: "task t1 finished" });
     });
 
     it("does not defer a stimulus past a block whose calls are all already answered", () => {

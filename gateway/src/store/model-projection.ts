@@ -46,6 +46,12 @@
 //     id. Reusing the id makes the completion invisible to the model, which
 //     then re-issues the same call — the exact failure mode rule 1 exists to
 //     prevent.
+//  5. A STIMULUS'S ROLE IS WHO SPOKE IT. Only a `user` entry was spoken by the
+//     person; a `trigger` is a stimulus nobody typed and projects as
+//     role:"system". See `stimulusRole` below for the defect this cost us
+//     (D16) and why the rule keys on the entry kind rather than on a recorded
+//     stimulus type. It applies on BOTH emission paths — the straight-line
+//     branch and rule 3b's deferred one.
 
 import { getLog } from "../logging/logger.js";
 import type { SessionEntry } from "./entry-types.js";
@@ -58,6 +64,28 @@ const log = getLog(["sentient", "store", "model-projection"]);
  *  rule 3b in this file's header. Deliberately excludes every kind
  *  react-loop.ts appends itself. */
 const DEFERRABLE_STIMULUS_KINDS = new Set<SessionEntry["kind"]>(["user", "trigger"]);
+
+/**
+ * Rule 5 (defect D16). A stimulus's role answers exactly one question — WHO
+ * SPOKE — and only a `user` entry was spoken by the person. A `trigger` is a
+ * stimulus nobody typed: a background task completing today; a sensor reading
+ * or a scheduled wake later. Projected as role:"user" the model reads it as
+ * the person pasting a result into the chat, so it answers the PERSON
+ * ("Great! Let me know if you'd like to use that somewhere.") and never
+ * relays what came back — observed live twice, and from outside the whole
+ * delegation feature looks broken.
+ *
+ * Deliberately keyed on the entry KIND rather than on a recorded stimulus
+ * type, because the answer to "who spoke" is the same for every
+ * non-conversational source: not the person. What differs between a sensor
+ * reading and a task completion is the TEXT, and the text is composed at the
+ * source, which already knows. Adding a `stimulus_kind` column would mean a
+ * forward-only migration over every existing user database (see schema.ts's
+ * frozen-baseline header) to carry a discriminator nothing reads.
+ */
+function stimulusRole(kind: SessionEntry["kind"]): "user" | "system" {
+  return kind === "user" ? "user" : "system";
+}
 
 export interface ChatToolCall {
   id: string;
@@ -248,7 +276,7 @@ export function projectForModel(entries: SessionEntry[]): ChatMessage[] {
         });
       }
       for (const stimulus of block.deferred) {
-        messages.push({ role: "user", content: stimulus.text ?? "" });
+        messages.push({ role: stimulusRole(stimulus.kind), content: stimulus.text ?? "" });
       }
       i = block.next;
       continue;
@@ -273,7 +301,7 @@ export function projectForModel(entries: SessionEntry[]): ChatMessage[] {
     }
 
     if (entry.kind === "user" || entry.kind === "trigger") {
-      messages.push({ role: "user", content: entry.text ?? "" });
+      messages.push({ role: stimulusRole(entry.kind), content: entry.text ?? "" });
       i += 1;
       continue;
     }
