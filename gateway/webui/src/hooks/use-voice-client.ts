@@ -28,7 +28,7 @@ import {
   createTurnAudioQueue,
   deriveRestBaseUrl,
 } from "@sentient/web-sdk";
-import type { ChatMessage, VoiceStatus } from "@sentient/web-sdk";
+import type { VoiceStatus } from "@sentient/web-sdk";
 import { useEffect, useMemo, useRef } from "preact/hooks";
 import { createWebAudioCapture } from "../adapters/web-audio-capture.ts";
 import { createWebAudioPlayback } from "../adapters/web-audio-playback.ts";
@@ -54,6 +54,10 @@ import {
   SPEECH_GATE_OPEN_DEBOUNCE_MS,
   SPEECH_GATE_PREROLL_FRAMES,
 } from "../constants.ts";
+// The webui's OWN display model, not the SDK's. It is a strict superset — it
+// carries the `trigger` role the SDK's voice-local accumulator has no notion
+// of — and it is what every chat component already takes.
+import type { ChatMessage } from "../types.ts";
 import { createAwaitingTracker } from "./awaiting-tracker.ts";
 import { attachToolsToAssistantMessages, deriveCycleStatus, deriveMessages } from "./cycle-helpers.ts";
 import { reducePermissionPrompt } from "./permission-helpers.ts";

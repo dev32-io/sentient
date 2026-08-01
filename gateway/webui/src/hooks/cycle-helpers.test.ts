@@ -210,3 +210,47 @@ describe("cycle-helpers — committed tool tiles", () => {
     expect(renderedTiles(messages)).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// D16 — a background completion the client silently ate.
+//
+// The gateway puts the settled delegated result on the wire as a `trigger`
+// feed item (source + summary). `appendCommittedItems` dropped it with the
+// comment "Phase-2 sensor events, ignored in Phase-1 UI", so the owner saw the
+// assistant acknowledge a result they were never shown. This pins the wire
+// item through to something renderable.
+// ---------------------------------------------------------------------------
+
+function triggerEntry(summary: string, ts: number): CommittedFeedItem {
+  return { entryId: `e-${ts}`, ts, kind: "trigger", source: "background-completion", summary };
+}
+
+describe("cycle-helpers — background completions", () => {
+  it("CONTRACT: a trigger feed item renders, carrying its task id and result", () => {
+    const summary = "Background task t1 completed.\n--- BEGIN TASK OUTPUT (task t1) ---\nA Fresnel lens…";
+    const messages = render([userEntry("delegate it", 1), triggerEntry(summary, 2)], []);
+
+    const event = messages.find((m) => m.role === "trigger");
+    expect(event).toBeDefined();
+    expect(event?.text).toContain("t1");
+    expect(event?.text).toContain("A Fresnel lens");
+    expect(event?.source).toBe("background-completion");
+  });
+
+  it("does not steal the tool tiles of a turn it lands inside", () => {
+    // A completion can land mid-dispatch (the steer seam). Unlike a user
+    // message it is not a person taking the floor, so it must not close the
+    // turn and orphan tiles that still have a reply to anchor to.
+    const messages = render(
+      [
+        userEntry("delegate it", 1),
+        toolEntry("delegateTask", 2),
+        triggerEntry("Background task t1 completed.", 3),
+        assistantEntry("here it is", 4),
+      ],
+      [],
+    );
+
+    expect(renderedTiles(messages)).toEqual(["here it is::delegateTask"]);
+  });
+});

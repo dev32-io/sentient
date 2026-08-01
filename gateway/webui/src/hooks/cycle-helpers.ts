@@ -329,6 +329,20 @@ function buildUserMessage(
   };
 }
 
+function buildTriggerMessage(id: string, item: CommittedFeedItem & { kind: "trigger" }): ChatMessage {
+  return {
+    id,
+    role: "trigger",
+    text: item.summary,
+    timestamp: item.ts,
+    isStreaming: false,
+    // Both fields are gateway-owned and read straight off the frame. The task
+    // id lives INSIDE `summary` (the gateway composes it there) — never
+    // parsed back out, because the client does not invent or re-derive ids.
+    source: item.source,
+  };
+}
+
 function buildAssistantMessage(id: string, item: CommittedFeedItem & { kind: "assistant" }): ChatMessage {
   return {
     id,
@@ -381,7 +395,20 @@ function appendCommittedItems(walk: FeedWalk, items: readonly CommittedFeedItem[
       continue;
     }
 
-    // "trigger" is Phase-2 sensor events, ignored in Phase-1 UI.
+    if (item.kind === "trigger") {
+      // D16's client half. This used to `continue` ("Phase-2 sensor events,
+      // ignored in Phase-1 UI") — so a delegated task's result reached the
+      // browser on the wire and was thrown away, and the owner watched the
+      // assistant acknowledge content they were never shown.
+      //
+      // pendingTools is deliberately NOT cleared, unlike the `user` branch
+      // above: a completion can land mid-dispatch via the steer seam, and it
+      // is not a person taking the floor. Closing the turn here would orphan
+      // tiles that still have a reply to anchor to.
+      walk.out.push(buildTriggerMessage(stableId, item));
+      continue;
+    }
+
     if (item.kind !== "assistant") continue;
     if (item.content.length === 0 && !item.cutoff) continue;
     const msg = buildAssistantMessage(stableId, item);

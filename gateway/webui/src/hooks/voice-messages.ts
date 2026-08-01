@@ -1,5 +1,5 @@
 import type { Signal } from "@preact/signals";
-import type { ChatMessage } from "@sentient/web-sdk";
+import type { ChatMessage } from "../types.ts";
 import { createChatMessage } from "../types.ts";
 
 // ---------------------------------------------------------------------------

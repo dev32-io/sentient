@@ -4,6 +4,7 @@ import type { ChatMessage } from "../../types.ts";
 import type { SentientMarkMode } from "../common/sentient-mark.tsx";
 import { DayDivider } from "./day-divider.tsx";
 import { MessageBubble, type CurrentUser } from "./message-bubble.tsx";
+import { SystemEventRow } from "./system-event-row.tsx";
 
 export interface MessageListProps {
   messages: readonly ChatMessage[];
@@ -44,7 +45,13 @@ export function MessageList({ messages, currentTurnId, activeCycleMode, currentU
         return (
           <Fragment key={m.id}>
             {divider && <DayDivider label={divider} />}
-            <MessageBubble message={m} avatarMode={avatarMode} currentUser={currentUser} />
+            {/* A stimulus nobody typed is not a chat bubble — it has no side
+                and no author. See SystemEventRow. */}
+            {m.role === "trigger" ? (
+              <SystemEventRow message={m} />
+            ) : (
+              <MessageBubble message={m} avatarMode={avatarMode} currentUser={currentUser} />
+            )}
           </Fragment>
         );
       })}

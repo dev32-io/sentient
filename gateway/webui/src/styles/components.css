@@ -442,6 +442,58 @@ html.is-paused *::after {
   margin-left: auto;
 }
 
+/* ─── SystemEventRow — a feed entry nobody typed ───
+   Full-width and unattributed on purpose: no avatar, no name, neither side of
+   the column, so it can never be misread as one of the two people talking.
+   Borrows the tool-tile vocabulary (mono type, accent wash, chevron) rather
+   than introducing a new one. */
+
+.system-event {
+  border: 1px solid var(--color-line-soft);
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--color-accent) 6%, transparent);
+  overflow: hidden;
+}
+.system-event__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 14px;
+  background: transparent;
+  border: 0;
+  color: var(--color-ink-3);
+  font-size: 12px;
+  line-height: 1;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--motion-fast);
+}
+.system-event__head:hover { background: color-mix(in oklab, var(--color-ink) 5%, transparent); }
+.system-event__icon { display: inline-flex; color: var(--color-ink-3); }
+.system-event__label {
+  color: var(--color-ink-2);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.system-event__time { margin-left: auto; color: var(--color-ink-4); }
+.system-event__chev {
+  display: inline-flex;
+  color: var(--color-ink-4);
+  transition: transform var(--motion-fast);
+}
+.system-event--open .system-event__chev { transform: rotate(180deg); }
+.system-event__body {
+  margin: 0;
+  padding: 0 14px 12px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--color-ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* ─── BubbleText ─── */
 
 .bubble-text {
