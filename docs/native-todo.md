@@ -116,9 +116,11 @@ A regression of the 2.0 legacy purge, not of task 9e: `git log -S pendingId -- g
 
 Driving the restart case also **found a defect in the reap fix itself**, which is the reason to insist on this case rather than reason about it: children are detached on purpose, so they outlive a killed gateway, and the replacement met a live child it never spawned. Two paths threw away the only evidence that child was ours — `stopIfRunning` removed the pid file unconditionally, and `reapOrphans` removed it immediately after an *asynchronous* SIGTERM. The successor then classified its own predecessor's children as foreign and refused **forever** (observed live: `native.port-held` on both addons against pids 88050/88120, re-refused every 15 s). Ownership is now read from both records — in-memory handle first, then the service's own pid file — and the file is dropped only once the process it names is actually gone.
 
-### P1 — `bun --hot` leaks one orchestrator *and one watchdog* per reload, and the leak wedges native supervision — OPEN (found 2026-07-31, plan task 12)
+### ~~P1 — `bun --hot` leaks one orchestrator *and one watchdog* per reload, and the leak wedges native supervision~~ — CLOSED 2026-07-31 (plan task 14)
 
-**Dev-only in effect, but `bun --hot src/main.ts` is the documented dev command** (`gateway/CLAUDE.md`), so every gateway developer is exposed and this is how a wedged dev stack gets misread as a product defect.
+**Fixed by retiring `--hot`, not by teaching it to tear down.** The dev command is now `bun --watch src/main.ts` (`gateway/package.json`), and `main.ts` refuses a second in-process evaluation outright — see the close at the end of this entry.
+
+**Dev-only in effect, but `bun --hot src/main.ts` was the documented dev command** (`gateway/CLAUDE.md`), so every gateway developer was exposed and this is how a wedged dev stack got misread as a product defect.
 
 A hot reload re-evaluates the module graph **inside the same process** and tears nothing down. So each reload constructs another `SystemOrchestratorService` and calls `healthWatch.start()` on it, while every previous watchdog keeps ticking — `stopHealthWatch()` is wired to gateway *shutdown*, which a hot reload never performs. Measured on one process on 2026-07-31: **twelve `[system-orch:health-watch] started` lines**, one per reload since 14:09.
 
@@ -136,12 +138,28 @@ Five supervisors, five children, one port. Four get signalled by the others; the
 
 Task 13's diagnosis was right about the mechanism and incomplete about the population: it fixed *"a successor gateway process meets a predecessor's child"*. This is *"N supervisors inside ONE process meet each other's children"*, which no pid file can arbitrate because they all write the same one.
 
-**Candidate fixes, in preference order — none implemented:**
-1. Make the watchdog's lifetime a property of the *process*, not the module instance (a module-level singleton keyed on `globalThis`, which `--hot` preserves), so a reload replaces rather than adds.
-2. Register a teardown on Bun's hot-reload hook that calls `stopHealthWatch()` before the new graph arms its own.
-3. Failing both, refuse to arm a second watchdog when one is already running in this process, and say so at WARN.
+**THE CLOSE — `bun --watch`, chosen on measurement, not on preference.**
 
-**Testing consequence, now in `agents/docs/testing-knowledge.md`:** never interleave gateway source edits with an E2E drive, and confirm with `bun qa/web/stack-integrity.ts` before believing any row.
+The three candidate fixes above all assumed keeping `--hot` and disposing what it leaks. Measuring the reload killed that assumption: **`--hot` was not buying a fast reload here.** A reload re-runs the whole composition root, so it re-runs `reconcile()` → `reapOrphans()` + `applyAll()`, and `applyAll` calls `driver.recreate()` *unconditionally* for every service (`system-orchestrator/orchestrator.ts:121` — there is no "already matches, skip" path). So a `--hot` reload already recreated all 7 docker containers and respawned both native addons, the same ~12–15 s a process restart pays. Measured on the live stack:
+
+| | `--hot` (before) | `--watch` (after) |
+|---|---|---|
+| edit → `gateway-started` | ~0 ms | **720 ms** |
+| edit → `apply.complete` | ~12 s *(when it completed at all)* | **13.5 s**, `state="ready" ready=9 failed=0` |
+| OS pid across reloads | unchanged | unchanged (bun restarts in place) |
+| `globalThis` across reloads | **preserved** (eval count 1, 2, 3) | **reset** (1, 1, 1) |
+| previous evaluation's timers | still ticking (3 concurrent after 2 reloads) | stopped |
+
+So the entire price of correctness is **720 ms on top of an apply both modes pay** — under 10% of one reload. Against that: a teardown registry would have to dispose the watchdog, the MCP host's per-user unix listeners, the accumulated signal handlers, the provider/STT/TTS sockets and every resource added later, and anything missed reproduces this defect somewhere new.
+
+Two findings worth keeping, because both would mislead the next person:
+
+- **`bun --watch` keeps the same OS pid.** So a pid comparison cannot tell a hot reload from a restart, and `globalThis` — the very scope the leak survived in — is the only thing that can. That is what `bootstrap/single-evaluation.ts` stamps.
+- **Counting `health-watch] started` lines no longer measures the leak.** Under `--watch` each restart legitimately logs one, so the count rises 1:1 with restarts while only one watchdog is ever live. The live oracle is the *reaction*: stop one addon and count the recovery. Driven — `docker stop sentient-searxng-mcp` after 9 reloads in one process produced exactly one `service.unhealthy`, one `apply.start mode="subset"`, one `reapply.dispatched`, one `service.recovered`. Under the leak, each supervisor fired its own.
+
+**Verified live, 2026-07-31**, one process (pid 77942) across 9 reloads — 5 edits 5 s apart (each aborting the previous apply mid-flight) then 3 edits 20 s apart (each apply completing): zero `reapply.gave-up`, zero `identity-failed`, zero `native.port-held`, every `apply.complete` `state="ready" ready=9 failed=0 blocked=0`, and `bun qa/web/stack-integrity.ts` → `RESULT PASS — pass=9 fail=0` **after** the storm, not merely after a cold boot. The refusal path was driven too: booted deliberately under `bun --hot`, one edit produced seven `hot-reload.refused` ERROR lines naming the replacement command, and the process exited.
+
+**Testing consequence, now stale in `agents/docs/testing-knowledge.md`:** the rule "never interleave gateway source edits with an E2E drive" was written for this defect and no longer holds for the supervisor leak. Editing during a drive still restarts the gateway (dropping WS connections mid-flow), so the *E2E* advice stands on its own footing — but the stated reason must be corrected. `bun qa/web/stack-integrity.ts` remains the check that settles it.
 
 ### ~~A hallucinated tool name reaches the human permission prompt~~ — CLOSED 2026-07-31 (plan task 12)
 
@@ -270,5 +288,5 @@ Full checklist with exact steps and expected log lines: `docs/superpowers/handof
 ## 5. Observations recorded, deliberately not filed as defects
 
 - **STT dial retries once per mic frame with no backoff** — 33 attempts in 751 ms when the STT service is down. Documented, deliberate design in `stt-session.ts:10-19`. Recorded because it *looks* like a defect in a log and someone will eventually file it.
-- ~~**`SENTIENT_CODE` is unset in dev**, so the dev gateway's orchestrator cannot supervise the native addons.~~ **No longer true — corrected 2026-07-31 (task 12).** `scripts/env.sh` exports `SENTIENT_CODE` and `HOST_CONFIG_DIR`, and `scripts/dev-stage-code.sh` builds the prod-shaped tree, precisely so dev exercises the supervision path. The old advice ("do not read supervision behaviour off a dev run") now inverts: a dev run **is** the supervision path, which is why the `bun --hot` supervisor leak in §1 matters.
+- ~~**`SENTIENT_CODE` is unset in dev**, so the dev gateway's orchestrator cannot supervise the native addons.~~ **No longer true — corrected 2026-07-31 (task 12).** `scripts/env.sh` exports `SENTIENT_CODE` and `HOST_CONFIG_DIR`, and `scripts/dev-stage-code.sh` builds the prod-shaped tree, precisely so dev exercises the supervision path. The old advice ("do not read supervision behaviour off a dev run") now inverts: a dev run **is** the supervision path, which is why the `bun --hot` supervisor leak in §1 mattered — and is why it is now closed by moving dev to `bun --watch`.
 - **The emulator reaches the gateway via `10.0.2.2` and the simulator via the shared host network**, so the `0.0.0.0` bind has never been exercised by a real LAN device. That is what the off-box probe in §4 is for.
