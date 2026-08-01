@@ -10,6 +10,25 @@ Each `### Case` entry has a scenario, a "why added" reason, callable
 steps, and the expected user-visible + log-trail outcome. New reusable
 cases are appended here, indexed by the surface they exercise.
 
+> ## Local-stack credentials — read this before reporting a login blocker
+>
+> **The PIN for every user on the LOCAL DEV stack is `1234`.** It is a
+> local-only test credential, not a secret, and it is written here on
+> purpose so no agent ever stalls at the login gate again.
+>
+> This is not hypothetical. Task 9c abandoned **two** matrix rows
+> (`steer-followup-audio`'s audio half, `interrupt`'s browser-Stop
+> trigger) and filed them as operator work, reasoning that creating a
+> user needs an admin token, which needs a PIN — *"circular. PIN
+> guessing was not attempted."* Several voice-pack rows below were handed
+> to the operator for the same reason. Every one of them was drivable.
+>
+> So: **an unknown PIN is never a valid reason to stop.** Log in with
+> `1234`, drive the row, and only escalate something the browser genuinely
+> cannot reach (a real microphone, real acoustics, interactive `sudo`, a
+> second machine). Applies to the local dev stack ONLY — production is
+> observational-only and is never driven by Playwright or Maestro.
+
 > **Native-stack migration banner — re-grounded 2026-07-30 (Task 9, web).**
 > Cases below that named the retired cerebrum/cycle wire (`cycleId`,
 > `[cerebrum:attention-gate] cycle dispatched`, `cycle.done`,
