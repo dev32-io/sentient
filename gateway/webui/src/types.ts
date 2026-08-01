@@ -4,13 +4,14 @@ import type { AuthUser } from "./services/auth-api.js";
 
 /** Chat message for UI rendering.
  *
- *  `trigger` is a feed entry nobody typed — a background task's result today,
- *  a sensor reading or a scheduled wake later. It is NOT a chat bubble and
- *  never renders as one (see `SystemEventRow`): attributing it to a person is
- *  the client half of defect D16. */
+ *  Only what a person said and what the assistant answered. A stimulus nobody
+ *  typed — a background task's result today, a sensor reading or a scheduled
+ *  wake later — never becomes one of these: it is context the model answers
+ *  FROM, and the answer is the artifact (owner, 2026-07-31). See the `trigger`
+ *  arm of `cycle-helpers.ts`'s feed walk. */
 export interface ChatMessage {
   readonly id: string;
-  readonly role: "user" | "assistant" | "trigger";
+  readonly role: "user" | "assistant";
   readonly text: string;
   readonly timestamp: number;
   readonly isStreaming: boolean;
@@ -22,9 +23,6 @@ export interface ChatMessage {
   readonly cutoff?: ConversationAssistantCutoff;
   /** Assistant messages only: tool calls grouped onto this message by shared turnId. */
   readonly tools?: readonly ToolCallSnapshotItem[];
-  /** Trigger messages only: which stimulus source produced the entry, read
-   *  straight off the wire item (`background-completion` today). */
-  readonly source?: string;
 }
 
 /** Auth state */

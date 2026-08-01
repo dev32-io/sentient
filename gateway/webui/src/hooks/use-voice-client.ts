@@ -54,9 +54,8 @@ import {
   SPEECH_GATE_OPEN_DEBOUNCE_MS,
   SPEECH_GATE_PREROLL_FRAMES,
 } from "../constants.ts";
-// The webui's OWN display model, not the SDK's. It is a strict superset — it
-// carries the `trigger` role the SDK's voice-local accumulator has no notion
-// of — and it is what every chat component already takes.
+// The webui's OWN display model, not the SDK's — it is what every chat
+// component already takes.
 import type { ChatMessage } from "../types.ts";
 import { createAwaitingTracker } from "./awaiting-tracker.ts";
 import { attachToolsToAssistantMessages, deriveCycleStatus, deriveMessages } from "./cycle-helpers.ts";

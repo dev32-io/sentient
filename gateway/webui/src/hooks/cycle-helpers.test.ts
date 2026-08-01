@@ -212,13 +212,17 @@ describe("cycle-helpers — committed tool tiles", () => {
 });
 
 // ---------------------------------------------------------------------------
-// D16 — a background completion the client silently ate.
+// A background completion is CONTEXT FOR THE MODEL, never a feed artifact.
 //
-// The gateway puts the settled delegated result on the wire as a `trigger`
-// feed item (source + summary). `appendCommittedItems` dropped it with the
-// comment "Phase-2 sensor events, ignored in Phase-1 UI", so the owner saw the
-// assistant acknowledge a result they were never shown. This pins the wire
-// item through to something renderable.
+// The gateway puts the settled delegated result on the wire as a `trigger` feed
+// item (source + summary), because the model needs it. The owner's ruling
+// (2026-07-31) is that a tool result is not a user-facing artifact: the model
+// synthesises a reply from it and THAT is what the user sees and hears — which
+// is also the only thing that works in voice, where there is no card to show.
+//
+// So the walk skips it. What must NOT come back with that skip is the tile bug:
+// a completion lands mid-dispatch via the steer seam and is not a person taking
+// the floor, so it must not close the turn.
 // ---------------------------------------------------------------------------
 
 function triggerEntry(summary: string, ts: number): CommittedFeedItem {
@@ -226,15 +230,11 @@ function triggerEntry(summary: string, ts: number): CommittedFeedItem {
 }
 
 describe("cycle-helpers — background completions", () => {
-  it("CONTRACT: a trigger feed item renders, carrying its task id and result", () => {
+  it("CONTRACT: a trigger feed item produces no chat message at all", () => {
     const summary = "Background task t1 completed.\n--- BEGIN TASK OUTPUT (task t1) ---\nA Fresnel lens…";
     const messages = render([userEntry("delegate it", 1), triggerEntry(summary, 2)], []);
 
-    const event = messages.find((m) => m.role === "trigger");
-    expect(event).toBeDefined();
-    expect(event?.text).toContain("t1");
-    expect(event?.text).toContain("A Fresnel lens");
-    expect(event?.source).toBe("background-completion");
+    expect(messages.map((m) => m.text)).toEqual(["delegate it"]);
   });
 
   it("does not steal the tool tiles of a turn it lands inside", () => {
