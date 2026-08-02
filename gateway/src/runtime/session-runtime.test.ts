@@ -599,6 +599,13 @@ describe("SessionRuntime — delegateTask fire-and-steer loop closes end to end"
         readSince: () => [],
         findByPendingId: () => null,
         listSessions: () => [],
+        createSession: () => {
+          throw new Error("ToolBroker.store is interface-parity only");
+        },
+        findSessionByMintKey: () => null,
+        getSession: () => null,
+        listSessionsWithMetadata: () => [],
+        setTitle: () => false,
         close: () => {},
       },
       principal: alice,

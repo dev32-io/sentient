@@ -69,6 +69,11 @@ function unusedStore(): SessionStore {
     readSince: refuse,
     findByPendingId: refuse,
     listSessions: refuse,
+    createSession: refuse,
+    findSessionByMintKey: refuse,
+    getSession: refuse,
+    listSessionsWithMetadata: refuse,
+    setTitle: refuse,
     close: () => {},
   };
 }

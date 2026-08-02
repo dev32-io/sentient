@@ -54,6 +54,13 @@ function fakeStore(): SessionStore {
     readSince: () => [],
     findByPendingId: () => null,
     listSessions: () => [],
+    createSession: () => {
+      throw new Error("not used by ToolBroker — createSession is owned by the store's opener (Task 3)");
+    },
+    findSessionByMintKey: () => null,
+    getSession: () => null,
+    listSessionsWithMetadata: () => [],
+    setTitle: () => false,
     close: () => {},
   };
 }

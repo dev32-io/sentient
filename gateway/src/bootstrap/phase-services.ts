@@ -580,6 +580,21 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       listSessions: () => {
         throw new Error("ToolBroker.store is interface-parity only and must not be used");
       },
+      createSession: () => {
+        throw new Error("ToolBroker.store is interface-parity only and must not be used");
+      },
+      findSessionByMintKey: () => {
+        throw new Error("ToolBroker.store is interface-parity only and must not be used");
+      },
+      getSession: () => {
+        throw new Error("ToolBroker.store is interface-parity only and must not be used");
+      },
+      listSessionsWithMetadata: () => {
+        throw new Error("ToolBroker.store is interface-parity only and must not be used");
+      },
+      setTitle: () => {
+        throw new Error("ToolBroker.store is interface-parity only and must not be used");
+      },
       close: () => {},
     };
 
