@@ -61,10 +61,18 @@ function freshAccessManager(): AccessManager {
   return createAccessManager({ userDataRoot: `${STORE_ROOT}/run-${storeSeq}` });
 }
 
+/** `ServerWebSocket.readyState`. The ownership guards in ws-handlers.ts read it
+ *  to tell a LIVE rival connection from a dying one that simply has not had its
+ *  close event processed yet, so the double has to carry it. */
+const WS_OPEN = 1;
+const WS_CLOSING = 2;
+const WS_CLOSED = 3;
+
 interface FakeWs {
   data: SessionData;
   sent: Record<string, unknown>[];
   send: (payload: string) => void;
+  readyState: number;
 }
 
 function fakeAuthedWs(connectionSessionId = "test-session"): FakeWs {
@@ -75,11 +83,22 @@ function fakeAuthedWs(connectionSessionId = "test-session"): FakeWs {
   const ws: FakeWs = {
     data,
     sent: [],
+    readyState: WS_OPEN,
     send(payload) {
       ws.sent.push(JSON.parse(payload) as Record<string, unknown>);
     },
   };
   return ws;
+}
+
+/**
+ * The socket dropped, and its close event has NOT been processed — so
+ * `cleanupSession` has not run and this connection's runtime claim is still in
+ * the registry. This is the state a client is retrying against, and the reason
+ * the ownership guards key on liveness rather than on "is it claimed".
+ */
+function dropSocket(ws: FakeWs, readyState: number = WS_CLOSED): void {
+  ws.readyState = readyState;
 }
 
 function asWs(ws: FakeWs): ServerWebSocket<SessionData> {
@@ -849,6 +868,10 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     const draftKey = first.data.draftKey as string;
     const sessionId = await sendFirstMessage(first, services, "hello", "pending-1");
     await waitUntilIdle(first.data.runtime as SessionRuntime);
+    // The socket drops before the ack is read. Its close event has NOT been
+    // processed, so the claim it took at mint time is still in the registry —
+    // the exact window the takeover below has to beat.
+    dropSocket(first);
     (first.data.runtime as SessionRuntime).dispose();
 
     // The retry arrives on a NEW socket carrying the same unspent draft key.
@@ -886,6 +909,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     const draftKey = first.data.draftKey as string;
     const sessionId = await sendFirstMessage(first, services, "hello");
     await waitUntilIdle(first.data.runtime as SessionRuntime);
+    dropSocket(first);
     (first.data.runtime as SessionRuntime).dispose();
 
     const retry = fakeAuthedWs("connection-2");
@@ -914,6 +938,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     const draftKey = first.data.draftKey as string;
     await sendFirstMessage(first, services, "hello", "pending-1");
     await waitUntilIdle(first.data.runtime as SessionRuntime);
+    dropSocket(first);
     (first.data.runtime as SessionRuntime).dispose();
 
     const retry = fakeAuthedWs("connection-2");
@@ -1076,6 +1101,87 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     expect(a.data.runtime).toBeNull(); // …and A did not take the session over.
     expect(a.sent.some((f) => f.type === "error" && f.code === "orchestrator_unavailable")).toBe(true);
     bRuntime.dispose();
+  });
+
+  it("SECURITY: a second LIVE connection sharing one draft key does not evict the one that minted it", async () => {
+    // The same "claim decided by call time, not connection recency" hazard on
+    // the MINT path, reachable without any drop at all.
+    //
+    // The draft key lives in per-tab sessionStorage
+    // (`sentient.currentSessionId`, shared/web-sdk/src/sdk-reconnect.ts), and
+    // sessionStorage is COPIED into a duplicated browsing context — an ordinary
+    // browser "Duplicate Tab". A user mid-draft who duplicates the tab now has
+    // two independently connected sockets presenting ONE draft key, both routed
+    // onto that draft by `resolveConnectionSession`. Nothing is reconnecting and
+    // nothing is dying. Whichever sends first mints, binds and claims; the
+    // other's first message replays onto that same id, and an unguarded mint
+    // would evict a fully live tab that may be mid-conversation. `session.created`
+    // is a single-connection send, so the loser never learned it lost the race.
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const accessManager = freshAccessManager();
+    const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
+
+    const original = fakeAuthedWs("connection-original");
+    configure(original, services, SURFACE_A);
+    const draftKey = original.data.draftKey as string;
+
+    // The duplicate carries the copied surfaceId too, which is why it is
+    // SURFACE_A here and not a second surface.
+    const duplicate = fakeAuthedWs("connection-duplicate");
+    configure(duplicate, services, SURFACE_A, draftKey);
+    expect(duplicate.data.draftKey).toBe(draftKey);
+
+    const sessionId = await sendFirstMessage(original, services, "first tab types");
+    const originalRuntime = original.data.runtime as SessionRuntime;
+    await waitUntilIdle(originalRuntime);
+
+    await handleWebSocketMessage(
+      asWs(duplicate),
+      JSON.stringify({ type: "text.input", text: "second tab types" }),
+      services,
+    );
+
+    expect(original.data.runtime).toBe(originalRuntime); // the live tab was NOT evicted…
+    expect(original.data.permissions).not.toBeNull();
+    expect(duplicate.data.runtime).toBeNull(); // …and the duplicate did not take the session over.
+    expect(duplicate.data.conversationId).toBeNull();
+    expect(duplicate.sent.some((f) => f.type === "error" && f.code === "orchestrator_unavailable")).toBe(true);
+    // The declined message never reached the live tab's append-only log.
+    expect(entriesFor(accessManager, sessionId).map((e) => e.text)).toEqual(["first tab types", "ok"]);
+    originalRuntime.dispose();
+  });
+
+  it("INVARIANT: a first-message retry over a new socket still takes over from a CLOSING original", async () => {
+    // The other direction, and the case an unconditional ownership guard would
+    // break: the original minted, claimed and dropped, but its close event has
+    // not been processed — `release` runs there — so its claim is still in the
+    // registry. The guard therefore keys on whether the OWNER IS ALIVE, not on
+    // whether the session is claimed. CLOSING is pinned here; CLOSED is pinned
+    // by the retry cases above.
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const accessManager = freshAccessManager();
+    const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
+
+    const first = fakeAuthedWs("connection-1");
+    configure(first, services, SURFACE_A);
+    const draftKey = first.data.draftKey as string;
+    const sessionId = await sendFirstMessage(first, services, "hello");
+    await waitUntilIdle(first.data.runtime as SessionRuntime);
+    // Deliberately NOT disposed and NOT released — only the transport is gone.
+    dropSocket(first, WS_CLOSING);
+
+    const retry = fakeAuthedWs("connection-2");
+    configure(retry, services, SURFACE_A, draftKey);
+    const retriedId = await sendFirstMessage(retry, services, "hello", "pending-1");
+    await waitUntilIdle(retry.data.runtime as SessionRuntime);
+
+    expect(retriedId).toBe(sessionId);
+    expect(retry.data.conversationId).toBe(sessionId);
+    expect(retry.sent.some((f) => f.type === "error" && f.code === "orchestrator_unavailable")).toBe(false);
+    // …and the takeover evicted the dying original rather than leaving two live
+    // runtimes (and two sqlite handles) over one append-only log.
+    expect(first.data.runtime).toBeNull();
+    (retry.data.runtime as SessionRuntime).dispose();
   });
 
   it("a connection that presents nothing starts clean — no other session bleeds in", async () => {

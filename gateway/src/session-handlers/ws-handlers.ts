@@ -328,12 +328,12 @@ function ensureBoundRuntime(
     //
     // Task 5 deletes evict-on-claim entirely (N attachments to one runtime), so
     // this is a guard for the window until then, not a new ownership model.
-    const liveOwner = services.conversationRuntimes.ownerOf(ws.data.conversationId);
-    if (liveOwner !== null && liveOwner !== ws.data.sessionId) {
+    const lateRival = liveRivalOwner(ws, services, ws.data.conversationId);
+    if (lateRival !== null) {
       log.warn("text.input.late-bind-declined", {
         sessionId: ws.data.sessionId,
         conversationId: ws.data.conversationId,
-        ownerConnectionId: liveOwner,
+        ownerConnectionId: lateRival,
         reason: "another live connection is serving this session — refusing to evict it from a late bind",
       });
       return null;
@@ -363,6 +363,43 @@ function ensureBoundRuntime(
   const { sessionId, replayed } = withSessionStore(services, principal, (store) =>
     mintOnFirstMessage({ store, mintKey: draftKey, text }),
   );
+
+  // NOR OVER A LIVE OWNER HERE. A FRESH mint cannot collide — the id was just
+  // allocated from a CSPRNG and nothing can hold it — so this only ever bites a
+  // REPLAYED mint, i.e. two connections presenting one draft key. That is not
+  // only the lost-ack retry:
+  //
+  //   sessionStorage is COPIED into a duplicated browsing context (HTML Living
+  //   Standard), and the draft key lives in per-tab sessionStorage
+  //   (`sentient.currentSessionId`, shared/web-sdk/src/sdk-reconnect.ts). So an
+  //   ordinary browser "Duplicate Tab" mid-draft leaves TWO independently
+  //   connected sockets on one draft key, both routed onto that draft by
+  //   `resolveConnectionSession`. Whichever sends first mints and claims; the
+  //   other's first message replays onto the same id, and without this guard it
+  //   would evict a fully live tab that may be mid-conversation. `session.created`
+  //   is a single-connection send, so the loser never learned it lost the race.
+  //
+  // The discriminator is deliberately NOT "is this session claimed" — the retry
+  // this path exists to serve arrives while the dying original may still hold an
+  // unreleased claim (`release` runs on the close event; see replay-registry.ts's
+  // header on the drop Bun's idle timeout has not noticed). It is "is the
+  // claiming connection still ALIVE", answered from that socket's `readyState`.
+  // A closing/closed owner is stepped over and evicted by the claim below.
+  const mintRival = liveRivalOwner(ws, services, sessionId);
+  if (mintRival !== null) {
+    log.warn("text.input.mint-declined", {
+      sessionId: ws.data.sessionId,
+      conversationId: sessionId,
+      ownerConnectionId: mintRival,
+      replayed,
+      reason: "another live connection already minted and is serving this draft key's session",
+    });
+    // Left a draft on purpose: nothing was assigned, the mint is idempotent, and
+    // the next message re-resolves the same row — so this connection takes the
+    // session over as soon as the live owner goes away, instead of wedging.
+    return null;
+  }
+
   // Bind BEFORE claiming the id on the connection. Assigning first and failing
   // here would leave `conversationId` set with no runtime, and every later
   // `text.input` would take the bound branch above and answer
@@ -391,6 +428,24 @@ function ensureBoundRuntime(
   // the truth there, and the user entry follows immediately.
   if (replayed) runtime.emitConversationSnapshot();
   return runtime;
+}
+
+/**
+ * Another connection that is live-serving [sessionId] right now, or null when
+ * this connection is free to bind it.
+ *
+ * Both of `ensureBoundRuntime`'s claim paths reach the registry outside a
+ * handshake, so neither can rely on `claim`'s "newest wins" — that rule
+ * measures newest by CALL time. Asking here instead is one read and one
+ * comparison, and it is deleted wholesale with the registry in task 5.
+ *
+ * "Live" excludes an owner whose socket is CLOSING/CLOSED with its close event
+ * still outstanding (conversation-runtime-registry.ts). That is the difference
+ * between guarding a duplicated tab and breaking a drop-and-retry.
+ */
+function liveRivalOwner(ws: ServerWebSocket<SessionData>, services: GatewayServices, sessionId: string): string | null {
+  const owner = services.conversationRuntimes.liveOwnerOf(sessionId);
+  return owner !== null && owner !== ws.data.sessionId ? owner : null;
 }
 
 /**

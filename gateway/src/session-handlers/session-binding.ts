@@ -29,6 +29,11 @@ import { createWsTurnEmitter } from "./ws-turn-emitter.js";
 
 const log = getLog(["sentient", "ws", "session-binding"]);
 
+/** `ServerWebSocket.readyState` OPEN. The other three (CONNECTING, CLOSING,
+ *  CLOSED) all mean this connection can no longer be served, and none of them
+ *  can be the state of a socket that is mid-`session.configure`. */
+const WS_READY_STATE_OPEN = 1;
+
 /**
  * Open the session store this principal's capability selects, hand it to
  * [use], and close it again.
@@ -135,7 +140,16 @@ export function bindSessionRuntime(
     // construction, not before, so a factory throw leaves whatever socket
     // already holds the session running rather than killing it for a session
     // that never materialised.
-    services.conversationRuntimes.claim(sessionId, connectionId, () => disposeSessionHandles(ws));
+    //
+    // `isAlive` is read by the registry at QUERY time, so the ownership guards
+    // in `ensureBoundRuntime` see this socket's CURRENT transport state rather
+    // than a latch. This closure is the only place in the gateway that knows
+    // which socket owns which claim, which is why the predicate is supplied
+    // here rather than derived inside the registry.
+    services.conversationRuntimes.claim(sessionId, connectionId, {
+      isAlive: () => ws.readyState === WS_READY_STATE_OPEN,
+      evict: () => disposeSessionHandles(ws),
+    });
     log.info("session-binding.bound", { connectionId, userId, sessionId, hasVoice: voice !== null });
     return handles.runtime;
   } catch (err) {
