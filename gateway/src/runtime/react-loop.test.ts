@@ -86,6 +86,7 @@ function fakeBroker(
   };
   return {
     dispatchCalls,
+    ownerUserId: cap.ownerUserId,
     definitions: () => defs,
     async dispatch(inv) {
       dispatchCalls.push(inv);

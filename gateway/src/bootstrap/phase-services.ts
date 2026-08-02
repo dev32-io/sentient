@@ -518,6 +518,13 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       );
     }
 
+    // The broker's authorization input (spec §3.2) — minted from the SAME
+    // AccessManager that grants the store's own capability in
+    // session-runtime.ts, just a different resource class. Fixes the second
+    // of the two L2 holes CLAUDE.md claimed were already closed: the broker
+    // used to authorize off the ambient `principal` directly.
+    const capability = accessManager.grant(principal, "tool-broker");
+
     // Connection-scoped permission mediation (spec §5.3/§7.1). Created here
     // because this is the only scope holding BOTH the session's emitter and
     // the orchestrator config; `ws-session-configure.ts` receives it back on
@@ -538,7 +545,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       createDelegateTaskRunner({
         guard: delegationGuard,
         hermesRunner,
-        userId: principal.userId,
+        userId: capability.ownerUserId, // the delegated-agent socket path — spec §3.2.
         // The SLOT, not its value. This closure runs on every WS connect,
         // which is not ordered against boot filling the slot — snapshotting it
         // here would hand a session that connected inside the boot window a
@@ -581,6 +588,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       policy: policyEngine,
       store: brokerStore,
       principal,
+      capability,
       // Log correlation only (see `ToolBrokerDeps.sessionId`) — the CONNECTION,
       // so a tool dispatch stays traceable to the one socket that made it.
       sessionId: connectionId,

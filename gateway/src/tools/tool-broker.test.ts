@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { OrchestratorConfig } from "@sentient/config";
+import { createAccessManager } from "../access/access-manager.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
 import type { PolicyContext, PolicyDecision, PolicyEngine } from "../security/policy-engine.js";
 import type { SessionStore } from "../store/session-store.js";
@@ -58,6 +59,11 @@ function fakeStore(): SessionStore {
 }
 
 const principal = createUserPrincipal("u_aaaaaaaa", "adult", "household-1");
+// A real AccessManager grant — the broker's authority is this value, not the
+// `principal` above (which stays only for log correlation, see
+// ToolBrokerDeps.principal's doc comment).
+const accessManager = createAccessManager({ userDataRoot: "/tmp/sentient-tool-broker-test" });
+const capability = accessManager.grant(principal, "tool-broker");
 
 const toolsConfig: OrchestratorConfig["tools"] = {
   foreground_timeout_ms: 30000,
@@ -85,6 +91,34 @@ const weatherTool: McpToolRef = {
 };
 
 // ---------------------------------------------------------------------------
+// Authority — the broker's identity comes from its capability, not the
+// ambient principal (spec §3.2, closing the second of two L2 holes CLAUDE.md
+// claimed were already closed; the first is session-store.ts's resource-class
+// check).
+// ---------------------------------------------------------------------------
+
+describe("ToolBroker — authority", () => {
+  it("SECURITY: the broker's authority comes from its capability, not an ambient principal", () => {
+    const mismatchedPrincipal = createUserPrincipal("u_bbbbbbbb", "adult", "household-1");
+    const broker = createToolBroker({
+      mcp: fakeMcp([weatherTool]),
+      policy: fakePolicy({ action: "allow" }),
+      store: fakeStore(),
+      // Deliberately mismatched from `capability` below — proves ownerUserId
+      // is read from the capability, never from this ambient principal.
+      principal: mismatchedPrincipal,
+      capability,
+      sessionId: "session-1",
+      backgroundTools: new Map(),
+      config: toolsConfig,
+      requestConfirm: async () => false,
+    });
+
+    expect(broker.ownerUserId).toBe(capability.ownerUserId);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Foreground: allow / deny / confirm
 // ---------------------------------------------------------------------------
 
@@ -96,6 +130,7 @@ describe("ToolBroker — PDP choke point (foreground)", () => {
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
       principal,
+      capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
       config: toolsConfig,
@@ -115,6 +150,7 @@ describe("ToolBroker — PDP choke point (foreground)", () => {
       policy: fakePolicy({ action: "deny", reason: "not allowed for this role" }),
       store: fakeStore(),
       principal,
+      capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
       config: toolsConfig,
@@ -137,6 +173,7 @@ describe("ToolBroker — PDP choke point (foreground)", () => {
       policy: fakePolicy({ action: "confirm", reason: "side-effecting tool" }),
       store: fakeStore(),
       principal,
+      capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
       config: toolsConfig,
@@ -160,6 +197,7 @@ describe("ToolBroker — PDP choke point (foreground)", () => {
       policy: fakePolicy({ action: "confirm", reason: "side-effecting tool" }),
       store: fakeStore(),
       principal,
+      capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
       config: toolsConfig,
@@ -179,6 +217,7 @@ describe("ToolBroker — PDP choke point (foreground)", () => {
       policy: fakePolicy({ action: "confirm", reason: "side-effecting tool" }),
       store: fakeStore(),
       principal,
+      capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
       config: toolsConfig,
@@ -203,6 +242,7 @@ describe("ToolBroker — unanswerable confirm (fail-closed reason passthrough)",
       policy: fakePolicy({ action: "confirm", reason: "side-effecting" }),
       store: fakeStore(),
       principal,
+      capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
       config: toolsConfig,
@@ -225,6 +265,7 @@ describe("ToolBroker — unanswerable confirm (fail-closed reason passthrough)",
       policy: fakePolicy({ action: "confirm", reason: "side-effecting" }),
       store: fakeStore(),
       principal,
+      capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
       config: toolsConfig,
@@ -263,6 +304,7 @@ describe("ToolBroker — a hallucinated tool never reaches the permission prompt
       policy,
       store: fakeStore(),
       principal,
+      capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
       config: toolsConfig,
@@ -290,6 +332,7 @@ describe("ToolBroker — a hallucinated tool never reaches the permission prompt
       policy,
       store: fakeStore(),
       principal,
+      capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
       config: toolsConfig,
@@ -324,6 +367,7 @@ describe("ToolBroker — a hallucinated tool never reaches the permission prompt
       policy,
       store: fakeStore(),
       principal,
+      capability,
       sessionId: "session-1",
       backgroundTools: new Map([["delegateTask", runner]]),
       config: toolsConfig,
@@ -352,6 +396,7 @@ describe("ToolBroker — background dispatch", () => {
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
       principal,
+      capability,
       sessionId: "session-1",
       backgroundTools: new Map([["delegateTask", runner]]),
       config: toolsConfig,
@@ -380,6 +425,7 @@ describe("ToolBroker — background dispatch", () => {
       policy: fakePolicy({ action: "deny", reason: "delegation disabled" }),
       store: fakeStore(),
       principal,
+      capability,
       sessionId: "session-1",
       backgroundTools: new Map([["delegateTask", runner]]),
       config: toolsConfig,
@@ -403,6 +449,7 @@ describe("ToolBroker — background dispatch", () => {
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
       principal,
+      capability,
       sessionId: "session-1",
       backgroundTools: new Map([["delegateTask", runner]]),
       config: toolsConfig, // max_concurrent_background_tasks: 1
@@ -449,6 +496,7 @@ describe("ToolBroker — background completion sink", () => {
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
       principal,
+      capability,
       sessionId: "session-1",
       backgroundTools: new Map([["delegateTask", runner]]),
       config: toolsConfig,
@@ -495,6 +543,7 @@ describe("ToolBroker — background completion sink", () => {
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
       principal,
+      capability,
       sessionId: "session-1",
       backgroundTools: new Map([["delegateTask", runner]]),
       config: toolsConfig,
@@ -526,6 +575,7 @@ describe("ToolBroker — background completion sink", () => {
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
       principal,
+      capability,
       sessionId: "session-1",
       backgroundTools: new Map([["delegateTask", runner]]),
       config: toolsConfig,
@@ -575,6 +625,7 @@ describe("ToolBroker — delegation.progress producer", () => {
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
       principal,
+      capability,
       sessionId: "session-1",
       backgroundTools: new Map([
         [
@@ -616,6 +667,7 @@ describe("ToolBroker — delegation.progress producer", () => {
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
       principal,
+      capability,
       sessionId: "session-1",
       backgroundTools: new Map([
         [
@@ -672,6 +724,7 @@ describe("ToolBroker — tool result cap", () => {
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
       principal,
+      capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
       config: tightCapConfig,
@@ -694,6 +747,7 @@ describe("ToolBroker — tool result cap", () => {
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
       principal,
+      capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
       config: tightCapConfig,
@@ -717,6 +771,7 @@ describe("ToolBroker — tool result cap", () => {
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
       principal,
+      capability,
       sessionId: "session-1",
       backgroundTools: new Map([["delegateTask", runner]]),
       config: tightCapConfig,

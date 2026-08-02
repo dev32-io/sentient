@@ -37,10 +37,12 @@
 // principal/config shape locked here.
 
 import type { OrchestratorConfig } from "@sentient/config";
+import type { Capability } from "../access/capability.js";
 import type { UserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
 import type { PolicyContext, PolicyEngine } from "../security/policy-engine.js";
 import type { SessionStore } from "../store/session-store.js";
+import type { UserId } from "../user-auth/user-id.js";
 import { createBackgroundRegistry } from "./background-registry.js";
 import type { BackgroundRegistry } from "./background-registry.js";
 import type { McpClient } from "./mcp-client.js";
@@ -117,6 +119,13 @@ export interface BackgroundCompletionResult {
 export type BackgroundCompletionSink = (result: BackgroundCompletionResult) => void;
 
 export interface ToolBroker {
+  /** Whose authority this broker acts under — read from its `Capability` at
+   *  construction, never from the `principal` dep (spec §3.2: a capability is
+   *  the authorization input, `principal` is log correlation only). Exposed
+   *  so a caller can confirm which identity a broker instance was actually
+   *  built for, the same confused-deputy check `openSessionStore` makes for
+   *  the store. */
+  readonly ownerUserId: UserId;
   /** The session's full, immutable tool vocabulary (MCP-catalog tools +
    *  registered background tools). Computed once and cached — never
    *  mutated per turn (spec §4.6: hiding a tool is not a security
@@ -144,6 +153,20 @@ export interface ToolBrokerDeps {
   mcp: McpClient;
   policy: PolicyEngine;
   store: SessionStore;
+  /** The AUTHORIZATION input (spec §3.2). `broker.ownerUserId` and the PDP's
+   *  `PolicyContext.userId` both read `capability.ownerUserId` — never
+   *  `principal.userId` — so the broker's authority is exactly what its
+   *  capability grants, not whatever principal happened to be threaded in
+   *  alongside it. Mint from the same `AccessManager` that mints the
+   *  session's own store capability. */
+  capability: Capability;
+  /** Log correlation ONLY (`role` is useful in a log line) — it must never be
+   *  an input to a PDP decision. `mcp-policy.yaml` rules keyed on `role`
+   *  (e.g. child/guest tiering) still read `principal.role`: role is not the
+   *  identity this task's confused-deputy fix is about (a capability is
+   *  always minted from the very principal whose role this is — see
+   *  `AccessManager.grant` — so the two cannot diverge), and `Capability`
+   *  carries no role of its own to substitute. */
   principal: UserPrincipal;
   /** The CONNECTION id (`ws.data.sessionId`), for log correlation and nothing
    *  else — every `tool-broker.*` line below carries it so a dispatch is
@@ -172,7 +195,18 @@ export interface ToolBrokerDeps {
 }
 
 export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
-  const { mcp, policy, principal, sessionId, backgroundTools, config, requestConfirm, onDelegationProgress } = deps;
+  const {
+    mcp,
+    policy,
+    principal,
+    capability,
+    sessionId,
+    backgroundTools,
+    config,
+    requestConfirm,
+    onDelegationProgress,
+  } = deps;
+  const ownerUserId = capability.ownerUserId;
   const background = createBackgroundRegistry();
   // Late-bound (see `ToolBroker.setBackgroundCompletionSink`'s doc comment
   // for why this can't be a constructor dep). `null` until the composition
@@ -223,8 +257,8 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
   async function resolveDecision(inv: ToolInvocation): Promise<PdpDecision> {
     const ctx: PolicyContext = {
       tool: inv.name,
-      userId: principal.userId,
-      role: principal.role,
+      userId: ownerUserId, // capability, not the ambient principal — spec §3.2.
+      role: principal.role, // RBAC tier only; see ToolBrokerDeps.principal's doc comment.
       sessionChannel: "text", // Plan 2 is text-only; see file header.
       args: inv.args,
     };
@@ -474,5 +508,5 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     completionSink = sink;
   }
 
-  return { definitions, dispatch, background, setBackgroundCompletionSink };
+  return { ownerUserId, definitions, dispatch, background, setBackgroundCompletionSink };
 }

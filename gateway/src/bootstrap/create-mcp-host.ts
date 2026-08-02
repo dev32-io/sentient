@@ -1,4 +1,5 @@
 import type { HermesConfig, OrchestratorConfig } from "@sentient/config";
+import type { AccessManager } from "../access/access-manager.js";
 import { HOSTED_TOOL_CONTEXT, selectDelegatedAllowTier } from "../external-tools/delegated-tool-tier.js";
 import { getLog } from "../logging/logger.js";
 import type { ActiveSessionLookup } from "../mcp-host/active-session-lookup.js";
@@ -45,6 +46,8 @@ export interface McpHostOptions {
   proxy?: {
     mcpClient: McpClient;
     toolsConfig: OrchestratorConfig["tools"];
+    /** Mints each delegated broker's authorization capability (spec §3.2). */
+    accessManager: AccessManager;
   };
 }
 
@@ -112,6 +115,7 @@ export async function createMcpHost(options: McpHostOptions): Promise<McpHost> {
           mcp: proxy.mcpClient,
           policy,
           toolsConfig: proxy.toolsConfig,
+          accessManager: proxy.accessManager,
         }),
         hostedNames: new Set(hostedTools.map((tool) => tool.def.name)),
       })

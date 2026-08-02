@@ -102,6 +102,7 @@ function fakeBroker(
   };
   return {
     dispatchCalls,
+    ownerUserId: "u_aaaaaaaa",
     definitions: () => defs,
     async dispatch(inv) {
       dispatchCalls.push(inv);
@@ -601,6 +602,7 @@ describe("SessionRuntime — delegateTask fire-and-steer loop closes end to end"
         close: () => {},
       },
       principal: alice,
+      capability: am.grant(alice, "tool-broker"),
       sessionId: "sess-3b",
       backgroundTools: new Map([["delegateTask", backgroundRunner]]),
       config: {
@@ -859,6 +861,7 @@ function spyBackgroundRegistry(): SpyBackgroundRegistry {
 function fakeBrokerWithBackground(background: BackgroundRegistry): FakeBroker {
   return {
     dispatchCalls: [],
+    ownerUserId: "u_aaaaaaaa",
     definitions: () => [],
     async dispatch(): Promise<ToolResult> {
       throw new Error("dispatch should never be called in cancellation tests");

@@ -18,6 +18,7 @@
 //     real session gets. A delegated agent acts FOR its user, never above them.
 
 import type { OrchestratorConfig } from "@sentient/config";
+import type { AccessManager } from "../access/access-manager.js";
 import { DELEGATED_PRINCIPAL_ROLE, PROXIED_TOOL_CONTEXT } from "../external-tools/delegated-tool-tier.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
@@ -45,6 +46,10 @@ export interface DelegatedBrokerFactoryDeps {
   /** `orchestrator.tools` — only `max_concurrent_background_tasks` is read, and
    *  only on a branch this broker cannot reach (see the file header). */
   toolsConfig: OrchestratorConfig["tools"];
+  /** Mints this broker's authorization capability (spec §3.2) — same role
+   *  `bootstrap/phase-services.ts`'s session broker gives its AccessManager,
+   *  just for a synthetic delegated principal instead of a real session's. */
+  accessManager: AccessManager;
 }
 
 /**
@@ -79,11 +84,13 @@ export function createDelegatedBrokerFactory(deps: DelegatedBrokerFactoryDeps): 
 
     let broker: ToolBroker;
     try {
+      const principal = createUserPrincipal(userId, DELEGATED_PRINCIPAL_ROLE, DELEGATED_HOUSEHOLD_ID);
       broker = createToolBroker({
         mcp: deps.mcp,
         policy: deps.policy,
         store: unusedStore(),
-        principal: createUserPrincipal(userId, DELEGATED_PRINCIPAL_ROLE, DELEGATED_HOUSEHOLD_ID),
+        principal,
+        capability: deps.accessManager.grant(principal, "tool-broker"),
         // Log correlation only. Named apart from a connection id on purpose:
         // every line from this broker is a delegated call, not a socket's.
         sessionId: `delegated:${userId}`,

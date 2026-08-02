@@ -217,7 +217,13 @@ if (config.hermes) {
     // calls passes the PDP. Same shared McpClient the gateway's own loop uses —
     // never a second dialer to the same servers.
     ...(config.orchestrator
-      ? { proxy: { mcpClient: services.mcpClient, toolsConfig: config.orchestrator.tools } }
+      ? {
+          proxy: {
+            mcpClient: services.mcpClient,
+            toolsConfig: config.orchestrator.tools,
+            accessManager: services.accessManager,
+          },
+        }
       : {}),
   });
 

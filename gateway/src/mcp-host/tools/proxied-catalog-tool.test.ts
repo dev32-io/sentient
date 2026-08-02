@@ -19,6 +19,7 @@ function fakeBroker(outcome: ToolResult | { taskId: string }): ToolBroker & { di
   const dispatched: ToolInvocation[] = [];
   return {
     dispatched,
+    ownerUserId: "u_deadbeef",
     definitions: () => [],
     async dispatch(inv) {
       dispatched.push(inv);

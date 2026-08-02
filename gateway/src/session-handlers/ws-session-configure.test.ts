@@ -568,6 +568,7 @@ function noopBroker(): ToolBroker {
     cancelAll: () => {},
   };
   return {
+    ownerUserId: "u_aaaaaaaa",
     definitions: () => [],
     dispatch: async () => {
       throw new Error("dispatch should never be called for a text-only response");
