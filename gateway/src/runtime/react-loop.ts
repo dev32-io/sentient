@@ -479,13 +479,25 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
       // retry: there may be no tool call in THIS request to blame, and a
       // retry against a model that just exhausted its budget on the same
       // messages risks looping.
-      if (outcome.finishReason === "length" && outcome.text.trim().length === 0) {
-        log.warn("react-loop.completed-empty-length", {
+      //
+      // The guard is on TEXT, not on `finishReason === "length"` — D17's own
+      // closing line is unconditional ("an empty assistant entry must never
+      // be committed as a completed turn"). `finishReason` is a free-form
+      // `string` off the wire (provider-client.ts), so a provider that
+      // returns empty/whitespace-only text under `"stop"`,
+      // `"content_filter"`, or any other reason would otherwise fall through
+      // and reproduce the exact defect via a different trigger.
+      // `finishReason` is still logged below — it's the "why", worth keeping
+      // in the diagnostics even though it must not gate the behaviour.
+      if (outcome.text.trim().length === 0) {
+        log.warn("react-loop.completed-empty-final", {
           sessionId,
           turnId,
           iteration,
           forceFinal,
-          reason: "provider exhausted its output budget before any visible text — not committing an empty reply",
+          finishReason: outcome.finishReason,
+          reason:
+            "final completion produced no visible text — not committing an empty reply, regardless of finishReason",
         });
         return { completed: false, iterations: iteration, consumedThroughSeq };
       }

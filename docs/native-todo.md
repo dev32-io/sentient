@@ -14,7 +14,7 @@ Status as of 2026-07-31, branch `feature/native-orchestrator`.
 
 ## 1. Open defects
 
-### D17 — a large tool result silently kills the turn, and the turn records itself as a success
+### ~~D17 — a large tool result silently kills the turn, and the turn records itself as a success~~ — CLOSED 2026-08-01 (plan task 18)
 
 **Found 2026-08-01, E2E round 2 (plan task 17, group D). The most serious thing this round turned up.**
 Evidence: `qa/web/evidence/2026-08-01-e2e-round-2/group-d-tools-and-errors.md`.
@@ -30,6 +30,8 @@ That last line is the defect behind the defect. A turn that produced nothing, be
 Generalise before fixing the symptom: **any** tool whose result is large enough can do this, so a per-tool fix (`ha_get_history` returns less) treats the instance and leaves the class. The turn loop needs to treat `finishReason="length"` with empty text as a **failure** — surface it, and either retry with the tool result truncated or tell the user the result was too large to summarise. `ha_get_history` is merely the first tool big enough to prove it.
 
 Related and probably the same budget: `search_web` results run ~3.8 KB and are fine, so nothing before this round came close.
+
+**What shipped (task 18), four independent pieces, all required together:** `orchestrator.provider.max_output_tokens` raised 1024 → 8000 so a reasoning model's invisible reasoning channel no longer reliably exhausts the answer budget; `react-loop.ts`'s empty-final-completion guard widened to fire on **any** empty/whitespace-only final text regardless of `finishReason` (not just `"length"` — a code-review pass on this same task found the original guard still had the D17 hole under `"stop"`/`"content_filter"`), routing to the existing `commitTurnFailure` path so the user gets a durable notice instead of a silently empty transcript; a 20000-char head-and-tail cap on every tool result at the broker (`tool-result-cap.ts`, `orchestrator.tools.max_tool_result_chars`), surrogate-safe at the cut boundary, so no single oversized result can crowd out the answer again; and `orchestrator.provider.reasoning_effort` (default `"low"`) now actually sent to the provider, shortening the invisible reasoning phase itself. Regression coverage: `react-loop.test.ts` (empty-completion under both `"length"` and `"stop"`), `session-runtime.test.ts` (the D17 shape end-to-end — zero streamed text, turn not completed, non-empty failure notice committed), `tool-result-cap.test.ts`.
 
 ### D18 — a tool that fails in-band reports success, and the model then invents an answer
 

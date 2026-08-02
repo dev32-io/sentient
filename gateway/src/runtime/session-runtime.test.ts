@@ -317,6 +317,74 @@ describe("SessionRuntime — a turn that fails without a user gesture", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Case 1d (task-18 code review, finding 2): D17's OWN shape, end to end.
+//
+// The case1b test above covers a DIFFERENT failure shape — a provider that
+// throws mid-stream after emitting partial text. D17 (docs/native-todo.md
+// § 1) is a clean, non-throwing `completed: false` with ZERO streamed text
+// (react-loop.ts's empty-final-completion guard, task 18): the provider
+// finishes normally, just with nothing to show. Nothing before this pinned
+// that react-loop.ts's `completed: false` actually reaches
+// session-runtime.ts's `onTurnSettled` → `commitTurnFailure` and lands the
+// user-visible notice via commitTurnFailure's OWN else-branch (no partial to
+// prefix, so the committed text is the bare notice) — only a one-off live
+// check did. This is D17 itself, so it clears the project's FSM-invariant
+// test bar.
+// ---------------------------------------------------------------------------
+
+describe("SessionRuntime — a turn that completes with zero text (D17)", () => {
+  it("INVARIANT: no text streamed, turn not completed, and a non-empty failure notice is committed", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/case1d` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    // The exact D17 shape: the provider stream ends with no text chunk and
+    // no tool call at all — react-loop.ts's empty-final-completion guard
+    // (task 18) returns `completed: false` rather than committing an empty
+    // assistant entry. Distinct from case1b: this never throws.
+    const provider = fakeProvider(async function* () {
+      yield { type: "done", finishReason: "length" };
+    });
+    const emitter = recordingEmitter();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-1d",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter,
+      systemPrompt: "test",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "give me the home assistant history" });
+    await waitUntilIdle(runtime);
+
+    // Zero text ever streamed to the client for this turn.
+    expect(emitter.events.filter((e) => e.type === "textDelta")).toHaveLength(0);
+    // The turn still terminates cleanly — react-loop.ts's `completed: false`
+    // is not a throw, so this is turnCompleted, not turnAborted (only a user
+    // gesture drives turnAborted; see case1c above).
+    expect(emitter.events.filter((e) => e.type === "turnCompleted")).toHaveLength(1);
+    expect(emitter.events.filter((e) => e.type === "turnAborted")).toHaveLength(0);
+
+    const readback = openSessionStore(am.grant(alice, "session-store"));
+    const assistant = readback.readSession("sess-1d").filter((e) => e.kind === "assistant");
+    // Exactly one committed assistant entry: NOT the empty completion
+    // react-loop.ts refused to commit, but commitTurnFailure's own durable
+    // notice — so the user sees something instead of a silently empty
+    // transcript on reload (the exact D17 symptom).
+    expect(assistant).toHaveLength(1);
+    expect(assistant[0]?.text?.trim().length).toBeGreaterThan(0);
+    // No partial text existed to prefix (unlike case1b), so
+    // commitTurnFailure's else-branch fires: the bare notice, verbatim.
+    expect(assistant[0]?.text).toBe("Sorry — something went wrong while I was answering. Please try again.");
+
+    runtime.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Case 2: a second submit while a turn is running steers it — no parallel
 // loop, and the steered text reaches the running loop's next iteration.
 // ---------------------------------------------------------------------------

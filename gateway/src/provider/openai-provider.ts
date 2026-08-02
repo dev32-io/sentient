@@ -24,12 +24,22 @@ export function createOpenAIProvider(cfg: OrchestratorConfig["provider"], apiKey
       const startedAt = Date.now();
       const hasTools = req.tools.length > 0;
       const maxOutputTokens = req.maxOutputTokens ?? cfg.max_output_tokens;
+      // "unset" is the operator's escape hatch (distinct from "none": the
+      // OpenAI SDK types "none" as a REAL `reasoning_effort` value — zero
+      // reasoning effort, but the field is still sent and the provider is
+      // expected to understand it. Overloading "none" to also mean "omit the
+      // field" would silently break that real value for a provider that
+      // supports it). "unset" OMITS the field from the request entirely —
+      // see the field comment below and `orchestrator.provider.reasoning_effort`
+      // in config.yaml/the zod schema.
+      const reasoningEffort = cfg.reasoning_effort === "unset" ? undefined : cfg.reasoning_effort;
       log.info("stream-start", {
         model: cfg.model,
         messageCount: req.messages.length,
         toolCount: req.tools.length,
         maxOutputTokens,
         reasoningEffort: cfg.reasoning_effort,
+        reasoningEffortSent: reasoningEffort !== undefined,
       });
 
       let response: Awaited<ReturnType<typeof client.chat.completions.create>>;
@@ -43,17 +53,26 @@ export function createOpenAIProvider(cfg: OrchestratorConfig["provider"], apiKey
             max_tokens: maxOutputTokens,
             // Never sent before task 18 (D17): reasoning is the invisible
             // phase that delays the first spoken word, and a household voice
-            // assistant wants an answer sooner. Sent unconditionally — an
-            // OpenAI-compatible endpoint that does not recognize the field is
-            // expected to ignore it (the norm for extra JSON fields on these
-            // APIs), and on the rare provider that instead rejects the
-            // request outright, the throw below still reaches
-            // session-runtime.ts's existing "runTurn threw" backstop, which
-            // fails the turn with a user-visible notice rather than
-            // crashing — the same safety net every other provider error
-            // already relies on. No per-provider capability probe exists to
-            // do better than that without one.
-            reasoning_effort: cfg.reasoning_effort,
+            // assistant wants an answer sooner. Sent on every call whose
+            // config isn't "unset" — an OpenAI-compatible endpoint that does
+            // not recognize the field is EXPECTED to ignore it (the norm for
+            // extra JSON fields on these APIs), but that is an expectation,
+            // not a guarantee: a STRICT endpoint that 400s on an unknown
+            // field would fail EVERY turn until reconfigured, a wider blast
+            // radius than one bad request. No per-provider capability probe
+            // exists to detect that ahead of time, so the documented escape
+            // hatch is config, not code: set
+            // `orchestrator.provider.reasoning_effort: unset` to omit this
+            // field entirely (see below — spread rather than an explicit
+            // `undefined` value, since `exactOptionalPropertyTypes` forbids
+            // assigning `undefined` to an optional field the SDK types as
+            // `ReasoningEffort | null`).
+            // Short of that, on the rare provider that rejects the request
+            // outright, the throw below still reaches session-runtime.ts's
+            // existing "runTurn threw" backstop, which fails the turn with a
+            // user-visible notice rather than crashing — the same safety net
+            // every other provider error already relies on.
+            ...(reasoningEffort !== undefined ? { reasoning_effort: reasoningEffort } : {}),
             ...(hasTools ? { tools: req.tools as OpenAI.Chat.ChatCompletionTool[], tool_choice: "auto" as const } : {}),
           },
           { signal: req.signal },

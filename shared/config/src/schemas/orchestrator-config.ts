@@ -26,12 +26,17 @@ export const orchestratorConfigSchema = z.object({
     request_timeout_ms: z.number().int().min(1000).max(600000).default(120000),
     // Optional site attribution headers (OpenRouter convention).
     site_name: z.string().default("Sentient"),
-    // Constrains how much the model reasons before answering. Sent only when
-    // the provider accepts the field (see openai-provider.ts); never sent
-    // before task 18. "low" rather than "minimal": minimal reasoning effort
-    // can degrade TOOL SELECTION, and picking the wrong tool is worse than a
-    // slightly slower reply. See config.yaml for the full rationale.
-    reasoning_effort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).default("low"),
+    // Constrains how much the model reasons before answering. Sent
+    // UNCONDITIONALLY (see openai-provider.ts) on every value except
+    // "unset" — an OpenAI-compatible endpoint that rejects the unrecognized
+    // field will 400 on EVERY turn until reconfigured. "unset" is the
+    // escape hatch: it omits the field from the request entirely. "none" is
+    // NOT that escape hatch — it is a real SDK-typed value (zero reasoning
+    // effort, field still sent). "low" rather than "minimal": minimal
+    // reasoning effort can degrade TOOL SELECTION, and picking the wrong
+    // tool is worse than a slightly slower reply. See config.yaml for the
+    // full rationale.
+    reasoning_effort: z.enum(["unset", "none", "minimal", "low", "medium", "high", "xhigh", "max"]).default("low"),
   }),
   loop: z.object({
     // ReAct iteration cap: consecutive tool-calling iterations before a

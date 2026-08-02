@@ -33,6 +33,31 @@ export interface CapToolResultOptions {
   limit: number;
 }
 
+const HIGH_SURROGATE_MIN = 0xd800;
+const HIGH_SURROGATE_MAX = 0xdbff;
+const LOW_SURROGATE_MIN = 0xdc00;
+const LOW_SURROGATE_MAX = 0xdfff;
+
+/**
+ * `String.prototype.slice` is UTF-16-code-unit based, not codepoint-aware —
+ * it has no idea a surrogate pair (any emoji or astral-plane character) is
+ * two code units that belong together. A cut landing between them leaves a
+ * lone surrogate on each side; it doesn't throw, but re-encoding to UTF-8
+ * (the wire) turns each lone surrogate into U+FFFD — a small silent
+ * corruption right at the truncation boundary. Nudges `index` back by one
+ * code unit when it falls inside a pair, so the whole pair moves together
+ * (into the omitted middle, or into the surviving head/tail) instead of
+ * splitting.
+ */
+function surrogateSafeIndex(str: string, index: number): number {
+  if (index <= 0 || index >= str.length) return index;
+  const before = str.charCodeAt(index - 1);
+  const at = str.charCodeAt(index);
+  const isHighSurrogate = before >= HIGH_SURROGATE_MIN && before <= HIGH_SURROGATE_MAX;
+  const isLowSurrogate = at >= LOW_SURROGATE_MIN && at <= LOW_SURROGATE_MAX;
+  return isHighSurrogate && isLowSurrogate ? index - 1 : index;
+}
+
 function truncationMarker(omittedChars: number, originalLength: number): string {
   return `\n\n[... tool result ${TRUNCATED_WORD}: ${omittedChars} of ${originalLength} characters omitted here (kept the start and the end) — narrow your query to see the missing part ...]\n\n`;
 }
@@ -43,16 +68,23 @@ function truncationMarker(omittedChars: number, originalLength: number): string 
  * splices a marker between them, so the returned string lands a little OVER
  * `limit` (by the marker's own length) rather than under it — the head+tail
  * budget itself is never shorted to make room for the marker.
+ *
+ * Both cut points are nudged to a surrogate-safe boundary (see
+ * `surrogateSafeIndex`), so `omittedChars` is derived from the ACTUAL head
+ * and tail lengths after that nudge, never from the nominal `limit` split.
  */
 export function capToolResult(content: string, opts: CapToolResultOptions): string {
   const { limit } = opts;
   if (content.length <= limit) return content;
 
-  const headLen = Math.floor(limit / 2);
-  const tailLen = limit - headLen;
+  const nominalHeadLen = Math.floor(limit / 2);
+  const nominalTailLen = limit - nominalHeadLen;
+  const headLen = surrogateSafeIndex(content, nominalHeadLen);
+  const tailStart = nominalTailLen > 0 ? surrogateSafeIndex(content, content.length - nominalTailLen) : content.length;
+
   const head = content.slice(0, headLen);
-  const tail = tailLen > 0 ? content.slice(content.length - tailLen) : "";
-  const omittedChars = content.length - headLen - tailLen;
+  const tail = nominalTailLen > 0 ? content.slice(tailStart) : "";
+  const omittedChars = content.length - head.length - tail.length;
 
   return head + truncationMarker(omittedChars, content.length) + tail;
 }

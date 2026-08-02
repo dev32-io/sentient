@@ -141,16 +141,23 @@ orchestrator:
     max_output_tokens: 8000
     request_timeout_ms: 120000               # per-request deadline (1000-600000)
     site_name: Sentient                      # OpenRouter attribution header
-    # Constrains how much the model reasons before answering ("none",
-    # "minimal", "low", "medium", "high", "xhigh", "max" — provider-dependent
-    # support; sent only when the provider accepts the field, see
-    # openai-provider.ts). Never sent before task 18 (grep confirmed only
-    # comments mentioned "reasoning" anywhere in gateway/src/provider/).
-    # Reasoning is the invisible phase that delays the first spoken word, and
-    # a household voice assistant wants an answer sooner. "low" rather than
-    # "minimal" is deliberate: minimal reasoning effort can degrade TOOL
-    # SELECTION, and picking the wrong tool is worse than a slightly slower
-    # reply.
+    # Constrains how much the model reasons before answering ("unset",
+    # "none", "minimal", "low", "medium", "high", "xhigh", "max" —
+    # provider-dependent support). Reasoning is the invisible phase that
+    # delays the first spoken word, and a household voice assistant wants an
+    # answer sooner. "low" rather than "minimal" is deliberate: minimal
+    # reasoning effort can degrade TOOL SELECTION, and picking the wrong tool
+    # is worse than a slightly slower reply.
+    #
+    # SENT UNCONDITIONALLY on every value except "unset" (see
+    # openai-provider.ts) — never sent before task 18 (grep confirmed only
+    # comments mentioned "reasoning" anywhere in gateway/src/provider/). A
+    # strict OpenAI-compatible endpoint that 400s on an unrecognized field
+    # will fail EVERY turn until reconfigured. If that happens, set this to
+    # "unset" — the field is then omitted from the request entirely. Do NOT
+    # use "none" for that: it is a real value the OpenAI SDK types as "zero
+    # reasoning effort", still sent and still a 400 risk on a provider that
+    # doesn't recognize the field at all.
     reasoning_effort: low
   loop:
     max_iterations: 10                       # ReAct iteration cap (1-50)

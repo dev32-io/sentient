@@ -488,6 +488,46 @@ describe("runTurn — provider exhausts its output budget before any visible tex
 
     store.close();
   });
+
+  // Finding 1 (task-18 code review): the guard above must not be scoped to
+  // `finishReason === "length"`. finishReason is a free-form `string` off the
+  // wire (provider-client.ts) — a provider returning empty/whitespace-only
+  // text under "stop" (or "content_filter", or anything else) must hit the
+  // exact same failure path, not fall through to a `completed: true` commit
+  // of an empty entry.
+  it("INVARIANT: empty text under finish_reason 'stop' is ALSO a failed turn, never a silent success", async () => {
+    const store = openSessionStore(cap);
+    const sessionId = "empty-stop";
+    seedUserMessage(store, sessionId, "hello?");
+    const beforeCount = store.readSession(sessionId).length;
+
+    // Whitespace-only, not just "", to prove the guard trims before judging —
+    // and finish_reason "stop", the ordinary/successful reason, to prove the
+    // guard does not key off finishReason at all.
+    const provider = fakeProvider(async function* () {
+      yield { type: "text", content: "   " };
+      yield { type: "done", finishReason: "stop" };
+    });
+
+    const result = await runTurn(
+      {
+        provider,
+        broker: noopBroker(),
+        store,
+        systemPrompt: "you are a test assistant",
+        sessionId,
+        config: loopConfig(10),
+        onTextDelta: () => {},
+        onToolUpdate: () => {},
+      },
+      { turnId: "turn-empty-stop", signal: new AbortController().signal },
+    );
+
+    expect(result).toMatchObject({ completed: false, iterations: 1 });
+    expect(store.readSession(sessionId)).toHaveLength(beforeCount);
+
+    store.close();
+  });
 });
 
 // ---------------------------------------------------------------------------

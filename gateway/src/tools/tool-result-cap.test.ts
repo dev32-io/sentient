@@ -38,4 +38,20 @@ describe("capToolResult", () => {
     // a bare "truncated" with no numbers gives the model nothing to act on.
     expect(out).toMatch(/\d+ of 50000 characters/);
   });
+
+  it("SURROGATE-SAFE: a cut landing mid-surrogate-pair keeps the pair intact instead of splitting it", () => {
+    // "😀" (U+1F600) is TWO UTF-16 code units — a high surrogate followed by
+    // a low surrogate. `String.prototype.slice` doesn't know that; a naive
+    // cut between them leaves a lone surrogate on each side, which becomes
+    // U+FFFD on UTF-8 re-encoding. limit=22 puts the naive head cut
+    // (floor(22/2)=11) exactly between the emoji's two code units (indices
+    // 10 and 11 in "a".repeat(10) + emoji + "b".repeat(20)).
+    const content = `${"a".repeat(10)}\u{1F600}${"b".repeat(20)}`;
+    const out = capToolResult(content, { limit: 22 });
+
+    const UNPAIRED_HIGH_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/;
+    const UNPAIRED_LOW_SURROGATE = /(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+    expect(out).not.toMatch(UNPAIRED_HIGH_SURROGATE);
+    expect(out).not.toMatch(UNPAIRED_LOW_SURROGATE);
+  });
 });
