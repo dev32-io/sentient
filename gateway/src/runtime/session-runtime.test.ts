@@ -35,6 +35,7 @@ function testConfig(maxIterations = 10): OrchestratorConfig {
       max_output_tokens: 1024,
       request_timeout_ms: 120000,
       site_name: "Sentient",
+      reasoning_effort: "low",
     },
     loop: { max_iterations: maxIterations },
     permission: { request_timeout_ms: 120000 },
@@ -42,6 +43,7 @@ function testConfig(maxIterations = 10): OrchestratorConfig {
       foreground_timeout_ms: 30000,
       max_concurrent_background_tasks: 50,
       background_completion_request_echo_chars: 240,
+      max_tool_result_chars: 20000,
     },
     delegation: {
       frontmatter_dir: "./config/delegation",
@@ -537,6 +539,7 @@ describe("SessionRuntime — delegateTask fire-and-steer loop closes end to end"
         foreground_timeout_ms: 30000,
         max_concurrent_background_tasks: 5,
         background_completion_request_echo_chars: 240,
+        max_tool_result_chars: 20000,
       },
       requestConfirm: async () => false,
     });

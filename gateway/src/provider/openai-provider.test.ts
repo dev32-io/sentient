@@ -20,6 +20,7 @@ live("[@live] openai-provider against a real endpoint", () => {
         max_output_tokens: 64,
         request_timeout_ms: 60000,
         site_name: "Sentient",
+        reasoning_effort: "low",
       },
       KEY,
     );

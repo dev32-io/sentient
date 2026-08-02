@@ -9,6 +9,7 @@ const providerCfg: OrchestratorConfig["provider"] = {
   max_output_tokens: 1024,
   request_timeout_ms: 120000,
   site_name: "Sentient",
+  reasoning_effort: "low",
 };
 
 describe("resolveProviderConnection", () => {

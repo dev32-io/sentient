@@ -513,6 +513,7 @@ function testOrchestratorConfig(): OrchestratorConfig {
       max_output_tokens: 1024,
       request_timeout_ms: 120000,
       site_name: "Sentient",
+      reasoning_effort: "low",
     },
     loop: { max_iterations: 4 },
     permission: { request_timeout_ms: 120000 },
@@ -520,6 +521,7 @@ function testOrchestratorConfig(): OrchestratorConfig {
       foreground_timeout_ms: 30000,
       max_concurrent_background_tasks: 50,
       background_completion_request_echo_chars: 240,
+      max_tool_result_chars: 20000,
     },
     delegation: {
       frontmatter_dir: "./config/delegation",
