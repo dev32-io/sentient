@@ -1,0 +1,63 @@
+2026-08-01T15:59:55.294 INFO  [gateway:api:profile-edit] soul.put | userId="u_0417d3b0" bytes=2042
+2026-08-01T15:59:55.296 INFO  [gateway:api:profile-edit] editApplied | userId="u_0417d3b0" elapsedMs=2
+2026-08-01T15:59:55.302 INFO  [gateway:api:profile] apply.request | userId="u_0417d3b0"
+2026-08-01T15:59:55.302 INFO  [apply:orchestrator] apply.begin | userId="u_0417d3b0"
+2026-08-01T15:59:55.309 INFO  [gateway:profile-store:renderer] writeRendered | userId="u_0417d3b0" dir="/Users/kevinye/.sentient/gateway/u_0417d3b0/profiles/u_0417d3b0" wroteSoul=false
+2026-08-01T15:59:55.310 INFO  [apply:orchestrator] apply.ready | userId="u_0417d3b0" elapsedMs=8
+2026-08-01T15:59:55.310 INFO  [gateway:api:profile] apply.ready | userId="u_0417d3b0" elapsedMs=8
+2026-08-01T15:59:55.316 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T15:59:55.324 INFO  [gateway:api:profile-edit] soul.get | userId="u_0417d3b0"
+2026-08-01T16:00:09.797 INFO  [ws] client-disconnected
+2026-08-01T16:00:09.798 INFO  [runtime:permission-broker] permission-broker.deny-all | userId="u_0417d3b0" sessionId="s-msayowy9-q0cph3h3" count=0
+2026-08-01T16:00:09.799 INFO  [runtime:turn-voice] turn-voice.audio.cancel | sessionId="s-msayowy9-q0cph3h3" turnIds=530bc0be-8f6e-49fb-809e-52781dabf134,cf9fe149-275e-41b8-acd7-ca7b4840f533,782989dc-617d-4f41-a47b-c4ac1b852c48 reason="user cancel gesture — barge-in or interrupt"
+2026-08-01T16:00:09.799 INFO  [runtime:session-runtime] session-runtime.dispose | userId="u_0417d3b0" sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" hadInFlight=false cutTurnCount=3
+2026-08-01T16:00:09.800 INFO  [store:session-store] store.closed | userId="u_0417d3b0"
+2026-08-01T16:00:09.801 INFO  [ws:replay-registry] replay-registry.released | surfaceKey="u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" epoch=7 leaseId=7 newestSeq=27 journalBytes=11179 retentionMs=300000
+2026-08-01T16:00:09.801 INFO  [ws] session-cleanup | sessionId="s-msayowy9-q0cph3h3" conversationId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6"
+2026-08-01T16:00:09.802 INFO  [tts:streaming-tts-synthesizer] synthesize-aborted | frameCount=0
+2026-08-01T16:00:09.802 INFO  [tts:local-tts] dispose
+2026-08-01T16:00:09.803 INFO  [tts:local-tts-socket] ws-closed
+2026-08-01T16:00:09.804 INFO  [runtime:turn-voice] turn-voice.audio.cancelled | sessionId="s-msayowy9-q0cph3h3" turnId="530bc0be-8f6e-49fb-809e-52781dabf134" frameCount=0 bytesSent=0
+2026-08-01T16:00:09.805 INFO  [runtime:turn-voice] turn-voice.drain.skipped | sessionId="s-msayowy9-q0cph3h3" turnId="cf9fe149-275e-41b8-acd7-ca7b4840f533" reason="aborted while queued behind a prior turn"
+2026-08-01T16:00:09.805 INFO  [runtime:turn-voice] turn-voice.audio.cancelled | sessionId="s-msayowy9-q0cph3h3" turnId="cf9fe149-275e-41b8-acd7-ca7b4840f533" frameCount=0 bytesSent=0
+2026-08-01T16:00:09.805 INFO  [runtime:turn-voice] turn-voice.drain.skipped | sessionId="s-msayowy9-q0cph3h3" turnId="782989dc-617d-4f41-a47b-c4ac1b852c48" reason="aborted while queued behind a prior turn"
+2026-08-01T16:00:09.805 INFO  [runtime:turn-voice] turn-voice.audio.cancelled | sessionId="s-msayowy9-q0cph3h3" turnId="782989dc-617d-4f41-a47b-c4ac1b852c48" frameCount=0 bytesSent=0
+2026-08-01T16:00:09.971 WARN  [system-orch:factory] versions.hermes-read-failed | reason="ENOENT: no such file or directory, open '/data/supervisor/.versions/hermes'" path="/data/supervisor/.versions/hermes"
+2026-08-01T16:00:09.971 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T16:00:09.971 INFO  [ws] client-connected
+2026-08-01T16:00:09.971 INFO  [ws] session-opened | sessionId="s-msaz59wz-kqys2ctm"
+2026-08-01T16:00:09.972 INFO  [gateway:api:profile-edit] memory.get | userId="u_0417d3b0" slot="memory"
+2026-08-01T16:00:09.977 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T16:00:09.980 INFO  [gateway:session-handlers:ws-auth-gate] auth.ok | sessionId="s-msaz59wz-kqys2ctm" userId="u_0417d3b0"
+2026-08-01T16:00:09.981 INFO  [gateway:api:profile-edit] memory.get | userId="u_0417d3b0" slot="memory"
+2026-08-01T16:00:09.982 INFO  [ws:replay-registry] replay-registry.fresh | surfaceKey="u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" epoch=8 priorEpoch=7 leaseId=8 reason="no-resume-requested"
+2026-08-01T16:00:09.983 INFO  [bootstrap:text-stream-synthesizer] text-stream-synthesizer-created
+2026-08-01T16:00:09.984 WARN  [tools:mcp-client] mcp.entry.stdio-skipped | serverName="gateway" reason="v1 only dials http transport"
+2026-08-01T16:00:09.984 INFO  [bootstrap:phase-services] session-runtime.factory.build | userId="u_0417d3b0" conversationId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" connectionId="s-msaz59wz-kqys2ctm"
+2026-08-01T16:00:09.985 INFO  [store:session-store] store.opened | userId="u_0417d3b0" schemaVersion=1
+2026-08-01T16:00:09.985 INFO  [ws:session-configure] session-configured | sessionId="s-msaz59wz-kqys2ctm" userId="u_0417d3b0" capabilities=stream.resume,audio.input,text.input,audio.output,cognition.status,conversation.history,message.stream,tool.status,permission.confirm,delegation.progress,sessions,session.preferences clientType="webui" language="en" deviceId="6e952001-ebae-410e-b4eb-5ae4efbcec80" surfaceId="16a4b56e-7731-4941-b7eb-da494f814ae6" hasRuntime=true hasVoice=true epoch=8 resumed=false requestedResumeLastSeq=null conversationId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6"
+2026-08-01T16:00:09.985 INFO  [ws:turn-emitter] turn-emitter.conversation-snapshot | sessionId="s-msaz59wz-kqys2ctm" itemCount=16
+2026-08-01T16:00:09.986 INFO  [runtime:conversation-feed] conversation-feed.snapshot | userId="u_0417d3b0" sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" itemCount=16 throughSeq=158
+2026-08-01T16:00:09.986 INFO  [session-handlers:voice-prefs] voice-prefs.loaded | sessionId="s-msaz59wz-kqys2ctm" userId="u_0417d3b0" voiceId="c624a6ca980346ec9dc38bb434fec506" ttsEnabled=true channel="voice"
+2026-08-01T16:00:09.988 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T16:00:09.988 INFO  [gateway:api:profile-edit] memory.get | userId="u_0417d3b0" slot="memory"
+2026-08-01T16:00:09.994 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T16:00:09.995 INFO  [gateway:api:profile-edit] memory.get | userId="u_0417d3b0" slot="memory"
+2026-08-01T16:00:10.001 INFO  [tools:mcp-client] mcp.list-tools.ok | serverName="music_assistant" totalCount=10 filteredCount=10 elapsedMs=17
+2026-08-01T16:00:10.002 INFO  [tools:mcp-client] mcp.list-tools.ok | serverName="fetch" totalCount=1 filteredCount=1 elapsedMs=18
+2026-08-01T16:00:10.008 INFO  [tools:mcp-client] mcp.list-tools.ok | serverName="searxng" totalCount=5 filteredCount=1 elapsedMs=24
+2026-08-01T16:00:10.018 INFO  [tools:mcp-client] mcp.list-tools.ok | serverName="home_assistant" totalCount=78 filteredCount=16 elapsedMs=34
+2026-08-01T16:00:10.018 INFO  [tools:tool-broker] tool-broker.mcp-warmup.ok | sessionId="s-msaz59wz-kqys2ctm" toolCount=28
+2026-08-01T16:00:10.019 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T16:00:10.019 INFO  [gateway:api:profile-edit] memory.get | userId="u_0417d3b0" slot="memory"
+2026-08-01T16:00:19.399 INFO  [gateway:api:profile-edit] soul.get | userId="u_0417d3b0"
+2026-08-01T16:01:00.579 INFO  [gateway:api:profile-edit] soul.put | userId="u_0417d3b0" bytes=2012
+2026-08-01T16:01:00.581 INFO  [gateway:api:profile-edit] editApplied | userId="u_0417d3b0" elapsedMs=2
+2026-08-01T16:01:00.587 INFO  [gateway:api:profile] apply.request | userId="u_0417d3b0"
+2026-08-01T16:01:00.587 INFO  [apply:orchestrator] apply.begin | userId="u_0417d3b0"
+2026-08-01T16:01:00.593 INFO  [gateway:profile-store:renderer] writeRendered | userId="u_0417d3b0" dir="/Users/kevinye/.sentient/gateway/u_0417d3b0/profiles/u_0417d3b0" wroteSoul=false
+2026-08-01T16:01:00.593 INFO  [apply:orchestrator] apply.ready | userId="u_0417d3b0" elapsedMs=6
+2026-08-01T16:01:00.593 INFO  [gateway:api:profile] apply.ready | userId="u_0417d3b0" elapsedMs=6
+2026-08-01T16:01:00.600 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T16:01:00.608 INFO  [gateway:api:profile-edit] soul.get | userId="u_0417d3b0"
+2026-08-01T16:01:00.614 INFO  [gateway:api:profile-edit] memory.get | userId="u_0417d3b0" slot="memory"

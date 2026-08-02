@@ -14,6 +14,55 @@ Status as of 2026-07-31, branch `feature/native-orchestrator`.
 
 ## 1. Open defects
 
+### D17 — a large tool result silently kills the turn, and the turn records itself as a success
+
+**Found 2026-08-01, E2E round 2 (plan task 17, group D). The most serious thing this round turned up.**
+Evidence: `qa/web/evidence/2026-08-01-e2e-round-2/group-d-tools-and-errors.md`.
+
+Ask for Home Assistant history. `ha_get_history` **succeeds** — `isError=false`, an ~81 KB payload. The next provider completion then returns `finishReason="length"` with **zero output text**, and:
+
+- no reply ever renders — the composer sits on the red Interrupt button indefinitely;
+- it is not a render glitch: a page reload shows the persisted transcript is genuinely empty at that point;
+- the turn is recorded server-side as **`completed=true failed=false`**.
+
+That last line is the defect behind the defect. A turn that produced nothing, because its own tool output crowded the answer out of the completion budget, is stored as a clean success. Nothing retries, nothing warns, and no oracle built on the turn record can ever see it.
+
+Generalise before fixing the symptom: **any** tool whose result is large enough can do this, so a per-tool fix (`ha_get_history` returns less) treats the instance and leaves the class. The turn loop needs to treat `finishReason="length"` with empty text as a **failure** — surface it, and either retry with the tool result truncated or tell the user the result was too large to summarise. `ha_get_history` is merely the first tool big enough to prove it.
+
+Related and probably the same budget: `search_web` results run ~3.8 KB and are fine, so nothing before this round came close.
+
+### D18 — a tool that fails in-band reports success, and the model then invents an answer
+
+**Found 2026-08-01, E2E round 2 (group D).** With `sentient-searxng` stopped, a currency question was answered *"1 USD = 1.40 CAD"* — no citation, no hedge, stated as fact. The same question after recovery returned the real figure with a source (1.4021, ExchangeRate-API), so the outage answer was confabulated.
+
+Root cause is upstream and it is the exact false-green shape this branch keeps meeting, this time at runtime and user-facing. The third-party `searxng-mcp-server` (pip, pinned 0.1.9) swallows its own DNS failure and returns a **131-byte success**:
+
+```json
+{"total_results": 0, "results": [], "error": "[Errno -3] Temporary failure in name resolution"}
+```
+
+`isError=false`, so the ToolBroker, the PDP and the log all read it as a clean call. The failure exists only *inside* the payload, and the model — handed an empty result set with no error signal — answered from its weights.
+
+We cannot fix the upstream package, so the boundary is ours: a tool result carrying an `error` key, or an empty result set from a search tool, must not reach the model shaped as success. This is the same lesson as D17 from the other direction — **the honesty of a result is a property we have to check, not one we can inherit** — and it is a second argument for the untrusted-content boundary below, which is the natural place to inspect inbound payloads.
+
+*Positive result from the same row, worth keeping:* the gateway's own health watchdog restarted the stopped container **unaided in ~15 s**, twice, well inside the 90 s budget.
+
+### D19 — the tool catalog names a tool that does not exist, and the allowlist hides it
+
+**Found 2026-08-01, E2E round 2 (group D).** `ha_search_entities` appears in `gateway/config.yaml`'s ha-mcp `tools.include` list **and** has its own `allow_ha_search_entities` rule in `mcp-policy.yaml`. The upstream server has no such tool — confirmed by a direct MCP dial (`Unknown tool: 'ha_search_entities'`) and a full `tools/list` of all 78 tools it serves. The real one is **`ha_search`**, which is in neither file.
+
+Consequences, in order of importance:
+
+1. **The assistant cannot search entities at all.** It can only reach an entity whose exact id it already knows. That is a live capability gap, not a config typo.
+2. `ha_search` is unreachable even if the model guessed the name: it is absent from the include list, and with no policy rule it would hit the fail-closed default anyway. **Fail-closed held** — this is not a security hole.
+3. **The mechanism that hid it is the durable lesson.** `filterByAllowlist` (`tools/mcp-client.ts:109`) intersects the include list with what the server advertises and drops the rest **silently**. A curated surface therefore rots invisibly as upstream renames things, and the config keeps reading like coverage. Log the difference — an `include` entry that matched nothing is exactly the kind of drift a WARN exists for.
+
+### D20 — a failed login leaves no server-side trace
+
+**Found 2026-08-01, E2E round 2 (group A).** `user-auth/auth-service.ts:81,86` log both failure branches (`authenticate.no-user`, `authenticate.wrong-pin`) at **DEBUG**, while the running level is `info` — the documented prod default. The success path logs at INFO (line 90).
+
+So a wrong PIN produces a correct user-visible error and a 401, and **nothing at all** in the gateway log. Repeated PIN guessing against a household assistant is invisible to whoever reads the logs, and there is no record to rate-limit or alert on later. Per the logging rules a rejected credential is precisely a "boundary decision with a reason" — these belong at WARN with the userId and the reason, and they are cheap.
+
 ### ~~D11 — the delegated Hermes has no tools~~ — CLOSED 2026-07-30 (plan task 9d)
 
 `gateway/src/external-tools/` holds the generic **external tool** contract — an external tool is one the gateway does not supervise (no lifecycle, port or health check), Hermes being the first of them. Registration is `hermes -p <id> mcp add gateway --command nc --args -U <resolveMcpSocketPath(id)>` through hermes's public CLI, read back afterwards because exit 0 is not evidence. The `hermes-profile.bridge.not-live` detector is deleted.
@@ -206,6 +255,18 @@ The suspicion above was correct on every mechanical point, and each is now close
 
 The content is not being dropped or hoisted out of reach: asked directly, the model reproduces the payload and the task id verbatim under **both** roles. It *sees* it and declines to act on it — under `role:"system"` it answers as though the task were still running ("Got it—sending that request over to Hermes now"). Adding an explicit hand-off line to the note ("the person who asked has not seen this yet; your next reply is how they receive it") did not move it: 0/6.
 
+**Measured on the selected model 2026-08-01 (E2E round 2, group C), and it is WORSE, not better.** This is the first measurement taken after the model-selection fix, i.e. the first one on a model anybody actually chose — Ada on `deepseek-v4-flash:cloud`. A delegation was approved and ran for real (`hermes-runner.run.ok elapsedMs=30428 verdict="succeeded"`), the completion steered a follow-up turn (`turn-emitter.turn-started trigger="background-completion"`), and that turn emitted:
+
+```
+completionTokens=1  textLength=0  toolCallCount=0
+```
+
+**No bubble at all** — verified twice, ten seconds apart. So the behaviour across two models is: `gpt-oss:20b` acknowledges without relaying; `deepseek-v4-flash` says nothing whatsoever. From the user's seat, a 30-second delegated task they explicitly approved produces silence.
+
+That kills the "wait for a stronger model" hypothesis this section recorded, and it changes the shape of the problem. Every mechanical link is right — `role:"system"`, the self-describing note, the fenced payload, and a system prompt that says in as many words to relay the result. The models still decline to speak. Whatever the fix is, it is not another wording pass over the note.
+
+The next thing to try is the one structural option not yet tried: stop asking the model to volunteer a follow-up reply and instead make the completion arrive as something it must answer. Do not spend more rounds on prompt wording — two models, nine trials and a hand-off line have already failed that way.
+
 So this is a model-behaviour gap on a 20B open-weights model with the harmony format, not a gateway defect. `role:"system"` for an async result is the published convention (Telnyx's async-tools spec recommends it verbatim and explicitly does not bind it to a `tool_call_id`), and the shipped shape is the correct one. The open question is whether a stronger model closes it on its own — untested here, because the only other configured providers are paid and smoke does not burn them. **Test that before changing the projection.** If it must be closed on a weak model, the lever is the system prompt's "Background tasks" section or the note's framing, not the role — reverting the role reinstates "the person pasted this into the chat", which is a lie the model then acts on.
 
 **Security, restated because task 15 made it live:** the delegated payload now sits in a `role:"system"` message — the highest-trust role — and nothing scans it. Task 15's containment is framing only: the frame is ours, the payload sits inside a per-task fence whose marker carries the freshly-minted `taskId` (so a page a delegated agent read cannot forge a closing marker it has never seen), and the note says in as many words that the contents are data rather than instruction. That raises the cost of an injection; it does not stop one. The owed work is the inbound scanning boundary already specified below under *"HIGH-PRIORITY SECURITY — untrusted content enters the model context completely unscanned"*, which is now no longer hypothetical.
@@ -224,6 +285,14 @@ None of it affects behaviour; all was found during the migration and would other
 - `gateway/src/system-orchestrator/types.ts:40` hardcodes the network topology in TypeScript; per the every-tunable-in-YAML rule it belongs in config.
 - `shared/mobile-sdk/.../settings/AdminModels.kt:19` keeps a vestigial `port` field describing a per-user worker slot that no longer exists.
 
+Added 2026-08-01 by E2E round 2 (plan task 17). All cosmetic; none blocks anything:
+
+- **A long unbroken token in a reply is silently clipped, not wrapped.** `webui/src/styles/components.css:417` sets `.message-bubble__text-wrap { overflow: hidden }` and nothing in `.bubble-text__md` sets `overflow-wrap`/`word-break`, so a bare URL just disappears past the edge. The fix pattern is already in the same file — `.tool-inline-detail__preview` (line 592) uses `overflow-wrap: anywhere`. Note the oracle lesson with it: the page-level `scrollWidth <= innerWidth` check **passes** here, because `overflow: hidden` suppresses the very scroll the oracle looks for. Only an ancestor-chain walk found it. Clipping is invisible to the obvious test.
+- **The Model pane still says "Apply & Restart" / "Agent will restart to apply."** Nothing restarts — `apply/orchestrator.ts` says so in its own comment, and three measured applies took 8–12 ms. Stale copy plus stale doc-comments in `settings-view.tsx` and `apply-bar/apply-bar-machine.ts` describing the retired Hermes-worker restart pipeline.
+- **Composer controls are below the 44 px tap target** — voice 32×32, mute 32×32, send 28×28, shrunk further under `@media (max-width: 620px)` from an already-small desktop default. All clear WCAG 2.5.8 AA's 24 px floor, so this is a comfort issue on a phone-sized viewport, not a compliance failure.
+- **One benign "which players do I have?" produced eight consecutive `ma_queue` confirm prompts.** Every one was correctly gated and denied, and the model recovered — so the PDP behaved. But eight dialogs for one read-shaped question is a UX smell worth a look when the permission surface is next touched.
+- **A previous run left a garbled marker in Ada's Soul.md** (`#E2E mrkr(tempoary— estoe by RetoeDfu belw)`) — found by group B before it touched anything, and left alone as not-its-to-fix. Recorded as the process lesson: a driver that edits owner-visible settings must restore them, and this round's briefs now say so explicitly.
+
 ### D15 — "+ new chat" does not reset the server-side conversation
 
 A surface has exactly one durable conversation on 2.0, so `session.new` is answered with the existing id: "+" clears the client's mirror but leaves the server thread and its context. Observed consequence, not theoretical — `ios/01-newchat.yaml` sends `what is 8 plus 9` into a fresh-looking chat and the model calls `ha_call_service`, resuming the *previous* conversation's task, so the turn parks on a permission prompt and no reply ever renders.
@@ -235,6 +304,12 @@ A surface has exactly one durable conversation on 2.0, so `session.new` is answe
 - `drawer.tsx:133`'s comment still describes the ACP-era mechanism (*"the gateway clears the chat pane synchronously (`switchFlow.switchTo("")`)"*). That code path no longer exists; the comment is why the button looks wired.
 
 So on web, "+" closes the drawer and nothing else happens. Same root cause, same fix, and it goes with the multi-conversation project — but it should not be described as a client-mirror reset when the web client visibly performs none.
+
+**Driven 2026-08-01 (E2E round 2, group A), and it is a context leak, not a cosmetic one.** Evidence: `qa/web/evidence/2026-08-01-e2e-round-2/group-a-auth-and-newchat.md`.
+
+The feed did not clear (checked in the accessibility tree, not by eye). Asked afterwards whether it had prior context *with an escape hatch offered* ("say NO-CONTEXT if this is fresh"), the model took the hatch and answered `NO-CONTEXT` — which is exactly the vacuous pass this file keeps warning about, and the driver did not accept it. On the wire, `provider:openai stream-start | messageCount` went 6 → 8 across the "+" click: the entire pre-"+" transcript was sent to the model both times. Re-asked without an escape hatch ("repeat back the exact marker string"), it recited the pre-"+" marker verbatim.
+
+So a user who clicks "+ new chat" to start something private, or simply to drop a long context, gets neither. Everything they said before is still in the prompt. `session.new.answered` returned the same conversation id, and `session-boundary.clear-drain` never fired at all. Upgrade the severity accordingly: this is a *data* boundary users reasonably believe in, and it does not exist.
 
 The alternative was rejected on evidence: minting a fresh partition per `session.new` would fork on **every app launch** (the chat route's default `sessionId` is null, so `ChatViewModel.init` fires `sendNewChat()` with no user tap — and the VM initialises twice per launch), destroying `reload-convergence` and `restart-persistence`. Closing this properly is the multi-conversation project in §2. `01-newchat` is left red as its standing acceptance test.
 

@@ -1,0 +1,52 @@
+2026-08-01T15:33:26.013 INFO  [gateway:user-auth:auth-service] authenticate.ok | userId="u_0417d3b0"
+2026-08-01T15:33:26.030 INFO  [ws] session-opened | sessionId="s-msay6wb2-v3i2mdcr"
+2026-08-01T15:33:26.030 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T15:33:26.034 INFO  [gateway:session-handlers:ws-auth-gate] auth.ok | sessionId="s-msay6wb2-v3i2mdcr" userId="u_0417d3b0"
+2026-08-01T15:33:26.037 INFO  [ws:replay-registry] replay-registry.swept | surfaceKey="u_0417d3b0::25b02290-ff5f-47a3-96a4-38065fc95067" epoch=2 detachedForMs=1846890 retentionMs=300000 reason="detached past the retention window"
+2026-08-01T15:33:26.037 INFO  [ws:replay-registry] replay-registry.fresh | surfaceKey="u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" epoch=4 priorEpoch=null leaseId=4 reason="fresh-connect"
+2026-08-01T15:33:26.037 INFO  [bootstrap:phase-services] session-runtime.factory.build | userId="u_0417d3b0" conversationId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" connectionId="s-msay6wb2-v3i2mdcr"
+2026-08-01T15:33:26.038 INFO  [store:session-store] store.opened | userId="u_0417d3b0" schemaVersion=1
+2026-08-01T15:33:26.039 INFO  [ws:session-configure] session-configured | sessionId="s-msay6wb2-v3i2mdcr" userId="u_0417d3b0" capabilities=stream.resume,audio.input,text.input,audio.output,cognition.status,conversation.history,message.stream,tool.status,permission.confirm,delegation.progress,sessions,session.preferences clientType="webui" language="en" deviceId="6e952001-ebae-410e-b4eb-5ae4efbcec80" surfaceId="16a4b56e-7731-4941-b7eb-da494f814ae6" hasRuntime=true hasVoice=true epoch=4 resumed=false requestedResumeLastSeq=null conversationId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6"
+2026-08-01T15:33:26.039 INFO  [ws:turn-emitter] turn-emitter.conversation-snapshot | sessionId="s-msay6wb2-v3i2mdcr" itemCount=2
+2026-08-01T15:33:26.039 INFO  [runtime:conversation-feed] conversation-feed.snapshot | userId="u_0417d3b0" sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" itemCount=2 throughSeq=114
+2026-08-01T15:33:26.040 INFO  [session-handlers:voice-prefs] voice-prefs.loaded | sessionId="s-msay6wb2-v3i2mdcr" userId="u_0417d3b0" voiceId="c624a6ca980346ec9dc38bb434fec506" ttsEnabled=true channel="voice"
+2026-08-01T15:33:26.041 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T15:33:26.044 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T15:33:26.047 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T15:33:26.052 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T15:33:26.068 INFO  [tools:tool-broker] tool-broker.mcp-warmup.ok | sessionId="s-msay6wb2-v3i2mdcr" toolCount=28
+2026-08-01T15:33:52.097 INFO  [runtime:session-runtime] session-runtime.submit.start-turn | userId="u_0417d3b0" sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" kind="conversational" seq=145 turnId="b3a9b92b-c914-4c3a-b4f7-542d4516161a"
+2026-08-01T15:33:52.097 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-msay6wb2-v3i2mdcr" turnId="b3a9b92b-c914-4c3a-b4f7-542d4516161a"
+2026-08-01T15:33:52.097 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-msay6wb2-v3i2mdcr" turnId="b3a9b92b-c914-4c3a-b4f7-542d4516161a" trigger="user"
+2026-08-01T15:33:52.097 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_0417d3b0" sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="b3a9b92b-c914-4c3a-b4f7-542d4516161a" trigger="user" lastProcessedSeq=145
+2026-08-01T15:33:52.097 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="b3a9b92b-c914-4c3a-b4f7-542d4516161a" maxIterations=10 toolCount=29
+2026-08-01T15:33:53.112 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="b3a9b92b-c914-4c3a-b4f7-542d4516161a" iteration=1 forceFinal=false finishReason="stop" toolCallCount=0 textLength=8 cacheHitRatio=0
+2026-08-01T15:33:53.112 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="b3a9b92b-c914-4c3a-b4f7-542d4516161a" iterations=1 forceFinal=false
+2026-08-01T15:33:53.112 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_0417d3b0" sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="b3a9b92b-c914-4c3a-b4f7-542d4516161a" completed=true failed=false iterations=1
+2026-08-01T15:33:53.112 INFO  [ws:turn-emitter] turn-emitter.turn-completed | sessionId="s-msay6wb2-v3i2mdcr" turnId="b3a9b92b-c914-4c3a-b4f7-542d4516161a"
+2026-08-01T15:33:53.816 INFO  [ws:turn-emitter] turn-emitter.audio-start | sessionId="s-msay6wb2-v3i2mdcr" turnId="b3a9b92b-c914-4c3a-b4f7-542d4516161a" encoding="opus" sampleRate=48000
+2026-08-01T15:33:53.817 INFO  [runtime:turn-voice] turn-voice.audio.start | sessionId="s-msay6wb2-v3i2mdcr" turnId="b3a9b92b-c914-4c3a-b4f7-542d4516161a" encoding="opus" sampleRate=48000 firstFrameMs=1719
+2026-08-01T15:33:53.818 INFO  [ws:turn-emitter] turn-emitter.audio-done | sessionId="s-msay6wb2-v3i2mdcr" turnId="b3a9b92b-c914-4c3a-b4f7-542d4516161a" framesSent=2
+2026-08-01T15:33:53.818 INFO  [runtime:turn-voice] turn-voice.audio.done | sessionId="s-msay6wb2-v3i2mdcr" turnId="b3a9b92b-c914-4c3a-b4f7-542d4516161a" frameCount=2 bytesSent=10122 elapsedMs=1720
+2026-08-01T15:35:06.036 INFO  [gateway:user-auth:auth-service] authenticate.ok | userId="u_0417d3b0"
+2026-08-01T15:35:06.047 INFO  [runtime:permission-broker] permission-broker.deny-all | userId="u_0417d3b0" sessionId="s-msay6wb2-v3i2mdcr" count=0
+2026-08-01T15:35:06.047 INFO  [runtime:turn-voice] turn-voice.audio.cancel | sessionId="s-msay6wb2-v3i2mdcr" turnIds= reason="user cancel gesture — barge-in or interrupt"
+2026-08-01T15:35:06.048 INFO  [runtime:session-runtime] session-runtime.dispose | userId="u_0417d3b0" sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" hadInFlight=false cutTurnCount=0
+2026-08-01T15:35:06.048 INFO  [store:session-store] store.closed | userId="u_0417d3b0"
+2026-08-01T15:35:06.048 INFO  [ws:replay-registry] replay-registry.released | surfaceKey="u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" epoch=4 leaseId=4 newestSeq=12 journalBytes=11674 retentionMs=300000
+2026-08-01T15:35:06.048 INFO  [ws] session-cleanup | sessionId="s-msay6wb2-v3i2mdcr" conversationId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6"
+2026-08-01T15:35:06.053 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T15:35:06.053 INFO  [ws] session-opened | sessionId="s-msay91hh-x7y921mg"
+2026-08-01T15:35:06.055 INFO  [gateway:session-handlers:ws-auth-gate] auth.ok | sessionId="s-msay91hh-x7y921mg" userId="u_0417d3b0"
+2026-08-01T15:35:06.058 INFO  [ws:replay-registry] replay-registry.fresh | surfaceKey="u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" epoch=5 priorEpoch=4 leaseId=5 reason="no-resume-requested"
+2026-08-01T15:35:06.058 INFO  [bootstrap:phase-services] session-runtime.factory.build | userId="u_0417d3b0" conversationId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" connectionId="s-msay91hh-x7y921mg"
+2026-08-01T15:35:06.059 INFO  [store:session-store] store.opened | userId="u_0417d3b0" schemaVersion=1
+2026-08-01T15:35:06.059 INFO  [ws:session-configure] session-configured | sessionId="s-msay91hh-x7y921mg" userId="u_0417d3b0" capabilities=stream.resume,audio.input,text.input,audio.output,cognition.status,conversation.history,message.stream,tool.status,permission.confirm,delegation.progress,sessions,session.preferences clientType="webui" language="en" deviceId="6e952001-ebae-410e-b4eb-5ae4efbcec80" surfaceId="16a4b56e-7731-4941-b7eb-da494f814ae6" hasRuntime=true hasVoice=true epoch=5 resumed=false requestedResumeLastSeq=null conversationId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6"
+2026-08-01T15:35:06.059 INFO  [ws:turn-emitter] turn-emitter.conversation-snapshot | sessionId="s-msay91hh-x7y921mg" itemCount=4
+2026-08-01T15:35:06.059 INFO  [runtime:conversation-feed] conversation-feed.snapshot | userId="u_0417d3b0" sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" itemCount=4 throughSeq=146
+2026-08-01T15:35:06.060 INFO  [session-handlers:voice-prefs] voice-prefs.loaded | sessionId="s-msay91hh-x7y921mg" userId="u_0417d3b0" voiceId="c624a6ca980346ec9dc38bb434fec506" ttsEnabled=true channel="voice"
+2026-08-01T15:35:06.060 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T15:35:06.063 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T15:35:06.067 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T15:35:06.076 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T15:35:06.084 INFO  [tools:tool-broker] tool-broker.mcp-warmup.ok | sessionId="s-msay91hh-x7y921mg" toolCount=28

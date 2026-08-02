@@ -1,0 +1,81 @@
+2026-08-01T15:52:46.053 INFO  [gateway:api:profile] me.request | method="PUT" userId="u_0417d3b0"
+2026-08-01T15:52:46.055 INFO  [gateway:profile-store] save | userId="u_0417d3b0"
+2026-08-01T15:52:46.058 INFO  [session-handlers:voice-prefs] voice-prefs.audio-patched | sessionId="s-msayowy9-q0cph3h3" userId="u_0417d3b0" ttsEnabled=true channel="voice"
+2026-08-01T15:52:46.059 INFO  [gateway:profile-store] save | userId="u_0417d3b0"
+2026-08-01T15:52:46.059 INFO  [session-handlers:preferences-patch] preferences-patch.applied | sessionId="s-msayowy9-q0cph3h3" userId="u_0417d3b0" ttsEnabled=true channel="voice"
+2026-08-01T15:52:46.062 INFO  [gateway:api:profile] apply.request | userId="u_0417d3b0"
+2026-08-01T15:52:46.062 INFO  [apply:orchestrator] apply.begin | userId="u_0417d3b0"
+2026-08-01T15:52:46.074 INFO  [gateway:profile-store:renderer] writeRendered | userId="u_0417d3b0" dir="/Users/kevinye/.sentient/gateway/u_0417d3b0/profiles/u_0417d3b0" wroteSoul=false
+2026-08-01T15:52:46.074 INFO  [apply:orchestrator] apply.ready | userId="u_0417d3b0" elapsedMs=12
+2026-08-01T15:52:46.074 INFO  [gateway:api:profile] apply.ready | userId="u_0417d3b0" elapsedMs=12
+2026-08-01T15:52:46.082 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T15:52:46.090 INFO  [gateway:api:profile-edit] soul.get | userId="u_0417d3b0"
+2026-08-01T15:53:37.269 INFO  [runtime:session-runtime] session-runtime.submit.start-turn | userId="u_0417d3b0" sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" kind="conversational" seq=153 turnId="530bc0be-8f6e-49fb-809e-52781dabf134"
+2026-08-01T15:53:37.270 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-msayowy9-q0cph3h3" turnId="530bc0be-8f6e-49fb-809e-52781dabf134"
+2026-08-01T15:53:37.270 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-msayowy9-q0cph3h3" turnId="530bc0be-8f6e-49fb-809e-52781dabf134" trigger="user"
+2026-08-01T15:53:37.271 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_0417d3b0" sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="530bc0be-8f6e-49fb-809e-52781dabf134" trigger="user" lastProcessedSeq=153
+2026-08-01T15:53:37.271 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="530bc0be-8f6e-49fb-809e-52781dabf134" maxIterations=10 toolCount=29
+2026-08-01T15:53:37.271 INFO  [tts:streaming-tts-synthesizer] synthesize-start
+2026-08-01T15:53:37.272 INFO  [tts:local-tts-socket] ws-open-requested | url="ws://127.0.0.1:8770/?format=opus&sample_rate=48000&voice=c624a6ca980346ec9dc38bb434fec506"
+2026-08-01T15:53:37.273 INFO  [bootstrap:user-model-provider] orchestrator.provider.resolved | userId="u_0417d3b0" provider="ollama-cloud" model="kimi-k3:cloud" source="profile" hasKey=true
+2026-08-01T15:53:37.274 INFO  [provider:openai] stream-start | model="kimi-k3:cloud" messageCount=12 toolCount=29
+2026-08-01T15:53:37.277 INFO  [tts:local-tts-socket] ws-opened
+2026-08-01T15:53:37.278 INFO  [tts:local-tts] ready-received | format="opus" sampleRate=48000 voice="c624a6ca980346ec9dc38bb434fec506"
+2026-08-01T15:53:37.470 ERROR [runtime:session-runtime] session-runtime.turn.threw | userId="u_0417d3b0" sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="530bc0be-8f6e-49fb-809e-52781dabf134" reason="402 "this model uses extra usage only (not included plan usage) and your extra usage balance is empty, add extra usage or turn on auto reload at https://ollama.com/settings (ref: 76da869c-88cd-4c0f-b0..."
+2026-08-01T15:53:37.471 WARN  [runtime:session-runtime] session-runtime.turn.failure-committed | userId="u_0417d3b0" sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="530bc0be-8f6e-49fb-809e-52781dabf134" seq=154 partialLength=0 reason="turn ended with no answer and no user cancel — committing a durable notice in its place"
+2026-08-01T15:53:37.471 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_0417d3b0" sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="530bc0be-8f6e-49fb-809e-52781dabf134" completed=false failed=true iterations=0
+2026-08-01T15:53:37.471 INFO  [ws:turn-emitter] turn-emitter.turn-completed | sessionId="s-msayowy9-q0cph3h3" turnId="530bc0be-8f6e-49fb-809e-52781dabf134"
+2026-08-01T15:54:44.953 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T15:54:44.955 WARN  [system-orch:factory] versions.hermes-read-failed | reason="ENOENT: no such file or directory, open '/data/supervisor/.versions/hermes'" path="/data/supervisor/.versions/hermes"
+2026-08-01T15:54:52.957 INFO  [gateway:api:providers] providers.list | key="models" stale=false
+2026-08-01T15:55:12.384 INFO  [gateway:api:profile] me.request | method="PUT" userId="u_0417d3b0"
+2026-08-01T15:55:12.385 INFO  [gateway:profile-store] save | userId="u_0417d3b0"
+2026-08-01T15:55:12.387 INFO  [session-handlers:voice-prefs] voice-prefs.audio-patched | sessionId="s-msayowy9-q0cph3h3" userId="u_0417d3b0" ttsEnabled=true channel="voice"
+2026-08-01T15:55:12.389 INFO  [gateway:profile-store] save | userId="u_0417d3b0"
+2026-08-01T15:55:12.389 INFO  [session-handlers:preferences-patch] preferences-patch.applied | sessionId="s-msayowy9-q0cph3h3" userId="u_0417d3b0" ttsEnabled=true channel="voice"
+2026-08-01T15:55:12.390 INFO  [gateway:api:profile] apply.request | userId="u_0417d3b0"
+2026-08-01T15:55:12.390 INFO  [apply:orchestrator] apply.begin | userId="u_0417d3b0"
+2026-08-01T15:55:12.398 INFO  [gateway:profile-store:renderer] writeRendered | userId="u_0417d3b0" dir="/Users/kevinye/.sentient/gateway/u_0417d3b0/profiles/u_0417d3b0" wroteSoul=false
+2026-08-01T15:55:12.399 INFO  [apply:orchestrator] apply.ready | userId="u_0417d3b0" elapsedMs=9
+2026-08-01T15:55:12.399 INFO  [gateway:api:profile] apply.ready | userId="u_0417d3b0" elapsedMs=9
+2026-08-01T15:55:12.406 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T15:55:12.415 INFO  [gateway:api:profile-edit] soul.get | userId="u_0417d3b0"
+2026-08-01T15:55:25.998 INFO  [runtime:session-runtime] session-runtime.submit.start-turn | userId="u_0417d3b0" sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" kind="conversational" seq=155 turnId="cf9fe149-275e-41b8-acd7-ca7b4840f533"
+2026-08-01T15:55:25.998 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-msayowy9-q0cph3h3" turnId="cf9fe149-275e-41b8-acd7-ca7b4840f533"
+2026-08-01T15:55:25.998 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-msayowy9-q0cph3h3" turnId="cf9fe149-275e-41b8-acd7-ca7b4840f533" trigger="user"
+2026-08-01T15:55:25.999 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_0417d3b0" sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="cf9fe149-275e-41b8-acd7-ca7b4840f533" trigger="user" lastProcessedSeq=155
+2026-08-01T15:55:25.999 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="cf9fe149-275e-41b8-acd7-ca7b4840f533" maxIterations=10 toolCount=29
+2026-08-01T15:55:25.999 INFO  [bootstrap:user-model-provider] orchestrator.provider.resolved | userId="u_0417d3b0" provider="ollama-cloud" model="nemotron-3-nano:30b-cloud" source="profile" hasKey=true
+2026-08-01T15:55:26.000 INFO  [provider:openai] stream-start | model="nemotron-3-nano:30b-cloud" messageCount=14 toolCount=29
+2026-08-01T15:55:28.028 INFO  [provider:openai] stream-end | durationMs=2028 finishReason="stop" promptTokens=16158 cachedTokens=0 completionTokens=45 cacheHitRatio=0
+2026-08-01T15:55:28.029 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="cf9fe149-275e-41b8-acd7-ca7b4840f533" iteration=1 forceFinal=false finishReason="stop" toolCallCount=0 textLength=2 cacheHitRatio=0
+2026-08-01T15:55:28.029 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="cf9fe149-275e-41b8-acd7-ca7b4840f533" iterations=1 forceFinal=false
+2026-08-01T15:55:28.030 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_0417d3b0" sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="cf9fe149-275e-41b8-acd7-ca7b4840f533" completed=true failed=false iterations=1
+2026-08-01T15:55:28.030 INFO  [ws:turn-emitter] turn-emitter.turn-completed | sessionId="s-msayowy9-q0cph3h3" turnId="cf9fe149-275e-41b8-acd7-ca7b4840f533"
+2026-08-01T15:56:14.100 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T15:56:14.102 WARN  [system-orch:factory] versions.hermes-read-failed | reason="ENOENT: no such file or directory, open '/data/supervisor/.versions/hermes'" path="/data/supervisor/.versions/hermes"
+2026-08-01T15:56:22.863 INFO  [gateway:api:providers] providers.list | key="models" stale=false
+2026-08-01T15:56:43.284 INFO  [gateway:api:profile] me.request | method="PUT" userId="u_0417d3b0"
+2026-08-01T15:56:43.286 INFO  [gateway:profile-store] save | userId="u_0417d3b0"
+2026-08-01T15:56:43.288 INFO  [session-handlers:voice-prefs] voice-prefs.audio-patched | sessionId="s-msayowy9-q0cph3h3" userId="u_0417d3b0" ttsEnabled=true channel="voice"
+2026-08-01T15:56:43.289 INFO  [gateway:profile-store] save | userId="u_0417d3b0"
+2026-08-01T15:56:43.289 INFO  [session-handlers:preferences-patch] preferences-patch.applied | sessionId="s-msayowy9-q0cph3h3" userId="u_0417d3b0" ttsEnabled=true channel="voice"
+2026-08-01T15:56:43.292 INFO  [gateway:api:profile] apply.request | userId="u_0417d3b0"
+2026-08-01T15:56:43.292 INFO  [apply:orchestrator] apply.begin | userId="u_0417d3b0"
+2026-08-01T15:56:43.299 INFO  [gateway:profile-store:renderer] writeRendered | userId="u_0417d3b0" dir="/Users/kevinye/.sentient/gateway/u_0417d3b0/profiles/u_0417d3b0" wroteSoul=false
+2026-08-01T15:56:43.300 INFO  [apply:orchestrator] apply.ready | userId="u_0417d3b0" elapsedMs=8
+2026-08-01T15:56:43.300 INFO  [gateway:api:profile] apply.ready | userId="u_0417d3b0" elapsedMs=8
+2026-08-01T15:56:43.308 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T15:56:43.314 INFO  [gateway:api:profile-edit] soul.get | userId="u_0417d3b0"
+2026-08-01T15:56:57.503 INFO  [runtime:session-runtime] session-runtime.submit.start-turn | userId="u_0417d3b0" sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" kind="conversational" seq=157 turnId="782989dc-617d-4f41-a47b-c4ac1b852c48"
+2026-08-01T15:56:57.504 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-msayowy9-q0cph3h3" turnId="782989dc-617d-4f41-a47b-c4ac1b852c48"
+2026-08-01T15:56:57.504 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-msayowy9-q0cph3h3" turnId="782989dc-617d-4f41-a47b-c4ac1b852c48" trigger="user"
+2026-08-01T15:56:57.504 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_0417d3b0" sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="782989dc-617d-4f41-a47b-c4ac1b852c48" trigger="user" lastProcessedSeq=157
+2026-08-01T15:56:57.505 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="782989dc-617d-4f41-a47b-c4ac1b852c48" maxIterations=10 toolCount=29
+2026-08-01T15:56:57.505 INFO  [bootstrap:user-model-provider] orchestrator.provider.resolved | userId="u_0417d3b0" provider="ollama-cloud" model="deepseek-v4-flash:cloud" source="profile" hasKey=true
+2026-08-01T15:56:57.505 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=16 toolCount=29
+2026-08-01T15:56:58.549 INFO  [provider:openai] stream-end | durationMs=1044 finishReason="stop" promptTokens=15655 cachedTokens=0 completionTokens=30 cacheHitRatio=0
+2026-08-01T15:56:58.550 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="782989dc-617d-4f41-a47b-c4ac1b852c48" iteration=1 forceFinal=false finishReason="stop" toolCallCount=0 textLength=2 cacheHitRatio=0
+2026-08-01T15:56:58.551 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="782989dc-617d-4f41-a47b-c4ac1b852c48" iterations=1 forceFinal=false
+2026-08-01T15:56:58.551 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_0417d3b0" sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="782989dc-617d-4f41-a47b-c4ac1b852c48" completed=true failed=false iterations=1
+2026-08-01T15:56:58.551 INFO  [ws:turn-emitter] turn-emitter.turn-completed | sessionId="s-msayowy9-q0cph3h3" turnId="782989dc-617d-4f41-a47b-c4ac1b852c48"

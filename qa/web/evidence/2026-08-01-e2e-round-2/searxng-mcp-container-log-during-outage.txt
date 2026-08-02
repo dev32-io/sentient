@@ -1,0 +1,5 @@
+INFO:     172.20.0.5:55936 - "POST /mcp HTTP/1.1" 200 OK
+2026-08-01 23:41:13,681 - mcp.server.lowlevel.server - INFO - Processing request of type CallToolRequest
+2026-08-01 23:41:13,688 - searxng_mcp_server.tools - ERROR - search request failed: [Errno -3] Temporary failure in name resolution
+2026-08-01 23:41:13,689 - searxng_mcp_server.tools - ERROR - search_web failed: [Errno -3] Temporary failure in name resolution
+2026-08-01 23:41:13,696 - mcp.server.streamable_http - INFO - Terminating session: None
