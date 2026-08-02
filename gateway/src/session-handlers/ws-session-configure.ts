@@ -2,15 +2,13 @@ import type { ClientType, GatewayMessage, SessionConfigureResume } from "@sentie
 import type { ServerWebSocket } from "bun";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { getLog } from "../logging/logger.js";
-import { createTurnVoice } from "../runtime/turn-voice.js";
-import { createMicEchoGuard } from "./mic-echo-guard.js";
 import type { ReplayAcquisition } from "./replay-registry.js";
-import { createSessionVoicePrefs } from "./session-voice-prefs.js";
+import { bindSessionRuntime, disposeSessionHandles, sendDraftHandshake, withSessionStore } from "./session-binding.js";
+import { isDraftKey, mintDraftKey, resolveSession } from "./session-id.js";
 import type { SessionData } from "./ws-helpers.js";
-import { errorMessage, sendError } from "./ws-helpers.js";
+import { sendError } from "./ws-helpers.js";
 import { handleResumeOrFresh } from "./ws-resume.js";
 import { sendGatewayFrame } from "./ws-send.js";
-import { createWsTurnEmitter } from "./ws-turn-emitter.js";
 
 const log = getLog(["sentient", "ws", "session-configure"]);
 
@@ -18,14 +16,7 @@ const INPUT_SAMPLE_RATE = 16000;
 const OUTPUT_SAMPLE_RATE = 48000;
 const AUDIO_ENCODING = "pcm16";
 
-// Conversation-id shape: `c::<userId>::<surfaceId>`. An internal identifier
-// format, not an operator tunable — the same class as a protocol string.
-// `userId` is `u_[a-f0-9]{8}` (user-auth/user-id.ts), so it can never contain
-// the separator and the owner segment is unambiguous to parse back out.
-const CONVERSATION_ID_PREFIX = "c";
 const ID_SEGMENT_SEPARATOR = "::";
-/** Cap on the client-supplied id echoed into a rejection log line. */
-const PRESENTED_ID_PREVIEW_MAX = 120;
 
 // ---------------------------------------------------------------------------
 // Session configure — post-purge minimal form.
@@ -79,20 +70,28 @@ const PRESENTED_ID_PREVIEW_MAX = 120;
 // first connect — the `turn.*` family is a live stream the client discards,
 // so the committed feed is the only thing that survives a turn.
 //
-// Finally, this handler resolves the DURABLE CONVERSATION ID the session
-// store partitions on (`resolveConversationId` below) and hands it to the
-// runtime factory. Two ids live in this file and they are not the same thing:
-// `sessionId` is this WebSocket connection and dies with it; `conversationId`
-// outlives every socket. The store used to be keyed on the former, so a
-// reload / reconnect / restart landed in a brand-new empty partition — the
-// snapshot above came back empty AND the model projection replayed nothing,
-// which is the whole of "the assistant forgot everything on reload".
+// Finally, this handler decides WHICH SESSION this connection is looking at
+// (`resolveConnectionSession` below). Two ids live in this file and they are
+// not the same thing: `sessionId` is this WebSocket connection and dies with
+// it; the session the store partitions on outlives every socket. The store
+// used to be keyed on the former, so a reload / reconnect / restart landed in
+// a brand-new empty partition — the snapshot above came back empty AND the
+// model projection replayed nothing, which is the whole of "the assistant
+// forgot everything on reload".
+//
+// Session-model redesign, task 3: that id is no longer DERIVED from the
+// principal and the surface. It is ALLOCATED (session-id.ts) when the first
+// message of a draft arrives, and a client-presented id is honoured only when
+// the store this caller's capability opens already holds it. A connection that
+// presents nothing — a fresh tab, a first launch, the window right after "+" —
+// is a DRAFT: no row, no id, no runtime, nothing in the session list. Ten
+// opened tabs leave no trace.
 //
 // Because that id is durable it is also SHARED, so the runtime it keys is
 // claimed from `services.conversationRuntimes`: a newer connection on a
-// conversation a still-live socket holds evicts that socket's runtime instead
-// of running a second ReAct loop over the same append-only log. Same race,
-// same stance, as the frame journal above.
+// session a still-live socket holds evicts that socket's runtime instead of
+// running a second ReAct loop over the same append-only log. Same race, same
+// stance, as the frame journal above.
 // ---------------------------------------------------------------------------
 
 export function handleSessionConfigure(
@@ -144,7 +143,7 @@ export function handleSessionConfigure(
   ws.data.epoch = acquisition.epoch;
   ws.data.replayLease = acquisition.lease;
 
-  // --- Durable conversation identity: the STORE's partition key ---
+  // --- Session identity: membership lookup, or a draft ---
   //
   // Resolved before the runtime block, because it is a runtime construction
   // input. Deliberately NOT `sessionId`: that one is minted per WebSocket
@@ -152,102 +151,32 @@ export function handleSessionConfigure(
   // partition on every reload, reconnect and restart — the committed feed came
   // back empty and the model projection handed the LLM no history at all
   // (spec §10 acceptance #9).
-  const conversationId = resolveConversationId(userId, surfaceId, configureConversationId, sessionId);
-  const priorConversationId = ws.data.conversationId;
-  ws.data.conversationId = conversationId;
+  const resolved = resolveConnectionSession(ws, services, configureConversationId);
 
   // A repeat session.configure on the same connection must not leak the
   // previous runtime's store handle, strand its open permission prompts, or
   // leave its speech draining — `dispose()` cuts all three, which is why the
-  // fresh `TurnVoice` minted below can start with an empty drain map and still
+  // fresh `TurnVoice` bound below can start with an empty drain map and still
   // be the only thing writing audio. The frame journal above is
   // deliberately NOT torn down with them: it belongs to the surface, not to
   // the runtime, and losing it here would break the very replay this
   // handshake just promised.
   //
-  // The claim on the PRIOR conversation goes back too — a re-configure onto a
-  // different surface must not leave this connection registered as the live
-  // owner of a conversation whose runtime it just disposed.
+  // The claim on the PRIOR session goes back too — a re-configure onto a
+  // different one must not leave this connection registered as the live owner
+  // of a session whose runtime it just disposed.
+  const priorSessionId = ws.data.conversationId;
   if (ws.data.runtime) {
     log.info("session-configure.reconfigure", { sessionId, userId, reason: "disposing prior runtime" });
     disposeSessionHandles(ws);
-    if (priorConversationId !== null) {
-      services.conversationRuntimes.release(priorConversationId, sessionId);
+    if (priorSessionId !== null) {
+      services.conversationRuntimes.release(priorSessionId, sessionId);
     }
   }
 
-  let hasVoice = false;
-
-  if (services.createSessionRuntime) {
-    try {
-      const emitter = createWsTurnEmitter(ws);
-      // Voice composition (spec §6). Built HERE because this is the only
-      // place that knows the socket, the emitter, the authenticated user's
-      // profile, and this connection's STT session — but DRIVEN inside
-      // SessionRuntime on the turn's own AbortController, so barge-in and
-      // interrupt cancel TTS through the same abort that stops the provider
-      // stream. See runtime/turn-voice.ts's header.
-      // Parked on the socket too: `user.preferences.patch` applies a live mute
-      // toggle through it (handle-preferences-patch.ts), so it cannot stay a
-      // closure variable only this block can see.
-      const voicePrefs = createSessionVoicePrefs(services.profileStore, userId, sessionId);
-      ws.data.voicePrefs = voicePrefs;
-      const echoGuard = createMicEchoGuard(
-        () => ws.data.stt,
-        services.stt?.adapterConfig.ttsEchoCooldownMs ?? null,
-        sessionId,
-      );
-      const synthesizer = services.createSynthesizerFor(() => voicePrefs.voiceId());
-      const voice = synthesizer
-        ? createTurnVoice({
-            synthesizer,
-            sink: emitter,
-            echoGuard,
-            shouldSpeak: () => voicePrefs.shouldSpeak(),
-            sessionId,
-          })
-        : null;
-      hasVoice = voice !== null;
-      // Both ids go in, named apart (`SessionRuntimeRequest`): the durable
-      // `conversationId` becomes the session store's partition key, while the
-      // connection-scoped `sessionId` reaches only the tool/permission
-      // brokers' log correlation. Swapping them is what emptied the store's
-      // partition on every reload.
-      const handles = services.createSessionRuntime({
-        principal,
-        conversationId,
-        connectionId: sessionId,
-        emitter,
-        voice,
-      });
-      ws.data.runtime = handles.runtime;
-      ws.data.permissions = handles.permissions;
-      // Take sole ownership of this conversation's live runtime. Claiming
-      // AFTER construction, not before, so a factory throw leaves whatever
-      // socket already holds the conversation running rather than killing it
-      // for a session that never materialised.
-      services.conversationRuntimes.claim(conversationId, sessionId, () => disposeSessionHandles(ws));
-    } catch (err) {
-      // Thrown only when the orchestrator IS configured but no active LLM
-      // key resolved from the secrets store (see phase-services.ts's
-      // `buildCreateSessionRuntime`) — a genuine per-session misconfig, not
-      // a reason to fail the whole handshake. Single-signal by design: this
-      // handler does NOT sendError here (a session.configure that both
-      // errors AND acks with session.ready is contradictory) — the socket
-      // is otherwise perfectly usable for everything that doesn't need the
-      // orchestrator, so session.ready still follows below with
-      // `ws.data.runtime` left null, and `text.input` (ws-handlers.ts)
-      // surfaces this exact "orchestrator_unavailable" error itself, at the
-      // point the client actually tries to use it.
-      log.error("session-configure.runtime-construction-failed", {
-        sessionId,
-        userId,
-        reason: errorMessage(err, "unknown error"),
-      });
-    }
-  } else {
-    log.info("session-configure.no-orchestrator", { sessionId, userId, reason: "orchestrator: absent from config" });
-  }
+  ws.data.conversationId = resolved.sessionId;
+  ws.data.draftKey = resolved.draftKey;
+  const hasRuntime = resolved.sessionId === null ? false : bindSessionRuntime(ws, services, resolved.sessionId);
 
   log.info("session-configured", {
     sessionId,
@@ -257,12 +186,12 @@ export function handleSessionConfigure(
     language,
     deviceId: configureDeviceId,
     surfaceId,
-    hasRuntime: ws.data.runtime !== null,
-    hasVoice,
+    hasRuntime,
     epoch: acquisition.epoch,
     resumed: acquisition.resumed,
     requestedResumeLastSeq: configureResume?.lastSeq ?? null,
-    conversationId,
+    conversationId: resolved.sessionId,
+    draft: resolved.sessionId === null,
   });
 
   const readyFrame: GatewayMessage = {
@@ -295,80 +224,84 @@ export function handleSessionConfigure(
   if (readyAlreadySent) return;
 
   sendGatewayFrame(ws, readyFrame);
-  sendConversationSnapshot(ws, sessionId, conversationId, userId);
+  if (resolved.sessionId === null) {
+    sendDraftHandshake(ws, resolved.draftKey, undefined);
+    return;
+  }
+  sendConversationSnapshot(ws, sessionId, resolved.sessionId, userId);
+}
+
+/** What this connection is looking at: a real session, or a draft holding the
+ *  key its first message will mint under. Exactly one of the two is set. */
+interface ConnectionSession {
+  sessionId: string | null;
+  draftKey: string;
 }
 
 /**
- * Tear down one connection's orchestrator handles and clear them off the
- * socket. Two callers, one body: a re-`session.configure` on this connection,
- * and the eviction hook a NEWER connection's claim fires on this one. Both
- * must leave the socket in the same state — no runtime, no permission broker —
- * so `text.input` answers `orchestrator_unavailable` (ws-handlers.ts) instead
- * of feeding a disposed runtime, and `cleanupSession` finds nothing to redo.
+ * Decide which session this connection opens — MEMBERSHIP, not derivation and
+ * not a prefix parse (spec §3.5).
  *
- * Permissions settle BEFORE the runtime is disposed: each open prompt is a
- * promise the ReAct loop is awaiting inside `broker.dispatch`, and an
- * unsettled one parks that turn for the full permission timeout.
+ * Four inputs, four answers:
+ *
+ *  - **nothing presented** — a fresh tab or a first launch. A DRAFT: no row,
+ *    no id, no runtime, nothing in the session list. The id is allocated when
+ *    the first message arrives (ws-handlers.ts), so ten opened tabs leave the
+ *    list unchanged.
+ *  - **a draft key** — the client is mid-draft and reconnected. Stay on the
+ *    same draft, so the first message still mints under the key the client
+ *    already holds and a lost `session.created` ack cannot fork a second
+ *    session out of the retry.
+ *  - **a session id the caller's store holds** — open it. This covers both
+ *    shapes identically: a minted id (a `sessions` row) and a legacy
+ *    `c::<userId>::<surfaceId>` partition (entries, no row). The store was
+ *    already chosen by the caller's capability, which is why membership is a
+ *    STRONGER check than the prefix parse it replaces — and why the
+ *    `surfaceId` inside a legacy id is dead metadata that nothing reads.
+ *  - **anything else** — REFUSED, and the connection starts a fresh draft.
+ *    The old behaviour created an empty partition for any well-formed string,
+ *    which let a client spam a user's database with rows nothing can list,
+ *    open or delete.
  */
-function disposeSessionHandles(ws: ServerWebSocket<SessionData>): void {
-  ws.data.permissions?.denyAll();
-  ws.data.permissions = null;
-  ws.data.runtime?.dispose();
-  ws.data.runtime = null;
-  // Minted with the runtime, cleared with it: the next session.configure
-  // hydrates a fresh one from the profile, and a stale handle here would apply
-  // a mute toggle to a `TurnVoice` no turn can ever reach.
-  ws.data.voicePrefs = null;
-}
-
-/**
- * Resolve the DURABLE conversation id this connection's store partition keys
- * on. Three decisions, all deliberate:
- *
- *  - **Who mints it?** The gateway, deterministically, from the authenticated
- *    principal plus the client's own stable surface id (`surfaceId`, falling
- *    back to `deviceId` — the same pair the replay journal is keyed on). Web
- *    persists `surfaceId` in sessionStorage and mobile sends `deviceId`, so
- *    the SAME id is re-derived on every reload, reconnect and gateway
- *    restart without the client having to hold anything new.
- *  - **Echoed back?** No, and it does not need to be: derivation means the
- *    client presents what it already sends. Nothing is added to the frozen
- *    wire contract, and `session.ready.sessionId` keeps meaning exactly what
- *    it has always meant (this connection).
- *  - **Mismatch?** A client MAY present `session.configure.conversationId`
- *    (mobile does, when it has an anchor). It is honoured ONLY when it is
- *    namespaced to the AUTHENTICATED principal; anything else falls back to
- *    this principal's own surface partition and is logged. A client-supplied
- *    string never becomes a partition key on trust alone. The store is
- *    already one DB per user opened through a Capability, so this is
- *    defense in depth over a bounded blast radius — not the only wall.
- *
- * A well-formed id for a partition this principal has never used yet simply
- * starts empty, in their own DB. That is a new conversation, not an error.
- */
-function resolveConversationId(
-  userId: string,
-  surfaceId: string,
+function resolveConnectionSession(
+  ws: ServerWebSocket<SessionData>,
+  services: GatewayServices,
   presented: string | undefined,
-  sessionId: string,
-): string {
-  const surfaceConversationId = `${CONVERSATION_ID_PREFIX}${ID_SEGMENT_SEPARATOR}${userId}${ID_SEGMENT_SEPARATOR}${surfaceId}`;
-  if (presented === undefined) return surfaceConversationId;
+): ConnectionSession {
+  const connectionId = ws.data.sessionId;
+  const principal = ws.data.principal;
+  if (principal === null) return { sessionId: null, draftKey: mintDraftKey() };
+  const userId = principal.userId;
 
-  const ownerPrefix = `${CONVERSATION_ID_PREFIX}${ID_SEGMENT_SEPARATOR}${userId}${ID_SEGMENT_SEPARATOR}`;
-  if (presented.startsWith(ownerPrefix)) {
-    log.info("session-configure.conversation.client-anchored", { sessionId, userId, conversationId: presented });
-    return presented;
+  if (presented === undefined) {
+    const draftKey = mintDraftKey();
+    log.info("session-configure.draft.fresh", { sessionId: connectionId, userId, draftKey });
+    return { sessionId: null, draftKey };
   }
 
-  log.warn("session-configure.conversation.foreign-id-refused", {
-    sessionId,
+  if (isDraftKey(presented)) {
+    log.info("session-configure.draft.resumed", { sessionId: connectionId, userId, draftKey: presented });
+    return { sessionId: null, draftKey: presented };
+  }
+
+  const resolution = withSessionStore(services, principal, (store) => resolveSession({ store, presented }));
+  if ("sessionId" in resolution) {
+    log.info("session-configure.session.opened", {
+      sessionId: connectionId,
+      userId,
+      conversationId: resolution.sessionId,
+    });
+    return { sessionId: resolution.sessionId, draftKey: mintDraftKey() };
+  }
+
+  const draftKey = mintDraftKey();
+  log.warn("session-configure.session.refused", {
+    sessionId: connectionId,
     userId,
-    conversationId: surfaceConversationId,
-    presentedPreview: presented.slice(0, PRESENTED_ID_PREVIEW_MAX),
-    reason: "presented conversation id is not scoped to this principal — anchoring to its own surface partition",
+    draftKey,
+    reason: `presented session id was ${resolution.rejected} in this caller's store — starting a draft instead of creating it`,
   });
-  return surfaceConversationId;
+  return { sessionId: null, draftKey };
 }
 
 /**

@@ -53,12 +53,19 @@ export interface SttSessionDeps {
   readonly sessionId: string;
   readonly factory: STTAdapterFactory;
   readonly config: STTAdapterConfig;
-  /** Read fresh on every event: `session.configure` can re-mint the runtime. */
+  /** Read fresh on every event: `session.configure` can re-mint the runtime.
+   *  NEVER mints a session — a mic onset with nothing running has nothing to
+   *  barge into, and a draft must not become a session because someone
+   *  breathed near the microphone. */
   readonly getRuntime: () => SessionRuntime | null;
+  /** The runtime a TRANSCRIPT goes to. Distinct from `getRuntime` because a
+   *  voice-first draft has no session yet: spoken words are a first message
+   *  like any other, and this is the seam that mints one (spec §4.2). */
+  readonly getRuntimeForInput: (text: string) => SessionRuntime | null;
 }
 
 export function createSttSession(deps: SttSessionDeps): SttSession {
-  const { sessionId, factory, config, getRuntime } = deps;
+  const { sessionId, factory, config, getRuntime, getRuntimeForInput } = deps;
   const lifetime = new AbortController();
 
   let adapter: STTAdapter | null = null;
@@ -89,30 +96,39 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
   }
 
   function dispatch(event: STTEvent): void {
-    const runtime = getRuntime();
     if (event.type === "turn_dropped") {
       log.debug("stt.turn-dropped", { sessionId, turnIdx: event.turnIdx });
-      return;
-    }
-    if (!runtime) {
-      log.warn("stt.event.no-runtime", {
-        sessionId,
-        eventType: event.type,
-        reason: "orchestrator unconfigured, or session.configure has not minted a runtime",
-      });
       return;
     }
     if (event.type === "turn_started") {
       // Barge-in (spec §4.7): fire on mic onset, BEFORE the transcript lands,
       // so the assistant stops talking as early as possible. Background tasks
       // keep running — that distinction lives in cancellation.ts.
+      const running = getRuntime();
+      if (!running) {
+        log.debug("stt.barge-in.no-runtime", {
+          sessionId,
+          turnIdx: event.turnIdx,
+          reason: "draft or unconfigured orchestrator — nothing is speaking",
+        });
+        return;
+      }
       log.info("stt.barge-in", { sessionId, turnIdx: event.turnIdx });
-      runtime.bargeIn();
+      running.bargeIn();
       return;
     }
     const text = event.text.trim();
     if (text.length === 0) {
       log.debug("stt.transcript.blank", { sessionId, turnIdx: event.turnIdx, reason: "empty after trim" });
+      return;
+    }
+    const runtime = getRuntimeForInput(text);
+    if (!runtime) {
+      log.warn("stt.event.no-runtime", {
+        sessionId,
+        eventType: event.type,
+        reason: "orchestrator unconfigured, or the session could not be minted for this transcript",
+      });
       return;
     }
     log.info("stt.transcript.submit", { sessionId, turnIdx: event.turnIdx, length: text.length });

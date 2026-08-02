@@ -73,6 +73,9 @@ function stubRuntime(): StubRuntime {
 // GatewayServices' large surface without exercising any of it.
 const unusedServices = {} as GatewayServices;
 
+/** A draft key shaped exactly as session-id.ts mints them (`d_` + 32 hex). */
+const DRAFT_KEY = `d_${"ab".repeat(16)}`;
+
 // cleanupSession() dereferences sessionManager, replayRegistry, and (once
 // session.configure has resolved a conversation) conversationRuntimes. Real
 // (tiny) registries are cheaper and more honest than hand-rolled doubles.
@@ -302,9 +305,12 @@ describe("ws-handlers outbound frames — journal discipline", () => {
 // ---------------------------------------------------------------------------
 
 describe("ws-handlers routing — session.new", () => {
-  it("answers with a session.created carrying this connection's durable conversation id", async () => {
+  it("CONTRACT: an implicit session.new re-attaches the bound session instead of forking one", async () => {
+    // Mobile fires this on EVERY launch, twice per launch. Answering it as a
+    // new chat is what would hand every relaunch an empty conversation.
     const ws = fakeAuthedWs(null);
     ws.data.conversationId = "c::u_deadbeef::surface-a";
+    ws.data.draftKey = DRAFT_KEY;
 
     await handleWebSocketMessage(
       ws as unknown as ServerWebSocket<SessionData>,
@@ -321,9 +327,30 @@ describe("ws-handlers routing — session.new", () => {
     expect(gatewayMessageSchema.safeParse(reply).success).toBe(true);
   });
 
-  it("seq-stamps and journals session.created so a reconnect replays the anchor", async () => {
+  it("CONTRACT: an explicit session.new unbinds the session and hands back a draft key", async () => {
     const ws = fakeAuthedWs(null);
     ws.data.conversationId = "c::u_deadbeef::surface-a";
+    ws.data.draftKey = DRAFT_KEY;
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({ type: "session.new", requestId: "r1", intent: "explicit" }),
+      cleanupServices,
+    );
+
+    const reply = ws.sent.find((f) => (f as { type: string }).type === "session.draft");
+    expect(reply).toBeDefined();
+    expect(gatewayMessageSchema.safeParse(reply).success).toBe(true);
+    // A fresh key, not the one the bound connection was carrying: reusing it
+    // would let the next mint collide with a session this draft never owned.
+    expect((reply as { draftKey: string }).draftKey).not.toBe(DRAFT_KEY);
+    expect(ws.data.conversationId).toBeNull();
+  });
+
+  it("seq-stamps and journals the answer so a reconnect replays the anchor", async () => {
+    const ws = fakeAuthedWs(null);
+    ws.data.conversationId = "c::u_deadbeef::surface-a";
+    ws.data.draftKey = DRAFT_KEY;
     const journal = createFrameJournal({ maxBytes: 65536 });
     ws.data.journal = journal;
     ws.data.epoch = 4;
@@ -340,7 +367,7 @@ describe("ws-handlers routing — session.new", () => {
     expect(journal.newestSeq).toBe(1);
   });
 
-  it("answers sessions.error when no conversation is bound yet, never silence", async () => {
+  it("answers sessions.error when the connection never configured, never silence", async () => {
     const ws = fakeAuthedWs(null);
 
     await handleWebSocketMessage(

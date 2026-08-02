@@ -38,14 +38,31 @@ export interface SessionData {
    */
   sessionId: string | null;
   /**
-   * DURABLE conversation id — the session store's partition key (its
-   * `session_id` column), resolved in `handleSessionConfigure` from the
-   * authenticated principal plus the client's own stable surface id. Stable
-   * across reload / reconnect / gateway restart, which is what makes the
-   * committed feed and the model's history survive them (spec §10
-   * acceptance #9). Null until session.configure.
+   * DURABLE session id — the session store's partition key (its `session_id`
+   * column). Server-minted, opaque and unguessable (session-id.ts); a client
+   * that presents one gets it only after a MEMBERSHIP lookup in the store its
+   * own capability opens. Stable across reload / reconnect / gateway restart,
+   * which is what makes the committed feed and the model's history survive
+   * them (spec §10 acceptance #9).
+   *
+   * Null on a DRAFT — a connection that presented nothing, presented a draft
+   * key, or presented an id this user's store does not hold. A draft has no
+   * row and no id until its first message mints one, which is why ten opened
+   * tabs leave the session list unchanged. `draftKey` below is what it holds
+   * meanwhile.
    */
   conversationId: string | null;
+  /**
+   * This connection's draft key — the mint key its first message allocates a
+   * session under, and the value the client re-presents as
+   * `session.configure.conversationId` while it is still on a draft.
+   *
+   * Always set after session.configure, even when `conversationId` is bound:
+   * an explicit "+" (ws-session-new.ts) unbinds the session and the connection
+   * must have a fresh key ready to hand back on the same frame. Null before
+   * session.configure.
+   */
+  draftKey: string | null;
   /**
    * Auth gate state. pending → authenticating happens synchronously (no
    * await between the guard read and this write in ws-auth-gate.ts), so a
@@ -138,6 +155,7 @@ export function createEmptySessionData(): SessionData {
   return {
     sessionId: null,
     conversationId: null,
+    draftKey: null,
     authState: "pending",
     principal: null,
     authTimeout: null,

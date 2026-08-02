@@ -32,6 +32,7 @@ function fakeWs(): FakeWs {
   const data: SessionData = {
     sessionId: "test-session",
     conversationId: null,
+    draftKey: null,
     authState: "pending",
     principal: null,
     authTimeout: null,

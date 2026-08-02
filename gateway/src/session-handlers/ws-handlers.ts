@@ -3,13 +3,16 @@ import { clientMessageSchema } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { getLog } from "../logging/logger.js";
+import type { SessionRuntime } from "../runtime/session-runtime.js";
 import { handlePreferencesPatch } from "./handle-preferences-patch.js";
+import { bindSessionRuntime, withSessionStore } from "./session-binding.js";
+import { mintOnFirstMessage } from "./session-id.js";
 import { createSttSession } from "./stt-session.js";
 import type { SttSession } from "./stt-session.js";
 import { handleAuthMessage, scheduleAuthTimeout } from "./ws-auth-gate.js";
 import type { SessionData } from "./ws-helpers.js";
 import { sendError } from "./ws-helpers.js";
-import { sendUnsequencedFrame } from "./ws-send.js";
+import { sendGatewayFrame, sendUnsequencedFrame } from "./ws-send.js";
 import { handleSessionConfigure } from "./ws-session-configure.js";
 import { handleSessionNew } from "./ws-session-new.js";
 
@@ -147,24 +150,27 @@ export async function handleWebSocketMessage(
       handleSessionEnd(ws, services);
       return;
 
-    case "text.input":
-      if (!ws.data.runtime) {
-        log.warn("text.input.no-runtime", {
-          sessionId: ws.data.sessionId,
-          reason: "orchestrator unconfigured, or session.configure has not run / failed to mint a runtime",
-        });
+    case "text.input": {
+      // MINT ON FIRST MESSAGE (spec §4.2). A draft connection has no session
+      // and no runtime; this is the moment the id is allocated and the row
+      // written. Idempotent by mint key, so a retry after a lost
+      // `session.created` reaches the session it already created rather than
+      // forking a second one.
+      const runtime = ensureBoundRuntime(ws, services, msg.text);
+      if (runtime === null) {
         sendError(ws, "orchestrator_unavailable", "Native orchestrator is not available for this session");
         return;
       }
       // `pendingId` is threaded, NOT acted on here: the idempotency decision
       // belongs where the store append happens (SessionRuntime), so a resend
       // is recorded and re-echoed rather than silently swallowed by the router.
-      ws.data.runtime.submit({
+      runtime.submit({
         kind: "conversational",
         text: msg.text,
         ...(msg.pendingId === undefined ? {} : { pendingId: msg.pendingId }),
       });
       return;
+    }
 
     case "interrupt":
       // No-op (not an error) if idle or the orchestrator is unconfigured —
@@ -199,10 +205,10 @@ export async function handleWebSocketMessage(
       return;
 
     case "session.new":
-      // Answered with this connection's DURABLE conversation id, not a freshly
-      // minted partition — see ws-session-new.ts for why forking here would
-      // hand every mobile relaunch an empty conversation.
-      handleSessionNew(ws, msg.requestId);
+      // `intent` separates a person pressing "+" from an app simply launching
+      // — see ws-session-new.ts for why answering both the same way forks the
+      // conversation on every mobile relaunch.
+      handleSessionNew(ws, services, msg.requestId, msg.intent);
       return;
 
     case "user.preferences.patch":
@@ -241,6 +247,77 @@ export async function handleWebSocketMessage(
 }
 
 /**
+ * The runtime this connection's message goes to — minting the session first if
+ * the connection is still a draft.
+ *
+ * WHY THE MINT LIVES HERE. A session is allocated by the first MESSAGE, not by
+ * the handshake (spec §4.2): connecting yields an empty draft, so ten opened
+ * tabs leave no row behind. This is the only place that sees a message arrive
+ * on a draft, so it is the only place that can do it.
+ *
+ * ORDER, and it is deliberate:
+ *
+ *  1. mint (or re-resolve, on a retry) the session under the connection's
+ *     draft key — the `UNIQUE` constraint on `mint_key` is what makes the
+ *     retry idempotent, not a read-then-write check;
+ *  2. bind the runtime to it;
+ *  3. BROADCAST the mint as `session.created` BEFORE the message is submitted,
+ *     so the id reaches the client ahead of the turn frames that reference it,
+ *     and so a second window already attached to this connection's session
+ *     learns the id without re-attaching. Task 6 turns this single send into a
+ *     session-lane fan-out; the frame and its position are already correct.
+ *
+ * Returns null when no runtime could be produced — the orchestrator is absent
+ * from config, or its per-session construction failed (no active LLM key). The
+ * caller answers `orchestrator_unavailable`, which is the only signal that a
+ * `text.input` went nowhere.
+ */
+function ensureBoundRuntime(
+  ws: ServerWebSocket<SessionData>,
+  services: GatewayServices,
+  text: string,
+): SessionRuntime | null {
+  if (ws.data.runtime) return ws.data.runtime;
+
+  const principal = ws.data.principal;
+  const draftKey = ws.data.draftKey;
+  if (principal === null || draftKey === null) {
+    log.warn("text.input.unconfigured", {
+      sessionId: ws.data.sessionId,
+      reason: "no principal or draft key on this connection — session.configure has not run",
+    });
+    return null;
+  }
+
+  if (ws.data.conversationId !== null) {
+    // Bound, but the runtime failed to construct at configure time (or the
+    // orchestrator is absent). Nothing to mint; the caller reports it.
+    log.warn("text.input.no-runtime", {
+      sessionId: ws.data.sessionId,
+      conversationId: ws.data.conversationId,
+      reason: "session is bound but no runtime was constructed for it",
+    });
+    return null;
+  }
+
+  const { sessionId } = withSessionStore(services, principal, (store) =>
+    mintOnFirstMessage({ store, mintKey: draftKey, text }),
+  );
+  ws.data.conversationId = sessionId;
+  if (!bindSessionRuntime(ws, services, sessionId)) {
+    log.error("text.input.mint-without-runtime", {
+      sessionId: ws.data.sessionId,
+      conversationId: sessionId,
+      reason: "session minted but no runtime could be constructed — the row exists and holds no entries",
+    });
+    return null;
+  }
+
+  sendGatewayFrame(ws, { type: "session.created", sessionId, ts: Date.now() });
+  return ws.data.runtime;
+}
+
+/**
  * Lazily mints this connection's STT uplink on the first `audio.start`.
  * Returns null when the gateway has no `stt:` config block at all — a
  * text-capable deployment, not an error. The runtime is read through a
@@ -258,6 +335,7 @@ function ensureSttSession(ws: ServerWebSocket<SessionData>, services: GatewaySer
     factory: services.stt.adapterFactory,
     config: services.stt.adapterConfig,
     getRuntime: () => ws.data.runtime,
+    getRuntimeForInput: (text) => ensureBoundRuntime(ws, services, text),
   });
   ws.data.stt = session;
   log.info("stt-session-created", { sessionId: ws.data.sessionId });
@@ -323,13 +401,13 @@ function handleSessionEnd(ws: ServerWebSocket<SessionData>, services: GatewaySer
  * `runtime.dispose()` aborts any in-flight turn's AbortSignal and closes
  * the session's store handle — idempotent, so a socket that never reached
  * session.configure (runtime still null) is unaffected.
- * A fresh connection always mints a fresh runtime over the SAME durable
- * conversation partition — `ws.data.conversationId` is derived from the
- * principal + the client's surface id, so the next connection re-derives it
- * and the store hands the committed feed and the model's history straight
- * back (ws-session-configure.ts). Only the handle is torn down here; nothing
- * in the store is. That shared partition is why this connection's claim on
- * `services.conversationRuntimes` goes back here too.
+ * A fresh connection re-opens the SAME session by presenting its id in
+ * `session.configure.conversationId`; the gateway checks membership and hands
+ * the committed feed and the model's history straight back
+ * (ws-session-configure.ts). Only the handle is torn down here; nothing in the
+ * store is. That shared partition is why this connection's claim on
+ * `services.conversationRuntimes` goes back here too. A connection that was
+ * still a DRAFT when it closed leaves nothing at all behind — no row, no id.
  * The other thing that survives the disconnect is this surface's outbound
  * frame journal, parked in
  * `services.replayRegistry` for `session.replay_journal_retention_ms` so a
@@ -387,6 +465,7 @@ export function cleanupSession(ws: ServerWebSocket<SessionData>, services: Gatew
   const conversationId = ws.data.conversationId;
   ws.data.sessionId = null;
   ws.data.conversationId = null;
+  ws.data.draftKey = null;
 
   log.info("session-cleanup", { sessionId, conversationId });
 }

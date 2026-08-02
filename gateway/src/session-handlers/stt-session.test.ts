@@ -134,6 +134,7 @@ describe("createSttSession", () => {
       factory: () => fake.adapter,
       config: TEST_CONFIG,
       getRuntime: () => stub.runtime,
+      getRuntimeForInput: () => stub.runtime,
     });
 
     session.start("semantic");
@@ -153,6 +154,7 @@ describe("createSttSession", () => {
       factory: () => fake.adapter,
       config: TEST_CONFIG,
       getRuntime: () => stub.runtime,
+      getRuntimeForInput: () => stub.runtime,
     });
 
     session.start("semantic");
@@ -173,6 +175,7 @@ describe("createSttSession", () => {
       factory: () => fake.adapter,
       config: TEST_CONFIG,
       getRuntime: () => stub.runtime,
+      getRuntimeForInput: () => stub.runtime,
     });
 
     session.start("semantic");
@@ -192,6 +195,7 @@ describe("createSttSession", () => {
       factory: () => fake.adapter,
       config: TEST_CONFIG,
       getRuntime: () => stub.runtime,
+      getRuntimeForInput: () => stub.runtime,
     });
 
     session.start("manual");
@@ -215,6 +219,7 @@ describe("createSttSession", () => {
       factory: () => (queue.shift() ?? healthy).adapter,
       config: TEST_CONFIG,
       getRuntime: () => stub.runtime,
+      getRuntimeForInput: () => stub.runtime,
     });
 
     session.start("semantic");
@@ -237,6 +242,7 @@ describe("createSttSession", () => {
       factory: () => fake.adapter,
       config: TEST_CONFIG,
       getRuntime: () => stub.runtime,
+      getRuntimeForInput: () => stub.runtime,
     });
 
     session.start("semantic");
