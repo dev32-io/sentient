@@ -5,11 +5,12 @@ import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { getLog } from "../logging/logger.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import { handlePreferencesPatch } from "./handle-preferences-patch.js";
-import { bindSessionRuntime, withSessionStore } from "./session-binding.js";
+import { bindSessionRuntime, liveRivalOwner, withSessionStore } from "./session-binding.js";
 import { mintOnFirstMessage } from "./session-id.js";
 import { createSttSession } from "./stt-session.js";
 import type { SttSession } from "./stt-session.js";
 import { handleAuthMessage, scheduleAuthTimeout } from "./ws-auth-gate.js";
+import { handleConversationActivate } from "./ws-conversation-activate.js";
 import type { SessionData } from "./ws-helpers.js";
 import { sendError } from "./ws-helpers.js";
 import { sendGatewayFrame, sendUnsequencedFrame } from "./ws-send.js";
@@ -67,7 +68,8 @@ export function openSession(ws: ServerWebSocket<SessionData>, services: GatewayS
 //
 // `session.new` (defect D12) answers with `session.created` naming this
 // connection's durable conversation — ws-session-new.ts. `conversation.activate`
-// stays received-but-unhandled on purpose; the `default:` arm says why.
+// (session-model plan task 4) answers `session.switched` after a membership
+// lookup — ws-conversation-activate.ts.
 // ---------------------------------------------------------------------------
 
 export async function handleWebSocketMessage(
@@ -219,29 +221,23 @@ export async function handleWebSocketMessage(
       applyPreferencesPatch(ws, services, msg.payload);
       return;
 
+    case "conversation.activate":
+      // `GET /sessions/:id/messages` (api/handlers/sessions.ts) landed earlier
+      // in this same task, which is what makes this frame answerable now — see
+      // ws-conversation-activate.ts's header for why it was silently dropped
+      // before that: its only reply, session.switched, tells both client SDKs
+      // to refetch history over a route that used to not exist, and their
+      // fetch-failure branch replaces the mirror with an empty list.
+      handleConversationActivate(ws, services, msg.sessionId);
+      return;
+
     default:
-      // `conversation.activate` is deliberately LEFT UNANSWERED, and it is not
-      // the same call as session.new above.
-      //
-      // Its only reply frame is `session.switched`, and both client SDKs read
-      // that frame as "your conversation changed — refetch history over
-      // `GET /sessions/:id/messages`". This gateway does not serve that route
-      // (sessions CRUD is deferred with multi-conversation, docs/native-todo.md
-      // § 2), and mobile's fetch-failure branch is
-      // `SdkConnectors.loadHistoryForSession` → `replaceMirror(emptyList())`.
-      // So answering would WIPE THE VISIBLE CHAT — and not only on a user's
-      // switch: `SentientSdk.reestablishAnchoredSession` fires an activate on
-      // every reconnect that carries an anchor without a resume cursor, so the
-      // wipe would land on ordinary reconnects too.
-      //
-      // Unhandled costs nothing here: the gateway re-anchors the conversation
-      // from `session.configure.conversationId` on that same reconnect, which
-      // is the path that actually restores the thread. This arm becomes
-      // answerable when the history route lands, not before.
-      log.debug("message-unhandled", {
-        type: msg.type,
-        reason: "session.switched would trigger a client history refetch against an unserved REST route",
-      });
+      // Unreached for any type in clientMessageSchema's union — every member
+      // has its own case above, which is why TS narrows `msg` to `never` here.
+      // Kept as a safety net, not a dispatch table entry: a future protocol
+      // addition that forgets a case lands here first, loudly, rather than
+      // silently matching a stale case by accident.
+      log.debug("message-unhandled", { reason: "no case for this message type" });
       return;
   }
 }
@@ -428,24 +424,6 @@ function ensureBoundRuntime(
   // the truth there, and the user entry follows immediately.
   if (replayed) runtime.emitConversationSnapshot();
   return runtime;
-}
-
-/**
- * Another connection that is live-serving [sessionId] right now, or null when
- * this connection is free to bind it.
- *
- * Both of `ensureBoundRuntime`'s claim paths reach the registry outside a
- * handshake, so neither can rely on `claim`'s "newest wins" — that rule
- * measures newest by CALL time. Asking here instead is one read and one
- * comparison, and it is deleted wholesale with the registry in task 5.
- *
- * "Live" excludes an owner whose socket is CLOSING/CLOSED with its close event
- * still outstanding (conversation-runtime-registry.ts). That is the difference
- * between guarding a duplicated tab and breaking a drop-and-retry.
- */
-function liveRivalOwner(ws: ServerWebSocket<SessionData>, services: GatewayServices, sessionId: string): string | null {
-  const owner = services.conversationRuntimes.liveOwnerOf(sessionId);
-  return owner !== null && owner !== ws.data.sessionId ? owner : null;
 }
 
 /**

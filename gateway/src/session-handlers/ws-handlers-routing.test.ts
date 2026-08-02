@@ -5,17 +5,21 @@
 // no real provider/network I/O, `services` is never touched by these two
 // branches so a cast stub is sufficient.
 
-import { describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
+import { mkdirSync, rmSync } from "node:fs";
 import { gatewayMessageSchema } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
+import { type AccessManager, createAccessManager } from "../access/access-manager.js";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
 import type { PermissionBroker } from "../runtime/permission-broker.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { Stimulus } from "../runtime/stimulus.js";
+import { openSessionStore } from "../store/session-store.js";
 import { createConversationRuntimeRegistry } from "./conversation-runtime-registry.js";
 import { createFrameJournal } from "./frame-journal.js";
 import { createReplayRegistry } from "./replay-registry.js";
+import { mintDraftKey, mintSessionId } from "./session-id.js";
 import { cleanupSession, handleWebSocketMessage } from "./ws-handlers.js";
 import { type SessionData, createEmptySessionData } from "./ws-helpers.js";
 
@@ -75,6 +79,46 @@ const unusedServices = {} as GatewayServices;
 
 /** A draft key shaped exactly as session-id.ts mints them (`d_` + 32 hex). */
 const DRAFT_KEY = `d_${"ab".repeat(16)}`;
+
+// --- conversation.activate fixtures ------------------------------------------
+// A real, per-test-isolated AccessManager + store: handleConversationActivate
+// does a genuine membership lookup (resolveSession over the caller's own
+// store), so a cast stub cannot stand in the way it can for text.input/interrupt.
+
+const ACTIVATE_ROOT = "/tmp/sentient-ws-conversation-activate-test";
+mkdirSync(ACTIVATE_ROOT, { recursive: true });
+afterAll(() => rmSync(ACTIVATE_ROOT, { recursive: true, force: true }));
+
+let activateRunSeq = 0;
+
+/** Services for conversation.activate: a fresh AccessManager over its own data
+ *  root (no test can see another's rows), a working (stub) runtime factory so
+ *  bindSessionRuntime succeeds, and a real ConversationRuntimeRegistry so
+ *  live-rival-owner checks are genuine rather than assumed. */
+function activateServices(): GatewayServices {
+  activateRunSeq += 1;
+  const accessManager = createAccessManager({ userDataRoot: `${ACTIVATE_ROOT}/run-${activateRunSeq}` });
+  const runtimeStub = { emitConversationSnapshot: () => {}, dispose: () => {} } as unknown as SessionRuntime;
+  return {
+    accessManager,
+    conversationRuntimes: createConversationRuntimeRegistry(),
+    profileStore: { get: async () => ({ ok: false, error: "no profile in this test" }) },
+    createSynthesizerFor: () => null,
+    stt: null,
+    createSessionRuntime: () => ({ runtime: runtimeStub, permissions: { denyAll: () => {} } }),
+  } as unknown as GatewayServices;
+}
+
+/** Puts a real session with one entry in [userId]'s own store (opened through
+ *  [accessManager]) and returns its id — the state a caller is in when
+ *  activate should be able to resolve and reopen it. */
+function seedActivatableSession(accessManager: AccessManager, userId: string): string {
+  const store = openSessionStore(accessManager.grant(createUserPrincipal(userId, "adult", "home"), "session-store"));
+  const sessionId = mintSessionId();
+  store.createSession(sessionId, `mint-${sessionId}`);
+  store.close();
+  return sessionId;
+}
 
 // cleanupSession() dereferences sessionManager, replayRegistry, and (once
 // session.configure has resolved a conversation) conversationRuntimes. Real
@@ -295,13 +339,13 @@ describe("ws-handlers outbound frames — journal discipline", () => {
 // carries (`SendMessageUseCase.flushIfReady` → `attachedId`), so silence here
 // is not a missing nicety — it is every mobile text send dying on the device.
 //
-// The `conversation.activate` half is pinned as deliberately UNANSWERED, and
-// that is a product decision with teeth: mobile's history connector treats a
-// `session.switched` as "refetch over GET /sessions/:id/messages", a route
-// this gateway does not serve, and its 404 branch calls
-// `replaceMirror(emptyList())`. Answering would wipe the visible chat on
-// every activate — including the one every reconnect fires. See
-// ws-handlers.ts's `default:` arm for the full reasoning.
+// `conversation.activate` used to be pinned as deliberately UNANSWERED: mobile's
+// history connector treats a `session.switched` as "refetch over
+// `GET /sessions/:id/messages`", and its 404 branch called
+// `replaceMirror(emptyList())` — answering would have wiped the visible chat.
+// That route now exists (api/handlers/sessions.ts, session-model plan task 4),
+// which is what makes ws-conversation-activate.ts's answer safe. See that
+// file's header for the full reasoning, and its membership/rival-owner checks.
 // ---------------------------------------------------------------------------
 
 describe("ws-handlers routing — session.new", () => {
@@ -383,17 +427,71 @@ describe("ws-handlers routing — session.new", () => {
 });
 
 describe("ws-handlers routing — conversation.activate", () => {
-  it("stays unanswered while GET /sessions/:id/messages is unserved, so no client wipes its mirror", async () => {
+  it("CONTRACT: activating a session the caller's store holds answers session.switched", async () => {
+    const services = activateServices();
+    const sessionId = seedActivatableSession(services.accessManager, "u_deadbeef");
     const ws = fakeAuthedWs(null);
-    ws.data.conversationId = "c::u_deadbeef::surface-a";
 
     await handleWebSocketMessage(
       ws as unknown as ServerWebSocket<SessionData>,
-      JSON.stringify({ type: "conversation.activate", sessionId: "c::u_deadbeef::surface-a" }),
-      unusedServices,
+      JSON.stringify({ type: "conversation.activate", sessionId }),
+      services,
     );
 
-    expect(ws.sent).toEqual([]);
+    expect(ws.sent).toEqual([{ type: "session.switched", sessionId, ts: expect.any(Number) }]);
+    expect(ws.data.conversationId).toBe(sessionId);
+    // The frame must survive the outbound validator, not merely be constructed.
+    expect(gatewayMessageSchema.safeParse(ws.sent[0]).success).toBe(true);
+  });
+
+  it("SECURITY: an id absent from the caller's store answers not_found, not session.switched", async () => {
+    const services = activateServices();
+    const ws = fakeAuthedWs(null);
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({ type: "conversation.activate", sessionId: mintSessionId() }),
+      services,
+    );
+
+    expect(ws.sent).toEqual([{ type: "sessions.error", code: "not_found", message: expect.any(String) }]);
+    expect(ws.data.conversationId).toBeNull();
+  });
+
+  it("SECURITY: a draft key is refused rather than treated as a session id", async () => {
+    const services = activateServices();
+    const ws = fakeAuthedWs(null);
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({ type: "conversation.activate", sessionId: mintDraftKey() }),
+      services,
+    );
+
+    expect(ws.sent).toEqual([{ type: "sessions.error", code: "not_found", message: expect.any(String) }]);
+  });
+
+  it("INVARIANT: a session another live connection is serving is declined, not evicted", async () => {
+    const services = activateServices();
+    const sessionId = seedActivatableSession(services.accessManager, "u_deadbeef");
+    // A rival owner is "live" purely by isAlive() — evict() is never expected
+    // to run, so a stray call fails the test loudly rather than passing quietly.
+    services.conversationRuntimes.claim(sessionId, "rival-connection", {
+      isAlive: () => true,
+      evict: () => {
+        throw new Error("must not evict a live rival owner");
+      },
+    });
+    const ws = fakeAuthedWs(null);
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({ type: "conversation.activate", sessionId }),
+      services,
+    );
+
+    expect(ws.sent).toEqual([{ type: "sessions.error", code: "switching", message: expect.any(String) }]);
+    expect(ws.data.conversationId).toBeNull();
   });
 });
 
