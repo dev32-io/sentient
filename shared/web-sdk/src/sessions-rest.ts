@@ -36,6 +36,45 @@ export interface SessionsListResult {
 }
 
 // ---------------------------------------------------------------------------
+// GET /api/v1/sessions wire shape (gateway/src/api/handlers/sessions.ts) —
+// SessionMetadata (gateway/src/store/session-metadata.ts) serialized as JSON.
+// Deliberately NOT `SessionRow`: that is this SDK's client-facing row shape,
+// carrying fields (rootId, messageCount, isActive) the gateway's session
+// metadata table does not track. Mapped below rather than shared across the
+// server/client boundary — a gateway-internal type has no business in a
+// browser bundle.
+// ---------------------------------------------------------------------------
+
+interface SessionMetadataDTO {
+  sessionId: string;
+  createdAt: number;
+  updatedAt: number;
+  title: string | null;
+  titleProvenance: "generated" | "user" | null;
+  version: number;
+}
+
+// Matches use-sessions.ts's DEFAULT_NEW_CHAT_TITLE — a session with no title
+// yet (nothing has generated or set one) still needs row text to render.
+const UNTITLED_SESSION_TITLE = "New chat";
+
+function toSessionRow(dto: SessionMetadataDTO): SessionRow {
+  return {
+    sessionId: dto.sessionId,
+    rootId: dto.sessionId,
+    title: dto.title ?? UNTITLED_SESSION_TITLE,
+    startedAt: dto.createdAt,
+    lastActiveAt: dto.updatedAt,
+    // Not tracked by SessionMetadata yet, and unread by every current
+    // consumer (session-list.tsx / session-row.tsx key off sessionId, title,
+    // lastActiveAt only) — honest placeholders, not a lossy mapping of a
+    // value that exists elsewhere.
+    messageCount: 0,
+    isActive: false,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Client interface
 // ---------------------------------------------------------------------------
 
@@ -122,14 +161,22 @@ export function createSessionsRest(config: SessionsRestConfig): SessionsRest {
 
   return {
     async list(opts = {}) {
+      // The gateway does not paginate yet (task 4: it returns the caller's
+      // whole list, newest-updated first) — limit/offset still ride along on
+      // the URL for forward compatibility (an unknown query param is a no-op
+      // server-side) but are not honoured client-side either.
       const limit = opts.limit ?? DEFAULT_LIST_LIMIT;
       const offset = opts.offset ?? 0;
       const url = `${baseUrl}/sessions?limit=${limit}&offset=${offset}`;
       log.debug("list", { limit, offset });
-      return doFetch<SessionsListResult>(url, {
+      const result = await doFetch<{ sessions: SessionMetadataDTO[] }>(url, {
         method: "GET",
         headers: bearerHeaders(token()),
       });
+      const items = result.sessions.map(toSessionRow);
+      // total/hasMore are honest derivations, not server-reported pagination
+      // state — there is none yet.
+      return { items, total: items.length, hasMore: false };
     },
 
     async search(q, limit = DEFAULT_SEARCH_LIMIT) {

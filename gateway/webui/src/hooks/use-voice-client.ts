@@ -632,6 +632,22 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       inflightRef.current = [];
       typewriterTurnIdRef.current = null;
       typewriterRef.current.reset();
+      // `switched` refetches: ConversationHistoryConnector is subscribed to
+      // the SAME session.switched frame and will replace committedRef.current
+      // with the new session's REST-loaded history moments after this fires
+      // (its own onUpdate calls refreshMessages() again once that resolves).
+      // Leave it alone here.
+      //
+      // `created` / `draft` start empty: nothing else ever clears the mirror
+      // for these two — ConversationHistoryConnector only resets on
+      // conversation.snapshot, a switch's REST load, or identity teardown, and
+      // none of those fire for "+ new chat". Without this, the pane kept
+      // rendering the PREVIOUS session's messages after pressing "+" — D15
+      // ("+ new chat does not start a new chat ... does not even clear the
+      // mirror").
+      if (e.kind !== "switched") {
+        committedRef.current = [];
+      }
       refreshMessages();
     });
 
