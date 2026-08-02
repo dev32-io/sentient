@@ -342,7 +342,12 @@ export function createMcpClient(catalog: McpCatalog, opts: { includeServers?: st
     const { kept, unmatched } = filterByAllowlist(refs, entry.tools?.include);
     // D19: an include entry naming a tool the server no longer (or never
     // did) advertise is catalog drift, not a mere zero-hit filter — WARN so
-    // it surfaces at startup instead of rotting silently in the allowlist.
+    // it surfaces instead of rotting silently in the allowlist. Note this
+    // WARN re-fires on every call, not once at boot: a ToolBroker (and the
+    // `listTools()` behind it) is built per SESSION, not per process — see
+    // `buildOrchestratorServices`'s comment in bootstrap/phase-services.ts —
+    // so a persistent drift logs again on every new connection, tab, or
+    // reconnect for as long as it stays unfixed.
     if (unmatched.length > 0) {
       log.warn("mcp.list-tools.allowlist-drift", { serverName, unmatched });
     }
