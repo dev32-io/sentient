@@ -1,31 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  type ApplyDeps,
-  type ApplyOutcome,
-  type PendingOp,
-  applyButtonLabel,
-  isDirty,
-  runApply,
-} from "./apply-bar-machine.ts";
-
-describe("applyButtonLabel", () => {
-  it("returns 'Apply' when all pending ops are fast", () => {
-    const pending: PendingOp[] = [{ key: "personalities.active", kind: "fast" }];
-    expect(applyButtonLabel(pending)).toBe("Apply");
-  });
-
-  it("returns 'Apply' when a pending op is slow too — nothing restarts, so the label doesn't vary", () => {
-    const pending: PendingOp[] = [
-      { key: "personalities.active", kind: "fast" },
-      { key: "profile.voice", kind: "slow" },
-    ];
-    expect(applyButtonLabel(pending)).toBe("Apply");
-  });
-
-  it("returns 'Apply' for empty pending list (degenerate; bar should be hidden in this state)", () => {
-    expect(applyButtonLabel([])).toBe("Apply");
-  });
-});
+import { type ApplyDeps, type ApplyOutcome, isDirty, runApply } from "./apply-bar-machine.ts";
 
 describe("isDirty", () => {
   it("returns false for empty pending list", () => {

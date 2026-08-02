@@ -20,15 +20,6 @@ export type ApplyBarState =
   | { phase: "ready"; elapsedMs: number }
   | { phase: "failed"; errorMessage: string };
 
-/**
- * Label for the Apply button. Always "Apply" — there is no restart to
- * distinguish; a `slow` op's extra profile rewrite is a background disk
- * write (measured 8-12ms), invisible to the user.
- */
-export function applyButtonLabel(_pending: PendingOp[]): string {
-  return "Apply";
-}
-
 /** True when at least one pending op is dirty. */
 export function isDirty(pending: PendingOp[]): boolean {
   return pending.length > 0;

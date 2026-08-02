@@ -3,13 +3,7 @@ import type { JSX } from "preact";
 import { useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
 import { Btn } from "../primitives/btn.tsx";
-import {
-  applyButtonLabel,
-  runApply,
-  type ApplyBarState,
-  type ApplyDeps,
-  type PendingOpWithPayload,
-} from "./apply-bar-machine.ts";
+import { runApply, type ApplyBarState, type ApplyDeps, type PendingOpWithPayload } from "./apply-bar-machine.ts";
 
 const log = createLogger(["sentient", "webui", "settings", "apply-bar"]);
 
@@ -25,7 +19,10 @@ export function ApplyBar({ pending, deps, onApplied, onDiscard }: ApplyBarProps)
 
   if (pending.length === 0 && state.phase === "idle") return null;
 
-  const label = applyButtonLabel(pending);
+  // Always "Apply" — there is no restart to distinguish; a `slow` op's
+  // extra profile rewrite is a background disk write (measured 8-12ms),
+  // invisible to the user.
+  const label = "Apply";
   const isBusy = state.phase === "saving" || state.phase === "restarting";
 
   const handleApply = async () => {
