@@ -19,7 +19,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import type { Capability } from "../access/capability.js";
 import type { NewSessionEntry } from "../store/entry-types.js";
 import { type SessionStore, openSessionStore } from "../store/session-store.js";
-import { isWellFormedSessionId, mintOnFirstMessage, mintSessionId, resolveSession } from "./session-id.js";
+import { mintOnFirstMessage, mintSessionId, resolveSession } from "./session-id.js";
 
 const ROOT = "/tmp/sentient-session-id-test";
 
@@ -57,20 +57,21 @@ function entryFor(sessionId: string): NewSessionEntry {
   };
 }
 
+/** `s_` + 32 lowercase hex = exactly 16 CSPRNG bytes. Asserted as a SHAPE, not
+ *  as a minimum length: a `>= 22` bound was calibrated for base64url and would
+ *  still pass if the entropy silently dropped to 12 bytes (96 bits), which is
+ *  the regression this line exists to catch. Hex also cannot produce the "u_"
+ *  substring, which base64url's alphabet would yield in ~1 id in 200. */
+const MINTED_ID_SHAPE = /^s_[0-9a-f]{32}$/;
+
 describe("session id — minting", () => {
   it("SECURITY: a minted session id embeds no identity and does not repeat", () => {
     const ids = new Set(Array.from({ length: 1000 }, mintSessionId));
     expect(ids.size).toBe(1000);
     for (const id of ids) {
       expect(id).not.toContain("u_");
-      expect(id.length).toBeGreaterThanOrEqual(22); // ≥128 bits
+      expect(id).toMatch(MINTED_ID_SHAPE); // 128 bits, no more and no less
     }
-  });
-
-  it("accepts both a minted id and a legacy c:: id as well-formed", () => {
-    expect(isWellFormedSessionId(mintSessionId())).toBe(true);
-    expect(isWellFormedSessionId("c::u_0417d3b0::web-1")).toBe(true);
-    expect(isWellFormedSessionId("not-an-id")).toBe(false);
   });
 });
 
@@ -118,12 +119,13 @@ describe("session id — minting on the first message", () => {
     store.close();
   });
 
-  it("gives two different drafts two different sessions", () => {
+  it("INVARIANT: the retry is reported as replayed, so the caller can re-project the feed", () => {
+    // The caller needs this bit: a replayed mint lands on a connection whose
+    // handshake already handed it an EMPTY committed feed, and without knowing
+    // the session is older than this message it never refills the pane.
     const store = freshStore();
-    const a = mintOnFirstMessage({ store, mintKey: "k-a", text: "hello" });
-    const b = mintOnFirstMessage({ store, mintKey: "k-b", text: "hello" });
-    expect(b.sessionId).not.toBe(a.sessionId);
-    expect(store.listSessionsWithMetadata()).toHaveLength(2);
+    expect(mintOnFirstMessage({ store, mintKey: "k-2", text: "hello" }).replayed).toBe(false);
+    expect(mintOnFirstMessage({ store, mintKey: "k-2", text: "hello" }).replayed).toBe(true);
     store.close();
   });
 });

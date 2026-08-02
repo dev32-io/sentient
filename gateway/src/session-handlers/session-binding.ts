@@ -17,6 +17,7 @@ import type { ServerWebSocket } from "bun";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import type { UserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
+import type { SessionRuntime } from "../runtime/session-runtime.js";
 import { createTurnVoice } from "../runtime/turn-voice.js";
 import { type SessionStore, openSessionStore } from "../store/session-store.js";
 import { createMicEchoGuard } from "./mic-echo-guard.js";
@@ -57,7 +58,12 @@ export function withSessionStore<T>(
 
 /**
  * Build this connection's orchestrator handles for [sessionId] and park them
- * on the socket. Returns true when a runtime is live afterwards.
+ * on the socket. Returns the live runtime, or null when none could be built.
+ *
+ * Returning the runtime rather than a boolean is not sugar: TypeScript cannot
+ * see that this call mutates `ws.data.runtime`, so a caller that checked a
+ * boolean and then read the field back would be narrowing against a stale
+ * view of it.
  *
  * Never throws. A construction failure is a per-session misconfig (no active
  * LLM key resolved from the secrets store — see `phase-services.ts`'s
@@ -70,7 +76,7 @@ export function bindSessionRuntime(
   ws: ServerWebSocket<SessionData>,
   services: GatewayServices,
   sessionId: string,
-): boolean {
+): SessionRuntime | null {
   const connectionId = ws.data.sessionId;
   const principal = ws.data.principal;
   if (connectionId === null || principal === null) {
@@ -78,13 +84,13 @@ export function bindSessionRuntime(
       sessionId,
       reason: "bind attempted on a connection that has not authenticated",
     });
-    return false;
+    return null;
   }
   const userId = principal.userId;
 
   if (!services.createSessionRuntime) {
     log.info("session-binding.no-orchestrator", { connectionId, userId, reason: "orchestrator: absent from config" });
-    return false;
+    return null;
   }
 
   try {
@@ -131,7 +137,7 @@ export function bindSessionRuntime(
     // that never materialised.
     services.conversationRuntimes.claim(sessionId, connectionId, () => disposeSessionHandles(ws));
     log.info("session-binding.bound", { connectionId, userId, sessionId, hasVoice: voice !== null });
-    return true;
+    return handles.runtime;
   } catch (err) {
     log.error("session-binding.runtime-construction-failed", {
       connectionId,
@@ -139,7 +145,7 @@ export function bindSessionRuntime(
       sessionId,
       reason: errorMessage(err, "unknown error"),
     });
-    return false;
+    return null;
   }
 }
 

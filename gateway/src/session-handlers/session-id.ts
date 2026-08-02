@@ -69,6 +69,21 @@ export interface MintOnFirstMessageDeps {
   text: string;
 }
 
+export interface MintOutcome {
+  sessionId: string;
+  /**
+   * True when this call resolved an EXISTING session rather than creating one
+   * — the client re-spent a draft key whose `session.created` it never saw.
+   *
+   * The caller needs it: a replayed mint lands on a connection that was told at
+   * handshake time it was a draft and handed an EMPTY committed feed, so
+   * without re-projecting the session's real feed the earlier exchange stays
+   * invisible until the next reload. Creating a session has no such problem —
+   * an empty feed is the truth there.
+   */
+  replayed: boolean;
+}
+
 function randomHex(): string {
   const bytes = new Uint8Array(ID_ENTROPY_BYTES);
   crypto.getRandomValues(bytes);
@@ -171,14 +186,23 @@ export function resolveSession(deps: ResolveSessionDeps): SessionResolution {
  * (submit's resend branch republishes and starts no turn) — two writers for
  * one logical event, which is exactly the drift the append-only store's
  * single-source-of-truth design forbids. Instead the two idempotency keys
- * compose: `mintKey` guarantees one session per draft, `pendingId` guarantees
- * one entry per message, and a retry of the first message is correct under
- * both. The residual is a session row whose first append never happened
+ * compose: `mintKey` guarantees one session per draft, and — WHEN THE CLIENT
+ * CARRIES ONE — `pendingId` guarantees one entry per message.
+ *
+ * That second clause is a PRECONDITION, not a property of this function.
+ * `textInputSchema.pendingId` is optional, so a client that omits it gets one
+ * session and a duplicate first entry on a retry: the message is reachable and
+ * no partition is orphaned (the §4.2 hazard is closed either way), but the turn
+ * runs twice. Every shipped client sends one — mobile from its outbox, web from
+ * `UserTextInputConnector` — and `session-id.test.ts` pins both halves so the
+ * claim above cannot quietly become false.
+ *
+ * The other residual is a session row whose first append never happened
  * (runtime construction threw in the same tick) — an empty session in the
  * list, strictly less harmful than the ghost §4.2 names, and visible rather
  * than silent.
  */
-export function mintOnFirstMessage(deps: MintOnFirstMessageDeps): { sessionId: string } {
+export function mintOnFirstMessage(deps: MintOnFirstMessageDeps): MintOutcome {
   const { store, mintKey, text } = deps;
 
   const existing = store.findSessionByMintKey(mintKey);
@@ -187,7 +211,7 @@ export function mintOnFirstMessage(deps: MintOnFirstMessageDeps): { sessionId: s
       sessionId: existing.sessionId,
       reason: "mint key already claimed — the first message is being retried after a lost ack",
     });
-    return { sessionId: existing.sessionId };
+    return { sessionId: existing.sessionId, replayed: true };
   }
 
   const sessionId = mintSessionId();
@@ -203,9 +227,9 @@ export function mintOnFirstMessage(deps: MintOnFirstMessageDeps): { sessionId: s
       sessionId: raced.sessionId,
       reason: "a concurrent first message on this draft minted the session first",
     });
-    return { sessionId: raced.sessionId };
+    return { sessionId: raced.sessionId, replayed: true };
   }
 
   log.info("session.mint.created", { sessionId, firstMessageChars: text.length });
-  return { sessionId };
+  return { sessionId, replayed: false };
 }

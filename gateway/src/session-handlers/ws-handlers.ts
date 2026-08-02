@@ -300,21 +300,37 @@ function ensureBoundRuntime(
     return null;
   }
 
-  const { sessionId } = withSessionStore(services, principal, (store) =>
+  const { sessionId, replayed } = withSessionStore(services, principal, (store) =>
     mintOnFirstMessage({ store, mintKey: draftKey, text }),
   );
-  ws.data.conversationId = sessionId;
-  if (!bindSessionRuntime(ws, services, sessionId)) {
+  // Bind BEFORE claiming the id on the connection. Assigning first and failing
+  // here would leave `conversationId` set with no runtime, and every later
+  // `text.input` would take the bound branch above and answer
+  // `orchestrator_unavailable` for the rest of the socket's life without ever
+  // retrying the bind. Leaving it null costs nothing: the mint is idempotent,
+  // so the next message re-resolves the SAME row under the same draft key.
+  const runtime = bindSessionRuntime(ws, services, sessionId);
+  if (runtime === null) {
     log.error("text.input.mint-without-runtime", {
       sessionId: ws.data.sessionId,
       conversationId: sessionId,
-      reason: "session minted but no runtime could be constructed — the row exists and holds no entries",
+      reason:
+        "session minted but no runtime could be constructed — connection stays a draft so the next message retries",
     });
     return null;
   }
+  ws.data.conversationId = sessionId;
 
   sendGatewayFrame(ws, { type: "session.created", sessionId, ts: Date.now() });
-  return ws.data.runtime;
+  // A REPLAYED mint lands on a connection whose handshake already told it it
+  // was a draft and handed it an EMPTY committed feed (session-binding.ts's
+  // `sendDraftHandshake`). Without re-projecting the real feed here, the
+  // client renders only the retried message and its reply while the earlier
+  // exchange stays invisible until a reload — on the exact path this whole
+  // design exists to serve. A fresh mint needs no snapshot: an empty feed is
+  // the truth there, and the user entry follows immediately.
+  if (replayed) runtime.emitConversationSnapshot();
+  return runtime;
 }
 
 /**

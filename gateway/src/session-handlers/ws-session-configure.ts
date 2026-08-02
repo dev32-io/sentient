@@ -176,7 +176,7 @@ export function handleSessionConfigure(
 
   ws.data.conversationId = resolved.sessionId;
   ws.data.draftKey = resolved.draftKey;
-  const hasRuntime = resolved.sessionId === null ? false : bindSessionRuntime(ws, services, resolved.sessionId);
+  const hasRuntime = resolved.sessionId !== null && bindSessionRuntime(ws, services, resolved.sessionId) !== null;
 
   log.info("session-configured", {
     sessionId,

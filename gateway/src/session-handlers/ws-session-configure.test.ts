@@ -767,12 +767,29 @@ async function waitUntilIdle(runtime: SessionRuntime, timeoutMs = 2000): Promise
 }
 
 /** Drive one `text.input` through the real router — the path that MINTS the
- *  session on a draft connection. Returns the id the mint broadcast carried. */
-async function sendFirstMessage(ws: FakeWs, services: GatewayServices, text: string): Promise<string> {
-  await handleWebSocketMessage(asWs(ws), JSON.stringify({ type: "text.input", text }), services);
+ *  session on a draft connection. Returns the id the mint broadcast carried.
+ *  `pendingId` is threaded because it is the SECOND idempotency key: `mintKey`
+ *  gives one session per draft, `pendingId` one entry per message, and a
+ *  realistic retry carries both. */
+async function sendFirstMessage(
+  ws: FakeWs,
+  services: GatewayServices,
+  text: string,
+  pendingId?: string,
+): Promise<string> {
+  const frame = { type: "text.input", text, ...(pendingId === undefined ? {} : { pendingId }) };
+  await handleWebSocketMessage(asWs(ws), JSON.stringify(frame), services);
   const created = ws.sent.find((f) => f.type === "session.created");
   if (created === undefined) throw new Error("no session.created broadcast — the mint did not happen");
   return created.sessionId as string;
+}
+
+/** Every entry in one session's partition, read through a fresh handle. */
+function entriesFor(accessManager: AccessManager, sessionId: string): { kind: string; text: string | null }[] {
+  const store = openSessionStore(accessManager.grant(createUserPrincipal(USER_ID, "adult", "home"), "session-store"));
+  const rows = store.readSession(sessionId).map((e) => ({ kind: e.kind, text: e.text }));
+  store.close();
+  return rows;
 }
 
 describe("handleSessionConfigure — reload rebuilds the conversation", () => {
@@ -812,11 +829,54 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     secondRuntime.dispose();
   });
 
-  it("INVARIANT: minting is idempotent — a retried first message reaches one session", async () => {
+  it("INVARIANT: a retried first message reaches ONE session and ONE entry", async () => {
     // The `session.created` ack cannot join the SQLite transaction that wrote
-    // the row (spec §4.2). Commit lands, ack is lost, the client retries: the
-    // draft key is the same, so the retry must resolve to the session already
-    // minted rather than fork a second one holding an unreachable message.
+    // the row (spec §4.2). Commit lands, ack is lost, the client retries over a
+    // NEW socket: the draft key is the same, so the retry must resolve to the
+    // session already minted rather than fork a second one holding an
+    // unreachable message.
+    //
+    // BOTH keys are asserted, because the guarantee is their composition and
+    // the session count alone hides half of it: `mintKey` gives one session,
+    // `pendingId` gives one entry. A retry carrying its pendingId — which every
+    // shipped client sends — must not append the message twice or answer twice.
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const accessManager = freshAccessManager();
+    const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
+
+    const first = fakeAuthedWs("connection-1");
+    configure(first, services, SURFACE_A);
+    const draftKey = first.data.draftKey as string;
+    const sessionId = await sendFirstMessage(first, services, "hello", "pending-1");
+    await waitUntilIdle(first.data.runtime as SessionRuntime);
+    (first.data.runtime as SessionRuntime).dispose();
+
+    // The retry arrives on a NEW socket carrying the same unspent draft key.
+    const retry = fakeAuthedWs("connection-2");
+    configure(retry, services, SURFACE_A, draftKey);
+    expect(retry.data.conversationId).toBeNull();
+    const retriedId = await sendFirstMessage(retry, services, "hello", "pending-1");
+    await waitUntilIdle(retry.data.runtime as SessionRuntime);
+    (retry.data.runtime as SessionRuntime).dispose();
+
+    expect(retriedId).toBe(sessionId);
+    const store = openSessionStore(accessManager.grant(createUserPrincipal(USER_ID, "adult", "home"), "session-store"));
+    expect(store.listSessionsWithMetadata()).toHaveLength(1);
+    store.close();
+    expect(entriesFor(accessManager, sessionId)).toEqual([
+      { kind: "user", text: "hello" },
+      { kind: "assistant", text: "ok" },
+    ]);
+  });
+
+  it("INVARIANT: a retry without a pendingId still reaches one session, and duplicates only the entry", async () => {
+    // `textInputSchema.pendingId` is OPTIONAL, so this is the weaker half of
+    // the guarantee, pinned rather than assumed. The §4.2 hazard is still
+    // closed — one session, message reachable, no orphan partition — but the
+    // message is committed twice and answered twice. Anything that made this
+    // fork a SECOND session would be the real defect; anything that made it
+    // stop duplicating would mean the wire began enforcing the key, and this
+    // row is where that shows up instead of a stale comment claiming it does.
     const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
@@ -828,15 +888,86 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     await waitUntilIdle(first.data.runtime as SessionRuntime);
     (first.data.runtime as SessionRuntime).dispose();
 
-    // The retry arrives on a NEW socket carrying the same unspent draft key.
     const retry = fakeAuthedWs("connection-2");
     configure(retry, services, SURFACE_A, draftKey);
-    expect(retry.data.conversationId).toBeNull();
-    const retriedId = await sendFirstMessage(retry, services, "hello");
+    expect(await sendFirstMessage(retry, services, "hello")).toBe(sessionId);
     await waitUntilIdle(retry.data.runtime as SessionRuntime);
     (retry.data.runtime as SessionRuntime).dispose();
 
-    expect(retriedId).toBe(sessionId);
+    const store = openSessionStore(accessManager.grant(createUserPrincipal(USER_ID, "adult", "home"), "session-store"));
+    expect(store.listSessionsWithMetadata()).toHaveLength(1);
+    store.close();
+    expect(entriesFor(accessManager, sessionId).filter((e) => e.kind === "user")).toHaveLength(2);
+  });
+
+  it("CONTRACT: a replayed mint re-projects the feed, so the earlier exchange is not invisible", async () => {
+    // The retry connection was told at handshake time it was a draft and handed
+    // an EMPTY committed feed. Without a snapshot here the client renders only
+    // the retried message and its reply, and the earlier exchange stays hidden
+    // until a reload — on the exact path this design exists to serve.
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const accessManager = freshAccessManager();
+    const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
+
+    const first = fakeAuthedWs("connection-1");
+    configure(first, services, SURFACE_A);
+    const draftKey = first.data.draftKey as string;
+    await sendFirstMessage(first, services, "hello", "pending-1");
+    await waitUntilIdle(first.data.runtime as SessionRuntime);
+    (first.data.runtime as SessionRuntime).dispose();
+
+    const retry = fakeAuthedWs("connection-2");
+    configure(retry, services, SURFACE_A, draftKey);
+    // The draft handshake's own empty snapshot — the thing that would be left
+    // standing if the replayed mint sent nothing.
+    expect(retry.sent.filter((f) => f.type === "conversation.snapshot")).toHaveLength(1);
+    await sendFirstMessage(retry, services, "hello", "pending-1");
+    await waitUntilIdle(retry.data.runtime as SessionRuntime);
+    (retry.data.runtime as SessionRuntime).dispose();
+
+    const snapshots = retry.sent.filter((f) => f.type === "conversation.snapshot");
+    expect(snapshots).toHaveLength(2);
+    const items = (snapshots[1]?.items ?? []) as { kind: string; content?: string }[];
+    expect(items.map((i) => i.kind)).toEqual(["user", "assistant"]);
+    expect(items[0]?.content).toBe("hello");
+  });
+
+  it("INVARIANT: a failed bind leaves the connection retryable instead of wedged for its whole life", async () => {
+    // `conversationId` is claimed only AFTER a successful bind. Setting it
+    // first and failing would send every later `text.input` down the "bound,
+    // but no runtime" branch, which never re-attempts the bind — the socket
+    // would answer `orchestrator_unavailable` until it closed. The mint is
+    // idempotent, so leaving it null costs nothing: the retry re-resolves the
+    // SAME row under the same draft key.
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const accessManager = freshAccessManager();
+    const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
+    let failNextBind = true;
+    const workingFactory = services.createSessionRuntime;
+    (services as { createSessionRuntime: unknown }).createSessionRuntime = (req: never) => {
+      if (failNextBind) {
+        failNextBind = false;
+        throw new Error("no active LLM key for this user");
+      }
+      return (workingFactory as (r: never) => unknown)(req);
+    };
+
+    const ws = fakeAuthedWs("connection-1");
+    configure(ws, services, SURFACE_A);
+    const draftKey = ws.data.draftKey as string;
+
+    await handleWebSocketMessage(asWs(ws), JSON.stringify({ type: "text.input", text: "hello" }), services);
+    expect(ws.sent.some((f) => f.type === "error" && f.code === "orchestrator_unavailable")).toBe(true);
+    expect(ws.data.conversationId).toBeNull();
+    expect(ws.data.draftKey).toBe(draftKey);
+
+    // Same socket, next message: the bind is retried and the session resolves
+    // to the row the failed attempt already minted.
+    const sessionId = await sendFirstMessage(ws, services, "hello", "pending-1");
+    await waitUntilIdle(ws.data.runtime as SessionRuntime);
+    (ws.data.runtime as SessionRuntime).dispose();
+
+    expect(ws.data.conversationId).toBe(sessionId);
     const store = openSessionStore(accessManager.grant(createUserPrincipal(USER_ID, "adult", "home"), "session-store"));
     expect(store.listSessionsWithMetadata()).toHaveLength(1);
     store.close();

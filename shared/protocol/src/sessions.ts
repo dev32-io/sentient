@@ -80,8 +80,14 @@ export const sessionCreatedEventSchema = z.object({
  *      is retried by the client against the same draft key and resolves to the
  *      session already minted, instead of forking a second one.
  *
- * It is NEVER a session id: `session.title`, `conversation.activate` and the
- * sessions REST surface all refuse it, and it never appears in the session list.
+ * It is NOT a session id, and nothing yet enforces that. Stated as a
+ * REQUIREMENT on the tasks that build those surfaces, not as a description of
+ * today: `conversation.activate` MUST refuse a draft key (it is currently
+ * unanswered entirely, and mobile's `reestablishAnchoredSession` fires one
+ * carrying whatever it is anchored to — a draft key included — on a no-cursor
+ * reconnect), and the sessions REST surface MUST 404 it rather than treat it as
+ * an id it has never seen. A draft never appears in the session list because it
+ * has no row to list.
  */
 export const sessionDraftSchema = z.object({
   type: z.literal("session.draft"),

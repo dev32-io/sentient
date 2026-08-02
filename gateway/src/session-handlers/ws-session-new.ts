@@ -28,10 +28,17 @@
 //     existing key. Re-issuing rather than re-minting matters: a relaunch
 //     mid-draft must not fork the draft, or the mint key changes and a lost
 //     ack can no longer be resolved to the session it already created.
-//   - **explicit ("+")**    → unbind, mint a FRESH draft key, answer
-//     `session.draft`. No row is written and no id is minted here; the session
-//     is allocated only if and when a first message arrives (spec §4.2), so a
-//     person who taps "+" and walks away leaves the session list untouched.
+//   - **explicit ("+") on a BOUND connection** → unbind, mint a FRESH draft
+//     key, answer `session.draft`. Fresh because the old key may already have
+//     been spent; reusing it would resolve the next mint to the session the
+//     person just left.
+//   - **explicit on a connection that is ALREADY a draft** → keep the existing
+//     key and answer with it. "+" on an empty draft is a no-op, and re-minting
+//     would move the mint key out from under a first message already in flight.
+//
+// No row is written and no id is minted on any of these paths; the session is
+// allocated only if and when a first message arrives (spec §4.2), so a person
+// who taps "+" and walks away leaves the session list untouched.
 //
 // NO requestId ECHO ON `session.created` — CHECKED, NOT ASSUMED. It carries no
 // `requestId` field in the contract, and neither client wants one: both
