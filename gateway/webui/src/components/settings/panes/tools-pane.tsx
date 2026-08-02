@@ -100,7 +100,7 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
     <>
       <PaneHead
         title="Tools"
-        sub="Tools available to the assistant on each cycle. Toggle a server or built-in tool group on/off, or expand to gate individual tools. Changes apply after you save settings — the agent restarts to pick them up."
+        sub="Tools available to the assistant on each cycle. Toggle a server or built-in tool group on/off, or expand to gate individual tools. Changes apply after you save settings."
       />
 
       <Card title="MCP servers" padding={false}>

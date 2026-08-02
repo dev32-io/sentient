@@ -1,6 +1,12 @@
 // gateway/webui/src/components/settings/apply-bar/apply-bar-machine.ts
 
-/** A pending change. `slow` ops trigger a Hermes restart on apply. */
+/**
+ * A pending change. `slow` ops require the gateway to re-render and rewrite
+ * the on-disk Hermes profile (config.yaml / SOUL.md) before the change is
+ * live — Hermes is a one-shot exec per delegation, so the next delegation
+ * simply reads the new file; there is no process to restart. `fast` ops
+ * persist directly with nothing further to apply.
+ */
 export interface PendingOp {
   key: string;
   kind: "fast" | "slow";
@@ -14,9 +20,12 @@ export type ApplyBarState =
   | { phase: "ready"; elapsedMs: number }
   | { phase: "failed"; errorMessage: string };
 
-/** Smart label for the Apply button. */
-export function applyButtonLabel(pending: PendingOp[]): string {
-  if (pending.some((op) => op.kind === "slow")) return "Apply & Restart";
+/**
+ * Label for the Apply button. Always "Apply" — there is no restart to
+ * distinguish; a `slow` op's extra profile rewrite is a background disk
+ * write (measured 8-12ms), invisible to the user.
+ */
+export function applyButtonLabel(_pending: PendingOp[]): string {
   return "Apply";
 }
 
@@ -75,7 +84,9 @@ export interface ApplyOutcome {
 
 /**
  * Walks pending ops, dispatches each to the right save dep, then
- * (if any slow op was in the batch) waits for the Hermes restart.
+ * (if any slow op was in the batch) waits for the profile render+write to
+ * finish — there is no Hermes process to restart, just a file to rewrite
+ * before the next delegation reads it.
  * Emits state transitions via `onState` so the UI can drive the spinner.
  *
  * Stops on first failure. Caller is responsible for keeping pending
@@ -121,8 +132,9 @@ async function dispatchOp(op: PendingOpWithPayload, deps: ApplyDeps): Promise<Sa
   switch (op.key) {
     case "secrets.changed":
       // Secrets are eagerly saved by the row-level save handler; the op
-      // exists only so the apply bar can drive a Hermes restart to make
-      // the worker pick the new key up. Nothing to commit at apply time.
+      // exists only so the apply bar can drive a profile re-render so the
+      // rendered Hermes config picks up the new key. Nothing to commit at
+      // apply time.
       return { ok: true };
     case "systemPrompt.soul":
       return deps.saveSoul(op.payload as string);

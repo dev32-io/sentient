@@ -86,7 +86,7 @@ export function MembersPane(): JSX.Element {
 
   return (
     <>
-      <SpinnerOverlay open={applying} heading="Applying changes…" body="Restarting agent — do not close this tab" />
+      <SpinnerOverlay open={applying} heading="Applying changes…" body="This may take a moment — do not close this tab" />
 
       <PaneHead title="Members" sub="Everyone with a recognized voice or account in this home." />
 

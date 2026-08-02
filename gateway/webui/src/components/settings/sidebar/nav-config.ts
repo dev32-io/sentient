@@ -69,8 +69,8 @@ export const SOUL_KEYS: ReadonlySet<SidebarKey> = new Set([
 
 /** Tabs that show the docked Apply bar when dirty. Soul tabs (minus Voice)
  *  collect a draft before commit, so the bar batches the save. Secrets are
- *  saved eagerly per row, but a Hermes restart is still needed to reload the
- *  per-user profile with the new key — the apply bar provides that
+ *  saved eagerly per row, but the per-user Hermes profile still needs a
+ *  re-render to pick up the new key — the apply bar provides that
  *  affordance even though there's nothing to "save" at apply-time. Voice is
  *  excluded: voice-pack ops (record/upload/select/delete) are immediate and
  *  persist server-side on their own — see components/voices/VoicesPanel. */

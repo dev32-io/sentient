@@ -81,8 +81,8 @@ export function MemoryPane({
 
   const headSub =
     "Persistent context Hermes carries between conversations. The agent " +
-    "writes and prunes this autonomously; you can hand-edit. Apply restarts " +
-    "your assistant so the next chain reads the new content.";
+    "writes and prunes this autonomously; you can hand-edit. Apply saves " +
+    "your changes so the next chain reads the new content.";
 
   if (loadError) {
     return (
@@ -117,7 +117,7 @@ export function MemoryPane({
 
       <Card
         title={SLOT_LABEL[slot]}
-        sub={`${SLOT_EXPLAIN[slot]} Hard-capped at ${cap} characters per Hermes spec. Restart required after Apply.`}
+        sub={`${SLOT_EXPLAIN[slot]} Hard-capped at ${cap} characters per Hermes spec. Applies immediately.`}
         action={
           <span class={`memory-count${overCap ? " over" : ""}`}>
             {charsUsed} / {cap}

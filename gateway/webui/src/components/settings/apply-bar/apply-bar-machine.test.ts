@@ -14,12 +14,12 @@ describe("applyButtonLabel", () => {
     expect(applyButtonLabel(pending)).toBe("Apply");
   });
 
-  it("returns 'Apply & Restart' when any pending op is slow", () => {
+  it("returns 'Apply' when a pending op is slow too — nothing restarts, so the label doesn't vary", () => {
     const pending: PendingOp[] = [
       { key: "personalities.active", kind: "fast" },
       { key: "profile.voice", kind: "slow" },
     ];
-    expect(applyButtonLabel(pending)).toBe("Apply & Restart");
+    expect(applyButtonLabel(pending)).toBe("Apply");
   });
 
   it("returns 'Apply' for empty pending list (degenerate; bar should be hidden in this state)", () => {

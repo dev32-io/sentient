@@ -123,10 +123,11 @@ export function SettingsView({
   const derivedOps = useMemo<PendingOpWithPayload[]>(() => {
     const ops: PendingOpWithPayload[] = [];
     if (profileDraft && (profileDiff.audio || profileDiff.model || profileDiff.tools || profileDiff.advanced)) {
-      // Audio is gateway-side — no Hermes restart needed. Voice is no longer
-      // part of this draft/apply flow at all (see VoicesPanel — immediate ops).
-      const needsRestart = profileDiff.model || profileDiff.tools || profileDiff.advanced;
-      ops.push({ key: "profile", kind: needsRestart ? "slow" : "fast", payload: profileDraft });
+      // Audio is gateway-side — it never touches the Hermes profile
+      // render/write, so it stays "fast". Voice is no longer part of this
+      // draft/apply flow at all (see VoicesPanel — immediate ops).
+      const needsProfileRewrite = profileDiff.model || profileDiff.tools || profileDiff.advanced;
+      ops.push({ key: "profile", kind: needsProfileRewrite ? "slow" : "fast", payload: profileDraft });
     }
     if (soulDirty && soulDraft !== null) {
       ops.push({ key: "systemPrompt.soul", kind: "slow", payload: soulDraft });
@@ -180,8 +181,9 @@ export function SettingsView({
       setSoulDraft(s.value.content);
     }
     // Re-fetch any memory slot the user touched so the editor reflects the
-    // post-restart on-disk state (Hermes may have updated the file during
-    // restart).
+    // latest on-disk state (Hermes writes and prunes memory autonomously
+    // between conversations, so the file may have changed since it was
+    // last loaded here).
     for (const slot of ["memory", "user"] as const) {
       if (memoryOriginals[slot] === null) continue;
       const m = await profileApi.getMemoryDoc(token, slot);
@@ -359,10 +361,13 @@ function makeApplyDeps(
     },
     waitForRestart: async () => {
       // Trigger the gateway's apply pipeline: render config.yaml + SOUL.md
-      // into the Hermes worker's profile dir, then supervisorctl-restart
-      // the worker, then poll /health until it accepts auth. Without this,
-      // a model/tools/advanced change saves to profile.json but never
-      // reaches the running worker — silent stale config, hard to debug.
+      // into the Hermes profile dir (gateway/src/apply/orchestrator.ts).
+      // Hermes runs as a one-shot exec per delegation with that dir as its
+      // cwd, so writing the file IS the entire operation — the next
+      // delegation reads it, no restart or health-check involved. Without
+      // this call, a model/tools/advanced change saves to profile.json but
+      // never reaches the rendered Hermes config — silent stale config,
+      // hard to debug.
       const r = await profileApi.apply(token);
       if (!r.ok) return { state: "failed", elapsedMs: 0 };
       return { state: "ready", elapsedMs: r.value.elapsedMs };

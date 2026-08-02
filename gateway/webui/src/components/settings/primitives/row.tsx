@@ -16,7 +16,7 @@ export function Row({ label, hint, children, dirty, vertical }: RowProps): JSX.E
       <div class="row-l">
         <div class="row-label">
           <span>{label}</span>
-          {dirty && <span class="dot-dirty" title="Restart required" />}
+          {dirty && <span class="dot-dirty" title="Unapplied change" />}
         </div>
         {hint && <p class="row-hint">{hint}</p>}
       </div>

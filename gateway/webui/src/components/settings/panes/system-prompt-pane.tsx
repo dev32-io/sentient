@@ -95,7 +95,7 @@ export function SystemPromptPane({
 
       <Card
         title="Soul.md"
-        sub="Markdown supported. Restart required after Apply."
+        sub="Markdown supported. Changes take effect after Apply."
         action={
           <Btn kind="secondary" size="sm" danger onClick={() => setConfirmOpen(true)}>
             Restore default
@@ -139,8 +139,8 @@ export function SystemPromptPane({
           }
         >
           <p class="modal-lead">
-            This replaces your edits with the canonical Soul.md template. Apply &amp; Restart afterwards
-            to make it take effect. You can still discard the change before applying.
+            This replaces your edits with the canonical Soul.md template. Apply afterwards to make it
+            take effect. You can still discard the change before applying.
           </p>
         </Modal>
       )}
