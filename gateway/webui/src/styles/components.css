@@ -456,7 +456,13 @@ html.is-paused *::after {
 }
 /* Inline markdown container — strips default block margins from paragraphs
    and lists so the bubble stays compact, but preserves visible structure
-   for headings, code, and lists. */
+   for headings, code, and lists. `.message-bubble__text-wrap` sets
+   `overflow: hidden`, so an unbroken long token (URL, hash, path) MUST wrap
+   here or it is silently clipped off the edge with no scrollbar to reveal
+   it — same fix as `.tool-inline-detail__preview` below. */
+.bubble-text__md {
+  overflow-wrap: anywhere;
+}
 .bubble-text__md > :first-child { margin-top: 0; }
 .bubble-text__md > :last-child { margin-bottom: 0; }
 .bubble-text__md p { margin: 0 0 0.4em; }
