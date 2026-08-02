@@ -77,11 +77,14 @@ function toMetadata(row: SessionRow): SessionMetadata {
   };
 }
 
-// SQLite reports both a UNIQUE and a TEXT PRIMARY KEY violation under a
-// `SQLITE_CONSTRAINT_*` code, so the column name in the message — not the
-// code — is what tells a `mint_key` collision (idempotent re-mint) apart from
-// a `session_id` collision (a caller bug: colliding id generation).
-const MINT_KEY_COLUMN = "sessions.mint_key";
+// SQLite gives a UNIQUE violation and a TEXT PRIMARY KEY violation DISTINCT
+// exact `.code` values — measured on the pinned bun:sqlite (1.3.11):
+// `mint_key` (plain UNIQUE) fails as SQLITE_CONSTRAINT_UNIQUE, `session_id`
+// (PRIMARY KEY) fails as SQLITE_CONSTRAINT_PRIMARYKEY. `mint_key` is the only
+// plain-UNIQUE column on this table, so the exact code alone discriminates a
+// `mint_key` collision (idempotent re-mint) from a `session_id` collision (a
+// caller bug: colliding id generation) — no message-parsing needed.
+const SQLITE_CONSTRAINT_UNIQUE = "SQLITE_CONSTRAINT_UNIQUE";
 
 export function createSessionMetadataOps(db: Database, userId: string): SessionMetadataOps {
   const insertSession = db.query<SessionRow, [string, string, number, number]>(`
@@ -114,11 +117,7 @@ export function createSessionMetadataOps(db: Database, userId: string): SessionM
         log.info("session.metadata.created", { userId, sessionId, mintKey });
         return toMetadata(row);
       } catch (err: unknown) {
-        if (
-          err instanceof SQLiteError &&
-          err.code?.startsWith("SQLITE_CONSTRAINT") &&
-          err.message.includes(MINT_KEY_COLUMN)
-        ) {
+        if (err instanceof SQLiteError && err.code === SQLITE_CONSTRAINT_UNIQUE) {
           log.warn("session.metadata.mint-key-conflict", {
             userId,
             sessionId,

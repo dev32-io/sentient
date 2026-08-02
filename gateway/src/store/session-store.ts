@@ -27,6 +27,12 @@ import { migrateStore } from "./migrate-store.js";
 import { STORE_DDL } from "./schema.js";
 import { type SessionMetadata, type TitleProvenance, createSessionMetadataOps } from "./session-metadata.js";
 
+// Re-exported so a consumer of the public `SessionStore` surface (task 3:
+// resolve a mint-key conflict to the existing session) can `catch` and
+// `instanceof`-check it without reaching past this module into the internal
+// session-metadata.js submodule.
+export { MintKeyConflictError } from "./session-metadata.js";
+
 const log = getLog(["sentient", "store", "session-store"]);
 
 // Mirrors gateway/config.yaml#store.db_filename. The composition root does not
