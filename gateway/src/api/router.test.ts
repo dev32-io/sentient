@@ -29,6 +29,7 @@ function makeDeps(overrides: Partial<ApiRouterDeps> = {}): ApiRouterDeps {
     handleApply: fallthrough,
     handleVoices: fallthrough,
     handleDiagnostics: fallthrough,
+    handleSessions: fallthrough,
     handleStatic: nullStatic,
     ...overrides,
   };
@@ -57,5 +58,24 @@ describe("createApiRouter — voices route dispatch", () => {
     await router(new Request("http://host/api/v1/providers/models"));
     expect(handleVoices).not.toHaveBeenCalled();
     expect(handleProviders).toHaveBeenCalledOnce();
+  });
+});
+
+describe("createApiRouter — sessions route dispatch", () => {
+  it("routes GET /api/v1/sessions to handleSessions, ahead of the static fallback", async () => {
+    const handleSessions = vi.fn().mockResolvedValue(sentinel);
+    const handleStatic = vi.fn().mockResolvedValue(new Response("index.html", { status: 200 }));
+    const router = createApiRouter(makeDeps({ handleSessions, handleStatic }));
+    const res = await router(new Request("http://host/api/v1/sessions"));
+    expect(handleSessions).toHaveBeenCalledOnce();
+    expect(handleStatic).not.toHaveBeenCalled();
+    expect(res?.status).toBe(200);
+  });
+
+  it("routes GET /api/v1/sessions/<id>/messages to handleSessions", async () => {
+    const handleSessions = vi.fn().mockResolvedValue(sentinel);
+    const router = createApiRouter(makeDeps({ handleSessions }));
+    await router(new Request("http://host/api/v1/sessions/s_abc123/messages"));
+    expect(handleSessions).toHaveBeenCalledOnce();
   });
 });

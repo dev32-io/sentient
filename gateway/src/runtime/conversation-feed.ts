@@ -153,6 +153,20 @@ function lastSeqOf(entries: readonly SessionEntry[], fallback: number): number {
   return entries[entries.length - 1]?.seq ?? fallback;
 }
 
+/**
+ * Project committed entries into the EXACT wire shape the live path emits on
+ * `conversation.snapshot` — `projectForClient` plus the same per-item
+ * `toWireItem` status derivation `snapshot()` below uses.
+ *
+ * Exported so `api/handlers/sessions.ts` (`GET /sessions/:id/messages`) can
+ * reuse it rather than re-deriving the shape: `render(replay) == render(live)`
+ * is a protocol contract, and two hand-written projections is how it drifts.
+ */
+export function snapshotFeedItems(entries: SessionEntry[]): ConversationFeedItem[] {
+  const unresolved = unresolvedToolItemIds(entries);
+  return projectForClient(entries).map((i) => toWireItem(i, unresolved.has(i.id)));
+}
+
 export function createConversationFeed(deps: ConversationFeedDeps): ConversationFeed {
   const { store, sessionId, userId, emitter } = deps;
 
@@ -213,8 +227,7 @@ export function createConversationFeed(deps: ConversationFeedDeps): Conversation
   return {
     snapshot(): void {
       const entries = store.readSession(sessionId);
-      const unresolved = unresolvedToolItemIds(entries);
-      const items = projectForClient(entries).map((i) => toWireItem(i, unresolved.has(i.id)));
+      const items = snapshotFeedItems(entries);
       emitter.conversationSnapshot(items);
       publishedThroughSeq = lastSeqOf(entries, publishedThroughSeq);
       log.info("conversation-feed.snapshot", {

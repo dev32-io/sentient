@@ -47,9 +47,40 @@ const WS_READY_STATE_OPEN = 1;
  * The grant is the authorization step: `AccessManager` mints the capability
  * from the principal, and `openSessionStore` refuses any capability that is
  * not for the `session-store` resource class.
+ *
+ * Takes only the slice of `GatewayServices` it actually reads — `accessManager`
+ * — so a caller with a narrower deps shape (the sessions REST handler has no
+ * reason to carry the whole services object) can still use it. Every existing
+ * caller passes the full `GatewayServices`, which satisfies the narrower type
+ * structurally, so this is a widening, not a breaking change.
  */
-export function withSessionStore<T>(
+/**
+ * Another connection that is live-serving [sessionId] right now, or null when
+ * [ws] is free to bind it.
+ *
+ * Every caller reaches the registry OUTSIDE the handshake `claim` call — a
+ * late text.input re-bind, a mint that replays onto a draft key another
+ * connection already spent, and `conversation.activate` switching a live
+ * connection onto a different session — so none of them can rely on `claim`'s
+ * "newest wins", which measures newest by CALL time. Asking here instead is
+ * one read and one comparison, and this whole function is deleted with the
+ * single-owner registry in task 5.
+ *
+ * "Live" excludes an owner whose socket is CLOSING/CLOSED with its close event
+ * still outstanding (conversation-runtime-registry.ts). That is the difference
+ * between guarding a duplicated tab and breaking a drop-and-retry.
+ */
+export function liveRivalOwner(
+  ws: ServerWebSocket<SessionData>,
   services: GatewayServices,
+  sessionId: string,
+): string | null {
+  const owner = services.conversationRuntimes.liveOwnerOf(sessionId);
+  return owner !== null && owner !== ws.data.sessionId ? owner : null;
+}
+
+export function withSessionStore<T>(
+  services: Pick<GatewayServices, "accessManager">,
   principal: UserPrincipal,
   use: (store: SessionStore) => T,
 ): T {

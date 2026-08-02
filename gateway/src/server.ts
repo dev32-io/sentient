@@ -16,6 +16,7 @@ import { createProvidersHandler } from "./api/handlers/providers.ts";
 import { createReadyHandler } from "./api/handlers/ready.ts";
 import { createSecretsHandler } from "./api/handlers/secrets.ts";
 import { createServicesVersionsHandler } from "./api/handlers/services-versions.ts";
+import { createSessionsHandler } from "./api/handlers/sessions.ts";
 import { createSystemStatusHandler } from "./api/handlers/system-status.ts";
 import { createVoicesHandler } from "./api/handlers/voices.ts";
 import { createWebuiHandler } from "./api/handlers/webui.ts";
@@ -180,6 +181,10 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
     maxTags: services.ttsConfig.voice_max_tags,
   });
   const handleDiagnostics = createDiagnosticsHandler({ tokens: services.auth.tokens });
+  const handleSessions = createSessionsHandler({
+    tokens: services.auth.tokens,
+    accessManager: services.accessManager,
+  });
 
   return Bun.serve<SessionData>({
     port: options.port,
@@ -213,6 +218,7 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
         handleApply,
         handleVoices,
         handleDiagnostics,
+        handleSessions,
         handleStatic,
       });
       return router(request);
