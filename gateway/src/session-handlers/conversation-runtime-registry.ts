@@ -19,6 +19,12 @@
 // one is torn down rather than left running blind. Ownership is tracked by
 // connection id, so a superseded socket's late close event cannot deregister
 // (or tear down) the connection that replaced it.
+//
+// "NEWEST" IS MEASURED BY CLAIM-CALL TIME, not by connection recency, and those
+// two agree only while every connection claims during its own handshake. They
+// do not for a LATE bind — a connection whose handshake-time bind failed and
+// which recovers on a later message — so that caller asks `ownerOf` first and
+// declines rather than claiming blind. See `ensureBoundRuntime` (ws-handlers.ts).
 
 import { getLog } from "../logging/logger.js";
 
@@ -47,6 +53,16 @@ export interface ConversationRuntimeRegistry {
    * deregister the live one.
    */
   release(conversationId: string, connectionId: string): void;
+  /**
+   * The connection currently serving this conversation, or null.
+   *
+   * Exists because `claim` decides "newest" by CALL TIME, which is only the
+   * same as connection recency while every connection claims during its own
+   * handshake. A LATE bind (ws-handlers.ts's `ensureBoundRuntime`) breaks that
+   * assumption — it can claim long after a newer connection did — so it has to
+   * ask who is there first instead of asserting ownership blind.
+   */
+  ownerOf(conversationId: string): string | null;
   /** Live conversations. Exposed so teardown paths can assert no leak. */
   readonly size: number;
 }
@@ -94,6 +110,10 @@ export function createConversationRuntimeRegistry(): ConversationRuntimeRegistry
       }
       owners.delete(conversationId);
       log.debug("conversation-runtime.released", { conversationId, connectionId, liveConversations: owners.size });
+    },
+
+    ownerOf(conversationId) {
+      return owners.get(conversationId)?.connectionId ?? null;
     },
 
     get size() {

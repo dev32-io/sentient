@@ -1028,6 +1028,56 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     expect(((snapshot?.items ?? []) as { content?: string }[])[0]?.content).toBe("from before the reload");
   });
 
+  it("INVARIANT: a late bind never evicts a live connection that took the session over meanwhile", async () => {
+    // The hazard the late re-bind opens, in its four steps:
+    //   1. A opens session S; its bind fails transiently (secrets-store hiccup).
+    //   2. A sits idle — the client is showing an error, or nobody has typed.
+    //   3. B opens S after the condition clears, binds, and CLAIMS it.
+    //   4. A finally sends a message.
+    //
+    // Step 4 must not evict B. `claim` decides "newest wins" by call time,
+    // which equals connection recency only while every connection claims during
+    // its own handshake — and A, by definition, did not. Without the guard, a
+    // connection that failed early and recovered late beats one that succeeded
+    // in between, inverting the registry's own stated invariant and discarding
+    // whatever B had in flight.
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const accessManager = freshAccessManager();
+    const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
+    const sessionId = seedSession(accessManager, USER_ID, "shared session");
+
+    let failNextBind = true;
+    const workingFactory = services.createSessionRuntime;
+    (services as { createSessionRuntime: unknown }).createSessionRuntime = (req: never) => {
+      if (failNextBind) {
+        failNextBind = false;
+        throw new Error("no active LLM key for this user");
+      }
+      return (workingFactory as (r: never) => unknown)(req);
+    };
+
+    // 1 + 2: A resolves S, its bind fails, nothing is claimed, and it idles.
+    const a = fakeAuthedWs("connection-a");
+    configure(a, services, SURFACE_A, sessionId);
+    expect(a.data.runtime).toBeNull();
+    expect(a.data.conversationId).toBe(sessionId);
+
+    // 3: B opens the same session and binds successfully.
+    const b = fakeAuthedWs("connection-b");
+    configure(b, services, SURFACE_B, sessionId);
+    const bRuntime = b.data.runtime as SessionRuntime;
+    expect(bRuntime).not.toBeNull();
+
+    // 4: A's first message must be refused rather than served by theft.
+    await handleWebSocketMessage(asWs(a), JSON.stringify({ type: "text.input", text: "late" }), services);
+
+    expect(b.data.runtime).toBe(bRuntime); // B was NOT evicted…
+    expect(b.data.permissions).not.toBeNull();
+    expect(a.data.runtime).toBeNull(); // …and A did not take the session over.
+    expect(a.sent.some((f) => f.type === "error" && f.code === "orchestrator_unavailable")).toBe(true);
+    bRuntime.dispose();
+  });
+
   it("a connection that presents nothing starts clean — no other session bleeds in", async () => {
     const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();

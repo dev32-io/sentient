@@ -314,6 +314,31 @@ function ensureBoundRuntime(
     // Re-binding rather than clearing the id and minting: the id is the only
     // record of which session the client asked for, and a mint here would
     // silently move them into a brand-new conversation.
+    //
+    // BUT NEVER OVER A LIVE OWNER. `claim` decides "newest wins" by call time,
+    // which equals connection recency only while every connection claims during
+    // its own handshake — and this one, by definition, did not. A connection
+    // that failed early and recovers late would otherwise beat one that
+    // succeeded in between: reopening the same session from a second tab or
+    // device, then typing in the first, would evict the runtime actively
+    // serving the second and discard whatever it had in flight. Declining
+    // upholds the registry's own rule instead of inverting it, and it is the
+    // status quo for this connection either way — before the re-bind existed,
+    // this branch answered `orchestrator_unavailable` unconditionally.
+    //
+    // Task 5 deletes evict-on-claim entirely (N attachments to one runtime), so
+    // this is a guard for the window until then, not a new ownership model.
+    const liveOwner = services.conversationRuntimes.ownerOf(ws.data.conversationId);
+    if (liveOwner !== null && liveOwner !== ws.data.sessionId) {
+      log.warn("text.input.late-bind-declined", {
+        sessionId: ws.data.sessionId,
+        conversationId: ws.data.conversationId,
+        ownerConnectionId: liveOwner,
+        reason: "another live connection is serving this session — refusing to evict it from a late bind",
+      });
+      return null;
+    }
+
     const rebound = bindSessionRuntime(ws, services, ws.data.conversationId);
     if (rebound === null) {
       log.warn("text.input.no-runtime", {
