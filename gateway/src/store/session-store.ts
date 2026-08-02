@@ -25,6 +25,7 @@ import { getLog } from "../logging/logger.js";
 import type { NewSessionEntry, SessionEntry } from "./entry-types.js";
 import { migrateStore } from "./migrate-store.js";
 import { STORE_DDL } from "./schema.js";
+import { type SessionMetadata, type TitleProvenance, createSessionMetadataOps } from "./session-metadata.js";
 
 const log = getLog(["sentient", "store", "session-store"]);
 
@@ -77,6 +78,17 @@ export interface SessionStore {
    *  process-lifetime set, so it survives reconnect, restart and redeploy. */
   findByPendingId(sessionId: string, pendingId: string): SessionEntry | null;
   listSessions(): Array<{ sessionId: string; startedAt: number; lastAt: number }>;
+  /** Throws `MintKeyConflictError` (session-metadata.js) when `mintKey` already
+   *  names a session — the `UNIQUE` constraint on `mint_key` is what makes
+   *  minting idempotent, not a read-then-write check. */
+  createSession(sessionId: string, mintKey: string): SessionMetadata;
+  findSessionByMintKey(mintKey: string): SessionMetadata | null;
+  getSession(sessionId: string): SessionMetadata | null;
+  /** Newest-updated first. */
+  listSessionsWithMetadata(): SessionMetadata[];
+  /** Compare-and-set title write. `false` when `expectedVersion` is stale or a
+   *  `generated` title would overwrite a `user` one. */
+  setTitle(sessionId: string, title: string, provenance: TitleProvenance, expectedVersion: number): boolean;
   /** Release the handle. Idempotent. Every other method throws afterwards —
    *  see this file's header. */
   close(): void;
@@ -149,6 +161,7 @@ export function openSessionStore(cap: Capability): SessionStore {
     SELECT session_id, MIN(created_at) AS started_at, MAX(created_at) AS last_at
     FROM entries GROUP BY session_id ORDER BY last_at DESC
   `);
+  const metadata = createSessionMetadataOps(db, cap.ownerUserId);
 
   let closed = false;
 
@@ -205,6 +218,26 @@ export function openSessionStore(cap: Capability): SessionStore {
         startedAt: r.started_at,
         lastAt: r.last_at,
       }));
+    },
+    createSession(sessionId, mintKey) {
+      assertOpen("createSession");
+      return metadata.createSession(sessionId, mintKey);
+    },
+    findSessionByMintKey(mintKey) {
+      assertOpen("findSessionByMintKey");
+      return metadata.findSessionByMintKey(mintKey);
+    },
+    getSession(sessionId) {
+      assertOpen("getSession");
+      return metadata.getSession(sessionId);
+    },
+    listSessionsWithMetadata() {
+      assertOpen("listSessionsWithMetadata");
+      return metadata.listSessionsWithMetadata();
+    },
+    setTitle(sessionId, title, provenance, expectedVersion) {
+      assertOpen("setTitle");
+      return metadata.setTitle(sessionId, title, provenance, expectedVersion);
     },
     close() {
       if (closed) return;

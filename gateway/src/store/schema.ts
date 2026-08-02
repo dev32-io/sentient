@@ -63,6 +63,28 @@ export const STORE_MIGRATIONS: readonly StoreMigration[] = [
       "CREATE INDEX IF NOT EXISTS idx_entries_session_pending ON entries (session_id, pending_id)",
     ],
   },
+  {
+    version: 2,
+    name: "sessions",
+    statements: [
+      // A session's identity, separate from its entries: `entries` has never
+      // had a row that says a session EXISTS, only rows it happens to own.
+      // `mint_key` is UNIQUE so SQLite itself — not a read-then-write race in
+      // TypeScript — is what makes minting a session idempotent (spec §4.1).
+      // `version` is the CAS token `setTitle` checks before writing.
+      `CREATE TABLE IF NOT EXISTS sessions (
+        session_id       TEXT    PRIMARY KEY,
+        mint_key         TEXT    NOT NULL UNIQUE,
+        created_at       INTEGER NOT NULL,
+        updated_at       INTEGER NOT NULL,
+        title            TEXT,
+        title_provenance TEXT,
+        version          INTEGER NOT NULL DEFAULT 1
+      )`,
+      // listSessionsWithMetadata orders by this, newest first.
+      "CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions (updated_at DESC)",
+    ],
+  },
 ];
 
 /** The version a store is brought up to on open. Derived, never hand-written. */
