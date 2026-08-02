@@ -202,12 +202,31 @@ export interface McpClient {
   close(): Promise<void>;
 }
 
+/** The result of intersecting a catalog entry's curated `tools.include` list
+ *  against what the server actually advertises. */
+export interface AllowlistFilterResult {
+  /** Tools kept — advertised by the server AND named in `include`. */
+  kept: McpToolRef[];
+  /** `include` entries that matched no advertised tool (D19): the operator's
+   *  curated surface has drifted from upstream, silently, until something
+   *  reads this. Empty whenever `include` is undefined. */
+  unmatched: string[];
+}
+
 /** Keeps only allowlisted tools when `include` is set; keeps all tools when
- *  `include` is undefined (operator has not curated this server's surface). */
-export function filterByAllowlist(tools: McpToolRef[], include: string[] | undefined): McpToolRef[] {
-  if (include === undefined) return tools;
+ *  `include` is undefined (operator has not curated this server's surface).
+ *
+ *  Pure — reports the diff instead of just dropping it, so the caller can log
+ *  the drift (D19: `filterByAllowlist` used to intersect and discard
+ *  silently, so a curated surface rotted invisibly as upstream renamed
+ *  things while the config kept reading like coverage). */
+export function filterByAllowlist(tools: McpToolRef[], include: string[] | undefined): AllowlistFilterResult {
+  if (include === undefined) return { kept: tools, unmatched: [] };
+  const advertised = new Set(tools.map((tool) => tool.name));
   const allowed = new Set(include);
-  return tools.filter((tool) => allowed.has(tool.name));
+  const kept = tools.filter((tool) => allowed.has(tool.name));
+  const unmatched = include.filter((name) => !advertised.has(name));
+  return { kept, unmatched };
 }
 
 /** The one transport this v1 client dials — stdio catalog entries are
@@ -320,14 +339,20 @@ export function createMcpClient(catalog: McpCatalog, opts: { includeServers?: st
   }
 
   function finishListTools(serverName: string, entry: McpHttpEntry, refs: McpToolRef[], startedAt: number) {
-    const filtered = filterByAllowlist(refs, entry.tools?.include);
+    const { kept, unmatched } = filterByAllowlist(refs, entry.tools?.include);
+    // D19: an include entry naming a tool the server no longer (or never
+    // did) advertise is catalog drift, not a mere zero-hit filter — WARN so
+    // it surfaces at startup instead of rotting silently in the allowlist.
+    if (unmatched.length > 0) {
+      log.warn("mcp.list-tools.allowlist-drift", { serverName, unmatched });
+    }
     log.info("mcp.list-tools.ok", {
       serverName,
       totalCount: refs.length,
-      filteredCount: filtered.length,
+      filteredCount: kept.length,
       elapsedMs: Date.now() - startedAt,
     });
-    return filtered;
+    return kept;
   }
 
   async function listToolsForServer(serverName: string, entry: McpHttpEntry): Promise<McpToolRef[]> {

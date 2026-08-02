@@ -235,7 +235,7 @@ describe("shipped mcp-policy.yaml", () => {
   it.each([
     "ha_get_overview",
     "ha_get_state",
-    "ha_search_entities",
+    "ha_search",
     "ha_get_todo",
     "search_web",
     "fetch",

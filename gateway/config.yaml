@@ -490,7 +490,7 @@ mcp_catalog:
         # query / state
         - ha_get_overview
         - ha_get_state
-        - ha_search_entities
+        - ha_search
         - ha_get_history
         - ha_eval_template
         - ha_get_operation_status

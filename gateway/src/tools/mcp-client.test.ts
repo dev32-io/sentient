@@ -1,19 +1,49 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { McpCatalog } from "@sentient/config";
-import { classifyTransport, createMcpClient, filterByAllowlist, normalizeToolResult } from "./mcp-client.js";
+import {
+  type McpToolRef,
+  classifyTransport,
+  createMcpClient,
+  filterByAllowlist,
+  normalizeToolResult,
+} from "./mcp-client.js";
 
 const tools = [
   { serverName: "ha", name: "ha_get_state", description: "", inputSchema: {} },
   { serverName: "ha", name: "ha_dangerous", description: "", inputSchema: {} },
 ];
 
+function toolRef(name: string): McpToolRef {
+  return { serverName: "ha", name, description: "", inputSchema: {} };
+}
+
 describe("filterByAllowlist", () => {
   it("keeps only allowlisted tools when an include list is set", () => {
-    expect(filterByAllowlist(tools, ["ha_get_state"]).map((t) => t.name)).toEqual(["ha_get_state"]);
+    expect(filterByAllowlist(tools, ["ha_get_state"]).kept.map((t) => t.name)).toEqual(["ha_get_state"]);
   });
   it("keeps all tools when no include list is set", () => {
-    expect(filterByAllowlist(tools, undefined)).toHaveLength(2);
+    expect(filterByAllowlist(tools, undefined).kept).toHaveLength(2);
+  });
+  it("reports no unmatched entries when no include list is set", () => {
+    expect(filterByAllowlist(tools, undefined).unmatched).toEqual([]);
+  });
+  it("reports no unmatched entries when every include entry is advertised", () => {
+    expect(filterByAllowlist(tools, ["ha_get_state"]).unmatched).toEqual([]);
+  });
+
+  // D19: `ha_search_entities` sat in config.yaml's include list and its own
+  // mcp-policy.yaml rule for weeks while the real tool (`ha_search`) went
+  // unreachable — filterByAllowlist intersected the include list with what
+  // the server advertised and silently dropped the rest, so the curated
+  // surface read like coverage while it rotted. This is the regression test
+  // for that mechanism: an include entry matching no advertised tool must be
+  // REPORTED, not silently dropped, so the caller can WARN on it.
+  it("INVARIANT: an include entry matching no advertised tool is reported, not silently dropped", () => {
+    const { kept, unmatched } = filterByAllowlist([toolRef("ha_search")], ["ha_search", "ha_search_entities"]);
+    expect(kept).toHaveLength(1);
+    expect(kept.map((t) => t.name)).toEqual(["ha_search"]);
+    expect(unmatched).toEqual(["ha_search_entities"]);
   });
 });
 

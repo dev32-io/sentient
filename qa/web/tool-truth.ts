@@ -71,7 +71,7 @@ const READ_ONLY_TOOLS: Readonly<Record<string, readonly string[]>> = {
   home_assistant: [
     "ha_get_overview",
     "ha_get_state",
-    "ha_search_entities",
+    "ha_search",
     "ha_get_history",
     "ha_eval_template",
     "ha_list_floors_areas",

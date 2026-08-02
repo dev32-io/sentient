@@ -70,9 +70,9 @@ rules:
     action: allow
     reason: "Read-only Home Assistant query"
 
-  - name: allow_ha_search_entities
-    tool: ha_search_entities
-    condition: 'tool == "ha_search_entities"'
+  - name: allow_ha_search
+    tool: ha_search
+    condition: 'tool == "ha_search"'
     action: allow
     reason: "Read-only Home Assistant query"
 
