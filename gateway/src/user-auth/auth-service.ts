@@ -78,12 +78,16 @@ export async function createAuthService(authConfig: AuthConfig): Promise<AuthSer
     async authenticate(userId, pin) {
       const r = await users.get(userId);
       if (!r.ok || r.value === null) {
-        log.debug("authenticate.no-user", { userId });
+        // D20: a rejected credential is a security boundary decision, not a
+        // debug trace — WARN so it survives at the running `info` level
+        // (also the documented prod default). userId + reason are the whole
+        // payload; the pin is NEVER logged, not even truncated.
+        log.warn("authenticate.no-user", { userId, reason: "no such user" });
         return { ok: false, error: "invalid-credentials" };
       }
       const ok = await verifyPin(pin, r.value.pinHash);
       if (!ok) {
-        log.debug("authenticate.wrong-pin", { userId });
+        log.warn("authenticate.wrong-pin", { userId, reason: "wrong pin" });
         return { ok: false, error: "invalid-credentials" };
       }
       const token = await tokens.issue({ userId: r.value.userId, isAdmin: r.value.isAdmin });
