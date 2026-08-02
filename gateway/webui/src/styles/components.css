@@ -123,13 +123,15 @@ html.is-paused *::after {
     width: 44px;
     height: 44px;
   }
-  /* Composer is high-density; carve out small tightly-packed controls
-     even on mobile. WCAG 44×44 still applies to topbar / drawer / standalone icon buttons. */
+  /* Composer is high-density, so its controls stay under the 44×44 generic
+     floor to preserve room for the textarea — but they still need to be
+     comfortably tappable, not just clear WCAG 2.5.8 AA's 24×24 minimum.
+     WCAG 44×44 still applies to topbar / drawer / standalone icon buttons. */
   .composer__bottom-row .icon-btn {
-    min-width: 32px;
-    min-height: 32px;
-    width: 32px;
-    height: 32px;
+    min-width: 40px;
+    min-height: 40px;
+    width: 40px;
+    height: 40px;
   }
 }
 .icon-btn:hover { background: var(--color-bg-sunk); color: var(--color-ink); }
@@ -1243,15 +1245,25 @@ html.is-paused *::after {
     min-height: 22px;
   }
   .composer__bottom-row { margin-top: 4px; gap: 6px; }
-  .composer__bottom-row .icon-btn { width: 28px; height: 28px; border-radius: 7px; }
+  /* Raised from 28px (measured too small to comfortably tap — QA e2e round
+     2, task-21) toward the 44px comfort target; kept at 40 rather than a
+     full 44 so the high-density bottom row doesn't grow tall enough to
+     visibly eat chat real estate. Icon glyph size (16px, via <Icon>) is
+     unchanged — only the hit-rect/chrome grows, same idiom as the base
+     `.icon-btn` touch rule above. */
+  .composer__bottom-row .icon-btn { width: 40px; height: 40px; border-radius: 10px; }
   .send-btn,
-  .interrupt-btn { width: 28px; height: 28px; border-radius: 7px; }
-  .composer--live .composer__bottom-row { min-height: 28px; }
+  .interrupt-btn { width: 40px; height: 40px; border-radius: 10px; }
+  .composer--live .composer__bottom-row { min-height: 40px; }
 
-  /* Corner mic: smaller tab, tighter travel on narrow screens. */
-  .mic-corner-wrap { top: -16px; right: 8px; width: 84px; height: 32px; }
-  .mic-corner { width: 32px; height: 32px; }
-  .mic-corner-wrap__trail { width: calc(var(--mic-drag-progress, 0) * (100% - 32px)); }
+  /* Corner mic: smaller tab, tighter travel on narrow screens. Bumped 32→36
+     (more conservative than the 40px flat controls above) because this is a
+     drag rail, not a plain tap target — `mic-corner-gesture.ts` computes
+     travel/lock thresholds from the button's live measured size at runtime,
+     so growing it further shortens the hold→lock drag distance. */
+  .mic-corner-wrap { top: -16px; right: 8px; width: 84px; height: 36px; }
+  .mic-corner { width: 36px; height: 36px; }
+  .mic-corner-wrap__trail { width: calc(var(--mic-drag-progress, 0) * (100% - 36px)); }
   .composer__wave-field { padding: 0 10px; }
 
   /* Suggestion chips: single horizontal scroll row instead of wrapping
