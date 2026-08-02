@@ -74,6 +74,64 @@ function failureReason(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** Detects a tool result that reports `isError:false` at the JSON-RPC level
+ *  while carrying its own failure INSIDE the payload (D18: the upstream
+ *  `searxng-mcp-server`, pip-pinned 0.1.9, swallows its own DNS failure and
+ *  answers a 131-byte "success" — `{"total_results":0,"results":[],
+ *  "error":"[Errno -3] Temporary failure in name resolution"}`. Nothing
+ *  between it and the model flagged that as a failure, so the model
+ *  answered a currency question from its own weights instead of refusing.
+ *  We cannot fix the upstream package; this is our boundary check).
+ *
+ *  Deliberately narrow. The false positive that matters more than the bug
+ *  being fixed is turning a REAL result into a manufactured error — a log
+ *  search, a home-assistant entity literally named "error", a web page
+ *  ABOUT errors, or a search that returned hits alongside a warning. All
+ *  three conditions below must hold:
+ *   1. `content` parses as JSON and the top level is a plain object — prose
+ *      that merely contains the word "error" (a log line, an article) is
+ *      not JSON and never reaches this branch.
+ *   2. that object has an OWN top-level property literally named `error`
+ *      holding a non-empty string — an id/message/title containing the
+ *      substring "error" nested inside a results array is not a top-level
+ *      key named `error`.
+ *   3. every top-level array-valued property on that object is empty — a
+ *      call that returned real results (search hits, log lines) alongside
+ *      a warning is a working call, not a failure; emptiness only
+ *      corroborates the error string, it is never sufficient on its own
+ *      (a genuine no-hits search with no `error` key is not flagged here).
+ *  Returns the error message when all three hold, `null` otherwise. */
+export function detectInBandError(content: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+  const obj = parsed as Record<string, unknown>;
+  const errorMessage = obj.error;
+  if (typeof errorMessage !== "string" || errorMessage.length === 0) return null;
+  const hasNonEmptyResults = Object.values(obj).some((value) => Array.isArray(value) && value.length > 0);
+  if (hasNonEmptyResults) return null;
+  return errorMessage;
+}
+
+/** Applies `detectInBandError` to an already-"successful" `ToolResult`,
+ *  flipping it to `isError:true` when the payload proves the flag lied. A
+ *  result that already reports `isError:true` passes through unchanged —
+ *  there is nothing to upgrade. Called on the shared `callTool` result path
+ *  (see below) so every MCP server inherits the check, not just searxng. */
+export function normalizeToolResult(result: ToolResult): ToolResult {
+  if (result.isError) return result;
+  const reason = detectInBandError(result.content);
+  if (reason === null) return result;
+  return {
+    isError: true,
+    content: `MCP tool reported success but its payload carries an error: ${reason}`,
+  };
+}
+
 /** One tool advertised by an MCP server, tagged with the catalog entry it
  *  came from so callers can route a call back to the right server. */
 export interface McpToolRef {
@@ -307,15 +365,24 @@ export function createMcpClient(catalog: McpCatalog, opts: { includeServers?: st
             droppedPartTypes: [...new Set(nonTextParts.map((part) => part.type))],
           });
         }
-        const isError = !!result.isError;
+        const wireIsError = !!result.isError;
+        const normalized = normalizeToolResult({ content, isError: wireIsError });
+        if (normalized.isError && !wireIsError) {
+          // D18: the peer said isError:false, but its own payload disagrees.
+          log.warn("mcp.call-tool.in-band-error", {
+            serverName,
+            name,
+            reason: normalized.content,
+          });
+        }
         log.info("mcp.call-tool.ok", {
           serverName,
           name,
-          isError,
-          contentLength: content.length,
+          isError: normalized.isError,
+          contentLength: normalized.content.length,
           elapsedMs: Date.now() - startedAt,
         });
-        return { content, isError };
+        return normalized;
       } catch (err) {
         const reason = failureReason(err);
         // Evict, but never re-invoke: this tool may have side effects and the

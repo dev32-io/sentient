@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { McpCatalog } from "@sentient/config";
-import { classifyTransport, createMcpClient, filterByAllowlist } from "./mcp-client.js";
+import { classifyTransport, createMcpClient, filterByAllowlist, normalizeToolResult } from "./mcp-client.js";
 
 const tools = [
   { serverName: "ha", name: "ha_get_state", description: "", inputSchema: {} },
@@ -14,6 +14,88 @@ describe("filterByAllowlist", () => {
   });
   it("keeps all tools when no include list is set", () => {
     expect(filterByAllowlist(tools, undefined)).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D18 — a tool that fails IN-BAND still reports isError:false. The upstream
+// searxng-mcp-server (pip, pinned 0.1.9) swallows its own DNS failure and
+// answers a 131-byte "success":
+//   {"total_results": 0, "results": [], "error": "[Errno -3] ..."}
+// Nothing between it and the model flagged that as a failure, so the model
+// answered a currency question from its training weights instead of
+// refusing (docs/native-todo.md D18). `normalizeToolResult` is the shared
+// boundary check on the `callTool` result path — every MCP server inherits
+// it, not just searxng.
+// ---------------------------------------------------------------------------
+describe("normalizeToolResult", () => {
+  it("INVARIANT: a result whose payload carries an error is isError, whatever the flag said", () => {
+    const r = normalizeToolResult({
+      isError: false,
+      content: '{"total_results":0,"results":[],"error":"[Errno -3] Temporary failure in name resolution"}',
+    });
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain("name resolution"); // the reason survives, so the model can say WHAT failed
+  });
+
+  it("does not flag a result that already reports isError:true (nothing to upgrade)", () => {
+    const r = normalizeToolResult({ isError: true, content: "already an error" });
+    expect(r).toEqual({ isError: true, content: "already an error" });
+  });
+
+  it("does not flag plain-text content that merely contains the word 'error'", () => {
+    // A log-search or article result mentioning "error" as prose, not JSON.
+    const r = normalizeToolResult({ isError: false, content: "Found 3 log lines mentioning error today." });
+    expect(r.isError).toBe(false);
+  });
+
+  it("does not flag a home-assistant entity literally named 'error' nested in results", () => {
+    const content = '{"results":[{"entity_id":"sensor.error","state":"off"}]}';
+    const r = normalizeToolResult({ isError: false, content });
+    expect(r.isError).toBe(false);
+  });
+
+  it("does not flag JSON with no top-level `error` key", () => {
+    const r = normalizeToolResult({ isError: false, content: '{"total_results":0,"results":[]}' });
+    expect(r.isError).toBe(false);
+  });
+
+  it("does not flag a top-level `error` key that isn't a non-empty string", () => {
+    expect(normalizeToolResult({ isError: false, content: '{"error":null,"results":[]}' }).isError).toBe(false);
+    expect(normalizeToolResult({ isError: false, content: '{"error":"","results":[]}' }).isError).toBe(false);
+    expect(normalizeToolResult({ isError: false, content: '{"error":{"code":1},"results":[]}' }).isError).toBe(false);
+  });
+
+  it("does NOT flag a call that returned real results alongside a warning — narrow beats broad", () => {
+    // A search that returned hits AND a warning is a working call, not a
+    // failed one; turning it into a manufactured error is worse than the
+    // bug being fixed.
+    const content = '{"total_results":2,"results":[{"title":"a"},{"title":"b"}],"error":"partial index"}';
+    const r = normalizeToolResult({ isError: false, content });
+    expect(r.isError).toBe(false);
+  });
+
+  it("does not flag a genuine no-hits search with no error key — emptiness alone is not failure", () => {
+    const r = normalizeToolResult({ isError: false, content: '{"total_results":0,"results":[]}' });
+    expect(r.isError).toBe(false);
+  });
+
+  it("does not flag a top-level JSON array", () => {
+    const r = normalizeToolResult({ isError: false, content: '[{"error":"x"}]' });
+    expect(r.isError).toBe(false);
+  });
+
+  it("does not flag content that fails to parse as JSON at all", () => {
+    const r = normalizeToolResult({ isError: false, content: "error: connection refused" });
+    expect(r.isError).toBe(false);
+  });
+
+  it("flags a bare in-band error with no results field present at all", () => {
+    // Generic case beyond searxng's specific shape: any MCP server that
+    // answers isError:false with only {"error": "..."} at the top level.
+    const r = normalizeToolResult({ isError: false, content: '{"error":"upstream unavailable"}' });
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain("upstream unavailable");
   });
 });
 
@@ -35,7 +117,7 @@ interface JsonRpcRequest {
   params?: { protocolVersion?: string };
 }
 
-type ToolBehaviour = "ok" | "app-error" | "rpc-error";
+type ToolBehaviour = "ok" | "app-error" | "rpc-error" | "in-band-error";
 
 interface FakeMcpPeer {
   url: string;
@@ -114,11 +196,21 @@ function startFakeMcpPeer(): FakeMcpPeer {
           });
         }
         const isAppError = toolBehaviour === "app-error";
+        // D18 reproduction: the peer answers isError:false at the JSON-RPC
+        // level, exactly like the real searxng-mcp-server (pip 0.1.9)
+        // swallowing its own DNS failure — the failure lives only inside the
+        // text payload.
+        const text =
+          toolBehaviour === "in-band-error"
+            ? '{"total_results":0,"results":[],"error":"[Errno -3] Temporary failure in name resolution"}'
+            : isAppError
+              ? "No such playlist"
+              : "played";
         return jsonResponse({
           jsonrpc: "2.0",
           id: body.id,
           result: {
-            content: [{ type: "text", text: isAppError ? "No such playlist" : "played" }],
+            content: [{ type: "text", text }],
             ...(isAppError ? { isError: true } : {}),
           },
         });
@@ -203,6 +295,23 @@ describe("a catalog server that restarts under the client", () => {
     expect(await client.listTools()).toHaveLength(1);
     const result = await client.callTool("music_assistant", "ma_search", {}, AbortSignal.abort());
     expect(result.isError).toBe(true);
+    const after = await client.callTool("music_assistant", "ma_search", {}, new AbortController().signal);
+    expect(after.content).toBe("played");
+    expect(peer.initializeCount()).toBe(1);
+  });
+
+  // D18, end-to-end through the real callTool path (not just the pure
+  // normalizeToolResult unit above) — the peer answers isError:false at the
+  // wire level, byte-for-byte the searxng-mcp-server shape, and the client
+  // must still surface it as a failure.
+  it("D18: surfaces an in-band error even though the peer answered isError:false", async () => {
+    peer.setToolBehaviour("in-band-error");
+    const result = await client.callTool("music_assistant", "ma_search", {}, new AbortController().signal);
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("name resolution");
+    // No JSON-RPC error occurred, so the transport is proven fine — the next
+    // call must reuse the same session, not redial.
+    peer.setToolBehaviour("ok");
     const after = await client.callTool("music_assistant", "ma_search", {}, new AbortController().signal);
     expect(after.content).toBe("played");
     expect(peer.initializeCount()).toBe(1);
