@@ -483,6 +483,10 @@ Deferred items, in the order they'd sensibly land:
 
 5. **Settings + tweak flow** — how an operator inspects, enables, disables and re-scopes an external tool from the UI. Depends on the delegate-tool permission surface in §1/D11. Design later.
 
+6. **Reasoning effort needs a UX, not just a config key.** Deferred by the owner 2026-08-01, at the same time as setting it. Wave 1 wires `reasoning_effort` to the provider for the first time (the orchestrator previously never sent it) and pins it at **`low`** in `config.yaml` — the right default for a household assistant, where the invisible thinking phase is what delays the first spoken word.
+
+   But it is a genuine speed/depth trade and it is currently one global value for the whole house. The eventual shape is a **setting**, and the design questions are real: per user or per household? A plain three-way choice (quick / balanced / thorough) rather than the provider's vocabulary? Does a hard question deserve to raise it automatically for one turn? Note the trap — the existing `profile.json#advanced.reasoningEffort` field is **not** this: it is rendered into Hermes' config and has never reached the gateway's own loop, so a UI wired to it would appear to work and change nothing. Same shape as the model-selection bug closed in task 16.
+
 ---
 
 ### 3a. The delegated-agent (Hermes) cluster — DEFERRED as one, 2026-08-01
