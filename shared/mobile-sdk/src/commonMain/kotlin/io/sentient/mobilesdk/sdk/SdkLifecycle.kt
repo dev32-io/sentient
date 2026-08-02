@@ -199,6 +199,11 @@ class SdkLifecycle(
             // (broadcast). The orchestrator ignores empty ids defensively.
             is ServerMessage.SessionSwitched -> hooks.onSessionAnchored(msg.sessionId)
             is ServerMessage.SessionCreated -> hooks.onSessionAnchored(msg.sessionId)
+            // A draft key anchors exactly like a session id: it is what this
+            // client presents on configure and what unblocks the outbound
+            // queue. It is replaced by the real id on the session.created the
+            // first message triggers.
+            is ServerMessage.SessionDraft -> hooks.onSessionAnchored(msg.draftKey)
             // A forbidden mid re-establish means the anchored session was revoked
             // elsewhere — the orchestrator drops the anchor so reconnects stop
             // re-firing a switch to a dead session.

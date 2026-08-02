@@ -78,6 +78,13 @@ export function createUseSessions(connector: SessionsConnector): UseSessions {
       currentId.value = e.sessionId;
       return;
     }
+    if (e.kind === "draft") {
+      // A draft is not a session: it has no row, so nothing goes into the
+      // list. The pointer moves so the composer sends against this draft, and
+      // the row appears only when the first message mints the real id.
+      currentId.value = e.draftKey;
+      return;
+    }
     // created
     currentId.value = e.sessionId;
     const next: SessionRow = {
@@ -138,8 +145,8 @@ export function createUseSessions(connector: SessionsConnector): UseSessions {
     },
     async newChat() {
       try {
-        const { sessionId } = await connector.newChat();
-        currentId.value = sessionId;
+        const { draftKey } = await connector.newChat();
+        currentId.value = draftKey;
       } catch (e: unknown) {
         const message = (e as Error).message;
         log.warn("sessions.new.failed", { reason: message });

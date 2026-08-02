@@ -50,6 +50,10 @@ data class SessionsListPage(
 sealed class SessionsChangeEvent {
     data class Created(val sessionId: String, val title: String?, val ts: Long) : SessionsChangeEvent()
     data class Switched(val sessionId: String, val title: String?, val ts: Long) : SessionsChangeEvent()
+
+    /** No session yet — [draftKey] is the handle this client holds until its
+     *  first message mints one. A draft has no row and must never be listed. */
+    data class Draft(val draftKey: String, val ts: Long) : SessionsChangeEvent()
     data class Deleted(val sessionId: String) : SessionsChangeEvent()
     data class Renamed(val sessionId: String, val title: String) : SessionsChangeEvent()
 }
@@ -93,6 +97,12 @@ class SessionsConnector(
             is ServerMessage.SessionsRenamed -> dispatch(SessionsChangeEvent.Renamed(msg.sessionId, msg.title))
             is ServerMessage.SessionCreated -> onCreated(msg)
             is ServerMessage.SessionSwitched -> onSwitched(msg)
+            is ServerMessage.SessionDraft -> onDraft(msg)
+            // The gateway's own titling push. Fanned out as Renamed because
+            // every consumer does the same thing with it — put this title on
+            // this row — and the guard that decides whether a generated title
+            // may land at all is enforced in the gateway's store, not here.
+            is ServerMessage.SessionTitle -> dispatch(SessionsChangeEvent.Renamed(msg.sessionId, msg.title))
             else -> Unit // not owned by this connector
         }
     }
@@ -114,6 +124,20 @@ class SessionsConnector(
         createdWaiters.clear()
         for (w in waiters) w.complete(msg.sessionId)
         dispatch(SessionsChangeEvent.Created(msg.sessionId, msg.title, msg.ts))
+    }
+
+    /**
+     * A draft answers a pending mint exactly as a created session does: the
+     * "+" tap is complete, and the key is what the client anchors on so its
+     * outbound queue drains. Clearing [lastMintAtMs] here matters — the
+     * debounce must not stay armed against a mint that was already answered.
+     */
+    private fun onDraft(msg: ServerMessage.SessionDraft) {
+        lastMintAtMs = null
+        val waiters = createdWaiters.toList()
+        createdWaiters.clear()
+        for (w in waiters) w.complete(msg.draftKey)
+        dispatch(SessionsChangeEvent.Draft(msg.draftKey, msg.ts))
     }
 
     private fun onSwitched(msg: ServerMessage.SessionSwitched) {
@@ -188,13 +212,18 @@ class SessionsConnector(
         }
     }
 
-    /** Send session.new and await the session.created broadcast. */
+    /**
+     * Send an EXPLICIT session.new and await the answer — the id on
+     * `session.created` when the connection was bound, or the draft key on
+     * `session.draft` when the gateway unbound it and there is nothing minted
+     * yet.
+     */
     suspend fun newChat(): String {
         val deferred = CompletableDeferred<String>()
         createdWaiters.add(deferred)
         val id = newId()
         log.info("newChat", mapOf("requestId" to id))
-        send(ClientMessage.SessionNew(requestId = id))
+        send(ClientMessage.SessionNew(requestId = id, intent = INTENT_EXPLICIT))
         return try {
             withTimeout(timeoutMs) { deferred.await() }
         } catch (e: TimeoutCancellationException) {
@@ -208,6 +237,17 @@ class SessionsConnector(
 
     /**
      * Fire-and-forget new chat. Debounced: rapid taps collapse to one mint.
+     *
+     * DELIBERATELY IMPLICIT. This is the only live path on mobile and it serves
+     * BOTH meanings: the app fires it from `ChatViewModel.init` on every launch
+     * (route sessionId is null → `SwitchConversationUseCase(null)`), and a "+"
+     * tap reaches it through the exact same call after the host flips
+     * `activeSessionId` to null. Nothing at this layer can tell them apart, and
+     * declaring "explicit" would abandon the bound conversation on every app
+     * open. Sending "implicit" keeps today's behaviour exactly: a bound
+     * connection reattaches, an unbound one is told it is a draft. Closing the
+     * "+"-really-means-new gap needs the app to carry the distinction into the
+     * route — see docs/native-todo.md § 2.
      */
     fun sendNew() {
         val now = clock.nowMs()
@@ -274,5 +314,9 @@ class SessionsConnector(
     companion object {
         const val CAPABILITY: String = "sessions"
         private const val DEFAULT_SEARCH_LIMIT = 20
+
+        /** `session.new.intent` — a person pressing "+", as opposed to the app
+         *  launching with no route id (the gateway's default, "implicit"). */
+        private const val INTENT_EXPLICIT = "explicit"
     }
 }

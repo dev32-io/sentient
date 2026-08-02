@@ -92,8 +92,16 @@ sealed class ClientMessage {
     // Query RPCs (list/search/delete/rename) were removed from the WS protocol in
     // Task 2.1 — they are now REST (SessionsHttpClient). Only lifecycle frames remain.
 
+    /**
+     * Ask for a new chat. [intent] separates a person pressing "+" ("explicit")
+     * from the app simply launching with no route id ("implicit") — this SDK
+     * fires session.new on EVERY launch, twice per launch, and the gateway
+     * answering both the same way would abandon the bound conversation on every
+     * app open. Defaulted to "implicit" on the gateway, so omitting it is the
+     * safe half.
+     */
     @Serializable @SerialName("session.new")
-    data class SessionNew(val requestId: String) : ClientMessage()
+    data class SessionNew(val requestId: String, val intent: String? = null) : ClientMessage()
 
     /** Replaces the retired session.switch — activates an existing session.
      *  Fire-and-forget: no requestId. The gateway strips any requestId on the

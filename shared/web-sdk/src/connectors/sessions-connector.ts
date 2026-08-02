@@ -10,6 +10,12 @@ const DEFAULT_TIMEOUT_MS = 5000;
 export type SessionsChangeEvent =
   | { kind: "created"; sessionId: string; title?: string; ts: number }
   | { kind: "switched"; sessionId: string; title?: string; ts: number }
+  /** No session yet. `draftKey` is the opaque handle the gateway minted for
+   *  this draft: the client holds it as its current pointer, re-presents it on
+   *  `session.configure`, and the gateway spends it as the mint key when the
+   *  first message arrives. A draft is NOT a session — it has no row and must
+   *  never appear in the session list. */
+  | { kind: "draft"; draftKey: string; ts: number }
   | { kind: "deleted"; sessionId: string }
   | { kind: "renamed"; sessionId: string; title: string };
 
@@ -48,6 +54,23 @@ export class SessionsConnector implements Connector {
     };
     this.unsubs.push(sdk.onMessage("session.created", dispatchLifecycle("created")));
     this.unsubs.push(sdk.onMessage("session.switched", dispatchLifecycle("switched")));
+    this.unsubs.push(
+      sdk.onMessage("session.draft", (raw: unknown) => {
+        const m = raw as { draftKey: string; ts: number };
+        this.dispatch({ kind: "draft", draftKey: m.draftKey, ts: m.ts });
+      }),
+    );
+    // The gateway's own titling push. Folded into the `renamed` event rather
+    // than given its own kind: every consumer's behaviour is identical — put
+    // this title on this row — and the provenance guard that decides WHETHER a
+    // generated title may land is enforced in the store (compare-and-set on
+    // `title_provenance`), never re-litigated on the client.
+    this.unsubs.push(
+      sdk.onMessage("session.title", (raw: unknown) => {
+        const m = raw as { sessionId: string; title: string };
+        this.dispatch({ kind: "renamed", sessionId: m.sessionId, title: m.title });
+      }),
+    );
   }
 
   detach(): void {
@@ -118,25 +141,37 @@ export class SessionsConnector implements Connector {
     });
   }
 
-  newChat(): Promise<{ sessionId: string }> {
+  /**
+   * The "+" button: abandon the current session and start a draft.
+   *
+   * Resolves with the DRAFT KEY, not a session id — pressing "+" mints
+   * nothing, so ten presses leave the session list unchanged (spec §4.2). The
+   * real id arrives later, as a `created` event, when the first message
+   * allocates it.
+   *
+   * `intent: "explicit"` is what separates this from the `session.new` a client
+   * fires on launch. Without it the gateway cannot tell "the person asked for a
+   * new chat" from "the app started with no route id" and would abandon the
+   * bound session on every launch.
+   */
+  newChat(): Promise<{ draftKey: string }> {
     return new Promise((resolve, reject) => {
-      const onCreated = (e: SessionsChangeEvent): void => {
-        if (e.kind === "created") {
-          cleanup();
-          resolve({ sessionId: e.sessionId });
-        }
+      const onAnswer = (e: SessionsChangeEvent): void => {
+        if (e.kind !== "draft") return;
+        cleanup();
+        resolve({ draftKey: e.draftKey });
       };
-      this.listeners.add(onCreated);
+      this.listeners.add(onAnswer);
       const timer = setTimeout(() => {
         cleanup();
-        log.warn("newChat.timeout", { reason: "timeout waiting for session.created" });
-        reject(new Error("timeout waiting for session.created"));
+        log.warn("newChat.timeout", { reason: "timeout waiting for session.draft" });
+        reject(new Error("timeout waiting for session.draft"));
       }, this.timeoutMs);
       const cleanup = (): void => {
         clearTimeout(timer);
-        this.listeners.delete(onCreated);
+        this.listeners.delete(onAnswer);
       };
-      this.send({ type: "session.new", requestId: newId() });
+      this.send({ type: "session.new", requestId: newId(), intent: "explicit" });
     });
   }
 

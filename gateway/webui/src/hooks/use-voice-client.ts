@@ -623,8 +623,11 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     // the new session loads clean. `created` and `switched` both signal a
     // session boundary; `deleted` / `renamed` do not.
     sessionsConnector.onSessionsChanged((e) => {
-      if (e.kind !== "switched" && e.kind !== "created") return;
-      log.debug("session-boundary.clear-drain", { kind: e.kind, sessionId: e.sessionId });
+      if (e.kind !== "switched" && e.kind !== "created" && e.kind !== "draft") return;
+      log.debug("session-boundary.clear-drain", {
+        kind: e.kind,
+        sessionId: e.kind === "draft" ? e.draftKey : e.sessionId,
+      });
       drainTurnRef.current = null;
       inflightRef.current = [];
       typewriterTurnIdRef.current = null;

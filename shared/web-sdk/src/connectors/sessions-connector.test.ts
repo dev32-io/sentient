@@ -149,14 +149,17 @@ describe("SessionsConnector", () => {
     expect(onChange).toHaveBeenCalledWith({ kind: "switched", sessionId: "s-1", ts: 42 });
   });
 
-  it("newChat — resolves with sessionId on session.created", async () => {
+  it("newChat — resolves with the draft key on session.draft", async () => {
+    // "+" mints nothing. The draft key is what the tab holds until its first
+    // message allocates the real id, and it is the mint key that makes that
+    // allocation idempotent.
     const sdk = fakeSdk();
     const rest = makeRest();
     const c = new SessionsConnector({ rest });
     c.attach(sdk as unknown as Parameters<typeof c.attach>[0]);
     const p = c.newChat();
-    sdk.emit("session.created", { sessionId: "s-new", ts: 1 });
-    await expect(p).resolves.toEqual({ sessionId: "s-new" });
+    sdk.emit("session.draft", { draftKey: "d_abc", ts: 1 });
+    await expect(p).resolves.toEqual({ draftKey: "d_abc" });
   });
 
   it("switchTo — rejects on timeout", async () => {

@@ -223,6 +223,35 @@ sealed class ServerMessage {
         val ts: Long,
     ) : ServerMessage()
 
+    /**
+     * "You have no session yet — hold this key."
+     *
+     * A connection that presents no session id is a DRAFT: no row, no id,
+     * nothing in the session list until its first message mints one. [draftKey]
+     * is what the client holds meanwhile — it takes the anchor's place so the
+     * outbound queue can drain (SendMessageUseCase gates on a non-null attached
+     * id), it is re-presented as `session.configure.conversationId` so a
+     * reconnect stays on the same draft, and the gateway spends it as the mint
+     * key, which is what makes a retry after a lost `session.created` resolve to
+     * the session already minted instead of forking a second one.
+     */
+    @Serializable @SerialName("session.draft")
+    data class SessionDraft(
+        val requestId: String? = null,
+        val draftKey: String,
+        val ts: Long,
+    ) : ServerMessage()
+
+    /** The gateway titled this session. Distinct from [SessionsRenamed], which
+     *  echoes a rename the client itself asked for; [provenance] is
+     *  "generated" or "user". */
+    @Serializable @SerialName("session.title")
+    data class SessionTitle(
+        val sessionId: String,
+        val title: String,
+        val provenance: String,
+    ) : ServerMessage()
+
     @Serializable @SerialName("session.switched")
     data class SessionSwitched(
         val sessionId: String,

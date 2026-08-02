@@ -24,6 +24,7 @@ import {
   clearStaleResumeId,
   createReconnectController,
   createSettlePair,
+  getCurrentSessionId,
   hasPendingResume,
   setCurrentSessionId,
 } from "./sdk-reconnect.ts";
@@ -294,6 +295,15 @@ export class SentientSDK {
       const m = msg as { sessionId?: string };
       if (m.sessionId) setCurrentSessionId(m.sessionId);
     });
+    // A draft has no session id. The gateway's draft key takes the pointer's
+    // place so this tab keeps re-presenting the SAME draft across reloads and
+    // reconnects — which is what makes the mint idempotent, since that key IS
+    // the mint key. It is replaced by the real id on the `session.created` the
+    // first message triggers.
+    this.addMessageHandler("session.draft", (msg: unknown) => {
+      const m = msg as { draftKey?: string };
+      if (m.draftKey) setCurrentSessionId(m.draftKey);
+    });
     this.addMessageHandler("session.switched", (msg: unknown) => {
       const m = msg as { sessionId?: string };
       if (m.sessionId) setCurrentSessionId(m.sessionId);
@@ -381,6 +391,13 @@ export class SentientSDK {
         // resume synchronously off configure, no separate stream.resume frame,
         // no send-ordering race.
         const resume = isReconnect ? buildConfigureResume(this.cursor) : undefined;
+        // Present what this tab is looking at — a session id, or an unspent
+        // draft key. REQUIRED, not an optimisation: the gateway no longer
+        // derives an id from the principal and the surface, so a configure
+        // that presents nothing starts a fresh draft and the tab's history is
+        // gone on every reload. The gateway checks membership and refuses
+        // anything this user's store does not hold.
+        const current = getCurrentSessionId();
         this.sendRaw({
           type: "session.configure",
           capabilities: { supports: [...this.capabilities] },
@@ -388,6 +405,7 @@ export class SentientSDK {
           deviceId: this.deviceId,
           surfaceId: this.surfaceId,
           ...(resume ? { resume } : {}),
+          ...(current ? { conversationId: current } : {}),
         });
       },
       onSessionReady: this.config.onSessionReady,
