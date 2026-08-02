@@ -1,7 +1,9 @@
 import { Database } from "bun:sqlite";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { createAccessManager } from "../access/access-manager.js";
 import type { Capability } from "../access/capability.js";
+import { createUserPrincipal } from "../identity/user-principal.js";
 import type { NewSessionEntry } from "./entry-types.js";
 import { openSessionStore } from "./session-store.js";
 
@@ -13,6 +15,13 @@ const cap: Capability = Object.freeze({
   resource: "session-store",
   rootPath: `${ROOT}/u_aaaaaaaa`,
 });
+
+// For the confused-deputy test below: a real AccessManager grant, so the
+// wrong-class capability has the EXACT rootPath `cap` above has — proving the
+// rejection is the resource-class check, not a path mismatch that would
+// reject it anyway.
+const accessManager = createAccessManager({ userDataRoot: ROOT });
+const principal = createUserPrincipal("u_aaaaaaaa", "adult", "household-1");
 
 function entry(overrides: Partial<NewSessionEntry> = {}): NewSessionEntry {
   return {
@@ -61,6 +70,11 @@ describe("SessionStore", () => {
     expect(b.seq).toBeGreaterThan(a.seq);
     expect(a.createdAt).toBeGreaterThan(0);
     store.close();
+  });
+
+  it("SECURITY: a capability for another resource class cannot open the session store", () => {
+    const fileScope = accessManager.grant(principal, "file-scope");
+    expect(() => openSessionStore(fileScope)).toThrow(/resource class/i);
   });
 
   it("INVARIANT: exposes no mutating API — history is append-only", () => {

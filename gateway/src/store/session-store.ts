@@ -83,6 +83,21 @@ export interface SessionStore {
 }
 
 export function openSessionStore(cap: Capability): SessionStore {
+  // Checked BEFORE the path check, deliberately: a wrong-class capability and
+  // an escaping path are different faults and must say so. Without this, a
+  // `file-scope` capability for the same user has an IDENTICAL rootPath, so
+  // `capabilityCoversPath` below passes and the store opens under a grant
+  // that was never meant to authorize it — the confused-deputy hole this
+  // check closes (spec §3.2).
+  if (cap.resource !== "session-store") {
+    log.warn("store.resource-class-mismatch", {
+      userId: cap.ownerUserId,
+      resource: cap.resource,
+      reason: "capability was not minted for the session-store resource class",
+    });
+    throw new Error(`capability resource class mismatch: expected "session-store", got "${cap.resource}"`);
+  }
+
   const dbPath = path.join(cap.rootPath, DB_FILENAME);
   if (!capabilityCoversPath(cap, dbPath)) {
     throw new Error(`store path escapes capability scope: ${dbPath}`);
