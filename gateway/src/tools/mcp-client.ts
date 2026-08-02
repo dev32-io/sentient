@@ -74,6 +74,38 @@ function failureReason(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** Whether a JSON value plausibly carries real data, for the "is there a
+ *  populated field alongside `error`" check in `detectInBandError` below.
+ *  Deliberately typed per JSON shape rather than JS truthiness: a naive
+ *  truthy check gets objects wrong in the direction that matters here —
+ *  every object is truthy in JS regardless of contents, so it would treat
+ *  an empty `{}` as "real data". (It happens to get `0` right, by accident:
+ *  `0` is falsy, which is also the answer we want for `total_results:0`
+ *  below — but relying on that coincidence is exactly the kind of guess
+ *  this function exists to avoid making.) The rule, one JSON type at a
+ *  time:
+ *   - string:  non-empty. `""` carries nothing; `"<html>…</html>"` does.
+ *   - array:   non-empty. Matches the pre-existing array rule (searxng's
+ *     `results:[]` carries nothing).
+ *   - object:  has at least one own key. `{}` carries nothing; a nested
+ *     `attributes: {...}` with fields is real data.
+ *   - number:  non-zero. `total_results:0` is a COUNT of nothing — the
+ *     numeric analogue of a 0-length array — so it must NOT count as
+ *     populated, or the searxng D18 payload stops being flagged. A
+ *     genuinely meaningful number (a temperature, an id) is never 0-as-a-
+ *     placeholder in the payloads we've observed; if that changes, extend
+ *     this deliberately rather than guessing here.
+ *   - boolean / null: never populated. No observed tool payload puts real
+ *     data behind a bare boolean or null field; extend deliberately if one
+ *     shows up rather than defaulting a guess in now. */
+function isPopulatedValue(value: unknown): boolean {
+  if (typeof value === "string") return value.length > 0;
+  if (typeof value === "number") return value !== 0;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object" && value !== null) return Object.keys(value).length > 0;
+  return false;
+}
+
 /** Detects a tool result that reports `isError:false` at the JSON-RPC level
  *  while carrying its own failure INSIDE the payload (D18: the upstream
  *  `searxng-mcp-server`, pip-pinned 0.1.9, swallows its own DNS failure and
@@ -86,20 +118,28 @@ function failureReason(err: unknown): string {
  *  Deliberately narrow. The false positive that matters more than the bug
  *  being fixed is turning a REAL result into a manufactured error — a log
  *  search, a home-assistant entity literally named "error", a web page
- *  ABOUT errors, or a search that returned hits alongside a warning. All
+ *  ABOUT errors, a fetch whose real answer lives in a `content` STRING, a
+ *  `ha_get_state` reply whose real answer is a single entity OBJECT with no
+ *  arrays anywhere, or a search that returned hits alongside a warning. All
  *  three conditions below must hold:
  *   1. `content` parses as JSON and the top level is a plain object — prose
  *      that merely contains the word "error" (a log line, an article) is
- *      not JSON and never reaches this branch.
+ *      not JSON and never reaches this branch. A top-level JSON ARRAY is
+ *      also rejected here: every observed tool answers with an object
+ *      envelope, so an in-band error inside a bare array (e.g.
+ *      `[{"error":"x"}]`) is a deliberate scope call, not an oversight —
+ *      left uncaught rather than widening the shape this function accepts.
  *   2. that object has an OWN top-level property literally named `error`
  *      holding a non-empty string — an id/message/title containing the
  *      substring "error" nested inside a results array is not a top-level
  *      key named `error`.
- *   3. every top-level array-valued property on that object is empty — a
- *      call that returned real results (search hits, log lines) alongside
- *      a warning is a working call, not a failure; emptiness only
- *      corroborates the error string, it is never sufficient on its own
- *      (a genuine no-hits search with no `error` key is not flagged here).
+ *   3. every OTHER top-level property on that object is unpopulated per
+ *      `isPopulatedValue` — a call that returned a real answer (search
+ *      hits, log lines, a fetched page's `content` string, an entity's
+ *      `state`/`attributes`) alongside a warning is a working call, not a
+ *      failure; emptiness only corroborates the error string, it is never
+ *      sufficient on its own (a genuine no-hits search with no `error` key
+ *      is not flagged here).
  *  Returns the error message when all three hold, `null` otherwise. */
 export function detectInBandError(content: string): string | null {
   let parsed: unknown;
@@ -112,8 +152,8 @@ export function detectInBandError(content: string): string | null {
   const obj = parsed as Record<string, unknown>;
   const errorMessage = obj.error;
   if (typeof errorMessage !== "string" || errorMessage.length === 0) return null;
-  const hasNonEmptyResults = Object.values(obj).some((value) => Array.isArray(value) && value.length > 0);
-  if (hasNonEmptyResults) return null;
+  const hasPopulatedField = Object.entries(obj).some(([key, value]) => key !== "error" && isPopulatedValue(value));
+  if (hasPopulatedField) return null;
   return errorMessage;
 }
 

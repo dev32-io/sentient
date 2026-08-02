@@ -55,14 +55,15 @@ describe("normalizeToolResult", () => {
     expect(r.isError).toBe(false);
   });
 
-  it("does not flag JSON with no top-level `error` key", () => {
-    const r = normalizeToolResult({ isError: false, content: '{"total_results":0,"results":[]}' });
-    expect(r.isError).toBe(false);
+  it("does not flag a top-level `error` key whose value is null", () => {
+    expect(normalizeToolResult({ isError: false, content: '{"error":null,"results":[]}' }).isError).toBe(false);
   });
 
-  it("does not flag a top-level `error` key that isn't a non-empty string", () => {
-    expect(normalizeToolResult({ isError: false, content: '{"error":null,"results":[]}' }).isError).toBe(false);
+  it("does not flag a top-level `error` key whose value is an empty string", () => {
     expect(normalizeToolResult({ isError: false, content: '{"error":"","results":[]}' }).isError).toBe(false);
+  });
+
+  it("does not flag a top-level `error` key whose value is an object, not a string", () => {
     expect(normalizeToolResult({ isError: false, content: '{"error":{"code":1},"results":[]}' }).isError).toBe(false);
   });
 
@@ -71,6 +72,24 @@ describe("normalizeToolResult", () => {
     // failed one; turning it into a manufactured error is worse than the
     // bug being fixed.
     const content = '{"total_results":2,"results":[{"title":"a"},{"title":"b"}],"error":"partial index"}';
+    const r = normalizeToolResult({ isError: false, content });
+    expect(r.isError).toBe(false);
+  });
+
+  it("does NOT flag a fetch-shaped result whose real answer is a non-array `content` string", () => {
+    // A fetched page's body lives in a STRING field, not an array — the
+    // original array-only check missed this and would have discarded a
+    // real fetched page just because a benign warning sat alongside it.
+    const content = '{"content":"<html>…</html>","error":"SSL warning, proceeding anyway"}';
+    const r = normalizeToolResult({ isError: false, content });
+    expect(r.isError).toBe(false);
+  });
+
+  it("does NOT flag a ha_get_state-shaped result with no arrays anywhere", () => {
+    // ha_get_state's real shape: a single entity object with `state` and
+    // `attributes` fields, never an array. The array-only check had no way
+    // to see this as populated at all.
+    const content = '{"state":"on","attributes":{"friendly_name":"Kitchen Light"},"error":"history backfill stale"}';
     const r = normalizeToolResult({ isError: false, content });
     expect(r.isError).toBe(false);
   });
