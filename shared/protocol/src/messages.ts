@@ -25,8 +25,10 @@ import { conversationFeedItemSchema } from "./conversation.ts";
 import {
   conversationActivateSchema,
   sessionCreatedEventSchema,
+  sessionDraftSchema,
   sessionNewSchema,
   sessionSwitchedEventSchema,
+  sessionTitleSchema,
   sessionsDeletedEventSchema,
   sessionsErrorSchema,
   sessionsRenamedEventSchema,
@@ -100,12 +102,17 @@ export const sessionConfigureSchema = z.object({
    */
   resume: sessionConfigureResumeSchema.optional(),
   /**
-   * Optional — the Hermes conversation/thread id the client is currently
-   * displaying. This is the same value the client receives as `sessionId` on
-   * `session.created` / `session.switched` and sends back in
-   * `conversation.activate.sessionId`. It is NOT the per-WS connection id
-   * (`session.ready.sessionId`). Sent on (re)connect so the gateway re-anchors
-   * the thread for the next message instead of forking. Omitted on a fresh chat.
+   * Optional — what the client is currently displaying. Either a session id it
+   * received on `session.created` / `session.switched`, or a `session.draft`
+   * key it has not yet spent. It is NOT the per-WS connection id
+   * (`session.ready.sessionId`). Sent on (re)connect so the gateway re-opens
+   * the same session (or stays on the same draft) instead of forking. Omitted
+   * only when the client has neither.
+   *
+   * A session id here is checked for MEMBERSHIP — it must already exist in the
+   * store the caller's capability opens. One that does not is refused and the
+   * connection starts a draft; it is never created on trust, and no ownership
+   * is inferred from the id's shape.
    */
   conversationId: z.string().min(1).optional(),
   /**
@@ -550,6 +557,8 @@ export const gatewayMessageSchema = z.discriminatedUnion("type", [
   withSeqEpoch(sessionsDeletedEventSchema),
   withSeqEpoch(sessionsRenamedEventSchema),
   withSeqEpoch(sessionCreatedEventSchema),
+  withSeqEpoch(sessionDraftSchema),
+  withSeqEpoch(sessionTitleSchema),
   withSeqEpoch(sessionSwitchedEventSchema),
   withSeqEpoch(sessionsErrorSchema),
   streamResumedSchema, // already wrapped with withSeq; epoch is required on this frame
