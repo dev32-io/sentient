@@ -72,7 +72,7 @@ Order is not arbitrary. Tasks 1–2 are foundations that later tasks rest on; ta
 | 10 | [Auxiliary-task seam + titling](task-10-titling.md) | Needs the metadata table from 2. |
 | 11 | [E2E round 3 + doc supersession](task-11-e2e-and-docs.md) | Exit criteria. |
 
-**Wire-protocol changes are concentrated in tasks 3 and 9.** No other task may add a field to `shared/protocol`.
+**Wire-protocol changes are concentrated in tasks 3 and 9.** No other task may add a field or frame to `shared/protocol` — task 3 adds the `session.title` frame that task 10 later emits, so task 10 touches no protocol code.
 
 ---
 

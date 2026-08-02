@@ -13,7 +13,6 @@ Everything later in this plan calls a session "a capability-scoped resource". Th
 - Test: `gateway/src/store/session-store.test.ts`, `gateway/src/tools/tool-broker.test.ts`
 
 **Interfaces produced:**
-- `ResourceClass` gains `"session"` → `"session-store" | "file-scope" | "tool-broker" | "session"`
 - `openSessionStore(cap: Capability): SessionStore` — unchanged signature, now throws on a wrong-class capability
 - `ToolBrokerDeps.capability: Capability` replaces `ToolBrokerDeps.principal` as the **authorization** input; `principal` stays for log correlation only
 
@@ -58,9 +57,11 @@ Read `tool-broker.ts`'s real `ToolBrokerDeps` before writing this — match the 
 
 Update the construction site in `bootstrap/phase-services.ts`. Grant the capability from the same `AccessManager` that already mints the store's.
 
-- [ ] **Step 6: Add the `session` resource class**
+- [ ] **Step 6: Do NOT add a `session` resource class**
 
-Extend `ResourceClass` with `"session"`. Nothing consumes it yet — task 3 does — but adding it here keeps the type change in the task that owns the capability model.
+An earlier draft of this plan had you extend `ResourceClass` with `"session"`. **Dropped deliberately** (owner's ruling, pre-flight review): nothing would consume it. Membership is already gated structurally, because the capability chooses *which database opens* — a session id is a column inside it. A second resource class would duplicate a check the store already enforces.
+
+Adding an unused type is the exact pattern this branch keeps getting burned by: a declared control that nothing validates, which later reads as coverage. `ResourceClass` stays `"session-store" | "file-scope" | "tool-broker"`.
 
 - [ ] **Step 7: Correct the documentation that was wrong**
 

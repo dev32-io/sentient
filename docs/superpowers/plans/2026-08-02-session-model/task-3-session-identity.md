@@ -95,15 +95,23 @@ Also handle the no-session-yet state: mobile gates its outbound queue on `sessio
 
 A connection presenting no id gets an empty draft — **no row, no id**. The id is minted when the first message arrives. Ten opened tabs must leave the session list unchanged.
 
-- [ ] **Step 7: Broadcast the mint**
+- [ ] **Step 7: Add the `session.title` frame while you are in the protocol**
+
+Task 10 generates a session title and must push it to every attached window. It is a session-metadata frame of the same family as the mint broadcast in step 8, and the global constraint confines wire changes to this task and task 9 — so **add the frame type here** (owner's ruling, pre-flight review) and let task 10 merely emit it.
+
+Shape: the session id, the new title, and its provenance (`"generated" | "user"`). Both SDKs move with it, in this task.
+
+Nothing emits it yet. That is deliberate and different from adding an unused *type*: the frame has a named consumer in task 10 and a test row (`title-appears`), so it is scheduled work rather than speculative surface.
+
+- [ ] **Step 8: Broadcast the mint**
 
 Two windows can attach to one draft before either sends. When the first message mints the id, the new `sessionId` goes out on the session lane so the other window adopts it **without re-attaching**. (The session lane is formalised in task 6; here, emit it the way the existing code emits session frames and leave a comment pointing at task 6.)
 
-- [ ] **Step 8: Verify live**
+- [ ] **Step 9: Verify live**
 
 In the browser, press "+", send a message, and confirm on the wire that `stream-start messageCount` counts **only** the fresh turn. Then ask the model to repeat a marker string from before the click **without offering it an escape hatch** — an earlier round found the model falsely claiming `NO-CONTEXT` when offered one, while the wire showed the full prior transcript.
 
-- [ ] **Step 9: Gate and commit**
+- [ ] **Step 10: Gate and commit**
 
 ```bash
 source scripts/env.sh
