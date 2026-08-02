@@ -174,6 +174,19 @@ export function handleSessionConfigure(
     }
   }
 
+  // `conversationId` is the session this connection has RESOLVED; `runtime` is
+  // whether it is currently serviceable. They are set together on the happy
+  // path and can diverge on exactly one: a bind failure (no active LLM key
+  // resolved for this user). The id is kept anyway, and deliberately — it is
+  // the only record of WHICH session the client asked for, and clearing it
+  // would send their next message into a brand-new one instead. The recovery is
+  // a late re-bind on the next message (`ensureBoundRuntime`, ws-handlers.ts),
+  // which is what stops this state being permanent.
+  //
+  // Safe to hold without a runtime: nothing was claimed in
+  // `services.conversationRuntimes` (the claim is the last statement of a
+  // SUCCESSFUL bind), and `release` is connection-guarded, so this connection's
+  // teardown cannot deregister whoever does own the session.
   ws.data.conversationId = resolved.sessionId;
   ws.data.draftKey = resolved.draftKey;
   const hasRuntime = resolved.sessionId !== null && bindSessionRuntime(ws, services, resolved.sessionId) !== null;

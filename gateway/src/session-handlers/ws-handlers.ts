@@ -248,14 +248,26 @@ export async function handleWebSocketMessage(
 
 /**
  * The runtime this connection's message goes to — minting the session first if
- * the connection is still a draft.
+ * the connection is still a draft, or re-binding one whose handshake could not.
+ *
+ * NO PATH THROUGH HERE IS PERMANENT. Both ways a connection can arrive without
+ * a runtime are retried on the NEXT message, each by the route that lands on
+ * the right session:
+ *
+ *  - **it resolved a session but the bind failed** (no active LLM key at
+ *    handshake time) → re-bind that same session;
+ *  - **it is a draft** → mint, which is idempotent under the connection's
+ *    unchanged draft key, so a failed attempt re-resolves the same row.
+ *
+ * That symmetry is the point. One transient misconfiguration used to wedge the
+ * socket for its whole life at both call sites.
  *
  * WHY THE MINT LIVES HERE. A session is allocated by the first MESSAGE, not by
  * the handshake (spec §4.2): connecting yields an empty draft, so ten opened
  * tabs leave no row behind. This is the only place that sees a message arrive
  * on a draft, so it is the only place that can do it.
  *
- * ORDER, and it is deliberate:
+ * ORDER on the mint path, and it is deliberate:
  *
  *  1. mint (or re-resolve, on a retry) the session under the connection's
  *     draft key — the `UNIQUE` constraint on `mint_key` is what makes the
@@ -290,14 +302,37 @@ function ensureBoundRuntime(
   }
 
   if (ws.data.conversationId !== null) {
-    // Bound, but the runtime failed to construct at configure time (or the
-    // orchestrator is absent). Nothing to mint; the caller reports it.
-    log.warn("text.input.no-runtime", {
+    // LATE RE-BIND. This connection resolved a session at handshake time but
+    // its runtime failed to construct (no active LLM key for this user, the one
+    // per-session failure `bindSessionRuntime` swallows). Retrying HERE, for
+    // that same session, is what stops the failure being permanent: the branch
+    // used to log and give up, so one transient misconfiguration at configure
+    // time made the socket answer `orchestrator_unavailable` for the rest of
+    // its life — a key restored a second later changed nothing until the user
+    // reloaded.
+    //
+    // Re-binding rather than clearing the id and minting: the id is the only
+    // record of which session the client asked for, and a mint here would
+    // silently move them into a brand-new conversation.
+    const rebound = bindSessionRuntime(ws, services, ws.data.conversationId);
+    if (rebound === null) {
+      log.warn("text.input.no-runtime", {
+        sessionId: ws.data.sessionId,
+        conversationId: ws.data.conversationId,
+        reason: "session is bound but a runtime still could not be constructed for it",
+      });
+      return null;
+    }
+    // The handshake could not send a feed (it had no runtime to project one
+    // from) and sent nothing at all — not even the draft's empty snapshot. This
+    // is the client's first chance to see this session's history.
+    rebound.emitConversationSnapshot();
+    log.info("text.input.late-bind", {
       sessionId: ws.data.sessionId,
       conversationId: ws.data.conversationId,
-      reason: "session is bound but no runtime was constructed for it",
+      reason: "runtime construction failed at session.configure and succeeded on this message",
     });
-    return null;
+    return rebound;
   }
 
   const { sessionId, replayed } = withSessionStore(services, principal, (store) =>

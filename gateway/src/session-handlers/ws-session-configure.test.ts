@@ -973,6 +973,61 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     store.close();
   });
 
+  it("INVARIANT: a bind that fails at session.configure is retried on the next message, on the SAME session", async () => {
+    // The second instance of the wedge, on the reload path rather than the mint
+    // path: a connection re-opens an existing session, its runtime fails to
+    // construct (no active LLM key), and `conversationId` is left set with no
+    // runtime. Before the retry existed this branch logged and gave up, so a
+    // key restored a second later changed nothing until the user reloaded.
+    //
+    // Re-binding, NOT clearing-and-minting: the id is the only record of which
+    // session the client asked for, so a mint here would silently move them
+    // into a brand-new conversation. The assertions below pin both halves —
+    // the socket recovers, AND it recovers onto the session that was presented.
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const accessManager = freshAccessManager();
+    const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
+    const sessionId = seedSession(accessManager, USER_ID, "from before the reload");
+
+    let failNextBind = true;
+    const workingFactory = services.createSessionRuntime;
+    (services as { createSessionRuntime: unknown }).createSessionRuntime = (req: never) => {
+      if (failNextBind) {
+        failNextBind = false;
+        throw new Error("no active LLM key for this user");
+      }
+      return (workingFactory as (r: never) => unknown)(req);
+    };
+
+    const ws = fakeAuthedWs("connection-1");
+    configure(ws, services, SURFACE_A, sessionId);
+    expect(ws.data.runtime).toBeNull();
+    // The id is KEPT despite the failure — it is what the retry re-binds.
+    expect(ws.data.conversationId).toBe(sessionId);
+    // A failed handshake could project no feed, not even the draft's empty one.
+    expect(ws.sent.filter((f) => f.type === "conversation.snapshot")).toHaveLength(0);
+
+    await handleWebSocketMessage(asWs(ws), JSON.stringify({ type: "text.input", text: "still here?" }), services);
+    await waitUntilIdle(ws.data.runtime as SessionRuntime);
+    (ws.data.runtime as SessionRuntime).dispose();
+
+    expect(ws.data.conversationId).toBe(sessionId);
+    expect(ws.sent.some((f) => f.type === "error" && f.code === "orchestrator_unavailable")).toBe(false);
+    // Recovered onto the presented session, not a fresh one: no second row, and
+    // the message landed in the partition that already held the earlier turn.
+    const store = openSessionStore(accessManager.grant(createUserPrincipal(USER_ID, "adult", "home"), "session-store"));
+    expect(store.listSessionsWithMetadata()).toHaveLength(1);
+    store.close();
+    expect(entriesFor(accessManager, sessionId).map((e) => e.text)).toEqual([
+      "from before the reload",
+      "still here?",
+      "ok",
+    ]);
+    // …and the late bind hands over the history the handshake never could.
+    const snapshot = ws.sent.find((f) => f.type === "conversation.snapshot");
+    expect(((snapshot?.items ?? []) as { content?: string }[])[0]?.content).toBe("from before the reload");
+  });
+
   it("a connection that presents nothing starts clean — no other session bleeds in", async () => {
     const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
