@@ -13,12 +13,25 @@ export const orchestratorConfigSchema = z.object({
     // the secrets store at composition-root construction time, NOT from an
     // env var — see gateway/src/bootstrap/resolve-provider-connection.ts.
     model: z.string().min(1),
-    // Per-request cap.
-    max_output_tokens: z.number().int().min(1).max(32000).default(1024),
+    // Per-request ANSWER cap. Reasoning tokens are charged against this SAME
+    // budget, so a reasoning model (gpt-oss:20b emits a Harmony reasoning
+    // channel first) can exhaust it before any visible text —
+    // finish_reason:"length" with an EMPTY reply (D17, docs/native-todo.md
+    // § 1: an 81KB ha_get_history result was enough to trigger it live). Same
+    // question as `compaction.summarizer_max_output_tokens` below, just for
+    // the main loop instead of the summarizer. See config.yaml for the full
+    // "why 8000" rationale. Range 1-32000.
+    max_output_tokens: z.number().int().min(1).max(32000).default(8000),
     // Per-request wall-clock deadline (ms). Match to the model's worst case.
     request_timeout_ms: z.number().int().min(1000).max(600000).default(120000),
     // Optional site attribution headers (OpenRouter convention).
     site_name: z.string().default("Sentient"),
+    // Constrains how much the model reasons before answering. Sent only when
+    // the provider accepts the field (see openai-provider.ts); never sent
+    // before task 18. "low" rather than "minimal": minimal reasoning effort
+    // can degrade TOOL SELECTION, and picking the wrong tool is worse than a
+    // slightly slower reply. See config.yaml for the full rationale.
+    reasoning_effort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).default("low"),
   }),
   loop: z.object({
     // ReAct iteration cap: consecutive tool-calling iterations before a
@@ -49,6 +62,15 @@ export const orchestratorConfigSchema = z.object({
     // summarises away. Too small and the echo stops identifying the task; too
     // large and every completion re-pays for the dispatch. 32-2000.
     background_completion_request_echo_chars: z.number().int().min(32).max(2000).default(240),
+    // Ceiling on a SINGLE tool result's character length before it reaches
+    // the model, enforced at the broker (tool-broker.ts) so every tool
+    // inherits it rather than each tool author remembering to bound its own
+    // output. ha_get_history returning ~81KB was the first result big enough
+    // to crowd the answer out of `provider.max_output_tokens` entirely (D17);
+    // read_file/write_file hit the same ceiling next. See config.yaml for the
+    // full rationale (head-and-tail truncation, marker wording). Range
+    // 1000-200000.
+    max_tool_result_chars: z.number().int().min(1000).max(200000).default(20000),
   }),
   delegation: z.object({
     // Per-agent frontmatter file dir (static delegation envelopes).

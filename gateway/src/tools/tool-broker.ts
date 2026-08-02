@@ -44,6 +44,7 @@ import type { SessionStore } from "../store/session-store.js";
 import { createBackgroundRegistry } from "./background-registry.js";
 import type { BackgroundRegistry } from "./background-registry.js";
 import type { McpClient } from "./mcp-client.js";
+import { capToolResult } from "./tool-result-cap.js";
 import { ConfirmUnavailableError } from "./tool-types.js";
 import type { DelegationProgress, PdpDecision, ToolDefinition, ToolInvocation, ToolResult } from "./tool-types.js";
 
@@ -299,12 +300,34 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     return serverName ? { kind: "foreground", serverName } : null;
   }
 
+  /** The ONE place a tool result's size is bounded before it can reach the
+   *  model (task 18, D17) — every result flowing through this function,
+   *  whatever tool produced it, inherits the cap. See tool-result-cap.ts's
+   *  file header for why this lives at the broker and not in any one tool. */
+  function capResult(inv: ToolInvocation, result: ToolResult, logEvent: string): ToolResult {
+    const limit = config.max_tool_result_chars;
+    if (result.content.length <= limit) return result;
+    const content = capToolResult(result.content, { limit });
+    log.warn(logEvent, {
+      sessionId,
+      tool: inv.name,
+      toolCallId: inv.toolCallId,
+      originalLength: result.content.length,
+      cappedLength: content.length,
+      limit,
+      reason:
+        "tool result exceeded orchestrator.tools.max_tool_result_chars — truncated head+tail so it cannot alone exhaust the answer budget",
+    });
+    return { ...result, content };
+  }
+
   async function dispatchForeground(inv: ToolInvocation, serverName: string): Promise<ToolResult> {
     // Plan 2: the foreground deadline is enforced per-server by the MCP client
     // (each catalog entry's `timeout`), which supersedes config.foreground_timeout_ms
     // at this layer. A broker-level per-call deadline (AbortSignal.timeout merged
     // with inv.signal) is a later hardening step if a single per-call bound is wanted.
-    const result = await mcp.callTool(serverName, inv.name, inv.args, inv.signal);
+    const raw = await mcp.callTool(serverName, inv.name, inv.args, inv.signal);
+    const result = capResult(inv, raw, "tool-broker.dispatch.foreground.result-capped");
     log.info("tool-broker.dispatch.foreground.done", {
       sessionId,
       tool: inv.name,
@@ -373,7 +396,11 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
           return { content: `Background task failed: ${reason}`, isError: true };
         },
       )
-      .then((toolResult) => {
+      .then((raw) => {
+        // Same cap as the foreground path — a delegated task's own settled
+        // output reaches the model too (via the completion sink below), so
+        // it can starve the answer just as surely as a big MCP tool result.
+        const toolResult = capResult(inv, raw, "tool-broker.dispatch.background.result-capped");
         background.complete(taskId);
         onDelegationProgress?.({
           taskId,

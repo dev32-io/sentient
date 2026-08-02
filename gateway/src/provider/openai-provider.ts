@@ -23,7 +23,14 @@ export function createOpenAIProvider(cfg: OrchestratorConfig["provider"], apiKey
 
       const startedAt = Date.now();
       const hasTools = req.tools.length > 0;
-      log.info("stream-start", { model: cfg.model, messageCount: req.messages.length, toolCount: req.tools.length });
+      const maxOutputTokens = req.maxOutputTokens ?? cfg.max_output_tokens;
+      log.info("stream-start", {
+        model: cfg.model,
+        messageCount: req.messages.length,
+        toolCount: req.tools.length,
+        maxOutputTokens,
+        reasoningEffort: cfg.reasoning_effort,
+      });
 
       let response: Awaited<ReturnType<typeof client.chat.completions.create>>;
       try {
@@ -33,7 +40,20 @@ export function createOpenAIProvider(cfg: OrchestratorConfig["provider"], apiKey
             messages: req.messages as OpenAI.Chat.ChatCompletionMessageParam[],
             stream: true,
             stream_options: { include_usage: true },
-            max_tokens: req.maxOutputTokens ?? cfg.max_output_tokens,
+            max_tokens: maxOutputTokens,
+            // Never sent before task 18 (D17): reasoning is the invisible
+            // phase that delays the first spoken word, and a household voice
+            // assistant wants an answer sooner. Sent unconditionally — an
+            // OpenAI-compatible endpoint that does not recognize the field is
+            // expected to ignore it (the norm for extra JSON fields on these
+            // APIs), and on the rare provider that instead rejects the
+            // request outright, the throw below still reaches
+            // session-runtime.ts's existing "runTurn threw" backstop, which
+            // fails the turn with a user-visible notice rather than
+            // crashing — the same safety net every other provider error
+            // already relies on. No per-provider capability probe exists to
+            // do better than that without one.
+            reasoning_effort: cfg.reasoning_effort,
             ...(hasTools ? { tools: req.tools as OpenAI.Chat.ChatCompletionTool[], tool_choice: "auto" as const } : {}),
           },
           { signal: req.signal },

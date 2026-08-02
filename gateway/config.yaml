@@ -125,9 +125,33 @@ orchestrator:
     # `toCloudTag`). Override to match the operator's active secrets-store
     # provider/model if it isn't ollama-cloud/gpt-oss:20b.
     model: gpt-oss:20b-cloud
-    max_output_tokens: 1024                  # per-request output cap (1-32000)
+    # Per-request ANSWER cap (1-32000). Reasoning tokens are charged against
+    # this SAME budget, so a reasoning model (gpt-oss:20b emits a Harmony
+    # reasoning channel first) can exhaust it before producing any visible
+    # text — finish_reason:"length" with an EMPTY reply, which the loop used
+    # to silently commit as a completed turn (D17, docs/native-todo.md § 1:
+    # an 81KB ha_get_history tool result was enough to trigger it live, 2/2
+    # reproduced). This is the SAME question as compaction's
+    # summarizer_max_output_tokens below — that key is the summarizer's own
+    # version of this budget; this one is the main loop's. 8000 clears the
+    # observed failure with headroom (owner-approved). Do NOT raise it
+    # further "for safety": the requested generation size is used by some
+    # backends as an initial estimate with compute reserved for its
+    # duration, so an oversized cap has a real scheduling cost.
+    max_output_tokens: 8000
     request_timeout_ms: 120000               # per-request deadline (1000-600000)
     site_name: Sentient                      # OpenRouter attribution header
+    # Constrains how much the model reasons before answering ("none",
+    # "minimal", "low", "medium", "high", "xhigh", "max" — provider-dependent
+    # support; sent only when the provider accepts the field, see
+    # openai-provider.ts). Never sent before task 18 (grep confirmed only
+    # comments mentioned "reasoning" anywhere in gateway/src/provider/).
+    # Reasoning is the invisible phase that delays the first spoken word, and
+    # a household voice assistant wants an answer sooner. "low" rather than
+    # "minimal" is deliberate: minimal reasoning effort can degrade TOOL
+    # SELECTION, and picking the wrong tool is worse than a slightly slower
+    # reply.
+    reasoning_effort: low
   loop:
     max_iterations: 10                       # ReAct iteration cap (1-50)
   permission:
@@ -139,6 +163,19 @@ orchestrator:
     # the model can tell which in-flight task came back after compaction has
     # summarised the dispatch away (32-2000).
     background_completion_request_echo_chars: 240
+    # Ceiling on a SINGLE tool result's character length before it reaches
+    # the model, enforced at the broker (tool-broker.ts) so every tool
+    # inherits the guarantee rather than each tool author remembering to
+    # bound its own output. ha_get_history returning ~81KB was the first
+    # result big enough to crowd the answer out of provider.max_output_tokens
+    # entirely (D17); read_file/write_file hit the same ceiling next.
+    # Truncated HEAD-AND-TAIL, not head-only — history/log-shaped data
+    # carries meaning at both ends — with a marker naming roughly how much
+    # was cut, so the model can narrow its next query instead of silently
+    # reasoning over a fragment. Convention, not invention: Codex truncates
+    # tool output at 10 KiB / 256 lines head-and-tail; Pi caps at 2000 lines
+    # / 50 KB and tells the model to paginate. Range 1000-200000.
+    max_tool_result_chars: 20000
   delegation:
     frontmatter_dir: ./config/delegation     # static per-agent envelope dir (relative to gateway/)
     hermes_timeout_ms: 600000                # per Hermes one-shot (1000-3600000)
@@ -200,12 +237,17 @@ orchestrator:
     # once a session runs long.
     compact_threshold_tokens: 8000
     keep_recent_turns: 4                     # most-recent turns copied VERBATIM into the summary marker rather than summarized away (0-50)
-    # Output cap for the compaction summarizer specifically. The main loop's
-    # max_output_tokens is an ANSWER cap; a reasoning model (gpt-oss:20b emits
-    # a Harmony reasoning channel first) exhausts 1024 before producing any
-    # visible summary text, which failed compaction silently and forever
-    # (observed 2/2 live — qa/web/evidence/2026-07-30-compaction-continue).
-    # Range 512-8000.
+    # Output cap for the compaction summarizer specifically — the SAME
+    # question as provider.max_output_tokens above, fixed independently here
+    # because the summarizer is a separate request: a reasoning model
+    # (gpt-oss:20b emits a Harmony reasoning channel first) can exhaust the
+    # budget before producing any visible text. Historically the main loop's
+    # cap was 1024 and this summarizer inherited nothing from it — that
+    # undersized 1024 is what failed compaction silently and forever
+    # (observed 2/2 live — qa/web/evidence/2026-07-30-compaction-continue)
+    # before this key existed. Kept smaller than the main loop's now-8000 cap
+    # (task 18) because digesting a transcript into a summary is a terser
+    # workload than an answer that may also narrate tool use. Range 512-8000.
     summarizer_max_output_tokens: 4000
     # Consecutive failed compactions before the runtime stops attempting one at
     # every turn boundary, logs a single ERROR with the reason, and retries on

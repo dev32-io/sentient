@@ -435,7 +435,63 @@ describe("runTurn — narration + tool call in the same iteration (convergence)"
 });
 
 // ---------------------------------------------------------------------------
-// Case 6: background tool dispatch (defect D7 — one request spawned TEN real
+// Case 6 (numbered before background dispatch below, which pre-existed this
+// one): an empty completion under budget exhaustion (D17, task 18) must
+// never be committed as a completed turn.
+//
+// THE JUDGEMENT CALL. Retry-with-truncated-tool-result was considered and
+// rejected: this branch fires when there are NO tool calls at all in the
+// outcome (or the iteration was forced content-only), so there may be no
+// "offending tool result" in this request to point at — and an unconditional
+// retry against a model that JUST exhausted its budget on the SAME messages
+// risks looping. Returning `completed: false` instead routes the turn
+// through the EXISTING failure path (session-runtime.ts's
+// `commitTurnFailure`, already exercised by every other "runTurn produced no
+// answer" exit — provider error, timeout) which durably commits a
+// user-visible notice and still terminates the turn with `turn.completed`,
+// so the client never spins. No new UI/wire surface needed.
+// ---------------------------------------------------------------------------
+
+describe("runTurn — provider exhausts its output budget before any visible text", () => {
+  it("INVARIANT: finish_reason 'length' with no text is a failed turn, never a silent success", async () => {
+    const store = openSessionStore(cap);
+    const sessionId = "budget-exhausted";
+    seedUserMessage(store, sessionId, "give me the home assistant history");
+    const beforeCount = store.readSession(sessionId).length;
+
+    // The exact D17 shape: a reasoning model spends its whole output budget
+    // on the (invisible) reasoning channel and never reaches a visible token.
+    const provider = fakeProvider(async function* () {
+      yield { type: "done", finishReason: "length" };
+    });
+
+    const result = await runTurn(
+      {
+        provider,
+        broker: noopBroker(),
+        store,
+        systemPrompt: "you are a test assistant",
+        sessionId,
+        config: loopConfig(10),
+        onTextDelta: () => {},
+        onToolUpdate: () => {},
+      },
+      { turnId: "turn-budget", signal: new AbortController().signal },
+    );
+
+    expect(result).toMatchObject({ completed: false, iterations: 1 });
+    // No empty assistant entry committed — that record is what made D17
+    // invisible in the first place (completed=true failed=false, nothing to
+    // show). Leaving the store untouched here is what hands this turn to
+    // session-runtime.ts's existing failure-commit path instead.
+    expect(store.readSession(sessionId)).toHaveLength(beforeCount);
+
+    store.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Case 6b: background tool dispatch (defect D7 — one request spawned TEN real
 // hermes subprocesses).
 //
 // MECHANISM, measured rather than assumed. The reported cause was "the

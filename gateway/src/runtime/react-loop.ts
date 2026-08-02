@@ -464,6 +464,32 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
     });
 
     if (forceFinal || outcome.toolCalls.length === 0) {
+      // D17 (task 18): a reasoning model can spend its ENTIRE output budget
+      // on the invisible reasoning channel and never reach a visible token —
+      // finish_reason:"length" with zero text. Committing that as a
+      // completed turn is the defect: the record reads `completed=true
+      // failed=false` forever, nothing retries, nothing warns, and no
+      // oracle built on the turn record can ever see it (live 2/2 via an
+      // 81KB ha_get_history result). An empty assistant entry must never be
+      // committed as a completed turn, so this returns `completed: false`
+      // instead — the EXISTING "turn produced no answer" path
+      // (session-runtime.ts's `commitTurnFailure`, already the terminus for
+      // a provider error or a timed-out turn) durably commits a
+      // user-visible failure notice and still ends the turn cleanly. No
+      // retry: there may be no tool call in THIS request to blame, and a
+      // retry against a model that just exhausted its budget on the same
+      // messages risks looping.
+      if (outcome.finishReason === "length" && outcome.text.trim().length === 0) {
+        log.warn("react-loop.completed-empty-length", {
+          sessionId,
+          turnId,
+          iteration,
+          forceFinal,
+          reason: "provider exhausted its output budget before any visible text — not committing an empty reply",
+        });
+        return { completed: false, iterations: iteration, consumedThroughSeq };
+      }
+
       store.append({ ...blankEntry(sessionId, turnId), kind: "assistant", text: outcome.text });
       onTurnCommitting?.(turnId);
       log.info("react-loop.completed", { sessionId, turnId, iterations: iteration, forceFinal });

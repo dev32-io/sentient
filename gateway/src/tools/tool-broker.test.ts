@@ -63,6 +63,7 @@ const toolsConfig: OrchestratorConfig["tools"] = {
   foreground_timeout_ms: 30000,
   max_concurrent_background_tasks: 1,
   background_completion_request_echo_chars: 240,
+  max_tool_result_chars: 20000,
 };
 
 function makeInvocation(overrides: Partial<ToolInvocation> = {}): ToolInvocation {
@@ -635,5 +636,100 @@ describe("ToolBroker — delegation.progress producer", () => {
     await Promise.resolve();
 
     expect(progress[1]).toMatchObject({ status: "error", note: "hermes exited 1" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tool result cap (task 18, D17) — "Cap tool result size at the broker, not
+// in any one tool." ha_get_history returning ~81KB was the first result big
+// enough to crowd the model's answer out of its own output budget entirely
+// (finish_reason:"length", zero visible text, silently committed as a
+// completed turn). Both dispatch lanes are pinned here: the foreground path
+// (what ha_get_history/read_file/write_file actually use) and the background
+// completion path (a delegated task's own settled result reaches the model
+// too, via the completion sink).
+// ---------------------------------------------------------------------------
+
+function fakeMcpWithContent(content: string): McpClient {
+  return {
+    async listTools() {
+      return [weatherTool];
+    },
+    async callTool() {
+      return { content, isError: false };
+    },
+    async close() {},
+  };
+}
+
+const tightCapConfig: OrchestratorConfig["tools"] = { ...toolsConfig, max_tool_result_chars: 100 };
+
+describe("ToolBroker — tool result cap", () => {
+  it("INVARIANT: an oversized FOREGROUND result is truncated head-and-tail before reaching the model", async () => {
+    const oversized = `${"A".repeat(500)}Z`;
+    const broker = createToolBroker({
+      mcp: fakeMcpWithContent(oversized),
+      policy: fakePolicy({ action: "allow" }),
+      store: fakeStore(),
+      principal,
+      sessionId: "session-1",
+      backgroundTools: new Map(),
+      config: tightCapConfig,
+      requestConfirm: async () => false,
+    });
+
+    const result = await broker.dispatch(makeInvocation());
+
+    if ("taskId" in result) throw new Error("expected a ToolResult, got a background handle");
+    expect(result.content.length).toBeLessThan(oversized.length);
+    expect(result.content).toContain("truncated");
+    expect(result.content.startsWith("A")).toBe(true);
+    expect(result.content.endsWith("Z")).toBe(true);
+  });
+
+  it("leaves a result at or under the configured limit completely unchanged", async () => {
+    const small = "well within budget";
+    const broker = createToolBroker({
+      mcp: fakeMcpWithContent(small),
+      policy: fakePolicy({ action: "allow" }),
+      store: fakeStore(),
+      principal,
+      sessionId: "session-1",
+      backgroundTools: new Map(),
+      config: tightCapConfig,
+      requestConfirm: async () => false,
+    });
+
+    const result = await broker.dispatch(makeInvocation());
+
+    if ("taskId" in result) throw new Error("expected a ToolResult, got a background handle");
+    expect(result.content).toBe(small);
+  });
+
+  it("INVARIANT: an oversized BACKGROUND completion is truncated before reaching the completion sink", async () => {
+    const oversized = `${"B".repeat(500)}Z`;
+    const runner: BackgroundToolRunner = {
+      definition: { name: "delegateTask", description: "", parameters: {}, category: "background" },
+      run: () => ({ cancel: () => {}, result: Promise.resolve({ content: oversized, isError: false }) }),
+    };
+    const broker = createToolBroker({
+      mcp: fakeMcp([]),
+      policy: fakePolicy({ action: "allow" }),
+      store: fakeStore(),
+      principal,
+      sessionId: "session-1",
+      backgroundTools: new Map([["delegateTask", runner]]),
+      config: tightCapConfig,
+      requestConfirm: async () => false,
+    });
+
+    const { promise, sink } = deferredSinkCall<{ content: string; isError: boolean }>();
+    broker.setBackgroundCompletionSink(sink);
+
+    await broker.dispatch(makeInvocation({ name: "delegateTask" }));
+    const settled = await promise;
+
+    expect(settled.content.length).toBeLessThan(oversized.length);
+    expect(settled.content).toContain("truncated");
   });
 });
