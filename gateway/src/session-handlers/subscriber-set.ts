@@ -76,7 +76,7 @@ export function createSubscriberSet(sessionId: string): SubscriberSet {
       generations += 1;
       const attachment: Attachment = { attachmentId: mintAttachmentId(), connectionId, generation: generations };
       members.set(attachment.attachmentId, attachment);
-      log.info("subscriber-set.attached", {
+      log.debug("subscriber-set.attached", {
         sessionId,
         connectionId,
         attachmentId: attachment.attachmentId,
@@ -98,7 +98,7 @@ export function createSubscriberSet(sessionId: string): SubscriberSet {
         return false;
       }
       members.delete(attachmentId);
-      log.info("subscriber-set.detached", {
+      log.debug("subscriber-set.detached", {
         sessionId,
         connectionId: attachment.connectionId,
         attachmentId,

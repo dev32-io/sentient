@@ -39,6 +39,9 @@ const log = getLog(["sentient", "ws", "session-windows"]);
  *  CLOSED) all mean this window can no longer be served. */
 const WS_READY_STATE_OPEN = 1;
 
+/** Binary audio carries no `type` field; this is the label its log lines use. */
+const AUDIO_FRAME_TYPE = "audio";
+
 export interface SessionWindows {
   /** Start delivering this session's frames to [ws]. Keyed on the
    *  ATTACHMENT id, so a connection that re-attaches replaces its own entry
@@ -49,19 +52,48 @@ export interface SessionWindows {
   /** Write one JSON frame to every open window. Returns how many received it. */
   broadcast(frame: GatewayMessage): number;
   /** Write one audio frame to every open window, each stamped from its own
-   *  journal. Returns the allocated seqs, in window order. */
-  broadcastAudio(payload: Uint8Array): readonly number[];
+   *  journal. */
+  broadcastAudio(payload: Uint8Array): void;
+  /**
+   * Route everything [emit] writes to ONE attachment instead of to the whole
+   * session.
+   *
+   * EXISTS FOR ONE FRAME: `conversation.snapshot`, which is an ANSWER to the
+   * connection that just joined, not an event in the conversation. Fanning it
+   * out replaces every other window's committed mirror — which both SDKs treat
+   * as a real session boundary (`conversation-history-connector.ts`) — and it
+   * arrives with no paired `session.switched`, so a peer inside its own resume
+   * window can arm the stale-resume timer and drop its stored session id.
+   *
+   * SYNCHRONOUS ONLY, and the type says so: [emit] returns void, not a
+   * promise, so an `await` inside it cannot silently extend the redirect over
+   * another turn's frames. `SessionRuntime.emitConversationSnapshot` is
+   * synchronous end to end (store read → projection → sink).
+   */
+  directTo(attachmentId: string, emit: () => void): void;
+  /** Every attached window's socket, in attach order — open or not. Callers
+   *  that need per-connection state (the mic echo guard's `SttSession`) reach
+   *  it through here rather than capturing one socket at build time. */
+  readonly sockets: readonly ServerWebSocket<SessionData>[];
   readonly size: number;
 }
 
 export function createSessionWindows(sessionId: string): SessionWindows {
   const windows = new Map<string, ServerWebSocket<SessionData>>();
+  /** Set for the duration of a `directTo` call; see its doc. */
+  let directedTo: string | null = null;
+  /** Whether the previous broadcast reached anyone. Turns "this session has
+   *  gone dark" into ONE warn on the transition instead of one per frame — a
+   *  cut-off reply is ~50 audio frames and a delta per token, and the e2e gate
+   *  fails on unexpected WARNs. */
+  let wasDelivering = true;
 
   /** Open windows, as a snapshot — a write that closes a socket must not
    *  perturb the iteration that is still delivering to its peers. */
   function openWindows(frameType: string): ServerWebSocket<SessionData>[] {
     const open: ServerWebSocket<SessionData>[] = [];
     for (const [attachmentId, ws] of windows) {
+      if (directedTo !== null && attachmentId !== directedTo) continue;
       if (ws.readyState === WS_READY_STATE_OPEN) {
         open.push(ws);
         continue;
@@ -76,36 +108,72 @@ export function createSessionWindows(sessionId: string): SessionWindows {
     return open;
   }
 
+  /** One WARN when the session stops reaching anyone, one INFO when it starts
+   *  again; DEBUG for every frame in between. */
+  function noteDelivery(frameType: string, delivered: number): void {
+    if (delivered > 0) {
+      if (!wasDelivering) {
+        log.info("session-windows.delivering", { sessionId, frameType, windows: windows.size });
+      }
+      wasDelivering = true;
+      return;
+    }
+    if (wasDelivering) {
+      log.warn("session-windows.undelivered", {
+        sessionId,
+        frameType,
+        windows: windows.size,
+        reason: "no open window received this frame — every attached socket is closing/closed",
+      });
+    } else {
+      log.debug("session-windows.undelivered", { sessionId, frameType, windows: windows.size });
+    }
+    wasDelivering = false;
+  }
+
   return {
     add(attachmentId, ws) {
       windows.set(attachmentId, ws);
-      log.info("session-windows.added", { sessionId, attachmentId, windows: windows.size });
+      log.debug("session-windows.added", { sessionId, attachmentId, windows: windows.size });
     },
 
     remove(attachmentId) {
       if (!windows.delete(attachmentId)) return;
-      log.info("session-windows.removed", { sessionId, attachmentId, windows: windows.size });
+      log.debug("session-windows.removed", { sessionId, attachmentId, windows: windows.size });
     },
 
     broadcast(frame) {
-      const targets = openWindows(frame.type);
       let delivered = 0;
-      for (const ws of targets) {
+      for (const ws of openWindows(frame.type)) {
         if (sendGatewayFrame(ws, frame)) delivered += 1;
       }
-      if (delivered === 0) {
-        log.warn("session-windows.undelivered", {
-          sessionId,
-          frameType: frame.type,
-          windows: windows.size,
-          reason: "no open window received this frame",
-        });
-      }
+      noteDelivery(frame.type, delivered);
       return delivered;
     },
 
     broadcastAudio(payload) {
-      return openWindows("audio").map((ws) => sendAudioFrame(ws, payload));
+      let delivered = 0;
+      for (const ws of openWindows(AUDIO_FRAME_TYPE)) {
+        // The seq each window allocates is per-connection and reaches nothing
+        // but that window's own journal, so it is deliberately not collected:
+        // this runs ~50×/s per turn.
+        sendAudioFrame(ws, payload);
+        delivered += 1;
+      }
+      noteDelivery(AUDIO_FRAME_TYPE, delivered);
+    },
+
+    directTo(attachmentId, emit) {
+      directedTo = attachmentId;
+      try {
+        emit();
+      } finally {
+        directedTo = null;
+      }
+    },
+
+    get sockets() {
+      return [...windows.values()];
     },
 
     get size() {

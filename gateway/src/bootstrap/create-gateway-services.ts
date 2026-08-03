@@ -147,10 +147,11 @@ export interface GatewayServices {
   readonly provider: UserModelProvider | null;
   /** Per-session runtime factory. Takes a `SessionRuntimeRequest`, whose two
    *  ids are named apart on purpose — `conversationId` is the durable store
-   *  partition, `connectionId` is this socket and only ever reaches logs.
-   *  Returns the connection-scoped `SessionHandles` pair (runtime + its
-   *  permission broker, Plan 3 Task 6), both torn down together in
-   *  `cleanupSession`. `null` only when `orchestrator:` is absent from
+   *  partition, `connectionId` is the socket whose attach built the session and
+   *  only ever reaches logs. Returns the `SessionRuntimeHandles` pair (runtime
+   *  + its permission broker, Plan 3 Task 6), which the session registry keeps
+   *  and disposes when the session is released — NOT per connection. `null`
+   *  only when `orchestrator:` is absent from
    *  config.yaml. When present but `provider` is null, calling it throws a
    *  clear error rather than the gateway failing to boot. */
   readonly createSessionRuntime: CreateSessionRuntime | null;

@@ -1230,9 +1230,8 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     const first = fakeAuthedWs("connection-1");
     configure(first, services, SURFACE_A);
     await sendFirstMessage(first, services, "private to the first session");
-    const firstRuntime = first.data.runtime as SessionRuntime;
-    await waitUntilIdle(firstRuntime);
-    firstRuntime.dispose();
+    await waitUntilIdle(first.data.runtime as SessionRuntime);
+    cleanupSession(asWs(first), services);
 
     const second = fakeAuthedWs("connection-2");
     configure(second, services, SURFACE_B);

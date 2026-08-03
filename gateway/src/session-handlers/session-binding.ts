@@ -128,7 +128,7 @@ export function bindSessionRuntime(
   let attachment: Attachment;
   try {
     attachment = services.sessionRegistry.attach(sessionId, connectionId, () =>
-      buildSessionHandles(ws, services, principal, sessionId),
+      buildSessionHandles(services, principal, sessionId, connectionId),
     );
   } catch (err) {
     log.error("session-binding.runtime-construction-failed", {
@@ -161,6 +161,9 @@ export function bindSessionRuntime(
   ws.data.runtime = handles.runtime;
   ws.data.permissions = handles.permissions;
   ws.data.voicePrefs = handles.voicePrefs;
+  // The ONE line per attach: the registry, the subscriber set and the window
+  // set all log at DEBUG, and repeating these ids four times said nothing the
+  // first did not.
   log.info("session-binding.attached", {
     connectionId,
     userId,
@@ -177,19 +180,18 @@ export function bindSessionRuntime(
  * `build` callback — invoked on the first attachment ONLY, so nothing here may
  * assume it runs once per connection.
  *
- * [ws] is the connection that happened to be first. Two things still read it
- * after this returns, and both are known interim scoping gaps that task 6's
- * fan-out closes: the mic echo guard reads that connection's `SttSession`, and
- * `SessionRuntime`'s emitter reaches the session's other windows only through
- * `windows`, which this function creates.
+ * [ws] is only the connection that happened to be first, and NOTHING built
+ * here may capture it: the session outlives it. The emitter writes to
+ * `windows` (every attached socket) and the mic echo guard reads its
+ * `SttSession`s the same way, so this argument supplies the connection id for
+ * log correlation and nothing else.
  */
 function buildSessionHandles(
-  ws: ServerWebSocket<SessionData>,
   services: GatewayServices,
   principal: UserPrincipal,
   sessionId: string,
+  connectionId: string,
 ): SessionHandles {
-  const connectionId = ws.data.sessionId ?? "unbound";
   const windows = createSessionWindows(sessionId);
   const emitter = createWsTurnEmitter(windows, sessionId);
   // Voice composition (spec §6). Built HERE because this is the only place
@@ -200,10 +202,13 @@ function buildSessionHandles(
   // attached socket too: `user.preferences.patch` applies a live mute toggle
   // through it (handle-preferences-patch.ts).
   const voicePrefs = createSessionVoicePrefs(services.profileStore, principal.userId, connectionId);
+  // Every attached window's mic, read at TTS-start time — the session's TTS
+  // reaches all of them, so a guard scoped to this one connection would leave
+  // the others open on the assistant's own voice (self-triggered barge-in).
   const echoGuard = createMicEchoGuard(
-    () => ws.data.stt,
+    () => windows.sockets.flatMap((window) => (window.data.stt === null ? [] : [window.data.stt])),
     services.stt?.adapterConfig.ttsEchoCooldownMs ?? null,
-    connectionId,
+    sessionId,
   );
   const synthesizer = services.createSynthesizerFor(() => voicePrefs.voiceId());
   const voice = synthesizer
@@ -227,7 +232,7 @@ function buildSessionHandles(
   });
   if (built === undefined) throw new Error("orchestrator is not configured for this gateway");
 
-  log.info("session-binding.session-handles-built", {
+  log.debug("session-binding.session-handles-built", {
     connectionId,
     userId: principal.userId,
     sessionId,
@@ -291,6 +296,33 @@ export function detachSession(ws: ServerWebSocket<SessionData>, services: Gatewa
   // that has left cannot apply a mute toggle to a `TurnVoice` no turn of its
   // own can reach.
   ws.data.voicePrefs = null;
+}
+
+/**
+ * Publish this session's committed feed to THIS connection and no other.
+ *
+ * `conversation.snapshot` is the one frame the runtime emits that is an ANSWER
+ * to a connection rather than an event in the conversation: a handshake, a
+ * late bind, or a replayed mint asked for it, and only that connection has an
+ * empty mirror to fill. Fanning it out replaces every OTHER window's committed
+ * mirror — which both SDKs treat as a real session boundary — and it arrives
+ * with no paired `session.switched`, so a peer inside its own resume window
+ * can arm the stale-resume timer, receive no switch, and drop its stored
+ * session id. The conversation would then vanish on that peer's next
+ * reconnect.
+ *
+ * Returns false when this connection is not attached, so the caller can log
+ * its own reason rather than guess at one.
+ */
+export function emitConversationSnapshotTo(ws: ServerWebSocket<SessionData>, services: GatewayServices): boolean {
+  const runtime = ws.data.runtime;
+  const attachment = ws.data.attachment;
+  const sessionId = ws.data.conversationId;
+  if (runtime === null || attachment === null || sessionId === null) return false;
+  const windows = services.sessionRegistry.handlesFor(sessionId)?.windows;
+  if (windows === undefined) return false;
+  windows.directTo(attachment.attachmentId, () => runtime.emitConversationSnapshot());
+  return true;
 }
 
 /**

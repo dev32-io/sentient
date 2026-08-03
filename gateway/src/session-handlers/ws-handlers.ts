@@ -5,7 +5,7 @@ import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { getLog } from "../logging/logger.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import { handlePreferencesPatch } from "./handle-preferences-patch.js";
-import { bindSessionRuntime, detachSession, withSessionStore } from "./session-binding.js";
+import { bindSessionRuntime, detachSession, emitConversationSnapshotTo, withSessionStore } from "./session-binding.js";
 import { mintOnFirstMessage } from "./session-id.js";
 import { createSttSession } from "./stt-session.js";
 import type { SttSession } from "./stt-session.js";
@@ -328,8 +328,10 @@ function ensureBoundRuntime(
     }
     // The handshake could not send a feed (it had no runtime to project one
     // from) and sent nothing at all — not even the draft's empty snapshot. This
-    // is the client's first chance to see this session's history.
-    rebound.emitConversationSnapshot();
+    // is the client's first chance to see this session's history. Directed at
+    // THIS socket: a peer already attached to the session has a correct mirror
+    // that a snapshot would replace (session-binding.ts).
+    emitConversationSnapshotTo(ws, services);
     log.info("text.input.late-bind", {
       sessionId: ws.data.sessionId,
       conversationId: ws.data.conversationId,
@@ -384,8 +386,10 @@ function ensureBoundRuntime(
   // client renders only the retried message and its reply while the earlier
   // exchange stays invisible until a reload — on the exact path this whole
   // design exists to serve. A fresh mint needs no snapshot: an empty feed is
-  // the truth there, and the user entry follows immediately.
-  if (replayed) runtime.emitConversationSnapshot();
+  // the truth there, and the user entry follows immediately. Directed at THIS
+  // socket for the same reason as the late bind above — and here a peer is not
+  // hypothetical: a replayed mint means a second connection is on this draft.
+  if (replayed) emitConversationSnapshotTo(ws, services);
   return runtime;
 }
 

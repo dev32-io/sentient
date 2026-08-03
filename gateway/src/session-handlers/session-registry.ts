@@ -177,7 +177,7 @@ export function createSessionRegistry(policy: SessionDisposalPolicy = disposeWhe
       const existing = sessions.get(sessionId);
       if (existing !== undefined) {
         const attachment = existing.subscribers.add(connectionId);
-        log.info("session-registry.joined", {
+        log.debug("session-registry.joined", {
           sessionId,
           connectionId,
           attachmentId: attachment.attachmentId,

@@ -3,7 +3,13 @@ import type { ServerWebSocket } from "bun";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { getLog } from "../logging/logger.js";
 import type { ReplayAcquisition } from "./replay-registry.js";
-import { bindSessionRuntime, detachSession, sendDraftHandshake, withSessionStore } from "./session-binding.js";
+import {
+  bindSessionRuntime,
+  detachSession,
+  emitConversationSnapshotTo,
+  sendDraftHandshake,
+  withSessionStore,
+} from "./session-binding.js";
 import { isDraftKey, mintDraftKey, resolveSession } from "./session-id.js";
 import type { SessionData } from "./ws-helpers.js";
 import { sendError } from "./ws-helpers.js";
@@ -244,7 +250,7 @@ export function handleSessionConfigure(
     sendDraftHandshake(ws, resolved.draftKey, undefined);
     return;
   }
-  sendConversationSnapshot(ws, sessionId, resolved.sessionId, userId);
+  sendConversationSnapshot(ws, services, sessionId, resolved.sessionId, userId);
 }
 
 /** What this connection is looking at: a real session, or a draft holding the
@@ -358,21 +364,18 @@ function resolveConnectionSession(
  */
 function sendConversationSnapshot(
   ws: ServerWebSocket<SessionData>,
+  services: GatewayServices,
   sessionId: string,
   conversationId: string,
   userId: string,
 ): void {
-  const runtime = ws.data.runtime;
-  if (runtime === null) {
-    log.warn("session-configure.no-conversation-snapshot", {
-      sessionId,
-      conversationId,
-      userId,
-      reason: "no session runtime on this connection — no store to project",
-    });
-    return;
-  }
-  runtime.emitConversationSnapshot();
+  if (emitConversationSnapshotTo(ws, services)) return;
+  log.warn("session-configure.no-conversation-snapshot", {
+    sessionId,
+    conversationId,
+    userId,
+    reason: "this connection is not attached to a session runtime — no store to project",
+  });
 }
 
 /**

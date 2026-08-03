@@ -82,8 +82,9 @@ export function createWsTurnEmitter(windows: SessionWindows, sessionId: string):
     toolStartedAtMs.clear();
   }
 
-  function emit(frame: GatewayMessage): void {
-    windows.broadcast(frame);
+  /** @returns how many windows the frame actually reached. */
+  function emit(frame: GatewayMessage): number {
+    return windows.broadcast(frame);
   }
 
   return {
@@ -155,8 +156,20 @@ export function createWsTurnEmitter(windows: SessionWindows, sessionId: string):
 
     conversationSnapshot(items: ConversationFeedItem[]) {
       // Item CONTENT is chat content — never logged. Count only.
-      log.info("turn-emitter.conversation-snapshot", { sessionId, itemCount: items.length });
-      emit({ type: "conversation.snapshot", items });
+      //
+      // `windows` vs `delivered` is the one pair worth reading here: this
+      // frame REPLACES a client's committed mirror, so it must reach exactly
+      // the connection that asked for it. `delivered=1` with `windows=2` is
+      // the directed emission working (session-binding.ts's
+      // `emitConversationSnapshotTo`); `delivered` equal to `windows` on a
+      // multi-window session means a peer's mirror was overwritten.
+      const delivered = emit({ type: "conversation.snapshot", items });
+      log.info("turn-emitter.conversation-snapshot", {
+        sessionId,
+        itemCount: items.length,
+        windows: windows.size,
+        delivered,
+      });
     },
 
     conversationEntry(item: ConversationFeedItem, turnId?: string) {
@@ -176,15 +189,15 @@ export function createWsTurnEmitter(windows: SessionWindows, sessionId: string):
     },
 
     audioFrame(turnId: string, bytes: Uint8Array) {
-      // One seq PER WINDOW — each connection stamps from its own journal, so
-      // there are as many as there are open windows (task 6 collapses them
-      // into the session's single seq space).
-      const seqs = windows.broadcastAudio(bytes);
+      // Each window stamps its own seq from its own journal, so there is no
+      // single seq to report here — task 6 collapses them into the session's
+      // one space, at which point this line can carry it again.
+      windows.broadcastAudio(bytes);
       audioFramesSent += 1;
       log.debug("turn-emitter.audio-frame", {
         sessionId,
         turnId,
-        seqs,
+        windows: windows.size,
         payloadBytes: bytes.byteLength,
       });
     },

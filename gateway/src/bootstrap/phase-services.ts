@@ -525,13 +525,14 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
     // used to authorize off the ambient `principal` directly.
     const capability = accessManager.grant(principal, "tool-broker");
 
-    // Connection-scoped permission mediation (spec §5.3/§7.1). Created here
-    // because this is the only scope holding BOTH the session's emitter and
-    // the orchestrator config; `ws-session-configure.ts` receives it back on
-    // `SessionHandles` and parks it on `ws.data.permissions` so
-    // `permission.response` can route into it. It gets `connectionId`, not the
-    // conversation: a prompt is settleable only by the socket that issued it,
-    // so that is the id its logs must name.
+    // Permission mediation (spec §5.3/§7.1). Created here because this is the
+    // only scope holding BOTH the session's emitter and the orchestrator
+    // config; the broker comes back on `SessionRuntimeHandles`, is kept by the
+    // session registry, and is parked on EVERY attached connection's
+    // `ws.data.permissions` so `permission.response` can route into it from
+    // any window (session-model plan task 5 — it is session-scoped now, and
+    // task 7 makes that explicit on the wire). It gets `connectionId` for its
+    // log correlation, naming the connection whose attach built the session.
     const permissions = createPermissionBroker({
       emitter,
       sessionId: connectionId,
