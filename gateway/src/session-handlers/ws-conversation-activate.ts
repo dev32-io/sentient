@@ -37,7 +37,7 @@
 import type { ServerWebSocket } from "bun";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { getLog } from "../logging/logger.js";
-import { bindSessionRuntime, completeAttach, unbindSession, withSessionStore } from "./session-binding.js";
+import { bindSessionRuntime, completeAttachWithSnapshot, unbindSession, withSessionStore } from "./session-binding.js";
 import { mintDraftKey, resolveSession } from "./session-id.js";
 import type { SessionData } from "./ws-helpers.js";
 import { sendConnectionFrame } from "./ws-send.js";
@@ -115,11 +115,14 @@ export function handleConversationActivate(
     return;
   }
 
-  // No snapshot here BY DESIGN — the client REST-refetches history on
-  // `session.switched` — so the attach is completed with a plain drain: this
-  // window receives everything the session emitted while it was held, and the
-  // refetch supplies the committed half.
-  completeAttach(ws, services);
+  // No committed SNAPSHOT here by design — the client REST-refetches history on
+  // `session.switched`, and a second source of truth for the same mirror would
+  // race it. The TURN STATE is a different question and is sent: opening a
+  // conversation that is mid-reply is the ordinary case for this frame, and no
+  // REST route carries `turn.started`, the text so far, a running tool tile or
+  // an open prompt — without them this window renders deltas for a turn it
+  // never saw start.
+  completeAttachWithSnapshot(ws, services, "client-refetch");
   log.info("conversation.activate.switched", { sessionId: connectionId, userId: principal.userId, targetSessionId });
   sendConnectionFrame(ws, { type: "session.switched", sessionId: targetSessionId, ts: Date.now() });
 }

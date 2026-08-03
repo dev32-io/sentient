@@ -437,6 +437,26 @@ describe("attachWithSnapshot", () => {
     expect(texts(connB).map((f) => f.type)).toContain("permission.request");
   });
 
+  it("reconstructs the in-flight turn even when the client refetches its own committed history", () => {
+    // `conversation.activate` takes no committed snapshot — the client refetches
+    // over REST on `session.switched` — but it can land mid-reply, and no REST
+    // route carries `turn.started`, the text so far, a running tile or an open
+    // prompt. Without this a drawer-join renders deltas for a turn it never saw
+    // start.
+    const connA = fakeWindow("conn-a");
+    const connB = fakeWindow("conn-b");
+    const h = harness(connA);
+    attachWithSnapshot(h.registry, SESSION_ID, asWs(connA));
+    h.emit.turnStarted("t1", "user");
+    h.emit.textDelta("t1", "half an answer");
+
+    h.attach(connB);
+    const snap = attachWithSnapshot(h.registry, SESSION_ID, asWs(connB), "client-refetch");
+
+    expect(snap.activeTurnId).toBe("t1");
+    expect(texts(connB).map((f) => f.type)).toEqual(["turn.started", "turn.text.delta"]);
+  });
+
   it("hands a joiner an empty turn state when no turn is in flight", () => {
     const connA = fakeWindow("conn-a");
     const connB = fakeWindow("conn-b");

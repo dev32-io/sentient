@@ -399,13 +399,29 @@ export function createFanOutTurnEmitter(deps: FanOutEmitterDeps): FanOutTurnEmit
 }
 
 /**
+ * Where a joining window's COMMITTED history comes from. The turn-state
+ * reconstruction is not optional and is not affected by this choice — a window
+ * that lands mid-turn needs the transient prerequisites either way, and no REST
+ * route carries them.
+ */
+export type CommittedFeedSource =
+  /** `conversation.snapshot`, directed at this window (the handshake, a late
+   *  bind, a replayed mint — the client's mirror is empty and this fills it). */
+  | "snapshot"
+  /** The client refetches `GET /sessions/:id/messages` itself, which is what
+   *  `session.switched` tells it to do — so sending a snapshot as well would be
+   *  a second, racing source of truth for the same mirror
+   *  (ws-conversation-activate.ts). */
+  | "client-refetch";
+
+/**
  * Give a joining window everything it needs to render coherently, and let it
  * start receiving.
  *
  * The window must already be attached (`SessionRegistry.attach`) and HELD
  * (`FanOutTurnEmitter.hold`), both done synchronously by `bindSessionRuntime`.
- * This is the second half: project the committed feed, capture the in-flight
- * turn, then drain everything that arrived while it was held.
+ * This is the second half: publish the committed feed, reconstruct the
+ * in-flight turn, then drain everything that arrived while it was held.
  *
  * SYNCHRONOUS, AND THE SIGNATURE IS THE ENFORCEMENT. The plan sketched this as
  * `async`, which reads naturally and is exactly the shape that breaks the
@@ -423,6 +439,7 @@ export function attachWithSnapshot(
   registry: SessionRegistry,
   sessionId: string,
   ws: ServerWebSocket<SessionData>,
+  committedFeed: CommittedFeedSource = "snapshot",
 ): TurnStateSnapshot {
   const attachment = ws.data.attachment;
   const handles = registry.handlesFor(sessionId);
@@ -440,7 +457,9 @@ export function attachWithSnapshot(
   // ── interleaving here is a frame that is in neither the snapshot nor the
   // ── drain, which is precisely the silent loss this design exists to prevent.
   const watermark = handles.journal.newestSeq;
-  handles.fanOut.directTo(attachment.attachmentId, () => handles.runtime.emitConversationSnapshot());
+  if (committedFeed === "snapshot") {
+    handles.fanOut.directTo(attachment.attachmentId, () => handles.runtime.emitConversationSnapshot());
+  }
   const turnState = captureTurnStateSnapshot(handles.runtime);
   // ── End of the atomic block.
 
@@ -451,6 +470,7 @@ export function attachWithSnapshot(
     connectionId: ws.data.sessionId,
     attachmentId: attachment.attachmentId,
     turnId: turnState.activeTurnId,
+    committedFeed,
     watermark,
     windows: handles.fanOut.size,
   });

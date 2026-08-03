@@ -23,7 +23,7 @@ import { getLog } from "../logging/logger.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import { createTurnVoice } from "../runtime/turn-voice.js";
 import { type SessionStore, openSessionStore } from "../store/session-store.js";
-import { attachWithSnapshot, createFanOutTurnEmitter } from "./fan-out-emitter.js";
+import { type CommittedFeedSource, attachWithSnapshot, createFanOutTurnEmitter } from "./fan-out-emitter.js";
 import { createMicEchoGuard } from "./mic-echo-guard.js";
 import type { Attachment, SessionHandles } from "./session-registry.js";
 import { createSessionVoicePrefs } from "./session-voice-prefs.js";
@@ -351,25 +351,39 @@ export function detachSession(ws: ServerWebSocket<SessionData>, services: Gatewa
  * on that peer's next reconnect. It is a CONNECTION-lane frame (frame-lanes.ts)
  * precisely so the fan-out cannot broadcast it even by accident.
  *
+ * [committedFeed] chooses where the joiner's COMMITTED history comes from —
+ * this directed snapshot, or the client's own REST refetch. It does NOT gate
+ * the turn-state reconstruction: a window that lands mid-turn needs the
+ * transient prerequisites either way, and no REST route carries them.
+ *
  * Returns false when this connection is not attached, so the caller can log its
  * own reason rather than guess at one.
  */
-export function completeAttachWithSnapshot(ws: ServerWebSocket<SessionData>, services: GatewayServices): boolean {
+export function completeAttachWithSnapshot(
+  ws: ServerWebSocket<SessionData>,
+  services: GatewayServices,
+  committedFeed: CommittedFeedSource = "snapshot",
+): boolean {
   const sessionId = ws.data.conversationId;
   if (ws.data.runtime === null || ws.data.attachment === null || sessionId === null) return false;
   if (services.sessionRegistry.handlesFor(sessionId) === null) return false;
-  attachWithSnapshot(services.sessionRegistry, sessionId, ws);
+  attachWithSnapshot(services.sessionRegistry, sessionId, ws, committedFeed);
   return true;
 }
 
 /**
- * Finish an attach that does NOT get a snapshot, by draining everything the
- * hold buffered.
+ * Finish an attach with a plain drain — no committed feed, no turn-state
+ * reconstruction.
  *
- * Two callers, both of which would fight a snapshot rather than benefit from
- * one: a FRESH mint (the committed feed is empty and the user's own entry
- * follows immediately) and `conversation.activate` (the client REST-refetches
- * history on `session.switched`).
+ * Two callers, and neither can be mid-turn from this window's point of view: a
+ * FRESH mint (the session was created by this very message, so there is no
+ * prior turn and the user's own entry follows immediately) and a RECOVERED
+ * resume (the client's cursor genuinely reached `deliveredThrough`, so it
+ * already saw whatever prerequisites the turn emitted).
+ *
+ * `conversation.activate` deliberately does NOT come here: it takes no
+ * committed snapshot — the client refetches — but it can land mid-turn, so it
+ * needs the reconstruction (`completeAttachWithSnapshot(…, "client-refetch")`).
  *
  * [deliveredThrough] is the highest seq this connection has ALREADY been sent
  * by another path — the recovered-resume replay's `toSeq`. 0 means "it has seen
