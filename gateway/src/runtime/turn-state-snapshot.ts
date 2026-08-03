@@ -196,6 +196,12 @@ export function createTurnStateTracker(sessionId: string): TurnStateTracker {
           }
           emitter.delegationProgress(p);
         },
+        sessionTitle(title, provenance) {
+          // Pass-through: a title is session METADATA, not turn state — a
+          // window joining mid-turn gets the title from its sessions list, not
+          // from the turn-state snapshot.
+          emitter.sessionTitle(title, provenance);
+        },
       };
     },
 

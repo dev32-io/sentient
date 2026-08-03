@@ -108,6 +108,25 @@ function emitterFor(ws: { data: SessionData }): TurnEmitter {
   };
 }
 
+/** The same wiring as `emitterFor`, with TWO windows attached to the one
+ *  session — the shape a session-lane frame has to be proven against, because
+ *  a single-window harness cannot tell "broadcast" from "written to the only
+ *  socket there is". */
+function twoWindowEmitter(a: { data: SessionData }, b: { data: SessionData }): TurnEmitter {
+  const registry = createSessionRegistry(() => {});
+  const journal = createFrameJournal({ sessionId: SESSION_ID, maxBytes: 1_000_000 });
+  const fanOut = createFanOutTurnEmitter({
+    registry,
+    sessionId: SESSION_ID,
+    journal,
+    epoch: 7,
+    maxLagBytes: 1_000_000,
+  });
+  registry.attach(SESSION_ID, "conn-a", a as unknown as ServerWebSocket<SessionData>, () => NO_HANDLES);
+  registry.attach(SESSION_ID, "conn-b", b as unknown as ServerWebSocket<SessionData>, () => NO_HANDLES);
+  return fanOut;
+}
+
 describe("createWsTurnEmitter — 2.0 wire contract", () => {
   it("turnStarted sends turn.started carrying the trigger", () => {
     const ws = fakeWs();
@@ -356,6 +375,7 @@ describe("createWsTurnEmitter — 2.0 wire contract", () => {
     });
     emitter.permissionResolved({ requestId: "r1", outcome: "allowed" });
     emitter.delegationProgress({ taskId: "t-9", turnId: "turn-1", agent: "hermes", status: "running" });
+    emitter.sessionTitle("Kitchen light schedule", "generated");
     emitter.conversationSnapshot([{ entryId: "1", ts: 1000, kind: "user", channel: "text", content: "hi" }]);
     emitter.conversationEntry({ entryId: "2", ts: 1001, kind: "assistant", content: "hello" }, "turn-1");
     emitter.turnAborted("turn-1", "interrupt");
@@ -374,12 +394,33 @@ describe("createWsTurnEmitter — 2.0 wire contract", () => {
       "permission.request",
       "permission.resolved",
       "delegation.progress",
+      "session.title",
       "conversation.snapshot",
       "conversation.entry",
       "turn.aborted",
       "playback.stop",
       "turn.completed",
     ]);
+  });
+
+  it("INVARIANT: a generated title is emitted on the session lane, not to one connection", () => {
+    // Titling (spec §6) renames a conversation for EVERYONE looking at it. The
+    // fan-out is real here, not a double: `broadcast` refuses a
+    // connection-lane frame outright (frame-lanes.ts), so a `sessionTitle`
+    // wired through `directed` would deliver to nobody rather than quietly to
+    // one window — and this case would catch it either way.
+    const connA = fakeWs();
+    const connB = fakeWs();
+    twoWindowEmitter(connA, connB).sessionTitle("Kitchen light schedule", "generated");
+
+    const frame = {
+      type: "session.title",
+      sessionId: SESSION_ID,
+      title: "Kitchen light schedule",
+      provenance: "generated",
+    };
+    expect(connA.sent).toContainEqual(frame);
+    expect(connB.sent).toContainEqual(frame);
   });
 
   it("a schema-violating frame is dropped, not thrown and not sent", () => {

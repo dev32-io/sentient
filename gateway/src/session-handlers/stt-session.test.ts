@@ -114,6 +114,9 @@ function stubRuntime(): StubRuntime {
     get running() {
       return false;
     },
+    get hasAuxiliaryTaskInFlight() {
+      return false;
+    },
     dispose: () => {},
     bargeIn: () => {
       bargeIns.push("barge-in");

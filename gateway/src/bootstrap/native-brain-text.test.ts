@@ -125,6 +125,9 @@ function recordingEmitter(): RecordingEmitter {
     permissionRequest: () => {},
     permissionResolved: () => {},
     delegationProgress: () => {},
+    // Titling is session METADATA, not turn output — this harness asserts on
+    // the turn stream only.
+    sessionTitle: () => {},
   };
   return emitter;
 }

@@ -680,11 +680,14 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       get newestBackgroundTaskStartedAtMs() {
         return broker.background.newestStartedAtMs();
       },
-      // NO PRODUCER UNTIL TASK 10 (session titling). Wired now, constant
-      // `false`, so the term is in the predicate and in the reason list from
-      // the day the auxiliary-task runner lands — task 10 replaces this line
-      // with the runner's own getter and changes nothing else.
-      hasAuxiliaryTaskInFlight: false,
+      // Session titling (spec §6) — the auxiliary-task seam's first producer.
+      // A titling round trip starts AFTER the turn that triggered it settled,
+      // so `isTurnInFlight` is already false and this is the only term holding
+      // the session: without it, the last window closing between the reply and
+      // the title's arrival disposes the runtime and the title lands nowhere.
+      get hasAuxiliaryTaskInFlight() {
+        return runtime.hasAuxiliaryTaskInFlight;
+      },
     };
 
     // Closes the delegateTask fire-and-steer loop (spec §5.2/§5.4): the

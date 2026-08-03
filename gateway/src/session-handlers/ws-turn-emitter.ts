@@ -45,6 +45,7 @@ import type {
   TurnEmitter,
 } from "../runtime/turn-emitter.js";
 import type { CutoffKind } from "../store/entry-types.js";
+import type { TitleProvenance } from "../store/session-metadata.js";
 
 const log = getLog(["sentient", "ws", "turn-emitter"]);
 
@@ -256,6 +257,15 @@ export function createWsTurnEmitter(sink: SessionFrameSink, sessionId: string): 
         status: p.status,
       });
       emit({ type: "delegation.progress", ...p });
+    },
+
+    sessionTitle(title: string, provenance: TitleProvenance) {
+      // A title is a summary of what the person said — CONTENT. Length and
+      // provenance only; the durable record is the store's.
+      log.info("turn-emitter.session-title", { sessionId, titleChars: title.length, provenance });
+      // `sessionId` is THIS emitter's own, never a caller's — see the seam's
+      // doc comment in runtime/turn-emitter.ts.
+      emit({ type: "session.title", sessionId, title, provenance });
     },
   };
 }

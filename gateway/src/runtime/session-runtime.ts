@@ -92,7 +92,7 @@
 import type { OrchestratorConfig } from "@sentient/config";
 import type { TurnTrigger } from "@sentient/protocol";
 import type { AccessManager } from "../access/access-manager.js";
-import { loadCompactionSummarizerPrompt } from "../context/system-prompt-loader.js";
+import { loadAuxiliaryTemplate, loadCompactionSummarizerPrompt } from "../context/system-prompt-loader.js";
 import type { UserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
 import type { ProviderClient } from "../provider/provider-client.js";
@@ -108,6 +108,7 @@ import { createConversationFeed } from "./conversation-feed.js";
 import type { ReactLoopDeps } from "./react-loop.js";
 import { type TurnOutcome, runTurn } from "./react-loop.js";
 import type { Stimulus } from "./stimulus.js";
+import { runTitler } from "./titler.js";
 import type { TurnEmitter } from "./turn-emitter.js";
 import { type TurnStateSnapshot, type TurnStateTracker, createTurnStateTracker } from "./turn-state-snapshot.js";
 import type { TurnVoice, TurnVoiceStream } from "./turn-voice.js";
@@ -190,6 +191,17 @@ export interface SessionRuntime {
    *  recovered resume replays the exact frames the client missed instead.
    *  A no-op after `dispose()`. */
   emitConversationSnapshot(): void;
+  /**
+   * An AUXILIARY TASK (spec §6) is running for this session — today, the
+   * titler. Feeds task 8's retention term of the same name, so a session is
+   * never reclaimed out from under its own title: the turn is already over by
+   * then, so `running` is false and nothing else would hold it.
+   *
+   * A COUNT behind a boolean, not a latch. A latch set at six sites eventually
+   * leaks one, and both leak directions are bugs (a stuck `true` pins the
+   * session forever; an early `false` drops it mid-work).
+   */
+  readonly hasAuxiliaryTaskInFlight: boolean;
   /**
    * The in-flight turn as a window that was not there needs to see it (spec
    * §7.2) — active turn, text so far, running tools, open prompts, audio
@@ -334,6 +346,15 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     config.compaction.max_backoff_turns,
   );
   let disposed = false;
+  // Auxiliary tasks (spec §6) running for this session. A COUNT so a future
+  // second task (tags, follow-ups) composes without this becoming a latch.
+  let auxiliaryInFlight = 0;
+  // RUNTIME-SCOPED, not turn-scoped, and that is the point: an auxiliary task
+  // outlives the turn that started it (it fires from the settle path), so the
+  // turn's own controller is already unreachable by the time a `dispose()`
+  // needs to cancel the round trip and stop the store write that would follow
+  // it through a closed SQLite handle.
+  const auxiliaryController = new AbortController();
   // The most recent turn this session started, kept AFTER it settles. Audio
   // outlives its turn, so a cancel landing in the tail window still has to
   // name a turn on its `playback.stop`; `inFlight` is already null by then.
@@ -461,6 +482,63 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     });
   }
 
+  /**
+   * Start this session's title, if it still needs one (spec §6).
+   *
+   * FIRE-AND-FORGET BY CONSTRUCTION. It is started from the settle path AFTER
+   * the reply's terminal frame has gone out, and nothing awaits it — a title
+   * that made a user wait for their answer would be a worse feature than no
+   * title. The counter is incremented SYNCHRONOUSLY, before the first await,
+   * so the retention predicate can never observe the window between "the turn
+   * ended" and "the auxiliary task registered".
+   *
+   * THE `title !== null` GATE IS WHAT MAKES THIS "THE FIRST COMPLETED REPLY"
+   * without counting replies: a cut-off first reply leaves the session
+   * untitled and the next completed one picks it up, while a session that
+   * already has any title (generated, or a name a person typed) never spends
+   * another provider call. Counting turns instead would re-title after a
+   * failure and never re-title after a barge-in.
+   */
+  function startTitling(turnId: string): void {
+    if (!config.auxiliary.enabled) return;
+    const session = store.getSession(sessionId);
+    if (session === null || session.title !== null) return;
+
+    auxiliaryInFlight += 1;
+    log.info("session-runtime.titling.start", { userId, sessionId, turnId });
+    runTitler({
+      store,
+      provider,
+      sessionId,
+      userId,
+      config: config.auxiliary,
+      loadTemplate: (templatePath) =>
+        loadAuxiliaryTemplate(templatePath, {
+          templateDir: config.auxiliary.template_dir,
+          overrideDir: config.auxiliary.override_dir,
+        }),
+      emitTitle: (title, provenance) => emitter.sessionTitle(title, provenance),
+      signal: auxiliaryController.signal,
+    })
+      .catch((err: unknown) => {
+        // `runTitler`'s contract is "never throws" — a backstop only. This
+        // chain is DETACHED, and Bun exits the process on an unhandled
+        // rejection, so the backstop is not optional.
+        log.error("session-runtime.titling.threw", {
+          userId,
+          sessionId,
+          turnId,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      })
+      .finally(() => {
+        auxiliaryInFlight -= 1;
+        // Retention re-derives on this seam: without it the session waits for
+        // the policy's re-check timer after its last hold is released.
+        deps.onWorkSettled?.();
+      });
+  }
+
   async function onTurnSettled(turnId: string, result: TurnOutcome, signal: AbortSignal): Promise<void> {
     // A DISPOSED RUNTIME DOES NO SETTLE WORK — the first statement in this
     // function, before anything can touch the store. `dispose()` already did
@@ -540,6 +618,14 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
         reason: "aborted by a user gesture — cancellation.ts owns this turn's terminal frame",
       });
     }
+
+    // TITLING (spec §6), after the terminal frame and gated on a NATURAL
+    // completion. `failed` is a turn whose only assistant text is the failure
+    // notice, and a cut-off one may hold nothing but a half sentence — neither
+    // is something to name a conversation after, so the session stays untitled
+    // and the next completed reply picks it up. Detached: it must not delay
+    // the compaction await below, let alone the reply above.
+    if (result.completed) startTitling(turnId);
 
     // Compaction (spec §8, §3.4) runs HERE, in the one window where it is
     // safe, and nowhere else:
@@ -824,6 +910,13 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
       cutTurnCount: cut.length,
     });
     inFlight?.controller.abort();
+    // Cancels an auxiliary round trip that is still out (spec §6). Retention
+    // normally prevents a disposal landing here at all — an in-flight
+    // auxiliary task holds the session — but `dispose()` is also reachable
+    // from paths that do not consult retention (a forced teardown, the idle
+    // cap), and the store write that follows the round trip would go through
+    // the handle closed on the next line.
+    auxiliaryController.abort();
     store.close();
   }
 
@@ -832,6 +925,9 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     submit,
     get running() {
       return inFlight !== null;
+    },
+    get hasAuxiliaryTaskInFlight() {
+      return auxiliaryInFlight > 0;
     },
     dispose,
     bargeIn: whenLive("bargeIn", cancellation.bargeIn),

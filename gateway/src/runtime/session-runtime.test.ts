@@ -3,9 +3,11 @@ import { mkdirSync, rmSync } from "node:fs";
 import type { OrchestratorConfig } from "@sentient/config";
 import type { ConversationFeedItem } from "@sentient/protocol";
 import { createAccessManager } from "../access/access-manager.js";
+import type { UserPrincipal } from "../identity/user-principal.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
 import type { ProviderClient, ProviderRequest, ProviderStreamChunk } from "../provider/provider-client.js";
 import type { CutoffKind } from "../store/entry-types.js";
+import type { TitleProvenance } from "../store/session-metadata.js";
 import { openSessionStore } from "../store/session-store.js";
 import type { BackgroundRegistry } from "../tools/background-registry.js";
 import type { BackgroundToolRunner, ToolBroker } from "../tools/tool-broker.js";
@@ -57,6 +59,19 @@ function testConfig(maxIterations = 10): OrchestratorConfig {
     // call at turn end, which would silently change the call-index
     // assertions those cases are built on. The compaction case below
     // builds its own config with it enabled.
+    // ON, and its template + schema are the REAL ones: every case in this file
+    // that leaves the `sessions` row absent therefore proves titling declines
+    // to run rather than proving it was configured off.
+    auxiliary: {
+      enabled: true,
+      template_dir: "system_prompts/auxiliary",
+      override_dir: "config/auxiliary",
+      max_output_tokens: 200,
+      input_truncation_chars: 4000,
+      reasoning_effort: "none",
+      title_word_target: 5,
+      title_max_chars: 60,
+    },
     compaction: {
       enabled: false,
       compact_threshold_tokens: 24000,
@@ -139,14 +154,25 @@ interface RecordedEvent {
   items?: ConversationFeedItem[];
 }
 
+interface RecordedTitle {
+  title: string;
+  provenance: TitleProvenance;
+}
+
 interface RecordingEmitter extends TurnEmitter {
   events: RecordedEvent[];
+  /** Kept apart from `events` so the exhaustive event-count assertions in this
+   *  file stay about the TURN stream — a title is session metadata. */
+  titles: RecordedTitle[];
 }
 
 function recordingEmitter(): RecordingEmitter {
   const events: RecordedEvent[] = [];
+  const titles: RecordedTitle[] = [];
   return {
     events,
+    titles,
+    sessionTitle: (title, provenance) => titles.push({ title, provenance }),
     turnStarted: (turnId) => events.push({ type: "turnStarted", turnId }),
     textDelta: (turnId) => events.push({ type: "textDelta", turnId }),
     toolUpdate: (turnId) => events.push({ type: "toolUpdate", turnId }),
@@ -782,8 +808,11 @@ describe("SessionRuntime — isolation", () => {
     // constructed after it (genuine forward reference).
     const ref: { runtime?: SessionRuntime } = {};
     const events: RecordedEvent[] = [];
+    const titles: RecordedTitle[] = [];
     const emitter: RecordingEmitter = {
       events,
+      titles,
+      sessionTitle: (title, provenance) => titles.push({ title, provenance }),
       turnStarted: (t) => events.push({ type: "turnStarted", turnId: t }),
       textDelta: (t) => events.push({ type: "textDelta", turnId: t }),
       toolUpdate: (t) => events.push({ type: "toolUpdate", turnId: t }),
@@ -2044,5 +2073,179 @@ describe("SessionRuntime — dispose while a turn is in flight", () => {
     expect(() => runtime.submit({ kind: "conversational", text: "anyone there?" })).not.toThrow();
 
     expect(emitter.events).toHaveLength(eventCount);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Titling (session-model spec §6) — the auxiliary-task seam's first user, and
+// the two facts SessionRuntime owns about it: WHEN it fires, and that a
+// session cannot be reclaimed out from under it while it runs.
+//
+// An auxiliary call is told apart from a loop call by `reasoningEffort`, which
+// only the auxiliary seam ever sets — a discriminator the production wiring
+// really has, not a flag invented for the test.
+// ---------------------------------------------------------------------------
+
+function auxiliaryCallCount(provider: FakeProvider): number {
+  return provider.calls.filter((c) => c.reasoningEffort !== undefined).length;
+}
+
+/** A session with a real `sessions` row, which is what titling compare-and-sets
+ *  against. Every other case in this file leaves the row absent, which is why
+ *  none of them start generating a title. */
+function seedSessionRow(am: ReturnType<typeof createAccessManager>, alice: UserPrincipal, sessionId: string): void {
+  const seed = openSessionStore(am.grant(alice, "session-store"));
+  seed.createSession(sessionId, `mint-${sessionId}`);
+  seed.close();
+}
+
+describe("SessionRuntime — titling fires on the first COMPLETED reply", () => {
+  it("INVARIANT: a cut-off first reply does not trigger titling, and the next completed one does", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/case-title-cutoff` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+    seedSessionRow(am, alice, "sess-title-cutoff");
+
+    const provider = fakeProvider(async function* (_callIndex, req) {
+      if (req.reasoningEffort !== undefined) {
+        yield { type: "text", content: '{"title":"Kitchen light schedule"}' };
+        yield { type: "done", finishReason: "stop" };
+        return;
+      }
+      if (req.messages.some((m) => (m.content ?? "").includes("second question"))) {
+        yield { type: "text", content: "a complete answer" };
+        yield { type: "done", finishReason: "stop" };
+        return;
+      }
+      yield { type: "text", content: "a partial answer" };
+      await new Promise<void>((resolve) => {
+        if (req.signal.aborted) {
+          resolve();
+          return;
+        }
+        req.signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+    });
+
+    const emitter = recordingEmitter();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-title-cutoff",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter,
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "first question" });
+    await waitFor(() => emitter.events.some((e) => e.type === "textDelta"));
+    runtime.bargeIn();
+    await waitUntilIdle(runtime);
+    expect(auxiliaryCallCount(provider)).toBe(0);
+
+    runtime.submit({ kind: "conversational", text: "a second question" });
+    await waitUntilIdle(runtime);
+    await waitFor(() => auxiliaryCallCount(provider) === 1);
+
+    await waitFor(() => emitter.titles.length === 1);
+    expect(emitter.titles).toEqual([{ title: "Kitchen light schedule", provenance: "generated" }]);
+
+    const readback = openSessionStore(am.grant(alice, "session-store"));
+    expect(readback.getSession("sess-title-cutoff")?.title).toBe("Kitchen light schedule");
+    readback.close();
+
+    runtime.dispose();
+  });
+
+  it("titles a session exactly once, not again on the second completed reply", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/case-title-once` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+    seedSessionRow(am, alice, "sess-title-once");
+
+    const provider = fakeProvider(async function* (_callIndex, req) {
+      if (req.reasoningEffort !== undefined) {
+        yield { type: "text", content: '{"title":"First subject"}' };
+      } else {
+        yield { type: "text", content: "an answer" };
+      }
+      yield { type: "done", finishReason: "stop" };
+    });
+
+    const emitter = recordingEmitter();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-title-once",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter,
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "first" });
+    await waitUntilIdle(runtime);
+    await waitFor(() => auxiliaryCallCount(provider) === 1);
+
+    runtime.submit({ kind: "conversational", text: "second" });
+    await waitUntilIdle(runtime);
+    // A settled turn is not proof the detached titling continuation has NOT
+    // run — give it a real chance to misbehave before asserting it didn't.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(auxiliaryCallCount(provider)).toBe(1);
+
+    runtime.dispose();
+  });
+
+  it("INVARIANT: an in-flight auxiliary task holds the session, so it is not reclaimed mid-title", async () => {
+    // Task 8's `hasAuxiliaryTaskInFlight` becomes real here. Without it, the
+    // last window closing between the reply and the title's arrival disposes
+    // the runtime, closes the SQLite handle, and the title lands nowhere.
+    const am = createAccessManager({ userDataRoot: `${ROOT}/case-title-inflight` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+    seedSessionRow(am, alice, "sess-title-inflight");
+
+    let releaseTitle: (() => void) | undefined;
+    const titleGate = new Promise<void>((resolve) => {
+      releaseTitle = resolve;
+    });
+
+    const provider = fakeProvider(async function* (_callIndex, req) {
+      if (req.reasoningEffort !== undefined) {
+        await titleGate;
+        yield { type: "text", content: '{"title":"Held open"}' };
+        yield { type: "done", finishReason: "stop" };
+        return;
+      }
+      yield { type: "text", content: "an answer" };
+      yield { type: "done", finishReason: "stop" };
+    });
+
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-title-inflight",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter: recordingEmitter(),
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "hello" });
+    await waitFor(() => auxiliaryCallCount(provider) === 1);
+
+    // The turn is over — `running` is false — and the session is STILL held.
+    expect(runtime.running).toBe(false);
+    expect(runtime.hasAuxiliaryTaskInFlight).toBe(true);
+
+    releaseTitle?.();
+    await waitFor(() => !runtime.hasAuxiliaryTaskInFlight);
+
+    runtime.dispose();
   });
 });

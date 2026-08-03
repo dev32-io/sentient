@@ -25,6 +25,7 @@ import type {
 } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
 import type { CutoffKind } from "../store/entry-types.js";
+import type { TitleProvenance } from "../store/session-metadata.js";
 import type { ToolUpdate } from "./react-loop.js";
 
 const log = getLog(["sentient", "runtime", "turn-emitter"]);
@@ -82,6 +83,19 @@ export interface TurnEmitter {
    *  auto-deny, or turn abort — so a client dialog is never orphaned. */
   permissionResolved(res: PermissionResolution): void;
   delegationProgress(p: DelegationProgress): void;
+  /**
+   * This session's title changed (spec §6) — the gateway's OWN titling push,
+   * not the echo of a client's rename (`sessions.renamed`).
+   *
+   * SESSION LANE: it renames the conversation for everyone looking at it, so
+   * it goes to every attached window and is journaled for a resume.
+   *
+   * TAKES NO `sessionId`. The frame carries one, and the implementation fills
+   * in the session it was built for — a caller-supplied id would let one
+   * session's title be broadcast on another session's lane, which is a leak
+   * this seam should not be able to express.
+   */
+  sessionTitle(title: string, provenance: TitleProvenance): void;
 }
 
 /**
@@ -155,6 +169,10 @@ export function createLoggingTurnEmitter(): TurnEmitter {
         agent: p.agent,
         status: p.status,
       });
+    },
+    sessionTitle(title, provenance) {
+      // The title IS user-derived content — length and provenance only.
+      log.info("turn-emitter.session-title", { titleChars: title.length, provenance });
     },
   };
 }

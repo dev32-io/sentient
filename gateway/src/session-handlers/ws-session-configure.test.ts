@@ -734,6 +734,16 @@ function testOrchestratorConfig(): OrchestratorConfig {
       hermes_profile_create_timeout_ms: 30000,
       hermes_mcp_register_timeout_ms: 30000,
     },
+    auxiliary: {
+      enabled: true,
+      template_dir: "system_prompts/auxiliary",
+      override_dir: "config/auxiliary",
+      max_output_tokens: 200,
+      input_truncation_chars: 4000,
+      reasoning_effort: "none",
+      title_word_target: 5,
+      title_max_chars: 60,
+    },
     compaction: {
       enabled: false,
       compact_threshold_tokens: 24000,
@@ -887,7 +897,12 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     secondRuntime.submit({ kind: "conversational", text: "what number?" });
     await waitUntilIdle(secondRuntime);
     cleanupSession(asWs(second), services);
-    const replayed = provider.calls[1]?.messages ?? [];
+    // The SECOND LOOP call, selected rather than indexed: the same provider
+    // now also serves auxiliary tasks (session titling, spec §6), whose calls
+    // are interleaved with the loop's and are the only ones that set
+    // `reasoningEffort`. `calls[1]` was the second turn until titling landed.
+    const loopCalls = provider.calls.filter((c) => c.reasoningEffort === undefined);
+    const replayed = loopCalls[1]?.messages ?? [];
     expect(replayed.some((m) => m.role === "user" && m.content === "remember the number 41")).toBe(true);
     expect(replayed.some((m) => m.role === "assistant" && m.content === "hello back")).toBe(true);
   });
