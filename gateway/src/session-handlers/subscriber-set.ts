@@ -27,6 +27,21 @@ const ID_ENTROPY_BYTES = 16;
 const ATTACHMENT_ID_PREFIX = "at_";
 
 export interface Attachment {
+  /**
+   * The session this window is IN — the durable id whose subscriber set holds
+   * it.
+   *
+   * IT LIVES HERE SO THE BINDING IS STRUCTURAL. Routing a command by
+   * `{ws.data.attachment, ws.data.conversationId}` pairs the answering window
+   * with a session id from a DIFFERENT field, kept in step by an ordering
+   * invariant across every bind, detach and switch — "true today" rather than
+   * "true by construction", and exactly the shape that breaks when session
+   * switching lands. Reading the session off the attachment makes a divergent
+   * `conversationId` unable to aim a `permission.response` (ws-handlers.ts) at
+   * a session this connection is not a window on. Task 9's
+   * `{sessionId, generation}` command stamp reads the pair from here too.
+   */
+  readonly sessionId: string;
   /** Unique per ATTACH — the log-attribution key, and the key `detach` is
    *  matched on. Two attachments of the same connection never share one. */
   readonly attachmentId: string;
@@ -87,7 +102,16 @@ export function createSubscriberSet(sessionId: string): SubscriberSet {
   return {
     add(connectionId, ws) {
       generations += 1;
-      const attachment: Attachment = { attachmentId: mintAttachmentId(), connectionId, generation: generations, ws };
+      const attachment: Attachment = {
+        // The set already IS this session's; stamping it on every member is
+        // what lets a holder answer "which session is this window in?" without
+        // consulting a second field that can diverge.
+        sessionId,
+        attachmentId: mintAttachmentId(),
+        connectionId,
+        generation: generations,
+        ws,
+      };
       members.set(attachment.attachmentId, attachment);
       log.debug("subscriber-set.attached", {
         sessionId,

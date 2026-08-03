@@ -311,6 +311,36 @@ describe("ws-handlers routing — permission.response", () => {
     expect(permissions.resolveCalls).toEqual([]);
     expect(ws.sent).toEqual([]);
   });
+
+  it("SECURITY: a window attached to one session cannot settle a prompt on another", async () => {
+    // THE BINDING IS THE ATTACHMENT'S, NOT THE SOCKET'S. The route used to take
+    // the answering window from `ws.data.attachment` and the SESSION from
+    // `ws.data.conversationId` — two fields kept in step by an ordering
+    // invariant across three call sites. `Attachment.sessionId` names the
+    // session the window is actually in, so a divergent `conversationId`
+    // (a switch mid-flight, a stale field) cannot aim an answer at a session
+    // this connection is not a window on.
+    const own = stubPermissions();
+    const other = stubPermissions();
+    const services = sessionScopedServices((sessionId) => (sessionId === OTHER_SESSION_ID ? other : own));
+    // A peer window makes the OTHER session resident, with prompts of its own.
+    attach(fakeAuthedWs(null), services, OTHER_SESSION_ID);
+
+    const ws = fakeAuthedWs(null);
+    attach(ws, services, SESSION_ID);
+    ws.data.conversationId = OTHER_SESSION_ID;
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({ type: "permission.response", requestId: "req-1", approved: true }),
+      services,
+    );
+
+    expect(other.resolveCalls).toEqual([]);
+    expect(own.resolveCalls).toEqual([
+      { requestId: "req-1", allow: true, attachmentId: ws.data.attachment?.attachmentId ?? "" },
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -568,11 +598,20 @@ describe("ws-handlers routing — conversation.activate", () => {
 
 /** A durable session id in `session-id.ts`'s minted shape. */
 const SESSION_ID = `s_${"0".repeat(31)}1`;
+/** A SECOND durable session, resident at the same time as `SESSION_ID`. */
+const OTHER_SESSION_ID = `s_${"0".repeat(31)}2`;
 
 /** `cleanupServices` plus a real `SessionRegistry` and a runtime factory that
  *  hands back [permissions], so a connection can attach for real and its
  *  cleanup genuinely detaches. */
 function attachedCleanupServices(permissions: SessionPermissionBroker): GatewayServices {
+  return sessionScopedServices(() => permissions);
+}
+
+/** The same, but each session gets the broker [brokerFor] names — so a test can
+ *  prove WHICH session's prompts an answer reached, not merely that some broker
+ *  was called. */
+function sessionScopedServices(brokerFor: (sessionId: string) => SessionPermissionBroker): GatewayServices {
   const runtimeStub = {
     dispose: () => {},
     emitConversationSnapshot: () => {},
@@ -586,14 +625,17 @@ function attachedCleanupServices(permissions: SessionPermissionBroker): GatewayS
     profileStore: { get: async () => ({ ok: false, error: "no profile in this test" }) },
     createSynthesizerFor: () => null,
     stt: null,
-    createSessionRuntime: () => ({ runtime: runtimeStub, permissions }),
+    createSessionRuntime: ({ conversationId }: { conversationId: string }) => ({
+      runtime: runtimeStub,
+      permissions: brokerFor(conversationId),
+    }),
   } as unknown as GatewayServices;
 }
 
-/** Attach [ws] to SESSION_ID through the real bind path. */
-function attach(ws: FakeWs, services: GatewayServices): void {
-  ws.data.conversationId = SESSION_ID;
-  bindSessionRuntime(ws as unknown as ServerWebSocket<SessionData>, services, SESSION_ID);
+/** Attach [ws] to [sessionId] through the real bind path. */
+function attach(ws: FakeWs, services: GatewayServices, sessionId: string = SESSION_ID): void {
+  ws.data.conversationId = sessionId;
+  bindSessionRuntime(ws as unknown as ServerWebSocket<SessionData>, services, sessionId);
 }
 
 describe("ws-handlers cleanup — outstanding permission prompts", () => {

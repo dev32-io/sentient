@@ -269,8 +269,15 @@ export async function handleWebSocketMessage(
  * `ws.data.permissions`, which made "the prompt was minted on this connection"
  * the resolution rule; a prompt raised at the laptop was then unanswerable from
  * the phone. The prompt map belongs to the session's handles now, so the route
- * is: this connection's ATTACHMENT → the session it is attached to → that
+ * is: this connection's ATTACHMENT → the session THE ATTACHMENT names → that
  * session's prompts.
+ *
+ * ONE FIELD, NOT TWO. Both halves — the answering window and the session it may
+ * answer for — come off the same `Attachment`. Taking the session from
+ * `ws.data.conversationId` instead would pair them through an ordering
+ * invariant maintained across every bind, detach and switch: correct today,
+ * unenforced, and a divergence away from letting a connection settle a prompt
+ * on a session it is not a window on.
  *
  * THE ATTACHMENT IS THE AUTHORITY, and requiring it is what preserves the old
  * isolation exactly. `detachSession` clears it, so a connection that has left
@@ -291,26 +298,25 @@ function answerPermissionPrompt(
   approved: boolean,
 ): void {
   const attachment = ws.data.attachment;
-  const sessionId = ws.data.conversationId;
   log.info("permission.response.received", {
     connectionId: ws.data.sessionId,
-    sessionId,
+    sessionId: attachment?.sessionId ?? null,
     attachmentId: attachment?.attachmentId ?? null,
     generation: attachment?.generation ?? null,
     requestId,
     approved,
   });
 
-  if (attachment === null || sessionId === null) {
+  if (attachment === null) {
     log.warn("permission.response.unattached", {
       connectionId: ws.data.sessionId,
-      sessionId,
       requestId,
       reason: "this connection is not attached to a session — only a window IN a session can answer its prompts",
     });
     return;
   }
 
+  const sessionId = attachment.sessionId;
   const permissions = services.sessionRegistry.handlesFor(sessionId)?.permissions ?? null;
   if (permissions === null) {
     log.warn("permission.response.no-session", {

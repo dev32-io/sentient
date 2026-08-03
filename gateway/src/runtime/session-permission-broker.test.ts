@@ -13,7 +13,8 @@
 // Zero-cost: a fan-out double (one frame written to every attached window, as
 // fan-out-emitter.ts's `broadcast` does it), no sockets, no I/O.
 
-import { beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { reset } from "@logtape/logtape";
 import { createGatewayLogger } from "../logging/logger.js";
 import { TIMEOUT_MESSAGE } from "./permission-prompt.js";
 import { createSessionPermissionBroker } from "./session-permission-broker.js";
@@ -97,6 +98,20 @@ const logLines: string[] = [];
 
 beforeAll(async () => {
   await createGatewayLogger({ logLevel: "debug", testSink: (line) => logLines.push(line) });
+});
+
+afterAll(async () => {
+  // PROCESS-GLOBAL, and `createGatewayLogger` configures with `reset: true` —
+  // so leaving the test sink installed redirects every LATER test file's logs
+  // into the array above (unbounded) and silences their stderr.
+  //
+  // `reset()` rather than `createGatewayLogger()`: the state to restore is the
+  // one a test process actually starts in, which is NO sinks. Installing the
+  // console sink instead would leave every later file writing its INFO lines
+  // to stderr — ~2100 lines in a full suite run that were never there before.
+  // Same discipline as user-auth/auth-service.test.ts, the other file that
+  // captures log records.
+  await reset();
 });
 
 function linesSince(mark: number, event: string): string[] {
