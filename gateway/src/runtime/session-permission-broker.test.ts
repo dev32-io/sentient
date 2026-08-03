@@ -205,6 +205,24 @@ describe("SessionPermissionBroker — the prompt belongs to the session", () => 
     expect(broker.pendingCount).toBe(0);
   });
 
+  it("SECURITY: refuses a prompt whose requestId is already open rather than displacing it", async () => {
+    // The map is keyed by requestId and every settle removes ITS key, so a
+    // second prompt under a live id would leave the first one unsettleable —
+    // its own deadline would then delete the newcomer's entry. Fail closed on
+    // the duplicate; the prompt a window is already looking at is untouched.
+    const session = fakeSession();
+    const broker = makeBroker(session);
+    const req = permissionRequest();
+    const first = broker.request(req, new AbortController().signal);
+
+    await expect(broker.request({ ...req }, new AbortController().signal)).resolves.toEqual(
+      expect.objectContaining({ allow: false }),
+    );
+    expect(broker.pendingCount).toBe(1);
+    expect(broker.resolve(req.requestId, { allow: true }, B_ID)).toBe(true);
+    await expect(first).resolves.toEqual({ allow: true });
+  });
+
   it("refuses an answer naming a requestId no prompt is open under", async () => {
     const session = fakeSession();
     const broker = makeBroker(session);

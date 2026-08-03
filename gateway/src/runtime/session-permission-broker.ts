@@ -48,6 +48,8 @@ const log = getLog(["sentient", "runtime", "session-permission"]);
 
 /** Model-facing copy for a prompt raised with nobody attached to answer it. */
 const NO_WINDOW_MESSAGE = "permission request could not be shown: no window is open on this session";
+/** Model-facing copy for a prompt minted under an id that is already open. */
+const DUPLICATE_MESSAGE = "permission request could not be shown: a prompt is already open for this request";
 
 /** The two emitter methods this module needs. Declared structurally rather
  *  than as `Pick<TurnEmitter, …>` so `runtime/` owns no import cycle and this
@@ -150,6 +152,18 @@ export function createSessionPermissionBroker(deps: SessionPermissionBrokerDeps)
         "session-permission.turn-gone",
         ABORTED_MESSAGE,
         "the turn was already aborted when the PDP asked — no dialog is opened for a turn nobody is waiting on",
+      );
+    }
+    if (pending.has(req.requestId)) {
+      // Every settle deletes ITS OWN key, so a second prompt under a live id
+      // would leave the first unsettleable and let its deadline delete the
+      // newcomer's entry. The id is the prompt's identity; refuse the
+      // duplicate rather than displace the dialog a window is looking at.
+      return refuse(
+        req,
+        "session-permission.duplicate-request",
+        DUPLICATE_MESSAGE,
+        "a prompt is already open under this requestId — refusing the duplicate rather than displacing it",
       );
     }
 
