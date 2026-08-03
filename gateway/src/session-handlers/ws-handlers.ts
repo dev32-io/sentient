@@ -5,7 +5,7 @@ import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { getLog } from "../logging/logger.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import { handlePreferencesPatch } from "./handle-preferences-patch.js";
-import { bindSessionRuntime, liveRivalOwner, withSessionStore } from "./session-binding.js";
+import { bindSessionRuntime, detachSession, withSessionStore } from "./session-binding.js";
 import { mintOnFirstMessage } from "./session-id.js";
 import { createSttSession } from "./stt-session.js";
 import type { SttSession } from "./stt-session.js";
@@ -311,30 +311,12 @@ function ensureBoundRuntime(
     // record of which session the client asked for, and a mint here would
     // silently move them into a brand-new conversation.
     //
-    // BUT NEVER OVER A LIVE OWNER. `claim` decides "newest wins" by call time,
-    // which equals connection recency only while every connection claims during
-    // its own handshake — and this one, by definition, did not. A connection
-    // that failed early and recovers late would otherwise beat one that
-    // succeeded in between: reopening the same session from a second tab or
-    // device, then typing in the first, would evict the runtime actively
-    // serving the second and discard whatever it had in flight. Declining
-    // upholds the registry's own rule instead of inverting it, and it is the
-    // status quo for this connection either way — before the re-bind existed,
-    // this branch answered `orchestrator_unavailable` unconditionally.
-    //
-    // Task 5 deletes evict-on-claim entirely (N attachments to one runtime), so
-    // this is a guard for the window until then, not a new ownership model.
-    const lateRival = liveRivalOwner(ws, services, ws.data.conversationId);
-    if (lateRival !== null) {
-      log.warn("text.input.late-bind-declined", {
-        sessionId: ws.data.sessionId,
-        conversationId: ws.data.conversationId,
-        ownerConnectionId: lateRival,
-        reason: "another live connection is serving this session — refusing to evict it from a late bind",
-      });
-      return null;
-    }
-
+    // NO OWNERSHIP CHECK, AND THAT IS THE POINT (task 5). This branch used to
+    // decline when another live connection was serving the session, because
+    // binding meant CLAIMING it and the claim evicted the incumbent. Attaching
+    // takes nothing from anyone: if a second tab opened the same session while
+    // this one was wedged, this connection joins that session's runtime and
+    // both windows are live in it.
     const rebound = bindSessionRuntime(ws, services, ws.data.conversationId);
     if (rebound === null) {
       log.warn("text.input.no-runtime", {
@@ -360,43 +342,24 @@ function ensureBoundRuntime(
     mintOnFirstMessage({ store, mintKey: draftKey, text }),
   );
 
-  // NOR OVER A LIVE OWNER HERE. A FRESH mint cannot collide — the id was just
-  // allocated from a CSPRNG and nothing can hold it — so this only ever bites a
-  // REPLAYED mint, i.e. two connections presenting one draft key. That is not
-  // only the lost-ack retry:
+  // A REPLAYED mint means two connections presented ONE draft key, and it is
+  // not only the lost-ack retry:
   //
   //   sessionStorage is COPIED into a duplicated browsing context (HTML Living
   //   Standard), and the draft key lives in per-tab sessionStorage
   //   (`sentient.currentSessionId`, shared/web-sdk/src/sdk-reconnect.ts). So an
   //   ordinary browser "Duplicate Tab" mid-draft leaves TWO independently
   //   connected sockets on one draft key, both routed onto that draft by
-  //   `resolveConnectionSession`. Whichever sends first mints and claims; the
-  //   other's first message replays onto the same id, and without this guard it
-  //   would evict a fully live tab that may be mid-conversation. `session.created`
-  //   is a single-connection send, so the loser never learned it lost the race.
+  //   `resolveConnectionSession`. Whichever sends first mints; the other's
+  //   first message replays onto the same id.
   //
-  // The discriminator is deliberately NOT "is this session claimed" — the retry
-  // this path exists to serve arrives while the dying original may still hold an
-  // unreleased claim (`release` runs on the close event; see replay-registry.ts's
-  // header on the drop Bun's idle timeout has not noticed). It is "is the
-  // claiming connection still ALIVE", answered from that socket's `readyState`.
-  // A closing/closed owner is stepped over and evicted by the claim below.
-  const mintRival = liveRivalOwner(ws, services, sessionId);
-  if (mintRival !== null) {
-    log.warn("text.input.mint-declined", {
-      sessionId: ws.data.sessionId,
-      conversationId: sessionId,
-      ownerConnectionId: mintRival,
-      replayed,
-      reason: "another live connection already minted and is serving this draft key's session",
-    });
-    // Left a draft on purpose: nothing was assigned, the mint is idempotent, and
-    // the next message re-resolves the same row — so this connection takes the
-    // session over as soon as the live owner goes away, instead of wedging.
-    return null;
-  }
+  // Both connections now ATTACH to that one session and both are served
+  // (task 5). This used to be a race with a loser: the second one's bind
+  // CLAIMED the session and evicted a fully live tab that might have been
+  // mid-turn, and `session.created` is a single-connection send, so the loser
+  // never learned it had lost. There is nothing left to arbitrate.
 
-  // Bind BEFORE claiming the id on the connection. Assigning first and failing
+  // Bind BEFORE recording the id on the connection. Assigning first and failing
   // here would leave `conversationId` set with no runtime, and every later
   // `text.input` would take the bound branch above and answer
   // `orchestrator_unavailable` for the rest of the socket's life without ever
@@ -502,27 +465,33 @@ function handleSessionEnd(ws: ServerWebSocket<SessionData>, services: GatewaySer
 
 /**
  * Tears down the connection-tracking state this file owns: the auth
- * timeout, the SessionManager registration, the per-session `SessionRuntime`
- * and `PermissionBroker` minted in ws-session-configure.ts, and (Plan 3
- * Task 2) this connection's `SttSession` — closing it aborts its event
- * stream and releases the socket to the STT service, which no other owner
- * would ever do.
- * `runtime.dispose()` aborts any in-flight turn's AbortSignal and closes
- * the session's store handle — idempotent, so a socket that never reached
- * session.configure (runtime still null) is unaffected.
+ * timeout, the SessionManager registration, this connection's ATTACHMENT to
+ * its session, and (Plan 3 Task 2) its `SttSession` — closing that aborts its
+ * event stream and releases the socket to the STT service, which no other
+ * owner would ever do.
+ *
+ * DETACH, NOT DISPOSE (task 5). The `SessionRuntime` and `PermissionBroker`
+ * belong to the SESSION, so this drops one subscriber and lets the registry's
+ * disposal policy decide what that means. Today the last one out disposes, so
+ * a single-window session behaves exactly as it did when this function
+ * disposed the runtime directly; with a second window still attached, the
+ * conversation simply carries on there. Task 8 replaces that policy with the
+ * retention predicate, which is what finally stops a closing tab orphaning a
+ * running delegated task.
+ *
  * A fresh connection re-opens the SAME session by presenting its id in
  * `session.configure.conversationId`; the gateway checks membership and hands
  * the committed feed and the model's history straight back
- * (ws-session-configure.ts). Only the handle is torn down here; nothing in the
- * store is. That shared partition is why this connection's claim on
- * `services.conversationRuntimes` goes back here too. A connection that was
- * still a DRAFT when it closed leaves nothing at all behind — no row, no id.
+ * (ws-session-configure.ts). Nothing in the store is torn down here. A
+ * connection that was still a DRAFT when it closed leaves nothing at all
+ * behind — no row, no id.
  * The other thing that survives the disconnect is this surface's outbound
  * frame journal, parked in
  * `services.replayRegistry` for `session.replay_journal_retention_ms` so a
  * reconnect carrying `resume: {epoch, lastSeq}` can replay the frames the
- * client missed (Plan 3 Task 10). The in-flight turn is not resumed — it is
- * aborted by `dispose()` — only the already-emitted frames are.
+ * client missed (Plan 3 Task 10). An in-flight turn is not resumed — it is
+ * aborted if this detach disposes the session — only the already-emitted
+ * frames are.
  */
 export function cleanupSession(ws: ServerWebSocket<SessionData>, services: GatewayServices): void {
   const sessionId = ws.data.sessionId;
@@ -533,23 +502,12 @@ export function cleanupSession(ws: ServerWebSocket<SessionData>, services: Gatew
     ws.data.authTimeout = null;
   }
 
-  // Settle every open permission prompt BEFORE disposing the runtime: each
-  // one is a promise the ReAct loop is awaiting inside `broker.dispatch`,
-  // and an unsettled one would keep that turn parked for the full
-  // permission timeout after the socket is already gone.
-  ws.data.permissions?.denyAll();
-  ws.data.permissions = null;
-
-  ws.data.runtime?.dispose();
-  ws.data.runtime = null;
-
-  // Hand this conversation's live-runtime claim back. Connection-guarded
-  // inside the registry: a socket that was already SUPERSEDED on this
-  // conversation (a reload whose new session.configure beat this close) must
-  // not deregister — or tear down — the connection that replaced it.
-  if (ws.data.conversationId !== null) {
-    services.conversationRuntimes.release(ws.data.conversationId, sessionId);
-  }
+  // Leave this connection's session. Keyed on the ATTACHMENT id, so a socket
+  // that already detached (a reload whose new session.configure beat this
+  // close, a duplicate close event) removes nothing rather than unseating the
+  // window that replaced it. Open permission prompts are settled by the
+  // handles' own `dispose`, if this is the detach that triggers it.
+  detachSession(ws, services);
 
   // Detach the frame journal LAST, after the runtime has been disposed:
   // dispose() is synchronous, and anything it still writes to this socket

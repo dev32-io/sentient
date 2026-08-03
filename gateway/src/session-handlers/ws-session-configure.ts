@@ -3,7 +3,7 @@ import type { ServerWebSocket } from "bun";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { getLog } from "../logging/logger.js";
 import type { ReplayAcquisition } from "./replay-registry.js";
-import { bindSessionRuntime, disposeSessionHandles, sendDraftHandshake, withSessionStore } from "./session-binding.js";
+import { bindSessionRuntime, detachSession, sendDraftHandshake, withSessionStore } from "./session-binding.js";
 import { isDraftKey, mintDraftKey, resolveSession } from "./session-id.js";
 import type { SessionData } from "./ws-helpers.js";
 import { sendError } from "./ws-helpers.js";
@@ -87,11 +87,12 @@ const ID_SEGMENT_SEPARATOR = "::";
 // is a DRAFT: no row, no id, no runtime, nothing in the session list. Ten
 // opened tabs leave no trace.
 //
-// Because that id is durable it is also SHARED, so the runtime it keys is
-// claimed from `services.conversationRuntimes`: a newer connection on a
-// session a still-live socket holds evicts that socket's runtime instead of
-// running a second ReAct loop over the same append-only log. Same race, same
-// stance, as the frame journal above.
+// Because that id is durable it is also SHARED, so the runtime it keys lives in
+// `services.sessionRegistry` rather than on this socket: this connection
+// ATTACHES to the session (task 5), building its runtime only if it is the
+// first to arrive. A second window joins the same loop instead of forking a
+// second one over the same append-only log — and, unlike the single-owner
+// registry this replaced, without tearing the first window down.
 // ---------------------------------------------------------------------------
 
 export function handleSessionConfigure(
@@ -123,7 +124,10 @@ export function handleSessionConfigure(
 
   // --- Reconnect gap-fill: acquire this surface's frame journal ---
   //
-  // Keyed `${userId}::${surfaceId}`, matching SessionRuntime's own identity.
+  // Keyed `${userId}::${surfaceId}`. That used to match `SessionRuntime`'s own
+  // identity; since task 5 the runtime is keyed on the SESSION, so the journal
+  // is the last thing a surface still partitions — task 6 moves it to the
+  // session too, which is what lets N windows share one seq space.
   // surfaceId falls back to deviceId when the client omits it — mandated by
   // sessionConfigureSchema.surfaceId's contract note, and the reason two
   // browser tabs of one user stay independent. The registry (not this
@@ -153,25 +157,24 @@ export function handleSessionConfigure(
   // (spec §10 acceptance #9).
   const resolved = resolveConnectionSession(ws, services, configureConversationId);
 
-  // A repeat session.configure on the same connection must not leak the
-  // previous runtime's store handle, strand its open permission prompts, or
-  // leave its speech draining — `dispose()` cuts all three, which is why the
-  // fresh `TurnVoice` bound below can start with an empty drain map and still
-  // be the only thing writing audio. The frame journal above is
-  // deliberately NOT torn down with them: it belongs to the surface, not to
-  // the runtime, and losing it here would break the very replay this
-  // handshake just promised.
+  // A repeat session.configure on the same connection leaves the session it
+  // was on — otherwise this connection would hold two attachments and its
+  // close would release only one, pinning a session resident forever. Whether
+  // the prior session's runtime is DISPOSED by that detach is the registry's
+  // decision, not this handler's: sole attachment, so today it is; with
+  // another window still attached, it is not.
   //
-  // The claim on the PRIOR session goes back too — a re-configure onto a
-  // different one must not leave this connection registered as the live owner
-  // of a session whose runtime it just disposed.
-  const priorSessionId = ws.data.conversationId;
-  if (ws.data.runtime) {
-    log.info("session-configure.reconfigure", { sessionId, userId, reason: "disposing prior runtime" });
-    disposeSessionHandles(ws);
-    if (priorSessionId !== null) {
-      services.conversationRuntimes.release(priorSessionId, sessionId);
-    }
+  // The frame journal above is deliberately NOT torn down with it: it belongs
+  // to the surface, not to the runtime, and losing it here would break the
+  // very replay this handshake just promised.
+  if (ws.data.attachment !== null) {
+    log.info("session-configure.reconfigure", {
+      sessionId,
+      userId,
+      conversationId: ws.data.conversationId,
+      reason: "detaching from the session this connection was already on",
+    });
+    detachSession(ws, services);
   }
 
   // `conversationId` is the session this connection has RESOLVED; `runtime` is
@@ -183,10 +186,10 @@ export function handleSessionConfigure(
   // a late re-bind on the next message (`ensureBoundRuntime`, ws-handlers.ts),
   // which is what stops this state being permanent.
   //
-  // Safe to hold without a runtime: nothing was claimed in
-  // `services.conversationRuntimes` (the claim is the last statement of a
-  // SUCCESSFUL bind), and `release` is connection-guarded, so this connection's
-  // teardown cannot deregister whoever does own the session.
+  // Safe to hold without a runtime: a failed bind attaches nothing (the
+  // registry either registers the attachment or propagates the build failure),
+  // and `detachSession` is keyed on THIS connection's attachment id, so its
+  // teardown cannot unseat a window that did attach.
   ws.data.conversationId = resolved.sessionId;
   ws.data.draftKey = resolved.draftKey;
   const hasRuntime = resolved.sessionId !== null && bindSessionRuntime(ws, services, resolved.sessionId) !== null;

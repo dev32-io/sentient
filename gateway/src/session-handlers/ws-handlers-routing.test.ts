@@ -16,10 +16,12 @@ import type { PermissionBroker } from "../runtime/permission-broker.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { Stimulus } from "../runtime/stimulus.js";
 import { openSessionStore } from "../store/session-store.js";
-import { createConversationRuntimeRegistry } from "./conversation-runtime-registry.js";
 import { createFrameJournal } from "./frame-journal.js";
 import { createReplayRegistry } from "./replay-registry.js";
+import { bindSessionRuntime } from "./session-binding.js";
 import { mintDraftKey, mintSessionId } from "./session-id.js";
+import { type SessionHandles, createSessionRegistry } from "./session-registry.js";
+import { createSessionWindows } from "./session-windows.js";
 import { cleanupSession, handleWebSocketMessage } from "./ws-handlers.js";
 import { type SessionData, createEmptySessionData } from "./ws-helpers.js";
 
@@ -93,15 +95,15 @@ let activateRunSeq = 0;
 
 /** Services for conversation.activate: a fresh AccessManager over its own data
  *  root (no test can see another's rows), a working (stub) runtime factory so
- *  bindSessionRuntime succeeds, and a real ConversationRuntimeRegistry so
- *  live-rival-owner checks are genuine rather than assumed. */
+ *  bindSessionRuntime succeeds, and a real SessionRegistry so attach/detach is
+ *  genuine rather than assumed. */
 function activateServices(): GatewayServices {
   activateRunSeq += 1;
   const accessManager = createAccessManager({ userDataRoot: `${ACTIVATE_ROOT}/run-${activateRunSeq}` });
   const runtimeStub = { emitConversationSnapshot: () => {}, dispose: () => {} } as unknown as SessionRuntime;
   return {
     accessManager,
-    conversationRuntimes: createConversationRuntimeRegistry(),
+    sessionRegistry: createSessionRegistry(),
     profileStore: { get: async () => ({ ok: false, error: "no profile in this test" }) },
     createSynthesizerFor: () => null,
     stt: null,
@@ -121,12 +123,12 @@ function seedActivatableSession(accessManager: AccessManager, userId: string): s
 }
 
 // cleanupSession() dereferences sessionManager, replayRegistry, and (once
-// session.configure has resolved a conversation) conversationRuntimes. Real
-// (tiny) registries are cheaper and more honest than hand-rolled doubles.
+// session.configure has resolved a conversation) sessionRegistry. Real (tiny)
+// registries are cheaper and more honest than hand-rolled doubles.
 const cleanupServices = {
   sessionManager: { unbindUser: () => {}, removeSession: () => {} },
   replayRegistry: createReplayRegistry({ maxBytesPerSurface: 65536, retentionMs: 1000 }),
-  conversationRuntimes: createConversationRuntimeRegistry(),
+  sessionRegistry: createSessionRegistry(),
 } as unknown as GatewayServices;
 
 interface StubPermissions extends PermissionBroker {
@@ -471,17 +473,31 @@ describe("ws-handlers routing — conversation.activate", () => {
     expect(ws.sent).toEqual([{ type: "sessions.error", code: "not_found", message: expect.any(String) }]);
   });
 
-  it("INVARIANT: a session another live connection is serving is declined, not evicted", async () => {
+  it("INVARIANT: a session another connection is serving is JOINED, not declined or evicted", async () => {
+    // The behaviour change task 5 exists for. This used to answer
+    // `sessions.error{code:"switching"}` because binding meant CLAIMING the
+    // session from a single-owner registry, and the claim tore the incumbent
+    // down. Opening a conversation that is already open elsewhere is the
+    // feature now, so the incumbent keeps its runtime AND this connection gets
+    // the same one — one ReAct loop over one append-only log, two windows.
     const services = activateServices();
     const sessionId = seedActivatableSession(services.accessManager, "u_deadbeef");
-    // A rival owner is "live" purely by isAlive() — evict() is never expected
-    // to run, so a stray call fails the test loudly rather than passing quietly.
-    services.conversationRuntimes.claim(sessionId, "rival-connection", {
-      isAlive: () => true,
-      evict: () => {
-        throw new Error("must not evict a live rival owner");
-      },
-    });
+    const incumbentRuntime = { emitConversationSnapshot: () => {} } as unknown as SessionRuntime;
+    const incumbent = services.sessionRegistry.attach(
+      sessionId,
+      "rival-connection",
+      () =>
+        ({
+          runtime: incumbentRuntime,
+          permissions: { denyAll: () => {} },
+          voicePrefs: null,
+          windows: createSessionWindows(sessionId),
+          // A stray call fails the test loudly rather than passing quietly.
+          dispose: () => {
+            throw new Error("must not dispose a live incumbent");
+          },
+        }) as unknown as SessionHandles,
+    );
     const ws = fakeAuthedWs(null);
 
     await handleWebSocketMessage(
@@ -490,22 +506,76 @@ describe("ws-handlers routing — conversation.activate", () => {
       services,
     );
 
-    expect(ws.sent).toEqual([{ type: "sessions.error", code: "switching", message: expect.any(String) }]);
-    expect(ws.data.conversationId).toBeNull();
+    expect(ws.sent).toEqual([{ type: "session.switched", sessionId, ts: expect.any(Number) }]);
+    expect(ws.data.conversationId).toBe(sessionId);
+    // The INCUMBENT's runtime, not a second one built for this connection.
+    expect(ws.data.runtime).toBe(incumbentRuntime);
+    // The incumbent is still attached — nothing was evicted to make room.
+    expect(services.sessionRegistry.subscribers(sessionId).map((a) => a.attachmentId)).toContain(
+      incumbent.attachmentId,
+    );
   });
 });
 
-describe("ws-handlers cleanup — outstanding permission prompts", () => {
-  it("denies every open prompt so a dropped socket never leaks a pending promise", () => {
-    const { runtime } = stubRuntime();
-    const permissions = stubPermissions();
-    const ws = fakeAuthedWs(runtime);
-    ws.data.permissions = permissions;
+/** A durable session id in `session-id.ts`'s minted shape. */
+const SESSION_ID = `s_${"0".repeat(31)}1`;
 
-    cleanupSession(ws as unknown as ServerWebSocket<SessionData>, cleanupServices);
+/** `cleanupServices` plus a real `SessionRegistry` and a runtime factory that
+ *  hands back [permissions], so a connection can attach for real and its
+ *  cleanup genuinely detaches. */
+function attachedCleanupServices(permissions: PermissionBroker): GatewayServices {
+  const runtimeStub = { dispose: () => {}, emitConversationSnapshot: () => {} } as unknown as SessionRuntime;
+  return {
+    sessionManager: { unbindUser: () => {}, removeSession: () => {} },
+    replayRegistry: createReplayRegistry({ maxBytesPerSurface: 65536, retentionMs: 1000 }),
+    sessionRegistry: createSessionRegistry(),
+    profileStore: { get: async () => ({ ok: false, error: "no profile in this test" }) },
+    createSynthesizerFor: () => null,
+    stt: null,
+    createSessionRuntime: () => ({ runtime: runtimeStub, permissions }),
+  } as unknown as GatewayServices;
+}
+
+/** Attach [ws] to SESSION_ID through the real bind path. */
+function attach(ws: FakeWs, services: GatewayServices): void {
+  ws.data.conversationId = SESSION_ID;
+  bindSessionRuntime(ws as unknown as ServerWebSocket<SessionData>, services, SESSION_ID);
+}
+
+describe("ws-handlers cleanup — outstanding permission prompts", () => {
+  it("denies every open prompt when the LAST window on the session leaves", () => {
+    // Each open prompt is a promise the ReAct loop is awaiting inside
+    // `broker.dispatch`; an unsettled one parks that turn for the full
+    // permission timeout after the socket is already gone. Since task 5 the
+    // broker belongs to the SESSION, so the denial runs from the handles'
+    // dispose — i.e. only when nothing is attached any more.
+    const permissions = stubPermissions();
+    const services = attachedCleanupServices(permissions);
+    const ws = fakeAuthedWs(null);
+    attach(ws, services);
+
+    cleanupSession(ws as unknown as ServerWebSocket<SessionData>, services);
 
     expect(permissions.denyAllCallCount()).toBe(1);
     expect(ws.data.permissions).toBeNull();
+    expect(ws.data.attachment).toBeNull();
+  });
+
+  it("INVARIANT: a closing window does not deny prompts another window can still answer", () => {
+    // The eviction this task deleted, in its permission form: one socket's
+    // close used to call `denyAll()` on the broker directly, which under N
+    // windows would auto-deny a prompt a second window is looking at.
+    const permissions = stubPermissions();
+    const services = attachedCleanupServices(permissions);
+    const survivor = fakeAuthedWs(null);
+    attach(survivor, services);
+    const leaving = fakeAuthedWs(null);
+    attach(leaving, services);
+
+    cleanupSession(leaving as unknown as ServerWebSocket<SessionData>, services);
+
+    expect(permissions.denyAllCallCount()).toBe(0);
+    expect(survivor.data.permissions).toBe(permissions);
   });
 });
 
@@ -515,7 +585,7 @@ describe("ws-handlers cleanup — replay journal", () => {
     const services = {
       sessionManager: { unbindUser: () => {}, removeSession: () => {} },
       replayRegistry: registry,
-      conversationRuntimes: createConversationRuntimeRegistry(),
+      sessionRegistry: createSessionRegistry(),
     } as unknown as GatewayServices;
 
     const ws = fakeAuthedWs(null);

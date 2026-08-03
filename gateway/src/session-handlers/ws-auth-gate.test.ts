@@ -38,6 +38,7 @@ function fakeWs(): FakeWs {
     authTimeout: null,
     grantedCapabilities: new Set(),
     clientType: "webui",
+    attachment: null,
     runtime: null,
     permissions: null,
     stt: null,

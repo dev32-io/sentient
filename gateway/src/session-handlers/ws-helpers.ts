@@ -5,6 +5,7 @@ import type { PermissionBroker } from "../runtime/permission-broker.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { FrameJournal } from "./frame-journal.js";
 import type { ReplayLease } from "./replay-registry.js";
+import type { Attachment } from "./session-registry.js";
 import type { SessionVoicePrefs } from "./session-voice-prefs.js";
 import type { SttSession } from "./stt-session.js";
 // ws-send.ts imports only the `SessionData` TYPE back from this file, which the
@@ -83,24 +84,47 @@ export interface SessionData {
    */
   clientType: ClientType;
   /**
-   * The native orchestrator's per-session owner (Plan 2 Task 10). Minted in
-   * `handleSessionConfigure` via `services.createSessionRuntime` once the
-   * principal is known; null until then, and null for the lifetime of a
-   * session if the orchestrator is unconfigured
-   * (`services.createSessionRuntime === null`) or construction failed (no
-   * active LLM key — see ws-session-configure.ts). `text.input` /
-   * `interrupt` routing (ws-handlers.ts) both no-op safely against null.
+   * This connection's membership in `conversationId`'s subscriber set
+   * (session-model plan task 5). Minted by `bindSessionRuntime` on every
+   * attach — a fresh id and generation each time, so a duplicate or late
+   * close event detaches nothing.
+   *
+   * NON-NULL IFF `runtime` IS. Both are set by one attach and cleared by one
+   * detach, and `conversationId` names the session the attachment is in for
+   * exactly that window — `detachSession` reads the pair together.
+   *
+   * Task 9 validates every command frame against `generation`; the logging
+   * contract (spec §7.3) carries `attachmentId` on every command, permission
+   * and cancellation line, because with N windows an unattributed Stop cannot
+   * be traced.
+   */
+  attachment: Attachment | null;
+  /**
+   * The session's ReAct loop (Plan 2 Task 10) — SHARED with every other
+   * connection attached to `conversationId`, not owned by this one. Handed
+   * over by the registry in `bindSessionRuntime`; null until then, and null
+   * for the lifetime of a connection whose orchestrator is unconfigured
+   * (`services.createSessionRuntime === null`) or whose session failed to
+   * construct (no active LLM key — see ws-session-configure.ts). `text.input`
+   * / `interrupt` routing (ws-handlers.ts) both no-op safely against null.
+   *
+   * Clearing this field is NOT disposal: the runtime dies with the SESSION,
+   * when the registry's disposal policy says so.
    */
   runtime: SessionRuntime | null;
   /**
-   * This connection's L3 permission round-trip (Plan 3 Task 6, spec §7.1).
-   * Minted alongside `runtime` in `handleSessionConfigure`; null until then
-   * and for the lifetime of a session whose orchestrator is unconfigured.
-   * Connection-scoped ON PURPOSE — a `permission.response` frame can only
-   * settle a prompt this same socket issued, which is what makes cross-user
-   * resolution structurally impossible rather than a check to remember.
-   * `cleanupSession` calls `denyAll()` so a dropped socket never strands a
-   * ReAct turn awaiting an answer.
+   * The session's L3 permission round-trip (Plan 3 Task 6, spec §7.1), shared
+   * with every window attached to it. Handed over alongside `runtime`; null
+   * until then and for the lifetime of a connection whose orchestrator is
+   * unconfigured.
+   *
+   * SESSION-scoped since task 5, because the runtime whose ReAct loop awaits
+   * these prompts is: a broker per connection would have made a prompt
+   * unanswerable from the window that did not issue it. Cross-user resolution
+   * stays structurally impossible — a session belongs to exactly one
+   * principal, and only that principal's connections can attach to it. Task 7
+   * makes the fan-out explicit on the wire (any window may answer, the first
+   * answer wins, a timeout denies).
    */
   permissions: PermissionBroker | null;
   /**
@@ -161,6 +185,7 @@ export function createEmptySessionData(): SessionData {
     authTimeout: null,
     grantedCapabilities: new Set(),
     clientType: "webui",
+    attachment: null,
     runtime: null,
     permissions: null,
     stt: null,

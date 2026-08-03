@@ -34,9 +34,9 @@ import type { SessionRuntime } from "../runtime/session-runtime.js";
 import { openSessionStore } from "../store/session-store.js";
 import type { BackgroundRegistry } from "../tools/background-registry.js";
 import type { ToolBroker } from "../tools/tool-broker.js";
-import { createConversationRuntimeRegistry } from "./conversation-runtime-registry.js";
 import { type ReplayRegistry, createReplayRegistry } from "./replay-registry.js";
 import { mintSessionId } from "./session-id.js";
+import { createSessionRegistry } from "./session-registry.js";
 import { cleanupSession, handleWebSocketMessage } from "./ws-handlers.js";
 import { type SessionData, createEmptySessionData } from "./ws-helpers.js";
 import { sendGatewayFrame } from "./ws-send.js";
@@ -112,7 +112,7 @@ function asWs(ws: FakeWs): ServerWebSocket<SessionData> {
 function servicesWith(replayRegistry: ReplayRegistry, accessManager?: AccessManager): GatewayServices {
   return {
     replayRegistry,
-    conversationRuntimes: createConversationRuntimeRegistry(),
+    sessionRegistry: createSessionRegistry(),
     webui: { playback: { min_eager_end_ms: 0, preempt_fadeout_ms: 0 } },
     accessManager,
     createSessionRuntime: null,
@@ -174,7 +174,7 @@ function servicesWithRuntime(replayRegistry: ReplayRegistry, ws: FakeWs, accessM
   } as unknown as SessionRuntime;
   spy.services = {
     replayRegistry,
-    conversationRuntimes: createConversationRuntimeRegistry(),
+    sessionRegistry: createSessionRegistry(),
     webui: { playback: { min_eager_end_ms: 0, preempt_fadeout_ms: 0 } },
     profileStore: { get: async () => ({ ok: false, error: "no profile in this test" }) },
     createSynthesizerFor: () => null,
@@ -386,7 +386,7 @@ function servicesRecordingPartition(
   } as unknown as SessionRuntime;
   spy.services = {
     replayRegistry,
-    conversationRuntimes: createConversationRuntimeRegistry(),
+    sessionRegistry: createSessionRegistry(),
     webui: { playback: { min_eager_end_ms: 0, preempt_fadeout_ms: 0 } },
     profileStore: { get: async () => ({ ok: false, error: "no profile in this test" }) },
     createSynthesizerFor: () => null,
@@ -469,16 +469,22 @@ describe("handleSessionConfigure — session addressing", () => {
 
   it("CONTRACT: two connections presenting one id open the SAME session, whatever their surfaces", () => {
     // Surfaces no longer partition anything (§3.4: surfaceId gates nothing).
+    // ONE partition is opened, not two: the second connection attaches to the
+    // session the first made resident rather than constructing a second
+    // runtime over the same append-only log.
     const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
     const first = fakeAuthedWs("connection-1");
     const accessManager = freshAccessManager();
     const spy = servicesRecordingPartition(registry, first, accessManager);
     const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
+    const second = fakeAuthedWs("connection-2");
 
     configure(first, spy.services, SURFACE_A, sessionId);
-    configure(fakeAuthedWs("connection-2"), spy.services, SURFACE_B, sessionId);
+    configure(second, spy.services, SURFACE_B, sessionId);
 
-    expect(spy.partitionIds).toEqual([sessionId, sessionId]);
+    expect(spy.partitionIds).toEqual([sessionId]);
+    expect(first.data.conversationId).toBe(sessionId);
+    expect(second.data.conversationId).toBe(sessionId);
   });
 
   it("INVARIANT: a legacy c:: partition that holds entries is still addressable", () => {
@@ -532,19 +538,22 @@ describe("handleSessionConfigure — session addressing", () => {
 });
 
 // ---------------------------------------------------------------------------
-// One live runtime per conversation.
+// One live runtime per session, N connections attached to it.
 //
 // Making the conversation durable made it SHARED: two sockets can now name the
 // same store partition. replay-registry.ts already documents the window that
 // makes this routine rather than hypothetical — "a same-tab reload whose new
 // session.configure lands before the old socket's close event, or a TCP/NAT
 // drop Bun's idle timeout has not noticed yet" — and mints a fresh journal so
-// the two never share a seq counter. The runtime needs the same treatment for
-// a stronger reason: two live `SessionRuntime`s on one partition are two ReAct
+// the two never share a seq counter. The runtime needs coordination for a
+// stronger reason: two live `SessionRuntime`s on one partition are two ReAct
 // loops appending to one append-only log with different views of the prior
 // context, plus two `bun:sqlite` handles on one WAL file.
 //
-// Newest connection wins, matching the registry's own stance on the same race.
+// The REMEDY is what task 5 changed. The second connection used to WIN and the
+// first was torn down; it now JOINS, and the runtime is released only when the
+// last attachment leaves. These cases pin that at the handler level — the
+// registry's own contract is session-registry.test.ts.
 // ---------------------------------------------------------------------------
 
 interface MintedRuntime {
@@ -565,7 +574,7 @@ function servicesTrackingRuntimes(replayRegistry: ReplayRegistry, accessManager:
   const spy: LifecycleSpy = { minted: [], services: {} as GatewayServices };
   spy.services = {
     replayRegistry,
-    conversationRuntimes: createConversationRuntimeRegistry(),
+    sessionRegistry: createSessionRegistry(),
     webui: { playback: { min_eager_end_ms: 0, preempt_fadeout_ms: 0 } },
     profileStore: { get: async () => ({ ok: false, error: "no profile in this test" }) },
     createSynthesizerFor: () => null,
@@ -588,38 +597,24 @@ function servicesTrackingRuntimes(replayRegistry: ReplayRegistry, accessManager:
 }
 
 describe("handleSessionConfigure — one live runtime per session", () => {
-  it("CONTRACT: a new connection on a live session evicts the previous connection's runtime", () => {
+  it("INVARIANT: a second connection on a live session shares the runtime instead of evicting it", () => {
     const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const spy = servicesTrackingRuntimes(registry, accessManager);
     const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
 
-    const stale = fakeAuthedWs("connection-1");
-    configure(stale, spy.services, SURFACE_A, sessionId);
-    const fresh = fakeAuthedWs("connection-2");
-    configure(fresh, spy.services, SURFACE_A, sessionId);
-
-    expect(spy.minted[0]?.disposeCount).toBe(1);
-    expect(stale.data.runtime).toBeNull();
-    expect(stale.data.permissions).toBeNull();
-    expect(spy.minted[1]?.disposeCount).toBe(0);
-    expect(fresh.data.runtime).not.toBeNull();
-  });
-
-  it("leaves a live runtime on a DIFFERENT session alone", () => {
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
-    const accessManager = freshAccessManager();
-    const spy = servicesTrackingRuntimes(registry, accessManager);
-    const firstId = seedSession(accessManager, USER_ID, "one");
-    const secondId = seedSession(accessManager, USER_ID, "two");
-
     const first = fakeAuthedWs("connection-1");
-    configure(first, spy.services, SURFACE_A, firstId);
+    configure(first, spy.services, SURFACE_A, sessionId);
     const second = fakeAuthedWs("connection-2");
-    configure(second, spy.services, SURFACE_B, secondId);
+    configure(second, spy.services, SURFACE_A, sessionId);
 
+    // ONE construction, shared: not one per connection, and not a teardown of
+    // the window that got there first.
+    expect(spy.minted).toHaveLength(1);
     expect(spy.minted[0]?.disposeCount).toBe(0);
-    expect(first.data.runtime).not.toBeNull();
+    expect(second.data.runtime).toBe(first.data.runtime);
+    expect(first.data.permissions).not.toBeNull();
+    expect(spy.services.sessionRegistry.subscribers(sessionId)).toHaveLength(2);
   });
 
   it("keeps the runtime a re-configure on the SAME connection just minted", () => {
@@ -639,9 +634,11 @@ describe("handleSessionConfigure — one live runtime per session", () => {
     expect(ws.data.runtime).not.toBeNull();
   });
 
-  it("CONTRACT: a superseded connection's teardown cannot deregister the live one", () => {
+  it("INVARIANT: a superseded connection's teardown cannot detach the live one", () => {
     // Mirrors replay-registry's stale-lease guard: the close event of the
-    // socket a reload replaced lands AFTER the new socket configured.
+    // socket a reload replaced lands AFTER the new socket configured. Detach
+    // is keyed on the ATTACHMENT id, minted per attach, so the late close can
+    // only ever remove its own membership.
     const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const spy = servicesTrackingRuntimes(registry, accessManager);
@@ -651,16 +648,32 @@ describe("handleSessionConfigure — one live runtime per session", () => {
     configure(stale, spy.services, SURFACE_A, sessionId);
     const live = fakeAuthedWs("connection-2");
     configure(live, spy.services, SURFACE_A, sessionId);
+    const liveRuntime = live.data.runtime;
 
     cleanupSession(asWs(stale), spy.services);
 
-    // The live connection is still the registered owner, so a THIRD connection
-    // still evicts it — which it could not do if the stale teardown had
-    // dropped the entry.
-    const third = fakeAuthedWs("connection-3");
-    configure(third, spy.services, SURFACE_A, sessionId);
-    expect(spy.minted[1]?.disposeCount).toBe(1);
-    expect(live.data.runtime).toBeNull();
+    expect(spy.minted[0]?.disposeCount).toBe(0);
+    expect(live.data.runtime).toBe(liveRuntime);
+    expect(spy.services.sessionRegistry.subscribers(sessionId)).toHaveLength(1);
+  });
+
+  it("INVARIANT: the runtime is disposed when the LAST window leaves, not the first", () => {
+    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const accessManager = freshAccessManager();
+    const spy = servicesTrackingRuntimes(registry, accessManager);
+    const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
+
+    const first = fakeAuthedWs("connection-1");
+    configure(first, spy.services, SURFACE_A, sessionId);
+    const second = fakeAuthedWs("connection-2");
+    configure(second, spy.services, SURFACE_A, sessionId);
+
+    cleanupSession(asWs(first), spy.services);
+    expect(spy.minted[0]?.disposeCount).toBe(0);
+
+    cleanupSession(asWs(second), spy.services);
+    expect(spy.minted[0]?.disposeCount).toBe(1);
+    expect(spy.services.sessionRegistry.size).toBe(0);
   });
 });
 
@@ -751,12 +764,15 @@ function servicesWithStoreBackedRuntime(
 ): GatewayServices {
   return {
     replayRegistry,
-    conversationRuntimes: createConversationRuntimeRegistry(),
+    sessionRegistry: createSessionRegistry(),
     webui: { playback: { min_eager_end_ms: 0, preempt_fadeout_ms: 0 } },
     profileStore: { get: async () => ({ ok: false, error: "no profile in this test" }) },
     createSynthesizerFor: () => null,
     stt: null,
     accessManager,
+    // cleanupSession() is how a test models a socket closing: it detaches,
+    // which is what disposes a session whose last window just left.
+    sessionManager: { unbindUser: () => {}, removeSession: () => {} },
     createSessionRuntime: ({
       principal,
       conversationId,
@@ -823,10 +839,10 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     // A draft: nothing exists until the first message allocates it.
     expect(first.data.conversationId).toBeNull();
     const sessionId = await sendFirstMessage(first, services, "remember the number 41");
-    const firstRuntime = first.data.runtime as SessionRuntime;
-    await waitUntilIdle(firstRuntime);
-    // The socket drops (reload): the runtime is disposed, the store is not.
-    firstRuntime.dispose();
+    await waitUntilIdle(first.data.runtime as SessionRuntime);
+    // The socket drops (reload) and its close event lands: the last window
+    // detaches, so the session's runtime is disposed. The store is not.
+    cleanupSession(asWs(first), services);
 
     const second = fakeAuthedWs("connection-2");
     configure(second, services, SURFACE_A, sessionId);
@@ -842,10 +858,10 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     const secondRuntime = second.data.runtime as SessionRuntime;
     secondRuntime.submit({ kind: "conversational", text: "what number?" });
     await waitUntilIdle(secondRuntime);
+    cleanupSession(asWs(second), services);
     const replayed = provider.calls[1]?.messages ?? [];
     expect(replayed.some((m) => m.role === "user" && m.content === "remember the number 41")).toBe(true);
     expect(replayed.some((m) => m.role === "assistant" && m.content === "hello back")).toBe(true);
-    secondRuntime.dispose();
   });
 
   it("INVARIANT: a retried first message reaches ONE session and ONE entry", async () => {
@@ -872,7 +888,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     // processed, so the claim it took at mint time is still in the registry —
     // the exact window the takeover below has to beat.
     dropSocket(first);
-    (first.data.runtime as SessionRuntime).dispose();
+    cleanupSession(asWs(first), services);
 
     // The retry arrives on a NEW socket carrying the same unspent draft key.
     const retry = fakeAuthedWs("connection-2");
@@ -880,7 +896,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     expect(retry.data.conversationId).toBeNull();
     const retriedId = await sendFirstMessage(retry, services, "hello", "pending-1");
     await waitUntilIdle(retry.data.runtime as SessionRuntime);
-    (retry.data.runtime as SessionRuntime).dispose();
+    cleanupSession(asWs(retry), services);
 
     expect(retriedId).toBe(sessionId);
     const store = openSessionStore(accessManager.grant(createUserPrincipal(USER_ID, "adult", "home"), "session-store"));
@@ -910,13 +926,13 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     const sessionId = await sendFirstMessage(first, services, "hello");
     await waitUntilIdle(first.data.runtime as SessionRuntime);
     dropSocket(first);
-    (first.data.runtime as SessionRuntime).dispose();
+    cleanupSession(asWs(first), services);
 
     const retry = fakeAuthedWs("connection-2");
     configure(retry, services, SURFACE_A, draftKey);
     expect(await sendFirstMessage(retry, services, "hello")).toBe(sessionId);
     await waitUntilIdle(retry.data.runtime as SessionRuntime);
-    (retry.data.runtime as SessionRuntime).dispose();
+    cleanupSession(asWs(retry), services);
 
     const store = openSessionStore(accessManager.grant(createUserPrincipal(USER_ID, "adult", "home"), "session-store"));
     expect(store.listSessionsWithMetadata()).toHaveLength(1);
@@ -939,7 +955,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     await sendFirstMessage(first, services, "hello", "pending-1");
     await waitUntilIdle(first.data.runtime as SessionRuntime);
     dropSocket(first);
-    (first.data.runtime as SessionRuntime).dispose();
+    cleanupSession(asWs(first), services);
 
     const retry = fakeAuthedWs("connection-2");
     configure(retry, services, SURFACE_A, draftKey);
@@ -948,7 +964,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     expect(retry.sent.filter((f) => f.type === "conversation.snapshot")).toHaveLength(1);
     await sendFirstMessage(retry, services, "hello", "pending-1");
     await waitUntilIdle(retry.data.runtime as SessionRuntime);
-    (retry.data.runtime as SessionRuntime).dispose();
+    cleanupSession(asWs(retry), services);
 
     const snapshots = retry.sent.filter((f) => f.type === "conversation.snapshot");
     expect(snapshots).toHaveLength(2);
@@ -990,12 +1006,12 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     // to the row the failed attempt already minted.
     const sessionId = await sendFirstMessage(ws, services, "hello", "pending-1");
     await waitUntilIdle(ws.data.runtime as SessionRuntime);
-    (ws.data.runtime as SessionRuntime).dispose();
 
     expect(ws.data.conversationId).toBe(sessionId);
     const store = openSessionStore(accessManager.grant(createUserPrincipal(USER_ID, "adult", "home"), "session-store"));
     expect(store.listSessionsWithMetadata()).toHaveLength(1);
     store.close();
+    cleanupSession(asWs(ws), services);
   });
 
   it("INVARIANT: a bind that fails at session.configure is retried on the next message, on the SAME session", async () => {
@@ -1034,7 +1050,6 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
 
     await handleWebSocketMessage(asWs(ws), JSON.stringify({ type: "text.input", text: "still here?" }), services);
     await waitUntilIdle(ws.data.runtime as SessionRuntime);
-    (ws.data.runtime as SessionRuntime).dispose();
 
     expect(ws.data.conversationId).toBe(sessionId);
     expect(ws.sent.some((f) => f.type === "error" && f.code === "orchestrator_unavailable")).toBe(false);
@@ -1051,21 +1066,21 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     // …and the late bind hands over the history the handshake never could.
     const snapshot = ws.sent.find((f) => f.type === "conversation.snapshot");
     expect(((snapshot?.items ?? []) as { content?: string }[])[0]?.content).toBe("from before the reload");
+    cleanupSession(asWs(ws), services);
   });
 
-  it("INVARIANT: a late bind never evicts a live connection that took the session over meanwhile", async () => {
-    // The hazard the late re-bind opens, in its four steps:
+  it("INVARIANT: a late bind JOINS the connection that took the session over meanwhile", async () => {
+    // The hazard the late re-bind used to open, in its four steps:
     //   1. A opens session S; its bind fails transiently (secrets-store hiccup).
     //   2. A sits idle — the client is showing an error, or nobody has typed.
-    //   3. B opens S after the condition clears, binds, and CLAIMS it.
+    //   3. B opens S after the condition clears and binds it.
     //   4. A finally sends a message.
     //
-    // Step 4 must not evict B. `claim` decides "newest wins" by call time,
-    // which equals connection recency only while every connection claims during
-    // its own handshake — and A, by definition, did not. Without the guard, a
-    // connection that failed early and recovered late beats one that succeeded
-    // in between, inverting the registry's own stated invariant and discarding
-    // whatever B had in flight.
+    // Under the single-owner registry, step 4 CLAIMED S and tore B down, so
+    // this branch had to decline — a connection that failed early and recovered
+    // late must not beat one that succeeded in between. Attaching removes the
+    // conflict rather than arbitrating it: A joins B's runtime, both windows
+    // are live in S, and A's message is served instead of refused.
     const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
@@ -1093,19 +1108,23 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     const bRuntime = b.data.runtime as SessionRuntime;
     expect(bRuntime).not.toBeNull();
 
-    // 4: A's first message must be refused rather than served by theft.
+    // 4: A's first message is served — by B's runtime, not by a second one.
     await handleWebSocketMessage(asWs(a), JSON.stringify({ type: "text.input", text: "late" }), services);
+    await waitUntilIdle(bRuntime);
 
-    expect(b.data.runtime).toBe(bRuntime); // B was NOT evicted…
+    expect(b.data.runtime).toBe(bRuntime); // B was NOT torn down…
     expect(b.data.permissions).not.toBeNull();
-    expect(a.data.runtime).toBeNull(); // …and A did not take the session over.
-    expect(a.sent.some((f) => f.type === "error" && f.code === "orchestrator_unavailable")).toBe(true);
-    bRuntime.dispose();
+    expect(a.data.runtime).toBe(bRuntime); // …and A shares it rather than forking one.
+    expect(a.sent.some((f) => f.type === "error" && f.code === "orchestrator_unavailable")).toBe(false);
+    expect(services.sessionRegistry.subscribers(sessionId)).toHaveLength(2);
+    // One log, one loop: A's message landed in the session B was already on.
+    expect(entriesFor(accessManager, sessionId).map((e) => e.text)).toEqual(["shared session", "late", "ok"]);
+    cleanupSession(asWs(a), services);
+    cleanupSession(asWs(b), services);
   });
 
-  it("SECURITY: a second LIVE connection sharing one draft key does not evict the one that minted it", async () => {
-    // The same "claim decided by call time, not connection recency" hazard on
-    // the MINT path, reachable without any drop at all.
+  it("INVARIANT: two LIVE connections sharing one draft key land on ONE session and ONE runtime", async () => {
+    // The duplicated-tab race, reachable without any drop at all.
     //
     // The draft key lives in per-tab sessionStorage
     // (`sentient.currentSessionId`, shared/web-sdk/src/sdk-reconnect.ts), and
@@ -1113,10 +1132,15 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     // browser "Duplicate Tab". A user mid-draft who duplicates the tab now has
     // two independently connected sockets presenting ONE draft key, both routed
     // onto that draft by `resolveConnectionSession`. Nothing is reconnecting and
-    // nothing is dying. Whichever sends first mints, binds and claims; the
-    // other's first message replays onto that same id, and an unguarded mint
-    // would evict a fully live tab that may be mid-conversation. `session.created`
-    // is a single-connection send, so the loser never learned it lost the race.
+    // nothing is dying. Whichever sends first mints; the other's first message
+    // replays onto that same id.
+    //
+    // It used to be a race with a loser: the second mint CLAIMED the session
+    // and evicted a fully live tab that might have been mid-conversation, and
+    // `session.created` is a single-connection send, so the loser never learned
+    // it had lost. Both tabs now attach to the one session the mint key
+    // resolves to — which is the invariant that matters, since two runtimes
+    // over that one partition would fork the append-only log.
     const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
@@ -1141,23 +1165,33 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
       services,
     );
 
-    expect(original.data.runtime).toBe(originalRuntime); // the live tab was NOT evicted…
+    await waitUntilIdle(originalRuntime);
+
+    expect(original.data.runtime).toBe(originalRuntime); // the live tab was NOT torn down…
     expect(original.data.permissions).not.toBeNull();
-    expect(duplicate.data.runtime).toBeNull(); // …and the duplicate did not take the session over.
-    expect(duplicate.data.conversationId).toBeNull();
-    expect(duplicate.sent.some((f) => f.type === "error" && f.code === "orchestrator_unavailable")).toBe(true);
-    // The declined message never reached the live tab's append-only log.
-    expect(entriesFor(accessManager, sessionId).map((e) => e.text)).toEqual(["first tab types", "ok"]);
-    originalRuntime.dispose();
+    expect(duplicate.data.runtime).toBe(originalRuntime); // …and the duplicate joined it.
+    expect(duplicate.data.conversationId).toBe(sessionId);
+    expect(duplicate.sent.some((f) => f.type === "error" && f.code === "orchestrator_unavailable")).toBe(false);
+    // ONE partition, ONE loop: both tabs' messages are in the same log, in
+    // order, with no forked session.
+    expect(entriesFor(accessManager, sessionId).map((e) => e.text)).toEqual([
+      "first tab types",
+      "ok",
+      "second tab types",
+      "ok",
+    ]);
+    cleanupSession(asWs(duplicate), services);
+    cleanupSession(asWs(original), services);
   });
 
-  it("INVARIANT: a first-message retry over a new socket still takes over from a CLOSING original", async () => {
-    // The other direction, and the case an unconditional ownership guard would
-    // break: the original minted, claimed and dropped, but its close event has
-    // not been processed — `release` runs there — so its claim is still in the
-    // registry. The guard therefore keys on whether the OWNER IS ALIVE, not on
-    // whether the session is claimed. CLOSING is pinned here; CLOSED is pinned
-    // by the retry cases above.
+  it("INVARIANT: a first-message retry over a new socket is served while the original is still CLOSING", async () => {
+    // The wedge an ownership model has to keep answering for: the original
+    // minted and dropped, but its close event has NOT been processed, so it is
+    // still attached to the session. The old registry needed a liveness
+    // predicate here — a corpse holding an exclusive claim would have refused
+    // the retry outright. Attaching needs none: the retry joins the session
+    // whatever state its peer is in, and the delivery set skips the socket that
+    // can no longer be written to (session-windows.ts).
     const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
@@ -1165,9 +1199,10 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     const first = fakeAuthedWs("connection-1");
     configure(first, services, SURFACE_A);
     const draftKey = first.data.draftKey as string;
-    const sessionId = await sendFirstMessage(first, services, "hello");
+    const sessionId = await sendFirstMessage(first, services, "hello", "pending-1");
     await waitUntilIdle(first.data.runtime as SessionRuntime);
-    // Deliberately NOT disposed and NOT released — only the transport is gone.
+    // Deliberately NOT cleaned up — only the transport is gone, so this
+    // connection is still attached when the retry arrives.
     dropSocket(first, WS_CLOSING);
 
     const retry = fakeAuthedWs("connection-2");
@@ -1178,10 +1213,13 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     expect(retriedId).toBe(sessionId);
     expect(retry.data.conversationId).toBe(sessionId);
     expect(retry.sent.some((f) => f.type === "error" && f.code === "orchestrator_unavailable")).toBe(false);
-    // …and the takeover evicted the dying original rather than leaving two live
-    // runtimes (and two sqlite handles) over one append-only log.
-    expect(first.data.runtime).toBeNull();
-    (retry.data.runtime as SessionRuntime).dispose();
+    // ONE runtime over the partition, shared with the dying original rather
+    // than a second one racing it — two would fork the append-only log and put
+    // two sqlite handles on one WAL.
+    expect(retry.data.runtime).toBe(first.data.runtime);
+    expect(entriesFor(accessManager, sessionId).map((e) => e.text)).toEqual(["hello", "ok"]);
+    cleanupSession(asWs(retry), services);
+    cleanupSession(asWs(first), services);
   });
 
   it("a connection that presents nothing starts clean — no other session bleeds in", async () => {

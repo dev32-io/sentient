@@ -26,12 +26,9 @@ import type { PersonalityStore } from "../profile-store/personality-store.js";
 import type { ProfileStore } from "../profile-store/profile-store.ts";
 import type { TemplateLoader } from "../profile-store/template-loader.ts";
 import type { CreateSessionRuntime } from "../runtime/session-handles.js";
-import {
-  type ConversationRuntimeRegistry,
-  createConversationRuntimeRegistry,
-} from "../session-handlers/conversation-runtime-registry.js";
 import { type ReplayRegistry, createReplayRegistry } from "../session-handlers/replay-registry.js";
 import type { SessionControlsRegistry } from "../session-handlers/session-controls-registry.js";
+import { type SessionRegistry, createSessionRegistry } from "../session-handlers/session-registry.js";
 import type { GatewayTlsMaterial } from "../session-handlers/ws-handlers.ts";
 import type { SystemOrchestratorService } from "../system-orchestrator/index.js";
 import type { OrchestratorStatus } from "../system-orchestrator/types.js";
@@ -101,11 +98,13 @@ export interface GatewayServices {
    *  client can replay the frames it missed. Built here rather than in a
    *  phase because it depends on nothing but `cfg.session`. */
   readonly replayRegistry: ReplayRegistry;
-  /** Which connection currently owns each durable conversation's live
-   *  `SessionRuntime`. Sits beside `replayRegistry` because it answers the
-   *  same overlapping-connection race for the other shared resource: the
-   *  store partition. Depends on no config at all. */
-  readonly conversationRuntimes: ConversationRuntimeRegistry;
+  /** The resident sessions: exactly one `SessionRuntime` per durable session,
+   *  with the set of connections attached to it. Sits beside `replayRegistry`
+   *  because it answers the same overlapping-connection question for the
+   *  other shared resource — the store partition — though with the opposite
+   *  remedy: connections JOIN a session rather than take it over. Depends on
+   *  no config at all. */
+  readonly sessionRegistry: SessionRegistry;
   readonly webui: WebuiConfig;
   readonly auth: AuthService;
   readonly authConfig: AuthConfig;
@@ -232,7 +231,7 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
       maxBytesPerSurface: cfg.session.replay_journal_max_bytes,
       retentionMs: cfg.session.replay_journal_retention_ms,
     }),
-    conversationRuntimes: createConversationRuntimeRegistry(),
+    sessionRegistry: createSessionRegistry(),
     webui: cfg.webui,
     auth,
     authConfig: cfg.auth,

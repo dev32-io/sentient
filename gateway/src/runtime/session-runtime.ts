@@ -75,10 +75,10 @@
 // dispose that closed the handle:
 //
 //   - the SETTLE CONTINUATION. `runTurn` is awaited on a DETACHED `.then`
-//     chain, so a turn still in flight when the socket dies (a tab closed or
-//     reloaded mid-reply, or the newer connection of a same-tab reload
-//     evicting the superseded one — conversation-runtime-registry.ts) settles
-//     AFTER `dispose()`. A throw there is an `unhandledRejection`, and Bun
+//     chain, so a turn still in flight when the LAST window on this session
+//     detaches (a tab closed or reloaded mid-reply, whose close releases the
+//     session's final attachment — session-registry.ts) settles AFTER
+//     `dispose()`. A throw there is an `unhandledRejection`, and Bun
 //     answers one by exiting the process: the whole gateway, for every
 //     connected user, because one tab reloaded.
 //   - the PUBLIC GESTURES. `submit` (the background-completion sink holds this
@@ -172,17 +172,28 @@ export interface SessionRuntime {
 export interface SessionRuntimeDeps {
   principal: UserPrincipal;
   /**
-   * The DURABLE conversation id — this runtime's partition of the session
-   * store (its `session_id` column), and the only thing this field is: every
-   * read, append, projection and compaction below scopes to it.
+   * The DURABLE session id — this runtime's partition of the session store
+   * (its `session_id` column), and THE KEY THIS RUNTIME IS IDENTIFIED BY.
+   * Every read, append, projection and compaction below scopes to it.
+   *
+   * SERVER-MINTED AND OPAQUE (session-model spec §3.3, task 3): a CSPRNG
+   * value, never derived from the principal or from a surface id. It used to
+   * be `c::<userId>::<surfaceId>`, which is why this comment once described it
+   * as "principal + the client's stable surface id" — that shape is legacy,
+   * addressable only when the caller's own store already holds it, and nothing
+   * parses the identity it happens to embed.
+   *
+   * ONE RUNTIME PER SESSION, N CONNECTIONS ATTACHED TO IT (spec §2.5, task 5).
+   * The old `(userId, surfaceId)` key is retired: a second window on this
+   * session attaches to THIS runtime rather than constructing another one, and
+   * fan-out to those windows is a property of the `emitter` handed in below —
+   * this object is deliberately unaware that it has more than one audience.
    *
    * It is NOT `ws.data.sessionId`, which is minted per WebSocket connection
-   * and dies with the socket. `handleSessionConfigure` resolves the durable
-   * id (principal + the client's stable surface id) and passes THAT here —
-   * keying the store on the connection id instead opened a brand-new empty
-   * partition on every reload, reconnect and gateway restart. The field keeps
-   * its name only because the store's own vocabulary for a partition is
-   * `sessionId`.
+   * and dies with the socket; that one arrives separately as `connectionId`
+   * (`SessionRuntimeRequest`) and reaches only log correlation. Keying the
+   * store on it opened a brand-new empty partition on every reload, reconnect
+   * and gateway restart.
    */
   sessionId: string;
   accessManager: AccessManager;

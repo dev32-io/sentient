@@ -34,7 +34,6 @@
 // never renders at all.
 
 import type { ConversationFeedItem, GatewayMessage, TurnAudioEncoding, TurnTrigger } from "@sentient/protocol";
-import type { ServerWebSocket } from "bun";
 import { getLog } from "../logging/logger.js";
 import type { ToolUpdate } from "../runtime/react-loop.js";
 import type {
@@ -44,20 +43,25 @@ import type {
   TurnEmitter,
 } from "../runtime/turn-emitter.js";
 import type { CutoffKind } from "../store/entry-types.js";
-import type { SessionData } from "./ws-helpers.js";
-import { sendAudioFrame, sendGatewayFrame } from "./ws-send.js";
+import type { SessionWindows } from "./session-windows.js";
 
 const log = getLog(["sentient", "ws", "turn-emitter"]);
 
 const TEXT_PREVIEW_LEN = 120;
 
-export function createWsTurnEmitter(ws: ServerWebSocket<SessionData>): TurnEmitter {
-  const sessionId = ws.data.sessionId;
-
-  // Frames emitted this connection — LOG ONLY. The wire seq now comes from
-  // `ws.data.journal` inside `sendAudioFrame` (ws-send.ts) so JSON and
-  // binary share one monotonic space, which is what both client resume
-  // cursors assume.
+/**
+ * [windows] is the session's delivery set, not one socket (session-model plan
+ * task 5): the runtime it serves outlives any single connection, so a captured
+ * socket would strand every frame the moment that window closed. [sessionId] is
+ * the DURABLE session id, which is what a session-lane log line must carry now
+ * that these frames belong to a session rather than a connection.
+ */
+export function createWsTurnEmitter(windows: SessionWindows, sessionId: string): TurnEmitter {
+  // Frames emitted this session — LOG ONLY. The wire seq comes from each
+  // window's own `ws.data.journal` inside `sendAudioFrame` (ws-send.ts) so
+  // JSON and binary share one monotonic space per connection, which is what
+  // both client resume cursors assume. Task 6 moves that seq into the
+  // SESSION's space.
   let audioFramesSent = 0;
 
   // A tool call's start time, stamped on its FIRST update and read back by the
@@ -68,8 +72,8 @@ export function createWsTurnEmitter(ws: ServerWebSocket<SessionData>): TurnEmitt
   // An entry is dropped on its call's terminal status. A BACKGROUND call never
   // reaches one through this callback (its completion arrives as
   // `delegation.progress`), so `endTurn` also clears the whole map — this
-  // emitter lives for the WHOLE CONNECTION, not one turn, so without that sweep
-  // every delegated call would leak an entry for the life of the socket.
+  // emitter lives for the WHOLE SESSION, not one turn, so without that sweep
+  // every delegated call would leak an entry for the life of the session.
   // Safe because a SessionRuntime runs at most one turn at a time, so no live
   // call's stamp can still be needed once the turn has settled.
   const toolStartedAtMs = new Map<string, number>();
@@ -79,7 +83,7 @@ export function createWsTurnEmitter(ws: ServerWebSocket<SessionData>): TurnEmitt
   }
 
   function emit(frame: GatewayMessage): void {
-    sendGatewayFrame(ws, frame);
+    windows.broadcast(frame);
   }
 
   return {
@@ -172,12 +176,15 @@ export function createWsTurnEmitter(ws: ServerWebSocket<SessionData>): TurnEmitt
     },
 
     audioFrame(turnId: string, bytes: Uint8Array) {
-      const seq = sendAudioFrame(ws, bytes);
+      // One seq PER WINDOW — each connection stamps from its own journal, so
+      // there are as many as there are open windows (task 6 collapses them
+      // into the session's single seq space).
+      const seqs = windows.broadcastAudio(bytes);
       audioFramesSent += 1;
       log.debug("turn-emitter.audio-frame", {
         sessionId,
         turnId,
-        seq,
+        seqs,
         payloadBytes: bytes.byteLength,
       });
     },

@@ -100,7 +100,7 @@ export function handleSessionNew(
   }
 
   if (intent === "explicit" && boundSessionId !== null) {
-    unbindSession(ws, services, boundSessionId);
+    unbindSession(ws, services);
     ws.data.draftKey = mintDraftKey();
     log.info("session.new.unbound", {
       sessionId,

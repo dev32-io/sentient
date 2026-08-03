@@ -17,14 +17,21 @@ import { gatewayMessageSchema } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import type { ToolUpdate } from "../runtime/react-loop.js";
 import { createFrameJournal } from "./frame-journal.js";
+import { createSessionWindows } from "./session-windows.js";
 import { type SessionData, createEmptySessionData } from "./ws-helpers.js";
 import { createWsTurnEmitter } from "./ws-turn-emitter.js";
 
 const BINARY_HEADER_BYTES = 9;
 const BINARY_TYPE_AUDIO = 0x01;
+/** `ServerWebSocket.readyState` OPEN. */
+const WS_OPEN = 1;
+const SESSION_ID = "s_00000000000000000000000000000001";
 
 interface FakeWs {
   data: SessionData;
+  /** The delivery set skips a window that is not OPEN (session-windows.ts),
+   *  so a double that omits this receives nothing at all. */
+  readyState: number;
   /** Decoded JSON frames, in order. */
   sent: unknown[];
   /** Raw binary frames (audio), in order. */
@@ -37,6 +44,7 @@ function fakeWs(): FakeWs {
   data.sessionId = "test-session";
   const ws: FakeWs = {
     data,
+    readyState: WS_OPEN,
     sent: [],
     binary: [],
     send(payload) {
@@ -50,8 +58,13 @@ function fakeWs(): FakeWs {
   return ws;
 }
 
-function emitterFor(ws: FakeWs) {
-  return createWsTurnEmitter(ws as unknown as ServerWebSocket<SessionData>);
+/** One session, one attached window — the shape every case below asserts on.
+ *  The emitter writes to the session's delivery set now, not to a captured
+ *  socket (session-model plan task 5). */
+function emitterFor(ws: { data: SessionData }) {
+  const windows = createSessionWindows(SESSION_ID);
+  windows.add("at_test", ws as unknown as ServerWebSocket<SessionData>);
+  return createWsTurnEmitter(windows, SESSION_ID);
 }
 
 describe("createWsTurnEmitter — 2.0 wire contract", () => {
@@ -374,6 +387,7 @@ describe("createWsTurnEmitter — 2.0 wire contract", () => {
 
 interface SequencedFakeWs {
   data: SessionData;
+  readyState: number;
   sentText: Record<string, unknown>[];
   sentBinary: Uint8Array[];
   send: (payload: string | Uint8Array) => void;
@@ -386,6 +400,7 @@ function sequencedFakeWs(epoch = 7): SequencedFakeWs {
   data.epoch = epoch;
   const ws: SequencedFakeWs = {
     data,
+    readyState: WS_OPEN,
     sentText: [],
     sentBinary: [],
     send(payload) {
@@ -403,7 +418,7 @@ function headerSeq(frame: Uint8Array): number {
 describe("createWsTurnEmitter — seq/epoch stamping (Task 10)", () => {
   it("stamps every JSON frame with a monotonic seq and the connection epoch", () => {
     const ws = sequencedFakeWs(7);
-    const emitter = createWsTurnEmitter(ws as unknown as ServerWebSocket<SessionData>);
+    const emitter = emitterFor(ws);
 
     emitter.turnStarted("turn-1", "user");
     emitter.textDelta("turn-1", "hi");
@@ -415,7 +430,7 @@ describe("createWsTurnEmitter — seq/epoch stamping (Task 10)", () => {
 
   it("draws JSON and binary audio seqs from ONE monotonic space", () => {
     const ws = sequencedFakeWs();
-    const emitter = createWsTurnEmitter(ws as unknown as ServerWebSocket<SessionData>);
+    const emitter = emitterFor(ws);
 
     emitter.audioStart("turn-1", "opus", 48000); // seq 1 (JSON)
     emitter.audioFrame("turn-1", new Uint8Array([1])); // seq 2 (binary)
@@ -429,7 +444,7 @@ describe("createWsTurnEmitter — seq/epoch stamping (Task 10)", () => {
 
   it("journals every frame it sends so a later resume can replay them verbatim", () => {
     const ws = sequencedFakeWs();
-    const emitter = createWsTurnEmitter(ws as unknown as ServerWebSocket<SessionData>);
+    const emitter = emitterFor(ws);
 
     emitter.turnStarted("turn-1", "user");
     emitter.audioFrame("turn-1", new Uint8Array([9]));
@@ -446,7 +461,7 @@ describe("createWsTurnEmitter — seq/epoch stamping (Task 10)", () => {
     const ws = sequencedFakeWs();
     ws.data.journal = null;
     ws.data.epoch = 0;
-    const emitter = createWsTurnEmitter(ws as unknown as ServerWebSocket<SessionData>);
+    const emitter = emitterFor(ws);
 
     emitter.turnStarted("turn-1", "user");
 

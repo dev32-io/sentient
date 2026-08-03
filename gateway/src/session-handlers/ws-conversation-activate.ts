@@ -26,17 +26,18 @@
 // fails `isWellFormedSessionId` (neither the minted `s_` prefix nor the
 // legacy `c::` one).
 //
-// SINGLE OWNER, STILL. `services.conversationRuntimes` is the pre-task-5
-// single-owner registry — task 5 replaces it with a subscriber set that lets N
-// connections attach to one session at once. Until then, activating a session
-// another LIVE connection is already serving is DECLINED, not evicted — the
-// same stance `ensureBoundRuntime`'s late-bind and mint-race guards take
-// (ws-handlers.ts) — rather than tearing down a window that may be mid-turn.
+// N ATTACHMENTS, NO ARBITRATION (task 5). This handler used to DECLINE a
+// session another live connection was already serving, answering
+// `sessions.error{code:"switching"}`, because binding meant claiming it from
+// the single-owner registry and the claim tore that connection down. Attaching
+// takes nothing from anyone: opening the same conversation in a second window
+// is now the feature, not a collision, so there is no rival to detect and no
+// reason to refuse.
 
 import type { ServerWebSocket } from "bun";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { getLog } from "../logging/logger.js";
-import { bindSessionRuntime, liveRivalOwner, unbindSession, withSessionStore } from "./session-binding.js";
+import { bindSessionRuntime, unbindSession, withSessionStore } from "./session-binding.js";
 import { mintDraftKey, resolveSession } from "./session-id.js";
 import type { SessionData } from "./ws-helpers.js";
 import { sendGatewayFrame } from "./ws-send.js";
@@ -80,31 +81,12 @@ export function handleConversationActivate(
     return;
   }
 
-  const rival = liveRivalOwner(ws, services, targetSessionId);
-  if (rival !== null) {
-    log.warn("conversation.activate.declined", {
-      sessionId: connectionId,
-      userId: principal.userId,
-      targetSessionId,
-      ownerConnectionId: rival,
-      reason: "another live connection is already serving this session — refusing to evict it",
-    });
-    sendGatewayFrame(ws, {
-      type: "sessions.error",
-      code: "switching",
-      message: "this session is already open in another window",
-    });
-    return;
-  }
-
-  // Dispose whatever this connection held BEFORE binding the new session —
-  // same order handleSessionConfigure uses for a re-configure onto a
-  // different session, and for the same reason: a stale store handle or an
-  // open permission prompt from the outgoing session must not leak into the
-  // new one.
-  const priorSessionId = ws.data.conversationId;
-  if (priorSessionId !== null) {
-    unbindSession(ws, services, priorSessionId);
+  // Leave the outgoing session BEFORE joining the new one — same order
+  // handleSessionConfigure uses for a re-configure, and for the same reason:
+  // holding two attachments means this connection's close releases only one,
+  // pinning the other session resident forever.
+  if (ws.data.conversationId !== null) {
+    unbindSession(ws, services);
   }
 
   const runtime = bindSessionRuntime(ws, services, targetSessionId);

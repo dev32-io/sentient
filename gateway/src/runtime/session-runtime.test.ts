@@ -1892,10 +1892,10 @@ describe("SessionRuntime — cancellation reaches the audio tail", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Case: dispose() lands WHILE a turn is in flight — a tab closed or reloaded
-// mid-reply (server.ts's close hook → cleanupSession), or the newer connection
-// of a same-tab reload evicting the superseded one before its close event
-// fires (conversation-runtime-registry.ts).
+// Case: dispose() lands WHILE a turn is in flight — the LAST window on this
+// session closing or reloading mid-reply, so its detach releases the session's
+// final attachment and the disposal policy frees the runtime (server.ts's
+// close hook → cleanupSession → session-registry.ts).
 //
 // PROCESS-LEVEL INVARIANT, not a cosmetic one. `dispose()` closes the
 // bun:sqlite handle SYNCHRONOUSLY, but the turn's settle continuation runs
