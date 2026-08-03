@@ -68,6 +68,7 @@ Order is not arbitrary. Tasks 1–2 are foundations that later tasks rest on; ta
 | 6 | [Frame lanes, fan-out, attach](task-6-fanout-and-attach.md) | Multi-window delivery. |
 | 7 | [Session-scoped permissions](task-7-session-permissions.md) | Needs the subscriber set from 5. |
 | 8 | [Derived retention](task-8-derived-retention.md) | Needs the subscriber set; fixes a live orphaned-task defect. |
+| 8b | [Background-completion relay](task-8b-background-completion-relay.md) | Closes D16. Inserted by owner decision 2026-08-02 — the models will not volunteer a reply to a system-role message. |
 | 9 | [Command binding + arbitration](task-9-command-binding.md) | Correctness condition for switching. |
 | 10 | [Auxiliary-task seam + titling](task-10-titling.md) | Needs the metadata table from 2. |
 | 11 | [E2E round 3 + doc supersession](task-11-e2e-and-docs.md) | Exit criteria. |
