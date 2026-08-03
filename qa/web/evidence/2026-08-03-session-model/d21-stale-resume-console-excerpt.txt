@@ -1,0 +1,6 @@
+[     186ms] [INFO] [sentient.webui.opus-encoder] ready {codec: opus, sampleRate: 48000, channels: 1, bitrate: 24000} @ http://localhost:5173/@fs/Users/kevinye/Development/sentient/shared/web-sdk/src/logger.ts:8
+[     194ms] [INFO] [sentient.webui.audio-playback] init: ENTER (AC creation deferred until first user gesture) @ http://localhost:5173/@fs/Users/kevinye/Development/sentient/shared/web-sdk/src/logger.ts:9
+[     200ms] [INFO] [sentient.webui.opus-decoder] ready {codec: ogg-opus, thread: worker} @ http://localhost:5173/@fs/Users/kevinye/Development/sentient/shared/web-sdk/src/logger.ts:8
+[     204ms] [INFO] [sentient.webui.rnnoise] ready {frameSamples: 480, sampleRate: 48000} @ http://localhost:5173/@fs/Users/kevinye/Development/sentient/shared/web-sdk/src/logger.ts:8
+[     207ms] [INFO] [sentient.web-sdk.sdk] ws.auth.sent {tokenPreview: v4.local} @ http://localhost:5173/@fs/Users/kevinye/Development/sentient/shared/web-sdk/src/logger.ts:8
+[     418ms] [INFO] [sentient.web-sdk.sdk] session-resume.fallback-cleared {staleId: s_b92ccc82b3d37dbd972c9c32795fb768, reason: snapshot-without-switched} @ http://localhost:5173/@fs/Users/kevinye/Development/sentient/shared/web-sdk/src/logger.ts:8
