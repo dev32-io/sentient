@@ -24,6 +24,7 @@ import { createReplayRegistry } from "./replay-registry.js";
 import { bindSessionRuntime, detachSession } from "./session-binding.js";
 import { mintDraftKey, mintSessionId } from "./session-id.js";
 import { type SessionHandles, createSessionRegistry } from "./session-registry.js";
+import type { SttSession } from "./stt-session.js";
 import { cleanupSession, handleWebSocketMessage } from "./ws-handlers.js";
 import { type SessionData, createEmptySessionData } from "./ws-helpers.js";
 
@@ -103,6 +104,10 @@ function stubRuntime(): StubRuntime {
 // GatewayServices' large surface without exercising any of it.
 const unusedServices = {} as GatewayServices;
 
+/** Matches `session.input_arbitration_window_ms` in these fixtures. Small so a
+ *  case that must land OUTSIDE the window does not pay for it in wall clock. */
+const ARBITRATION_WINDOW_MS = 30;
+
 /** A draft key shaped exactly as session-id.ts mints them (`d_` + 32 hex). */
 const DRAFT_KEY = `d_${"ab".repeat(16)}`;
 
@@ -121,19 +126,21 @@ let activateRunSeq = 0;
  *  root (no test can see another's rows), a working (stub) runtime factory so
  *  bindSessionRuntime succeeds, and a real SessionRegistry so attach/detach is
  *  genuine rather than assumed. */
-function activateServices(): GatewayServices {
+function activateServices(runtime?: SessionRuntime): GatewayServices {
   activateRunSeq += 1;
   const accessManager = createAccessManager({ userDataRoot: `${ACTIVATE_ROOT}/run-${activateRunSeq}` });
-  const runtimeStub = {
-    emitConversationSnapshot: () => {},
-    dispose: () => {},
-    turnState: EMPTY_TURN_STATE,
-  } as unknown as SessionRuntime;
+  const runtimeStub =
+    runtime ??
+    ({
+      emitConversationSnapshot: () => {},
+      dispose: () => {},
+      turnState: EMPTY_TURN_STATE,
+    } as unknown as SessionRuntime);
   return {
     accessManager,
     sessionRegistry: createSessionRegistry(),
     replayRegistry: createReplayRegistry({ maxBytesPerSession: 65536, retentionMs: 60_000 }),
-    session: { max_window_lag_bytes: 1_000_000 },
+    session: { max_window_lag_bytes: 1_000_000, input_arbitration_window_ms: ARBITRATION_WINDOW_MS },
     profileStore: { get: async () => ({ ok: false, error: "no profile in this test" }) },
     createSynthesizerFor: () => null,
     stt: null,
@@ -722,6 +729,136 @@ describe("ws-handlers cleanup — outstanding permission prompts", () => {
     // are still reachable — and reachable from IT, which is the whole point.
     expect(services.sessionRegistry.handlesFor(SESSION_ID)?.permissions).toBe(permissions);
     expect(survivor.data.attachment).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Multi-window input (spec §8.3) — the property this whole task exists for, and
+// the one the arbitration cases are only half of.
+//
+// Arbitration says a SIMULTANEOUS peer is refused. This says the ordinary case:
+// a message from a DIFFERENT window, outside that instant, reaches the SAME
+// runtime and folds into the turn already running rather than forking a second
+// one. Both windows genuinely attach here, through the real registry and the
+// real `bindSessionRuntime`, so "one runtime, N attachments" is exercised
+// rather than assumed — that shared instance is what makes the runtime's own
+// one-turn-at-a-time serialization (pinned against a REAL SessionRuntime in
+// runtime/session-runtime.test.ts's steer cases) apply to both windows at all.
+// ---------------------------------------------------------------------------
+
+describe("ws-handlers routing — two windows, one turn", () => {
+  /** A runtime double that models the documented `submit` contract: start a
+   *  turn when idle, otherwise steer the running one. Counting turn STARTS is
+   *  the only way to observe a fork. */
+  function serializingRuntime(): { runtime: SessionRuntime; turnsStarted: () => number; submits: () => number } {
+    let turnsStarted = 0;
+    let submits = 0;
+    let running = false;
+    const runtime = {
+      userId: "u_deadbeef" as SessionRuntime["userId"],
+      submit: () => {
+        submits += 1;
+        if (running) return; // steer — the store IS the queue
+        running = true;
+        turnsStarted += 1;
+      },
+      get running() {
+        return running;
+      },
+      dispose: () => {},
+      bargeIn: () => {},
+      interrupt: () => {},
+      emitConversationSnapshot: () => {},
+      cutUnheardSpeech: () => {},
+      turnState: EMPTY_TURN_STATE,
+    } as unknown as SessionRuntime;
+    return { runtime, turnsStarted: () => turnsStarted, submits: () => submits };
+  }
+
+  it("INVARIANT: a second window's input folds into the running turn instead of forking one", async () => {
+    const spy = serializingRuntime();
+    const services = activateServices(spy.runtime);
+    const sessionId = seedActivatableSession(services.accessManager, "u_deadbeef");
+
+    const a = fakeAuthedWs(null);
+    const b = fakeAuthedWs(null);
+    for (const ws of [a, b]) {
+      ws.data.draftKey = DRAFT_KEY;
+      await handleWebSocketMessage(
+        ws as unknown as ServerWebSocket<SessionData>,
+        JSON.stringify({ type: "conversation.activate", sessionId }),
+        services,
+      );
+    }
+    // Two windows, two attachments, one session.
+    expect(services.sessionRegistry.subscribers(sessionId)).toHaveLength(2);
+    expect(a.data.runtime).toBe(b.data.runtime);
+
+    const send = (ws: FakeWs, text: string): Promise<void> =>
+      handleWebSocketMessage(
+        ws as unknown as ServerWebSocket<SessionData>,
+        JSON.stringify({
+          type: "text.input",
+          text,
+          sessionId,
+          attachmentGeneration: ws.data.attachment?.generation,
+        }),
+        services,
+      );
+
+    await send(a, "start a turn");
+    // Past the arbitration window — a real second speaker, not a race.
+    await new Promise((resolve) => setTimeout(resolve, ARBITRATION_WINDOW_MS + 20));
+    await send(b, "and mention the seagulls");
+
+    expect(spy.submits()).toBe(2); // B was ACCEPTED, not refused
+    expect(spy.turnsStarted()).toBe(1); // …and steered, rather than forking
+    expect(b.sent.some((f) => (f as { type?: string }).type === "command.rejected")).toBe(false);
+  });
+});
+
+describe("detachSession — leaving a session drops what was captured under it", () => {
+  it("INVARIANT: leaving a session DISCARDS this connection's mic uplink", () => {
+    // THE COMPENSATING CONTROL FOR UNSTAMPED BINARY AUDIO (spec §3.7). Mic
+    // bytes carry no `{sessionId, generation}`; the connection's attachment is
+    // authoritative for them. That is only sound if leaving a session provably
+    // drops the bytes captured under the old one — otherwise an utterance begun
+    // in chat A finalizes into chat B, which is precisely the hazard a
+    // per-frame stamp would have closed.
+    //
+    // It has to live HERE, not on a refusal path. A drawer switch sends
+    // `conversation.activate`, which is deliberately UNSTAMPED (it is how a
+    // connection leaves), so no command is ever refused and the mediator is
+    // never the one to notice. Every leave — re-configure, "+", activate,
+    // close — funnels through this one body.
+    let discards = 0;
+    const services = attachedCleanupServices(stubPermissions());
+    const ws = fakeAuthedWs(null);
+    attach(ws, services);
+    ws.data.stt = {
+      discard: () => {
+        discards += 1;
+      },
+    } as unknown as SttSession;
+
+    detachSession(ws as unknown as ServerWebSocket<SessionData>, services);
+
+    expect(discards).toBe(1);
+  });
+
+  it("keeps the uplink OBJECT — the mic is still on, it is just aimed somewhere else now", () => {
+    // `discard()`, never `close()`. The person is still holding the talk
+    // button; they have merely changed which conversation they are in. Nulling
+    // `ws.data.stt` here would make the next mic frame silently vanish until
+    // they released and pressed again.
+    const services = attachedCleanupServices(stubPermissions());
+    const ws = fakeAuthedWs(null);
+    attach(ws, services);
+    ws.data.stt = { discard: () => {} } as unknown as SttSession;
+
+    detachSession(ws as unknown as ServerWebSocket<SessionData>, services);
+
+    expect(ws.data.stt).not.toBeNull();
   });
 });
 

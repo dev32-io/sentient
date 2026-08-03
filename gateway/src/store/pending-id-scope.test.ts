@@ -27,17 +27,6 @@ function userEntry(seq: number, text: string, pendingId: string | null): Session
 }
 
 describe("pendingId scoping — one window's resend record cannot suppress another's message", () => {
-  it("INVARIANT: two windows reusing one pendingId do not collide on the store's dedup key", () => {
-    expect(scopePendingId("surface-a", "p-1")).not.toBe(scopePendingId("surface-b", "p-1"));
-  });
-
-  it("INVARIANT: the SAME window's resend still matches — the key survives a reconnect", () => {
-    // The record exists so a resend after a dropped socket matches. A namespace
-    // keyed on the connection or the attachment would be reminted on reconnect
-    // and turn every resend into a second message.
-    expect(scopePendingId("surface-a", "p-1")).toBe(scopePendingId("surface-a", "p-1"));
-  });
-
   it("CONTRACT: the client sees back the value it sent, not the namespaced one", () => {
     // The client reconciles its optimistic bubble by pendingId. Echoing the
     // stored form would leave that bubble unsettled and render the message

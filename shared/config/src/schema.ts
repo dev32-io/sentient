@@ -111,13 +111,27 @@ export const sessionConfigSchema = z.object({
   // for the whole turn, which would let one speaker own the session until their
   // reply finished and defeat multi-window entirely.
   //
-  // Sized to human simultaneity plus network jitter, not to a turn: two people
-  // pressing send "at the same moment" land within ~250 ms of each other, and
-  // the e2e case that must still steer is a message sent THREE SECONDS into a
-  // running turn. Anything approaching a turn's length is the floor lock this
-  // key exists not to be. 0 disables arbitration entirely — every input is
-  // applied, which is the pre-§8.3 behaviour. Range 0–5000.
-  input_arbitration_window_ms: z.number().int().min(0).max(5000).default(500),
+  // WHAT IT DOES *NOT* DO, stated first because the obvious reading is wrong:
+  // it does not prevent two concurrent turns. Bun runs WS handlers to
+  // completion serially on one thread and `SessionRuntime.submit` sets its
+  // in-flight marker synchronously, so by the time a second window's frame
+  // dispatches the first turn is ALWAYS already running and the second message
+  // would steer. One-turn-at-a-time is structural, not something this key
+  // defends.
+  //
+  // Its only observable effect is converting a would-be steer into a
+  // `session_busy` refusal while the window is open. That is worth doing for a
+  // genuine race — two people pressing send on the same idle session produce
+  // one message and one clear "try again" rather than a spliced double
+  // prompt — and it is pure loss outside one, because webui has no optimistic
+  // echo and a refused message simply vanishes from the composer.
+  //
+  // So it is sized to the RACE, not to human patience: ~100 ms covers two
+  // clients whose frames left at the same instant plus loopback jitter.
+  // Anything longer starts destroying messages that would have been absorbed
+  // perfectly well by the running turn. 0 disables arbitration entirely — every
+  // input is applied, which is the pre-§8.3 behaviour. Range 0–5000.
+  input_arbitration_window_ms: z.number().int().min(0).max(5000).default(100),
 });
 
 export type SessionConfig = z.output<typeof sessionConfigSchema>;

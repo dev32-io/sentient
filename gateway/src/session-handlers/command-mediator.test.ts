@@ -10,7 +10,7 @@ import { describe, expect, it } from "bun:test";
 import type { ServerWebSocket } from "bun";
 import type { SessionWorkSignals } from "../runtime/session-retention.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
-import { type InboundCommand, mediateCommand } from "./command-mediator.js";
+import { type InboundCommand, claimInputFloor, mediateCommand } from "./command-mediator.js";
 import { createInputArbiter } from "./input-arbiter.js";
 import { type SessionHandles, type SessionRegistry, createSessionRegistry } from "./session-registry.js";
 import type { SttSession } from "./stt-session.js";
@@ -27,11 +27,17 @@ const IDLE_WORK: SessionWorkSignals = {
 const ARBITRATION_WINDOW_MS = 500;
 /** `ServerWebSocket.readyState` OPEN. */
 const WS_OPEN = 1;
+/** RFC 6455 policy violation — what the gateway closes an expired socket with. */
+const WS_CLOSE_POLICY = 1008;
 
 interface FakeWs {
   data: SessionData;
   sent: Record<string, unknown>[];
   send: (s: string) => void;
+  /** Close codes this socket was closed with. An expired credential MUST close
+   *  the socket, so a double that cannot record it is not a socket. */
+  closes: number[];
+  close: (code: number, reason?: string) => void;
   readyState: number;
   getBufferedAmount: () => number;
 }
@@ -43,10 +49,14 @@ function fakeWs(connectionId: string): FakeWs {
   const ws: FakeWs = {
     data,
     sent: [],
+    closes: [],
     readyState: WS_OPEN,
     getBufferedAmount: () => 0,
     send(s) {
       ws.sent.push(JSON.parse(s) as Record<string, unknown>);
+    },
+    close(code) {
+      ws.closes.push(code);
     },
   };
   return ws;
@@ -282,8 +292,8 @@ describe("mediateCommand — a stale command discards its STT buffer", () => {
     h.attach(a, "s_1");
     h.attach(b, "s_1");
 
-    mediateCommand(textInput("s_1", a.data.attachment?.generation), asWs(a), h.registry, 1000);
-    mediateCommand(textInput("s_1", b.data.attachment?.generation), asWs(b), h.registry, 1000);
+    claimInputFloor({ type: "text.input" }, asWs(a), h.registry, 1000);
+    claimInputFloor({ type: "text.input" }, asWs(b), h.registry, 1000);
 
     expect(stt.discarded()).toBe(0);
     expect(stt.buffered()).toBe(4096);
@@ -298,32 +308,28 @@ describe("mediateCommand — input arbitration (§8.3)", () => {
     h.attach(a, "s_1");
     h.attach(b, "s_1");
 
-    const first = mediateCommand(textInput("s_1", a.data.attachment?.generation), asWs(a), h.registry, 1000);
-    const second = mediateCommand(textInput("s_1", b.data.attachment?.generation), asWs(b), h.registry, 1000);
+    const first = claimInputFloor({ type: "text.input" }, asWs(a), h.registry, 1000);
+    const second = claimInputFloor({ type: "text.input" }, asWs(b), h.registry, 1000);
 
-    expect(first.accept).toBe(true);
-    expect(second).toEqual({ accept: false, reason: "session_busy" });
+    expect(first).toBe(true);
+    expect(second).toBe(false);
+    expect(b.sent).toContainEqual(expect.objectContaining({ type: "command.rejected", reason: "session_busy" }));
   });
 
-  it("INVARIANT: input arriving during a running turn steers it rather than being refused", () => {
-    // The pair that makes the case above correct. Arbitration is for
-    // simultaneous contention only — a floor lock for the whole turn would let
-    // one speaker own the session until their reply finished.
+  it("the floor is released once the window elapses, so a peer is no longer refused", () => {
+    // Narrowly what it says. This is an `InputArbiter` timing property, NOT the
+    // steer invariant — nothing here runs a turn. "A second window's input
+    // folds into the running turn instead of forking one" is pinned where a
+    // runtime actually exists: ws-handlers-routing.test.ts.
     const h = harness();
     const a = fakeWs("conn-a");
     const b = fakeWs("conn-b");
     h.attach(a, "s_1");
     h.attach(b, "s_1");
 
-    mediateCommand(textInput("s_1", a.data.attachment?.generation), asWs(a), h.registry, 1000);
-    const later = mediateCommand(
-      textInput("s_1", b.data.attachment?.generation),
-      asWs(b),
-      h.registry,
-      1000 + ARBITRATION_WINDOW_MS,
-    );
+    claimInputFloor({ type: "text.input" }, asWs(a), h.registry, 1000);
 
-    expect(later.accept).toBe(true);
+    expect(claimInputFloor({ type: "text.input" }, asWs(b), h.registry, 1000 + ARBITRATION_WINDOW_MS)).toBe(true);
   });
 
   it("INVARIANT: the window that won keeps talking — a fast second message from it is not refused", () => {
@@ -333,10 +339,9 @@ describe("mediateCommand — input arbitration (§8.3)", () => {
     const a = fakeWs("conn-a");
     h.attach(a, "s_1");
 
-    mediateCommand(textInput("s_1", a.data.attachment?.generation), asWs(a), h.registry, 1000);
-    const again = mediateCommand(textInput("s_1", a.data.attachment?.generation), asWs(a), h.registry, 1100);
+    claimInputFloor({ type: "text.input" }, asWs(a), h.registry, 1000);
 
-    expect(again.accept).toBe(true);
+    expect(claimInputFloor({ type: "text.input" }, asWs(a), h.registry, 1000 + ARBITRATION_WINDOW_MS / 2)).toBe(true);
   });
 
   it("INVARIANT: a Stop from the losing window is never arbitrated — cancellation is honoured from anywhere", () => {
@@ -349,7 +354,7 @@ describe("mediateCommand — input arbitration (§8.3)", () => {
     h.attach(a, "s_1");
     h.attach(b, "s_1");
 
-    mediateCommand(textInput("s_1", a.data.attachment?.generation), asWs(a), h.registry, 1000);
+    claimInputFloor({ type: "text.input" }, asWs(a), h.registry, 1000);
     const stop = mediateCommand(
       { type: "interrupt", sessionId: "s_1", generation: b.data.attachment?.generation },
       asWs(b),
@@ -357,6 +362,8 @@ describe("mediateCommand — input arbitration (§8.3)", () => {
       1000,
     );
 
+    // Cancellation never reaches `claimInputFloor` at all — ws-handlers.ts
+    // calls it only for `text.input` and `transcript`.
     expect(stop.accept).toBe(true);
   });
 });
@@ -386,6 +393,46 @@ describe("mediateCommand — credential lifetime (§3.6)", () => {
 
     expect(h.registry.subscribers("s_1")).toHaveLength(0);
     expect(conn.data.attachment).toBeNull();
+  });
+
+  it("SECURITY: an expired credential CLOSES the socket — a detach alone is undone by the next frame", () => {
+    // The detach is not enough on its own, and this is the case that says so.
+    // `session.configure`, `session.new` and `conversation.activate` are
+    // deliberately outside the gate (they are how a connection changes session)
+    // and none of them checks expiry — so a merely-detached connection
+    // re-attaches with any one of them and resumes reading, indefinitely, on a
+    // credential that expired hours ago. Only closing the socket makes the
+    // refusal stick: it cannot read, cannot re-attach, and has to return
+    // through the auth gate with a fresh expiry.
+    const h = harness();
+    const conn = fakeWs("conn-a");
+    h.attach(conn, "s_1");
+    conn.data.tokenExpiresAtMs = 999;
+
+    mediateCommand(textInput("s_1", conn.data.attachment?.generation), asWs(conn), h.registry, 1000);
+
+    expect(conn.closes).toEqual([WS_CLOSE_POLICY]);
+    // `code: "expired"` is what mobile's AuthErrorClass classifies terminal and
+    // what routes both clients to re-login rather than a silent retry loop.
+    expect(conn.sent).toContainEqual(expect.objectContaining({ type: "auth.error", code: "expired" }));
+  });
+
+  it("SECURITY: the refusal still NAMES the window it cut off, though the detach ran first", () => {
+    // The log line for this refusal is the only record of which window was
+    // ejected; reading the attachment after the detach would make every one of
+    // them say `sessionId: null`.
+    const h = harness();
+    const conn = fakeWs("conn-a");
+    h.attach(conn, "s_1");
+    const ejected = conn.data.attachment;
+    conn.data.tokenExpiresAtMs = 999;
+
+    mediateCommand(textInput("s_1", ejected?.generation), asWs(conn), h.registry, 1000);
+
+    expect(ejected).not.toBeNull();
+    expect(conn.sent).toContainEqual(
+      expect.objectContaining({ type: "command.rejected", reason: "credential_expired" }),
+    );
   });
 
   it("accepts a command on a connection whose token is still valid", () => {

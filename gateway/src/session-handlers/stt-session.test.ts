@@ -126,6 +126,28 @@ function stubRuntime(): StubRuntime {
   return { runtime, submitted, bargeIns };
 }
 
+/**
+ * An adapter whose `close()` does NOT end its event stream.
+ *
+ * `fakeAdapter` terminates the generator inside `close()`, which is convenient
+ * and WRONG for the discard cases: a real STT socket keeps yielding whatever it
+ * had already decoded until the close round-trips. Testing the discard against
+ * the convenient fake would pass without any guard in the production code at
+ * all — the fake would be doing the work. This one models the hazard.
+ */
+function lingeringAdapter(): FakeAdapter {
+  const f = fakeAdapter();
+  const inner = f.adapter;
+  f.adapter = {
+    ...inner,
+    events: (signal) => inner.events(signal),
+    close: async () => {
+      f.closes += 1;
+    },
+  };
+  return f;
+}
+
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 5));
 
 describe("createSttSession", () => {
@@ -253,6 +275,95 @@ describe("createSttSession", () => {
 
     expect(() => session.pushFrame(new Uint8Array([1]))).not.toThrow();
     expect(fake.sent).toEqual([]);
+    session.close();
+  });
+
+  // ── Discard: the uplink is aimed at a session this connection has left ──
+  //
+  // These pin the compensating control that makes "binary audio binds to the
+  // CONNECTION, not to a stamped header" a sound decision (spec §3.7). The
+  // decision only holds if leaving a session provably drops the bytes captured
+  // under the old one; without that, an utterance begun in session A finalizes
+  // into session B, which is the exact hazard a per-frame stamp would have
+  // closed.
+
+  it("INVARIANT: a discarded uplink commits no transcript — the words were spoken into another session", async () => {
+    const fake = lingeringAdapter();
+    const stub = stubRuntime();
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => fake.adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: () => stub.runtime,
+    });
+
+    session.start("semantic");
+    await settle();
+    session.pushFrame(new Uint8Array([1, 2, 3, 4]));
+    expect(session.buffered).toBe(4);
+
+    session.discard();
+    // The abandoned socket can still yield what it had already decoded. Nothing
+    // it produces after the discard may reach a runtime — by then that runtime
+    // belongs to a DIFFERENT conversation.
+    fake.emit({ type: "transcript", turnIdx: 1, text: "meant for the other chat" });
+    await settle();
+
+    expect(stub.submitted).toEqual([]);
+    expect(session.buffered).toBe(0);
+    expect(fake.flushes).toBe(0); // abandoned, never force-finalized
+    session.close();
+  });
+
+  it("INVARIANT: a discarded uplink barges into nothing — a mic onset in the old session must not abort the new one", async () => {
+    const fake = lingeringAdapter();
+    const stub = stubRuntime();
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => fake.adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: () => stub.runtime,
+    });
+
+    session.start("semantic");
+    await settle();
+    session.discard();
+    fake.emit({ type: "turn_started", turnIdx: 1 });
+    await settle();
+
+    // `bargeIn()` aborts the SHARED turn for every window on the session it
+    // reaches. One that leaked from an abandoned uplink would cut off a
+    // conversation the speaker is not even in.
+    expect(stub.bargeIns).toEqual([]);
+    session.close();
+  });
+
+  it("keeps the mic live across a discard — the next frame re-dials and speech continues", async () => {
+    let dialled = 0;
+    const first = fakeAdapter();
+    const second = fakeAdapter();
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => {
+        dialled += 1;
+        return dialled === 1 ? first.adapter : second.adapter;
+      },
+      config: TEST_CONFIG,
+      getRuntime: () => null,
+      getRuntimeForInput: () => null,
+    });
+
+    session.start("semantic");
+    await settle();
+    session.discard();
+    session.pushFrame(new Uint8Array([9]));
+    await settle();
+    session.pushFrame(new Uint8Array([9]));
+
+    expect(dialled).toBe(2);
+    expect(second.sent).toHaveLength(1);
     session.close();
   });
 });

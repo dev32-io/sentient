@@ -167,6 +167,21 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
   async function consumeEvents(active: STTAdapter): Promise<void> {
     try {
       for await (const event of active.events(lifetime.signal)) {
+        // ABANDONED UPLINK — stop, do not dispatch. `discard()` clears
+        // `adapter` synchronously but its `close()` only round-trips later, so
+        // a socket that had already decoded an utterance keeps yielding it in
+        // the meantime. Dispatching any of that would submit words captured in
+        // the session this connection has LEFT into the one it is on now, or
+        // barge into that session's turn — the exact hazard `discard()` exists
+        // to prevent, arriving through the back door.
+        if (adapter !== active) {
+          log.info("stt.event.after-discard", {
+            sessionId,
+            eventType: event.type,
+            reason: "this uplink was discarded — its events belong to a session this connection has left",
+          });
+          break;
+        }
         // A hook throw must never kill the event loop for the rest of the
         // session — the pre-purge adapter learned this the hard way.
         try {

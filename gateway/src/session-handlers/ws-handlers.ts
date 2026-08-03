@@ -5,7 +5,7 @@ import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { getLog } from "../logging/logger.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import { scopePendingId } from "../store/pending-id-scope.js";
-import { type CommandKind, mediateCommand } from "./command-mediator.js";
+import { type CommandKind, claimInputFloor, mediateCommand } from "./command-mediator.js";
 import { handlePreferencesPatch } from "./handle-preferences-patch.js";
 import {
   bindSessionRuntime,
@@ -201,6 +201,13 @@ export async function handleWebSocketMessage(
       // It is NAMESPACED by the issuing surface first (spec §3.8) — the dedup
       // record is session-scoped and durable, so with N windows on one session
       // two that reuse a value would silently suppress the second message.
+      //
+      // THE FLOOR IS CLAIMED HERE, not up at the gate: a claim is made on
+      // behalf of an input that is actually going to be submitted, and the two
+      // lines above can still fail. Claiming before them burns the floor for a
+      // message that ended in `orchestrator_unavailable` and refuses a peer for
+      // a dispatch that did nothing (command-mediator.ts).
+      if (!claimInputFloor({ type: "text.input" }, ws, services.sessionRegistry)) return;
       runtime.submit({
         kind: "conversational",
         text: msg.text,
@@ -580,15 +587,23 @@ function ensureSttSession(ws: ServerWebSocket<SessionData>, services: GatewaySer
     getRuntime: () => ws.data.runtime,
     // A SPOKEN INPUT IS AN INPUT (spec §8.3: "this applies to every input form:
     // mic onset, text, or anything later"), so it goes through the same gate —
-    // at the TRANSCRIPT, which is the moment mic bytes become a command, and
-    // which is why binary frames need no binding of their own
-    // (command-mediator.ts). It carries no `{sessionId, generation}` because the
-    // client never stamped one: the connection's attachment as it stands right
-    // now is authoritative, and that is strictly more current than anything the
-    // client could have stamped when it opened the mic.
+    // at the TRANSCRIPT, which is the moment mic bytes become a command.
+    //
+    // AN EMPTY BINDING, BY CONSTRUCTION: the client never stamped one, so this
+    // decides whether the speaker may submit NOW, against the attachment as it
+    // stands now. It follows that a transcript can never be refused
+    // `stale_generation` — there is no claimed pair to be stale. What stops
+    // words captured in the session this connection has LEFT from landing here
+    // is `detachSession` discarding the uplink on every leave
+    // (session-binding.ts); it is not this call, and it cannot be.
     getRuntimeForInput: (text) => {
       if (!mediate(ws, services, {}, "transcript")) return null;
-      return ensureBoundRuntime(ws, services, text);
+      const runtime = ensureBoundRuntime(ws, services, text);
+      if (runtime === null) return null;
+      // Same ordering as `text.input`: the floor is claimed only once there is
+      // a runtime to submit to.
+      if (!claimInputFloor({ type: "transcript" }, ws, services.sessionRegistry)) return null;
+      return runtime;
     },
   });
   ws.data.stt = session;

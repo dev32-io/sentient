@@ -115,8 +115,16 @@ export interface SessionData {
    * close event detaches nothing.
    *
    * NON-NULL IFF `runtime` IS. Both are set by one attach and cleared by one
-   * detach, and `conversationId` names the session the attachment is in for
-   * exactly that window — `detachSession` reads the pair together.
+   * detach.
+   *
+   * IT IS THE ONLY AUTHORITY ON WHICH SESSION THIS WINDOW IS IN (task 9).
+   * `detachSession`, `permission.response` and the command mediator all read
+   * `attachment.sessionId`, NOT `conversationId` — pairing the window with a
+   * session id from a second field held only while an ordering invariant did,
+   * across every bind, detach and switch. `conversationId` remains the record
+   * of which session this connection RESOLVED (it survives a failed bind, which
+   * is what makes the late re-bind retry the right one); it is not a routing
+   * input.
    *
    * Task 9 validates every command frame against `generation`; the logging
    * contract (spec §7.3) carries `attachmentId` on every command, permission

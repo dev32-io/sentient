@@ -25,23 +25,34 @@
 //   - `ping` and `user.preferences.patch`. Neither acts on a session — one is
 //     transport liveness, the other writes a user profile.
 //   - INBOUND BINARY AUDIO. The connection's attachment is authoritative for
-//     mic bytes; see `audioBindsToTheConnection` below for the reasoning, which
-//     is the deliberate decision §3.7 asks for rather than an omission.
+//     mic bytes — the deliberate decision §3.7 step 9 asks for rather than an
+//     omission. The reasoning, and the control that makes it sound, are stated
+//     under "WHY BINARY AUDIO IS NOT STAMPED" below.
 //
-// ORDER IS PART OF THE CONTRACT: credential, then binding, then arbitration. A
-// window whose token expired must not win an input race on its way out, and a
-// command aimed at a session this connection has left must not consume that
-// session's input floor.
+// TWO PHASES, AND THE SPLIT IS LOAD-BEARING. `mediateCommand` (credential, then
+// binding) runs BEFORE the runtime is resolved, because on a draft that
+// resolution MINTS a session and a stale-generation command must never mint one.
+// `claimInputFloor` (arbitration) runs AFTER it, because a floor claim is made
+// on behalf of an input that is actually going to be submitted — claiming first
+// burns the floor for a message that ended in `orchestrator_unavailable` and
+// refuses a peer for a dispatch that did nothing. Both phases live here; the
+// switch arms hold no logic of their own.
+//
+// ORDER WITHIN PHASE ONE IS ALSO THE CONTRACT: credential, then binding. A
+// window whose token expired must not be able to act on its way out.
 
 import type { CommandRefusal, CommandRejectedMessage } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import { getLog } from "../logging/logger.js";
 import { detachSession } from "./session-binding.js";
-import type { SessionRegistry } from "./session-registry.js";
+import type { Attachment, SessionRegistry } from "./session-registry.js";
 import type { SessionData } from "./ws-helpers.js";
 import { sendConnectionFrame } from "./ws-send.js";
 
 const log = getLog(["sentient", "ws", "command-mediator"]);
+
+/** RFC 6455 policy violation — the same code the auth gate closes on. */
+const WS_CLOSE_POLICY = 1008;
 
 /**
  * What the mediator can be asked about.
@@ -85,21 +96,6 @@ export type CommandVerdict =
   | { accept: false; reason: CommandRefusal };
 
 /**
- * Commands that count as INPUT for arbitration (§8.3: "this applies to every
- * input form: mic onset, text, or anything later").
- *
- * `audio.start` is NOT one. It arms the mic; it says nothing yet. Two windows
- * may both hold an open mic — refusing the second would break hold-to-talk in
- * every window but one. The contention §8.3 describes happens when a person
- * actually says something, which is `"transcript"`.
- *
- * `interrupt` is NOT one either, and that is §8.3 in its own words: "barge-in
- * from any window is honoured whenever it lands." Arbitrating Stop would let
- * one window's input lock out the only person watching a runaway reply.
- */
-const INPUT_COMMANDS: ReadonlySet<CommandKind> = new Set<CommandKind>(["text.input", "transcript"]);
-
-/**
  * Commands that cannot mean anything without a session.
  *
  * Only the permission answer. Everything else is reachable on a DRAFT and must
@@ -129,22 +125,41 @@ const DISCARDS_STT: ReadonlySet<CommandRefusal> = new Set<CommandRefusal>(["stal
 // uplink encoder and the STT wire in the same breath, for a stamp captured tens
 // of milliseconds before the session it names could possibly change.
 //
-// And it would buy nothing, because mic bytes are not a command. They become
-// one at the TRANSCRIPT, which IS mediated (`"transcript"` above) against the
-// connection's attachment as it stands at that moment — later, and therefore
-// more accurate, than any stamp. The hazard a stamp would close — "audio
-// captured before a switch is transcribed into the session after it" — is
-// closed instead by DISCARDING the uplink on a stale refusal (`DISCARDS_STT`),
-// which is strictly stronger: the bytes are dropped rather than allowed to
-// finalize anywhere.
+// THE HAZARD, AND WHERE IT IS ACTUALLY CLOSED. Bytes captured before a switch
+// must not be transcribed into the session after it. That is closed by
+// `detachSession` (session-binding.ts) discarding the uplink on EVERY leave —
+// not by anything in this file, and the distinction matters enough to state
+// plainly here, because the obvious-looking answer is wrong:
+//
+//   A drawer switch sends `conversation.activate`, which is deliberately
+//   UNSTAMPED — it is how a connection leaves — so no command is ever refused
+//   and this mediator never sees the switch at all. `DISCARDS_STT` below covers
+//   only the case where a client sends a STALE-stamped command afterwards, and
+//   the transcript path in particular can never reach it: `ws-handlers.ts`
+//   mediates a transcript with an EMPTY binding by construction, so
+//   `claimsSession` is false and `stale_generation` is unreachable for spoken
+//   input. The leave path is the only place that can be the control, so that is
+//   where the control lives.
+//
+// What remains true here: mic bytes are not a command; they become one at the
+// TRANSCRIPT, which IS mediated (`"transcript"` above) against the attachment as
+// it stands then. That is the right place to check WHETHER the speaker may
+// submit. It is not, and cannot be, the place that notices they walked out of
+// the room mid-sentence.
 
+/**
+ * [attachment] is passed rather than read off the socket because the
+ * `credential_expired` path DETACHES before it refuses: reading here would log
+ * `sessionId: null, attachmentId: null` for exactly the refusal whose whole
+ * point is naming the window that was cut off.
+ */
 function reject(
   cmd: InboundCommand,
   conn: ServerWebSocket<SessionData>,
   reason: CommandRefusal,
   detail: string,
+  attachment: Attachment | null = conn.data.attachment,
 ): CommandVerdict {
-  const attachment = conn.data.attachment;
   log.warn("command.refused", {
     connectionId: conn.data.sessionId,
     sessionId: attachment?.sessionId ?? null,
@@ -153,7 +168,11 @@ function reject(
     command: cmd.type,
     claimedSessionId: cmd.sessionId ?? null,
     claimedGeneration: cmd.generation ?? null,
-    reason: `${reason}: ${detail}`,
+    // TWO FIELDS, NOT ONE INTERPOLATED STRING. `reason` is the machine token a
+    // log query filters on; folding the prose into it makes
+    // `reason="session_busy"` match nothing.
+    reason,
+    detail,
   });
 
   if (DISCARDS_STT.has(reason)) discardUplink(conn, reason);
@@ -192,11 +211,15 @@ function discardUplink(conn: ServerWebSocket<SessionData>, reason: CommandRefusa
 }
 
 /**
- * Decide whether [cmd] may act, and on what.
+ * Decide whether [cmd] may act, and on what — credential, then binding.
  *
- * [nowMs] is injectable so arbitration is deterministic under test; production
- * always takes the default. It is NOT read from the client — a clock the caller
- * supplies would be an input to a security decision.
+ * ARBITRATION IS NOT HERE; it is `claimInputFloor` below, called by the input
+ * call sites AFTER they have a runtime. See that function for why the gate is
+ * two-phase.
+ *
+ * [nowMs] is injectable so the expiry check is deterministic under test;
+ * production always takes the default. It is NOT read from the client — a clock
+ * the caller supplies would be an input to a security decision.
  */
 export function mediateCommand(
   cmd: InboundCommand,
@@ -212,12 +235,41 @@ export function mediateCommand(
   // authorizing. Revalidated here, at the same choke point, and failing closed.
   const expiresAtMs = conn.data.tokenExpiresAtMs;
   if (expiresAtMs !== null && nowMs >= expiresAtMs) {
-    // DETACH, not merely refuse. §3.6 covers reads: a revoked principal that
-    // stays in the subscriber set keeps receiving every frame the session fans
-    // out. Dropping the attachment is what stops that, and it is done BEFORE
-    // the refusal is logged so the log line already reflects the new state.
+    // CLOSE THE SOCKET — detaching alone is not failing closed.
+    //
+    // Detaching stops the fan-out reaching this window, which is §3.6's "this
+    // covers reads too". But `session.configure`, `session.new` and
+    // `conversation.activate` are deliberately OUTSIDE this gate — they are how
+    // a connection changes session, so binding them to the session being left
+    // would make switching unreachable — and none of them checks expiry. So a
+    // detached connection re-attaches by sending any one of them and resumes
+    // reading every fanned-out frame, indefinitely, on a credential that
+    // expired hours ago. The detach would be undone by the next frame.
+    //
+    // A CLOSED SOCKET collapses that: it cannot read, cannot re-attach, and has
+    // to come back through the auth gate with a fresh expiry. The detach still
+    // runs first so the subscriber set is correct even if the close races.
+    //
+    // `code: "expired"` is `token-service.ts`'s own vocabulary for this, which
+    // is what mobile's `AuthErrorClass` already classifies as terminal (→ route
+    // to login) and what web converges on when its reconnect re-presents the
+    // dead token during `authenticating`.
+    const expired = conn.data.attachment;
     detachSession(conn, { sessionRegistry: registry });
-    return reject(cmd, conn, "credential_expired", "this connection's token expired — attachment dropped");
+    const verdict = reject(
+      cmd,
+      conn,
+      "credential_expired",
+      "this connection's token expired — attachment dropped and socket closing",
+      expired,
+    );
+    sendConnectionFrame(conn, {
+      type: "auth.error",
+      code: "expired",
+      message: "session token expired — please sign in again",
+    });
+    conn.close(WS_CLOSE_POLICY, "credential expired");
+    return verdict;
   }
 
   // ── 2. Binding (§3.7) ──
@@ -243,14 +295,6 @@ export function mediateCommand(
     return reject(cmd, conn, "not_attached", "this command needs a session and this connection is in none");
   }
 
-  // ── 3. Arbitration (§8.3) ──
-  if (attachment !== null && INPUT_COMMANDS.has(cmd.type)) {
-    const arbiter = registry.handlesFor(attachment.sessionId)?.arbiter ?? null;
-    if (arbiter !== null && !arbiter.claim(attachment.attachmentId, nowMs)) {
-      return reject(cmd, conn, "session_busy", "another window won this dispatch");
-    }
-  }
-
   log.debug("command.accepted", {
     connectionId: conn.data.sessionId,
     sessionId: attachment?.sessionId ?? null,
@@ -260,4 +304,45 @@ export function mediateCommand(
     bound: claimsSession,
   });
   return { accept: true, sessionId: attachment?.sessionId ?? null, attachmentId: attachment?.attachmentId ?? null };
+}
+
+/**
+ * PHASE TWO of the gate: take this session's input floor, or refuse
+ * `session_busy` (§8.3).
+ *
+ * WHY IT IS A SEPARATE PHASE, and why that is not the "sprinkled verb checks"
+ * this module exists to prevent. Both phases live in this one module and every
+ * input passes through both; what differs is WHEN. Phases 1 and 2 of
+ * `mediateCommand` must run BEFORE `ensureBoundRuntime`, because on a draft that
+ * call MINTS a session and a stale-generation command must never mint one. The
+ * floor must be claimed AFTER it, because a claim is a claim on behalf of an
+ * input that is actually going to be submitted — and `ensureBoundRuntime` can
+ * still fail (`orchestrator_unavailable`, no active LLM key). Claiming first
+ * burns the floor for a message that went nowhere and refuses a peer for a
+ * dispatch that did nothing.
+ *
+ * ONLY `text.input` AND `transcript` REACH HERE (§8.3: "every input form: mic
+ * onset, text, or anything later"). `audio.start` arms the mic and says nothing
+ * yet — two windows may both hold an open mic, and refusing the second would
+ * break hold-to-talk everywhere but one. `interrupt` is §8.3 in its own words:
+ * "barge-in from any window is honoured whenever it lands" — arbitrating Stop
+ * would let one window's typing lock out the only person watching a runaway
+ * reply.
+ */
+export function claimInputFloor(
+  cmd: InboundCommand,
+  conn: ServerWebSocket<SessionData>,
+  registry: SessionRegistry,
+  nowMs: number = Date.now(),
+): boolean {
+  const attachment = conn.data.attachment;
+  // A DRAFT has no session and therefore no floor to contend for. It is also
+  // the one place contention cannot matter: the mint is idempotent under the
+  // draft key, so two connections on one draft resolve to one session.
+  if (attachment === null) return true;
+  const arbiter = registry.handlesFor(attachment.sessionId)?.arbiter ?? null;
+  if (arbiter === null) return true;
+  if (arbiter.claim(attachment.attachmentId, nowMs)) return true;
+  reject(cmd, conn, "session_busy", "another window claimed this session's input floor at this dispatch");
+  return false;
 }

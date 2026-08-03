@@ -28,6 +28,16 @@
 // merely restores the pre-§3.8 behaviour for that pair rather than crossing any
 // boundary.
 //
+// A KNOWN GAP, RECORDED RATHER THAN PAPERED OVER. webui keeps its surface id in
+// sessionStorage, and the HTML Living Standard COPIES sessionStorage into a
+// duplicated browsing context — so browser "Duplicate Tab" yields two windows
+// sharing one surface id and therefore one namespace, which is the single
+// scenario §3.8 exists to separate. Nothing collides today because both SDKs
+// mint each `pendingId` with `crypto.randomUUID()`, so the values never repeat
+// in the first place; this namespace is defence for a client that does not.
+// Closing it needs a per-window id that survives that copy, which sessionStorage
+// by definition cannot give.
+//
 // LEGACY ROWS PASS THROUGH UNCHANGED. Stores written before this change hold
 // bare client values, and `unscopePendingId` returns anything that does not
 // carry the prefix verbatim. A raw UUID can never be mistaken for a scoped id:

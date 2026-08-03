@@ -426,6 +426,29 @@ export function detachSession(
     // with nobody left to hear it — see `SessionRuntime.cutUnheardSpeech`.
     if (remaining === 0) services.sessionRegistry.handlesFor(sessionId)?.runtime.cutUnheardSpeech();
   }
+  // DROP THE MIC UPLINK'S IN-FLIGHT UTTERANCE, and this line is what makes
+  // "binary audio binds to the CONNECTION rather than to a stamped header"
+  // (command-mediator.ts) a sound decision instead of a claim.
+  //
+  // Mic bytes carry no `{sessionId, generation}`. They are captured under the
+  // attachment this connection held WHEN THE PERSON SPOKE, and they become a
+  // command only later, at the transcript. Without this, an utterance begun in
+  // chat A survives a drawer switch and finalizes into chat B: the STT socket
+  // is untouched, `micOpen` is still true, and the next `audio.end` — carrying
+  // the NEW binding, so perfectly valid — force-flushes words spoken into a
+  // conversation the person has left. Semantic turn-end reaches the same place
+  // with no client frame at all, and a mic onset would barge into B's turn for
+  // every window on it.
+  //
+  // IT HAS TO BE HERE RATHER THAN ON A REFUSAL PATH. A drawer switch sends
+  // `conversation.activate`, which is deliberately UNSTAMPED — it is how a
+  // connection LEAVES — so nothing is ever refused and the mediator never sees
+  // it. Every leave funnels through this function.
+  //
+  // `discard()`, never `close()`: the person is still holding the talk button
+  // (`micOpen` survives, `uplinkEpoch` disowns an in-flight connect, the next
+  // frame re-dials). They changed conversation, not their mind about speaking.
+  ws.data.stt?.discard();
   ws.data.attachment = null;
   ws.data.runtime = null;
   // Held per connection but OWNED by the session: cleared here so a socket
