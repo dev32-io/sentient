@@ -28,14 +28,17 @@ package io.sentient.mobilesdk.transport
 import io.sentient.mobilesdk.dev.FaultHooks
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.ClientMessage
+import io.sentient.mobilesdk.protocol.CommandBinding
 import io.sentient.mobilesdk.protocol.ServerMessage
 import io.sentient.mobilesdk.protocol.WireJson
+import io.sentient.mobilesdk.protocol.stampCommandBinding
 import io.sentient.mobilesdk.result.SentientError
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonElement
 
 /**
  * Send/receive wrapper over one open [WebSocketSession].
@@ -72,10 +75,25 @@ class WsTransport(
         scope.launch { pump() }
     }
 
-    /** Encode [msg] via WireJson and send as a text frame. Logs type only. */
+    /**
+     * This connection's `{sessionId, generation}` attachment, or null while it
+     * holds none — a draft, or the moment before the gateway's first
+     * `session.attached` lands (gateway spec §3.7).
+     *
+     * WRITTEN BY THE SDK, READ ONLY HERE. It lives on the transport because
+     * [send] is the ONE place a control frame is encoded, which is what makes
+     * "every command is stamped" structural rather than a rule five call sites
+     * have to remember. It dies with the transport, exactly as the attachment it
+     * describes dies with the socket.
+     */
+    var commandBinding: CommandBinding? = null
+
+    /** Encode [msg] via WireJson, stamp the §3.7 binding, send as a text frame.
+     *  Logs type only. */
     suspend fun send(msg: ClientMessage) {
-        val frame = WireJson.instance.encodeToString(ClientMessage.serializer(), msg)
-        log.debug("send", mapOf("type" to msg::class.simpleName))
+        val stamped = stampCommandBinding(msg, commandBinding)
+        val frame = WireJson.instance.encodeToString(JsonElement.serializer(), stamped)
+        log.debug("send", mapOf("type" to msg::class.simpleName, "bound" to (commandBinding != null)))
         session.sendText(frame)
     }
 

@@ -259,6 +259,40 @@ sealed class ServerMessage {
         val ts: Long,
     ) : ServerMessage()
 
+    /**
+     * "You are now window number [generation] on [sessionId]" (gateway spec §3.7).
+     *
+     * Sent on EVERY attach — handshake, mint, re-bind, activate — and it is the
+     * only source of the pair every outbound command is stamped with. The stamp
+     * is what lets the gateway tell a command issued before a session switch
+     * from one issued after it, and refuse the stale one instead of applying it
+     * to the wrong conversation.
+     *
+     * Arrives BEFORE session.ready / session.created / session.switched, so the
+     * binding is never behind the session id it belongs to.
+     */
+    @Serializable @SerialName("session.attached")
+    data class SessionAttached(
+        val sessionId: String,
+        val generation: Int,
+    ) : ServerMessage()
+
+    /**
+     * The gateway REFUSED a command this client sent (gateway spec §3.7).
+     *
+     * Never silence: a dropped command is indistinguishable from a lost network
+     * and leaves the UI waiting on a reply that is never coming. [reason] is one
+     * of `stale_generation` (issued against a session this app has left — do not
+     * retry), `session_busy` (another window won a simultaneous input race —
+     * retryable at once), `not_attached`, or `credential_expired`.
+     */
+    @Serializable @SerialName("command.rejected")
+    data class CommandRejected(
+        val command: String,
+        val reason: String,
+        val pendingId: String? = null,
+    ) : ServerMessage()
+
     /** Error frame for lifecycle operations (e.g. forbidden on re-establish switch).
      *  requestId is optional — conversation.activate errors have no requestId. */
     @Serializable @SerialName("sessions.error")

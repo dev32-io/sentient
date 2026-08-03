@@ -208,6 +208,16 @@ function AppInner() {
   useEffect(() => {
     prefsSeededRef.current = false;
   }, [token]);
+  // A REFUSED COMMAND, surfaced. There is no optimistic echo in this UI — a
+  // message the gateway refuses simply never appears — so without this the
+  // person watches their text vanish with no explanation. Consumed on show, so
+  // an identical second refusal still raises a second toast.
+  const commandRejection = client.commandRejection.value;
+  useEffect(() => {
+    if (commandRejection === null) return;
+    toast.show(commandRejection, "error");
+    client.commandRejection.value = null;
+  }, [commandRejection, toast, client.commandRejection]);
   useEffect(() => {
     if (prefsSeededRef.current) return;
     let cancelled = false;

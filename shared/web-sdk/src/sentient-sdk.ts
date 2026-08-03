@@ -1,3 +1,4 @@
+import { type CommandBindingState, createCommandBindingState } from "./command-binding.ts";
 import type {
   Connector,
   ReconnectConfig,
@@ -91,6 +92,9 @@ export class SentientSDK {
   private readonly deviceId: string;
   private readonly surfaceId: string;
   private readonly cursor: ResumeCursorState;
+  /** This tab's `{sessionId, generation}` attachment (gateway spec §3.7).
+   *  Stamped onto every outbound command in `sendRaw`. */
+  private readonly binding: CommandBindingState;
 
   private currentStatus: SDKStatus = "disconnected";
   private ws: WebSocket | null = null;
@@ -112,6 +116,7 @@ export class SentientSDK {
     this.deviceId = getOrCreateDeviceId();
     this.surfaceId = getOrCreateSurfaceId();
     this.cursor = createResumeCursor();
+    this.binding = createCommandBindingState();
     this.timers = createSdkTimers({
       onAuthTimeout: () => {
         this.lastErrorKind = "timeout";
@@ -144,6 +149,10 @@ export class SentientSDK {
       }
       // Clear stale handlers from prior socket — detach prevents N-stacked listeners.
       this.detachAll();
+      // An attachment dies with its socket. Carrying one across a reconnect
+      // would stamp the first command on the new socket with a generation the
+      // gateway has already retired, and it would be refused as stale.
+      this.binding.clear("connect");
       this.wireSessionPointerHandlers();
       this.presence?.clearIdleClosed();
       this.consumerDisconnected = false;
@@ -183,6 +192,7 @@ export class SentientSDK {
     this.timers.clearAll();
     this.clearStaleResumeTimer();
     this.detachAll();
+    this.binding.clear("disconnect");
     // Consumer-driven teardown ends the SESSION, not just the socket — so this
     // is the one path that drops connector session state. The reconnect path
     // (teardownWsForReconnect / softCloseForIdle) detaches only.
@@ -291,6 +301,30 @@ export class SentientSDK {
    * subscriptions) so the handlers stay live across reconnects.
    */
   private wireSessionPointerHandlers(): void {
+    // THE ATTACHMENT BINDING (gateway spec §3.7). Registered here rather than
+    // in a connector because it must be live from the moment the socket opens:
+    // the gateway sends `session.attached` from inside the bind, which is
+    // BEFORE `session.ready` — and connectors are attached only once ready
+    // arrives, so a connector-owned handler would miss the first one.
+    this.addMessageHandler("session.attached", (msg: unknown) => {
+      const m = msg as { sessionId?: string; generation?: number };
+      if (typeof m.sessionId !== "string" || typeof m.generation !== "number") return;
+      this.binding.attached({ sessionId: m.sessionId, generation: m.generation });
+    });
+    // A REFUSED COMMAND, said out loud. The gateway never silently drops one,
+    // so the consumer always gets a chance to act — re-enable a composer, drop
+    // a spinner, retry a `session_busy` — instead of waiting on a reply that is
+    // never coming.
+    this.addMessageHandler("command.rejected", (msg: unknown) => {
+      const m = msg as { command?: string; reason?: string; pendingId?: string };
+      sdkLog.warn("command.rejected", { command: m.command, reason: m.reason, pendingId: m.pendingId });
+      if (typeof m.command !== "string" || typeof m.reason !== "string") return;
+      this.config.onCommandRejected?.({
+        command: m.command,
+        reason: m.reason,
+        ...(m.pendingId === undefined ? {} : { pendingId: m.pendingId }),
+      });
+    });
     this.addMessageHandler("session.created", (msg: unknown) => {
       const m = msg as { sessionId?: string };
       if (m.sessionId) setCurrentSessionId(m.sessionId);
@@ -303,6 +337,11 @@ export class SentientSDK {
     this.addMessageHandler("session.draft", (msg: unknown) => {
       const m = msg as { draftKey?: string };
       if (m.draftKey) setCurrentSessionId(m.draftKey);
+      // A draft has NO attachment, so the binding must go with it. Keeping the
+      // previous session's pair would stamp it onto this draft's first
+      // `text.input` — the one frame that mints the next session — and the
+      // gateway would refuse it as stale. The chat would simply never start.
+      this.binding.clear("session.draft");
     });
     this.addMessageHandler("session.switched", (msg: unknown) => {
       const m = msg as { sessionId?: string };
@@ -454,7 +493,10 @@ export class SentientSDK {
       if (this.currentStatus === "ready" || this.currentStatus === "authenticating") this.reconnect.forceReconnect();
       return;
     }
-    this.ws.send(JSON.stringify(message));
+    // ONE STAMP SEAM (gateway spec §3.7). Every frame leaves through here, so
+    // a command cannot escape unbound and no connector has to remember to bind
+    // one — the client mirror of the gateway's own single choke point.
+    this.ws.send(JSON.stringify(this.binding.stamp(message)));
   }
 
   private sendBinaryRaw(data: ArrayBuffer | Uint8Array): void {

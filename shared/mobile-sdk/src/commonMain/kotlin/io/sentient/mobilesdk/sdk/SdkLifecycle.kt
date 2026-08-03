@@ -14,6 +14,7 @@ import io.sentient.mobilesdk.dev.FaultHooks
 import io.sentient.mobilesdk.log.Log
 import io.sentient.mobilesdk.protocol.Capabilities
 import io.sentient.mobilesdk.protocol.ClientMessage
+import io.sentient.mobilesdk.protocol.CommandBinding
 import io.sentient.mobilesdk.protocol.ServerMessage
 import io.sentient.mobilesdk.result.SentientError
 import io.sentient.mobilesdk.transport.ConnectResult
@@ -203,7 +204,28 @@ class SdkLifecycle(
             // client presents on configure and what unblocks the outbound
             // queue. It is replaced by the real id on the session.created the
             // first message triggers.
-            is ServerMessage.SessionDraft -> hooks.onSessionAnchored(msg.draftKey)
+            is ServerMessage.SessionDraft -> {
+                hooks.onSessionAnchored(msg.draftKey)
+                // A draft holds NO attachment (gateway spec §3.7). Keeping the
+                // previous session's binding would stamp it onto this draft's
+                // first text.input — the one frame that mints the next session —
+                // and the gateway would refuse it as stale. The chat would never
+                // start.
+                setCommandBinding(null, "session.draft")
+            }
+            // THE ATTACHMENT BINDING (gateway spec §3.7). Intercepted rather
+            // than routed to a connector: it must be live from the first frame
+            // the socket delivers, and connectors are wired later in the
+            // handshake.
+            is ServerMessage.SessionAttached ->
+                setCommandBinding(CommandBinding(msg.sessionId, msg.generation), "session.attached")
+            // A REFUSED COMMAND, said out loud rather than dropped. WARN because
+            // it always means a user action did not happen; the reason names
+            // whether retrying is the right move.
+            is ServerMessage.CommandRejected -> log.warn(
+                "command.rejected",
+                mapOf("command" to msg.command, "reason" to msg.reason),
+            )
             // A forbidden mid re-establish means the anchored session was revoked
             // elsewhere — the orchestrator drops the anchor so reconnects stop
             // re-firing a switch to a dead session.
@@ -220,6 +242,23 @@ class SdkLifecycle(
             else -> Unit
         }
         if (!intercepted) router.route(msg)
+    }
+
+    /**
+     * Park (or clear) the `{sessionId, generation}` pair every outbound command
+     * is stamped with.
+     *
+     * It lives on the TRANSPORT because `WsTransport.send` is the one place a
+     * control frame is encoded, so stamping there is structural rather than a
+     * rule every call site has to remember — and because an attachment dies with
+     * its socket, exactly as the transport does.
+     */
+    private fun setCommandBinding(binding: CommandBinding?, reason: String) {
+        transport?.commandBinding = binding
+        log.debug(
+            "command-binding",
+            mapOf("sessionId" to (binding?.sessionId ?: "none"), "generation" to (binding?.generation ?: 0), "reason" to reason),
+        )
     }
 
     // ── Transport signals → reconnect ──────────────────────────────────────────

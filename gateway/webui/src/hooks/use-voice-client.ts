@@ -67,6 +67,21 @@ export type { CycleStatus } from "./cycle-helpers.ts";
 
 const log = createLogger(["sentient", "webui", "voice-client"]);
 
+/**
+ * What a refused command says to the person who issued it (gateway spec §3.7).
+ *
+ * Each reason gets its own line because the right NEXT ACTION differs: retry a
+ * busy race, do not retry a stale one (it belonged to the conversation you
+ * left), sign in again on an expired credential.
+ */
+const COMMAND_REJECTION_COPY: Readonly<Record<string, string>> = {
+  session_busy: "Someone else was sending at the same moment — try again.",
+  stale_generation: "That message was meant for the previous chat, so it wasn't sent.",
+  not_attached: "That chat isn't open any more — reopen it and try again.",
+  credential_expired: "Your session expired. Please sign in again.",
+};
+const COMMAND_REJECTION_FALLBACK = "That didn't go through. Please try again.";
+
 // ---------------------------------------------------------------------------
 // Hook public interface
 // ---------------------------------------------------------------------------
@@ -129,6 +144,11 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
   const sdkStatus = useSignal<SDKStatus>("disconnected");
   const connectionLost = useSignal(false);
   const authExpired = useSignal(false);
+  // The gateway REFUSED the last command this tab sent (gateway spec §3.7) —
+  // human-readable, or null once nothing is outstanding. There is no optimistic
+  // echo in this UI: a message that is refused simply never appears, so without
+  // surfacing this the person sees their text vanish and nothing else happens.
+  const commandRejection = useSignal<string | null>(null);
 
   const sdkStatusRef = useRef<SDKStatus>("disconnected");
   const cognitionRef = useRef<CognitionState>("idle");
@@ -603,6 +623,10 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
         log.warn("auth-expired (gateway rejected token on reconnect)");
         authExpired.value = true;
       },
+      onCommandRejected: ({ command, reason }) => {
+        log.warn("command-rejected", { command, reason });
+        commandRejection.value = COMMAND_REJECTION_COPY[reason] ?? COMMAND_REJECTION_FALLBACK;
+      },
     });
     const sessionsConnector = new SessionsConnector({ rest: sessionsRest });
 
@@ -855,6 +879,8 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     sdkStatus,
     connectionLost,
     authExpired,
+    /** Copy for the last refused command, or null. Cleared by the consumer once shown. */
+    commandRejection,
     cycleStatus,
     currentTurnId,
     voiceMode,
