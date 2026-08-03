@@ -32,6 +32,7 @@ import type { TTSProviderFactory } from "../providers/tts/tts-types.ts";
 import { createPermissionBroker } from "../runtime/permission-broker.js";
 import type { CreateSessionRuntime } from "../runtime/session-handles.js";
 import { createSessionRuntime as buildSessionRuntime } from "../runtime/session-runtime.js";
+import { createTurnStateTracker } from "../runtime/turn-state-snapshot.js";
 import { createPolicyEngine } from "../security/policy-engine.js";
 import type { PolicyEngine } from "../security/policy-engine.js";
 import { loadMcpPolicy } from "../security/policy-loader.js";
@@ -505,7 +506,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
   const { orchestratorCfg, accessManager, provider, mcpClient, policyEngine, delegationGuard, hermesRunner } = deps;
   const { delegatedExternalTool } = deps;
 
-  return ({ principal, conversationId, connectionId, emitter, voice }) => {
+  return ({ principal, conversationId, connectionId, emitter: rawEmitter, voice }) => {
     if (!provider) {
       log.error("session-runtime.factory.no-provider", {
         userId: principal.userId,
@@ -517,6 +518,16 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
         "orchestrator provider unavailable — no active LLM key configured in the secrets store (admin > secrets)",
       );
     }
+
+    // ONE turn-state tracker for the whole session, wrapping the emitter BEFORE
+    // anything else takes it. This is the only scope that holds both the
+    // runtime and the permission broker, and both emit through this seam — so
+    // wrapping here is what puts open PROMPTS into a joining window's turn-state
+    // snapshot alongside the turn's text and tool tiles (session-model spec
+    // §7.2). Wrapping inside `createSessionRuntime` instead would see the
+    // runtime's frames and none of the broker's.
+    const turnState = createTurnStateTracker(conversationId);
+    const emitter = turnState.wrap(rawEmitter);
 
     // The broker's authorization input (spec §3.2) — minted from the SAME
     // AccessManager that grants the store's own capability in
@@ -633,6 +644,9 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       provider: provider.forUser(principal.userId),
       broker,
       emitter,
+      // Already wrapping `emitter` above — handed in so the runtime does not
+      // wrap a second time and double every delta into `textSoFar`.
+      turnState,
       systemPrompt: resolveSystemPrompt(),
       config: orchestratorCfg,
       voice: voice ?? null,

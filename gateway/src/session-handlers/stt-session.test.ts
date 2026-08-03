@@ -15,6 +15,7 @@ import type { TurnMode } from "@sentient/protocol";
 import type { STTAdapter, STTAdapterConfig, STTEvent } from "../adapters/stt/stt-adapter-types.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { Stimulus } from "../runtime/stimulus.js";
+import { EMPTY_TURN_STATE } from "../runtime/turn-state-snapshot.js";
 import { createSttSession } from "./stt-session.js";
 
 const TEST_CONFIG: STTAdapterConfig = {
@@ -118,6 +119,7 @@ function stubRuntime(): StubRuntime {
       bargeIns.push("barge-in");
     },
     interrupt: () => {},
+    turnState: EMPTY_TURN_STATE,
     emitConversationSnapshot: () => {},
   };
   return { runtime, submitted, bargeIns };

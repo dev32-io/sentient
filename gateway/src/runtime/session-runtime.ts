@@ -109,6 +109,7 @@ import type { ReactLoopDeps } from "./react-loop.js";
 import { type TurnOutcome, runTurn } from "./react-loop.js";
 import type { Stimulus } from "./stimulus.js";
 import type { TurnEmitter } from "./turn-emitter.js";
+import { type TurnStateSnapshot, type TurnStateTracker, createTurnStateTracker } from "./turn-state-snapshot.js";
 import type { TurnVoice, TurnVoiceStream } from "./turn-voice.js";
 
 const log = getLog(["sentient", "runtime", "session-runtime"]);
@@ -167,6 +168,16 @@ export interface SessionRuntime {
    *  recovered resume replays the exact frames the client missed instead.
    *  A no-op after `dispose()`. */
   emitConversationSnapshot(): void;
+  /**
+   * The in-flight turn as a window that was not there needs to see it (spec
+   * §7.2) — active turn, text so far, running tools, open prompts, audio
+   * bracket. Read at ATTACH time and re-derived live; never journaled.
+   *
+   * A GETTER, and it must stay one: a joiner's snapshot has to be captured
+   * atomically with the journal watermark (fan-out-emitter.ts), so a latched
+   * value would describe a turn that has already moved on.
+   */
+  readonly turnState: TurnStateSnapshot;
 }
 
 export interface SessionRuntimeDeps {
@@ -200,6 +211,19 @@ export interface SessionRuntimeDeps {
   provider: ProviderClient;
   broker: ToolBroker;
   emitter: TurnEmitter;
+  /**
+   * Collects the in-flight turn's state off the emitter seam, for
+   * `SessionRuntime.turnState`.
+   *
+   * OPTIONAL, and the two shapes mean different things. Omitted, the runtime
+   * builds its own and wraps `emitter` itself — right for a headless harness or
+   * a text-only session. Supplied, it MUST already be wrapping `emitter`
+   * (`tracker.wrap(...)`), because the composition root shares one tracker
+   * between this runtime and the session's permission broker so open PROMPTS
+   * are in the snapshot too — the broker emits through the same seam, and the
+   * runtime cannot wrap on its behalf.
+   */
+  turnState?: TurnStateTracker;
   systemPrompt: string;
   config: OrchestratorConfig;
   /**
@@ -259,7 +283,12 @@ function stimulusPendingId(stimulus: Stimulus): string | undefined {
 }
 
 export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
-  const { principal, sessionId, accessManager, provider, broker, emitter, systemPrompt, config } = deps;
+  const { principal, sessionId, accessManager, provider, broker, systemPrompt, config } = deps;
+  const turnState = deps.turnState ?? createTurnStateTracker(sessionId);
+  // Wrapped HERE only when the caller did not: a supplied tracker is already
+  // wrapping `deps.emitter` (see the field's doc), and wrapping twice would
+  // double every delta into `textSoFar`.
+  const emitter = deps.turnState === undefined ? turnState.wrap(deps.emitter) : deps.emitter;
   const voice = deps.voice ?? null;
   const userId = principal.userId;
 
@@ -772,5 +801,11 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     bargeIn: whenLive("bargeIn", cancellation.bargeIn),
     interrupt: whenLive("interrupt", cancellation.interrupt),
     emitConversationSnapshot: whenLive("emitConversationSnapshot", () => feed.snapshot()),
+    // Deliberately NOT `whenLive`: a disposed runtime has no in-flight turn, so
+    // the honest answer is an empty snapshot rather than a WARN — an attach
+    // racing a disposal is a normal path, not a fault.
+    get turnState() {
+      return turnState.snapshot();
+    },
   };
 }
