@@ -8,7 +8,7 @@
 
 **Artifacts:**
 
-- `screenshots/` — 8 PNGs at decision points.
+- `screenshots/` — 8 PNGs at decision points. **Local-only, and deliberately so:** `.gitignore:82` ignores `*.png` repo-wide (with named exceptions for `public/`, `icons/`, `Assets.xcassets/`), and no evidence package in this repo tracks a screenshot — `git ls-files qa/ | grep -c '\.png$'` is `0` against 41 tracked `.txt` files. Every claim in the table below therefore rests on a **committed** log or a SQL count, never on a screenshot. The PNGs corroborate; they are not load-bearing. Filenames are listed per row so a re-driver can regenerate them.
 - `gateway-log-session-model-filtered.txt` — **a grep-filtered selection**, not a contiguous window. 144 lines, each verbatim from `~/.sentient/gateway/logs/2026-08-03.log`, but selected by an event-name filter: it carries the session/attach/arbiter/permission/retention/titler lines and **no turn-level lines at all**. Inter-line gaps reach 481 s. Read it as an index, never as a transcript.
 - `gateway-log-turn-level-oracles.txt` — **contiguous windows** (no filtering *inside* a block), carrying the turn- and frame-level lines the filtered file cannot support: `stream-start messageCount` 4 → 2 for row 1, `session-configure.draft.fresh` for row 4, `turn-emitter.turn-started trigger="background-completion"` for row 30, plus the arbitration, steer, interrupt, join and expiry windows behind rows 11–15, 19, 21, 22, 27 and 33. Source line numbers are preserved so every line can be located in the day's log.
 - `d21-stale-resume-console-excerpt.txt` — unedited browser console (renamed off `.log`; see the note below).
