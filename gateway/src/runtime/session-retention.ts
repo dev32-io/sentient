@@ -67,11 +67,14 @@ export interface SessionWorkSignals {
   /** A permission prompt is open and unanswered. */
   readonly hasOutstandingPrompt: boolean;
   /**
-   * Task 10's auxiliary-task runner (session titling) has no producer yet.
-   * The input is wired NOW, returning `false`, so the term exists in the
-   * predicate and in the reason list from the day the runner lands — task 10
-   * replaces the constant with the runner's own getter and changes nothing
-   * else.
+   * An auxiliary task (spec §6) is running for this session — session titling
+   * today; tags, follow-up suggestions and summarisation as they land.
+   *
+   * THE ONLY TERM THAT CAN HOLD A SESSION WITH NO TURN RUNNING. An auxiliary
+   * task starts from a turn's SETTLE continuation, so `isTurnInFlight` is
+   * already false by the time it registers: without this term, the last window
+   * closing in the ~1s between the reply and the title disposes the runtime,
+   * closes the store handle, and the title lands nowhere.
    */
   readonly hasAuxiliaryTaskInFlight: boolean;
   /**

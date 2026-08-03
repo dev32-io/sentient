@@ -55,13 +55,10 @@ function testConfig(maxIterations = 10): OrchestratorConfig {
       hermes_profile_create_timeout_ms: 30000,
       hermes_mcp_register_timeout_ms: 30000,
     },
-    // OFF for every pre-existing case: compaction adds a second provider
-    // call at turn end, which would silently change the call-index
-    // assertions those cases are built on. The compaction case below
-    // builds its own config with it enabled.
-    // ON, and its template + schema are the REAL ones: every case in this file
-    // that leaves the `sessions` row absent therefore proves titling declines
-    // to run rather than proving it was configured off.
+    // AUXILIARY: ON, with the REAL template and schema. Every case in this
+    // file that leaves the `sessions` row absent therefore proves titling
+    // DECLINES to run, rather than proving it was configured off. Only the
+    // titling cases at the bottom call `seedSessionRow`.
     auxiliary: {
       enabled: true,
       template_dir: "system_prompts/auxiliary",
@@ -72,6 +69,10 @@ function testConfig(maxIterations = 10): OrchestratorConfig {
       title_word_target: 5,
       title_max_chars: 60,
     },
+    // COMPACTION: OFF for every pre-existing case — it adds a second provider
+    // call at turn end, which would silently change the call-index assertions
+    // those cases are built on. The compaction case below builds its own
+    // config with it enabled.
     compaction: {
       enabled: false,
       compact_threshold_tokens: 24000,
@@ -2197,6 +2198,59 @@ describe("SessionRuntime — titling fires on the first COMPLETED reply", () => 
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(auxiliaryCallCount(provider)).toBe(1);
 
+    runtime.dispose();
+  });
+
+  it("INVARIANT: a turn completing while a title is still generating does not fire a second call", async () => {
+    // The store is written only AFTER the round trip returns, so the
+    // `title !== null` gate is still open for its whole duration — the
+    // sequential case above cannot catch this. A second completed turn inside
+    // that window used to buy a duplicate provider call whose write the CAS
+    // then refused: correct, and paid for twice.
+    const am = createAccessManager({ userDataRoot: `${ROOT}/case-title-concurrent` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+    seedSessionRow(am, alice, "sess-title-concurrent");
+
+    let releaseTitle: (() => void) | undefined;
+    const titleGate = new Promise<void>((resolve) => {
+      releaseTitle = resolve;
+    });
+
+    const provider = fakeProvider(async function* (_callIndex, req) {
+      if (req.reasoningEffort !== undefined) {
+        await titleGate;
+        yield { type: "text", content: '{"title":"Only once"}' };
+        yield { type: "done", finishReason: "stop" };
+        return;
+      }
+      yield { type: "text", content: "an answer" };
+      yield { type: "done", finishReason: "stop" };
+    });
+
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-title-concurrent",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter: recordingEmitter(),
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "first" });
+    await waitFor(() => auxiliaryCallCount(provider) === 1);
+
+    // A SECOND turn completes while the first title is still out — the store
+    // still says `title === null`, so only the in-flight gate can refuse it.
+    runtime.submit({ kind: "conversational", text: "second" });
+    await waitUntilIdle(runtime);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(auxiliaryCallCount(provider)).toBe(1);
+
+    releaseTitle?.();
+    await waitFor(() => !runtime.hasAuxiliaryTaskInFlight);
     runtime.dispose();
   });
 

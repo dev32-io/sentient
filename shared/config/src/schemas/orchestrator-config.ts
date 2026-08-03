@@ -127,6 +127,9 @@ export const orchestratorConfigSchema = z.object({
       // OPERATOR OVERRIDE directory, same root, consulted FIRST. A file here
       // wins over the baked-in one of the same name, so an operator can
       // retune a prompt without a rebuild. Missing is the normal case.
+      // Survives a restart but NOT an upgrade — it resolves inside the
+      // installed release's asset root, and each deploy is a new versioned
+      // dir. See config.yaml for the full caveat.
       override_dir: z.string().min(1).default("config/auxiliary"),
       // Output cap for one auxiliary call. A structured answer of a few words
       // needs nothing like the loop's answer cap, and an auxiliary call that

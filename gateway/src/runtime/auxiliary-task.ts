@@ -136,8 +136,22 @@ function truncateTo(value: string, allowance: number): string {
  * The TEMPLATE ITSELF IS NEVER TRUNCATED. Bounding the rendered prompt instead
  * would hit the same length target while amputating whatever instruction sits
  * at the end of the file — which is where "answer with JSON only" lives.
+ *
+ * A NAME MISMATCH IS REPORTED, NOT SWALLOWED. An unmatched `{{placeholder}}`
+ * renders literally and the model is asked to title a conversation it was
+ * never shown; a supplied-but-unused variable silently eats budget from the
+ * ones that ARE substituted. Both are pure typos, both survive every test that
+ * asserts on the answer, and every future caller of this seam inherits the
+ * silence — so the mismatch is named in the log rather than left for someone
+ * to notice in a prompt dump. DEBUG, not WARN: it is a template-authoring
+ * signal, not a degraded path, and the e2e gate reads WARNs as failures.
  */
-export function renderAuxiliaryPrompt(template: string, variables: Record<string, string>, budget: number): string {
+export function renderAuxiliaryPrompt(
+  template: string,
+  variables: Record<string, string>,
+  budget: number,
+  onNameMismatch?: (unmatched: string[], unused: string[]) => void,
+): string {
   const names = Object.keys(variables);
   const allowance = allocateBudget(
     names.map((name) => variables[name] ?? ""),
@@ -145,7 +159,19 @@ export function renderAuxiliaryPrompt(template: string, variables: Record<string
   );
   const bounded = new Map<string, string>();
   names.forEach((name, index) => bounded.set(name, truncateTo(variables[name] ?? "", allowance[index] ?? 0)));
-  return template.replace(PLACEHOLDER, (whole, name: string) => bounded.get(name) ?? whole);
+
+  const seen = new Set<string>();
+  const rendered = template.replace(PLACEHOLDER, (whole, name: string) => {
+    seen.add(name);
+    return bounded.get(name) ?? whole;
+  });
+
+  if (onNameMismatch !== undefined) {
+    const unmatched = [...seen].filter((name) => !bounded.has(name));
+    const unused = names.filter((name) => !seen.has(name));
+    if (unmatched.length > 0 || unused.length > 0) onNameMismatch(unmatched, unused);
+  }
+  return rendered;
 }
 
 /**
@@ -205,7 +231,22 @@ async function collectAnswer<T>(
     });
     return null;
   } finally {
-    await stream?.return(undefined);
+    // A throw from the `finally` is NOT caught by its own try's catch — it
+    // replaces whatever the block was doing and escapes this "never throws"
+    // seam into the caller's detached continuation, where Bun exits the
+    // process on the unhandled rejection. A generator whose cleanup path
+    // throws is unusual but entirely expressible, and nothing else here would
+    // stop it.
+    try {
+      await stream?.return(undefined);
+    } catch (err) {
+      log.warn("auxiliary-task.stream-cleanup-failed", {
+        userId: deps.userId,
+        sessionId: deps.sessionId,
+        taskName: deps.taskName,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
   return answer;
 }
@@ -228,7 +269,23 @@ export async function runAuxiliaryTask<T>(req: AuxiliaryTaskRequest<T>, deps: Au
   if (template === null) return fail("template-missing", { templatePath: req.templatePath });
   if (deps.signal.aborted) return fail("aborted");
 
-  const prompt = renderAuxiliaryPrompt(template, req.variables, deps.config.input_truncation_chars);
+  const prompt = renderAuxiliaryPrompt(
+    template,
+    req.variables,
+    deps.config.input_truncation_chars,
+    (unmatched, unused) => {
+      log.debug("auxiliary-task.template-variable-mismatch", {
+        userId,
+        sessionId,
+        taskName,
+        templatePath: req.templatePath,
+        // NAMES only — a variable's VALUE is conversation content.
+        unmatchedPlaceholders: unmatched.join(","),
+        unusedVariables: unused.join(","),
+        reason: "template placeholders and supplied variables do not line up — check the .md against its caller",
+      });
+    },
+  );
   const startedAt = Date.now();
   log.debug("auxiliary-task.start", {
     userId,

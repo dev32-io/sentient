@@ -319,6 +319,13 @@ orchestrator:
     # OPERATOR OVERRIDE dir, same root, consulted FIRST. Drop a file of the
     # same name here to retune a prompt without a rebuild. Normally absent —
     # a miss is logged at DEBUG, not WARN, because absence is the usual state.
+    #
+    # SURVIVES A RESTART, NOT AN UPGRADE. This resolves inside the INSTALLED
+    # RELEASE's asset root, and setup-prod.py installs each upgrade into a new
+    # versioned dir — so an override written here is left behind by the next
+    # deploy and the baked-in template silently takes over again. Same caveat
+    # as every other operator file under the release root; re-apply after an
+    # upgrade, or keep the edit in the repo template instead.
     override_dir: config/auxiliary
     # Output cap for ONE auxiliary call (32-2000). A structured five-word
     # answer needs nothing like the loop's 8000-token answer cap, and every

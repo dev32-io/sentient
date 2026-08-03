@@ -77,6 +77,18 @@ const WS_READY_STATE_OPEN = 1;
  *  told, so both SDKs treat it as retryable and reconnect with their cursor. */
 const WS_CLOSE_TRY_AGAIN_LATER = 1013;
 
+/**
+ * Frames whose producer DELIBERATELY outlives its audience, so reaching zero
+ * windows is a normal path rather than "the session has gone dark".
+ *
+ * `session.title` is the first: an auxiliary task (spec §6) is started from a
+ * turn's settle continuation and derived retention holds the session open for
+ * it on purpose, so closing the tab inside the ~1s generation window lands the
+ * title with nobody attached. Journaling still carries it into a resume. See
+ * `noteDelivery` for why these do not disturb the WARN transition.
+ */
+const AUDIENCE_OPTIONAL_FRAMES: ReadonlySet<string> = new Set(["session.title"]);
+
 /** One buffered frame, held for an attachment that has not been released yet. */
 interface HeldFrame {
   readonly seq: number;
@@ -230,12 +242,30 @@ export function createFanOutTurnEmitter(deps: FanOutEmitterDeps): FanOutTurnEmit
     }
   }
 
-  /** One WARN when the session stops reaching anyone, one INFO when it starts
-   *  again; DEBUG for every frame in between. */
+  /**
+   * One WARN when the session stops reaching anyone, one INFO when it starts
+   * again; DEBUG for every frame in between.
+   *
+   * EXCEPT for the frames in `AUDIENCE_OPTIONAL_FRAMES`, which are DEBUG at
+   * zero windows and leave `wasDelivering` alone. A frame emitted by work that
+   * DELIBERATELY outlives its audience — derived retention keeps a session
+   * resident precisely so an auxiliary task can finish (session-retention.ts's
+   * `hasAuxiliaryTaskInFlight`) — reaching nobody is the designed path, not a
+   * fault: close the tab within a second of the reply and the title lands with
+   * no window attached. It is still journaled, so a resume replays it.
+   *
+   * `wasDelivering` is untouched rather than set false, so one of these can
+   * neither raise a spurious WARN nor MASK the next real one by making the
+   * session look already-dark.
+   */
   function noteDelivery(frameType: string, turnId: string | null, delivered: number, windows: number): void {
     if (delivered > 0) {
       if (!wasDelivering) log.info("fan-out.delivering", { sessionId, turnId, frameType, windows });
       wasDelivering = true;
+      return;
+    }
+    if (AUDIENCE_OPTIONAL_FRAMES.has(frameType)) {
+      log.debug("fan-out.undelivered-audience-optional", { sessionId, turnId, frameType, windows });
       return;
     }
     if (wasDelivering) {

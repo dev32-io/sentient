@@ -113,7 +113,11 @@ const FRAME_LANES: Record<GatewayMessage["type"], FrameLane> = {
   "delegation.progress": "session",
   "conversation.entry": "session",
   // Titling (spec §6) lands as a session-lane frame so every attached window
-  // renames live. Task 10 wires its emitter.
+  // renames live. Emitted by `TurnEmitter.sessionTitle` (runtime/titler.ts is
+  // the only producer today). It is the one session-lane frame that can
+  // legitimately reach ZERO windows — the auxiliary task that produces it
+  // deliberately outlives its audience — which is why fan-out-emitter.ts's
+  // `AUDIENCE_OPTIONAL_FRAMES` exempts it from the went-dark WARN.
   "session.title": "session",
 };
 

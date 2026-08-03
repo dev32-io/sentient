@@ -50,8 +50,13 @@ export const TITLE_FALLBACK = "truncated-first-message";
 const ELLIPSIS = "…";
 
 /** The structured answer. One field, because a title is one field — a schema
- *  is what lets the seam serve tasks whose answers share nothing. */
-const titleAnswerSchema = z.object({ title: z.string().min(1) });
+ *  is what lets the seam serve tasks whose answers share nothing.
+ *
+ *  `.trim()` BEFORE `.min(1)`: a bare `min(1)` accepts `"   "`, which
+ *  `boundTitle` then cleans to `""` — a session titled with an empty string,
+ *  no fallback (the answer "succeeded"), and never retried because it is no
+ *  longer null. */
+const titleAnswerSchema = z.object({ title: z.string().trim().min(1) });
 
 /** Entry kinds the opening slice is built from — what was SAID, never the
  *  loop's own tool traffic or a compaction marker. */
@@ -119,8 +124,13 @@ function firstUserMessage(entries: readonly SessionEntry[]): string | null {
  * validated away before it leaves the gateway (fan-out-emitter.ts), which looks
  * from the outside exactly like the generator never running.
  */
-function boundTitle(raw: string, maxChars: number): string {
+function boundTitle(raw: string, maxChars: number): string | null {
   const clean = raw.replace(/\s+/gu, " ").trim();
+  // NULL, NOT "". An empty title is worse than no title: it is not null, so
+  // nothing ever retries it, and the row renders blank forever. The schema
+  // already trims, so reaching here means the model answered in characters
+  // that collapse to nothing — belt to that brace.
+  if (clean.length === 0) return null;
   if (clean.length <= maxChars) return clean;
   return `${clean.slice(0, maxChars - ELLIPSIS.length).trimEnd()}${ELLIPSIS}`;
 }
@@ -186,7 +196,10 @@ export async function runTitler(deps: TitlerDeps): Promise<TitlerOutcome> {
   );
 
   const generated = answer === null ? null : boundTitle(answer.title, config.title_max_chars);
-  const title = generated ?? boundTitle(opening, config.title_max_chars);
+  // `opening` is already `.trim()`-non-empty (firstUserMessage), so the
+  // fallback cannot itself collapse to null — the `??` keeps the type honest
+  // without inventing a third source.
+  const title = generated ?? boundTitle(opening, config.title_max_chars) ?? opening;
   const fallback = generated === null ? TITLE_FALLBACK : null;
   if (fallback !== null) {
     log.warn("titler.generation-failed", {

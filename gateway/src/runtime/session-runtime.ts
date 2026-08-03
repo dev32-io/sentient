@@ -498,9 +498,29 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
    * already has any title (generated, or a name a person typed) never spends
    * another provider call. Counting turns instead would re-title after a
    * failure and never re-title after a barge-in.
+   *
+   * THE `auxiliaryInFlight` GATE IS THE OTHER HALF OF THAT SENTENCE, and it is
+   * not redundant with it. The store is only written AFTER the round trip
+   * returns — ~700ms observed live, and up to `provider.request_timeout_ms` on
+   * a provider that hangs — so `title` is still null for the whole of it. Any
+   * turn completing inside that window (a background-completion follow-up, or
+   * simply a fast second reply) would read the same null and fire a SECOND
+   * paid provider call. The store's compare-and-set means the loser's write is
+   * refused and nothing corrupts, but the call was still made and paid for,
+   * and under a hung provider each concurrent attempt independently holds the
+   * session resident.
    */
   function startTitling(turnId: string): void {
     if (!config.auxiliary.enabled) return;
+    if (auxiliaryInFlight > 0) {
+      log.debug("session-runtime.titling.skipped", {
+        userId,
+        sessionId,
+        turnId,
+        reason: "an auxiliary task for this session is already in flight",
+      });
+      return;
+    }
     const session = store.getSession(sessionId);
     if (session === null || session.title !== null) return;
 
