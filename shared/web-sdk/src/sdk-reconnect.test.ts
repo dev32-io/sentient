@@ -1,21 +1,25 @@
 // ---------------------------------------------------------------------------
-// sdk-reconnect — wire-contract tests for the WS connect-URL builder and the
-// per-tab `sentient.currentSessionId` pointer. The connect URL IS the wire
-// (gateway reads `?session_id=` at WS upgrade), so this is the wire-protocol
-// boundary worth pinning per .claude/rules/testing.md.
+// sdk-reconnect — the per-tab session pointer's deletion rule.
+//
+// The pointer is what a tab presents as `conversationId` on `session.configure`
+// (the gateway↔SDK wire), and it is the ONLY way back into a conversation since
+// the id stopped being derived server-side from `(userId, surfaceId)`. Deleting
+// it wrongly loses the conversation, so the rule that deletes it is pinned here
+// on its own: deletion is a failsafe on an EXPLICIT server refusal, and its
+// condition is a conjunction — this tab presented an id AND the server refused
+// it. The frame-level mapping (which gateway frame means which) is pinned in
+// sentient-sdk.test.ts.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  _resetResumeStateForTests,
-  buildConnectUrl,
-  clearStaleResumeId,
-  hasPendingResume,
+  CURRENT_SESSION_STORAGE_KEY,
+  _resetSessionPointerForTests,
+  clearRefusedSessionId,
+  getCurrentSessionId,
+  markSessionPresented,
   setCurrentSessionId,
 } from "./sdk-reconnect.ts";
-
-const STORAGE_KEY = "sentient.currentSessionId";
-const GATEWAY = "wss://example.test/api/v1/ws";
 
 // jsdom-like minimal sessionStorage shim — vitest runs in node by default.
 function installSessionStorageShim(): void {
@@ -45,108 +49,84 @@ function uninstallSessionStorageShim(): void {
   Reflect.deleteProperty(globalThis, "sessionStorage");
 }
 
-describe("buildConnectUrl — sessionStorage anchor → ?session_id=", () => {
+describe("session pointer — deletion is a failsafe on an explicit refusal", () => {
   beforeEach(() => {
     installSessionStorageShim();
-    _resetResumeStateForTests();
+    _resetSessionPointerForTests();
   });
   afterEach(() => {
     uninstallSessionStorageShim();
-    _resetResumeStateForTests();
+    _resetSessionPointerForTests();
   });
 
-  it("appends session_id when sessionStorage has a value", () => {
-    sessionStorage.setItem(STORAGE_KEY, "sess-abc");
-    const url = buildConnectUrl(GATEWAY);
-    const parsed = new URL(url);
-    expect(parsed.searchParams.get("session_id")).toBe("sess-abc");
-    expect(hasPendingResume()).toBe(true);
+  it("drops the stored id when the id this tab presented is refused", () => {
+    sessionStorage.setItem(CURRENT_SESSION_STORAGE_KEY, "s_stale");
+    markSessionPresented("s_stale");
+
+    clearRefusedSessionId(null);
+
+    expect(getCurrentSessionId()).toBeNull();
   });
 
-  it("omits session_id when sessionStorage is empty", () => {
-    const url = buildConnectUrl(GATEWAY);
-    const parsed = new URL(url);
-    expect(parsed.searchParams.has("session_id")).toBe(false);
-    expect(hasPendingResume()).toBe(false);
+  it("INVARIANT: a second refusal on the same answer cannot delete a pointer re-anchored since", () => {
+    // The presented marker is spent by the first drop, so the draft key the
+    // caller stores immediately afterwards is not eligible to be deleted by
+    // anything else arriving on this connection.
+    sessionStorage.setItem(CURRENT_SESSION_STORAGE_KEY, "s_stale");
+    markSessionPresented("s_stale");
+
+    clearRefusedSessionId(null);
+    setCurrentSessionId("d_fresh");
+    clearRefusedSessionId(null);
+
+    expect(getCurrentSessionId()).toBe("d_fresh");
   });
 
-  it("omits session_id when sessionStorage holds an empty string", () => {
-    sessionStorage.setItem(STORAGE_KEY, "");
-    const url = buildConnectUrl(GATEWAY);
-    expect(new URL(url).searchParams.has("session_id")).toBe(false);
-    expect(hasPendingResume()).toBe(false);
+  it("INVARIANT: a tab that presented nothing deletes nothing on a refusal", () => {
+    // A first-ever connect presents no id and is answered with `session.draft`
+    // too. Reading that as a refusal would have it delete a pointer it never
+    // had — which is why the condition is the conjunction and not the frame.
+    sessionStorage.setItem(CURRENT_SESSION_STORAGE_KEY, "s_fresh");
+    markSessionPresented(null);
+
+    expect(() => clearRefusedSessionId(null)).not.toThrow();
+    expect(getCurrentSessionId()).toBe("s_fresh");
   });
 
-  it("preserves existing query params on the gateway URL", () => {
-    sessionStorage.setItem(STORAGE_KEY, "sess-xyz");
-    const url = buildConnectUrl(`${GATEWAY}?token=abc`);
-    const parsed = new URL(url);
-    expect(parsed.searchParams.get("token")).toBe("abc");
-    expect(parsed.searchParams.get("session_id")).toBe("sess-xyz");
+  it("INVARIANT: an honoured id survives — nothing after the answer can refuse it", () => {
+    // The defect this replaces: a ~200ms timer deleted an id that had just
+    // resolved correctly, because it fired on SILENCE rather than on a refusal.
+    markSessionPresented("s_live");
+
+    setCurrentSessionId("s_live");
+    clearRefusedSessionId(null);
+
+    expect(getCurrentSessionId()).toBe("s_live");
   });
 
-  it("returns the input verbatim and clears pending state on a non-URL gateway string", () => {
-    sessionStorage.setItem(STORAGE_KEY, "sess-abc");
-    const url = buildConnectUrl("not-a-url");
-    expect(url).toBe("not-a-url");
-    expect(hasPendingResume()).toBe(false);
+  it("treats an empty presented value as presenting nothing", () => {
+    sessionStorage.setItem(CURRENT_SESSION_STORAGE_KEY, "s_fresh");
+    markSessionPresented("");
+
+    clearRefusedSessionId(null);
+
+    expect(getCurrentSessionId()).toBe("s_fresh");
   });
 });
 
-describe("setCurrentSessionId / clearStaleResumeId — pointer transitions", () => {
-  beforeEach(() => {
-    installSessionStorageShim();
-    _resetResumeStateForTests();
-  });
-  afterEach(() => {
-    uninstallSessionStorageShim();
-    _resetResumeStateForTests();
-  });
-
-  it("setCurrentSessionId writes sessionStorage and clears pendingResume", () => {
-    sessionStorage.setItem(STORAGE_KEY, "old-id");
-    buildConnectUrl(GATEWAY);
-    expect(hasPendingResume()).toBe(true);
-
-    setCurrentSessionId("new-id");
-    expect(sessionStorage.getItem(STORAGE_KEY)).toBe("new-id");
-    expect(hasPendingResume()).toBe(false);
-  });
-
-  it("setCurrentSessionId is a no-op for an empty id", () => {
-    sessionStorage.setItem(STORAGE_KEY, "old-id");
-    setCurrentSessionId("");
-    expect(sessionStorage.getItem(STORAGE_KEY)).toBe("old-id");
-  });
-
-  it("clearStaleResumeId removes sessionStorage when a resume was pending", () => {
-    sessionStorage.setItem(STORAGE_KEY, "stale-id");
-    buildConnectUrl(GATEWAY);
-    clearStaleResumeId();
-    expect(sessionStorage.getItem(STORAGE_KEY)).toBeNull();
-    expect(hasPendingResume()).toBe(false);
-  });
-
-  it("clearStaleResumeId is a no-op when no resume is pending", () => {
-    sessionStorage.setItem(STORAGE_KEY, "fresh-id");
-    // Skipping buildConnectUrl — pendingResume stays null.
-    clearStaleResumeId();
-    expect(sessionStorage.getItem(STORAGE_KEY)).toBe("fresh-id");
-  });
-});
-
-describe("buildConnectUrl — non-browser / disabled storage", () => {
+describe("session pointer — non-browser / disabled storage", () => {
   beforeEach(() => {
     uninstallSessionStorageShim();
-    _resetResumeStateForTests();
+    _resetSessionPointerForTests();
   });
   afterEach(() => {
-    _resetResumeStateForTests();
+    _resetSessionPointerForTests();
   });
 
-  it("omits session_id when sessionStorage is undefined (SSR / Node)", () => {
-    const url = buildConnectUrl(GATEWAY);
-    expect(new URL(url).searchParams.has("session_id")).toBe(false);
-    expect(hasPendingResume()).toBe(false);
+  it("reads null and writes without throwing when sessionStorage is undefined (SSR / Node)", () => {
+    expect(getCurrentSessionId()).toBeNull();
+    expect(() => setCurrentSessionId("s_1")).not.toThrow();
+    markSessionPresented("s_1");
+    expect(() => clearRefusedSessionId(null)).not.toThrow();
   });
 });

@@ -10,7 +10,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createResumeCursor } from "./resume-cursor.ts";
-import { _resetResumeStateForTests } from "./sdk-reconnect.ts";
+import { _resetSessionPointerForTests } from "./sdk-reconnect.ts";
 import { type StreamResumeHandlerDeps, buildConfigureResume, handleStreamResumed } from "./stream-resume-handler.ts";
 
 // ---------------------------------------------------------------------------
@@ -120,12 +120,12 @@ describe("handleStreamResumed — recovered=false", () => {
   beforeEach(() => {
     store = new Map<string, string>();
     installSessionStorageShim(store);
-    _resetResumeStateForTests();
+    _resetSessionPointerForTests();
   });
 
   afterEach(() => {
     uninstallSessionStorageShim();
-    _resetResumeStateForTests();
+    _resetSessionPointerForTests();
   });
 
   it("resets cursor to {epoch:0, lastSeq:0} when recovered=false", () => {
