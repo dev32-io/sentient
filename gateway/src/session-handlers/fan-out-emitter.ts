@@ -49,6 +49,7 @@ import type { ServerWebSocket } from "bun";
 import { getLog } from "../logging/logger.js";
 import type { TurnEmitter } from "../runtime/turn-emitter.js";
 import { EMPTY_TURN_STATE, type TurnStateSnapshot, captureTurnStateSnapshot } from "../runtime/turn-state-snapshot.js";
+import { closeExpiredCredential, isCredentialExpired } from "./credential-lifetime.js";
 import { AUDIO_FRAME_TYPE, type FrameJournal } from "./frame-journal.js";
 import { frameLane } from "./frame-lanes.js";
 import type { SessionRegistry } from "./session-registry.js";
@@ -282,6 +283,29 @@ export function createFanOutTurnEmitter(deps: FanOutEmitterDeps): FanOutTurnEmit
     wasDelivering = false;
   }
 
+  /**
+   * Stop serving a window whose credential died, and close it to the login
+   * screen (credential-lifetime.ts).
+   *
+   * `departWindow` rather than a bare skip: the frame this window just missed
+   * is one of a stream, and leaving it attached would re-run the check — and
+   * re-send `auth.error` — for every token, every audio frame, for as long as
+   * the reply lasts. Same two-step shape as `disconnectLaggingWindow`, and for
+   * the same reason: delivery must stop synchronously, the registry detach must
+   * wait for the microtask.
+   */
+  function expireWindow(attachmentId: string, ws: ServerWebSocket<SessionData>, frameType: string): void {
+    log.warn("fan-out.window-credential-expired", {
+      sessionId,
+      attachmentId,
+      connectionId: ws.data.sessionId,
+      frameType,
+      reason: "this window's token expired — closing it rather than delivering session content",
+    });
+    departWindow(attachmentId);
+    closeExpiredCredential(ws, "outbound");
+  }
+
   /** Buffer [frame] for a held window, or disconnect it when the buffer alone
    *  passes the lag bound. */
   function bufferFor(attachmentId: string, ws: ServerWebSocket<SessionData>, frame: HeldFrame): void {
@@ -316,6 +340,16 @@ export function createFanOutTurnEmitter(deps: FanOutEmitterDeps): FanOutTurnEmit
           frameType: frame.frameType,
           reason: "window socket is closing/closed — its detach has not been processed yet",
         });
+        continue;
+      }
+      // CREDENTIAL, AT THE POINT CONTENT LEAVES (spec §3.6). The inbound gate
+      // cannot reach this window: an expired socket on a quiet session never
+      // sends anything, and the gateway PUSHES — so without this check it keeps
+      // receiving the whole conversation on a token that died hours ago. Beside
+      // the liveness skip because it is the same question: may these bytes go
+      // to this socket, right now?
+      if (isCredentialExpired(ws)) {
+        expireWindow(attachment.attachmentId, ws, frame.frameType);
         continue;
       }
       if (!writeTo(ws, frame)) {

@@ -21,7 +21,10 @@
 //
 //   - `session.configure`, `session.new`, `conversation.activate`. These are how
 //     a connection LEAVES or CHANGES its session; binding them to the session
-//     they are leaving would make switching unreachable.
+//     they are leaving would make switching unreachable. Their CREDENTIAL is
+//     still checked — at the WS message-handler entry, one layer up, because
+//     "may this token still act at all" is not a binding question and must
+//     cover the frames this gate deliberately skips (credential-lifetime.ts).
 //   - `ping` and `user.preferences.patch`. Neither acts on a session — one is
 //     transport liveness, the other writes a user profile.
 //   - INBOUND BINARY AUDIO. The connection's attachment is authoritative for
@@ -44,15 +47,13 @@
 import type { CommandRefusal, CommandRejectedMessage } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import { getLog } from "../logging/logger.js";
+import { closeExpiredCredential, isCredentialExpired } from "./credential-lifetime.js";
 import { detachSession } from "./session-binding.js";
 import type { Attachment, SessionRegistry } from "./session-registry.js";
 import type { SessionData } from "./ws-helpers.js";
 import { sendConnectionFrame } from "./ws-send.js";
 
 const log = getLog(["sentient", "ws", "command-mediator"]);
-
-/** RFC 6455 policy violation — the same code the auth gate closes on. */
-const WS_CLOSE_POLICY = 1008;
 
 /**
  * What the mediator can be asked about.
@@ -229,31 +230,21 @@ export function mediateCommand(
 ): CommandVerdict {
   // ── 1. Credential (§3.6) ──
   //
-  // `UserPrincipal` is frozen and carries no expiry, and the PASETO token is
-  // validated ONCE at connect — so without this an attachment outlives its
-  // credential indefinitely and a token that expired hours ago keeps
-  // authorizing. Revalidated here, at the same choke point, and failing closed.
-  const expiresAtMs = conn.data.tokenExpiresAtMs;
-  if (expiresAtMs !== null && nowMs >= expiresAtMs) {
-    // CLOSE THE SOCKET — detaching alone is not failing closed.
-    //
-    // Detaching stops the fan-out reaching this window, which is §3.6's "this
-    // covers reads too". But `session.configure`, `session.new` and
-    // `conversation.activate` are deliberately OUTSIDE this gate — they are how
-    // a connection changes session, so binding them to the session being left
-    // would make switching unreachable — and none of them checks expiry. So a
-    // detached connection re-attaches by sending any one of them and resumes
-    // reading every fanned-out frame, indefinitely, on a credential that
-    // expired hours ago. The detach would be undone by the next frame.
-    //
-    // A CLOSED SOCKET collapses that: it cannot read, cannot re-attach, and has
-    // to come back through the auth gate with a fresh expiry. The detach still
-    // runs first so the subscriber set is correct even if the close races.
-    //
-    // `code: "expired"` is `token-service.ts`'s own vocabulary for this, which
-    // is what mobile's `AuthErrorClass` already classifies as terminal (→ route
-    // to login) and what web converges on when its reconnect re-presents the
-    // dead token during `authenticating`.
+  // THE SAME PREDICATE THE INBOUND AND OUTBOUND SEAMS USE
+  // (credential-lifetime.ts) — one implementation, so no two gates can disagree
+  // about whether a token is dead. What this phase ADDS is seam-local: the
+  // `command.rejected` frame naming the refused command, and the detach, which
+  // the fan-out expresses through its own deferred window departure instead.
+  //
+  // Reachable even though ws-handlers.ts checks first, and deliberately so: a
+  // SPOKEN input is mediated at the TRANSCRIPT, which lands asynchronously,
+  // after the mic frames that produced it were already routed. Expiry can fall
+  // in that gap.
+  if (isCredentialExpired(conn, nowMs)) {
+    // Detach, THEN say no, THEN close — in that order. Detaching first makes
+    // the subscriber set correct even if the close races; refusing before the
+    // close is what gets the frame onto the wire at all, since a socket already
+    // closed drops whatever is written to it.
     const expired = conn.data.attachment;
     detachSession(conn, { sessionRegistry: registry });
     const verdict = reject(
@@ -263,12 +254,7 @@ export function mediateCommand(
       "this connection's token expired — attachment dropped and socket closing",
       expired,
     );
-    sendConnectionFrame(conn, {
-      type: "auth.error",
-      code: "expired",
-      message: "session token expired — please sign in again",
-    });
-    conn.close(WS_CLOSE_POLICY, "credential expired");
+    closeExpiredCredential(conn, "command");
     return verdict;
   }
 

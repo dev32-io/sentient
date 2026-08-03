@@ -362,6 +362,48 @@ describe("fan-out emitter", () => {
     expect(h.registry.subscribers(SESSION_ID)).toHaveLength(1);
   });
 
+  it("SECURITY: a window whose credential expired receives no fanned-out frame and is closed", () => {
+    // THE OUTBOUND SEAM (spec §3.6). The gateway PUSHES, so a socket whose
+    // token died while it sat quietly never sends anything an inbound gate
+    // could catch — and keeps receiving every frame of the conversation
+    // indefinitely. That is the actual disclosure, and it is closed here,
+    // beside the readyState skip, because this is where content leaves.
+    const connA = fakeWindow("conn-a");
+    const connB = fakeWindow("conn-b");
+    const h = harness(connA);
+    attachWithSnapshot(h.registry, SESSION_ID, asWs(connA));
+    h.attach(connB);
+    attachWithSnapshot(h.registry, SESSION_ID, asWs(connB));
+    connA.received.length = 0;
+    connB.received.length = 0;
+    connA.data.tokenExpiresAtMs = Date.now() - 1;
+
+    h.emit.textDelta("t1", "content this window may not read");
+
+    expect(connA.received.filter(isTextDelta)).toHaveLength(0);
+    expect(connA.closedWith).toBe(1008);
+    expect(texts(connA)).toContainEqual(expect.objectContaining({ type: "auth.error", code: "expired" }));
+    // The peer with a live credential is unaffected — one dead window must
+    // never silence the session for everyone else.
+    expect(connB.received.filter(isTextDelta)).toHaveLength(1);
+  });
+
+  it("a LIVE credential still receives everything — the gate must not break every session", () => {
+    // The over-correction guard. A wrong reading here (unit confusion, an
+    // inverted comparison, `null` treated as expired) closes every socket on
+    // the gateway the first time any frame is fanned out.
+    const connA = fakeWindow("conn-a");
+    const h = harness(connA);
+    attachWithSnapshot(h.registry, SESSION_ID, asWs(connA));
+    connA.received.length = 0;
+    connA.data.tokenExpiresAtMs = Date.now() + 60_000;
+
+    h.emit.textDelta("t1", "hi");
+
+    expect(connA.received.filter(isTextDelta)).toHaveLength(1);
+    expect(connA.closedWith).toBeNull();
+  });
+
   it("routes a directed frame to the attachment it names and to no other", () => {
     const connA = fakeWindow("conn-a");
     const connB = fakeWindow("conn-b");

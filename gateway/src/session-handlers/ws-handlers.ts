@@ -6,6 +6,7 @@ import { getLog } from "../logging/logger.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import { scopePendingId } from "../store/pending-id-scope.js";
 import { type CommandKind, claimInputFloor, mediateCommand } from "./command-mediator.js";
+import { closeExpiredCredential, isCredentialExpired } from "./credential-lifetime.js";
 import { handlePreferencesPatch } from "./handle-preferences-patch.js";
 import {
   bindSessionRuntime,
@@ -98,6 +99,25 @@ export async function handleWebSocketMessage(
   message: string | Buffer,
   services: GatewayServices,
 ): Promise<void> {
+  // ── CREDENTIAL, BEFORE ANYTHING ELSE (spec §3.6, credential-lifetime.ts) ──
+  //
+  // At the ENTRY rather than inside `mediateCommand`, because the mediator
+  // covers only the ACTING commands: `session.configure`, `session.new`,
+  // `conversation.activate`, the preference write and raw binary audio all pass
+  // it by. Those are exactly the frames that RE-ATTACH a socket, so a check
+  // that misses them can be undone by the very next frame — an expired socket
+  // would reopen an owned session and take its snapshot. One check here covers
+  // every inbound frame; the mediator's own phase 1 shares this predicate and
+  // stays for the spoken path, which is mediated later, at the transcript.
+  //
+  // Pre-auth this is a no-op: `tokenExpiresAtMs` is null until the auth gate
+  // sets it, so the `auth` frame itself can never be closed by it.
+  if (isCredentialExpired(ws)) {
+    detachSession(ws, services);
+    closeExpiredCredential(ws, "inbound");
+    return;
+  }
+
   // Inbound binary = mic audio → STT (spec §6). Never routed through the
   // outbound emitter. Dropped before auth completes: unauthenticated bytes
   // must not reach the STT service running on the operator's host.
@@ -177,10 +197,6 @@ export async function handleWebSocketMessage(
         msg.resume,
         msg.conversationId,
       );
-      return;
-
-    case "session.end":
-      handleSessionEnd(ws, services);
       return;
 
     case "text.input": {
@@ -647,18 +663,17 @@ function applyPreferencesPatch(
 }
 
 // ---------------------------------------------------------------------------
-// Session end + cleanup
+// Connection cleanup.
+//
+// THERE IS NO `session.end` FRAME, and there is deliberately nothing to
+// replace it with. A client that is done simply DISCONNECTS, and this runs from
+// the socket's close handler. Session liveness is already a derived predicate
+// over attached connections plus in-flight work (runtime/session-retention.ts),
+// so an explicit end frame was a second path to a state we compute anyway — and
+// it had regressed into doing exactly what a disconnect does. The one thing it
+// could have added over a disconnect is "and stop the work", which is precisely
+// what a background task must NOT do (tools/delegate-task.ts).
 // ---------------------------------------------------------------------------
-
-function handleSessionEnd(ws: ServerWebSocket<SessionData>, services: GatewayServices): void {
-  if (!ws.data.sessionId) return;
-  // The journal is NOT discarded here any more. It belongs to the SESSION, and
-  // one window saying "I am done" says nothing about the peers still attached
-  // to it — discarding would tear the shared replay window out from under them.
-  // The last detach parks it instead, and the retention window reclaims it.
-  cleanupSession(ws, services);
-  ws.close(WS_NORMAL_CLOSURE, "Session ended");
-}
 
 /**
  * Tears down the connection-tracking state this file owns: the auth

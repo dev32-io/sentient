@@ -47,10 +47,16 @@ interface FakeWs {
    *  every write, so a double that omits either is not a socket. */
   readyState: number;
   getBufferedAmount: () => number;
+  /** Close codes this socket was closed with. An expired credential MUST close
+   *  the socket, so a double that cannot record it is not a socket. */
+  closes: number[];
+  close: (code: number, reason?: string) => void;
 }
 
 /** `ServerWebSocket.readyState` OPEN. */
 const WS_OPEN = 1;
+/** RFC 6455 policy violation — what an expired credential is closed with. */
+const WS_CLOSE_POLICY = 1008;
 
 function fakeAuthedWs(runtime: SessionRuntime | null): FakeWs {
   const data = createEmptySessionData();
@@ -61,10 +67,14 @@ function fakeAuthedWs(runtime: SessionRuntime | null): FakeWs {
   const ws: FakeWs = {
     data,
     sent: [],
+    closes: [],
     readyState: WS_OPEN,
     getBufferedAmount: () => 0,
     send(s) {
       ws.sent.push(JSON.parse(s));
+    },
+    close(code) {
+      ws.closes.push(code);
     },
   };
   return ws;
@@ -266,6 +276,110 @@ describe("ws-handlers routing — interrupt", () => {
     ).resolves.toBeUndefined();
 
     expect(ws.sent).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Credential lifetime at the INBOUND seam (spec §3.6).
+//
+// The check used to live only inside `mediateCommand`, which covers
+// `text.input` / `interrupt` / `permission.response` / the audio brackets — and
+// misses `session.configure`, `conversation.activate`, `session.new`, the
+// preference write and raw binary audio. Those are exactly the frames that
+// RE-ATTACH a socket, so an expired connection could reopen an owned session
+// and take its snapshot without ever passing a gate. The check is at the
+// handler ENTRY now, before the frame-type switch, so the covered set is "every
+// inbound frame" rather than "the mediated subset".
+// ---------------------------------------------------------------------------
+
+describe("ws-handlers routing — expired credential (§3.6)", () => {
+  it("SECURITY: conversation.activate on an expired socket is refused and the socket closed", async () => {
+    // The disclosure this closes: activate answers with the session's snapshot,
+    // and it is deliberately outside the command gate (it is how a connection
+    // LEAVES a session), so nothing checked expiry on this path at all.
+    const services = activateServices();
+    const sessionId = seedActivatableSession(services.accessManager, "u_deadbeef");
+    const ws = fakeAuthedWs(null);
+    ws.data.tokenExpiresAtMs = Date.now() - 1;
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({ type: "conversation.activate", sessionId }),
+      services,
+    );
+
+    expect(ws.closes).toEqual([WS_CLOSE_POLICY]);
+    expect(ws.sent).toEqual([{ type: "auth.error", code: "expired", message: expect.any(String) }]);
+    // Nothing was activated: no attach answer, no switch ack, no binding.
+    expect(ws.data.conversationId).toBeNull();
+    expect(ws.data.attachment).toBeNull();
+  });
+
+  it("SECURITY: session.configure on an expired socket never reaches the handshake", async () => {
+    const services = activateServices();
+    const ws = fakeAuthedWs(null);
+    ws.data.tokenExpiresAtMs = Date.now() - 1;
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({
+        type: "session.configure",
+        capabilities: { supports: ["text"] },
+        clientType: "web",
+        surfaceId: "surface-1",
+      }),
+      services,
+    );
+
+    expect(ws.closes).toEqual([WS_CLOSE_POLICY]);
+    expect(ws.sent).toEqual([{ type: "auth.error", code: "expired", message: expect.any(String) }]);
+    expect(ws.data.runtime).toBeNull();
+  });
+
+  it("SECURITY: inbound mic audio on an expired socket never reaches STT", async () => {
+    let framesPushed = 0;
+    let discards = 0;
+    const ws = fakeAuthedWs(null);
+    ws.data.stt = {
+      pushFrame: () => {
+        framesPushed += 1;
+      },
+      discard: () => {
+        discards += 1;
+      },
+    } as unknown as SttSession;
+    ws.data.tokenExpiresAtMs = Date.now() - 1;
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      Buffer.from([1, 2, 3, 4]),
+      unusedServices,
+    );
+
+    expect(framesPushed).toBe(0);
+    expect(ws.closes).toEqual([WS_CLOSE_POLICY]);
+    // The half-utterance already buffered is dropped rather than finalized —
+    // an expired credential must not transcribe into the session on its way out.
+    expect(discards).toBe(1);
+  });
+
+  it("a LIVE credential is untouched — the gate must not break every session", async () => {
+    // The over-correction guard. A wrong reading of `tokenExpiresAtMs` (unit
+    // confusion, an inverted comparison, treating `null` as expired) closes
+    // every socket on the gateway, so the negative case is the one that matters.
+    const services = activateServices();
+    const sessionId = seedActivatableSession(services.accessManager, "u_deadbeef");
+    const ws = fakeAuthedWs(null);
+    ws.data.tokenExpiresAtMs = Date.now() + 60_000;
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({ type: "conversation.activate", sessionId }),
+      services,
+    );
+
+    expect(ws.closes).toEqual([]);
+    expect(ws.data.conversationId).toBe(sessionId);
   });
 });
 
