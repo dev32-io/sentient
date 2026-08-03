@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import type { SessionEntry } from "../store/entry-types.js";
+import { BACKGROUND_COMPLETION_INSTRUCTION, projectForModel } from "../store/model-projection.js";
 import { composeBackgroundCompletionNote } from "./background-completion-note.js";
 
 const BASE = {
@@ -70,4 +72,45 @@ describe("composeBackgroundCompletionNote", () => {
     expect(note).not.toContain("You dispatched");
     expect(note).not.toContain("delegateTask");
   });
+
+  // Both halves of the seam at once, because the boundary only exists across
+  // them: a real composed note, projected, must put every byte of untrusted
+  // output in the system message and none of it in the user turn that follows.
+  // Asserted here rather than in model-projection.test.ts (which uses a
+  // synthetic entry text) so that "relay it by putting the payload in the user
+  // message" — the shape D16 was filed against — cannot come back as a
+  // one-line change to either module.
+  it("SECURITY: projected, the payload reaches the model in the system role only", () => {
+    const note = composeBackgroundCompletionNote({
+      ...BASE,
+      output: "SECRET_PAYLOAD_MARKER: a Fresnel lens collapses a thick lens into concentric rings.",
+      isError: false,
+    });
+    const messages = projectForModel([triggerEntry(note)]);
+
+    expect(messages).toHaveLength(2);
+    expect(messages[0]?.role).toBe("system");
+    expect(messages[0]?.content).toContain("SECRET_PAYLOAD_MARKER");
+    expect(messages[1]).toEqual({ role: "user", content: BACKGROUND_COMPLETION_INSTRUCTION });
+    for (const m of messages.filter((msg) => msg.role === "user")) {
+      expect(m.content).not.toContain("SECRET_PAYLOAD_MARKER");
+    }
+  });
 });
+
+function triggerEntry(text: string): SessionEntry {
+  return {
+    seq: 1,
+    sessionId: "s1",
+    turnId: "t1",
+    kind: "trigger",
+    createdAt: 1000,
+    text,
+    toolCallId: null,
+    toolName: null,
+    toolArgs: null,
+    cutoff: null,
+    compactedThroughSeq: null,
+    pendingId: null,
+  };
+}

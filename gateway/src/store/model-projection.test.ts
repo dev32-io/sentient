@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { SessionEntry } from "./entry-types.js";
 import type { ChatMessage } from "./model-projection.js";
-import { projectForModel } from "./model-projection.js";
+import { BACKGROUND_COMPLETION_INSTRUCTION, projectForModel } from "./model-projection.js";
 
 let seq = 0;
 function e(partial: Partial<SessionEntry>): SessionEntry {
@@ -81,9 +81,67 @@ describe("projectForModel", () => {
       e({ kind: "user", text: "do the thing" }),
       e({ kind: "trigger", text: "Background task t1 (delegateTask) completed." }),
     ]);
+    const completion = out.at(-2);
+    expect(completion?.role).toBe("system");
+    expect(completion?.content).toContain("t1");
+  });
+
+  // D16, second half (task 8b). role:"system" is right and stays, but these
+  // models will not VOLUNTEER a reply to a system message — they answer users.
+  // Measured: 0/9 relays on gpt-oss:20b, and `completionTokens=1 textLength=0`
+  // on deepseek-v4-flash. So the completion is followed by a fixed instruction
+  // in the user role: the harness speaking, carrying none of the payload.
+  it("INVARIANT: a background completion is followed by a user-role instruction, and the payload stays in the system message", () => {
+    const out = projectForModel([
+      e({ kind: "user", text: "delegate the thing" }),
+      e({ kind: "trigger", text: "Delegated task t1 … completed: PAYLOAD" }),
+    ]);
     const last = out.at(-1);
-    expect(last?.role).toBe("system");
-    expect(last?.content).toContain("t1");
+    expect(last?.role).toBe("user");
+    expect(last?.content).toBe(BACKGROUND_COMPLETION_INSTRUCTION);
+    expect(out.at(-2)?.role).toBe("system");
+    expect(out.at(-2)?.content).toContain("PAYLOAD");
+    // The trust boundary, not a style check: a delegated agent reads the open
+    // web, so its output is the lowest-trust input there is. Promoting any of
+    // it into the user's voice is the injection surface this shape avoids.
+    expect(last?.content).not.toContain("PAYLOAD");
+  });
+
+  it("INVARIANT: the instruction is emitted only alongside a completion, never alone", () => {
+    const out = projectForModel([e({ kind: "user", text: "hello" })]);
+    expect(out.filter((m) => m.content === BACKGROUND_COMPLETION_INSTRUCTION)).toHaveLength(0);
+  });
+
+  it("INVARIANT: two completions get two instructions, each after its own payload", () => {
+    // One instruction covering both payloads leaves the model no way to say
+    // which it is answering — the reason the note echoes a task id at all.
+    const out = projectForModel([
+      e({ kind: "user", text: "delegate two things" }),
+      e({ kind: "trigger", text: "task t1 completed: FIRST" }),
+      e({ kind: "trigger", text: "task t2 completed: SECOND" }),
+    ]);
+    expect(out).toEqual([
+      { role: "user", content: "delegate two things" },
+      { role: "system", content: "task t1 completed: FIRST" },
+      { role: "user", content: BACKGROUND_COMPLETION_INSTRUCTION },
+      { role: "system", content: "task t2 completed: SECOND" },
+      { role: "user", content: BACKGROUND_COMPLETION_INSTRUCTION },
+    ]);
+  });
+
+  // CACHE STABILITY (spec §3.2): the model projection's prefix must never be
+  // rewritten by a later turn. The instruction is appended immediately after
+  // the completion it belongs to, so a second completion landing later extends
+  // the array and touches nothing before it.
+  it("INVARIANT: a later completion only appends — the earlier prefix is byte-identical", () => {
+    const first = [e({ kind: "user", text: "go" }), e({ kind: "trigger", text: "task t1 completed: FIRST" })];
+    const before = projectForModel(first);
+    const after = projectForModel([
+      ...first,
+      e({ kind: "assistant", text: "here is the first" }),
+      e({ kind: "trigger", text: "task t2 completed: SECOND" }),
+    ]);
+    expect(after.slice(0, before.length)).toEqual(before);
   });
 
   it("CONTRACT: emits a full tool round-trip (assistant tool_calls + role:tool result)", () => {
@@ -252,7 +310,34 @@ describe("projectForModel", () => {
       // completion takes whenever a second delegation is still mid-dispatch,
       // i.e. every concurrent case. Fixing only the straight-line branch
       // leaves the concurrent case projecting the task as the person.
-      expect(out[out.length - 1]).toEqual({ role: "system", content: "task t1 finished" });
+      expect(out.at(-2)).toEqual({ role: "system", content: "task t1 finished" });
+    });
+
+    it("INVARIANT: a completion deferred past a tool block still gets its user-role instruction", () => {
+      // Written as its own case through the DEFERRED path rather than as an
+      // assertion on the shared helper: wave 1 shipped a one-line D16 fix that
+      // covered the straight-line branch only, and this is the branch every
+      // concurrent delegation takes.
+      const out = projectForModel([
+        e({ kind: "tool_call", toolCallId: "y4", toolName: "a", toolArgs: "{}" }),
+        e({ kind: "trigger", text: "task t1 completed: PAYLOAD" }),
+        e({ kind: "tool_result", toolCallId: "y4", toolName: "a", toolArgs: '"r"' }),
+      ]);
+      assertValidToolPairing(out);
+      const last = out.at(-1);
+      expect(last).toEqual({ role: "user", content: BACKGROUND_COMPLETION_INSTRUCTION });
+      expect(last?.content).not.toContain("PAYLOAD");
+      expect(out.at(-2)?.content).toContain("PAYLOAD");
+    });
+
+    it("INVARIANT: a user message deferred past a tool block gets no instruction", () => {
+      // The instruction belongs to a `trigger`, not to every deferred stimulus.
+      const out = projectForModel([
+        e({ kind: "tool_call", toolCallId: "y5", toolName: "a", toolArgs: "{}" }),
+        e({ kind: "user", text: "hold on" }),
+        e({ kind: "tool_result", toolCallId: "y5", toolName: "a", toolArgs: '"r"' }),
+      ]);
+      expect(out.filter((m) => m.content === BACKGROUND_COMPLETION_INSTRUCTION)).toHaveLength(0);
     });
 
     it("does not defer a stimulus past a block whose calls are all already answered", () => {

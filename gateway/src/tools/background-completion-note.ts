@@ -18,6 +18,16 @@
 //     (OpenAI's "background mode" is a different feature — the model RESPONSE
 //     runs async — and does not apply.)
 //
+//     AND THE NOTE ALONE IS NOT ANSWERED. Correct role, correct framing, and
+//     across two models the follow-up turn still said nothing worth reading —
+//     these models do not volunteer a reply to a system message. So the
+//     projection appends `BACKGROUND_COMPLETION_INSTRUCTION` (model-projection
+//     rule 6) in the USER role right after this note. That line is the harness
+//     speaking and carries none of the payload; the payload stays here, fenced
+//     as data. Do not "simplify" the two messages into one by moving any of
+//     this text into the user turn — that is point 3's injection surface, and
+//     it is the shape D16 was originally filed against.
+//
 //  2. IT MUST BE SELF-DESCRIBING, AND NOTHING MORE. Hence the echoed request:
 //     the taskId alone would force the model to join the completion against the
 //     dispatch's `{taskId}` tool_result — which compaction summarises away,

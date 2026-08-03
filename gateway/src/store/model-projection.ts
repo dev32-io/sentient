@@ -52,6 +52,13 @@
 //     (D16) and why the rule keys on the entry kind rather than on a recorded
 //     stimulus type. It applies on BOTH emission paths — the straight-line
 //     branch and rule 3b's deferred one.
+//  6. A `trigger` IS FOLLOWED BY AN INSTRUCTION THE MODEL WILL ANSWER. Rule 5
+//     is correct and stays, but it is only half of D16: these models do not
+//     VOLUNTEER a reply to a system message — they answer users. So each
+//     completion is followed by `BACKGROUND_COMPLETION_INSTRUCTION` in the
+//     user role. See that constant for the measurements and the trust
+//     boundary. Emitted by `emitStimulus`, which both paths call, because
+//     rule 5's own one-line fix once covered only one of them.
 
 import { getLog } from "../logging/logger.js";
 import type { SessionEntry } from "./entry-types.js";
@@ -87,6 +94,31 @@ function stimulusRole(kind: SessionEntry["kind"]): "user" | "system" {
   return kind === "user" ? "user" : "system";
 }
 
+/**
+ * Rule 6 (defect D16, second half). Rule 5 puts the completion in the system
+ * role and that is right — but on its own it produced nothing: 0/9 relays on
+ * `gpt-oss:20b` (which acknowledged without ever restating the answer) and
+ * `completionTokens=1 textLength=0` on `deepseek-v4-flash` (silence). The
+ * content was never lost — asked directly, both models reproduce the payload
+ * and the task id verbatim. They see it and decline to speak. Six framing
+ * passes over the note moved it 0/6. The defect is not the wording and not the
+ * role: THESE MODELS WILL NOT VOLUNTEER A REPLY TO A SYSTEM MESSAGE. They
+ * answer users. So the follow-up turn ends with something addressed to them.
+ *
+ * "Respond accordingly", not "relay the result", is deliberate: a delegation
+ * can also fail, or come back needing another tool call before it means
+ * anything, and a directive to relay would be wrong for both.
+ *
+ * THE PAYLOAD DOES NOT MOVE. It stays fenced inside the role:"system" message
+ * with its task id and request echo; this line is the HARNESS speaking and
+ * carries none of it. Per the Model Spec's chain of command tool output is the
+ * lowest-trust input there is, and a delegated agent reads the open web —
+ * promoting that content into the user's voice is exactly the injection
+ * surface this shape exists to avoid.
+ */
+export const BACKGROUND_COMPLETION_INSTRUCTION =
+  "The background task you dispatched has returned. Respond accordingly.";
+
 export interface ChatToolCall {
   id: string;
   type: "function";
@@ -98,6 +130,32 @@ export interface ChatMessage {
   content: string | null;
   tool_calls?: ChatToolCall[];
   tool_call_id?: string;
+}
+
+/**
+ * Emits one external stimulus: the entry itself in the role of whoever spoke
+ * it (rule 5), plus — for a `trigger` only — the instruction that gets the
+ * model to answer it (rule 6).
+ *
+ * Shared by BOTH emission paths on purpose. Rule 5 first shipped as a one-line
+ * change on the straight-line branch alone, which left rule 3b's deferred path
+ * — the one every completion takes while another delegation is still
+ * mid-dispatch — projecting a task as the person.
+ *
+ * Appends only, and always immediately after the completion it belongs to, so
+ * a second completion landing later extends the array without rewriting a byte
+ * of the prefix (spec §3.2 cache stability). One instruction per completion,
+ * never one covering several: handed two payloads and one prompt, the model
+ * has no way to say which it is answering.
+ */
+function emitStimulus(messages: ChatMessage[], entry: SessionEntry): void {
+  messages.push({ role: stimulusRole(entry.kind), content: entry.text ?? "" });
+  if (entry.kind !== "trigger") return;
+  log.debug("projection.background-completion-instruction", {
+    reason: "a system-role completion alone is not answered — appending the user-role instruction (rule 6)",
+    seq: entry.seq,
+  });
+  messages.push({ role: "user", content: BACKGROUND_COMPLETION_INSTRUCTION });
 }
 
 /** Slice from the latest compaction entry forward; that entry becomes a system summary. */
@@ -276,7 +334,7 @@ export function projectForModel(entries: SessionEntry[]): ChatMessage[] {
         });
       }
       for (const stimulus of block.deferred) {
-        messages.push({ role: stimulusRole(stimulus.kind), content: stimulus.text ?? "" });
+        emitStimulus(messages, stimulus);
       }
       i = block.next;
       continue;
@@ -301,7 +359,7 @@ export function projectForModel(entries: SessionEntry[]): ChatMessage[] {
     }
 
     if (entry.kind === "user" || entry.kind === "trigger") {
-      messages.push({ role: stimulusRole(entry.kind), content: entry.text ?? "" });
+      emitStimulus(messages, entry);
       i += 1;
       continue;
     }
