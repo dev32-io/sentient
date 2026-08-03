@@ -505,6 +505,70 @@ a host that never ran the old shape. Cannot be expressed as a `depends_on`
 (`ingress-proxy` must precede the MCPs for reachability, so waiting on them
 would be a cycle) — see `qa/native/README.md`'s "One-time migration" section.
 
+## Multi-window session cases — two clients on ONE session
+
+Added 2026-08-03 (session-model wave, plan task 11). **These are the first cases in this repo that need two clients attached to a single session**, which the pre-wave `(userId, surfaceId)` runtime key made impossible: a second connection naming the same conversation used to *evict* the first. Tags: `multisurface`, `permission`, `security`, `session`, `reconnect`.
+
+**Driver (web).** Two Playwright tabs in one browser context. Both must reach the *same* `sessionId`: tab A gets there however you like, tab B opens the same row from the Past-chats drawer (`conversation.activate`). Confirm the join before asserting anything — `[ws:session-binding] session-binding.attached … subscribers=2` is the only proof that you have two windows rather than one window twice.
+
+**The instrument.** Assert on a per-tab inbound frame tap, not on the DOM alone. Install it with Playwright's `context.addInitScript` (it must exist *before* the SDK constructs its socket, so `browser_evaluate` after load is too late) subclassing `WebSocket` and pushing every parsed inbound frame onto `window.__rx`. Reset `__rx` immediately before each action.
+
+> **The tap must be shown alive before an empty tap can mean anything.** `connection-lane-private` passes by asserting window B received *nothing*. That is worthless unless the same tap has been seen recording frames — so run a `two-windows-live`-shaped case first on the same socket and keep its non-empty result as the control. An empty array from a dead instrument looks identical to correct isolation.
+
+**Credentials:** Ada / `1234` (see the banner at the top of this file). **Never** drive `ha_call_service`, `ma_playback`, `ma_play_media`, or `ma_volume` — a permission prompt is best exercised by **denying** it, which resolves the prompt without executing anything.
+
+### two-windows-live · two-windows-race · two-windows-steer
+**Scenario:** One session, two attached windows. (a) A sends, B renders the same streaming reply; (b) both send inside the arbitration window, one wins; (c) B sends mid-turn on A.
+**Why added:** These three are the whole point of the identity rewrite — a shared journal with N cursors. (b) and (c) are the same seam under different timing and are easy to confuse: the discriminator is `elapsedMs` against `windowMs` in `input-arbiter.busy`.
+**Steps:**
+1. `two-windows-live` — reset both taps; send from A; read B's tap.
+2. `two-windows-race` — fire both composers with `Promise.all` on the two Playwright pages (sequential MCP calls are hundreds of ms apart and will *steer* instead of racing; the `input_arbitration_window_ms` default is **100**).
+3. `two-windows-steer` — A starts a long reply; **wait ≥2 s**, then send from B.
+**Expected user-visible:** (a) B shows the reply streaming and plays its audio, having sent nothing; (b) the loser's composer clears and a toast reads *"Someone else was sending at the same moment — try again."* — it lives ~1.5–3 s, so **sample within 1 s or you will wrongly report a silent drop**; (c) the message folds into the running turn.
+**Expected log trail:** (a) exactly one `[runtime:react-loop] react-loop.start` for the turn, and B's tap carries that same `turnId` on `turn.started` / `turn.text.delta` / `turn.completed`; (b) `[ws:input-arbiter] input-arbiter.busy … attachmentId=<loser> holderAttachmentId=<winner> elapsedMs=<n> windowMs=100` plus `[ws:command-mediator] command.refused … reason="session_busy"`, and still only one `react-loop.start`; (c) `[runtime:session-runtime] session-runtime.submit.steer … turnId=<the RUNNING turn>` with **no** second `react-loop.start` and **no** `session_busy`.
+**Known-red (D22):** the steer is appended to the running turn but a turn that ends on iteration 1 never re-reads the store, so the instruction is ignored and the compensating follow-up turn commits a durable *"Sorry — something went wrong while I was answering."* Reproduces with **one** window too. Assert the seam (`submit.steer`, same `turn_id` in the store) — do **not** assert the steer was obeyed until D22 closes.
+
+### join-midturn · join-race
+**Scenario:** B attaches while A's turn is streaming.
+**Why added:** The attach answer and the live session lane are two delivery paths for the same entries; where they overlap is where duplicates live.
+**Steps:** Park B on a *different* session; start a long, tool-using turn on A; ~2 s in, open A's session from B's drawer; let the turn finish.
+**Expected user-visible:** B renders the in-flight turn coherently and shows an enabled **Interrupt** button (the joiner turn-state handshake); no audio is replayed from before the join.
+**Expected log trail:** `[ws:fan-out] fan-out.turn-state-sent … turnId=… trigger="user" runningTools=<n> openPrompts=<n> audioTurnId=<id|null>` followed by `fan-out.attached … committedFeed="client-refetch"`. The audio half asserts `fan-out.audio-skipped … audio.skip-reason="midturn-join"` — **only reachable when `audioTurnId` is non-null at the join instant.** TTS starts after the text turn settles, so a join during tool calls has no audio to skip and does not exercise it; say so rather than counting it.
+**Oracle:** count `.tool-pill` nodes in **both** windows against `select count(*) from entries where session_id=? and kind='tool_call'`. Do not diff the two panes' `innerText` — the composer task strip mirrors the pills as one grouped node and makes the builder look short.
+**Known-red (D23):** the joiner renders one **extra** pill (5 rendered for 4 real calls) while the long-attached window renders the correct count.
+
+### permission-either-answers · permission-issuer-leaves · permission-timeout-denies
+**Scenario:** A confirm-tier prompt raised by A's turn is answered on B; then answered on B after A has closed; then answered by nobody.
+**Why added:** The broker moved from connection scope to session scope in this wave. "Whose socket raised it" must stop mattering.
+**Steps:** From A, ask *"Show me what is currently in the music queue"* — `ma_queue` is confirm-tier and read-shaped. **Click Deny**, never Allow. Note that a denial makes the model retry, so a second, *different* `requestId` appears within seconds; read the `requestId` before concluding a dialog "did not close".
+**Expected user-visible:** the dialog appears in **both** windows with identical text; answering in either closes it in both.
+**Expected log trail:** `[runtime:session-permission] session-permission.request … requestId=… windows=2 pending=1`, then exactly one `session-permission.settled … requestId=<same> reason="denied" attachmentId=<the window that ANSWERED> pending=0`. For `permission-issuer-leaves`, close A first and expect the settle line to carry `windows=1` and still succeed. For `permission-timeout-denies`, answer nobody: the settle arrives `orchestrator.permission.request_timeout_ms` (120 000) after the raise with `reason="timeout"` and **`attachmentId=null`** — that null is the assertion; an answered prompt always names an attachment.
+
+### connection-lane-private
+**Scenario:** Frames addressed to one connection must never reach a peer window on the same session.
+**Why added:** The privacy row of the lane split. One leaked `auth.error` or `conversation.snapshot` is a cross-window information leak.
+**Steps:** Reset B's tap. On A, force **all three** frame classes: an auth refresh and a resume (reload A onto the session — that alone yields `auth.ok`, `session.ready`, `session.attached`, `conversation.snapshot`), and a `pong` (send a raw `{"type":"ping"}` on a third socket attached to the same session; the SDK's own heartbeat is not reliably inside your sampling window).
+**Expected:** B's tap contains **none** of the 16 connection-lane types (`frame-lanes.ts` is the authority; `conversation.snapshot` is on it — it is the attach *answer*, not conversation content). Read the control paragraph above before trusting an empty tap.
+
+### last-one-out · retention-holds-work · retention-drops-idle
+**Scenario:** Session lifetime is a derived predicate over observable work, not a flag.
+**Why added:** Under the old registry the *owner* leaving tore the session down; now only "nothing holds it" does, and a background task counts as holding it.
+**Steps:** `last-one-out` — close A, keep B, complete a turn on B. `retention-holds-work` — approve a `delegateTask`, close **every** window while it runs, reattach after it finishes. `retention-drops-idle` — reattach to a session the sweeper already disposed (don't wait out `retention_ms`; take one from the log).
+**Expected log trail:** `session-binding.detached … subscribers=1` with **no** `[ws:session-registry] session-registry.disposed` for that id (the dispose line firing for *other* sessions in the same log is what proves the check is alive); `[runtime:session-retention-policy] session-retention.timer-armed kind="recheck" … reasons=hasUnfinishedBackgroundTask` while the task runs, and only afterwards `timer-armed kind="disposal" delayMs=900000 reasons=`; on reattach after disposal, `session.attached generation=1` plus a `conversation.snapshot` whose item count matches the store.
+**Note on the feared audio replay:** a background-completion turn that runs with zero windows attached is *silent* — `[runtime:turn-voice] turn-voice.silent reason="no window is attached — synthesising this turn would occupy the on-host TTS for zero listeners"` — so a window returning inside the retention window gets the **text** and no audio (verified: 0 binary frames, 0 `turn.audio.start` on reattach). The "reconnecting window hears the whole delegated answer re-spoken" hazard is therefore reachable only when a window was attached when synthesis *began* and then dropped, not in the all-windows-closed case.
+
+### unknown-session-refused · cross-user-refused · expired-credential-refused
+**Scenario:** Presenting an id the server never minted, another user's id, and acting on a lapsed token.
+**Why added:** `sessionId` stopped being derived from identity in this wave, so "can I open it" is now purely a membership question and must be driven, never reasoned about.
+**Steps:** Open a raw WS, `{"type":"auth",token}`, then `session.configure` with the id under test. **Always drive a legitimate id through the same probe first** — a refusal proves nothing unless the identical path is seen returning `session.attached` + a populated `conversation.snapshot` for an id that *should* work.
+**Expected:** no `session.attached` for the presented id; a fresh `session.draft` and `conversation.snapshot` with `items: 0` instead. Log: `[session:session-id] session.resolve.unknown … reason="not present in the store this caller's capability opened — refusing to create it"` and `[ws:session-configure] session-configure.session.refused`. **A cross-user id produces the identical line** — the other user's store is a different SQLite file the capability never opened, so "not yours" and "not there" are structurally indistinguishable, which is the intended design and not a weak assertion. A malformed id logs `session.resolve.malformed` with only `presentedLength`, never the id itself.
+**`expired-credential-refused` is `fault-armed`** and needs a gateway restart: set `auth.token_ttl_seconds` to **60** in `gateway/config.yaml` (the schema floor is 60 — 45 fails zod at boot), restart (`config.yaml` is not in the module graph, so `bun --watch` will *not* pick it up), log in fresh, wait out the TTL, then send a message. Expect `[ws:command-mediator] command.refused … reason="credential_expired"`, `auth.error{code:"expired"}`, the socket closed, the webui dropped to the login screen, and **zero** rows for the probe text in the store. Restore the config and restart when done.
+
+### Cross-cutting oracle rules for all of the above
+- **Never accept the model's self-report.** Check `[provider:openai] stream-start | messageCount` for what the model was actually sent, and re-ask any recall probe **without an escape hatch** ("repeat back, verbatim, the exact marker string"), never "say NO-CONTEXT if this is fresh".
+- **Assert refusals against the database, not the pane.** `select count(*) from entries where text like '%<probe marker>%'` returning `0` is the real "it never landed"; an empty pane is not.
+- **Never use page-level `scrollWidth <= innerWidth` to check for clipping** — an ancestor's `overflow: hidden` suppresses the very scroll it looks for. Walk the ancestor chain comparing each element's `scrollWidth` to its `clientWidth`.
+
 ## Mobile (Android emulator + iOS simulator via Maestro)
 
 **Tool:** Maestro CLI against a running Android emulator (`avd`) or iOS simulator (`xcrun simctl`), driven through the committed flow library at `qa/mobile/flows/{android,ios}/*.yaml` (97 flows, refactored 2026-07-17, commit `204f728`) via `qa/mobile/run-e2e.sh`. The old "write to `/tmp/<flow>.yaml` at run time, never commit" convention is retired for this library — flows here ARE the committed artifact. Evidence screenshots → `qa/mobile/screens/` (gitignored).
@@ -516,7 +580,8 @@ would be a cycle) — see `qa/native/README.md`'s "One-time migration" section.
 
 Every flow's YAML frontmatter carries `tags:` from two orthogonal families. The runner's default batch always excludes `fault-armed`, `physical-only`, `helper`; `--no-slow` additionally drops `slow`.
 
-- **Surface** (what's exercised — matches `--tags` selection): `auth chat session reconnect outbox voice-loop settings-root settings-soul settings-user settings-admin settings-voice settings-diagnostics update logout`.
+- **Surface** (what's exercised — matches `--tags` selection): `auth chat session reconnect outbox voice-loop settings-root settings-soul settings-user settings-admin settings-voice settings-diagnostics update logout multisurface permission security`.
+  - `multisurface`, `permission`, `security` were added 2026-08-03 by the session-model wave. They are **driven on web today** and have no Maestro flows yet — see "Multi-window session cases" below for what a mobile port needs (chiefly: a second client, which on mobile means emulator + simulator on one session, not two app instances).
 - **Behavior** (orthogonal, controls execution regime):
   - `fault-armed` — needs harness-side arming (adb broadcast / network kill / gateway stop); excluded from the default batch, run individually in the runner's dedicated fault phase.
   - `physical-only` — needs a real device (emulator loopback masks the network drop being tested, e.g. WiFi toggle on `emulator-*`); flagged and skipped on emulator.
