@@ -46,10 +46,58 @@ import kotlinx.serialization.json.jsonObject
 private const val PATH_SESSIONS = "/sessions"
 private const val PATH_MESSAGES_SUFFIX = "/messages"
 
+// ── Response envelope field names ──
+// GET /api/v1/sessions answers {sessions: SessionMetadata[]} (gateway
+// api/handlers/sessions.ts) — a DIFFERENT top-level key from every other
+// list-shaped response here, which still answers {items: [...]}. Not yet
+// implemented server-side: search/rename/delete stay on the {items:[...]}
+// shape they were speculatively written against; those calls 404 today and
+// safeGet/safeBoolean degrade them to an empty list / false, same as before
+// this route existed.
+private const val FIELD_ITEMS = "items"
+private const val FIELD_SESSIONS = "sessions"
+
 // ── Response DTOs ──
 
 @Serializable
 private data class RenameRequest(val title: String)
+
+/**
+ * Wire shape of one row in GET /api/v1/sessions (gateway's SessionMetadata,
+ * store/session-metadata.ts, JSON-serialized). Deliberately NOT [SessionRow]:
+ * that is this SDK's client-facing row shape, carrying fields (rootId,
+ * messageCount, isActive) the gateway's session metadata table does not
+ * track — mapped in [toSessionRow] rather than shared across the
+ * server/client boundary.
+ */
+@Serializable
+private data class SessionMetadataDto(
+    val sessionId: String,
+    val createdAt: Long = 0L,
+    val updatedAt: Long = 0L,
+    val title: String? = null,
+    val titleProvenance: String? = null,
+    val version: Int = 0,
+)
+
+// Matches web-sdk's sessions-rest.ts UNTITLED_SESSION_TITLE and webui's
+// use-sessions.ts DEFAULT_NEW_CHAT_TITLE — a session with no title yet
+// (nothing has generated or set one) still needs row text to render.
+private const val UNTITLED_SESSION_TITLE = "New chat"
+
+/** [SessionSummary.toSessionRow] downstream (HistoryViewModel) reads only
+ *  sessionId/title/lastActiveAt off the result, same as web's mapping —
+ *  rootId/messageCount/isActive are honest placeholders, not a lossy mapping
+ *  of a value that exists elsewhere. */
+private fun SessionMetadataDto.toSessionRow(): SessionRow = SessionRow(
+    sessionId = sessionId,
+    rootId = sessionId,
+    title = title ?: UNTITLED_SESSION_TITLE,
+    startedAt = createdAt,
+    lastActiveAt = updatedAt,
+    messageCount = 0,
+    isActive = false,
+)
 
 // Lenient Json for session rows (no polymorphism needed).
 private val rowJson = Json { ignoreUnknownKeys = true }
@@ -78,6 +126,10 @@ open class SessionsHttpClient(
     /**
      * GET /api/v1/sessions?limit=&offset=
      *
+     * The gateway does not paginate yet — it returns the caller's whole list,
+     * newest-updated first; limit/offset still ride the URL for forward
+     * compatibility (an unknown query param is a no-op server-side).
+     *
      * Returns an empty list on any non-2xx response.
      */
     open suspend fun list(limit: Int, offset: Int): List<SessionRow> {
@@ -91,7 +143,13 @@ open class SessionsHttpClient(
                 return@safeGet emptyList()
             }
             val text = resp.bodyAsText()
-            val items = parseItemsArray<SessionRow>(text, rowJson, SessionRow.serializer())
+            val dtos = parseArrayField<SessionMetadataDto>(
+                text,
+                rowJson,
+                SessionMetadataDto.serializer(),
+                FIELD_SESSIONS,
+            )
+            val items = dtos.map { it.toSessionRow() }
             log.debug("list.ok", mapOf("count" to items.size))
             items
         }
@@ -123,10 +181,11 @@ open class SessionsHttpClient(
             }
             val text = resp.bodyAsText()
             // ConversationFeedItem uses @JsonClassDiscriminator("kind") — use WireJson.
-            val items = parseItemsArray<ConversationFeedItem>(
+            val items = parseArrayField<ConversationFeedItem>(
                 text,
                 WireJson.instance,
                 ConversationFeedItem.serializer(),
+                FIELD_ITEMS,
             )
             log.debug("getMessages.ok", mapOf("sessionId" to sessionId, "count" to items.size))
             items
@@ -154,7 +213,7 @@ open class SessionsHttpClient(
                 return@safeGet emptyList()
             }
             val text = resp.bodyAsText()
-            val items = parseItemsArray<SessionRow>(text, rowJson, SessionRow.serializer())
+            val items = parseArrayField<SessionRow>(text, rowJson, SessionRow.serializer(), FIELD_ITEMS)
             log.debug("search.ok", mapOf("count" to items.size))
             items
         }
@@ -211,17 +270,21 @@ open class SessionsHttpClient(
     // ── Internal helpers ──────────────────────────────────────────────────────
 
     /**
-     * Parse a paginated response body: extracts `items` array and deserializes
-     * each element using [json] and [elementSerializer]. Returns empty on any
-     * parse error so a malformed response never crashes the app.
+     * Parse a response body shaped `{[field]: [...]}`: extracts the [field]
+     * array and deserializes each element using [json] and [elementSerializer].
+     * Returns empty on any parse error so a malformed response never crashes
+     * the app. [field] is explicit rather than defaulted to `"items"` because
+     * GET /api/v1/sessions is the one caller that answers a different key
+     * (`"sessions"`, gateway api/handlers/sessions.ts) — see FIELD_SESSIONS.
      */
-    private fun <T> parseItemsArray(
+    private fun <T> parseArrayField(
         body: String,
         json: Json,
         elementSerializer: kotlinx.serialization.KSerializer<T>,
+        field: String,
     ): List<T> = runCatching {
         val root: JsonObject = json.parseToJsonElement(body).jsonObject
-        val array = root["items"]?.jsonArray ?: return emptyList()
+        val array = root[field]?.jsonArray ?: return emptyList()
         json.decodeFromJsonElement(ListSerializer(elementSerializer), array)
     }.getOrElse { e ->
         log.warn("parse.error", mapOf("cause" to (e.message?.take(PREVIEW_LEN) ?: "unknown")))
