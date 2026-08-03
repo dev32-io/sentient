@@ -638,13 +638,25 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       // (its own onUpdate calls refreshMessages() again once that resolves).
       // Leave it alone here.
       //
-      // `created` / `draft` start empty: nothing else ever clears the mirror
-      // for these two — ConversationHistoryConnector only resets on
-      // conversation.snapshot, a switch's REST load, or identity teardown, and
-      // none of those fire for "+ new chat". Without this, the pane kept
-      // rendering the PREVIOUS session's messages after pressing "+" — D15
-      // ("+ new chat does not start a new chat ... does not even clear the
-      // mirror").
+      // `created` / `draft` — REDUNDANT DEFENSE-IN-DEPTH, verified live. Every
+      // path that reaches `draft` or a fresh-mint `created` goes through
+      // session-binding.ts's `sendDraftHandshake`, which sends an empty
+      // `conversation.snapshot` (`items: []`) on the SAME socket before the
+      // `session.draft` / `session.created` frame — and because WS preserves
+      // per-socket ordering, ConversationHistoryConnector's snapshot handler
+      // (an unconditional mirror REPLACE, not a merge) has already set
+      // committedRef.current to `[]` and re-rendered by the time this handler
+      // runs. Confirmed on the running stack: pulled this exact
+      // `committedRef.current = []` line, re-ran the "+" press with an old
+      // session's history loaded, and the pane still correctly cleared —
+      // console showed `conversation.snapshot{items:[]}` arrive (not
+      // dedup-dropped) strictly before `session.draft`, with
+      // committedRef.current already length 0 at the point this line used to
+      // run. So THIS assignment clears nothing new; it is cheap insurance
+      // against `sendDraftHandshake`'s ordering/snapshot invariant changing
+      // out from under this file without this file's own test catching it —
+      // not, as an earlier version of this comment claimed, the only thing
+      // that clears the mirror for these two.
       if (e.kind !== "switched") {
         committedRef.current = [];
       }

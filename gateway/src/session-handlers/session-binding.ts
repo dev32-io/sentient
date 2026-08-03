@@ -35,26 +35,6 @@ const log = getLog(["sentient", "ws", "session-binding"]);
 const WS_READY_STATE_OPEN = 1;
 
 /**
- * Open the session store this principal's capability selects, hand it to
- * [use], and close it again.
- *
- * SHORT-LIVED ON PURPOSE. The membership lookup (session-id.ts) and the mint
- * both need a store before any `SessionRuntime` exists to own one, and a
- * handle parked on the connection would be a second live `bun:sqlite` handle
- * on the same WAL for the whole session. Opening is cheap; outliving the
- * question is not.
- *
- * The grant is the authorization step: `AccessManager` mints the capability
- * from the principal, and `openSessionStore` refuses any capability that is
- * not for the `session-store` resource class.
- *
- * Takes only the slice of `GatewayServices` it actually reads — `accessManager`
- * — so a caller with a narrower deps shape (the sessions REST handler has no
- * reason to carry the whole services object) can still use it. Every existing
- * caller passes the full `GatewayServices`, which satisfies the narrower type
- * structurally, so this is a widening, not a breaking change.
- */
-/**
  * Another connection that is live-serving [sessionId] right now, or null when
  * [ws] is free to bind it.
  *
@@ -79,6 +59,26 @@ export function liveRivalOwner(
   return owner !== null && owner !== ws.data.sessionId ? owner : null;
 }
 
+/**
+ * Open the session store this principal's capability selects, hand it to
+ * [use], and close it again.
+ *
+ * SHORT-LIVED ON PURPOSE. The membership lookup (session-id.ts) and the mint
+ * both need a store before any `SessionRuntime` exists to own one, and a
+ * handle parked on the connection would be a second live `bun:sqlite` handle
+ * on the same WAL for the whole session. Opening is cheap; outliving the
+ * question is not.
+ *
+ * The grant is the authorization step: `AccessManager` mints the capability
+ * from the principal, and `openSessionStore` refuses any capability that is
+ * not for the `session-store` resource class.
+ *
+ * Takes only the slice of `GatewayServices` it actually reads — `accessManager`
+ * — so a caller with a narrower deps shape (the sessions REST handler has no
+ * reason to carry the whole services object) can still use it. Every existing
+ * caller passes the full `GatewayServices`, which satisfies the narrower type
+ * structurally, so this is a widening, not a breaking change.
+ */
 export function withSessionStore<T>(
   services: Pick<GatewayServices, "accessManager">,
   principal: UserPrincipal,

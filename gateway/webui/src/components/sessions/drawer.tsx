@@ -134,12 +134,15 @@ export function Drawer({ open, onClose }: DrawerProps): JSX.Element {
               // Fire-and-forget: sessions.newChat() sends session.new over WS
               // (intent: "explicit") and resolves once the gateway answers
               // session.draft — no session row yet, just a draft key the
-              // composer's next send will mint against. That same event
-              // clears the chat pane (use-voice-client.ts's
-              // sessionsConnector.onSessionsChanged: a `draft` starts empty,
-              // unlike a `switched`, which refetches). Awaiting the promise
-              // here would only re-block the drawer's close on that round
-              // trip; the user can type immediately.
+              // composer's next send will mint against. The gateway's
+              // sendDraftHandshake sends an empty conversation.snapshot on
+              // the SAME socket just before session.draft, which is what
+              // actually clears the chat pane (ConversationHistoryConnector's
+              // ordinary snapshot handling, not a session-boundary special
+              // case — see use-voice-client.ts's onSessionsChanged for the
+              // verified-redundant belt-and-suspenders clear alongside it).
+              // Awaiting the promise here would only re-block the drawer's
+              // close on that round trip; the user can type immediately.
               void sessions.newChat();
               onClose();
             }}
