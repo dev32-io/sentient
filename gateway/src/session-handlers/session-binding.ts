@@ -291,6 +291,12 @@ function buildHandlesOver(
     // is being written to" can never disagree.
     attachedWindows: () => fanOut.size,
     voice,
+    // Work COMPLETING is not an attach or a detach, so the registry would
+    // otherwise never learn that the last thing holding this session resident
+    // has finished (task 8). Keyed on `sessionId` and resolved through the
+    // registry at call time, never captured: by the time this fires the session
+    // may already be gone, and `reevaluate` on an unknown id is a no-op.
+    onWorkSettled: () => services.sessionRegistry.reevaluate(sessionId),
   });
   if (built === undefined) throw new Error("orchestrator is not configured for this gateway");
 
@@ -303,6 +309,10 @@ function buildHandlesOver(
   return {
     runtime: built.runtime,
     permissions: built.permissions,
+    // Getters over the runtime, the tool broker and the permission broker —
+    // what makes this session's residency a DERIVED property rather than a
+    // consequence of which window happened to close last.
+    work: built.work,
     voicePrefs,
     fanOut,
     journal: acquisition.journal,

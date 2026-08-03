@@ -29,6 +29,7 @@ import { type AccessManager, createAccessManager } from "../access/access-manage
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
 import type { ProviderClient, ProviderRequest, ProviderStreamChunk } from "../provider/provider-client.js";
+import type { SessionWorkSignals } from "../runtime/session-retention.js";
 import { createSessionRuntime } from "../runtime/session-runtime.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import { EMPTY_TURN_STATE } from "../runtime/turn-state-snapshot.js";
@@ -42,6 +43,17 @@ import { cleanupSession, handleWebSocketMessage } from "./ws-handlers.js";
 import { type SessionData, createEmptySessionData } from "./ws-helpers.js";
 import { sendConnectionFrame } from "./ws-send.js";
 import { handleSessionConfigure } from "./ws-session-configure.js";
+
+/** A session that is doing nothing — every retention term false. These cases
+ *  are about routing and residency counting, not about work; the derived
+ *  retention predicate is pinned in runtime/session-retention.test.ts. */
+const IDLE_WORK: SessionWorkSignals = {
+  isTurnInFlight: false,
+  hasPendingForegroundTool: false,
+  hasOutstandingPrompt: false,
+  hasAuxiliaryTaskInFlight: false,
+  newestBackgroundTaskStartedAtMs: null,
+};
 
 const USER_ID: `u_${string}` = "u_deadbeef";
 const OTHER_USER_ID: `u_${string}` = "u_aaaaaaaa";
@@ -175,7 +187,7 @@ function servicesWithRuntime(replayRegistry: ReplayRegistry, ws: FakeWs, accessM
     createSynthesizerFor: () => null,
     stt: null,
     accessManager,
-    createSessionRuntime: () => ({ runtime, permissions: { denyAll: () => {} } }),
+    createSessionRuntime: () => ({ runtime, permissions: { denyAll: () => {} }, work: IDLE_WORK }),
     // Task 8 replaces this with the retention predicate; here it only has to
     // not dispose a session mid-test.
   } as unknown as GatewayServices;
@@ -400,7 +412,7 @@ function servicesRecordingPartition(
     accessManager,
     createSessionRuntime: ({ conversationId }: { conversationId: string }) => {
       spy.partitionIds.push(conversationId);
-      return { runtime, permissions: { denyAll: () => {} } };
+      return { runtime, permissions: { denyAll: () => {} }, work: IDLE_WORK };
     },
   } as unknown as GatewayServices;
   return spy;
@@ -598,7 +610,7 @@ function servicesTrackingRuntimes(replayRegistry: ReplayRegistry, accessManager:
         },
         turnState: EMPTY_TURN_STATE,
       } as unknown as SessionRuntime;
-      return { runtime, permissions: { denyAll: () => {} } };
+      return { runtime, permissions: { denyAll: () => {} }, work: IDLE_WORK };
     },
   } as unknown as GatewayServices;
   return spy;
@@ -752,12 +764,14 @@ function fakeProvider(reply: string): FakeProvider {
 function noopBroker(): ToolBroker {
   const background: BackgroundRegistry = {
     count: () => 0,
+    newestStartedAtMs: () => null,
     register: () => {},
     complete: () => {},
     cancelAll: () => {},
   };
   return {
     ownerUserId: "u_aaaaaaaa",
+    foregroundInFlight: 0,
     definitions: () => [],
     dispatch: async () => {
       throw new Error("dispatch should never be called for a text-only response");
@@ -800,6 +814,7 @@ function servicesWithStoreBackedRuntime(
         config: testOrchestratorConfig(),
       }),
       permissions: { denyAll: () => {} },
+      work: IDLE_WORK,
     }),
   } as unknown as GatewayServices;
 }

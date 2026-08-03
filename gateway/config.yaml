@@ -4,7 +4,7 @@
 # ---------------------------------------------------------------------------
 # Schema version — bumped by deploy/setup.py migrations. Do not hand-edit.
 # ---------------------------------------------------------------------------
-schema_version: "0.1.2"
+schema_version: "0.1.3"
 
 # ---------------------------------------------------------------------------
 # Server
@@ -60,7 +60,7 @@ tls:
     # - "sentient.local"             # add the mDNS / DNS name if you use one
 
 # ---------------------------------------------------------------------------
-# Session — connection limits
+# Session — connection limits, journal and retention
 # ---------------------------------------------------------------------------
 session:
   ws_idle_timeout_ms: 255000         # Range: 1000–255000. Bun WS idle close; Bun takes SECONDS (cap 255), gateway converts ms→s.
@@ -72,8 +72,41 @@ session:
   # replays exactly what it missed, and a second window joining reads the same
   # bytes rather than a second seq space. Connection-lane frames (auth, pong,
   # resume coordination, session-ready, the attach answer) are NEVER journaled.
-  replay_journal_max_bytes: 16777216    # 16 MB per session. Range 65536–268435456 (64 KB–256 MB). Evict-oldest, down to empty — a lone stale frame must not pin itself as the whole replay window.
-  replay_journal_retention_ms: 300000   # 5 min. Range 1000–3600000. How long a session's journal outlives its last window; past this a resuming client gets recovered:false and a fresh snapshot.
+  # RE-TUNED 16 MB -> 32 MB with derived retention. One journal now serves N
+  # windows, so a window that was away gap-fills everything the SESSION produced
+  # while it was gone, including other windows' turns — per-surface, a detached
+  # surface's journal simply stopped growing because nobody was writing to it.
+  # And a session now stays resident while a background task runs, so a whole
+  # turn's text AND its Opus audio can be journaled with ZERO windows attached:
+  # new production, not a redistribution of old. Sized off retention_ms rather
+  # than a round number — at the ~33 KB/s max_window_lag_bytes below anchors
+  # 48 kHz Opus at, 15 min of continuous speech is ~30 MB, and a smaller cap
+  # would silently break the promise retention_ms makes (a window returning at
+  # minute 14 would find its cursor evicted). A CEILING on an evict-oldest ring,
+  # never an allocation.
+  replay_journal_max_bytes: 33554432    # 32 MB per session. Range 65536–268435456 (64 KB–256 MB). Evict-oldest, down to empty — a lone stale frame must not pin itself as the whole replay window.
+  # --- Session retention (spec §5) ---
+  # A session stays resident because WORK IS HAPPENING — a turn, a foreground
+  # tool call, a background task, an open permission prompt, an auxiliary task —
+  # or because a window is attached. That predicate is DERIVED on every
+  # evaluation and never stored (gateway/src/runtime/session-retention.ts); this
+  # key is only the grace window after it goes false. Renamed from
+  # replay_journal_retention_ms: it now governs SESSION lifetime, not journal
+  # bytes, and the journal's survival hangs off the same window because the
+  # journal is released when the session's handles are.
+  retention_ms: 900000                  # 15 min. Range 1000–3600000. Grace between "nothing holds this session" and teardown; also how long its journal outlives its last holder.
+  # A background task still registered past this cannot be running: delegateTask's
+  # runner kills its Hermes child at orchestrator.delegation.hermes_timeout_ms
+  # (600000) and settles. Anything older is a bookkeeping leak, so it is dropped
+  # from the predicate and WARNed — otherwise a worker that dies without
+  # reporting holds its session resident for the life of the process.
+  # MUST stay above hermes_timeout_ms.
+  lost_task_threshold_ms: 660000        # 11 min = hermes_timeout_ms + 1 min slack. Range 60000–3600000.
+  # Work COMPLETING is not an attach or a detach, so the registry has no event
+  # for it. SessionRegistry.reevaluate covers the normal case (a turn settling);
+  # this timer bounds the abnormal one, and it ticks only for a session held by
+  # work with no window attached.
+  retention_recheck_interval_ms: 30000  # 30 s. Range 1000–600000.
   # Slow-window policy (spec §8.1) — DECIDED: disconnect, not forced re-snapshot.
   # A window whose transport backlog (or attach buffer) passes this is closed
   # with RFC 6455 1013 "try again later"; both SDKs then reconnect, present

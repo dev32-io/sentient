@@ -32,14 +32,20 @@
 // duplicated or late close event removes nothing rather than unseating the
 // connection that replaced it.
 //
-// DISPOSAL IS A HOOK, NOT A RULE. The default is "the last one out disposes".
-// Task 8 substitutes a retention predicate (a session stays resident while a
-// turn, a foreground tool call, a background task, a prompt or an auxiliary
-// task is outstanding) — a POLICY change, not a rewrite of this module.
+// DISPOSAL IS A HOOK, NOT A RULE, and task 8 has now substituted into it: a
+// session stays resident while a turn, a foreground tool call, a background
+// task, a prompt or an auxiliary task is outstanding (runtime/session-retention.ts,
+// runtime/session-retention-policy.ts). That was a POLICY change and this
+// module was not rewritten for it — the two additions it needed are a way for
+// the policy to reach the session's WORK (`SessionDisposalInput.work`, since
+// none of it is an attach or a detach) and a way for a work COMPLETION to ask
+// for a fresh decision (`reevaluate`, for the same reason).
 
 import type { ServerWebSocket } from "bun";
 import { getLog } from "../logging/logger.js";
 import type { SessionPermissionBroker } from "../runtime/session-permission-broker.js";
+import type { SessionWorkSignals } from "../runtime/session-retention.js";
+import { isRetained, livenessInputsOf } from "../runtime/session-retention.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { FanOutTurnEmitter } from "./fan-out-emitter.js";
 import type { FrameJournal } from "./frame-journal.js";
@@ -91,6 +97,13 @@ export interface SessionHandles {
   /** `journal`'s epoch, stamped on every session-lane frame. A client whose
    *  `resume.epoch` matches is in the same seq space and can be gap-filled. */
   readonly epoch: number;
+  /**
+   * This session's OBSERVABLE WORK — every member a getter, read at access
+   * time, never latched (task 8). It is what makes residency a DERIVED
+   * property: the disposal policy re-reads it on every evaluation and again
+   * immediately before it tears anything down.
+   */
+  readonly work: SessionWorkSignals;
   /** Ownership token for `journal`; released when these handles are disposed. */
   readonly replayLease: ReplayLease;
   /** Settle open prompts, abort any in-flight turn, cut speech and close the
@@ -100,23 +113,33 @@ export interface SessionHandles {
 }
 
 /**
- * What a session's subscriber count changing means for its residency.
+ * What a change in a session's residency inputs means for its lifetime.
  *
- * Called after EVERY attach and detach, so a policy that defers disposal can
- * cancel a pending one when work (or a window) returns. The default disposes
- * the moment the last attachment leaves.
+ * Called after EVERY attach and detach, and on every `reevaluate`, so a policy
+ * that defers disposal can cancel a pending one when work (or a window)
+ * returns. The default disposes as soon as nothing observable holds the
+ * session; the production policy adds a grace window on top of the same
+ * predicate (runtime/session-retention-policy.ts).
  */
 export type SessionDisposalPolicy = (input: SessionDisposalInput) => void;
 
 export interface SessionDisposalInput {
   readonly sessionId: string;
   /**
-   * A GETTER, read at access time. A policy that defers (task 8's retention
-   * timer) must re-read it immediately before disposing rather than latch the
-   * value it saw when the timer was armed — "a check that passed at time T is
-   * not a check that passes at time T+ε".
+   * A GETTER, read at access time. A policy that defers (the retention timer)
+   * must re-read it immediately before disposing rather than latch the value
+   * it saw when the timer was armed — "a check that passed at time T is not a
+   * check that passes at time T+ε".
    */
   readonly subscriberCount: number;
+  /**
+   * This session's work, also read at access time. Present because the
+   * predicate a policy needs is NOT a function of the subscriber count: a
+   * background task registering, a turn settling and a prompt being answered
+   * are none of them an attach or a detach, and each of them changes the
+   * answer.
+   */
+  readonly work: SessionWorkSignals;
   /**
    * Release this session's handles now. Idempotent, and guarded on the
    * registry entry's identity: a deferred call that fires after the session
@@ -146,6 +169,16 @@ export interface SessionRegistry {
    *  A duplicate or late close (an `attachmentId` that is no longer a member)
    *  is a no-op. */
   detach(sessionId: string, attachmentId: string): void;
+  /**
+   * Ask the disposal policy to decide again, without any attachment having
+   * changed. The seam for work COMPLETING — a turn settling, and through it
+   * every background completion, tool result and answered prompt that turn was
+   * waiting on. Without it a session whose last window left mid-work would stay
+   * resident until the policy's own re-check timer noticed, because attach and
+   * detach are the registry's only other events and neither is going to happen.
+   * A no-op for an unknown id.
+   */
+  reevaluate(sessionId: string): void;
   /** This session's attachments, insertion-ordered. Empty for an unknown id. */
   subscribers(sessionId: string): readonly Attachment[];
   /** The one runtime serving this session, or null when none is resident. */
@@ -162,13 +195,19 @@ interface ResidentSession {
   subscribers: SubscriberSet;
 }
 
-/** The default policy: the last one out disposes. Task 8 replaces it. */
-function disposeWhenLastDetaches(input: SessionDisposalInput): void {
-  if (input.subscriberCount > 0) return;
+/**
+ * The default policy: dispose as soon as nothing observable holds the session.
+ * The same predicate the production policy uses, with no grace window and no
+ * timer — right for a harness, and honest in a way "the last one out disposes"
+ * was not: that default would orphan a running background task the moment the
+ * last window closed.
+ */
+function disposeWhenNoWorkRemains(input: SessionDisposalInput): void {
+  if (isRetained(livenessInputsOf(input.work, input.subscriberCount > 0))) return;
   input.dispose();
 }
 
-export function createSessionRegistry(policy: SessionDisposalPolicy = disposeWhenLastDetaches): SessionRegistry {
+export function createSessionRegistry(policy: SessionDisposalPolicy = disposeWhenNoWorkRemains): SessionRegistry {
   const sessions = new Map<string, ResidentSession>();
 
   function evaluate(sessionId: string, resident: ResidentSession): void {
@@ -176,6 +215,9 @@ export function createSessionRegistry(policy: SessionDisposalPolicy = disposeWhe
       sessionId,
       get subscriberCount() {
         return resident.subscribers.size;
+      },
+      get work() {
+        return resident.handles.work;
       },
       dispose() {
         // Identity-guarded, not id-guarded: a deferred disposal that fires
@@ -235,6 +277,12 @@ export function createSessionRegistry(policy: SessionDisposalPolicy = disposeWhe
       const resident = sessions.get(sessionId);
       if (resident === undefined) return;
       if (!resident.subscribers.remove(attachmentId)) return;
+      evaluate(sessionId, resident);
+    },
+
+    reevaluate(sessionId) {
+      const resident = sessions.get(sessionId);
+      if (resident === undefined) return;
       evaluate(sessionId, resident);
     },
 

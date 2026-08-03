@@ -96,6 +96,7 @@ function fakeBroker(
   const dispatchCalls: ToolInvocation[] = [];
   const background: BackgroundRegistry = {
     count: () => 0,
+    newestStartedAtMs: () => null,
     register: () => {},
     complete: () => {},
     cancelAll: () => {},
@@ -103,6 +104,7 @@ function fakeBroker(
   return {
     dispatchCalls,
     ownerUserId: "u_aaaaaaaa",
+    foregroundInFlight: 0,
     definitions: () => defs,
     async dispatch(inv) {
       dispatchCalls.push(inv);
@@ -851,6 +853,7 @@ function spyBackgroundRegistry(): SpyBackgroundRegistry {
   const registry: SpyBackgroundRegistry = {
     cancelAllCalls: 0,
     count: () => tasks.size,
+    newestStartedAtMs: () => (tasks.size === 0 ? null : Date.now()),
     register: (taskId, cancel) => {
       tasks.set(taskId, cancel);
     },
@@ -869,6 +872,7 @@ function fakeBrokerWithBackground(background: BackgroundRegistry): FakeBroker {
   return {
     dispatchCalls: [],
     ownerUserId: "u_aaaaaaaa",
+    foregroundInFlight: 0,
     definitions: () => [],
     async dispatch(): Promise<ToolResult> {
       throw new Error("dispatch should never be called in cancellation tests");

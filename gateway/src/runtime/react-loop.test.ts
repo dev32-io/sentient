@@ -80,6 +80,7 @@ function fakeBroker(
   const dispatchCalls: ToolInvocation[] = [];
   const background: BackgroundRegistry = {
     count: () => 0,
+    newestStartedAtMs: () => null,
     register: () => {},
     complete: () => {},
     cancelAll: () => {},
@@ -87,6 +88,7 @@ function fakeBroker(
   return {
     dispatchCalls,
     ownerUserId: cap.ownerUserId,
+    foregroundInFlight: 0,
     definitions: () => defs,
     async dispatch(inv) {
       dispatchCalls.push(inv);

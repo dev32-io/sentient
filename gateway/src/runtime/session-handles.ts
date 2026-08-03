@@ -18,16 +18,25 @@
 
 import type { UserPrincipal } from "../identity/user-principal.js";
 import type { SessionPermissionBroker } from "./session-permission-broker.js";
+import type { SessionWorkSignals } from "./session-retention.js";
 import type { SessionRuntime } from "./session-runtime.js";
 import type { TurnEmitter } from "./turn-emitter.js";
 import type { TurnVoice } from "./turn-voice.js";
 
 /** What the factory returns. Named apart from `SessionHandles` because that
- *  is the strictly larger set the registry keeps — this pair plus the voice
+ *  is the strictly larger set the registry keeps — this trio plus the voice
  *  preferences, the window set and the disposal that ties them together. */
 export interface SessionRuntimeHandles {
   runtime: SessionRuntime;
   permissions: SessionPermissionBroker;
+  /**
+   * What this session is currently DOING, as getters (task 8). Built here
+   * because this factory is the only scope holding all three producers — the
+   * runtime's turn, the broker's foreground call and background registry, and
+   * the permission broker's open prompts. The registry's disposal policy reads
+   * it to decide residency; nothing else does.
+   */
+  work: SessionWorkSignals;
 }
 
 /**
@@ -72,6 +81,18 @@ export interface SessionRuntimeRequest {
   attachedWindows: () => number;
   /** This session's TTS fork, or null/absent for a text-only session. */
   voice?: TurnVoice | null;
+  /**
+   * Fired when a unit of this session's work finishes — today, whenever a turn
+   * settles, which is the point every background completion, tool result and
+   * answered prompt the turn was waiting on has resolved through.
+   *
+   * The composition root binds it to `SessionRegistry.reevaluate(sessionId)`.
+   * Retention is derived from work, and work COMPLETING is not an attach or a
+   * detach, so without this seam a session whose last window left mid-work
+   * would stay resident until the retention policy's own re-check timer
+   * noticed. Optional: a headless harness has no registry to tell.
+   */
+  onWorkSettled?: () => void;
 }
 
 /**

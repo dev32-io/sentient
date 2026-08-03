@@ -136,6 +136,13 @@ export interface ToolBroker {
    *  immediately without blocking on the runner. Every call passes the L3
    *  PDP check first, unconditionally. */
   dispatch(inv: ToolInvocation): Promise<ToolResult | { taskId: string }>;
+  /**
+   * Foreground calls currently awaiting a result. Read by the session
+   * retention predicate (runtime/session-retention.ts): a session whose last
+   * window closed mid-tool-call is still working, and a tool round-trip is the
+   * one part of a turn that can outlive the socket that provoked it.
+   */
+  readonly foregroundInFlight: number;
   readonly background: BackgroundRegistry;
   /** Late-bound seam for the chicken-and-egg in the broker/runtime
    *  construction order (the broker is built BEFORE the `SessionRuntime`
@@ -215,6 +222,10 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
   // root binds it — dispatchBackground below tolerates that by just not
   // forwarding the settled result.
   let completionSink: BackgroundCompletionSink | null = null;
+  // Foreground calls awaiting a result. A COUNTER, not a set: the retention
+  // predicate only asks whether any call is outstanding, and the loop dispatches
+  // a turn's tool calls concurrently.
+  let foregroundInFlight = 0;
 
   // MCP tool listing is I/O (a round-trip to every configured server), so
   // it can't be resolved synchronously inside `definitions()`. It is
@@ -362,16 +373,23 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     // (each catalog entry's `timeout`), which supersedes config.foreground_timeout_ms
     // at this layer. A broker-level per-call deadline (AbortSignal.timeout merged
     // with inv.signal) is a later hardening step if a single per-call bound is wanted.
-    const raw = await mcp.callTool(serverName, inv.name, inv.args, inv.signal);
-    const result = capResult(inv, raw, "tool-broker.dispatch.foreground.result-capped");
-    log.info("tool-broker.dispatch.foreground.done", {
-      sessionId,
-      tool: inv.name,
-      toolCallId: inv.toolCallId,
-      isError: result.isError,
-      contentLength: result.content.length,
-    });
-    return result;
+    foregroundInFlight += 1;
+    try {
+      const raw = await mcp.callTool(serverName, inv.name, inv.args, inv.signal);
+      const result = capResult(inv, raw, "tool-broker.dispatch.foreground.result-capped");
+      log.info("tool-broker.dispatch.foreground.done", {
+        sessionId,
+        tool: inv.name,
+        toolCallId: inv.toolCallId,
+        isError: result.isError,
+        contentLength: result.content.length,
+      });
+      return result;
+    } finally {
+      // `finally`, not a decrement after the await: a throwing or aborted call
+      // that left the counter high would pin its session resident forever.
+      foregroundInFlight -= 1;
+    }
   }
 
   function dispatchBackground(inv: ToolInvocation, runner: BackgroundToolRunner): ToolResult | { taskId: string } {
@@ -510,5 +528,14 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     completionSink = sink;
   }
 
-  return { ownerUserId, definitions, dispatch, background, setBackgroundCompletionSink };
+  return {
+    ownerUserId,
+    definitions,
+    dispatch,
+    get foregroundInFlight() {
+      return foregroundInFlight;
+    },
+    background,
+    setBackgroundCompletionSink,
+  };
 }

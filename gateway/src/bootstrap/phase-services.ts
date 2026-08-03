@@ -31,6 +31,7 @@ import { type TemplateLoader, createTemplateLoader } from "../profile-store/temp
 import type { TTSProviderFactory } from "../providers/tts/tts-types.ts";
 import type { CreateSessionRuntime } from "../runtime/session-handles.js";
 import { createConfirmHook, createSessionPermissionBroker } from "../runtime/session-permission-broker.js";
+import type { SessionWorkSignals } from "../runtime/session-retention.js";
 import { createSessionRuntime as buildSessionRuntime } from "../runtime/session-runtime.js";
 import { createTurnStateTracker } from "../runtime/turn-state-snapshot.js";
 import { createPolicyEngine } from "../security/policy-engine.js";
@@ -506,7 +507,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
   const { orchestratorCfg, accessManager, provider, mcpClient, policyEngine, delegationGuard, hermesRunner } = deps;
   const { delegatedExternalTool } = deps;
 
-  return ({ principal, conversationId, connectionId, emitter: rawEmitter, attachedWindows, voice }) => {
+  return ({ principal, conversationId, connectionId, emitter: rawEmitter, attachedWindows, voice, onWorkSettled }) => {
     if (!provider) {
       log.error("session-runtime.factory.no-provider", {
         userId: principal.userId,
@@ -658,7 +659,33 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       systemPrompt: resolveSystemPrompt(),
       config: orchestratorCfg,
       voice: voice ?? null,
+      onWorkSettled,
     });
+
+    // The session's OBSERVABLE WORK (task 8), assembled here because this is
+    // the only scope holding all three producers. Every member a GETTER: the
+    // retention policy re-reads them on every evaluation and again immediately
+    // before disposing, so a latched value would be exactly the "a check that
+    // passed at time T" bug the policy exists to avoid.
+    const work: SessionWorkSignals = {
+      get isTurnInFlight() {
+        return runtime.running;
+      },
+      get hasPendingForegroundTool() {
+        return broker.foregroundInFlight > 0;
+      },
+      get hasOutstandingPrompt() {
+        return permissions.pendingCount > 0;
+      },
+      get newestBackgroundTaskStartedAtMs() {
+        return broker.background.newestStartedAtMs();
+      },
+      // NO PRODUCER UNTIL TASK 10 (session titling). Wired now, constant
+      // `false`, so the term is in the predicate and in the reason list from
+      // the day the auxiliary-task runner lands — task 10 replaces this line
+      // with the runner's own getter and changes nothing else.
+      hasAuxiliaryTaskInFlight: false,
+    };
 
     // Closes the delegateTask fire-and-steer loop (spec §5.2/§5.4): the
     // broker is necessarily built BEFORE this runtime (it's a runtime
@@ -681,6 +708,6 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       runtime.submit({ kind: "background-completion", note });
     });
 
-    return { runtime, permissions };
+    return { runtime, permissions, work };
   };
 }

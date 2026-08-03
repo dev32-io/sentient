@@ -233,6 +233,12 @@ export interface SessionRuntimeDeps {
    * Null/absent for text-only sessions (no `tts:` config, headless harness).
    */
   voice?: TurnVoice | null;
+  /**
+   * Fired when a turn settles and the follow-up decision has been made — the
+   * seam the session registry's retention policy re-derives on (task 8). See
+   * `SessionRuntimeRequest.onWorkSettled`. Absent for a headless harness.
+   */
+  onWorkSettled?: (() => void) | undefined;
 }
 
 interface InFlightTurn {
@@ -590,6 +596,14 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
       });
       startTurn(nextTurnId, trigger);
     }
+
+    // LAST, after the follow-up decision above: a back-to-back turn has already
+    // set `inFlight` synchronously by now, so the retention predicate reads
+    // this session as still working rather than briefly idle. The registry's
+    // only other events are attach and detach, and a turn ending is neither —
+    // without this line a session whose last window left mid-work waits for the
+    // retention policy's re-check timer instead of being released promptly.
+    deps.onWorkSettled?.();
   }
 
   /**

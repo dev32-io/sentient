@@ -590,7 +590,7 @@ function handleSessionEnd(ws: ServerWebSocket<SessionData>, services: GatewaySer
  * The other thing that survives is the SESSION's outbound frame journal. It is
  * released by the handles' own dispose, not here, precisely because it is not
  * this connection's to park: with a peer still attached the session keeps
- * filling it, and with none it is kept for `session.replay_journal_retention_ms`
+ * filling it, and with none it is kept for `session.retention_ms`
  * so a reconnect carrying `resume: {epoch, lastSeq}` replays the frames this
  * client missed. An in-flight turn is not resumed — it is aborted if this
  * detach disposes the session — only the already-emitted frames are.

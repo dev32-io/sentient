@@ -26,7 +26,7 @@
 // Memory is bounded by TWO independent caps: this byte cap (evict-oldest,
 // config `session.replay_journal_max_bytes`) and the registry's detach
 // retention window (replay-registry.ts, config
-// `session.replay_journal_retention_ms`). Audio journals one frame per Opus
+// `session.retention_ms`). Audio journals one frame per Opus
 // frame (~50/s) for a session several windows may watch for an hour, so the
 // frame COUNT is bounded implicitly by the byte cap. Coalescing many Opus
 // frames into one journal entry is deliberately NOT done — each Opus frame

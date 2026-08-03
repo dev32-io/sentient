@@ -13,6 +13,7 @@ import { type AccessManager, createAccessManager } from "../access/access-manage
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
 import type { SessionPermissionBroker } from "../runtime/session-permission-broker.js";
+import type { SessionWorkSignals } from "../runtime/session-retention.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { Stimulus } from "../runtime/stimulus.js";
 import { EMPTY_TURN_STATE } from "../runtime/turn-state-snapshot.js";
@@ -25,6 +26,17 @@ import { mintDraftKey, mintSessionId } from "./session-id.js";
 import { type SessionHandles, createSessionRegistry } from "./session-registry.js";
 import { cleanupSession, handleWebSocketMessage } from "./ws-handlers.js";
 import { type SessionData, createEmptySessionData } from "./ws-helpers.js";
+
+/** A session that is doing nothing — every retention term false. These cases
+ *  are about routing and residency counting, not about work; the derived
+ *  retention predicate is pinned in runtime/session-retention.test.ts. */
+const IDLE_WORK: SessionWorkSignals = {
+  isTurnInFlight: false,
+  hasPendingForegroundTool: false,
+  hasOutstandingPrompt: false,
+  hasAuxiliaryTaskInFlight: false,
+  newestBackgroundTaskStartedAtMs: null,
+};
 
 interface FakeWs {
   data: SessionData;
@@ -124,7 +136,7 @@ function activateServices(): GatewayServices {
     profileStore: { get: async () => ({ ok: false, error: "no profile in this test" }) },
     createSynthesizerFor: () => null,
     stt: null,
-    createSessionRuntime: () => ({ runtime: runtimeStub, permissions: { denyAll: () => {} } }),
+    createSessionRuntime: () => ({ runtime: runtimeStub, permissions: { denyAll: () => {} }, work: IDLE_WORK }),
   } as unknown as GatewayServices;
 }
 
@@ -560,6 +572,7 @@ describe("ws-handlers routing — conversation.activate", () => {
         ({
           runtime: incumbentRuntime,
           permissions: { denyAll: () => {} },
+          work: IDLE_WORK,
           voicePrefs: null,
           fanOut: createFanOutTurnEmitter({
             registry: services.sessionRegistry,
@@ -628,6 +641,7 @@ function sessionScopedServices(brokerFor: (sessionId: string) => SessionPermissi
     createSessionRuntime: ({ conversationId }: { conversationId: string }) => ({
       runtime: runtimeStub,
       permissions: brokerFor(conversationId),
+      work: IDLE_WORK,
     }),
   } as unknown as GatewayServices;
 }

@@ -14,6 +14,15 @@ const log = getLog(["sentient", "tools", "background-registry"]);
 export interface BackgroundRegistry {
   /** Number of background tasks currently registered (not yet completed). */
   count(): number;
+  /**
+   * When the MOST RECENTLY registered still-running task was registered; null
+   * when none is. Read by the session retention predicate
+   * (runtime/session-retention.ts), which needs an AGE rather than a count: a
+   * worker that dies without reporting would otherwise hold its session
+   * resident forever. The newest is the youngest, so "the newest is older than
+   * the threshold" is exactly "every registered task is".
+   */
+  newestStartedAtMs(): number | null;
   /** Registers a running task's cancel handle, keyed by taskId. */
   register(taskId: string, cancel: () => void): void;
   /** Marks a task done, freeing its slot. No-op if the taskId is unknown
@@ -24,16 +33,30 @@ export interface BackgroundRegistry {
   cancelAll(): void;
 }
 
+interface RunningTask {
+  cancel: () => void;
+  /** Wall-clock registration time — the retention predicate's age input. */
+  startedAtMs: number;
+}
+
 export function createBackgroundRegistry(): BackgroundRegistry {
-  const tasks = new Map<string, () => void>();
+  const tasks = new Map<string, RunningTask>();
 
   return {
     count(): number {
       return tasks.size;
     },
 
+    newestStartedAtMs(): number | null {
+      let newest: number | null = null;
+      for (const task of tasks.values()) {
+        if (newest === null || task.startedAtMs > newest) newest = task.startedAtMs;
+      }
+      return newest;
+    },
+
     register(taskId: string, cancel: () => void): void {
-      tasks.set(taskId, cancel);
+      tasks.set(taskId, { cancel, startedAtMs: Date.now() });
       log.debug("background-registry.registered", { taskId, count: tasks.size });
     },
 
@@ -44,9 +67,9 @@ export function createBackgroundRegistry(): BackgroundRegistry {
 
     cancelAll(): void {
       const taskIds = [...tasks.keys()];
-      for (const [taskId, cancel] of tasks) {
+      for (const [taskId, task] of tasks) {
         try {
-          cancel();
+          task.cancel();
         } catch (err) {
           log.warn("background-registry.cancel-failed", {
             taskId,

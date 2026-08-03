@@ -26,11 +26,44 @@ export const sessionConfigSchema = z.object({
   // `.default()` (unlike this block's two older keys) so an operator's
   // existing config.yaml keeps booting without an operator-config-migrator
   // schema_version bump.
-  replay_journal_max_bytes: z.number().int().min(65536).max(268435456).default(16777216),
-  // How long a session's journal is kept after its last window detaches. Past
-  // this, a resuming client gets stream.resumed{recovered:false} and takes a
-  // fresh snapshot. Range 1000–3600000 (1 s–1 h).
-  replay_journal_retention_ms: z.number().int().min(1000).max(3600000).default(300000),
+  //
+  // RE-TUNED 16 MB → 32 MB with derived retention (task 8), for two reasons
+  // that both point the same way:
+  //  1. One journal now serves N windows, and a window that was away has to
+  //     gap-fill everything the SESSION produced while it was gone — including
+  //     other windows' turns. Per-surface, a detached surface's journal simply
+  //     stopped growing; there was nobody writing to it.
+  //  2. A session now stays resident while a background task runs, so a whole
+  //     turn — text AND its Opus audio — can be journaled with ZERO windows
+  //     attached. That is new production, not a redistribution of old.
+  // Sized off the retention window rather than a round number: at the ~33 KB/s
+  // this journal's own `max_window_lag_bytes` comment anchors 48 kHz Opus at,
+  // `retention_ms` (15 min) of continuous speech is ~30 MB. A cap below that
+  // would silently break the promise `retention_ms` makes — a window returning
+  // at minute 14 would find its cursor evicted and take a fresh snapshot
+  // anyway. It is a CEILING on an evict-oldest ring, not an allocation.
+  replay_journal_max_bytes: z.number().int().min(65536).max(268435456).default(33554432),
+  // How long a SESSION is kept once nothing observable is working on it, and
+  // for the same window afterwards, how long its journal survives its last
+  // holder. Renamed from `replay_journal_retention_ms` (task 8): the key now
+  // governs session lifetime, not journal bytes, and a key that
+  // under-describes its job is how the dead `session.idle_timeout_ms` survived
+  // with zero readers. What "retained" MEANS is derived, never stored — see
+  // gateway/src/runtime/session-retention.ts. Range 1000–3600000 (1 s–1 h).
+  retention_ms: z.number().int().min(1000).max(3600000).default(900000),
+  // When a still-registered background task is treated as LOST: dropped from
+  // the retention predicate and WARNed. MUST exceed the longest a task can
+  // legitimately run — for `delegateTask` that is
+  // `orchestrator.delegation.hermes_timeout_ms` (600000), after which the
+  // runner kills the child and settles. Anything still registered past this is
+  // a bookkeeping leak, not work, and without the bound it would hold its
+  // session resident for the life of the process. Range 60000–3600000.
+  lost_task_threshold_ms: z.number().int().min(60000).max(3600000).default(660000),
+  // How often a session held ONLY by work, with no window attached, is
+  // re-derived. Work COMPLETING is not an attach or a detach, so the registry
+  // has no event for it; `SessionRegistry.reevaluate` covers the normal case
+  // and this timer bounds the abnormal one. Range 1000–600000 (1 s–10 min).
+  retention_recheck_interval_ms: z.number().int().min(1000).max(600000).default(30000),
   // Maximum bytes one window may have queued (transport backpressure, or the
   // attach buffer) before the gateway CLOSES it with RFC 6455 1013. With a
   // shared journal a slow window's prerequisite frames can be evicted while it

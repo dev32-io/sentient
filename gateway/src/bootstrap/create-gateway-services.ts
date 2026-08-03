@@ -26,6 +26,7 @@ import type { PersonalityStore } from "../profile-store/personality-store.js";
 import type { ProfileStore } from "../profile-store/profile-store.ts";
 import type { TemplateLoader } from "../profile-store/template-loader.ts";
 import type { CreateSessionRuntime } from "../runtime/session-handles.js";
+import { createSessionRetentionPolicy } from "../runtime/session-retention-policy.js";
 import { type ReplayRegistry, createReplayRegistry } from "../session-handlers/replay-registry.js";
 import type { SessionControlsRegistry } from "../session-handlers/session-controls-registry.js";
 import { type SessionRegistry, createSessionRegistry } from "../session-handlers/session-registry.js";
@@ -230,9 +231,18 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     session: cfg.session,
     replayRegistry: createReplayRegistry({
       maxBytesPerSession: cfg.session.replay_journal_max_bytes,
-      retentionMs: cfg.session.replay_journal_retention_ms,
+      retentionMs: cfg.session.retention_ms,
     }),
-    sessionRegistry: createSessionRegistry(),
+    // Residency is DERIVED from observable work, not from which window closed
+    // last (session-model spec §5). Substituted into the disposal hook the
+    // registry has always exposed — the registry itself is unchanged.
+    sessionRegistry: createSessionRegistry(
+      createSessionRetentionPolicy({
+        retentionMs: cfg.session.retention_ms,
+        recheckIntervalMs: cfg.session.retention_recheck_interval_ms,
+        lostTaskThresholdMs: cfg.session.lost_task_threshold_ms,
+      }),
+    ),
     webui: cfg.webui,
     auth,
     authConfig: cfg.auth,

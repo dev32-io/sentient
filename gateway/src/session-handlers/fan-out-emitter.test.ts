@@ -117,6 +117,15 @@ function harness(first: FakeWindow, maxLagBytes = MAX_LAG_BYTES, onDispose?: () 
   const handles: SessionHandles = {
     runtime,
     permissions: { denyAll() {} } as unknown as SessionHandles["permissions"],
+    // Never driven here — these cases are about delivery, not residency
+    // (session-retention.test.ts owns that).
+    work: {
+      isTurnInFlight: false,
+      hasPendingForegroundTool: false,
+      hasOutstandingPrompt: false,
+      hasAuxiliaryTaskInFlight: false,
+      newestBackgroundTaskStartedAtMs: null,
+    },
     voicePrefs: null,
     fanOut,
     journal,

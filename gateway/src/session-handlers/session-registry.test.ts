@@ -10,9 +10,21 @@
 
 import { describe, expect, it } from "bun:test";
 import type { ServerWebSocket } from "bun";
+import type { SessionWorkSignals } from "../runtime/session-retention.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import { type SessionHandles, createSessionRegistry } from "./session-registry.js";
 import type { SessionData } from "./ws-helpers.js";
+
+/** A session that is doing nothing — every retention term false. These cases
+ *  are about routing and residency counting, not about work; the derived
+ *  retention predicate is pinned in runtime/session-retention.test.ts. */
+const IDLE_WORK: SessionWorkSignals = {
+  isTurnInFlight: false,
+  hasPendingForegroundTool: false,
+  hasOutstandingPrompt: false,
+  hasAuxiliaryTaskInFlight: false,
+  newestBackgroundTaskStartedAtMs: null,
+};
 
 /** The socket an attachment delivers to. Nothing here writes to it — these
  *  cases are about residency, not delivery (see fan-out-emitter.test.ts). */
@@ -40,6 +52,7 @@ function handlesSpy(): HandlesSpy {
       return {
         runtime,
         permissions: { denyAll: () => {} },
+        work: IDLE_WORK,
         voicePrefs: null,
         dispose: () => {
           disposed = true;

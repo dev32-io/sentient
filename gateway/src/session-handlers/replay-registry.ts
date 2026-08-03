@@ -31,6 +31,22 @@
 // about. Surviving disposal is the point: a window that reconnects inside the
 // retention window presents its cursor and gets the frames it missed rather
 // than a truncated conversation.
+//
+// THAT SWEEP IS REUSED VERBATIM BY DERIVED RETENTION (task 8) — but calling the
+// whole arrangement "reuse" would understate the change, because THE PREDICATE
+// FEEDING IT IS NEW. What is unchanged is this file: the clock still starts
+// when the last lease is released, and the window is still `retentionMs`.
+// What changed is WHEN that release happens. It used to be "the last window
+// closed"; it is now "nothing observable is still working on this session, and
+// the grace window has since elapsed" (runtime/session-retention.ts). A journal
+// therefore now outlives a session that spent ten minutes finishing a delegated
+// task with nobody watching — and the frames that task produced are IN it,
+// because the session was never torn down mid-work to begin with.
+//
+// `retentionMs` is `session.retention_ms`, renamed from
+// `session.replay_journal_retention_ms` in the same task: one window governs
+// both stages, because a journal is released exactly when its session's handles
+// are disposed.
 
 import { getLog } from "../logging/logger.js";
 import { type FrameJournal, createFrameJournal } from "./frame-journal.js";
