@@ -45,6 +45,30 @@ export interface SttSession {
   pushFrame(bytes: Uint8Array): void;
   /** Echo-suppression window (ms). `0` clears it. See mic-echo-guard.ts. */
   suppressInputFor(ms: number): void;
+  /**
+   * Bytes forwarded to STT since the current utterance began — reset by
+   * `start`, `end` and `discard`.
+   *
+   * It is the OBSERVABLE that makes "the buffer was dropped, not flushed"
+   * checkable from outside. Approximate by construction: the authoritative
+   * buffer lives in the STT service, and this counts what was handed to it.
+   */
+  readonly buffered: number;
+  /**
+   * Drop the in-flight utterance WITHOUT finalizing it (task 9, spec §3.7).
+   *
+   * The distinction from `end()` is the whole reason this exists: `end()`
+   * force-flushes, so whatever half-sentence is open would be transcribed and
+   * submitted — into whichever session this connection is on NOW. Committing
+   * half an utterance into the wrong conversation is worse than dropping it.
+   *
+   * Implemented by closing the STT socket, which is the only primitive the
+   * adapter contract offers that abandons an open turn rather than completing
+   * it. Not terminal: `micOpen` is preserved, so the next mic frame re-dials
+   * through the existing frame-driven reconnect and the person can keep
+   * talking.
+   */
+  discard(): void;
   /** Connection teardown — idempotent. */
   close(): void;
 }
@@ -73,6 +97,11 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
   let closed = false;
   let micOpen = false;
   let desiredTurnMode: TurnMode = INITIAL_TURN_MODE;
+  let bufferedBytes = 0;
+  // Bumped by `discard()`. A connect started before the discard must not
+  // install its adapter afterwards — that would resurrect the very socket the
+  // discard abandoned, complete with the open turn it was abandoning.
+  let uplinkEpoch = 0;
 
   /**
    * Start detached background work with a rejection handler already attached.
@@ -170,6 +199,7 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
   function connect(): void {
     if (closed || connecting || adapter !== null) return;
     connecting = true;
+    const startedAtEpoch = uplinkEpoch;
     const candidate = factory(config);
     log.info("stt.connecting", { sessionId, url: config.url, audioFormat: config.audioFormat });
     candidate
@@ -178,6 +208,14 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
         connecting = false;
         if (closed) {
           detach("close-after-session-closed", () => candidate.close());
+          return;
+        }
+        if (startedAtEpoch !== uplinkEpoch) {
+          log.info("stt.connect-superseded", {
+            sessionId,
+            reason: "the uplink was discarded while this socket was connecting — closing it instead of installing it",
+          });
+          detach("close-after-discard", () => candidate.close());
           return;
         }
         adapter = candidate;
@@ -200,6 +238,7 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
       if (closed) return;
       micOpen = true;
       desiredTurnMode = turnMode;
+      bufferedBytes = 0;
       log.info("stt.audio-start", { sessionId, turnMode, connected: adapter !== null });
       if (adapter) {
         adapter.setTurnMode(turnMode);
@@ -210,7 +249,8 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
 
     end() {
       micOpen = false;
-      log.info("stt.audio-end", { sessionId, connected: adapter !== null });
+      log.info("stt.audio-end", { sessionId, connected: adapter !== null, bufferedBytes });
+      bufferedBytes = 0;
       adapter?.endUtterance();
     },
 
@@ -221,11 +261,36 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
         log.debug("stt.frame-dropped", { sessionId, byteSize: bytes.byteLength, reason: "no live STT socket" });
         return;
       }
+      bufferedBytes += bytes.byteLength;
       adapter.send(bytes);
     },
 
     suppressInputFor(ms) {
       adapter?.suppressInputFor(ms);
+    },
+
+    get buffered() {
+      return bufferedBytes;
+    },
+
+    discard() {
+      if (closed) return;
+      // Bumped FIRST, so a connect already in flight sees the change and closes
+      // its socket instead of installing it.
+      uplinkEpoch += 1;
+      const active = adapter;
+      adapter = null;
+      log.info("stt.discard", {
+        sessionId,
+        wasConnected: active !== null,
+        bufferedBytes,
+        micOpen,
+        reason: "the uplink was aimed at a session this connection has left — dropping it without a flush",
+      });
+      bufferedBytes = 0;
+      // `close()`, never `endUtterance()`: the point is to ABANDON the open
+      // turn, not to make the service finalize it.
+      if (active) detach("discard", () => active.close());
     },
 
     close() {

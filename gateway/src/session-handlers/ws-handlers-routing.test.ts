@@ -283,7 +283,9 @@ describe("ws-handlers routing — permission.response", () => {
     expect(permissions.resolveCalls).toEqual([
       { requestId: "req-1", allow: true, attachmentId: ws.data.attachment?.attachmentId ?? "" },
     ]);
-    expect(ws.sent).toEqual([]);
+    // `session.attached` is the attach answer (task 9) and nothing else: an
+    // accepted command produces no frame of its own.
+    expect(commandFrames(ws)).toEqual([]);
   });
 
   it("does not throw or answer when no prompt is open under that requestId", async () => {
@@ -300,7 +302,7 @@ describe("ws-handlers routing — permission.response", () => {
       ),
     ).resolves.toBeUndefined();
 
-    expect(ws.sent).toEqual([]);
+    expect(commandFrames(ws)).toEqual([]);
   });
 
   it("SECURITY: a connection that is not attached to a session settles nothing", async () => {
@@ -322,7 +324,12 @@ describe("ws-handlers routing — permission.response", () => {
     ).resolves.toBeUndefined();
 
     expect(permissions.resolveCalls).toEqual([]);
-    expect(ws.sent).toEqual([]);
+    // REFUSED OUT LOUD, not dropped (task 9). Silence here is
+    // indistinguishable from a lost network and leaves the dialog open
+    // forever; the client needs to know its answer went nowhere.
+    expect(commandFrames(ws)).toEqual([
+      { type: "command.rejected", command: "permission.response", reason: "not_attached" },
+    ]);
   });
 
   it("SECURITY: a window attached to one session cannot settle a prompt on another", async () => {
@@ -517,7 +524,14 @@ describe("ws-handlers routing — conversation.activate", () => {
       services,
     );
 
-    expect(ws.sent).toEqual([{ type: "session.switched", sessionId, ts: expect.any(Number) }]);
+    // ORDER PINNED (task 9): the attach answer precedes the switch ack. A
+    // client that learned its new session id before its `{sessionId,
+    // generation}` binding would stamp the next command with a generation it
+    // does not hold yet and have it refused as stale.
+    expect(ws.sent).toEqual([
+      { type: "session.attached", sessionId, generation: expect.any(Number) },
+      { type: "session.switched", sessionId, ts: expect.any(Number) },
+    ]);
     expect(ws.data.conversationId).toBe(sessionId);
     // The frame must survive the outbound validator, not merely be constructed.
     expect(gatewayMessageSchema.safeParse(ws.sent[0]).success).toBe(true);
@@ -599,7 +613,14 @@ describe("ws-handlers routing — conversation.activate", () => {
       services,
     );
 
-    expect(ws.sent).toEqual([{ type: "session.switched", sessionId, ts: expect.any(Number) }]);
+    // ORDER PINNED (task 9): the attach answer precedes the switch ack. A
+    // client that learned its new session id before its `{sessionId,
+    // generation}` binding would stamp the next command with a generation it
+    // does not hold yet and have it refused as stale.
+    expect(ws.sent).toEqual([
+      { type: "session.attached", sessionId, generation: expect.any(Number) },
+      { type: "session.switched", sessionId, ts: expect.any(Number) },
+    ]);
     expect(ws.data.conversationId).toBe(sessionId);
     // The INCUMBENT's runtime, not a second one built for this connection.
     expect(ws.data.runtime).toBe(incumbentRuntime);
@@ -645,6 +666,18 @@ function sessionScopedServices(brokerFor: (sessionId: string) => SessionPermissi
       work: IDLE_WORK,
     }),
   } as unknown as GatewayServices;
+}
+
+/**
+ * Every frame this socket received EXCEPT the attach answer.
+ *
+ * `session.attached` (task 9) goes out from `bindSessionRuntime`, so it is
+ * present on every attached socket and says nothing about the command under
+ * test. Filtering it here keeps each case asserting on what its own command
+ * produced.
+ */
+function commandFrames(ws: FakeWs): unknown[] {
+  return ws.sent.filter((f) => (f as { type?: string }).type !== "session.attached");
 }
 
 /** Attach [ws] to [sessionId] through the real bind path. */

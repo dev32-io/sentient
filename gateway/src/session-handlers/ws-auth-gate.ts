@@ -31,6 +31,7 @@ import { sendConnectionFrame } from "./ws-send.js";
 const log = getLog(["sentient", "gateway", "session-handlers", "ws-auth-gate"]);
 
 const WS_CLOSE_POLICY = 1008; // RFC 6455 — policy violation
+const MS_PER_SECOND = 1000;
 
 // The user record doesn't carry role/householdId yet — default them here.
 // The real role model (system/operator/household scopes) lands with the
@@ -119,6 +120,12 @@ export async function handleAuthMessage(
     return reject(ws, "invalid-user-record", "stored user record has a malformed userId");
   }
   ws.data.principal = principal;
+  // The credential's OWN lifetime, kept off the principal because the principal
+  // is an immutable identity anchor (spec §3.6). `TokenPayload.expiresAt` is in
+  // SECONDS — the PASETO claim is an ISO instant floored to a second in
+  // token-service.ts — and every consumer compares it against `Date.now()`, so
+  // it is converted here, once, rather than at each comparison.
+  ws.data.tokenExpiresAtMs = r.value.expiresAt * MS_PER_SECOND;
   ws.data.authState = "authed";
   if (ws.data.authTimeout) {
     clearTimeout(ws.data.authTimeout);
@@ -164,6 +171,7 @@ function reject(ws: ServerWebSocket<SessionData>, code: string, reason: string):
   }
   ws.data.authState = "rejected";
   ws.data.principal = null;
+  ws.data.tokenExpiresAtMs = null;
   if (ws.data.authTimeout) {
     clearTimeout(ws.data.authTimeout);
     ws.data.authTimeout = null;

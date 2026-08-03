@@ -49,6 +49,7 @@ import { isRetained, livenessInputsOf } from "../runtime/session-retention.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { FanOutTurnEmitter } from "./fan-out-emitter.js";
 import type { FrameJournal } from "./frame-journal.js";
+import type { InputArbiter } from "./input-arbiter.js";
 import type { ReplayLease } from "./replay-registry.js";
 import type { SessionVoicePrefs } from "./session-voice-prefs.js";
 import { type Attachment, type SubscriberSet, createSubscriberSet } from "./subscriber-set.js";
@@ -79,6 +80,11 @@ export interface SessionHandles {
   /** Null when the orchestrator built no voice for this session (no `tts:`
    *  config, or no synthesizer for the resolved voice id). */
   readonly voicePrefs: SessionVoicePrefs | null;
+  /** The session's INPUT FLOOR (task 9, spec §8.3) — which window won the most
+   *  recent dispatch, and for how long that still refuses a peer. Session state
+   *  because contention is between windows OF one session, and it dies with the
+   *  session for the same reason the runtime does. */
+  readonly arbiter: InputArbiter;
   /**
    * The session's outbound seam: one seq allocation per frame, fanned out to
    * every attached window, plus the hold/release that makes an attach atomic

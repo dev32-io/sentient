@@ -103,6 +103,21 @@ export const sessionConfigSchema = z.object({
   // reached — this policy would be unreachable and the silent loss it exists to
   // bound would be back. Range 65536–16777216 (64 KB–16 MB).
   max_window_lag_bytes: z.number().int().min(65536).max(16777216).default(4194304),
+  // How long after one window's input the SESSION's input floor stays that
+  // window's (session-model spec §8.3). Two windows sending inside this span are
+  // contending simultaneously: the first is applied, the second is refused
+  // `session_busy`. Outside it, a later message STEERS the running turn through
+  // the ordinary stimulus seam — arbitration is for races, never a floor lock
+  // for the whole turn, which would let one speaker own the session until their
+  // reply finished and defeat multi-window entirely.
+  //
+  // Sized to human simultaneity plus network jitter, not to a turn: two people
+  // pressing send "at the same moment" land within ~250 ms of each other, and
+  // the e2e case that must still steer is a message sent THREE SECONDS into a
+  // running turn. Anything approaching a turn's length is the floor lock this
+  // key exists not to be. 0 disables arbitration entirely — every input is
+  // applied, which is the pre-§8.3 behaviour. Range 0–5000.
+  input_arbitration_window_ms: z.number().int().min(0).max(5000).default(500),
 });
 
 export type SessionConfig = z.output<typeof sessionConfigSchema>;

@@ -134,6 +134,15 @@ session:
   # ws.send() returns 0 and the frame is DROPPED silently, so a threshold above
   # it could never be reached and this policy would be unreachable.
   max_window_lag_bytes: 4194304         # 4 MB (~2 min of 48 kHz Opus queued). Range 65536–16777216 (64 KB–16 MB).
+  # Input arbitration (spec §8.3) — "a connection is a window onto the session,
+  # and the first window to talk wins." Two windows sending inside this span are
+  # racing at one dispatch: the first is applied, the second is refused
+  # `session_busy` and can retry immediately. OUTSIDE it a later message steers
+  # the running turn through the ordinary stimulus seam, which is why this is
+  # sized to human simultaneity (~250 ms) plus jitter and NOT to a turn — a
+  # window as long as a reply would be a floor lock, letting one speaker own the
+  # session until their turn ended and defeating multi-window entirely.
+  input_arbitration_window_ms: 500      # 0.5 s. Range 0–5000. 0 disables arbitration (every input applied).
 
 # ---------------------------------------------------------------------------
 # Access — capability minting + per-user physical isolation (spec §2.1, §2.5)

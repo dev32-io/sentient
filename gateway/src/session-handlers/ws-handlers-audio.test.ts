@@ -20,6 +20,7 @@ interface SpyStt {
   ends: number;
   frames: number;
   closes: number;
+  discards: number;
 }
 
 function spyStt(): SpyStt {
@@ -28,6 +29,7 @@ function spyStt(): SpyStt {
     ends: 0,
     frames: 0,
     closes: 0,
+    discards: 0,
     session: {
       start: (mode) => {
         spy.starts.push(mode);
@@ -39,6 +41,10 @@ function spyStt(): SpyStt {
         spy.frames += 1;
       },
       suppressInputFor: () => {},
+      buffered: 0,
+      discard: () => {
+        spy.discards += 1;
+      },
       close: () => {
         spy.closes += 1;
       },

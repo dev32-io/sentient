@@ -72,6 +72,33 @@ export interface SessionData {
   authState: "pending" | "authenticating" | "authed" | "rejected";
   /** Minted once at the auth gate; null until authenticated. Never reassigned after. */
   principal: UserPrincipal | null;
+  /**
+   * When THIS connection's PASETO token stops authorizing (epoch ms), or null
+   * before auth.
+   *
+   * IT LIVES ON THE CONNECTION, NOT ON THE PRINCIPAL (spec §3.6), and that
+   * placement is the point: `UserPrincipal` is `Object.freeze({userId, role,
+   * householdId})` — an identity anchor that must stay immutable, and identity
+   * does not expire. A CREDENTIAL does. The token is validated exactly once, at
+   * connect, so without this field an attachment outlives its credential
+   * indefinitely and a token that expired hours ago keeps authorizing every
+   * command. `command-mediator.ts` revalidates against it at the choke point and
+   * fails closed.
+   */
+  tokenExpiresAtMs: number | null;
+  /**
+   * The chat surface this connection is a window of — one browser tab, one
+   * mobile app instance. Client-supplied (`session.configure.surfaceId`, falling
+   * back to `deviceId`), and per §3.4 it GATES NOTHING: it is not in the
+   * authorization chain and no capability is minted from it.
+   *
+   * Parked here for exactly one reader: the `pendingId` dedup namespace
+   * (store/pending-id-scope.ts). That record has to be stable across a
+   * reconnect — a resend after a dropped socket must still match — so it cannot
+   * be keyed on the attachment or the connection, both of which are reminted.
+   * The surface is the one identifier with the right lifetime.
+   */
+  surfaceId: string | null;
   /** Handle for the auth timeout; cleared on auth success or rejection. */
   authTimeout: ReturnType<typeof setTimeout> | null;
   /** Capabilities the client declared in session.configure. */
@@ -166,6 +193,8 @@ export function createEmptySessionData(): SessionData {
     draftKey: null,
     authState: "pending",
     principal: null,
+    tokenExpiresAtMs: null,
+    surfaceId: null,
     authTimeout: null,
     grantedCapabilities: new Set(),
     clientType: "webui",

@@ -1037,6 +1037,48 @@ describe("SessionRuntime — cancellation: double-commit guard", () => {
     expect(background.cancelAllCalls).toBe(1); // interrupt's own background step still fires
     runtime.dispose();
   });
+
+  it("INVARIANT: a second barge-in on an already-aborted turn commits no second cutoff entry", async () => {
+    // MULTI-WINDOW, not a double-click. One runtime now serves N windows and a
+    // barge-in from ANY of them aborts the SHARED turn (spec §8.3) — two people
+    // speaking over the same reply is the ordinary case, not a fault, and
+    // `stt-session.ts` fires `bargeIn()` per connection with nothing between
+    // them to coalesce. Two cutoff entries would put two interrupted bubbles in
+    // the transcript for one reply, on every reload, forever.
+    const am = createAccessManager({ userDataRoot: `${ROOT}/case-double-bargein` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = partialReplyThenHangProvider("half a sentence");
+    const emitter = recordingEmitter();
+
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-double-bargein",
+      accessManager: am,
+      provider,
+      broker: fakeBrokerWithBackground(spyBackgroundRegistry()),
+      emitter,
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "go" });
+    await waitFor(() => emitter.events.some((e) => e.type === "textDelta"));
+
+    runtime.bargeIn();
+    runtime.bargeIn();
+
+    await waitUntilIdle(runtime);
+
+    const readback = openSessionStore(am.grant(alice, "session-store"));
+    const cutoffs = readback.readSession("sess-double-bargein").filter((e) => e.cutoff === "barge-in");
+    readback.close();
+
+    expect(cutoffs).toHaveLength(1);
+    expect(emitter.events.filter((e) => e.type === "turnAborted")).toHaveLength(1);
+    runtime.dispose();
+  });
 });
 
 // ---------------------------------------------------------------------------

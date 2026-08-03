@@ -20,6 +20,7 @@ import type { TurnEmitter } from "../runtime/turn-emitter.js";
 import { createTurnStateTracker } from "../runtime/turn-state-snapshot.js";
 import { attachWithSnapshot, createFanOutTurnEmitter } from "./fan-out-emitter.js";
 import { createFrameJournal } from "./frame-journal.js";
+import { createInputArbiter } from "./input-arbiter.js";
 import { type SessionHandles, type SessionRegistry, createSessionRegistry } from "./session-registry.js";
 import { type SessionData, createEmptySessionData } from "./ws-helpers.js";
 import { sendConnectionFrame } from "./ws-send.js";
@@ -127,6 +128,7 @@ function harness(first: FakeWindow, maxLagBytes = MAX_LAG_BYTES, onDispose?: () 
       newestBackgroundTaskStartedAtMs: null,
     },
     voicePrefs: null,
+    arbiter: createInputArbiter(SESSION_ID, 0),
     fanOut,
     journal,
     epoch: 7,

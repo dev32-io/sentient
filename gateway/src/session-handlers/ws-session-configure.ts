@@ -139,6 +139,10 @@ export function handleSessionConfigure(
   // field is kept because it is on the frozen wire and it is what a log line
   // uses to tell those two tabs apart.
   const surfaceId = configureSurfaceId ?? configureDeviceId;
+  // Parked for ONE reader: the `pendingId` dedup namespace (spec §3.8,
+  // store/pending-id-scope.ts). It is not an authorization input and mints no
+  // capability — §3.4 is explicit that this field gates nothing.
+  ws.data.surfaceId = surfaceId;
 
   // --- Session identity: membership lookup, or a draft ---
   //

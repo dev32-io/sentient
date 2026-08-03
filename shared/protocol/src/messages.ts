@@ -57,6 +57,41 @@ function withSeq<T extends z.ZodRawShape>(schema: z.ZodObject<T>) {
 
 // ─── Client → Gateway Messages ───
 
+// ─── Command binding (session-model spec §3.7) ───
+//
+// `text.input`, `interrupt`, the permission answer and the audio control frames
+// used to carry NO session identity at all: the gateway applied each one to
+// whatever session the connection happened to be on when the bytes landed. With
+// session switching that is a correctness bug, not a nicety — a message typed
+// into session A and a `conversation.activate` onto session B are two frames in
+// flight at once, and the loser lands in the wrong conversation.
+//
+// So every acting command names the session it was issued against AND the
+// generation of the attachment that issued it. The pair is what the gateway
+// compares (gateway/src/session-handlers/command-mediator.ts); `generation`
+// alone is ambiguous because it restarts at 1 per session, and `sessionId` alone
+// cannot tell a command issued before a re-attach from one issued after it.
+//
+// BOTH ARE OPTIONAL, and that is forced rather than lenient: a DRAFT connection
+// has no session and no attachment (spec §4.2), yet its `text.input` is exactly
+// the frame that mints the session. A command with neither field is bound
+// implicitly to the connection's current attachment — the pre-§3.7 behaviour,
+// which is all an unstamped client can be given. A command carrying ONE of the
+// two is refused: half a binding is a client bug, and accepting it would let a
+// stale `sessionId` through unchecked.
+//
+// The client learns the pair from `session.attached` (below), which the gateway
+// sends on every attach.
+export const commandBindingFields = {
+  sessionId: z.string().min(1).optional(),
+  attachmentGeneration: z.number().int().positive().optional(),
+} as const;
+
+/** Add the §3.7 binding to a client→gateway command frame. */
+function withCommandBinding<T extends z.ZodRawShape>(schema: z.ZodObject<T>) {
+  return schema.extend(commandBindingFields);
+}
+
 /**
  * Client kind sent in session.configure so the gateway can apply
  * client-type-aware policy (e.g. headless devices like the cube ignore the
@@ -138,25 +173,31 @@ export const sessionConfigureSchema = z.object({
 export const turnModeSchema = z.union([z.literal("manual"), z.literal("semantic")]);
 export type TurnMode = z.infer<typeof turnModeSchema>;
 
-export const audioStartSchema = z.object({
-  type: z.literal("audio.start"),
-  /**
-   * Optional; absent (or omitted by old clients / webui) defaults to
-   * "semantic" so back-compat is automatic — no client-side migration
-   * required. Mobile sets "manual" for a hold-to-talk press.
-   */
-  turnMode: turnModeSchema.default("semantic"),
-});
+export const audioStartSchema = withCommandBinding(
+  z.object({
+    type: z.literal("audio.start"),
+    /**
+     * Optional; absent (or omitted by old clients / webui) defaults to
+     * "semantic" so back-compat is automatic — no client-side migration
+     * required. Mobile sets "manual" for a hold-to-talk press.
+     */
+    turnMode: turnModeSchema.default("semantic"),
+  }),
+);
 
-export const audioEndSchema = z.object({
-  type: z.literal("audio.end"),
-});
+export const audioEndSchema = withCommandBinding(
+  z.object({
+    type: z.literal("audio.end"),
+  }),
+);
 
-export const textInputSchema = z.object({
-  type: z.literal("text.input"),
-  text: z.string().min(1).max(10000),
-  pendingId: z.string().optional(),
-});
+export const textInputSchema = withCommandBinding(
+  z.object({
+    type: z.literal("text.input"),
+    text: z.string().min(1).max(10000),
+    pendingId: z.string().optional(),
+  }),
+);
 
 // Client → gateway answer to a `permission.request` (spec §7.1). Keyed by
 // `requestId`, not `toolCallId`: the gateway may have already resolved the
@@ -164,11 +205,13 @@ export const textInputSchema = z.object({
 // prompt id makes that late answer a clean no-op instead of a stale approval
 // applied to a different call. `approved` is REQUIRED — there is no
 // "unanswered" wire value, because a missing decision must never read as yes.
-export const permissionResponseSchema = z.object({
-  type: z.literal("permission.response"),
-  requestId: z.string(),
-  approved: z.boolean(),
-});
+export const permissionResponseSchema = withCommandBinding(
+  z.object({
+    type: z.literal("permission.response"),
+    requestId: z.string(),
+    approved: z.boolean(),
+  }),
+);
 export type PermissionResponse = z.infer<typeof permissionResponseSchema>;
 
 export const sessionEndSchema = z.object({
@@ -183,9 +226,11 @@ export const pingSchema = z.object({
 // from barge-in, which is mic-onset-inferred. Server treats it as a
 // hard abort: aborts the cycle, cancels interruptable tasks, stops
 // audio playback. No payload — the interrupt is idempotent.
-export const interruptSchema = z.object({
-  type: z.literal("interrupt"),
-});
+export const interruptSchema = withCommandBinding(
+  z.object({
+    type: z.literal("interrupt"),
+  }),
+);
 
 // The in-chat mute / unmute toggle, and the settings Apply bar's live push
 // after a profile save. PAYLOAD-NESTED — that is the shape all three clients
@@ -294,6 +339,64 @@ export const sessionReadySchema = z.object({
     })
     .optional(),
 });
+
+// ─── Attachment binding (session-model spec §3.7) ───
+//
+// "You are now window number [generation] on session [sessionId]." Sent on every
+// successful attach — handshake, mint, late re-bind, `conversation.activate` —
+// and it is the ONLY source of the pair a client stamps on its commands.
+//
+// A CONNECTION-lane frame: an attachment belongs to one socket, and a peer
+// window's generation is not this one's business. Two windows of one person hold
+// two different generations on the same session, which is exactly what makes a
+// pre-switch command distinguishable from a post-switch one.
+//
+// The client MUST forget the pair when it goes back to a draft (`session.draft`)
+// or loses the socket — an attachment does not survive either, so a stamp that
+// did would be refused as stale on the very frame that mints the next session.
+export const sessionAttachedSchema = z.object({
+  type: z.literal("session.attached"),
+  sessionId: z.string().min(1),
+  /** Monotonic per session, starting at 1, never reused. */
+  generation: z.number().int().positive(),
+});
+export type SessionAttachedMessage = z.infer<typeof sessionAttachedSchema>;
+
+/**
+ * Why the gateway refused a command.
+ *
+ * - `stale_generation` — the command named a session/generation this connection
+ *   is no longer on. It was issued before a switch and landed after it.
+ * - `not_attached` — the command needs a session and this connection is in none.
+ * - `session_busy` — another window won the input race (spec §8.3: the first
+ *   window to talk wins simultaneous contention). Retryable immediately.
+ * - `credential_expired` — this connection's token has expired; the attachment
+ *   was dropped. The client must re-authenticate.
+ */
+export const commandRefusalSchema = z.enum(["stale_generation", "not_attached", "session_busy", "credential_expired"]);
+export type CommandRefusal = z.infer<typeof commandRefusalSchema>;
+
+/**
+ * Gateway → client: this command was NOT applied.
+ *
+ * Silence is indistinguishable from a lost network and leaves a client waiting
+ * on a reply that will never come — an optimistic bubble that never reconciles,
+ * a Stop button stuck spinning. Every refusal at the mediator says so out loud.
+ *
+ * CONNECTION lane: it answers ONE window's action, and a peer has nothing to do
+ * with someone else's refused command.
+ */
+export const commandRejectedSchema = z.object({
+  type: z.literal("command.rejected"),
+  /** The refused frame's `type` — or `"transcript"` for a spoken input, which
+   *  has no frame of its own (the gateway submits it on the client's behalf). */
+  command: z.string().min(1),
+  reason: commandRefusalSchema,
+  /** Echoed from a refused `text.input` that carried one, so the client can
+   *  settle the exact optimistic bubble rather than guessing. */
+  pendingId: z.string().optional(),
+});
+export type CommandRejectedMessage = z.infer<typeof commandRejectedSchema>;
 
 // ─── Turn lifecycle (Sentient 2.0 native orchestrator, spec §7) ───
 //
@@ -538,6 +641,8 @@ export const gatewayMessageSchema = z.discriminatedUnion("type", [
   withSeqEpoch(authOkSchema),
   withSeqEpoch(authErrorSchema),
   withSeqEpoch(sessionReadySchema),
+  withSeqEpoch(sessionAttachedSchema),
+  withSeqEpoch(commandRejectedSchema),
   withSeqEpoch(turnStartedSchema),
   withSeqEpoch(turnTextDeltaSchema),
   withSeqEpoch(turnCompletedSchema),

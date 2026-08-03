@@ -75,6 +75,11 @@ const FRAME_LANES: Record<GatewayMessage["type"], FrameLane> = {
   "auth.ok": "connection",
   "auth.error": "connection",
   "session.ready": "connection",
+  // The §3.7 attachment binding and the refusal that enforces it. Both answer
+  // ONE socket: a generation belongs to one attachment, and a peer window has
+  // nothing to do with someone else's refused command.
+  "session.attached": "connection",
+  "command.rejected": "connection",
   "session.expired": "connection",
   "stream.resumed": "connection",
   pong: "connection",

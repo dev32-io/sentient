@@ -4,6 +4,8 @@ import type { ServerWebSocket } from "bun";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { getLog } from "../logging/logger.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
+import { scopePendingId } from "../store/pending-id-scope.js";
+import { type CommandKind, mediateCommand } from "./command-mediator.js";
 import { handlePreferencesPatch } from "./handle-preferences-patch.js";
 import {
   bindSessionRuntime,
@@ -78,6 +80,17 @@ export function openSession(ws: ServerWebSocket<SessionData>, services: GatewayS
 // connection's durable conversation — ws-session-new.ts. `conversation.activate`
 // (session-model plan task 4) answers `session.switched` after a membership
 // lookup — ws-conversation-activate.ts.
+//
+// COMMAND BINDING (task 9, spec §3.7/§3.6/§8.3) puts ONE gate in front of every
+// acting arm below: `mediateCommand` (command-mediator.ts) revalidates the
+// credential, checks the `{sessionId, generation}` the client stamped against
+// this connection's CURRENT attachment, and arbitrates simultaneous input. The
+// arms do not re-implement any part of that and must not start to — scattered
+// verb-style checks is how a bypass appears, and "cancel is only a cancel so it
+// can go straight to the runtime" is that shape. `session.configure`,
+// `session.new` and `conversation.activate` are deliberately outside it: they
+// are how a connection LEAVES a session, so binding them to the one being left
+// would make switching unreachable.
 // ---------------------------------------------------------------------------
 
 export async function handleWebSocketMessage(
@@ -171,6 +184,7 @@ export async function handleWebSocketMessage(
       return;
 
     case "text.input": {
+      if (!mediate(ws, services, msg, "text.input", msg.pendingId)) return;
       // MINT ON FIRST MESSAGE (spec §4.2). A draft connection has no session
       // and no runtime; this is the moment the id is allocated and the row
       // written. Idempotent by mint key, so a retry after a lost
@@ -184,15 +198,19 @@ export async function handleWebSocketMessage(
       // `pendingId` is threaded, NOT acted on here: the idempotency decision
       // belongs where the store append happens (SessionRuntime), so a resend
       // is recorded and re-echoed rather than silently swallowed by the router.
+      // It is NAMESPACED by the issuing surface first (spec §3.8) — the dedup
+      // record is session-scoped and durable, so with N windows on one session
+      // two that reuse a value would silently suppress the second message.
       runtime.submit({
         kind: "conversational",
         text: msg.text,
-        ...(msg.pendingId === undefined ? {} : { pendingId: msg.pendingId }),
+        ...(msg.pendingId === undefined ? {} : { pendingId: scopedPendingId(ws, msg.pendingId) }),
       });
       return;
     }
 
     case "interrupt":
+      if (!mediate(ws, services, msg, "interrupt")) return;
       // No-op (not an error) if idle or the orchestrator is unconfigured —
       // interrupt is idempotent and there is nothing to cancel.
       //
@@ -202,7 +220,7 @@ export async function handleWebSocketMessage(
       // itself (runtime/cancellation.ts) knows only the session.
       log.info("interrupt.requested", {
         connectionId: ws.data.sessionId,
-        sessionId: ws.data.conversationId,
+        sessionId: ws.data.attachment?.sessionId ?? null,
         attachmentId: ws.data.attachment?.attachmentId ?? null,
         generation: ws.data.attachment?.generation ?? null,
         hasRuntime: ws.data.runtime !== null,
@@ -211,17 +229,20 @@ export async function handleWebSocketMessage(
       return;
 
     case "audio.start":
+      if (!mediate(ws, services, msg, "audio.start")) return;
       // The mic opened. Lazily dial STT (a text-only session never does) and
       // relay the client's turn authority (manual = hold-to-talk).
       ensureSttSession(ws, services)?.start(msg.turnMode);
       return;
 
     case "audio.end":
+      if (!mediate(ws, services, msg, "audio.end")) return;
       // PTT release / mic off — force-finalize any open STT turn now.
       ws.data.stt?.end();
       return;
 
     case "permission.response":
+      if (!mediate(ws, services, msg, "permission.response")) return;
       answerPermissionPrompt(ws, services, msg.requestId, msg.approved);
       return;
 
@@ -259,6 +280,51 @@ export async function handleWebSocketMessage(
       log.debug("message-unhandled", { reason: "no case for this message type" });
       return;
   }
+}
+
+/**
+ * Put one inbound command through the choke point (spec §3.7).
+ *
+ * Returns false when the arm must NOT run — the mediator has already logged the
+ * reason and sent the client a `command.rejected` frame, so the caller adds
+ * nothing by handling it. Returning a boolean rather than the verdict is
+ * deliberate: no arm below needs the accepted session id (each already reaches
+ * it through `ws.data`), and handing one out invites an arm to act on a session
+ * it re-derived rather than the one the gate approved.
+ *
+ * [binding] is the frame itself; only the two §3.7 fields are read off it.
+ */
+function mediate(
+  ws: ServerWebSocket<SessionData>,
+  services: GatewayServices,
+  binding: { sessionId?: string | undefined; attachmentGeneration?: number | undefined },
+  type: CommandKind,
+  pendingId?: string,
+): boolean {
+  return mediateCommand(
+    {
+      type,
+      sessionId: binding.sessionId,
+      generation: binding.attachmentGeneration,
+      ...(pendingId === undefined ? {} : { pendingId }),
+    },
+    ws,
+    services.sessionRegistry,
+  ).accept;
+}
+
+/**
+ * This connection's `pendingId` store key (spec §3.8).
+ *
+ * Namespaced by SURFACE, which is the only identifier with the right lifetime:
+ * stable across this window's own reconnects (so a resend still matches the
+ * durable record) and distinct between windows (so two of them cannot dedup
+ * each other's message away). Falls back to the connection id only before
+ * `session.configure` has run, where there is no surface to name and no peer
+ * window to collide with.
+ */
+function scopedPendingId(ws: ServerWebSocket<SessionData>, pendingId: string): string {
+  return scopePendingId(ws.data.surfaceId ?? ws.data.sessionId ?? "", pendingId);
 }
 
 /**
@@ -512,7 +578,18 @@ function ensureSttSession(ws: ServerWebSocket<SessionData>, services: GatewaySer
     factory: services.stt.adapterFactory,
     config: services.stt.adapterConfig,
     getRuntime: () => ws.data.runtime,
-    getRuntimeForInput: (text) => ensureBoundRuntime(ws, services, text),
+    // A SPOKEN INPUT IS AN INPUT (spec §8.3: "this applies to every input form:
+    // mic onset, text, or anything later"), so it goes through the same gate —
+    // at the TRANSCRIPT, which is the moment mic bytes become a command, and
+    // which is why binary frames need no binding of their own
+    // (command-mediator.ts). It carries no `{sessionId, generation}` because the
+    // client never stamped one: the connection's attachment as it stands right
+    // now is authoritative, and that is strictly more current than anything the
+    // client could have stamped when it opened the mic.
+    getRuntimeForInput: (text) => {
+      if (!mediate(ws, services, {}, "transcript")) return null;
+      return ensureBoundRuntime(ws, services, text);
+    },
   });
   ws.data.stt = session;
   log.info("stt-session-created", { sessionId: ws.data.sessionId });

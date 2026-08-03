@@ -283,7 +283,7 @@ describe("handleSessionConfigure — committed-feed handshake", () => {
 
     configure(ws, spy.services, SURFACE_A, sessionId);
 
-    expect(frameTypes(ws)).toEqual(["session.ready", "conversation.snapshot"]);
+    expect(frameTypes(ws)).toEqual(["session.attached", "session.ready", "conversation.snapshot"]);
     expect(spy.snapshotCalls).toBe(1);
   });
 
@@ -364,8 +364,8 @@ describe("handleSessionConfigure — committed-feed handshake", () => {
       sessionId,
     );
 
-    expect(frameTypes(ws)).toEqual(["stream.resumed", "session.ready", "conversation.snapshot"]);
-    expect(ws.sent[0]?.recovered).toBe(false);
+    expect(frameTypes(ws)).toEqual(["session.attached", "stream.resumed", "session.ready", "conversation.snapshot"]);
+    expect(ws.sent[1]?.recovered).toBe(false);
     expect(spy.snapshotCalls).toBe(1);
   });
 });

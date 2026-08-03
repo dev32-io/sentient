@@ -35,6 +35,8 @@ function fakeWs(): FakeWs {
     draftKey: null,
     authState: "pending",
     principal: null,
+    tokenExpiresAtMs: null,
+    surfaceId: null,
     authTimeout: null,
     grantedCapabilities: new Set(),
     clientType: "webui",

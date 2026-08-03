@@ -9,6 +9,7 @@
 
 import { getLog } from "../logging/logger.js";
 import type { CutoffKind, SessionEntry } from "./entry-types.js";
+import { unscopePendingId } from "./pending-id-scope.js";
 
 const log = getLog(["sentient", "store", "client-projection"]);
 
@@ -114,7 +115,14 @@ export function projectForClient(entries: readonly SessionEntry[]): FeedItem[] {
       toolName: null,
       cutoff: entry.cutoff,
       createdAt: entry.createdAt,
-      pendingId: entry.pendingId,
+      // The CLIENT's own value, not the store key. `pending_id` is namespaced
+      // by issuing surface so two windows cannot dedup each other's message
+      // away (spec §3.8, pending-id-scope.ts); the client reconciles its
+      // optimistic bubble against what it SENT, so the namespace is stripped
+      // here — at the single path from stored state to a feed item, which is
+      // what keeps the live entry and every later snapshot saying the same
+      // thing.
+      pendingId: entry.pendingId === null ? null : unscopePendingId(entry.pendingId),
     });
   }
 

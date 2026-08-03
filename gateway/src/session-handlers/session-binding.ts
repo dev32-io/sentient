@@ -25,6 +25,7 @@ import type { SessionRuntime } from "../runtime/session-runtime.js";
 import { createTurnVoice } from "../runtime/turn-voice.js";
 import { type SessionStore, openSessionStore } from "../store/session-store.js";
 import { type CommittedFeedSource, attachWithSnapshot, createFanOutTurnEmitter } from "./fan-out-emitter.js";
+import { createInputArbiter } from "./input-arbiter.js";
 import { createMicEchoGuard } from "./mic-echo-guard.js";
 import type { ReplayAcquisition } from "./replay-registry.js";
 import type { Attachment, SessionHandles } from "./session-registry.js";
@@ -183,6 +184,22 @@ export function bindSessionRuntime(
     generation: attachment.generation,
     subscribers: services.sessionRegistry.subscribers(sessionId).length,
   });
+  // TELL THE CLIENT WHICH WINDOW IT IS (spec §3.7). This is the only source of
+  // the `{sessionId, generation}` pair a client stamps on its commands, and it
+  // goes out from the ONE place an attachment is minted, so there is no path
+  // that attaches without announcing it.
+  //
+  // Ahead of the handshake frames on purpose: `session.ready` /
+  // `session.created` / `session.switched` all follow this call, and a client
+  // that learned its session id before its binding could stamp a command with a
+  // generation it does not yet have. It bypasses the fan-out HOLD legitimately —
+  // it is connection-lane, so it is neither sequenced nor journaled, and it
+  // describes this socket rather than the conversation.
+  sendConnectionFrame(ws, {
+    type: "session.attached",
+    sessionId,
+    generation: attachment.generation,
+  });
   return handles.runtime;
 }
 
@@ -252,6 +269,11 @@ function buildHandlesOver(
     maxLagBytes: services.session.max_window_lag_bytes,
   });
   const emitter = fanOut;
+  // The session's input floor (spec §8.3). Built here rather than in the
+  // mediator because it is SESSION state: contention is between the windows of
+  // one session, and it must be released when the session is. A map keyed by
+  // session id inside the mediator would outlive every session it ever saw.
+  const arbiter = createInputArbiter(sessionId, services.session.input_arbitration_window_ms);
   // Voice composition (spec §6). Built HERE because this is the only place
   // that knows the emitter, the authenticated user's profile and the session's
   // STT session — but DRIVEN inside SessionRuntime on the turn's own
@@ -320,6 +342,7 @@ function buildHandlesOver(
     // consequence of which window happened to close last.
     work: built.work,
     voicePrefs,
+    arbiter,
     fanOut,
     journal: acquisition.journal,
     epoch: acquisition.epoch,
@@ -363,14 +386,29 @@ function buildHandlesOver(
  * routing goes through the registry, and a connection with no attachment has
  * no window to answer from.
  *
- * Reads the session id off `ws.data.conversationId` rather than taking it as a
- * parameter: every caller passed exactly that, and a caller that passed
- * anything else would detach from a session this connection never joined.
+ * ONE FIELD, NOT TWO (task 9). The session id comes off the ATTACHMENT, the
+ * same place `permission.response` and the command mediator read it. It used to
+ * come off `ws.data.conversationId`, which paired the attachment being removed
+ * with a session id from a DIFFERENT field — correct only while an ordering
+ * invariant held across every bind, detach and switch. That was never a
+ * security boundary here (the lookup is by session then by `attachmentId`, and
+ * those are 16-byte CSPRNG per attach, so a diverged id could only make the
+ * removal a no-op) — but a no-op detach LEAKS: the window stays in the
+ * subscriber set, keeps receiving a conversation it has left, and holds that
+ * session resident for the life of the process. This is the task that makes
+ * connections switch sessions, so it is the task that stops pairing two fields.
+ *
+ * Takes only the slice of `GatewayServices` it reads, so the command mediator —
+ * which holds a `SessionRegistry` and nothing else — can detach an expired
+ * credential through this one body instead of open-coding a second teardown.
  */
-export function detachSession(ws: ServerWebSocket<SessionData>, services: GatewayServices): void {
+export function detachSession(
+  ws: ServerWebSocket<SessionData>,
+  services: Pick<GatewayServices, "sessionRegistry">,
+): void {
   const attachment = ws.data.attachment;
-  const sessionId = ws.data.conversationId;
-  if (attachment !== null && sessionId !== null) {
+  if (attachment !== null) {
+    const sessionId = attachment.sessionId;
     // ONE removal, not two: the socket lives IN the subscriber set now, so
     // dropping the attachment drops the delivery target with it. Task 5 had to
     // keep a parallel window map in step by hand here.
