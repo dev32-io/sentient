@@ -83,7 +83,6 @@ function fakeBroker(
     newestStartedAtMs: () => null,
     register: () => {},
     complete: () => {},
-    cancelAll: () => {},
   };
   return {
     dispatchCalls,

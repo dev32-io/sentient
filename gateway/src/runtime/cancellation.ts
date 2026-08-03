@@ -8,14 +8,20 @@
 // the loop's internals.
 //
 //   - barge-in  (mic onset, Plan 3 wires the trigger): abort the turn (+ TTS,
-//     Plan 3), KEEP background tasks running — the user is talking, not
-//     cancelling the work they kicked off.
-//   - interrupt (UI Stop / Esc): abort the turn (+ TTS, Plan 3) AND cancel
-//     every background task for this session (`broker.background.cancelAll()`)
-//     — explicit user cancel, nothing survives it. `cancelAll()` fires
-//     unconditionally, even with no turn in flight: a background task
-//     (`delegateTask`) outlives the turn that dispatched it (fire-and-steer,
-//     Task 4/5) and Stop must still be able to reach it.
+//     Plan 3).
+//   - interrupt (UI Stop / Esc): abort the turn (+ TTS, Plan 3).
+//
+// NEITHER GESTURE TOUCHES BACKGROUND TASKS, and the difference between them is
+// now only the `cutoff` kind stamped on the committed partial. A background
+// task (`delegateTask`) outlives the turn that dispatched it in EVERY case, and
+// nothing cancels it — the lost-task watchdog is the only backstop. See
+// tools/delegate-task.ts's header for the contract and the trade it accepts.
+//
+// Interrupt used to fan out into `broker.background.cancelAll()`. It was the
+// only production caller, and `cancelAll` is gone with it: "Stop" cancelling
+// every delegation in the session was a blanket sweep no user asked for, and
+// the per-task `cancel` handles a named, model-facing task-management tool will
+// want are still registered.
 //
 // react-loop.ts's contract on abort is "don't throw, don't partially commit"
 // — it deliberately leaves the partial assistant text uncommitted (Task 6's
@@ -42,9 +48,8 @@
 // committing/aborting.
 //   - `signal.aborted`: a second bargeIn()/interrupt() call on the same
 //     still-in-flight turn (or interrupt following a prior bargeIn) sees the
-//     signal already aborted and skips straight to the (idempotent)
-//     background-cancel step, never appending a second cutoff entry for the
-//     same turn.
+//     signal already aborted and commits nothing, never appending a second
+//     cutoff entry for the same turn.
 //   - `turn.settled`: the terminal-completion race. A turn that finishes
 //     NATURALLY never sets `signal.aborted` — its final text commits
 //     directly in react-loop.ts's terminal branch (not through
@@ -60,13 +65,11 @@
 //     appended, letting session-runtime.ts mark the turn `settled` before
 //     any of that can happen. `turn.settled` folds into this same guard
 //     because the required behavior is identical: commit nothing further,
-//     fire no `turnAborted` — but interrupt's unconditional `cancelAll()`
-//     below still fires either way (background tasks outlive the turn).
+//     fire no `turnAborted`.
 
 import { getLog } from "../logging/logger.js";
 import type { CutoffKind, NewSessionEntry } from "../store/entry-types.js";
 import type { SessionStore } from "../store/session-store.js";
-import type { ToolBroker } from "../tools/tool-broker.js";
 import type { UserId } from "../user-auth/user-id.js";
 import type { TurnEmitter } from "./turn-emitter.js";
 
@@ -106,7 +109,6 @@ export interface CancellationDeps {
   sessionId: string;
   userId: UserId;
   store: SessionStore;
-  broker: ToolBroker;
   emitter: TurnEmitter;
   /** Current in-flight turn, or null if the runtime is idle. Read fresh on
    *  every call — cancellation always acts on whatever is running NOW, never
@@ -157,30 +159,23 @@ function commitCutoffEntry(deps: CancellationDeps, turn: CancellableTurn, cutoff
   });
 }
 
-function abortTurn(deps: CancellationDeps, cutoff: CutoffKind, cancelBackground: boolean): void {
+function abortTurn(deps: CancellationDeps, cutoff: CutoffKind): void {
   const turn = deps.getInFlight();
 
   if (!turn) {
-    log.info("cancellation.no-turn-in-flight", {
-      userId: deps.userId,
-      sessionId: deps.sessionId,
-      cutoff,
-      cancelBackground,
-    });
+    log.info("cancellation.no-turn-in-flight", { userId: deps.userId, sessionId: deps.sessionId, cutoff });
   } else if (turn.controller.signal.aborted || turn.settled) {
     // Either already aborted by a prior bargeIn()/interrupt() on this same
     // turn (the cutoff entry, if any, was already committed then), or the
     // turn already reached a natural terminal commit (the
     // terminal-completion race — see the module doc comment above). Either
-    // way: commit nothing, fire no turnAborted, skip straight to the
-    // background step below so a follow-up interrupt() still reaches
-    // cancelAll() without double-appending or racing turnCompleted.
+    // way: commit nothing, fire no turnAborted — and still stop the audio
+    // below, because speech outlives its turn.
     log.info("cancellation.already-aborted", {
       userId: deps.userId,
       sessionId: deps.sessionId,
       turnId: turn.turnId,
       cutoff,
-      cancelBackground,
       alreadyAborted: turn.controller.signal.aborted,
       alreadySettled: turn.settled,
     });
@@ -194,7 +189,6 @@ function abortTurn(deps: CancellationDeps, cutoff: CutoffKind, cancelBackground:
       sessionId: deps.sessionId,
       turnId: turn.turnId,
       cutoff,
-      cancelBackground,
     });
   }
 
@@ -204,20 +198,15 @@ function abortTurn(deps: CancellationDeps, cutoff: CutoffKind, cancelBackground:
   // feed marker precedes its `playback.stop`, the order both client SDKs and
   // ws-turn-emitter.test.ts pin.
   deps.stopPlayback(cutoff);
-
-  if (cancelBackground) {
-    deps.broker.background.cancelAll();
-    log.info("cancellation.background.cancel-all", { userId: deps.userId, sessionId: deps.sessionId, cutoff });
-  }
 }
 
 export function createCancellationControllers(deps: CancellationDeps): CancellationControllers {
   return {
     bargeIn(): void {
-      abortTurn(deps, "barge-in", false);
+      abortTurn(deps, "barge-in");
     },
     interrupt(): void {
-      abortTurn(deps, "interrupt", true);
+      abortTurn(deps, "interrupt");
     },
   };
 }

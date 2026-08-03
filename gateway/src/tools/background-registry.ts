@@ -2,10 +2,18 @@
 // tool tasks (delegateTask and friends). ToolBroker is the ONLY caller: it
 // checks `count()` against `config.tools.max_concurrent_background_tasks`
 // BEFORE registering a new task (this module does not enforce the cap
-// itself — it has no config, it only counts). `cancelAll` backs the
-// interrupt path (spec §4.7): every registered task's cancel handle is
-// invoked, background work included, unlike barge-in which leaves
-// background tasks running.
+// itself — it has no config, it only counts).
+//
+// NOTHING CANCELS A BACKGROUND TASK. There is no `cancelAll` any more: it had
+// exactly one production caller (interrupt, in runtime/cancellation.ts), and
+// "Stop" sweeping away every delegation in the session was a blanket cancel no
+// user asked for. A background task outlives the turn that spawned it in every
+// case — see tools/delegate-task.ts's header for the contract and the trade it
+// accepts, and runtime/session-retention.ts for the residency this implies.
+//
+// The per-task `cancel` handles are STILL REGISTERED, and that is the point:
+// they are the mechanism a future model-facing task-management tool drives, by
+// NAMED taskId. `register` keeps taking one so that tool needs no new plumbing.
 
 import { getLog } from "../logging/logger.js";
 
@@ -23,14 +31,12 @@ export interface BackgroundRegistry {
    * the threshold" is exactly "every registered task is".
    */
   newestStartedAtMs(): number | null;
-  /** Registers a running task's cancel handle, keyed by taskId. */
+  /** Registers a running task's cancel handle, keyed by taskId. Held for a
+   *  future task-management tool to drive by name; nothing invokes it today. */
   register(taskId: string, cancel: () => void): void;
   /** Marks a task done, freeing its slot. No-op if the taskId is unknown
    *  (already completed, or never registered). */
   complete(taskId: string): void;
-  /** Invokes every registered cancel handle and clears the registry. A
-   *  throwing handle is logged and does not stop the remaining cancels. */
-  cancelAll(): void;
 }
 
 interface RunningTask {
@@ -63,22 +69,6 @@ export function createBackgroundRegistry(): BackgroundRegistry {
     complete(taskId: string): void {
       const existed = tasks.delete(taskId);
       log.debug("background-registry.completed", { taskId, existed, count: tasks.size });
-    },
-
-    cancelAll(): void {
-      const taskIds = [...tasks.keys()];
-      for (const [taskId, task] of tasks) {
-        try {
-          task.cancel();
-        } catch (err) {
-          log.warn("background-registry.cancel-failed", {
-            taskId,
-            reason: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-      tasks.clear();
-      log.info("background-registry.cancel-all", { taskIds, count: taskIds.length });
     },
   };
 }

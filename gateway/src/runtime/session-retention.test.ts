@@ -2,9 +2,11 @@
 // so (session-model spec §5, plan task 8).
 //
 // THE DEFECT THESE CASES CLOSE IS LIVE, not hypothetical. `SessionRuntime`'s
-// `dispose()` deliberately leaves registered background tasks running — only
-// `interrupt()` calls `broker.background.cancelAll()` — but it CLOSES THE
-// SQLITE HANDLE, so the completion of a task it left alive can never land.
+// `dispose()` leaves registered background tasks running — NOTHING cancels one,
+// not even interrupt (tools/delegate-task.ts) — but it CLOSES THE SQLITE
+// HANDLE, so the completion of a task it left alive can never land. Which makes
+// this predicate the ONLY thing standing between a delegated task and a lost
+// result: with no cancel path anywhere, residency is the whole mechanism.
 // Driven on the real stack before this module existed:
 //
 //   22:27:35 delegate-task.run.guard-decision  taskId=00394962…

@@ -99,9 +99,10 @@ export interface ConversationFeedDeps {
 }
 
 function toWireCutoff(cutoff: CutoffKind): ConversationAssistantCutoff {
-  // `cancelledTaskIds` is required by the frame, but nothing records which
-  // background tasks a specific interrupt killed (`background.cancelAll()`
-  // is fire-and-forget). An empty list is the honest value, not a guess.
+  // `cancelledTaskIds` is required by the frame and is ALWAYS empty now:
+  // an interrupt cancels the turn and nothing else — a background task
+  // outlives it, and nothing anywhere cancels one (tools/delegate-task.ts).
+  // Empty is the accurate value, not a placeholder.
   return cutoff === "interrupt" ? { kind: "interrupt", cancelledTaskIds: [] } : { kind: "barge-in" };
 }
 

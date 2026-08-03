@@ -115,7 +115,6 @@ function fakeBroker(
     newestStartedAtMs: () => null,
     register: () => {},
     complete: () => {},
-    cancelAll: () => {},
   };
   return {
     dispatchCalls,
@@ -867,35 +866,54 @@ describe("SessionRuntime — isolation", () => {
 
 // ---------------------------------------------------------------------------
 // Cancellation (spec §4.7, Task 8) — barge-in vs interrupt. Two distinct
-// gestures, pinned as the FSM invariant that must never regress into one
-// do-everything "cancel": barge-in aborts the turn but keeps background
-// tasks alive; interrupt aborts the turn AND cancels them. Both commit the
-// turn's not-yet-durable partial as a `cutoff` assistant entry before
-// aborting.
+// gestures, and the FSM invariant they must never regress into one
+// do-everything "cancel": each aborts the TURN and commits its not-yet-durable
+// partial as a `cutoff` assistant entry, and NEITHER touches background work.
+//
+// THESE CASES ASSERT THE PROPERTY, NOT A CALL. They used to count
+// `cancelAll()` invocations, which was the wrong subject twice over: the count
+// was satisfied while `delegateTask` was subscribing its own controller to the
+// TURN's signal, so barge-in killed the delegation down a path no assertion
+// looked at. "Is the task still running" is the thing the contract promises, so
+// it is the thing measured — via the registered cancel handle, which is exactly
+// what a killed task would have had invoked.
 // ---------------------------------------------------------------------------
 
 interface SpyBackgroundRegistry extends BackgroundRegistry {
-  cancelAllCalls: number;
+  /** taskIds whose cancel handle was invoked. MUST stay empty: nothing in
+   *  production cancels a background task any more. */
+  cancelled: string[];
 }
 
 function spyBackgroundRegistry(): SpyBackgroundRegistry {
   const tasks = new Map<string, () => void>();
   const registry: SpyBackgroundRegistry = {
-    cancelAllCalls: 0,
+    cancelled: [],
     count: () => tasks.size,
     newestStartedAtMs: () => (tasks.size === 0 ? null : Date.now()),
     register: (taskId, cancel) => {
-      tasks.set(taskId, cancel);
+      // Wrapped, so ANY route to this task's cancel — the registry, a stray
+      // signal subscription, a future sweep — is recorded, not just one API.
+      tasks.set(taskId, () => {
+        registry.cancelled.push(taskId);
+        cancel();
+      });
     },
     complete: (taskId) => {
       tasks.delete(taskId);
     },
-    cancelAll: () => {
-      registry.cancelAllCalls += 1;
-      tasks.clear();
-    },
   };
   return registry;
+}
+
+/** Register a background task that reports whether it is still running — the
+ *  property both gestures must preserve. */
+function runningTask(background: SpyBackgroundRegistry, taskId = "task-1"): { isRunning: () => boolean } {
+  let running = true;
+  background.register(taskId, () => {
+    running = false;
+  });
+  return { isRunning: () => running };
 }
 
 function fakeBrokerWithBackground(background: BackgroundRegistry): FakeBroker {
@@ -942,7 +960,7 @@ describe("SessionRuntime — cancellation: barge-in keeps background tasks alive
 
     const provider = partialReplyThenHangProvider("here is a partial answer");
     const background = spyBackgroundRegistry();
-    background.register("task-1", () => {});
+    const task = runningTask(background);
     const broker = fakeBrokerWithBackground(background);
     const emitter = recordingEmitter();
 
@@ -970,7 +988,8 @@ describe("SessionRuntime — cancellation: barge-in keeps background tasks alive
     expect(cutoffEntry?.text).toBe("here is a partial answer");
     readback.close();
 
-    expect(background.cancelAllCalls).toBe(0);
+    expect(task.isRunning()).toBe(true);
+    expect(background.cancelled).toEqual([]);
     expect(background.count()).toBe(1); // still registered — barge-in never touches it
 
     expect(emitter.events.some((e) => e.type === "turnAborted")).toBe(true);
@@ -979,15 +998,15 @@ describe("SessionRuntime — cancellation: barge-in keeps background tasks alive
   });
 });
 
-describe("SessionRuntime — cancellation: interrupt cancels background tasks", () => {
-  it("aborts the turn, commits cutoff:interrupt, and DOES cancel background tasks", async () => {
+describe("SessionRuntime — cancellation: interrupt leaves background tasks alive too", () => {
+  it("aborts the turn, commits cutoff:interrupt, and leaves the background task running", async () => {
     const am = createAccessManager({ userDataRoot: `${ROOT}/case-interrupt` });
     const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
     mkdirSync(am.userHomeDir(alice), { recursive: true });
 
     const provider = partialReplyThenHangProvider("stopping now");
     const background = spyBackgroundRegistry();
-    background.register("task-1", () => {});
+    const task = runningTask(background);
     const broker = fakeBrokerWithBackground(background);
     const emitter = recordingEmitter();
 
@@ -1015,8 +1034,12 @@ describe("SessionRuntime — cancellation: interrupt cancels background tasks", 
     expect(cutoffEntry?.text).toBe("stopping now");
     readback.close();
 
-    expect(background.cancelAllCalls).toBe(1);
-    expect(background.count()).toBe(0); // cancelAll cleared the registry
+    // Stop cancels the TURN, not the work the turn kicked off. A delegated
+    // agent has its own lifetime; sweeping it away because the reply about it
+    // was cut short is a blanket cancel nobody asked for.
+    expect(task.isRunning()).toBe(true);
+    expect(background.cancelled).toEqual([]);
+    expect(background.count()).toBe(1);
 
     expect(emitter.events.some((e) => e.type === "turnAborted")).toBe(true);
 
@@ -1025,14 +1048,14 @@ describe("SessionRuntime — cancellation: interrupt cancels background tasks", 
 });
 
 describe("SessionRuntime — cancellation: double-commit guard", () => {
-  it("interrupt() right after bargeIn() on the same turn still cancels background but never double-appends a cutoff entry", async () => {
+  it("interrupt() right after bargeIn() on the same turn never double-appends a cutoff entry", async () => {
     const am = createAccessManager({ userDataRoot: `${ROOT}/case-double-cancel` });
     const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
     mkdirSync(am.userHomeDir(alice), { recursive: true });
 
     const provider = partialReplyThenHangProvider("only once");
     const background = spyBackgroundRegistry();
-    background.register("task-1", () => {});
+    const task = runningTask(background);
     const broker = fakeBrokerWithBackground(background);
     const emitter = recordingEmitter();
 
@@ -1051,8 +1074,8 @@ describe("SessionRuntime — cancellation: double-commit guard", () => {
     await waitFor(() => emitter.events.some((e) => e.type === "textDelta"));
 
     // Same still-in-flight turn, back to back — the second call must see the
-    // signal already aborted and skip straight to its own background step
-    // without re-committing a cutoff entry for a turn already cut off.
+    // signal already aborted and commit nothing, rather than re-committing a
+    // cutoff entry for a turn already cut off.
     runtime.bargeIn();
     runtime.interrupt();
 
@@ -1064,7 +1087,9 @@ describe("SessionRuntime — cancellation: double-commit guard", () => {
     expect(cutoffEntries[0]?.cutoff).toBe("barge-in"); // first call wins
     readback.close();
 
-    expect(background.cancelAllCalls).toBe(1); // interrupt's own background step still fires
+    // Neither gesture reached the background task, in either order.
+    expect(task.isRunning()).toBe(true);
+    expect(background.cancelled).toEqual([]);
     runtime.dispose();
   });
 
@@ -1840,6 +1865,7 @@ describe("SessionRuntime — cancellation reaches the audio tail", () => {
       yield { type: "done", finishReason: "stop" };
     });
     const background = spyBackgroundRegistry();
+    const task = runningTask(background);
     const voice = recordingVoice();
     const emitter = recordingEmitter();
     const runtime = createSessionRuntime({
@@ -1878,8 +1904,10 @@ describe("SessionRuntime — cancellation reaches the audio tail", () => {
     expect(assistantEntries[0]?.cutoff).toBeNull();
     readback.close();
     expect(emitter.events.some((e) => e.type === "turnAborted")).toBe(false);
-    // interrupt's unconditional reach into background tasks is unaffected.
-    expect(background.cancelAllCalls).toBe(1);
+    // A Stop landing in the audio tail reaches the speech, and nothing else.
+    // The delegated task keeps running — it never belonged to this turn.
+    expect(task.isRunning()).toBe(true);
+    expect(background.cancelled).toEqual([]);
 
     runtime.dispose();
   });
@@ -1894,7 +1922,7 @@ describe("SessionRuntime — cancellation reaches the audio tail", () => {
       yield { type: "done", finishReason: "stop" };
     });
     const background = spyBackgroundRegistry();
-    background.register("task-1", () => {});
+    const task = runningTask(background);
     const voice = recordingVoice();
     const emitter = recordingEmitter();
     const runtime = createSessionRuntime({
@@ -1917,7 +1945,8 @@ describe("SessionRuntime — cancellation reaches the audio tail", () => {
     const stops = emitter.events.filter((e) => e.type === "playbackStop");
     expect(stops).toHaveLength(1);
     expect(stops[0]?.cutoff).toBe("barge-in");
-    expect(background.cancelAllCalls).toBe(0);
+    expect(task.isRunning()).toBe(true);
+    expect(background.cancelled).toEqual([]);
     expect(background.count()).toBe(1);
 
     runtime.dispose();

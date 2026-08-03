@@ -779,7 +779,6 @@ function noopBroker(): ToolBroker {
     newestStartedAtMs: () => null,
     register: () => {},
     complete: () => {},
-    cancelAll: () => {},
   };
   return {
     ownerUserId: "u_aaaaaaaa",

@@ -150,18 +150,20 @@ export interface SessionRuntime {
   dispose(): void;
   /** Mic onset — the user starts speaking over the assistant (spec §4.7).
    *  Aborts the in-flight turn and commits its partial output as an assistant
-   *  entry with `cutoff: "barge-in"`, but LEAVES any registered background
-   *  task running. Cuts this session's speech and flushes client playback
-   *  even when no turn is in flight — audio outlives its turn. See
-   *  `runtime/cancellation.ts`. A no-op after `dispose()`. */
+   *  entry with `cutoff: "barge-in"`. Cuts this session's speech and flushes
+   *  client playback even when no turn is in flight — audio outlives its turn.
+   *  See `runtime/cancellation.ts`. A no-op after `dispose()`. */
   bargeIn(): void;
   /** UI Stop / Esc (spec §4.7). Aborts the in-flight turn, commits its
-   *  partial output as an assistant entry with `cutoff: "interrupt"`, cuts
-   *  speech + flushes client playback, AND cancels every background task for
-   *  this session (`broker.background.cancelAll()`). The last two fire even
-   *  with no turn in flight: a background task outlives the turn that
-   *  dispatched it, and so does the audio. See `runtime/cancellation.ts`.
-   *  A no-op after `dispose()`. */
+   *  partial output as an assistant entry with `cutoff: "interrupt"`, and cuts
+   *  speech + flushes client playback — the last of which fires even with no
+   *  turn in flight, because audio outlives its turn.
+   *
+   *  LEAVES BACKGROUND TASKS RUNNING, exactly as `bargeIn` does: a background
+   *  task outlives the turn that spawned it in every case and nothing cancels
+   *  it (tools/delegate-task.ts). The two gestures now differ only in the
+   *  `cutoff` kind they stamp. See `runtime/cancellation.ts`. A no-op after
+   *  `dispose()`. */
   interrupt(): void;
   /**
    * The LAST window on this session detached while the session stayed resident
@@ -407,7 +409,6 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     sessionId,
     userId,
     store,
-    broker,
     emitter,
     getInFlight: (): CancellableTurn | null =>
       inFlight
@@ -661,7 +662,8 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     // a naturally-completed turn is already `settled: true` and an aborted
     // one already has `signal.aborted`, so cancellation.ts's
     // `signal.aborted || turn.settled` guard no-ops either way (it still
-    // reaches interrupt's unconditional `background.cancelAll()`).
+    // reaches the unconditional `stopPlayback`, because audio outlives its
+    // turn).
     // No `disposed` re-check is needed to REACH here — the guard at the top of
     // this function is the only one, and nothing above awaits.
     try {

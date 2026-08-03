@@ -11,6 +11,27 @@
 // immediately and returns synchronously — the broker never awaits `result`
 // before `dispatch` returns (fire-and-steer, spec §5.2).
 //
+// A BACKGROUND TASK OUTLIVES THE TURN THAT SPAWNED IT, IN EVERY CASE, AND
+// NOTHING CANCELS IT. That is the whole contract, and it is deliberately
+// absolute:
+//
+//   - BARGE-IN aborts the turn and leaves this running (CLAUDE.md, spec §4.7)
+//     — the user talking over the assistant did not ask to unwind the work
+//     they kicked off;
+//   - INTERRUPT (UI Stop) aborts the turn and leaves this running too. Stop
+//     used to fan out into `BackgroundRegistry.cancelAll()`; that call is gone,
+//     along with `cancelAll` itself.
+//
+// Which is why this runner does NOT subscribe its controller to `inv.signal`:
+// that signal IS the turn's, so any subscription makes both gestures kill the
+// delegation — the exact regression the contract exists to forbid.
+//
+// THE TRADE, STATED PLAINLY: a runaway delegation now runs to its own
+// completion. The lost-task watchdog is the only backstop. This is deliberate
+// until the model has a task-management tool it can call — at which point the
+// per-task `cancel` handles this file still hands `BackgroundRegistry` become
+// that tool's mechanism, with a NAMED taskId rather than a blanket sweep.
+//
 // Late-result note (load-bearing, spec §5.2/§5.4): the `result` promise this
 // runner returns settles with the FINAL ToolResult, but nothing in this file
 // appends it to the store. `ToolInvocation` carries no `turnId` (see
@@ -188,14 +209,20 @@ export function createDelegateTaskRunner(deps: DelegateTaskDeps): BackgroundTool
       return { cancel: () => {}, result: Promise.resolve(errorResult(decision.reason)) };
     }
 
+    // THE TURN'S SIGNAL IS DELIBERATELY NOT SUBSCRIBED. `inv.signal` IS the
+    // turn's `AbortController` (react-loop.ts builds the invocation with it),
+    // so wiring this controller to it made barge-in — the one gesture whose
+    // whole contract is "keep background tasks running" — kill the delegation.
+    // See this file's header for the full contract.
+    //
+    // The controller stays: it is the handle `BackgroundRegistry` stores as
+    // this task's `cancel`, which a future model-facing task-management tool
+    // drives. Nothing in production calls it today.
     const controller = new AbortController();
-    const onInvAbort = () => controller.abort();
-    inv.signal.addEventListener("abort", onInvAbort, { once: true });
 
     const result = runSetupPhase(taskId, controller.signal)
       .then(() => hermesRunner.run(userId, taskPrompt, controller.signal))
       .then((outcome): ToolResult => {
-        inv.signal.removeEventListener("abort", onInvAbort);
         if (outcome.ok) {
           log.info("delegate-task.run.ok", { taskId, agent, outputLength: outcome.output.length });
           return { content: outcome.output, isError: false };

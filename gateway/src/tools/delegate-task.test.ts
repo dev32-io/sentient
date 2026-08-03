@@ -127,6 +127,60 @@ describe("delegateTask runner — guard gates every invocation before hermesRunn
     expect(hermesRunner.callCount()).toBe(0);
   });
 
+  // -------------------------------------------------------------------------
+  // THE CONTRACT (CLAUDE.md, spec §4.7): a background task OUTLIVES the turn
+  // that spawned it, in every case.
+  //
+  // The runner used to subscribe its controller to `inv.signal`, which
+  // react-loop.ts builds from the TURN's `AbortController`. Barge-in aborts the
+  // turn — so barge-in killed the delegation, in flat contradiction of the
+  // documented contract, and interrupt killed it twice over. The old guard
+  // asserted `cancelAll()` was not called; that was true and irrelevant,
+  // because the task died down the other path. These two pin the PROPERTY.
+  // -------------------------------------------------------------------------
+
+  it("INVARIANT: aborting the TURN does not abort the delegation — barge-in leaves it running", async () => {
+    const turn = new AbortController();
+    let capturedSignal: AbortSignal | undefined;
+    const hermesRunner: HermesRunner = {
+      run: (_userId, _prompt, signal) => {
+        capturedSignal = signal;
+        return new Promise(() => {}); // never settles — the worker is still working
+      },
+    };
+    const runner = createDelegateTaskRunner({ guard: fakeGuard({ action: "allow" }), hermesRunner, userId });
+
+    runner.run(makeInvocation({ agent: "hermes", taskPrompt: "do it" }, turn.signal), "task-1");
+    await settle();
+
+    turn.abort();
+
+    expect(capturedSignal?.aborted).toBe(false);
+  });
+
+  it("INVARIANT: a turn aborted BEFORE the spawn still spawns — the task was already the turn's successor", async () => {
+    // The abort can land inside the off-turn setup phase, before hermes is
+    // ever exec'd. Skipping the spawn there would make the contract hold only
+    // for delegations lucky enough to have started.
+    const order: string[] = [];
+    const turn = new AbortController();
+    const slot = createExternalToolSlot();
+    const runner = createDelegateTaskRunner({
+      guard: fakeGuard({ action: "allow" }),
+      hermesRunner: loggingRunner(order, { ok: true, output: "done" }),
+      userId,
+      externalTool: slot,
+    });
+
+    const { result } = runner.run(makeInvocation({ agent: "hermes", taskPrompt: "do it" }, turn.signal), "task-1");
+    await settle();
+    turn.abort();
+    slot.set(fakeExternalTool({ ok: true, value: undefined }, order));
+
+    expect(await result).toEqual({ content: "done", isError: false });
+    expect(order).toEqual([`provide:${userId}`, `spawn:${userId}`]);
+  });
+
   it("cancel() aborts the signal passed into hermesRunner.run", async () => {
     let capturedSignal: AbortSignal | undefined;
     const hermesRunner: HermesRunner = {
