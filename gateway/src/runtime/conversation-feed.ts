@@ -162,7 +162,7 @@ function lastSeqOf(entries: readonly SessionEntry[], fallback: number): number {
  * reuse it rather than re-deriving the shape: `render(replay) == render(live)`
  * is a protocol contract, and two hand-written projections is how it drifts.
  */
-export function snapshotFeedItems(entries: SessionEntry[]): ConversationFeedItem[] {
+export function snapshotFeedItems(entries: readonly SessionEntry[]): ConversationFeedItem[] {
   const unresolved = unresolvedToolItemIds(entries);
   return projectForClient(entries).map((i) => toWireItem(i, unresolved.has(i.id)));
 }

@@ -15,15 +15,17 @@
 //     capability), this holds for another user's real session id too, not
 //     just for a made-up one.
 //
-// A fourth is pinned because shared/protocol's sessionDraftSchema doc states
-// it as a MUST-requirement on this exact task: a draft key is not a session
-// id, and the messages route must refuse one rather than look it up.
+// Two more are pinned because shared/protocol's sessionDraftSchema doc states
+// them as MUST-requirements on this exact task: a draft key is not a session
+// id, so the messages route must refuse one rather than look it up, and the
+// list route must never let a mint key surface as a sessionId — the only
+// column a draft key is ever written to.
 
 import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { type AccessManager, createAccessManager } from "../../access/access-manager.js";
 import { createUserPrincipal } from "../../identity/user-principal.js";
-import { mintDraftKey, mintSessionId } from "../../session-handlers/session-id.js";
+import { mintDraftKey, mintOnFirstMessage, mintSessionId } from "../../session-handlers/session-id.js";
 import { openSessionStore } from "../../store/session-store.js";
 import type { TokenPayload, TokenResult } from "../../user-auth/types.js";
 import { createSessionsHandler } from "./sessions.js";
@@ -146,6 +148,22 @@ describe("GET /api/v1/sessions", () => {
 
     const body = await (await handleSessions(requestAs(user, "/api/v1/sessions"))).json();
     expect(body.sessions.map((s: { sessionId: string }) => s.sessionId)).toEqual([second, first]);
+  });
+
+  it("SECURITY: a draft key is never a row in the list — only the session it mints is", async () => {
+    const { handleSessions, accessManager, makeUser } = freshHarness();
+    const user = makeUser("drafter2");
+    const store = openSessionStore(
+      accessManager.grant(createUserPrincipal(user.userId, "adult", "home"), "session-store"),
+    );
+    const draftKey = mintDraftKey();
+    const { sessionId } = mintOnFirstMessage({ store, mintKey: draftKey, text: "hello" });
+    store.close();
+
+    const body = await (await handleSessions(requestAs(user, "/api/v1/sessions"))).json();
+    const ids = body.sessions.map((s: { sessionId: string }) => s.sessionId);
+    expect(ids).toContain(sessionId);
+    expect(ids).not.toContain(draftKey);
   });
 });
 

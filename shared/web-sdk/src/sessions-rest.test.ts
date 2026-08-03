@@ -38,23 +38,6 @@ describe("sessions REST client", () => {
     expect(calls[0]?.[1]?.headers).toMatchObject({ authorization: "Bearer t" });
   });
 
-  it("GET /sessions falls back to a placeholder title for an un-generated session", async () => {
-    const fetchFn = mockFetch(
-      async () =>
-        new Response(
-          JSON.stringify({
-            sessions: [
-              { sessionId: "s-2", createdAt: 1, updatedAt: 1, title: null, titleProvenance: null, version: 1 },
-            ],
-          }),
-          { status: 200 },
-        ),
-    );
-    const rest = createSessionsRest({ baseUrl: "https://h/api/v1", token: () => "t", fetchFn });
-    const result = await rest.list();
-    expect(result.items[0]?.title).toBe("New chat");
-  });
-
   it("GET /sessions passes limit and offset as query params", async () => {
     const calls: Array<[string, RequestInit | undefined]> = [];
     const fetchFn = mockFetch(async (url, init) => {

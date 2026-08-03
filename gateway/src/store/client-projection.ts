@@ -29,7 +29,7 @@ export interface FeedItem {
   pendingId: string | null;
 }
 
-export function projectForClient(entries: SessionEntry[]): FeedItem[] {
+export function projectForClient(entries: readonly SessionEntry[]): FeedItem[] {
   const items: FeedItem[] = [];
   const toolItemIndexByCallId = new Map<string, number>();
 

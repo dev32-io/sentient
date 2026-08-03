@@ -60,7 +60,7 @@ export function createSessionsHandler(deps: SessionsHandlerDeps): (request: Requ
   return (request) => handleSessions(deps, request);
 }
 
-export async function handleSessions(deps: SessionsHandlerDeps, request: Request): Promise<Response> {
+async function handleSessions(deps: SessionsHandlerDeps, request: Request): Promise<Response> {
   const token = readBearer(request);
   if (!token) return jsonError(HTTP_UNAUTHORIZED, "missing-token");
 
