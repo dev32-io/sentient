@@ -246,7 +246,7 @@ Every `${VAR}` in every declared docker template is now checked at startup — n
 
 It reports the fact and **not** a cause. An earlier draft listed the host-env variables that happened to be empty; on this box that read `HOST_DOCKER_GID,TZ,SUPERVISOR_DIR,MCP_SOCKET_DIR` — four variables with nothing to do with an interpreter path. Pointing an operator at innocent names costs more than saying less.
 
-### D16 — the follow-up turn acknowledges a delegated result without ever relaying it
+### ~~D16 — the follow-up turn acknowledges a delegated result without ever relaying it~~ — CLOSED 2026-08-03 (plan task 8b)
 
 Found 2026-07-31 (plan task 12, step 6), reproduced on **both** drives of `delegate-hermes-bg`. The whole background path is green: `delegateTask` dispatches, hermes runs, `delegate-task.run.ok` reports a non-empty payload (`outputLength=476`, then `137`), the completion steers a back-to-back follow-up turn (`trigger="background-completion"`), and that turn renders its own bubble with its own queued audio. What the bubble *says* is the defect:
 
@@ -288,6 +288,30 @@ That kills the "wait for a stronger model" hypothesis this section recorded, and
 The next thing to try is the one structural option not yet tried: stop asking the model to volunteer a follow-up reply and instead make the completion arrive as something it must answer. Do not spend more rounds on prompt wording — two models, nine trials and a hand-off line have already failed that way.
 
 So this is a model-behaviour gap on a 20B open-weights model with the harmony format, not a gateway defect. `role:"system"` for an async result is the published convention (Telnyx's async-tools spec recommends it verbatim and explicitly does not bind it to a `tool_call_id`), and the shipped shape is the correct one. The open question is whether a stronger model closes it on its own — untested here, because the only other configured providers are paid and smoke does not burn them. **Test that before changing the projection.** If it must be closed on a weak model, the lever is the system prompt's "Background tasks" section or the note's framing, not the role — reverting the role reinstates "the person pasted this into the chat", which is a lie the model then acts on.
+
+#### 2026-08-03 (plan task 8b) — CLOSED. The role was never the problem; the absence of anyone to answer was
+
+The paragraph above is right that the shape is correct and wrong that the lever is more wording. The defect reduces to one sentence: **these models will not volunteer a reply to a system-role message. They answer users.** So the follow-up turn now ends with one fixed user-role line the harness speaks:
+
+```
+The background task you dispatched has returned. Respond accordingly.
+```
+
+"Respond accordingly" rather than "relay the result" is deliberate — a delegation can fail, or come back needing another tool call before it means anything, and a directive to relay would be wrong for both. **The payload does not move**: it stays fenced as data inside the `role:"system"` note with its task id and request echo, and the instruction carries none of it. That is the trust boundary, not a stylistic choice — promoting a delegated agent's output into the user's voice is the injection surface the fenced note exists to avoid, and it is the shape D16 was originally filed against.
+
+Emitted through one helper both projection paths call (`emitStimulus` in `store/model-projection.ts`, rule 6), including rule 3b's deferred one — the path every completion takes while another delegation is still mid-dispatch. It only ever appends, so the projection's cache-stable prefix is untouched.
+
+**Measured live on `deepseek-v4-flash:cloud`** — the same model that produced `completionTokens=1 textLength=0` on 2026-08-01, same webui, same user:
+
+| drive | result |
+|---|---|
+| one delegation ("explain a Fresnel lens in two sentences") | **relayed** — the follow-up bubble states the answer in full. `completionTokens=96`, `finishReason="stop"` |
+| two concurrent delegations (Saturn fact + nitrogen boiling point) | **both relayed**, with the actual content: `-195.8°C` appears in the bubble. The first completion took rule 3b's deferred path — its `trigger` entry landed at seq 500, between `tool_call call_fahhv8ec` (seq 499) and that call's `tool_result` (seq 501) — and was relayed *inside the running turn*; the second started a `trigger="background-completion"` follow-up turn |
+
+**Two things stay open and are NOT closed by this.**
+
+- **The webui does not render `trigger` feed items at all.** The raw completion — the fenced note, its task id, its payload — is invisible in the transcript even when the relay works. What the user sees is the assistant's restatement and nothing else, so a relay that silently drops half the payload would look identical to a faithful one. (`client-projection.ts` maps `trigger` to a feed item; the transcript never draws it.)
+- **A window reconnecting inside the retention window may hear a whole delegated answer spoken from the journal** — task 8's consequence, since a background-completion turn can now run with zero windows attached and its audio is queued rather than dropped.
 
 **Security, restated because task 15 made it live:** the delegated payload now sits in a `role:"system"` message — the highest-trust role — and nothing scans it. Task 15's containment is framing only: the frame is ours, the payload sits inside a per-task fence whose marker carries the freshly-minted `taskId` (so a page a delegated agent read cannot forge a closing marker it has never seen), and the note says in as many words that the contents are data rather than instruction. That raises the cost of an injection; it does not stop one. The owed work is the inbound scanning boundary already specified below under *"HIGH-PRIORITY SECURITY — untrusted content enters the model context completely unscanned"*, which is now no longer hypothetical.
 
@@ -527,7 +551,7 @@ Deferred, each already recorded in full where it was found. This is the index, n
 | 4 | Hermes builtins bypass the gateway proxy entirely (`write_file`, `terminal`, `browser_*`, …) — mediation cannot reach inside a delegated run | §1, *SECURITY — `delegateTask` has no user gate* | security |
 | 5 | The real delegation risk classifier — interim `confirm` gate shipped; Claude Code's auto-mode decomposition is the reference | §1, same entry | security |
 | 6 | `identify_user` / `update_user_settings` unreachable; `pause_audio` / `resume_audio` still stubs | §1, *`identify_user` and `update_user_settings` now have no caller* | wiring |
-| 7 | Whether a stronger model relays a `role:"system"` completion — measured 0/9 on gpt-oss:20b, and every such measurement predates the model-selection fix | §1, D16's 2026-07-31 note | measurement |
+| 7 | ~~Whether a stronger model relays a `role:"system"` completion~~ — **MOOT 2026-08-03**: no model relays one unprompted, and none has to. A user-role instruction after the note closed it on the model that scored worst. §1, D16's task-8b note | measurement |
 | 8 | Hermes is assumed present on `PATH` — unpinned, unverified, not installed by us | §3 item 1 | setup |
 
 **What is NOT deferred with them:** the untrusted-content scanning boundary (§1, HIGH-PRIORITY SECURITY). A delegated agent reads the open web and its payload lands in a `role:"system"` message, so that item's priority comes from this cluster existing — deferring the cluster raises it rather than lowering it.
