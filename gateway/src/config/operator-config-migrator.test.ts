@@ -86,7 +86,7 @@ hermes:
 `;
 
 const ALREADY_MIGRATED_YAML = `\
-schema_version: "0.1.2"
+schema_version: "0.1.3"
 hermes:
   web_tools:
     provider: searxng
@@ -95,7 +95,7 @@ hermes:
 `;
 
 const NO_WEB_TOOLS_YAML = `\
-schema_version: "0.1.2"
+schema_version: "0.1.3"
 hermes:
   worker:
     container_name: sentient-hermes
@@ -285,10 +285,10 @@ describe("migrateOperatorConfigYamlSync — schema 0.1.0 → 0.1.1", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("bumps schema_version to 0.1.1 on a 0.1.0 host config", () => {
+  it("runs the whole chain in one pass, leaving schema_version at the head", () => {
     const p = writeTmp(dir, HOST_CONFIG_v010);
     migrateOperatorConfigYamlSync(p);
-    expect(readTmp(p)).toContain('schema_version: "0.1.2"');
+    expect(readTmp(p)).toContain('schema_version: "0.1.3"');
   });
 
   it("removes all dead session keys", () => {
@@ -330,10 +330,14 @@ describe("migrateOperatorConfigYamlSync — schema 0.1.0 → 0.1.1", () => {
     expect(readTmp(p)).toContain("per_user_max_sessions: 40");
   });
 
-  it("adds idle_timeout_ms: 900000 when missing", () => {
+  it("leaves no idle_timeout_ms behind — 0.1.1 added it, 0.1.3 removed it as dead", () => {
+    // The key was never in `sessionConfigSchema`, so zod stripped it and
+    // nothing ever read it. It is the cautionary case behind the
+    // `replay_journal_retention_ms` -> `retention_ms` rename.
     const p = writeTmp(dir, HOST_CONFIG_v010);
     migrateOperatorConfigYamlSync(p);
-    expect(readTmp(p)).toContain("idle_timeout_ms: 900000");
+    // Anchored: `ws_idle_timeout_ms` is a LIVE key that contains this substring.
+    expect(readTmp(p)).not.toMatch(/^\s*idle_timeout_ms:/m);
   });
 
   it("does NOT overwrite per_user_max_sessions if already present", () => {
@@ -344,12 +348,10 @@ describe("migrateOperatorConfigYamlSync — schema 0.1.0 → 0.1.1", () => {
     expect(result).not.toContain("per_user_max_sessions: 40");
   });
 
-  it("does NOT overwrite idle_timeout_ms if already present", () => {
+  it("removes a hand-tuned idle_timeout_ms too — the key had no reader to honour", () => {
     const p = writeTmp(dir, HOST_CONFIG_v010_HAS_NEW_FIELDS);
     migrateOperatorConfigYamlSync(p);
-    const result = readTmp(p);
-    expect(result).toContain("idle_timeout_ms: 1800000");
-    expect(result).not.toContain("idle_timeout_ms: 900000");
+    expect(readTmp(p)).not.toMatch(/^\s*idle_timeout_ms:/m);
   });
 
   it("preserves unrelated keys (port, auth_timeout_ms, session.ws_idle_timeout_ms, etc.)", () => {
@@ -363,7 +365,7 @@ describe("migrateOperatorConfigYamlSync — schema 0.1.0 → 0.1.1", () => {
     expect(result).toContain("max_output_tokens: 512");
   });
 
-  it("is a no-op when schema_version is already 0.1.2", () => {
+  it("is a no-op when schema_version is already at the head", () => {
     const p = writeTmp(dir, ALREADY_MIGRATED_YAML);
     const statBefore = statSync(p);
     migrateOperatorConfigYamlSync(p);
@@ -371,18 +373,17 @@ describe("migrateOperatorConfigYamlSync — schema 0.1.0 → 0.1.1", () => {
     expect(statAfter.mtimeMs).toBe(statBefore.mtimeMs);
   });
 
-  it("migrates 0.1.1 stt.language en -> auto and bumps to 0.1.2", () => {
+  it("migrates 0.1.1 stt.language en -> auto", () => {
     const p = writeTmp(dir, V011_STT_EN_YAML);
     migrateOperatorConfigYamlSync(p);
     const result = readTmp(p);
     expect(result).toContain("language: auto");
     expect(result).not.toMatch(/language:\s*en\b/);
-    expect(result).toContain('schema_version: "0.1.2"');
   });
 
-  it("is a no-op when stt.language already auto at 0.1.2", () => {
+  it("is a no-op when stt.language is already auto at the head version", () => {
     const yaml = `\
-schema_version: "0.1.2"
+schema_version: "0.1.3"
 stt:
   provider: local-stt
   language: auto
@@ -391,5 +392,54 @@ stt:
     const statBefore = statSync(p);
     migrateOperatorConfigYamlSync(p);
     expect(statSync(p).mtimeMs).toBe(statBefore.mtimeMs);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests — schema 0.1.2 → 0.1.3 (derived retention: the key's JOB changed)
+// ---------------------------------------------------------------------------
+
+const V012_TUNED_RETENTION_YAML = `\
+schema_version: "0.1.2"
+session:
+  ws_idle_timeout_ms: 255000
+  replay_journal_max_bytes: 16777216
+  replay_journal_retention_ms: 60000
+`;
+
+describe("migrateOperatorConfigYamlSync — schema 0.1.2 → 0.1.3", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "op-config-migrator-013-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("renames replay_journal_retention_ms to retention_ms", () => {
+    const p = writeTmp(dir, V012_TUNED_RETENTION_YAML);
+    migrateOperatorConfigYamlSync(p);
+    const result = readTmp(p);
+    expect(result).not.toContain("replay_journal_retention_ms");
+    expect(result).toContain("retention_ms: 900000");
+    expect(result).toContain('schema_version: "0.1.3"');
+  });
+
+  it("does NOT carry the old value across the rename", () => {
+    // `replay_journal_retention_ms` bounded JOURNAL BYTES after the last window
+    // left; `retention_ms` governs how long a whole SESSION — its runtime, its
+    // store handle, its running background tasks — stays resident. A 60 s value
+    // tuned for the first would silently make the second orphan work.
+    const p = writeTmp(dir, V012_TUNED_RETENTION_YAML);
+    migrateOperatorConfigYamlSync(p);
+    expect(readTmp(p)).not.toContain("60000");
+  });
+
+  it("leaves unrelated session keys alone", () => {
+    const p = writeTmp(dir, V012_TUNED_RETENTION_YAML);
+    migrateOperatorConfigYamlSync(p);
+    const result = readTmp(p);
+    expect(result).toContain("ws_idle_timeout_ms: 255000");
+    expect(result).toContain("replay_journal_max_bytes: 16777216");
   });
 });

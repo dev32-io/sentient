@@ -32,6 +32,26 @@ const log = getLog(["sentient", "config", "migration", "operator-config"]);
 //             default forced English and dropped Chinese input)
 //             schema_version: "0.1.2"
 //
+//   0.1.2 → 0.1.3 (session-model task 8 — derived retention):
+//     ADD:    session.retention_ms: 900000
+//     REMOVE: session.replay_journal_retention_ms  (renamed to retention_ms)
+//             session.idle_timeout_ms             (dead since 0.1.1: added by
+//                                                  that step, never in the
+//                                                  schema, zero readers)
+//     SET:    schema_version: "0.1.3"
+//
+//     The old value is NOT carried across the rename. `replay_journal_retention_ms`
+//     bounded JOURNAL BYTES after the last window left; `retention_ms` governs
+//     how long a whole SESSION — its runtime, its store handle, its running
+//     background tasks — stays resident. A number tuned for the first is not a
+//     number tuned for the second, so the migration writes the new default and
+//     logs whatever the operator had. Both values reach the log line, so a host
+//     that had deliberately tuned it can be re-tuned deliberately.
+//
+//     `lost_task_threshold_ms` and `retention_recheck_interval_ms` are NOT
+//     backfilled: both carry `.default()` in the schema, so an absent key boots
+//     (the `replay_journal_max_bytes` precedent).
+//
 // Uses yaml's Document API to preserve comments and unrelated keys.
 // ---------------------------------------------------------------------------
 
@@ -216,6 +236,68 @@ function applySchema012Migration(doc: Document): Schema012MigrationResult | null
 }
 
 // ---------------------------------------------------------------------------
+// 0.1.2 → 0.1.3: session retention rename (journal bytes → session lifetime)
+// ---------------------------------------------------------------------------
+
+const SCHEMA_013_VERSION = "0.1.3";
+const RETENTION_MS_DEFAULT = 900000;
+/** Keys this step removes from the `session:` block. `replay_journal_retention_ms`
+ *  is superseded by `retention_ms`; `idle_timeout_ms` is the dead key the 0.1.1
+ *  step added and nothing ever read. */
+const RENAMED_RETENTION_KEY = "replay_journal_retention_ms";
+const DEAD_SESSION_KEYS_013 = [RENAMED_RETENTION_KEY, "idle_timeout_ms"] as const;
+
+interface Schema013MigrationResult {
+  /** What `replay_journal_retention_ms` held, so a deliberately-tuned host can
+   *  be re-tuned deliberately rather than silently reset. */
+  replayJournalRetentionMsPrev: number | null;
+  retentionMsAdded: boolean;
+  removedKeys: string[];
+}
+
+function applySchema013Migration(doc: Document): Schema013MigrationResult | null {
+  const root = doc.contents;
+  if (!isMap(root)) return null;
+
+  const versionNode = root.get("schema_version", true);
+  const currentVersion = isScalar(versionNode) ? String(versionNode.value) : null;
+  if (currentVersion === SCHEMA_013_VERSION) return null; // already migrated
+  // Runs only at 0.1.2 — reached fresh, or via the earlier steps in this pass.
+  if (currentVersion !== SCHEMA_012_VERSION) return null;
+
+  const result: Schema013MigrationResult = {
+    replayJournalRetentionMsPrev: null,
+    retentionMsAdded: false,
+    removedKeys: [],
+  };
+
+  const sessionNode = root.get("session", true);
+  if (isMap(sessionNode)) {
+    const session = sessionNode as YAMLMap;
+
+    const previous = session.get(RENAMED_RETENTION_KEY, true);
+    if (isScalar(previous) && typeof previous.value === "number") {
+      result.replayJournalRetentionMsPrev = previous.value;
+    }
+
+    for (const key of DEAD_SESSION_KEYS_013) {
+      if (session.has(key)) {
+        session.delete(key);
+        result.removedKeys.push(`session.${key}`);
+      }
+    }
+
+    if (!session.has("retention_ms")) {
+      session.set("retention_ms", RETENTION_MS_DEFAULT);
+      result.retentionMsAdded = true;
+    }
+  }
+
+  root.set("schema_version", SCHEMA_013_VERSION);
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Public API — sync (used by loadStartupConfig) + async (tests, future use)
 // ---------------------------------------------------------------------------
 
@@ -223,6 +305,7 @@ function applyAllMigrations(doc: Document): boolean {
   const webToolsResult = applyWebToolsMigration(doc);
   const schema011Result = applySchema011Migration(doc);
   const schema012Result = applySchema012Migration(doc);
+  const schema013Result = applySchema013Migration(doc);
 
   if (webToolsResult !== null) {
     log.info("migration:web-tools", {
@@ -247,7 +330,18 @@ function applyAllMigrations(doc: Document): boolean {
     });
   }
 
-  return webToolsResult !== null || schema011Result !== null || schema012Result !== null;
+  if (schema013Result !== null) {
+    log.info("migration:0.1.3", {
+      replayJournalRetentionMsPrev: schema013Result.replayJournalRetentionMsPrev,
+      retentionMs: RETENTION_MS_DEFAULT,
+      retentionMsAdded: schema013Result.retentionMsAdded,
+      removedKeys: schema013Result.removedKeys,
+      reason:
+        "the key now governs SESSION lifetime, not journal bytes — the previous value was not carried across the rename",
+    });
+  }
+
+  return webToolsResult !== null || schema011Result !== null || schema012Result !== null || schema013Result !== null;
 }
 
 /**
