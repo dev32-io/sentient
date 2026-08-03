@@ -48,11 +48,12 @@ const AUDIO_ENCODING = "pcm16";
 // the message-level wiring, and ws-turn-emitter.ts for the outbound frame
 // mapping.
 //
-// Plan 3 Task 6 makes that factory return a PAIR — `SessionHandles`
-// { runtime, permissions }. The permission broker is connection-scoped for
-// the same reason the runtime is, and lands on `ws.data.permissions` so
-// `permission.response` (ws-handlers.ts) can settle only prompts THIS socket
-// issued.
+// Plan 3 Task 6 makes that factory return a PAIR — { runtime, permissions }.
+// Both are SESSION-scoped and both live on the registry's `SessionHandles`,
+// never on a socket: since session-model task 7 the permission broker holds
+// the session's open prompts, fans each one to every attached window, and is
+// reached by `permission.response` (ws-handlers.ts) through the ATTACHMENT
+// this connection holds rather than through a per-socket reference.
 //
 // Plan 3 Task 2 adds the voice half: this handler also composes the session's
 // `TurnVoice` (profile-backed voice id + audio prefs, mic echo guard, TTS

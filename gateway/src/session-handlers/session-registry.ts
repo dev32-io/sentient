@@ -39,7 +39,7 @@
 
 import type { ServerWebSocket } from "bun";
 import { getLog } from "../logging/logger.js";
-import type { PermissionBroker } from "../runtime/permission-broker.js";
+import type { SessionPermissionBroker } from "../runtime/session-permission-broker.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { FanOutTurnEmitter } from "./fan-out-emitter.js";
 import type { FrameJournal } from "./frame-journal.js";
@@ -65,10 +65,11 @@ export type { Attachment } from "./subscriber-set.js";
  */
 export interface SessionHandles {
   readonly runtime: SessionRuntime;
-  /** Session-scoped from here on. Task 7 makes that visible on the wire (fan
-   *  out the prompt, first answer wins, timeout denies); today it simply means
-   *  every attached window can settle a prompt the session issued. */
-  readonly permissions: PermissionBroker;
+  /** The session's OPEN PROMPTS (task 7). Reached only through this entry —
+   *  no socket holds one — which is what makes "any window may answer, the
+   *  first answer settles it" a property of the session rather than of which
+   *  connection happened to raise the prompt. */
+  readonly permissions: SessionPermissionBroker;
   /** Null when the orchestrator built no voice for this session (no `tts:`
    *  config, or no synthesizer for the resolved voice id). */
   readonly voicePrefs: SessionVoicePrefs | null;

@@ -20,6 +20,7 @@ import type { ServerWebSocket } from "bun";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import type { UserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
+import { SESSION_CLOSED_MESSAGE } from "../runtime/permission-prompt.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import { createTurnVoice } from "../runtime/turn-voice.js";
 import { type SessionStore, openSessionStore } from "../store/session-store.js";
@@ -165,7 +166,6 @@ export function bindSessionRuntime(
   handles.fanOut.hold(attachment.attachmentId);
   ws.data.attachment = attachment;
   ws.data.runtime = handles.runtime;
-  ws.data.permissions = handles.permissions;
   ws.data.voicePrefs = handles.voicePrefs;
   // The SESSION's journal and epoch, not this connection's: one seq space, N
   // cursors. Held on the socket so the resume handshake (ws-resume.ts) can ask
@@ -286,6 +286,10 @@ function buildHandlesOver(
     conversationId: sessionId,
     connectionId,
     emitter,
+    // The delivery set itself, read at prompt time — the same source the
+    // fan-out writes through, so "somebody can see this dialog" and "somebody
+    // is being written to" can never disagree.
+    attachedWindows: () => fanOut.size,
     voice,
   });
   if (built === undefined) throw new Error("orchestrator is not configured for this gateway");
@@ -306,9 +310,11 @@ function buildHandlesOver(
     replayLease: acquisition.lease,
     // Permissions settle BEFORE the runtime is disposed: each open prompt is a
     // promise the ReAct loop is awaiting inside `broker.dispatch`, and an
-    // unsettled one parks that turn for the full permission timeout.
+    // unsettled one parks that turn for the full permission timeout. The
+    // reason is MODEL-FACING copy — it becomes the tool result that parked
+    // dispatch sees.
     dispose() {
-      built.permissions.denyAll();
+      built.permissions.denyAll(SESSION_CLOSED_MESSAGE);
       built.runtime.dispose();
       // LAST, after everything that can still emit has stopped: the release
       // starts the journal's retention clock, and every frame disposal wrote
@@ -331,9 +337,12 @@ function buildHandlesOver(
  *
  * Four callers, one body: a re-`session.configure`, an explicit "+", a
  * `conversation.activate` onto a different session, and `cleanupSession`. All
- * must leave the socket in the same state — no attachment, no runtime, no
- * permission broker — so `text.input` answers `orchestrator_unavailable`
- * (ws-handlers.ts) instead of feeding a session it has left.
+ * must leave the socket in the same state — no attachment, no runtime — so
+ * `text.input` answers `orchestrator_unavailable` (ws-handlers.ts) instead of
+ * feeding a session it has left. Dropping the ATTACHMENT is also what stops
+ * this socket answering the session's permission prompts: since task 7 that
+ * routing goes through the registry, and a connection with no attachment has
+ * no window to answer from.
  *
  * Reads the session id off `ws.data.conversationId` rather than taking it as a
  * parameter: every caller passed exactly that, and a caller that passed
@@ -355,7 +364,6 @@ export function detachSession(ws: ServerWebSocket<SessionData>, services: Gatewa
     });
   }
   ws.data.attachment = null;
-  ws.data.permissions = null;
   ws.data.runtime = null;
   // Held per connection but OWNED by the session: cleared here so a socket
   // that has left cannot apply a mute toggle to a `TurnVoice` no turn of its

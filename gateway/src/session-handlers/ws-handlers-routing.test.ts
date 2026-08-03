@@ -12,7 +12,7 @@ import type { ServerWebSocket } from "bun";
 import { type AccessManager, createAccessManager } from "../access/access-manager.js";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
-import type { PermissionBroker } from "../runtime/permission-broker.js";
+import type { SessionPermissionBroker } from "../runtime/session-permission-broker.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { Stimulus } from "../runtime/stimulus.js";
 import { EMPTY_TURN_STATE } from "../runtime/turn-state-snapshot.js";
@@ -20,7 +20,7 @@ import { openSessionStore } from "../store/session-store.js";
 import { createFanOutTurnEmitter } from "./fan-out-emitter.js";
 import { createFrameJournal } from "./frame-journal.js";
 import { createReplayRegistry } from "./replay-registry.js";
-import { bindSessionRuntime } from "./session-binding.js";
+import { bindSessionRuntime, detachSession } from "./session-binding.js";
 import { mintDraftKey, mintSessionId } from "./session-id.js";
 import { type SessionHandles, createSessionRegistry } from "./session-registry.js";
 import { cleanupSession, handleWebSocketMessage } from "./ws-handlers.js";
@@ -148,20 +148,22 @@ const cleanupServices = {
   sessionRegistry: createSessionRegistry(),
 } as unknown as GatewayServices;
 
-interface StubPermissions extends PermissionBroker {
-  resolveCalls: Array<{ requestId: string; approved: boolean }>;
+interface StubPermissions extends SessionPermissionBroker {
+  /** Every answer that reached the SESSION's broker, with the window it came
+   *  from — the attribution `permission.response` now has to carry. */
+  resolveCalls: Array<{ requestId: string; allow: boolean; attachmentId: string }>;
   denyAllCallCount: () => number;
 }
 
 function stubPermissions(matches = true): StubPermissions {
-  const resolveCalls: Array<{ requestId: string; approved: boolean }> = [];
+  const resolveCalls: Array<{ requestId: string; allow: boolean; attachmentId: string }> = [];
   let denyAllCalls = 0;
   return {
     resolveCalls,
     denyAllCallCount: () => denyAllCalls,
-    request: async () => false,
-    resolve: (requestId, approved) => {
-      resolveCalls.push({ requestId, approved });
+    request: async () => ({ allow: false }),
+    resolve: (requestId, decision, attachmentId) => {
+      resolveCalls.push({ requestId, allow: decision.allow, attachmentId });
       return matches;
     },
     denyAll: () => {
@@ -245,56 +247,68 @@ describe("ws-handlers routing — interrupt", () => {
 });
 
 // ---------------------------------------------------------------------------
-// permission.response (Plan 3 Task 6, spec §7.1). The security boundary being
-// pinned: the ONLY broker a frame can reach is the one on its OWN socket, so
-// a requestId minted on another connection resolves nothing.
+// permission.response (Plan 3 Task 6, spec §7.1; session-model spec §2.4). The
+// routing contract being pinned: an answer is settled against the SESSION this
+// connection is attached to, naming the window it came from — and a connection
+// with no attachment settles nothing, which is what preserves the isolation
+// the old per-socket broker gave for free.
 // ---------------------------------------------------------------------------
 
 describe("ws-handlers routing — permission.response", () => {
-  it("routes the client's decision into this connection's permission broker", async () => {
-    const { runtime } = stubRuntime();
+  it("routes the client's decision into the SESSION's broker, naming the answering window", async () => {
     const permissions = stubPermissions();
-    const ws = fakeAuthedWs(runtime);
-    ws.data.permissions = permissions;
+    const services = attachedCleanupServices(permissions);
+    const ws = fakeAuthedWs(null);
+    attach(ws, services);
 
     await handleWebSocketMessage(
       ws as unknown as ServerWebSocket<SessionData>,
       JSON.stringify({ type: "permission.response", requestId: "req-1", approved: true }),
-      unusedServices,
+      services,
     );
 
-    expect(permissions.resolveCalls).toEqual([{ requestId: "req-1", approved: true }]);
+    expect(permissions.resolveCalls).toEqual([
+      { requestId: "req-1", allow: true, attachmentId: ws.data.attachment?.attachmentId ?? "" },
+    ]);
     expect(ws.sent).toEqual([]);
   });
 
-  it("does not throw or answer when the requestId matches nothing on this connection", async () => {
-    const { runtime } = stubRuntime();
+  it("does not throw or answer when no prompt is open under that requestId", async () => {
     const permissions = stubPermissions(false);
-    const ws = fakeAuthedWs(runtime);
-    ws.data.permissions = permissions;
+    const services = attachedCleanupServices(permissions);
+    const ws = fakeAuthedWs(null);
+    attach(ws, services);
 
     await expect(
       handleWebSocketMessage(
         ws as unknown as ServerWebSocket<SessionData>,
         JSON.stringify({ type: "permission.response", requestId: "someone-elses-request", approved: true }),
-        unusedServices,
+        services,
       ),
     ).resolves.toBeUndefined();
 
     expect(ws.sent).toEqual([]);
   });
 
-  it("is a safe no-op when the connection has no permission broker", async () => {
+  it("SECURITY: a connection that is not attached to a session settles nothing", async () => {
+    // The isolation the per-socket broker used to give structurally: a socket
+    // that has left (or never joined) must not be able to answer for a session
+    // it is not a window on, even while it still remembers the id.
+    const permissions = stubPermissions();
+    const services = attachedCleanupServices(permissions);
     const ws = fakeAuthedWs(null);
+    attach(ws, services);
+    detachSession(ws as unknown as ServerWebSocket<SessionData>, services);
 
     await expect(
       handleWebSocketMessage(
         ws as unknown as ServerWebSocket<SessionData>,
         JSON.stringify({ type: "permission.response", requestId: "req-1", approved: true }),
-        unusedServices,
+        services,
       ),
     ).resolves.toBeUndefined();
 
+    expect(permissions.resolveCalls).toEqual([]);
     expect(ws.sent).toEqual([]);
   });
 });
@@ -558,7 +572,7 @@ const SESSION_ID = `s_${"0".repeat(31)}1`;
 /** `cleanupServices` plus a real `SessionRegistry` and a runtime factory that
  *  hands back [permissions], so a connection can attach for real and its
  *  cleanup genuinely detaches. */
-function attachedCleanupServices(permissions: PermissionBroker): GatewayServices {
+function attachedCleanupServices(permissions: SessionPermissionBroker): GatewayServices {
   const runtimeStub = {
     dispose: () => {},
     emitConversationSnapshot: () => {},
@@ -597,7 +611,6 @@ describe("ws-handlers cleanup — outstanding permission prompts", () => {
     cleanupSession(ws as unknown as ServerWebSocket<SessionData>, services);
 
     expect(permissions.denyAllCallCount()).toBe(1);
-    expect(ws.data.permissions).toBeNull();
     expect(ws.data.attachment).toBeNull();
   });
 
@@ -615,7 +628,10 @@ describe("ws-handlers cleanup — outstanding permission prompts", () => {
     cleanupSession(leaving as unknown as ServerWebSocket<SessionData>, services);
 
     expect(permissions.denyAllCallCount()).toBe(0);
-    expect(survivor.data.permissions).toBe(permissions);
+    // The survivor's window is still in the session, so the session's prompts
+    // are still reachable — and reachable from IT, which is the whole point.
+    expect(services.sessionRegistry.handlesFor(SESSION_ID)?.permissions).toBe(permissions);
+    expect(survivor.data.attachment).not.toBeNull();
   });
 });
 

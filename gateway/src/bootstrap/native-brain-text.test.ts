@@ -214,6 +214,9 @@ live("[@live] native orchestrator — text-only turn against the real active LLM
         conversationId: TEST_CONVERSATION_ID,
         connectionId: TEST_CONNECTION_ID,
         emitter,
+        // One headless "window": enough for a permission prompt to be raised
+        // rather than denied on sight (session-permission-broker.ts).
+        attachedWindows: () => 1,
       });
 
       try {

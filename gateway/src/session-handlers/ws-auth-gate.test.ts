@@ -40,7 +40,6 @@ function fakeWs(): FakeWs {
     clientType: "webui",
     attachment: null,
     runtime: null,
-    permissions: null,
     stt: null,
     voicePrefs: null,
     journal: null,

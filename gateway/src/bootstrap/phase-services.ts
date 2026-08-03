@@ -29,8 +29,8 @@ import type { PersonalityStore } from "../profile-store/personality-store.js";
 import { type ProfileStore, createProfileStore } from "../profile-store/profile-store.ts";
 import { type TemplateLoader, createTemplateLoader } from "../profile-store/template-loader.ts";
 import type { TTSProviderFactory } from "../providers/tts/tts-types.ts";
-import { createPermissionBroker } from "../runtime/permission-broker.js";
 import type { CreateSessionRuntime } from "../runtime/session-handles.js";
+import { createConfirmHook, createSessionPermissionBroker } from "../runtime/session-permission-broker.js";
 import { createSessionRuntime as buildSessionRuntime } from "../runtime/session-runtime.js";
 import { createTurnStateTracker } from "../runtime/turn-state-snapshot.js";
 import { createPolicyEngine } from "../security/policy-engine.js";
@@ -506,7 +506,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
   const { orchestratorCfg, accessManager, provider, mcpClient, policyEngine, delegationGuard, hermesRunner } = deps;
   const { delegatedExternalTool } = deps;
 
-  return ({ principal, conversationId, connectionId, emitter: rawEmitter, voice }) => {
+  return ({ principal, conversationId, connectionId, emitter: rawEmitter, attachedWindows, voice }) => {
     if (!provider) {
       log.error("session-runtime.factory.no-provider", {
         userId: principal.userId,
@@ -536,19 +536,24 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
     // used to authorize off the ambient `principal` directly.
     const capability = accessManager.grant(principal, "tool-broker");
 
-    // Permission mediation (spec §5.3/§7.1). Created here because this is the
-    // only scope holding BOTH the session's emitter and the orchestrator
-    // config; the broker comes back on `SessionRuntimeHandles`, is kept by the
-    // session registry, and is parked on EVERY attached connection's
-    // `ws.data.permissions` so `permission.response` can route into it from
-    // any window (session-model plan task 5 — it is session-scoped now, and
-    // task 7 makes that explicit on the wire). It gets `connectionId` for its
-    // log correlation, naming the connection whose attach built the session.
-    const permissions = createPermissionBroker({
+    // Permission mediation (spec §5.3/§7.1, session-model spec §2.4). Created
+    // here because this is the only scope holding BOTH the session's emitter
+    // and the orchestrator config; the broker comes back on
+    // `SessionRuntimeHandles` and is kept by the SESSION registry — it is not
+    // parked on any socket, because since task 7 the prompt map belongs to the
+    // session and a `permission.response` is routed by the session the
+    // answering window is attached to (ws-handlers.ts).
+    //
+    // Keyed on `conversationId`, not `connectionId`: the prompts are the
+    // session's, so the id in their log lines has to be the one every attached
+    // window shares. The answering window is named by `attachmentId` on the
+    // settle line instead — which is the id that actually answers "who
+    // approved this" when N windows can.
+    const permissions = createSessionPermissionBroker({
       emitter,
-      sessionId: connectionId,
+      sessionId: conversationId,
       userId: principal.userId,
-      timeoutMs: orchestratorCfg.permission.request_timeout_ms,
+      attachedWindows,
     });
 
     const backgroundTools = new Map<string, BackgroundToolRunner>();
@@ -621,10 +626,13 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       sessionId: connectionId,
       backgroundTools,
       config: orchestratorCfg.tools,
-      // Real L3 confirm round-trip (spec §5.3): emits `permission.request` to
-      // this connection and blocks the dispatch until the user answers, the
-      // 2-minute config timeout fires (auto-deny), or the socket drops.
-      requestConfirm: (inv, reason) => permissions.request(inv, reason),
+      // Real L3 confirm round-trip (spec §5.3): fans `permission.request` to
+      // EVERY window attached to this session and blocks the dispatch until
+      // the first of them answers, the config timeout fires (auto-deny), or
+      // the session is torn down. The hook owns both conversions — minting the
+      // session-global requestId, and turning an unanswerable decision back
+      // into the `ConfirmUnavailableError` this seam is contracted on.
+      requestConfirm: createConfirmHook(permissions, orchestratorCfg.permission.request_timeout_ms),
       onDelegationProgress: (p) => emitter.delegationProgress(p),
     });
     void broker.definitions(); // kick off this session's own MCP list-tools warm-up now, not on the first turn.

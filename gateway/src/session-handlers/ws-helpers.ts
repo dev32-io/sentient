@@ -1,7 +1,6 @@
 import type { ClientType } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import type { UserPrincipal } from "../identity/user-principal.js";
-import type { PermissionBroker } from "../runtime/permission-broker.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { FrameJournal } from "./frame-journal.js";
 import type { Attachment } from "./session-registry.js";
@@ -111,21 +110,16 @@ export interface SessionData {
    * when the registry's disposal policy says so.
    */
   runtime: SessionRuntime | null;
-  /**
-   * The session's L3 permission round-trip (Plan 3 Task 6, spec §7.1), shared
-   * with every window attached to it. Handed over alongside `runtime`; null
-   * until then and for the lifetime of a connection whose orchestrator is
-   * unconfigured.
-   *
-   * SESSION-scoped since task 5, because the runtime whose ReAct loop awaits
-   * these prompts is: a broker per connection would have made a prompt
-   * unanswerable from the window that did not issue it. Cross-user resolution
-   * stays structurally impossible — a session belongs to exactly one
-   * principal, and only that principal's connections can attach to it. Task 7
-   * makes the fan-out explicit on the wire (any window may answer, the first
-   * answer wins, a timeout denies).
-   */
-  permissions: PermissionBroker | null;
+  // NO `permissions` FIELD, DELIBERATELY (task 7). The L3 permission
+  // round-trip used to be parked here, one broker per socket, and that
+  // placement WAS the resolution rule: a `permission.response` could only
+  // settle a prompt minted on the same connection. With N windows on one
+  // session that rule strands a prompt the moment its window closes, so the
+  // prompt map moved to the session's handles
+  // (runtime/session-permission-broker.ts) and `permission.response` is routed
+  // by the session this connection is ATTACHED to (ws-handlers.ts). Re-adding
+  // a per-connection handle here would re-introduce exactly the scoping that
+  // move deleted.
   /**
    * The connection's STT uplink (Plan 3 Task 2, spec §6). Null until the
    * client's first `audio.start` — a text-only session never dials the STT
@@ -177,7 +171,6 @@ export function createEmptySessionData(): SessionData {
     clientType: "webui",
     attachment: null,
     runtime: null,
-    permissions: null,
     stt: null,
     voicePrefs: null,
     journal: null,

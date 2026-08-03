@@ -66,11 +66,13 @@ export function openSession(ws: ServerWebSocket<SessionData>, services: GatewayS
 // binary are separate paths — outbound TTS frames leave through the turn
 // emitter, never through this router.
 //
-// Permission (Plan 3 Task 6, spec §7.1) adds the L3 confirm answer:
-// `permission.response` routes into `ws.data.permissions`, the broker minted
-// for THIS connection in ws-session-configure.ts. Connection scoping is the
-// isolation boundary — a frame can only ever settle a prompt this same
-// socket issued.
+// Permission (Plan 3 Task 6, spec §7.1; session-model spec §2.4) adds the L3
+// confirm answer: `permission.response` routes into the SESSION's open prompts
+// (`answerPermissionPrompt` below), reached through the registry entry this
+// connection is attached to. Connection scoping used to BE the isolation
+// boundary; with N windows on one session it strands a prompt whose window
+// closed, so the boundary moved to the session — which is where it belongs,
+// since a session has exactly one principal.
 //
 // `session.new` (defect D12) answers with `session.created` naming this
 // connection's durable conversation — ws-session-new.ts. `conversation.activate`
@@ -220,27 +222,7 @@ export async function handleWebSocketMessage(
       return;
 
     case "permission.response":
-      // Fail-closed by construction: an unknown/duplicate/expired requestId
-      // just returns false here — the PDP already denied (or is about to
-      // auto-deny) and nothing is re-opened. Only a prompt THIS connection
-      // issued can be settled, so a frame naming another user's requestId
-      // resolves nothing.
-      log.info("permission.response.received", {
-        connectionId: ws.data.sessionId,
-        sessionId: ws.data.conversationId,
-        attachmentId: ws.data.attachment?.attachmentId ?? null,
-        requestId: msg.requestId,
-        approved: msg.approved,
-      });
-      if (!ws.data.permissions?.resolve(msg.requestId, msg.approved)) {
-        log.warn("permission.response.unmatched", {
-          connectionId: ws.data.sessionId,
-          sessionId: ws.data.conversationId,
-          attachmentId: ws.data.attachment?.attachmentId ?? null,
-          requestId: msg.requestId,
-          reason: "no pending permission prompt on this session for that requestId",
-        });
-      }
+      answerPermissionPrompt(ws, services, msg.requestId, msg.approved);
       return;
 
     case "session.new":
@@ -276,6 +258,79 @@ export async function handleWebSocketMessage(
       // silently matching a stale case by accident.
       log.debug("message-unhandled", { reason: "no case for this message type" });
       return;
+  }
+}
+
+/**
+ * Settle one of the SESSION's open permission prompts from the window that
+ * answered (session-model spec §2.4).
+ *
+ * ROUTED BY SESSION, NOT BY SOCKET. The broker used to hang off
+ * `ws.data.permissions`, which made "the prompt was minted on this connection"
+ * the resolution rule; a prompt raised at the laptop was then unanswerable from
+ * the phone. The prompt map belongs to the session's handles now, so the route
+ * is: this connection's ATTACHMENT → the session it is attached to → that
+ * session's prompts.
+ *
+ * THE ATTACHMENT IS THE AUTHORITY, and requiring it is what preserves the old
+ * isolation exactly. `detachSession` clears it, so a connection that has left
+ * (a re-configure, a "+", a `conversation.activate` elsewhere, a close) can no
+ * longer answer for a session it is no longer in — even though it may still
+ * remember the id. It also supplies the `attachmentId` every settle line
+ * carries, because with N windows an unattributed approval cannot be traced.
+ *
+ * Fail-closed by construction: an unknown, duplicate or already-timed-out
+ * requestId settles nothing and re-opens nothing — the broker just returns
+ * false and this logs it. Task 9's mediator is where the generation check
+ * goes; it is deliberately not duplicated here.
+ */
+function answerPermissionPrompt(
+  ws: ServerWebSocket<SessionData>,
+  services: GatewayServices,
+  requestId: string,
+  approved: boolean,
+): void {
+  const attachment = ws.data.attachment;
+  const sessionId = ws.data.conversationId;
+  log.info("permission.response.received", {
+    connectionId: ws.data.sessionId,
+    sessionId,
+    attachmentId: attachment?.attachmentId ?? null,
+    generation: attachment?.generation ?? null,
+    requestId,
+    approved,
+  });
+
+  if (attachment === null || sessionId === null) {
+    log.warn("permission.response.unattached", {
+      connectionId: ws.data.sessionId,
+      sessionId,
+      requestId,
+      reason: "this connection is not attached to a session — only a window IN a session can answer its prompts",
+    });
+    return;
+  }
+
+  const permissions = services.sessionRegistry.handlesFor(sessionId)?.permissions ?? null;
+  if (permissions === null) {
+    log.warn("permission.response.no-session", {
+      connectionId: ws.data.sessionId,
+      sessionId,
+      attachmentId: attachment.attachmentId,
+      requestId,
+      reason: "no session is resident under this id — its prompts were denied when it was released",
+    });
+    return;
+  }
+
+  if (!permissions.resolve(requestId, { allow: approved }, attachment.attachmentId)) {
+    log.warn("permission.response.unmatched", {
+      connectionId: ws.data.sessionId,
+      sessionId,
+      attachmentId: attachment.attachmentId,
+      requestId,
+      reason: "no open prompt for that requestId — another window already answered it, or it timed out",
+    });
   }
 }
 
@@ -510,8 +565,8 @@ function handleSessionEnd(ws: ServerWebSocket<SessionData>, services: GatewaySer
  * event stream and releases the socket to the STT service, which no other
  * owner would ever do.
  *
- * DETACH, NOT DISPOSE (task 5). The `SessionRuntime` and `PermissionBroker`
- * belong to the SESSION, so this drops one subscriber and lets the registry's
+ * DETACH, NOT DISPOSE (task 5). The `SessionRuntime` and the session's open
+ * PROMPTS belong to the SESSION, so this drops one subscriber and lets the registry's
  * disposal policy decide what that means. Today the last one out disposes, so
  * a single-window session behaves exactly as it did when this function
  * disposed the runtime directly; with a second window still attached, the

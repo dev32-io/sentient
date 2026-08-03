@@ -621,7 +621,9 @@ describe("handleSessionConfigure — one live runtime per session", () => {
     expect(spy.minted).toHaveLength(1);
     expect(spy.minted[0]?.disposeCount).toBe(0);
     expect(second.data.runtime).toBe(first.data.runtime);
-    expect(first.data.permissions).not.toBeNull();
+    // The prompts are the SESSION's, held once on its handles — no socket
+    // carries a broker of its own any more (task 7).
+    expect(spy.services.sessionRegistry.handlesFor(sessionId)?.permissions).toBeDefined();
     expect(spy.services.sessionRegistry.subscribers(sessionId)).toHaveLength(2);
   });
 
@@ -1159,7 +1161,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     await waitUntilIdle(bRuntime);
 
     expect(b.data.runtime).toBe(bRuntime); // B was NOT torn down…
-    expect(b.data.permissions).not.toBeNull();
+    expect(services.sessionRegistry.handlesFor(sessionId)?.permissions).toBeDefined();
     expect(a.data.runtime).toBe(bRuntime); // …and A shares it rather than forking one.
     expect(a.sent.some((f) => f.type === "error" && f.code === "orchestrator_unavailable")).toBe(false);
     expect(services.sessionRegistry.subscribers(sessionId)).toHaveLength(2);
@@ -1214,7 +1216,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     await waitUntilIdle(originalRuntime);
 
     expect(original.data.runtime).toBe(originalRuntime); // the live tab was NOT torn down…
-    expect(original.data.permissions).not.toBeNull();
+    expect(services.sessionRegistry.handlesFor(sessionId)?.permissions).toBeDefined();
     expect(duplicate.data.runtime).toBe(originalRuntime); // …and the duplicate joined it.
     expect(duplicate.data.conversationId).toBe(sessionId);
     expect(duplicate.sent.some((f) => f.type === "error" && f.code === "orchestrator_unavailable")).toBe(false);

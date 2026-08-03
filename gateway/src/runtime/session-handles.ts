@@ -5,17 +5,19 @@
 // returned objects belong to the session and are torn down together, by the
 // session registry's disposal policy rather than by any one socket's close:
 // `runtime.dispose()` aborts the in-flight turn and closes the store handle,
-// and `permissions.denyAll()` settles any open permission prompt so the LAST
-// window leaving cannot strand a ReAct turn awaiting an answer that will
+// and `permissions.denyAll(reason)` settles any open permission prompt so the
+// LAST window leaving cannot strand a ReAct turn awaiting an answer that will
 // never come. A window closing while others remain attached settles nothing —
-// a prompt it issued is still answerable from any of them.
+// a prompt it issued is still answerable from any of them, which since task 7
+// is a property of the broker itself (session-permission-broker.ts) rather
+// than of which socket happens to hold a reference to it.
 //
 // The pair is one member of `SessionHandles`
 // (session-handlers/session-registry.ts), which is what the registry stores
 // and hands to every attaching connection.
 
 import type { UserPrincipal } from "../identity/user-principal.js";
-import type { PermissionBroker } from "./permission-broker.js";
+import type { SessionPermissionBroker } from "./session-permission-broker.js";
 import type { SessionRuntime } from "./session-runtime.js";
 import type { TurnEmitter } from "./turn-emitter.js";
 import type { TurnVoice } from "./turn-voice.js";
@@ -25,7 +27,7 @@ import type { TurnVoice } from "./turn-voice.js";
  *  preferences, the window set and the disposal that ties them together. */
 export interface SessionRuntimeHandles {
   runtime: SessionRuntime;
-  permissions: PermissionBroker;
+  permissions: SessionPermissionBroker;
 }
 
 /**
@@ -57,6 +59,17 @@ export interface SessionRuntimeRequest {
    */
   connectionId: string;
   emitter: TurnEmitter;
+  /**
+   * How many windows are attached to this session RIGHT NOW.
+   *
+   * A GETTER, read at the moment a permission prompt is raised rather than
+   * captured here: the count at construction time is always zero (the first
+   * attachment is recorded after the handles are built) and a session outlives
+   * every one of its windows. It is what makes "a prompt no window can see is
+   * denied at once" a decision rather than a two-minute park — see
+   * `SessionPermissionBroker`.
+   */
+  attachedWindows: () => number;
   /** This session's TTS fork, or null/absent for a text-only session. */
   voice?: TurnVoice | null;
 }

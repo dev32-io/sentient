@@ -10,15 +10,16 @@
 // Fail-closed at both layers: `policy-engine.ts` classifies a tool that NO
 // rule names as side-effecting and returns `confirm` (design §2.2), and this
 // broker is what makes `confirm` mean something — it calls the injected
-// `requestConfirm`, which Plan 3's
-// composition root binds to the connection's `PermissionBroker`
-// (runtime/permission-broker.ts), so an unconfirmed side-effecting tool is
-// BLOCKED, never silently run. Three outcomes reach a two-valued seam: an
-// explicit human answer RESOLVES true/false, and an UNANSWERABLE request
-// (timeout, socket close, turn abort) REJECTS with `ConfirmUnavailableError`
-// whose message is forwarded to the model verbatim as the deny reason. Any
-// other throw is a bug in the hook and stays opaque ("confirmation error"),
-// so an internal error string never enters the model's context.
+// `requestConfirm`, which the composition root binds to the SESSION's
+// permission broker (runtime/session-permission-broker.ts's
+// `createConfirmHook`), so an unconfirmed side-effecting tool is BLOCKED,
+// never silently run. Three outcomes reach a two-valued seam: an explicit
+// human answer from ANY window on the session RESOLVES true/false, and an
+// UNANSWERABLE request (timeout, no window open, session teardown, turn abort)
+// REJECTS with `ConfirmUnavailableError` whose message is forwarded to the
+// model verbatim as the deny reason. Any other throw is a bug in the hook and
+// stays opaque ("confirmation error"), so an internal error string never
+// enters the model's context.
 //
 // `store: SessionStore` is accepted for interface parity with the wider
 // deps-threading pattern (composition root, Task 9) but is NOT used to
@@ -178,10 +179,11 @@ export interface ToolBrokerDeps {
   /** name → runner. `delegateTask` (Task 5) registers itself here. */
   backgroundTools: Map<string, BackgroundToolRunner>;
   config: OrchestratorConfig["tools"];
-  /** Resolves an L3 `confirm` decision. Plan 3's composition root binds this
-   *  to the connection's `PermissionBroker` (runtime/permission-broker.ts):
-   *  it resolves `true`/`false` on a human answer and REJECTS with
-   *  `ConfirmUnavailableError` when the prompt could not be answered at all.
+  /** Resolves an L3 `confirm` decision. The composition root binds this to the
+   *  SESSION's permission broker (runtime/session-permission-broker.ts): it
+   *  resolves `true`/`false` on the FIRST human answer from any attached
+   *  window, and REJECTS with `ConfirmUnavailableError` when the prompt could
+   *  not be answered at all — including "no window is open to show it".
    *  Either way the call fails closed — see `resolveDecision` below. */
   requestConfirm: (inv: ToolInvocation, reason: string) => Promise<boolean>;
   /** Fired at both ends of a background task's life (spec §5.4 / §7): once
@@ -289,8 +291,8 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     } catch (err) {
       // Fail-closed either way — the ONLY difference is what the model is
       // told. `ConfirmUnavailableError` is the confirm hook's deliberate
-      // "nobody could answer this" signal (timeout / socket closed / turn
-      // aborted, see runtime/permission-broker.ts) and its message is
+      // "nobody could answer this" signal (timeout / no window open / session
+      // closed / turn aborted, see runtime/permission-prompt.ts) and its message is
       // model-facing copy by design. Every other throw is a bug in the hook:
       // report it opaquely so an internal error string never enters the
       // model's context.
