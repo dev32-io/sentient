@@ -207,7 +207,11 @@ export async function handleWebSocketMessage(
       // lines above can still fail. Claiming before them burns the floor for a
       // message that ended in `orchestrator_unavailable` and refuses a peer for
       // a dispatch that did nothing (command-mediator.ts).
-      if (!claimInputFloor({ type: "text.input" }, ws, services.sessionRegistry)) return;
+      // `pendingId` rides along so a `session_busy` refusal names the message it
+      // refused. It is the one refusal the protocol calls retryable immediately,
+      // so it is the one a client most needs to settle against a specific bubble
+      // — and a pendingId-keyed outbox cannot fail the right entry without it.
+      if (!claimInputFloor({ type: "text.input", pendingId: msg.pendingId }, ws, services.sessionRegistry)) return;
       runtime.submit({
         kind: "conversational",
         text: msg.text,

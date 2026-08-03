@@ -818,6 +818,50 @@ describe("ws-handlers routing — two windows, one turn", () => {
     expect(spy.turnsStarted()).toBe(1); // …and steered, rather than forking
     expect(b.sent.some((f) => (f as { type?: string }).type === "command.rejected")).toBe(false);
   });
+
+  it("INVARIANT: a session_busy refusal echoes the pendingId of the message it refused", async () => {
+    // `stale_generation` and `credential_expired` carry it because they are
+    // mediated with the real frame; the floor claim used to be made with a bare
+    // `{type: "text.input"}` and dropped it. `session_busy` is the ONE refusal
+    // the protocol documents as retryable immediately, so it is the one a client
+    // most needs to match back to a specific bubble — and a pendingId-keyed
+    // outbox cannot fail the right entry without it.
+    const spy = serializingRuntime();
+    const services = activateServices(spy.runtime);
+    const sessionId = seedActivatableSession(services.accessManager, "u_deadbeef");
+
+    const a = fakeAuthedWs(null);
+    const b = fakeAuthedWs(null);
+    for (const ws of [a, b]) {
+      ws.data.draftKey = DRAFT_KEY;
+      await handleWebSocketMessage(
+        ws as unknown as ServerWebSocket<SessionData>,
+        JSON.stringify({ type: "conversation.activate", sessionId }),
+        services,
+      );
+    }
+
+    const send = (ws: FakeWs, text: string, pendingId: string): Promise<void> =>
+      handleWebSocketMessage(
+        ws as unknown as ServerWebSocket<SessionData>,
+        JSON.stringify({
+          type: "text.input",
+          text,
+          pendingId,
+          sessionId,
+          attachmentGeneration: ws.data.attachment?.generation,
+        }),
+        services,
+      );
+
+    // Both inside the arbitration window — a genuine race, so B loses.
+    await send(a, "first", "p-a");
+    await send(b, "same instant", "p-b");
+
+    expect(commandFrames(b)).toContainEqual(
+      expect.objectContaining({ type: "command.rejected", reason: "session_busy", pendingId: "p-b" }),
+    );
+  });
 });
 
 describe("detachSession — leaving a session drops what was captured under it", () => {
