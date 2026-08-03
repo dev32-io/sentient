@@ -638,25 +638,48 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       // (its own onUpdate calls refreshMessages() again once that resolves).
       // Leave it alone here.
       //
-      // `created` / `draft` — REDUNDANT DEFENSE-IN-DEPTH, verified live. Every
-      // path that reaches `draft` or a fresh-mint `created` goes through
-      // session-binding.ts's `sendDraftHandshake`, which sends an empty
-      // `conversation.snapshot` (`items: []`) on the SAME socket before the
-      // `session.draft` / `session.created` frame — and because WS preserves
-      // per-socket ordering, ConversationHistoryConnector's snapshot handler
-      // (an unconditional mirror REPLACE, not a merge) has already set
-      // committedRef.current to `[]` and re-rendered by the time this handler
-      // runs. Confirmed on the running stack: pulled this exact
-      // `committedRef.current = []` line, re-ran the "+" press with an old
-      // session's history loaded, and the pane still correctly cleared —
-      // console showed `conversation.snapshot{items:[]}` arrive (not
-      // dedup-dropped) strictly before `session.draft`, with
-      // committedRef.current already length 0 at the point this line used to
-      // run. So THIS assignment clears nothing new; it is cheap insurance
-      // against `sendDraftHandshake`'s ordering/snapshot invariant changing
-      // out from under this file without this file's own test catching it —
-      // not, as an earlier version of this comment claimed, the only thing
-      // that clears the mirror for these two.
+      // `draft` and `created` are TWO DIFFERENT MECHANISMS, verified live and
+      // separately — do not read them as one case:
+      //
+      //   - `draft`: session-binding.ts's `sendDraftHandshake` sends an empty
+      //     `conversation.snapshot` (`items: []`) on the SAME socket
+      //     immediately before THIS `session.draft` frame. WS preserves
+      //     per-socket order, and ConversationHistoryConnector's snapshot
+      //     handler is an unconditional mirror REPLACE, so
+      //     committedRef.current is already `[]` by the time this handler
+      //     runs. Verified: pulled this assignment, re-ran "+" against a
+      //     loaded session, and the console showed `conversation.snapshot
+      //     {items:[]}` land (not dedup-dropped) strictly before
+      //     `session.draft`, with committedRef.current already length 0 at
+      //     this exact point.
+      //
+      //   - `created` (the common, non-replayed path — typing the first
+      //     message of a fresh draft): NO snapshot precedes it.
+      //     `ensureBoundRuntime`'s mint path (ws-handlers.ts) sends
+      //     `session.created` directly — its own comment: "A fresh mint
+      //     needs no snapshot: an empty feed is the truth there." Verified
+      //     by driving the actual flow (switch to a 2-message session, "+",
+      //     type + send a new message, full frame trace): `session.created`
+      //     (seq 7) followed `session.draft` (seq 6) with NO
+      //     `conversation.snapshot` in between, and with this assignment
+      //     pulled, committedRef.current was ALREADY length 0 at this point
+      //     — not because `created` cleared it, but transitively, because
+      //     the EARLIER `draft` frame's own snapshot (above) cleared it and
+      //     nothing since (no entry, no other snapshot) had touched it. The
+      //     user's own `conversation.entry` for the fresh message arrives
+      //     only AFTER this handler runs (seq 8, once `runtime.submit`
+      //     starts the turn), so it can never race this clear. A REPLAYED
+      //     mint (a dropped-ack retry) is the one sub-case this reasoning
+      //     does not cover directly — there,
+      //     `runtime.emitConversationSnapshot()` sends a REAL, non-empty
+      //     snapshot moments after `session.created`, which unconditionally
+      //     overwrites whatever this line does either way.
+      //
+      // Net: on every path this fires for, something OTHER than this
+      // assignment already produces the correct mirror. Kept anyway as
+      // cheap, harmless defense-in-depth against either mechanism above
+      // changing without this file's own test catching it — not because
+      // either is unverified.
       if (e.kind !== "switched") {
         committedRef.current = [];
       }
