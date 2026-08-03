@@ -28,8 +28,10 @@ function prompt() {
       return;
     }
     if (text.trim() === "/quit") {
-      ws.send(JSON.stringify({ type: "session.end" }));
-      console.info("\n  Session ended. Bye!\n");
+      // Just disconnect. There is no `session.end` frame — a client that is
+      // done closes its socket, and the gateway derives liveness from attached
+      // connections plus in-flight work (runtime/session-retention.ts).
+      console.info("\n  Disconnecting. Bye!\n");
       ws.close();
       rl.close();
       process.exit(0);

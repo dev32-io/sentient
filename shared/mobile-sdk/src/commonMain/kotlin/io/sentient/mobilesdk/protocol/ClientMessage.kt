@@ -73,9 +73,6 @@ sealed class ClientMessage {
     @Serializable @SerialName("permission.response")
     data class PermissionResponse(val requestId: String, val approved: Boolean) : ClientMessage()
 
-    @Serializable @SerialName("session.end")
-    data object SessionEnd : ClientMessage()
-
     @Serializable @SerialName("ping")
     data object Ping : ClientMessage()
 

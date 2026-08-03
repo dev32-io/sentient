@@ -214,10 +214,6 @@ export const permissionResponseSchema = withCommandBinding(
 );
 export type PermissionResponse = z.infer<typeof permissionResponseSchema>;
 
-export const sessionEndSchema = z.object({
-  type: z.literal("session.end"),
-});
-
 export const pingSchema = z.object({
   type: z.literal("ping"),
 });
@@ -264,7 +260,6 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   audioEndSchema,
   textInputSchema,
   permissionResponseSchema,
-  sessionEndSchema,
   pingSchema,
   interruptSchema,
   sessionNewSchema,
