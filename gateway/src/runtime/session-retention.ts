@@ -13,13 +13,16 @@
 // session that never goes away and a session that goes away too early look
 // identical from the outside, and both are single-term bugs.
 //
-// THE DEFECT THIS CLOSES IS LIVE. `SessionRuntime.dispose()` deliberately
-// leaves registered background tasks running — only `interrupt()` cancels them
-// — but it closes the bun:sqlite handle, so the completion of a task it left
-// alive can never land. Before this predicate, closing the last window on a
-// session ORPHANED a running delegated task: the worker finished, its result
-// hit a disposed runtime, and `session-runtime.submit.disposed` dropped it.
-// `hasUnfinishedBackgroundTask` is a defect gate, not a comfort feature.
+// THE DEFECT THIS CLOSES IS LIVE. `SessionRuntime.dispose()` leaves registered
+// background tasks running — NOTHING cancels one, not even interrupt
+// (tools/delegate-task.ts) — but it closes the bun:sqlite handle, so the
+// completion of a task it left alive can never land. Before this predicate,
+// closing the last window on a session ORPHANED a running delegated task: the
+// worker finished, its result hit a disposed runtime, and
+// `session-runtime.submit.disposed` dropped it.
+// `hasUnfinishedBackgroundTask` is a defect gate, not a comfort feature — and
+// with no cancel path anywhere, residency is now the WHOLE mechanism standing
+// between a delegated task and a lost result.
 //
 // THE BACKGROUND TERM IS A TIMESTAMP, NOT A BOOLEAN, on the way in. Derivation
 // fires on state-change events, and a worker that dies without emitting a

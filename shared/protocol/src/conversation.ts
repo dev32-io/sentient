@@ -34,8 +34,13 @@ export type ConversationToolStatus = z.infer<typeof conversationToolStatusSchema
 // `barge-in`: user spoke mid-TTS, playback stopped; LLM stream finished
 //             normally but the audio was interrupted.
 // `interrupt`: turn was hard-aborted (UI button or `interrupt` tool).
-//              `cancelledTaskIds` lets the UI / model correlate tasks
-//              that died with this interrupt specifically.
+//              `cancelledTaskIds` is STRUCTURALLY ALWAYS EMPTY: an interrupt
+//              cancels the turn and nothing else, and nothing anywhere
+//              cancels a background task (gateway tools/delegate-task.ts).
+//              The field is kept because removing it is a wire change, and
+//              because a later model-facing task-management tool — which
+//              cancels by NAMED taskId — is what would finally populate it.
+//              Never render it as "these died with your Stop"; nothing did.
 export const conversationAssistantCutoffSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("barge-in") }),
   z.object({

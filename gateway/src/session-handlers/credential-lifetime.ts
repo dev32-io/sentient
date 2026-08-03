@@ -94,6 +94,16 @@ export function isCredentialExpired(ws: ServerWebSocket<SessionData>, nowMs: num
  * attachment through `detachSession`, the fan-out departs the window through
  * its own deferred detach. Reaching into either from here would give this
  * module a dependency on the modules that depend on it.
+ *
+ * THE CLOSE CANNOT THROW OUT OF HERE, and that is not defensiveness. The
+ * OUTBOUND caller runs inside `deliver()` → `broadcast()` → `textDelta()` —
+ * i.e. inside the running ReAct loop — so an exception escaping this function
+ * unwinds a live turn because one window's socket was already gone.
+ * `sendConnectionFrame` is already write-safe; the close is the one exposed
+ * call, so it is wrapped exactly as `disconnectLaggingWindow`
+ * (fan-out-emitter.ts) wraps the identical call, for the identical reason. The
+ * window has already stopped being served either way — the close is what makes
+ * the ejection stick, not what makes it correct.
  */
 export function closeExpiredCredential(ws: ServerWebSocket<SessionData>, seam: CredentialSeam): void {
   log.warn("credential.expired", {
@@ -104,5 +114,13 @@ export function closeExpiredCredential(ws: ServerWebSocket<SessionData>, seam: C
     reason: "this connection's token expired — closing so it returns through the auth gate",
   });
   sendConnectionFrame(ws, { type: "auth.error", code: EXPIRED_CODE, message: EXPIRED_MESSAGE });
-  ws.close(WS_CLOSE_POLICY, "credential expired");
+  try {
+    ws.close(WS_CLOSE_POLICY, "credential expired");
+  } catch (err) {
+    log.debug("credential.close-failed", {
+      connectionId: ws.data.sessionId,
+      seam,
+      reason: err instanceof Error ? err.message : String(err),
+    });
+  }
 }

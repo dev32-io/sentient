@@ -212,7 +212,7 @@ A stored `workInFlight` boolean would be set and cleared at several sites and ev
 
 Today expiry means "the client refetches". Under this design expiry **also disposes the runtime**.
 
-Worse, the current code already has the failure this prevents: `SessionRuntime.dispose()` **deliberately leaves** registered background tasks alive (only `interrupt()` calls `background.cancelAll()`), but it closes the SQLite handle — so the completion can never land. **Closing your last tab today orphans a running delegated task.** `retention-holds-work` is therefore a defect gate, not a comfort feature.
+Worse, the current code already has the failure this prevents: `SessionRuntime.dispose()` **leaves** registered background tasks alive — **nothing cancels one, not even `interrupt()`** (see the 2.0 design's §4.7; `background.cancelAll()` is gone) — but it closes the SQLite handle, so the completion can never land. **Closing your last tab today orphans a running delegated task.** `retention-holds-work` is therefore a defect gate, not a comfort feature — and with no cancel path anywhere, it is the *whole* mechanism keeping a delegated result reachable.
 
 ### 5.3 Config — the sweep loop is reused, the predicate is new
 

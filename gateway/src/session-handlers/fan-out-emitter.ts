@@ -438,6 +438,22 @@ export function createFanOutTurnEmitter(deps: FanOutEmitterDeps): FanOutTurnEmit
       log.debug("fan-out.held", { sessionId, attachmentId, heldAtSeq: journal.newestSeq });
     },
 
+    /**
+     * NO CREDENTIAL CHECK ON THE DRAIN, and the reason is an invariant rather
+     * than an oversight — stated here because nothing else states it.
+     *
+     * `deliver()` gates on `isCredentialExpired` only AFTER its `held.has()`
+     * branch, so frames buffered during a hold and written out here bypass the
+     * outbound seam. That is sound today because `hold` and `release` are
+     * SAME-TICK and synchronous in all three callers (`attachWithSnapshot` and
+     * the two `bindSessionRuntime` paths), every one of them reached through
+     * the inbound gate — so a credential cannot expire inside the window, and
+     * the frames drained are ones the joiner was already cleared to receive.
+     *
+     * ANY caller that makes the hold outlive its tick — an await between
+     * `hold` and `release`, a hold parked for a later event — breaks that and
+     * must add the check to the drain loop below.
+     */
     release(attachmentId: string, deliveredThrough: number): void {
       const window = held.get(attachmentId);
       if (window === undefined) return;

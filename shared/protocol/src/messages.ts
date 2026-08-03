@@ -220,8 +220,14 @@ export const pingSchema = z.object({
 
 // Explicit user-initiated interrupt (UI button, Escape key). Distinct
 // from barge-in, which is mic-onset-inferred. Server treats it as a
-// hard abort: aborts the cycle, cancels interruptable tasks, stops
-// audio playback. No payload — the interrupt is idempotent.
+// hard abort of the TURN: aborts the turn and stops audio playback.
+// No payload — the interrupt is idempotent.
+//
+// IT DOES NOT CANCEL BACKGROUND WORK, and clients must not present it as
+// though it does. A background task (`delegateTask`) outlives the turn that
+// spawned it in every case and nothing cancels it; its completion still
+// arrives later on the normal stimulus seam. Barge-in and interrupt differ
+// only in the `cutoff` kind stamped on the committed partial.
 export const interruptSchema = withCommandBinding(
   z.object({
     type: z.literal("interrupt"),

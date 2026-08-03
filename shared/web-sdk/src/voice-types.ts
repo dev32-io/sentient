@@ -35,7 +35,9 @@ export interface ChatMessage {
   readonly channel?: "text" | "speech";
   /** Present on assistant messages when the reply was cut short.
    *  - `barge-in`: user spoke mid-TTS; playback stopped.
-   *  - `interrupt`: cycle hard-aborted; `cancelledTaskIds` lists tasks killed. */
+   *  - `interrupt`: turn hard-aborted. `cancelledTaskIds` is always empty —
+   *    an interrupt cancels the turn and nothing else, and no background task
+   *    is ever cancelled. Do not render it as tasks killed. */
   readonly cutoff?:
     | { readonly kind: "barge-in" }
     | { readonly kind: "interrupt"; readonly cancelledTaskIds: readonly string[] };

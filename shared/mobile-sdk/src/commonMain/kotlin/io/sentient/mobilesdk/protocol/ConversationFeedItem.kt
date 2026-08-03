@@ -93,7 +93,8 @@ sealed class ConversationFeedItem {
 /**
  * Why an assistant reply was cut short.
  * kind="barge-in": user spoke mid-TTS.
- * kind="interrupt": hard abort via UI button; cancelledTaskIds identifies affected tasks.
+ * kind="interrupt": hard abort of the TURN via UI button. cancelledTaskIds is always empty —
+ * nothing cancels a background task, so never render it as tasks killed by the Stop.
  */
 @Serializable
 data class Cutoff(

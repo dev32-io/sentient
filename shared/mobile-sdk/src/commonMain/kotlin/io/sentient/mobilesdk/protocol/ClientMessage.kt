@@ -76,7 +76,9 @@ sealed class ClientMessage {
     @Serializable @SerialName("ping")
     data object Ping : ClientMessage()
 
-    /** Explicit user-initiated interrupt (UI Stop / Escape). Hard abort: turn + TTS + background tasks. */
+    /** Explicit user-initiated interrupt (UI Stop / Escape). Hard abort of the TURN: turn + TTS.
+     *  It does NOT cancel background work — a delegated task outlives the turn that spawned it
+     *  and its completion still arrives later, so never present Stop as cancelling it. */
     @Serializable @SerialName("interrupt")
     data object Interrupt : ClientMessage()
 
