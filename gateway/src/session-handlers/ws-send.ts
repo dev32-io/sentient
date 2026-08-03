@@ -59,9 +59,36 @@ const BINARY_TYPE_AUDIO = 0x01;
 
 const decoder = new TextDecoder();
 
+/**
+ * `ServerWebSocket.send()` returning 0 — Bun DROPPED the message because the
+ * socket's buffer is past `backpressureLimit` (16 MB by default; the gateway
+ * sets none). Not an error and not a throw: the call returns normally and the
+ * bytes are simply gone.
+ *
+ * This is the return value spec §8.1 named as ignored, and ignoring it is the
+ * residual silent-loss path under a SHARED journal: the frame carried a seq
+ * every other cursor advanced past, so the window that lost it has a hole it
+ * will never learn about. Treating it as a failed write is what routes it into
+ * the same recovery as a dead socket — dropped from the session, client
+ * reconnects, gap-fill or a fresh snapshot.
+ *
+ * `-1` means "queued behind backpressure", which is a real delivery: the bytes
+ * are Bun's now and the lag check on the next write is what bounds it.
+ */
+const SEND_DROPPED = 0;
+
 function writeText(ws: ServerWebSocket<SessionData>, text: string, frameType: string): boolean {
   try {
-    ws.send(text);
+    if (ws.send(text) === SEND_DROPPED) {
+      log.warn("ws-send.backpressure-dropped", {
+        sessionId: ws.data.sessionId,
+        frameType,
+        frameBytes: text.length,
+        bufferedAmount: ws.getBufferedAmount(),
+        reason: "the transport dropped this frame past its backpressure limit — the window has an unfillable hole",
+      });
+      return false;
+    }
     return true;
   } catch (err) {
     log.warn("ws-send.write-failed", {
@@ -163,7 +190,16 @@ export function writeJournaledText(ws: ServerWebSocket<SessionData>, text: strin
  *  is already inside `framed`. */
 export function writeJournaledBinary(ws: ServerWebSocket<SessionData>, framed: Uint8Array, seq: number): boolean {
   try {
-    ws.send(framed);
+    if (ws.send(framed) === SEND_DROPPED) {
+      log.warn("ws-send.backpressure-dropped", {
+        sessionId: ws.data.sessionId,
+        seq,
+        frameBytes: framed.byteLength,
+        bufferedAmount: ws.getBufferedAmount(),
+        reason: "the transport dropped this audio frame past its backpressure limit",
+      });
+      return false;
+    }
     return true;
   } catch (err) {
     log.warn("ws-send.audio-write-failed", {

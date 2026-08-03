@@ -5,18 +5,19 @@
 // constructed and validated through `gatewayMessageSchema`" constraint forbids;
 // the schema's `auth.ok` had drifted to a `{ sessionId, role }` stub nothing
 // sent and nothing read, and `auth.error` was not in the union at all.
-// Both now go out through `sendGatewayFrame` (ws-send.ts) like every other
-// frame. They are still UNSEQUENCED — `ws.data.journal` is null until
-// session.configure, and sendGatewayFrame writes unstamped in that case — so
-// this changed validation, not sequencing.
+// Both now go out through `sendConnectionFrame` (ws-send.ts) like every other
+// frame. They are UNSEQUENCED and unjournaled — not incidentally, as they were
+// when that fell out of `ws.data.journal` still being null, but because the
+// lane table says so (frame-lanes.ts): an auth result belongs to ONE socket and
+// must never reach another window or enter a session's replay window.
 //
 // SIGNATURE: the socket is typed `ServerWebSocket<SessionData>` rather than the
-// narrow local `WsLike` this file used to declare. `sendGatewayFrame` reads
-// `ws.data.journal` / `ws.data.epoch` and writes through `ws.send`, so a
-// three-member structural stand-in is not assignable to it; duplicating a
-// second socket type to work around that would just re-create the drift this
-// commit is removing. Callers already hold the real Bun socket; the tests pass
-// a cast fake, which is the normal cost of typing on the real transport.
+// narrow local `WsLike` this file used to declare. `sendConnectionFrame` reads
+// `ws.data.sessionId` and writes through `ws.send`, so a three-member
+// structural stand-in is not assignable to it; duplicating a second socket type
+// to work around that would just re-create the drift this commit is removing.
+// Callers already hold the real Bun socket; the tests pass a cast fake, which
+// is the normal cost of typing on the real transport.
 
 import type { ServerWebSocket } from "bun";
 import { z } from "zod";

@@ -81,7 +81,10 @@ session:
   # Writing more to a socket that cannot drain does not make it drain, and a
   # bespoke re-snapshot path would be a second recovery mechanism for the same
   # condition — reachable only under load, and therefore never exercised.
-  max_window_lag_bytes: 4194304         # 4 MB (~2 min of 48 kHz Opus queued). Range 65536–67108864 (64 KB–64 MB).
+  # The ceiling is Bun's own backpressureLimit default (16 MB): past that
+  # ws.send() returns 0 and the frame is DROPPED silently, so a threshold above
+  # it could never be reached and this policy would be unreachable.
+  max_window_lag_bytes: 4194304         # 4 MB (~2 min of 48 kHz Opus queued). Range 65536–16777216 (64 KB–16 MB).
 
 # ---------------------------------------------------------------------------
 # Access — capability minting + per-user physical isolation (spec §2.1, §2.5)

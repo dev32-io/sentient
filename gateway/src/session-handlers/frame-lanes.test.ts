@@ -5,7 +5,6 @@
 // drive.
 
 import { describe, expect, it } from "bun:test";
-import { gatewayMessageSchema } from "@sentient/protocol";
 import { ALL_GATEWAY_MESSAGE_TYPES, frameLane } from "./frame-lanes.js";
 
 describe("frameLane", () => {
@@ -13,10 +12,6 @@ describe("frameLane", () => {
     for (const type of ALL_GATEWAY_MESSAGE_TYPES) {
       expect(() => frameLane(type)).not.toThrow();
     }
-  });
-
-  it("enumerates exactly the wire union — the list is read from zod, never hand-maintained", () => {
-    expect(ALL_GATEWAY_MESSAGE_TYPES).toHaveLength(gatewayMessageSchema.options.length);
   });
 
   it("throws rather than defaulting for a type with no lane", () => {

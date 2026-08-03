@@ -25,6 +25,7 @@ import { createTurnVoice } from "../runtime/turn-voice.js";
 import { type SessionStore, openSessionStore } from "../store/session-store.js";
 import { type CommittedFeedSource, attachWithSnapshot, createFanOutTurnEmitter } from "./fan-out-emitter.js";
 import { createMicEchoGuard } from "./mic-echo-guard.js";
+import type { ReplayAcquisition } from "./replay-registry.js";
 import type { Attachment, SessionHandles } from "./session-registry.js";
 import { createSessionVoicePrefs } from "./session-voice-prefs.js";
 import type { SessionData } from "./ws-helpers.js";
@@ -206,7 +207,43 @@ function buildSessionHandles(
   // when they are disposed. The registry keeps it for the retention window
   // afterwards, which is what lets a reconnecting window replay what it missed
   // even though the runtime that produced those frames is long gone.
+  //
+  // EVERYTHING BELOW IS INSIDE A RELEASE GUARD, and that is not defensive
+  // habit — `createSessionRuntime` genuinely throws when no active LLM key
+  // resolves for this user (phase-services.ts), which is a per-session
+  // misconfiguration `bindSessionRuntime` catches and recovers from. The ONLY
+  // other release is `dispose()` below, on handles this function never
+  // returned, so without the guard that throw pins the journal: `acquire`
+  // added a lease and cleared `detachedAtMs`, and the registry starts a
+  // retention clock only when the lease set EMPTIES — so the entry is never
+  // swept and its bytes are held for the life of the process, once per
+  // affected session. The shape this replaced parked the lease on the socket
+  // and released it in `cleanupSession`, which survived exactly this failure.
   const acquisition = services.replayRegistry.acquire(sessionId);
+  try {
+    return buildHandlesOver(services, principal, sessionId, connectionId, acquisition);
+  } catch (err) {
+    services.replayRegistry.release(acquisition.lease);
+    log.warn("session-binding.journal-released-on-build-failure", {
+      connectionId,
+      sessionId,
+      leaseId: acquisition.lease.id,
+      reason: "session handles could not be constructed — releasing the journal instead of pinning it",
+    });
+    throw err;
+  }
+}
+
+/** The construction itself. Split out so the caller's `try` covers ALL of it —
+ *  an inline try/catch around a 60-line body invites a future edit to land
+ *  above it. */
+function buildHandlesOver(
+  services: GatewayServices,
+  principal: UserPrincipal,
+  sessionId: string,
+  connectionId: string,
+  acquisition: ReplayAcquisition,
+): SessionHandles {
   const fanOut = createFanOutTurnEmitter({
     registry: services.sessionRegistry,
     sessionId,

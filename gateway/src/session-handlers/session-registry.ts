@@ -24,7 +24,7 @@
 // an exclusive right and a corpse must not hold one against a retry. Nothing
 // here is exclusive, so no caller has to ask who is there before attaching, and
 // the question dissolves. Liveness survives in exactly one place, as a routing
-// question rather than a lifecycle one: `session-windows.ts` skips a
+// question rather than a lifecycle one: `fan-out-emitter.ts` skips a
 // closing/closed socket when delivering a frame.
 //
 // IDENTITY STILL MATTERS, and for the same reason it did before: `detach` is

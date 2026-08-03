@@ -149,6 +149,10 @@ export function createFanOutTurnEmitter(deps: FanOutEmitterDeps): FanOutTurnEmit
 
   /** Attachments still buffering. Absent = delivering. */
   const held = new Map<string, HeldWindow>();
+  /** Attachments this fan-out has given up on but whose registry detach has not
+   *  run yet — see `departWindow`. Delivery skips them from the instant they
+   *  are added; the set is emptied by the microtask that does the detaching. */
+  const departed = new Set<string>();
   /** Set for the duration of a `directTo` call; see its doc. */
   let directedTo: string | null = null;
   /** Whether the previous broadcast reached anyone. Turns "this session has
@@ -163,9 +167,34 @@ export function createFanOutTurnEmitter(deps: FanOutEmitterDeps): FanOutTurnEmit
     return registry.subscribers(sessionId);
   }
 
-  function dropWindow(attachmentId: string, connectionId: string, frameType: string, reason: string): void {
+  /**
+   * Stop delivering to [attachmentId] NOW, and detach it from the registry on
+   * the next microtask.
+   *
+   * TWO STEPS, NOT ONE, and the split is the point. `registry.detach` runs the
+   * session's disposal policy synchronously, so on the LAST window it disposes
+   * the runtime and closes the store handle — inside the `emitter.textDelta()`
+   * the ReAct loop is executing at that instant. The loop would then run
+   * against a closed `bun:sqlite` handle until it observed the abort. (The
+   * object this replaced left a failed write attached, so it never had this
+   * shape to get wrong.)
+   *
+   * Deferring alone is not enough: the window has to stop receiving
+   * immediately, or the rest of this fan-out and every frame until the
+   * microtask runs keeps writing to a socket already known to be gone. So
+   * `departed` gates delivery synchronously and the lifecycle change waits.
+   */
+  function departWindow(attachmentId: string): void {
     held.delete(attachmentId);
-    registry.detach(sessionId, attachmentId);
+    departed.add(attachmentId);
+    queueMicrotask(() => {
+      departed.delete(attachmentId);
+      registry.detach(sessionId, attachmentId);
+    });
+  }
+
+  function dropWindow(attachmentId: string, connectionId: string, frameType: string, reason: string): void {
+    departWindow(attachmentId);
     log.warn("fan-out.window-dropped", { sessionId, attachmentId, connectionId, frameType, reason });
   }
 
@@ -189,8 +218,7 @@ export function createFanOutTurnEmitter(deps: FanOutEmitterDeps): FanOutTurnEmit
       maxLagBytes,
       reason: "window backlog passed session.max_window_lag_bytes — closing so it reconnects and re-snapshots",
     });
-    held.delete(attachmentId);
-    registry.detach(sessionId, attachmentId);
+    departWindow(attachmentId);
     try {
       ws.close(WS_CLOSE_TRY_AGAIN_LATER, "window too far behind");
     } catch (err) {
@@ -246,6 +274,7 @@ export function createFanOutTurnEmitter(deps: FanOutEmitterDeps): FanOutTurnEmit
     const windows = attachments();
     for (const attachment of windows) {
       const ws = attachment.ws;
+      if (departed.has(attachment.attachmentId)) continue;
       if (held.has(attachment.attachmentId)) {
         bufferFor(attachment.attachmentId, ws, frame);
         continue;
@@ -478,13 +507,26 @@ export function attachWithSnapshot(
 }
 
 /**
- * Rebuild the transient prerequisites of an in-flight turn on ONE socket.
+ * Rebuild the transient prerequisites a joining window is missing, on ONE
+ * socket.
  *
  * Order is `turn.started` → running tool tiles → the accumulated text → the
  * audio bracket → open prompts. The exact live INTERLEAVING of text and tiles
  * is not recoverable from the tracker and is deliberately not reconstructed:
  * the committed projection carries the settled order, and the live bubble is
  * transient — the two converge the moment this turn commits (spec §7.2).
+ *
+ * THE AUDIO BRACKET IS EMITTED INDEPENDENTLY OF THE TURN, because speech
+ * outlives its turn and this is the seam where that stops being an abstract
+ * claim. `session-runtime.ts` emits `turnCompleted` as soon as the loop
+ * settles, while turn-voice.ts's detached drain is still yielding frames — so
+ * "no active turn, audio still playing" is a window seconds wide on every
+ * spoken reply, not an edge case. `createTurnStateTracker` deliberately RETAINS
+ * `audio` past `endTurn` for exactly this; an early return here would have made
+ * that retention an invariant with no consumer, and the joiner would take the
+ * remaining binary frames with no bracket to hang them on — which the web
+ * connector SILENTLY DROPS (`if (!this.isReceiving) return`), followed by a
+ * `turn.audio.done` for a stream it never opened.
  */
 function emitTurnStateTo(
   ws: ServerWebSocket<SessionData>,
@@ -492,30 +534,29 @@ function emitTurnStateTo(
   attachmentId: string,
   state: TurnStateSnapshot,
 ): void {
-  if (state.activeTurnId === null || state.trigger === null) {
-    if (state.audio !== null) noteAudioSkip(sessionId, attachmentId, state.audio.turnId);
-    return;
-  }
   const turnId = state.activeTurnId;
-  sendAttachReplayFrame(ws, { type: "turn.started", turnId, trigger: state.trigger });
-  for (const tool of state.tools) {
-    sendAttachReplayFrame(ws, {
-      type: "turn.tool.update",
-      turnId,
-      toolCallId: tool.toolCallId,
-      toolName: tool.toolName,
-      status: tool.status,
-      ...(tool.taskId === undefined ? {} : { taskId: tool.taskId }),
-      argsPreview: tool.argsPreview ?? "",
-      startedAtMs: Date.now(),
-    });
-  }
-  if (state.textSoFar.length > 0) {
-    sendAttachReplayFrame(ws, { type: "turn.text.delta", turnId, text: state.textSoFar });
+  if (turnId !== null && state.trigger !== null) {
+    sendAttachReplayFrame(ws, { type: "turn.started", turnId, trigger: state.trigger });
+    for (const tool of state.tools) {
+      sendAttachReplayFrame(ws, {
+        type: "turn.tool.update",
+        turnId,
+        toolCallId: tool.toolCallId,
+        toolName: tool.toolName,
+        status: tool.status,
+        ...(tool.taskId === undefined ? {} : { taskId: tool.taskId }),
+        argsPreview: tool.argsPreview ?? "",
+        startedAtMs: Date.now(),
+      });
+    }
+    if (state.textSoFar.length > 0) {
+      sendAttachReplayFrame(ws, { type: "turn.text.delta", turnId, text: state.textSoFar });
+    }
   }
   if (state.audio !== null) {
-    // The BRACKET, never the bytes: binary frames carry no turnId, so without
-    // this the joiner would attribute the REMAINING audio to the wrong turn.
+    // The BRACKET, never the bytes: binary frames carry no turnId, so the
+    // client attributes them to the most recent `turn.audio.start`. Without
+    // this the joiner drops the rest of the utterance on the floor.
     sendAttachReplayFrame(ws, {
       type: "turn.audio.start",
       turnId: state.audio.turnId,
@@ -527,6 +568,7 @@ function emitTurnStateTo(
   for (const prompt of state.prompts) {
     sendAttachReplayFrame(ws, { type: "permission.request", ...prompt });
   }
+  if (turnId === null && state.audio === null && state.prompts.length === 0) return;
   log.info("fan-out.turn-state-sent", {
     sessionId,
     attachmentId,
@@ -535,7 +577,7 @@ function emitTurnStateTo(
     textLength: state.textSoFar.length,
     runningTools: state.tools.length,
     openPrompts: state.prompts.length,
-    hasAudio: state.audio !== null,
+    audioTurnId: state.audio?.turnId ?? null,
   });
 }
 

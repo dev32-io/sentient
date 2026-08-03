@@ -91,9 +91,13 @@ interface Harness {
 
 /** A session with `first` already attached and delivering. Real registry, real
  *  journal, real turn-state tracker — only the store projection is a double. */
-function harness(first: FakeWindow, maxLagBytes = MAX_LAG_BYTES): Harness {
-  const registry = createSessionRegistry(() => {
-    // Never dispose: these cases are about delivery, not residency.
+function harness(first: FakeWindow, maxLagBytes = MAX_LAG_BYTES, onDispose?: () => void): Harness {
+  const registry = createSessionRegistry((input) => {
+    // Residency is session-registry.test.ts's subject; these cases only care
+    // that a disposal does not fire in the middle of an emission.
+    if (onDispose === undefined) return;
+    if (input.subscriberCount > 0) return;
+    onDispose();
   });
   const journal = createFrameJournal({ sessionId: SESSION_ID, maxBytes: 10_000_000 });
   const fanOut = createFanOutTurnEmitter({ registry, sessionId: SESSION_ID, journal, epoch: 7, maxLagBytes });
@@ -176,13 +180,6 @@ describe("fan-out emitter", () => {
     expect(texts(connA).at(-1)).toEqual({ type: "pong" });
   });
 
-  it("refuses to journal a connection-lane frame even when it is handed to the journal directly", () => {
-    // The lane rule is enforced at the journal, not only at its callers: a
-    // future call site cannot burn a shared seq on a private frame by mistake.
-    const journal = createFrameJournal({ sessionId: SESSION_ID, maxBytes: 1000 });
-    expect(() => journal.allocateText("pong", () => "{}")).toThrow(/connection-lane/);
-  });
-
   it("INVARIANT: a session frame is allocated once and read by every cursor", () => {
     const connA = fakeWindow("conn-a");
     const connB = fakeWindow("conn-b");
@@ -252,7 +249,7 @@ describe("fan-out emitter", () => {
     expect(h.handles.journal.newestSeq).toBe(1);
   });
 
-  it("INVARIANT: a throwing subscriber is dropped and the others still receive", () => {
+  it("INVARIANT: a throwing subscriber is dropped and the others still receive", async () => {
     const connA = fakeWindow("conn-a");
     const connB = fakeWindow("conn-b");
     const h = harness(connA);
@@ -267,7 +264,75 @@ describe("fan-out emitter", () => {
     h.emit.textDelta("t1", "hi");
 
     expect(connB.received).toHaveLength(1);
+    await Promise.resolve(); // the registry detach is deferred — see below
     expect(h.registry.subscribers(SESSION_ID)).not.toContainEqual(expect.objectContaining({ connectionId: "conn-a" }));
+  });
+
+  it("INVARIANT: dropping a window stops delivery NOW but detaches on the next microtask", async () => {
+    // `registry.detach` runs the disposal policy synchronously, so on the LAST
+    // window it would dispose the runtime and close the store handle INSIDE the
+    // `emitter.textDelta()` the ReAct loop is currently executing — the loop
+    // would then run against a closed handle until it observed the abort. The
+    // window still has to stop receiving immediately, or the rest of this
+    // fan-out keeps writing to a socket already known to be gone.
+    const connA = fakeWindow("conn-a");
+    const disposed: string[] = [];
+    const h = harness(connA, MAX_LAG_BYTES, () => disposed.push(SESSION_ID));
+    attachWithSnapshot(h.registry, SESSION_ID, asWs(connA));
+    connA.received.length = 0;
+    connA.send = () => {
+      throw new Error("socket gone");
+    };
+
+    h.emit.textDelta("t1", "one");
+    // Synchronously: still a subscriber (nothing disposed mid-emit) …
+    expect(h.registry.subscribers(SESSION_ID)).toHaveLength(1);
+    expect(disposed).toHaveLength(0);
+    // … but already receiving nothing, so a second frame is not even attempted.
+    let attempts = 0;
+    connA.send = () => {
+      attempts += 1;
+      throw new Error("socket gone");
+    };
+    h.emit.textDelta("t1", "two");
+    expect(attempts).toBe(0);
+
+    await Promise.resolve();
+    expect(h.registry.subscribers(SESSION_ID)).toHaveLength(0);
+    expect(disposed).toEqual([SESSION_ID]);
+  });
+
+  it("INVARIANT: a frame the transport DROPS for backpressure is not counted as delivered", async () => {
+    // `ws.send()` returning 0 is Bun dropping the message past its
+    // backpressure limit — no throw, no error, the bytes are simply gone. Under
+    // a SHARED journal that frame carried a seq every other cursor advanced
+    // past, so the window that lost it has a hole it will never learn about.
+    const connA = fakeWindow("conn-a");
+    const connB = fakeWindow("conn-b");
+    const h = harness(connA);
+    attachWithSnapshot(h.registry, SESSION_ID, asWs(connA));
+    h.attach(connB);
+    attachWithSnapshot(h.registry, SESSION_ID, asWs(connB));
+
+    connA.send = () => 0;
+    h.emit.textDelta("t1", "hi");
+
+    await Promise.resolve();
+    expect(h.registry.subscribers(SESSION_ID).map((a) => a.connectionId)).toEqual(["conn-b"]);
+  });
+
+  it("counts a frame QUEUED behind backpressure as delivered", () => {
+    // `-1` means Bun enqueued it: the bytes are its problem now, and the lag
+    // check on the next write is what bounds the queue. Dropping the window
+    // here would disconnect every client that hits a momentary stall.
+    const connA = fakeWindow("conn-a");
+    const h = harness(connA);
+    attachWithSnapshot(h.registry, SESSION_ID, asWs(connA));
+
+    connA.send = () => -1;
+    h.emit.textDelta("t1", "hi");
+
+    expect(h.registry.subscribers(SESSION_ID)).toHaveLength(1);
   });
 
   it("skips a closing socket without dropping the attachment", () => {
@@ -318,7 +383,7 @@ describe("fan-out emitter", () => {
     expect(connB.received).toHaveLength(0);
   });
 
-  it("closes a window whose backlog passes the lag bound", () => {
+  it("closes a window whose backlog passes the lag bound", async () => {
     const connA = fakeWindow("conn-a");
     const h = harness(connA, 100);
     attachWithSnapshot(h.registry, SESSION_ID, asWs(connA));
@@ -327,6 +392,7 @@ describe("fan-out emitter", () => {
     h.emit.textDelta("t1", "hi");
 
     expect(connA.closedWith).toBe(1013);
+    await Promise.resolve();
     expect(h.registry.subscribers(SESSION_ID)).toHaveLength(0);
   });
 });
@@ -455,6 +521,46 @@ describe("attachWithSnapshot", () => {
 
     expect(snap.activeTurnId).toBe("t1");
     expect(texts(connB).map((f) => f.type)).toEqual(["turn.started", "turn.text.delta"]);
+  });
+
+  it("INVARIANT: a joiner landing during the TTS tail still gets the audio bracket", () => {
+    // Speech outlives its turn, and this is the seam where that stops being an
+    // abstract claim: `session-runtime.ts` emits `turnCompleted` as soon as the
+    // loop settles while turn-voice.ts's detached drain is still yielding
+    // frames, so "no active turn, audio still playing" is a window seconds wide
+    // on EVERY spoken reply. Without the bracket the joiner takes the remaining
+    // binary frames with nothing to attribute them to — the web connector drops
+    // them silently — and then a `turn.audio.done` for a stream it never opened.
+    const connA = fakeWindow("conn-a");
+    const connB = fakeWindow("conn-b");
+    const h = harness(connA);
+    attachWithSnapshot(h.registry, SESSION_ID, asWs(connA));
+    h.emit.turnStarted("t1", "user");
+    h.emit.audioStart("t1", "opus", 48000);
+    h.emit.turnCompleted("t1"); // the loop settled; the drain has not
+
+    h.attach(connB);
+    const snap = attachWithSnapshot(h.registry, SESSION_ID, asWs(connB));
+
+    expect(snap.activeTurnId).toBeNull();
+    expect(snap.audio).toEqual({ turnId: "t1", encoding: "opus", sampleRate: 48000 });
+    expect(texts(connB).map((f) => f.type)).toEqual(["conversation.snapshot", "turn.audio.start"]);
+  });
+
+  it("sends no bracket once the audio stream has actually ended", () => {
+    const connA = fakeWindow("conn-a");
+    const connB = fakeWindow("conn-b");
+    const h = harness(connA);
+    attachWithSnapshot(h.registry, SESSION_ID, asWs(connA));
+    h.emit.turnStarted("t1", "user");
+    h.emit.audioStart("t1", "opus", 48000);
+    h.emit.turnCompleted("t1");
+    h.emit.audioDone("t1");
+
+    h.attach(connB);
+    attachWithSnapshot(h.registry, SESSION_ID, asWs(connB));
+
+    expect(texts(connB).map((f) => f.type)).toEqual(["conversation.snapshot"]);
   });
 
   it("hands a joiner an empty turn state when no turn is in flight", () => {

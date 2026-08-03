@@ -982,6 +982,43 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     expect(items[0]?.content).toBe("hello");
   });
 
+  it("INVARIANT: a bind that throws RELEASES the session journal instead of pinning it", async () => {
+    // The journal is acquired BEFORE the handles are constructed, and the only
+    // other release is the handles' own `dispose()` — on handles a throwing
+    // build never returned. `acquire` adds a lease and clears `detachedAtMs`,
+    // and the retention clock starts only when the lease set EMPTIES, so an
+    // unreleased lease pins the entry (up to `replay_journal_max_bytes`) for
+    // the life of the process, once per affected session.
+    //
+    // Observed through the sweep, which is what a leaked lease defeats: a
+    // released entry is reclaimed once its retention window passes, a pinned
+    // one never is. `acquire` sweeps first, so any later acquire is the probe.
+    let clock = 1_000;
+    const registry = createReplayRegistry({
+      maxBytesPerSession: 1_000_000,
+      retentionMs: 60_000,
+      now: () => clock,
+    });
+    const accessManager = freshAccessManager();
+    const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
+    (services as { createSessionRuntime: unknown }).createSessionRuntime = () => {
+      throw new Error("no active LLM key for this user");
+    };
+
+    const ws = fakeAuthedWs("connection-1");
+    configure(ws, services, SURFACE_A);
+    await handleWebSocketMessage(asWs(ws), JSON.stringify({ type: "text.input", text: "hello" }), services);
+    expect(ws.data.runtime).toBeNull();
+    expect(registry.size).toBe(1);
+
+    clock += 60_001;
+    registry.acquire("s_unrelated"); // any acquire sweeps first
+
+    // Only the probe survives. A pinned entry would still be here, holding its
+    // journal, with no lifecycle left that can ever release it.
+    expect(registry.size).toBe(1);
+  });
+
   it("INVARIANT: a failed bind leaves the connection retryable instead of wedged for its whole life", async () => {
     // `conversationId` is claimed only AFTER a successful bind. Setting it
     // first and failing would send every later `text.input` down the "bound,
@@ -1199,8 +1236,8 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     // still attached to the session. The old registry needed a liveness
     // predicate here — a corpse holding an exclusive claim would have refused
     // the retry outright. Attaching needs none: the retry joins the session
-    // whatever state its peer is in, and the delivery set skips the socket that
-    // can no longer be written to (session-windows.ts).
+    // whatever state its peer is in, and the fan-out skips the socket that can
+    // no longer be written to (fan-out-emitter.ts).
     const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));

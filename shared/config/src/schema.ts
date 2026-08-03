@@ -36,9 +36,15 @@ export const sessionConfigSchema = z.object({
   // shared journal a slow window's prerequisite frames can be evicted while it
   // lags, so it must not be allowed to lag without bound. Disconnect rather
   // than forced re-snapshot: both SDKs already reconnect and gap-fill, and
-  // writing more to a socket that cannot drain does not make it drain. Range
-  // 65536–67108864 (64 KB–64 MB).
-  max_window_lag_bytes: z.number().int().min(65536).max(67108864).default(4194304),
+  // writing more to a socket that cannot drain does not make it drain.
+  //
+  // The ceiling is Bun's own `backpressureLimit` default (16 MB), NOT an
+  // arbitrary round number. The gateway sets no `backpressureLimit` and leaves
+  // `closeOnBackpressureLimit` false, so past that limit `ws.send()` returns 0
+  // and Bun DROPS the message silently. A threshold above it could never be
+  // reached — this policy would be unreachable and the silent loss it exists to
+  // bound would be back. Range 65536–16777216 (64 KB–16 MB).
+  max_window_lag_bytes: z.number().int().min(65536).max(16777216).default(4194304),
 });
 
 export type SessionConfig = z.output<typeof sessionConfigSchema>;

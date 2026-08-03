@@ -127,8 +127,3 @@ export function frameLane(type: GatewayMessage["type"]): FrameLane {
   }
   return lane;
 }
-
-/** True when this frame belongs to the conversation rather than to one socket. */
-export function isSessionLane(type: GatewayMessage["type"]): boolean {
-  return frameLane(type) === "session";
-}

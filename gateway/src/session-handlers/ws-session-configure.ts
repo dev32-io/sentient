@@ -60,13 +60,18 @@ const AUDIO_ENCODING = "pcm16";
 // text deltas fork into TTS on the turn's own AbortController. The STT half
 // is lazy — ws-handlers.ts mints `ws.data.stt` on the first `audio.start`.
 //
-// Plan 3 Task 10 adds the second piece: acquiring this surface's frame
-// journal from `services.replayRegistry` and running the resume decision
-// (ws-resume.ts) before session.ready goes out. The `resume` field the
-// client folds into this frame is now honoured, not just logged. session.ready
-// itself now leaves through `sendGatewayFrame`, so it is validated against
-// `gatewayMessageSchema` like every other outbound frame instead of being
-// hand-serialised.
+// Plan 3 Task 10 adds the second piece: running the resume decision
+// (ws-resume.ts) before session.ready goes out. The `resume` field the client
+// folds into this frame is honoured, not just logged. The journal it resumes
+// from is the SESSION's, taken by the bind rather than acquired here — the
+// session-model redesign moved it off the surface (task 6), which is why
+// `surfaceId` below now partitions nothing.
+//
+// session.ready is a CONNECTION-lane frame (frame-lanes.ts): validated by
+// `sendConnectionFrame`, but never seq-stamped and never journaled. A stamped
+// ready would advance the client's cursor past a replay window it has not been
+// handed yet, and it is this socket's handshake — no other window has any use
+// for it.
 //
 // Every NON-recovered handshake ends with a `conversation.snapshot`
 // (runtime/conversation-feed.ts, via `SessionRuntime`). Without it a client

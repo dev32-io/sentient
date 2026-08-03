@@ -4,9 +4,11 @@
 //
 // Every method maps 1:1 onto exactly one frame in
 // shared/protocol/src/messages.ts and is constructed as a typed
-// `GatewayMessage`, then validated by `sendGatewayFrame` before any bytes leave
-// (see ws-send.ts for the drop-never-throw policy). Nothing here hand-builds an
-// object literal or calls `ws.send` directly.
+// `GatewayMessage`, then handed to a `SessionFrameSink` which validates it
+// before any bytes leave (see ws-send.ts for the drop-never-throw policy).
+// Nothing here hand-builds an object literal, allocates a seq, or calls
+// `ws.send` directly — this file owns frame CONSTRUCTION and the §7.3 log
+// lines, and nothing else.
 //
 // Two Plan-2 behaviours are deliberately GONE:
 //   - `toolUpdate` and `turnAborted` are no longer log-only. They emit
