@@ -32,13 +32,21 @@ export function createOpenAIProvider(cfg: OrchestratorConfig["provider"], apiKey
       // supports it). "unset" OMITS the field from the request entirely —
       // see the field comment below and `orchestrator.provider.reasoning_effort`
       // in config.yaml/the zod schema.
-      const reasoningEffort = cfg.reasoning_effort === "unset" ? undefined : cfg.reasoning_effort;
+      //
+      // A per-request override (`req.reasoningEffort` — auxiliary tasks ask
+      // for "none") narrows the value, but CANNOT re-introduce the field the
+      // operator turned off: the operator's "unset" is checked first and wins,
+      // because it exists precisely for an endpoint that 400s on the unknown
+      // field. Both directions of the check are load-bearing.
+      const requested = req.reasoningEffort ?? cfg.reasoning_effort;
+      const isOmitted = cfg.reasoning_effort === "unset" || requested === "unset";
+      const reasoningEffort = isOmitted ? undefined : requested;
       log.info("stream-start", {
         model: cfg.model,
         messageCount: req.messages.length,
         toolCount: req.tools.length,
         maxOutputTokens,
-        reasoningEffort: cfg.reasoning_effort,
+        reasoningEffort: requested,
         reasoningEffortSent: reasoningEffort !== undefined,
       });
 

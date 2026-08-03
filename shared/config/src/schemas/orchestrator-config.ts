@@ -110,6 +110,60 @@ export const orchestratorConfigSchema = z.object({
     // than a pure config write. Range 1000-120000.
     hermes_mcp_register_timeout_ms: z.number().int().min(1000).max(120000).default(30000),
   }),
+  // AUXILIARY TASKS (spec §6) — the out-of-band model calls that are ABOUT a
+  // conversation rather than part of it. Session titling is the first; tags,
+  // follow-up suggestions and summarisation are the named next ones, and each
+  // is a template plus a caller, not a new config block. Every knob here is
+  // therefore deliberately task-AGNOSTIC except the two `title_*` ones.
+  auxiliary: z
+    .object({
+      // Master switch for EVERY auxiliary task. false = the gateway never
+      // makes an out-of-band model call, and a session keeps the fallback
+      // title its first message produced.
+      enabled: z.boolean().default(true),
+      // Baked-in template directory, relative to the gateway asset root
+      // (config/asset-root.ts). Ships with the build.
+      template_dir: z.string().min(1).default("system_prompts/auxiliary"),
+      // OPERATOR OVERRIDE directory, same root, consulted FIRST. A file here
+      // wins over the baked-in one of the same name, so an operator can
+      // retune a prompt without a rebuild. Missing is the normal case.
+      override_dir: z.string().min(1).default("config/auxiliary"),
+      // Output cap for one auxiliary call. A structured answer of a few words
+      // needs nothing like the loop's answer cap, and an auxiliary call that
+      // runs long is a call the user is paying for and never sees. Large
+      // enough that a model emitting a short reasoning preamble still reaches
+      // its JSON. Range 32-2000.
+      max_output_tokens: z.number().int().min(32).max(2000).default(200),
+      // Ceiling on the CHARACTERS of substituted input in one auxiliary
+      // prompt, shared across every variable. Bounds the seam, not each
+      // caller: a pasted document in the first message must not blow the
+      // titling prompt — the same class as `tools.max_tool_result_chars`.
+      // Range 200-20000.
+      input_truncation_chars: z.number().int().min(200).max(20000).default(4000),
+      // Reasoning effort for auxiliary calls specifically. "none" because a
+      // title does not need a reasoning phase and the reasoning channel is
+      // charged against `max_output_tokens` above. Same vocabulary as
+      // `provider.reasoning_effort`, and the operator's global "unset"
+      // escape hatch still wins: when the provider block is "unset" the field
+      // is omitted from EVERY request, auxiliary ones included, so a strict
+      // endpoint stays working.
+      reasoning_effort: z.enum(["unset", "none", "minimal", "low", "medium", "high", "xhigh", "max"]).default("none"),
+      // TITLING — how many words a generated session title should aim for.
+      // Substituted into the template, so it is a target the prompt states,
+      // never a cap the code enforces (`title_max_chars` is the cap).
+      // Range 2-12; 3-5 is the Open WebUI convention.
+      title_word_target: z.number().int().min(2).max(12).default(5),
+      // TITLING — hard ceiling on a stored/emitted title, in characters, and
+      // the length the fallback truncates the first message to. MUST stay at
+      // or under the wire contract's own 200-char `TITLE_MAX`
+      // (shared/protocol/src/sessions.ts) or the frame is rejected before it
+      // leaves. Range 8-200.
+      title_max_chars: z.number().int().min(8).max(200).default(60),
+    })
+    // Block-level default: operator configs are edited in place and predate
+    // this key — a missing block must never brick a gateway that worked
+    // yesterday.
+    .default({}),
   compaction: z
     .object({
       // Master switch (spec §8). false = the model window grows unbounded

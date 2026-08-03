@@ -8,7 +8,12 @@
 // any loop test written against the mock without adaptation. `"done"` is the
 // one variant the mock doesn't carry — it exists only so the terminal
 // finishReason/usage can ride the same stream instead of a side-channel.
+import type { OrchestratorConfig } from "@sentient/config";
 import type { ChatMessage, ChatToolCall } from "../store/model-projection.js";
+
+/** The `reasoning_effort` vocabulary, sourced from the config schema so a new
+ *  value can never be accepted by config and rejected here. */
+export type ReasoningEffort = OrchestratorConfig["provider"]["reasoning_effort"];
 
 export type ProviderStreamChunk =
   | { type: "text"; content: string }
@@ -35,6 +40,20 @@ export interface ProviderRequest {
    *  first) and needs its own, larger budget or it finishes with
    *  finish_reason:"length" and no visible text at all. */
   maxOutputTokens?: number;
+  /**
+   * Per-request `reasoning_effort` override, for a workload whose reasoning
+   * need differs from the loop's — an auxiliary task (spec §6) wants none at
+   * all, since a five-word title has nothing to reason about and the reasoning
+   * channel is charged against the same output budget.
+   *
+   * DOES NOT OVERRIDE THE OPERATOR'S ESCAPE HATCH. When
+   * `orchestrator.provider.reasoning_effort` is `"unset"` the field is omitted
+   * from every request regardless of what is asked for here — that setting
+   * exists because a strict OpenAI-compatible endpoint 400s on the unknown
+   * field, and a per-request override that re-introduced it would break every
+   * auxiliary call on exactly the deployment that had to disable it.
+   */
+  reasoningEffort?: ReasoningEffort;
 }
 
 export interface ProviderClient {
