@@ -229,7 +229,7 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     hermes: cfg.hermes ?? null,
     session: cfg.session,
     replayRegistry: createReplayRegistry({
-      maxBytesPerSurface: cfg.session.replay_journal_max_bytes,
+      maxBytesPerSession: cfg.session.replay_journal_max_bytes,
       retentionMs: cfg.session.replay_journal_retention_ms,
     }),
     sessionRegistry: createSessionRegistry(),

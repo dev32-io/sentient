@@ -65,13 +65,23 @@ tls:
 session:
   ws_idle_timeout_ms: 255000         # Range: 1000–255000. Bun WS idle close; Bun takes SECONDS (cap 255), gateway converts ms→s.
   per_user_max_sessions: 40           # max concurrent WS sessions for ONE user (1–100). Bounds memory under churn.
-  # --- Reconnect gap-fill (spec §11 slice 6) ---
-  # Every gateway → client frame is stamped with a monotonic seq inside an
-  # epoch and journaled per surface, so a client that reconnects with
-  # `resume: {epoch, lastSeq}` in session.configure gets the frames it
-  # missed replayed instead of a silently truncated conversation.
-  replay_journal_max_bytes: 16777216    # 16 MB per surface. Range 65536–268435456 (64 KB–256 MB). Evict-oldest; the newest frame is never evicted.
-  replay_journal_retention_ms: 300000   # 5 min. Range 1000–3600000. Retention for a DETACHED surface journal; past this a resuming client gets recovered:false and REST-refetches.
+  # --- Session journal: reconnect gap-fill AND multi-window join ---
+  # Every SESSION-lane frame is allocated one monotonic seq inside an epoch and
+  # journaled ONCE per session; every attached window is a cursor into it. So a
+  # client that reconnects with `resume: {epoch, lastSeq}` in session.configure
+  # replays exactly what it missed, and a second window joining reads the same
+  # bytes rather than a second seq space. Connection-lane frames (auth, pong,
+  # resume coordination, session-ready, the attach answer) are NEVER journaled.
+  replay_journal_max_bytes: 16777216    # 16 MB per session. Range 65536–268435456 (64 KB–256 MB). Evict-oldest, down to empty — a lone stale frame must not pin itself as the whole replay window.
+  replay_journal_retention_ms: 300000   # 5 min. Range 1000–3600000. How long a session's journal outlives its last window; past this a resuming client gets recovered:false and a fresh snapshot.
+  # Slow-window policy (spec §8.1) — DECIDED: disconnect, not forced re-snapshot.
+  # A window whose transport backlog (or attach buffer) passes this is closed
+  # with RFC 6455 1013 "try again later"; both SDKs then reconnect, present
+  # their cursor, and take either a contiguous replay or a fresh snapshot.
+  # Writing more to a socket that cannot drain does not make it drain, and a
+  # bespoke re-snapshot path would be a second recovery mechanism for the same
+  # condition — reachable only under load, and therefore never exercised.
+  max_window_lag_bytes: 4194304         # 4 MB (~2 min of 48 kHz Opus queued). Range 65536–67108864 (64 KB–64 MB).
 
 # ---------------------------------------------------------------------------
 # Access — capability minting + per-user physical isolation (spec §2.1, §2.5)
