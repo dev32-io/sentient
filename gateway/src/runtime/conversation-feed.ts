@@ -8,8 +8,13 @@
 // with `recovered:false` yields an empty chat.
 //
 // Single-path property: BOTH frames come from `projectForClient` over the
-// same store entries, so `render(replay) == render(live)` (Invariant B) is
-// structural rather than a coincidence of two hand-written mappings.
+// same store entries, so `render(replay_from(seq)) == render(live_at(seq))`
+// (Invariant B) is structural rather than a coincidence of two hand-written
+// mappings. Note the qualifier — it holds for a seq a client GENUINELY
+// reached. A window that JOINS mid-turn is a different, defined path
+// (`snapshot ∪ replay_from(watermark)`, session-model spec §7.2) which
+// converges with this projection once the in-flight turn commits; asserting
+// the unqualified form for a joiner is false.
 //
 // EXACTLY ONCE, IN FINAL FORM. The web connector appends every
 // `conversation.entry` to its mirror with no dedupe, so an item emitted twice

@@ -5,7 +5,13 @@ import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { getLog } from "../logging/logger.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import { handlePreferencesPatch } from "./handle-preferences-patch.js";
-import { bindSessionRuntime, detachSession, emitConversationSnapshotTo, withSessionStore } from "./session-binding.js";
+import {
+  bindSessionRuntime,
+  completeAttach,
+  completeAttachWithSnapshot,
+  detachSession,
+  withSessionStore,
+} from "./session-binding.js";
 import { mintOnFirstMessage } from "./session-id.js";
 import { createSttSession } from "./stt-session.js";
 import type { SttSession } from "./stt-session.js";
@@ -13,7 +19,7 @@ import { handleAuthMessage, scheduleAuthTimeout } from "./ws-auth-gate.js";
 import { handleConversationActivate } from "./ws-conversation-activate.js";
 import type { SessionData } from "./ws-helpers.js";
 import { sendError } from "./ws-helpers.js";
-import { sendGatewayFrame, sendUnsequencedFrame } from "./ws-send.js";
+import { sendConnectionFrame } from "./ws-send.js";
 import { handleSessionConfigure } from "./ws-session-configure.js";
 import { handleSessionNew } from "./ws-session-new.js";
 
@@ -114,18 +120,28 @@ export async function handleWebSocketMessage(
   const msg = msgResult.data;
 
   if (msg.type !== "ping") {
-    log.debug("message-received", { type: msg.type });
+    // THE COMMAND LINE (session-model spec §7.3). With N windows on one
+    // session, `sessionId` alone no longer says WHO acted — two tabs of one
+    // person are two attachments on one conversation — so every command line
+    // carries `attachmentId` and its `generation` too. Without it an
+    // unattributed Stop cannot be traced back to the window that sent it.
+    log.debug("message-received", {
+      type: msg.type,
+      connectionId: ws.data.sessionId,
+      sessionId: ws.data.conversationId,
+      attachmentId: ws.data.attachment?.attachmentId ?? null,
+      generation: ws.data.attachment?.generation ?? null,
+    });
   }
 
   switch (msg.type) {
     case "ping":
-      // Validated, but deliberately NEITHER seq-stamped NOR journaled. A pong
-      // is a transport-liveness ack with no payload: replaying a stale one
-      // tells a reconnected client nothing (it re-pings on its own schedule),
-      // and journaling a periodic keepalive would burn seq numbers and evict
-      // real replayable content from the byte-capped journal. Same class as
-      // `stream.resumed` — see ws-send.ts's header.
-      sendUnsequencedFrame(ws, { type: "pong" });
+      // CONNECTION lane (frame-lanes.ts): a transport-liveness ack with no
+      // payload, belonging to this socket alone. Never journaled — a periodic
+      // keepalive in a SHARED seq space would burn seq numbers for every window
+      // and evict real content from the byte-capped journal — and never fanned
+      // out, because another window's ping is not this one's business.
+      sendConnectionFrame(ws, { type: "pong" });
       return;
 
     case "session.configure":
@@ -177,6 +193,18 @@ export async function handleWebSocketMessage(
     case "interrupt":
       // No-op (not an error) if idle or the orchestrator is unconfigured —
       // interrupt is idempotent and there is nothing to cancel.
+      //
+      // Its own INFO because Stop is the cancellation §7.3 names: it aborts the
+      // turn for EVERY window on the session, so "which window pressed it" is
+      // the first question anyone reading the log will have, and the abort
+      // itself (runtime/cancellation.ts) knows only the session.
+      log.info("interrupt.requested", {
+        connectionId: ws.data.sessionId,
+        sessionId: ws.data.conversationId,
+        attachmentId: ws.data.attachment?.attachmentId ?? null,
+        generation: ws.data.attachment?.generation ?? null,
+        hasRuntime: ws.data.runtime !== null,
+      });
       ws.data.runtime?.interrupt();
       return;
 
@@ -197,11 +225,20 @@ export async function handleWebSocketMessage(
       // auto-deny) and nothing is re-opened. Only a prompt THIS connection
       // issued can be settled, so a frame naming another user's requestId
       // resolves nothing.
+      log.info("permission.response.received", {
+        connectionId: ws.data.sessionId,
+        sessionId: ws.data.conversationId,
+        attachmentId: ws.data.attachment?.attachmentId ?? null,
+        requestId: msg.requestId,
+        approved: msg.approved,
+      });
       if (!ws.data.permissions?.resolve(msg.requestId, msg.approved)) {
         log.warn("permission.response.unmatched", {
-          sessionId: ws.data.sessionId,
+          connectionId: ws.data.sessionId,
+          sessionId: ws.data.conversationId,
+          attachmentId: ws.data.attachment?.attachmentId ?? null,
           requestId: msg.requestId,
-          reason: "no pending permission prompt on this connection for that requestId",
+          reason: "no pending permission prompt on this session for that requestId",
         });
       }
       return;
@@ -331,7 +368,7 @@ function ensureBoundRuntime(
     // is the client's first chance to see this session's history. Directed at
     // THIS socket: a peer already attached to the session has a correct mirror
     // that a snapshot would replace (session-binding.ts).
-    emitConversationSnapshotTo(ws, services);
+    completeAttachWithSnapshot(ws, services);
     log.info("text.input.late-bind", {
       sessionId: ws.data.sessionId,
       conversationId: ws.data.conversationId,
@@ -379,7 +416,7 @@ function ensureBoundRuntime(
   }
   ws.data.conversationId = sessionId;
 
-  sendGatewayFrame(ws, { type: "session.created", sessionId, ts: Date.now() });
+  sendConnectionFrame(ws, { type: "session.created", sessionId, ts: Date.now() });
   // A REPLAYED mint lands on a connection whose handshake already told it it
   // was a draft and handed it an EMPTY committed feed (session-binding.ts's
   // `sendDraftHandshake`). Without re-projecting the real feed here, the
@@ -389,7 +426,10 @@ function ensureBoundRuntime(
   // the truth there, and the user entry follows immediately. Directed at THIS
   // socket for the same reason as the late bind above — and here a peer is not
   // hypothetical: a replayed mint means a second connection is on this draft.
-  if (replayed) emitConversationSnapshotTo(ws, services);
+  // Either way the attach must be COMPLETED — `bindSessionRuntime` left this
+  // window held, so without one of these two lines it receives nothing at all.
+  if (replayed) completeAttachWithSnapshot(ws, services);
+  else completeAttach(ws, services);
   return runtime;
 }
 
@@ -455,14 +495,10 @@ function applyPreferencesPatch(
 
 function handleSessionEnd(ws: ServerWebSocket<SessionData>, services: GatewayServices): void {
   if (!ws.data.sessionId) return;
-  // Explicit end: discard rather than park. Clearing the lease here also
-  // stops cleanupSession below from re-releasing an entry that no longer
-  // exists. The registry ignores the discard outright if a newer connection
-  // has since taken this surface over.
-  if (ws.data.replayLease !== null) {
-    services.replayRegistry.discard(ws.data.replayLease);
-    ws.data.replayLease = null;
-  }
+  // The journal is NOT discarded here any more. It belongs to the SESSION, and
+  // one window saying "I am done" says nothing about the peers still attached
+  // to it — discarding would tear the shared replay window out from under them.
+  // The last detach parks it instead, and the retention window reclaims it.
   cleanupSession(ws, services);
   ws.close(WS_NORMAL_CLOSURE, "Session ended");
 }
@@ -489,13 +525,14 @@ function handleSessionEnd(ws: ServerWebSocket<SessionData>, services: GatewaySer
  * (ws-session-configure.ts). Nothing in the store is torn down here. A
  * connection that was still a DRAFT when it closed leaves nothing at all
  * behind — no row, no id.
- * The other thing that survives the disconnect is this surface's outbound
- * frame journal, parked in
- * `services.replayRegistry` for `session.replay_journal_retention_ms` so a
- * reconnect carrying `resume: {epoch, lastSeq}` can replay the frames the
- * client missed (Plan 3 Task 10). An in-flight turn is not resumed — it is
- * aborted if this detach disposes the session — only the already-emitted
- * frames are.
+ *
+ * The other thing that survives is the SESSION's outbound frame journal. It is
+ * released by the handles' own dispose, not here, precisely because it is not
+ * this connection's to park: with a peer still attached the session keeps
+ * filling it, and with none it is kept for `session.replay_journal_retention_ms`
+ * so a reconnect carrying `resume: {epoch, lastSeq}` replays the frames this
+ * client missed. An in-flight turn is not resumed — it is aborted if this
+ * detach disposes the session — only the already-emitted frames are.
  */
 export function cleanupSession(ws: ServerWebSocket<SessionData>, services: GatewayServices): void {
   const sessionId = ws.data.sessionId;
@@ -512,21 +549,6 @@ export function cleanupSession(ws: ServerWebSocket<SessionData>, services: Gatew
   // window that replaced it. Open permission prompts are settled by the
   // handles' own `dispose`, if this is the detach that triggers it.
   detachSession(ws, services);
-
-  // Detach the frame journal LAST, after the runtime has been disposed:
-  // dispose() is synchronous, and anything it still writes to this socket
-  // must land in the journal so a reconnecting client replays it. The
-  // journal OBJECT survives in the registry for the retention window; only
-  // this connection's handle on it is cleared. Lease-guarded: if a newer
-  // connection already took this surface over (a reload whose configure beat
-  // this close), the release is a no-op instead of starting a retention
-  // countdown under the live connection's journal.
-  if (ws.data.replayLease !== null) {
-    services.replayRegistry.release(ws.data.replayLease);
-    ws.data.replayLease = null;
-  }
-  ws.data.journal = null;
-  ws.data.epoch = 0;
 
   ws.data.stt?.close();
   ws.data.stt = null;

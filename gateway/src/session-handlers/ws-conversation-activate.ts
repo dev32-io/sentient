@@ -37,10 +37,10 @@
 import type { ServerWebSocket } from "bun";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { getLog } from "../logging/logger.js";
-import { bindSessionRuntime, unbindSession, withSessionStore } from "./session-binding.js";
+import { bindSessionRuntime, completeAttach, unbindSession, withSessionStore } from "./session-binding.js";
 import { mintDraftKey, resolveSession } from "./session-id.js";
 import type { SessionData } from "./ws-helpers.js";
-import { sendGatewayFrame } from "./ws-send.js";
+import { sendConnectionFrame } from "./ws-send.js";
 
 const log = getLog(["sentient", "ws", "conversation-activate"]);
 
@@ -56,7 +56,7 @@ export function handleConversationActivate(
       sessionId: connectionId,
       reason: "no principal on this connection — auth (or session.configure) has not run",
     });
-    sendGatewayFrame(ws, { type: "sessions.error", code: "validation", message: "not authenticated" });
+    sendConnectionFrame(ws, { type: "sessions.error", code: "validation", message: "not authenticated" });
     return;
   }
 
@@ -67,7 +67,7 @@ export function handleConversationActivate(
       userId: principal.userId,
       reason: resolution.rejected,
     });
-    sendGatewayFrame(ws, { type: "sessions.error", code: "not_found", message: "unknown session" });
+    sendConnectionFrame(ws, { type: "sessions.error", code: "not_found", message: "unknown session" });
     return;
   }
   const targetSessionId = resolution.sessionId;
@@ -77,7 +77,7 @@ export function handleConversationActivate(
     // window opening the row it is already on) needs only the ack, not a
     // pointless dispose-and-rebind of a runtime already serving it.
     log.debug("conversation.activate.noop", { sessionId: connectionId, targetSessionId });
-    sendGatewayFrame(ws, { type: "session.switched", sessionId: targetSessionId, ts: Date.now() });
+    sendConnectionFrame(ws, { type: "session.switched", sessionId: targetSessionId, ts: Date.now() });
     return;
   }
 
@@ -89,6 +89,9 @@ export function handleConversationActivate(
     unbindSession(ws, services);
   }
 
+  // Attaches AND holds this window (session-binding.ts). Every path out of here
+  // must therefore finish the attach, or this connection silently receives
+  // nothing from the session it just switched to.
   const runtime = bindSessionRuntime(ws, services, targetSessionId);
   // The id is kept even on a bind failure — deliberately, mirroring
   // handleSessionConfigure: it is the only record of which session the client
@@ -104,7 +107,7 @@ export function handleConversationActivate(
       targetSessionId,
       reason: "session resolved but no runtime could be constructed for it",
     });
-    sendGatewayFrame(ws, {
+    sendConnectionFrame(ws, {
       type: "sessions.error",
       code: "internal",
       message: "could not activate this session right now",
@@ -112,6 +115,11 @@ export function handleConversationActivate(
     return;
   }
 
+  // No snapshot here BY DESIGN — the client REST-refetches history on
+  // `session.switched` — so the attach is completed with a plain drain: this
+  // window receives everything the session emitted while it was held, and the
+  // refetch supplies the committed half.
+  completeAttach(ws, services);
   log.info("conversation.activate.switched", { sessionId: connectionId, userId: principal.userId, targetSessionId });
-  sendGatewayFrame(ws, { type: "session.switched", sessionId: targetSessionId, ts: Date.now() });
+  sendConnectionFrame(ws, { type: "session.switched", sessionId: targetSessionId, ts: Date.now() });
 }

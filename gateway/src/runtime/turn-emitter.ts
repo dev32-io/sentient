@@ -52,9 +52,19 @@ export interface TurnEmitter {
    *  sanctioned audio flush: a USER cancel gesture (spec §4.6/§7.2, Global
    *  Constraint 5). A new turnId must never produce it. */
   playbackStop(turnId: string, reason: CutoffKind): void;
-  /** The session's whole committed feed (spec §3.2), sent once per
-   *  non-recovered `session.configure`. Both projections read the same store,
-   *  which is what makes `render(replay) == render(live)` hold. */
+  /**
+   * The session's whole committed feed (spec §3.2), sent once per non-recovered
+   * attach — and DIRECTED at the connection that attached, never fanned out
+   * (session-model spec §7.2): both SDKs replace their committed mirror on it.
+   *
+   * THE REPLAY INVARIANT, IN ITS TRUE FORM. Both projections read the same
+   * store, which gives `render(replay_from(seq)) == render(live_at(seq))` for
+   * any seq a client GENUINELY reached. It does NOT give the unqualified
+   * `render(replay) == render(live)` this comment used to claim: a fresh joiner
+   * is `snapshot ∪ replay_from(watermark)` — a different, defined path that
+   * converges with the committed projection once the in-flight turn commits.
+   * Conflating the two is what made the original claim false.
+   */
   conversationSnapshot(items: ConversationFeedItem[]): void;
   /** One newly committed feed item. `turnId` is the entry's OWN originating
    *  turn — the gateway-owned join key the client uses to fold the committed

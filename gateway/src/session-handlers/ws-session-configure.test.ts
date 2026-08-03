@@ -31,6 +31,7 @@ import { createUserPrincipal } from "../identity/user-principal.js";
 import type { ProviderClient, ProviderRequest, ProviderStreamChunk } from "../provider/provider-client.js";
 import { createSessionRuntime } from "../runtime/session-runtime.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
+import { EMPTY_TURN_STATE } from "../runtime/turn-state-snapshot.js";
 import { openSessionStore } from "../store/session-store.js";
 import type { BackgroundRegistry } from "../tools/background-registry.js";
 import type { ToolBroker } from "../tools/tool-broker.js";
@@ -39,7 +40,7 @@ import { mintSessionId } from "./session-id.js";
 import { createSessionRegistry } from "./session-registry.js";
 import { cleanupSession, handleWebSocketMessage } from "./ws-handlers.js";
 import { type SessionData, createEmptySessionData } from "./ws-helpers.js";
-import { sendGatewayFrame } from "./ws-send.js";
+import { sendConnectionFrame } from "./ws-send.js";
 import { handleSessionConfigure } from "./ws-session-configure.js";
 
 const USER_ID: `u_${string}` = "u_deadbeef";
@@ -73,6 +74,10 @@ interface FakeWs {
   sent: Record<string, unknown>[];
   send: (payload: string) => void;
   readyState: number;
+  /** Bun's transport backlog. The fan-out reads it after every write to
+   *  enforce `session.max_window_lag_bytes`, so a double that omits it is not
+   *  a socket. */
+  getBufferedAmount: () => number;
 }
 
 function fakeAuthedWs(connectionSessionId = "test-session"): FakeWs {
@@ -84,6 +89,8 @@ function fakeAuthedWs(connectionSessionId = "test-session"): FakeWs {
     data,
     sent: [],
     readyState: WS_OPEN,
+    /** Bun's transport backlog. 0 — these doubles never apply backpressure. */
+    getBufferedAmount: () => 0,
     send(payload) {
       ws.sent.push(JSON.parse(payload) as Record<string, unknown>);
     },
@@ -103,20 +110,6 @@ function dropSocket(ws: FakeWs, readyState: number = WS_CLOSED): void {
 
 function asWs(ws: FakeWs): ServerWebSocket<SessionData> {
   return ws as unknown as ServerWebSocket<SessionData>;
-}
-
-/** Only the three fields `handleSessionConfigure` reads on the no-orchestrator
- *  path: the registry it acquires from, the playback block session.ready
- *  carries, and (when the client presents an id) the AccessManager whose
- *  capability selects the store the membership lookup runs against. */
-function servicesWith(replayRegistry: ReplayRegistry, accessManager?: AccessManager): GatewayServices {
-  return {
-    replayRegistry,
-    sessionRegistry: createSessionRegistry(),
-    webui: { playback: { min_eager_end_ms: 0, preempt_fadeout_ms: 0 } },
-    accessManager,
-    createSessionRuntime: null,
-  } as unknown as GatewayServices;
 }
 
 function configure(ws: FakeWs, services: GatewayServices, surfaceId: string, conversationId?: string): void {
@@ -168,87 +161,98 @@ function servicesWithRuntime(replayRegistry: ReplayRegistry, ws: FakeWs, accessM
   const runtime = {
     emitConversationSnapshot: () => {
       spy.snapshotCalls += 1;
-      sendGatewayFrame(asWs(ws), { type: "conversation.snapshot", items: [] });
+      sendConnectionFrame(asWs(ws), { type: "conversation.snapshot", items: [] });
     },
     dispose: () => {},
+    turnState: EMPTY_TURN_STATE,
   } as unknown as SessionRuntime;
   spy.services = {
     replayRegistry,
     sessionRegistry: createSessionRegistry(),
     webui: { playback: { min_eager_end_ms: 0, preempt_fadeout_ms: 0 } },
+    session: { max_window_lag_bytes: 1_000_000 },
     profileStore: { get: async () => ({ ok: false, error: "no profile in this test" }) },
     createSynthesizerFor: () => null,
     stt: null,
     accessManager,
     createSessionRuntime: () => ({ runtime, permissions: { denyAll: () => {} } }),
+    // Task 8 replaces this with the retention predicate; here it only has to
+    // not dispose a session mid-test.
   } as unknown as GatewayServices;
   return spy;
 }
 
-describe("handleSessionConfigure — journal across a re-configure", () => {
-  it("keeps the same journal and epoch when a still-open connection re-configures the same surface", () => {
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
-    const services = servicesWith(registry);
+describe("handleSessionConfigure — the SESSION's journal across a re-configure", () => {
+  it("keeps the same journal and epoch when a connection re-configures the same session", () => {
+    // The journal follows the SESSION now, not the surface. A reload landing
+    // back on the same conversation must continue its seq space, or the client
+    // reads the epoch jump as a stream restart and refetches everything.
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const ws = fakeAuthedWs();
+    const accessManager = freshAccessManager();
+    const spy = servicesWithRuntime(registry, ws, accessManager);
+    const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
 
-    configure(ws, services, SURFACE_A);
+    configure(ws, spy.services, SURFACE_A, sessionId);
     const firstJournal = ws.data.journal;
     const firstEpoch = ws.data.epoch;
 
-    configure(ws, services, SURFACE_A);
+    configure(ws, spy.services, SURFACE_A, sessionId);
 
+    expect(firstJournal).not.toBeNull();
     expect(ws.data.journal).toBe(firstJournal);
     expect(ws.data.epoch).toBe(firstEpoch);
   });
 
-  it("continues the same seq space across that re-configure, so the client sees no restart", () => {
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
-    const services = servicesWith(registry);
-    const ws = fakeAuthedWs();
+  it("gives two SURFACES of one user on one session the SAME journal", () => {
+    // The inversion this task made: `surfaceId` used to partition the journal,
+    // which meant two windows on one conversation held two seq spaces over the
+    // same frames.
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
+    const accessManager = freshAccessManager();
+    const wsA = fakeAuthedWs("conn-a");
+    const wsB = fakeAuthedWs("conn-b");
+    const spy = servicesWithRuntime(registry, wsA, accessManager);
+    const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
 
-    configure(ws, services, SURFACE_A);
-    configure(ws, services, SURFACE_A);
+    configure(wsA, spy.services, SURFACE_A, sessionId);
+    configure(wsB, spy.services, SURFACE_B, sessionId);
 
-    // Three frames per draft handshake (ready, empty snapshot, draft key), so
-    // the second ready lands at seq 4 — contiguous, no restart.
-    const readies = ws.sent.filter((f) => f.type === "session.ready");
-    expect(readies.map((f) => f.seq)).toEqual([1, 4]);
-    expect(readies.map((f) => f.epoch)).toEqual([readies[0]?.epoch, readies[0]?.epoch]);
+    expect(wsB.data.journal).toBe(wsA.data.journal);
+    expect(wsB.data.epoch).toBe(wsA.data.epoch);
   });
 
-  it("leaves the surface attached, so a later reconnect at that epoch still resumes", () => {
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
-    const services = servicesWith(registry);
+  it("hands a DIFFERENT session a different journal and epoch", () => {
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const ws = fakeAuthedWs();
+    const accessManager = freshAccessManager();
+    const spy = servicesWithRuntime(registry, ws, accessManager);
+    const first = seedSession(accessManager, USER_ID, "first");
+    const second = seedSession(accessManager, USER_ID, "second");
 
-    configure(ws, services, SURFACE_A);
-    configure(ws, services, SURFACE_A);
-    const epoch = ws.data.epoch;
-    const lease = ws.data.replayLease;
-    expect(lease).not.toBeNull();
-
-    registry.release(lease as NonNullable<typeof lease>);
-    const reconnect = registry.acquire(`${USER_ID}::${SURFACE_A}`, epoch);
-
-    expect(reconnect.resumed).toBe(true);
-    expect(reconnect.journal.newestSeq).toBe(6);
-    expect(registry.size).toBe(1);
-  });
-
-  it("mints a fresh journal and epoch when the same connection re-configures a DIFFERENT surface", () => {
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
-    const services = servicesWith(registry);
-    const ws = fakeAuthedWs();
-
-    configure(ws, services, SURFACE_A);
+    configure(ws, spy.services, SURFACE_A, first);
     const firstJournal = ws.data.journal;
     const firstEpoch = ws.data.epoch;
 
-    configure(ws, services, SURFACE_B);
+    configure(ws, spy.services, SURFACE_A, second);
 
     expect(ws.data.journal).not.toBe(firstJournal);
     expect(ws.data.epoch).not.toBe(firstEpoch);
-    expect(ws.data.journal?.newestSeq).toBe(3);
+  });
+
+  it("leaves a DRAFT connection with no journal at all", () => {
+    // A draft has no session, so there is no conversation to replay. The client
+    // has no cursor at that point either, which is why an unsequenced draft
+    // handshake is correct rather than a gap.
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
+    const ws = fakeAuthedWs();
+    const spy = servicesWithRuntime(registry, ws, freshAccessManager());
+
+    configure(ws, spy.services, SURFACE_A);
+
+    expect(ws.data.journal).toBeNull();
+    expect(ws.data.epoch).toBe(0);
+    expect(registry.size).toBe(0);
   });
 });
 
@@ -257,7 +261,7 @@ describe("handleSessionConfigure — committed-feed handshake", () => {
     // Nothing else on the wire carries committed history: `turn.*` is a live
     // stream the client drops on turn.completed. Without this frame the chat
     // is empty on every reload.
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const ws = fakeAuthedWs();
     const accessManager = freshAccessManager();
     const spy = servicesWithRuntime(registry, ws, accessManager);
@@ -275,7 +279,7 @@ describe("handleSessionConfigure — committed-feed handshake", () => {
     // the previous session's bubbles on screen with nothing to clear them.
     // The `session.draft` key is what a client whose outbound queue gates on
     // "a conversation is attached" (mobile) holds so the queue can drain.
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const ws = fakeAuthedWs();
     const spy = servicesWithRuntime(registry, ws, freshAccessManager());
 
@@ -288,7 +292,7 @@ describe("handleSessionConfigure — committed-feed handshake", () => {
   });
 
   it("CONTRACT: a RECOVERED resume sends no snapshot — the verbatim replay already restored the mirror", () => {
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const ws = fakeAuthedWs();
     const accessManager = freshAccessManager();
     const spy = servicesWithRuntime(registry, ws, accessManager);
@@ -328,7 +332,7 @@ describe("handleSessionConfigure — committed-feed handshake", () => {
     // not fire today only because the ack arrives BEFORE ready, while the
     // connector is still detached. Flip these two and the "reconnect yields an
     // empty chat" bug this handshake exists to close comes straight back.
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const ws = fakeAuthedWs();
     const accessManager = freshAccessManager();
     const spy = servicesWithRuntime(registry, ws, accessManager);
@@ -381,13 +385,15 @@ function servicesRecordingPartition(
 ): PartitionSpy {
   const spy: PartitionSpy = { partitionIds: [], services: {} as GatewayServices };
   const runtime = {
-    emitConversationSnapshot: () => sendGatewayFrame(asWs(ws), { type: "conversation.snapshot", items: [] }),
+    emitConversationSnapshot: () => sendConnectionFrame(asWs(ws), { type: "conversation.snapshot", items: [] }),
     dispose: () => {},
+    turnState: EMPTY_TURN_STATE,
   } as unknown as SessionRuntime;
   spy.services = {
     replayRegistry,
     sessionRegistry: createSessionRegistry(),
     webui: { playback: { min_eager_end_ms: 0, preempt_fadeout_ms: 0 } },
+    session: { max_window_lag_bytes: 1_000_000 },
     profileStore: { get: async () => ({ ok: false, error: "no profile in this test" }) },
     createSynthesizerFor: () => null,
     stt: null,
@@ -405,7 +411,7 @@ describe("handleSessionConfigure — session addressing", () => {
     // The junk-partition vector: the previous handler honoured any
     // well-prefixed string and opened an empty partition for it, so a client
     // could fill a user's database with rows nothing can list, open or delete.
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const ws = fakeAuthedWs();
     const accessManager = freshAccessManager();
     const spy = servicesRecordingPartition(registry, ws, accessManager);
@@ -426,7 +432,7 @@ describe("handleSessionConfigure — session addressing", () => {
     // simply is not there — which is exactly why membership is a stronger
     // check than the prefix parse it replaces, and why no code path needs to
     // read an owner out of an id's shape.
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const foreignId = seedSession(accessManager, OTHER_USER_ID, "not yours");
 
@@ -441,7 +447,7 @@ describe("handleSessionConfigure — session addressing", () => {
   it("INVARIANT: a connection that presents nothing leaves no row behind", () => {
     // "Ten opened tabs leave the session list unchanged" (spec §4.2). A draft
     // is not a session: no row, no id, nothing to list.
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const spy = servicesRecordingPartition(registry, fakeAuthedWs(), accessManager);
 
@@ -454,7 +460,7 @@ describe("handleSessionConfigure — session addressing", () => {
   });
 
   it("CONTRACT: an id this user's store holds is opened, and it is not the connection id", () => {
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const ws = fakeAuthedWs("connection-1");
     const accessManager = freshAccessManager();
     const spy = servicesRecordingPartition(registry, ws, accessManager);
@@ -472,7 +478,7 @@ describe("handleSessionConfigure — session addressing", () => {
     // ONE partition is opened, not two: the second connection attaches to the
     // session the first made resident rather than constructing a second
     // runtime over the same append-only log.
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const first = fakeAuthedWs("connection-1");
     const accessManager = freshAccessManager();
     const spy = servicesRecordingPartition(registry, first, accessManager);
@@ -491,7 +497,7 @@ describe("handleSessionConfigure — session addressing", () => {
     // Existing users' conversations are rows in their own store, reached
     // through the same membership lookup. Both shapes are handled identically
     // and the surfaceId inside a legacy id carries no authority.
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const ws = fakeAuthedWs();
     const accessManager = freshAccessManager();
     const spy = servicesRecordingPartition(registry, ws, accessManager);
@@ -521,7 +527,7 @@ describe("handleSessionConfigure — session addressing", () => {
     // The draft key is the mint key. A reconnect that re-minted it would give
     // the retry of a first message a different key, and the lost-ack retry
     // would fork a second session — the exact failure §4.2 names.
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const first = fakeAuthedWs("connection-1");
     const spy = servicesRecordingPartition(registry, first, freshAccessManager());
 
@@ -576,6 +582,7 @@ function servicesTrackingRuntimes(replayRegistry: ReplayRegistry, accessManager:
     replayRegistry,
     sessionRegistry: createSessionRegistry(),
     webui: { playback: { min_eager_end_ms: 0, preempt_fadeout_ms: 0 } },
+    session: { max_window_lag_bytes: 1_000_000 },
     profileStore: { get: async () => ({ ok: false, error: "no profile in this test" }) },
     createSynthesizerFor: () => null,
     stt: null,
@@ -589,6 +596,7 @@ function servicesTrackingRuntimes(replayRegistry: ReplayRegistry, accessManager:
         dispose: () => {
           record.disposeCount += 1;
         },
+        turnState: EMPTY_TURN_STATE,
       } as unknown as SessionRuntime;
       return { runtime, permissions: { denyAll: () => {} } };
     },
@@ -598,7 +606,7 @@ function servicesTrackingRuntimes(replayRegistry: ReplayRegistry, accessManager:
 
 describe("handleSessionConfigure — one live runtime per session", () => {
   it("INVARIANT: a second connection on a live session shares the runtime instead of evicting it", () => {
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const spy = servicesTrackingRuntimes(registry, accessManager);
     const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
@@ -618,7 +626,7 @@ describe("handleSessionConfigure — one live runtime per session", () => {
   });
 
   it("keeps the runtime a re-configure on the SAME connection just minted", () => {
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const spy = servicesTrackingRuntimes(registry, accessManager);
     const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
@@ -639,7 +647,7 @@ describe("handleSessionConfigure — one live runtime per session", () => {
     // socket a reload replaced lands AFTER the new socket configured. Detach
     // is keyed on the ATTACHMENT id, minted per attach, so the late close can
     // only ever remove its own membership.
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const spy = servicesTrackingRuntimes(registry, accessManager);
     const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
@@ -658,7 +666,7 @@ describe("handleSessionConfigure — one live runtime per session", () => {
   });
 
   it("INVARIANT: the runtime is disposed when the LAST window leaves, not the first", () => {
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const spy = servicesTrackingRuntimes(registry, accessManager);
     const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
@@ -766,6 +774,7 @@ function servicesWithStoreBackedRuntime(
     replayRegistry,
     sessionRegistry: createSessionRegistry(),
     webui: { playback: { min_eager_end_ms: 0, preempt_fadeout_ms: 0 } },
+    session: { max_window_lag_bytes: 1_000_000 },
     profileStore: { get: async () => ({ ok: false, error: "no profile in this test" }) },
     createSynthesizerFor: () => null,
     stt: null,
@@ -829,7 +838,7 @@ function entriesFor(accessManager: AccessManager, sessionId: string): { kind: st
 
 describe("handleSessionConfigure — reload rebuilds the conversation", () => {
   it("CONTRACT: a reload presenting the minted id replays the prior feed and a non-empty model projection", async () => {
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const provider = fakeProvider("hello back");
     const services = servicesWithStoreBackedRuntime(registry, accessManager, provider);
@@ -875,7 +884,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     // the session count alone hides half of it: `mintKey` gives one session,
     // `pendingId` gives one entry. A retry carrying its pendingId — which every
     // shipped client sends — must not append the message twice or answer twice.
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
 
@@ -916,7 +925,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     // fork a SECOND session would be the real defect; anything that made it
     // stop duplicating would mean the wire began enforcing the key, and this
     // row is where that shows up instead of a stale comment claiming it does.
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
 
@@ -945,7 +954,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     // an EMPTY committed feed. Without a snapshot here the client renders only
     // the retried message and its reply, and the earlier exchange stays hidden
     // until a reload — on the exact path this design exists to serve.
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
 
@@ -980,7 +989,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     // would answer `orchestrator_unavailable` until it closed. The mint is
     // idempotent, so leaving it null costs nothing: the retry re-resolves the
     // SAME row under the same draft key.
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
     let failNextBind = true;
@@ -1025,7 +1034,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     // session the client asked for, so a mint here would silently move them
     // into a brand-new conversation. The assertions below pin both halves —
     // the socket recovers, AND it recovers onto the session that was presented.
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
     const sessionId = seedSession(accessManager, USER_ID, "from before the reload");
@@ -1081,7 +1090,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     // late must not beat one that succeeded in between. Attaching removes the
     // conflict rather than arbitrating it: A joins B's runtime, both windows
     // are live in S, and A's message is served instead of refused.
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
     const sessionId = seedSession(accessManager, USER_ID, "shared session");
@@ -1141,7 +1150,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     // it had lost. Both tabs now attach to the one session the mint key
     // resolves to — which is the invariant that matters, since two runtimes
     // over that one partition would fork the append-only log.
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
 
@@ -1192,7 +1201,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     // the retry outright. Attaching needs none: the retry joins the session
     // whatever state its peer is in, and the delivery set skips the socket that
     // can no longer be written to (session-windows.ts).
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
 
@@ -1223,7 +1232,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
   });
 
   it("a connection that presents nothing starts clean — no other session bleeds in", async () => {
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("hello back"));
 

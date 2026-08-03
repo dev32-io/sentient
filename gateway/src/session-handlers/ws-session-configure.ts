@@ -2,11 +2,11 @@ import type { ClientType, GatewayMessage, SessionConfigureResume } from "@sentie
 import type { ServerWebSocket } from "bun";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { getLog } from "../logging/logger.js";
-import type { ReplayAcquisition } from "./replay-registry.js";
 import {
   bindSessionRuntime,
+  completeAttach,
+  completeAttachWithSnapshot,
   detachSession,
-  emitConversationSnapshotTo,
   sendDraftHandshake,
   withSessionStore,
 } from "./session-binding.js";
@@ -14,15 +14,13 @@ import { isDraftKey, mintDraftKey, resolveSession } from "./session-id.js";
 import type { SessionData } from "./ws-helpers.js";
 import { sendError } from "./ws-helpers.js";
 import { handleResumeOrFresh } from "./ws-resume.js";
-import { sendGatewayFrame } from "./ws-send.js";
+import { sendConnectionFrame } from "./ws-send.js";
 
 const log = getLog(["sentient", "ws", "session-configure"]);
 
 const INPUT_SAMPLE_RATE = 16000;
 const OUTPUT_SAMPLE_RATE = 48000;
 const AUDIO_ENCODING = "pcm16";
-
-const ID_SEGMENT_SEPARATOR = "::";
 
 // ---------------------------------------------------------------------------
 // Session configure — post-purge minimal form.
@@ -128,30 +126,13 @@ export function handleSessionConfigure(
   ws.data.grantedCapabilities = new Set(capabilities);
   ws.data.clientType = clientType;
 
-  // --- Reconnect gap-fill: acquire this surface's frame journal ---
-  //
-  // Keyed `${userId}::${surfaceId}`. That used to match `SessionRuntime`'s own
-  // identity; since task 5 the runtime is keyed on the SESSION, so the journal
-  // is the last thing a surface still partitions — task 6 moves it to the
-  // session too, which is what lets N windows share one seq space.
-  // surfaceId falls back to deviceId when the client omits it — mandated by
-  // sessionConfigureSchema.surfaceId's contract note, and the reason two
-  // browser tabs of one user stay independent. The registry (not this
-  // connection) OWNS the journal: a resumed surface gets the same object
-  // back and its seq counter simply continues, which is what makes replay
-  // contiguous across the socket boundary.
-  //
-  // Acquired BEFORE the runtime block, so any frame the runtime can emit is
-  // already sequenced. `acquireSurfaceJournal` (bottom of this file) owns the
-  // one case the registry cannot see from the outside: a re-configure on a
-  // connection that already holds THIS surface keeps its journal instead of
-  // minting a fresh one.
+  // `surfaceId` no longer partitions ANYTHING (session-model task 6). It was
+  // the journal's key while a surface owned its own seq space; the journal is
+  // the SESSION's now, acquired with the session's handles, so two browser tabs
+  // of one user are two cursors into one stream rather than two streams. The
+  // field is kept because it is on the frozen wire and it is what a log line
+  // uses to tell those two tabs apart.
   const surfaceId = configureSurfaceId ?? configureDeviceId;
-  const replayKey = `${userId}${ID_SEGMENT_SEPARATOR}${surfaceId}`;
-  const acquisition = acquireSurfaceJournal(ws, services, replayKey, sessionId, configureResume?.epoch);
-  ws.data.journal = acquisition.journal;
-  ws.data.epoch = acquisition.epoch;
-  ws.data.replayLease = acquisition.lease;
 
   // --- Session identity: membership lookup, or a draft ---
   //
@@ -170,9 +151,11 @@ export function handleSessionConfigure(
   // decision, not this handler's: sole attachment, so today it is; with
   // another window still attached, it is not.
   //
-  // The frame journal above is deliberately NOT torn down with it: it belongs
-  // to the surface, not to the runtime, and losing it here would break the
-  // very replay this handshake just promised.
+  // The session's frame journal is not torn down with it either: it belongs to
+  // the SESSION and outlives its handles in the replay registry's retention
+  // window, so a re-configure that lands back on the same session gets the same
+  // journal and the same epoch, and the replay this handshake is about to
+  // promise stays contiguous.
   if (ws.data.attachment !== null) {
     log.info("session-configure.reconfigure", {
       sessionId,
@@ -198,7 +181,15 @@ export function handleSessionConfigure(
   // teardown cannot unseat a window that did attach.
   ws.data.conversationId = resolved.sessionId;
   ws.data.draftKey = resolved.draftKey;
+  // The bind ATTACHES this connection to the session and takes its journal:
+  // one seq space shared with every other window on it. It also HOLDS this
+  // window — it receives nothing until the attach is completed below, which is
+  // what makes "the snapshot, then the frames that arrived meanwhile" a single
+  // linearization point rather than two steps with a hole between them.
   const hasRuntime = resolved.sessionId !== null && bindSessionRuntime(ws, services, resolved.sessionId) !== null;
+  // A resume is honourable only when this connection's cursor is in the same
+  // seq space the session's journal is still allocating from.
+  const epochMatches = configureResume !== undefined && configureResume.epoch === ws.data.epoch;
 
   log.info("session-configured", {
     sessionId,
@@ -209,8 +200,8 @@ export function handleSessionConfigure(
     deviceId: configureDeviceId,
     surfaceId,
     hasRuntime,
-    epoch: acquisition.epoch,
-    resumed: acquisition.resumed,
+    epoch: ws.data.epoch,
+    resumed: epochMatches,
     requestedResumeLastSeq: configureResume?.lastSeq ?? null,
     conversationId: resolved.sessionId,
     draft: resolved.sessionId === null,
@@ -230,22 +221,27 @@ export function handleSessionConfigure(
   };
 
   // On the recovered path this sends session.ready itself (RAW, before the
-  // stream.resumed ack and the verbatim replay) and returns true — see
-  // ws-resume.ts for why that order is load-bearing. Every other path
-  // returns false and we send the normal seq-stamped ready below.
-  const readyAlreadySent = handleResumeOrFresh({
+  // stream.resumed ack and the verbatim replay) and returns the seq it replayed
+  // through — see ws-resume.ts for why that order is load-bearing. Every other
+  // path returns null and we send the normal ready below.
+  const replayedThrough = handleResumeOrFresh({
     ws,
     sessionId,
-    surfaceKey: replayKey,
-    journal: acquisition.journal,
-    epoch: acquisition.epoch,
-    resumed: acquisition.resumed,
+    journal: ws.data.journal,
+    epoch: ws.data.epoch,
+    epochMatches,
     resumeParams: configureResume,
     readyFrame,
   });
-  if (readyAlreadySent) return;
+  if (replayedThrough !== null) {
+    // Recovered: the client's mirror is intact and the replay just carried it
+    // to `replayedThrough`, so it gets NO snapshot — only the frames that
+    // arrived while it was held, which is everything past that seq.
+    completeAttach(ws, services, replayedThrough);
+    return;
+  }
 
-  sendGatewayFrame(ws, readyFrame);
+  sendConnectionFrame(ws, readyFrame);
   if (resolved.sessionId === null) {
     sendDraftHandshake(ws, resolved.draftKey, undefined);
     return;
@@ -329,11 +325,15 @@ function resolveConnectionSession(
 /**
  * Hand the client its committed conversation feed, right after session.ready.
  *
- * ONLY on the non-recovered paths (fresh connect, and a resume the registry
+ * ONLY on the non-recovered paths (fresh connect, and a resume the journal
  * could not honour). A recovered resume replays the exact frames the client
  * missed, and its mirror is still intact — a snapshot there would fight that
- * replay. `readyAlreadySent` is precisely the recovered flag, so this reads
- * off the same decision rather than re-deriving it.
+ * replay. `replayedThrough` is precisely the recovered flag, so this reads off
+ * the same decision rather than re-deriving it.
+ *
+ * It also completes the ATTACH: the connection has been held since it bound, so
+ * the snapshot and the drain of everything emitted meanwhile are one
+ * linearization point (fan-out-emitter.ts's `attachWithSnapshot`).
  *
  * The feed lives on the SessionRuntime because the runtime owns the store
  * handle. No runtime (orchestrator absent, or per-session construction
@@ -369,61 +369,11 @@ function sendConversationSnapshot(
   conversationId: string,
   userId: string,
 ): void {
-  if (emitConversationSnapshotTo(ws, services)) return;
+  if (completeAttachWithSnapshot(ws, services)) return;
   log.warn("session-configure.no-conversation-snapshot", {
     sessionId,
     conversationId,
     userId,
     reason: "this connection is not attached to a session runtime — no store to project",
   });
-}
-
-/**
- * Take — or KEEP — ownership of this surface's outbound frame journal.
- *
- * Three shapes:
- *
- *  1. **Re-configure of a surface this still-open connection already holds**
- *     (and no resume naming a foreign epoch). Nothing was lost: the socket
- *     never closed and this connection's own journal is still live and
- *     attached. So the lease, journal and epoch are kept VERBATIM. Releasing
- *     and re-acquiring here would present the registry with a detached entry
- *     and no resume request, which is its `no-resume-requested` mint-fresh
- *     branch — a live replay window silently discarded and an epoch jump the
- *     client can only read as a stream restart (`recovered:false` + a full
- *     REST refetch on its next reconnect).
- *  2. **Re-configure onto a different surface**, or a resume naming an epoch
- *     this connection is not on — a genuine handover. Park what this
- *     connection held FIRST, so the acquire sees a detached entry rather than
- *     reading this connection's own attachment as a rival live socket and
- *     minting a fresh journal underneath it.
- *  3. **First configure** — nothing held; straight to the registry.
- */
-function acquireSurfaceJournal(
-  ws: ServerWebSocket<SessionData>,
-  services: GatewayServices,
-  surfaceKey: string,
-  sessionId: string,
-  resumeEpoch: number | undefined,
-): ReplayAcquisition {
-  const heldLease = ws.data.replayLease;
-  if (heldLease === null) return services.replayRegistry.acquire(surfaceKey, resumeEpoch);
-
-  const heldJournal = ws.data.journal;
-  const isSameSurface = heldLease.surfaceKey === surfaceKey;
-  const isEpochCompatible = resumeEpoch === undefined || resumeEpoch === ws.data.epoch;
-  if (heldJournal !== null && isSameSurface && isEpochCompatible) {
-    log.info("session-configure.journal-retained", {
-      sessionId,
-      surfaceKey,
-      epoch: ws.data.epoch,
-      leaseId: heldLease.id,
-      newestSeq: heldJournal.newestSeq,
-      reason: "re-configure on a still-open connection for the same surface — nothing was lost",
-    });
-    return { journal: heldJournal, epoch: ws.data.epoch, resumed: true, lease: heldLease };
-  }
-
-  services.replayRegistry.release(heldLease);
-  return services.replayRegistry.acquire(surfaceKey, resumeEpoch);
 }

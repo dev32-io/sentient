@@ -1,9 +1,9 @@
-// Validated outbound-frame writer (Plan 3 Task 1, spec §7).
+// Validated outbound-frame writers — one per LANE, and the lane is asserted
+// rather than assumed (session-model spec §2.1).
 //
-// Every gateway → client JSON frame goes through `sendGatewayFrame`, which
-// parses it against `gatewayMessageSchema` BEFORE it hits the socket. Parsing
-// here also strips any stray key an object spread picked up, so the bytes on
-// the wire are exactly the contract and nothing else.
+// Every gateway → client JSON frame is parsed against `gatewayMessageSchema`
+// BEFORE it hits the socket. Parsing also strips any stray key an object spread
+// picked up, so the bytes on the wire are exactly the contract and nothing else.
 //
 // Failure policy is deliberate and asymmetric:
 //   - A schema violation is a GATEWAY BUG. Log it at error with the offending
@@ -15,36 +15,39 @@
 //   - A socket write failure is EXPECTED (client vanished mid-turn). Log warn
 //     once with a reason, drop, continue.
 //
-// Plan 3 Task 10 adds sequencing on top, without touching a single call site:
+// WHAT CHANGED, AND WHY IT IS A SPLIT RATHER THAN A RENAME. This file used to
+// expose `sendGatewayFrame` (stamp a seq from THIS CONNECTION's journal +
+// journal the bytes) and `sendUnsequencedFrame` (neither), and the difference
+// between them was a judgement call made per call site — the header even
+// argued, case by case, why `pong` and the resume ack qualified and `error`
+// did not. That distinction is now the LANE, decided once per frame TYPE in
+// frame-lanes.ts and enforced here:
 //
-//   - `sendGatewayFrame` stamps `seq` (monotonic, from this connection's
-//     FrameJournal) + `epoch` and journals the wire bytes, so a reconnecting
-//     client can be handed back exactly what it missed.
-//   - `sendAudioFrame` draws its 9-byte-header seq from the SAME journal.
-//     One seq space for JSON and binary, because both client SDKs feed one
-//     resume cursor from both paths (reconciliation R7).
-//   - `sendUnsequencedFrame` is the deliberate escape hatch for frames that
-//     are NOT replayable content: still validated, but neither stamped nor
-//     journaled. Two callers, and the bar for a third is high.
-//       * the resume handshake (ws-resume.ts) — a seq-stamped `session.ready`
-//         on the recovered path would advance the client's cursor past the
-//         replay window and it would drop every replayed frame, and
-//         `stream.resumed` is a handshake ack, not content;
-//       * `pong` (ws-handlers.ts) — a transport-liveness ack with no payload.
-//         Replaying a stale pong tells a reconnected client nothing, and
-//         journaling a periodic keepalive would burn seq numbers and evict
-//         real content from the byte-capped journal.
-//     Everything else — including `error`, the gateway's substantive answer to
-//     a client action — takes `sendGatewayFrame`, because a client that never
-//     sees it has no other way to learn its request went nowhere.
+//   - `sendConnectionFrame` — connection lane. One socket, never a seq, never
+//     journaled. Auth results, session-ready, pong, resume coordination, the
+//     sessions-list acks, errors, and the attach answer. Asserted: a session-
+//     lane frame written this way would be silently absent from every OTHER
+//     window and from the replay window.
+//   - `sendAttachReplayFrame` — the ONE sanctioned exception, and it is not a
+//     content path: the transient prerequisite frames a joining window needs
+//     to render an in-flight turn (turn-state-snapshot.ts). Session-lane types,
+//     ONE socket, unsequenced and unjournaled, because they RECONSTRUCT frames
+//     that were already allocated once for the windows that were there.
+//   - `writeJournaledText` / `writeJournaledBinary` — the raw writes for bytes
+//     that were already allocated from the SESSION journal: the fan-out
+//     emitter's per-window write, and ws-resume.ts's verbatim replay. They do
+//     not validate, because the bytes they carry were validated when they were
+//     allocated, and re-encoding them would break client dedup.
 //
-// ORDER MATTERS: validate FIRST, stamp SECOND. Stamping before validation
-// would let a rejected frame consume a seq and tear a permanent hole in the
-// journal's contiguity.
+// A session frame is allocated ONCE, in fan-out-emitter.ts, and its bytes are
+// written to every attached window. There is deliberately no "send a session
+// frame to a socket" entry point here: that shape is what let a per-connection
+// seq space exist in the first place.
 
 import { type GatewayMessage, gatewayMessageSchema } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import { getLog } from "../logging/logger.js";
+import { frameLane } from "./frame-lanes.js";
 import type { SessionData } from "./ws-helpers.js";
 
 const log = getLog(["sentient", "ws", "send"]);
@@ -53,11 +56,8 @@ const log = getLog(["sentient", "ws", "send"]);
  *  comment at the top of shared/protocol/src/messages.ts. */
 const BINARY_HEADER_BYTES = 9;
 const BINARY_TYPE_AUDIO = 0x01;
-/** Header seq for an audio frame written before a journal exists. Both SDKs
- *  treat seq 0 as "unsequenced" and pass it through without dedup, so the
- *  audio still plays — it just cannot be replayed. Should be unreachable:
- *  session.configure mints the journal before any emitter can run. */
-const UNSEQUENCED = 0;
+
+const decoder = new TextDecoder();
 
 function writeText(ws: ServerWebSocket<SessionData>, text: string, frameType: string): boolean {
   try {
@@ -73,7 +73,95 @@ function writeText(ws: ServerWebSocket<SessionData>, text: string, frameType: st
   }
 }
 
-function writeBinary(ws: ServerWebSocket<SessionData>, framed: Uint8Array, seq: number): boolean {
+/**
+ * Parse [frame] against the gateway → client contract, or drop it.
+ *
+ * Exported because the SESSION lane validates in a different place: the fan-out
+ * allocates one seq and encodes ONCE for every window, so validation has to
+ * happen before that allocation rather than per socket. ORDER MATTERS —
+ * validate FIRST, stamp SECOND. Stamping before validation would let a rejected
+ * frame consume a seq and tear a permanent hole in the journal's contiguity,
+ * which every attached cursor would then read as an unfillable gap.
+ *
+ * [scopeId] names whatever the caller can attribute the drop to — a connection
+ * id on the connection lane, a session id on the session lane.
+ */
+export function validateGatewayFrame(scopeId: string | null, frame: GatewayMessage): GatewayMessage | null {
+  const parsed = gatewayMessageSchema.safeParse(frame);
+  if (parsed.success) return parsed.data;
+  log.error("ws-send.schema-violation", {
+    scopeId,
+    frameType: (frame as { type?: string }).type,
+    reason: "outbound frame does not satisfy gatewayMessageSchema — dropped",
+    issues: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
+  });
+  return null;
+}
+
+function validate(ws: ServerWebSocket<SessionData>, frame: GatewayMessage): GatewayMessage | null {
+  return validateGatewayFrame(ws.data.sessionId, frame);
+}
+
+/**
+ * Write a CONNECTION-lane frame to the socket it answers. Validated, never
+ * seq-stamped, never journaled.
+ *
+ * @returns true when the bytes actually left; false on a schema violation, a
+ *          lane violation, or a dead socket.
+ */
+export function sendConnectionFrame(ws: ServerWebSocket<SessionData>, frame: GatewayMessage): boolean {
+  if (frameLane(frame.type) !== "connection") {
+    log.error("ws-send.lane-violation", {
+      sessionId: ws.data.sessionId,
+      frameType: frame.type,
+      reason: "session-lane frame written to one socket — it must be allocated once and fanned out",
+    });
+    return false;
+  }
+  const validated = validate(ws, frame);
+  if (validated === null) return false;
+  return writeText(ws, JSON.stringify(validated), frame.type);
+}
+
+/**
+ * Write a SESSION-lane frame to ONE socket, unsequenced and unjournaled — the
+ * attach reconstruction and nothing else.
+ *
+ * A window joining mid-turn needs the transient prerequisites it was not there
+ * for (`turn.started` before deltas, an audio bracket before audio, a prompt
+ * before its resolution). Those frames were already allocated once, for the
+ * windows that WERE there; re-allocating them would advance every peer's cursor
+ * and re-deliver them. So they are rebuilt live and written here — outside the
+ * seq space, exactly like the committed snapshot they arrive with.
+ */
+export function sendAttachReplayFrame(ws: ServerWebSocket<SessionData>, frame: GatewayMessage): boolean {
+  if (frameLane(frame.type) !== "session") {
+    log.error("ws-send.lane-violation", {
+      sessionId: ws.data.sessionId,
+      frameType: frame.type,
+      reason: "connection-lane frame written as an attach replay — use sendConnectionFrame",
+    });
+    return false;
+  }
+  const validated = validate(ws, frame);
+  if (validated === null) return false;
+  return writeText(ws, JSON.stringify(validated), frame.type);
+}
+
+/**
+ * Write bytes that were already allocated from the session journal.
+ *
+ * No validation and no re-encoding by design: the frame was validated when it
+ * was allocated, and its `seq` lives inside the bytes — re-stamping or
+ * re-serialising would break the client's dedup.
+ */
+export function writeJournaledText(ws: ServerWebSocket<SessionData>, text: string, frameType: string): boolean {
+  return writeText(ws, text, frameType);
+}
+
+/** Binary half of `writeJournaledText`. `seq` is for the failure log only; it
+ *  is already inside `framed`. */
+export function writeJournaledBinary(ws: ServerWebSocket<SessionData>, framed: Uint8Array, seq: number): boolean {
   try {
     ws.send(framed);
     return true;
@@ -88,58 +176,15 @@ function writeBinary(ws: ServerWebSocket<SessionData>, framed: Uint8Array, seq: 
   }
 }
 
-function validate(ws: ServerWebSocket<SessionData>, frame: GatewayMessage): GatewayMessage | null {
-  const parsed = gatewayMessageSchema.safeParse(frame);
-  if (parsed.success) return parsed.data;
-  log.error("ws-send.schema-violation", {
-    sessionId: ws.data.sessionId,
-    frameType: (frame as { type?: string }).type,
-    reason: "outbound frame does not satisfy gatewayMessageSchema — dropped",
-    issues: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
-  });
-  return null;
-}
-
-/**
- * Validate `frame` against the gateway → client contract, stamp it with this
- * connection's `seq`/`epoch`, journal the wire bytes, and write. Falls back to
- * an unstamped, unjournaled write when the connection has no journal yet
- * (every frame before session.configure).
- *
- * Returns true when the bytes actually left; false on a schema violation or a
- * dead socket, so callers that care (audio drains) can stop early.
- */
-export function sendGatewayFrame(ws: ServerWebSocket<SessionData>, frame: GatewayMessage): boolean {
-  const validated = validate(ws, frame);
-  if (validated === null) return false;
-
-  const journal = ws.data.journal;
-  if (journal === null) return writeText(ws, JSON.stringify(validated), frame.type);
-
-  const epoch = ws.data.epoch;
-  const allocated = journal.allocateText((seq) => JSON.stringify({ ...validated, seq, epoch }));
-  log.debug("ws-send.sequenced", {
-    sessionId: ws.data.sessionId,
-    frameType: frame.type,
-    seq: allocated.seq,
-    epoch,
-    journalBytes: journal.byteLength,
-  });
-  return writeText(ws, allocated.text, frame.type);
-}
-
-/**
- * Validate and write WITHOUT a seq stamp and WITHOUT journaling — for frames
- * that must never be replayed. Resume handshake (ws-resume.ts) and `pong`
- * (ws-handlers.ts) only; see this file's header for why each qualifies and
- * why `error` does not.
- *
- * @returns true if the frame reached the socket.
- */
-export function sendUnsequencedFrame(ws: ServerWebSocket<SessionData>, frame: GatewayMessage): boolean {
-  const validated = validate(ws, frame);
-  if (validated === null) return false;
-  return writeText(ws, JSON.stringify(validated), frame.type);
+/** Replay one journaled frame verbatim (ws-resume.ts). Text and binary share
+ *  one entry point because a replay window interleaves both. */
+export function writeReplayFrame(
+  ws: ServerWebSocket<SessionData>,
+  bytes: Uint8Array,
+  kind: "text" | "binary",
+): boolean {
+  if (kind === "binary") return writeJournaledBinary(ws, bytes, 0);
+  return writeText(ws, decoder.decode(bytes), "replay");
 }
 
 /**
@@ -154,37 +199,4 @@ export function encodeAudioFrame(seq: number, payload: Uint8Array): Uint8Array {
   buf[8] = BINARY_TYPE_AUDIO;
   buf.set(payload, BINARY_HEADER_BYTES);
   return buf;
-}
-
-/**
- * Allocate the next seq from this connection's journal, frame the audio
- * payload with it, journal the framed bytes, and write.
- *
- * Binary frames carry no `turnId` — the client attributes bytes to the most
- * recent `turn.audio.start`. The gateway therefore MUST bracket each turn's
- * audio (start → frames → done) before starting the next turn's (plan
- * reconciliation R4); this function cannot enforce that and does not try.
- *
- * SIGNATURE CHANGED in Task 10: the caller no longer supplies `seq`. The
- * emitter's own counter is gone precisely so JSON and binary cannot drift
- * into two seq spaces (reconciliation R7).
- *
- * @returns the allocated seq, or 0 when the frame was written unsequenced
- *          (no journal) or failed to reach the socket.
- */
-export function sendAudioFrame(ws: ServerWebSocket<SessionData>, payload: Uint8Array): number {
-  const journal = ws.data.journal;
-
-  if (journal === null) {
-    log.warn("ws-send.audio-unsequenced", {
-      sessionId: ws.data.sessionId,
-      payloadBytes: payload.byteLength,
-      reason: "no frame journal on this connection — audio before session.configure",
-    });
-    writeBinary(ws, encodeAudioFrame(UNSEQUENCED, payload), UNSEQUENCED);
-    return UNSEQUENCED;
-  }
-
-  const allocated = journal.allocateBinary((seq) => encodeAudioFrame(seq, payload));
-  return writeBinary(ws, allocated.bytes, allocated.seq) ? allocated.seq : UNSEQUENCED;
 }

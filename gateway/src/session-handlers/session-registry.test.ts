@@ -9,8 +9,14 @@
 // retention expressible at all.
 
 import { describe, expect, it } from "bun:test";
+import type { ServerWebSocket } from "bun";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import { type SessionHandles, createSessionRegistry } from "./session-registry.js";
+import type { SessionData } from "./ws-helpers.js";
+
+/** The socket an attachment delivers to. Nothing here writes to it — these
+ *  cases are about residency, not delivery (see fan-out-emitter.test.ts). */
+const SOCKET = {} as ServerWebSocket<SessionData>;
 
 interface HandlesSpy {
   build: () => SessionHandles;
@@ -35,7 +41,6 @@ function handlesSpy(): HandlesSpy {
         runtime,
         permissions: { denyAll: () => {} },
         voicePrefs: null,
-        windows: { remove: () => {} },
         dispose: () => {
           disposed = true;
         },
@@ -49,8 +54,8 @@ describe("SessionRegistry — one runtime per session, N attachments", () => {
     const registry = createSessionRegistry();
     const spy = handlesSpy();
 
-    const a = registry.attach("s_1", "conn-a", spy.build);
-    const b = registry.attach("s_1", "conn-b", spy.build);
+    const a = registry.attach("s_1", "conn-a", SOCKET, spy.build);
+    const b = registry.attach("s_1", "conn-b", SOCKET, spy.build);
 
     expect(spy.buildCallCount()).toBe(1);
     expect(registry.subscribers("s_1")).toHaveLength(2);
@@ -62,8 +67,8 @@ describe("SessionRegistry — one runtime per session, N attachments", () => {
     const registry = createSessionRegistry();
     const spy = handlesSpy();
 
-    const a = registry.attach("s_1", "conn-a", spy.build);
-    const b = registry.attach("s_1", "conn-b", spy.build);
+    const a = registry.attach("s_1", "conn-a", SOCKET, spy.build);
+    const b = registry.attach("s_1", "conn-b", SOCKET, spy.build);
 
     registry.detach("s_1", a.attachmentId);
     expect(spy.disposed()).toBe(false);
@@ -76,10 +81,10 @@ describe("SessionRegistry — one runtime per session, N attachments", () => {
     const registry = createSessionRegistry();
     const spy = handlesSpy();
 
-    const a = registry.attach("s_1", "conn-a", spy.build);
+    const a = registry.attach("s_1", "conn-a", SOCKET, spy.build);
     registry.detach("s_1", a.attachmentId);
     registry.detach("s_1", a.attachmentId); // duplicate close event
-    const b = registry.attach("s_1", "conn-b", spy.build);
+    const b = registry.attach("s_1", "conn-b", SOCKET, spy.build);
     registry.detach("s_1", a.attachmentId); // stale
 
     expect(registry.subscribers("s_1")).toContainEqual(expect.objectContaining({ attachmentId: b.attachmentId }));
@@ -88,8 +93,8 @@ describe("SessionRegistry — one runtime per session, N attachments", () => {
   it("INVARIANT: distinct sessions get distinct runtimes", () => {
     const registry = createSessionRegistry();
 
-    registry.attach("s_1", "conn-a", handlesSpy().build);
-    registry.attach("s_2", "conn-b", handlesSpy().build);
+    registry.attach("s_1", "conn-a", SOCKET, handlesSpy().build);
+    registry.attach("s_2", "conn-b", SOCKET, handlesSpy().build);
 
     expect(registry.runtimeFor("s_1")).not.toBe(registry.runtimeFor("s_2"));
   });
@@ -102,7 +107,7 @@ describe("SessionRegistry — one runtime per session, N attachments", () => {
     const registry = createSessionRegistry();
 
     expect(() =>
-      registry.attach("s_1", "conn-a", () => {
+      registry.attach("s_1", "conn-a", SOCKET, () => {
         throw new Error("no active LLM key for this user");
       }),
     ).toThrow();
@@ -121,7 +126,7 @@ describe("SessionRegistry — one runtime per session, N attachments", () => {
     });
     const spy = handlesSpy();
 
-    const a = registry.attach("s_1", "conn-a", spy.build);
+    const a = registry.attach("s_1", "conn-a", SOCKET, spy.build);
     registry.detach("s_1", a.attachmentId);
 
     expect(spy.disposed()).toBe(false);

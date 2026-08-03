@@ -55,7 +55,7 @@ import { getLog } from "../logging/logger.js";
 import { sendDraftHandshake, unbindSession } from "./session-binding.js";
 import { mintDraftKey } from "./session-id.js";
 import type { SessionData } from "./ws-helpers.js";
-import { sendGatewayFrame } from "./ws-send.js";
+import { sendConnectionFrame } from "./ws-send.js";
 
 const log = getLog(["sentient", "ws", "session-new"]);
 
@@ -84,7 +84,7 @@ export function handleSessionNew(
       intent,
       reason: "no draft key on this connection — session.configure has not run",
     });
-    sendGatewayFrame(ws, {
+    sendConnectionFrame(ws, {
       type: "sessions.error",
       requestId,
       code: "validation",
@@ -95,7 +95,7 @@ export function handleSessionNew(
 
   if (intent === "implicit" && boundSessionId !== null) {
     log.info("session.new.reattached", { sessionId, requestId, conversationId: boundSessionId });
-    sendGatewayFrame(ws, { type: "session.created", sessionId: boundSessionId, ts: Date.now() });
+    sendConnectionFrame(ws, { type: "session.created", sessionId: boundSessionId, ts: Date.now() });
     return;
   }
 

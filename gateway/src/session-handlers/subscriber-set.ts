@@ -14,7 +14,9 @@
 // session) is a NEW attachment, so its previous id refers to nothing and a
 // close event carrying it removes nothing.
 
+import type { ServerWebSocket } from "bun";
 import { getLog } from "../logging/logger.js";
+import type { SessionData } from "./ws-helpers.js";
 
 const log = getLog(["sentient", "ws", "subscriber-set"]);
 
@@ -45,12 +47,23 @@ export interface Attachment {
    * still unambiguous because the sessionId disambiguates the other half.
    */
   readonly generation: number;
+  /**
+   * The socket this attachment delivers to.
+   *
+   * IT LIVES HERE, not in a parallel window map (task 6). Task 5 had to add
+   * `session-windows.ts` precisely because the subscriber set carried no
+   * socket, so the emitter could not learn a JOINER's — two structures keyed on
+   * the same id, which a detach has to keep in step by hand. The fan-out reads
+   * this at WRITE time, so a window that joined a millisecond ago is already
+   * served and a window that detached is already gone.
+   */
+  readonly ws: ServerWebSocket<SessionData>;
 }
 
 export interface SubscriberSet {
   /** Register a new attachment for this session. Always mints; never dedups on
    *  `connectionId` — two windows of one browser can and do share one. */
-  add(connectionId: string): Attachment;
+  add(connectionId: string, ws: ServerWebSocket<SessionData>): Attachment;
   /** Remove the attachment with this id. Returns false when there is nothing
    *  to remove — a duplicate close event, or a close arriving after the
    *  connection already re-attached under a fresh id. */
@@ -72,9 +85,9 @@ export function createSubscriberSet(sessionId: string): SubscriberSet {
   let generations = 0;
 
   return {
-    add(connectionId) {
+    add(connectionId, ws) {
       generations += 1;
-      const attachment: Attachment = { attachmentId: mintAttachmentId(), connectionId, generation: generations };
+      const attachment: Attachment = { attachmentId: mintAttachmentId(), connectionId, generation: generations, ws };
       members.set(attachment.attachmentId, attachment);
       log.debug("subscriber-set.attached", {
         sessionId,

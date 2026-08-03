@@ -37,12 +37,16 @@
 // turn, a foreground tool call, a background task, a prompt or an auxiliary
 // task is outstanding) — a POLICY change, not a rewrite of this module.
 
+import type { ServerWebSocket } from "bun";
 import { getLog } from "../logging/logger.js";
 import type { PermissionBroker } from "../runtime/permission-broker.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
+import type { FanOutTurnEmitter } from "./fan-out-emitter.js";
+import type { FrameJournal } from "./frame-journal.js";
+import type { ReplayLease } from "./replay-registry.js";
 import type { SessionVoicePrefs } from "./session-voice-prefs.js";
-import type { SessionWindows } from "./session-windows.js";
 import { type Attachment, type SubscriberSet, createSubscriberSet } from "./subscriber-set.js";
+import type { SessionData } from "./ws-helpers.js";
 
 const log = getLog(["sentient", "ws", "session-registry"]);
 
@@ -68,9 +72,26 @@ export interface SessionHandles {
   /** Null when the orchestrator built no voice for this session (no `tts:`
    *  config, or no synthesizer for the resolved voice id). */
   readonly voicePrefs: SessionVoicePrefs | null;
-  /** The sockets this session's frames go to. Attach adds one, detach removes
-   *  one; the emitter reads it at write time. */
-  readonly windows: SessionWindows;
+  /**
+   * The session's outbound seam: one seq allocation per frame, fanned out to
+   * every attached window, plus the hold/release that makes an attach atomic
+   * (fan-out-emitter.ts). Same object the runtime and the permission broker
+   * emit through — there is exactly one, because there is exactly one journal.
+   */
+  readonly fanOut: FanOutTurnEmitter;
+  /**
+   * This session's frame journal — ONE monotonic seq space, N cursors into it.
+   * Owned by `services.replayRegistry` and held here under `replayLease`, so it
+   * survives both the socket that filled it and this session's disposal: a
+   * window reconnecting inside the retention window replays what it missed
+   * instead of taking a truncated conversation.
+   */
+  readonly journal: FrameJournal;
+  /** `journal`'s epoch, stamped on every session-lane frame. A client whose
+   *  `resume.epoch` matches is in the same seq space and can be gap-filled. */
+  readonly epoch: number;
+  /** Ownership token for `journal`; released when these handles are disposed. */
+  readonly replayLease: ReplayLease;
   /** Settle open prompts, abort any in-flight turn, cut speech and close the
    *  store handle. Invoked by the disposal policy only — never by a
    *  connection, which is precisely the eviction this module deleted. */
@@ -114,7 +135,12 @@ export interface SessionRegistry {
    * half-registered session would make the next attach skip construction and
    * hand out handles that were never built.
    */
-  attach(sessionId: string, connectionId: string, build: () => SessionHandles): Attachment;
+  attach(
+    sessionId: string,
+    connectionId: string,
+    ws: ServerWebSocket<SessionData>,
+    build: () => SessionHandles,
+  ): Attachment;
   /** Drop one attachment and let the disposal policy decide what that means.
    *  A duplicate or late close (an `attachmentId` that is no longer a member)
    *  is a no-op. */
@@ -173,10 +199,10 @@ export function createSessionRegistry(policy: SessionDisposalPolicy = disposeWhe
   }
 
   return {
-    attach(sessionId, connectionId, build) {
+    attach(sessionId, connectionId, ws, build) {
       const existing = sessions.get(sessionId);
       if (existing !== undefined) {
-        const attachment = existing.subscribers.add(connectionId);
+        const attachment = existing.subscribers.add(connectionId, ws);
         log.debug("session-registry.joined", {
           sessionId,
           connectionId,
@@ -191,7 +217,7 @@ export function createSessionRegistry(policy: SessionDisposalPolicy = disposeWhe
       // exactly as it was.
       const handles = build();
       const resident: ResidentSession = { handles, subscribers: createSubscriberSet(sessionId) };
-      const attachment = resident.subscribers.add(connectionId);
+      const attachment = resident.subscribers.add(connectionId, ws);
       sessions.set(sessionId, resident);
       log.info("session-registry.resident", {
         sessionId,

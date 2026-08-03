@@ -45,7 +45,6 @@ function fakeWs(): FakeWs {
     voicePrefs: null,
     journal: null,
     epoch: 0,
-    replayLease: null,
   };
   const ws: FakeWs = {
     data,

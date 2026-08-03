@@ -43,25 +43,43 @@ import type {
   TurnEmitter,
 } from "../runtime/turn-emitter.js";
 import type { CutoffKind } from "../store/entry-types.js";
-import type { SessionWindows } from "./session-windows.js";
 
 const log = getLog(["sentient", "ws", "turn-emitter"]);
 
 const TEXT_PREVIEW_LEN = 120;
 
 /**
- * [windows] is the session's delivery set, not one socket (session-model plan
- * task 5): the runtime it serves outlives any single connection, so a captured
- * socket would strand every frame the moment that window closed. [sessionId] is
- * the DURABLE session id, which is what a session-lane log line must carry now
- * that these frames belong to a session rather than a connection.
+ * Where a built frame goes. Declared HERE, by the consumer, so this module owns
+ * no edge to the fan-out that implements it — construction and delivery are two
+ * responsibilities and only one of them is allowed to know about sockets.
  */
-export function createWsTurnEmitter(windows: SessionWindows, sessionId: string): TurnEmitter {
-  // Frames emitted this session — LOG ONLY. The wire seq comes from each
-  // window's own `ws.data.journal` inside `sendAudioFrame` (ws-send.ts) so
-  // JSON and binary share one monotonic space per connection, which is what
-  // both client resume cursors assume. Task 6 moves that seq into the
-  // SESSION's space.
+export interface SessionFrameSink {
+  /** Allocate one seq from the SESSION journal for a session-lane frame and
+   *  write its bytes to every delivering window.
+   *  @returns how many windows received it. */
+  broadcast(frame: GatewayMessage): number;
+  /** Allocate one seq for an audio payload and write the same framed bytes to
+   *  every delivering window. */
+  broadcastAudio(payload: Uint8Array): void;
+  /** Write a CONNECTION-lane frame to the one attachment the enclosing
+   *  `directTo` names. @returns 1 when it landed, 0 otherwise. */
+  directed(frame: GatewayMessage): number;
+  /** Attached windows, delivering or held. */
+  readonly size: number;
+}
+
+/**
+ * [sink] is the session's delivery seam, not one socket: the runtime it serves
+ * outlives any single connection, so a captured socket would strand every frame
+ * the moment that window closed. [sessionId] is the DURABLE session id — spec
+ * §7.3 requires every session-lane line to carry it alongside `turnId`, because
+ * with N windows `turnId` alone no longer identifies who is watching.
+ */
+export function createWsTurnEmitter(sink: SessionFrameSink, sessionId: string): TurnEmitter {
+  // Frames emitted this session — LOG ONLY. The wire seq is allocated ONCE per
+  // frame from the session journal inside the sink (fan-out-emitter.ts), so
+  // JSON and binary share one monotonic space per SESSION and every cursor
+  // reads the same bytes.
   let audioFramesSent = 0;
 
   // A tool call's start time, stamped on its FIRST update and read back by the
@@ -84,7 +102,7 @@ export function createWsTurnEmitter(windows: SessionWindows, sessionId: string):
 
   /** @returns how many windows the frame actually reached. */
   function emit(frame: GatewayMessage): number {
-    return windows.broadcast(frame);
+    return sink.broadcast(frame);
   }
 
   return {
@@ -157,17 +175,17 @@ export function createWsTurnEmitter(windows: SessionWindows, sessionId: string):
     conversationSnapshot(items: ConversationFeedItem[]) {
       // Item CONTENT is chat content — never logged. Count only.
       //
-      // `windows` vs `delivered` is the one pair worth reading here: this
-      // frame REPLACES a client's committed mirror, so it must reach exactly
-      // the connection that asked for it. `delivered=1` with `windows=2` is
-      // the directed emission working (session-binding.ts's
-      // `emitConversationSnapshotTo`); `delivered` equal to `windows` on a
-      // multi-window session means a peer's mirror was overwritten.
-      const delivered = emit({ type: "conversation.snapshot", items });
+      // DIRECTED, NOT BROADCAST, and the lane table enforces it: this frame
+      // REPLACES a client's committed mirror, so it must reach exactly the
+      // connection that attached. It is CONNECTION-lane (frame-lanes.ts), so
+      // `sink.broadcast` would refuse it outright; `sink.directed` requires an
+      // addressee. `delivered=1` with `windows=2` is the directed emission
+      // working; `delivered=0` means the snapshot was emitted with nobody named.
+      const delivered = sink.directed({ type: "conversation.snapshot", items });
       log.info("turn-emitter.conversation-snapshot", {
         sessionId,
         itemCount: items.length,
-        windows: windows.size,
+        windows: sink.size,
         delivered,
       });
     },
@@ -189,15 +207,12 @@ export function createWsTurnEmitter(windows: SessionWindows, sessionId: string):
     },
 
     audioFrame(turnId: string, bytes: Uint8Array) {
-      // Each window stamps its own seq from its own journal, so there is no
-      // single seq to report here — task 6 collapses them into the session's
-      // one space, at which point this line can carry it again.
-      windows.broadcastAudio(bytes);
+      sink.broadcastAudio(bytes);
       audioFramesSent += 1;
       log.debug("turn-emitter.audio-frame", {
         sessionId,
         turnId,
-        windows: windows.size,
+        windows: sink.size,
         payloadBytes: bytes.byteLength,
       });
     },

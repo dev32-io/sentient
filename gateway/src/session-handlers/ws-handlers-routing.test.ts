@@ -15,13 +15,14 @@ import { createUserPrincipal } from "../identity/user-principal.js";
 import type { PermissionBroker } from "../runtime/permission-broker.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { Stimulus } from "../runtime/stimulus.js";
+import { EMPTY_TURN_STATE } from "../runtime/turn-state-snapshot.js";
 import { openSessionStore } from "../store/session-store.js";
+import { createFanOutTurnEmitter } from "./fan-out-emitter.js";
 import { createFrameJournal } from "./frame-journal.js";
 import { createReplayRegistry } from "./replay-registry.js";
 import { bindSessionRuntime } from "./session-binding.js";
 import { mintDraftKey, mintSessionId } from "./session-id.js";
 import { type SessionHandles, createSessionRegistry } from "./session-registry.js";
-import { createSessionWindows } from "./session-windows.js";
 import { cleanupSession, handleWebSocketMessage } from "./ws-handlers.js";
 import { type SessionData, createEmptySessionData } from "./ws-helpers.js";
 
@@ -29,7 +30,14 @@ interface FakeWs {
   data: SessionData;
   sent: unknown[];
   send: (s: string) => void;
+  /** The fan-out skips a window that is not OPEN and reads the backlog after
+   *  every write, so a double that omits either is not a socket. */
+  readyState: number;
+  getBufferedAmount: () => number;
 }
+
+/** `ServerWebSocket.readyState` OPEN. */
+const WS_OPEN = 1;
 
 function fakeAuthedWs(runtime: SessionRuntime | null): FakeWs {
   const data = createEmptySessionData();
@@ -40,6 +48,8 @@ function fakeAuthedWs(runtime: SessionRuntime | null): FakeWs {
   const ws: FakeWs = {
     data,
     sent: [],
+    readyState: WS_OPEN,
+    getBufferedAmount: () => 0,
     send(s) {
       ws.sent.push(JSON.parse(s));
     },
@@ -70,6 +80,7 @@ function stubRuntime(): StubRuntime {
       interruptCalls += 1;
     },
     emitConversationSnapshot: () => {},
+    turnState: EMPTY_TURN_STATE,
   };
   return { runtime, submitCalls, interruptCallCount: () => interruptCalls };
 }
@@ -100,10 +111,16 @@ let activateRunSeq = 0;
 function activateServices(): GatewayServices {
   activateRunSeq += 1;
   const accessManager = createAccessManager({ userDataRoot: `${ACTIVATE_ROOT}/run-${activateRunSeq}` });
-  const runtimeStub = { emitConversationSnapshot: () => {}, dispose: () => {} } as unknown as SessionRuntime;
+  const runtimeStub = {
+    emitConversationSnapshot: () => {},
+    dispose: () => {},
+    turnState: EMPTY_TURN_STATE,
+  } as unknown as SessionRuntime;
   return {
     accessManager,
     sessionRegistry: createSessionRegistry(),
+    replayRegistry: createReplayRegistry({ maxBytesPerSession: 65536, retentionMs: 60_000 }),
+    session: { max_window_lag_bytes: 1_000_000 },
     profileStore: { get: async () => ({ ok: false, error: "no profile in this test" }) },
     createSynthesizerFor: () => null,
     stt: null,
@@ -127,7 +144,7 @@ function seedActivatableSession(accessManager: AccessManager, userId: string): s
 // registries are cheaper and more honest than hand-rolled doubles.
 const cleanupServices = {
   sessionManager: { unbindUser: () => {}, removeSession: () => {} },
-  replayRegistry: createReplayRegistry({ maxBytesPerSurface: 65536, retentionMs: 1000 }),
+  replayRegistry: createReplayRegistry({ maxBytesPerSession: 65536, retentionMs: 1000 }),
   sessionRegistry: createSessionRegistry(),
 } as unknown as GatewayServices;
 
@@ -283,25 +300,28 @@ describe("ws-handlers routing — permission.response", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Journal discipline for the two frames this router emits. Which send helper
-// each one takes is a wire-contract decision, not style:
+// LANE discipline for the two frames this router emits — a wire-contract
+// decision, and since task 6 one that is made per frame TYPE rather than per
+// call site (frame-lanes.ts).
 //
-//   - `error` is the gateway's substantive answer to a client action — an
-//     `orchestrator_unavailable` is the ONLY signal that a `text.input` went
-//     nowhere. A socket that drops before the client reads it must replay it,
-//     so it is seq-stamped AND journaled like every other content frame.
-//   - `pong` is a transport-liveness ack carrying no payload. Replaying a
-//     stale pong tells a reconnected client nothing (it re-pings on its own
-//     schedule), and journaling a periodic keepalive would burn seq numbers
-//     and evict real replayable content from the byte-capped journal. So it
-//     is validated but neither stamped nor journaled — the same class as
-//     `stream.resumed`.
+// Both are CONNECTION lane, and the reasoning inverted for one of them:
+//
+//   - `pong` always was. A transport-liveness ack carries no payload; a
+//     periodic keepalive in the SESSION's shared seq space would burn seq
+//     numbers for every window and evict real content from the byte-capped
+//     journal.
+//   - `error` used to be journaled, on the reasoning that
+//     `orchestrator_unavailable` is the only signal a `text.input` went
+//     nowhere, so a socket that drops before reading it must replay it. Under
+//     one journal per session that reasoning INVERTS: the replay would reach
+//     the wrong window, and telling a peer that someone else's request failed
+//     is noise it cannot act on.
 // ---------------------------------------------------------------------------
 
-describe("ws-handlers outbound frames — journal discipline", () => {
-  it("seq-stamps and journals an error frame so a reconnect replays it", async () => {
+describe("ws-handlers outbound frames — lane discipline", () => {
+  it("sends an error unstamped and unjournaled, so it reaches only the connection that asked", async () => {
     const ws = fakeAuthedWs(null);
-    const journal = createFrameJournal({ maxBytes: 65536 });
+    const journal = createFrameJournal({ sessionId: SESSION_ID, maxBytes: 65536 });
     ws.data.journal = journal;
     ws.data.epoch = 7;
 
@@ -311,15 +331,13 @@ describe("ws-handlers outbound frames — journal discipline", () => {
       unusedServices,
     );
 
-    expect(ws.sent).toEqual([
-      { type: "error", code: "orchestrator_unavailable", message: expect.any(String), seq: 1, epoch: 7 },
-    ]);
-    expect(journal.newestSeq).toBe(1);
+    expect(ws.sent).toEqual([{ type: "error", code: "orchestrator_unavailable", message: expect.any(String) }]);
+    expect(journal.newestSeq).toBe(0);
   });
 
   it("sends pong unstamped and unjournaled so keepalives never consume the replay window", async () => {
     const ws = fakeAuthedWs(null);
-    const journal = createFrameJournal({ maxBytes: 65536 });
+    const journal = createFrameJournal({ sessionId: SESSION_ID, maxBytes: 65536 });
     ws.data.journal = journal;
     ws.data.epoch = 7;
 
@@ -393,11 +411,13 @@ describe("ws-handlers routing — session.new", () => {
     expect(ws.data.conversationId).toBeNull();
   });
 
-  it("seq-stamps and journals the answer so a reconnect replays the anchor", async () => {
+  it("answers on the CONNECTION lane, so the anchor never enters the session's seq space", async () => {
+    // `session.created` answers the connection that pressed "+". Journaling it
+    // would replay one window's anchor into another window's reconnect.
     const ws = fakeAuthedWs(null);
     ws.data.conversationId = "c::u_deadbeef::surface-a";
     ws.data.draftKey = DRAFT_KEY;
-    const journal = createFrameJournal({ maxBytes: 65536 });
+    const journal = createFrameJournal({ sessionId: SESSION_ID, maxBytes: 65536 });
     ws.data.journal = journal;
     ws.data.epoch = 4;
 
@@ -408,9 +428,9 @@ describe("ws-handlers routing — session.new", () => {
     );
 
     expect(ws.sent).toEqual([
-      { type: "session.created", sessionId: "c::u_deadbeef::surface-a", ts: expect.any(Number), seq: 1, epoch: 4 },
+      { type: "session.created", sessionId: "c::u_deadbeef::surface-a", ts: expect.any(Number) },
     ]);
-    expect(journal.newestSeq).toBe(1);
+    expect(journal.newestSeq).toBe(0);
   });
 
   it("answers sessions.error when the connection never configured, never silence", async () => {
@@ -482,16 +502,31 @@ describe("ws-handlers routing — conversation.activate", () => {
     // the same one — one ReAct loop over one append-only log, two windows.
     const services = activateServices();
     const sessionId = seedActivatableSession(services.accessManager, "u_deadbeef");
-    const incumbentRuntime = { emitConversationSnapshot: () => {} } as unknown as SessionRuntime;
+    const incumbentRuntime = {
+      emitConversationSnapshot: () => {},
+      turnState: EMPTY_TURN_STATE,
+    } as unknown as SessionRuntime;
+    const incumbentWs = fakeAuthedWs(incumbentRuntime);
+    const journal = createFrameJournal({ sessionId, maxBytes: 65536 });
     const incumbent = services.sessionRegistry.attach(
       sessionId,
       "rival-connection",
+      incumbentWs as unknown as ServerWebSocket<SessionData>,
       () =>
         ({
           runtime: incumbentRuntime,
           permissions: { denyAll: () => {} },
           voicePrefs: null,
-          windows: createSessionWindows(sessionId),
+          fanOut: createFanOutTurnEmitter({
+            registry: services.sessionRegistry,
+            sessionId,
+            journal,
+            epoch: 1,
+            maxLagBytes: 1_000_000,
+          }),
+          journal,
+          epoch: 1,
+          replayLease: { sessionId, id: 1 },
           // A stray call fails the test loudly rather than passing quietly.
           dispose: () => {
             throw new Error("must not dispose a live incumbent");
@@ -524,11 +559,16 @@ const SESSION_ID = `s_${"0".repeat(31)}1`;
  *  hands back [permissions], so a connection can attach for real and its
  *  cleanup genuinely detaches. */
 function attachedCleanupServices(permissions: PermissionBroker): GatewayServices {
-  const runtimeStub = { dispose: () => {}, emitConversationSnapshot: () => {} } as unknown as SessionRuntime;
+  const runtimeStub = {
+    dispose: () => {},
+    emitConversationSnapshot: () => {},
+    turnState: EMPTY_TURN_STATE,
+  } as unknown as SessionRuntime;
   return {
     sessionManager: { unbindUser: () => {}, removeSession: () => {} },
-    replayRegistry: createReplayRegistry({ maxBytesPerSurface: 65536, retentionMs: 1000 }),
+    replayRegistry: createReplayRegistry({ maxBytesPerSession: 65536, retentionMs: 1000 }),
     sessionRegistry: createSessionRegistry(),
+    session: { max_window_lag_bytes: 1_000_000 },
     profileStore: { get: async () => ({ ok: false, error: "no profile in this test" }) },
     createSynthesizerFor: () => null,
     stt: null,
@@ -579,9 +619,12 @@ describe("ws-handlers cleanup — outstanding permission prompts", () => {
   });
 });
 
-describe("ws-handlers cleanup — replay journal", () => {
-  it("releases the surface journal into the registry instead of dropping it", () => {
-    const registry = createReplayRegistry({ maxBytesPerSurface: 65536, retentionMs: 60_000 });
+describe("ws-handlers cleanup — the session journal", () => {
+  it("drops this connection's HANDLE on the journal without destroying the journal", () => {
+    // The journal is the SESSION's since task 6, so a closing window clears its
+    // own reference and nothing more; releasing it is the session handles'
+    // dispose, and the registry keeps it for the retention window after that.
+    const registry = createReplayRegistry({ maxBytesPerSession: 65536, retentionMs: 60_000 });
     const services = {
       sessionManager: { unbindUser: () => {}, removeSession: () => {} },
       replayRegistry: registry,
@@ -589,16 +632,18 @@ describe("ws-handlers cleanup — replay journal", () => {
     } as unknown as GatewayServices;
 
     const ws = fakeAuthedWs(null);
-    const acquired = registry.acquire("u_deadbeef::surface-a", undefined);
+    const acquired = registry.acquire(SESSION_ID);
+    acquired.journal.allocateText("turn.completed", (seq) => JSON.stringify({ seq }));
     ws.data.journal = acquired.journal;
     ws.data.epoch = acquired.epoch;
-    ws.data.replayLease = acquired.lease;
 
     cleanupSession(ws as unknown as ServerWebSocket<SessionData>, services);
 
     expect(ws.data.journal).toBeNull();
-    expect(ws.data.replayLease).toBeNull();
-    // Parked, not destroyed — a reconnect at the same epoch still resumes.
-    expect(registry.acquire("u_deadbeef::surface-a", acquired.epoch).resumed).toBe(true);
+    expect(ws.data.epoch).toBe(0);
+    // Still there, still at the same epoch — a reconnect resumes from it.
+    const reconnect = registry.acquire(SESSION_ID);
+    expect(reconnect.epoch).toBe(acquired.epoch);
+    expect(reconnect.journal.newestSeq).toBe(1);
   });
 });

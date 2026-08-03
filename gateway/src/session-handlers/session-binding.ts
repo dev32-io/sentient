@@ -23,14 +23,13 @@ import { getLog } from "../logging/logger.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import { createTurnVoice } from "../runtime/turn-voice.js";
 import { type SessionStore, openSessionStore } from "../store/session-store.js";
+import { attachWithSnapshot, createFanOutTurnEmitter } from "./fan-out-emitter.js";
 import { createMicEchoGuard } from "./mic-echo-guard.js";
 import type { Attachment, SessionHandles } from "./session-registry.js";
 import { createSessionVoicePrefs } from "./session-voice-prefs.js";
-import { createSessionWindows } from "./session-windows.js";
 import type { SessionData } from "./ws-helpers.js";
 import { errorMessage } from "./ws-helpers.js";
-import { sendGatewayFrame } from "./ws-send.js";
-import { createWsTurnEmitter } from "./ws-turn-emitter.js";
+import { sendConnectionFrame } from "./ws-send.js";
 
 const log = getLog(["sentient", "ws", "session-binding"]);
 
@@ -127,7 +126,7 @@ export function bindSessionRuntime(
 
   let attachment: Attachment;
   try {
-    attachment = services.sessionRegistry.attach(sessionId, connectionId, () =>
+    attachment = services.sessionRegistry.attach(sessionId, connectionId, ws, () =>
       buildSessionHandles(services, principal, sessionId, connectionId),
     );
   } catch (err) {
@@ -154,13 +153,24 @@ export function bindSessionRuntime(
     return null;
   }
 
-  // Registered BEFORE the socket is told it is bound, and after the handles
-  // exist, so the first frame this session emits already has somewhere to go.
-  handles.windows.add(attachment.attachmentId, ws);
+  // HELD IMMEDIATELY, in the same synchronous block as the attach — the
+  // linearization point (spec §7.1). The registry has just put this socket in
+  // the session's delivery set, so without this line a frame emitted before the
+  // snapshot is written to a window whose client has no `turn.started` to hang
+  // it on; with it, that frame is buffered and drained after the snapshot,
+  // exactly once and in order. Every caller MUST finish the attach —
+  // `completeAttachWithSnapshot` or `completeAttach` — or this window receives
+  // nothing at all.
+  handles.fanOut.hold(attachment.attachmentId);
   ws.data.attachment = attachment;
   ws.data.runtime = handles.runtime;
   ws.data.permissions = handles.permissions;
   ws.data.voicePrefs = handles.voicePrefs;
+  // The SESSION's journal and epoch, not this connection's: one seq space, N
+  // cursors. Held on the socket so the resume handshake (ws-resume.ts) can ask
+  // it what this client missed without re-deriving the session.
+  ws.data.journal = handles.journal;
+  ws.data.epoch = handles.epoch;
   // The ONE line per attach: the registry, the subscriber set and the window
   // set all log at DEBUG, and repeating these ids four times said nothing the
   // first did not.
@@ -192,8 +202,19 @@ function buildSessionHandles(
   sessionId: string,
   connectionId: string,
 ): SessionHandles {
-  const windows = createSessionWindows(sessionId);
-  const emitter = createWsTurnEmitter(windows, sessionId);
+  // ONE journal per session, acquired with the session's handles and released
+  // when they are disposed. The registry keeps it for the retention window
+  // afterwards, which is what lets a reconnecting window replay what it missed
+  // even though the runtime that produced those frames is long gone.
+  const acquisition = services.replayRegistry.acquire(sessionId);
+  const fanOut = createFanOutTurnEmitter({
+    registry: services.sessionRegistry,
+    sessionId,
+    journal: acquisition.journal,
+    epoch: acquisition.epoch,
+    maxLagBytes: services.session.max_window_lag_bytes,
+  });
+  const emitter = fanOut;
   // Voice composition (spec §6). Built HERE because this is the only place
   // that knows the emitter, the authenticated user's profile and the session's
   // STT session — but DRIVEN inside SessionRuntime on the turn's own
@@ -206,7 +227,7 @@ function buildSessionHandles(
   // reaches all of them, so a guard scoped to this one connection would leave
   // the others open on the assistant's own voice (self-triggered barge-in).
   const echoGuard = createMicEchoGuard(
-    () => windows.sockets.flatMap((window) => (window.data.stt === null ? [] : [window.data.stt])),
+    () => fanOut.sockets.flatMap((window) => (window.data.stt === null ? [] : [window.data.stt])),
     services.stt?.adapterConfig.ttsEchoCooldownMs ?? null,
     sessionId,
   );
@@ -242,13 +263,20 @@ function buildSessionHandles(
     runtime: built.runtime,
     permissions: built.permissions,
     voicePrefs,
-    windows,
+    fanOut,
+    journal: acquisition.journal,
+    epoch: acquisition.epoch,
+    replayLease: acquisition.lease,
     // Permissions settle BEFORE the runtime is disposed: each open prompt is a
     // promise the ReAct loop is awaiting inside `broker.dispatch`, and an
     // unsettled one parks that turn for the full permission timeout.
     dispose() {
       built.permissions.denyAll();
       built.runtime.dispose();
+      // LAST, after everything that can still emit has stopped: the release
+      // starts the journal's retention clock, and every frame disposal wrote
+      // must already be in it for a reconnecting client to replay.
+      services.replayRegistry.release(acquisition.lease);
     },
   };
 }
@@ -278,9 +306,9 @@ export function detachSession(ws: ServerWebSocket<SessionData>, services: Gatewa
   const attachment = ws.data.attachment;
   const sessionId = ws.data.conversationId;
   if (attachment !== null && sessionId !== null) {
-    // Off the delivery set FIRST: a frame emitted by the disposal the detach
-    // may trigger must not be written to a socket that has already left.
-    services.sessionRegistry.handlesFor(sessionId)?.windows.remove(attachment.attachmentId);
+    // ONE removal, not two: the socket lives IN the subscriber set now, so
+    // dropping the attachment drops the delivery target with it. Task 5 had to
+    // keep a parallel window map in step by hand here.
     services.sessionRegistry.detach(sessionId, attachment.attachmentId);
     log.info("session-binding.detached", {
       connectionId: ws.data.sessionId,
@@ -296,33 +324,66 @@ export function detachSession(ws: ServerWebSocket<SessionData>, services: Gatewa
   // that has left cannot apply a mute toggle to a `TurnVoice` no turn of its
   // own can reach.
   ws.data.voicePrefs = null;
+  // Same reasoning for the journal: the OBJECT belongs to the session (and
+  // outlives it, in the replay registry's retention window) — this only drops
+  // this connection's handle on it, so a socket that has left cannot answer a
+  // resume against a session it is no longer in.
+  ws.data.journal = null;
+  ws.data.epoch = 0;
 }
 
 /**
- * Publish this session's committed feed to THIS connection and no other.
+ * Finish this connection's attach by publishing what it needs to render, then
+ * letting it start receiving.
  *
- * `conversation.snapshot` is the one frame the runtime emits that is an ANSWER
- * to a connection rather than an event in the conversation: a handshake, a
- * late bind, or a replayed mint asked for it, and only that connection has an
- * empty mirror to fill. Fanning it out replaces every OTHER window's committed
- * mirror — which both SDKs treat as a real session boundary — and it arrives
- * with no paired `session.switched`, so a peer inside its own resume window
- * can arm the stale-resume timer, receive no switch, and drop its stored
- * session id. The conversation would then vanish on that peer's next
- * reconnect.
+ * Three things, one atomic capture (`attachWithSnapshot`, fan-out-emitter.ts):
+ * the committed feed DIRECTED at this connection, the in-flight turn's state,
+ * and the drain of everything buffered since the hold.
  *
- * Returns false when this connection is not attached, so the caller can log
- * its own reason rather than guess at one.
+ * DIRECTED, and the lane table now enforces it. `conversation.snapshot` is the
+ * one frame the runtime emits that is an ANSWER to a connection rather than an
+ * event in the conversation: a handshake, a late bind, or a replayed mint asked
+ * for it, and only that connection has an empty mirror to fill. Fanning it out
+ * replaces every OTHER window's committed mirror — which both SDKs treat as a
+ * real session boundary — and it arrives with no paired `session.switched`, so
+ * a peer inside its own resume window can arm the stale-resume timer, receive
+ * no switch, and drop its stored session id. The conversation would then vanish
+ * on that peer's next reconnect. It is a CONNECTION-lane frame (frame-lanes.ts)
+ * precisely so the fan-out cannot broadcast it even by accident.
+ *
+ * Returns false when this connection is not attached, so the caller can log its
+ * own reason rather than guess at one.
  */
-export function emitConversationSnapshotTo(ws: ServerWebSocket<SessionData>, services: GatewayServices): boolean {
-  const runtime = ws.data.runtime;
-  const attachment = ws.data.attachment;
+export function completeAttachWithSnapshot(ws: ServerWebSocket<SessionData>, services: GatewayServices): boolean {
   const sessionId = ws.data.conversationId;
-  if (runtime === null || attachment === null || sessionId === null) return false;
-  const windows = services.sessionRegistry.handlesFor(sessionId)?.windows;
-  if (windows === undefined) return false;
-  windows.directTo(attachment.attachmentId, () => runtime.emitConversationSnapshot());
+  if (ws.data.runtime === null || ws.data.attachment === null || sessionId === null) return false;
+  if (services.sessionRegistry.handlesFor(sessionId) === null) return false;
+  attachWithSnapshot(services.sessionRegistry, sessionId, ws);
   return true;
+}
+
+/**
+ * Finish an attach that does NOT get a snapshot, by draining everything the
+ * hold buffered.
+ *
+ * Two callers, both of which would fight a snapshot rather than benefit from
+ * one: a FRESH mint (the committed feed is empty and the user's own entry
+ * follows immediately) and `conversation.activate` (the client REST-refetches
+ * history on `session.switched`).
+ *
+ * [deliveredThrough] is the highest seq this connection has ALREADY been sent
+ * by another path — the recovered-resume replay's `toSeq`. 0 means "it has seen
+ * nothing; drain everything", which is the right answer whenever no replay ran.
+ */
+export function completeAttach(
+  ws: ServerWebSocket<SessionData>,
+  services: GatewayServices,
+  deliveredThrough = 0,
+): void {
+  const sessionId = ws.data.conversationId;
+  const attachment = ws.data.attachment;
+  if (sessionId === null || attachment === null) return;
+  services.sessionRegistry.handlesFor(sessionId)?.fanOut.release(attachment.attachmentId, deliveredThrough);
 }
 
 /**
@@ -363,8 +424,8 @@ export function sendDraftHandshake(
   draftKey: string,
   requestId: string | undefined,
 ): void {
-  sendGatewayFrame(ws, { type: "conversation.snapshot", items: [] });
-  sendGatewayFrame(ws, {
+  sendConnectionFrame(ws, { type: "conversation.snapshot", items: [] });
+  sendConnectionFrame(ws, {
     type: "session.draft",
     ...(requestId === undefined ? {} : { requestId }),
     draftKey,

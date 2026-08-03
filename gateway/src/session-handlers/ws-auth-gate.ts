@@ -25,7 +25,7 @@ import { type PrincipalRole, type UserPrincipal, createUserPrincipal } from "../
 import { getLog } from "../logging/logger.js";
 import type { AuthService } from "../user-auth/auth-service.js";
 import type { SessionData } from "./ws-helpers.js";
-import { sendGatewayFrame } from "./ws-send.js";
+import { sendConnectionFrame } from "./ws-send.js";
 
 const log = getLog(["sentient", "gateway", "session-handlers", "ws-auth-gate"]);
 
@@ -123,7 +123,7 @@ export async function handleAuthMessage(
     clearTimeout(ws.data.authTimeout);
     ws.data.authTimeout = null;
   }
-  sendGatewayFrame(ws, {
+  sendConnectionFrame(ws, {
     type: "auth.ok",
     user: {
       userId: userR.value.userId,
@@ -167,7 +167,7 @@ function reject(ws: ServerWebSocket<SessionData>, code: string, reason: string):
     clearTimeout(ws.data.authTimeout);
     ws.data.authTimeout = null;
   }
-  sendGatewayFrame(ws, { type: "auth.error", code, message: reason });
+  sendConnectionFrame(ws, { type: "auth.error", code, message: reason });
   log.info("auth.reject", { sessionId: ws.data.sessionId, code, reason });
   ws.close(WS_CLOSE_POLICY, reason);
 }

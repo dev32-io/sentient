@@ -1,4 +1,5 @@
-// Reconnect gap-fill contract (Plan 3 Task 10, spec §11 slice 6).
+// Reconnect gap-fill contract, now over the SESSION's journal (session-model
+// spec §2.1/§2.3).
 //
 // Two things are pinned here and nothing else:
 //
@@ -10,13 +11,17 @@
 //     `session.ready` on the recovered path would jump the cursor past the
 //     replay window and the client would drop every replayed frame as a
 //     duplicate. Recovered path: raw ready → resumed ack → verbatim replay.
-//     Non-recovered path: resumed ack → stamped ready.
+//     Non-recovered path: resumed ack → the caller's ready + snapshot.
 //
-//  2. THE REGISTRY FSM — epoch mismatch forces a fresh stream, a detached
-//     journal is reclaimed once its retention window expires, and a surface
-//     has exactly ONE live owner: a second connection never shares a live
-//     journal (it would share the seq counter), and a superseded connection's
-//     release/discard cannot reach the journal that replaced it.
+//  2. THE REGISTRY FSM, INVERTED BY THIS TASK. It used to key journals by
+//     SURFACE and enforce a single owner: a second connection presenting a
+//     matching epoch got a FRESH journal, because two sockets sharing one seq
+//     counter would each see only the seqs it allocated and silently lose the
+//     rest. One journal per SESSION inverts that — sharing the counter IS the
+//     mechanism, and minting a second journal for one session is what would
+//     split the stream. What carries over unchanged is the LEASE discipline: a
+//     superseded or duplicated teardown must not park a journal something live
+//     is still filling.
 //
 // Zero cost: FakeWs doubles, an injected clock, no provider/network I/O.
 
@@ -27,12 +32,13 @@ import { createFrameJournal } from "./frame-journal.js";
 import { createReplayRegistry } from "./replay-registry.js";
 import { type SessionData, createEmptySessionData } from "./ws-helpers.js";
 import { handleResumeOrFresh } from "./ws-resume.js";
-import { sendGatewayFrame } from "./ws-send.js";
 
 const decoder = new TextDecoder();
 
-const SURFACE_A = "u_deadbeef::surface-a";
-const SURFACE_B = "u_deadbeef::surface-b";
+const SESSION_A = "s_aaaa";
+const SESSION_B = "s_bbbb";
+
+const SESSION_LANE_TYPE = "turn.text.delta" as const;
 
 interface FakeWs {
   data: SessionData;
@@ -69,9 +75,11 @@ const readyFrame: GatewayMessage = {
 
 /** A journal already holding three text frames, as if a prior socket filled it. */
 function filledJournal() {
-  const journal = createFrameJournal({ maxBytes: 1_000_000 });
+  const journal = createFrameJournal({ sessionId: SESSION_A, maxBytes: 1_000_000 });
   for (const body of ["one", "two", "three"]) {
-    journal.allocateText((seq) => JSON.stringify({ type: "turn.text.delta", turnId: "t", text: body, seq, epoch: 3 }));
+    journal.allocateText(SESSION_LANE_TYPE, (seq) =>
+      JSON.stringify({ type: "turn.text.delta", turnId: "t", text: body, seq, epoch: 3 }),
+    );
   }
   return journal;
 }
@@ -82,21 +90,18 @@ describe("handleResumeOrFresh — recovered replay", () => {
   it("emits raw session.ready, then stream.resumed, then the missed frames verbatim", () => {
     const ws = fakeWs();
     const journal = filledJournal();
-    ws.data.journal = journal;
-    ws.data.epoch = 3;
 
-    const readySent = handleResumeOrFresh({
+    const replayedThrough = handleResumeOrFresh({
       ws: asWs(ws),
       sessionId: "test-session",
-      surfaceKey: SURFACE_A,
       journal,
       epoch: 3,
-      resumed: true,
+      epochMatches: true,
       resumeParams: { epoch: 3, lastSeq: 1 },
       readyFrame,
     });
 
-    expect(readySent).toBe(true);
+    expect(replayedThrough).toBe(3);
     const frames = jsonFrames(ws);
     expect(frames.map((f) => f.type)).toEqual([
       "session.ready",
@@ -104,8 +109,8 @@ describe("handleResumeOrFresh — recovered replay", () => {
       "turn.text.delta",
       "turn.text.delta",
     ]);
-    // The raw ready must NOT carry a seq — it would advance the client cursor
-    // past the replay window.
+    // The ready must NOT carry a seq — it would advance the client cursor past
+    // the replay window. It is CONNECTION lane, so it structurally cannot.
     expect(frames[0]?.seq).toBeUndefined();
     expect(frames[1]).toEqual({ type: "stream.resumed", recovered: true, epoch: 3, fromSeq: 2, toSeq: 3 });
     // Replayed frames keep their ORIGINAL seqs — never re-stamped.
@@ -115,16 +120,13 @@ describe("handleResumeOrFresh — recovered replay", () => {
   it("acks recovered:true with an empty range when the client is already at the head", () => {
     const ws = fakeWs();
     const journal = filledJournal();
-    ws.data.journal = journal;
-    ws.data.epoch = 3;
 
     handleResumeOrFresh({
       ws: asWs(ws),
       sessionId: "test-session",
-      surfaceKey: SURFACE_A,
       journal,
       epoch: 3,
-      resumed: true,
+      epochMatches: true,
       resumeParams: { epoch: 3, lastSeq: 3 },
       readyFrame,
     });
@@ -137,215 +139,196 @@ describe("handleResumeOrFresh — recovered replay", () => {
   it("continues the SAME seq space after the replay, so the client never sees a gap", () => {
     const ws = fakeWs();
     const journal = filledJournal();
-    ws.data.journal = journal;
-    ws.data.epoch = 3;
 
-    handleResumeOrFresh({
+    const replayedThrough = handleResumeOrFresh({
       ws: asWs(ws),
       sessionId: "test-session",
-      surfaceKey: SURFACE_A,
       journal,
       epoch: 3,
-      resumed: true,
+      epochMatches: true,
       resumeParams: { epoch: 3, lastSeq: 3 },
       readyFrame,
     });
-    sendGatewayFrame(asWs(ws), { type: "turn.completed", turnId: "t" });
+    const next = journal.allocateText("turn.completed", (seq) =>
+      JSON.stringify({ type: "turn.completed", turnId: "t", seq, epoch: 3 }),
+    );
 
-    const last = jsonFrames(ws).at(-1);
-    expect(last).toEqual({ type: "turn.completed", turnId: "t", seq: 4, epoch: 3 });
+    expect(replayedThrough).toBe(3);
+    expect(next.seq).toBe(4);
   });
 });
 
 describe("handleResumeOrFresh — fallbacks", () => {
   it("sends stream.resumed{recovered:false} and defers session.ready on an epoch mismatch", () => {
     const ws = fakeWs();
-    const journal = createFrameJournal({ maxBytes: 1_000_000 });
-    ws.data.journal = journal;
-    ws.data.epoch = 9;
+    const journal = createFrameJournal({ sessionId: SESSION_A, maxBytes: 1_000_000 });
 
-    const readySent = handleResumeOrFresh({
+    const replayedThrough = handleResumeOrFresh({
       ws: asWs(ws),
       sessionId: "test-session",
-      surfaceKey: SURFACE_A,
       journal,
       epoch: 9,
-      resumed: false,
+      epochMatches: false,
       resumeParams: { epoch: 3, lastSeq: 12 },
       readyFrame,
     });
 
-    expect(readySent).toBe(false);
+    expect(replayedThrough).toBeNull();
     expect(jsonFrames(ws)).toEqual([{ type: "stream.resumed", recovered: false, epoch: 9 }]);
+  });
+
+  it("answers recovered:false when the connection is on a draft and has no session journal", () => {
+    // A draft has no session, so there is nothing to replay — but a client that
+    // ASKED still needs the ack, or it assumes it is caught up.
+    const ws = fakeWs();
+
+    const replayedThrough = handleResumeOrFresh({
+      ws: asWs(ws),
+      sessionId: "test-session",
+      journal: null,
+      epoch: 0,
+      epochMatches: false,
+      resumeParams: { epoch: 3, lastSeq: 12 },
+      readyFrame,
+    });
+
+    expect(replayedThrough).toBeNull();
+    expect(jsonFrames(ws)).toEqual([{ type: "stream.resumed", recovered: false, epoch: 0 }]);
   });
 
   it("falls back to recovered:false when the client's cursor was evicted", () => {
     const ws = fakeWs();
-    const journal = createFrameJournal({ maxBytes: 25 });
+    const journal = createFrameJournal({ sessionId: SESSION_A, maxBytes: 25 });
     for (let i = 0; i < 5; i++) journal.allocateBinary(() => new Uint8Array(10));
-    ws.data.journal = journal;
-    ws.data.epoch = 3;
 
-    const readySent = handleResumeOrFresh({
+    const replayedThrough = handleResumeOrFresh({
       ws: asWs(ws),
       sessionId: "test-session",
-      surfaceKey: SURFACE_A,
       journal,
       epoch: 3,
-      resumed: true,
+      epochMatches: true,
       resumeParams: { epoch: 3, lastSeq: 1 },
       readyFrame,
     });
 
-    expect(readySent).toBe(false);
+    expect(replayedThrough).toBeNull();
     expect(jsonFrames(ws)).toEqual([{ type: "stream.resumed", recovered: false, epoch: 3 }]);
   });
 
   it("sends no stream.resumed at all on a fresh connect that asked for nothing", () => {
     const ws = fakeWs();
-    const journal = createFrameJournal({ maxBytes: 1_000_000 });
-    ws.data.journal = journal;
-    ws.data.epoch = 1;
+    const journal = createFrameJournal({ sessionId: SESSION_A, maxBytes: 1_000_000 });
 
-    const readySent = handleResumeOrFresh({
+    const replayedThrough = handleResumeOrFresh({
       ws: asWs(ws),
       sessionId: "test-session",
-      surfaceKey: SURFACE_A,
       journal,
       epoch: 1,
-      resumed: false,
+      epochMatches: false,
       resumeParams: undefined,
       readyFrame,
     });
 
-    expect(readySent).toBe(false);
+    expect(replayedThrough).toBeNull();
     expect(ws.sent).toEqual([]);
   });
 });
 
-describe("ReplayRegistry — epoch + retention FSM", () => {
-  it("returns the same journal and epoch when the resume epoch matches", () => {
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
-    const first = registry.acquire(SURFACE_A, undefined);
-    first.journal.allocateText(() => "x");
-    registry.release(first.lease);
+describe("ReplayRegistry — one journal per session, N holders", () => {
+  it("INVARIANT: a second holder gets the SAME journal and the SAME epoch", () => {
+    // The inversion this task made. Two windows on one session MUST share the
+    // seq counter — that is what makes "reconnect" and "join" one primitive.
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
+    const first = registry.acquire(SESSION_A);
+    first.journal.allocateText(SESSION_LANE_TYPE, () => "x");
 
-    const second = registry.acquire(SURFACE_A, first.epoch);
+    const second = registry.acquire(SESSION_A);
 
-    expect(second.resumed).toBe(true);
+    expect(second.journal).toBe(first.journal);
     expect(second.epoch).toBe(first.epoch);
-    expect(second.journal.newestSeq).toBe(1);
+    expect(second.reused).toBe(true);
   });
 
-  it("mints a fresh journal and a NEW epoch when the resume epoch does not match", () => {
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
-    const first = registry.acquire(SURFACE_A, undefined);
-    first.journal.allocateText(() => "x");
+  it("keeps distinct sessions in distinct seq spaces", () => {
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
+    const a = registry.acquire(SESSION_A);
+    const b = registry.acquire(SESSION_B);
+
+    expect(a.epoch).not.toBe(b.epoch);
+    a.journal.allocateText(SESSION_LANE_TYPE, () => "x");
+    expect(b.journal.newestSeq).toBe(0);
+  });
+
+  it("survives the session's disposal, so a reconnect inside the window replays", () => {
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
+    const first = registry.acquire(SESSION_A);
+    first.journal.allocateText(SESSION_LANE_TYPE, () => "x");
     registry.release(first.lease);
 
-    const second = registry.acquire(SURFACE_A, first.epoch + 99);
+    const reconnect = registry.acquire(SESSION_A);
 
-    expect(second.resumed).toBe(false);
-    expect(second.epoch).not.toBe(first.epoch);
-    expect(second.journal.newestSeq).toBe(0);
-  });
-
-  it("keeps surfaces of the same user isolated from each other", () => {
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
-    const tabA = registry.acquire(SURFACE_A, undefined);
-    const tabB = registry.acquire(SURFACE_B, undefined);
-
-    expect(tabA.epoch).not.toBe(tabB.epoch);
-    tabA.journal.allocateText(() => "x");
-    expect(tabB.journal.newestSeq).toBe(0);
-  });
-
-  it("reclaims a detached journal once the retention window expires", () => {
-    let clock = 1_000;
-    const registry = createReplayRegistry({
-      maxBytesPerSurface: 1_000_000,
-      retentionMs: 60_000,
-      now: () => clock,
-    });
-    const first = registry.acquire(SURFACE_A, undefined);
-    registry.release(first.lease);
-
-    clock += 60_001;
-    const second = registry.acquire(SURFACE_A, first.epoch);
-
-    expect(second.resumed).toBe(false);
-    expect(registry.size).toBe(1);
-  });
-
-  it("discard drops the journal outright so a later resume cannot match it", () => {
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
-    const first = registry.acquire(SURFACE_A, undefined);
-    registry.discard(first.lease);
-
-    expect(registry.size).toBe(0);
-    expect(registry.acquire(SURFACE_A, first.epoch).resumed).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Single-owner invariant. Two sockets are legitimately open on one surface
-// whenever a reload's session.configure lands before the old socket's close
-// event, or a TCP/NAT drop outlives the WS idle timeout — and the new one
-// presents a MATCHING epoch. Sharing the journal would share its seq counter:
-// each socket would see only the seqs IT allocated, and the client's resume
-// cursor reads the resulting jump as "already applied", so the missing frames
-// are never re-requested. Silent, permanent loss — exactly what this feature
-// exists to prevent, which is why these three cases are pinned.
-// ---------------------------------------------------------------------------
-describe("ReplayRegistry — single-owner invariant", () => {
-  it("never hands a live surface's journal to a second connection, even at a matching epoch", () => {
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
-    const live = registry.acquire(SURFACE_A, undefined);
-    live.journal.allocateText(() => "x");
-
-    // No release: the first socket is still attached.
-    const rival = registry.acquire(SURFACE_A, live.epoch);
-
-    expect(rival.resumed).toBe(false);
-    expect(rival.epoch).not.toBe(live.epoch);
-    expect(rival.journal).not.toBe(live.journal);
-    expect(rival.journal.newestSeq).toBe(0);
-  });
-
-  it("ignores a release from a connection whose lease was superseded", () => {
-    let clock = 1_000;
-    const registry = createReplayRegistry({
-      maxBytesPerSurface: 1_000_000,
-      retentionMs: 60_000,
-      now: () => clock,
-    });
-    const superseded = registry.acquire(SURFACE_A, undefined);
-    const live = registry.acquire(SURFACE_A, superseded.epoch);
-    live.journal.allocateText(() => "x");
-
-    // The dead socket's close event finally lands, long after the takeover.
-    registry.release(superseded.lease);
-    clock += 60_001;
-    registry.acquire(SURFACE_B, undefined); // any acquire sweeps first
-
-    // The live journal was never detached, so no retention clock ran under it.
-    expect(registry.size).toBe(2);
-    registry.release(live.lease);
-    const reconnect = registry.acquire(SURFACE_A, live.epoch);
-    expect(reconnect.resumed).toBe(true);
+    expect(reconnect.epoch).toBe(first.epoch);
     expect(reconnect.journal.newestSeq).toBe(1);
   });
 
-  it("ignores a discard from a connection whose lease was superseded", () => {
-    const registry = createReplayRegistry({ maxBytesPerSurface: 1_000_000, retentionMs: 60_000 });
-    const superseded = registry.acquire(SURFACE_A, undefined);
-    const live = registry.acquire(SURFACE_A, superseded.epoch);
+  it("reclaims a journal once its retention window expires, forcing a fresh epoch", () => {
+    let clock = 1_000;
+    const registry = createReplayRegistry({
+      maxBytesPerSession: 1_000_000,
+      retentionMs: 60_000,
+      now: () => clock,
+    });
+    const first = registry.acquire(SESSION_A);
+    registry.release(first.lease);
 
-    registry.discard(superseded.lease);
+    clock += 60_001;
+    const second = registry.acquire(SESSION_A);
 
+    expect(second.reused).toBe(false);
+    expect(second.epoch).not.toBe(first.epoch);
     expect(registry.size).toBe(1);
-    registry.release(live.lease);
-    expect(registry.acquire(SURFACE_A, live.epoch).resumed).toBe(true);
+  });
+
+  it("INVARIANT: the retention clock starts only when the LAST holder releases", () => {
+    // The multi-window failure this replaces: one window closing must not put a
+    // journal its peers are still filling on a countdown.
+    let clock = 1_000;
+    const registry = createReplayRegistry({
+      maxBytesPerSession: 1_000_000,
+      retentionMs: 60_000,
+      now: () => clock,
+    });
+    const windowA = registry.acquire(SESSION_A);
+    const windowB = registry.acquire(SESSION_A);
+
+    registry.release(windowA.lease);
+    clock += 60_001;
+    registry.acquire(SESSION_B); // any acquire sweeps first
+
+    expect(registry.size).toBe(2);
+    expect(registry.acquire(SESSION_A).epoch).toBe(windowB.epoch);
+  });
+
+  it("ignores a release from a lease the entry no longer holds", () => {
+    // A duplicated close event, or one arriving after the entry was already
+    // swept. It must not start a second countdown under a live journal.
+    let clock = 1_000;
+    const registry = createReplayRegistry({
+      maxBytesPerSession: 1_000_000,
+      retentionMs: 60_000,
+      now: () => clock,
+    });
+    const held = registry.acquire(SESSION_A);
+    registry.release(held.lease);
+    registry.release(held.lease); // duplicate
+
+    const rebound = registry.acquire(SESSION_A);
+    registry.release(held.lease); // the stale lease again, now that a new holder exists
+    clock += 60_001;
+    registry.acquire(SESSION_B);
+
+    expect(registry.size).toBe(2);
+    expect(rebound.epoch).toBe(held.epoch);
   });
 });
 

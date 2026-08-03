@@ -4,13 +4,12 @@ import type { UserPrincipal } from "../identity/user-principal.js";
 import type { PermissionBroker } from "../runtime/permission-broker.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { FrameJournal } from "./frame-journal.js";
-import type { ReplayLease } from "./replay-registry.js";
 import type { Attachment } from "./session-registry.js";
 import type { SessionVoicePrefs } from "./session-voice-prefs.js";
 import type { SttSession } from "./stt-session.js";
 // ws-send.ts imports only the `SessionData` TYPE back from this file, which the
 // transpiler erases — so this is a compile-time edge, never a runtime cycle.
-import { sendGatewayFrame } from "./ws-send.js";
+import { sendConnectionFrame } from "./ws-send.js";
 
 /**
  * Per-connection WS state. Post-purge minimal form (spec §9 Task 1) — holds
@@ -145,34 +144,25 @@ export interface SessionData {
    */
   voicePrefs: SessionVoicePrefs | null;
   /**
-   * This connection's outbound frame journal (Plan 3 Task 10, spec §11
-   * slice 6). Acquired from `services.replayRegistry` in
-   * `handleSessionConfigure`, so it is null for every frame sent before
-   * then (auth.ok, auth-gate errors) — those go out unstamped and
-   * unjournaled, which is correct: the client has no cursor yet either.
-   * The OBJECT is owned by the registry, not by this connection — a
-   * resumed surface gets the same journal back and its seq counter simply
-   * continues, which is what makes replay contiguous across the socket
-   * boundary.
+   * The SESSION's outbound frame journal — one monotonic seq space that every
+   * window attached to `conversationId` reads from (session-model spec §2.1).
+   *
+   * A REFERENCE, not ownership: the object belongs to the session's handles
+   * (which hold the lease) and outlives them in `services.replayRegistry`. This
+   * field is set by the bind and cleared by the detach, so it is null on a
+   * DRAFT and before session.configure — correct in both cases, since a
+   * connection with no session has no conversation to replay and the client has
+   * no cursor yet either. It exists here for exactly one reader: the resume
+   * handshake (ws-resume.ts), which asks it what this client missed.
    */
   journal: FrameJournal | null;
   /**
-   * Sequencing epoch for `journal`. Stamped on every outbound JSON frame so
-   * the client can tell a genuine seq gap from a stream restart. 0 until
-   * session.configure. Registry-global and never reused.
+   * Sequencing epoch for `journal`. Stamped on every session-lane frame so the
+   * client can tell a genuine seq gap from a stream restart, and compared
+   * against `resume.epoch` to decide whether a replay is even meaningful. 0
+   * while unattached. Registry-global and never reused.
    */
   epoch: number;
-  /**
-   * This connection's ownership token for `journal` — the registry key
-   * (`${userId}::${surfaceId}`) plus the per-acquisition lease id. Held here
-   * so `cleanupSession` can release the journal into its retention window
-   * without re-deriving the key from a principal that may already be gone,
-   * and so a connection that has since been SUPERSEDED on that surface (a
-   * reload whose new socket configured before this one's close landed)
-   * cannot park or discard the journal the newer connection is filling — the
-   * registry rejects a stale lease. null until session.configure.
-   */
-  replayLease: ReplayLease | null;
 }
 
 export function createEmptySessionData(): SessionData {
@@ -192,24 +182,23 @@ export function createEmptySessionData(): SessionData {
     voicePrefs: null,
     journal: null,
     epoch: 0,
-    replayLease: null,
   };
 }
 
 /**
  * Send the shared `error` frame.
  *
- * Goes through `sendGatewayFrame`, so it is validated against
- * `gatewayMessageSchema`, seq-stamped and journaled like every other content
- * frame — an error is the gateway's substantive answer to a client action
- * (`orchestrator_unavailable` is the ONLY signal that a `text.input` went
- * nowhere), so a socket that drops before the client reads it must replay it.
- * Frames sent before session.configure have no journal yet and fall back to an
- * unstamped write inside that helper, which is correct: the client has no
- * resume cursor at that point either.
+ * CONNECTION lane (frame-lanes.ts), so validated but never journaled and never
+ * fanned out. An error is the gateway's substantive answer to ONE connection's
+ * action — `orchestrator_unavailable` is the only signal that THIS socket's
+ * `text.input` went nowhere — and telling a peer window that someone else's
+ * request failed is noise it cannot act on. It used to be journaled, on the
+ * reasoning that a client which drops before reading it must replay it; under a
+ * shared journal that reasoning inverts, because the replay would reach the
+ * wrong window.
  */
 export function sendError(ws: ServerWebSocket<SessionData>, code: string, message: string): void {
-  sendGatewayFrame(ws, { type: "error", code, message });
+  sendConnectionFrame(ws, { type: "error", code, message });
 }
 
 export function errorMessage(error: unknown, fallback: string): string {
