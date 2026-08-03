@@ -41,7 +41,11 @@ export const sessionConfigSchema = z.object({
   // `retention_ms` (15 min) of continuous speech is ~30 MB. A cap below that
   // would silently break the promise `retention_ms` makes — a window returning
   // at minute 14 would find its cursor evicted and take a fresh snapshot
-  // anyway. It is a CEILING on an evict-oldest ring, not an allocation.
+  // anyway. Note a journal can live up to 2x `retention_ms`: the replay
+  // registry's clock starts when the journal is RELEASED, which is at disposal
+  // — itself `retention_ms` after the session went idle. That does not move the
+  // answer, because the 33 KB/s anchor is several times above real Opus speech
+  // bitrate and this is a CEILING on an evict-oldest ring, not an allocation.
   replay_journal_max_bytes: z.number().int().min(65536).max(268435456).default(33554432),
   // How long a SESSION is kept once nothing observable is working on it, and
   // for the same window afterwards, how long its journal survives its last
@@ -58,7 +62,28 @@ export const sessionConfigSchema = z.object({
   // runner kills the child and settles. Anything still registered past this is
   // a bookkeeping leak, not work, and without the bound it would hold its
   // session resident for the life of the process. Range 60000–3600000.
+  //
+  // The ordering constraint is ENFORCED at boot, not left to this comment:
+  // `create-gateway-services.ts` floors the effective value at
+  // `hermes_timeout_ms + 60s` and WARNs, because getting it wrong marks live
+  // work lost and re-arms the orphan derived retention exists to close. This
+  // key is only the floor's lower bound, so raising `hermes_timeout_ms` alone
+  // is safe.
   lost_task_threshold_ms: z.number().int().min(60000).max(3600000).default(660000),
+  // Cap on sessions kept resident while NOTHING holds them — no window, no
+  // turn, no tool, no task, no prompt — waiting out `retention_ms`. The oldest
+  // idle session is released first when the cap is exceeded.
+  //
+  // It exists because derived retention REMOVED a bound that used to hold
+  // implicitly: under "the last one out disposes", residency was bounded by
+  // live attachments (`max_sessions`, `per_user_max_sessions`). Now
+  // `conversation.activate` builds a full session per target and each one
+  // lingers, so walking the past-chats drawer would leave one resident session
+  // per chat visited, each holding a `bun:sqlite` handle, a `ToolBroker` with
+  // warmed MCP definitions, a voice and a journal. RETAINED sessions are never
+  // counted or evicted — eviction runs the ordinary disposal path, which
+  // re-derives first, so this can never cut work. Range 1–500.
+  max_idle_resident_sessions: z.number().int().min(1).max(500).default(16),
   // How often a session held ONLY by work, with no window attached, is
   // re-derived. Work COMPLETING is not an attach or a detach, so the registry
   // has no event for it; `SessionRegistry.reevaluate` covers the normal case

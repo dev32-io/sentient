@@ -164,6 +164,38 @@ export interface GatewayServices {
   readonly delegatedExternalTool: ExternalToolSlot;
 }
 
+/** Slack over `hermes_timeout_ms` for the runner's own kill-and-settle tail. */
+const LOST_TASK_SLACK_MS = 60_000;
+
+/**
+ * `session.lost_task_threshold_ms`, floored so it can never sit BELOW the
+ * longest a background task may legitimately run.
+ *
+ * The only background-task producer is `delegateTask`, whose runner kills its
+ * Hermes child at `orchestrator.delegation.hermes_timeout_ms` and settles. A
+ * threshold under that marks live work "lost", drops it from the retention
+ * predicate, and re-arms the exact orphan this policy exists to close — and the
+ * operator who causes it is the one RAISING `hermes_timeout_ms`, who has no
+ * reason to read the session block at all. So the constraint is enforced here
+ * rather than left to the two config comments to coordinate: this is the one
+ * scope holding both keys, which a per-key zod schema is not.
+ */
+function resolveLostTaskThresholdMs(cfg: StartupConfig): number {
+  const configured = cfg.session.lost_task_threshold_ms;
+  const hermesTimeoutMs = cfg.orchestrator?.delegation.hermes_timeout_ms;
+  if (hermesTimeoutMs === undefined) return configured;
+  const floor = hermesTimeoutMs + LOST_TASK_SLACK_MS;
+  if (configured >= floor) return configured;
+  log.warn("session.lost-task-threshold-raised", {
+    configured,
+    hermesTimeoutMs,
+    applied: floor,
+    reason:
+      "session.lost_task_threshold_ms is below orchestrator.delegation.hermes_timeout_ms — a live delegation would be marked lost and orphaned, so the floor is applied instead",
+  });
+  return floor;
+}
+
 export async function createGatewayServices(cfg: StartupConfig): Promise<GatewayServices> {
   const [auth, state] = await Promise.all([createAuthService(cfg.auth), runPhaseState(cfg)]);
 
@@ -240,7 +272,8 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
       createSessionRetentionPolicy({
         retentionMs: cfg.session.retention_ms,
         recheckIntervalMs: cfg.session.retention_recheck_interval_ms,
-        lostTaskThresholdMs: cfg.session.lost_task_threshold_ms,
+        lostTaskThresholdMs: resolveLostTaskThresholdMs(cfg),
+        maxIdleResidentSessions: cfg.session.max_idle_resident_sessions,
       }),
     ),
     webui: cfg.webui,

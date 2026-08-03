@@ -92,6 +92,7 @@ function stubRuntime(): StubRuntime {
       interruptCalls += 1;
     },
     emitConversationSnapshot: () => {},
+    cutUnheardSpeech: () => {},
     turnState: EMPTY_TURN_STATE,
   };
   return { runtime, submitCalls, interruptCallCount: () => interruptCalls };

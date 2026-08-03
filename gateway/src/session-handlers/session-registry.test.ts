@@ -131,9 +131,11 @@ describe("SessionRegistry — one runtime per session, N attachments", () => {
   });
 
   it("INVARIANT: the disposal policy is a substitutable hook, not a fixed rule", () => {
-    // Task 8 replaces "last one out disposes" with a retention predicate. It
-    // must be able to substitute a policy rather than rewrite this module —
-    // a policy that declines keeps the handles resident with zero subscribers.
+    // The retention predicate (task 8) is SUBSTITUTED into this hook rather
+    // than written into this module, and that substitutability is the property
+    // pinned here — a policy that declines keeps the handles resident with zero
+    // subscribers, which is what "a background task still running" looks like
+    // to the registry.
     const registry = createSessionRegistry(() => {
       /* retention says: keep it, work is still in flight */
     });

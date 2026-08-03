@@ -131,6 +131,7 @@ describe("createTurnVoice", () => {
       sink: sink.sink,
       echoGuard: guard.guard,
       shouldSpeak: () => true,
+      hasAudience: () => true,
       sessionId: "sess-1",
     });
 
@@ -156,6 +157,7 @@ describe("createTurnVoice", () => {
       sink: sink.sink,
       echoGuard: guard.guard,
       shouldSpeak: () => true,
+      hasAudience: () => true,
       sessionId: "sess-1",
     });
 
@@ -197,6 +199,7 @@ describe("createTurnVoice", () => {
       sink: sink.sink,
       echoGuard: guard.guard,
       shouldSpeak: () => true,
+      hasAudience: () => true,
       sessionId: "sess-1",
     });
 
@@ -228,6 +231,7 @@ describe("createTurnVoice", () => {
       sink: sink.sink,
       echoGuard: guard.guard,
       shouldSpeak: () => true,
+      hasAudience: () => true,
       sessionId: "sess-1",
     });
 
@@ -263,6 +267,7 @@ describe("createTurnVoice", () => {
       sink: sink.sink,
       echoGuard: guard.guard,
       shouldSpeak: () => true,
+      hasAudience: () => true,
       sessionId: "sess-1",
     });
 
@@ -287,12 +292,41 @@ describe("createTurnVoice", () => {
       sink: sink.sink,
       echoGuard: guard.guard,
       shouldSpeak: () => false,
+      hasAudience: () => true,
       sessionId: "sess-1",
     });
 
     const controller = new AbortController();
     const speech = voice.begin("turn-a", controller.signal);
     speech.pushText("silence please");
+    speech.end();
+    await settle();
+
+    expect(synth.calls).toEqual([]);
+    expect(sink.events).toEqual([]);
+  });
+
+  it("synthesizes nothing when no window is attached to hear it", async () => {
+    // Derived retention (task 8) lets a session outlive its last window and go
+    // on running turns while a background task completes. Synthesising those
+    // occupies the single-threaded on-host TTS against other users' real
+    // speech, for zero listeners — and a joining window is never sent
+    // historical audio anyway, so there is nothing to save it for.
+    const synth = fakeSynthesizer();
+    const sink = recordingSink();
+    const guard = recordingGuard();
+    const voice = createTurnVoice({
+      synthesizer: synth.synthesizer,
+      sink: sink.sink,
+      echoGuard: guard.guard,
+      shouldSpeak: () => true,
+      hasAudience: () => false,
+      sessionId: "sess-1",
+    });
+
+    const controller = new AbortController();
+    const speech = voice.begin("turn-a", controller.signal);
+    speech.pushText("nobody is listening");
     speech.end();
     await settle();
 

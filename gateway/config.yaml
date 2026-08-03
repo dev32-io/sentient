@@ -82,8 +82,12 @@ session:
   # than a round number — at the ~33 KB/s max_window_lag_bytes below anchors
   # 48 kHz Opus at, 15 min of continuous speech is ~30 MB, and a smaller cap
   # would silently break the promise retention_ms makes (a window returning at
-  # minute 14 would find its cursor evicted). A CEILING on an evict-oldest ring,
-  # never an allocation.
+  # minute 14 would find its cursor evicted). Note a journal can now live up to
+  # 2x retention_ms: the replay registry's own clock starts when the journal is
+  # RELEASED, which is at disposal — itself retention_ms after the session went
+  # idle. That does not change the answer, because the 33 KB/s anchor is several
+  # times above real Opus speech bitrate and this is a CEILING on an
+  # evict-oldest ring, never an allocation.
   replay_journal_max_bytes: 33554432    # 32 MB per session. Range 65536–268435456 (64 KB–256 MB). Evict-oldest, down to empty — a lone stale frame must not pin itself as the whole replay window.
   # --- Session retention (spec §5) ---
   # A session stays resident because WORK IS HAPPENING — a turn, a foreground
@@ -101,7 +105,19 @@ session:
   # from the predicate and WARNed — otherwise a worker that dies without
   # reporting holds its session resident for the life of the process.
   # MUST stay above hermes_timeout_ms.
+  # The ordering is ENFORCED at boot, not left to this comment: the effective
+  # value is floored at hermes_timeout_ms + 60s with a WARN, so raising
+  # hermes_timeout_ms alone cannot orphan a live delegation.
   lost_task_threshold_ms: 660000        # 11 min = hermes_timeout_ms + 1 min slack. Range 60000–3600000.
+  # Derived retention REMOVED a bound that used to hold implicitly: under "the
+  # last one out disposes", residency was bounded by live attachments. Now
+  # conversation.activate builds a full session per target and each one lingers
+  # for retention_ms, so walking the past-chats drawer would leave one resident
+  # session per chat visited — each holding a bun:sqlite handle, a ToolBroker
+  # with warmed MCP definitions, a voice and a journal. RETAINED sessions are
+  # never counted or evicted; eviction runs the ordinary disposal path, which
+  # re-derives first, so this can never cut work.
+  max_idle_resident_sessions: 16        # sessions kept resident with NOTHING holding them. Range 1–500. Oldest idle released first.
   # Work COMPLETING is not an attach or a detach, so the registry has no event
   # for it. SessionRegistry.reevaluate covers the normal case (a turn settling);
   # this timer bounds the abnormal one, and it ticks only for a session held by

@@ -82,8 +82,13 @@ export interface TurnVoice {
    *
    * The tail-window handle described in this file's header: it works whether
    * or not the turn is still in flight, because it aborts the audio's own
-   * controller rather than the turn's. Called ONLY from a user cancel gesture
-   * (barge-in / interrupt) — never on a new turn.
+   * controller rather than the turn's. Never called on a new turn.
+   *
+   * Three callers, all of them "this speech has no audience any more": a user
+   * cancel gesture (barge-in / interrupt), session teardown (`dispose`), and —
+   * since derived retention let a session outlive its last window — the last
+   * window detaching (`cutUnheardSpeech`). The caller owns the WHY; this method
+   * logs only what it cut.
    */
   cancelAudio(): string[];
 }
@@ -94,6 +99,19 @@ export interface TurnVoiceDeps {
   readonly echoGuard: MicEchoGuard;
   /** Read per turn — the user's profile.json audio prefs. */
   readonly shouldSpeak: () => boolean;
+  /**
+   * Whether anyone is attached to hear this session RIGHT NOW, read per turn.
+   *
+   * Separate from `shouldSpeak` because the two answer different questions and
+   * each needs its own log line — "the user muted me" and "there is nobody in
+   * the room" are not the same fallback, and a single gate would have to lie
+   * about one of them. Since derived retention (task 8) a session outlives its
+   * last window and keeps running turns while a background task completes, so
+   * without this a background-completion turn synthesises a whole reply into
+   * the void, occupying the single-threaded on-host TTS against other users'
+   * real speech.
+   */
+  readonly hasAudience: () => boolean;
   readonly sessionId: string;
 }
 
@@ -269,6 +287,14 @@ export function createTurnVoice(deps: TurnVoiceDeps): TurnVoice {
         log.info("turn-voice.silent", { sessionId: deps.sessionId, turnId, reason: "profile audio prefs disable TTS" });
         return SILENT_STREAM;
       }
+      if (!deps.hasAudience()) {
+        log.info("turn-voice.silent", {
+          sessionId: deps.sessionId,
+          turnId,
+          reason: "no window is attached — synthesising this turn would occupy the on-host TTS for zero listeners",
+        });
+        return SILENT_STREAM;
+      }
       if (signal.aborted) {
         log.info("turn-voice.silent", { sessionId: deps.sessionId, turnId, reason: "turn already aborted" });
         return SILENT_STREAM;
@@ -323,7 +349,7 @@ export function createTurnVoice(deps: TurnVoiceDeps): TurnVoice {
       log.info("turn-voice.audio.cancel", {
         sessionId: deps.sessionId,
         turnIds: cut,
-        reason: "user cancel gesture — barge-in or interrupt",
+        reason: "this session's speech has no audience any more — see the caller for which gesture",
       });
       return cut;
     },

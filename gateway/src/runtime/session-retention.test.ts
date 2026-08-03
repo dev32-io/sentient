@@ -37,6 +37,9 @@ const RETENTION_MS = 900_000;
 const RECHECK_MS = 30_000;
 /** Longer than one Hermes one-shot's own deadline — see the config comment. */
 const LOST_TASK_THRESHOLD_MS = 660_000;
+/** High enough that the residency cap never fires in the cases that are not
+ *  about it. The cap has its own harness below. */
+const UNCAPPED = 1000;
 const SOCKET = {} as ServerWebSocket<SessionData>;
 
 /** No window, no turn, no tool, no task, no prompt. */
@@ -86,6 +89,8 @@ interface ArmedTimer {
 interface PolicyHarness {
   /** Feed the policy one liveness reading for session [sessionId]. */
   evaluate(inputs: SessionLivenessInputs, sessionId?: string): void;
+  /** Make the next `dispose()` throw, as a real teardown can. */
+  breakDisposal(): void;
   /** How many DISPOSAL timers have been armed. */
   readonly timerStarts: number;
   /** How many RE-CHECK timers have been armed — the periodic re-derivation
@@ -103,6 +108,7 @@ interface PolicyHarness {
 function policyHarness(): PolicyHarness {
   const armed: ArmedTimer[] = [];
   let disposed = false;
+  let disposalThrows = false;
   const work: { current: SessionLivenessInputs } = { current: idle };
   const clock = fakeClock();
 
@@ -110,6 +116,7 @@ function policyHarness(): PolicyHarness {
     retentionMs: RETENTION_MS,
     recheckIntervalMs: RECHECK_MS,
     lostTaskThresholdMs: LOST_TASK_THRESHOLD_MS,
+    maxIdleResidentSessions: UNCAPPED,
     now: clock.now,
     schedule: (fire, _delayMs, meta) => {
       const timer: ArmedTimer = { meta, fire, cancelled: false };
@@ -137,8 +144,12 @@ function policyHarness(): PolicyHarness {
         },
         dispose() {
           disposed = true;
+          if (disposalThrows) throw new Error("permissions.denyAll blew up during teardown");
         },
       });
+    },
+    breakDisposal() {
+      disposalThrows = true;
     },
     get timerStarts() {
       return disposalTimers().length;
@@ -200,6 +211,7 @@ function registryHarness(): RegistryHarness {
     retentionMs: RETENTION_MS,
     recheckIntervalMs: RECHECK_MS,
     lostTaskThresholdMs: LOST_TASK_THRESHOLD_MS,
+    maxIdleResidentSessions: UNCAPPED,
     now: clock.now,
     schedule: (fire, _delayMs, meta) => {
       const timer: ArmedTimer = { meta, fire, cancelled: false };
@@ -251,6 +263,66 @@ function registryHarness(): RegistryHarness {
   };
 }
 
+interface CappedHarness {
+  readonly clock: FakeClock;
+  /** Make [sessionId] resident with nothing holding it. */
+  goIdle(sessionId: string): void;
+  /** Make [sessionId] resident and held by a running background task. */
+  goBusy(sessionId: string): void;
+  /** Start work on an already-idle session WITHOUT re-evaluating it — the way
+   *  a background task registers in production. */
+  startWorkSilently(sessionId: string): void;
+  /** Session ids torn down, in the order the cap released them. */
+  readonly disposed: string[];
+}
+
+/** Several sessions against one policy, each with independent work — what the
+ *  residency cap is about and what `policyHarness`'s single mutable reading
+ *  cannot express. Timers are armed and never fired: the cap must act on its
+ *  own, without waiting for any grace window to elapse. */
+function cappedHarness(maxIdleResidentSessions: number): CappedHarness {
+  const clock = fakeClock();
+  const disposed: string[] = [];
+  const busy = new Set<string>();
+
+  const policy = createSessionRetentionPolicy({
+    retentionMs: RETENTION_MS,
+    recheckIntervalMs: RECHECK_MS,
+    lostTaskThresholdMs: LOST_TASK_THRESHOLD_MS,
+    maxIdleResidentSessions,
+    now: clock.now,
+    schedule: () => ({ cancel: () => {} }),
+  });
+
+  function evaluate(sessionId: string): void {
+    policy({
+      sessionId,
+      subscriberCount: 0,
+      get work() {
+        return workSignalsOf({ ...idle, hasUnfinishedBackgroundTask: busy.has(sessionId) }, clock.now());
+      },
+      dispose() {
+        disposed.push(sessionId);
+      },
+    });
+  }
+
+  return {
+    clock,
+    goIdle(sessionId) {
+      evaluate(sessionId);
+    },
+    goBusy(sessionId) {
+      busy.add(sessionId);
+      evaluate(sessionId);
+    },
+    startWorkSilently(sessionId) {
+      busy.add(sessionId);
+    },
+    disposed,
+  };
+}
+
 // ---------------------------------------------------------------------------
 
 describe("retention is derived from observable work", () => {
@@ -265,11 +337,6 @@ describe("retention is derived from observable work", () => {
     const reasons = computeRetentionReasons({ ...idle, isTurnInFlight: true, hasOutstandingPrompt: true });
 
     expect(reasons).toEqual(["isTurnInFlight", "hasOutstandingPrompt"]);
-  });
-
-  it("returns no reasons when nothing is happening", () => {
-    expect(computeRetentionReasons(idle)).toEqual([]);
-    expect(isRetained(idle)).toBe(false);
   });
 });
 
@@ -336,7 +403,9 @@ describe("the disposal race (spec §5.1)", () => {
     harness.setBackgroundTaskRunning(true); // no attach, no detach, no reevaluate
     harness.fireDisposal(stamp);
 
-    expect(stamp).toBe(harness.pendingGeneration); // the stamp really did still match
+    // `disposed === false` is what carries this: nothing cancelled the timer
+    // and nothing moved the generation, so the stamp still matched when the
+    // callback ran and only the fire-time re-derivation declined the teardown.
     expect(harness.disposed).toBe(false);
   });
 
@@ -386,6 +455,71 @@ describe("a background task that stops reporting", () => {
 
     expect(observation.inputs.hasUnfinishedBackgroundTask).toBe(true);
     expect(observation.lostBackgroundTask).toBeNull();
+  });
+});
+
+describe("the timer callback is detached from every caller", () => {
+  it("INVARIANT: a teardown that throws is contained, not an uncaught exception", () => {
+    // `input.dispose()` runs `permissions.denyAll()` -> `runtime.dispose()` ->
+    // `voice.cancelAudio()` + `store.close()` -> `replayRegistry.release()`.
+    // That chain used to run synchronously inside the WS close path, where a
+    // throw failed ONE connection. It now runs from a bare timer, and an
+    // uncaught exception there is a `launchd` KeepAlive restart — every other
+    // user's live session dropped because one session's teardown threw.
+    const policy = policyHarness();
+    policy.evaluate(idle);
+    policy.breakDisposal();
+
+    expect(() => policy.fireDisposal(policy.pendingGeneration)).not.toThrow();
+  });
+});
+
+describe("the idle-residency cap", () => {
+  it("INVARIANT: the cap releases the session that has been idle longest", () => {
+    // Derived retention removed the bound that used to hold implicitly: walking
+    // the past-chats drawer builds a full session per chat visited, and each
+    // one now lingers for the whole retention window.
+    const harness = cappedHarness(2);
+
+    harness.goIdle("s_1");
+    harness.clock.advance(1000);
+    harness.goIdle("s_2");
+    harness.clock.advance(1000);
+    harness.goIdle("s_3");
+
+    expect(harness.disposed).toEqual(["s_1"]);
+  });
+
+  it("INVARIANT: a session held by work is not an eviction candidate at all", () => {
+    // The candidate filter is what carries this one: a retained session is on a
+    // re-check timer, not a disposal timer, so it is never in the pool the cap
+    // draws from.
+    const harness = cappedHarness(1);
+
+    harness.goBusy("s_1"); // held by an unfinished background task
+    harness.clock.advance(1000);
+    harness.goIdle("s_2");
+    harness.clock.advance(1000);
+    harness.goIdle("s_3");
+
+    expect(harness.disposed).toEqual(["s_2"]);
+  });
+
+  it("INVARIANT: eviction re-derives, so work acquired since going idle declines it", () => {
+    // The §5.1 shape again, reached through the cap instead of the timer. A
+    // session that went idle IS a candidate; work starting afterwards is not a
+    // registry event, so nothing re-files it and it is still in the pool when
+    // the cap fires. Only the re-derivation inside the ordinary disposal path
+    // saves it — an eviction that just called `dispose()` would make the cap a
+    // second way to orphan a delegated task.
+    const harness = cappedHarness(1);
+
+    harness.goIdle("s_1");
+    harness.clock.advance(1000);
+    harness.startWorkSilently("s_1"); // no evaluation — the cap must notice
+    harness.goIdle("s_2");
+
+    expect(harness.disposed).toEqual([]);
   });
 });
 

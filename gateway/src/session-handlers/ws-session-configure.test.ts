@@ -188,8 +188,10 @@ function servicesWithRuntime(replayRegistry: ReplayRegistry, ws: FakeWs, accessM
     stt: null,
     accessManager,
     createSessionRuntime: () => ({ runtime, permissions: { denyAll: () => {} }, work: IDLE_WORK }),
-    // Task 8 replaces this with the retention predicate; here it only has to
-    // not dispose a session mid-test.
+    // No policy passed, so the registry's default applies: dispose as soon as
+    // nothing observable holds the session. These cases never give it work, so
+    // it behaves as the old "last one out" did — which is what they were
+    // written against.
   } as unknown as GatewayServices;
   return spy;
 }

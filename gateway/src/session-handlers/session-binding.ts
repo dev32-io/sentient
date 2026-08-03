@@ -275,6 +275,12 @@ function buildHandlesOver(
         sink: emitter,
         echoGuard,
         shouldSpeak: () => voicePrefs.shouldSpeak(),
+        // Task 8's gate, and the reason it is separate from `shouldSpeak`:
+        // a session now outlives its last window by `retention_ms` and keeps
+        // running turns while a background task completes. A drain already in
+        // flight when the last window leaves is the other half of the same
+        // problem, cut by `cutUnheardSpeech()` below.
+        hasAudience: () => fanOut.size > 0,
         sessionId,
       })
     : null;
@@ -339,11 +345,14 @@ function buildHandlesOver(
  * session's handles off the socket.
  *
  * IT DOES NOT DISPOSE. The runtime belongs to the session, not to this
- * connection; whether losing this attachment ends the session is the
- * registry's disposal policy's decision (today: the last one out disposes;
- * task 8: a retention predicate). That separation is the whole cutover —
- * a connection disposing the runtime it happens to hold IS the eviction this
- * task deleted.
+ * connection; whether losing this attachment ends the session is the registry's
+ * disposal policy's decision — since task 8, the retention predicate
+ * (runtime/session-retention.ts), which keeps the session while any work is
+ * outstanding. That separation is the whole cutover — a connection disposing
+ * the runtime it happens to hold IS the eviction task 5 deleted.
+ *
+ * It DOES silence the session, when it is the last window out: see
+ * `cutUnheardSpeech` below.
  *
  * Four callers, one body: a re-`session.configure`, an explicit "+", a
  * `conversation.activate` onto a different session, and `cleanupSession`. All
@@ -366,12 +375,18 @@ export function detachSession(ws: ServerWebSocket<SessionData>, services: Gatewa
     // dropping the attachment drops the delivery target with it. Task 5 had to
     // keep a parallel window map in step by hand here.
     services.sessionRegistry.detach(sessionId, attachment.attachmentId);
+    const remaining = services.sessionRegistry.subscribers(sessionId).length;
     log.info("session-binding.detached", {
       connectionId: ws.data.sessionId,
       sessionId,
       attachmentId: attachment.attachmentId,
-      subscribers: services.sessionRegistry.subscribers(sessionId).length,
+      subscribers: remaining,
     });
+    // AFTER the detach, so `subscribers` is the count that matters, and only
+    // when the session SURVIVED it (a disposal already cut the drain itself).
+    // Speech outlives its turn, so a tail can still be pulling from local-tts
+    // with nobody left to hear it — see `SessionRuntime.cutUnheardSpeech`.
+    if (remaining === 0) services.sessionRegistry.handlesFor(sessionId)?.runtime.cutUnheardSpeech();
   }
   ws.data.attachment = null;
   ws.data.runtime = null;

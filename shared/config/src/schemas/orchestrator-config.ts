@@ -81,6 +81,15 @@ export const orchestratorConfigSchema = z.object({
     // Per-agent frontmatter file dir (static delegation envelopes).
     frontmatter_dir: z.string().default("./config/delegation"),
     // Deadline for a single Hermes one-shot invocation (ms). Long-running.
+    //
+    // COUPLED TO `session.lost_task_threshold_ms`: a delegation still
+    // registered past that threshold is treated as LOST and stops holding its
+    // session resident, so a value here ABOVE it would let a live delegation be
+    // orphaned — the session torn down with its store handle closed, and the
+    // result dropped when it finally lands. `create-gateway-services.ts` floors
+    // the effective threshold at this value + 60s and WARNs, so raising this
+    // key alone is safe; the two are stated together because the operator who
+    // raises it has no reason to read the session block.
     hermes_timeout_ms: z.number().int().min(1000).max(3600000).default(600000),
     // Configured Hermes profile that each new per-user profile is cloned from,
     // so the clone inherits provider + model + credentials. The gateway never

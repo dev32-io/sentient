@@ -162,6 +162,28 @@ export interface SessionRuntime {
    *  dispatched it, and so does the audio. See `runtime/cancellation.ts`.
    *  A no-op after `dispose()`. */
   interrupt(): void;
+  /**
+   * The LAST window on this session detached while the session stayed resident
+   * (task 8). Cuts every still-draining TTS stream and NOTHING else — no turn
+   * abort, no background-task cancel, no `playback.stop` (there is no socket
+   * left to send one to, and teardown is not a user gesture).
+   *
+   * It restores the one thing "the last one out disposes" used to do that
+   * derived retention otherwise stops doing. `dispose()` cuts the drain, and
+   * dispose used to run on the last detach; now it runs up to `retention_ms`
+   * later, so without this a settled turn's tail keeps pulling from local-tts
+   * and synthesising speech for zero listeners — occupying the single-threaded
+   * on-host MLX TTS against other users' real speech. `TurnVoiceStream.end()`
+   * does not cover it: it closes only the TEXT queue, and speech outlives its
+   * turn by design (turn-voice.ts).
+   *
+   * A turn that STARTS with no window attached is a different case, handled
+   * one layer down: `TurnVoice.begin` consults `hasAudience()` per turn, which
+   * session-binding.ts binds to the window count, so no drain is opened at all.
+   *
+   * A no-op after `dispose()`.
+   */
+  cutUnheardSpeech(): void;
   /** Publish this session's whole committed feed as `conversation.snapshot`
    *  and arm the live `conversation.entry` cursor at its tail. Called once
    *  per NON-recovered `session.configure` (ws-session-configure.ts) — a
@@ -815,6 +837,17 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     bargeIn: whenLive("bargeIn", cancellation.bargeIn),
     interrupt: whenLive("interrupt", cancellation.interrupt),
     emitConversationSnapshot: whenLive("emitConversationSnapshot", () => feed.snapshot()),
+    cutUnheardSpeech: whenLive("cutUnheardSpeech", () => {
+      const cut = voice?.cancelAudio() ?? [];
+      if (cut.length === 0) return;
+      log.info("session-runtime.speech.cut-unheard", {
+        userId,
+        sessionId,
+        cutTurnCount: cut.length,
+        turnIds: cut,
+        reason: "the last window on this session detached — nobody is left to hear this drain",
+      });
+    }),
     // Deliberately NOT `whenLive`: a disposed runtime has no in-flight turn, so
     // the honest answer is an empty snapshot rather than a WARN — an attach
     // racing a disposal is a normal path, not a fault.

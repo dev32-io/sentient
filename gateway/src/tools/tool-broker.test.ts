@@ -241,6 +241,35 @@ describe("ToolBroker — PDP choke point (foreground)", () => {
   });
 });
 
+describe("ToolBroker — the foreground in-flight counter", () => {
+  // It feeds the SESSION RETENTION predicate (runtime/session-retention.ts):
+  // `hasPendingForegroundTool` is what keeps a session resident while a tool
+  // round-trip outlives the socket that provoked it. A leaked count is
+  // therefore invisible — the session simply never goes away, with no error and
+  // nothing a smoke run would notice — which is why it is pinned here.
+  it("INVARIANT: a rejecting MCP call still releases its in-flight slot", async () => {
+    const mcp = fakeMcp([weatherTool]);
+    mcp.callTool = async () => {
+      throw new Error("mcp transport died mid-call");
+    };
+    const broker = createToolBroker({
+      mcp,
+      policy: fakePolicy({ action: "allow" }),
+      store: fakeStore(),
+      principal,
+      capability,
+      sessionId: "session-1",
+      backgroundTools: new Map(),
+      config: toolsConfig,
+      requestConfirm: async () => false,
+    });
+
+    await expect(broker.dispatch(makeInvocation())).rejects.toThrow("mcp transport died mid-call");
+
+    expect(broker.foregroundInFlight).toBe(0);
+  });
+});
+
 describe("ToolBroker — unanswerable confirm (fail-closed reason passthrough)", () => {
   it("surfaces a ConfirmUnavailableError message to the model verbatim as the deny reason", async () => {
     const mcp = fakeMcp([weatherTool]);

@@ -572,13 +572,14 @@ function handleSessionEnd(ws: ServerWebSocket<SessionData>, services: GatewaySer
  * owner would ever do.
  *
  * DETACH, NOT DISPOSE (task 5). The `SessionRuntime` and the session's open
- * PROMPTS belong to the SESSION, so this drops one subscriber and lets the registry's
- * disposal policy decide what that means. Today the last one out disposes, so
- * a single-window session behaves exactly as it did when this function
- * disposed the runtime directly; with a second window still attached, the
- * conversation simply carries on there. Task 8 replaces that policy with the
- * retention predicate, which is what finally stops a closing tab orphaning a
- * running delegated task.
+ * PROMPTS belong to the SESSION, so this drops one subscriber and lets the
+ * registry's disposal policy decide what that means. With a second window still
+ * attached, the conversation simply carries on there. With none, the policy is
+ * the RETENTION PREDICATE (task 8, runtime/session-retention.ts): the session
+ * stays resident while a turn, a foreground tool call, a background task, a
+ * prompt or an auxiliary task is outstanding, and for `session.retention_ms`
+ * after that. This is what stops a closing tab orphaning a running delegated
+ * task — the store handle stays open, so the completion can still land.
  *
  * A fresh connection re-opens the SAME session by presenting its id in
  * `session.configure.conversationId`; the gateway checks membership and hands

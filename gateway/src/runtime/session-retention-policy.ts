@@ -30,6 +30,30 @@
 // the re-derivation's braces: `clearTimeout` already prevents a cancelled
 // real timer from firing, but the stamp says so structurally, and an injected
 // scheduler (or a future queued-microtask shape) has no such guarantee.
+//
+// THE CALLBACKS ARE DETACHED, SO THEY CATCH THEIR OWN THROWS. Teardown
+// (`input.dispose()` -> `permissions.denyAll()` -> `runtime.dispose()` ->
+// `voice.cancelAudio()` + `store.close()` -> `replayRegistry.release()`) used to
+// run synchronously inside the WS close path, where a throw failed one
+// connection. It now runs from a bare timer with nothing between it and the
+// process, and an uncaught exception there is a `launchd` KeepAlive restart —
+// EVERY user's live session dropped because one session's teardown threw. Same
+// reasoning, same shape as `session-runtime.ts`'s `settle()`, which wraps its
+// own detached continuation for exactly this.
+//
+// RESIDENCY IS CAPPED, because derived retention removed the bound that used to
+// exist implicitly. Under "the last one out disposes", resident sessions were
+// bounded by live attachments (`max_sessions`, `per_user_max_sessions`). Now a
+// session stays resident for `retention_ms` after nothing holds it, and
+// `conversation.activate` builds a full session per target — so walking the
+// past-chats drawer leaves one resident session per chat visited, each with its
+// own `bun:sqlite` handle, `ToolBroker` (with warmed MCP definitions), voice and
+// journal. `session.max_idle_resident_sessions` bounds that pool. Only the
+// NOT-RETAINED pool is capped, and eviction runs the ordinary `fireDisposal`,
+// which re-derives first — so the cap is structurally unable to cut work. The
+// alternative considered and rejected was a shorter grace for a residency that
+// never did any work: it shrinks the common case but leaves "bounded by what?"
+// unanswered, which is the actual gap.
 
 import { getLog } from "../logging/logger.js";
 import type { SessionDisposalInput, SessionDisposalPolicy } from "../session-handlers/session-registry.js";
@@ -69,6 +93,13 @@ export interface SessionRetentionPolicyOptions {
   /** When a still-registered background task is treated as lost
    *  (`session.lost_task_threshold_ms`). */
   lostTaskThresholdMs: number;
+  /**
+   * Cap on sessions kept resident while NOTHING holds them
+   * (`session.max_idle_resident_sessions`). Retained sessions are never
+   * counted and never evicted — their own inputs bound them (attachments by
+   * `max_sessions`, background work by `tools.max_concurrent_background_tasks`).
+   */
+  maxIdleResidentSessions: number;
   /** Injectable clock. Defaults to `Date.now`. */
   now?: () => number;
   /** Injectable scheduler — the timer is an FSM worth testing without
@@ -91,6 +122,10 @@ interface TrackedSession {
    * safe: a stale one reads live state and tears down nothing.
    */
   input: SessionDisposalInput;
+  /** When this session last stopped being retained; null while something holds
+   *  it. The eviction order under the residency cap — the session that has been
+   *  idle longest is closest to its own deadline anyway. */
+  notRetainedSinceMs: number | null;
 }
 
 function defaultSchedule(fire: () => void, delayMs: number): RetentionTimer {
@@ -99,7 +134,7 @@ function defaultSchedule(fire: () => void, delayMs: number): RetentionTimer {
 }
 
 export function createSessionRetentionPolicy(options: SessionRetentionPolicyOptions): SessionDisposalPolicy {
-  const { retentionMs, recheckIntervalMs, lostTaskThresholdMs } = options;
+  const { retentionMs, recheckIntervalMs, lostTaskThresholdMs, maxIdleResidentSessions } = options;
   const now = options.now ?? (() => Date.now());
   const schedule = options.schedule ?? defaultSchedule;
 
@@ -156,6 +191,7 @@ export function createSessionRetentionPolicy(options: SessionRetentionPolicyOpti
 
   /** Retained: keep the handles and decide what, if anything, has to tick. */
   function holdResident(session: TrackedSession, reasons: readonly RetentionReason[]): void {
+    session.notRetainedSinceMs = null;
     if (reasons.includes("hasSubscribers")) {
       // A watched session needs no timer at all: `hasSubscribers` cannot lapse
       // without a detach, and a detach re-enters this policy.
@@ -172,7 +208,36 @@ export function createSessionRetentionPolicy(options: SessionRetentionPolicyOpti
     // THE TRANSITION, not every check — see this file's header, point 1.
     if (session.timerKind === "disposal") return;
     clearTimer(session, "this session stopped being retained");
+    session.notRetainedSinceMs = now();
     armTimer(session, "disposal", retentionMs, []);
+    enforceResidencyCap();
+  }
+
+  /**
+   * Hold the idle-residency pool under its cap, oldest-idle first.
+   *
+   * Only sessions in the grace window are candidates, and each is evicted by
+   * running its own `fireDisposal` — which re-derives before it tears anything
+   * down. So a session that acquired work since it went idle declines the
+   * eviction exactly as it would decline its own timer, and the cap is
+   * structurally unable to cut work.
+   */
+  function enforceResidencyCap(): void {
+    const idle = [...tracked.values()]
+      .filter((candidate) => candidate.timerKind === "disposal" && candidate.notRetainedSinceMs !== null)
+      .sort((a, b) => (a.notRetainedSinceMs ?? 0) - (b.notRetainedSinceMs ?? 0));
+    const excess = idle.length - maxIdleResidentSessions;
+    if (excess <= 0) return;
+    log.info("session-retention.residency-cap", {
+      idleResident: idle.length,
+      maxIdleResidentSessions,
+      evicting: excess,
+      reason:
+        "more sessions are resident with nothing holding them than the cap allows — releasing the oldest idle first",
+    });
+    for (const victim of idle.slice(0, excess)) {
+      fireDisposal(victim, victim.generation);
+    }
   }
 
   function derive(session: TrackedSession, trigger: string): void {
@@ -193,14 +258,41 @@ export function createSessionRetentionPolicy(options: SessionRetentionPolicyOpti
     holdResident(session, reasons);
   }
 
+  /**
+   * The ONE boundary where this policy's work is detached — a timer callback
+   * has nothing between it and the process, and an uncaught exception under
+   * `launchd` KeepAlive restarts the gateway, dropping every OTHER user's live
+   * session. Per .claude/rules/error-handling.md the catch belongs here and only
+   * here; the bodies below are expected not to throw, which keeps this a
+   * backstop that REPORTS an unexpected teardown failure rather than a blanket
+   * that hides routine ones. Mirrors `session-runtime.ts`'s `settle()`.
+   */
+  function guarded(sessionId: string, phase: string, body: () => void): void {
+    try {
+      body();
+    } catch (err) {
+      log.error("session-retention.timer-threw", {
+        sessionId,
+        phase,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   function fireRecheck(session: TrackedSession, generation: number): void {
-    if (session.generation !== generation) return;
-    session.timer = null;
-    session.timerKind = null;
-    derive(session, "recheck-timer");
+    guarded(session.input.sessionId, "recheck", () => {
+      if (session.generation !== generation) return;
+      session.timer = null;
+      session.timerKind = null;
+      derive(session, "recheck-timer");
+    });
   }
 
   function fireDisposal(session: TrackedSession, generation: number): void {
+    guarded(session.input.sessionId, "disposal", () => disposeIfStillIdle(session, generation));
+  }
+
+  function disposeIfStillIdle(session: TrackedSession, generation: number): void {
     const sessionId = session.input.sessionId;
     if (session.generation !== generation) {
       log.debug("session-retention.disposal-superseded", {
@@ -254,6 +346,7 @@ export function createSessionRetentionPolicy(options: SessionRetentionPolicyOpti
           now,
         }),
         input,
+        notRetainedSinceMs: null,
       };
       tracked.set(input.sessionId, session);
       derive(session, "first-evaluation");
