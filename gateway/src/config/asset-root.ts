@@ -57,38 +57,68 @@ export function resetAssetRootForTest(): void {
   cached = null;
 }
 
+/** Sibling directory that marks a `webui/` directory as tracked Vite SOURCE
+ *  rather than a built bundle. `webui/index.html` is committed source that
+ *  exists in EVERY checkout whether or not anything has been built — running
+ *  the build only ever adds `webui/dist/`, it never removes `webui/src/`. An
+ *  installed release's `share/webui/` is copied straight from `webui/dist/`
+ *  (scripts/build-gateway.sh) and so never carries a `src/` sibling. That
+ *  absence is the only thing distinguishing a real bundle sitting at
+ *  `webui/index.html` from committed pre-bundle source at the same path. */
+const WEBUI_SOURCE_SENTINEL = "src";
+
 /** Where the BUILT web bundle lives, or undefined when nothing has been built.
  *
- *  Two shapes, and they differ by one path segment — which is exactly why the
- *  naive `assetPath("webui")` is wrong:
+ *  Three shapes, and PROBE ORDER matters — checking bare `webui/` before
+ *  `webui/dist/` is a live bug, not a style choice. `webui/index.html` is
+ *  TRACKED VITE SOURCE present in every checkout regardless of build state,
+ *  so a naive first-match-wins scan over [webui, webui/dist] always matches
+ *  the source directory and never reaches dist. Serving that hands the
+ *  browser raw pre-bundle HTML referencing `/src/main.tsx`, which the browser
+ *  cannot run.
  *
- *    installed release — share/webui/index.html      (build-gateway.sh copies
- *                                                     webui/dist -> share/webui)
- *    repo checkout     — gateway/webui/dist/index.html  (webui/ is SOURCE here)
+ *    installed release   share/webui/index.html          -> share/webui
+ *    repo, built          webui/dist/index.html            -> webui/dist   (gitignored build output)
+ *    repo, NOT built       webui/index.html (source only)   -> undefined    (clean 404, never raw source)
  *
- *  Probing for index.html rather than branching on "am I compiled" keeps the two
- *  shapes from needing a flag that could be wrong. `WEB_DIST_DIR` stays as an
- *  override for operators pointing at a bundle outside either layout.
+ *  `webui/dist/index.html` is probed FIRST: it exists in exactly one shape
+ *  (repo + built) and is unambiguous whenever present. Only on a miss do we
+ *  consider bare `webui/index.html`, and even then only when `webui/` is NOT
+ *  a Vite source tree (no WEBUI_SOURCE_SENTINEL sibling) — that guard is what
+ *  makes the third row return undefined instead of serving unbuilt source.
+ *  Do not swap the probe order or drop the guard "to simplify" — either
+ *  change reintroduces the bug this comment is describing.
  *
- *  Returns undefined rather than throwing: a gateway with no UI still serves the
- *  API, and the launcher builds the bundle before start (scripts/stack.sh). */
+ *  `WEB_DIST_DIR` stays as an override for operators pointing at a bundle
+ *  outside either layout. Returns undefined rather than throwing: a gateway
+ *  with no UI still serves the API, and the launcher builds the bundle before
+ *  start (scripts/stack.sh). */
 export function resolveWebDistDir(): string | undefined {
   const override = process.env.WEB_DIST_DIR;
   if (override !== undefined && override.length > 0) {
     log.debug("web-dist.resolved", { dir: override, reason: "WEB_DIST_DIR" });
     return override;
   }
+
   const root = resolveAssetRoot();
-  const candidates = [join(root, "webui"), join(root, "webui", "dist")];
-  for (const dir of candidates) {
-    if (existsSync(join(dir, "index.html"))) {
-      log.debug("web-dist.resolved", { dir, reason: "asset-root" });
-      return dir;
-    }
+
+  const distDir = join(root, "webui", "dist");
+  if (existsSync(join(distDir, "index.html"))) {
+    log.debug("web-dist.resolved", { dir: distDir, reason: "asset-root" });
+    return distDir;
   }
+
+  const webuiDir = join(root, "webui");
+  const isSourceTree = existsSync(join(webuiDir, WEBUI_SOURCE_SENTINEL));
+  if (!isSourceTree && existsSync(join(webuiDir, "index.html"))) {
+    log.debug("web-dist.resolved", { dir: webuiDir, reason: "asset-root" });
+    return webuiDir;
+  }
+
   log.warn("web-dist.unresolved", {
-    reason: "no index.html under <asset-root>/webui or <asset-root>/webui/dist — the UI will 404",
-    candidates,
+    reason:
+      "no built index.html under <asset-root>/webui/dist, and <asset-root>/webui is Vite source (or missing) — the UI will 404",
+    candidates: [distDir, webuiDir],
   });
   return undefined;
 }
