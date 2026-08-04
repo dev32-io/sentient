@@ -347,7 +347,12 @@ export type DownloadsConfig = z.output<typeof downloadsConfigSchema>;
 
 export const gatewayConfigSchema = z.object({
   port: z.number().int().min(1).max(65535).default(8888),
-  host: z.string().default("0.0.0.0"),
+  // LOOPBACK ONLY. inbound-proxy owns the LAN-facing 443 and proxies here over
+  // the loopback interface; the gateway itself is not reachable from another
+  // host. Reverting this to 0.0.0.0 puts the API on every interface with no
+  // policy in front of it. This default must agree with the checked-in
+  // config.yaml default — a reader assumes the two match.
+  host: z.string().default("127.0.0.1"),
   max_sessions: z.number().int().min(1).max(1000).default(100),
   auth_timeout_ms: z.number().int().min(1000).default(5000),
   tls: tlsConfigSchema.default({}),

@@ -41,7 +41,10 @@ describe("gatewayConfigSchema", () => {
     const result = gatewayConfigSchema.parse(minimalValidConfig);
 
     expect(result.port).toBe(8888);
-    expect(result.host).toBe("0.0.0.0");
+    // No `host` key in minimalValidConfig — this pins the absent-key path at
+    // the config-parsing boundary: it must resolve to loopback, not 0.0.0.0,
+    // the exact address the gateway is meant to be off of by default.
+    expect(result.host).toBe("127.0.0.1");
     expect(result.max_sessions).toBe(100);
     expect(result.auth_timeout_ms).toBe(5000);
   });

@@ -392,12 +392,19 @@ function applyAllMigrations(doc: Document): boolean {
   }
 
   if (schema014Result !== null) {
+    // Three distinct cases — an absent key is NOT a customisation, and must not
+    // be logged as one: it resolves to the schema's own default (127.0.0.1),
+    // not to whatever this migration step did or didn't touch.
+    const hostReason =
+      schema014Result.hostPrev === null
+        ? "no host key present — the schema default (127.0.0.1) applies"
+        : schema014Result.hostRewritten
+          ? "the gateway now binds loopback; inbound-proxy owns the LAN-facing 443"
+          : "host was customised — left as-is; set it to 127.0.0.1 manually to sit behind inbound-proxy";
     log.info("migration:0.1.4", {
       hostPrev: schema014Result.hostPrev,
       hostRewritten: schema014Result.hostRewritten,
-      reason: schema014Result.hostRewritten
-        ? "the gateway now binds loopback; inbound-proxy owns the LAN-facing 443"
-        : "host was customised — left as-is; set it to 127.0.0.1 manually to sit behind inbound-proxy",
+      reason: hostReason,
     });
   }
 
