@@ -79,3 +79,14 @@ services:
     image: sentient/ingress-proxy:local
     pull_policy: never
     profiles: ["build-only"]
+
+  # Not an MCP either: the PUBLIC entrance (host 80/443). The gateway's
+  # orchestrator owns its lifecycle like every other addon; compose only bakes
+  # the image. Distinct from ingress-proxy above, which guards the internal
+  # addon-network boundary rather than the host one.
+  inbound-proxy:
+    build:
+      context: ../../gateway/addons/inbound-proxy
+    image: sentient/inbound-proxy:local
+    pull_policy: never
+    profiles: ["build-only"]

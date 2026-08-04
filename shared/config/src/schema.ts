@@ -219,6 +219,37 @@ export const tlsConfigSchema = z.object({
 export type TlsConfig = z.output<typeof tlsConfigSchema>;
 
 // ---------------------------------------------------------------------------
+// inbound-proxy — the public host/LAN entrance
+// ---------------------------------------------------------------------------
+
+export const inboundProxyConfigSchema = z.object({
+  // Directory holding the cert.pem + key.pem the proxy presents on 443. Null
+  // (the default) means "use the gateway's own self-signed material". Prod
+  // points this at the externally-managed acme.sh cert. A configured path that
+  // does not exist falls back to the self-signed material rather than failing
+  // to start — a fresh host has no real cert yet and still needs a door.
+  cert_dir: z.string().nullable().default(null),
+});
+export type InboundProxyConfig = z.output<typeof inboundProxyConfigSchema>;
+
+// ---------------------------------------------------------------------------
+// stack — the dev launcher (scripts/stack.sh)
+// ---------------------------------------------------------------------------
+
+export const stackConfigSchema = z.object({
+  // How long `bun run dev` waits for BOTH the gateway's loopback health and the
+  // proxied https://localhost/ before declaring the launch failed. Range
+  // 5000-300000. Must outlast a cold image pull plus nginx start.
+  readiness_timeout_ms: z.number().int().min(5000).max(300000).default(60000),
+  // How often each readiness probe retries within that budget. Range 100-5000.
+  readiness_poll_ms: z.number().int().min(100).max(5000).default(500),
+  // Seconds to wait for the docker daemon before refusing to launch. Range
+  // 0-120. Docker Desktop takes a while from cold on a rebooted machine.
+  docker_wait_s: z.number().int().min(0).max(120).default(30),
+});
+export type StackConfig = z.output<typeof stackConfigSchema>;
+
+// ---------------------------------------------------------------------------
 // Logging — file retention
 // ---------------------------------------------------------------------------
 
@@ -356,6 +387,13 @@ export const gatewayConfigSchema = z.object({
   max_sessions: z.number().int().min(1).max(1000).default(100),
   auth_timeout_ms: z.number().int().min(1000).default(5000),
   tls: tlsConfigSchema.default({}),
+  // inbound-proxy — the ONE outward-facing door (design 2026-08-04 §2).
+  // `.default({})` so a config predating this block still parses; cert_dir
+  // falls back to null (gateway's own self-signed material).
+  inbound_proxy: inboundProxyConfigSchema.default({}),
+  // stack — dev launcher budgets (scripts/stack.sh). `.default({})` for the
+  // same reason as inbound_proxy above.
+  stack: stackConfigSchema.default({}),
   // session block is required — no default; connection/inactivity fields
   // must be explicitly present in every config.yaml (fail loud if missing
   // per config rule).

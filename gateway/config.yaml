@@ -66,6 +66,25 @@ tls:
     # - "sentient.local"             # add the mDNS / DNS name if you use one
 
 # ---------------------------------------------------------------------------
+# inbound-proxy — the ONE outward-facing door (design 2026-08-04 §2)
+# ---------------------------------------------------------------------------
+inbound_proxy:
+  # Directory holding the cert.pem + key.pem presented on 443. null = use the
+  # gateway's own self-signed material (~/.sentient/gateway/certs), which is the
+  # dev default and the fresh-host fallback. On the mini, point this at the
+  # acme.sh-managed real cert:
+  #   cert_dir: /Users/OPERATOR/.data/certs/sentient.dev32.io
+  cert_dir: null
+
+# ---------------------------------------------------------------------------
+# stack — dev launcher budgets (scripts/stack.sh)
+# ---------------------------------------------------------------------------
+stack:
+  readiness_timeout_ms: 60000   # total wait for gateway health AND https://localhost/. Range 5000-300000.
+  readiness_poll_ms: 500        # retry interval within that budget. Range 100-5000.
+  docker_wait_s: 30             # seconds to wait for the docker daemon before refusing. Range 0-120.
+
+# ---------------------------------------------------------------------------
 # Session — connection limits, journal and retention
 # ---------------------------------------------------------------------------
 session:
@@ -821,6 +840,29 @@ managed_services:
     # nginx.conf's resolver), so it does not need the services it fronts to
     # exist yet — and depending on them would let one broken addon block the
     # shared ingress and take the other addon's reachability with it.
+    depends_on: []
+    optional: false
+
+  inbound-proxy:
+    template: inbound-proxy.yaml
+    allowed_images: ["sentient/inbound-proxy:local"]
+    networks: ["sentient-edge"]
+    # INFRASTRUCTURE class — see gateway/src/system-orchestrator/types.ts#infra.
+    # Applied before the wizard (it IS the route to the wizard), never given up
+    # on by the watchdog, and not recreated while unchanged and healthy.
+    infra: true
+    # Grants the ONE public-port exception in the stack. Admits 0.0.0.0:80 and
+    # 0.0.0.0:443 only, enforced at three layers.
+    public_ports: true
+    # Probes the door the LAN actually uses. Self-signed in dev, so the probe is
+    # TCP rather than HTTP — an HTTP probe would need a trust anchor the
+    # orchestrator has no reason to carry.
+    healthcheck:
+      tcp: "127.0.0.1:443"
+      timeout_ms: 30000
+    # Deliberately EMPTY. nginx resolves its upstream at request time, so it does
+    # not need the gateway to be up first — and it must not, since the gateway is
+    # what starts it.
     depends_on: []
     optional: false
 

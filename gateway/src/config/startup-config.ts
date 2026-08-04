@@ -7,6 +7,7 @@ import type {
   DownloadsConfig as DownloadsYaml,
   HermesBuiltinTools,
   HermesConfig as HermesYaml,
+  InboundProxyConfig as InboundProxyYaml,
   McpCatalog,
   OrchestratorConfig as OrchestratorYaml,
   ProvidersConfig as ProvidersYaml,
@@ -82,6 +83,12 @@ export interface StartupConfig {
   webDistDir: string | undefined;
 
   tls: TlsYaml & { certsDir: string };
+
+  /** inbound-proxy — the public host/LAN entrance (design 2026-08-04 §2).
+   *  `cert_dir` null means "use the gateway's own self-signed material";
+   *  phase-orchestrator.ts resolves the actual fallback against `tls.certsDir`
+   *  above at boot. */
+  inboundProxy: InboundProxyYaml;
 
   session: SessionYaml;
 
@@ -181,6 +188,8 @@ export function loadStartupConfig(): StartupConfig {
     webDistDir: resolveWebDistDir(),
 
     tls: { ...cfg.tls, certsDir: process.env.GATEWAY_CERTS_DIR ?? gatewayStateDir("certs") },
+
+    inboundProxy: cfg.inbound_proxy,
 
     session: cfg.session,
 

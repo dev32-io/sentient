@@ -1,4 +1,4 @@
-import { promises as fs, accessSync, constants as fsConstants } from "node:fs";
+import { promises as fs, accessSync, existsSync, constants as fsConstants } from "node:fs";
 import { dirname, join } from "node:path";
 import type { InstallState } from "../admin/install-state.js";
 import type { InternalSecretsStore } from "../admin/internal-secrets-store.js";
@@ -258,6 +258,23 @@ export async function runPhaseOrchestrator(input: PhaseOrchestratorInput): Promi
   // overwrites operator edits.
   await seedDefaultConfigs(templateDir, hostConfigDirContainerPath);
 
+  // Outward-identity cert for inbound-proxy. Configured path wins when it really
+  // exists; otherwise the gateway's own self-signed material. The fallback is
+  // load-bearing, not defensive: a fresh mini has no acme.sh cert yet, and an
+  // infra-class service that cannot start leaves the host with no door at all.
+  const configuredCertDir = cfg.inboundProxy.cert_dir;
+  const gatewayCertsDir = cfg.tls.certsDir;
+  const inboundCertDir =
+    configuredCertDir !== null && existsSync(configuredCertDir) ? configuredCertDir : gatewayCertsDir;
+  if (configuredCertDir !== null && inboundCertDir !== configuredCertDir) {
+    log.warn("inbound-proxy.cert-fallback", {
+      configured: configuredCertDir,
+      using: inboundCertDir,
+      reason: "configured cert_dir does not exist — serving the gateway's self-signed material instead",
+    });
+  }
+  log.info("inbound-proxy.cert-dir", { dir: inboundCertDir, configured: configuredCertDir });
+
   const hostEnv = {
     HOST_HOME: process.env.HOST_HOME ?? "",
     HOST_DOCKER_GID: process.env.HOST_DOCKER_GID ?? "",
@@ -274,6 +291,8 @@ export async function runPhaseOrchestrator(input: PhaseOrchestratorInput): Promi
     // Root of the root-owned release tree that native services launch from
     // (/opt/sentient/current in prod, the staged tree in dev).
     SENTIENT_CODE: process.env.SENTIENT_CODE ?? "",
+    INBOUND_CERT_DIR: inboundCertDir,
+    GATEWAY_CERTS_DIR: gatewayCertsDir,
   };
 
   // The `?? ""` defaults above are exactly how an unset variable used to reach

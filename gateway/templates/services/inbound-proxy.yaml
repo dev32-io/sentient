@@ -1,0 +1,28 @@
+image: sentient/inbound-proxy:local
+container_name: sentient-inbound-proxy
+# sentient-edge, and ONLY sentient-edge. Its single upstream is host loopback,
+# so it needs no reachability to any sibling addon; its own network is what
+# denies that reach. Non-internal because docker silently drops port publishing
+# when every attached network is internal.
+networks: [sentient-edge]
+# THE ONE PUBLIC PUBLISH IN THE WHOLE STACK. Permitted only because this
+# service's policy entry sets `public_ports: true`, and only for 80/443 —
+# see gateway/src/system-orchestrator/types.ts#isAllowedPortMapping.
+# Container-side ports are unprivileged; nothing here runs as root.
+ports:
+  - "0.0.0.0:443:8443"
+  - "0.0.0.0:80:8080"
+volumes:
+  # Outward identity: the real acme.sh cert in prod, the gateway's self-signed
+  # material in dev. Resolved by phase-orchestrator.ts, which falls back to the
+  # gateway's certs dir when the configured path does not exist — a fresh mini
+  # has no acme.sh cert yet and the door still has to open.
+  - "${INBOUND_CERT_DIR}:/etc/sentient/outward:ro"
+  # Upstream trust anchor: ALWAYS the gateway's own self-signed cert, in both
+  # environments. This is what makes the loopback hop verified rather than
+  # merely encrypted.
+  - "${GATEWAY_CERTS_DIR}:/etc/sentient/upstream:ro"
+extra_hosts:
+  - "host.docker.internal:host-gateway"
+mem_limit_bytes: 134217728    # 128 MiB — nginx, two server blocks, TLS termination
+cpus: 0.5
