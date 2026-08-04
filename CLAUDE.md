@@ -45,11 +45,30 @@ All `bun run` commands, test scripts, and quality-gate hooks depend on this.
 
 ## Running and restarting the gateway
 
-**Two URLs, and they are not interchangeable.** In dev the gateway serves the **API only** — `https://localhost:8888/` legitimately 404s. The UI is vite (`http://localhost:5173`, or the next free port), which proxies `/api/v1` to the gateway. Open the vite URL, never `:8888`, unless you are calling the API directly.
+**Three doors, increasing fidelity.** `https://localhost` is the real one —
+inbound-proxy on 443, the gateway serving the built UI behind it, identical to
+prod. **All browser smoke goes here.** `http://localhost:5173` is vite, live
+source with HMR, for UI iteration. `https://localhost:8888` is the gateway
+direct, host-only, for diagnostics.
 
-**Dev** — from the repo root, after `source scripts/env.sh`:
+443 serves the bundle **as of launch**. Vite hot-reloads; 443 does not. Relaunch
+to refresh it — which you want before smoking anyway, since smoke exercises the
+stack as launched.
 
-    bun run dev                    # gateway + webui; Ctrl-C stops BOTH
+**Dev** — from the repo root:
+
+    bun run dev             # preflight + gateway + vite + docker/native addons + proxy
+    bun run stack:down      # full stop, including native addons and containers
+    bun run stack:status    # what is up, probed independently of the gateway
+
+`bun run dev` sources `scripts/env.sh` itself, builds the web UI, bakes any
+missing addon images, and refuses with a runnable fix when it finds something it
+must not silently repair. Re-running it against a live stack restarts it.
+
+Ctrl-C stops the gateway and vite. Docker addons keep running (`unless-stopped`,
+which is what makes restart fast) and native addons survive too — the gateway's
+shutdown hook does not reap them, and the next boot's port-settle reclaims them.
+`bun run stack:down` is the explicit full stop.
 
 `bun --watch` **restarts the gateway process** on save — it does not hot-reload, and `bun --hot` must never be used here. A reload re-runs the composition root, and under `--hot` that arms a second addon supervisor inside the live process; they then reap and respawn each other's `whisper-stt` / `local-tts` children until nothing owns the ports. The gateway refuses a second in-process evaluation and exits 1 with the fix, so the failure is one legible line rather than a wedged stack. A restart re-reads `config.yaml` and the env — but `--watch` does NOT watch `config.yaml`, which is not in the module graph, so editing it needs a manual restart (touching a source file does not help either). If `:8888` is already taken, an orphaned run is the usual cause — `pkill -f "src/main.ts"`.
 

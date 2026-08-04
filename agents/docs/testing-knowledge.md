@@ -52,11 +52,16 @@ cases are appended here, indexed by the surface they exercise.
 > presence-source) is current, real code — a generic "an interaction cycle
 > ran" signal name, unrelated to the retired wire's `cycleId`. Bring-up is
 > also re-grounded: no more `docker compose ... gateway`; dev is
-> `cd gateway && bun --hot src/main.ts` (needs `SENTIENT_CODE` pointing at a
+> `cd gateway && bun --watch src/main.ts` (never `--hot` — refused outright at
+> startup, see `gateway/CLAUDE.md`; needs `SENTIENT_CODE` pointing at a
 > `<code>/whisper-stt/{venv,src}` + `<code>/local-tts/{venv,src}` layout for
 > the native addons — see the Native-stack migration section below) plus
 > `cd gateway/webui && bun run dev` (Vite, `:5173`, proxies `/api/v1` to the
-> gateway's `:8888`). Docker still fronts the MCP/searxng/proxy addons only.
+> gateway's `:8888`). **Superseded 2026-08-04:** the repo-root `bun run dev`
+> is now the whole-stack launcher (preflight + gateway + vite + every addon +
+> `inbound-proxy`), and `https://localhost` (443) is the URL all browser
+> smoke drives against — see the root `CLAUDE.md`. Docker still fronts the
+> MCP/searxng/proxy addons only.
 > Remaining containerized-era literal commands elsewhere in this file
 > (Setup Wizard walks, System-orchestrator Phase 6 section) are Task 10 /
 > follow-up scope, not re-driven here — treat their *scenario* and
@@ -74,9 +79,9 @@ and why those tools were chosen. One `###` subsection per surface.
 **Why this tool:** WebRTC AEC, AudioWorklet timing, jitter-buffer behaviour, and cycle-audio-queue state can only be exercised end-to-end in a real browser. Mocked playback misses these failure modes; they show up only as user-visible regressions.
 **How:**
 1. `source scripts/env.sh`
-2. Start the gateway natively: `cd gateway && bun --hot src/main.ts` (addon images come from `docker compose -f deploy/mac-prod/docker-compose.yml --profile build-only build`)
-3. `until curl -sk -o /dev/null -w "%{http_code}" https://localhost:8888/ | grep -q 200; do sleep 1; done`
-4. Open `https://localhost:8888` in Chrome. Self-signed cert → click Advanced → Proceed.
+2. Start the whole stack: `bun run dev` (repo root — preflight + gateway [`bun --watch`, never `--hot`] + vite + every addon + `inbound-proxy`)
+3. `until curl -sk -o /dev/null -w "%{http_code}" https://localhost/ | grep -q 200; do sleep 1; done`
+4. Open `https://localhost` in Chrome. Self-signed cert → click Advanced → Proceed.
 
 **Debugging hooks:**
 - Wire-message tap: `window.__sentWsTx` / `window.__sentWsRx` after injecting a WebSocket shim via `navigate_page` `initScript`.
@@ -359,30 +364,35 @@ row reports `health tcp ... ok` and still FAILS, which is exactly the shape of
 the bug the weak oracle missed.
 **Evidence:** `qa/web/evidence/2026-07-31-t12-stack-integrity/`.
 
-### NEVER edit gateway source while driving E2E — `bun --hot` leaks a supervisor per reload
+### Why `bun --hot` is refused outright — a hot reload leaks a supervisor per reload
 **Why added:** learned by wedging the dev stack on 2026-07-31 in about ten
-minutes. `bun --hot src/main.ts` re-evaluates the module graph **in the same
-process**; nothing tears the old graph down, so every reload constructs another
-`SystemOrchestratorService` and calls `healthWatch.start()` again while the
-previous watchdog keeps ticking (`stopHealthWatch()` runs only on gateway
-shutdown, which a hot reload never performs). Twelve `health-watch started`
-lines in one process is what that looks like in the log.
+minutes — the actual case study behind the startup guard now in
+`gateway/src/main.ts:81-93`. `bun --hot src/main.ts` re-evaluates the module
+graph **in the same process**; nothing tears the old graph down, so every
+reload constructed another `SystemOrchestratorService` and called
+`healthWatch.start()` again while the previous watchdog kept ticking
+(`stopHealthWatch()` runs only on gateway shutdown, which a hot reload never
+performs). Twelve `health-watch started` lines in one process is what that
+looked like in the log.
 
-They then race for the native ports: **five `native.started service="whisper-stt"`
+They then raced for the native ports: **five `native.started service="whisper-stt"`
 lines landed within 10 ms**, pids 46537–46541, four of which were promptly
 signalled by the others; ownership records were lost, so the survivors read as
 foreign — `native.port-held ... it is not a child of this gateway` — and eight
-`reapply.gave-up reason="max-attempts-exhausted"` followed. It does **not**
-self-heal; only a real process restart clears it.
+`reapply.gave-up reason="max-attempts-exhausted"` followed. It did **not**
+self-heal; only a real process restart cleared it.
 
-**Rules:**
-- Finish all gateway source edits, then drive. Never interleave.
-- One edit at a time, and wait for `apply.complete` (~12 s) before the next.
-  Edits ~10 s apart are what tipped it over.
-- If you see `native.port-held` naming a pid whose `ps -o ppid=` is the gateway
-  itself, you are in this state. Restart the process; do not touch a source file
-  again hoping to reload out of it — that adds a supervisor.
-- Confirm with `bun qa/web/stack-integrity.ts` before believing any row.
+**Now prevented at the source, not worked around.** This incident is exactly
+why `--hot` is refused outright at startup: `gateway/src/main.ts` claims a
+single in-process evaluation and exits 1 with the fix the moment a second one
+would run, so the race above can no longer happen — there is no "edit
+carefully, one at a time" discipline left to maintain. Use `bun --watch
+src/main.ts` for the gateway alone (a real process restart per edit;
+`config.yaml` still needs a manual restart either way, since it isn't in the
+module graph) or `bun run dev` from the repo root for the whole stack.
+Seeing this log signature again would mean the startup guard itself
+regressed, not that source was edited too fast — confirm with `bun
+qa/web/stack-integrity.ts` either way.
 
 ### Cold-path smoke
 
@@ -428,9 +438,9 @@ self-heal; only a real process restart clears it.
 Run after any change touching `gateway/src/api/wizard/`, `gateway/src/admin/install-state.ts`, `gateway/templates/wizard/`, or the webui wizard components.
 
 1. `rm -rf ~/.sentient/`
-2. Bring up the stack: `cd gateway && bun --hot src/main.ts` (see `deploy/README.md`)
+2. Bring up the stack: `bun run dev` from the repo root (see `deploy/README.md`)
 3. Read the unlock code: `cat ~/.sentient/gateway/data/unlock-code` (or read from gateway log banner).
-4. Open `https://localhost:8888`, enter the unlock code.
+4. Open `https://localhost`, enter the unlock code.
 5. Walk fresh: `provider → voice → secrets → bringup → admin → finish`.
 6. Confirm Back buttons present and functional on `voice` and `secrets` screens; absent on `provider`, `bringup`, `admin`, `finish`.
 7. Mid-admin reload: refresh page during AccountWizard. Expect: lands back on AccountWizard.
@@ -798,7 +808,7 @@ A voice pack carries a single optional `language` (one of Qwen's 10: zh/en/ja/ko
 
 Reusable cases for the native orchestrator's turn lifecycle, driven live
 2026-07-30 (native-stack migration Task 9) against a real gateway
-(`bun --hot src/main.ts`, `SENTIENT_CODE` pointed at a staged
+(`bun --watch src/main.ts`, `SENTIENT_CODE` pointed at a staged
 `<code>/whisper-stt|local-tts/{venv,src}` layout) + Vite webui dev server.
 Full per-case evidence, gateway log excerpts and defect diagnoses live
 under `qa/web/evidence/2026-07-30-<case>/`. Log tags:
@@ -866,7 +876,7 @@ only the screenshot) before concluding a real bug.
 ### restart-persistence
 **Scenario:** A real gateway process restart (native — the migration's actual path, not `docker restart`) preserves the full feed via the persisted store, even though the live-stream resume buffer correctly does NOT survive a restart.
 **Expected log trail:** `resume.not-recovered reason="fresh-journal-or-epoch-mismatch"` (correct — no resume buffer across a restart) → `turn-emitter.conversation-snapshot itemCount=<n>` (correct fallback — full history refetch). Client logs 4-5 reconnect attempts with backoff while the gateway is down, then succeeds.
-**Reminder:** `bun --hot` does NOT reload `config.yaml` — a config edit needs this same restart to take effect (only one `config-loaded` log line per process lifetime).
+**Reminder:** `bun --watch` does NOT reload `config.yaml` either — it isn't in the module graph, so a config edit needs this same restart to take effect (only one `config-loaded` log line per process lifetime).
 
 ### compaction-continue
 **Scenario:** Chatting past `orchestrator.compaction.compact_threshold_tokens` triggers `maybeCompact()` at the next turn boundary.

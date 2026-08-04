@@ -111,8 +111,11 @@ contract (rollback, offline-install proof, first-real-run checklist).
 
 ### 4. First launch
 
-Open `https://sentient.dev32.io` (port 443) or `https://<host>:8888`. The
-setup wizard walks through:
+Open `https://sentient.dev32.io` (port 443) — `inbound-proxy` is the one
+outward-facing door, and the gateway itself binds `127.0.0.1`, so it is not
+reachable from another host on `8888`. (`https://<host>:8888` still answers
+*from the mini itself* — useful as a diagnostic, never as the URL you hand a
+device.) The setup wizard walks through:
 
 - Admin password / PIN
 - LLM provider + key (Ollama Cloud — direct API to ollama.com — or
@@ -127,9 +130,31 @@ delegates a task (`delegateTask`), invoked and exited per call.
 User accounts, secrets, profiles, **and the Hermes "brain"**
 (`~/.sentient/hermes/data`) all live under `~/.sentient/`, user-owned and
 mutable — migrate or back up the whole assistant with one `rsync` of
-`~/.sentient/`. Code is root-owned and immutable under `/opt/sentient/`. (The
-TLS cert at `~/.data/certs/` is the one intentional exception to the state
-path — externally managed by `acme.sh`.)
+`~/.sentient/`. Code is root-owned and immutable under `/opt/sentient/`.
+
+**Two cert roles, not one.** `inbound-proxy` terminates TLS twice, for two
+different purposes:
+
+| Role | Cert | Set via |
+|---|---|---|
+| Outward identity — what the browser sees on 443 | `~/.data/certs/sentient.dev32.io` — the real cert, externally managed by `acme.sh`. The one intentional exception to the `~/.sentient/` state path | `inbound_proxy.cert_dir` in `config.yaml` |
+| Upstream trust anchor — the loopback hop to `:8888` | `~/.sentient/gateway/certs` — the gateway's own self-signed `cert.pem`, always | not configurable; the same cert in dev and prod |
+
+The upstream hop is never verified against the `acme.sh` cert — `inbound-proxy`
+trusts the gateway's own self-signed material for that hop in both
+environments, so it stays a verified TLS connection rather than merely an
+encrypted one.
+
+**`acme.sh` renewing the cert does not reload nginx.** Run this after every
+renewal so `inbound-proxy` picks up the new files:
+
+    docker kill -s HUP sentient-inbound-proxy
+
+**SAN note:** a browser on a LAN phone gets no microphone unless that host's
+IP or name is in `tls.hostnames` (`config.yaml`) — a SAN mismatch produces a
+hard browser warning *and* refuses mic access, since browsers gate `getUserMedia`
+on a fully-trusted origin. Native mobile apps are unaffected; they use platform
+mic permission, not browser origin rules.
 
 ---
 
@@ -200,21 +225,23 @@ ipconfig getifaddr en0     # ethernet (or en1 for Wi-Fi)
 
 ## Local dev — macOS
 
-Two independent pieces: bake the addon images once, then run the gateway
-natively with hot reload — no build step for the gateway itself.
+`bun run dev` from the repo root is the whole-stack dev launcher: preflight
+(docker-daemon wait, webui build, addon-image bake) then gateway (`bun
+--watch`, never `--hot` — see `gateway/CLAUDE.md`) plus vite plus every
+docker/native addon plus `inbound-proxy`. See the root `CLAUDE.md` for the
+full command set (`stack:down`, `stack:status`) and the three-doors URL story.
+The real URL is `https://localhost/`; `https://localhost:8888` still answers
+directly from the host, for diagnostics only.
+
+To bake the addon images by hand (rarely needed — preflight does this too):
 
 ```bash
-# Addon images (one list, shared with prod — there is no dev-only bakery):
 docker compose -f deploy/mac-prod/docker-compose.yml --profile build-only build
-
-# Gateway, from the checkout:
-source scripts/env.sh
-cd gateway && bun --hot src/main.ts
 ```
 
 The native driver launches whisper-stt/local-tts from repo-local venvs; the
-orchestrator creates the addon containers from the images baked above on
-first boot. Wizard URL: `https://localhost:8888`.
+orchestrator creates every addon container — `inbound-proxy` included — from
+the images baked above.
 
 ### macOS dev wipe
 

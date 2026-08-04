@@ -43,7 +43,7 @@ providers:
 ```
 
 ```bash
-# the gateway is native — restart it where it runs (bun --hot, or launchctl in prod)
+# the gateway is native — restart it where it runs (bun --watch in dev, or launchctl in prod)
 ```
 
 Effects, verified end-to-end:

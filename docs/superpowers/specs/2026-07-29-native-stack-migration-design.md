@@ -119,7 +119,7 @@ Per-service pinned interpreters carry forward verbatim. `local-tts` requires 3.1
 
 ## 5. Build & release
 
-**Dev path is unchanged** — `bun --hot src/main.ts` from the checkout. Hot reload, no build step. The native driver launches STT/TTS from repo-local venvs. Fast iteration is the point.
+**Dev path is unchanged** — `bun --watch src/main.ts` from the checkout, no build step. `--hot` is refused outright (`gateway/src/main.ts:81-93`): a second in-process evaluation would arm a second addon supervisor inside the still-live process, and the two would reap and respawn each other's `whisper-stt` / `local-tts` children until nothing owns the ports. `--watch`'s real process restart avoids that class of bug entirely, at the cost of a restart instead of a sub-second in-process reload. The native driver launches STT/TTS from repo-local venvs. Fast iteration is still the point.
 
 **Prod path** — `./scripts/build-gateway.sh [--release] [--deploy]`, mirroring the existing `build-android.sh` / `build-ios.sh` convention.
 

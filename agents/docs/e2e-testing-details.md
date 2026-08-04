@@ -4,21 +4,26 @@ The driver depends on the surface: **web** (webui) → Playwright MCP; **native 
 
 ## Bringup
 
-Two independent pieces: bake the addon images once, then run the gateway natively. From the repo root:
+`bun run dev` from the repo root is the whole-stack launcher (see the root
+`CLAUDE.md`): preflight (docker-daemon wait, webui build, addon-image bake)
+then gateway (`bun --watch`, never `--hot` — refused outright, see
+`gateway/CLAUDE.md`) plus vite plus every docker/native addon plus
+`inbound-proxy`.
 
 ```bash
 source scripts/env.sh
-docker compose -f deploy/mac-prod/docker-compose.yml --profile build-only build   # addons only now
-cd gateway && bun --hot src/main.ts &
-until curl -sk -o /dev/null -w "%{http_code}" https://localhost:8888/ | grep -q 200; do sleep 1; done
+bun run dev &
+until curl -sk -o /dev/null -w "%{http_code}" https://localhost/ | grep -q 200; do sleep 1; done
 ```
 
-The gateway's own `system-orchestrator/` creates and starts the addon
-containers from the images baked above on first boot — there is no
-`docker compose up` for this stack any more. Open `https://localhost:8888`
-via Playwright MCP `browser_navigate`. The self-signed cert is already
-trusted in the chromium profile that ships with the MCP — no clickthrough
-needed.
+The gateway's own `system-orchestrator/` creates and starts every addon
+container — `inbound-proxy` included — from the images preflight baked;
+there is no `docker compose up` for this stack. Open `https://localhost` via
+Playwright MCP `browser_navigate` — the one door all browser smoke drives
+against, proxy in front of the gateway, identical to prod. The self-signed
+cert is already trusted in the chromium profile that ships with the MCP — no
+clickthrough needed. (`https://localhost:8888` still answers directly from
+the host, for diagnostics only — not the smoke URL.)
 
 ## Native mobile bringup (Maestro)
 
@@ -111,10 +116,11 @@ tabs interleaved. Useful for BroadcastChannel / cross-tab sync flows
 ## Reconnect / restart smoke
 
 To exercise WS reconnect, restart the native gateway process while a tab is
-open (dev, `bun --hot` from `gateway/`):
+open (dev, `bun --watch` from `gateway/` — never `--hot`, see
+`gateway/CLAUDE.md`):
 
 ```bash
-pkill -f "bun --hot src/main.ts"; cd gateway && bun --hot src/main.ts &
+pkill -f "bun --watch src/main.ts"; cd gateway && bun --watch src/main.ts &
 ```
 
 Wait for `/health` to come back, then verify the tab reconnected. The

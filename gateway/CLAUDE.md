@@ -20,7 +20,16 @@ Rules live at the repo root: cross-cutting at `.claude/rules/*.md`, gateway-spec
 
 ## Commands
 
-    bun run dev       — Start gateway (`bun --watch`: full restart on save)
+    bun run dev       — Start gateway ONLY (`bun --watch`: full restart on save)
     bun run test      — Run all gateway tests
     bun run build     — Production build
     bun run typecheck — TypeScript strict check
+
+The repo-root `bun run dev` is the whole-stack launcher (preflight + gateway +
+vite + docker/native addons + inbound-proxy, via `scripts/stack.sh`). This
+`bun run dev` is scoped to the gateway package — it starts only the gateway
+process. The gateway's own orchestrator still brings up its managed addons
+(inbound-proxy included, since it is one of `managed_services`) on boot, but
+there is no preflight webui build and no vite alongside it — run this one
+directly only when you don't need the UI, e.g. iterating on the gateway API
+with an already-built `webui/dist`.

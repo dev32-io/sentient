@@ -184,6 +184,10 @@ reads/writes regardless of host ownership.
 ## Dev vs prod
 
 - `deploy/mac-prod/` — this folder, release build (`BUILD_PROFILE=release`).
-- Local dev runs the gateway from the checkout (`cd gateway && bun --hot
+- Local dev runs the gateway from the checkout (`cd gateway && bun --watch
   src/main.ts`) against the SAME addon images this folder's `build-only`
-  profile bakes. There is no separate dev compose file.
+  profile bakes. There is no separate dev compose file. Never `--hot`:
+  `gateway/src/main.ts` refuses it outright, because a second in-process
+  evaluation would arm a second addon supervisor inside the still-live
+  process, and the two would reap and respawn each other's `whisper-stt` /
+  `local-tts` children until nothing owns the ports.
