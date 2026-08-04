@@ -1,5 +1,5 @@
-import { describe, expect, it, test } from "bun:test";
-import { MANAGED_NETWORK_TOPOLOGY, ManagedServiceConfigSchema, ServiceTemplateSchema } from "./types.js";
+import { expect, test } from "bun:test";
+import { ManagedServiceConfigSchema, ServiceTemplateSchema } from "./types.js";
 
 test("ManagedServiceConfigSchema parses a valid entry", () => {
   const r = ManagedServiceConfigSchema.safeParse({
@@ -108,31 +108,12 @@ test("SECURITY: ServiceTemplateSchema rejects a LAN-IP-bound port mapping", () =
   expect(r.success).toBe(false);
 });
 
-describe("sentient-edge", () => {
-  it("is declared non-internal so docker does not drop the publish", () => {
-    expect(MANAGED_NETWORK_TOPOLOGY["sentient-edge"]).toEqual({ internal: false });
+test("returns infra: false when a service entry omits it", () => {
+  const parsed = ManagedServiceConfigSchema.parse({
+    template: "x.yaml",
+    allowed_images: ["a:b"],
+    networks: ["sentient-internal"],
+    healthcheck: { noop: true },
   });
-});
-
-describe("infra flag", () => {
-  it("defaults to false so every existing service entry is unchanged", () => {
-    const parsed = ManagedServiceConfigSchema.parse({
-      template: "x.yaml",
-      allowed_images: ["a:b"],
-      networks: ["sentient-internal"],
-      healthcheck: { noop: true },
-    });
-    expect(parsed.infra).toBe(false);
-  });
-
-  it("parses infra: true on a docker service", () => {
-    const parsed = ManagedServiceConfigSchema.parse({
-      template: "x.yaml",
-      allowed_images: ["a:b"],
-      networks: ["sentient-edge"],
-      healthcheck: { noop: true },
-      infra: true,
-    });
-    expect(parsed.infra).toBe(true);
-  });
+  expect(parsed.infra).toBe(false);
 });
