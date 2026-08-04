@@ -68,10 +68,19 @@ DOCKER_POLL_S=1                # docker-daemon wait poll interval
 PROBE_MAX_TIME_S=3             # readiness probe timeout (gateway/door)
 VITE_PROBE_MAX_TIME_S=2        # status probe timeout (vite, cheap/local)
 
-# Read one scalar out of the stack: block. Defaults mirror shared/config's
-# schema so a config predating this block still launches.
+# Read one scalar out of the stack: block, scoped to that block only. A
+# top-level YAML key starts at column 0; entering `stack:` arms the match,
+# hitting the NEXT column-0 key (any line not starting with space or `#`)
+# disarms it again. Without that scoping this would match the first "  key:"
+# anywhere in the file, so a same-named key added under some other top-level
+# block later would silently shadow this one with no error. Defaults mirror
+# shared/config's schema so a config predating this block still launches.
 cfg() { # cfg <key> <default>
-  awk -v k="  $1:" '$0 ~ "^"k {print $2; exit}' "$CONFIG" 2>/dev/null | tr -d '"' | grep -E '^[0-9]+$' || echo "$2"
+  awk -v k="  $1:" '
+    /^stack:/ { in_block=1; next }
+    /^[^ #]/  { in_block=0 }
+    in_block && $0 ~ "^"k { print $2; exit }
+  ' "$CONFIG" 2>/dev/null | tr -d '"' | grep -E '^[0-9]+$' || echo "$2"
 }
 READY_TIMEOUT_MS="$(cfg readiness_timeout_ms 60000)"
 READY_POLL_MS="$(cfg readiness_poll_ms 500)"
@@ -79,6 +88,26 @@ DOCKER_WAIT_S="$(cfg docker_wait_s 30)"
 
 die() { printf '\n  ✗ %s\n\n    fix:  %s\n\n' "$1" "$2" >&2; exit 1; }
 step() { printf '  · %s\n' "$1"; }
+
+# Kill a pid THIS SCRIPT recorded, and BLOCK until it is actually gone —
+# poll, then escalate to SIGKILL, same shape everywhere. Returns 1 if it
+# survived even SIGKILL. Shared by preflight_port's own-process reclaim and
+# cmd_down: a caller that removes its pid-file ownership record before this
+# returns 0 is how a still-live pid gets reported as "a process we did not
+# start" by the very next preflight_port call — the record is the only proof
+# of ownership, and dropping it early throws that proof away while the
+# process it names might still be running.
+kill_and_wait() { # kill_and_wait <pid>
+  local pid="$1"
+  kill "$pid" 2>/dev/null || true
+  for _ in $(seq 1 "$GATEWAY_STOP_MAX_ATTEMPTS"); do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep "$GATEWAY_STOP_POLL_S"
+  done
+  kill -9 "$pid" 2>/dev/null || true
+  sleep "$GATEWAY_STOP_POLL_S"
+  ! kill -0 "$pid" 2>/dev/null
+}
 
 # ── preflight ───────────────────────────────────────────────────────────────
 
@@ -134,12 +163,8 @@ preflight_port() { # preflight_port <port> <label> <pid_file|"">
     local ours; ours="$(cat "$pid_file")"
     if printf '%s\n' "$pids" | grep -qx "$ours"; then
       step "stopping our previous $label (pid $ours) on $port"
-      kill "$ours" 2>/dev/null || true
-      for _ in $(seq 1 "$GATEWAY_STOP_MAX_ATTEMPTS"); do
-        kill -0 "$ours" 2>/dev/null || return 0
-        sleep "$GATEWAY_STOP_POLL_S"
-      done
-      kill -9 "$ours" 2>/dev/null || true
+      kill_and_wait "$ours" || die "our previous $label (pid $ours) would not stop on $port" \
+          "kill -9 $ours    # then re-run"
       return 0
     fi
   fi
@@ -236,12 +261,24 @@ cmd_down() {
   # vite running and that other terminal's script hanging forever, never
   # reaching its own EXIT trap. Stopping both is what makes `down` the full
   # stop the comment in cmd_up promises, not just Ctrl-C's subset.
+  #
+  # The pid file is dropped ONLY after kill_and_wait confirms the process is
+  # actually gone — same reasoning native-driver.ts's own reapOrphans applies
+  # to native addons (keep the record if the pid survives, drop it once it's
+  # confirmed dead). Removing it earlier is how the immediately-following
+  # `bun run dev` finds the port still held with no record to explain it, and
+  # reports the gateway this command just stopped as "a process we did not
+  # start".
   for entry in "gateway:$GATEWAY_PID_FILE" "vite:$VITE_PID_FILE"; do
     local label="${entry%%:*}" f="${entry#*:}"
     [ -f "$f" ] || continue
     local pid; pid="$(cat "$f")"
-    kill "$pid" 2>/dev/null && step "$label stopped (pid $pid)" || true
-    rm -f "$f"
+    if kill_and_wait "$pid"; then
+      step "$label stopped (pid $pid)"
+      rm -f "$f"
+    else
+      step "$label (pid $pid) would not stop — pid file kept so the next preflight can retry"
+    fi
   done
   # Native addons are NOT reaped by the gateway's shutdown hook, so without this
   # they outlive it holding 8769/8771 and the next launch pays the port-settle
@@ -249,25 +286,67 @@ cmd_down() {
   for svc in "${NATIVE_ADDON_SERVICES[@]}"; do
     local f="$RUN_DIR/$svc.pid"
     [ -f "$f" ] || continue
-    kill "$(cat "$f")" 2>/dev/null && step "$svc stopped" || true
-    rm -f "$f"
+    if kill_and_wait "$(cat "$f")"; then
+      step "$svc stopped"
+      rm -f "$f"
+    else
+      step "$svc would not stop — pid file kept so the next preflight can retry"
+    fi
   done
-  docker ps -q --filter "$SENTIENT_MANAGED_FILTER" | xargs -r docker stop >/dev/null
-  step "docker addons stopped"
+  # Docker is best-effort here, not a hard requirement like cmd_up's preflight:
+  # the gateway/vite/native cleanup above already ran, and someone cleaning up
+  # a broken stack is exactly who is likely to hit a dead daemon. Abort under
+  # `set -e` would report a raw docker error and skip nothing that mattered.
+  if docker info >/dev/null 2>&1; then
+    docker ps -q --filter "$SENTIENT_MANAGED_FILTER" | xargs -r docker stop >/dev/null
+    step "docker addons stopped"
+  else
+    step "docker unreachable — could not stop docker addons (they may still be running)"
+  fi
   printf '\n'
 }
 
 cmd_status() {
   # Probes independently rather than reading the orchestrator's status endpoint:
   # status is most wanted when the gateway is DOWN, which is exactly when that
-  # endpoint cannot answer.
+  # endpoint cannot answer. Every check below is a real if/else, not
+  # `A && B || C` — that shape runs C too when B fails (shellcheck SC2015),
+  # which for `step` (a `printf`) is unlikely to fail but would otherwise let
+  # this print a service as both ready and DOWN in the same breath.
   printf '\n  sentient — stack status\n\n'
-  docker info >/dev/null 2>&1 && step "docker      up" || step "docker      DOWN"
-  probe "$DIRECT_URL/api/v1/health" && step "gateway     ready   $DIRECT_URL" || step "gateway     DOWN"
-  probe "$CANONICAL_URL" && step "door        ready   $CANONICAL_URL" || step "door        DOWN"
-  curl -sf -o /dev/null --max-time "$VITE_PROBE_MAX_TIME_S" "$VITE_URL" && step "vite        ready   $VITE_URL" || step "vite        DOWN"
+
+  local docker_up=1
+  if docker info >/dev/null 2>&1; then
+    docker_up=0
+    step "docker      up"
+  else
+    step "docker      DOWN"
+  fi
+
+  if probe "$DIRECT_URL/api/v1/health"; then
+    step "gateway     ready   $DIRECT_URL"
+  else
+    step "gateway     DOWN"
+  fi
+
+  if probe "$CANONICAL_URL"; then
+    step "door        ready   $CANONICAL_URL"
+  else
+    step "door        DOWN"
+  fi
+
+  if curl -sf -o /dev/null --max-time "$VITE_PROBE_MAX_TIME_S" "$VITE_URL"; then
+    step "vite        ready   $VITE_URL"
+  else
+    step "vite        DOWN"
+  fi
+
   printf '\n'
-  docker ps --filter "$SENTIENT_MANAGED_FILTER" --format '    {{.Names}}  {{.Status}}'
+  # Guarded the same way as the daemon check above: with docker unreachable
+  # there is nothing valid to list, and this must report that, not crash.
+  if [ "$docker_up" -eq 0 ]; then
+    docker ps --filter "$SENTIENT_MANAGED_FILTER" --format '    {{.Names}}  {{.Status}}'
+  fi
   printf '\n'
 }
 
