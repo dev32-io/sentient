@@ -84,6 +84,12 @@ export const DockerServiceConfigSchema = z.object({
   allowed_images: z.array(z.string().min(1)).nonempty(),
   networks: z.array(z.string().min(1)).nonempty(),
   secrets: z.record(z.string(), z.string()).optional().default({}),
+  /** Grants this service the §2.3 public-port exception. Default false, so the
+   *  loopback rule holds for every entry that does not name it explicitly.
+   *  Separate from `infra`: one is a lifecycle class, this is an exposure grant,
+   *  and coupling them would mean any future infra service silently gained the
+   *  right to bind 0.0.0.0. */
+  public_ports: z.boolean().optional().default(false),
   ...CommonServiceFields,
 });
 export type DockerServiceConfig = z.infer<typeof DockerServiceConfigSchema>;
@@ -117,10 +123,36 @@ export type ManagedServiceConfig = z.infer<typeof ManagedServiceConfigSchema>;
 export const LOOPBACK_PORT_RE = /^127\.0\.0\.1:\d{1,5}:\d{1,5}$/;
 export const LOOPBACK_PORT_REASON = "ports must bind 127.0.0.1 explicitly (127.0.0.1:host:container)";
 
-const LoopbackPortSchema = z.string().regex(LOOPBACK_PORT_RE, LOOPBACK_PORT_REASON);
+/** The ONE exception to the loopback rule, and it is deliberately not general.
+ *  `0.0.0.0:<80|443>:<container>` only, and only for a service whose POLICY
+ *  entry sets `public_ports: true` — the template alone can never grant it.
+ *
+ *  Two locks, because either alone is one edit away from opening every addon to
+ *  the LAN: the host port is pinned to the two ports a web entrance actually
+ *  needs, and the grant lives in operator config rather than in the template a
+ *  service ships with. */
+export const PUBLIC_PORT_RE = /^0\.0\.0\.0:(80|443):\d{1,5}$/;
+export const PUBLIC_PORT_REASON =
+  "a public publish must be 0.0.0.0:80 or 0.0.0.0:443 AND the service's config must set public_ports: true";
 
-/** Parsed YAML template body. `ports` are loopback-only (see above). Any volume
- *  must be bind-mountable from a path the gateway controls. */
+/** Single source of truth for "may this template publish this mapping". Read by
+ *  all three enforcement layers (schema, template-loader, docker-driver) so they
+ *  cannot drift — the previous duplication of LOOPBACK_PORT_RE across the three
+ *  is the pattern this replaces. */
+export function isAllowedPortMapping(entry: string, allowPublic: boolean): boolean {
+  if (LOOPBACK_PORT_RE.test(entry)) return true;
+  return allowPublic && PUBLIC_PORT_RE.test(entry);
+}
+
+/** Schema-level layer. It cannot see policy, so it admits the SHAPE of both and
+ *  leaves the grant check to the loader and driver, which do see policy. */
+const PortMappingSchema = z
+  .string()
+  .refine((v) => LOOPBACK_PORT_RE.test(v) || PUBLIC_PORT_RE.test(v), `${LOOPBACK_PORT_REASON}; ${PUBLIC_PORT_REASON}`);
+
+/** Parsed YAML template body. `ports` are loopback-only by default, with the one
+ *  narrow public exception above (see PUBLIC_PORT_RE). Any volume must be
+ *  bind-mountable from a path the gateway controls. */
 export const ServiceTemplateSchema = z.object({
   image: z.string().min(1),
   container_name: z.string().min(1),
@@ -132,7 +164,7 @@ export const ServiceTemplateSchema = z.object({
   mem_limit_bytes: z.number().int().positive().optional(),
   cpus: z.number().positive().optional(),
   group_add: z.array(z.string()).optional().default([]),
-  ports: z.array(LoopbackPortSchema).optional().default([]),
+  ports: z.array(PortMappingSchema).optional().default([]),
 });
 export type ServiceTemplate = z.infer<typeof ServiceTemplateSchema>;
 

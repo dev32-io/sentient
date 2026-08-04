@@ -1,7 +1,13 @@
 import type { Result } from "@sentient/protocol";
 import { parse as parseYaml } from "yaml";
 import { getLog } from "../logging/logger.js";
-import { LOOPBACK_PORT_RE, LOOPBACK_PORT_REASON, type ServiceTemplate, ServiceTemplateSchema } from "./types.js";
+import {
+  LOOPBACK_PORT_REASON,
+  PUBLIC_PORT_REASON,
+  type ServiceTemplate,
+  ServiceTemplateSchema,
+  isAllowedPortMapping,
+} from "./types.js";
 
 const log = getLog(["sentient", "system-orch", "template-loader"]);
 
@@ -29,6 +35,10 @@ export interface LoadTemplateInput {
    *  resolve placeholders that aren't secret-bound. Resolved AFTER secrets;
    *  does not produce missing-secret errors. */
   hostEnv?: Record<string, string>;
+  /** Grants the §2.3 public-port exception for THIS service. Comes from the
+   *  service's policy entry (config.yaml#managed_services.<svc>.public_ports),
+   *  never from the template body — a template cannot grant itself LAN exposure. */
+  allowPublicPorts?: boolean;
 }
 
 const PLACEHOLDER_RE = /\$\{([A-Z][A-Z0-9_]*)\}/g;
@@ -67,8 +77,8 @@ export async function loadServiceTemplate(input: LoadTemplateInput): Promise<Res
   // Reject non-loopback port publishing BEFORE schema parse so the error names
   // the security rule rather than surfacing as a generic zod message. The
   // schema enforces the same shape (defence in depth) — both read
-  // LOOPBACK_PORT_RE so the two layers cannot drift.
-  const portPolicy = enforceLoopbackPorts(parsed);
+  // isAllowedPortMapping so the two layers cannot drift.
+  const portPolicy = enforcePortPolicy(parsed, input.allowPublicPorts === true);
   if (!portPolicy.ok) return portPolicy;
 
   const result = ServiceTemplateSchema.safeParse(parsed);
@@ -80,20 +90,23 @@ export async function loadServiceTemplate(input: LoadTemplateInput): Promise<Res
   return { ok: true, value: result.data };
 }
 
-/** Every published port must bind loopback. A bare `"8086:8086"` publishes on
- *  0.0.0.0 (docker's default), which would put the addon on the LAN. */
-function enforceLoopbackPorts(parsed: unknown): Result<undefined, TemplateError> {
+/** Every published port must bind loopback, unless this service's policy grants
+ *  the narrow public exception (types.ts#isAllowedPortMapping). A bare
+ *  `"8086:8086"` publishes on 0.0.0.0 (docker's default), which would put the
+ *  addon on the LAN. */
+function enforcePortPolicy(parsed: unknown, allowPublic: boolean): Result<undefined, TemplateError> {
   if (!parsed || typeof parsed !== "object") return { ok: true, value: undefined };
   const ports = (parsed as Record<string, unknown>).ports;
   if (ports === undefined) return { ok: true, value: undefined };
+  const rule = allowPublic ? `${LOOPBACK_PORT_REASON}; ${PUBLIC_PORT_REASON}` : LOOPBACK_PORT_REASON;
   if (!Array.isArray(ports)) {
-    return { ok: false, error: { kind: "policy-violation", reason: `ports must be a list; ${LOOPBACK_PORT_REASON}` } };
+    return { ok: false, error: { kind: "policy-violation", reason: `ports must be a list; ${rule}` } };
   }
   for (const entry of ports) {
-    if (typeof entry === "string" && LOOPBACK_PORT_RE.test(entry)) continue;
+    if (typeof entry === "string" && isAllowedPortMapping(entry, allowPublic)) continue;
     const preview = String(entry).slice(0, PORT_PREVIEW_MAX);
-    log.warn("template.port-policy-violation", { port: preview, reason: LOOPBACK_PORT_REASON });
-    return { ok: false, error: { kind: "policy-violation", reason: `${LOOPBACK_PORT_REASON}; got ${preview}` } };
+    log.warn("template.port-policy-violation", { port: preview, allowPublic, reason: rule });
+    return { ok: false, error: { kind: "policy-violation", reason: `${rule}; got ${preview}` } };
   }
   return { ok: true, value: undefined };
 }

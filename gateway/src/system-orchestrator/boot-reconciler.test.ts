@@ -22,6 +22,7 @@ const ms = (name: string): ManagedService => ({
     depends_on: [],
     optional: false,
     infra: false,
+    public_ports: false,
   },
   template: {
     image: "x",

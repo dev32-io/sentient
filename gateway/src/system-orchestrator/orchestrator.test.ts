@@ -17,6 +17,7 @@ function svc(name: string, deps: string[] = [], optional = false): ManagedServic
       depends_on: deps,
       optional,
       infra: false,
+      public_ports: false,
     },
     template: {
       image: "x",

@@ -128,6 +128,8 @@ async function loadOneTemplate(
     yamlBody,
     secretBindings: cfg.secrets,
     secrets: input.secrets,
+    // The grant lives in POLICY and is read here, where policy and template meet.
+    allowPublicPorts: cfg.public_ports,
     ...(input.hostEnv ? { hostEnv: input.hostEnv } : {}),
   });
   if (!tplResult.ok) {

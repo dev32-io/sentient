@@ -4,12 +4,14 @@ import { getLog } from "../logging/logger.js";
 import {
   type DockerManagedService,
   type DriverError,
-  LOOPBACK_PORT_RE,
   LOOPBACK_PORT_REASON,
   type ManagedNetworks,
   type ManagedProcessInfo,
   type ManagedService,
+  PUBLIC_PORT_RE,
+  PUBLIC_PORT_REASON,
   type ServiceDriver,
+  isAllowedPortMapping,
   isDockerService,
 } from "./types.js";
 
@@ -21,6 +23,10 @@ const LABEL_SERVICE = "sentient.service";
 /** The only host address an addon may be published on. Docker treats an empty
  *  `HostIp` as 0.0.0.0, so this is written explicitly into every binding. */
 const LOOPBACK_HOST_IP = "127.0.0.1";
+/** Written explicitly for a granted public publish. Only reachable through
+ *  isAllowedPortMapping, which pins the host port to 80/443 AND requires the
+ *  service's policy to set public_ports. */
+const PUBLIC_HOST_IP = "0.0.0.0";
 /** Docker keys ExposedPorts/PortBindings by `<port>/<proto>`; addons are TCP. */
 const PORT_PROTO = "tcp";
 /** Driver for any network the gateway auto-creates. `bridge` is what the compose
@@ -277,19 +283,25 @@ interface PortPublishing {
 
 function buildPortPublishing(ms: DockerManagedService): Result<PortPublishing, DriverError> {
   const out: PortPublishing = { exposed: {}, bindings: {} };
+  const allowPublic = ms.config.public_ports;
   for (const entry of ms.template.ports) {
-    if (!LOOPBACK_PORT_RE.test(entry)) {
-      const reason = `${LOOPBACK_PORT_REASON}; got ${entry}`;
-      log.warn("driver.port-policy-violation", { service: ms.name, reason });
+    // Third and last enforcement layer. Re-tested here rather than trusted from
+    // the loader because this is the function that actually writes HostIp, and a
+    // wrong HostIp is the whole LAN.
+    if (!isAllowedPortMapping(entry, allowPublic)) {
+      const rule = allowPublic ? `${LOOPBACK_PORT_REASON}; ${PUBLIC_PORT_REASON}` : LOOPBACK_PORT_REASON;
+      const reason = `${rule}; got ${entry}`;
+      log.warn("driver.port-policy-violation", { service: ms.name, allowPublic, reason });
       return { ok: false, error: { kind: "policy-violation", reason } };
     }
     const [, hostPort, containerPort] = entry.split(":");
     const key = `${containerPort}/${PORT_PROTO}`;
+    const hostIp = PUBLIC_PORT_RE.test(entry) ? PUBLIC_HOST_IP : LOOPBACK_HOST_IP;
     out.exposed[key] = {};
-    out.bindings[key] = [{ HostIp: LOOPBACK_HOST_IP, HostPort: hostPort ?? "" }];
+    out.bindings[key] = [{ HostIp: hostIp, HostPort: hostPort ?? "" }];
   }
   if (ms.template.ports.length > 0) {
-    log.info("driver.ports-published", { service: ms.name, ports: ms.template.ports });
+    log.info("driver.ports-published", { service: ms.name, ports: ms.template.ports, public: allowPublic });
   }
   return { ok: true, value: out };
 }

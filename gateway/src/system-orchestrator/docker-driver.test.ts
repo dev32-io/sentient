@@ -19,6 +19,7 @@ const ms: DockerManagedService = {
     depends_on: [],
     optional: true,
     infra: false,
+    public_ports: false,
   },
   template: {
     image: "ghcr.io/homeassistant-ai/ha-mcp:stable",
@@ -371,6 +372,41 @@ test("CONTRACT: an unreachable docker daemon yields an empty list, never a rejec
   const drv = createDockerDriver({ docker: stub, networks: NETWORKS });
 
   expect(await drv.listManaged()).toEqual([]);
+});
+
+// SECURITY: the §2.3 public-port exception. Granted per-service in POLICY
+// (config.yaml#managed_services.<svc>.public_ports), never in the template —
+// this is the last of the three enforcement layers, the one that actually
+// writes HostIp onto the docker socket.
+test("SECURITY: recreate writes HostIp 0.0.0.0 for a granted public port", async () => {
+  const granted: DockerManagedService = {
+    ...ms,
+    config: { ...ms.config, public_ports: true, networks: ["sentient-external"] },
+    template: { ...ms.template, networks: ["sentient-external"], ports: ["0.0.0.0:443:8443"] },
+  };
+  const { stub, calls } = makeStub();
+  const drv = createDockerDriver({ docker: stub, networks: NETWORKS });
+  const r = await drv.recreate(granted);
+  expect(r.ok).toBe(true);
+  const spec = calls.create[0] as {
+    HostConfig?: { PortBindings?: Record<string, Array<{ HostIp?: string; HostPort?: string }>> };
+  };
+  expect(spec.HostConfig?.PortBindings?.["8443/tcp"]).toEqual([{ HostIp: "0.0.0.0", HostPort: "443" }]);
+});
+
+test("SECURITY: recreate refuses a public port when the service's policy does not grant it", async () => {
+  const notGranted: DockerManagedService = {
+    ...ms,
+    config: { ...ms.config, public_ports: false, networks: ["sentient-external"] },
+    template: { ...ms.template, networks: ["sentient-external"], ports: ["0.0.0.0:443:8443"] },
+  };
+  const { stub, calls } = makeStub();
+  const drv = createDockerDriver({ docker: stub, networks: NETWORKS });
+  const r = await drv.recreate(notGranted);
+  expect(r.ok).toBe(false);
+  if (r.ok) return;
+  expect(r.error.kind).toBe("policy-violation");
+  expect(calls.create.length).toBe(0);
 });
 
 test("recreate tolerates 404 from remove (idempotent recreate)", async () => {

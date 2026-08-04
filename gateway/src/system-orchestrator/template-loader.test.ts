@@ -145,3 +145,60 @@ test("redacts substituted secret values from schema-error reason", async () => {
   if (r.error.kind !== "schema-error") return;
   expect(r.error.reason.includes(SECRET)).toBe(false);
 });
+
+// SECURITY: the public-port exception (§2.3) is the one narrow hole in the
+// loopback rule. It must stay fail-closed on its own — no policy grant means
+// no wildcard publish, full stop.
+const noSecrets: SecretAccessor = { resolve: () => null };
+
+function templateWithPorts(ports: string[]): string {
+  return [
+    "image: nginx:1.30-alpine",
+    "container_name: c",
+    "networks: [sentient-edge]",
+    `ports: [${ports.map((p) => `"${p}"`).join(", ")}]`,
+  ].join("\n");
+}
+
+test("SECURITY: rejects a 0.0.0.0 publish when public_ports is not granted", async () => {
+  const r = await loadServiceTemplate({
+    yamlBody: templateWithPorts(["0.0.0.0:443:8443"]),
+    secretBindings: {},
+    secrets: noSecrets,
+  });
+  expect(r.ok).toBe(false);
+  if (r.ok) return;
+  expect(r.error.kind).toBe("policy-violation");
+});
+
+test("accepts 0.0.0.0:443 and 0.0.0.0:80 when public_ports is granted", async () => {
+  const r = await loadServiceTemplate({
+    yamlBody: templateWithPorts(["0.0.0.0:443:8443", "0.0.0.0:80:8080"]),
+    secretBindings: {},
+    secrets: noSecrets,
+    allowPublicPorts: true,
+  });
+  expect(r.ok).toBe(true);
+});
+
+test("SECURITY: rejects a public port other than 80 or 443 even when public_ports is granted", async () => {
+  const r = await loadServiceTemplate({
+    yamlBody: templateWithPorts(["0.0.0.0:8888:8888"]),
+    secretBindings: {},
+    secrets: noSecrets,
+    allowPublicPorts: true,
+  });
+  expect(r.ok).toBe(false);
+  if (r.ok) return;
+  expect(r.error.kind).toBe("policy-violation");
+});
+
+test("still accepts loopback publishes when public_ports is granted", async () => {
+  const r = await loadServiceTemplate({
+    yamlBody: templateWithPorts(["127.0.0.1:8088:8088"]),
+    secretBindings: {},
+    secrets: noSecrets,
+    allowPublicPorts: true,
+  });
+  expect(r.ok).toBe(true);
+});
