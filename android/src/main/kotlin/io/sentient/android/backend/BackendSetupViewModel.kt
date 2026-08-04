@@ -25,7 +25,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-private const val DEFAULT_PORT = 8888
+// The gateway is no longer LAN-reachable on 8888 — inbound-proxy owns 443 and
+// proxies to it over host loopback. A device paired before this change keeps
+// its saved port and must be re-pointed from Settings; that is deliberate,
+// since guessing at a working port for someone else's install is worse.
+private const val DEFAULT_PORT = 443
 
 data class BackendSetupUiState(
     val host: String = "",

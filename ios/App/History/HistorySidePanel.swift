@@ -203,7 +203,7 @@ private let previewRows = makePreviewRows()
 private struct PanelPreviewHost: View {
     // Preview uses a stub component (never connects — seeding happens in onAppear).
     @StateObject private var model = HistoryViewModel(
-        component: createUserSession(gatewayWsUrl: "ws://localhost:8888/api/v1/ws",
+        component: createUserSession(gatewayWsUrl: "ws://localhost/api/v1/ws",
                                      allowSelfSignedDevHost: true, capabilities: [],
                                      devFaultsEnabled: true, onLoggedOut: {}).component
     )

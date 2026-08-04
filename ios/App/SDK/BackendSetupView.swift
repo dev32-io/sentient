@@ -90,7 +90,7 @@ struct BackendSetupView: View {
 #Preview("Pre-filled") {
     BackendSetupView(
         model: BackendSetupViewModel(
-            existing: BackendConfig(host: "192.168.1.42", port: 8888, security: .tlsTrustSelfSigned),
+            existing: BackendConfig(host: "192.168.1.42", port: 443, security: .tlsTrustSelfSigned),
             reconfigure: { _ in }
         ),
         onSaved: {}

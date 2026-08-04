@@ -6,18 +6,18 @@ import kotlin.test.assertTrue
 
 class BackendConfigTest {
     @Test fun `wss path contract for valid-cert`() {
-        val c = BackendConfig("host.example", 8888, ConnectionSecurity.TLS_VALID)
-        assertEquals("wss://host.example:8888/api/v1/ws", c.toGatewayWsUrl())
+        val c = BackendConfig("host.example", 443, ConnectionSecurity.TLS_VALID)
+        assertEquals("wss://host.example:443/api/v1/ws", c.toGatewayWsUrl())
         assertEquals(false, c.allowSelfSigned())
     }
     @Test fun `trust-self-signed maps to allowSelfSigned true on wss`() {
-        val c = BackendConfig("192.168.0.5", 8888, ConnectionSecurity.TLS_TRUST_SELF_SIGNED)
-        assertEquals("wss://192.168.0.5:8888/api/v1/ws", c.toGatewayWsUrl())
+        val c = BackendConfig("192.168.0.5", 443, ConnectionSecurity.TLS_TRUST_SELF_SIGNED)
+        assertEquals("wss://192.168.0.5:443/api/v1/ws", c.toGatewayWsUrl())
         assertEquals(true, c.allowSelfSigned())
     }
     @Test fun `plain ws uses ws scheme and does not trust self-signed`() {
-        val c = BackendConfig("10.0.0.2", 8888, ConnectionSecurity.PLAIN_WS)
-        assertEquals("ws://10.0.0.2:8888/api/v1/ws", c.toGatewayWsUrl())
+        val c = BackendConfig("10.0.0.2", 443, ConnectionSecurity.PLAIN_WS)
+        assertEquals("ws://10.0.0.2:443/api/v1/ws", c.toGatewayWsUrl())
         assertEquals(false, c.allowSelfSigned())
     }
     @Test fun `override wins over build-time default`() {
