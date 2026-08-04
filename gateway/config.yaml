@@ -4,13 +4,19 @@
 # ---------------------------------------------------------------------------
 # Schema version — bumped by deploy/setup.py migrations. Do not hand-edit.
 # ---------------------------------------------------------------------------
-schema_version: "0.1.3"
+schema_version: "0.1.4"
 
 # ---------------------------------------------------------------------------
 # Server
 # ---------------------------------------------------------------------------
 port: 8888
-host: 0.0.0.0
+# LOOPBACK ONLY. inbound-proxy (managed_services below) owns the LAN-facing
+# 443 and proxies here over the loopback interface; the gateway itself is not
+# reachable from another host. Setting this back to 0.0.0.0 puts the API on
+# every interface with no policy in front of it.
+# Note: https://localhost:8888 still works FROM THIS HOST — that is the
+# diagnostic door, not the one browser smoke uses.
+host: 127.0.0.1
 max_sessions: 100                        # Max concurrent WS connections (mobile + webui + cube, multi-user). Range 1–1000.
 auth_timeout_ms: 5000
 

@@ -2,7 +2,12 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { migrateOperatorConfigYaml, migrateOperatorConfigYamlSync } from "./operator-config-migrator.ts";
+import { parseDocument } from "yaml";
+import {
+  applySchema014Migration,
+  migrateOperatorConfigYaml,
+  migrateOperatorConfigYamlSync,
+} from "./operator-config-migrator.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -86,7 +91,7 @@ hermes:
 `;
 
 const ALREADY_MIGRATED_YAML = `\
-schema_version: "0.1.3"
+schema_version: "0.1.4"
 hermes:
   web_tools:
     provider: searxng
@@ -95,7 +100,7 @@ hermes:
 `;
 
 const NO_WEB_TOOLS_YAML = `\
-schema_version: "0.1.3"
+schema_version: "0.1.4"
 hermes:
   worker:
     container_name: sentient-hermes
@@ -288,7 +293,7 @@ describe("migrateOperatorConfigYamlSync — schema 0.1.0 → 0.1.1", () => {
   it("runs the whole chain in one pass, leaving schema_version at the head", () => {
     const p = writeTmp(dir, HOST_CONFIG_v010);
     migrateOperatorConfigYamlSync(p);
-    expect(readTmp(p)).toContain('schema_version: "0.1.3"');
+    expect(readTmp(p)).toContain('schema_version: "0.1.4"');
   });
 
   it("removes all dead session keys", () => {
@@ -383,7 +388,7 @@ describe("migrateOperatorConfigYamlSync — schema 0.1.0 → 0.1.1", () => {
 
   it("is a no-op when stt.language is already auto at the head version", () => {
     const yaml = `\
-schema_version: "0.1.3"
+schema_version: "0.1.4"
 stt:
   provider: local-stt
   language: auto
@@ -422,7 +427,7 @@ describe("migrateOperatorConfigYamlSync — schema 0.1.2 → 0.1.3", () => {
     const result = readTmp(p);
     expect(result).not.toContain("replay_journal_retention_ms");
     expect(result).toContain("retention_ms: 900000");
-    expect(result).toContain('schema_version: "0.1.3"');
+    expect(result).toContain('schema_version: "0.1.4"');
   });
 
   it("does NOT carry the old value across the rename", () => {
@@ -441,5 +446,39 @@ describe("migrateOperatorConfigYamlSync — schema 0.1.2 → 0.1.3", () => {
     const result = readTmp(p);
     expect(result).toContain("ws_idle_timeout_ms: 255000");
     expect(result).toContain("replay_journal_max_bytes: 16777216");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests — schema 0.1.3 → 0.1.4 (gateway binds loopback)
+// ---------------------------------------------------------------------------
+
+describe("0.1.3 -> 0.1.4: gateway binds loopback", () => {
+  it("rewrites host 0.0.0.0 to 127.0.0.1 and bumps the version", () => {
+    const doc = parseDocument(['schema_version: "0.1.3"', "port: 8888", "host: 0.0.0.0"].join("\n"));
+
+    const result = applySchema014Migration(doc);
+
+    expect(result).not.toBeNull();
+    expect(result?.hostPrev).toBe("0.0.0.0");
+    expect(doc.get("host")).toBe("127.0.0.1");
+    expect(doc.get("schema_version")).toBe("0.1.4");
+  });
+
+  it("leaves a deliberately-customised host alone but still bumps the version", () => {
+    const doc = parseDocument(['schema_version: "0.1.3"', "host: 192.168.0.5"].join("\n"));
+
+    const result = applySchema014Migration(doc);
+
+    expect(result?.hostRewritten).toBe(false);
+    expect(doc.get("host")).toBe("192.168.0.5");
+    expect(doc.get("schema_version")).toBe("0.1.4");
+  });
+
+  it("is a no-op on a config that is not at 0.1.3", () => {
+    const doc = parseDocument(['schema_version: "0.1.2"', "host: 0.0.0.0"].join("\n"));
+
+    expect(applySchema014Migration(doc)).toBeNull();
+    expect(doc.get("host")).toBe("0.0.0.0");
   });
 });

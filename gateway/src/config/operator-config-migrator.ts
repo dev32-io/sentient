@@ -52,6 +52,12 @@ const log = getLog(["sentient", "config", "migration", "operator-config"]);
 //     backfilled: both carry `.default()` in the schema, so an absent key boots
 //     (the `replay_journal_max_bytes` precedent).
 //
+//   0.1.3 → 0.1.4 (inbound-proxy — gateway binds loopback):
+//     SET:    host: "127.0.0.1"   (only when it was still the literal
+//             "0.0.0.0" — a host an operator customised deliberately is left
+//             untouched)
+//             schema_version: "0.1.4"
+//
 // Uses yaml's Document API to preserve comments and unrelated keys.
 // ---------------------------------------------------------------------------
 
@@ -298,6 +304,49 @@ function applySchema013Migration(doc: Document): Schema013MigrationResult | null
 }
 
 // ---------------------------------------------------------------------------
+// 0.1.3 → 0.1.4: the gateway binds loopback, inbound-proxy owns the LAN
+// ---------------------------------------------------------------------------
+
+const SCHEMA_014_VERSION = "0.1.4";
+const HOST_ALL_INTERFACES = "0.0.0.0";
+const HOST_LOOPBACK = "127.0.0.1";
+
+interface Schema014MigrationResult {
+  /** What `host` held before, so an operator who chose a value deliberately can
+   *  see it in the log rather than discovering it from a refused connection. */
+  hostPrev: string | null;
+  hostRewritten: boolean;
+}
+
+/** Moves the gateway off every interface and behind inbound-proxy.
+ *
+ *  This step exists because production reads a SEEDED operator config that the
+ *  installer never overwrites — changing the checked-in default alone would
+ *  leave every existing mini listening on 0.0.0.0 forever, with the new proxy
+ *  in front of a gateway that is still directly reachable beside it.
+ *
+ *  Only the literal 0.0.0.0 is rewritten. A host that says anything else was
+ *  set on purpose, and silently overriding a deliberate choice is worse than
+ *  leaving a warning in the log. */
+export function applySchema014Migration(doc: Document): Schema014MigrationResult | null {
+  const root = doc.contents;
+  if (!isMap(root)) return null;
+
+  const versionNode = root.get("schema_version", true);
+  const currentVersion = isScalar(versionNode) ? String(versionNode.value) : null;
+  if (currentVersion === SCHEMA_014_VERSION) return null; // already migrated
+  if (currentVersion !== SCHEMA_013_VERSION) return null;
+
+  const hostNode = root.get("host", true);
+  const hostPrev = isScalar(hostNode) ? String(hostNode.value) : null;
+  const hostRewritten = hostPrev === HOST_ALL_INTERFACES;
+  if (hostRewritten) root.set("host", HOST_LOOPBACK);
+
+  root.set("schema_version", SCHEMA_014_VERSION);
+  return { hostPrev, hostRewritten };
+}
+
+// ---------------------------------------------------------------------------
 // Public API — sync (used by loadStartupConfig) + async (tests, future use)
 // ---------------------------------------------------------------------------
 
@@ -306,6 +355,7 @@ function applyAllMigrations(doc: Document): boolean {
   const schema011Result = applySchema011Migration(doc);
   const schema012Result = applySchema012Migration(doc);
   const schema013Result = applySchema013Migration(doc);
+  const schema014Result = applySchema014Migration(doc);
 
   if (webToolsResult !== null) {
     log.info("migration:web-tools", {
@@ -341,7 +391,23 @@ function applyAllMigrations(doc: Document): boolean {
     });
   }
 
-  return webToolsResult !== null || schema011Result !== null || schema012Result !== null || schema013Result !== null;
+  if (schema014Result !== null) {
+    log.info("migration:0.1.4", {
+      hostPrev: schema014Result.hostPrev,
+      hostRewritten: schema014Result.hostRewritten,
+      reason: schema014Result.hostRewritten
+        ? "the gateway now binds loopback; inbound-proxy owns the LAN-facing 443"
+        : "host was customised — left as-is; set it to 127.0.0.1 manually to sit behind inbound-proxy",
+    });
+  }
+
+  return (
+    webToolsResult !== null ||
+    schema011Result !== null ||
+    schema012Result !== null ||
+    schema013Result !== null ||
+    schema014Result !== null
+  );
 }
 
 /**
