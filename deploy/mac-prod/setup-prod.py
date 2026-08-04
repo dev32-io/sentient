@@ -20,8 +20,13 @@ Invariants this script exists to hold:
     `pip install --no-index`.
   * THE OPERATOR'S config.yaml IS NEVER CLOBBERED. It is seeded once from the
     template and hand-edited thereafter.
-  * TLS VERIFICATION IS NEVER DISABLED. The health probe pins the gateway's own
-    certificate as its trust anchor.
+  * TLS VERIFICATION IS NEVER DISABLED. Two health probes gate a successful
+    install: one against the gateway binary on 8888, pinned to its own
+    self-signed certificate; one against the public edge on 443 through
+    inbound-proxy, pinned to whichever certificate that proxy is actually
+    configured to present. Both require CERT_REQUIRED against a pinned file on
+    every attempt — the 8888 probe alone proves only that the process started,
+    never that a user's browser could reach it.
 """
 
 from __future__ import annotations
@@ -44,6 +49,10 @@ from pathlib import Path, PurePosixPath
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 # Seed for a fresh host only — ensure_state_dirs never overwrites an existing one.
 TEMPLATE_CONFIG = "gateway/config.yaml"
+# Where TEMPLATE_CONFIG lands once seeded under the operator's state tree. Read
+# back (never written) to resolve inbound_proxy.cert_dir for the edge health
+# probe — see resolve_outward_cert().
+OPERATOR_CONFIG_RELATIVE = "gateway/config/config.yaml"
 PLIST_SOURCE = "deploy/mac-prod/io.sentient.gateway.plist"
 # scripts/build-gateway.sh writes `<tarball>.sha256` beside the tarball.
 CHECKSUM_SUFFIX = ".sha256"
@@ -77,6 +86,38 @@ HEALTH_INTERVAL_SECONDS = 2
 # Valid: 1..60 seconds.
 HEALTH_TIMEOUT_SECONDS = 5
 HTTP_OK = 200
+
+# --- edge (443) health gate tunables -----------------------------------------
+# A SEPARATE budget from the 8888 one above, not a shared one, because the two
+# probes do not face the same risk. `inbound-proxy` is a docker addon the
+# gateway's own orchestrator applies fire-and-forget from inside
+# createGatewayServices — before main.ts binds the port the 8888 probe polls
+# ("accept traffic — LAST, and deliberately so"). The head start that actually
+# matters, though, is against the moment the 8888 probe below reports healthy,
+# since that is when THIS probe starts: on a warm restart both happen in
+# milliseconds and the proxy gets little head start, but on a cold boot (the
+# gateway minting a certificate can eat most of HEALTH_ATTEMPTS *
+# HEALTH_INTERVAL_SECONDS) the proxy's own apply has been running the whole
+# time the gateway probe was still retrying. Past that head start, this budget
+# only has to cover container recreate plus the orchestrator's own bounded 30s
+# TCP-health ceiling for inbound-proxy (config.yaml#managed_services.
+# inbound-proxy.healthcheck), never a cold gateway boot — hence smaller than
+# HEALTH_ATTEMPTS. On a freshly-rebooted mini where Docker Desktop itself has
+# not started yet (a real, documented failure mode: docs/native-todo.md §3),
+# this budget legitimately runs out — that is correct, not a bug, because the
+# rollback target depends on the same proxy and `_roll_back` already turns
+# "both versions unhealthy" into a named manual-intervention message rather
+# than a silent symlink flip. Valid: 1..600 attempts.
+EDGE_HEALTH_ATTEMPTS = 30
+EDGE_HEALTH_INTERVAL_SECONDS = 2
+# Bare root, not an API path: the thing being proved is "the proxy serves the
+# webui on 443 at all," and the root is what a browser actually requests.
+DEFAULT_EDGE_URL = "https://localhost/"
+# The root may redirect to a login route; any 2xx or 3xx through the proxy
+# already proves nginx, the outward cert and the reverse-proxy hop all work.
+# Half-open range: [MIN, MAX_EXCLUSIVE).
+EDGE_SUCCESS_STATUS_MIN = 200
+EDGE_SUCCESS_STATUS_MAX_EXCLUSIVE = 400
 
 # --- release layout ----------------------------------------------------------
 # Root-owned, immutable code. Nothing executable lives under $HOME.
@@ -159,6 +200,18 @@ STATE_ROOT = ".sentient"
 # appeared there and the health gate failed every install of a perfectly
 # healthy release.
 CERT_RELATIVE = "gateway/certs/cert.pem"
+
+# --- outward (443) cert resolution -------------------------------------------
+# Mirrors gateway/src/bootstrap/phase-orchestrator.ts EXACTLY: the operator's
+# `inbound_proxy.cert_dir` wins when that DIRECTORY exists on disk (matching
+# `existsSync(configuredCertDir)` there — the cert.pem file inside it is not
+# checked at this stage, same as the TS side), else the fallback is the
+# gateway's own self-signed material at CERT_RELATIVE above. Installer and
+# gateway must never disagree about which cert is in play, or a correctly
+# configured mini could fail this gate on a cert the running proxy never used.
+INBOUND_PROXY_SECTION = "inbound_proxy:"
+CERT_DIR_KEY = "cert_dir"
+CERT_FILENAME = "cert.pem"
 STATE_DIRS = (
     "gateway/config",
     "gateway/logs",
@@ -267,7 +320,7 @@ def ensure_state_dirs(home: Path, template_config: Path, chown=None) -> None:
 
     # HARD RULE: the operator edits config.yaml by hand. Seed it once, never
     # clobber it. Reverting a hand-tuned production config is silent data loss.
-    config = root / "gateway/config/config.yaml"
+    config = root / OPERATOR_CONFIG_RELATIVE
     if config.exists():
         return
     if not template_config.is_file():
@@ -565,48 +618,146 @@ class RealLaunchd:
         )
 
 
-def build_tls_context(ca_bundle: Path) -> ssl.SSLContext:
-    """Trust context for the health probe, pinned to the gateway's own cert.
+def read_inbound_proxy_cert_dir(config_path: Path) -> Path | None:
+    """The operator's `inbound_proxy.cert_dir` from their seeded config.yaml.
+
+    Deliberately NOT a YAML parse: this installer runs the system `python3`,
+    outside every service's own vendored venv, so importing PyYAML here would
+    be a new deploy-time dependency of exactly the kind "NOTHING FETCHES AT
+    DEPLOY TIME" (see the module docstring) exists to forbid. `inbound_proxy`
+    is a flat, single-key block (see gateway/config.yaml) with no nested lists
+    or multiline scalars, so a scoped line scan reads this one value exactly
+    without parsing the rest of the document.
+
+    Returns None on a missing file, a missing section, an explicit `null`/`~`,
+    or any shape this scanner does not recognize. Every one of those means
+    "fall back to the gateway's own material" in resolve_outward_cert() below,
+    which is also the correct reading of an unset value.
+    """
+    try:
+        text = config_path.read_text()
+    except OSError:
+        return None
+
+    in_section = False
+    for raw_line in text.splitlines():
+        line = raw_line.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        if not raw_line[:1].isspace():
+            # A new top-level key. Re-evaluate whether we are still inside
+            # `inbound_proxy:` rather than trusting a stale flag from before.
+            in_section = line.strip() == INBOUND_PROXY_SECTION
+            continue
+        if not in_section:
+            continue
+        key, sep, value = line.strip().partition(":")
+        if not sep or key.strip() != CERT_DIR_KEY:
+            continue
+        value = value.strip().strip("'\"")
+        if not value or value in ("null", "~"):
+            return None
+        return Path(value).expanduser()
+    return None
+
+
+def resolve_outward_cert(home: Path, config_path: Path) -> tuple[Path, str, bool]:
+    """The certificate the edge probe pins, plus why — see module-level comment
+    above INBOUND_PROXY_SECTION for the fallback this mirrors.
+
+    Returns (cert_path, log_message, is_fallback). `is_fallback` is True only
+    when the operator explicitly configured a `cert_dir` that does not exist —
+    a real misconfiguration or timing issue worth a warning, not the ordinary
+    dev-default case of leaving it `null`, which is the expected path on any
+    host that has not been pointed at a real acme.sh certificate yet.
+    """
+    fallback = home / STATE_ROOT / CERT_RELATIVE
+    configured_dir = read_inbound_proxy_cert_dir(config_path)
+    if configured_dir is None:
+        return (
+            fallback,
+            f"inbound_proxy.cert_dir is unset — edge probe pinned to the gateway's own {fallback}",
+            False,
+        )
+    if not configured_dir.is_dir():
+        return (
+            fallback,
+            f"inbound_proxy.cert_dir={configured_dir} does not exist yet — edge probe "
+            f"falling back to the gateway's own {fallback}",
+            True,
+        )
+    resolved = configured_dir / CERT_FILENAME
+    return (resolved, f"edge probe pinned to configured inbound_proxy.cert_dir: {resolved}", False)
+
+
+def build_tls_context(ca_bundle: Path, check_hostname: bool = True) -> ssl.SSLContext:
+    """Trust context for a health probe, pinned to one specific certificate.
 
     The gateway mints a self-signed CA into `~/.sentient/gateway/certs/cert.pem`
-    on first boot, so that file — not the system trust store — is the anchor.
+    on first boot, so that file — not the system trust store — is the anchor
+    for the 8888 probe. The edge (443) probe pins a possibly different file
+    (see resolve_outward_cert()), but the same rule applies either way:
+    `verify_mode` is unconditionally `ssl.CERT_REQUIRED` against the pinned
+    `cafile`, never anything looser.
 
     There is deliberately no "skip verification" path. An installer is exactly
     the kind of script that gets copied to a target that is not loopback, and a
     `verify=False` written here would travel with it. A missing bundle means
     the install is broken anyway, so it fails closed with a named cause.
+
+    `check_hostname` defaults to True: the 8888 probe dials `127.0.0.1` against
+    a cert whose SAN carries exactly that IP, so the name check is meaningful
+    and must run. The edge probe passes False for a specific, narrow reason —
+    it deliberately dials `localhost` while the production cert on the mini
+    names `sentient.dev32.io`, the operator's real DNS name, not a loopback
+    alias. Disabling the name check there does NOT weaken verification: chain
+    verification against the pinned `cafile` still runs on every attempt
+    (`verify_mode` stays `CERT_REQUIRED` regardless of this flag), so trust in
+    the exact pinned certificate is still required — it is only the NAME check
+    that is inapplicable to a deliberate loopback-vs-DNS-name mismatch, never
+    the chain check. Do not "simplify" this to `CERT_NONE`: that would drop the
+    chain check too, and a health gate that accepts any certificate cannot tell
+    "the proxy came up" from "something else answered on 443."
     """
     if not ca_bundle.is_file():
         raise InstallError(
-            f"TLS trust anchor {ca_bundle} not found — cannot verify the gateway's "
-            "health endpoint. Point --ca-bundle at the gateway's cert.pem; verification "
-            "is never disabled."
+            f"TLS trust anchor {ca_bundle} not found — cannot verify the health "
+            f"endpoint at this address. Point the cert override at the right cert.pem; "
+            "verification is never disabled."
         )
     context = ssl.create_default_context(cafile=str(ca_bundle))
-    context.check_hostname = True
+    context.check_hostname = check_hostname
     context.verify_mode = ssl.CERT_REQUIRED
     return context
 
 
 class HealthProbe:
-    """Poll the gateway's health endpoint over verified TLS, with a bounded budget.
+    """Poll an HTTP(S) endpoint over verified TLS, with a bounded budget.
+
+    Shared by both health gates: the 8888 probe (gateway binary, exact-200
+    success) and the 443 edge probe (through inbound-proxy, 2xx/3xx success,
+    hostname check off, own retry budget) — see `is_success` and
+    `check_hostname` below. One retry/backoff/classification shape for both,
+    so a passing edge probe is held to the exact same TLS rigor as the
+    long-standing 8888 one, not a second, looser style next to it.
 
     Failure shapes are classified, because the right response differs:
 
     * a refused connection means "not up *yet*" and is retried;
     * an anchor that is not readable yet is also "not *yet*" — on a genuinely
-      fresh host `~/.sentient/gateway/certs/cert.pem` does not exist until the gateway
-      this installer just started mints it, so the FIRST probe of every fresh
-      install races that file into existence and MUST retry;
-    * a TLS trust failure *against a cert the gateway served* is permanent and
-      is reported immediately. Retrying it would hide it behind a timeout, and
-      the tempting fix for a timeout is to turn verification off.
+      fresh host the pinned cert.pem does not exist until whatever mints it
+      (the gateway, for either cert) has run, so the FIRST probe of every
+      fresh install races that file into existence and MUST retry;
+    * a TLS trust failure *against a cert the far end actually served* is
+      permanent and is reported immediately. Retrying it would hide it behind
+      a timeout, and the tempting fix for a timeout is to turn verification
+      off.
 
     Retrying a missing anchor never weakens the boundary: verification is still
     required on every attempt, and if the anchor never appears the budget runs
     out and `wait()` returns False naming it. The cost is that a genuinely
-    wrong `--ca-bundle` path is reported after the budget rather than instantly
-    — the price of not aborting every fresh install on a race.
+    wrong cert path is reported after the budget rather than instantly — the
+    price of not aborting every fresh install on a race.
     """
 
     def __init__(
@@ -617,6 +768,8 @@ class HealthProbe:
         attempts: int = HEALTH_ATTEMPTS,
         interval_seconds: float = HEALTH_INTERVAL_SECONDS,
         timeout_seconds: float = HEALTH_TIMEOUT_SECONDS,
+        check_hostname: bool = True,
+        is_success=lambda status: status == HTTP_OK,
     ):
         self._url = url
         self._ca_bundle = ca_bundle
@@ -624,6 +777,8 @@ class HealthProbe:
         self._attempts = attempts
         self._interval = interval_seconds
         self._timeout = timeout_seconds
+        self._check_hostname = check_hostname
+        self._is_success = is_success
         self.last_reason = "not probed"
 
     def _trust(self) -> tuple[ssl.SSLContext | None, str]:
@@ -635,7 +790,7 @@ class HealthProbe:
         rollback path with it — leaving an unverified release `current`.
         """
         try:
-            return (build_tls_context(self._ca_bundle), "")
+            return (build_tls_context(self._ca_bundle, check_hostname=self._check_hostname), "")
         except InstallError as e:
             return (None, str(e))
         except OSError as e:
@@ -651,12 +806,17 @@ class HealthProbe:
         try:
             with self._opener(self._url, timeout=self._timeout, context=context) as response:
                 status = getattr(response, "status", None)
-                if status == HTTP_OK:
-                    return (True, False, f"{self._url} returned {HTTP_OK}")
+                if status is not None and self._is_success(status):
+                    return (True, False, f"{self._url} returned {status}")
                 return (False, True, f"{self._url} returned HTTP {status}")
         except ssl.SSLError as e:
             return (False, False, f"TLS verification failed against {self._ca_bundle}: {e}")
         except urllib.error.HTTPError as e:
+            # A redirect that urlopen could not itself follow (loop, cross-
+            # scheme, etc.) surfaces here rather than as a plain response, so
+            # the edge probe's own success predicate must still get a look.
+            if self._is_success(e.code):
+                return (True, False, f"{self._url} returned {e.code}")
             return (False, True, f"{self._url} returned HTTP {e.code}")
         except urllib.error.URLError as e:
             # urlopen wraps the real cause; a TLS failure arrives here in
@@ -856,6 +1016,18 @@ def parse_args(argv):
                          help=f"health probes before giving up (default {HEALTH_ATTEMPTS})")
     install.add_argument("--health-interval", type=float, default=HEALTH_INTERVAL_SECONDS,
                          help=f"seconds between probes (default {HEALTH_INTERVAL_SECONDS})")
+    # The edge (443) probe proves the whole stack, not just the binary — see
+    # resolve_outward_cert() and the EDGE_* tunables for why its cert and its
+    # budget are resolved separately from the 8888 probe above.
+    install.add_argument("--outward-cert", type=Path, default=None,
+                         help="TLS anchor for the edge probe (default: inbound_proxy.cert_dir/cert.pem "
+                              "if that directory exists, else the same cert as --ca-bundle)")
+    install.add_argument("--edge-url", default=DEFAULT_EDGE_URL,
+                         help=f"edge probe target through inbound-proxy (default {DEFAULT_EDGE_URL})")
+    install.add_argument("--edge-attempts", type=positive_int, default=EDGE_HEALTH_ATTEMPTS,
+                         help=f"edge probes before giving up (default {EDGE_HEALTH_ATTEMPTS})")
+    install.add_argument("--edge-interval", type=float, default=EDGE_HEALTH_INTERVAL_SECONDS,
+                         help=f"seconds between edge probes (default {EDGE_HEALTH_INTERVAL_SECONDS})")
     install.add_argument("--keep", type=int, default=RELEASES_TO_KEEP,
                          help=f"past releases to retain (default {RELEASES_TO_KEEP})")
     install.add_argument("--operator", default=None,
@@ -879,6 +1051,18 @@ def run_install(args) -> None:
                       chown=lambda path: shutil.chown(path, user=operator))
     ok(f"{home / STATE_ROOT} ready")
 
+    # Resolved AFTER ensure_state_dirs, and not alongside ca_bundle above: on a
+    # genuinely fresh host the operator's config.yaml does not exist until the
+    # seed above just created it, and this must read the real, possibly
+    # hand-edited file rather than race that seed.
+    if args.outward_cert:
+        outward_cert = args.outward_cert
+    else:
+        outward_cert, cert_reason, cert_is_fallback = resolve_outward_cert(
+            home, home / STATE_ROOT / OPERATOR_CONFIG_RELATIVE
+        )
+        (warn if cert_is_fallback else info)(cert_reason)
+
     info("installing the launchd daemon")
     launchd = RealLaunchd(plist, operator=operator, daemon_dir=args.launchd_dir)
     launchd.install_plist()
@@ -889,6 +1073,20 @@ def run_install(args) -> None:
     probe = HealthProbe(args.health_url, ca_bundle,
                         attempts=args.health_attempts,
                         interval_seconds=args.health_interval)
+    # check_hostname=False: this dials `localhost`, but the pinned cert may be
+    # the mini's real acme.sh certificate for `sentient.dev32.io` — see
+    # build_tls_context()'s docstring for why the name check is inapplicable
+    # here while chain verification (verify_mode=CERT_REQUIRED) still runs
+    # unconditionally. is_success accepts 2xx/3xx: the root may redirect to a
+    # login route, and a redirect through nginx already proves the proxy, the
+    # cert and the reverse-proxy path all work.
+    edge_probe = HealthProbe(args.edge_url, outward_cert,
+                             attempts=args.edge_attempts,
+                             interval_seconds=args.edge_interval,
+                             check_hostname=False,
+                             is_success=lambda status: (
+                                 EDGE_SUCCESS_STATUS_MIN <= status < EDGE_SUCCESS_STATUS_MAX_EXCLUSIVE
+                             ))
 
     def prepare(staged: str) -> None:
         info(f"staging native services into {version}")
@@ -896,9 +1094,25 @@ def run_install(args) -> None:
         ok("whisper-stt + local-tts venvs built from vendored wheels")
 
     def health() -> bool:
-        healthy = probe.wait()
-        (ok if healthy else fail)(probe.last_reason)
-        return healthy
+        """Gateway (8888) first, edge (443) second — both must pass.
+
+        The two failures are named distinctly and the edge probe is skipped
+        entirely when the gateway itself is not healthy: proxying through a
+        dead upstream cannot succeed, and there is no reason to burn the edge
+        probe's own budget finding that out a second way.
+        """
+        gateway_healthy = probe.wait()
+        (ok if gateway_healthy else fail)(f"gateway (8888): {probe.last_reason}")
+        if not gateway_healthy:
+            fail("gateway not healthy — the binary itself did not come up; edge (443) was not probed")
+            return False
+
+        edge_healthy = edge_probe.wait()
+        (ok if edge_healthy else fail)(f"edge (443): {edge_probe.last_reason}")
+        if not edge_healthy:
+            fail("gateway healthy, edge not — nginx config, the web bundle, or the outward "
+                 "cert is broken even though the gateway binary is fine")
+        return edge_healthy
 
     installer = Installer(
         fs=fs,
