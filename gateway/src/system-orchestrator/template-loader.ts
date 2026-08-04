@@ -76,8 +76,10 @@ export async function loadServiceTemplate(input: LoadTemplateInput): Promise<Res
 
   // Reject non-loopback port publishing BEFORE schema parse so the error names
   // the security rule rather than surfacing as a generic zod message. The
-  // schema enforces the same shape (defence in depth) — both read
-  // isAllowedPortMapping so the two layers cannot drift.
+  // schema enforces the same shape as defence in depth (it calls
+  // isAllowedPortMapping(v, true) — shape only, since it cannot see policy).
+  // Both this call and the schema's route through that one predicate, so the
+  // two layers cannot drift.
   const portPolicy = enforcePortPolicy(parsed, input.allowPublicPorts === true);
   if (!portPolicy.ok) return portPolicy;
 

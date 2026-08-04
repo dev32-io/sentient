@@ -145,10 +145,11 @@ export function isAllowedPortMapping(entry: string, allowPublic: boolean): boole
 }
 
 /** Schema-level layer. It cannot see policy, so it admits the SHAPE of both and
- *  leaves the grant check to the loader and driver, which do see policy. */
+ *  leaves the grant check to the loader and driver, which do see policy — hence
+ *  `allowPublic: true` here: this layer validates shape only, never a grant. */
 const PortMappingSchema = z
   .string()
-  .refine((v) => LOOPBACK_PORT_RE.test(v) || PUBLIC_PORT_RE.test(v), `${LOOPBACK_PORT_REASON}; ${PUBLIC_PORT_REASON}`);
+  .refine((v) => isAllowedPortMapping(v, true), `${LOOPBACK_PORT_REASON}; ${PUBLIC_PORT_REASON}`);
 
 /** Parsed YAML template body. `ports` are loopback-only by default, with the one
  *  narrow public exception above (see PUBLIC_PORT_RE). Any volume must be

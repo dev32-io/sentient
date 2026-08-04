@@ -171,7 +171,7 @@ test("SECURITY: rejects a 0.0.0.0 publish when public_ports is not granted", asy
   expect(r.error.kind).toBe("policy-violation");
 });
 
-test("accepts 0.0.0.0:443 and 0.0.0.0:80 when public_ports is granted", async () => {
+test("SECURITY: accepts 0.0.0.0:443 and 0.0.0.0:80 when public_ports is granted", async () => {
   const r = await loadServiceTemplate({
     yamlBody: templateWithPorts(["0.0.0.0:443:8443", "0.0.0.0:80:8080"]),
     secretBindings: {},
@@ -193,7 +193,7 @@ test("SECURITY: rejects a public port other than 80 or 443 even when public_port
   expect(r.error.kind).toBe("policy-violation");
 });
 
-test("still accepts loopback publishes when public_ports is granted", async () => {
+test("SECURITY: still accepts loopback publishes when public_ports is granted", async () => {
   const r = await loadServiceTemplate({
     yamlBody: templateWithPorts(["127.0.0.1:8088:8088"]),
     secretBindings: {},
