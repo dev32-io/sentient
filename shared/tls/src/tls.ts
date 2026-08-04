@@ -9,7 +9,7 @@
 // (gateway/src/index.ts) so they can each speak HTTPS/WSS on the LAN.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export interface TlsConfig {
@@ -82,6 +82,11 @@ function runOpenssl(paths: CertPaths, san: string, tag: string): void {
   if (result.status !== 0) {
     throw new Error(`[${tag}] openssl cert generation failed: ${result.stderr || result.stdout}`);
   }
+  // openssl's umask decides the key's mode otherwise, and a 0644 private key
+  // mounted read-only into the inbound proxy is readable by anything else that
+  // gets a mount of the same directory. Asserted in docs for a long time and
+  // never actually enforced.
+  chmodSync(paths.key, 0o600);
   writeFileSync(paths.marker, `${san}\n`, { mode: 0o644 });
 }
 
