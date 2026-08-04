@@ -189,7 +189,15 @@ export function loadStartupConfig(): StartupConfig {
 
     tls: { ...cfg.tls, certsDir: process.env.GATEWAY_CERTS_DIR ?? gatewayStateDir("certs") },
 
-    inboundProxy: cfg.inbound_proxy,
+    // `cert_dir` is YAML-sourced and may carry a leading `~` (the operator
+    // comment in config.yaml uses exactly that shape) — expand it here, same
+    // as access.user_data_root above, or a literal `~` reaches existsSync()
+    // in phase-orchestrator.ts, always resolves false, and the real acme.sh
+    // cert silently never gets served.
+    inboundProxy: {
+      ...cfg.inbound_proxy,
+      cert_dir: cfg.inbound_proxy.cert_dir === null ? null : expandHome(cfg.inbound_proxy.cert_dir),
+    },
 
     session: cfg.session,
 

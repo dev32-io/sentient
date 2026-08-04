@@ -21,7 +21,19 @@ volumes:
   # Upstream trust anchor: ALWAYS the gateway's own self-signed cert, in both
   # environments. This is what makes the loopback hop verified rather than
   # merely encrypted.
-  - "${GATEWAY_CERTS_DIR}:/etc/sentient/upstream:ro"
+  #
+  # SINGLE FILE, not the whole certs dir. A trust anchor needs the PUBLIC
+  # certificate only — nginx reads nothing else from this path
+  # (proxy_ssl_trusted_certificate in nginx.conf points at cert.pem alone) —
+  # and that directory also holds key.pem, the gateway's own TLS private key.
+  # This is the one container that terminates raw LAN/internet traffic, so it
+  # is the highest-value target in the stack; the private key must never be
+  # reachable from inside it. Mounting the directory handed it over for no
+  # reason at all — code execution in this nginx reads it straight off disk
+  # regardless of its 0600 mode, since nginx's master runs as root in the
+  # container, and with that key an attacker can impersonate the gateway to
+  # itself, exactly what `proxy_ssl_verify on` exists to make impossible.
+  - "${GATEWAY_CERTS_DIR}/cert.pem:/etc/sentient/upstream/cert.pem:ro"
 extra_hosts:
   - "host.docker.internal:host-gateway"
 mem_limit_bytes: 134217728    # 128 MiB — nginx, two server blocks, TLS termination
