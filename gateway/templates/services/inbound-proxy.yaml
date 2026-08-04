@@ -34,7 +34,18 @@ volumes:
   # container, and with that key an attacker can impersonate the gateway to
   # itself, exactly what `proxy_ssl_verify on` exists to make impossible.
   - "${GATEWAY_CERTS_DIR}/cert.pem:/etc/sentient/upstream/cert.pem:ro"
-extra_hosts:
-  - "host.docker.internal:host-gateway"
+# DELIBERATELY NO extra_hosts. An earlier revision carried
+# `host.docker.internal:host-gateway` here on the (reasonable-looking, wrong)
+# assumption that it was required for the name to resolve at all. It is not:
+# Docker Desktop's embedded DNS (127.0.0.11) answers `host.docker.internal`
+# on its own, IPv4-only, with no /etc/hosts entry needed — verified by running
+# a container on this same network with NO extra_hosts and diffing
+# `getent ahosts host.docker.internal` before/after. Worse, KEEPING it was
+# actively harmful: on this Docker Desktop version, `--add-host
+# name:host-gateway` writes a DUAL-STACK (IPv4 + IPv6) pair into /etc/hosts,
+# and nginx.conf's upstream resolves that name via /etc/hosts at startup,
+# unless it goes through nginx's own resolver (see nginx.conf's `resolve` +
+# `zone` on the upstream server) — so the extra_hosts entry was the actual
+# root cause of an IPv6 connect() failing on every fresh upstream connection.
 mem_limit_bytes: 134217728    # 128 MiB — nginx, two server blocks, TLS termination
 cpus: 0.5
