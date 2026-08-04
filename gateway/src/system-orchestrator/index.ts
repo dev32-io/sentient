@@ -167,10 +167,21 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
     };
   }
 
-  async function withFreshOrchestrator<T>(
-    fn: (orch: ReturnType<typeof createSystemOrchestrator>) => Promise<T>,
-    targets: ReadonlySet<ServiceName> | null = null,
-  ): Promise<T> {
+  /** Rebuild-or-fail, shared by every path that needs a live orchestrator built
+   *  from the current on-disk config. `withFreshOrchestrator` below is one
+   *  caller; `reconcileInfraOnly` is the other, and it needs the freshly built
+   *  REGISTRY (not just an orchestrator instance) to decide what to apply
+   *  before it can call anything — factored out so that decision never has to
+   *  duplicate the failure handling, and the registry is built exactly once
+   *  either way. */
+  async function buildFreshOrchestrator(): Promise<
+    | {
+        readonly ok: true;
+        readonly orch: ReturnType<typeof createSystemOrchestrator>;
+        readonly registry: Map<ServiceName, ManagedService>;
+      }
+    | { readonly ok: false; readonly failed: OrchestratorStatus }
+  > {
     const reg = await rebuildRegistry();
     if (!reg) {
       // Registry build failed — required service has unresolvable bindings
@@ -183,7 +194,7 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
         finishedAt: Date.now(),
       };
       lastStatus = failed;
-      return failed as T;
+      return { ok: false, failed };
     }
     const orch = createSystemOrchestrator({
       registry: reg,
@@ -192,8 +203,17 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
       pollIntervalMs: deps.pollIntervalMs,
       applyTimeoutMs: deps.applyTimeoutMs,
     });
-    const result = await fn(orch);
-    lastStatus = mergeStatus(lastStatus, orch.getStatus(), targets);
+    return { ok: true, orch, registry: reg };
+  }
+
+  async function withFreshOrchestrator<T>(
+    fn: (orch: ReturnType<typeof createSystemOrchestrator>) => Promise<T>,
+    targets: ReadonlySet<ServiceName> | null = null,
+  ): Promise<T> {
+    const build = await buildFreshOrchestrator();
+    if (!build.ok) return build.failed as T;
+    const result = await fn(build.orch);
+    lastStatus = mergeStatus(lastStatus, build.orch.getStatus(), targets);
     return result;
   }
 
@@ -313,26 +333,55 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
       // The watchdog is what recovers the public door when Docker Desktop comes
       // up after the gateway, which is the routine case on a rebooted mini.
       try {
-        // On a fresh install this call is the FIRST thing to ever touch the
-        // orchestrator, so `currentRegistry` is still the empty Map it was
-        // constructed with (it is only ever reassigned inside rebuildRegistry(),
-        // which nothing has called yet). Filtering that stale/empty snapshot
-        // would report zero infra services on every cold boot — exactly the
-        // deadlock this method exists to close — so rebuild first and filter
-        // the result, never the other way round.
-        await rebuildRegistry();
-        const infraNames = new Set(
-          Array.from(currentRegistry.values())
-            .filter((ms) => ms.config.infra)
-            .map((ms) => ms.name),
-        );
-        if (infraNames.size === 0) {
-          log.info("boot-reconcile.infra-only.empty", { reason: "no infra services in the registry" });
-          return lastStatus;
-        }
-        log.info("boot-reconcile.infra-only", { services: Array.from(infraNames) });
+        // A SIGKILLed gateway cannot run a shutdown hook, so native children
+        // from the previous process may still hold their ports. Reap
+        // unconditionally, like reconcile() — reapOrphans() sweeps EVERY
+        // native pid file, not just infra ones, and on a fresh install this
+        // is the only boot-time reap that will ever run (reconcile() never
+        // fires this session), so gating it on the infra set below would
+        // leave a non-infra orphan (e.g. whisper-stt) unreaped for the rest
+        // of the process's lifetime.
         await nativeDriver.reapOrphans();
-        return await applySubsetSerialized(infraNames);
+        // The infra filter must run against a FRESHLY BUILT registry: on a
+        // fresh install this call is the FIRST thing to ever touch the
+        // orchestrator, so `currentRegistry` is still the empty Map it was
+        // constructed with. That build is also a write to the same shared
+        // registry cell every other apply writes to (see the `applyChain`
+        // comment above — "the serialization is load-bearing, not
+        // defensive"), so it cannot happen standalone: a concurrent admin
+        // apply landing in the window before this settles would reintroduce
+        // the exact torn-write hazard that comment warns about. Building,
+        // filtering, and applying are therefore ONE serialized unit, and the
+        // registry is built exactly once.
+        return await serializeApply(async () => {
+          const build = await buildFreshOrchestrator();
+          if (!build.ok) {
+            // Distinct from "nothing configured" below. A broken template or a
+            // missing secret must not be reported as a benign empty infra set —
+            // that would leave the fresh-install deadlock open while this line
+            // calls the situation harmless. buildFreshOrchestrator() already
+            // logged the cause (factory.registry-rebuild-failed); this line
+            // exists so the infra-only boot path has its own honest record of
+            // why it did not apply anything.
+            log.warn("boot-reconcile.infra-only.registry-failed", {
+              reason: "registry rebuild failed — see the factory.registry-rebuild-failed line above for the cause",
+            });
+            return build.failed;
+          }
+          const infraNames = new Set(
+            Array.from(build.registry.values())
+              .filter((ms) => ms.config.infra)
+              .map((ms) => ms.name),
+          );
+          if (infraNames.size === 0) {
+            log.info("boot-reconcile.infra-only.empty", { reason: "no infra services in the registry" });
+            return lastStatus;
+          }
+          log.info("boot-reconcile.infra-only", { services: Array.from(infraNames) });
+          const result = await build.orch.applySubset(infraNames);
+          lastStatus = mergeStatus(lastStatus, build.orch.getStatus(), infraNames);
+          return result;
+        });
       } finally {
         healthWatch.start();
       }
