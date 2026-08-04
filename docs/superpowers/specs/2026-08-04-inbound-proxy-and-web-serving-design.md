@@ -118,9 +118,11 @@ PROD
 
 Rejected: fronting vite from the proxy in dev. It gives the proxy a two-upstream routing table in dev and a one-upstream table in prod — precisely the divergence this design exists to kill — and drags HMR's websocket through nginx for no gain.
 
-Both doors serve **current** code. `vite build --watch` runs as a third dev process, keeping `dist/` in step with source; the gateway serves that directory through `Bun.file`, read per request, so a rebuilt bundle needs no gateway restart — 443 picks it up on reload while 5173 has already hot-reloaded. It does not fight `bun --watch`: nothing under `gateway/src` imports `webui/dist`, so the bundle is not in the gateway's module graph and a rebuild cannot trigger a gateway restart. Worth confirming empirically in the plan — it is an inference from the import graph, not a documented bun guarantee.
+**443 serves the bundle as of launch; 5173 serves live source.** The launcher builds the webui in preflight, every time, so the prod-shaped door always reflects the code you started with. It is not kept in step afterwards — no build watcher, no third process.
 
-Without that watcher the two doors drift, and the drift is silent: you would fix a bug at 5173, smoke at 443, and smoke the previous build. Since the entire argument for routing browser smoke through 443 is that it catches packaging, MIME, cache-header, and SPA-fallback regressions vite hides, a stale bundle there defeats the feature.
+That means the two doors *can* drift within a session: edit UI, and 5173 hot-reloads while 443 keeps serving the launch-time build. Accepted deliberately. Vite is what you develop against, and a relaunch is what refreshes 443 — which you want anyway before smoking, since smoke is meant to exercise the stack as launched. A watcher was considered and cut: it buys freshness nobody asked for, at the cost of a third supervised process and a readiness gate that has to know when a build finished.
+
+The one rule this imposes: **browser smoke runs after a launch, not after an edit.** `bun run dev` is the refresh.
 
 Three doors exist in dev, in increasing fidelity:
 
@@ -150,6 +152,8 @@ Each row fixes a specific, verified failure:
 - **No give-up** matters because `docs/native-todo.md` already documents Docker Desktop starting *after* the LaunchDaemon on the mini, by a margin that can exceed the current backoff budget. Under today's rule the only public entrance would give up permanently and need a manual restart.
 - **Skip-unchanged** fixes §1.5: without it every `bun --watch` save drops 80/443.
 
+"Unchanged" is computable with the machinery already present. `docker-driver.ts:306-308` stamps `sentient.managed` and `sentient.service` labels at create time, `:344` lists by label filter, and the container handle exposes `inspect()`. Add a third label carrying a hash of the container spec; on reconcile, inspect the running container and compare its stamped hash against the freshly computed one. Equal **and** healthy → skip the recreate. No new introspection mechanism, and the comparison is against what we actually asked for rather than against docker's normalised view of it.
+
 The skip must **not** skip `verifyIdentity` (`orchestrator.ts:148-157`). Proving something answers the port is not proving it is ours; that check exists because a whole fleet once reported ready while both native addons were dead. Skip the recreate, keep the identity proof.
 
 **Accepted consequence:** the proxy's lifetime is the gateway's. Gateway down means no door and no maintenance page. This is correct — a door onto nothing serves no one — and is stated so it is a decision rather than a surprise.
@@ -161,6 +165,8 @@ The loopback rule of §1.3 is a genuine security invariant and stays the default
 - A service may declare non-loopback publishing **only** if its policy entry sets the public flag.
 - The exception admits host ports **80 and 443 only**.
 - All three enforcement sites read the same predicate, so the layers cannot drift — the existing reason `LOOPBACK_PORT_RE` is duplicated across schema, loader, and driver.
+
+The policy-in-config / ports-in-template split does not obstruct this. `service-registry.ts:109-132` already has the service's policy in hand (`cfg`) at the moment it calls `loadServiceTemplate({...})`, so the flag threads through as one added field on `LoadTemplateInput` and reaches `enforceLoopbackPorts` at `template-loader.ts:71`. The driver reads it off the built `ManagedService`. No restructuring of the registry.
 
 Inside the container nginx listens on unprivileged **8080/8443**; Docker maps host 80/443 onto them. Nothing in the image needs to run privileged.
 
@@ -250,6 +256,7 @@ One command, one canonical URL, in dev and prod alike.
 bun run dev  ─▶  bash scripts/stack.sh up
 
   preflight ── AUTO ──  source env.sh · wait for the docker daemon
+                        · BUILD THE WEBUI (always — this is 443's bundle)
                         · bake missing/stale :local images (incl. inbound-proxy)
                         · kill a gateway we can PROVE is ours (~/.sentient/run/gateway.pid)
 
@@ -258,20 +265,20 @@ bun run dev  ─▶  bash scripts/stack.sh up
                runnable   · a FOREIGN process holding 80/443/8888/5173 —
                line         named via lsof, never signalled
       ↓
-  start three processes ─┬─ bun --watch src/main.ts   gateway :8888 (+ addons, proxy)
-                         ├─ vite dev                  :5173  live source, HMR
-                         └─ vite build --watch        dist/ → :443 always current
+  start two processes ─┬─ bun --watch src/main.ts   gateway :8888 (+ addons, proxy)
+                       └─ vite dev                  :5173  live source, HMR
       ↓
   gateway boot ──▶ orchestrator applies the INFRA class first, then the rest
       ↓
   readiness ── gateway /api/v1/health on loopback
-               AND vite build --watch's FIRST pass complete (443 must serve something)
                AND https://localhost/ through the proxy
       ↓
   print ONE canonical URL:  https://localhost/
             side door:      http://localhost:5173  (HMR)
             diagnostics:    https://localhost:8888 (gateway-direct)
 ```
+
+The webui build sits in preflight rather than beside the running processes on purpose: it must finish before the gateway starts, so `dist/` is complete before anything probes 443. That ordering removes the need for readiness to know anything about vite's output.
 
 The auto/refuse split is the design's one judgement call. Auto-fix what is cheap, idempotent, and unambiguous. Refuse — loudly, with the exact command — where the fix needs the network, holds secrets, or would mean signalling a process we cannot prove is ours. The last is the existing native-addon rule (`config.yaml:762-768`: a holder recorded in `~/.sentient/run/<svc>.pid` is escalated; an unidentifiable holder is only named) applied to the gateway itself.
 
@@ -283,7 +290,7 @@ Prod depends on it identically, and notably does **not** always have it ready at
 
 **Stop semantics, documented because they are asymmetric:**
 
-| Action | Gateway | Vite (both processes) | Native addons | Docker addons |
+| Action | Gateway | Vite | Native addons | Docker addons |
 |---|---|---|---|---|
 | Ctrl-C on `bun run dev` | stops | stop with the process group | **survive** — see below | **keep running** (`unless-stopped`) |
 | `bun run stack:down` | stops | stop | **stopped explicitly**, via `~/.sentient/run/<svc>.pid` | stopped |
@@ -315,7 +322,7 @@ Commands: `bun run dev` (up / restart) · `bun run stack:down` · `bun run stack
 5. **Bind change**: `config.yaml:13` → `127.0.0.1`, **plus an operator-config migration**. The chain in `gateway/src/config/operator-config-migrator.ts` currently ends at 0.1.3 and never touches `host`; production reads a seeded, never-overwritten operator config, so without a 0.1.3 → 0.1.4 step every existing install silently stays on `0.0.0.0`.
 6. **Mobile defaults → 443** (`android/.../BackendSetupViewModel.kt:28`, `ios/App/SDK/GatewayConfig.swift:16`, and the URL builders that interpolate `:$port`). No migration machinery — an already-paired device is re-pointed from its own settings screen.
 7. **`key.pem` mode enforced** to 0600 in `shared/tls/src/tls.ts`, which currently only assumes it.
-8. **Launcher**: `scripts/stack.sh` + `bun run dev` / `stack:down` / `stack:status`, running the gateway, `vite dev`, and `vite build --watch` as one process group.
+8. **Launcher**: `scripts/stack.sh` + `bun run dev` / `stack:down` / `stack:status`, building the webui in preflight, then running the gateway and `vite dev` as one process group.
 9. **`setup-prod.py` health gate through 443**, not only 8888. Today `gateway/src/api/handlers/health.ts` returns 200 as soon as the process is up and the installer probes 8888 directly, so a broken nginx config, a missing bundle, a wrong cert, or broken WS forwarding would all pass the gate and never trigger the rollback that exists to catch exactly this.
 10. **Doc reconciliation**: `CLAUDE.md`'s "never open `:8888`", the two cert stories of §1.7, the SAN note of §2.6, and the native-stack migration spec's stale `bun --hot` reference (`gateway/src/main.ts:81-93` refuses hot reload outright).
 
@@ -359,7 +366,7 @@ All cases run against the **local dev stack**, through `https://localhost` unles
 | `proxy-survives-save` | — | stack up, gateway under `--watch` | touch a gateway source file | `https://localhost/` stays up throughout | reconcile logs skip-unchanged for `inbound-proxy`; **no** recreate; `verifyIdentity` still runs |
 | `webui-served-natively` | 1280×900 | prod-shaped install, no vite | GET `/` on the gateway directly | UI loads | static handler constructed with a real `distDir` at startup |
 | `stack-up-from-cold` | — | containers down, images present | `bun run dev` | canonical URL + side door + diagnostic printed; stack reaches ready | preflight decisions logged; readiness waits on loopback health **and** 443 |
-| `ui-edit-reaches-both-doors` | 1280×900 | stack up, both doors open | edit a webui source file | 5173 hot-reloads; 443 shows the same change after a reload | `vite build --watch` logs a rebuild; **no** gateway restart, **no** proxy recreate |
+| `relaunch-refreshes-443` | 1280×900 | stack up, both doors open | edit a webui source file, then `bun run dev` | 5173 shows it immediately; 443 shows it only after the relaunch | preflight logs a webui build on every start |
 | `preflight-refuses-foreign-port` | — | a foreign process on 8888 | `bun run dev` | refuses, names the holder and one runnable fix | holder named via lsof; **never signalled** |
 | `mobile-connects-443` | native | Android + iOS, default backend config | connect and send a message | connects on 443 through the proxy | gateway WS open; no `:8888` dial attempted |
 
@@ -370,7 +377,7 @@ All cases run against the **local dev stack**, through `https://localhost` unles
 ## 7. Open questions for the implementation plan
 
 1. **Dev cert dir vs prod cert dir as one config key.** The shape (`inbound_proxy.cert_dir` with fallback, vs. a two-key primary/fallback pair) is a plan-level call.
-2. **How readiness detects `vite build --watch`'s first pass.** The 443 probe cannot run until `dist/` holds a complete bundle. Options: poll for `dist/index.html`, parse the watcher's stdout, or simply let the 443 probe's own retry budget absorb it. The last is simplest and needs no coupling to vite's output format.
+2. **What exactly goes into the spec hash** (§2.2) — image ref, ports, env, volumes, networks, resource limits. Too little and a real change is skipped; too much and the hash churns on incidental fields, defeating the purpose.
 3. **`readiness` timeout budgets** for the 443 probe, and what the launcher prints when the gateway is healthy but the proxy is not.
 4. **Where `inbound-proxy`'s image and config live** in the tree, given it does not belong under `gateway/mcp/` (§2.8).
 5. **Whether `stack:status` reads the orchestrator's status endpoint** or probes independently. Reading it is less code and exercises a real surface; probing works when the gateway is down, which is when status is most wanted.
