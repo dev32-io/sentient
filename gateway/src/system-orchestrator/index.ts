@@ -259,6 +259,8 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
       });
     },
     isApplyInFlight: () => applyDepth > 0,
+    // Infra services are the ones with no second path back — see types.ts#infra.
+    neverGiveUp: (name) => currentRegistry.get(name)?.config.infra === true,
   });
 
   return {

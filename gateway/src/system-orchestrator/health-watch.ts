@@ -50,6 +50,13 @@ export interface HealthWatchDeps {
   maxAttempts?: number;
   /** Multiplier widening the wait after each failed attempt. */
   backoffFactor?: number;
+  /** Services that must never be abandoned. Giving up is right for a capability
+   *  addon — a broken one recreated every tick is sustained load for no gain —
+   *  but the public entrance has no operator watching it and no other path back:
+   *  once given up on it stays dead until someone restarts the gateway by hand.
+   *  Docker Desktop starting AFTER the LaunchDaemon (docs/native-todo.md) puts
+   *  the proxy inside that window on a routine reboot. */
+  neverGiveUp?: (name: ServiceName) => boolean;
 }
 
 export interface HealthWatch {
@@ -73,6 +80,7 @@ const FRESH_STATE: WatchState = { attempts: 0, nextAttemptAt: 0, gaveUp: false }
 export function createHealthWatch(deps: HealthWatchDeps): HealthWatch {
   const maxAttempts = deps.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   const backoffFactor = deps.backoffFactor ?? DEFAULT_BACKOFF_FACTOR;
+  const neverGiveUp = deps.neverGiveUp ?? (() => false);
   const states = new Map<ServiceName, WatchState>();
   let timer: ReturnType<typeof setTimeout> | null = null;
   let running = false;
@@ -140,7 +148,7 @@ export function createHealthWatch(deps: HealthWatchDeps): HealthWatch {
       log.debug("reapply.suppressed", { service: name, reason: "gave-up", attempts: state.attempts });
       return;
     }
-    if (state.attempts >= maxAttempts) {
+    if (state.attempts >= maxAttempts && !neverGiveUp(name)) {
       log.error("reapply.gave-up", {
         service: name,
         reason: "max-attempts-exhausted",
@@ -164,7 +172,11 @@ export function createHealthWatch(deps: HealthWatchDeps): HealthWatch {
 
   async function reapplyOnce(name: ServiceName, state: WatchState, now: number): Promise<void> {
     const attempt = state.attempts + 1;
-    const backoffMs = deps.intervalMs * backoffFactor ** (attempt - 1);
+    // Cap the exponent at maxAttempts so a never-give-up service settles into a
+    // steady retry cadence instead of backing off toward never. Without the cap,
+    // attempt 40 waits longer than the machine's uptime.
+    const exponent = Math.min(attempt - 1, maxAttempts);
+    const backoffMs = deps.intervalMs * backoffFactor ** exponent;
     log.warn("service.unhealthy", { service: name, reason: "health-probe-failed", attempt, maxAttempts });
     states.set(name, { attempts: attempt, nextAttemptAt: now + backoffMs, gaveUp: false });
     try {
