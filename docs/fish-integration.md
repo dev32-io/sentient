@@ -35,7 +35,7 @@ https + no-redirect hardening.)
 
 Set the feature flag to `false` in the operator config
 (`~/.sentient/gateway/config/config.yaml` in the standard macOS deploy) and
-restart the gateway container:
+restart the gateway — native, not a container:
 
 ```yaml
 providers:

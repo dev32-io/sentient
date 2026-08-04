@@ -35,7 +35,7 @@ All `bun run` commands, test scripts, and quality-gate hooks depend on this.
 
 ## Commands
 
-    bun run dev           — Gateway + web dev servers
+    bun run dev           — Whole-stack launcher (gateway + webui + addons + proxy)
     bun run test          — All tests
     bun run test:unit     — Unit tests only
     bun run test:int      — Integration tests
