@@ -19,6 +19,7 @@ import type {
   WebuiConfig as WebuiYaml,
 } from "@sentient/config";
 import { getLog } from "../logging/logger.ts";
+import { resolveWebDistDir } from "./asset-root.ts";
 import { loadGatewayConfig } from "./gateway-config.ts";
 import { migrateOperatorConfigYamlSync } from "./operator-config-migrator.ts";
 
@@ -173,7 +174,11 @@ export function loadStartupConfig(): StartupConfig {
     maxSessions: cfg.max_sessions,
     authTimeoutMs: cfg.auth_timeout_ms,
 
-    webDistDir: process.env.WEB_DIST_DIR,
+    // Derived from the asset root so an installed release and a repo checkout
+    // both work with no env var. WEB_DIST_DIR remains an override, handled
+    // inside resolveWebDistDir — it was previously the ONLY source, and being
+    // set nowhere in the repo is why prod served no UI at all.
+    webDistDir: resolveWebDistDir(),
 
     tls: { ...cfg.tls, certsDir: process.env.GATEWAY_CERTS_DIR ?? gatewayStateDir("certs") },
 

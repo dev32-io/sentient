@@ -56,3 +56,39 @@ export function assetPath(...segments: string[]): string {
 export function resetAssetRootForTest(): void {
   cached = null;
 }
+
+/** Where the BUILT web bundle lives, or undefined when nothing has been built.
+ *
+ *  Two shapes, and they differ by one path segment — which is exactly why the
+ *  naive `assetPath("webui")` is wrong:
+ *
+ *    installed release — share/webui/index.html      (build-gateway.sh copies
+ *                                                     webui/dist -> share/webui)
+ *    repo checkout     — gateway/webui/dist/index.html  (webui/ is SOURCE here)
+ *
+ *  Probing for index.html rather than branching on "am I compiled" keeps the two
+ *  shapes from needing a flag that could be wrong. `WEB_DIST_DIR` stays as an
+ *  override for operators pointing at a bundle outside either layout.
+ *
+ *  Returns undefined rather than throwing: a gateway with no UI still serves the
+ *  API, and the launcher builds the bundle before start (scripts/stack.sh). */
+export function resolveWebDistDir(): string | undefined {
+  const override = process.env.WEB_DIST_DIR;
+  if (override !== undefined && override.length > 0) {
+    log.debug("web-dist.resolved", { dir: override, reason: "WEB_DIST_DIR" });
+    return override;
+  }
+  const root = resolveAssetRoot();
+  const candidates = [join(root, "webui"), join(root, "webui", "dist")];
+  for (const dir of candidates) {
+    if (existsSync(join(dir, "index.html"))) {
+      log.debug("web-dist.resolved", { dir, reason: "asset-root" });
+      return dir;
+    }
+  }
+  log.warn("web-dist.unresolved", {
+    reason: "no index.html under <asset-root>/webui or <asset-root>/webui/dist — the UI will 404",
+    candidates,
+  });
+  return undefined;
+}
