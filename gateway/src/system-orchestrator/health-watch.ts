@@ -73,9 +73,16 @@ interface WatchState {
   nextAttemptAt: number;
   /** True once `maxAttempts` was exhausted — probing continues, re-applying stops. */
   gaveUp: boolean;
+  /** True once the "would have given up" boundary was logged for THIS failure
+   *  cycle on a `neverGiveUp` service. Without this latch, every tick spent
+   *  waiting out a long back-off between attempts would re-log the crossing —
+   *  the exact log-noise failure mode give-up exists to prevent. Reset to
+   *  false alongside `attempts` on recovery, so the next failure cycle logs
+   *  its own crossing again. */
+  exemptLogged: boolean;
 }
 
-const FRESH_STATE: WatchState = { attempts: 0, nextAttemptAt: 0, gaveUp: false };
+const FRESH_STATE: WatchState = { attempts: 0, nextAttemptAt: 0, gaveUp: false, exemptLogged: false };
 
 export function createHealthWatch(deps: HealthWatchDeps): HealthWatch {
   const maxAttempts = deps.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
@@ -158,16 +165,28 @@ export function createHealthWatch(deps: HealthWatchDeps): HealthWatch {
       states.set(name, { ...state, gaveUp: true });
       return;
     }
+    // Reaching here with attempts >= maxAttempts means neverGiveUp(name) is
+    // true — an ordinary service already returned above. Log the crossing
+    // exactly once per failure cycle so production has something distinctive
+    // to grep for when the front door is retrying past its nominal budget.
+    const current = state.attempts >= maxAttempts && !state.exemptLogged ? logExemptionOnce(name, state) : state;
     const now = Date.now();
-    if (now < state.nextAttemptAt) {
+    if (now < current.nextAttemptAt) {
       log.debug("reapply.deferred", {
         service: name,
         reason: "backoff",
-        waitMs: state.nextAttemptAt - now,
+        waitMs: current.nextAttemptAt - now,
       });
       return;
     }
-    await reapplyOnce(name, state, now);
+    await reapplyOnce(name, current, now);
+  }
+
+  function logExemptionOnce(name: ServiceName, state: WatchState): WatchState {
+    log.warn("reapply.exempted", { service: name, reason: "infra-never-give-up", attempts: state.attempts });
+    const next = { ...state, exemptLogged: true };
+    states.set(name, next);
+    return next;
   }
 
   async function reapplyOnce(name: ServiceName, state: WatchState, now: number): Promise<void> {
@@ -178,7 +197,12 @@ export function createHealthWatch(deps: HealthWatchDeps): HealthWatch {
     const exponent = Math.min(attempt - 1, maxAttempts);
     const backoffMs = deps.intervalMs * backoffFactor ** exponent;
     log.warn("service.unhealthy", { service: name, reason: "health-probe-failed", attempt, maxAttempts });
-    states.set(name, { attempts: attempt, nextAttemptAt: now + backoffMs, gaveUp: false });
+    states.set(name, {
+      attempts: attempt,
+      nextAttemptAt: now + backoffMs,
+      gaveUp: false,
+      exemptLogged: state.exemptLogged,
+    });
     try {
       await deps.reapply(name);
       // "dispatched", NOT "succeeded". reapply resolves when the apply call

@@ -61,7 +61,7 @@ describe("health-watch", () => {
     expect(applied.length).toBe(countAtStop);
   });
 
-  it("keeps re-applying a neverGiveUp service past maxAttempts", async () => {
+  it("INVARIANT: a neverGiveUp service keeps re-applying past maxAttempts", async () => {
     const reapplied: string[] = [];
     const watch = createHealthWatch({
       intervalMs: 10,
@@ -83,7 +83,7 @@ describe("health-watch", () => {
     expect(reapplied.length).toBeGreaterThan(2);
   });
 
-  it("still gives up on a service that is not neverGiveUp", async () => {
+  it("INVARIANT: a non-neverGiveUp service still gives up at maxAttempts", async () => {
     const reapplied: string[] = [];
     const watch = createHealthWatch({
       intervalMs: 10,
@@ -94,7 +94,8 @@ describe("health-watch", () => {
       },
       maxAttempts: 2,
       backoffFactor: 1,
-      neverGiveUp: () => false,
+      // neverGiveUp omitted — exercises the `?? (() => false)` default path,
+      // not an explicit `() => false` that would never touch the default.
     });
 
     watch.start();
@@ -102,5 +103,52 @@ describe("health-watch", () => {
     watch.stop();
 
     expect(reapplied.length).toBe(2);
+  });
+
+  it("INVARIANT: a neverGiveUp service's backoff plateaus at maxAttempts instead of growing forever", async () => {
+    const dispatchedAt: number[] = [];
+    const start = Date.now();
+    const intervalMs = 10;
+    const backoffFactor = 2;
+    const maxAttempts = 3;
+    const watch = createHealthWatch({
+      intervalMs,
+      listServices: () => ["inbound-proxy"],
+      probe: async () => false,
+      reapply: async () => {
+        dispatchedAt.push(Date.now() - start);
+      },
+      maxAttempts,
+      backoffFactor,
+      neverGiveUp: () => true,
+    });
+
+    watch.start();
+    // Capped dispatch times are 10,20,40,80,160,240,320,400 — comfortably
+    // inside this window. An uncapped backoff would still be doubling
+    // (10,20,40,80,160,320,640,...) and would only reach 6 dispatches by
+    // t=320, one short of the 7 this window requires — so a deleted or
+    // off-by-one cap fails the length assertion below on its own.
+    await advanceTicks(40, intervalMs);
+    watch.stop();
+
+    const gaps: number[] = [];
+    let previousDispatch: number | undefined;
+    for (const dispatchTime of dispatchedAt) {
+      if (previousDispatch !== undefined) gaps.push(dispatchTime - previousDispatch);
+      previousDispatch = dispatchTime;
+    }
+    expect(gaps.length).toBeGreaterThanOrEqual(6);
+
+    // gaps[3] is where the exponent FIRST reaches maxAttempts (capped and
+    // uncapped agree here). gaps[4] and gaps[5] are the first two where a cap
+    // and no cap diverge — capped holds at the plateau, uncapped keeps
+    // doubling (2x, then 4x the plateau). Range checks absorb real-timer
+    // jitter while staying far from the uncapped values.
+    const plateauMs = intervalMs * backoffFactor ** maxAttempts;
+    for (const gap of gaps.slice(4, 6)) {
+      expect(gap).toBeGreaterThan(plateauMs * 0.5);
+      expect(gap).toBeLessThan(plateauMs * 1.5);
+    }
   });
 });
