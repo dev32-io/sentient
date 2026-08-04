@@ -1,6 +1,7 @@
 import type { Readable } from "node:stream";
 import type { Result } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
+import { computeSpecHash } from "./spec-hash.js";
 import {
   type DockerManagedService,
   type DriverError,
@@ -19,6 +20,9 @@ const log = getLog(["sentient", "system-orch", "docker-driver"]);
 
 const LABEL_MANAGED = "sentient.managed";
 const LABEL_SERVICE = "sentient.service";
+/** Fingerprint of the create-spec that produced this container. Read on reconcile
+ *  so an infra service that has not changed is left alone. */
+const LABEL_SPEC_HASH = "sentient.spec-hash";
 
 /** The only host address an addon may be published on. Docker treats an empty
  *  `HostIp` as 0.0.0.0, so this is written explicitly into every binding. */
@@ -142,6 +146,17 @@ async function recreate(
   // refuse to create its replacement.
   const published = buildPortPublishing(ms);
   if (!published.ok) return published;
+
+  // INFRA ONLY. A capability addon is cheap to recreate and recreating it is the
+  // simplest correct thing. The public door is not: under `bun --watch` the
+  // gateway restarts on every source save, and an unconditional recreate would
+  // drop 80/443 on every keystroke. Skipping the recreate does NOT skip the
+  // health probe or verifyIdentity — the orchestrator still runs both after this
+  // returns, so "something else grabbed the port" is still caught.
+  if (ms.config.infra && (await isUnchangedAndRunning(docker, ms, published.value))) {
+    log.info("driver.recreate-skipped", { service: ms.name, reason: "infra-unchanged-and-running" });
+    return { ok: true, value: undefined };
+  }
 
   const nets = await ensureNetworks(docker, networks, ms);
   if (!nets.ok) return nets;
@@ -309,16 +324,12 @@ function buildPortPublishing(ms: DockerManagedService): Result<PortPublishing, D
 function buildCreateSpec(ms: DockerManagedService, published: PortPublishing): Record<string, unknown> {
   const env = Object.entries(ms.template.env).map(([k, v]) => `${k}=${v}`);
   const primaryNet = ms.template.networks[0] ?? "";
-  return {
+  const spec: Record<string, unknown> = {
     name: ms.template.container_name,
     Image: ms.template.image,
     Cmd: ms.template.command,
     Env: env,
     ExposedPorts: published.exposed,
-    Labels: {
-      [LABEL_MANAGED]: "true",
-      [LABEL_SERVICE]: ms.name,
-    },
     HostConfig: {
       RestartPolicy: { Name: "unless-stopped" },
       // NetworkMode pins the container to its primary network. NetworkingConfig
@@ -338,6 +349,39 @@ function buildCreateSpec(ms: DockerManagedService, published: PortPublishing): R
     // first entry at create time, so secondary networks would be silently
     // dropped here. They are attached after create via network.connect.
   };
+  // Stamped AFTER the hash is taken, and excluded from it by spec-hash.ts —
+  // a label that fed into its own value could never be stable.
+  spec.Labels = {
+    [LABEL_MANAGED]: "true",
+    [LABEL_SERVICE]: ms.name,
+    [LABEL_SPEC_HASH]: computeSpecHash(spec),
+  };
+  return spec;
+}
+
+/** True when this exact spec is already running under this container name.
+ *
+ *  Deliberately requires BOTH: a matching hash on a stopped container is not a
+ *  reason to leave it alone, and a running container with a stale hash is not
+ *  the thing we were asked to create. Any inspect failure — 404, unreadable
+ *  label, unreachable daemon — answers false, so the fallback is always the
+ *  existing recreate path. */
+async function isUnchangedAndRunning(
+  docker: DockerodeLike,
+  ms: DockerManagedService,
+  published: PortPublishing,
+): Promise<boolean> {
+  try {
+    const info = (await docker.getContainer(ms.template.container_name).inspect()) as {
+      State?: { Running?: boolean };
+      Config?: { Labels?: Record<string, string> };
+    };
+    if (info.State?.Running !== true) return false;
+    const want = computeSpecHash(buildCreateSpec(ms, published));
+    return info.Config?.Labels?.[LABEL_SPEC_HASH] === want;
+  } catch {
+    return false;
+  }
 }
 
 /** Every managed container the daemon holds, or an EMPTY list when the daemon

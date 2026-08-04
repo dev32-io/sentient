@@ -52,6 +52,11 @@ function makeStub(): {
     createNetwork: [] as unknown[],
     netConnect: [] as Array<{ network: string; container: string }>,
   };
+  // Tracks the one container `createContainer`/`remove` last acted on, keyed by
+  // name — enough for `inspect()` to answer "running, with these Labels" for
+  // the skip-recreate tests, and to 404 before anything has been created (or
+  // after it has since been removed).
+  let running: { name: string; spec: Record<string, unknown> } | undefined;
   return {
     calls,
     stub: {
@@ -63,12 +68,16 @@ function makeStub(): {
         calls.createNetwork.push(spec);
       },
       listContainers: async () => [],
-      getContainer: () => ({
+      getContainer: (name: string) => ({
         inspect: async () => {
+          if (running?.name === name) {
+            return { State: { Running: true }, Config: { Labels: running.spec.Labels } };
+          }
           throw Object.assign(new Error("not found"), { statusCode: 404 });
         },
         remove: async (opts: unknown) => {
           calls.remove.push(opts);
+          if (running?.name === name) running = undefined;
         },
         start: async () => {
           calls.start.push({ netConnectsAtStart: calls.netConnect.length });
@@ -77,6 +86,7 @@ function makeStub(): {
       }),
       createContainer: async (spec: unknown) => {
         calls.create.push(spec);
+        running = { name: (spec as { name: string }).name, spec: spec as Record<string, unknown> };
         return {
           id: "abc",
           start: async () => {
@@ -441,4 +451,65 @@ test("recreate tolerates 404 from remove (idempotent recreate)", async () => {
   const r = await drv.recreate(ms);
   expect(r.ok).toBe(true);
   expect(calls.create.length).toBe(1);
+});
+
+// INVARIANT, documented in spec-hash.ts: under `bun --watch` the gateway
+// restarts on every source save, and an unconditional recreate would drop the
+// public door (80/443) on every keystroke. An infra service already running
+// with the exact spec we would create is left alone. This does NOT skip
+// verifyIdentity — that runs afterward, in the orchestrator, regardless — so a
+// foreign process holding the port is still caught.
+test("INFRA: recreate skips an already-running infra container with a matching spec hash", async () => {
+  const { stub, calls } = makeStub();
+  const infra: DockerManagedService = {
+    ...ms,
+    config: { ...ms.config, infra: true, public_ports: true, networks: ["sentient-external"] },
+    template: { ...ms.template, networks: ["sentient-external"], ports: ["0.0.0.0:443:8443"] },
+  };
+  const drv = createDockerDriver({ docker: stub, networks: NETWORKS });
+
+  const first = await drv.recreate(infra);
+  expect(first.ok).toBe(true);
+  const createdOnce = calls.create.length;
+  const removedOnce = calls.remove.length;
+
+  const second = await drv.recreate(infra);
+
+  expect(second.ok).toBe(true);
+  expect(calls.create.length).toBe(createdOnce); // no second create
+  expect(calls.remove.length).toBe(removedOnce); // and nothing torn down
+});
+
+// The skip is gated on a hash match, not merely on "infra and running" — a
+// changed spec (here, an added env var) must still recreate, or the operator
+// loses the ability to ever change the public door's config.
+test("INFRA: recreate still recreates an infra container whose spec changed", async () => {
+  const { stub, calls } = makeStub();
+  const infra: DockerManagedService = {
+    ...ms,
+    config: { ...ms.config, infra: true, public_ports: true, networks: ["sentient-external"] },
+    template: { ...ms.template, networks: ["sentient-external"], ports: ["0.0.0.0:443:8443"] },
+  };
+  const drv = createDockerDriver({ docker: stub, networks: NETWORKS });
+  await drv.recreate(infra);
+  const createdOnce = calls.create.length;
+
+  const changed: DockerManagedService = { ...infra, template: { ...infra.template, env: { CHANGED: "1" } } };
+  const r = await drv.recreate(changed);
+
+  expect(r.ok).toBe(true);
+  expect(calls.create.length).toBe(createdOnce + 1);
+});
+
+// The skip is gated on `ms.config.infra` — a capability addon (infra: false)
+// is cheap to recreate, so it always does, even when nothing changed.
+test("recreate always recreates a non-infra container even when unchanged", async () => {
+  const { stub, calls } = makeStub();
+  const drv = createDockerDriver({ docker: stub, networks: NETWORKS });
+
+  await drv.recreate(ms);
+  const createdOnce = calls.create.length;
+  await drv.recreate(ms);
+
+  expect(calls.create.length).toBe(createdOnce + 1);
 });
