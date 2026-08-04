@@ -1,44 +1,84 @@
-# Inbound Proxy and Web Serving — Design
+# Inbound Proxy, Web Serving, and One-Command Launch — Design
 
-**Date:** 2026-08-04
+**Date:** 2026-08-04 (rewritten 2026-08-04 after a Codex review and a second design pass)
 **Branch context:** written on `feature/native-orchestrator`; independent of the session-model wave.
 **Status:** design approved in discussion, not yet planned or implemented.
 
-**Goal:** one outward-facing door for the whole stack, identical in dev and prod, so `https://<host>` reaches the web UI — and so the web UI is actually served at all.
+**Goal:** one outward-facing door for the whole stack — so `https://<host>` reaches the web UI, so the web UI is served at all, and so one command brings the whole local stack up the same way production does.
 
 ---
 
 ## 1. What we have today
 
-Three separate facts, established by inspection rather than assumption. Two of them are defects.
+Established by inspection. Three of these are defects.
 
-### 1.1 The gateway serves the API, on one port, everywhere
+### 1.1 The gateway serves the API on one port, on every interface
 
-`gateway/config.yaml:12` sets `port: 8888`. That value is the same in dev and in prod — there is no per-environment port. The gateway binds it on **all interfaces**, so today it is reachable from the LAN with no policy in front of it.
+`gateway/config.yaml:12-13` sets `port: 8888` and `host: 0.0.0.0`. Same value in dev and prod — there is no per-environment port. `gateway/src/server.ts:191` passes that straight to `hostname`, so today the gateway is reachable from the LAN with no policy in front of it.
 
-TLS is already terminated by the gateway itself: it mints a self-signed CA into `~/.sentient/gateway/certs/`, producing `cert.pem` (0644), `key.pem` (0600), and `san.txt`. The directory comes from `GATEWAY_CERTS_DIR`, which `deploy/mac-prod/io.sentient.gateway.plist:67` sets explicitly to that path, falling back to `gatewayStateDir("certs")`. `shared/tls/src/tls.ts:48-49` fixes the two filenames; `ensureTlsMaterial()` mints them if absent. `setup-prod.py` pins its post-install health probe to that same `cert.pem` as a trust anchor (`CERT_RELATIVE = "gateway/certs/cert.pem"`).
+TLS is terminated by the gateway itself. `gateway/src/bootstrap/phase-services.ts:150-152` calls `ensureTlsMaterial()` — **gated on `cfg.tls.enabled`** — which mints a self-signed CA into `cfg.tls.certsDir`, producing `cert.pem`, `key.pem`, and `san.txt` (`shared/tls/src/tls.ts:50`). `deploy/mac-prod/io.sentient.gateway.plist:67` points `GATEWAY_CERTS_DIR` at `~/.sentient/gateway/certs`. `setup-prod.py` pins its post-install health probe to that same `cert.pem` as a trust anchor.
 
-**This is the cert path the inbound proxy will reuse.** It is already the source of truth for the stack's identity, it already survives upgrades (it lives in `~/.sentient`, not in the code tree), and reusing it means the proxy and the gateway present the same identity rather than two competing self-signed certs.
+That gating is load-bearing for §2.5: **turning the gateway's TLS off would stop the cert being minted at all.**
 
-### 1.2 The web UI is served nowhere — this is the real hole
+### 1.2 The web UI is served nowhere — the real hole
 
-`gateway/src/server.ts:152` builds the static handler from `services.webDistDir`. That value is `process.env.WEB_DIST_DIR` (`gateway/src/config/startup-config.ts:176`), and **`WEB_DIST_DIR` is set nowhere in the repository** — not in the plist, not in `scripts/env.sh`, not in any compose file. `createWebuiHandler` therefore returns null, and the gateway serves the API with no UI attached.
+`gateway/src/server.ts:152` builds the static handler from `services.webDistDir`. That value is `process.env.WEB_DIST_DIR` (`gateway/src/config/startup-config.ts:176`), and **`WEB_DIST_DIR` is set nowhere in the repository** — not in the plist, not in `scripts/env.sh`, not in any compose file.
 
-In dev this is invisible: vite owns the UI on `http://localhost:5173` (`strictPort: true`) and proxies `/api/v1` and `/api/v1/ws` to the gateway, so the UI works and `https://localhost:8888/` legitimately 404s. In prod there is no vite, so **there is no UI on any port**. `gateway/webui/vite.config.ts:11` builds to `dist`, so the artifact exists; nothing points at it.
+The consequence is more precise than "the handler is null". `createWebuiHandler` (`gateway/src/api/handlers/webui.ts:50`) always returns a function; with `distDir` undefined that function returns `null` for **every request**, so the router falls through to a 404. Same outcome, different mechanism — and the distinction matters because the fix is a value, not a wiring change.
 
-This is a prerequisite, not a side quest. Standing up 443 in front of a gateway that serves no UI produces the same 404 over a nicer URL.
+In dev this is invisible: vite owns the UI on `http://localhost:5173` and proxies `/api/v1` to the gateway, so `https://localhost:8888/` legitimately 404s. In prod there is no vite, so **there is no UI on any port** — even though `scripts/build-gateway.sh:56` already copies `gateway/webui/dist` into `share/webui`, and `deploy/mac-prod/io.sentient.gateway.plist:46` already points `GATEWAY_RUNTIME_DIR` at that `share/`. The artifact is installed and addressable. Nothing reads it.
 
-### 1.3 Addons are already loopback-only
+`deploy/README.md:112` already instructs operators to "Open `https://sentient.dev32.io` (port 443)". Nothing listens on 443. The documentation describes a stack we do not ship.
 
-`deploy/mac-prod/docker-compose.yml:21` states the rule and the services follow it: every addon host port is published as `127.0.0.1:<port>:<port>`. Nothing in the addon tier is LAN-facing today.
+### 1.3 Addons are already loopback-only, by enforced policy
 
-So the outward-facing surface of the entire stack is **one port: the gateway's 8888**. The inbound proxy has exactly one upstream, not a fleet.
+Every addon host port is published as `127.0.0.1:<port>:<port>`, and this is enforced in **three** places, not one:
 
-### 1.4 `ingress-proxy` is a different thing, and the name is already taken
+| Site | Mechanism |
+|---|---|
+| `gateway/src/system-orchestrator/types.ts:97-100` | `LOOPBACK_PORT_RE` + `LoopbackPortSchema` |
+| `gateway/src/system-orchestrator/template-loader.ts:69` | `enforceLoopbackPorts()`, pre-schema, so the error names the rule |
+| `gateway/src/system-orchestrator/docker-driver.ts:280-290` | `buildPortPublishing()` re-tests the regex and writes `HostIp: LOOPBACK_HOST_IP` unconditionally |
 
-`gateway/mcp/ingress-proxy/` is a stock `nginx:1.30-alpine` with a single `COPY`d config and `RUN nginx -t` at build time. It exists so MCP containers can stay on an `internal: true` network while still being reachable — it spans the **internal addon network boundary**. It is not, and must not become, the public entrance.
+The outward-facing surface of the whole stack is therefore **one port: the gateway's 8888**. The inbound proxy has exactly one upstream, not a fleet.
 
-It is also the encapsulation precedent this design follows: a stock upstream image, one declarative config file, no code of ours, and a build that fails on a malformed config.
+The network topology is likewise a closed set: `MANAGED_NETWORK_TOPOLOGY` (`types.ts:39-42`) declares exactly `sentient-internal` (internal) and `sentient-external` (not internal), and the driver fails closed on any membership outside it.
+
+### 1.4 Boot reconcile is skipped on a fresh install
+
+`gateway/src/bootstrap/phase-orchestrator.ts:330-343`: the boot reconcile that replays `applyAll` runs **only** when `bootstrap_complete` is true. On a fresh host the wizard owns the first apply, deliberately, so the bringup screen does not flash past.
+
+This is the fresh-install deadlock. Bind the gateway to loopback without addressing it and a brand-new host has neither a LAN-reachable gateway nor a running proxy — **no route to the wizard from any device.**
+
+### 1.5 Every gateway restart recreates the whole fleet
+
+`gateway/src/system-orchestrator/orchestrator.ts:124` calls `drivers[...].recreate(ms)` for every service in the apply order, unconditionally. Under `bun --watch`, every source save restarts the gateway and therefore deletes and recreates every addon container. Today that is merely wasteful. Once a container holds 80/443, it means **every keystroke-save drops the public door.**
+
+### 1.6 `ingress-proxy` is a different thing, and a misleading reference
+
+`gateway/mcp/ingress-proxy/` is a stock `nginx:1.30-alpine` spanning the **internal addon network boundary**. It is not, and must not become, the public entrance.
+
+It is the encapsulation precedent this design follows — stock upstream image, one declarative config, no code of ours, build fails on a malformed config. It is **not** a usable reference for WebSocket forwarding: `gateway/mcp/ingress-proxy/nginx.conf:38` sets `proxy_set_header Connection "";` and never sets `Upgrade`, because it carries MCP Streamable-HTTP/SSE, not upgrades. Copying it breaks `/api/v1/ws`.
+
+### 1.7 Two cert stories, both live
+
+- `~/.sentient/gateway/certs/` — self-signed, gateway-minted, what `setup-prod.py` pins.
+- `~/.data/certs/sentient.dev32.io` — a **real** cert, renewed and rsynced by `acme.sh` on the LAN. `deploy/README.md:131` and `deploy/mac-prod/docker-compose.yml:39-41` both document it as the one intentional state path outside `~/.sentient`.
+
+Both are real. They serve different roles, and this design is where that gets said out loud (§2.5).
+
+### 1.8 Launch is split across four incantations
+
+`bun run dev` (`package.json:10`) starts the gateway and vite, and relies on the gateway's boot reconcile for docker and native addons. It does **not** source `scripts/env.sh`, stage `SENTIENT_CODE`, build images, or verify Docker is up. A working local stack currently requires, in order and from memory:
+
+```
+source scripts/env.sh
+scripts/dev-stage-code.sh                                             # once, needs venvs pre-built
+docker compose -f deploy/mac-prod/docker-compose.yml --profile build-only build
+bun run dev
+```
+
+`scripts/env.sh:45` only *warns* when the native tree is unstaged. Miss any step and the stack comes up looking healthy while the orchestrator's whole native path goes unexercised — the failure mode `env.sh`'s own header comment documents at length.
 
 ---
 
@@ -47,97 +87,269 @@ It is also the encapsulation precedent this design follows: a stock upstream ima
 One container owns every outward-facing port. Everything else binds loopback.
 
 ```
-LAN ──▶ inbound-proxy  :443   (+ :80 → 301 redirect)
-           │
-           └─ proxy_pass ──▶ host loopback :8888 ──▶ gateway
-                                                      ├── webui static (WEB_DIST_DIR)
-                                                      └── /api/v1, /api/v1/ws
-gateway        binds 127.0.0.1 only            (today: all interfaces)
-every addon    binds 127.0.0.1 already          (unchanged)
+LAN / browser ──▶ inbound-proxy :443  (+ :80 → 301)        ← the ONE public door
+                       │  TLS terminated (outward identity)
+                       │  re-encrypted, upstream verified
+                       └──▶ https://127.0.0.1:8888 ──▶ gateway (native binary / bun)
+                                                        ├── webui   ← assetPath("webui")
+                                                        └── /api/v1 (+ws)
+
+gateway         binds 127.0.0.1 only        (config.yaml:13, today 0.0.0.0)
+every addon     binds 127.0.0.1 already     (unchanged)
+inbound-proxy   is itself an orchestrator-managed addon, in a new INFRA class
 ```
 
-**Dev and prod run the identical topology.** That is the point of doing this in both places: a routing, header, or WebSocket-upgrade bug shows up on the dev Mac instead of only on the mini, and there is one thing to reason about rather than two. The only intended difference is that in dev, vite continues to serve the UI with hot reload, so the proxy's UI route points at vite while prod's points at the gateway's static handler.
+**Dev and prod run the identical topology, with the identical proxy config.** That is the whole point of doing it in both places: a routing, header, or upgrade bug surfaces on the dev Mac instead of only on the mini.
 
-### 2.1 Why a container, and what is actually privileged
+### 2.1 Dev serves the built UI, exactly like prod; vite is a side door
 
-Ports below 1024 require root on macOS. The only privileged act in this design is **binding 443**, and Docker's daemon — already running as root, already a hard dependency of the stack because the gateway's orchestrator drives it, already auto-started at login on the mini — performs that bind. Nothing we author runs as root.
+The proxy has **one** upstream in both environments. Vite is not behind it and does not know it exists.
 
-This does **not** dockerize the gateway. The gateway remains a native compiled binary under `launchd`; that migration stands. The proxy is a separate, stateless container in front of it, holding no application logic.
+```
+DEV (default — prod-shaped)
+  browser ─▶ inbound-proxy :443 ─▶ gateway :8888 ─┬─ webui (gateway/webui/dist)
+                                                  └─ /api/v1 (+ws)
 
-`pf` port-forwarding was considered and rejected: rules are lost on reboot unless anchored, the anchor file is a second root-owned artifact to maintain, and it gives no place to terminate TLS or redirect `:80`.
+DEV (--hmr, UI iteration only)
+  browser ─▶ vite :5173 ─▶ /api/v1 ─▶ gateway :8888        side door, proxy uninvolved
 
-### 2.2 The loopback question — settled by measurement
+PROD
+  LAN     ─▶ inbound-proxy :443 ─▶ gateway :8888 ─┬─ webui (share/webui)
+                                                  └─ /api/v1 (+ws)
+```
 
-Binding the gateway to `127.0.0.1` only works if a container can still reach it. On native Linux it cannot: `host.docker.internal` arrives on the bridge interface, and a loopback-bound service refuses it.
+Rejected: fronting vite from the proxy in dev. It gives the proxy a two-upstream routing table in dev and a one-upstream table in prod — precisely the divergence this design exists to kill — and drags HMR's websocket through nginx for no gain.
 
-Measured on this Mac (Docker Desktop), 2026-08-04:
+The cost is honest: the default dev loop serves a **built** bundle, so UI edits need `--hmr` or a rebuild. That is the right default, because packaging, MIME, cache-header, and SPA-fallback regressions are invisible under vite and only appear in prod today.
+
+Three doors exist in dev, in increasing fidelity:
+
+| URL | What it proves | When |
+|---|---|---|
+| `http://localhost:5173` | nothing about prod | `--hmr`, UI iteration |
+| `https://localhost:8888` | gateway static serving | diagnostics; works from the host even when loopback-bound |
+| `https://localhost` | the real thing | **default; all browser smoke** |
+
+`CLAUDE.md`'s standing instruction "Open the vite URL, never `:8888`" becomes wrong under this design and is updated as part of the work.
+
+### 2.2 Who owns the proxy: the orchestrator, in a new INFRA class
+
+`inbound-proxy` is an orchestrator-managed docker addon. It is not a compose service, not a second launchd job, not a bespoke supervisor. The gateway already is the host orchestrator; a second runtime owner would be exactly the rediscoverable divergence this design is trying to remove.
+
+But three existing orchestrator behaviours are wrong for a public door. Rather than special-case one service name, introduce an explicit **`infra` service class** — a policy flag in `managed_services`, default false, whose only member today is `inbound-proxy`:
+
+| Behaviour | Capability class (today) | `infra` class |
+|---|---|---|
+| First apply on a fresh host | waits for the wizard (`phase-orchestrator.ts:330`) | applied unconditionally at boot, after TLS material is minted |
+| Watchdog exhaustion | gives up after `health_watch_max_attempts` (`health-watch.ts:138-176`) | never gives up; keeps retrying with the same widening backoff |
+| Reconcile | unconditional `recreate` (`orchestrator.ts:124`) | skipped when the running container is unchanged **and** healthy |
+
+Each row fixes a specific, verified failure:
+
+- **Pre-bootstrap apply** closes §1.4's deadlock. Ordering is forced and cheap: `phase-services.ts:150` mints the cert before the orchestrator phase is constructed, so by the time an infra service starts, its cert already exists.
+- **No give-up** matters because `docs/native-todo.md` already documents Docker Desktop starting *after* the LaunchDaemon on the mini, by a margin that can exceed the current backoff budget. Under today's rule the only public entrance would give up permanently and need a manual restart.
+- **Skip-unchanged** fixes §1.5: without it every `bun --watch` save drops 80/443.
+
+The skip must **not** skip `verifyIdentity` (`orchestrator.ts:148-157`). Proving something answers the port is not proving it is ours; that check exists because a whole fleet once reported ready while both native addons were dead. Skip the recreate, keep the identity proof.
+
+**Accepted consequence:** the proxy's lifetime is the gateway's. Gateway down means no door and no maintenance page. This is correct — a door onto nothing serves no one — and is stated so it is a decision rather than a surprise.
+
+### 2.3 The public-port exception
+
+The loopback rule of §1.3 is a genuine security invariant and stays the default. It gains one narrow, fail-closed exception, expressed in policy (`config.yaml#managed_services`), not in the template:
+
+- A service may declare non-loopback publishing **only** if its policy entry sets the public flag.
+- The exception admits host ports **80 and 443 only**.
+- All three enforcement sites read the same predicate, so the layers cannot drift — the existing reason `LOOPBACK_PORT_RE` is duplicated across schema, loader, and driver.
+
+Inside the container nginx listens on unprivileged **8080/8443**; Docker maps host 80/443 onto them. Nothing in the image needs to run privileged.
+
+Port 80 is kept. Codex proposed cutting it as YAGNI; it is not. A bare `mini0.lan` typed into a browser attempts HTTP first, and the 301 is the entire reason `https://<host>` works without the user typing a scheme. That is the ergonomic point of the feature.
+
+### 2.4 Network: a new `sentient-edge`
+
+`inbound-proxy` joins a new non-internal network `sentient-edge`, added to `MANAGED_NETWORK_TOPOLOGY` (`types.ts:39-42`).
+
+It needs *a* non-internal network for publishing to take effect at all (docker silently drops publishing when every attached network is `internal: true` — the finding that produced `ingress-proxy`). It needs **no** container reachability whatsoever: its only upstream is host loopback. Reusing `sentient-external` would put the internet-facing container on the same L2 segment as `ha-mcp`, `ma-mcp`, `searxng-mcp`, and `egress-proxy`, granting lateral reach it has no use for. Its own network gives it exactly the reachability it needs and nothing else.
+
+### 2.5 TLS — two roles, two answers
+
+The proxy handles two distinct cert concerns. Conflating them is what produced §1.7's two competing stories.
+
+| Role | Dev | Prod |
+|---|---|---|
+| **Outward identity** (443) | `~/.sentient/gateway/certs` — self-signed, accept the browser warning | `~/.data/certs/sentient.dev32.io` — the real acme.sh cert |
+| **Upstream trust anchor** (→ 8888) | the gateway's self-signed `cert.pem` | the gateway's self-signed `cert.pem` |
+
+The outward path is a config value with a **fallback to the gateway's self-signed material**. That fallback is not a nicety: a fresh mini before `acme.sh` has ever run has no real cert, and an infra-class service must still start. One code path, both environments, no first-boot hole.
+
+**The upstream hop stays TLS.** Not a preference — a coupling. `phase-services.ts:150` gates cert minting on `cfg.tls.enabled`, so dropping the gateway to plaintext would stop the material being produced at all, including the material the proxy needs. Keeping TLS also leaves the gateway's listener untouched and preserves `setup-prod.py`'s existing verified-TLS health probe.
+
+nginx verifies the upstream against the mounted `cert.pem` with an explicit `proxy_ssl_name`. The container dials the host, so the name it presents must be one the SAN actually contains — `shared/tls/src/tls.ts:28` always includes `localhost` and `127.0.0.1`, so `localhost` is the correct, always-present choice. Verification that silently degrades to encryption-only is the failure mode being guarded against here.
+
+There is deliberately **no** "tolerate a missing cert, retry instead of crash-looping" requirement. The material is minted before the orchestrator phase is constructed (`phase-services.ts:150`, `create-gateway-services.ts`), and the prod path falls back to it, so no window exists in which an infra-class proxy starts without a cert.
+
+**Known, not fixed here:** `shared/tls/src/tls.ts:60-85` never `chmod`s `key.pem`, so "the key is 0600" is an assumption, not an enforced fact. Enforcing the mode is a one-line addition and is in scope (§3); rotating or reloading on acme.sh renewal is not (§3, Out).
+
+### 2.6 SAN, and where the microphone breaks
+
+`gateway/config.yaml:56-58` ships `tls.hostnames: ["localhost"]`. `shared/config/src/schema.ts:212-214` records the consequence: a SAN mismatch produces *"a hard browser warning AND refuses mic access."*
+
+This is a voice assistant, so it matters, but the blast radius is narrow:
+
+- **Prod** — the real cert names `sentient.dev32.io`. No issue.
+- **Dev, browser on the host** — `https://localhost` is in the SAN. No issue.
+- **Dev, browser on a phone over the LAN** — SAN mismatch, **no microphone**. Workaround already documented at `config.yaml:58`: add the LAN IP to `tls.hostnames` and delete the certs dir to regenerate.
+- **Native mobile apps** — unaffected. They use platform microphone permission, not browser origin rules.
+
+No code change; the operator note is part of the doc work in §3.
+
+### 2.7 Two measurements
+
+The privileged-bind and loopback-reachability premises are measured, not assumed.
+
+Loopback reachability from a container (2026-08-04, this Mac, Docker Desktop):
 
 | Case | Host bind | Result |
 |---|---|---|
-| A | `127.0.0.1:9911` (loopback only, confirmed via `lsof`) | container reached it ✅ |
-| B — control | `0.0.0.0:9912` | container reached it ✅ |
-| C — negative control | nothing listening on 9913 | `Connection refused` ✅ |
+| A | `127.0.0.1:9911`, confirmed via `lsof` | container reached it |
+| B — control | `0.0.0.0:9912` | container reached it |
+| C — negative control | nothing on 9913 | `Connection refused` |
 
-The negative control refusing proves the positive is not a false pass; `lsof` confirmed case A really was `127.0.0.1:9911` and not `*:9911`.
+C refusing proves A is not a false pass. The mechanism is visible in C's error: the container connects from `192.168.65.254`, Docker Desktop's host-side address, and its network stack proxies to host loopback. **This is Docker-Desktop-specific and would not work on native Linux** — that caveat belongs in a comment beside the bind, because someone will eventually try this on a Linux box.
 
-**Conclusion: the gateway can bind loopback-only and the proxy still reaches it, with no compromise.** The mechanism is visible in C's error — the container connects from `192.168.65.254`, Docker Desktop's host-side address, and its network stack proxies to host loopback. This is Docker-Desktop-specific and **would not work on native Linux**; that caveat belongs in a comment next to the bind, because someone will eventually try this on a Linux box.
+Privileged bind (2026-08-04, same host):
 
-### 2.3 TLS
+| Check | Result |
+|---|---|
+| `docker run -p 0.0.0.0:443:80 nginx:1.30-alpine` | bound, no root prompt |
+| `curl http://127.0.0.1:443/` | `200` |
+| `lsof -nP -iTCP:443 -sTCP:LISTEN` | `com.docker`, **user-owned, not root** |
 
-The proxy reads `~/.sentient/gateway/certs/{cert,key}.pem` — the same material the gateway mints — mounted read-only. Consequences:
+The conclusion holds but the previous draft's reasoning did not: on macOS the host listener is Docker Desktop's user-owned backend acting through its privileged helper, not "the daemon running as root". `pf` port-forwarding stays rejected — rules are lost on reboot unless anchored, the anchor is a second root-owned artifact, and it offers nowhere to terminate TLS or redirect `:80`.
 
-- **No new cert authority.** One identity for the stack, one thing to trust on client devices, one thing `setup-prod.py`'s health probe already pins.
-- **Ordering:** the material only exists after the gateway has started once. The proxy must tolerate its absence at first boot rather than crash-looping — the same problem `setup-prod.py:598` already documents for the health probe ("a fresh host's `cert.pem` does not exist until the gateway has run"). Restart policy handles it; the proxy is stateless.
-- `key.pem` is 0600 and owned by the operator. The mount must preserve that; the container reading it must not require loosening host permissions.
-- Terminating TLS at the proxy means the proxy→gateway hop is the loopback interface on a single host. Whether that hop stays TLS or drops to plaintext is a decision for the plan (see §4).
+### 2.8 Naming
 
-A self-signed cert still warns in browsers. Replacing it with a real certificate for `sentient.dev32.io` is **separate, later, and out of scope here** — but this design is the precondition for it, because a single terminator is the only sane place to install one.
+Called **`inbound-proxy`**, per owner decision. `ingress-proxy` (internal addon-network boundary) and `inbound-proxy` (public host/LAN boundary) are near-synonyms guarding different boundaries, so each config carries a header comment naming which boundary it guards — the way `ingress-proxy`'s already does.
 
-### 2.4 Naming
-
-Called **`inbound-proxy`**, per owner decision.
-
-Noted once, for the record: `ingress` and `inbound` are near-synonyms, and the stack will contain both `ingress-proxy` (internal addon-network boundary) and `inbound-proxy` (public host/LAN boundary). `edge-proxy` was proposed to avoid that collision. The owner chose `inbound-proxy`; the disambiguation therefore has to be carried by a header comment in each proxy's config stating which boundary it guards, the way `ingress-proxy`'s config already does.
+It does **not** live under `gateway/mcp/`. `ingress-proxy` sits there by accident of history; `inbound-proxy` has nothing to do with MCP.
 
 ---
 
-## 3. Scope
+## 3. Launching the stack
+
+One command, one canonical URL, in dev and prod alike.
+
+**Prod is already this shape** and does not change: `sudo launchctl kickstart -k system/io.sentient.gateway` starts the gateway, whose orchestrator creates every docker and native addon. `setup-prod.py` touches docker nowhere. Adding the proxy to the registry means prod gains a public door with no new prod launch step.
+
+**Dev gets the equivalent.** `bun run dev` becomes the whole-stack launcher, delegating to `scripts/stack.sh` — a bash entry point so it can source `scripts/env.sh` itself and so it still runs before bun is on `PATH`.
+
+```
+bun run dev  ─▶  bash scripts/stack.sh up
+
+  preflight ── AUTO ──  source env.sh · wait for the docker daemon
+                        · build webui if dist is stale
+                        · bake missing/stale :local images (incl. inbound-proxy)
+                        · kill a gateway we can PROVE is ours (~/.sentient/run/gateway.pid)
+
+            ── REFUSE ─ bun missing · daemon still down after the wait
+               with one  · venvs unstaged · ~/.sentient config absent
+               runnable   · a FOREIGN process holding 80/443/8888/5173 —
+               line         named via lsof, never signalled
+      ↓
+  start gateway ──▶ orchestrator applies the INFRA class first, then the rest
+      ↓
+  readiness ── gateway /api/v1/health on loopback AND https://localhost/ through the proxy
+      ↓
+  print ONE canonical URL:  https://localhost/
+            diagnostics:    :8888 gateway-direct · :5173 vite (only with --hmr)
+```
+
+The auto/refuse split is the design's one judgement call. Auto-fix what is cheap, idempotent, and unambiguous. Refuse — loudly, with the exact command — where the fix needs the network, holds secrets, or would mean signalling a process we cannot prove is ours. The last is the existing native-addon rule (`config.yaml:762-768`: a holder recorded in `~/.sentient/run/<svc>.pid` is escalated; an unidentifiable holder is only named) applied to the gateway itself.
+
+**Docker is a hard requirement.** No daemon means no MCP tools, no searxng, no egress-proxy, and now no door. A stack that "starts" without it is a lie that hides orchestrator bugs, so preflight waits briefly and then refuses with `open -a Docker`. Prod always has Docker up; dev matches.
+
+**Re-running is restarting.** `bun run dev` against a live stack restarts it. One command to remember, which is the entire ergonomic goal.
+
+**Stop semantics, documented because they are asymmetric:**
+
+| Action | Gateway | Native addons | Docker addons |
+|---|---|---|---|
+| Ctrl-C on `bun run dev` | stops | reaped by the SIGTERM hook (`main.ts:306-307`) | **keep running** (`unless-stopped`) |
+| `bun run stack:down` | stops | reaped | stopped |
+
+Containers surviving Ctrl-C is what makes restart fast, and `boot-reconciler` re-adopts them. It is only confusing when undocumented.
+
+Commands: `bun run dev` (up / restart) · `bun run dev --hmr` (also vite) · `bun run stack:down` · `bun run stack:status`.
+
+---
+
+## 4. Scope
 
 **In:**
-1. Set `WEB_DIST_DIR` so the gateway actually serves the built UI in prod.
-2. Add the `inbound-proxy` container: 443 + 80-redirect, cert mounted from `~/.sentient/gateway/certs/`, upstream on host loopback.
-3. Move the gateway's bind from all-interfaces to `127.0.0.1`.
-4. Run the same topology in dev.
+
+1. **Serve the UI.** `webDistDir` derived from the asset root (`assetPath("webui")`), `WEB_DIST_DIR` demoted to an override. Must handle both shapes: `share/webui` in an installed release, `gateway/webui/dist` in a repo checkout — `assetPath("webui")` alone resolves to the *source* directory in a checkout.
+2. **`inbound-proxy` addon.** Stock nginx, one baked config, infra class, `sentient-edge`, 8080/8443 internally mapped to host 80/443, outward cert from config with fallback, verified TLS upstream, correct `Upgrade`/`Connection` handling for `/api/v1/ws` (**not** copied from `ingress-proxy`), `Host` validation, and `X-Forwarded-*` / `X-Real-IP` **overwritten** rather than appended.
+3. **The public-port exception** at all three enforcement sites (`types.ts:97-100`, `template-loader.ts:69`, `docker-driver.ts:280-290`), plus `sentient-edge` in `MANAGED_NETWORK_TOPOLOGY`.
+4. **The infra service class**: pre-bootstrap apply, no watchdog give-up, no recreate when unchanged and healthy — while still running `verifyIdentity`.
+5. **Bind change**: `config.yaml:13` → `127.0.0.1`, **plus an operator-config migration**. The chain in `gateway/src/config/operator-config-migrator.ts` currently ends at 0.1.3 and never touches `host`; production reads a seeded, never-overwritten operator config, so without a 0.1.3 → 0.1.4 step every existing install silently stays on `0.0.0.0`.
+6. **Mobile defaults → 443** (`android/.../BackendSetupViewModel.kt:28`, `ios/App/SDK/GatewayConfig.swift:16`, and the URL builders that interpolate `:$port`). No migration machinery — an already-paired device is re-pointed from its own settings screen.
+7. **`key.pem` mode enforced** to 0600 in `shared/tls/src/tls.ts`, which currently only assumes it.
+8. **Launcher**: `scripts/stack.sh` + `bun run dev` / `dev --hmr` / `stack:down` / `stack:status`.
+9. **`setup-prod.py` health gate through 443**, not only 8888. Today `gateway/src/api/handlers/health.ts` returns 200 as soon as the process is up and the installer probes 8888 directly, so a broken nginx config, a missing bundle, a wrong cert, or broken WS forwarding would all pass the gate and never trigger the rollback that exists to catch exactly this.
+10. **Doc reconciliation**: `CLAUDE.md`'s "never open `:8888`", the two cert stories of §1.7, the SAN note of §2.6, and the native-stack migration spec's stale `bun --hot` reference (`gateway/src/main.ts:49-79` refuses hot reload outright).
 
 **Out:**
-- A real (non-self-signed) certificate.
+
+- Rate limiting or auth at the proxy. Owner decision: this is an edge on a home network. Recorded as accepted risk in §5.
+- Obtaining a real certificate — prod already has one via acme.sh.
+- Automating nginx reload on acme.sh renewal. Flag the one-liner (`docker kill -s HUP sentient-inbound-proxy`) in the deploy README; automate on demonstrated need.
 - Any change to `ingress-proxy` or the addon network.
 - Dockerizing the gateway — explicitly contrary to the native-stack migration.
-- Auth or rate limiting at the proxy. The gateway owns authorization; a second policy point that can drift from it is worse than none.
+- Hardening the static handler's traversal guard. `gateway/src/api/handlers/webui.ts:56` rejects only a literal `..`, weaker than `downloads.ts`'s resolved-path containment. Pre-existing, unchanged by this work, tracked separately.
 
 ---
 
-## 4. Open questions for the implementation plan
+## 5. Accepted risks
 
-1. **Does the proxy→gateway hop stay TLS?** Terminating at the proxy and re-encrypting to the gateway is belt-and-braces on a loopback hop of one host; plaintext is simpler but means the gateway must accept non-TLS on 8888, which is a behavioural change to its listener. Either is defensible — it needs deciding, not defaulting.
-2. **WebSocket upgrade headers.** `/api/v1/ws` must survive the hop; `ingress-proxy`'s existing config is the reference for what nginx needs here.
-3. **Dev's vite route.** Whether the proxy fronts vite in dev (closest to prod, but interposes a proxy on the hot-reload socket) or dev keeps 5173 direct with the proxy only fronting the API. The first is more faithful; the second is less likely to fight HMR.
-4. **First-boot ordering** between the proxy and the gateway that mints the cert (§2.3).
-5. **Where `WEB_DIST_DIR` points in a compiled-binary install** — the built `dist` has to land somewhere `setup-prod.py` installs and the plist can name.
+Recorded so they are decisions, not oversights.
+
+| Risk | Why accepted |
+|---|---|
+| No rate limiting at the edge; `auth.ts` has no failure counter around Argon2 verify | Owner decision — home-network edge. Not a regression: `:8888` is LAN-open today, so `/auth/setup` and the PIN endpoint are already reachable from the LAN. The proxy neither adds nor removes that exposure. |
+| First-admin takeover race on a fresh host (`/auth/setup` gates only on `isFirstRun()`) | Same reasoning. Pre-existing and unchanged. |
+| Proxy dies with the gateway; no maintenance page | A door onto nothing serves no one (§2.2). |
+| Loopback-from-container is Docker-Desktop-specific | Measured (§2.7), and carried as a comment beside the bind so a future Linux host fails legibly. |
+| Rollback is not transactional across image and binary | `setup-prod.py` rolls back the binary symlink; addon images carry mutable `:local` tags. Pre-existing across all addons; the proxy does not make it worse. Extending the health gate to 443 (§4.9) is the mitigation that *does* land here. |
+| Browser on a LAN phone has no mic in dev | §2.6 — documented workaround, no native-app impact. |
 
 ---
 
-## 5. E2E matrix
+## 6. E2E matrix
+
+All cases run against the **local dev stack**, through `https://localhost` unless stated. Prod verification stays observational — `docker compose ps`, `docker logs`, `curl` — per the standing rule.
 
 | Case | Viewport | Pre-state | Action | Expected user-visible | Expected log trail |
 |---|---|---|---|---|---|
-| `inbound-https` | 1280×900 | stack up, proxy running | GET `https://<host>/` | web UI loads (cert warning until §2.3's follow-up) | proxy access log 200; gateway static-handler hit |
-| `inbound-http-redirect` | 1280×900 | stack up | GET `http://<host>/` | 301 to `https://` | proxy access log 301, no gateway hit |
+| `inbound-https` | 1280×900 | stack up via `bun run dev` | GET `https://localhost/` | web UI loads (cert warning accepted once) | proxy access log 200; gateway static-handler hit, not a 404 |
+| `inbound-http-redirect` | 1280×900 | stack up | GET `http://localhost/` | 301 to `https://` | proxy log 301, no gateway hit |
 | `inbound-ws` | 1280×900 | logged in as Ada | send a chat message through the proxied origin | reply streams; no reconnect loop | gateway WS open; no upgrade-failure WARN |
-| `gateway-not-lan-reachable` | — | gateway bound loopback | connect to `<lan-ip>:8888` from another host | connection refused | nothing in gateway log — the connection never arrives |
-| `webui-served-natively` | 1280×900 | prod-shaped install, no vite | GET `/` on the gateway directly | UI loads (proves `WEB_DIST_DIR` is wired) | static handler constructed at startup, not null |
-| `cert-absent-first-boot` | — | `~/.sentient/gateway/certs/` empty | start proxy before gateway | proxy retries, does not crash-loop | restart backoff, then a clean bind after the gateway mints |
+| `gateway-not-lan-reachable` | — | gateway bound loopback | connect to `<lan-ip>:8888` from another host | connection refused | nothing in the gateway log — the connection never arrives |
+| `fresh-install-wizard` | 1280×900 | `bootstrap_complete=false`, no containers | `bun run dev`, then GET `https://localhost/` | wizard loads | infra-class apply logged **before** the bootstrap gate; `boot-reconcile.skipped` still logged for capability addons |
+| `proxy-survives-save` | — | stack up, gateway under `--watch` | touch a gateway source file | `https://localhost/` stays up throughout | reconcile logs skip-unchanged for `inbound-proxy`; **no** recreate; `verifyIdentity` still runs |
+| `webui-served-natively` | 1280×900 | prod-shaped install, no vite | GET `/` on the gateway directly | UI loads | static handler constructed with a real `distDir` at startup |
+| `stack-up-from-cold` | — | containers down, images present | `bun run dev` | one canonical URL printed; stack reaches ready | preflight decisions logged; readiness waits on **both** loopback health and 443 |
+| `preflight-refuses-foreign-port` | — | a foreign process on 8888 | `bun run dev` | refuses, names the holder and one runnable fix | holder named via lsof; **never signalled** |
+| `mobile-connects-443` | native | Android + iOS, default backend config | connect and send a message | connects on 443 through the proxy | gateway WS open; no `:8888` dial attempted |
 
-`gateway-not-lan-reachable` is the one that proves the security claim; without it the bind change is untested. `cert-absent-first-boot` is the ordering hazard from §2.3.
+`gateway-not-lan-reachable` is what proves the security claim; without it the bind change is untested. `fresh-install-wizard` and `proxy-survives-save` are the two failures the previous draft would have shipped.
 
-All cases run against the **local dev stack**. Prod verification stays observational — `docker compose ps`, `docker logs`, `curl` — per the standing rule.
+---
+
+## 7. Open questions for the implementation plan
+
+1. **Dev cert dir vs prod cert dir as one config key.** The shape (`inbound_proxy.cert_dir` with fallback, vs. a two-key primary/fallback pair) is a plan-level call.
+2. **Staleness test for the webui build** in preflight — mtime comparison against sources, or an unconditional build. Correctness versus a few seconds on every start.
+3. **`readiness` timeout budgets** for the 443 probe, and what the launcher prints when the gateway is healthy but the proxy is not.
+4. **Where `inbound-proxy`'s image and config live** in the tree, given it does not belong under `gateway/mcp/` (§2.8).
+5. **Whether `stack:status` reads the orchestrator's status endpoint** or probes independently. Reading it is less code and exercises a real surface; probing works when the gateway is down, which is when status is most wanted.
