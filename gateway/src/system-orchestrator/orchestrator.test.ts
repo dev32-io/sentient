@@ -16,6 +16,7 @@ function svc(name: string, deps: string[] = [], optional = false): ManagedServic
       healthcheck: { url: `http://${name}/health`, timeout_ms: 200 },
       depends_on: deps,
       optional,
+      infra: false,
     },
     template: {
       image: "x",
@@ -40,6 +41,7 @@ function nativeSvc(name: string): ManagedService {
       healthcheck: { url: `http://${name}/health`, timeout_ms: 200 },
       depends_on: [],
       optional: false,
+      infra: false,
     },
   };
 }

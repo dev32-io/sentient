@@ -18,6 +18,7 @@ const ms: DockerManagedService = {
     healthcheck: { url: "http://ha-mcp:8086/health", timeout_ms: 1000 },
     depends_on: [],
     optional: true,
+    infra: false,
   },
   template: {
     image: "ghcr.io/homeassistant-ai/ha-mcp:stable",

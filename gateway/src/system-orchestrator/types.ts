@@ -40,6 +40,13 @@ export type ManagedNetworks = Readonly<Record<string, ManagedNetworkConfig>>;
 export const MANAGED_NETWORK_TOPOLOGY: ManagedNetworks = Object.freeze({
   "sentient-internal": { internal: true },
   "sentient-external": { internal: false },
+  // The PUBLIC edge, and deliberately its own segment. inbound-proxy's only
+  // upstream is host loopback — it needs zero container reachability. Putting it
+  // on sentient-external instead would share an L2 segment with ha-mcp, ma-mcp,
+  // searxng-mcp and egress-proxy, handing the one internet-facing container
+  // lateral reach it has no use for. Non-internal because docker silently drops
+  // port publishing when every attached network is internal.
+  "sentient-edge": { internal: false },
 });
 
 /** Which backend supervises a managed service: a docker container, or a plain
@@ -56,6 +63,19 @@ const CommonServiceFields = {
   healthcheck: HealthCheckSchema,
   depends_on: z.array(ServiceNameSchema).optional().default([]),
   optional: z.boolean().optional().default(false),
+  /** INFRASTRUCTURE class. A capability addon can wait for the wizard, be given
+   *  up on, and be recreated freely. The public door cannot: waiting for the
+   *  wizard means no route TO the wizard on a fresh host, giving up means the
+   *  only entrance stays dead until someone notices, and recreating on every
+   *  `bun --watch` save drops 80/443 on every keystroke.
+   *
+   *  Three behaviours change, all fail-safe in the false direction:
+   *    - applied before bootstrap completes  (bootstrap/phase-orchestrator.ts)
+   *    - never given up on by the watchdog   (system-orchestrator/health-watch.ts)
+   *    - not recreated when unchanged+healthy (system-orchestrator/docker-driver.ts)
+   *
+   *  Default false: every pre-existing entry keeps today's behaviour exactly. */
+  infra: z.boolean().optional().default(false),
 };
 
 export const DockerServiceConfigSchema = z.object({

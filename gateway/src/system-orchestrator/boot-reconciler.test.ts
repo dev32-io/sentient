@@ -21,6 +21,7 @@ const ms = (name: string): ManagedService => ({
     healthcheck: { url: "http://x/health", timeout_ms: 1000 },
     depends_on: [],
     optional: false,
+    infra: false,
   },
   template: {
     image: "x",

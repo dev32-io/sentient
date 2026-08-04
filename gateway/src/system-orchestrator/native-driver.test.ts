@@ -17,6 +17,7 @@ function nativeService(
       healthcheck,
       depends_on: [],
       optional: false,
+      infra: false,
       ...(python === undefined ? {} : { python }),
     },
   };
