@@ -323,23 +323,25 @@ export async function runPhaseOrchestrator(input: PhaseOrchestratorInput): Promi
 
   // Boot reconcile — replays applyAll once on startup so gateway restarts
   // (after a crash, image rebuild, etc.) repopulate orchestrator status from
-  // the live container set. Skip on fresh installs (bootstrap_complete=false)
-  // because the wizard owns the first applyAll, and pre-applying here makes
-  // the bringup screen flash through too fast for the user to see what's
-  // happening. Fire-and-forget once we do run it.
+  // the live container set. Fire-and-forget either way.
+  //
+  // On a FRESH install the wizard still owns the first applyAll of every
+  // capability addon — pre-applying them makes the bringup screen flash past.
+  // But the INFRA class cannot wait for the wizard: with the gateway bound to
+  // loopback, inbound-proxy IS the route to the wizard, so deferring it means
+  // the fresh host has no reachable UI on any interface. Hence the split.
   let bootReconcile: Promise<OrchestratorStatus> | null = null;
   if (systemOrchestrator) {
     const installed = await installState.load();
-    if (installed.bootstrap_complete) {
-      bootReconcile = systemOrchestrator.reconcile().catch((err: unknown) => {
-        log.warn("boot-reconcile.failed", {
-          reason: err instanceof Error ? err.message : String(err),
-        });
-        return systemOrchestrator.getStatus();
+    const orch = systemOrchestrator;
+    const run = installed.bootstrap_complete ? () => orch.reconcile() : () => orch.reconcileInfraOnly();
+    bootReconcile = run().catch((err: unknown) => {
+      log.warn("boot-reconcile.failed", {
+        bootstrapComplete: installed.bootstrap_complete,
+        reason: err instanceof Error ? err.message : String(err),
       });
-    } else {
-      log.info("boot-reconcile.skipped", { reason: "bootstrap-incomplete" });
-    }
+      return orch.getStatus();
+    });
   }
 
   return { systemOrchestrator, bootReconcile };

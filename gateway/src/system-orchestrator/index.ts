@@ -37,6 +37,10 @@ export interface SystemOrchestratorService {
   applySubset(names: ReadonlySet<ServiceName>): Promise<OrchestratorStatus>;
   getStatus(): OrchestratorStatus;
   reconcile(): Promise<OrchestratorStatus>;
+  /** Boot path for a host that has NOT finished the wizard. Applies only the
+   *  infra class and arms the watchdog. The wizard still owns the first apply of
+   *  every capability addon, so its bringup screen is unchanged. */
+  reconcileInfraOnly(): Promise<OrchestratorStatus>;
   /** Stops the post-boot health watchdog. Called on gateway shutdown so a
    *  pending tick cannot re-apply into a torn-down driver. Idempotent. */
   stopHealthWatch(): void;
@@ -300,6 +304,35 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
             }),
           ),
         );
+      } finally {
+        healthWatch.start();
+      }
+    },
+    reconcileInfraOnly: async () => {
+      // Same unconditional-arming contract as reconcile() — see its comment.
+      // The watchdog is what recovers the public door when Docker Desktop comes
+      // up after the gateway, which is the routine case on a rebooted mini.
+      try {
+        // On a fresh install this call is the FIRST thing to ever touch the
+        // orchestrator, so `currentRegistry` is still the empty Map it was
+        // constructed with (it is only ever reassigned inside rebuildRegistry(),
+        // which nothing has called yet). Filtering that stale/empty snapshot
+        // would report zero infra services on every cold boot — exactly the
+        // deadlock this method exists to close — so rebuild first and filter
+        // the result, never the other way round.
+        await rebuildRegistry();
+        const infraNames = new Set(
+          Array.from(currentRegistry.values())
+            .filter((ms) => ms.config.infra)
+            .map((ms) => ms.name),
+        );
+        if (infraNames.size === 0) {
+          log.info("boot-reconcile.infra-only.empty", { reason: "no infra services in the registry" });
+          return lastStatus;
+        }
+        log.info("boot-reconcile.infra-only", { services: Array.from(infraNames) });
+        await nativeDriver.reapOrphans();
+        return await applySubsetSerialized(infraNames);
       } finally {
         healthWatch.start();
       }

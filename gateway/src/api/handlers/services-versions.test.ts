@@ -48,6 +48,7 @@ function makeOrchestrator(versions: ServiceVersionRecord): SystemOrchestratorSer
     applySubset: async () => ({ state: "ready", services: [], startedAt: null, finishedAt: null }),
     getStatus: () => ({ state: "ready", services: [], startedAt: null, finishedAt: null }),
     reconcile: async () => ({ state: "ready", services: [], startedAt: null, finishedAt: null }),
+    reconcileInfraOnly: async () => ({ state: "ready", services: [], startedAt: null, finishedAt: null }),
     stopHealthWatch: () => {},
     getRequiredServicesStatus: async () => versions,
   };
