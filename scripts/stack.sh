@@ -67,6 +67,10 @@ GATEWAY_STOP_MAX_ATTEMPTS=20   # ~5s grace period (poll * attempts)
 DOCKER_POLL_S=1                # docker-daemon wait poll interval
 PROBE_MAX_TIME_S=3             # readiness probe timeout (gateway/door)
 VITE_PROBE_MAX_TIME_S=2        # status probe timeout (vite, cheap/local)
+# Caps the PPID walk in is_descendant_of so a ppid cycle or an unexpectedly
+# deep supervisor chain cannot hang preflight. Verified live: the real chain
+# (bun workspace-filter -> vite) is one hop; this leaves wide margin.
+ANCESTRY_MAX_DEPTH=32
 
 # Read one scalar out of the stack: block, scoped to that block only. A
 # top-level YAML key starts at column 0; entering `stack:` arms the match,
@@ -91,10 +95,10 @@ step() { printf '  · %s\n' "$1"; }
 
 # Kill a pid THIS SCRIPT recorded, and BLOCK until it is actually gone —
 # poll, then escalate to SIGKILL, same shape everywhere. Returns 1 if it
-# survived even SIGKILL. Shared by preflight_port's own-process reclaim and
+# survived even SIGKILL. Shared by preflight_ports's reclaim step and
 # cmd_down: a caller that removes its pid-file ownership record before this
 # returns 0 is how a still-live pid gets reported as "a process we did not
-# start" by the very next preflight_port call — the record is the only proof
+# start" by the very next preflight_ports call — the record is the only proof
 # of ownership, and dropping it early throws that proof away while the
 # process it names might still be running.
 kill_and_wait() { # kill_and_wait <pid>
@@ -107,6 +111,34 @@ kill_and_wait() { # kill_and_wait <pid>
   kill -9 "$pid" 2>/dev/null || true
   sleep "$GATEWAY_STOP_POLL_S"
   ! kill -0 "$pid" 2>/dev/null
+}
+
+describe_pid() { # describe_pid <pid>; best-effort command name for a message
+  ps -o comm= -p "$1" 2>/dev/null || echo unknown
+}
+
+# Is <pid> our recorded <ancestor>, or a DESCENDANT of it? `bun run --filter`
+# interposes a workspace-filter supervisor between the pid we record for vite
+# and the grandchild node process that actually binds the port (verified
+# live: one hop, supervisor -> vite), so an exact pid match alone is too
+# strict and would call our own vite "a process we did not start". Walking up
+# the PPID chain is what recognises it as ours anyway.
+#
+# The walk is capped (ANCESTRY_MAX_DEPTH) and stops at pid 1 so a cycle or an
+# unexpectedly deep chain can't hang preflight. If the walk cannot establish
+# descent within that budget, the answer is FOREIGN — failing to prove
+# ownership must never be read as proving it. This never widens to matching
+# on command name: only a real, walked parent/child chain to a pid THIS
+# SCRIPT recorded counts.
+is_descendant_of() { # is_descendant_of <pid> <ancestor>
+  local pid="$1" ancestor="$2" depth=0
+  while [ -n "$pid" ] && [ "$depth" -le "$ANCESTRY_MAX_DEPTH" ]; do
+    [ "$pid" = "$ancestor" ] && return 0
+    [ "$pid" = "1" ] && return 1
+    pid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')"
+    depth=$((depth + 1))
+  done
+  return 1
 }
 
 # ── preflight ───────────────────────────────────────────────────────────────
@@ -141,11 +173,16 @@ preflight_native_code() {
   [ -x "$py" ] || die "SENTIENT_CODE is not staged ($SENTIENT_CODE)" "scripts/dev-stage-code.sh"
 }
 
-# Free the port, but only if we can PROVE the holder is ours. Signalling a
-# process we cannot identify is not a decision an unattended launcher gets to
-# take — the same rule the orchestrator applies to native addons.
-preflight_port() { # preflight_port <port> <label> <pid_file|"">
-  local port="$1" label="$2" pid_file="$3" pids
+# Populated by examine_port, consumed by preflight_ports — see there for why
+# deciding and acting are two separate passes.
+FOREIGN_PORTS=()      # human-readable lines, one per foreign holder found
+RECLAIM_TARGETS=()    # "port:label:pid" triples proven ours, still to signal
+
+# DECIDE ONLY for one port — never kills, never touches a pid file. Appends
+# to FOREIGN_PORTS or RECLAIM_TARGETS above; preflight_ports is what turns
+# the verdict into action, and only once every port has been examined.
+examine_port() { # examine_port <port> <label> <pid_file|"">
+  local port="$1" label="$2" pid_file="$3" pids pid
   pids="$(lsof -nP -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
   [ -z "$pids" ] && return 0
 
@@ -159,19 +196,79 @@ preflight_port() { # preflight_port <port> <label> <pid_file|"">
   # docker-driver.ts's own identity proof for infra services.
   if [ "$port" = "$INBOUND_HTTP_PORT" ] || [ "$port" = "$INBOUND_HTTPS_PORT" ]; then
     [ -n "$(docker ps -q --filter "$SENTIENT_MANAGED_FILTER" --filter "publish=$port")" ] && return 0
-  elif [ -n "$pid_file" ] && [ -f "$pid_file" ]; then
-    local ours; ours="$(cat "$pid_file")"
-    if printf '%s\n' "$pids" | grep -qx "$ours"; then
-      step "stopping our previous $label (pid $ours) on $port"
-      kill_and_wait "$ours" || die "our previous $label (pid $ours) would not stop on $port" \
-          "kill -9 $ours    # then re-run"
-      return 0
-    fi
+    for pid in $pids; do
+      FOREIGN_PORTS+=("port $port ($label) is held by a process we did not start: pid $pid ($(describe_pid "$pid"))")
+    done
+    return 0
   fi
 
-  local who; who="$(ps -o comm= -p "$(printf '%s' "$pids" | head -1)" 2>/dev/null || echo unknown)"
-  die "port $port ($label) is held by a process we did not start: pid $(printf '%s' "$pids" | head -1) ($who)" \
-      "lsof -nP -iTCP:$port -sTCP:LISTEN    # identify it, then stop it yourself"
+  if [ -n "$pid_file" ] && [ -f "$pid_file" ]; then
+    local recorded; recorded="$(cat "$pid_file")"
+    local all_ours=1
+    for pid in $pids; do
+      if ! is_descendant_of "$pid" "$recorded"; then
+        all_ours=0
+        FOREIGN_PORTS+=("port $port ($label) is held by a process we did not start: pid $pid ($(describe_pid "$pid"))")
+      elif [ "$pid" != "$recorded" ]; then
+        # A proven descendant that ISN'T the recorded pid itself: the actual
+        # listener behind a supervisor. Needs its own kill — verified live
+        # that SIGTERMing only the recorded supervisor orphans this one,
+        # still holding the port.
+        RECLAIM_TARGETS+=("$port:$label:$pid")
+      fi
+    done
+    # The recorded pid always needs its own kill too, even when (as for the
+    # plain gateway case) it was already the listener above and this would
+    # otherwise duplicate it — added once, unconditionally, here instead.
+    # Killing it is also what makes an OLD session's `wait` unblock and that
+    # shell exit, not just the port free up.
+    [ "$all_ours" -eq 1 ] && RECLAIM_TARGETS+=("$port:$label:$recorded")
+    return 0
+  fi
+
+  for pid in $pids; do
+    FOREIGN_PORTS+=("port $port ($label) is held by a process we did not start: pid $pid ($(describe_pid "$pid"))")
+  done
+}
+
+# Examine every port, THEN act — never interleaved. A refusal must leave the
+# world exactly as it found it: if any port turns out foreign, nothing above
+# this point has sent a signal to anything, so reporting every foreign holder
+# in one refusal is free, not a second pass over already-mutated state. Only
+# once EVERY port is confirmed free-or-ours does reclaiming start. This is
+# what stops a real, reproduced failure: previously, reaching an unprovable
+# port (vite, behind its supervisor) AFTER an earlier port (gateway) was
+# already killed left the stack half-torn — gateway dead, door 502, vite
+# orphaned and still holding its port, recoverable only via `stack.sh down`.
+preflight_ports() {
+  FOREIGN_PORTS=()
+  RECLAIM_TARGETS=()
+  examine_port "$INBOUND_HTTP_PORT" http ""
+  examine_port "$INBOUND_HTTPS_PORT" https ""
+  examine_port "$GATEWAY_PORT" gateway "$GATEWAY_PID_FILE"
+  examine_port "$VITE_PORT" vite "$VITE_PID_FILE"
+
+  if [ "${#FOREIGN_PORTS[@]}" -gt 0 ]; then
+    local msg; msg="$(printf '%s\n    ' "${FOREIGN_PORTS[@]}")"
+    die "${msg%$'\n    '}" \
+        "lsof -nP -iTCP:80,443,8888,5173 -sTCP:LISTEN    # identify them, then stop them yourself"
+  fi
+
+  # Guarded on count, not a bare `"${RECLAIM_TARGETS[@]}"` for-in: macOS's
+  # stock /bin/bash is 3.2, where expanding `[@]` on a genuinely EMPTY array
+  # under `set -u` throws "unbound variable" (fixed in later bash, not
+  # present here) — verified live, this crashed the common case (nothing to
+  # reclaim) until guarded the same way preflight_images already guards
+  # `missing[@]` below.
+  if [ "${#RECLAIM_TARGETS[@]}" -gt 0 ]; then
+    local target port label pid rest
+    for target in "${RECLAIM_TARGETS[@]}"; do
+      port="${target%%:*}" rest="${target#*:}" label="${rest%%:*}" pid="${rest#*:}"
+      step "stopping our previous $label (pid $pid) on $port"
+      kill_and_wait "$pid" || die "our previous $label (pid $pid) on $port would not stop" \
+          "kill -9 $pid    # then re-run"
+    done
+  fi
 }
 
 preflight_images() {
@@ -230,10 +327,7 @@ cmd_up() {
   preflight_config
   preflight_docker
   preflight_native_code
-  preflight_port "$INBOUND_HTTP_PORT" http ""
-  preflight_port "$INBOUND_HTTPS_PORT" https ""
-  preflight_port "$GATEWAY_PORT" gateway "$GATEWAY_PID_FILE"
-  preflight_port "$VITE_PORT" vite "$VITE_PID_FILE"
+  preflight_ports
   preflight_images
   build_webui
 
