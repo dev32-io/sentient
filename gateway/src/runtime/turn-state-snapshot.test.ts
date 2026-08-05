@@ -175,3 +175,40 @@ describe("captureTurnStateSnapshot", () => {
     expect(captureTurnStateSnapshot(source).activeTurnId).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Argument fidelity. A pass-through decorator that declares FEWER parameters
+// than the interface still typechecks — a narrower function is assignable to a
+// wider one — so a dropped argument is invisible until someone reads the wire.
+// That is exactly how `messageId` reached the client as null while the gateway
+// logged the right value one layer up, and the clients then grouped every
+// stretch of a ReAct turn's text into one undifferentiated bubble.
+// ---------------------------------------------------------------------------
+
+describe("turn-state tracker — argument fidelity", () => {
+  it("INVARIANT: forwards the bubble key on a text delta", () => {
+    const seen: (readonly [string, string, string | undefined])[] = [];
+    const tracker = createTurnStateTracker("s_1");
+    const emit = tracker.wrap({
+      ...createLoggingTurnEmitter(),
+      textDelta: (turnId, text, messageId) => seen.push([turnId, text, messageId] as const),
+    });
+
+    emit.textDelta("t1", "hello", "m1");
+
+    expect(seen).toEqual([["t1", "hello", "m1"]]);
+  });
+
+  it("INVARIANT: forwards the bubble key on a committed entry", () => {
+    const seen: (readonly [string | undefined, string | undefined])[] = [];
+    const tracker = createTurnStateTracker("s_1");
+    const emit = tracker.wrap({
+      ...createLoggingTurnEmitter(),
+      conversationEntry: (_item, turnId, messageId) => seen.push([turnId, messageId] as const),
+    });
+
+    emit.conversationEntry({ kind: "assistant", entryId: "e1", ts: 0, content: "hi" }, "t1", "m1");
+
+    expect(seen).toEqual([["t1", "m1"]]);
+  });
+});

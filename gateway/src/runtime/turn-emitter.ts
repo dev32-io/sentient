@@ -109,9 +109,10 @@ export function createLoggingTurnEmitter(): TurnEmitter {
     turnStarted(turnId, trigger) {
       log.info("turn-emitter.turn-started", { turnId, trigger });
     },
-    textDelta(turnId, text) {
+    textDelta(turnId, text, messageId) {
       log.debug("turn-emitter.text-delta", {
         turnId,
+        messageId: messageId ?? null,
         length: text.length,
         preview: text.slice(0, TEXT_PREVIEW_LEN),
       });

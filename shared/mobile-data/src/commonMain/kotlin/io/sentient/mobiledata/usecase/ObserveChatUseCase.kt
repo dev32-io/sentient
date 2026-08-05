@@ -89,10 +89,27 @@ class ObserveChatUseCase(
             // happened to be left, which is how a finished reply collapsed back to its
             // first line. Keyed on the message, a stretch the loop has moved past
             // unhides the moment the live bubble stops being it.
-            val liveKey = rs.bubble?.key
+            //
+            // Matched on the message when BOTH sides carry one, and on the turn
+            // otherwise. The asymmetric case is not theoretical: a gateway that
+            // stamped committed entries but not deltas left the live bubble
+            // keyed by turn and its own committed twin keyed by message, so
+            // nothing matched, both rendered, and the reveal ticker re-diffed a
+            // duplicated list every 16ms — a visibly stuck reply on a lagging
+            // screen. Falling back to the turn whenever either side is missing
+            // its key makes a one-sided drop degrade to the old behaviour
+            // instead of double-painting.
+            val bubble = rs.bubble
             val visibleCommitted =
-                if (liveKey == null) committed
-                else committed.filter { (it.messageId ?: it.turnId) != liveKey }
+                if (bubble == null) {
+                    committed
+                } else {
+                    committed.filter { row ->
+                        val sameMessage = bubble.messageId != null && row.messageId == bubble.messageId
+                        val sameTurn = (bubble.messageId == null || row.messageId == null) && row.turnId == bubble.turnId
+                        !sameMessage && !sameTurn
+                    }
+                }
             val liveBubble = rs.bubble?.let {
                 ChatMessage(
                     ts = 0,
