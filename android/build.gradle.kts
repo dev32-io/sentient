@@ -33,11 +33,16 @@ android {
     // host is ever committed. Key: sentient.gatewayUrl. Absent → 10.0.2.2 emulator
     // loopback fallback. See android/local.properties.example. Release bakes NO
     // default ("") → the app forces the in-app backend-setup page on first launch.
+    // Port 443, matching BackendSetupViewModel.DEFAULT_PORT: inbound-proxy owns the
+    // LAN-facing 443 and the gateway itself binds loopback. This build-time value
+    // takes precedence over that Kotlin default, so it has to agree with it — 8888
+    // still reaches the host from an emulator, which is exactly why a stale port
+    // here goes unnoticed.
     val debugGatewayUrl: String = run {
         val props = Properties()
         val f = rootProject.file("local.properties")
         if (f.exists()) f.inputStream().use { props.load(it) }
-        props.getProperty("sentient.gatewayUrl") ?: "wss://10.0.2.2:8888/api/v1/ws"
+        props.getProperty("sentient.gatewayUrl") ?: "wss://10.0.2.2:443/api/v1/ws"
     }
     defaultConfig {
         // Prod application id. The debug build type appends ".debug" so both

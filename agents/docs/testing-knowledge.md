@@ -396,9 +396,9 @@ qa/web/stack-integrity.ts` either way.
 
 ### Cold-path smoke
 
-1. Tear down: `docker compose down -v && rm -rf ~/.sentient`
-2. Bring up: `docker compose up -d`
-3. Open `https://localhost:8888`. Wizard renders.
+1. Tear down: `bun run stack:down`, then `docker rm -f $(docker ps -aq --filter label=sentient.managed=true)` and `rm -rf ~/.sentient` (commands re-grounded 2026-08-04; the walk below has not been re-driven since).
+2. Bring up: `bun run dev` from the repo root.
+3. Open `https://localhost`. Wizard renders. (Not `:8888` — that is the gateway's own loopback-only door and serves the API, not the UI.)
 4. Walk: unlock → provider (LLM key) → voice (acknowledge-and-advance — local-tts needs no key) → secrets (HA URL+tokens, MA URL+token; or skip).
 5. Click Continue on the secrets step. Page transitions to "Starting up services…".
 6. Per-service rows tick from "Queued" → "Starting…" → "Checking health…" → "Ready ✓" in dependency order. Required first; optional services last.
@@ -406,8 +406,8 @@ qa/web/stack-integrity.ts` either way.
 
 ### Warm restart
 
-1. With a bootstrapped deployment, run `docker compose down && docker compose up -d`.
-2. Reload the webui. No wizard appears. Sidebar shows "All services online". No re-bringup screen.
+1. With a bootstrapped deployment, run `bun run stack:down` then `bun run dev`.
+2. Reload the webui at `https://localhost`. No wizard appears. Sidebar shows "All services online". No re-bringup screen.
 
 ### Settings rotation (admin)
 

@@ -45,18 +45,37 @@ log_sink:
     bind: 0.0.0.0             # bind address; LAN-reachable on Mac dev
 
 # ---------------------------------------------------------------------------
-# TLS — self-signed cert for HTTPS/WSS on the LAN.
+# TLS — the gateway's own self-signed material.
 #
 # Browsers refuse `new WebSocket("ws://…")` from an HTTPS page (mixed
 # content), and the web client is HTTPS so the gateway must speak WSS too.
 #
-# The gateway OWNS cert generation. It writes cert.pem + key.pem into the
-# certs dir (mounted from ~/.sentient/certs in docker), and the web
-# container reads the same files. Sharing one cert across both services
-# means the user accepts ONE browser warning per device, not two.
+# The gateway OWNS this material. It is a native process, not a container: it
+# writes cert.pem + key.pem into ~/.sentient/gateway/certs (override with
+# GATEWAY_CERTS_DIR) and inbound-proxy mounts them from there. Two roles, one
+# directory (design 2026-08-04 §2.5):
+#   - upstream trust anchor — ALWAYS this cert.pem, in dev and prod alike. It
+#     is what makes the proxy's loopback hop to :8888 verified, not merely
+#     encrypted.
+#   - outward identity on 443 — this material too, but only while
+#     `inbound_proxy.cert_dir` below is null (the dev default and the
+#     fresh-host fallback). Set that key and the door presents a real cert
+#     instead; this one keeps serving as the upstream anchor.
 #
-# To add a new hostname later: edit `hostnames`, delete ~/.sentient/certs,
-# restart both containers.
+# CHANGING `hostnames` (e.g. adding a LAN IP so a phone's browser will grant
+# the microphone — a SAN mismatch refuses getUserMedia outright):
+#   1. edit the list below
+#   2. restart the gateway — dev: `bun run dev`; prod:
+#      `sudo launchctl kickstart -k system/io.sentient.gateway`. The SAN
+#      marker (certs/san.txt) no longer matches, so the cert is regenerated
+#      in place. Nothing needs deleting; do NOT `rm -rf` the certs DIRECTORY
+#      while a container has it bind-mounted — the mount would follow the old,
+#      deleted inode.
+#   3. `docker kill -s HUP sentient-inbound-proxy` — nginx re-reads the file.
+#      The gateway restart alone does NOT do this: the container spec is
+#      unchanged, so the infra-class proxy is skipped as unchanged and keeps
+#      the old cert loaded in memory.
+#   4. re-accept the new self-signed cert on each device.
 # ---------------------------------------------------------------------------
 tls:
   enabled: true                      # only flip false for localhost-only debugging

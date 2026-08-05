@@ -150,6 +150,17 @@ renewal so `inbound-proxy` picks up the new files:
 
     docker kill -s HUP sentient-inbound-proxy
 
+**Restarting the gateway is NOT an alternative, and neither is rebooting.** The
+orchestrator decides whether to recreate `inbound-proxy` by hashing the
+container *spec* — image, ports, mounts, limits. A cert renewed in place is the
+same path with new bytes, so the hash is unchanged, the infra-class service is
+skipped as unchanged-and-running (by design: an unconditional recreate would
+drop 80/443 on every `bun --watch` save), and the nginx that is already running
+keeps the old certificate loaded in memory. The `HUP` above is the only thing
+that makes it re-read the file. The same applies to the gateway's own
+self-signed material after a `tls.hostnames` change — see the step list at
+`gateway/config.yaml`'s TLS block.
+
 **SAN note:** a browser on a LAN phone gets no microphone unless that host's
 IP or name is in `tls.hostnames` (`config.yaml`) — a SAN mismatch produces a
 hard browser warning *and* refuses mic access, since browsers gate `getUserMedia`
@@ -169,8 +180,44 @@ sudo python3 deploy/mac-prod/setup-prod.py install dist/gateway/<version>.tar.gz
 ```
 
 State in `~/.sentient/` persists across upgrades. A release that fails its
-health gate is rolled back automatically — the mini is never left on a
-broken version.
+health gate is rolled back automatically — the mini is never left running a
+broken *binary*.
+
+**Config migration is one-way, and rollback does not undo it.** The two
+mechanisms have different granularity, and it is worth being blunt about the
+gap: `setup-prod.py` rolls back by flipping the `current` symlink to the
+previous release, but the operator config at `~/.sentient/gateway/config.yaml`
+is shared STATE — a boot-time migrator rewrites it in place, and the
+rolled-back binary then reads the already-migrated file. There is no
+down-migration. So:
+
+- Rolling back recovers from a bad *binary*, not from a bad *migration*.
+- Every migration step must therefore leave a config that BOTH the new and the
+  previous release can boot on, and must never remove a way in without adding
+  its replacement in the same step. The 0.1.3 → 0.1.4 step is the worked
+  example: it moves `host` to `127.0.0.1` **and** writes the
+  `managed_services.inbound-proxy` entry in one atomic write, because the bind
+  change alone would leave the mini reachable from nowhere but itself — a state
+  no rollback could repair, since the previous release would re-read the same
+  loopback bind and the health gate would fail identically.
+- Recovery from a genuinely bad migration is a hand-edit of
+  `~/.sentient/gateway/config.yaml` over SSH. Keep a copy before a major
+  upgrade if that matters to you: `cp ~/.sentient/gateway/config.yaml{,.bak}`.
+
+### Upgrade note — gateway 1.12.x moves the gateway behind `inbound-proxy`
+
+The 0.1.3 → 0.1.4 migration rewrites `host: 0.0.0.0` → `127.0.0.1` and, in the
+same write, adds `managed_services.inbound-proxy` (with `infra: true` and
+`public_ports: true`) plus an `inbound_proxy: { cert_dir: null }` block. It runs
+once, is idempotent, and never touches an `inbound-proxy` entry an operator
+added by hand.
+
+**The addon image must exist before that first boot** — the
+`docker compose … --profile build-only build` line above is what builds
+`sentient/inbound-proxy:local`. Skip it and the new door has no image to run.
+Point `inbound_proxy.cert_dir` at the `acme.sh` directory afterwards; until you
+do, 443 is served with the gateway's self-signed cert (the deliberate
+fresh-host fallback), not with a browser-trusted one.
 
 ### Upgrade note — gateway 1.11.1 migrates `session.*` config automatically
 

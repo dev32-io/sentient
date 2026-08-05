@@ -456,9 +456,12 @@ test("recreate tolerates 404 from remove (idempotent recreate)", async () => {
 // INVARIANT, documented in spec-hash.ts: under `bun --watch` the gateway
 // restarts on every source save, and an unconditional recreate would drop the
 // public door (80/443) on every keystroke. An infra service already running
-// with the exact spec we would create is left alone. This does NOT skip
-// verifyIdentity — that runs afterward, in the orchestrator, regardless — so a
-// foreign process holding the port is still caught.
+// with the exact spec we would create is left alone. A foreign process holding
+// the port is still caught — by this skip's own precondition, not by
+// verifyIdentity (which for the docker backend is an unconditional pass): the
+// skip requires OUR container to be Running with a matching spec hash, and
+// dockerd would not be running it if the published port belonged to someone
+// else.
 test("INFRA: recreate skips an already-running infra container with a matching spec hash", async () => {
   const { stub, calls } = makeStub();
   const infra: DockerManagedService = {

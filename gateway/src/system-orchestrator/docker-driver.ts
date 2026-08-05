@@ -88,13 +88,22 @@ export function createDockerDriver(deps: DockerDriverDeps): ServiceDriver {
     prepare: (ms) => prepare(deps.docker, ms),
     recreate: (ms) => recreate(deps.docker, deps.networks, ms),
 
-    // Docker binds the published port itself, in dockerd, at container start:
-    // a container whose `127.0.0.1:N:N` is already held by a foreign process
-    // FAILS to start, and `recreate` returns create/start-failed. So for this
-    // backend a successful recreate IS the identity proof — the socket the
-    // healthcheck then dials cannot belong to anything but this container.
-    // The native backend has no such guarantee (nothing stops a second process
-    // from having bound the port first), which is why it does the real work.
+    // AN UNCONDITIONAL PASS, and it must be read as one: this driver has no
+    // analogue of native-driver.ts's `listeningPidFor` check, so nothing here
+    // ever compares the port's holder against something of ours. Do not cite
+    // "verifyIdentity" as the thing that catches a stolen port for a docker
+    // service — for this backend it catches nothing.
+    //
+    // It is sound because dockerd itself does the work. Docker binds the
+    // published port, in dockerd, at container start: a container whose
+    // `127.0.0.1:N:N` is already held by a foreign process FAILS to start, and
+    // `recreate` returns create/start-failed. So a successful recreate IS the
+    // identity proof — the socket the healthcheck then dials cannot belong to
+    // anything but this container — and on the infra skip path (see recreate)
+    // the running container holding the port is one dockerd started for us and
+    // has never exited. The native backend has no such guarantee (nothing stops
+    // a second process from having bound the port first), which is why it does
+    // the real work.
     verifyIdentity: async () => ({ ok: true, value: undefined }),
     start: async (name) => {
       try {
@@ -150,9 +159,18 @@ async function recreate(
   // INFRA ONLY. A capability addon is cheap to recreate and recreating it is the
   // simplest correct thing. The public door is not: under `bun --watch` the
   // gateway restarts on every source save, and an unconditional recreate would
-  // drop 80/443 on every keystroke. Skipping the recreate does NOT skip the
-  // health probe or verifyIdentity — the orchestrator still runs both after this
-  // returns, so "something else grabbed the port" is still caught.
+  // drop 80/443 on every keystroke.
+  //
+  // "Something else grabbed the port" is still caught across this skip — but by
+  // the skip's own precondition, NOT by verifyIdentity, which for this backend
+  // is an unconditional pass (see createDockerDriver above). The precondition is
+  // that OUR container name is Running with a spec hash matching the one we
+  // would create; dockerd holds that container's published ports for its whole
+  // lifetime and would have refused to start it if the port had been taken. A
+  // foreign holder therefore implies our container is not running,
+  // isUnchangedAndRunning returns false, and the full recreate path runs — where
+  // the failure to bind surfaces as create/start-failed. The orchestrator's
+  // health probe does still run after this returns.
   if (ms.config.infra && (await isUnchangedAndRunning(docker, ms, published.value))) {
     log.info("driver.recreate-skipped", { service: ms.name, reason: "infra-unchanged-and-running" });
     return { ok: true, value: undefined };

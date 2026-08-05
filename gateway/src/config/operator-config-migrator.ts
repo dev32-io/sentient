@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import { type Document, type YAMLMap, isMap, isScalar, parseDocument } from "yaml";
+import { type Document, type Pair, type YAMLMap, isMap, isScalar, parseDocument } from "yaml";
 import { getLog } from "../logging/logger.ts";
 import { writeFileAtomic } from "../user-auth/atomic-write.ts";
 
@@ -57,6 +57,15 @@ const log = getLog(["sentient", "config", "migration", "operator-config"]);
 //             "0.0.0.0" — a host an operator customised deliberately is left
 //             untouched)
 //             schema_version: "0.1.4"
+//     ADD:    managed_services.inbound-proxy  (the policy entry for the new
+//             outward-facing door)
+//             inbound_proxy.cert_dir: null    (so the block exists and an
+//             operator can see where to point a real cert)
+//
+//     The bind change and the two additions are ONE step on purpose. Taking the
+//     old door away without installing the new one leaves a host reachable from
+//     nowhere but itself, silently — and rollback cannot undo it, because a
+//     rolled-back binary still reads the already-migrated config.
 //
 // Uses yaml's Document API to preserve comments and unrelated keys.
 // ---------------------------------------------------------------------------
@@ -310,20 +319,164 @@ function applySchema013Migration(doc: Document): Schema013MigrationResult | null
 const SCHEMA_014_VERSION = "0.1.4";
 const HOST_ALL_INTERFACES = "0.0.0.0";
 const HOST_LOOPBACK = "127.0.0.1";
+const MANAGED_SERVICES_KEY = "managed_services";
+const INBOUND_PROXY_SERVICE_NAME = "inbound-proxy";
+const INBOUND_PROXY_CONFIG_KEY = "inbound_proxy";
+const TLS_KEY = "tls";
+
+/** The `managed_services.inbound-proxy` policy entry, verbatim from the shipped
+ *  gateway/config.yaml. Written as YAML rather than an object literal so the
+ *  operator's file gets the same comments the shipped file carries — a policy
+ *  entry that appears from nowhere with no explanation is worse than no entry. */
+const INBOUND_PROXY_SERVICE_YAML = `\
+template: inbound-proxy.yaml
+allowed_images: ["sentient/inbound-proxy:local"]
+networks: ["sentient-edge"]
+# INFRASTRUCTURE class — see gateway/src/system-orchestrator/types.ts#infra.
+# Applied before the wizard (it IS the route to the wizard), never given up on
+# by the watchdog, and not recreated while unchanged and healthy. Load-bearing:
+# without it those three behaviours are dead code for the only service they
+# exist to protect.
+infra: true
+# Grants the ONE public-port exception in the stack. Admits 0.0.0.0:80 and
+# 0.0.0.0:443 only, enforced at three layers. Load-bearing: without it all three
+# layers refuse the container and nothing listens on the LAN.
+public_ports: true
+# Probes the door the LAN actually uses. Self-signed in dev, so the probe is TCP
+# rather than HTTP — an HTTP probe would need a trust anchor the orchestrator
+# has no reason to carry.
+healthcheck:
+  tcp: "127.0.0.1:443"
+  timeout_ms: 30000
+# Deliberately EMPTY. nginx resolves its upstream at request time, so it does not
+# need the gateway to be up first — and it must not, since the gateway is what
+# starts it.
+depends_on: []
+optional: false
+`;
+
+const INBOUND_PROXY_SERVICE_COMMENT = `\
+ inbound-proxy — the ONE outward-facing door (design 2026-08-04 §2).
+ ADDED BY THE 0.1.3 -> 0.1.4 MIGRATION, in the same step that moved \`host\` to
+ 127.0.0.1. The bind change alone would leave this host reachable from nowhere
+ but itself. Hand-edit freely: the migration never touches an entry that already
+ exists.`;
+
+const INBOUND_PROXY_CONFIG_YAML = "cert_dir: null\n";
+
+const INBOUND_PROXY_CONFIG_COMMENT = `\
+ inbound-proxy — the ONE outward-facing door (design 2026-08-04 §2).
+ ADDED BY THE 0.1.3 -> 0.1.4 MIGRATION.
+ cert_dir: directory holding the cert.pem + key.pem presented on 443. null =
+ use the gateway's own self-signed material (~/.sentient/gateway/certs), which
+ is the dev default and the fresh-host fallback. Point it at a real, externally
+ managed cert once one exists:
+   cert_dir: /Users/OPERATOR/.data/certs/sentient.dev32.io
+ Renewing a cert IN PLACE (same path, new bytes) does not change the container
+ spec, so the proxy is skipped as unchanged: restarting the gateway does NOT
+ reload it. Run \`docker kill -s HUP sentient-inbound-proxy\` after a renewal.`;
 
 interface Schema014MigrationResult {
   /** What `host` held before, so an operator who chose a value deliberately can
    *  see it in the log rather than discovering it from a refused connection. */
   hostPrev: string | null;
   hostRewritten: boolean;
+  /** The `managed_services.inbound-proxy` policy entry this step wrote. False
+   *  when the operator already had one — theirs is never overwritten. */
+  inboundProxyServiceAdded: boolean;
+  /** True when the host had no `managed_services:` block at all and this step
+   *  created one to hold the entry. */
+  managedServicesBlockCreated: boolean;
+  /** The root `inbound_proxy:` block this step wrote. */
+  inboundProxyConfigAdded: boolean;
 }
 
-/** Moves the gateway off every interface and behind inbound-proxy.
+/** Parse a static YAML snippet into a node this document can adopt. The snippet
+ *  is a compile-time constant, so a parse failure is a programming error, not an
+ *  operator-input error. */
+function parseSnippet(snippet: string): unknown {
+  return parseDocument(snippet).contents;
+}
+
+/** Builds a commented pair. The comment is not decoration: a policy entry that
+ *  appears in an operator's file from nowhere, with no provenance, is the kind
+ *  of thing that gets deleted by the next person trying to tidy up. */
+function commentedPair(doc: Document, key: string, value: unknown, comment: string): Pair {
+  const pair = doc.createPair(key, value);
+  if (isScalar(pair.key)) pair.key.commentBefore = comment;
+  return pair;
+}
+
+/** Inserts a root-level pair immediately after `afterKey`, or appends when that
+ *  key is absent. Position is cosmetic — an operator reading their config finds
+ *  `inbound_proxy:` beside `tls:`, where the shipped file puts it. */
+function insertRootPairAfter(root: YAMLMap, pair: Pair, afterKey: string): void {
+  const anchorIndex = root.items.findIndex((item) => isScalar(item.key) && item.key.value === afterKey);
+  if (anchorIndex === -1) root.items.push(pair);
+  else root.items.splice(anchorIndex + 1, 0, pair);
+}
+
+/** Backfills `managed_services.inbound-proxy`. Idempotent twice over: the
+ *  version gate above runs this step once, and an existing entry — an operator
+ *  who added one by hand — is left exactly as they wrote it. */
+function backfillInboundProxyService(doc: Document, root: YAMLMap): { added: boolean; blockCreated: boolean } {
+  let servicesNode: unknown = root.get(MANAGED_SERVICES_KEY, true);
+  let blockCreated = false;
+
+  if (!isMap(servicesNode)) {
+    // No block at all. That host runs no managed addons — and the loopback bind
+    // in this same step just took away the only way in, so it needs the door
+    // more than anyone.
+    servicesNode = doc.createNode({});
+    root.set(MANAGED_SERVICES_KEY, servicesNode);
+    blockCreated = true;
+  }
+
+  const services = servicesNode as YAMLMap;
+  if (services.has(INBOUND_PROXY_SERVICE_NAME)) return { added: false, blockCreated };
+
+  services.items.push(
+    commentedPair(
+      doc,
+      INBOUND_PROXY_SERVICE_NAME,
+      parseSnippet(INBOUND_PROXY_SERVICE_YAML),
+      INBOUND_PROXY_SERVICE_COMMENT,
+    ),
+  );
+
+  return { added: true, blockCreated };
+}
+
+/** Backfills the root `inbound_proxy:` block. An absent block is legal (the
+ *  schema defaults it), so this is about VISIBILITY: an operator who cannot see
+ *  the key has no reason to think a real cert is configurable at all. */
+function backfillInboundProxyConfig(doc: Document, root: YAMLMap): boolean {
+  if (isMap(root.get(INBOUND_PROXY_CONFIG_KEY, true))) return false;
+
+  const pair = commentedPair(
+    doc,
+    INBOUND_PROXY_CONFIG_KEY,
+    parseSnippet(INBOUND_PROXY_CONFIG_YAML),
+    INBOUND_PROXY_CONFIG_COMMENT,
+  );
+  insertRootPairAfter(root, pair, TLS_KEY);
+  return true;
+}
+
+/** Moves the gateway off every interface and behind inbound-proxy, and installs
+ *  inbound-proxy in the same breath.
  *
  *  This step exists because production reads a SEEDED operator config that the
  *  installer never overwrites — changing the checked-in default alone would
  *  leave every existing mini listening on 0.0.0.0 forever, with the new proxy
  *  in front of a gateway that is still directly reachable beside it.
+ *
+ *  ONE STEP, DELIBERATELY. Nothing merges the shipped config.yaml's policy block
+ *  into a seeded operator config, so a bind change on its own would flip the
+ *  gateway to loopback while the registry still had no inbound-proxy: no
+ *  listener on 80 or 443, no error, no WARN, and a host reachable from nowhere
+ *  but itself. Rollback cannot undo that either — a rolled-back binary reads the
+ *  same already-migrated config. So the two writes must not be separable.
  *
  *  Only the literal 0.0.0.0 is rewritten. A host that says anything else was
  *  set on purpose, and silently overriding a deliberate choice is worse than
@@ -342,8 +495,17 @@ export function applySchema014Migration(doc: Document): Schema014MigrationResult
   const hostRewritten = hostPrev === HOST_ALL_INTERFACES;
   if (hostRewritten) root.set("host", HOST_LOOPBACK);
 
+  const service = backfillInboundProxyService(doc, root);
+  const inboundProxyConfigAdded = backfillInboundProxyConfig(doc, root);
+
   root.set("schema_version", SCHEMA_014_VERSION);
-  return { hostPrev, hostRewritten };
+  return {
+    hostPrev,
+    hostRewritten,
+    inboundProxyServiceAdded: service.added,
+    managedServicesBlockCreated: service.blockCreated,
+    inboundProxyConfigAdded,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -405,6 +567,16 @@ function applyAllMigrations(doc: Document): boolean {
       hostPrev: schema014Result.hostPrev,
       hostRewritten: schema014Result.hostRewritten,
       reason: hostReason,
+    });
+    // Logged separately from the host rewrite so the two halves of the step are
+    // both visible: the door that closed AND the door that opened.
+    log.info("migration:0.1.4:inbound-proxy", {
+      serviceEntryAdded: schema014Result.inboundProxyServiceAdded,
+      managedServicesBlockCreated: schema014Result.managedServicesBlockCreated,
+      certDirBlockAdded: schema014Result.inboundProxyConfigAdded,
+      reason: schema014Result.inboundProxyServiceAdded
+        ? "the gateway now binds loopback, so the LAN needs inbound-proxy in managed_services — nothing else merges the shipped policy block into a seeded operator config"
+        : "an inbound-proxy entry was already present — left exactly as the operator wrote it",
     });
   }
 

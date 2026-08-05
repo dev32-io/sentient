@@ -27,12 +27,25 @@ volumes:
   # (proxy_ssl_trusted_certificate in nginx.conf points at cert.pem alone) —
   # and that directory also holds key.pem, the gateway's own TLS private key.
   # This is the one container that terminates raw LAN/internet traffic, so it
-  # is the highest-value target in the stack; the private key must never be
-  # reachable from inside it. Mounting the directory handed it over for no
-  # reason at all — code execution in this nginx reads it straight off disk
-  # regardless of its 0600 mode, since nginx's master runs as root in the
-  # container, and with that key an attacker can impersonate the gateway to
-  # itself, exactly what `proxy_ssl_verify on` exists to make impossible.
+  # is the highest-value target in the stack, and mounting a whole directory to
+  # read one file out of it is unearned reach: code execution in this nginx
+  # reads whatever is mounted straight off disk regardless of 0600, since the
+  # nginx master runs as root in the container.
+  #
+  # WHAT THIS DOES AND DOES NOT BUY, precisely — it depends on the OTHER mount:
+  #   - `inbound_proxy.cert_dir` CONFIGURED (prod, acme.sh): the two mounts name
+  #     two different directories, and the gateway's key.pem is then reachable
+  #     from nowhere inside this container. The property holds outright.
+  #   - cert_dir NULL — the FALLBACK (dev, and a fresh mini before acme.sh has
+  #     ever run): INBOUND_CERT_DIR resolves to the gateway's own certs dir, so
+  #     the mount above already carries key.pem. The two cert roles deliberately
+  #     SHARE one key there (design 2026-08-04 §2.5) — a proxy must hold some
+  #     private key to terminate TLS at all, and the fallback chose that one so
+  #     an infra-class door still opens on a host with no real cert. This mount
+  #     narrows nothing that the other mount has already granted.
+  # In both shapes this line is still the right one: it keeps the trust anchor a
+  # single public file, so the configured shape is clean rather than accidentally
+  # equivalent to the fallback.
   - "${GATEWAY_CERTS_DIR}/cert.pem:/etc/sentient/upstream/cert.pem:ro"
 # DELIBERATELY NO extra_hosts. An earlier revision carried
 # `host.docker.internal:host-gateway` here on the (reasonable-looking, wrong)

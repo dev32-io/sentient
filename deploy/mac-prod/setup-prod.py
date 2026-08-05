@@ -921,7 +921,15 @@ class Installer:
             result = self._health()
         except (InstallError, OSError) as e:
             return (False, f"health check could not complete: {e}")
+        # The arity check is part of the contract, not decoration: an unpack of
+        # the wrong-length tuple would raise HERE, outside the try above, and a
+        # ValueError escaping this method is precisely the "health as an
+        # exception" failure the docstring rules out. Unreachable with today's
+        # callers; kept so a future health check returning a 3-tuple degrades to
+        # "not verified" instead of unwinding past `_roll_back`.
         if isinstance(result, tuple):
+            if len(result) != 2:
+                return (False, f"health check returned an unusable {len(result)}-tuple")
             healthy, cause = result
             return (bool(healthy), cause)
         return (bool(result), None)

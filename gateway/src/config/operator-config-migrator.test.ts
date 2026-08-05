@@ -453,6 +453,44 @@ describe("migrateOperatorConfigYamlSync — schema 0.1.2 → 0.1.3", () => {
 // Tests — schema 0.1.3 → 0.1.4 (gateway binds loopback)
 // ---------------------------------------------------------------------------
 
+// A realistic seeded 0.1.3 operator config: a managed_services block that
+// predates inbound-proxy, which is exactly the shape every existing install has.
+const V013_NO_INBOUND_PROXY_YAML = `\
+schema_version: "0.1.3"
+port: 8888
+host: 0.0.0.0
+
+tls:
+  enabled: true
+  hostnames:
+    - "localhost"
+
+managed_services:
+  egress-proxy:
+    template: egress-proxy.yaml
+    allowed_images: ["kalaksi/tinyproxy:latest"]
+    networks: ["sentient-internal", "sentient-external"]
+    healthcheck:
+      noop: true
+    depends_on: []
+    optional: false
+
+  ha-mcp:
+    template: ha-mcp.yaml
+    allowed_images: ["ghcr.io/homeassistant-ai/ha-mcp:stable"]
+    networks: ["sentient-internal", "sentient-external"]
+    healthcheck:
+      tcp: "127.0.0.1:8086"
+      timeout_ms: 30000
+    depends_on: ["egress-proxy"]
+    optional: true
+`;
+
+function inboundProxyEntry(doc: ReturnType<typeof parseDocument>): Record<string, unknown> {
+  const js = doc.toJS() as { managed_services?: Record<string, Record<string, unknown>> };
+  return js.managed_services?.["inbound-proxy"] ?? {};
+}
+
 describe("0.1.3 -> 0.1.4: gateway binds loopback", () => {
   it("rewrites host 0.0.0.0 to 127.0.0.1 and bumps the version", () => {
     const doc = parseDocument(['schema_version: "0.1.3"', "port: 8888", "host: 0.0.0.0"].join("\n"));
@@ -480,5 +518,116 @@ describe("0.1.3 -> 0.1.4: gateway binds loopback", () => {
 
     expect(applySchema014Migration(doc)).toBeNull();
     expect(doc.get("host")).toBe("0.0.0.0");
+  });
+
+  // INVARIANT: the bind change and the inbound-proxy backfill are ONE step.
+  // Nothing else merges the shipped policy block into a seeded operator config,
+  // so a loopback bind without this entry leaves the host reachable from nowhere
+  // but itself — silently, and un-rollback-able, since a rolled-back binary
+  // still reads the migrated config.
+  it("backfills the inbound-proxy policy entry alongside the host rewrite", () => {
+    const doc = parseDocument(V013_NO_INBOUND_PROXY_YAML);
+
+    const result = applySchema014Migration(doc);
+
+    expect(result?.inboundProxyServiceAdded).toBe(true);
+    expect(result?.managedServicesBlockCreated).toBe(false);
+    expect(doc.get("host")).toBe("127.0.0.1");
+    expect(inboundProxyEntry(doc)).toEqual({
+      template: "inbound-proxy.yaml",
+      allowed_images: ["sentient/inbound-proxy:local"],
+      networks: ["sentient-edge"],
+      infra: true,
+      public_ports: true,
+      healthcheck: { tcp: "127.0.0.1:443", timeout_ms: 30000 },
+      depends_on: [],
+      optional: false,
+    });
+  });
+
+  it("adds the inbound_proxy block with a null cert_dir", () => {
+    const doc = parseDocument(V013_NO_INBOUND_PROXY_YAML);
+
+    const result = applySchema014Migration(doc);
+
+    expect(result?.inboundProxyConfigAdded).toBe(true);
+    expect((doc.toJS() as { inbound_proxy: { cert_dir: string | null } }).inbound_proxy).toEqual({ cert_dir: null });
+  });
+
+  it("creates the managed_services block when the host has none", () => {
+    const doc = parseDocument(['schema_version: "0.1.3"', "host: 0.0.0.0"].join("\n"));
+
+    const result = applySchema014Migration(doc);
+
+    expect(result?.managedServicesBlockCreated).toBe(true);
+    expect(result?.inboundProxyServiceAdded).toBe(true);
+    expect(inboundProxyEntry(doc).infra).toBe(true);
+  });
+
+  it("backfills the entry even when the host was customised and left alone", () => {
+    const doc = parseDocument(V013_NO_INBOUND_PROXY_YAML.replace("host: 0.0.0.0", "host: 192.168.0.5"));
+
+    const result = applySchema014Migration(doc);
+
+    expect(result?.hostRewritten).toBe(false);
+    expect(result?.inboundProxyServiceAdded).toBe(true);
+  });
+
+  it("leaves an operator's hand-written inbound-proxy entry exactly as written", () => {
+    const handWritten = V013_NO_INBOUND_PROXY_YAML.concat(`\
+  inbound-proxy:
+    template: inbound-proxy.yaml
+    allowed_images: ["sentient/inbound-proxy:local"]
+    networks: ["sentient-edge"]
+    infra: true
+    public_ports: true
+    healthcheck:
+      tcp: "127.0.0.1:8443"
+      timeout_ms: 5000
+    depends_on: []
+    optional: true
+`);
+    const doc = parseDocument(handWritten);
+
+    const result = applySchema014Migration(doc);
+
+    expect(result?.inboundProxyServiceAdded).toBe(false);
+    expect(inboundProxyEntry(doc).healthcheck).toEqual({ tcp: "127.0.0.1:8443", timeout_ms: 5000 });
+    expect(inboundProxyEntry(doc).optional).toBe(true);
+  });
+});
+
+describe("0.1.4 backfill on disk", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "op-config-migrator-014-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("writes the entry once, no matter how many times the chain runs", () => {
+    const p = writeTmp(dir, V013_NO_INBOUND_PROXY_YAML);
+
+    migrateOperatorConfigYamlSync(p);
+    migrateOperatorConfigYamlSync(p);
+    migrateOperatorConfigYamlSync(p);
+
+    const result = readTmp(p);
+    expect(result.split("\n").filter((l) => /^ {2}inbound-proxy:$/.test(l))).toHaveLength(1);
+    expect(result.split("\n").filter((l) => /^inbound_proxy:$/.test(l))).toHaveLength(1);
+    expect(result).toContain("host: 127.0.0.1");
+    expect(result).toContain('schema_version: "0.1.4"');
+  });
+
+  it("keeps every pre-existing service entry", () => {
+    const p = writeTmp(dir, V013_NO_INBOUND_PROXY_YAML);
+
+    migrateOperatorConfigYamlSync(p);
+
+    const services = Object.keys(
+      (parseDocument(readTmp(p)).toJS() as { managed_services: Record<string, unknown> }).managed_services,
+    );
+    expect(services).toEqual(["egress-proxy", "ha-mcp", "inbound-proxy"]);
   });
 });
