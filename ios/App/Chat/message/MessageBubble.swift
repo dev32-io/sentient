@@ -200,29 +200,29 @@ enum BubbleLayout {
     ScrollView {
         VStack(spacing: Space.gapMsg) {
             MessageBubble(
-                message: ChatMessage(ts: now, role: "user", content: "hello", streaming: false, cutoffKind: nil, turnId: nil, pendingId: nil, tools: [], entryId: "preview-u0"),
+                message: ChatMessage(ts: now, role: "user", content: "hello", streaming: false, cutoffKind: nil, turnId: nil, messageId: nil, pendingId: nil, tools: [], entryId: "preview-u0"),
                 index: 0,
                 userName: "Alice"
             )
             MessageBubble(
-                message: ChatMessage(ts: now + 1, role: "assistant", content: "Hi there! How can I help?", streaming: false, cutoffKind: nil, turnId: nil, pendingId: nil, tools: [], entryId: "preview-a1"),
+                message: ChatMessage(ts: now + 1, role: "assistant", content: "Hi there! How can I help?", streaming: false, cutoffKind: nil, turnId: nil, messageId: nil, pendingId: nil, tools: [], entryId: "preview-a1"),
                 index: 1,
                 userName: "Alice"
             )
             MessageBubble(
-                message: ChatMessage(ts: now + 2, role: "assistant", content: "", streaming: true, cutoffKind: nil, turnId: nil, pendingId: nil, tools: [], entryId: "preview-a2"),
+                message: ChatMessage(ts: now + 2, role: "assistant", content: "", streaming: true, cutoffKind: nil, turnId: nil, messageId: nil, pendingId: nil, tools: [], entryId: "preview-a2"),
                 index: 2,
                 userName: "Alice"
             )
             // streaming + content → data-layer substring rendered directly, no cursor
             MessageBubble(
-                message: ChatMessage(ts: now + 3, role: "assistant", content: "Streaming text reveals progressively...", streaming: true, cutoffKind: nil, turnId: nil, pendingId: nil, tools: [], entryId: "preview-a3"),
+                message: ChatMessage(ts: now + 3, role: "assistant", content: "Streaming text reveals progressively...", streaming: true, cutoffKind: nil, turnId: nil, messageId: nil, pendingId: nil, tools: [], entryId: "preview-a3"),
                 index: 3,
                 avatarMode: .thinking,
                 userName: "Alice"
             )
             MessageBubble(
-                message: ChatMessage(ts: now + 4, role: "assistant", content: "Cut off here", streaming: false, cutoffKind: "interrupt", turnId: nil, pendingId: nil, tools: [], entryId: "preview-a4"),
+                message: ChatMessage(ts: now + 4, role: "assistant", content: "Cut off here", streaming: false, cutoffKind: "interrupt", turnId: nil, messageId: nil, pendingId: nil, tools: [], entryId: "preview-a4"),
                 index: 4,
                 userName: "Alice"
             )
@@ -232,7 +232,7 @@ enum BubbleLayout {
                     ts: now + 5, role: "assistant",
                     content: "I checked the weather and your calendar.",
                     streaming: false, cutoffKind: nil, turnId: "c1",
-                    pendingId: nil, tools: sampleTools, entryId: "preview-a5"
+                    messageId: nil, pendingId: nil, tools: sampleTools, entryId: "preview-a5"
                 ),
                 index: 5,
                 userName: "Alice"
@@ -243,7 +243,7 @@ enum BubbleLayout {
                     ts: now + 6, role: "assistant",
                     content: "Working on it...",
                     streaming: true, cutoffKind: nil, turnId: "c1",
-                    pendingId: nil, tools: [sampleTools[1]], entryId: "preview-a6"
+                    messageId: nil, pendingId: nil, tools: [sampleTools[1]], entryId: "preview-a6"
                 ),
                 index: 6,
                 avatarMode: .thinking,

@@ -251,9 +251,9 @@ extension EnvironmentValues {
     // Yesterday messages trigger a day divider before today's messages.
     let yesterday = now - 86_400_000
     MessageList(messages: [
-        ChatMessage(ts: yesterday, role: "user", content: "message from yesterday", streaming: false, cutoffKind: nil, turnId: nil, pendingId: nil, tools: [], entryId: "preview-y0"),
-        ChatMessage(ts: now, role: "user", content: "hello", streaming: false, cutoffKind: nil, turnId: nil, pendingId: nil, tools: [], entryId: "preview-u0"),
-        ChatMessage(ts: now + 1, role: "assistant", content: "Hi! How can I help today?", streaming: false, cutoffKind: nil, turnId: nil, pendingId: nil, tools: [], entryId: "preview-a1"),
+        ChatMessage(ts: yesterday, role: "user", content: "message from yesterday", streaming: false, cutoffKind: nil, turnId: nil, messageId: nil, pendingId: nil, tools: [], entryId: "preview-y0"),
+        ChatMessage(ts: now, role: "user", content: "hello", streaming: false, cutoffKind: nil, turnId: nil, messageId: nil, pendingId: nil, tools: [], entryId: "preview-u0"),
+        ChatMessage(ts: now + 1, role: "assistant", content: "Hi! How can I help today?", streaming: false, cutoffKind: nil, turnId: nil, messageId: nil, pendingId: nil, tools: [], entryId: "preview-a1"),
     ], userName: "Alice")
     .background(DuskColors.bg)
 }
