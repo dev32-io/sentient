@@ -21,6 +21,7 @@ function fakeBroker(outcome: ToolResult | { taskId: string }): ToolBroker & { di
     dispatched,
     ownerUserId: "u_deadbeef",
     foregroundInFlight: 0,
+    ready: async () => {},
     definitions: () => [],
     async dispatch(inv) {
       dispatched.push(inv);

@@ -127,10 +127,29 @@ export interface ToolBroker {
    *  built for, the same confused-deputy check `openSessionStore` makes for
    *  the store. */
   readonly ownerUserId: UserId;
+  /**
+   * Resolve the MCP half of the vocabulary. Idempotent and memoized, so every
+   * call after the first is free.
+   *
+   * AWAIT THIS BEFORE READING `definitions()` FOR THE MODEL. Listing MCP tools
+   * is I/O against every configured server, and it lands ~100ms after a session
+   * binds — while the first turn of that session starts in the SAME TICK as
+   * `session.configure` on mobile, which carries the first message. So the
+   * model's first call went out with only the background tools registered:
+   *
+   *   react-loop.start   toolCount=1     ← delegateTask, alone
+   *   stream-start       toolCount=1
+   *   mcp-warmup.ok      toolCount=29    ← 117ms too late
+   *
+   * A model whose only tool is `delegateTask` delegates. That read as the model
+   * being eager to hand work off; it was the tool list being empty.
+   */
+  ready(): Promise<void>;
   /** The session's full, immutable tool vocabulary (MCP-catalog tools +
    *  registered background tools). Computed once and cached — never
    *  mutated per turn (spec §4.6: hiding a tool is not a security
-   *  boundary, L3 at the call is). */
+   *  boundary, L3 at the call is). Synchronous, so it reports whatever is
+   *  resolved NOW: see `ready()` before handing the result to a provider. */
   definitions(): ToolDefinition[];
   /** foreground → awaits the result; background → returns `{ taskId }`
    *  immediately without blocking on the runner. Every call passes the L3
@@ -530,6 +549,7 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
 
   return {
     ownerUserId,
+    ready: ensureMcpWarm,
     definitions,
     dispatch,
     get foregroundInFlight() {

@@ -121,6 +121,7 @@ function fakeBroker(
     dispatchCalls,
     ownerUserId: "u_aaaaaaaa",
     foregroundInFlight: 0,
+    ready: async () => {},
     definitions: () => defs,
     async dispatch(inv) {
       dispatchCalls.push(inv);
@@ -922,6 +923,7 @@ function fakeBrokerWithBackground(background: BackgroundRegistry): FakeBroker {
     dispatchCalls: [],
     ownerUserId: "u_aaaaaaaa",
     foregroundInFlight: 0,
+    ready: async () => {},
     definitions: () => [],
     async dispatch(): Promise<ToolResult> {
       throw new Error("dispatch should never be called in cancellation tests");

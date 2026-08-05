@@ -88,6 +88,7 @@ function fakeBroker(
     dispatchCalls,
     ownerUserId: cap.ownerUserId,
     foregroundInFlight: 0,
+    ready: async () => {},
     definitions: () => defs,
     async dispatch(inv) {
       dispatchCalls.push(inv);
@@ -103,6 +104,71 @@ function noopBroker(): FakeBroker {
     throw new Error("dispatch should never be called for a text-only response");
   });
 }
+
+// ---------------------------------------------------------------------------
+// Case 0: the tool vocabulary is resolved BEFORE the first provider call.
+// ---------------------------------------------------------------------------
+
+describe("runTurn — tool vocabulary", () => {
+  it("INVARIANT: waits for the broker before sending the first request", async () => {
+    // Listing MCP tools is I/O and lands ~100ms after a session binds, while
+    // the first turn of a fresh session starts in the SAME TICK as
+    // `session.configure` (which carries the first message on mobile). Reading
+    // `definitions()` without awaiting `ready()` therefore sent the model a
+    // vocabulary of one — the background `delegateTask` — and a model holding
+    // exactly one tool uses it. What looked like eagerness to delegate was an
+    // empty tool list.
+    const store = openSessionStore(cap);
+    const sessionId = "vocabulary-race";
+    seedUserMessage(store, sessionId, "what is the news today");
+
+    const mcpTool: ToolDefinition = {
+      name: "search_web",
+      description: "search the web",
+      parameters: { type: "object", properties: {} },
+      category: "foreground",
+    };
+    const backgroundTool: ToolDefinition = {
+      name: "delegateTask",
+      description: "delegate",
+      parameters: { type: "object", properties: {} },
+      category: "background",
+    };
+
+    // Mirrors the real broker: `definitions()` reports only what has resolved
+    // so far, and `ready()` is what makes the rest of it appear.
+    let resolved = [backgroundTool];
+    const broker = fakeBroker([], async () => {
+      throw new Error("dispatch should never be called");
+    });
+    broker.ready = async () => {
+      await Promise.resolve();
+      resolved = [mcpTool, backgroundTool];
+    };
+    broker.definitions = () => resolved;
+
+    const provider = fakeProvider(async function* () {
+      yield { type: "text", content: "let me look" };
+      yield { type: "done", finishReason: "stop" };
+    });
+
+    await runTurn(
+      {
+        provider,
+        broker,
+        store,
+        systemPrompt: "you are a test assistant",
+        sessionId,
+        config: loopConfig(10),
+        onTextDelta: () => {},
+        onToolUpdate: () => {},
+      },
+      { turnId: "turn-1", signal: new AbortController().signal },
+    );
+
+    expect(provider.calls[0]?.tools.map((t) => t.function.name).sort()).toEqual(["delegateTask", "search_web"]);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Case 1: text-only response — one iteration, one assistant entry.

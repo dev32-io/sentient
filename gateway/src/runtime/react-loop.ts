@@ -404,6 +404,14 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
 
   // Immutable per spec §4.6 — computed once, passed unchanged every
   // iteration below. Never re-derived or mutated inside the loop.
+  //
+  // Awaited first: the MCP half of the vocabulary is I/O and lands ~100ms after
+  // a session binds, while the first turn of a fresh session starts in the same
+  // tick as `session.configure`. Without this the first turn of every session
+  // went to the provider with `delegateTask` as its ONLY tool — and a model
+  // holding one tool uses it. Memoized in the broker, so this is free from the
+  // second turn on. See `ToolBroker.ready`.
+  await broker.ready();
   const tools = broker.definitions().map(toProviderTool);
   const maxIterations = config.max_iterations;
 
