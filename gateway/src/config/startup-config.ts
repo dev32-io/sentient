@@ -59,9 +59,13 @@ export function resolveSentientHome(): string {
 }
 
 /** Absolute default for a writable gateway state dir, e.g. "logs" →
- *  `~/.sentient/gateway/logs`. Kept beside `resolveSentientHome` so the two
- *  callers below cannot drift apart. */
-function gatewayStateDir(...segments: string[]): string {
+ *  `~/.sentient/gateway/logs`. Kept beside `resolveSentientHome` so no caller
+ *  has to re-spell the anchor — every writable default the gateway ships MUST
+ *  come from here, in this module or any other. `api/handlers/diagnostics.ts`
+ *  is the cautionary tale: it defaulted the client-log dir to the container
+ *  path "/app/clientLogs", which on the native stack is unwritable, so every
+ *  mobile vitals upload 500'd on `EROFS: mkdir '/app'`. */
+export function gatewayStateDir(...segments: string[]): string {
   return join(resolveSentientHome(), "gateway", ...segments);
 }
 

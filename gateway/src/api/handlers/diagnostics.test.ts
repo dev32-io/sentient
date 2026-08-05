@@ -36,6 +36,17 @@ function postRequest(
   });
 }
 
+/**
+ * Truly REMOVE an env key. `process.env.X = undefined` stores the STRING
+ * "undefined", which every `?? default` here then reads as a set override —
+ * silently masking the default-path suite below. Written through
+ * `Reflect.deleteProperty` because biome's `noDelete` autofix rewrites a bare
+ * `delete` into exactly the assignment this exists to avoid.
+ */
+function unsetEnv(key: string): void {
+  Reflect.deleteProperty(process.env, key);
+}
+
 // --- Suite -------------------------------------------------------------------
 
 describe("POST /api/v1/diagnostics/logs — wire contract", () => {
@@ -47,7 +58,7 @@ describe("POST /api/v1/diagnostics/logs — wire contract", () => {
   });
 
   afterEach(() => {
-    process.env.CLIENT_LOGS_DIR = undefined;
+    unsetEnv("CLIENT_LOGS_DIR");
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -133,5 +144,40 @@ describe("POST /api/v1/diagnostics/logs — wire contract", () => {
       }),
     );
     expect(res.status).toBe(405);
+  });
+});
+
+// Every other case above sets CLIENT_LOGS_DIR, so the DEFAULT was never
+// exercised — which is how it shipped pointing at "/app/clientLogs", the mount
+// path from the container era. On the native binary /app does not exist and /
+// is read-only, so every upload answered 500 `EROFS: mkdir '/app'` and mobile
+// vitals was dead in dev and prod alike. This pins the default to the writable
+// state root (`.claude/rules/logging.md`: never hardcode a writable absolute
+// path; anchor on resolveSentientHome).
+describe("POST /api/v1/diagnostics/logs — default log directory", () => {
+  let homeDir: string;
+  let priorHome: string | undefined;
+
+  beforeEach(() => {
+    homeDir = mkdtempSync(join(tmpdir(), "diag-home-"));
+    priorHome = process.env.SENTIENT_HOME;
+    process.env.SENTIENT_HOME = homeDir;
+    unsetEnv("CLIENT_LOGS_DIR");
+  });
+
+  afterEach(() => {
+    if (priorHome === undefined) unsetEnv("SENTIENT_HOME");
+    else process.env.SENTIENT_HOME = priorHome;
+    rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  it("writes under <SENTIENT_HOME>/gateway/clientLogs/mobile when CLIENT_LOGS_DIR is unset", async () => {
+    const handler = createDiagnosticsHandler(makeDeps());
+    const res = await handler(postRequest("hello from mobile", { bearer: "t", vitalsFile: "session-01.log" }));
+
+    expect(res.status).toBe(200);
+    const mobileDir = join(homeDir, "gateway", "clientLogs", "mobile");
+    expect(existsSync(mobileDir)).toBe(true);
+    expect(readdirSync(mobileDir)).toHaveLength(1);
   });
 });
