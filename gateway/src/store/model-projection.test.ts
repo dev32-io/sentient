@@ -345,8 +345,12 @@ describe("projectForModel", () => {
       const out = projectForModel([
         e({ kind: "tool_call", toolCallId: "y3", toolName: "a", toolArgs: "{}" }),
         e({ kind: "tool_result", toolCallId: "y3", toolName: "a", toolArgs: '"r"' }),
-        e({ kind: "user", text: "and now this" }),
-        e({ kind: "assistant", text: "done" }),
+        // Its OWN turn, as production writes it: a question that arrives once
+        // the previous turn has finished mints a new turnId, and the reply
+        // belongs to that new turn. Same-turn would make it a mid-turn steer
+        // (rule 3c), which is a different shape with a different order.
+        e({ kind: "user", text: "and now this", turnId: "t2" }),
+        e({ kind: "assistant", text: "done", turnId: "t2" }),
       ]);
       assertValidToolPairing(out);
       expect(out.map((m) => m.role)).toEqual(["assistant", "tool", "user", "assistant"]);
@@ -443,11 +447,13 @@ describe("projectForModel", () => {
     // would keep "b" and both summaries; the correct behavior discards
     // everything up to and including the second marker.
     const out = projectForModel([
-      e({ kind: "user", text: "a" }),
-      e({ kind: "compaction", text: "S1", compactedThroughSeq: 1 }),
-      e({ kind: "user", text: "b" }),
-      e({ kind: "compaction", text: "S2", compactedThroughSeq: 3 }),
-      e({ kind: "user", text: "c" }),
+      e({ kind: "user", text: "a", turnId: "t1" }),
+      e({ kind: "compaction", text: "S1", compactedThroughSeq: 1, turnId: "t1" }),
+      // Each question is its own turn — see rule 3c; sharing one turnId would
+      // read as a steer and reorder them.
+      e({ kind: "user", text: "b", turnId: "t2" }),
+      e({ kind: "compaction", text: "S2", compactedThroughSeq: 3, turnId: "t2" }),
+      e({ kind: "user", text: "c", turnId: "t3" }),
     ]);
     expect(out).toEqual([
       { role: "system", content: "S2" },
@@ -497,5 +503,53 @@ describe("projectForModel — message stamps", () => {
     const [message] = projectForModel([e({ kind: "user", text: "plain", createdAt: AT })]);
 
     expect(message?.content).toBe("plain");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Rule 3c — a mid-turn steer sorts after the answer it did not read.
+// ---------------------------------------------------------------------------
+
+describe("projectForModel — mid-turn steer ordering", () => {
+  it("INVARIANT: a steer is the LAST message, even though the answer was stored after it", () => {
+    // Observed live. The person spoke while the final iteration's provider
+    // stream was in flight, so the store took their message first and the
+    // loop's answer second. The follow-up turn then projected a conversation
+    // ending with the assistant's own reply, the model concluded nothing was
+    // outstanding and returned `completionTokens=1 textLength=0`, and the user
+    // saw "something went wrong while I was answering".
+    const out = projectForModel([
+      e({ kind: "user", text: "what is the weather", turnId: "t1" }),
+      e({ kind: "user", text: "actually, in celsius", turnId: "t1" }), // steer
+      e({ kind: "assistant", text: "It is 12 degrees.", turnId: "t1" }),
+    ]);
+
+    expect(out).toEqual([
+      { role: "user", content: "what is the weather" },
+      { role: "assistant", content: "It is 12 degrees." },
+      { role: "user", content: "actually, in celsius" },
+    ]);
+  });
+
+  it("leaves the message that STARTED a turn in front of that turn's answer", () => {
+    // The trigger carries the turn's id too, so a rule keyed only on "has
+    // same-turn output after it" moved the very question the turn exists to
+    // answer. A trigger is its turn's FIRST entry; a steer never is.
+    const out = projectForModel([
+      e({ kind: "user", text: "hello", turnId: "t1" }),
+      e({ kind: "assistant", text: "hi", turnId: "t1" }),
+    ]);
+
+    expect(out.map((m) => m.role)).toEqual(["user", "assistant"]);
+  });
+
+  it("does not move a background completion, which the turn it landed in answers", () => {
+    const out = projectForModel([
+      e({ kind: "user", text: "go", turnId: "t1" }),
+      e({ kind: "trigger", text: "task done", turnId: "t1" }),
+      e({ kind: "assistant", text: "relayed", turnId: "t1" }),
+    ]);
+
+    expect(out.map((m) => m.role)).toEqual(["user", "system", "user", "assistant"]);
   });
 });

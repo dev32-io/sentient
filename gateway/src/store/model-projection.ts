@@ -349,10 +349,87 @@ export interface ProjectForModelOptions {
   readonly timeZone?: string;
 }
 
+/**
+ * Rule 3c. A mid-turn `user` stimulus sorts AFTER the output of the turn it
+ * landed in — even when the store appended it first.
+ *
+ * Rule 3b already does this inside an open tool block. The same thing happens
+ * one level up and rule 3b never saw it: the person speaks while the FINAL
+ * iteration's provider stream is in flight, so the stimulus is appended, the
+ * stream then ends with `finishReason:"stop"`, and the loop commits its answer
+ * AFTER it. There is no next iteration to absorb the steer, so a back-to-back
+ * follow-up turn opens (spec §7.2) and projects a conversation ending:
+ *
+ *     user:      "…follow-up…"        seq 760
+ *     assistant: "…answer to the FIRST question…"   seq 761
+ *
+ * The model reads its own reply as the last message, concludes there is
+ * nothing outstanding, and emits nothing — observed live as
+ * `completionTokens=1 textLength=0`, which `react-loop` correctly refuses to
+ * commit and the user sees as "something went wrong while I was answering".
+ *
+ * Store order is not wrong and is not rewritten; it records exactly when each
+ * entry was appended, and the CLIENT projection still renders the person's
+ * bubble where it actually appeared. What the model needs is the LOGICAL
+ * order: that answer was composed before the follow-up was read, so the
+ * follow-up comes after it and is the thing still awaiting a reply.
+ *
+ * Keyed on the turn: only a steer produces a `user` entry that later entries of
+ * the SAME turn follow. A message that starts its own turn has no same-turn
+ * output after it and never moves. Pure and order-preserving otherwise, so
+ * replay and live still converge.
+ */
+function deferMidTurnStimuli(entries: SessionEntry[]): SessionEntry[] {
+  const lastSeqOfTurn = new Map<string, number>();
+  const firstSeqOfTurn = new Map<string, number>();
+  for (const e of entries) {
+    lastSeqOfTurn.set(e.turnId, e.seq);
+    if (!firstSeqOfTurn.has(e.turnId)) firstSeqOfTurn.set(e.turnId, e.seq);
+  }
+
+  const deferred: SessionEntry[] = [];
+  const out: SessionEntry[] = [];
+  for (const entry of entries) {
+    // Hold a `user` entry that its own turn still has output after. A `trigger`
+    // is deliberately excluded: it is answered by the turn it landed in, and
+    // moving it would separate a background result from the reply relaying it.
+    // A STEER, not a trigger. The message that STARTS a turn carries that
+    // turn's id too — it is appended immediately before `startTurn` — so "has
+    // same-turn output after it" is true of both, and deferring on that alone
+    // moved the very question the turn exists to answer. What separates them is
+    // what comes BEFORE: a steer lands once the turn is already producing, so
+    // its turn already has an earlier entry. A trigger is its turn's first.
+    const isSteer =
+      entry.kind === "user" &&
+      (firstSeqOfTurn.get(entry.turnId) ?? entry.seq) < entry.seq &&
+      (lastSeqOfTurn.get(entry.turnId) ?? entry.seq) > entry.seq;
+    if (isSteer) {
+      deferred.push(entry);
+      continue;
+    }
+    out.push(entry);
+    // Release each held stimulus the moment its turn's last entry has been
+    // emitted, so it lands immediately after that turn rather than at the end
+    // of the whole conversation.
+    for (let i = deferred.length - 1; i >= 0; i -= 1) {
+      const held = deferred[i];
+      if (held === undefined || lastSeqOfTurn.get(held.turnId) !== entry.seq) continue;
+      deferred.splice(i, 1);
+      out.push(held);
+      log.debug("projection.stimulus-deferred-past-turn", {
+        seq: held.seq,
+        turnId: held.turnId,
+        reason: "spoken while the turn was still producing — sorts after the answer it did not read",
+      });
+    }
+  }
+  return [...out, ...deferred];
+}
+
 export function projectForModel(entries: SessionEntry[], options: ProjectForModelOptions = {}): ChatMessage[] {
   const zone = options.timeZone;
   const stamp: StampFn = zone === undefined ? (entry) => entry.text ?? "" : (entry) => stampedContent(entry, zone);
-  const { head, rest } = sliceFromLatestCompaction(entries);
+  const { head, rest } = sliceFromLatestCompaction(deferMidTurnStimuli(entries));
   const messages: ChatMessage[] = [...head];
 
   let i = 0;
