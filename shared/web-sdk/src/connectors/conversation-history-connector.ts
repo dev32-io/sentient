@@ -15,7 +15,13 @@ const log = createLogger(["sentient", "sdk", "connectors", "conversation-history
 // turn) and for user / trigger entries (no originating turn).
 // ---------------------------------------------------------------------------
 
-export type CommittedFeedItem = ConversationFeedItem & { readonly turnId?: string };
+export type CommittedFeedItem = ConversationFeedItem & {
+  readonly turnId?: string;
+  /** WHICH BUBBLE this row belongs to, re-attached from the frame like
+   *  `turnId`. Consecutive assistant rows sharing it are the several stretches
+   *  of ONE reply and render as one bubble. */
+  readonly messageId?: string;
+};
 
 // ---------------------------------------------------------------------------
 // Config
@@ -115,11 +121,15 @@ export class ConversationHistoryConnector implements Connector {
     this.unsubs.push(
       sdk.onMessage("conversation.entry", (msg: unknown) => {
         if (this.awaitingSnapshot) return; // drop straggler from prior generation
-        const m = msg as { item?: ConversationFeedItem; turnId?: string };
+        const m = msg as { item?: ConversationFeedItem; turnId?: string; messageId?: string };
         if (!m.item) return;
         // Re-attach the gateway's frame turnId to the committed item so the UI
         // joins it to the live bubble by id (never by ts-window guessing).
-        const entry: CommittedFeedItem = m.turnId ? { ...m.item, turnId: m.turnId } : m.item;
+        const entry: CommittedFeedItem = {
+          ...m.item,
+          ...(m.turnId === undefined ? {} : { turnId: m.turnId }),
+          ...(m.messageId === undefined ? {} : { messageId: m.messageId }),
+        };
         this.mirror = [...this.mirror, entry];
         this.config.onEntry?.(entry);
         this.config.onUpdate?.(this.mirror);

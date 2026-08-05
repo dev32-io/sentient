@@ -339,6 +339,7 @@ function buildAssistantMessage(id: string, item: CommittedFeedItem & { kind: "as
     // turnId is the gateway-owned join key carried on the conversation.entry
     // frame (CommittedFeedItem) — read straight through, never invented client-side.
     ...(item.turnId ? { turnId: item.turnId } : {}),
+    ...(item.messageId ? { messageId: item.messageId } : {}),
     ...(item.cutoff ? { cutoff: item.cutoff } : {}),
   };
 }
@@ -400,6 +401,29 @@ function appendCommittedItems(walk: FeedWalk, items: readonly CommittedFeedItem[
     if (item.kind !== "assistant") continue;
     if (item.content.length === 0 && !item.cutoff) continue;
     const msg = buildAssistantMessage(stableId, item);
+
+    // ONE BUBBLE PER REPLY. A ReAct turn commits a row per stretch of text —
+    // narration, then the answer after a tool round trip — and the live stream
+    // showed them as one bubble that grew. Merging the consecutive rows that
+    // share a `messageId` is what makes the replay agree with it, rather than
+    // splitting a finished reply into two bubbles the user never saw. The
+    // gateway breaks the run itself (a new messageId) when the person speaks
+    // mid-turn, so an interjection still splits the reply exactly where it
+    // visibly belongs.
+    const previous = walk.out[walk.out.length - 1];
+    if (
+      msg.messageId !== undefined &&
+      previous?.role === "assistant" &&
+      previous.messageId === msg.messageId &&
+      walk.pendingTools.length === 0
+    ) {
+      walk.out[walk.out.length - 1] = {
+        ...previous,
+        text: previous.text + msg.text,
+        ...(msg.cutoff ? { cutoff: msg.cutoff } : {}),
+      };
+      continue;
+    }
     // While the typewriter is draining a turn, suppress the committed
     // assistant entry for that turnId so the inflight (typewriter) bubble
     // stays the sole render until it catches up. Prevents the "chunk pop"

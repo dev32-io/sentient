@@ -6,6 +6,9 @@ const log = createLogger(["sentient", "sdk", "connectors", "inflight-message"]);
 export interface InFlightMessage {
   readonly turnId: string;
   readonly text: string;
+  /** WHICH BUBBLE this is. Absent against a gateway that does not stamp
+   *  deltas, in which case the buffer is keyed by turn — the old behaviour. */
+  readonly messageId?: string;
 }
 
 export interface InFlightMessageConnectorConfig {
@@ -45,8 +48,14 @@ export class InFlightMessageConnector implements Connector {
 
   private readonly config: InFlightMessageConnectorConfig;
   private unsubs: (() => void)[] = [];
-  /** turnId → accumulated text. Insertion order IS render order. */
-  private buffers = new Map<string, string>();
+  /** bubble key → the buffer. Insertion order IS render order.
+   *
+   *  KEYED BY BUBBLE, NOT BY TURN. A ReAct turn produces text more than once
+   *  and that is ONE bubble that grew — but a message the person sends mid-turn
+   *  is drawn between two of those stretches, so the text after it belongs to a
+   *  new bubble. The gateway decides where the boundary falls and stamps every
+   *  delta (`messageId`); nothing here derives it. */
+  private buffers = new Map<string, { turnId: string; text: string; messageId?: string }>();
 
   constructor(config: InFlightMessageConnectorConfig = {}) {
     this.config = config;
@@ -54,7 +63,11 @@ export class InFlightMessageConnector implements Connector {
 
   /** Every turn currently mid-stream, oldest first. Empty when idle. */
   list(): readonly InFlightMessage[] {
-    return [...this.buffers].map(([turnId, text]) => ({ turnId, text }));
+    return [...this.buffers.values()].map((b) => ({
+      turnId: b.turnId,
+      text: b.text,
+      ...(b.messageId === undefined ? {} : { messageId: b.messageId }),
+    }));
   }
 
   attach(sdk: SentientSDKInternal): void {
@@ -64,7 +77,10 @@ export class InFlightMessageConnector implements Connector {
       sdk.onMessage("turn.started", (msg: unknown) => {
         const m = msg as { turnId?: string; trigger?: string };
         if (!m.turnId || this.buffers.has(m.turnId)) return;
-        this.buffers.set(m.turnId, "");
+        // Seeded under the TURN key — `turn.started` carries no messageId, and
+        // the first delta is what names the bubble. That delta re-keys this
+        // placeholder in place, so it never becomes an orphan beside it.
+        this.buffers.set(m.turnId, { turnId: m.turnId, text: "" });
         log.debug("turn-seeded", { turnId: m.turnId, trigger: m.trigger, inflight: this.buffers.size });
         this.emit();
       }),
@@ -72,9 +88,29 @@ export class InFlightMessageConnector implements Connector {
 
     this.unsubs.push(
       sdk.onMessage("turn.text.delta", (msg: unknown) => {
-        const m = msg as { turnId?: string; text?: string };
+        const m = msg as { turnId?: string; text?: string; messageId?: string };
         if (!m.turnId || typeof m.text !== "string") return;
-        this.buffers.set(m.turnId, (this.buffers.get(m.turnId) ?? "") + m.text);
+        const key = m.messageId ?? m.turnId;
+        // Adopt the turn-keyed placeholder ONCE, while it is still empty. A
+        // non-empty one belongs to a gateway sending unstamped deltas and must
+        // not be stolen.
+        if (key !== m.turnId) {
+          const seeded = this.buffers.get(m.turnId);
+          if (seeded && seeded.text === "") {
+            this.buffers.delete(m.turnId);
+            this.buffers.set(key, {
+              turnId: seeded.turnId,
+              text: seeded.text,
+              ...(m.messageId === undefined ? {} : { messageId: m.messageId }),
+            });
+          }
+        }
+        const prior = this.buffers.get(key);
+        this.buffers.set(key, {
+          turnId: m.turnId,
+          text: (prior?.text ?? "") + m.text,
+          ...(m.messageId === undefined ? {} : { messageId: m.messageId }),
+        });
         this.emit();
       }),
     );
@@ -92,8 +128,12 @@ export class InFlightMessageConnector implements Connector {
   private clearTurn(msg: unknown, reason: "completed" | "aborted"): void {
     const m = msg as { turnId?: string };
     if (!m.turnId) return;
-    if (!this.buffers.delete(m.turnId)) return;
-    log.debug("turn-cleared", { turnId: m.turnId, reason, inflight: this.buffers.size });
+    // EVERY bubble of this turn: a turn the person spoke through owns more
+    // than one, and clearing only the turn-keyed slot would strand the rest.
+    const keys = [...this.buffers].filter(([, b]) => b.turnId === m.turnId).map(([key]) => key);
+    if (keys.length === 0) return;
+    for (const key of keys) this.buffers.delete(key);
+    log.debug("turn-cleared", { turnId: m.turnId, reason, bubbles: keys.length, inflight: this.buffers.size });
     this.emit();
   }
 

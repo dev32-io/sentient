@@ -17,6 +17,9 @@ export interface ChatMessage {
   readonly isStreaming: boolean;
   /** Turn that produced this assistant message, or triggered by this user message. */
   readonly turnId?: string;
+  /** WHICH BUBBLE this message is. Several committed rows of one ReAct turn
+   *  share it and merge into the single bubble the stream showed. */
+  readonly messageId?: string;
   /** Present for user messages only — which input channel the message came in on. */
   readonly channel?: ConversationUserChannel;
   /** Present for assistant messages that ended with a cutoff (barge-in or interrupt). */
