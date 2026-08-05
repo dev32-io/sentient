@@ -477,15 +477,18 @@ describe("runTurn — narration + tool call in the same iteration (convergence)"
     );
 
     expect(result).toMatchObject({ completed: true, iterations: 2 });
-    // The narration streamed live, same as before the fix (deltas span both
-    // iterations of this turn: narration, then the terminal reply).
-    expect(deltas.join("")).toBe("Let me check.It is sunny.");
+    // The narration streamed live, and its segment is TERMINATED before the
+    // final answer follows it. Both halves land in one bubble on the client, so
+    // without the break the reply read "Let me check.It is sunny." — the
+    // gateway owns what a well-formed segment is, not the clients.
+    expect(deltas.join("")).toBe("Let me check.\n\nIt is sunny.");
 
     // Before this fix, "Let me check." would be ABSENT here — discarded the
     // instant the loop saw toolCalls.length > 0 on a non-forceFinal iteration.
     const entries = store.readSession(sessionId);
     expect(entries.map((e) => e.kind)).toEqual(["user", "assistant", "tool_call", "tool_result", "assistant"]);
-    expect(entries[1]?.text).toBe("Let me check.");
+    // Stored WITH its terminator, byte-identical to what the live stream sent.
+    expect(entries[1]?.text).toBe("Let me check.\n\n");
     expect(entries[entries.length - 1]?.text).toBe("It is sunny.");
 
     // The tool round-trip is unaffected: the narration entry sits BEFORE the
@@ -499,7 +502,7 @@ describe("runTurn — narration + tool call in the same iteration (convergence)"
     // same narration the live onTextDelta stream showed — proving
     // render(replay) == render(live) for this turn.
     const feed = projectForClient(store.readSession(sessionId));
-    const narrationItem = feed.find((item) => item.kind === "assistant" && item.text === "Let me check.");
+    const narrationItem = feed.find((item) => item.kind === "assistant" && item.text === "Let me check.\n\n");
     expect(narrationItem).toBeDefined();
     const toolTile = feed.find((item) => item.kind === "tool");
     expect(toolTile?.text).toBe("sunny");

@@ -407,6 +407,23 @@ export interface TurnOutcome {
   consumedThroughSeq: number;
 }
 
+/** A paragraph break. Two newlines, because one is a soft wrap in Markdown and
+ *  would still render the next segment as the same paragraph. */
+const SEGMENT_BREAK = "\n\n";
+
+/**
+ * What must be appended to [text] so the segment is properly terminated —
+ * "" when it already is.
+ *
+ * A suffix rather than a rewrite: the text has already been streamed to the
+ * client verbatim, so anything but an append would make the live bubble and the
+ * committed entry disagree.
+ */
+function segmentTerminator(text: string): string {
+  if (text.endsWith(SEGMENT_BREAK)) return "";
+  return text.endsWith("\n") ? "\n" : SEGMENT_BREAK;
+}
+
 export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<TurnOutcome> {
   const {
     provider,
@@ -558,7 +575,21 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
     // Appended here, never at the terminal branch above, so text is
     // committed exactly once per iteration.
     if (outcome.text.length > 0) {
-      store.append({ ...blankEntry(sessionId, turnId), kind: "assistant", text: outcome.text });
+      // TERMINATED, because more text is coming. This segment is followed by a
+      // tool round trip and then, on a later iteration, the rest of the reply —
+      // and both halves land in ONE bubble on the client, which appends deltas
+      // to a single per-turn buffer. Committed unterminated, the final answer
+      // ran straight into the end of the narration with no break at all:
+      // "Let me look that up.The news today is…".
+      //
+      // The terminator is streamed as well as stored, and is a pure SUFFIX of
+      // what was already sent, so the live buffer and the replayed entry stay
+      // byte-identical (spec §3.2 Invariant B). Terminating in the gateway is
+      // the point: it owns what a well-formed segment is, so no client has to
+      // reimplement a joining rule and no two clients can disagree about it.
+      const suffix = segmentTerminator(outcome.text);
+      if (suffix.length > 0) onTextDelta(turnId, suffix);
+      store.append({ ...blankEntry(sessionId, turnId), kind: "assistant", text: outcome.text + suffix });
     }
 
     const dispatchedAll = await dispatchToolCalls(deps, sessionId, turnId, signal, outcome.toolCalls, backgroundByKey);

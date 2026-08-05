@@ -1150,7 +1150,9 @@ describe("SessionRuntime — cancellation: interrupt during tool dispatch", () =
 
     // The narration committed by the loop keeps cutoff:null; the cut is its own
     // appended marker, because history is append-only and nothing is restamped.
-    const narration = entries.find((e) => e.kind === "assistant" && e.text === "let me look that up");
+    // `startsWith`: a narration segment is committed with its terminator (see
+    // react-loop.ts's `segmentTerminator`).
+    const narration = entries.find((e) => e.kind === "assistant" && (e.text ?? "").startsWith("let me look that up"));
     expect(narration?.cutoff).toBeNull();
 
     const marker = entries.find((e) => e.kind === "assistant" && e.cutoff === "interrupt");
@@ -1552,7 +1554,9 @@ describe("SessionRuntime — voice fork: loop output reaches the turn's TTS stre
     await waitUntilIdle(runtime);
 
     expect(voice.calls).toHaveLength(1);
-    expect(voice.calls[0]?.pushed).toEqual(["Let me check.", "It is sunny."]);
+    // The segment terminator is streamed too, so the TTS fork sees exactly what
+    // the client's bubble does.
+    expect(voice.calls[0]?.pushed.join("")).toBe("Let me check.\n\nIt is sunny.");
     // The loop's tool-call id must reach the voice stream so local-tts speaks
     // the pre-tool line now instead of holding it for the round trip.
     expect(voice.calls[0]?.flushed).toContain("call_1");
