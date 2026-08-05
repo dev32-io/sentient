@@ -85,11 +85,24 @@ const log = getLog(["sentient", "bootstrap", "phase-services"]);
 // `loadCompactionSummarizerPrompt` already has, and its lines DO reach the log.
 let systemPrompt: string | null = null;
 
-/** One provider for the process: the zone is a property of where the household
- *  is, not of a session, and resolving it per session would re-log it per
- *  socket. Swapped for a location-derived provider when the app learns where
- *  the house actually is — see context/message-time.ts. */
-const timeZone: TimeZoneProvider = createHostTimeZoneProvider();
+/**
+ * One provider for the process: the zone is a property of where the household
+ * is, not of a session, and resolving it per session would re-log it per
+ * socket. Swapped for a location-derived provider when the app learns where the
+ * house actually is — see context/message-time.ts.
+ *
+ * LAZY, for the same reason `resolveSystemPrompt` below is: the resolver logs
+ * which zone it picked, and at module-init time the file sink does not exist
+ * yet, so a module-scope call writes that line to nowhere. Built on first use
+ * instead, by which point the sink is up and an operator can actually confirm
+ * from the log which zone the gateway is stamping in.
+ */
+let hostTimeZone: TimeZoneProvider | null = null;
+
+function resolveTimeZone(): TimeZoneProvider {
+  hostTimeZone ??= createHostTimeZoneProvider();
+  return hostTimeZone;
+}
 
 function resolveSystemPrompt(): string {
   if (systemPrompt !== null) return systemPrompt;
@@ -683,14 +696,14 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       // wrap a second time and double every delta into `textSoFar`.
       turnState,
       systemPrompt: resolveSystemPrompt(),
-      timeZone,
+      timeZone: resolveTimeZone(),
       // Prompt tiers 3 and 5 (context/session-block.ts, situation-block.ts).
       // Composed HERE because this is the only scope holding all of their
       // collaborators — the principal, the household roster, this session's
       // window set, its background registry and its audio authority.
       sessionBlock: createSessionBlockRenderer({
         clock: { nowMs: () => Date.now() },
-        timeZone,
+        timeZone: resolveTimeZone(),
         identity: {
           async describe() {
             if (!auth) return { speaking: principal.userId, household: [] };
