@@ -30,8 +30,35 @@
 // aborting the controller, so the accumulated text is captured before the
 // loop can possibly stop consuming it — an APPEND, so history stays
 // immutable (Invariant A) and the client can render "interrupted here."
-// Empty partial (abort landed before any text streamed, e.g. mid tool-call
-// dispatch) commits nothing — an empty assistant entry is noise, not signal.
+//
+// AN EMPTY PARTIAL IS STILL A MARKER, when the turn already produced durable
+// output. The partial accumulator is cleared the moment the loop commits an
+// iteration's narration and dispatches a tool (session-runtime.ts's
+// `onToolUpdate`), so a Stop pressed DURING tool dispatch — the single most
+// common way to interrupt a ReAct turn — arrives here with `text === ""`.
+// Committing nothing then left the cut off the durable record entirely: the
+// live `turn.aborted` frame marked the running bubble, and the next refetch or
+// reconnect rendered the turn as though it had ended on its own. Both clients
+// already render an assistant entry that is empty but CARRIES a cutoff as a
+// bare "interrupted" marker (webui hooks/cycle-helpers.ts, mobile-sdk
+// StateDeriver.committedMessage), so the empty entry is the designed shape for
+// exactly this case. Only a turn that produced NOTHING at all skips it — there
+// a marker would annotate a turn the user never saw start.
+//
+// UNREPLIED TOOL CALLS ARE CLOSED FIRST, and that ordering is the whole point
+// of doing it here rather than in react-loop.ts. A turn cut off between
+// `broker.dispatch` returning and its `tool_result` being appended leaves a
+// bare `tool_call` in the store, and an unreplied call is poison twice over:
+// the client tile renders "cancelled", which StateDeriver maps to a
+// PERMANENTLY spinning pill, and `projectForModel` DROPS the call from every
+// later turn's messages — so the model reads its own narration with the action
+// erased, and the drop re-WARNs on every iteration for the life of the session.
+// This module runs synchronously BEFORE `controller.abort()`, so its appends
+// land while react-loop.ts is still parked on its await: the synthetic
+// `tool_result` immediately follows its `tool_call`, which is what
+// `projectForModel` requires (it pairs a call only with the run of results
+// DIRECTLY after it). Closing them from react-loop.ts's post-abort branch
+// instead would put the cutoff entry between the pair and drop the call anyway.
 //
 // TWO CONCERNS, NOT ONE. Committing a cutoff entry (+ firing `turnAborted`)
 // is about the TURN; flushing playback is about AUDIO — and audio OUTLIVES
@@ -68,12 +95,30 @@
 //     fire no `turnAborted`.
 
 import { getLog } from "../logging/logger.js";
-import type { CutoffKind, NewSessionEntry } from "../store/entry-types.js";
+import type { CutoffKind, NewSessionEntry, SessionEntry } from "../store/entry-types.js";
 import type { SessionStore } from "../store/session-store.js";
 import type { UserId } from "../user-auth/user-id.js";
 import type { TurnEmitter } from "./turn-emitter.js";
 
 const log = getLog(["sentient", "runtime", "cancellation"]);
+
+/**
+ * Result text for a `tool_result` synthesized because the turn was cut off
+ * before the real one was recorded.
+ *
+ * Addressed to the MODEL — this is what it reads in place of the result on
+ * every later turn — so it states the two things the model cannot otherwise
+ * know: the round trip did not complete, and whether the tool took effect is
+ * genuinely unknown. The call was already in flight when the abort landed, so
+ * claiming it "did not run" would be a guess, and a side-effecting tool that
+ * DID run must never be silently re-issued on that basis.
+ */
+const CUT_OFF_TOOL_RESULT =
+  "The user stopped this turn before the tool's result was recorded. Whether it took effect is unknown — say so rather than assuming, and confirm before repeating a call that changes anything.";
+
+/** The kinds that mean a turn put something durable on the record. A turn's
+ *  own trigger (`user` / `trigger`) is what STARTED it and does not count. */
+const TURN_OUTPUT_KINDS: ReadonlySet<string> = new Set(["assistant", "tool_call", "tool_result"]);
 
 export interface CancellationControllers {
   /** Mic onset — the user starts speaking over the assistant. */
@@ -103,6 +148,14 @@ export interface CancellableTurn {
    *  turn as already-cut-off-equivalent: commit nothing further, fire no
    *  `turnAborted` — see `abortTurn` below. */
   settled: boolean;
+  /**
+   * The store's high-water seq at the instant this turn started
+   * (session-runtime.ts's `lastProcessedSeq` snapshot). Bounds the read that
+   * finds this turn's unreplied tool calls to the turn's OWN entries — a full
+   * `readSession` would grow with the conversation, and this runs on a user
+   * gesture that must feel instant.
+   */
+  startedAfterSeq: number;
 }
 
 export interface CancellationDeps {
@@ -124,29 +177,100 @@ export interface CancellationDeps {
   publishCommitted: () => void;
 }
 
-function commitCutoffEntry(deps: CancellationDeps, turn: CancellableTurn, cutoff: CutoffKind): void {
-  if (turn.text.length === 0) {
-    log.info("cancellation.cutoff.no-partial-text", {
+/** This turn's own entries, newest-last. Bounded by `startedAfterSeq`; the
+ *  turnId filter drops a steer's stimulus, which shares the seq range. */
+function turnEntries(deps: CancellationDeps, turn: CancellableTurn): SessionEntry[] {
+  return deps.store.readSince(deps.sessionId, turn.startedAfterSeq).filter((e) => e.turnId === turn.turnId);
+}
+
+/** Tool-call ids this turn appended with no `tool_result` after them, in
+ *  dispatch order. Mirrors conversation-feed.ts's `unresolvedToolItemIds`
+ *  predicate — same question, asked of entries rather than feed items. */
+function unrepliedToolCalls(entries: readonly SessionEntry[]): SessionEntry[] {
+  const replied = new Set<string>();
+  for (const e of entries) {
+    if (e.kind === "tool_result" && e.toolCallId !== null) replied.add(e.toolCallId);
+  }
+  return entries.filter((e) => e.kind === "tool_call" && e.toolCallId !== null && !replied.has(e.toolCallId));
+}
+
+/**
+ * Append a `tool_result` for every call this turn left unanswered, so the cut
+ * turn's record is a complete round trip. Returns how many were closed.
+ *
+ * Runs BEFORE the cutoff entry and before `controller.abort()` — see the module
+ * header for why that order is load-bearing rather than incidental.
+ */
+function closeUnrepliedToolCalls(deps: CancellationDeps, turn: CancellableTurn, cutoff: CutoffKind): SessionEntry[] {
+  const entries = turnEntries(deps, turn);
+  for (const call of unrepliedToolCalls(entries)) {
+    const appended = deps.store.append({
+      ...blankEntry(deps.sessionId, turn.turnId),
+      kind: "tool_result",
+      toolCallId: call.toolCallId,
+      toolName: call.toolName,
+      toolArgs: CUT_OFF_TOOL_RESULT,
+    });
+    log.info("cancellation.tool-call.closed", {
       userId: deps.userId,
       sessionId: deps.sessionId,
       turnId: turn.turnId,
       cutoff,
+      toolCallId: call.toolCallId,
+      toolName: call.toolName,
+      seq: appended.seq,
+      reason: "cut off before its result was recorded — closing the round trip so the model keeps the call",
+    });
+  }
+  return entries;
+}
+
+function blankEntry(sessionId: string, turnId: string): NewSessionEntry {
+  return {
+    sessionId,
+    turnId,
+    kind: "assistant",
+    createdAt: Date.now(),
+    text: null,
+    toolCallId: null,
+    toolName: null,
+    toolArgs: null,
+    cutoff: null,
+    compactedThroughSeq: null,
+    pendingId: null,
+  };
+}
+
+/**
+ * Commit the cutoff marker for this turn.
+ *
+ * [priorEntries] are the turn's entries as of the abort, read once by
+ * `closeUnrepliedToolCalls`. An empty partial still commits when they show the
+ * turn produced durable output — see the module header.
+ */
+function commitCutoffEntry(
+  deps: CancellationDeps,
+  turn: CancellableTurn,
+  cutoff: CutoffKind,
+  priorEntries: readonly SessionEntry[],
+): void {
+  const hasOutput = priorEntries.some((e) => TURN_OUTPUT_KINDS.has(e.kind));
+  if (turn.text.length === 0 && !hasOutput) {
+    log.info("cancellation.cutoff.nothing-to-mark", {
+      userId: deps.userId,
+      sessionId: deps.sessionId,
+      turnId: turn.turnId,
+      cutoff,
+      reason: "the turn committed no output before the abort — a marker would annotate an empty turn",
     });
     return;
   }
 
   const entry: NewSessionEntry = {
-    sessionId: deps.sessionId,
-    turnId: turn.turnId,
+    ...blankEntry(deps.sessionId, turn.turnId),
     kind: "assistant",
-    createdAt: Date.now(),
     text: turn.text,
-    toolCallId: null,
-    toolName: null,
-    toolArgs: null,
     cutoff,
-    compactedThroughSeq: null,
-    pendingId: null,
   };
   const appended = deps.store.append(entry);
   log.info("cancellation.cutoff.committed", {
@@ -156,6 +280,7 @@ function commitCutoffEntry(deps: CancellationDeps, turn: CancellableTurn, cutoff
     cutoff,
     seq: appended.seq,
     textLength: turn.text.length,
+    markerOnly: turn.text.length === 0,
   });
 }
 
@@ -180,7 +305,11 @@ function abortTurn(deps: CancellationDeps, cutoff: CutoffKind): void {
       alreadySettled: turn.settled,
     });
   } else {
-    commitCutoffEntry(deps, turn, cutoff);
+    // Order is the contract: close the tool round trips, THEN mark the cut,
+    // THEN abort. See the module header — a cutoff entry landing between a
+    // tool_call and its result is what drops the call from the model's view.
+    const priorEntries = closeUnrepliedToolCalls(deps, turn, cutoff);
+    commitCutoffEntry(deps, turn, cutoff, priorEntries);
     deps.publishCommitted();
     turn.controller.abort();
     deps.emitter.turnAborted(turn.turnId, cutoff);

@@ -7,6 +7,7 @@ import type { UserPrincipal } from "../identity/user-principal.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
 import type { ProviderClient, ProviderRequest, ProviderStreamChunk } from "../provider/provider-client.js";
 import type { CutoffKind } from "../store/entry-types.js";
+import { projectForModel } from "../store/model-projection.js";
 import type { TitleProvenance } from "../store/session-metadata.js";
 import { openSessionStore } from "../store/session-store.js";
 import type { BackgroundRegistry } from "../tools/background-registry.js";
@@ -1040,6 +1041,113 @@ describe("SessionRuntime — cancellation: interrupt leaves background tasks ali
     expect(task.isRunning()).toBe(true);
     expect(background.cancelled).toEqual([]);
     expect(background.count()).toBe(1);
+
+    expect(emitter.events.some((e) => e.type === "turnAborted")).toBe(true);
+
+    runtime.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cancellation landing DURING tool dispatch — the common way a ReAct turn is
+// interrupted, and the one that used to leave no trace at all.
+//
+// The partial-text accumulator is cleared the instant the loop commits an
+// iteration's narration and dispatches a tool, so a Stop pressed while the tool
+// is in flight reaches cancellation.ts with `text === ""`. That used to commit
+// NOTHING: no cutoff anywhere in the store, so the interrupted turn replayed as
+// though it had ended on its own, and the dispatched `tool_call` sat there with
+// no `tool_result` — which `projectForModel` then DROPPED from every later
+// turn's messages, re-WARNing once per iteration for the life of the session.
+//
+// Both properties are asserted here, and the ORDER is asserted with them: the
+// synthetic result must land DIRECTLY after its call, because that adjacency is
+// exactly what `projectForModel` pairs on. A cutoff entry slipped between the
+// two satisfies "a result exists" and still drops the call.
+// ---------------------------------------------------------------------------
+describe("SessionRuntime — cancellation: interrupt during tool dispatch", () => {
+  it("closes the unreplied tool call and commits a marker-only cutoff entry", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/case-cut-mid-dispatch` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = fakeProvider(async function* (callIndex) {
+      if (callIndex === 1) {
+        yield { type: "text", content: "let me look that up" };
+        yield {
+          type: "tool_call",
+          toolCall: { id: "call_cut", type: "function", function: { name: "get_weather", arguments: "{}" } },
+        };
+        yield { type: "done", finishReason: "tool_calls" };
+        return;
+      }
+      yield { type: "text", content: "final reply" };
+      yield { type: "done", finishReason: "stop" };
+    });
+
+    // Hangs until the turn's signal fires — a real MCP call in flight when Stop
+    // is pressed. react-loop.ts reaches its post-dispatch abort check with the
+    // `tool_call` already appended and no result, which is the orphan.
+    let dispatchStarted: (() => void) | undefined;
+    const dispatchReached = new Promise<void>((resolve) => {
+      dispatchStarted = resolve;
+    });
+    const broker = fakeBroker([weatherDef], async (inv) => {
+      dispatchStarted?.();
+      await new Promise<void>((resolve) => {
+        if (inv.signal.aborted) {
+          resolve();
+          return;
+        }
+        inv.signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+      return { content: "sunny", isError: false };
+    });
+
+    const emitter = recordingEmitter();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-cut-mid-dispatch",
+      accessManager: am,
+      provider,
+      broker,
+      emitter,
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "what is the weather?" });
+    await dispatchReached;
+
+    runtime.interrupt();
+    await waitUntilIdle(runtime);
+
+    const readback = openSessionStore(am.grant(alice, "session-store"));
+    const entries = readback.readSession("sess-cut-mid-dispatch");
+    readback.close();
+
+    const callIndex = entries.findIndex((e) => e.kind === "tool_call" && e.toolCallId === "call_cut");
+    expect(callIndex).toBeGreaterThanOrEqual(0);
+
+    // Adjacency, not mere existence — see this block's header.
+    const next = entries[callIndex + 1];
+    expect(next?.kind).toBe("tool_result");
+    expect(next?.toolCallId).toBe("call_cut");
+
+    // The narration committed by the loop keeps cutoff:null; the cut is its own
+    // appended marker, because history is append-only and nothing is restamped.
+    const narration = entries.find((e) => e.kind === "assistant" && e.text === "let me look that up");
+    expect(narration?.cutoff).toBeNull();
+
+    const marker = entries.find((e) => e.kind === "assistant" && e.cutoff === "interrupt");
+    expect(marker).toBeDefined();
+    expect(marker?.text).toBe("");
+
+    // The payoff, asserted against the projection itself rather than inferred
+    // from the entry order: the model still sees the call it made. Before the
+    // round trip was closed this dropped, and kept dropping on every later turn.
+    const toolCallIds = projectForModel(entries).flatMap((m) => m.tool_calls?.map((c) => c.id) ?? []);
+    expect(toolCallIds).toContain("call_cut");
 
     expect(emitter.events.some((e) => e.type === "turnAborted")).toBe(true);
 

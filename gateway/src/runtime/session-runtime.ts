@@ -412,7 +412,17 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     emitter,
     getInFlight: (): CancellableTurn | null =>
       inFlight
-        ? { turnId: inFlight.turnId, controller: inFlight.controller, text: turnText, settled: inFlight.settled }
+        ? {
+            turnId: inFlight.turnId,
+            controller: inFlight.controller,
+            text: turnText,
+            settled: inFlight.settled,
+            // `lastProcessedSeq` is snapshotted to the store tail in
+            // `startTurn` and only moves again when the turn settles, so while
+            // a turn is in flight it is exactly that turn's starting mark —
+            // which is what bounds cancellation's read to this turn's entries.
+            startedAfterSeq: lastProcessedSeq,
+          }
         : null,
     stopPlayback,
     publishCommitted: () => feed.publishAll(),
