@@ -93,6 +93,8 @@ import type { OrchestratorConfig } from "@sentient/config";
 import type { TurnTrigger } from "@sentient/protocol";
 import type { AccessManager } from "../access/access-manager.js";
 import type { TimeZoneProvider } from "../context/message-time.js";
+import type { SessionBlockRenderer } from "../context/session-block.js";
+import type { SituationBlockRenderer } from "../context/situation-block.js";
 import { loadAuxiliaryTemplate, loadCompactionSummarizerPrompt } from "../context/system-prompt-loader.js";
 import type { UserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
@@ -262,6 +264,13 @@ export interface SessionRuntimeDeps {
    */
   turnState?: TurnStateTracker;
   systemPrompt: string;
+  /** Prompt tier 3 — rendered once per session and reused on every turn
+   *  (context/session-block.ts). Optional: absent in tests and in any harness
+   *  that does not want the block. */
+  sessionBlock?: SessionBlockRenderer | null;
+  /** Prompt tier 5 — re-rendered every turn and emitted last
+   *  (context/situation-block.ts). */
+  situationBlock?: SituationBlockRenderer | null;
   /** The zone every message stamp and the session block are rendered in.
    *  A provider, not a string, so location-derived zones replace the host's
    *  without touching this signature (see context/message-time.ts). */
@@ -337,6 +346,8 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   // double every delta into `textSoFar`.
   const emitter = deps.turnState === undefined ? turnState.wrap(deps.emitter) : deps.emitter;
   const voice = deps.voice ?? null;
+  // Tier-3 memo: one render per session, shared by every turn.
+  let sessionBlockText: Promise<string | null> | null = null;
   const userId = principal.userId;
 
   const cap = accessManager.grant(principal, "session-store");
@@ -801,6 +812,31 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
       store,
       systemPrompt,
       timeZone,
+      // Tier 3 is static for the session's life, so it is rendered at most
+      // once and the promise is the memo — a second turn reuses it rather
+      // than re-reading the household roster. Tier 5 is the opposite: read
+      // fresh every turn, because being volatile is the whole reason it
+      // exists. See context/session-block.ts for the cascade.
+      sessionBlock: () => {
+        sessionBlockText ??= (deps.sessionBlock?.render() ?? Promise.resolve(null)).catch((err: unknown) => {
+          log.warn("session-runtime.session-block-failed", {
+            userId,
+            sessionId,
+            reason: err instanceof Error ? err.message : String(err),
+          });
+          return null;
+        });
+        return sessionBlockText;
+      },
+      situationBlock: () =>
+        (deps.situationBlock?.render() ?? Promise.resolve(null)).catch((err: unknown) => {
+          log.warn("session-runtime.situation-block-failed", {
+            userId,
+            sessionId,
+            reason: err instanceof Error ? err.message : String(err),
+          });
+          return null;
+        }),
       sessionId,
       config: config.loop,
       onTextDelta: (id, text) => {

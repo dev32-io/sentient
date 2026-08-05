@@ -320,6 +320,10 @@ function buildHandlesOver(
     // fan-out writes through, so "somebody can see this dialog" and "somebody
     // is being written to" can never disagree.
     attachedWindows: () => fanOut.size,
+    // The same authority `TurnVoice` asks at drain time, so the `<situation>`
+    // block's `delivery:` line cannot claim one thing while the audio path
+    // does another.
+    audioPolicy,
     voice,
     // Work COMPLETING is not an attach or a detach, so the registry would
     // otherwise never learn that the last thing holding this session resident

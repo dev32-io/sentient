@@ -79,6 +79,11 @@ export interface SessionRuntimeRequest {
    * `SessionPermissionBroker`.
    */
   attachedWindows: () => number;
+  /** This session's audio authority (session-handlers/user-audio-policy.ts).
+   *  Read to tell the model whether its reply will actually be spoken — the
+   *  `<situation>` block's `delivery:` line. Optional: a text-only or headless
+   *  composition root has none, and the line is simply omitted. */
+  audioPolicy?: { shouldSpeak(): Promise<boolean> } | null;
   /** This session's TTS fork, or null/absent for a text-only session. */
   voice?: TurnVoice | null;
   /**

@@ -85,6 +85,12 @@ export interface ReactLoopDeps {
   systemPrompt: string;
   /** Zone for every message stamp — see context/message-time.ts. */
   timeZone: TimeZoneProvider;
+  /** Prompt tier 3: per-session, static, emitted straight after the system
+   *  prompt. Memoized by the caller — see session-runtime.ts. */
+  sessionBlock?: () => Promise<string | null>;
+  /** Prompt tier 5: volatile, re-read per turn, emitted LAST so nothing
+   *  downstream of it can be invalidated by it. */
+  situationBlock?: () => Promise<string | null>;
   sessionId: string;
   config: OrchestratorConfig["loop"];
   onTextDelta: (turnId: string, text: string) => void;
@@ -402,7 +408,19 @@ export interface TurnOutcome {
 }
 
 export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<TurnOutcome> {
-  const { provider, broker, store, systemPrompt, timeZone, sessionId, config, onTextDelta, onTurnCommitting } = deps;
+  const {
+    provider,
+    broker,
+    store,
+    systemPrompt,
+    timeZone,
+    sessionBlock,
+    situationBlock,
+    sessionId,
+    config,
+    onTextDelta,
+    onTurnCommitting,
+  } = deps;
   const { turnId, signal } = args;
 
   // Immutable per spec §4.6 — computed once, passed unchanged every
@@ -444,9 +462,17 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
     // built from, so it can never claim to have consumed an entry that landed
     // during the stream.
     consumedThroughSeq = entries[entries.length - 1]?.seq ?? consumedThroughSeq;
+    // The prompt is a cache cascade, static to volatile: the shared system
+    // prompt, then this session's fixed facts, then the stamped history, then
+    // whatever is true only right now. Each tier invalidates only what follows
+    // it, which is why the volatile block is LAST — anywhere earlier and every
+    // turn would break the cached prefix. See context/session-block.ts.
+    const [sessionText, situationText] = await Promise.all([sessionBlock?.() ?? null, situationBlock?.() ?? null]);
     const messages: ChatMessage[] = [
       { role: "system", content: systemPrompt },
+      ...(sessionText === null ? [] : [{ role: "system" as const, content: sessionText }]),
       ...projectForModel(entries, { timeZone: timeZone.zone() }),
+      ...(situationText === null ? [] : [{ role: "system" as const, content: situationText }]),
     ];
 
     log.debug("react-loop.iteration.start", {

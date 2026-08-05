@@ -22,6 +22,8 @@ import { renderAndWrite } from "../apply/orchestrator.js";
 import { resolveAssetRoot } from "../config/asset-root.ts";
 import type { StartupConfig } from "../config/startup-config.ts";
 import { type TimeZoneProvider, createHostTimeZoneProvider } from "../context/message-time.js";
+import { createSessionBlockRenderer } from "../context/session-block.js";
+import { createSituationBlockRenderer } from "../context/situation-block.js";
 import { loadSystemPrompt } from "../context/system-prompt-loader.ts";
 import { type ExternalToolSlot, createExternalToolSlot } from "../external-tools/external-tool-slot.js";
 import { getLog } from "../logging/logger.ts";
@@ -38,7 +40,7 @@ import { createPolicyEngine } from "../security/policy-engine.js";
 import type { PolicyEngine } from "../security/policy-engine.js";
 import { loadMcpPolicy } from "../security/policy-loader.js";
 import type { GatewayTlsMaterial } from "../session-handlers/ws-handlers.ts";
-import type { SessionStore } from "../store/session-store.js";
+import { type SessionStore, openSessionStore } from "../store/session-store.js";
 import { composeBackgroundCompletionNote } from "../tools/background-completion-note.js";
 import { createDelegateTaskRunner, delegateTaskDefinition } from "../tools/delegate-task.js";
 import { createDelegationGuard, loadDelegationFrontmatterDir } from "../tools/delegation-guard.js";
@@ -168,7 +170,7 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
   const templateLoader = createTemplateLoader();
 
   const { accessManager, mcpClient, provider, createSessionRuntime, delegatedExternalTool } =
-    await buildOrchestratorServices(cfg, secretsStore, profileStore);
+    await buildOrchestratorServices(cfg, secretsStore, profileStore, auth);
 
   const applyDeps: ApplyDeps = createApplyDeps({
     profileStore,
@@ -342,6 +344,11 @@ export async function buildOrchestratorServices(
   cfg: StartupConfig,
   secretsStore: SecretsStore | null,
   profileStore: ProfileStore,
+  /** Names the people the gateway knows about, for the `<session>` block's
+   *  "speaking with" / "household" lines. Optional so a headless boot-proof
+   *  harness can build the orchestrator without an auth service; the block
+   *  then renders without those two lines. */
+  auth?: AuthService | null,
 ): Promise<OrchestratorServices> {
   const accessManager = createAccessManager({ userDataRoot: cfg.access.user_data_root });
   const mcpClient = createMcpClient(cfg.mcpCatalog, {});
@@ -393,6 +400,7 @@ export async function buildOrchestratorServices(
     delegationGuard,
     hermesRunner,
     delegatedExternalTool,
+    auth: auth ?? null,
   });
 
   return { accessManager, mcpClient, provider, createSessionRuntime, delegatedExternalTool };
@@ -499,6 +507,9 @@ interface CreateSessionRuntimeFactoryDeps {
   delegationGuard: DelegationGuard;
   hermesRunner: HermesRunner;
   delegatedExternalTool: ExternalToolSlot;
+  /** Names the household for the `<session>` block; null in a headless
+   *  harness, which then renders the block without those lines. */
+  auth: AuthService | null;
 }
 
 /** The per-session factory itself. Synchronous (matches the locked
@@ -511,9 +522,18 @@ interface CreateSessionRuntimeFactoryDeps {
  *  actual use, not in `buildOrchestratorServices` above). */
 function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): CreateSessionRuntime {
   const { orchestratorCfg, accessManager, provider, mcpClient, policyEngine, delegationGuard, hermesRunner } = deps;
-  const { delegatedExternalTool } = deps;
+  const { delegatedExternalTool, auth } = deps;
 
-  return ({ principal, conversationId, connectionId, emitter: rawEmitter, attachedWindows, voice, onWorkSettled }) => {
+  return ({
+    principal,
+    conversationId,
+    connectionId,
+    emitter: rawEmitter,
+    attachedWindows,
+    audioPolicy,
+    voice,
+    onWorkSettled,
+  }) => {
     if (!provider) {
       log.error("session-runtime.factory.no-provider", {
         userId: principal.userId,
@@ -664,6 +684,50 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       turnState,
       systemPrompt: resolveSystemPrompt(),
       timeZone,
+      // Prompt tiers 3 and 5 (context/session-block.ts, situation-block.ts).
+      // Composed HERE because this is the only scope holding all of their
+      // collaborators — the principal, the household roster, this session's
+      // window set, its background registry and its audio authority.
+      sessionBlock: createSessionBlockRenderer({
+        clock: { nowMs: () => Date.now() },
+        timeZone,
+        identity: {
+          async describe() {
+            if (!auth) return { speaking: principal.userId, household: [] };
+            const listed = await auth.listUsersPublic();
+            const users = listed.ok ? listed.value : [];
+            const me = users.find((u) => u.userId === principal.userId);
+            return {
+              speaking: me?.displayName ?? principal.userId,
+              household: users.filter((u) => u.userId !== principal.userId).map((u) => u.displayName),
+            };
+          },
+        },
+        // A conversation the store already has entries for is one the person is
+        // picking back up; `lastActiveAtMs` is what makes "hours ago" legible.
+        continuity: {
+          describe() {
+            // Short-lived by design, matching session-binding's own rule: a
+            // second live handle on the same WAL for the life of the session
+            // is not worth a question asked once.
+            const store = openSessionStore(accessManager.grant(principal, "session-store"));
+            try {
+              const prior = store.readSession(conversationId);
+              const last = prior[prior.length - 1];
+              return last === undefined ? { kind: "new" } : { kind: "resumed", lastActiveAtMs: last.createdAt };
+            } finally {
+              store.close();
+            }
+          },
+        },
+        sessionId: conversationId,
+      }),
+      situationBlock: createSituationBlockRenderer({
+        speech: { spoken: async () => (audioPolicy ? audioPolicy.shouldSpeak() : false) },
+        surfaces: { count: attachedWindows },
+        work: { backgroundTaskCount: () => broker.background.count() },
+        sessionId: conversationId,
+      }),
       config: orchestratorCfg,
       voice: voice ?? null,
       onWorkSettled,
