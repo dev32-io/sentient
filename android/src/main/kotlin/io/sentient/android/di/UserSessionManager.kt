@@ -32,7 +32,9 @@ import io.sentient.android.update.UpdateDeps
 import io.sentient.android.update.buildUpdateDeps
 import io.sentient.mobiledata.di.ChatComponent
 import io.sentient.mobiledata.di.SettingsComponent
+import io.sentient.mobiledata.result.SentientResult
 import io.sentient.mobilesdk.log.createLogger
+import io.sentient.mobilesdk.protocol.AudioPreferences
 import io.sentient.mobilesdk.sdk.SdkConfig
 import io.sentient.mobilesdk.sdk.SentientSdk
 import io.sentient.mobilesdk.sdk.createPlatformBundle
@@ -99,7 +101,16 @@ class UserSessionManager(
         // defaults to NoOpResumeCursorStore. A cold relaunch takes the recovered:false
         // REST-refetch path (history comes from the gateway/Hermes on attach).
         newSdk = buildSdk(sessionScope)
-        val component = ChatComponent(sdk = newSdk)
+        // `loadAudioPreferences` reads `settingsComponent`, assigned a few lines below:
+        // the lambda only runs from `connect()`, by which time it is set. Seeds the chat
+        // TTS toggle from the stored profile instead of the SDK's default.
+        val component = ChatComponent(
+            sdk = newSdk,
+            loadAudioPreferences = {
+                (settingsComponent?.profileRepository?.getProfile() as? SentientResult.Success)
+                    ?.data?.audio?.let { AudioPreferences(ttsEnabled = it.ttsEnabled, channel = it.channel) }
+            },
+        )
 
         scope = sessionScope
         chatComponent = component

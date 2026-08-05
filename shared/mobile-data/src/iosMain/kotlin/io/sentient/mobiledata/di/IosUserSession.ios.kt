@@ -22,7 +22,9 @@
 // ---------------------------------------------------------------------------
 package io.sentient.mobiledata.di
 
+import io.sentient.mobiledata.result.SentientResult
 import io.sentient.mobilesdk.log.createLogger
+import io.sentient.mobilesdk.protocol.AudioPreferences
 import io.sentient.mobilesdk.sdk.SdkConfig
 import io.sentient.mobilesdk.sdk.SentientSdk
 import io.sentient.mobilesdk.sdk.createPlatformBundle
@@ -112,8 +114,18 @@ class IosUserSession(
         sessionsHttpClient = sessionsHttpClient,
     )
 
-    /** The single ChatComponent for this login — usecases + connection + passthroughs. */
-    val component: ChatComponent = ChatComponent(sdk = sdk)
+    /** The single ChatComponent for this login — usecases + connection + passthroughs.
+     *
+     *  `loadAudioPreferences` reaches [settings], declared BELOW: the lambda is only
+     *  invoked from `connect()`, long after both properties are initialized. */
+    val component: ChatComponent = ChatComponent(
+        sdk = sdk,
+        loadAudioPreferences = {
+            (settings.profileRepository.getProfile() as? SentientResult.Success)?.data?.audio?.let {
+                AudioPreferences(ttsEnabled = it.ttsEnabled, channel = it.channel)
+            }
+        },
+    )
 
     // Dedicated settings REST client: same Darwin engine + dev-TLS policy as the
     // sessions client, but with a GENEROUS request timeout so a restart-blocking
@@ -145,7 +157,10 @@ class IosUserSession(
         // route; rethrow CancellationException to honour structured cancellation.
         scope.launch {
             try {
-                sdk.connect()
+                // Through the component, not the SDK: `ChatComponent.connect()` seeds
+                // the stored audio preferences first, so the chat TTS toggle opens on
+                // the user's real value instead of the SDK default.
+                component.connect()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {

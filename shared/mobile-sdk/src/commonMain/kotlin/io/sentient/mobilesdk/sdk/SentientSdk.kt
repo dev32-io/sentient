@@ -17,6 +17,7 @@ import io.sentient.mobilesdk.connectors.SessionsRequestException
 import io.sentient.mobilesdk.connectors.SessionsTimeoutException
 import io.sentient.mobilesdk.dev.FaultHooks
 import io.sentient.mobilesdk.log.createLogger
+import io.sentient.mobilesdk.protocol.AudioPreferences
 import io.sentient.mobilesdk.protocol.AudioPreferencesPatch
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.protocol.ResumeParams
@@ -510,6 +511,25 @@ class SentientSdk(
     suspend fun patchAudioPreferences(patch: AudioPreferencesPatch) {
         log.info("patchAudioPreferences", mapOf("ttsEnabled" to patch.ttsEnabled, "channel" to patch.channel))
         connectors.preferences.patch(patch)
+    }
+
+    /**
+     * Adopt the user's stored audio preferences WITHOUT sending anything.
+     *
+     * The connector otherwise starts at [AudioPreferences.DEFAULT] (TTS on) and
+     * has no way to learn the truth: the gateway sends no preferences frame at
+     * `session.configure`, and `session.preferences.changed` — which both SDKs
+     * listen for — is not in `gatewayMessageSchema` at all, so nothing can emit
+     * it. A client that never seeds therefore renders the DEFAULT forever,
+     * which is how the chat TTS icon showed ON for a user whose stored
+     * preference was off.
+     *
+     * Call once per connection scope with `GET /profile/me`'s `audio` block —
+     * the same source webui seeds from (webui app.tsx). Idempotent.
+     */
+    fun seedAudioPreferences(prefs: AudioPreferences) {
+        log.info("seedAudioPreferences", mapOf("ttsEnabled" to prefs.ttsEnabled, "channel" to prefs.channel))
+        connectors.preferences.seed(prefs)
     }
 
     /** Page the session list via REST GET /api/v1/sessions. */
