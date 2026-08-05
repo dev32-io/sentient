@@ -68,7 +68,24 @@ const UNSUPPORTED_AGENT_MESSAGE = `delegateTask agent must be one of: ${SUPPORTE
 
 export const delegateTaskDefinition: ToolDefinition = {
   name: TOOL_NAME,
-  description: `Delegate a free-form task to a background worker agent. Returns immediately; the worker runs off-loop and its result arrives later as a stimulus. Supported agents: ${SUPPORTED_AGENTS.join(", ")}.`,
+  // A tool description IS a prompt: it is the only thing the model reads when
+  // choosing between this and everything else it holds. The previous one —
+  // "Delegate a free-form task to a background worker agent" — described the
+  // mechanism and named no boundary, so it read as an invitation, and a model
+  // that is unsure of its own reach takes the least-resistance path. State what
+  // this is FOR, and just as explicitly what it is not for.
+  description: [
+    "Hand a task to a background worker agent with its own tools and workspace (file system, shell, code execution).",
+    "Returns a task id immediately; the worker runs off-loop and its result arrives later as a stimulus.",
+    "",
+    "Use ONLY when the user asked for delegation, or the task needs capabilities you do not have",
+    "(writing files, running code, operating a computer), or the task is long-running and the user should not wait.",
+    "",
+    "Do NOT use this as a shortcut for work your own tools can do. The worker starts with none of this",
+    "conversation, so a task you could have handled directly comes back slower and less grounded.",
+    "",
+    `Supported agents: ${SUPPORTED_AGENTS.join(", ")}.`,
+  ].join("\n"),
   parameters: {
     type: "object",
     properties: {
