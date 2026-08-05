@@ -107,7 +107,9 @@ HTTP_OK = 200
 # this budget legitimately runs out — that is correct, not a bug, because the
 # rollback target depends on the same proxy and `_roll_back` already turns
 # "both versions unhealthy" into a named manual-intervention message rather
-# than a silent symlink flip. Valid: 1..600 attempts.
+# than a silent symlink flip. Valid: 1..600 attempts. 30 x 2s = 60s, on top of
+# whatever head start the proxy already banked while the 8888 probe was still
+# retrying above.
 EDGE_HEALTH_ATTEMPTS = 30
 EDGE_HEALTH_INTERVAL_SECONDS = 2
 # Bare root, not an API path: the thing being proved is "the proxy serves the
@@ -203,12 +205,13 @@ CERT_RELATIVE = "gateway/certs/cert.pem"
 
 # --- outward (443) cert resolution -------------------------------------------
 # Mirrors gateway/src/bootstrap/phase-orchestrator.ts EXACTLY: the operator's
-# `inbound_proxy.cert_dir` wins when that DIRECTORY exists on disk (matching
-# `existsSync(configuredCertDir)` there — the cert.pem file inside it is not
-# checked at this stage, same as the TS side), else the fallback is the
-# gateway's own self-signed material at CERT_RELATIVE above. Installer and
-# gateway must never disagree about which cert is in play, or a correctly
-# configured mini could fail this gate on a cert the running proxy never used.
+# `inbound_proxy.cert_dir` wins when that PATH exists on disk at all (matching
+# `existsSync(configuredCertDir)` there — type-agnostic, so this also does not
+# distinguish file from directory; the cert.pem file inside it is not checked
+# at this stage, same as the TS side), else the fallback is the gateway's own
+# self-signed material at CERT_RELATIVE above. Installer and gateway must
+# never disagree about which cert is in play, or a correctly configured mini
+# could fail this gate on a cert the running proxy never used.
 INBOUND_PROXY_SECTION = "inbound_proxy:"
 CERT_DIR_KEY = "cert_dir"
 CERT_FILENAME = "cert.pem"
@@ -679,7 +682,7 @@ def resolve_outward_cert(home: Path, config_path: Path) -> tuple[Path, str, bool
             f"inbound_proxy.cert_dir is unset — edge probe pinned to the gateway's own {fallback}",
             False,
         )
-    if not configured_dir.is_dir():
+    if not configured_dir.exists():
         return (
             fallback,
             f"inbound_proxy.cert_dir={configured_dir} does not exist yet — edge probe "
@@ -905,11 +908,23 @@ class Installer:
         `_roll_back` and leaving an unverified release `current` with the
         service pointed at it. Observed: an absent TLS anchor on a fresh host
         aborted the install with `current` already flipped and zero restarts.
+
+        `health()` may return either a plain bool or an `(is_healthy, cause)`
+        pair. The pair form lets a health check that fails WITHOUT raising
+        still name which sub-check failed — e.g. "gateway healthy, edge (443)
+        not" — the same way a raised exception's message already survives into
+        the rollback message below via the `except` branch. Every existing
+        caller returns a plain bool, so both shapes are accepted rather than
+        forcing one convention to change.
         """
         try:
-            return (bool(self._health()), None)
+            result = self._health()
         except (InstallError, OSError) as e:
             return (False, f"health check could not complete: {e}")
+        if isinstance(result, tuple):
+            healthy, cause = result
+            return (bool(healthy), cause)
+        return (bool(result), None)
 
     def _roll_back(self, failed, previous, cause=None):
         """Restore `previous` and re-verify it. Always raises — the install failed.
@@ -1093,10 +1108,15 @@ def run_install(args) -> None:
         stage_native_services(repo, args.opt_root / staged, wheels)
         ok("whisper-stt + local-tts venvs built from vendored wheels")
 
-    def health() -> bool:
+    def health() -> tuple[bool, str | None]:
         """Gateway (8888) first, edge (443) second — both must pass.
 
-        The two failures are named distinctly and the edge probe is skipped
+        Returns (healthy, cause): the two failures are named distinctly both
+        on the console (via `ok`/`fail` below, for a human reading the live
+        transcript) AND in the returned `cause` (for `_roll_back`'s raised
+        message — see `Installer._is_healthy`'s "pair form" comment — so
+        anything capturing only the final exception text still learns which
+        probe failed, not just that install failed). The edge probe is skipped
         entirely when the gateway itself is not healthy: proxying through a
         dead upstream cannot succeed, and there is no reason to burn the edge
         probe's own budget finding that out a second way.
@@ -1105,14 +1125,15 @@ def run_install(args) -> None:
         (ok if gateway_healthy else fail)(f"gateway (8888): {probe.last_reason}")
         if not gateway_healthy:
             fail("gateway not healthy — the binary itself did not come up; edge (443) was not probed")
-            return False
+            return (False, f"gateway not healthy: {probe.last_reason}")
 
         edge_healthy = edge_probe.wait()
         (ok if edge_healthy else fail)(f"edge (443): {edge_probe.last_reason}")
         if not edge_healthy:
             fail("gateway healthy, edge not — nginx config, the web bundle, or the outward "
                  "cert is broken even though the gateway binary is fine")
-        return edge_healthy
+            return (False, f"gateway healthy, edge (443) not: {edge_probe.last_reason}")
+        return (True, None)
 
     installer = Installer(
         fs=fs,

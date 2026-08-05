@@ -33,8 +33,10 @@ from setup_prod import (
     RealLaunchd,
     build_tls_context,
     ensure_state_dirs,
+    read_inbound_proxy_cert_dir,
     read_release_version,
     resolve_operator,
+    resolve_outward_cert,
     stage_native_services,
     verify_tarball_checksum,
 )
@@ -462,6 +464,136 @@ def test_a_certificate_that_never_appears_fails_closed_within_the_budget(tmp_pat
     assert probe.wait() is False
     assert calls == [], "no request may be made without a verified trust anchor"
     assert "never-minted.pem" in probe.last_reason, "the reason must name the missing anchor"
+
+
+# --- edge (443) probe generalization (HealthProbe reuse, not a second style) --
+#
+# HealthProbe now backs BOTH the 8888 probe (exact-200, hostname checked) and
+# the edge probe (2xx/3xx, hostname check off — see build_tls_context's
+# docstring for why a deliberate localhost-vs-DNS-name mismatch is not a
+# verification weakening). These pin that generalization did not change the
+# 8888 probe's original behavior and does give the edge probe what it needs.
+
+
+def test_build_tls_context_can_disable_the_hostname_check_while_requiring_verification(tmp_path):
+    """The edge probe dials `localhost` against a cert that may legitimately
+    name a different DNS host (the mini's real acme.sh cert names
+    sentient.dev32.io). check_hostname=False must never weaken CERT_REQUIRED —
+    only the name check, never the chain check.
+    """
+    ctx = build_tls_context(_self_signed(tmp_path), check_hostname=False)
+
+    assert ctx.verify_mode == ssl.CERT_REQUIRED, "chain verification must stay mandatory"
+    assert ctx.check_hostname is False
+
+
+def test_default_is_success_still_requires_exact_200(tmp_path):
+    """Generalizing HealthProbe for the edge probe must not loosen the
+    long-standing 8888 probe's exact-200 requirement to any 2xx/3xx."""
+    probe = HealthProbe(
+        url="https://127.0.0.1:8888/api/v1/health",
+        ca_bundle=_self_signed(tmp_path),
+        opener=lambda request, timeout, context: _FakeResponse(302),
+        attempts=1,
+        interval_seconds=0,
+    )
+
+    assert probe.wait() is False, "the 8888 probe must still reject a redirect"
+
+
+def test_is_success_lets_the_edge_probe_accept_a_redirect(tmp_path):
+    """The edge target's root path may legitimately redirect to a login route;
+    a redirect through nginx already proves the proxy, the cert and the
+    reverse-proxy hop all work."""
+    probe = HealthProbe(
+        url="https://localhost/",
+        ca_bundle=_self_signed(tmp_path),
+        opener=lambda request, timeout, context: _FakeResponse(302),
+        attempts=1,
+        interval_seconds=0,
+        is_success=lambda status: 200 <= status < 400,
+    )
+
+    assert probe.wait() is True
+
+
+# --- outward (443) cert resolution (mirrors phase-orchestrator.ts) -----------
+#
+# gateway/src/bootstrap/phase-orchestrator.ts:261-276 and
+# gateway/src/config/startup-config.ts:190-200 pick the outward cert the exact
+# same way: the operator's `inbound_proxy.cert_dir` wins when that path exists,
+# else the gateway's own self-signed material. These pin the Python mirror
+# against drifting from that TS logic — this file already carries one
+# documented incident (CERT_RELATIVE's own comment) where a stale path silently
+# failed the gate on every otherwise-healthy release.
+
+
+def test_read_inbound_proxy_cert_dir_returns_none_when_unset(tmp_path):
+    config = tmp_path / "config.yaml"
+    config.write_text("inbound_proxy:\n  cert_dir: null\n")
+
+    assert read_inbound_proxy_cert_dir(config) is None
+
+
+def test_read_inbound_proxy_cert_dir_returns_none_for_a_missing_file(tmp_path):
+    assert read_inbound_proxy_cert_dir(tmp_path / "absent.yaml") is None
+
+
+def test_read_inbound_proxy_cert_dir_reads_the_configured_path(tmp_path):
+    config = tmp_path / "config.yaml"
+    config.write_text("inbound_proxy:\n  cert_dir: /some/acme/dir\n")
+
+    assert read_inbound_proxy_cert_dir(config) == Path("/some/acme/dir")
+
+
+def test_read_inbound_proxy_cert_dir_ignores_a_same_named_key_outside_the_section(tmp_path):
+    """Only `inbound_proxy.cert_dir` counts. A de-indent to a new top-level key
+    must reset section tracking, not leak a same-named key from elsewhere."""
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "tls:\n"
+        "  cert_dir: /wrong/section\n"
+        "inbound_proxy:\n"
+        "  cert_dir: /right/section\n"
+    )
+
+    assert read_inbound_proxy_cert_dir(config) == Path("/right/section")
+
+
+def test_resolve_outward_cert_falls_back_to_the_gateways_own_material_when_unset(tmp_path):
+    config = tmp_path / "config.yaml"
+    config.write_text("inbound_proxy:\n  cert_dir: null\n")
+    home = tmp_path / "home"
+
+    cert, _reason, is_fallback = resolve_outward_cert(home, config)
+
+    assert cert == home / STATE_ROOT / CERT_RELATIVE
+    assert is_fallback is False, "an unset cert_dir is the ordinary default, not a misconfiguration"
+
+
+def test_resolve_outward_cert_warns_and_falls_back_when_the_configured_dir_is_missing(tmp_path):
+    config = tmp_path / "config.yaml"
+    config.write_text("inbound_proxy:\n  cert_dir: /does/not/exist\n")
+    home = tmp_path / "home"
+
+    cert, reason, is_fallback = resolve_outward_cert(home, config)
+
+    assert cert == home / STATE_ROOT / CERT_RELATIVE
+    assert is_fallback is True, "an explicitly configured but absent path is a real misconfiguration"
+    assert "/does/not/exist" in reason
+
+
+def test_resolve_outward_cert_pins_the_configured_dir_when_it_exists(tmp_path):
+    real_dir = tmp_path / "acme"
+    real_dir.mkdir()
+    config = tmp_path / "config.yaml"
+    config.write_text(f"inbound_proxy:\n  cert_dir: {real_dir}\n")
+    home = tmp_path / "home"
+
+    cert, _reason, is_fallback = resolve_outward_cert(home, config)
+
+    assert cert == real_dir / "cert.pem"
+    assert is_fallback is False
 
 
 # --- user-owned state (data-loss + privilege boundary) ------------------------
