@@ -1,18 +1,22 @@
-// `user.preferences.patch` — the live half of the audio-preference toggle.
+// `user.preferences.patch` — persisting the audio-preference toggle.
 //
-// Two effects, and BOTH are required:
-//   1. PERSIST onto profile.json#audio, because mobile's `setTtsEnabled` sends
-//      this frame and nothing else — no REST write rides alongside it, so
-//      without this the toggle is forgotten the moment the socket closes.
-//   2. APPLY LIVE onto this connection's `SessionVoicePrefs`, because
-//      `TurnVoice.begin` re-reads `shouldSpeak` per turn but the profile is
-//      read once at session.configure. Without this the assistant keeps
-//      speaking for the rest of the session after the user taps mute.
+// ONE effect, because one is now enough: write profile.json#audio. Mobile's
+// `setTtsEnabled` sends this frame and nothing else — no REST write rides
+// alongside it — so without this the toggle is forgotten the moment the socket
+// closes.
 //
-// Deliberately NOT mid-turn: the patch lands on the next turn's `TurnVoice`,
-// so a reply already being spoken finishes rather than cutting mid-word.
-// Silencing what is already in flight is a cancel gesture (interrupt /
-// barge-in), not a preference change.
+// There used to be a second effect: applying the patch onto this connection's
+// `SessionVoicePrefs`, a per-session copy of the profile that `TurnVoice` read
+// per turn. That copy is gone (user-audio-policy.ts) — the profile is read at
+// the moment the answer is used, so persisting IS applying, and there is no
+// second place for a preference to be stale in. It also removes a lost update:
+// the copy hydrated itself asynchronously, and a patch landing before that read
+// resolved was silently overwritten by it.
+//
+// Still NOT mid-turn, for the same reason as before: the read happens as a
+// turn's audio is about to drain, so a reply already being spoken finishes
+// rather than cutting mid-word. Silencing what is already in flight is a cancel
+// gesture (interrupt / barge-in), not a preference change.
 //
 // Read-modify-write on the profile is last-write-wins, which is correct here:
 // the writers are one person's own surfaces toggling their own preference, and
@@ -21,16 +25,11 @@
 import type { AudioPrefsPatch } from "@sentient/audio-prefs";
 import { getLog } from "../logging/logger.js";
 import type { ProfileStore } from "../profile-store/profile-store.js";
-import type { SessionVoicePrefs } from "./session-voice-prefs.js";
 
 const log = getLog(["sentient", "session-handlers", "preferences-patch"]);
 
 export interface PreferencesPatchDeps {
   profileStore: ProfileStore;
-  /** This connection's live prefs, or null when the session never minted a
-   *  runtime (orchestrator absent / construction failed). The patch is still
-   *  persisted in that case — only the live application is skipped. */
-  voicePrefs: SessionVoicePrefs | null;
   userId: string;
   sessionId: string;
 }
@@ -42,20 +41,11 @@ export interface PreferencesPatchDeps {
  * nobody reads.
  */
 export async function handlePreferencesPatch(deps: PreferencesPatchDeps, patch: AudioPrefsPatch): Promise<void> {
-  const { profileStore, voicePrefs, userId, sessionId } = deps;
+  const { profileStore, userId, sessionId } = deps;
 
   if (patch.ttsEnabled === undefined && patch.channel === undefined) {
     log.debug("preferences-patch.empty", { sessionId, userId, reason: "no field set — nothing to apply" });
     return;
-  }
-
-  voicePrefs?.applyAudio(patch);
-  if (voicePrefs === null) {
-    log.warn("preferences-patch.no-live-session", {
-      sessionId,
-      userId,
-      reason: "no voice prefs on this connection — persisted only, applies on the next session.configure",
-    });
   }
 
   const current = await profileStore.get(userId);

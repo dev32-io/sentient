@@ -43,7 +43,6 @@ function fakeWs(): FakeWs {
     attachment: null,
     runtime: null,
     stt: null,
-    voicePrefs: null,
     journal: null,
     epoch: 0,
   };

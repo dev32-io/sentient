@@ -97,8 +97,15 @@ export interface TurnVoiceDeps {
   readonly synthesizer: TextStreamSynthesizer;
   readonly sink: TurnAudioSink;
   readonly echoGuard: MicEchoGuard;
-  /** Read per turn — the user's profile.json audio prefs. */
-  readonly shouldSpeak: () => boolean;
+  /**
+   * Whether to speak this turn, resolved against the user's profile AT DRAIN
+   * TIME — see user-audio-policy.ts. Async and awaited inside the tail rather
+   * than at `begin()` for two reasons: `SessionRuntime.startTurn` is
+   * deliberately synchronous (its store-seq snapshot must not be split by an
+   * await), and the answer is most truthful at the last possible moment — a
+   * mute landing during the PREVIOUS turn's playback silences this one.
+   */
+  readonly shouldSpeak: () => Promise<boolean>;
   /**
    * Whether anyone is attached to hear this session RIGHT NOW, read per turn.
    *
@@ -283,10 +290,9 @@ export function createTurnVoice(deps: TurnVoiceDeps): TurnVoice {
 
   return {
     begin(turnId, signal) {
-      if (!deps.shouldSpeak()) {
-        log.info("turn-voice.silent", { sessionId: deps.sessionId, turnId, reason: "profile audio prefs disable TTS" });
-        return SILENT_STREAM;
-      }
+      // `shouldSpeak` is NOT checked here — it is awaited in the tail below,
+      // where the answer is read fresh. The two gates that remain are the ones
+      // already true synchronously.
       if (!deps.hasAudience()) {
         log.info("turn-voice.silent", {
           sessionId: deps.sessionId,
@@ -305,6 +311,11 @@ export function createTurnVoice(deps: TurnVoiceDeps): TurnVoice {
       draining.set(turnId, audio);
 
       const queue = createChunkQueue(audio.signal);
+      // Constructed here, not after the `shouldSpeak` read below, so that a
+      // turn's synthesis is bound at `begin()` and the cross-turn drain order
+      // is decided by `tail` alone. Costs nothing for a turn that turns out to
+      // be silent: `synthesize` returns a LAZY generator, so never iterating it
+      // never opens an upstream local-tts session (see the file header).
       const frames = deps.synthesizer.synthesize(queue.stream, audio.signal);
       const flushedToolCalls = new Set<string>();
       const previous = tail;
@@ -315,6 +326,20 @@ export function createTurnVoice(deps: TurnVoiceDeps): TurnVoice {
           /* the prior turn's drain logged its own failure */
         }
         try {
+          // Read here, not at `begin()`: this is the instant before audio would
+          // leave, so a mute that landed while the previous turn was still
+          // playing takes effect on this one. Returning without iterating
+          // `frames` leaves the synthesizer's generator unstarted, so no
+          // upstream session is ever opened for a silent turn.
+          if (audio.signal.aborted || !(await deps.shouldSpeak())) {
+            queue.close();
+            log.info("turn-voice.silent", {
+              sessionId: deps.sessionId,
+              turnId,
+              reason: audio.signal.aborted ? "cut before its drain began" : "profile audio prefs disable TTS",
+            });
+            return;
+          }
           await drainAudio(deps, turnId, frames, audio.signal);
         } finally {
           // Only ever drop THIS turn's entry: `cancelAudio` may already have

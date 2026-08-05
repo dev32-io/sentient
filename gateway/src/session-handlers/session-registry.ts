@@ -51,7 +51,6 @@ import type { FanOutTurnEmitter } from "./fan-out-emitter.js";
 import type { FrameJournal } from "./frame-journal.js";
 import type { InputArbiter } from "./input-arbiter.js";
 import type { ReplayLease } from "./replay-registry.js";
-import type { SessionVoicePrefs } from "./session-voice-prefs.js";
 import { type Attachment, type SubscriberSet, createSubscriberSet } from "./subscriber-set.js";
 import type { SessionData } from "./ws-helpers.js";
 
@@ -77,9 +76,6 @@ export interface SessionHandles {
    *  first answer settles it" a property of the session rather than of which
    *  connection happened to raise the prompt. */
   readonly permissions: SessionPermissionBroker;
-  /** Null when the orchestrator built no voice for this session (no `tts:`
-   *  config, or no synthesizer for the resolved voice id). */
-  readonly voicePrefs: SessionVoicePrefs | null;
   /** The session's INPUT FLOOR (task 9, spec §8.3) — which window won the most
    *  recent dispatch, and for how long that still refuses a peer. Session state
    *  because contention is between windows OF one session, and it dies with the

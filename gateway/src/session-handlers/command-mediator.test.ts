@@ -104,7 +104,6 @@ function harness(): Harness {
       runtime: { dispose() {}, cutUnheardSpeech() {} } as unknown as SessionRuntime,
       permissions: { denyAll() {} } as unknown as SessionHandles["permissions"],
       work: IDLE_WORK,
-      voicePrefs: null,
       arbiter: createInputArbiter(sessionId, ARBITRATION_WINDOW_MS),
       dispose() {},
     } as unknown as SessionHandles;

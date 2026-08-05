@@ -654,7 +654,6 @@ function applyPreferencesPatch(
   void handlePreferencesPatch(
     {
       profileStore: services.profileStore,
-      voicePrefs: ws.data.voicePrefs,
       userId: principal.userId,
       sessionId: ws.data.sessionId ?? "unbound",
     },

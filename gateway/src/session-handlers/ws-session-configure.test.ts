@@ -783,6 +783,7 @@ function noopBroker(): ToolBroker {
   return {
     ownerUserId: "u_aaaaaaaa",
     foregroundInFlight: 0,
+    ready: async () => {},
     definitions: () => [],
     dispatch: async () => {
       throw new Error("dispatch should never be called for a text-only response");

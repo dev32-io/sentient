@@ -42,14 +42,28 @@ export function createTtsService(deps: CreateTtsServiceDeps): TtsService {
   return { createTTSProvider };
 }
 
-/** Adapts `TtsService.createTTSProvider` (which already returns the strict
- *  non-null `TTSProviderFactory` shape) to resolve the per-session voiceId
- *  from `getVoiceId` before building. Kept as its own function — callers
- *  (phase-services.ts) close over a per-session `getVoiceId` at session-setup
- *  time, separate from `TtsService` construction at boot time. */
-export function asStrictFactory(svc: TtsService, getVoiceId: () => string | null): TTSProviderFactory {
-  return () => {
-    const voiceId = getVoiceId();
+/**
+ * Adapts `TtsService.createTTSProvider` to resolve the session's voiceId from
+ * `getVoiceId` before building. Kept as its own function — callers
+ * (phase-services.ts) close over a per-session `getVoiceId` at session-setup
+ * time, separate from `TtsService` construction at boot time.
+ *
+ * ASYNC because the voice pack is read from the user's profile at the moment
+ * the upstream session opens (user-audio-policy.ts), not cached at session
+ * setup. Opening the session is already an async step
+ * (`TTSSessionFactory.createSession`), so awaiting the profile read here adds
+ * a step to a path that was already awaited — and removes the window in which
+ * a session opened with `voice=default` because a hydration promise had not
+ * settled yet.
+ */
+export function asStrictFactory(svc: TtsService, getVoiceId: () => Promise<string | null>): TTSSessionOpener {
+  return async () => {
+    const voiceId = await getVoiceId();
     return voiceId ? svc.createTTSProvider({ voiceId }) : svc.createTTSProvider();
   };
 }
+
+/** A `TTSProviderFactory` whose voice resolution is awaited — what
+ *  `asStrictFactory` returns, and what `TTSSessionFactory.createSession`
+ *  consumes. */
+export type TTSSessionOpener = (...args: Parameters<TTSProviderFactory>) => Promise<TTSProvider>;

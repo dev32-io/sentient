@@ -28,7 +28,6 @@ import { createPersonalityStore } from "../profile-store/personality-store.js";
 import type { PersonalityStore } from "../profile-store/personality-store.js";
 import { type ProfileStore, createProfileStore } from "../profile-store/profile-store.ts";
 import { type TemplateLoader, createTemplateLoader } from "../profile-store/template-loader.ts";
-import type { TTSProviderFactory } from "../providers/tts/tts-types.ts";
 import type { CreateSessionRuntime } from "../runtime/session-handles.js";
 import { createConfirmHook, createSessionPermissionBroker } from "../runtime/session-permission-broker.js";
 import type { SessionWorkSignals } from "../runtime/session-retention.js";
@@ -58,7 +57,7 @@ import { createTextStreamSynthesizer } from "./content-tts-factory.ts";
 import { resolveProviderConnection } from "./resolve-provider-connection.ts";
 import type { SttService } from "./stt-factory.ts";
 import { createSttService } from "./stt-factory.ts";
-import type { TtsService } from "./tts-factory.ts";
+import type { TTSSessionOpener, TtsService } from "./tts-factory.ts";
 import { asStrictFactory, createTtsService } from "./tts-factory.ts";
 import { type UserModelProvider, createUserModelProvider } from "./user-model-provider.ts";
 
@@ -100,7 +99,7 @@ export interface PhaseServicesOutput {
   readonly stt: SttService | null;
   readonly tts: TtsService | null;
   readonly tls: GatewayTlsMaterial | undefined;
-  readonly createSynthesizerFor: (getVoiceId: () => string | null) => TextStreamSynthesizer | null;
+  readonly createSynthesizerFor: (getVoiceId: () => Promise<string | null>) => TextStreamSynthesizer | null;
   readonly applyDeps: ApplyDeps;
   readonly profileStore: ProfileStore;
   readonly templateLoader: TemplateLoader;
@@ -151,9 +150,9 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     ? ensureTlsMaterial({ hostnames: cfg.tls.hostnames, certsDir: cfg.tls.certsDir, logTag: "gateway" })
     : undefined;
 
-  const createSynthesizerFor = (getVoiceId: () => string | null): TextStreamSynthesizer | null => {
-    const sessionFactory: TTSProviderFactory = asStrictFactory(tts, getVoiceId);
-    return createTextStreamSynthesizer(cfg, sessionFactory);
+  const createSynthesizerFor = (getVoiceId: () => Promise<string | null>): TextStreamSynthesizer | null => {
+    const openSession: TTSSessionOpener = asStrictFactory(tts, getVoiceId);
+    return createTextStreamSynthesizer(cfg, openSession);
   };
 
   // BEFORE the orchestrator services: the provider factory resolves each user's

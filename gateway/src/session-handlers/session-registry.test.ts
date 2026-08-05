@@ -53,7 +53,6 @@ function handlesSpy(): HandlesSpy {
         runtime,
         permissions: { denyAll: () => {} },
         work: IDLE_WORK,
-        voicePrefs: null,
         dispose: () => {
           disposed = true;
         },

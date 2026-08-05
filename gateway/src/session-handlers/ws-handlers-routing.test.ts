@@ -712,7 +712,6 @@ describe("ws-handlers routing — conversation.activate", () => {
           runtime: incumbentRuntime,
           permissions: { denyAll: () => {} },
           work: IDLE_WORK,
-          voicePrefs: null,
           fanOut: createFanOutTurnEmitter({
             registry: services.sessionRegistry,
             sessionId,

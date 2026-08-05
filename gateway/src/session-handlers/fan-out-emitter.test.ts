@@ -127,7 +127,6 @@ function harness(first: FakeWindow, maxLagBytes = MAX_LAG_BYTES, onDispose?: () 
       hasAuxiliaryTaskInFlight: false,
       newestBackgroundTaskStartedAtMs: null,
     },
-    voicePrefs: null,
     arbiter: createInputArbiter(SESSION_ID, 0),
     fanOut,
     journal,

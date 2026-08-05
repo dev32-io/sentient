@@ -130,7 +130,7 @@ describe("createTurnVoice", () => {
       synthesizer: synth.synthesizer,
       sink: sink.sink,
       echoGuard: guard.guard,
-      shouldSpeak: () => true,
+      shouldSpeak: async () => true,
       hasAudience: () => true,
       sessionId: "sess-1",
     });
@@ -156,7 +156,7 @@ describe("createTurnVoice", () => {
       synthesizer: synth.synthesizer,
       sink: sink.sink,
       echoGuard: guard.guard,
-      shouldSpeak: () => true,
+      shouldSpeak: async () => true,
       hasAudience: () => true,
       sessionId: "sess-1",
     });
@@ -198,7 +198,7 @@ describe("createTurnVoice", () => {
       synthesizer: synth.synthesizer,
       sink: sink.sink,
       echoGuard: guard.guard,
-      shouldSpeak: () => true,
+      shouldSpeak: async () => true,
       hasAudience: () => true,
       sessionId: "sess-1",
     });
@@ -230,7 +230,7 @@ describe("createTurnVoice", () => {
       synthesizer: synth.synthesizer,
       sink: sink.sink,
       echoGuard: guard.guard,
-      shouldSpeak: () => true,
+      shouldSpeak: async () => true,
       hasAudience: () => true,
       sessionId: "sess-1",
     });
@@ -266,7 +266,7 @@ describe("createTurnVoice", () => {
       synthesizer: synth.synthesizer,
       sink: sink.sink,
       echoGuard: guard.guard,
-      shouldSpeak: () => true,
+      shouldSpeak: async () => true,
       hasAudience: () => true,
       sessionId: "sess-1",
     });
@@ -291,7 +291,7 @@ describe("createTurnVoice", () => {
       synthesizer: synth.synthesizer,
       sink: sink.sink,
       echoGuard: guard.guard,
-      shouldSpeak: () => false,
+      shouldSpeak: async () => false,
       hasAudience: () => true,
       sessionId: "sess-1",
     });
@@ -302,8 +302,51 @@ describe("createTurnVoice", () => {
     speech.end();
     await settle();
 
-    expect(synth.calls).toEqual([]);
+    // The generator is CONSTRUCTED at `begin()` but never iterated, which is
+    // what keeps a muted turn free: the real synthesizer opens its upstream
+    // local-tts session inside the generator body, on the first `next()`. So
+    // the assertion is that nothing was ever pulled through it, not that no
+    // object was allocated.
+    expect(synth.calls[0]?.chunks).toEqual([]);
     expect(sink.events).toEqual([]);
+  });
+
+  it("INVARIANT: reads the speak preference when the drain starts, not when the turn begins", async () => {
+    // The regression this replaces: the session held a COPY of the profile,
+    // hydrated by a fire-and-forget read that defaulted to speaking-on. On
+    // mobile the first turn starts in the same tick as session.configure, so
+    // the default won the race and the gateway spoke while the user was muted:
+    //
+    //   turn-voice.begin       shouldSpeak() -> true   (the default)
+    //   voice-prefs.loaded     ttsEnabled=false        (3ms too late)
+    //   turn-voice.audio.start
+    //
+    // Reading at drain time removes the window entirely — and makes a mute
+    // landing during the PREVIOUS turn's playback apply to this one.
+    const synth = fakeSynthesizer();
+    const sink = recordingSink();
+    const guard = recordingGuard();
+    let speaks = true;
+    const voice = createTurnVoice({
+      synthesizer: synth.synthesizer,
+      sink: sink.sink,
+      echoGuard: guard.guard,
+      shouldSpeak: async () => speaks,
+      hasAudience: () => true,
+      sessionId: "sess-1",
+    });
+
+    const controller = new AbortController();
+    const speech = voice.begin("turn-a", controller.signal);
+    speaks = false; // the user mutes after the turn started
+    speech.pushText("this must not be spoken");
+    speech.end();
+    synth.calls[0]?.emit(FRAME);
+    synth.calls[0]?.finish();
+    await settle();
+
+    expect(sink.events).toEqual([]);
+    expect(guard.started).toEqual([]);
   });
 
   it("synthesizes nothing when no window is attached to hear it", async () => {
@@ -319,7 +362,7 @@ describe("createTurnVoice", () => {
       synthesizer: synth.synthesizer,
       sink: sink.sink,
       echoGuard: guard.guard,
-      shouldSpeak: () => true,
+      shouldSpeak: async () => true,
       hasAudience: () => false,
       sessionId: "sess-1",
     });

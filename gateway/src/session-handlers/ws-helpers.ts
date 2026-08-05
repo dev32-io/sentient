@@ -4,7 +4,6 @@ import type { UserPrincipal } from "../identity/user-principal.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { FrameJournal } from "./frame-journal.js";
 import type { Attachment } from "./session-registry.js";
-import type { SessionVoicePrefs } from "./session-voice-prefs.js";
 import type { SttSession } from "./stt-session.js";
 // ws-send.ts imports only the `SessionData` TYPE back from this file, which the
 // transpiler erases — so this is a compile-time edge, never a runtime cycle.
@@ -171,7 +170,6 @@ export interface SessionData {
    * session.configure. Null when the orchestrator is unconfigured or the
    * runtime failed to construct; the patch is still persisted then.
    */
-  voicePrefs: SessionVoicePrefs | null;
   /**
    * The SESSION's outbound frame journal — one monotonic seq space that every
    * window attached to `conversationId` reads from (session-model spec §2.1).
@@ -209,7 +207,6 @@ export function createEmptySessionData(): SessionData {
     attachment: null,
     runtime: null,
     stt: null,
-    voicePrefs: null,
     journal: null,
     epoch: 0,
   };

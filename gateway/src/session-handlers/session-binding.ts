@@ -29,7 +29,7 @@ import { createInputArbiter } from "./input-arbiter.js";
 import { createMicEchoGuard } from "./mic-echo-guard.js";
 import type { ReplayAcquisition } from "./replay-registry.js";
 import type { Attachment, SessionHandles } from "./session-registry.js";
-import { createSessionVoicePrefs } from "./session-voice-prefs.js";
+import { createUserAudioPolicy } from "./user-audio-policy.js";
 import type { SessionData } from "./ws-helpers.js";
 import { errorMessage } from "./ws-helpers.js";
 import { sendConnectionFrame } from "./ws-send.js";
@@ -167,7 +167,6 @@ export function bindSessionRuntime(
   handles.fanOut.hold(attachment.attachmentId);
   ws.data.attachment = attachment;
   ws.data.runtime = handles.runtime;
-  ws.data.voicePrefs = handles.voicePrefs;
   // The SESSION's journal and epoch, not this connection's: one seq space, N
   // cursors. Held on the socket so the resume handshake (ws-resume.ts) can ask
   // it what this client missed without re-deriving the session.
@@ -278,10 +277,13 @@ function buildHandlesOver(
   // that knows the emitter, the authenticated user's profile and the session's
   // STT session — but DRIVEN inside SessionRuntime on the turn's own
   // AbortController, so barge-in and interrupt cancel TTS through the same
-  // abort that stops the provider stream. See turn-voice.ts. Parked on every
-  // attached socket too: `user.preferences.patch` applies a live mute toggle
-  // through it (handle-preferences-patch.ts).
-  const voicePrefs = createSessionVoicePrefs(services.profileStore, principal.userId, connectionId);
+  // abort that stops the provider stream. See turn-voice.ts.
+  //
+  // The policy is a READER, not a copy: it is not parked on the socket or the
+  // session handles, because nothing else needs to reach it. A preference
+  // patch persists to the profile and the next read sees it — there is no
+  // second copy to keep in step. See user-audio-policy.ts.
+  const audioPolicy = createUserAudioPolicy(services.profileStore, principal.userId, connectionId);
   // Every attached window's mic, read at TTS-start time — the session's TTS
   // reaches all of them, so a guard scoped to this one connection would leave
   // the others open on the assistant's own voice (self-triggered barge-in).
@@ -290,13 +292,13 @@ function buildHandlesOver(
     services.stt?.adapterConfig.ttsEchoCooldownMs ?? null,
     sessionId,
   );
-  const synthesizer = services.createSynthesizerFor(() => voicePrefs.voiceId());
+  const synthesizer = services.createSynthesizerFor(() => audioPolicy.voiceId());
   const voice = synthesizer
     ? createTurnVoice({
         synthesizer,
         sink: emitter,
         echoGuard,
-        shouldSpeak: () => voicePrefs.shouldSpeak(),
+        shouldSpeak: () => audioPolicy.shouldSpeak(),
         // Task 8's gate, and the reason it is separate from `shouldSpeak`:
         // a session now outlives its last window by `retention_ms` and keeps
         // running turns while a background task completes. A drain already in
@@ -341,7 +343,6 @@ function buildHandlesOver(
     // what makes this session's residency a DERIVED property rather than a
     // consequence of which window happened to close last.
     work: built.work,
-    voicePrefs,
     arbiter,
     fanOut,
     journal: acquisition.journal,
@@ -451,10 +452,6 @@ export function detachSession(
   ws.data.stt?.discard();
   ws.data.attachment = null;
   ws.data.runtime = null;
-  // Held per connection but OWNED by the session: cleared here so a socket
-  // that has left cannot apply a mute toggle to a `TurnVoice` no turn of its
-  // own can reach.
-  ws.data.voicePrefs = null;
   // Same reasoning for the journal: the OBJECT belongs to the session (and
   // outlives it, in the replay registry's retention window) — this only drops
   // this connection's handle on it, so a socket that has left cannot answer a

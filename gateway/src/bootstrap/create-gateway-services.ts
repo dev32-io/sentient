@@ -82,7 +82,7 @@ export interface GatewayServices {
   readonly sessionControls: SessionControlsRegistry;
   readonly stt: SttService | null;
   readonly tts: TtsService | null;
-  readonly createSynthesizerFor: (getVoiceId: () => string | null) => TextStreamSynthesizer | null;
+  readonly createSynthesizerFor: (getVoiceId: () => Promise<string | null>) => TextStreamSynthesizer | null;
   /** Raw `tts:` config block — needed by the voices handler (Fix C) for its
    *  own short-lived voice-mgmt WS ops, which bypass the TtsService/provider
    *  abstraction entirely. */
