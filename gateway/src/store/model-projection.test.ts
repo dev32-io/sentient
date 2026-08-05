@@ -454,3 +454,47 @@ describe("projectForModel", () => {
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Message stamps. Without them the model cannot tell a reply three seconds
+// later from one the next morning, and answers every dated question from a
+// training cutoff it cannot locate itself relative to.
+// ---------------------------------------------------------------------------
+
+describe("projectForModel — message stamps", () => {
+  const AT = Date.UTC(2026, 7, 5, 13, 12, 3);
+
+  it("wraps a stimulus in an envelope carrying an offset-bearing ISO instant", () => {
+    const [message] = projectForModel([e({ kind: "user", text: "what is the news", createdAt: AT })], {
+      timeZone: "UTC",
+    });
+
+    expect(message?.role).toBe("user");
+    expect(message?.content).toBe('<msg at="2026-08-05T13:12:03+00:00">\nwhat is the news\n</msg>');
+  });
+
+  it("renders the stamp in the supplied zone, with that zone's offset", () => {
+    const [message] = projectForModel([e({ kind: "user", text: "hi", createdAt: AT })], {
+      timeZone: "America/Toronto",
+    });
+
+    // The SAME instant, in the zone the household is in. An explicit offset is
+    // what lets a later zone change leave this message's stamp still true.
+    expect(message?.content).toContain('at="2026-08-05T09:12:03-04:00"');
+  });
+
+  it("leaves the assistant's own messages unstamped", () => {
+    const messages = projectForModel(
+      [e({ kind: "user", text: "hello", createdAt: AT }), e({ kind: "assistant", text: "hi there", createdAt: AT })],
+      { timeZone: "UTC" },
+    );
+
+    expect(messages[1]).toEqual({ role: "assistant", content: "hi there" });
+  });
+
+  it("omits the envelope entirely when no zone is supplied", () => {
+    const [message] = projectForModel([e({ kind: "user", text: "plain", createdAt: AT })]);
+
+    expect(message?.content).toBe("plain");
+  });
+});

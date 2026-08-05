@@ -92,6 +92,7 @@
 import type { OrchestratorConfig } from "@sentient/config";
 import type { TurnTrigger } from "@sentient/protocol";
 import type { AccessManager } from "../access/access-manager.js";
+import type { TimeZoneProvider } from "../context/message-time.js";
 import { loadAuxiliaryTemplate, loadCompactionSummarizerPrompt } from "../context/system-prompt-loader.js";
 import type { UserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
@@ -261,6 +262,10 @@ export interface SessionRuntimeDeps {
    */
   turnState?: TurnStateTracker;
   systemPrompt: string;
+  /** The zone every message stamp and the session block are rendered in.
+   *  A provider, not a string, so location-derived zones replace the host's
+   *  without touching this signature (see context/message-time.ts). */
+  timeZone: TimeZoneProvider;
   config: OrchestratorConfig;
   /**
    * This session's TTS fork (spec §6). Built at the WS layer and handed in
@@ -325,7 +330,7 @@ function stimulusPendingId(stimulus: Stimulus): string | undefined {
 }
 
 export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
-  const { principal, sessionId, accessManager, provider, broker, systemPrompt, config } = deps;
+  const { principal, sessionId, accessManager, provider, broker, systemPrompt, timeZone, config } = deps;
   const turnState = deps.turnState ?? createTurnStateTracker(sessionId);
   // Wrapped HERE only when the caller did not: a supplied tracker is already
   // wrapping `deps.emitter` (see the field's doc), and wrapping twice would
@@ -795,6 +800,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
       broker,
       store,
       systemPrompt,
+      timeZone,
       sessionId,
       config: config.loop,
       onTextDelta: (id, text) => {

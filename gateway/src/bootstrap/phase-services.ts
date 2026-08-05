@@ -21,6 +21,7 @@ import type { ApplyDeps } from "../apply/orchestrator.js";
 import { renderAndWrite } from "../apply/orchestrator.js";
 import { resolveAssetRoot } from "../config/asset-root.ts";
 import type { StartupConfig } from "../config/startup-config.ts";
+import { type TimeZoneProvider, createHostTimeZoneProvider } from "../context/message-time.js";
 import { loadSystemPrompt } from "../context/system-prompt-loader.ts";
 import { type ExternalToolSlot, createExternalToolSlot } from "../external-tools/external-tool-slot.js";
 import { getLog } from "../logging/logger.ts";
@@ -81,6 +82,12 @@ const log = getLog(["sentient", "bootstrap", "phase-services"]);
 // confirm from the log which prompt the gateway is running on. Same shape
 // `loadCompactionSummarizerPrompt` already has, and its lines DO reach the log.
 let systemPrompt: string | null = null;
+
+/** One provider for the process: the zone is a property of where the household
+ *  is, not of a session, and resolving it per session would re-log it per
+ *  socket. Swapped for a location-derived provider when the app learns where
+ *  the house actually is — see context/message-time.ts. */
+const timeZone: TimeZoneProvider = createHostTimeZoneProvider();
 
 function resolveSystemPrompt(): string {
   if (systemPrompt !== null) return systemPrompt;
@@ -656,6 +663,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       // wrap a second time and double every delta into `textSoFar`.
       turnState,
       systemPrompt: resolveSystemPrompt(),
+      timeZone,
       config: orchestratorCfg,
       voice: voice ?? null,
       onWorkSettled,

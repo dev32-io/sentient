@@ -237,6 +237,7 @@ describe("SessionRuntime — idle submit", () => {
       provider,
       broker: noopBroker(),
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "you are a test assistant",
       config: testConfig(),
     });
@@ -282,6 +283,7 @@ describe("SessionRuntime — a turn that fails without a user gesture", () => {
       provider,
       broker: noopBroker(),
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "test",
       config: testConfig(),
     });
@@ -331,6 +333,7 @@ describe("SessionRuntime — a turn that fails without a user gesture", () => {
       provider,
       broker: noopBroker(),
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "test",
       config: testConfig(),
     });
@@ -384,6 +387,7 @@ describe("SessionRuntime — a turn that completes with zero text (D17)", () => 
       provider,
       broker: noopBroker(),
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "test",
       config: testConfig(),
     });
@@ -467,6 +471,7 @@ describe("SessionRuntime — steer while running", () => {
       provider,
       broker,
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "you are a test assistant",
       config: testConfig(),
     });
@@ -547,6 +552,7 @@ describe("SessionRuntime — next-turn trigger", () => {
       provider,
       broker: noopBroker(),
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "you are a test assistant",
       config: testConfig(),
     });
@@ -680,6 +686,7 @@ describe("SessionRuntime — delegateTask fire-and-steer loop closes end to end"
       provider,
       broker,
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "you are a test assistant",
       config: testConfig(),
     });
@@ -762,6 +769,7 @@ describe("SessionRuntime — isolation", () => {
       provider,
       broker: noopBroker(),
       emitter: recordingEmitter(),
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "you are a test assistant",
       config: testConfig(),
     });
@@ -850,6 +858,7 @@ describe("SessionRuntime — isolation", () => {
       provider,
       broker: noopBroker(),
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "you are a test assistant",
       config: testConfig(),
     });
@@ -974,6 +983,7 @@ describe("SessionRuntime — cancellation: barge-in keeps background tasks alive
       provider,
       broker,
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "you are a test assistant",
       config: testConfig(),
     });
@@ -1020,6 +1030,7 @@ describe("SessionRuntime — cancellation: interrupt leaves background tasks ali
       provider,
       broker,
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "you are a test assistant",
       config: testConfig(),
     });
@@ -1114,6 +1125,7 @@ describe("SessionRuntime — cancellation: interrupt during tool dispatch", () =
       provider,
       broker,
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "you are a test assistant",
       config: testConfig(),
     });
@@ -1176,6 +1188,7 @@ describe("SessionRuntime — cancellation: double-commit guard", () => {
       provider,
       broker,
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "you are a test assistant",
       config: testConfig(),
     });
@@ -1224,6 +1237,7 @@ describe("SessionRuntime — cancellation: double-commit guard", () => {
       provider,
       broker: fakeBrokerWithBackground(spyBackgroundRegistry()),
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "you are a test assistant",
       config: testConfig(),
     });
@@ -1280,6 +1294,7 @@ describe("SessionRuntime — cancellation: terminal-completion race", () => {
       provider,
       broker: noopBroker(),
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "you are a test assistant",
       config: testConfig(),
     });
@@ -1394,6 +1409,7 @@ describe("SessionRuntime — compaction at the turn boundary", () => {
       provider,
       broker: noopBroker(),
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "you are a test assistant",
       config,
     });
@@ -1417,7 +1433,9 @@ describe("SessionRuntime — compaction at the turn boundary", () => {
     const followUp = provider.calls[2];
     expect(followUp?.messages[1]?.role).toBe("system");
     expect(followUp?.messages[1]?.content).toContain("EARLIER-SUMMARY");
-    expect(followUp?.messages[2]?.content).toBe("follow up");
+    // `toContain`, not `toBe`: a stimulus is projected inside the envelope that
+    // carries when it was sent (model-projection.ts's `stampedContent`).
+    expect(followUp?.messages[2]?.content).toContain("follow up");
 
     runtime.dispose();
   });
@@ -1524,6 +1542,7 @@ describe("SessionRuntime — voice fork: loop output reaches the turn's TTS stre
       provider,
       broker: fakeBroker([weatherDef], async () => ({ content: "sunny", isError: false })),
       emitter: recordingEmitter(),
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "you are a test assistant",
       config: testConfig(),
       voice,
@@ -1560,6 +1579,7 @@ describe("SessionRuntime — voice fork: loop output reaches the turn's TTS stre
       provider,
       broker: noopBroker(),
       emitter: recordingEmitter(),
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "you are a test assistant",
       config: testConfig(),
       voice,
@@ -1601,6 +1621,7 @@ describe("SessionRuntime — voice fork: the turn's own AbortSignal drives TTS",
       provider,
       broker: fakeBrokerWithBackground(spyBackgroundRegistry()),
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "you are a test assistant",
       config: testConfig(),
       voice,
@@ -1641,6 +1662,7 @@ describe("SessionRuntime — voice fork: the turn's own AbortSignal drives TTS",
       provider,
       broker: fakeBrokerWithBackground(spyBackgroundRegistry()),
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "you are a test assistant",
       config: testConfig(),
       voice,
@@ -1685,6 +1707,7 @@ describe("SessionRuntime — turn.aborted producer", () => {
       provider,
       broker: fakeBrokerWithBackground(spyBackgroundRegistry()),
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "test",
       config: testConfig(),
     });
@@ -1732,6 +1755,7 @@ describe("SessionRuntime — committed-feed producer", () => {
       provider,
       broker: noopBroker(),
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "test",
       config: testConfig(),
     });
@@ -1765,6 +1789,7 @@ describe("SessionRuntime — committed-feed producer", () => {
       provider,
       broker: noopBroker(),
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "test",
       config: testConfig(),
     });
@@ -1804,6 +1829,7 @@ describe("SessionRuntime — committed-feed producer", () => {
       provider,
       broker: noopBroker(),
       emitter: recordingEmitter(),
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "test",
       config: testConfig(),
     });
@@ -1820,6 +1846,7 @@ describe("SessionRuntime — committed-feed producer", () => {
       provider,
       broker: noopBroker(),
       emitter: reconnectEmitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "test",
       config: testConfig(),
     });
@@ -1860,6 +1887,7 @@ describe("SessionRuntime — committed-feed producer", () => {
       provider,
       broker: noopBroker(),
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "test",
       config: testConfig(),
     });
@@ -1904,6 +1932,7 @@ describe("SessionRuntime — committed-feed producer", () => {
       provider,
       broker: noopBroker(),
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "test",
       config: testConfig(),
     });
@@ -1935,6 +1964,7 @@ describe("SessionRuntime — committed-feed producer", () => {
       provider,
       broker: noopBroker(),
       emitter: recordingEmitter(),
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "test",
       config: testConfig(),
     });
@@ -1985,6 +2015,7 @@ describe("SessionRuntime — cancellation reaches the audio tail", () => {
       provider,
       broker: fakeBrokerWithBackground(background),
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "test",
       config: testConfig(),
       voice,
@@ -2042,6 +2073,7 @@ describe("SessionRuntime — cancellation reaches the audio tail", () => {
       provider,
       broker: fakeBrokerWithBackground(background),
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "test",
       config: testConfig(),
       voice,
@@ -2088,6 +2120,7 @@ describe("SessionRuntime — cancellation reaches the audio tail", () => {
       provider,
       broker: noopBroker(),
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "test",
       config: testConfig(),
       voice,
@@ -2160,6 +2193,7 @@ describe("SessionRuntime — dispose while a turn is in flight", () => {
       provider,
       broker: noopBroker(),
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "test",
       config: testConfig(),
     });
@@ -2194,6 +2228,7 @@ describe("SessionRuntime — dispose while a turn is in flight", () => {
       provider,
       broker: noopBroker(),
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "test",
       config: testConfig(),
     });
@@ -2275,6 +2310,7 @@ describe("SessionRuntime — titling fires on the first COMPLETED reply", () => 
       provider,
       broker: noopBroker(),
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "you are a test assistant",
       config: testConfig(),
     });
@@ -2322,6 +2358,7 @@ describe("SessionRuntime — titling fires on the first COMPLETED reply", () => 
       provider,
       broker: noopBroker(),
       emitter,
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "you are a test assistant",
       config: testConfig(),
     });
@@ -2374,6 +2411,7 @@ describe("SessionRuntime — titling fires on the first COMPLETED reply", () => 
       provider,
       broker: noopBroker(),
       emitter: recordingEmitter(),
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "you are a test assistant",
       config: testConfig(),
     });
@@ -2425,6 +2463,7 @@ describe("SessionRuntime — titling fires on the first COMPLETED reply", () => 
       provider,
       broker: noopBroker(),
       emitter: recordingEmitter(),
+      timeZone: { zone: () => "UTC" },
       systemPrompt: "you are a test assistant",
       config: testConfig(),
     });

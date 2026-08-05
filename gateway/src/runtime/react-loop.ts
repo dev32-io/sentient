@@ -43,6 +43,7 @@
 //    throw, don't partially commit."
 
 import type { OrchestratorConfig } from "@sentient/config";
+import type { TimeZoneProvider } from "../context/message-time.js";
 import { getLog } from "../logging/logger.js";
 import type { ProviderClient, ProviderTool } from "../provider/provider-client.js";
 import type { NewSessionEntry } from "../store/entry-types.js";
@@ -82,6 +83,8 @@ export interface ReactLoopDeps {
   broker: ToolBroker;
   store: SessionStore;
   systemPrompt: string;
+  /** Zone for every message stamp — see context/message-time.ts. */
+  timeZone: TimeZoneProvider;
   sessionId: string;
   config: OrchestratorConfig["loop"];
   onTextDelta: (turnId: string, text: string) => void;
@@ -399,7 +402,7 @@ export interface TurnOutcome {
 }
 
 export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<TurnOutcome> {
-  const { provider, broker, store, systemPrompt, sessionId, config, onTextDelta, onTurnCommitting } = deps;
+  const { provider, broker, store, systemPrompt, timeZone, sessionId, config, onTextDelta, onTurnCommitting } = deps;
   const { turnId, signal } = args;
 
   // Immutable per spec §4.6 — computed once, passed unchanged every
@@ -441,7 +444,10 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
     // built from, so it can never claim to have consumed an entry that landed
     // during the stream.
     consumedThroughSeq = entries[entries.length - 1]?.seq ?? consumedThroughSeq;
-    const messages: ChatMessage[] = [{ role: "system", content: systemPrompt }, ...projectForModel(entries)];
+    const messages: ChatMessage[] = [
+      { role: "system", content: systemPrompt },
+      ...projectForModel(entries, { timeZone: timeZone.zone() }),
+    ];
 
     log.debug("react-loop.iteration.start", {
       sessionId,

@@ -822,6 +822,7 @@ function servicesWithStoreBackedRuntime(
         provider,
         broker: noopBroker(),
         emitter,
+        timeZone: { zone: () => "UTC" },
         systemPrompt: "you are a test assistant",
         config: testOrchestratorConfig(),
       }),
@@ -903,7 +904,9 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     // `reasoningEffort`. `calls[1]` was the second turn until titling landed.
     const loopCalls = provider.calls.filter((c) => c.reasoningEffort === undefined);
     const replayed = loopCalls[1]?.messages ?? [];
-    expect(replayed.some((m) => m.role === "user" && m.content === "remember the number 41")).toBe(true);
+    // Matched by containment: a stimulus is projected inside the envelope
+    // carrying when it was sent (model-projection.ts's `stampedContent`).
+    expect(replayed.some((m) => m.role === "user" && (m.content ?? "").includes("remember the number 41"))).toBe(true);
     expect(replayed.some((m) => m.role === "assistant" && m.content === "hello back")).toBe(true);
   });
 

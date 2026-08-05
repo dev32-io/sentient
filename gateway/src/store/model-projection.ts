@@ -60,6 +60,7 @@
 //     boundary. Emitted by `emitStimulus`, which both paths call, because
 //     rule 5's own one-line fix once covered only one of them.
 
+import { formatStamp } from "../context/message-time.js";
 import { getLog } from "../logging/logger.js";
 import type { SessionEntry } from "./entry-types.js";
 
@@ -148,8 +149,8 @@ export interface ChatMessage {
  * never one covering several: handed two payloads and one prompt, the model
  * has no way to say which it is answering.
  */
-function emitStimulus(messages: ChatMessage[], entry: SessionEntry): void {
-  messages.push({ role: stimulusRole(entry.kind), content: entry.text ?? "" });
+function emitStimulus(messages: ChatMessage[], entry: SessionEntry, stamp: StampFn): void {
+  messages.push({ role: stimulusRole(entry.kind), content: stamp(entry) });
   if (entry.kind !== "trigger") return;
   log.debug("projection.background-completion-instruction", {
     reason: "a system-role completion alone is not answered — appending the user-role instruction (rule 6)",
@@ -312,7 +313,45 @@ function emitToolBlock(messages: ChatMessage[], callEntries: SessionEntry[], res
   }
 }
 
-export function projectForModel(entries: SessionEntry[]): ChatMessage[] {
+/** Renders one stimulus entry's content — its text, wrapped in the envelope
+ *  that carries when it was sent. See `stampedContent`. */
+type StampFn = (entry: SessionEntry) => string;
+
+/**
+ * A stimulus, wrapped in an envelope carrying the moment it was sent.
+ *
+ * FENCED, not prefixed. The obvious shape — `[2026-08-05T09:12:03-04:00] what's
+ * the news` — is what the temporal-reasoning literature uses, and it has one
+ * bad property in production: the model reads it as characters the person
+ * typed, and starts echoing stamps back into its own replies. An element around
+ * the text says "this is an envelope the system put there", which the system
+ * prompt's Time section then names explicitly.
+ *
+ * WHY STAMP AT ALL, given the measured effect is modest: without it the model
+ * cannot tell a reply three seconds later from one the next morning, and every
+ * dated question ("what's the news") is answered from a training cutoff it
+ * cannot locate itself relative to. The stamps are what make the tool-call
+ * protocol's "anything dated" rule mean something.
+ *
+ * Cache-stable: an entry's `createdAt` is fixed when it is appended, so a stamp
+ * rendered now is the same one rendered on every later turn. Only the zone
+ * could move it, and a zone change legitimately changes only messages that
+ * happen after it.
+ */
+function stampedContent(entry: SessionEntry, zone: string): string {
+  const text = entry.text ?? "";
+  return `<msg at="${formatStamp(entry.createdAt, zone)}">\n${text}\n</msg>`;
+}
+
+export interface ProjectForModelOptions {
+  /** The zone every stamp is rendered in. Omitted in tests and in any caller
+   *  that does not care — an unstamped projection is still a correct one. */
+  readonly timeZone?: string;
+}
+
+export function projectForModel(entries: SessionEntry[], options: ProjectForModelOptions = {}): ChatMessage[] {
+  const zone = options.timeZone;
+  const stamp: StampFn = zone === undefined ? (entry) => entry.text ?? "" : (entry) => stampedContent(entry, zone);
   const { head, rest } = sliceFromLatestCompaction(entries);
   const messages: ChatMessage[] = [...head];
 
@@ -334,7 +373,7 @@ export function projectForModel(entries: SessionEntry[]): ChatMessage[] {
         });
       }
       for (const stimulus of block.deferred) {
-        emitStimulus(messages, stimulus);
+        emitStimulus(messages, stimulus, stamp);
       }
       i = block.next;
       continue;
@@ -359,7 +398,7 @@ export function projectForModel(entries: SessionEntry[]): ChatMessage[] {
     }
 
     if (entry.kind === "user" || entry.kind === "trigger") {
-      emitStimulus(messages, entry);
+      emitStimulus(messages, entry, stamp);
       i += 1;
       continue;
     }
