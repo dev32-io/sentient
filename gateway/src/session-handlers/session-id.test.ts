@@ -45,6 +45,7 @@ function entryFor(sessionId: string): NewSessionEntry {
   return {
     sessionId,
     turnId: "turn-1",
+    messageId: null,
     kind: "user",
     createdAt: Date.now(),
     text: "hello",

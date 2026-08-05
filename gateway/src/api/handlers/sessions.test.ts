@@ -93,6 +93,7 @@ function seedSession(accessManager: AccessManager, user: TestUser, text: string)
   store.append({
     sessionId,
     turnId: "seed-turn",
+    messageId: null,
     kind: "user",
     createdAt: Date.now(),
     text,

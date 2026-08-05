@@ -39,6 +39,7 @@ function seedUserMessage(store: ReturnType<typeof openSessionStore>, sessionId: 
   const entry: NewSessionEntry = {
     sessionId,
     turnId: "seed-turn",
+    messageId: null,
     kind: "user",
     createdAt: Date.now(),
     text,

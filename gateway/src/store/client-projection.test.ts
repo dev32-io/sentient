@@ -9,6 +9,7 @@ function e(partial: Partial<SessionEntry>): SessionEntry {
     seq,
     sessionId: "s1",
     turnId: "t1",
+    messageId: null,
     kind: "user",
     createdAt: 1000 + seq,
     text: null,

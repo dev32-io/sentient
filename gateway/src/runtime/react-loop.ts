@@ -93,6 +93,11 @@ export interface ReactLoopDeps {
   situationBlock?: () => Promise<string | null>;
   sessionId: string;
   config: OrchestratorConfig["loop"];
+  /** Which bubble the loop's assistant text is going into right now. Read at
+   *  each append, never cached: the caller rotates it mid-turn when the person
+   *  speaks (see session-runtime.ts's `InFlightTurn.messageId`). Optional —
+   *  a harness without one gets null-grouped entries, one bubble each. */
+  currentMessageId?: () => string;
   onTextDelta: (turnId: string, text: string) => void;
   onToolUpdate: (turnId: string, u: ToolUpdate) => void;
   /** Fired synchronously, immediately after the terminal assistant entry is
@@ -145,6 +150,7 @@ function blankEntry(sessionId: string, turnId: string): Omit<NewSessionEntry, "k
   return {
     sessionId,
     turnId,
+    messageId: null,
     createdAt: Date.now(),
     text: null,
     toolCallId: null,
@@ -430,6 +436,7 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
     broker,
     store,
     systemPrompt,
+    currentMessageId,
     timeZone,
     sessionBlock,
     situationBlock,
@@ -559,7 +566,12 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
         return { completed: false, iterations: iteration, consumedThroughSeq };
       }
 
-      store.append({ ...blankEntry(sessionId, turnId), kind: "assistant", text: outcome.text });
+      store.append({
+        ...blankEntry(sessionId, turnId),
+        messageId: currentMessageId?.() ?? null,
+        kind: "assistant",
+        text: outcome.text,
+      });
       onTurnCommitting?.(turnId);
       log.info("react-loop.completed", { sessionId, turnId, iterations: iteration, forceFinal });
       return { completed: true, iterations: iteration, consumedThroughSeq };
@@ -589,7 +601,12 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
       // reimplement a joining rule and no two clients can disagree about it.
       const suffix = segmentTerminator(outcome.text);
       if (suffix.length > 0) onTextDelta(turnId, suffix);
-      store.append({ ...blankEntry(sessionId, turnId), kind: "assistant", text: outcome.text + suffix });
+      store.append({
+        ...blankEntry(sessionId, turnId),
+        messageId: currentMessageId?.() ?? null,
+        kind: "assistant",
+        text: outcome.text + suffix,
+      });
     }
 
     const dispatchedAll = await dispatchToolCalls(deps, sessionId, turnId, signal, outcome.toolCalls, backgroundByKey);

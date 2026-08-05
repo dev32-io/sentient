@@ -73,6 +73,7 @@ function append(store: SessionStore, kind: NewSessionEntry["kind"], text: string
   store.append({
     sessionId: SESSION_ID,
     turnId: "turn-1",
+    messageId: null,
     kind,
     createdAt: Date.now(),
     text,

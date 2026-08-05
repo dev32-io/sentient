@@ -85,6 +85,30 @@ export const STORE_MIGRATIONS: readonly StoreMigration[] = [
       "CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions (updated_at DESC)",
     ],
   },
+  {
+    version: 3,
+    name: "entries.message_id",
+    statements: [
+      // WHICH BUBBLE an entry belongs to. A turn is an interaction; a message
+      // is what the person sees as one reply. Usually the same thing — but a
+      // ReAct turn narrates, calls a tool, then answers, and the store records
+      // each stretch of text as its own entry, so one turn owns several.
+      //
+      // Grouping them by `turn_id` alone is not enough: a message the person
+      // sends mid-turn (spec §4.5's steer) is rendered as its own row BETWEEN
+      // two of those stretches, and everything after it has to start a new
+      // bubble or the reply visibly swallows the interjection.
+      //
+      // Server-minted, like every other id the client renders: the alternative
+      // is three clients each deriving grouping from ordering, which is three
+      // chances to disagree about what one reply was.
+      //
+      // Nullable, and null on every entry written before this column existed —
+      // a bubble per assistant entry is exactly how those conversations already
+      // render, so the back catalogue needs no backfill.
+      "ALTER TABLE entries ADD COLUMN message_id TEXT",
+    ],
+  },
 ];
 
 /** The version a store is brought up to on open. Derived, never hand-written. */

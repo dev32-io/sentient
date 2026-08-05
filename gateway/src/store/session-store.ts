@@ -46,6 +46,7 @@ interface EntryRow {
   seq: number;
   session_id: string;
   turn_id: string;
+  message_id: string | null;
   kind: string;
   created_at: number;
   text: string | null;
@@ -62,6 +63,7 @@ function toEntry(row: EntryRow): SessionEntry {
     seq: row.seq,
     sessionId: row.session_id,
     turnId: row.turn_id,
+    messageId: row.message_id,
     kind: row.kind as SessionEntry["kind"],
     createdAt: row.created_at,
     text: row.text,
@@ -139,6 +141,7 @@ export function openSessionStore(cap: Capability): SessionStore {
     [
       string,
       string,
+      string | null,
       string,
       number,
       string | null,
@@ -151,8 +154,8 @@ export function openSessionStore(cap: Capability): SessionStore {
     ]
   >(`
     INSERT INTO entries
-      (session_id, turn_id, kind, created_at, text, tool_call_id, tool_name, tool_args, cutoff, compacted_through_seq, pending_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (session_id, turn_id, message_id, kind, created_at, text, tool_call_id, tool_name, tool_args, cutoff, compacted_through_seq, pending_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     RETURNING *
   `);
 
@@ -184,6 +187,7 @@ export function openSessionStore(cap: Capability): SessionStore {
       const row = insert.get(
         entry.sessionId,
         entry.turnId,
+        entry.messageId,
         entry.kind,
         entry.createdAt,
         entry.text,

@@ -140,6 +140,7 @@ function seedSession(accessManager: AccessManager, userId: `u_${string}`, text: 
   store.append({
     sessionId,
     turnId: "seed-turn",
+    messageId: null,
     kind: "user",
     createdAt: Date.now(),
     text,
@@ -520,6 +521,7 @@ describe("handleSessionConfigure — session addressing", () => {
     store.append({
       sessionId: legacyId,
       turnId: "legacy-turn",
+      messageId: null,
       kind: "user",
       createdAt: Date.now(),
       text: "from before the redesign",

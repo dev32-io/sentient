@@ -14,6 +14,7 @@ function userEntry(seq: number, text: string, pendingId: string | null): Session
     seq,
     sessionId: "s_1",
     turnId: "t_1",
+    messageId: null,
     kind: "user",
     createdAt: 1,
     text,

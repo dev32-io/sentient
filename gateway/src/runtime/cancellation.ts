@@ -229,6 +229,7 @@ function blankEntry(sessionId: string, turnId: string): NewSessionEntry {
   return {
     sessionId,
     turnId,
+    messageId: null,
     kind: "assistant",
     createdAt: Date.now(),
     text: null,
