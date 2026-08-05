@@ -856,7 +856,9 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
       config: config.loop,
       onTextDelta: (id, text) => {
         turnText += text;
-        emitter.textDelta(id, text);
+        // The bubble key rides every delta, so the client never has to
+        // reverse-engineer which reply a chunk belongs to.
+        emitter.textDelta(id, text, inFlight?.messageId);
         speech?.pushText(text);
       },
       onToolUpdate: (id, u) => {

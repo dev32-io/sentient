@@ -162,8 +162,8 @@ export function createTurnStateTracker(sessionId: string): TurnStateTracker {
         conversationSnapshot(items) {
           emitter.conversationSnapshot(items);
         },
-        conversationEntry(item, turnId) {
-          emitter.conversationEntry(item, turnId);
+        conversationEntry(item, turnId, messageId) {
+          emitter.conversationEntry(item, turnId, messageId);
         },
         audioStart(turnId: string, encoding: TurnAudioEncoding, sampleRate: number) {
           audio = { turnId, encoding, sampleRate };

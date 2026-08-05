@@ -177,13 +177,18 @@ class ConversationHistoryConnector(
             log.debug("entry-dropped", mapOf("reason" to "awaiting-history", "ts" to msg.item.ts))
             return
         }
-        // Re-attach the gateway's frame turnId onto an assistant entry so the committed
-        // twin can be suppressed by exact id while its live bubble reveals. The wire item
-        // strips turnId; the frame carries it. No client-side derivation anywhere.
+        // Re-attach the gateway's frame turnId AND messageId onto an assistant entry.
+        // turnId suppresses the committed twin while its live bubble reveals; messageId
+        // is what groups several committed rows of one ReAct turn back into the single
+        // bubble they were streamed as. The wire item strips both; the frame carries
+        // them. No client-side derivation anywhere.
         val item = msg.item
         val enriched =
-            if (item is ConversationFeedItem.Assistant && msg.turnId != null) item.copy(turnId = msg.turnId)
-            else item
+            if (item is ConversationFeedItem.Assistant && (msg.turnId != null || msg.messageId != null)) {
+                item.copy(turnId = msg.turnId ?: item.turnId, messageId = msg.messageId ?: item.messageId)
+            } else {
+                item
+            }
         // Dedup by stable entryId: a re-delivered entry (e.g. a committed entry
         // replayed on resume) updates in place instead of double-appending.
         // Empty entryId (UNKNOWN_ENTRY_ID) has no identity → never deduped.
@@ -198,6 +203,7 @@ class ConversationHistoryConnector(
                 "entryId" to enriched.entryId,
                 "ts" to enriched.ts,
                 "turnId" to (msg.turnId ?: "-"),
+                "messageId" to (msg.messageId ?: "-"),
                 "deduped" to (existingIdx >= 0),
                 "size" to mirror.size,
             ),

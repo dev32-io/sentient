@@ -82,10 +82,17 @@ class ObserveChatUseCase(
             // bubble would never drop. echoedPendingIds is sourced from the SDK's in-memory
             // timeline before any null-strip (see ConversationRepository.echoedPendingIds).
             val visiblePending = pendingMsgs.filter { it.id !in echoedPendingIds }
-            val liveTurnId = rs.bubble?.turnId
+            // Hide ONLY the committed rows this live bubble is currently painting —
+            // matched on the bubble key, not the turn. A ReAct turn commits a row per
+            // stretch of text, so keying on the turn hid EVERY row of it behind one
+            // bubble: when that bubble drained the screen swapped to whichever rows
+            // happened to be left, which is how a finished reply collapsed back to its
+            // first line. Keyed on the message, a stretch the loop has moved past
+            // unhides the moment the live bubble stops being it.
+            val liveKey = rs.bubble?.key
             val visibleCommitted =
-                if (liveTurnId == null) committed
-                else committed.filter { it.turnId != liveTurnId }
+                if (liveKey == null) committed
+                else committed.filter { (it.messageId ?: it.turnId) != liveKey }
             val liveBubble = rs.bubble?.let {
                 ChatMessage(
                     ts = 0,
@@ -93,6 +100,7 @@ class ObserveChatUseCase(
                     content = rs.visibleContent(),
                     streaming = true,
                     turnId = it.turnId,
+                    messageId = it.messageId,
                 )
             }
             ChatModel(

@@ -114,14 +114,15 @@ export function createWsTurnEmitter(sink: SessionFrameSink, sessionId: string): 
       emit({ type: "turn.started", turnId, trigger });
     },
 
-    textDelta(turnId: string, text: string) {
+    textDelta(turnId: string, text: string, messageId?: string) {
       log.debug("turn-emitter.text-delta", {
         sessionId,
         turnId,
+        messageId: messageId ?? null,
         length: text.length,
         preview: text.slice(0, TEXT_PREVIEW_LEN),
       });
-      emit({ type: "turn.text.delta", turnId, text });
+      emit({ type: "turn.text.delta", turnId, text, ...(messageId === undefined ? {} : { messageId }) });
     },
 
     toolUpdate(turnId: string, u: ToolUpdate) {
@@ -193,15 +194,21 @@ export function createWsTurnEmitter(sink: SessionFrameSink, sessionId: string): 
       });
     },
 
-    conversationEntry(item: ConversationFeedItem, turnId?: string) {
+    conversationEntry(item: ConversationFeedItem, turnId?: string, messageId?: string) {
       log.debug("turn-emitter.conversation-entry", {
         sessionId,
         entryId: item.entryId,
         kind: item.kind,
         turnId: turnId ?? null,
+        messageId: messageId ?? null,
       });
-      // Omit the key entirely rather than sending an explicit undefined.
-      emit({ type: "conversation.entry", item, ...(turnId === undefined ? {} : { turnId }) });
+      // Omit each key entirely rather than sending an explicit undefined.
+      emit({
+        type: "conversation.entry",
+        item,
+        ...(turnId === undefined ? {} : { turnId }),
+        ...(messageId === undefined ? {} : { messageId }),
+      });
     },
 
     audioStart(turnId: string, encoding: TurnAudioEncoding, sampleRate: number) {

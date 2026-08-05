@@ -77,6 +77,9 @@ sealed class ConversationFeedItem {
         val content: String,
         val cutoff: Cutoff? = null,
         val turnId: String? = null,
+        /** Re-attached from the frame (the feed item itself strips plumbing).
+         *  Groups consecutive assistant rows into the one bubble they were. */
+        val messageId: String? = null,
     ) : ConversationFeedItem()
 
     /** kind="tool" — completed tool invocation in the feed. */

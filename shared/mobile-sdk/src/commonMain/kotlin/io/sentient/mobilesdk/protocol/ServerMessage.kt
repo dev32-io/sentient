@@ -83,7 +83,16 @@ sealed class ServerMessage {
     ) : ServerMessage()
 
     @Serializable @SerialName("turn.text.delta")
-    data class TurnTextDelta(val turnId: String, val text: String = "") : ServerMessage()
+    data class TurnTextDelta(
+        val turnId: String,
+        /** WHICH BUBBLE this chunk belongs to. A ReAct turn produces text more
+         *  than once under ONE turnId, and those stretches render as one bubble
+         *  that grew — except across a message the person sent mid-turn, which
+         *  is drawn between them and starts a new one. Server-minted; null only
+         *  from a gateway that predates the field. */
+        val messageId: String? = null,
+        val text: String = "",
+    ) : ServerMessage()
 
     @Serializable @SerialName("turn.completed")
     data class TurnCompleted(val turnId: String) : ServerMessage()
@@ -182,6 +191,10 @@ sealed class ServerMessage {
     data class ConversationEntry(
         val item: ConversationFeedItem,
         val turnId: String? = null,
+        /** The bubble this committed entry belongs to — the SAME key the live
+         *  deltas carried, so the swap at turn end shows the same grouping the
+         *  stream did. */
+        val messageId: String? = null,
     ) : ServerMessage()
 
     // ── Playback control ──

@@ -44,6 +44,10 @@ data class ChatMessage(
     val streaming: Boolean = false,
     val cutoffKind: String? = null,
     val turnId: String? = null,
+    /** The bubble this message belongs to. Several committed assistant rows of
+     *  one turn share it and render as one bubble; a row the person sent
+     *  mid-turn breaks the run and the rows after it carry a new one. */
+    val messageId: String? = null,
     val pendingId: String? = null,
     val tools: List<TaskSnapshotItem> = emptyList(),
     val entryId: String = "",

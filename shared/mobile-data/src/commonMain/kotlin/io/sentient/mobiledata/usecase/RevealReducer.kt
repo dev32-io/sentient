@@ -43,7 +43,21 @@ data class RevealBubble(
     val fullContent: String,
     val revealed: Int,
     val phase: LivePhase,
-)
+    /**
+     * WHICH BUBBLE this is, when the gateway names one. A ReAct turn produces
+     * text more than once and it is ONE bubble that grew — except across a
+     * message the person sent mid-turn, which is drawn between the stretches
+     * and starts a new one. The gateway decides where that falls; this is the
+     * key it stamps. Null against a gateway that does not send it, which
+     * degrades to the old one-bubble-per-turn behaviour.
+     */
+    val messageId: String? = null,
+) {
+    /** What this bubble is identified by — its message when it has one, its
+     *  turn otherwise. `ObserveChatUseCase` hides the committed rows carrying
+     *  the same key, so the swap at turn end shows exactly what was streamed. */
+    val key: String get() = messageId ?: turnId
+}
 
 data class RevealState(
     val bubble: RevealBubble? = null,
@@ -71,18 +85,39 @@ data class RevealState(
  */
 object RevealReducer {
     fun reduce(s: RevealState, e: Any): RevealState = when (e) {
+        // A new key REPLACES the live bubble rather than extending it. Two ways
+        // in: a new turn, and — mid-turn — the gateway rotating the message id
+        // because the person spoke. In the second case the stretch just dropped
+        // is already committed, so its durable row unhides the instant this
+        // bubble stops matching it; carrying it on would hide that row behind an
+        // animation for a reply that has already finished.
         is SdkEvent.MessageStarted ->
-            s.copy(
-                bubble = RevealBubble(e.turnId, "", 0, LivePhase.STREAMING),
-                tasks = emptyList(),
-                revealCarry = 0.0,
-            )
+            if (s.bubble != null && s.bubble.key == (e.messageId ?: e.turnId)) {
+                s
+            } else {
+                s.copy(
+                    bubble = RevealBubble(e.turnId, "", 0, LivePhase.STREAMING, e.messageId),
+                    tasks = if (s.bubble?.turnId == e.turnId) s.tasks else emptyList(),
+                    revealCarry = 0.0,
+                )
+            }
         is SdkEvent.MessageDelta -> {
-            val cur = s.bubble ?: RevealBubble(e.turnId, "", 0, LivePhase.STREAMING)
+            val key = e.messageId ?: e.turnId
+            // A delta for a bubble other than the live one opens it (a resume
+            // replay can deliver a delta before its MessageStarted).
+            val cur =
+                s.bubble?.takeIf { it.key == key } ?: RevealBubble(e.turnId, "", 0, LivePhase.STREAMING, e.messageId)
             s.copy(bubble = cur.copy(fullContent = cur.fullContent + e.chunk))
         }
         is SdkEvent.TaskUpserted -> s.copy(tasks = upsert(s.tasks, e.task))
-        is SdkEvent.MessageCommitted -> s.copy(bubble = s.bubble?.copy(phase = LivePhase.DRAINING))
+        // Turn-matched: a turn owning several bubbles commits each of them, and
+        // only the one still on screen should start draining.
+        is SdkEvent.MessageCommitted ->
+            if (s.bubble != null && s.bubble.key == (e.message.messageId ?: e.message.turnId ?: s.bubble.key)) {
+                s.copy(bubble = s.bubble.copy(phase = LivePhase.DRAINING))
+            } else {
+                s
+            }
         // Same `turn.completed` frame as MessageCommitted, but raised by a different
         // connector (CognitionStatusConnector), so it survives the one way that one
         // can go missing: InFlightMessageConnector.onCompleted early-returns when it

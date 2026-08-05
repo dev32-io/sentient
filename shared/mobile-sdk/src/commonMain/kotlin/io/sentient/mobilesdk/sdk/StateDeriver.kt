@@ -177,6 +177,7 @@ internal fun deriveMessages(
                 content = inflight.text,
                 streaming = true,
                 turnId = inflight.turnId,
+                messageId = inflight.messageId,
                 tools = pendingTools,
             ),
         )
@@ -206,6 +207,9 @@ private fun committedMessage(item: ConversationFeedItem): ChatMessage? = when (i
             // from the conversation.entry frame by the history connector). Read it
             // directly — no client-side text-match/ts-window derivation.
             turnId = item.turnId,
+            // Same key, same source: several committed rows of one ReAct turn
+            // share it and belong to one bubble.
+            messageId = item.messageId,
             entryId = item.entryId,
         )
 
