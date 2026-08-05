@@ -7,14 +7,18 @@ import MobileData
 
 struct ToolPillStrip: View {
     let tools: [TaskSnapshotItem]
-    @State private var openTaskId: String?
+    /// Keyed by `toolCallId`, which is the row's identity — NOT `taskId`, which is
+    /// non-nil only for a background tool. Keying on `taskId` made `nil == nil` true
+    /// for every foreground row, so `first(where:)` always matched: the strip opened
+    /// untapped, and the toggle below could only ever set nil to nil.
+    @State private var openToolCallId: String?
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                ForEach(tools, id: \.taskId) { t in pill(t) }
+                ForEach(tools, id: \.toolCallId) { t in pill(t) }
             }
-            if let open = tools.first(where: { $0.taskId == openTaskId }) {
+            if let open = tools.first(where: { $0.toolCallId == openToolCallId }) {
                 detail(open)
             }
         }
@@ -25,7 +29,7 @@ struct ToolPillStrip: View {
 
     private func pill(_ t: TaskSnapshotItem) -> some View {
         Button {
-            openTaskId = (openTaskId == t.taskId) ? nil : t.taskId
+            openToolCallId = (openToolCallId == t.toolCallId) ? nil : t.toolCallId
         } label: {
             HStack(spacing: Space.sm) {
                 StatusDot(status: t.status)
@@ -38,8 +42,8 @@ struct ToolPillStrip: View {
                 if !t.argsPreview.isEmpty {
                     Image(systemName: "chevron.right")
                         .font(.system(size: ToolPillLayout.chevronSize))
-                        .rotationEffect(.degrees(openTaskId == t.taskId ? 90 : 0))
-                        .foregroundStyle(openTaskId == t.taskId ? DuskColors.accent : DuskColors.ink4)
+                        .rotationEffect(.degrees(openToolCallId == t.toolCallId ? 90 : 0))
+                        .foregroundStyle(openToolCallId == t.toolCallId ? DuskColors.accent : DuskColors.ink4)
                 }
             }
             .padding(.vertical, Space.sm)

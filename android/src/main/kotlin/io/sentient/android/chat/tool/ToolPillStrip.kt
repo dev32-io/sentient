@@ -49,19 +49,23 @@ private const val PREVIEW_BG_ALPHA = 0.10f
 @Composable
 fun ToolPillStrip(tools: List<TaskSnapshotItem>) {
     val tokens = LocalTokens.current
+    // Keyed by `toolCallId`, which is the row's identity — NOT `taskId`, which is
+    // non-null only for a background tool. Keying on `taskId` made `null == null`
+    // true for every foreground row, so `firstOrNull` always matched: the strip
+    // opened untapped, and the toggle below could only ever set null to null.
     var openId by remember { mutableStateOf<String?>(null) }
     Column(modifier = Modifier.fillMaxWidth().padding(top = tokens.space.md)) {
         Row(modifier = Modifier.fillMaxWidth()) {
             tools.forEach { t ->
                 Pill(
                     t = t,
-                    isOpen = openId == t.taskId,
+                    isOpen = openId == t.toolCallId,
                     modifier = Modifier.weight(1f),
-                    onClick = { openId = if (openId == t.taskId) null else t.taskId },
+                    onClick = { openId = if (openId == t.toolCallId) null else t.toolCallId },
                 )
             }
         }
-        tools.firstOrNull { it.taskId == openId }?.let { t ->
+        tools.firstOrNull { it.toolCallId == openId }?.let { t ->
             Text(
                 text = t.argsPreview,
                 fontFamily = JetBrainsMono,
