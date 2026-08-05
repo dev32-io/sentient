@@ -143,7 +143,7 @@ exercise. Everything else is covered before you ever run this on the mini:
 | Behaviour | Where it is verified |
 |---|---|
 | install / rollback FSM, checksum gate, TLS trust decisions | `tests/test_setup_prod.py` (unit) |
-| ordering between the real collaborators — real tarball, real plist, real filesystem, real HTTPS + pinned CA | `bash tests/e2e-install.sh <workdir>` (rootless, 7 cases incl. rollback) |
+| ordering between the real collaborators — real tarball, real plist, real filesystem, real HTTPS (gateway + edge) + pinned CA | `bash tests/e2e-install.sh <workdir>` (rootless, 8 cases incl. rollback) |
 | the real `launchctl` contract — `print` exit codes, bootstrap-vs-kickstart, a rendered plist actually spawning a process with the substituted env | `SENTIENT_LAUNCHD_REHEARSAL=1 pytest deploy/mac-prod/tests/` (real launchctl, `gui/<uid>` domain) |
 | `chown -R root:wheel`; the `system` domain; `UserName` switching to another account | **first real run — the commands below** |
 
