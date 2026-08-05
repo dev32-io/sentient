@@ -222,16 +222,25 @@ private fun BubbleText(
                 ),
             ),
         )
-        if (cutoffLabel(cutoffKind) != null) {
-            Text(text = "⏹ interrupted", color = Color(Colors.ink3), fontSize = tokens.type.sm)
+        cutoffLabel(cutoffKind)?.let { label ->
+            Text(text = "$CUTOFF_GLYPH $label", color = Color(Colors.ink3), fontSize = tokens.type.sm)
         }
         if (tools.isNotEmpty()) ToolPillStrip(tools)
     }
 }
 
-/** Interrupt / barge-in both surface as "interrupted"; null when not cut short. */
+private const val CUTOFF_GLYPH = "⏹"
+
+/**
+ * Cut-short marker copy; null when not cut short. The two gestures read
+ * differently on purpose and match webui's InterruptChip word-for-word:
+ * "interrupted" is the Stop button, "barge-in" is the user talking over the
+ * reply. Collapsing them told the user their tap stopped a reply their voice
+ * had already cut off.
+ */
 private fun cutoffLabel(cutoffKind: String?): String? = when (cutoffKind) {
-    "interrupt", "barge-in" -> "interrupted"
+    "barge-in" -> "barge-in"
+    "interrupt" -> "interrupted"
     else -> null
 }
 

@@ -128,10 +128,15 @@ struct MessageBubble: View {
             .accessibilityIdentifier("message-cutoff-\(index)")
     }
 
-    /// Interrupt / barge-in cut-short marker copy (nil when not cut short).
+    /// Cut-short marker copy (nil when not cut short). The two gestures read
+    /// differently on purpose and match webui's InterruptChip word-for-word:
+    /// "interrupted" is the Stop button, "barge-in" is the user talking over the
+    /// reply. Collapsing them told the user their tap stopped a reply their
+    /// voice had already cut off.
     private var cutoffLabel: String? {
         switch message.cutoffKind {
-        case "interrupt", "barge-in": return "interrupted"
+        case "barge-in": return "barge-in"
+        case "interrupt": return "interrupted"
         default: return nil
         }
     }
