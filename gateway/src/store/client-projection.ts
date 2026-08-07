@@ -28,6 +28,8 @@ export interface FeedItem {
    *  optimistic bubble — on the live entry AND on every later snapshot, which
    *  is what keeps `render(replay) == render(live)` true of it. */
   pendingId: string | null;
+  /** The reply this item belongs to; null on user/trigger items. */
+  replyId: string | null;
 }
 
 export function projectForClient(entries: readonly SessionEntry[]): FeedItem[] {
@@ -64,6 +66,7 @@ export function projectForClient(entries: readonly SessionEntry[]): FeedItem[] {
         cutoff: null,
         createdAt: entry.createdAt,
         pendingId: null,
+        replyId: null,
       });
       continue;
     }
@@ -123,6 +126,7 @@ export function projectForClient(entries: readonly SessionEntry[]): FeedItem[] {
       // what keeps the live entry and every later snapshot saying the same
       // thing.
       pendingId: entry.pendingId === null ? null : unscopePendingId(entry.pendingId),
+      replyId: entry.replyId,
     });
   }
 

@@ -71,6 +71,11 @@ export const conversationFeedAssistantItemSchema = z.object({
   entryId: z.string(),
   ts: z.number().int().nonnegative(),
   kind: z.literal("assistant"),
+  /** WHICH REPLY this item is. Carried on the ITEM, not only on the
+   *  `conversation.entry` frame: a window that attaches mid-turn is answered
+   *  with a snapshot, which has no frame to hang it on, and without it that
+   *  window cannot tell which committed row its live bubble is painting. */
+  replyId: z.string().optional(),
   content: z.string(),
   cutoff: conversationAssistantCutoffSchema.optional(),
 });

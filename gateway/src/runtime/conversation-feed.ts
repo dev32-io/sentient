@@ -127,6 +127,7 @@ function toWireItem(item: FeedItem, isUnresolvedTool: boolean): ConversationFeed
         ...base,
         kind: "assistant",
         content: item.text,
+        ...(item.replyId === null ? {} : { replyId: item.replyId }),
         ...(item.cutoff === null ? {} : { cutoff: toWireCutoff(item.cutoff) }),
       };
     case "tool":
