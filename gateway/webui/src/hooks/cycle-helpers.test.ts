@@ -8,7 +8,7 @@
 // with no client-side merge or tool-tile anchoring of its own.
 // ---------------------------------------------------------------------------
 
-import type { CommittedFeedItem } from "@sentient/web-sdk";
+import type { CommittedFeedItem, InFlightMessage } from "@sentient/web-sdk";
 import { describe, expect, it } from "vitest";
 import { deriveMessages } from "./cycle-helpers.ts";
 
@@ -19,6 +19,14 @@ function userEntry(content: string, ts: number): CommittedFeedItem {
 function assistantEntry(content: string, ts: number, turnId?: string): CommittedFeedItem {
   const base: CommittedFeedItem = { entryId: `e-${ts}`, ts, kind: "assistant", content };
   return turnId === undefined ? base : { ...base, turnId };
+}
+
+function assistantReply(content: string, ts: number, turnId: string, replyId: string): CommittedFeedItem {
+  return { entryId: replyId, ts, kind: "assistant", content, turnId, replyId };
+}
+
+function liveBubble(turnId: string, replyId: string, text: string): InFlightMessage {
+  return { turnId, replyId, text };
 }
 
 function triggerEntry(summary: string, ts: number): CommittedFeedItem {
@@ -33,6 +41,53 @@ describe("cycle-helpers — one bubble per reply", () => {
     const out = deriveMessages(items as never, []);
     expect(out).toHaveLength(1);
     expect(out[0]?.text).toBe("one reply, already whole");
+  });
+
+  it("CONTRACT: does NOT merge two committed rows that share a replyId — the gateway folds, not the walk", () => {
+    // The deleted client-side merge would collapse these into one bubble and
+    // make the fold look done when it is not. A single-item fixture passes
+    // identically with that merge restored; two rows sharing a replyId are what
+    // tell the two apart. If the gateway ever regresses to committing per
+    // stretch, this walk must SHOW two rows so the regression is visible on
+    // screen rather than hidden by the client.
+    const out = deriveMessages(
+      [assistantReply("first stretch", 1, "t1", "m1"), assistantReply("second stretch", 2, "t1", "m1")],
+      [],
+    );
+
+    expect(out.map((m) => m.text)).toEqual(["first stretch", "second stretch"]);
+  });
+
+  it("INVARIANT: draining one reply never hides the OTHER reply of the same turn", () => {
+    // The gateway rotates `replyId` INSIDE one turnId when a person types
+    // mid-reply, so one turn commits two assistant rows sharing a turnId. The
+    // turn-keyed predicate this replaced matched BOTH, and the first stretch of
+    // the reply vanished from the feed for the length of the reveal.
+    const committed = [
+      assistantReply("before the interruption", 1, "t1", "m1"),
+      assistantReply("after it", 2, "t1", "m2"),
+    ];
+
+    const out = deriveMessages(committed, [], "after", "m2");
+
+    // m1 stays on screen; only m2 — the one the typewriter is painting — hides.
+    expect(out.map((m) => m.text)).toEqual(["before the interruption"]);
+  });
+
+  it("suppresses exactly the committed twin of the reply being drained", () => {
+    const committed = [assistantReply("a whole reply", 1, "t1", "m1")];
+
+    expect(deriveMessages(committed, [], undefined, "m1")).toHaveLength(0);
+    expect(deriveMessages(committed, [], undefined, "m-other")).toHaveLength(1);
+  });
+
+  it("keys the live bubble by reply, so two open bubbles of one turn are distinct render rows", () => {
+    // Two buffers under one turnId is a real state (a mid-turn rotation). A
+    // turn-keyed render id makes them Preact siblings with the same key.
+    const out = deriveMessages([], [liveBubble("t1", "m1", "first"), liveBubble("t1", "m2", "second")]);
+
+    expect(out.map((m) => m.id)).toEqual(["inflight-m1", "inflight-m2"]);
+    expect(new Set(out.map((m) => m.id)).size).toBe(2);
   });
 });
 

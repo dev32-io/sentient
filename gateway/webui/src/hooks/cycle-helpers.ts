@@ -92,7 +92,7 @@ interface FeedWalk {
   readonly out: ChatMessage[];
 }
 
-function appendCommittedItems(walk: FeedWalk, items: readonly CommittedFeedItem[], suppressAssistantTurnId?: string) {
+function appendCommittedItems(walk: FeedWalk, items: readonly CommittedFeedItem[], suppressAssistantReplyId?: string) {
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     if (!item) continue;
@@ -122,11 +122,17 @@ function appendCommittedItems(walk: FeedWalk, items: readonly CommittedFeedItem[
     if (item.content.length === 0 && !item.cutoff) continue;
     const msg = buildAssistantMessage(stableId, item);
 
-    // While the typewriter is draining a turn, suppress the committed
-    // assistant entry for that turnId so the inflight (typewriter) bubble
-    // stays the sole render until it catches up. Prevents the "chunk pop"
-    // from committed text replacing a mid-reveal bubble.
-    if (suppressAssistantTurnId && msg.turnId === suppressAssistantTurnId) continue;
+    // Hide ONLY the committed row this live bubble is painting, matched on the
+    // reply and nothing else. Prevents the "chunk pop" of committed text
+    // replacing a mid-reveal bubble.
+    //
+    // THE TURN FALLBACK THIS REPLACES WAS THE BUG. The gateway rotates
+    // `replyId` INSIDE one turnId (a message the person types mid-reply draws
+    // a line), so one turn can commit two assistant rows sharing a turnId —
+    // and a turn-keyed predicate matched BOTH, blanking the first stretch of
+    // the reply for the length of the reveal. Mobile fixed exactly this in
+    // `ObserveChatUseCase`; there is one row to hide and no reason to guess.
+    if (suppressAssistantReplyId && msg.replyId === suppressAssistantReplyId) continue;
     walk.out.push(msg);
   }
 }
@@ -150,12 +156,17 @@ function appendInflightMessages(walk: FeedWalk, inflight: readonly InFlightMessa
     // is empty AND isStreaming — so the user has feedback during LLM TTFB.
     const text = isNewest && visibleOverride !== undefined ? visibleOverride : entry.text;
     walk.out.push({
-      id: `inflight-${entry.turnId}`,
+      // Keyed by REPLY, falling back to the turn only against a gateway that
+      // does not stamp deltas. A rotation puts two open bubbles under one
+      // turnId, and a turn-keyed render id makes those two Preact siblings
+      // with the same key.
+      id: `inflight-${entry.replyId ?? entry.turnId}`,
       role: "assistant",
       text,
       timestamp: Date.now(),
       isStreaming: true,
       turnId: entry.turnId,
+      ...(entry.replyId ? { replyId: entry.replyId } : {}),
     });
   }
 }
@@ -167,20 +178,20 @@ function appendInflightMessages(walk: FeedWalk, inflight: readonly InFlightMessa
  * the inflight buffer say.
  *
  * `visibleOverride` substitutes the newest inflight bubble's text with the
- * typewriter's partial reveal. `suppressAssistantTurnId` hides the committed
- * assistant entry for a turn that is still mid-drain — keeping the typewriter
- * bubble onscreen until it catches up, instead of letting the committed
- * full-text bubble pop in. The committed entry's turnId is the gateway-owned
- * one off its frame.
+ * typewriter's partial reveal. `suppressAssistantReplyId` hides the committed
+ * assistant entry for the REPLY that is still mid-drain — keeping the
+ * typewriter bubble onscreen until it catches up, instead of letting the
+ * committed full-text bubble pop in. Both ids are the gateway-owned ones off
+ * the frame; nothing here derives either.
  */
 export function deriveMessages(
   items: readonly CommittedFeedItem[],
   inflight: readonly InFlightMessage[],
   visibleOverride?: string,
-  suppressAssistantTurnId?: string,
+  suppressAssistantReplyId?: string,
 ): ChatMessage[] {
   const walk: FeedWalk = { out: [] };
-  appendCommittedItems(walk, items, suppressAssistantTurnId);
+  appendCommittedItems(walk, items, suppressAssistantReplyId);
   appendInflightMessages(walk, inflight, visibleOverride);
   return walk.out;
 }

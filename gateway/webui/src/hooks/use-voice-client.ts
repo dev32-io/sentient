@@ -60,6 +60,7 @@ import type { ChatMessage } from "../types.ts";
 import { createAwaitingTracker } from "./awaiting-tracker.ts";
 import { deriveCycleStatus, deriveMessages } from "./cycle-helpers.ts";
 import { reducePermissionPrompt } from "./permission-helpers.ts";
+import { type DrainBubble, clearConversationScopedState } from "./session-boundary.ts";
 import { useTypewriterBuffer } from "./use-typewriter-buffer.ts";
 import { buildVoiceStatus, resolveGatewayUrl } from "./voice-status.ts";
 
@@ -155,7 +156,12 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
   const isAudioPlayingRef = useRef(false);
 
   const typewriter = useTypewriterBuffer();
-  const typewriterTurnIdRef = useRef<string | null>(null);
+  /** WHICH BUBBLE the typewriter is currently revealing — the reply, falling
+   *  back to the turn only against a gateway that does not stamp deltas. It
+   *  cannot be the turn: `setBuffer` is append-only and refuses to shrink, so
+   *  a reply rotating inside one turn would leave the reveal stuck on the
+   *  previous stretch's text while rendering it into the new bubble. */
+  const typewriterBubbleIdRef = useRef<string | null>(null);
   const typewriterRef = useRef(typewriter);
   typewriterRef.current = typewriter;
 
@@ -191,8 +197,10 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     // the turn's buffer but the typewriter may still be mid-reveal. We keep
     // rendering a synthetic inflight bubble (driven by the typewriter) until
     // its visible catches up to the final buffered text. During drain, the
-    // committed assistant entry for this turnId is suppressed to prevent a pop.
-    const drainTurnRef: { current: { turnId: string; snapshot: InFlightMessage } | null } = { current: null };
+    // committed assistant entry for THIS REPLY is suppressed to prevent a pop —
+    // by `replyId`, never by turn: a turn that a person typed through commits
+    // two assistant rows under one turnId and a turn-keyed match hides both.
+    const drainTurnRef: { current: DrainBubble | null } = { current: null };
     // Empty-history detection: snapshot committed-count when leaving `ready`
     // status; on next conversation snapshot post-reconnect, compare. Empty
     // result + nonzero prior == server-side PersonSession archive cycled.
@@ -243,7 +251,7 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
         committedRef.current,
         effectiveInflight,
         effectiveInflight.length > 0 ? typewriterRef.current.visible.value : undefined,
-        drain?.turnId,
+        drain?.replyId,
       );
       messages.value = base;
     }
@@ -498,11 +506,13 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
         // buffered text — they are no longer the turn emitting tokens.
         const newest = inflight[inflight.length - 1] ?? null;
         if (newest) {
-          // New turn: reset the typewriter before feeding the first buffer.
-          // This also clears any stale drain state from a previous turn.
-          if (typewriterTurnIdRef.current !== newest.turnId) {
+          // New BUBBLE: reset the typewriter before feeding the first buffer.
+          // This also clears any stale drain state from the previous one. A
+          // rotation inside one turn is a new bubble by the same rule.
+          const bubbleId = newest.replyId ?? newest.turnId;
+          if (typewriterBubbleIdRef.current !== bubbleId) {
             typewriterRef.current.reset();
-            typewriterTurnIdRef.current = newest.turnId;
+            typewriterBubbleIdRef.current = bubbleId;
             drainTurnRef.current = null;
           }
           typewriterRef.current.setBuffer(newest.text);
@@ -517,7 +527,13 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
           const last = inflightRef.current[inflightRef.current.length - 1];
           if (last) {
             const alreadyDrained = typewriterRef.current.visible.value.length >= last.text.length;
-            if (!alreadyDrained) drainTurnRef.current = { turnId: last.turnId, snapshot: last };
+            if (!alreadyDrained) {
+              drainTurnRef.current = {
+                turnId: last.turnId,
+                ...(last.replyId === undefined ? {} : { replyId: last.replyId }),
+                snapshot: last,
+              };
+            }
           }
           typewriterRef.current.markComplete();
         }
@@ -637,73 +653,24 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       },
     });
 
-    // Mid-turn session switch: the gateway aborts the running turn and emits
-    // turn.aborted, but the typewriter's drain machinery would keep revealing
-    // the buffered text from the OLD turn as a synthetic bubble in the NEW
-    // pane until catch-up. Clear drain + typewriter state on every switch so
-    // the new session loads clean. `created` and `switched` both signal a
-    // session boundary; `deleted` / `renamed` do not.
+    // Every conversation boundary drops what the pane holds for the
+    // conversation it is leaving — the typewriter's drain state AND the
+    // composer task strip. `created`, `switched` and `draft` all signal one;
+    // `deleted` / `renamed` do not. The rule itself lives in session-boundary.ts.
     sessionsConnector.onSessionsChanged((e) => {
       if (e.kind !== "switched" && e.kind !== "created" && e.kind !== "draft") return;
-      log.debug("session-boundary.clear-drain", {
+      log.debug("session-boundary.clear-scope", {
         kind: e.kind,
         sessionId: e.kind === "draft" ? e.draftKey : e.sessionId,
       });
-      drainTurnRef.current = null;
-      inflightRef.current = [];
-      typewriterTurnIdRef.current = null;
-      typewriterRef.current.reset();
-      // `switched` refetches: ConversationHistoryConnector is subscribed to
-      // the SAME session.switched frame and will replace committedRef.current
-      // with the new session's REST-loaded history moments after this fires
-      // (its own onUpdate calls refreshMessages() again once that resolves).
-      // Leave it alone here.
-      //
-      // `draft` and `created` are TWO DIFFERENT MECHANISMS, verified live and
-      // separately — do not read them as one case:
-      //
-      //   - `draft`: session-binding.ts's `sendDraftHandshake` sends an empty
-      //     `conversation.snapshot` (`items: []`) on the SAME socket
-      //     immediately before THIS `session.draft` frame. WS preserves
-      //     per-socket order, and ConversationHistoryConnector's snapshot
-      //     handler is an unconditional mirror REPLACE, so
-      //     committedRef.current is already `[]` by the time this handler
-      //     runs. Verified: pulled this assignment, re-ran "+" against a
-      //     loaded session, and the console showed `conversation.snapshot
-      //     {items:[]}` land (not dedup-dropped) strictly before
-      //     `session.draft`, with committedRef.current already length 0 at
-      //     this exact point.
-      //
-      //   - `created` (the common, non-replayed path — typing the first
-      //     message of a fresh draft): NO snapshot precedes it.
-      //     `ensureBoundRuntime`'s mint path (ws-handlers.ts) sends
-      //     `session.created` directly — its own comment: "A fresh mint
-      //     needs no snapshot: an empty feed is the truth there." Verified
-      //     by driving the actual flow (switch to a 2-message session, "+",
-      //     type + send a new message, full frame trace): `session.created`
-      //     (seq 7) followed `session.draft` (seq 6) with NO
-      //     `conversation.snapshot` in between, and with this assignment
-      //     pulled, committedRef.current was ALREADY length 0 at this point
-      //     — not because `created` cleared it, but transitively, because
-      //     the EARLIER `draft` frame's own snapshot (above) cleared it and
-      //     nothing since (no entry, no other snapshot) had touched it. The
-      //     user's own `conversation.entry` for the fresh message arrives
-      //     only AFTER this handler runs (seq 8, once `runtime.submit`
-      //     starts the turn), so it can never race this clear. A REPLAYED
-      //     mint (a dropped-ack retry) is the one sub-case this reasoning
-      //     does not cover directly — there,
-      //     `runtime.emitConversationSnapshot()` sends a REAL, non-empty
-      //     snapshot moments after `session.created`, which unconditionally
-      //     overwrites whatever this line does either way.
-      //
-      // Net: on every path this fires for, something OTHER than this
-      // assignment already produces the correct mirror. Kept anyway as
-      // cheap, harmless defense-in-depth against either mechanism above
-      // changing without this file's own test catching it — not because
-      // either is unverified.
-      if (e.kind !== "switched") {
-        committedRef.current = [];
-      }
+      clearConversationScopedState(e.kind, {
+        drain: drainTurnRef,
+        inflight: inflightRef,
+        committed: committedRef,
+        typewriterBubbleId: typewriterBubbleIdRef,
+        typewriter: typewriterRef.current,
+        taskList: taskListConnector,
+      });
       refreshMessages();
     });
 
