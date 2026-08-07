@@ -699,10 +699,11 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     if (failed) commitTurnFailure(turnId);
 
     // Turn boundary: release everything still outstanding on the committed
-    // feed — including a tool tile whose `tool_result` is never coming (a
-    // background dispatch), and the failure notice above — BEFORE the terminal
-    // frame below. The client drops its live bubble on `turn.completed`, so the
-    // committed twin has to already be there or the reply visibly vanishes.
+    // feed — the reply that was still open (the ONLY thing `publishAll`'s
+    // `force` now lifts, per conversation-feed.ts), and the failure notice
+    // above — BEFORE the terminal frame below. The client drops its live bubble
+    // on `turn.completed`, so the committed twin has to already be there or the
+    // reply visibly vanishes.
     feed.publishAll();
     // Foreground rows die with their turn (runtime/task-list.ts); background
     // rows (a `delegateTask` dispatch) survive it and stay on the strip.

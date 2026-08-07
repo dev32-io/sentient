@@ -523,6 +523,12 @@ function ensureBoundRuntime(
     // THIS socket: a peer already attached to the session has a correct mirror
     // that a snapshot would replace (session-binding.ts).
     completeAttachWithSnapshot(ws, services);
+    // The strip rides beside the committed feed on every attach — see
+    // ws-session-configure.ts's `sendConversationSnapshot` for why. Called on
+    // the runtime `bindSessionRuntime` just returned, not on `ws.data.runtime`:
+    // this branch only runs when the latter was null, and TypeScript cannot see
+    // that the bind above reassigned it.
+    rebound.emitTaskList();
     log.info("text.input.late-bind", {
       sessionId: ws.data.sessionId,
       conversationId: ws.data.conversationId,
@@ -582,8 +588,18 @@ function ensureBoundRuntime(
   // hypothetical: a replayed mint means a second connection is on this draft.
   // Either way the attach must be COMPLETED — `bindSessionRuntime` left this
   // window held, so without one of these two lines it receives nothing at all.
-  if (replayed) completeAttachWithSnapshot(ws, services);
-  else completeAttach(ws, services);
+  if (replayed) {
+    completeAttachWithSnapshot(ws, services);
+    // Same seam as every other snapshot attach — see ws-session-configure.ts's
+    // `sendConversationSnapshot`. Only on this branch: a FRESH mint has no
+    // prior turn to have a strip for, which is the same reason it takes
+    // `completeAttach` rather than the snapshot variant. Called on the local
+    // the bind above returned, for the same narrowing reason as the late-bind
+    // path.
+    runtime.emitTaskList();
+  } else {
+    completeAttach(ws, services);
+  }
   return runtime;
 }
 

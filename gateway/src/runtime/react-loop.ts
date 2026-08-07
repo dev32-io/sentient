@@ -172,11 +172,16 @@ function blankEntry(sessionId: string, turnId: string): Omit<NewSessionEntry, "k
   };
 }
 
-/** Longest a background receipt may be. The stored `tool_result` is NOT
- *  model-only text: `client-projection.ts` folds it into the tool tile as
- *  `summary` and the webui renders it as `resultPreview`, truncated at 120
- *  (webui/hooks/cycle-helpers.ts). A receipt over the cap gets cut mid-sentence
- *  in the user's transcript. Not config — it mirrors a UI constant. */
+/** Longest a background receipt may be. The stored `tool_result` is MODEL-ONLY
+ *  text — tool entries are replayed to the provider by `model-projection.ts`
+ *  and reach no client feed at all — so this is a CONTEXT-BUDGET guard, not a
+ *  UI one: a dispatch receipt is bookkeeping, and every character of it is
+ *  re-sent on every later iteration of the turn.
+ *
+ *  Not config, because it is not tunable: both receipt strings below are
+ *  gateway-authored templates that already come in well under it, so the slice
+ *  only ever fires on an unexpectedly long `taskId`. It is a defensive bound on
+ *  a fixed string, not a knob. */
 const BACKGROUND_RECEIPT_MAX = 120;
 
 /** The `tool_result` text a background dispatch is answered with.

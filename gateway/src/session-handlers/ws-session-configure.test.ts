@@ -39,6 +39,7 @@ import type { ToolBroker } from "../tools/tool-broker.js";
 import { type ReplayRegistry, createReplayRegistry } from "./replay-registry.js";
 import { mintSessionId } from "./session-id.js";
 import { createSessionRegistry } from "./session-registry.js";
+import { handleConversationActivate } from "./ws-conversation-activate.js";
 import { cleanupSession, handleWebSocketMessage } from "./ws-handlers.js";
 import { type SessionData, createEmptySessionData } from "./ws-helpers.js";
 import { sendConnectionFrame } from "./ws-send.js";
@@ -418,6 +419,51 @@ describe("handleSessionConfigure — committed-feed handshake", () => {
 
     expect(ws.sent.some((f) => f.type === "stream.resumed" && f.recovered === true)).toBe(true);
     expect(spy.taskListCalls).toBe(1); // unchanged
+  });
+
+  it("CONTRACT: conversation.activate publishes the task-list strip for the session it switched TO", () => {
+    // THE PATH THAT MATTERS MOST, and the one that had no strip publish at all.
+    // `conversation.activate` deliberately sends no committed snapshot — the
+    // client REST-refetches history — but it CAN land mid-turn, which is why it
+    // takes `completeAttachWithSnapshot(…, "client-refetch")` for the turn-state
+    // reconstruction. The strip is the same kind of answer and no REST route
+    // carries it either: a switch is exactly when the client cleared its own
+    // strip (TaskListConnector.clear), and the gateway's projector only re-emits
+    // on its OWN mutations (turn start / tool update / delegation progress /
+    // turn end). Without a push here, switching into a mid-turn conversation
+    // with a running tool shows an EMPTY strip until the next tool event.
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
+    const ws = fakeAuthedWs();
+    const accessManager = freshAccessManager();
+    const spy = servicesWithRuntime(registry, ws, accessManager);
+    const first = seedSession(accessManager, USER_ID, "first conversation");
+    const second = seedSession(accessManager, USER_ID, "second conversation");
+
+    configure(ws, spy.services, SURFACE_A, first);
+    expect(spy.taskListCalls).toBe(1);
+
+    handleConversationActivate(asWs(ws), spy.services, second);
+
+    expect(ws.sent.some((f) => f.type === "session.switched" && f.sessionId === second)).toBe(true);
+    expect(spy.taskListCalls).toBe(2);
+  });
+
+  it("CONTRACT: a no-op conversation.activate onto the SAME session does not re-publish the strip", () => {
+    // The duplicate-activate short circuit (double-click, a second window
+    // opening the row it is already on) returns before any re-attach, so there
+    // is no new window to answer and nothing to re-push.
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
+    const ws = fakeAuthedWs();
+    const accessManager = freshAccessManager();
+    const spy = servicesWithRuntime(registry, ws, accessManager);
+    const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
+
+    configure(ws, spy.services, SURFACE_A, sessionId);
+    expect(spy.taskListCalls).toBe(1);
+
+    handleConversationActivate(asWs(ws), spy.services, sessionId);
+
+    expect(spy.taskListCalls).toBe(1);
   });
 });
 

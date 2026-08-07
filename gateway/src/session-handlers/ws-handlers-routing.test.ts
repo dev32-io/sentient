@@ -148,6 +148,7 @@ function activateServices(runtime?: SessionRuntime): GatewayServices {
     runtime ??
     ({
       emitConversationSnapshot: () => {},
+      emitTaskList: () => {},
       dispose: () => {},
       turnState: EMPTY_TURN_STATE,
     } as unknown as SessionRuntime);
@@ -701,6 +702,7 @@ describe("ws-handlers routing — conversation.activate", () => {
     const sessionId = seedActivatableSession(services.accessManager, "u_deadbeef");
     const incumbentRuntime = {
       emitConversationSnapshot: () => {},
+      emitTaskList: () => {},
       turnState: EMPTY_TURN_STATE,
     } as unknown as SessionRuntime;
     const incumbentWs = fakeAuthedWs(incumbentRuntime);
@@ -775,6 +777,7 @@ function sessionScopedServices(brokerFor: (sessionId: string) => SessionPermissi
   const runtimeStub = {
     dispose: () => {},
     emitConversationSnapshot: () => {},
+    emitTaskList: () => {},
     turnState: EMPTY_TURN_STATE,
   } as unknown as SessionRuntime;
   return {
@@ -887,6 +890,7 @@ describe("ws-handlers routing — two windows, one turn", () => {
       bargeIn: () => {},
       interrupt: () => {},
       emitConversationSnapshot: () => {},
+      emitTaskList: () => {},
       cutUnheardSpeech: () => {},
       turnState: EMPTY_TURN_STATE,
     } as unknown as SessionRuntime;

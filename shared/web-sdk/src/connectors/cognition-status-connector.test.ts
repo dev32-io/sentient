@@ -51,4 +51,107 @@ describe("CognitionStatusConnector", () => {
     mock.emit("turn.aborted", { turnId: "t-2", cutoff: "interrupt" });
     expect(connector.state()).toBe("idle");
   });
+
+  it("reports acting while a FOREGROUND row is running and thinking again once it settles", () => {
+    mock.emit("turn.started", { turnId: "t-1", trigger: "user" });
+    mock.emit("tasklist.state", {
+      turnId: "t-1",
+      items: [
+        {
+          id: "c-1",
+          toolName: "home_assistant.get_state",
+          kind: "foreground",
+          status: "running",
+          argsPreview: "entity=light.kitchen",
+          startedAtMs: 1000,
+        },
+      ],
+    });
+    expect(connector.state()).toBe("acting");
+
+    // Full state, last-one-wins: the settled row replaces the running one.
+    mock.emit("tasklist.state", {
+      turnId: "t-1",
+      items: [
+        {
+          id: "c-1",
+          toolName: "home_assistant.get_state",
+          kind: "foreground",
+          status: "done",
+          argsPreview: "entity=light.kitchen",
+          startedAtMs: 1000,
+          endedAtMs: 1200,
+        },
+      ],
+    });
+    expect(connector.state()).toBe("thinking");
+  });
+
+  it("does not report acting for a BACKGROUND row alone — the loop is not waiting on it", () => {
+    // `delegateTask` is fire-and-steer: it outlives the turn that dispatched it,
+    // so counting it would pin cognition at acting for as long as the task runs.
+    // Its surface is DelegationProgressConnector, not this one.
+    mock.emit("turn.started", { turnId: "t-1", trigger: "user" });
+    mock.emit("tasklist.state", {
+      turnId: "t-1",
+      items: [
+        {
+          id: "task-1",
+          toolName: "delegateTask",
+          kind: "background",
+          status: "running",
+          argsPreview: "agent=hermes",
+          startedAtMs: 1000,
+        },
+      ],
+    });
+    expect(connector.state()).toBe("thinking");
+  });
+
+  it("goes idle when the turn ends even though a background row survives on the strip", () => {
+    mock.emit("turn.started", { turnId: "t-1", trigger: "user" });
+    mock.emit("tasklist.state", {
+      turnId: "t-1",
+      items: [
+        { id: "c-1", toolName: "search", kind: "foreground", status: "running", argsPreview: "", startedAtMs: 1000 },
+        {
+          id: "task-1",
+          toolName: "delegateTask",
+          kind: "background",
+          status: "running",
+          argsPreview: "",
+          startedAtMs: 1000,
+        },
+      ],
+    });
+    expect(connector.state()).toBe("acting");
+
+    // Foreground rows die with their turn at the source (runtime/task-list.ts);
+    // the background one rides on with a null turnId.
+    mock.emit("tasklist.state", {
+      turnId: null,
+      items: [
+        {
+          id: "task-1",
+          toolName: "delegateTask",
+          kind: "background",
+          status: "running",
+          argsPreview: "",
+          startedAtMs: 1000,
+        },
+      ],
+    });
+    mock.emit("turn.completed", { turnId: "t-1" });
+    expect(connector.state()).toBe("idle");
+  });
+
+  it("ignores a tasklist.state that arrives with no turn in flight", () => {
+    mock.emit("tasklist.state", {
+      turnId: null,
+      items: [
+        { id: "c-1", toolName: "search", kind: "foreground", status: "running", argsPreview: "", startedAtMs: 1000 },
+      ],
+    });
+    expect(connector.state()).toBe("idle");
+  });
 });

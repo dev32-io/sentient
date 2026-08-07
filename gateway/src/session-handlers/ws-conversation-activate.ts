@@ -119,10 +119,16 @@ export function handleConversationActivate(
   // `session.switched`, and a second source of truth for the same mirror would
   // race it. The TURN STATE is a different question and is sent: opening a
   // conversation that is mid-reply is the ordinary case for this frame, and no
-  // REST route carries `turn.started`, the text so far, a running tool tile or
-  // an open prompt — without them this window renders deltas for a turn it
-  // never saw start.
+  // REST route carries `turn.started`, the text so far or an open prompt —
+  // without them this window renders deltas for a turn it never saw start.
   completeAttachWithSnapshot(ws, services, "client-refetch");
+  // The strip is the same kind of answer, for the same reason — see
+  // ws-session-configure.ts's `sendConversationSnapshot`. It matters MOST here:
+  // a switch is exactly when the client cleared its own strip
+  // (TaskListConnector.clear), and the projector only re-emits on its own
+  // mutations, so without this a mid-turn conversation with a running tool
+  // shows an empty strip until the next tool event.
+  ws.data.runtime?.emitTaskList();
   log.info("conversation.activate.switched", { sessionId: connectionId, userId: principal.userId, targetSessionId });
   sendConnectionFrame(ws, { type: "session.switched", sessionId: targetSessionId, ts: Date.now() });
 }
