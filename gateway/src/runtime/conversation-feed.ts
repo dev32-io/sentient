@@ -181,11 +181,33 @@ function firstSeqOf(entries: readonly SessionEntry[], item: FeedItem): number {
   return Number(item.id);
 }
 
-/** The seq of the first entry belonging to [openReplyId], or null when no
- *  reply is open or none of its stretches are committed yet. */
-function openReplyStartSeq(entries: readonly SessionEntry[], openReplyId: string | null): number | null {
-  if (openReplyId === null) return null;
-  for (const e of entries) if (e.replyId === openReplyId) return e.seq;
+/**
+ * Is [item]'s content still going to change?
+ *
+ * THE ONE PLACE THE QUESTION IS ASKED. Both hold-back reasons live here, and
+ * both cursor writers consult it — `publish()` parks just below the first item
+ * that answers yes, `snapshot()` re-arms to the same boundary. Asking it in two
+ * places is how they drift, and a drifted cursor silently drops an item out of
+ * every attached window's feed for good.
+ */
+function isStillGrowing(item: FeedItem, unresolved: ReadonlySet<string>, openReplyId: string | null): boolean {
+  const isUnresolvedTool = unresolved.has(item.id);
+  const isOpenReply = openReplyId !== null && item.replyId === openReplyId;
+  return isUnresolvedTool || isOpenReply;
+}
+
+/** The seq of the first not-yet-final item in [entries], or null when every one
+ *  of them has settled. The cursor parks one below it.
+ *
+ *  [entries] must be the PENDING window (everything above the cursor), never
+ *  the whole session: a background `delegateTask`'s `tool_call` never gets a
+ *  `tool_result`, so over a full history this would answer with the first one
+ *  ever dispatched and rewind the cursor across the entire conversation. */
+function heldBackFromSeq(entries: readonly SessionEntry[], openReplyId: string | null): number | null {
+  const unresolved = unresolvedToolItemIds(entries);
+  for (const item of projectForClient(entries)) {
+    if (isStillGrowing(item, unresolved, openReplyId)) return firstSeqOf(entries, item);
+  }
   return null;
 }
 
@@ -249,8 +271,7 @@ export function createConversationFeed(deps: ConversationFeedDeps): Conversation
     let heldBackAtSeq: number | null = null;
     for (const item of projectForClient(tail)) {
       const isUnresolvedTool = unresolved.has(item.id);
-      const isOpenReply = openReplyId !== null && item.replyId === openReplyId;
-      if ((isUnresolvedTool || isOpenReply) && !force) {
+      if (isStillGrowing(item, unresolved, openReplyId) && !force) {
         heldBackAtSeq = firstSeqOf(tail, item);
         break;
       }
@@ -283,16 +304,20 @@ export function createConversationFeed(deps: ConversationFeedDeps): Conversation
       const entries = store.readSession(sessionId);
       const items = snapshotFeedItems(entries);
       emitter.conversationSnapshot(items);
-      // Re-armed at the tail — but NEVER above a reply that is still growing.
+      // Re-armed at the tail — but NEVER above an item that is still growing.
       // A snapshot is written to the ONE window that just attached, while the
-      // cursor is shared by every window on this session: parking it past an
-      // open reply would drop that reply's committed stretches out of every
-      // OTHER window's feed for good, and would later emit the reply's own id
-      // carrying nothing but its tail. Parking just below it costs the joiner
-      // one re-send of an item it already has under the same id, and keeps
-      // every frame that names a reply carrying the whole reply.
-      const openStart = openReplyStartSeq(entries, currentReplyId());
-      publishedThroughSeq = openStart === null ? lastSeqOf(entries, publishedThroughSeq) : openStart - 1;
+      // cursor is shared by every window on this session: parking it past a
+      // held-back item (an open reply, or a tool tile whose result has not
+      // landed) would drop that item out of every OTHER window's feed for good,
+      // and would later emit a reply's own id carrying nothing but its tail.
+      // Parking just below it costs the joiner one re-send of an item it
+      // already has under the same id.
+      //
+      // Asked of the PENDING window only, exactly as `publish` asks it — see
+      // `heldBackFromSeq` for why the full history is the wrong question.
+      const pending = entries.filter((e) => e.seq > publishedThroughSeq);
+      const heldFrom = heldBackFromSeq(pending, currentReplyId());
+      publishedThroughSeq = heldFrom === null ? lastSeqOf(entries, publishedThroughSeq) : heldFrom - 1;
       log.info("conversation-feed.snapshot", {
         userId,
         sessionId,

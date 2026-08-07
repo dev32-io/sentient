@@ -6,6 +6,7 @@ import { createAccessManager } from "../access/access-manager.js";
 import type { UserPrincipal } from "../identity/user-principal.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
 import type { ProviderClient, ProviderRequest, ProviderStreamChunk } from "../provider/provider-client.js";
+import { projectForClient } from "../store/client-projection.js";
 import type { CutoffKind } from "../store/entry-types.js";
 import { projectForModel } from "../store/model-projection.js";
 import type { TitleProvenance } from "../store/session-metadata.js";
@@ -1166,6 +1167,77 @@ describe("SessionRuntime — cancellation: interrupt during tool dispatch", () =
     expect(toolCallIds).toContain("call_cut");
 
     expect(emitter.events.some((e) => e.type === "turnAborted")).toBe(true);
+
+    runtime.dispose();
+  });
+
+  it("commits the cutoff under the reply it cuts off, so the cut turn is ONE bubble", async () => {
+    // The person watched ONE bubble grow and then stop. The store necessarily
+    // records two assistant rows for that — the narration the loop committed,
+    // and the cutoff marker cancellation.ts appends — so the cutoff row must
+    // carry the SAME replyId, or the committed feed draws a second bubble
+    // against a single live one and the cutoff lands on the wrong row.
+    const am = createAccessManager({ userDataRoot: `${ROOT}/case-cut-one-bubble` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = fakeProvider(async function* () {
+      yield { type: "text", content: "let me look that up" };
+      yield {
+        type: "tool_call",
+        toolCall: { id: "call_cut", type: "function", function: { name: "get_weather", arguments: "{}" } },
+      };
+      yield { type: "done", finishReason: "tool_calls" };
+    });
+
+    let dispatchStarted: (() => void) | undefined;
+    const dispatchReached = new Promise<void>((resolve) => {
+      dispatchStarted = resolve;
+    });
+    const broker = fakeBroker([weatherDef], async (inv) => {
+      dispatchStarted?.();
+      await new Promise<void>((resolve) => {
+        if (inv.signal.aborted) {
+          resolve();
+          return;
+        }
+        inv.signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+      return { content: "sunny", isError: false };
+    });
+
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-cut-one-bubble",
+      accessManager: am,
+      provider,
+      broker,
+      emitter: recordingEmitter(),
+      timeZone: { zone: () => "UTC" },
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "what is the weather?" });
+    await dispatchReached;
+    runtime.interrupt();
+    await waitUntilIdle(runtime);
+
+    const readback = openSessionStore(am.grant(alice, "session-store"));
+    const entries = readback.readSession("sess-cut-one-bubble");
+    readback.close();
+
+    // Two assistant ENTRIES — the narration and the marker — under one reply.
+    const assistantEntries = entries.filter((e) => e.kind === "assistant");
+    expect(assistantEntries).toHaveLength(2);
+    expect(new Set(assistantEntries.map((e) => e.replyId)).size).toBe(1);
+    expect(assistantEntries[0]?.replyId).not.toBeNull();
+
+    // ONE assistant ITEM, carrying the cut.
+    const assistantItems = projectForClient(entries).filter((i) => i.kind === "assistant");
+    expect(assistantItems).toHaveLength(1);
+    expect(assistantItems[0]?.text.startsWith("let me look that up")).toBe(true);
+    expect(assistantItems[0]?.cutoff).toBe("interrupt");
 
     runtime.dispose();
   });

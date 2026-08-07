@@ -133,6 +133,13 @@ export interface CancellationControllers {
 export interface CancellableTurn {
   turnId: string;
   controller: AbortController;
+  /** WHICH REPLY the cut-off text belongs to (session-runtime.ts's
+   *  `InFlightTurn.replyId`). The partial committed below is the last stretch
+   *  of the reply the person was watching, not a reply of its own: the client
+   *  projection folds every stretch sharing this id into ONE bubble and stamps
+   *  the cutoff on it (store/client-projection.ts). Committed without it, a
+   *  barge-in draws a second bubble against a single live one. */
+  replyId: string;
   /** Text streamed so far for the turn's current, not-yet-committed
    *  iteration. The runtime resets this to "" every time the loop itself
    *  commits an iteration's text (narration or terminal) — see
@@ -269,6 +276,10 @@ function commitCutoffEntry(
 
   const entry: NewSessionEntry = {
     ...blankEntry(deps.sessionId, turn.turnId),
+    // The reply this partial ENDS, never a new one — see `CancellableTurn`.
+    // The `tool_result`s closed above deliberately keep the blank's null: they
+    // are round-trip bookkeeping, not part of any bubble.
+    replyId: turn.replyId,
     kind: "assistant",
     text: turn.text,
     cutoff,

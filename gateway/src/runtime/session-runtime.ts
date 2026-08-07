@@ -455,6 +455,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
         ? {
             turnId: inFlight.turnId,
             controller: inFlight.controller,
+            replyId: inFlight.replyId,
             text: turnText,
             settled: inFlight.settled,
             // `lastProcessedSeq` is snapshotted to the store tail in

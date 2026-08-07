@@ -263,6 +263,42 @@ describe("conversation feed — wire convergence", () => {
     store.close();
   });
 
+  it("CONTRACT: a mid-turn snapshot does not park the cursor above a tool tile awaiting its result", () => {
+    // The no-narration shape: the model calls a tool without saying anything
+    // first, so NO committed entry carries the open reply id and the reply
+    // predicate alone finds nothing to hold. The TILE is still held back, and
+    // arming the cursor past it drops it out of every already-attached window's
+    // feed for good — its `tool_result` then arrives as an orphan the
+    // projection discards (`projection.dropped-tool-result-without-tile`),
+    // while a fresh snapshot still shows the tile. Live and replay disagree.
+    const store = openStoreFor("mid-turn-snapshot-tool");
+    const sink = recordingSink();
+    const feed = feedOver(store, sink, () => "r1");
+
+    store.append(entry({ kind: "user", text: "play music", createdAt: 8201 }));
+    store.append(
+      entry({ kind: "tool_call", toolCallId: "c1", toolName: "ma_play_media", toolArgs: "{}", createdAt: 8202 }),
+    );
+    feed.publishSettled();
+    expect(applyFrames(sink.frames).map((i) => i.kind)).toEqual(["user"]);
+
+    feed.snapshot(); // a second window attaches mid-turn
+    sink.frames.length = 0;
+
+    store.append(
+      entry({ kind: "tool_result", toolCallId: "c1", toolName: "ma_play_media", toolArgs: "ok", createdAt: 8203 }),
+    );
+    store.append(entry({ kind: "assistant", replyId: "r1", text: "Playing.", createdAt: 8204 }));
+    feed.publishAll();
+
+    expect(sink.frames.flatMap((f) => f.items).map((i) => [i.kind, i.entryId])).toEqual([
+      ["tool", "2"],
+      ["assistant", "r1"],
+    ]);
+    expect(applyFrames(sink.frames).map((i) => i.kind)).toEqual(["tool", "assistant"]);
+    store.close();
+  });
+
   it("CONTRACT: rotating the reply id releases the reply it closed, without waiting for the turn", () => {
     // The steer path (spec §4.5): the person speaks mid-turn, their row breaks
     // the bubble, and session-runtime.ts rotates the id — which is exactly what
