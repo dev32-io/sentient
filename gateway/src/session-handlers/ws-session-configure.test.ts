@@ -162,6 +162,9 @@ function frameTypes(ws: FakeWs): string[] {
 interface SnapshotSpy {
   services: GatewayServices;
   snapshotCalls: number;
+  /** How many times `emitTaskList` fired — the strip's own half of the same
+   *  attach-time publish `snapshotCalls` counts for the committed feed. */
+  taskListCalls: number;
 }
 
 /** Services whose runtime factory hands back a stub whose
@@ -170,13 +173,15 @@ interface SnapshotSpy {
  *  to session.ready is observable, not just the call count. Voice composition
  *  is short-circuited by `createSynthesizerFor: () => null`. */
 function servicesWithRuntime(replayRegistry: ReplayRegistry, ws: FakeWs, accessManager: AccessManager): SnapshotSpy {
-  const spy: SnapshotSpy = { snapshotCalls: 0, services: {} as GatewayServices };
+  const spy: SnapshotSpy = { snapshotCalls: 0, taskListCalls: 0, services: {} as GatewayServices };
   const runtime = {
     emitConversationSnapshot: () => {
       spy.snapshotCalls += 1;
       sendConnectionFrame(asWs(ws), { type: "conversation.snapshot", items: [] });
     },
-    emitTaskList: () => {},
+    emitTaskList: () => {
+      spy.taskListCalls += 1;
+    },
     dispose: () => {},
     turnState: EMPTY_TURN_STATE,
   } as unknown as SessionRuntime;
@@ -369,6 +374,50 @@ describe("handleSessionConfigure — committed-feed handshake", () => {
     expect(frameTypes(ws)).toEqual(["session.attached", "stream.resumed", "session.ready", "conversation.snapshot"]);
     expect(ws.sent[1]?.recovered).toBe(false);
     expect(spy.snapshotCalls).toBe(1);
+  });
+
+  it("CONTRACT: a non-recovered session.configure publishes the task-list strip exactly once", () => {
+    // The strip's own attach-time publish (SessionRuntime.emitTaskList) rides
+    // beside conversation.snapshot for the same reason: a fresh joiner has no
+    // other way to learn what is already running (runtime/task-list.ts).
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
+    const ws = fakeAuthedWs();
+    const accessManager = freshAccessManager();
+    const spy = servicesWithRuntime(registry, ws, accessManager);
+    const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
+
+    configure(ws, spy.services, SURFACE_A, sessionId);
+
+    expect(spy.taskListCalls).toBe(1);
+  });
+
+  it("CONTRACT: a RECOVERED resume does not re-publish the task-list strip", () => {
+    // Mirrors the snapshot case above: the recovered replay already carries
+    // whatever tasklist.state frames were journaled while this window was
+    // away, so a second full-state push here would be redundant at best.
+    const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
+    const ws = fakeAuthedWs();
+    const accessManager = freshAccessManager();
+    const spy = servicesWithRuntime(registry, ws, accessManager);
+    const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
+
+    configure(ws, spy.services, SURFACE_A, sessionId);
+    expect(spy.taskListCalls).toBe(1);
+
+    handleSessionConfigure(
+      asWs(ws),
+      [],
+      "en",
+      spy.services,
+      "webui",
+      DEVICE_ID,
+      SURFACE_A,
+      { epoch: ws.data.epoch, lastSeq: 0 },
+      sessionId,
+    );
+
+    expect(ws.sent.some((f) => f.type === "stream.resumed" && f.recovered === true)).toBe(true);
+    expect(spy.taskListCalls).toBe(1); // unchanged
   });
 });
 

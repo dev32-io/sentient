@@ -205,8 +205,7 @@ export function createTurnStateTracker(sessionId: string): TurnStateTracker {
         taskList(turnId: string | null, items: TaskListItem[]) {
           // Pass-through: the strip is its own full-state broadcast, not part
           // of the reconstructed in-flight-turn snapshot a joiner is handed.
-          // Optional on the interface — see turn-emitter.ts's doc comment.
-          emitter.taskList?.(turnId, items);
+          emitter.taskList(turnId, items);
         },
         sessionTitle(title, provenance) {
           // Pass-through: a title is session METADATA, not turn state — a

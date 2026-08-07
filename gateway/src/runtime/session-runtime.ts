@@ -83,7 +83,9 @@
 //     connected user, because one tab reloaded.
 //   - the PUBLIC GESTURES. `submit` (the background-completion sink holds this
 //     runtime by reference), `bargeIn`, `interrupt`, `emitConversationSnapshot`,
-//     `emitTaskList`.
+//     `emitTaskList`, `noteDelegationProgress` (the delegation-progress
+//     forward-reference slot holds this runtime by reference too — see
+//     `bootstrap/phase-services.ts`).
 //
 // So every one of them is inert after `dispose()` — a WARN-logged no-op, not a
 // caught throw. Nothing is swallowed by that: a GENUINE store failure on a
@@ -114,7 +116,7 @@ import { type TurnOutcome, runTurn } from "./react-loop.js";
 import type { Stimulus } from "./stimulus.js";
 import { createTaskListProjector } from "./task-list.js";
 import { runTitler } from "./titler.js";
-import type { TurnEmitter } from "./turn-emitter.js";
+import type { DelegationProgress, TurnEmitter } from "./turn-emitter.js";
 import { type TurnStateSnapshot, type TurnStateTracker, createTurnStateTracker } from "./turn-state-snapshot.js";
 import type { TurnVoice, TurnVoiceStream } from "./turn-voice.js";
 
@@ -204,6 +206,22 @@ export interface SessionRuntime {
    *  session lane cannot clobber a peer's view — which is why the strip needs
    *  no connection-lane twin of its own. A no-op after `dispose()`. */
   emitTaskList(): void;
+  /**
+   * A background `delegateTask` dispatch changed status (spec §5.4). The ONLY
+   * way `TaskListProjector.onDelegationProgress` (runtime/task-list.ts) is
+   * reached: `delegation.progress` is surfaced from `tool-broker.ts`'s
+   * `dispatchBackground`, via a callback wired at BROKER CONSTRUCTION time —
+   * before this runtime exists (`bootstrap/phase-services.ts`), so the broker
+   * cannot call a method on this object directly. The composition root closes
+   * that loop with a forward-reference slot, exactly as it already does for
+   * `setBackgroundCompletionSink`.
+   *
+   * Without this, a background row is added to the strip (via the
+   * `onToolUpdate` promotion, task-list.ts) but nothing ever tells the
+   * projector the dispatch finished — the exact unbounded-growth failure the
+   * strip exists to prevent. A no-op after `dispose()`.
+   */
+  noteDelegationProgress(p: DelegationProgress): void;
   /**
    * An AUXILIARY TASK (spec §6) is running for this session — today, the
    * titler. Feeds task 8's retention term of the same name, so a session is
@@ -397,9 +415,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
    *  and once per attach so a window that joins mid-turn sees the live rows
    *  without a frame type of its own. */
   function publishTaskList(): void {
-    // Optional on the interface (turn-emitter.ts) — guarded so an emitter that
-    // predates the strip (a frozen test double) is still a valid TurnEmitter.
-    emitter.taskList?.(taskList.turnId(), taskList.items());
+    emitter.taskList(taskList.turnId(), taskList.items());
   }
 
   let lastProcessedSeq = 0;
@@ -1014,14 +1030,19 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   }
 
   /**
-   * Wraps a no-argument public gesture so it becomes a WARN-logged no-op once
-   * the runtime is disposed. Every one of them reaches the store (a cutoff
-   * append, a committed-feed publish, a snapshot read) and the handle is
-   * closed by then. `submit` keeps its own guard because it logs the stimulus
-   * kind it dropped. See this file's header.
+   * Wraps a public gesture so it becomes a WARN-logged no-op once the runtime
+   * is disposed. Every one of them reaches the store (a cutoff append, a
+   * committed-feed publish, a snapshot read) and the handle is closed by
+   * then. `submit` keeps its own guard because it logs the stimulus kind it
+   * dropped. See this file's header.
+   *
+   * GENERIC OVER ARGUMENTS, not just the no-arg gestures it started with:
+   * `noteDelegationProgress` takes a `DelegationProgress` payload, and
+   * duplicating the disposed-check for one parameterized gesture would be
+   * exactly the kind of drift this wrapper exists to prevent.
    */
-  function whenLive(op: string, gesture: () => void): () => void {
-    return () => {
+  function whenLive<A extends unknown[]>(op: string, gesture: (...args: A) => void): (...args: A) => void {
+    return (...args: A) => {
       if (disposed) {
         log.warn("session-runtime.gesture.disposed", {
           userId,
@@ -1031,7 +1052,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
         });
         return;
       }
-      gesture();
+      gesture(...args);
     };
   }
 
@@ -1082,6 +1103,9 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     interrupt: whenLive("interrupt", cancellation.interrupt),
     emitConversationSnapshot: whenLive("emitConversationSnapshot", () => feed.snapshot()),
     emitTaskList: whenLive("emitTaskList", publishTaskList),
+    noteDelegationProgress: whenLive("noteDelegationProgress", (p: DelegationProgress) => {
+      if (taskList.onDelegationProgress(p)) publishTaskList();
+    }),
     cutUnheardSpeech: whenLive("cutUnheardSpeech", () => {
       const cut = voice?.cancelAudio() ?? [];
       if (cut.length === 0) return;

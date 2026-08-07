@@ -34,7 +34,7 @@ import { type TemplateLoader, createTemplateLoader } from "../profile-store/temp
 import type { CreateSessionRuntime } from "../runtime/session-handles.js";
 import { createConfirmHook, createSessionPermissionBroker } from "../runtime/session-permission-broker.js";
 import type { SessionWorkSignals } from "../runtime/session-retention.js";
-import { createSessionRuntime as buildSessionRuntime } from "../runtime/session-runtime.js";
+import { type SessionRuntime, createSessionRuntime as buildSessionRuntime } from "../runtime/session-runtime.js";
 import { createTurnStateTracker } from "../runtime/turn-state-snapshot.js";
 import { createPolicyEngine } from "../security/policy-engine.js";
 import type { PolicyEngine } from "../security/policy-engine.js";
@@ -655,6 +655,20 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       close: () => {},
     };
 
+    // Forward reference: `createToolBroker` (immediately below) needs
+    // `onDelegationProgress` NOW, but the runtime whose task-list projector
+    // that callback must also feed does not exist until `buildSessionRuntime`
+    // returns, several statements later — the broker is one of ITS
+    // constructor arguments, not the other way around. Both statements live
+    // in this one function body, so a plain mutable slot closes the loop: the
+    // callback captures `runtimeRef` by reference and reads it lazily, well
+    // after `runtimeRef = runtime` (below) has filled it in. A DELEGATION
+    // dispatch is asynchronous by construction (fire-and-steer — see
+    // tool-broker.ts's `dispatchBackground`), so this callback can never fire
+    // before the assignment; the only caller who could observe `null` here is
+    // one invoking it synchronously during construction, and nothing does.
+    let runtimeRef: SessionRuntime | null = null;
+
     const broker = createToolBroker({
       mcp: mcpClient,
       policy: policyEngine,
@@ -673,7 +687,16 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       // session-global requestId, and turning an unanswerable decision back
       // into the `ConfirmUnavailableError` this seam is contracted on.
       requestConfirm: createConfirmHook(permissions, orchestratorCfg.permission.request_timeout_ms),
-      onDelegationProgress: (p) => emitter.delegationProgress(p),
+      // BOTH sides, always — the projector's row lifetime (runtime/task-list.ts)
+      // and the wire frame (turn-emitter.ts's `delegationProgress`) are two
+      // independent consumers of the same event, neither a replacement for the
+      // other. Dropping the emitter call would silently stop `delegation.progress`
+      // reaching the client; dropping the runtime call is the bug this round
+      // fixes (a background row that never leaves the strip).
+      onDelegationProgress: (p) => {
+        runtimeRef?.noteDelegationProgress(p);
+        emitter.delegationProgress(p);
+      },
     });
     void broker.definitions(); // kick off this session's own MCP list-tools warm-up now, not on the first turn.
 
@@ -745,6 +768,10 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       voice: voice ?? null,
       onWorkSettled,
     });
+    // Fills the slot `onDelegationProgress` above closed over — see that
+    // comment for why this is safe despite running after the broker (and its
+    // callback) already exist.
+    runtimeRef = runtime;
 
     // The session's OBSERVABLE WORK (task 8), assembled here because this is
     // the only scope holding all three producers. Every member a GETTER: the

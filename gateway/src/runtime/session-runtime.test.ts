@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import type { OrchestratorConfig } from "@sentient/config";
-import type { ConversationFeedItem } from "@sentient/protocol";
+import type { ConversationFeedItem, TaskListItem } from "@sentient/protocol";
 import { createAccessManager } from "../access/access-manager.js";
 import type { UserPrincipal } from "../identity/user-principal.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
@@ -2607,6 +2607,84 @@ describe("SessionRuntime — task list", () => {
     // …and the last publish, at the turn boundary, is empty: a foreground call
     // is awaited by the loop, so none of it outlives the turn.
     expect(lists[lists.length - 1]?.items ?? []).toEqual([]);
+    runtime.dispose();
+  });
+
+  // -------------------------------------------------------------------------
+  // The other half of the rule case 1 above pins: a BACKGROUND row (a
+  // `delegateTask`-shaped dispatch) is exactly what case 1 does NOT cover —
+  // it survives the turn boundary and clears only on a terminal
+  // `delegation.progress`, via `SessionRuntime.noteDelegationProgress`. This
+  // is the exact seam whose real wiring lives in `bootstrap/phase-services.ts`
+  // (a forward-reference slot closing the loop between `createToolBroker`'s
+  // constructor-time `onDelegationProgress` and the runtime it doesn't exist
+  // yet to call into) — this test exercises the runtime's half of that
+  // contract directly, independent of that wiring.
+  // -------------------------------------------------------------------------
+
+  it("a background dispatch survives the turn boundary and clears only on a terminal delegation.progress", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/tasklist-bg` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = fakeProvider(async function* (callIndex) {
+      if (callIndex === 1) {
+        yield {
+          type: "tool_call",
+          toolCall: { id: "call_bg", type: "function", function: { name: "delegate_task", arguments: "{}" } },
+        };
+        yield { type: "done", finishReason: "tool_calls" };
+        return;
+      }
+      yield { type: "text", content: "started the task" };
+      yield { type: "done", finishReason: "stop" };
+    });
+    const backgroundDef: ToolDefinition = {
+      name: "delegate_task",
+      description: "delegates to a background agent",
+      parameters: { type: "object", properties: {} },
+      category: "background",
+    };
+    // A `{ taskId }` return is exactly what promotes the row to "background"
+    // in the projector — see task-list.ts's promotion doc.
+    const broker = fakeBroker([backgroundDef], async () => ({ taskId: "task-1" }));
+    const emitter = recordingEmitter();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-tasklist-bg",
+      accessManager: am,
+      provider,
+      broker,
+      emitter,
+      timeZone: { zone: () => "UTC" },
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "start the music" });
+    await waitUntilIdle(runtime);
+
+    const dispatchedTurnId = emitter.events.find((e) => e.type === "turnStarted")?.turnId ?? "";
+
+    const listsAtBoundary = emitter.events.filter((e) => e.type === "taskList");
+    expect(listsAtBoundary.length).toBeGreaterThan(1);
+    const atBoundary = listsAtBoundary[listsAtBoundary.length - 1];
+    // Unlike the foreground case above, the strip no longer belongs to any
+    // turn (`turnId: null`, recorded here as "") but the row itself survives.
+    expect(atBoundary?.turnId).toBe("");
+    const rowsAtBoundary = (atBoundary?.items ?? []) as unknown as TaskListItem[];
+    expect(rowsAtBoundary).toHaveLength(1);
+    expect(rowsAtBoundary[0]?.id).toBe("task-1");
+    expect(rowsAtBoundary[0]?.kind).toBe("background");
+    expect(rowsAtBoundary[0]?.status).toBe("running");
+
+    // The delegation settles. This is the ONLY thing that clears it — nothing
+    // else in this runtime removes a background row.
+    runtime.noteDelegationProgress({ taskId: "task-1", turnId: dispatchedTurnId, agent: "hermes", status: "done" });
+
+    const afterSettle = emitter.events.filter((e) => e.type === "taskList").at(-1);
+    expect(afterSettle?.items ?? []).toEqual([]);
+
     runtime.dispose();
   });
 });

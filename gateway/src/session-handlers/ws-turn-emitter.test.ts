@@ -350,6 +350,44 @@ describe("createWsTurnEmitter — 2.0 wire contract", () => {
     ]);
   });
 
+  it("taskList sends the whole live strip under tasklist.state", () => {
+    const ws = fakeWs();
+    emitterFor(ws).taskList("turn-1", [
+      {
+        id: "c1",
+        toolName: "get_weather",
+        kind: "foreground",
+        status: "running",
+        argsPreview: "{}",
+        startedAtMs: 1000,
+      },
+    ]);
+    expect(ws.sent).toEqual([
+      {
+        type: "tasklist.state",
+        turnId: "turn-1",
+        items: [
+          {
+            id: "c1",
+            toolName: "get_weather",
+            kind: "foreground",
+            status: "running",
+            argsPreview: "{}",
+            startedAtMs: 1000,
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("taskList carries turnId: null when only background rows survive a finished turn", () => {
+    // The strip's own vocabulary for "no turn owns this list any more" —
+    // distinct from an EMPTY list, which is "nothing running at all".
+    const ws = fakeWs();
+    emitterFor(ws).taskList(null, []);
+    expect(ws.sent).toEqual([{ type: "tasklist.state", turnId: null, items: [] }]);
+  });
+
   it("CONTRACT: every JSON frame the emitter can produce survives gatewayMessageSchema", () => {
     // Definition-of-done pin. `sendGatewayFrame` writes `parsed.data`, so a
     // re-parse can never fail — the load-bearing assertion is the TYPE SET:
@@ -362,6 +400,9 @@ describe("createWsTurnEmitter — 2.0 wire contract", () => {
     emitter.turnStarted("turn-1", "user");
     emitter.textDelta("turn-1", "hi");
     emitter.toolUpdate("turn-1", { toolCallId: "c1", toolName: "search", status: "running", argsPreview: "{}" });
+    emitter.taskList("turn-1", [
+      { id: "c1", toolName: "search", kind: "foreground", status: "running", argsPreview: "{}", startedAtMs: 1000 },
+    ]);
     emitter.audioStart("turn-1", "pcm", 48000);
     emitter.audioFrame("turn-1", new Uint8Array([1])); // binary — must NOT appear below
     emitter.audioDone("turn-1");
@@ -389,6 +430,7 @@ describe("createWsTurnEmitter — 2.0 wire contract", () => {
       "turn.started",
       "turn.text.delta",
       "turn.tool.update",
+      "tasklist.state",
       "turn.audio.start",
       "turn.audio.done",
       "permission.request",

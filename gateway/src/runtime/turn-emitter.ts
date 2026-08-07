@@ -90,15 +90,16 @@ export interface TurnEmitter {
    * joiner all the same operation, and leaves the client with nothing to
    * reconcile. `turnId` is null when only background rows outlive their turn.
    *
-   * OPTIONAL, unlike every sibling on this interface — the one deliberate
-   * exception. `reply-bubble-convergence.test.ts` pins its own `CapturingEmitter`
-   * literal and is frozen (task 6 brief: do not edit it), so a REQUIRED method
-   * here would either break that file's typecheck or force an edit to a test
-   * this task must leave untouched. Every real implementation (below, and
-   * `ws-turn-emitter.ts`) still provides it; callers reach it through
-   * `?.()` for exactly this reason.
+   * REQUIRED, like every sibling on this interface (see this file's header:
+   * "an emitter method with no frame ... is a contract break, not a
+   * feature"). Every implementer — including hand-rolled test fixtures —
+   * must provide it; a missing one is a compile-time TS2741, which is the
+   * point: this interface has already shipped one silently-dropped-field bug
+   * from a hand-rolled full-emitter literal (192c6dbd), and an optional
+   * method here would remove exactly the compiler guard that class of bug
+   * needs.
    */
-  taskList?(turnId: string | null, items: TaskListItem[]): void;
+  taskList(turnId: string | null, items: TaskListItem[]): void;
   /**
    * This session's title changed (spec §6) — the gateway's OWN titling push,
    * not the echo of a client's rename (`sessions.renamed`).

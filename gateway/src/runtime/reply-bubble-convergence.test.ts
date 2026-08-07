@@ -179,6 +179,7 @@ function capturingEmitter(): CapturingEmitter {
     permissionRequest: () => {},
     permissionResolved: () => {},
     delegationProgress: () => {},
+    taskList: () => {},
     sessionTitle: () => {},
   };
 }

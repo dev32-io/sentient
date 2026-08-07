@@ -107,6 +107,7 @@ function stubRuntime(): StubRuntime {
     },
     emitConversationSnapshot: () => {},
     emitTaskList: () => {},
+    noteDelegationProgress: () => {},
     cutUnheardSpeech: () => {},
     turnState: EMPTY_TURN_STATE,
   };
