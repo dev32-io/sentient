@@ -32,14 +32,14 @@ describe("projectForClient", () => {
     ]);
   });
 
-  it("folds a tool_call + tool_result pair into ONE tile", () => {
+  it("renders NOTHING for a tool_call + tool_result pair", () => {
+    // Tool entries stay in the store forever for the MODEL projection; they are
+    // not user-facing. Live tool activity is the composer task strip.
     const out = projectForClient([
       e({ kind: "tool_call", toolCallId: "c1", toolName: "search", toolArgs: "{}" }),
       e({ kind: "tool_result", toolCallId: "c1", toolName: "search", toolArgs: '"done"' }),
     ]);
-    expect(out).toHaveLength(1);
-    expect(out[0]?.kind).toBe("tool");
-    expect(out[0]?.toolName).toBe("search");
+    expect(out).toEqual([]);
   });
 
   it("folds every stretch of one reply into ONE item named by its replyId", () => {
@@ -61,10 +61,7 @@ describe("projectForClient", () => {
     const answer = e({ kind: "assistant", replyId: "r1", text: "It is 20C." });
 
     const out = projectForClient([narration, toolCall, toolResult, answer]);
-    expect(out.map((i) => [i.kind, i.id, i.text])).toEqual([
-      ["assistant", "r1", "Checking. It is 20C."],
-      ["tool", String(toolCall.seq), '"20C"'],
-    ]);
+    expect(out.map((i) => [i.kind, i.id, i.text])).toEqual([["assistant", "r1", "Checking. It is 20C."]]);
   });
 
   it("does NOT fold two replies: a rotated id is a new bubble", () => {
@@ -129,26 +126,5 @@ describe("projectForClient", () => {
   it("drops an entry with an unknown kind instead of rendering it as user", () => {
     const out = projectForClient([e({ kind: "bogus_future_kind" as SessionEntry["kind"], text: "corrupt row" })]);
     expect(out).toEqual([]);
-  });
-
-  it("drops a malformed tool_call missing toolCallId", () => {
-    const out = projectForClient([e({ kind: "tool_call", toolCallId: null, toolName: "search" })]);
-    expect(out).toEqual([]);
-  });
-
-  it("drops an orphan tool_result with no matching tool_call tile", () => {
-    const out = projectForClient([e({ kind: "tool_result", toolCallId: "missing", toolArgs: '"done"' })]);
-    expect(out).toEqual([]);
-  });
-
-  it("first-wins on duplicate toolCallId: keeps the first tile, drops the second call", () => {
-    const out = projectForClient([
-      e({ kind: "tool_call", toolCallId: "c1", toolName: "search", toolArgs: "{}" }),
-      e({ kind: "tool_call", toolCallId: "c1", toolName: "search-again", toolArgs: "{}" }),
-      e({ kind: "tool_result", toolCallId: "c1", toolArgs: '"done"' }),
-    ]);
-    expect(out).toHaveLength(1);
-    expect(out[0]?.toolName).toBe("search");
-    expect(out[0]?.text).toBe('"done"');
   });
 });

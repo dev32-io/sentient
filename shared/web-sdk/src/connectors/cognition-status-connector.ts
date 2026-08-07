@@ -17,20 +17,25 @@ function readTurnId(msg: unknown): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// CognitionStatusConnector — collapses turn + tool lifecycle into one
-// UI-facing state.
+// CognitionStatusConnector — collapses turn lifecycle into one UI-facing state.
 //
 // Capability: "cognition.status"
 // Direction: status
 //
 // Receives (2.0 wire contract):
 //   turn.started / turn.completed / turn.aborted   → active-turn membership
-//   turn.tool.update                               → running-tool membership
 //
 // State function (pure, recomputed on every event):
-//   no active turns                    → "idle"
-//   active turns + a running tool call → "acting"
-//   active turns, no running tool      → "thinking"
+//   no active turns → "idle"
+//   active turns    → "thinking"
+//
+// "acting" IS UNREACHED, deliberately. It used to mean "a tool is running",
+// derived from the retired per-call tool-update frame. Live tool activity is
+// now the task strip (TaskListConnector / `tasklist.state`), which is a surface
+// of its own — re-deriving a coarse thinking/acting flag from it here would be
+// a second, lossier answer to a question the strip already answers exactly. The
+// member stays on CognitionState for parity with mobile-sdk's enum, where it
+// has always been unreached.
 //
 // MULTI-TURN (spec §7.2): membership is a SET of turnIds, not a single flag.
 // A follow-up turn can start before the previous one completes; going idle on
@@ -46,8 +51,6 @@ export class CognitionStatusConnector implements Connector {
   private currentState: CognitionState = "idle";
   /** Turns that have started and not yet completed or aborted. */
   private activeTurns = new Set<string>();
-  /** turnId → toolCallIds still running for that turn. */
-  private runningTools = new Map<string, Set<string>>();
 
   constructor(config: CognitionStatusConfig = {}) {
     this.config = config;
@@ -61,7 +64,6 @@ export class CognitionStatusConnector implements Connector {
   attach(sdk: SentientSDKInternal): void {
     this.currentState = "idle";
     this.activeTurns = new Set();
-    this.runningTools = new Map();
 
     this.unsubs.push(
       sdk.onMessage("turn.started", (msg: unknown) => {
@@ -74,26 +76,12 @@ export class CognitionStatusConnector implements Connector {
 
     this.unsubs.push(sdk.onMessage("turn.completed", (msg: unknown) => this.endTurn(msg, "turn.completed")));
     this.unsubs.push(sdk.onMessage("turn.aborted", (msg: unknown) => this.endTurn(msg, "turn.aborted")));
-
-    this.unsubs.push(
-      sdk.onMessage("turn.tool.update", (msg: unknown) => {
-        const m = msg as { turnId?: unknown; toolCallId?: unknown; status?: unknown };
-        const turnId = readTurnId(msg);
-        if (turnId === null || typeof m.toolCallId !== "string" || typeof m.status !== "string") return;
-        const tools = this.runningTools.get(turnId) ?? new Set<string>();
-        if (m.status === "running") tools.add(m.toolCallId);
-        else tools.delete(m.toolCallId);
-        this.runningTools.set(turnId, tools);
-        this.recompute("turn.tool.update", turnId);
-      }),
-    );
   }
 
   detach(): void {
     for (const unsub of this.unsubs) unsub();
     this.unsubs = [];
     this.activeTurns = new Set();
-    this.runningTools = new Map();
     this.currentState = "idle";
   }
 
@@ -101,25 +89,11 @@ export class CognitionStatusConnector implements Connector {
     const turnId = readTurnId(msg);
     if (turnId === null) return;
     this.activeTurns.delete(turnId);
-    // Drop the turn's tool set outright. A BACKGROUND tool (delegateTask) can
-    // still be running when its turn ends; keeping it here would pin cognition
-    // at "acting" forever. Background work has its own surface —
-    // DelegationProgressConnector.
-    this.runningTools.delete(turnId);
     this.recompute(trigger, turnId);
   }
 
-  private hasRunningTool(): boolean {
-    for (const tools of this.runningTools.values()) {
-      if (tools.size > 0) return true;
-    }
-    return false;
-  }
-
   private computeState(): CognitionState {
-    if (this.activeTurns.size === 0) return "idle";
-    if (this.hasRunningTool()) return "acting";
-    return "thinking";
+    return this.activeTurns.size === 0 ? "idle" : "thinking";
   }
 
   private recompute(trigger: string, turnId: string): void {

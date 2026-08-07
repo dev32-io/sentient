@@ -32,8 +32,8 @@ function assistantItem(content: string, ts = 2): ConversationFeedItem {
   return { entryId: `assistant:${ts}:${content}`, ts, kind: "assistant", content };
 }
 
-function toolItem(summary: string, ts = 3): ConversationFeedItem {
-  return { entryId: `tool:${ts}:${summary}`, ts, kind: "tool", toolName: "speak", status: "finished", summary };
+function triggerItem(summary: string, ts = 3): ConversationFeedItem {
+  return { entryId: `trigger:${ts}:${summary}`, ts, kind: "trigger", source: "background-completion", summary };
 }
 
 describe("ConversationHistoryConnector", () => {
@@ -74,10 +74,13 @@ describe("ConversationHistoryConnector", () => {
     internal.messageHandlers.get("conversation.snapshot")?.({ type: "conversation.snapshot", items: [] });
     internal.messageHandlers.get("conversation.entry")?.({ type: "conversation.entry", item: userItem("hi") });
     internal.messageHandlers.get("conversation.entry")?.({ type: "conversation.entry", item: assistantItem("hello") });
-    internal.messageHandlers.get("conversation.entry")?.({ type: "conversation.entry", item: toolItem("said hi") });
+    internal.messageHandlers.get("conversation.entry")?.({
+      type: "conversation.entry",
+      item: triggerItem("task finished"),
+    });
 
     expect(connector.items()).toHaveLength(3);
-    expect(connector.items().map((i) => i.kind)).toEqual(["user", "assistant", "tool"]);
+    expect(connector.items().map((i) => i.kind)).toEqual(["user", "assistant", "trigger"]);
     expect(onEntry).toHaveBeenCalledTimes(3);
     // 1 for snapshot + 3 for entries
     expect(onUpdate).toHaveBeenCalledTimes(4);

@@ -58,9 +58,6 @@ export type {
   InFlightMessageConnectorConfig,
 } from "./connectors/inflight-message-connector.ts";
 
-export { ToolStatusConnector } from "./connectors/tool-status-connector.ts";
-export type { ToolCallSnapshotItem, ToolStatusConnectorConfig } from "./connectors/tool-status-connector.ts";
-
 export { TaskListConnector } from "./connectors/task-list-connector.ts";
 export type { TaskListConnectorConfig } from "./connectors/task-list-connector.ts";
 

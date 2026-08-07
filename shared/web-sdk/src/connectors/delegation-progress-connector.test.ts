@@ -65,8 +65,8 @@ describe("DelegationProgressConnector", () => {
     ]);
   });
 
-  // The reconnect FSM, identical to the one ToolStatusConnector and
-  // ConversationHistoryConnector pin: a `recovered:true` resume replays ONLY
+  // The reconnect FSM, identical to the one ConversationHistoryConnector
+  // pins: a `recovered:true` resume replays ONLY
   // the frames the client missed, so a connector that wipes its state on
   // re-attach loses every row the gateway will never re-send. Delegated work
   // is the longest-lived thing on this wire — a Hermes task easily outlives the

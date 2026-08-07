@@ -77,7 +77,6 @@ describe("projection convergence", () => {
     // equality check below by construction.
     expect(liveFeed.map((i) => [i.kind, i.text])).toEqual([
       ["user", "weather?"],
-      ["tool", '{"temp":"20C"}'],
       ["assistant", "It is 20C."],
     ]);
 
@@ -86,13 +85,9 @@ describe("projection convergence", () => {
     // check below (both sides project the same full array), but would break
     // the moment the live side projects a tail instead (see the readSince
     // test below).
-    const [userEntry, toolCallEntry, , assistantEntry] = committed;
-    if (!userEntry || !toolCallEntry || !assistantEntry) throw new Error("fixture entries missing");
-    expect(liveFeed.map((i) => i.id)).toEqual([
-      String(userEntry.seq),
-      String(toolCallEntry.seq),
-      String(assistantEntry.seq),
-    ]);
+    const [userEntry, , , assistantEntry] = committed;
+    if (!userEntry || !assistantEntry) throw new Error("fixture entries missing");
+    expect(liveFeed.map((i) => i.id)).toEqual([String(userEntry.seq), String(assistantEntry.seq)]);
 
     // Replay: reopen and project from persisted state.
     const reopened = openSessionStore(cap);
@@ -148,9 +143,9 @@ describe("projection convergence", () => {
     const fullReplayFeed = projectForClient(reopened.readSession("conv3"));
     reopened.close();
 
-    // The tail covers tool_call + tool_result + assistant — the last three
-    // items of the full replay. Their ids must match by seq, even though
-    // the tail's own array positions start over at 0.
+    // The tail covers tool_call + tool_result + assistant; only the assistant
+    // renders, so it is the last item of the full replay. Its id must match by
+    // seq, even though the tail's own array positions start over at 0.
     const correspondingReplayIds = fullReplayFeed.slice(-liveTailFeed.length).map((i) => i.id);
     expect(liveTailFeed.map((i) => i.id)).toEqual(correspondingReplayIds);
   });
@@ -192,8 +187,8 @@ describe("projection convergence", () => {
       ),
     ];
 
-    const [firstEntry, , toolCallEntry] = committed;
-    if (!firstEntry || !toolCallEntry) throw new Error("fixture entries missing");
+    const firstEntry = committed[0];
+    if (!firstEntry) throw new Error("fixture entries missing");
     const tailFeed = projectForClient(store.readSince("conv4", firstEntry.seq));
     store.close();
 
@@ -205,7 +200,6 @@ describe("projection convergence", () => {
     expect(fullReplayFeed.map((i) => [i.kind, i.id, i.text])).toEqual([
       ["user", String(firstEntry.seq), "weather?"],
       ["assistant", "r1", "Checking. It is 20C."],
-      ["tool", String(toolCallEntry.seq), "20C"],
     ]);
     expect(tailFeed.map((i) => i.id)).toEqual(fullReplayFeed.slice(-tailFeed.length).map((i) => i.id));
   });

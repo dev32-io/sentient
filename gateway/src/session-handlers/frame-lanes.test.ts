@@ -39,7 +39,7 @@ describe("frameLane", () => {
       "turn.text.delta",
       "turn.completed",
       "turn.aborted",
-      "turn.tool.update",
+      "tasklist.state",
       "turn.audio.start",
       "turn.audio.done",
       "playback.stop",

@@ -39,7 +39,6 @@
 
 import type { TaskListItem, TurnAudioEncoding, TurnTrigger } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
-import type { ToolUpdate } from "./react-loop.js";
 import type { DelegationProgress, PermissionRequest, PermissionResolution, TurnEmitter } from "./turn-emitter.js";
 
 const log = getLog(["sentient", "runtime", "turn-state"]);
@@ -62,8 +61,6 @@ export interface TurnStateSnapshot {
    *  makes replaying the whole accumulation the faithful reconstruction rather
    *  than a duplicate. */
   readonly textSoFar: string;
-  /** Tool calls still shown as running, in the order they started. */
-  readonly tools: readonly ToolUpdate[];
   /** Permission prompts still awaiting an answer. */
   readonly prompts: readonly PermissionRequest[];
   /** The audio bracket that is open, or null. Bytes are NEVER part of this. */
@@ -76,7 +73,6 @@ export const EMPTY_TURN_STATE: TurnStateSnapshot = {
   activeTurnId: null,
   trigger: null,
   textSoFar: "",
-  tools: [],
   prompts: [],
   audio: null,
 };
@@ -111,7 +107,6 @@ export function createTurnStateTracker(sessionId: string): TurnStateTracker {
   let trigger: TurnTrigger | null = null;
   let textSoFar = "";
   let audio: TurnStateAudio | null = null;
-  const tools = new Map<string, ToolUpdate>();
   const prompts = new Map<string, PermissionRequest>();
 
   /** A turn ended (completed or aborted). The audio bracket deliberately
@@ -122,7 +117,6 @@ export function createTurnStateTracker(sessionId: string): TurnStateTracker {
     activeTurnId = null;
     trigger = null;
     textSoFar = "";
-    tools.clear();
   }
 
   return {
@@ -132,7 +126,6 @@ export function createTurnStateTracker(sessionId: string): TurnStateTracker {
           activeTurnId = turnId;
           trigger = t;
           textSoFar = "";
-          tools.clear();
           emitter.turnStarted(turnId, t);
         },
         // EVERY parameter forwarded. A pass-through wrapper that declares fewer
@@ -144,11 +137,6 @@ export function createTurnStateTracker(sessionId: string): TurnStateTracker {
         textDelta(turnId: string, text: string, replyId?: string) {
           if (turnId === activeTurnId) textSoFar += text;
           emitter.textDelta(turnId, text, replyId);
-        },
-        toolUpdate(turnId: string, u: ToolUpdate) {
-          if (u.status === "running") tools.set(u.toolCallId, u);
-          else tools.delete(u.toolCallId);
-          emitter.toolUpdate(turnId, u);
         },
         turnCompleted(turnId: string) {
           endTurn(turnId);
@@ -191,20 +179,12 @@ export function createTurnStateTracker(sessionId: string): TurnStateTracker {
           emitter.permissionResolved(res);
         },
         delegationProgress(p: DelegationProgress) {
-          // A background dispatch's tile never reaches a terminal
-          // `turn.tool.update` — its completion arrives here instead — so
-          // without this the joiner would see a finished delegation as still
-          // running for the rest of the session.
-          if (p.status !== "running") {
-            for (const [toolCallId, u] of tools) {
-              if (u.taskId === p.taskId) tools.delete(toolCallId);
-            }
-          }
           emitter.delegationProgress(p);
         },
         taskList(turnId: string | null, items: TaskListItem[]) {
-          // Pass-through: the strip is its own full-state broadcast, not part
-          // of the reconstructed in-flight-turn snapshot a joiner is handed.
+          // Pass-through: the strip is its own full-state broadcast, re-sent to
+          // a joining window by ws-session-configure.ts, not part of the
+          // reconstructed in-flight-turn snapshot.
           emitter.taskList(turnId, items);
         },
         sessionTitle(title, provenance) {
@@ -221,7 +201,6 @@ export function createTurnStateTracker(sessionId: string): TurnStateTracker {
         activeTurnId,
         trigger,
         textSoFar,
-        tools: [...tools.values()],
         prompts: [...prompts.values()],
         audio,
       };
@@ -230,7 +209,6 @@ export function createTurnStateTracker(sessionId: string): TurnStateTracker {
         turnId: activeTurnId,
         trigger,
         textLength: textSoFar.length,
-        runningTools: snap.tools.length,
         openPrompts: snap.prompts.length,
         audioTurnId: audio?.turnId ?? null,
       });

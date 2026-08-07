@@ -160,10 +160,9 @@ private fun committedMessage(item: ConversationFeedItem): ChatMessage? = when (i
             entryId = item.entryId,
         )
 
-    // Tool items never render as rows — tool activity lives in the composer
-    // task strip (tasklist.state), not the chat list. Trigger entries are
-    // Phase-2 sensor events.
-    is ConversationFeedItem.Tool -> null
+    // Trigger entries are Phase-2 sensor events. (There is no tool item on the
+    // feed at all: tool activity lives in the composer task strip,
+    // tasklist.state, not the chat list.)
     is ConversationFeedItem.Trigger -> null
 }
 

@@ -88,26 +88,6 @@ describe("turn-state tracker", () => {
     expect(tracker.snapshot().audio).toBeNull();
   });
 
-  it("keeps a running tool call and drops it when it finishes", () => {
-    const { tracker, emit } = tracked();
-    emit.turnStarted("t1", "user");
-    emit.toolUpdate("t1", { toolCallId: "tc1", toolName: "web_search", status: "running" });
-    expect(tracker.snapshot().tools.map((t) => t.toolCallId)).toEqual(["tc1"]);
-    emit.toolUpdate("t1", { toolCallId: "tc1", toolName: "web_search", status: "done" });
-    expect(tracker.snapshot().tools).toHaveLength(0);
-  });
-
-  it("drops a background tool tile on its delegation completion, not on a tool update", () => {
-    // A background dispatch NEVER reaches a terminal `turn.tool.update` — its
-    // completion arrives as `delegation.progress` — so without this the joiner
-    // sees a finished delegation as still running for the rest of the session.
-    const { tracker, emit } = tracked();
-    emit.turnStarted("t1", "user");
-    emit.toolUpdate("t1", { toolCallId: "tc1", toolName: "delegateTask", status: "running", taskId: "task-1" });
-    emit.delegationProgress({ taskId: "task-1", turnId: "t1", agent: "hermes", status: "done" });
-    expect(tracker.snapshot().tools).toHaveLength(0);
-  });
-
   it("keeps an open permission prompt and drops it on resolution", () => {
     const { tracker, emit } = tracked();
     const req = {

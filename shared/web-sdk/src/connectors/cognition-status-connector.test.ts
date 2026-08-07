@@ -51,43 +51,4 @@ describe("CognitionStatusConnector", () => {
     mock.emit("turn.aborted", { turnId: "t-2", cutoff: "interrupt" });
     expect(connector.state()).toBe("idle");
   });
-
-  it("reports acting while a tool call is running and thinking again when it finishes", () => {
-    mock.emit("turn.started", { turnId: "t-1", trigger: "user" });
-    mock.emit("turn.tool.update", {
-      turnId: "t-1",
-      toolCallId: "tc-1",
-      toolName: "home_assistant.get_state",
-      status: "running",
-      argsPreview: "entity=light.kitchen",
-      startedAtMs: 1000,
-    });
-    expect(connector.state()).toBe("acting");
-
-    mock.emit("turn.tool.update", {
-      turnId: "t-1",
-      toolCallId: "tc-1",
-      toolName: "home_assistant.get_state",
-      status: "done",
-      argsPreview: "entity=light.kitchen",
-      startedAtMs: 1000,
-      endedAtMs: 1200,
-    });
-    expect(connector.state()).toBe("thinking");
-  });
-
-  it("does not pin acting when a background tool outlives its turn", () => {
-    mock.emit("turn.started", { turnId: "t-1", trigger: "user" });
-    mock.emit("turn.tool.update", {
-      turnId: "t-1",
-      toolCallId: "tc-bg",
-      toolName: "delegateTask",
-      status: "running",
-      taskId: "task-1",
-      argsPreview: "agent=hermes",
-      startedAtMs: 1000,
-    });
-    mock.emit("turn.completed", { turnId: "t-1" });
-    expect(connector.state()).toBe("idle");
-  });
 });

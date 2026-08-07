@@ -21,18 +21,6 @@ function assistantEntry(content: string, ts: number, turnId?: string): Committed
   return turnId === undefined ? base : { ...base, turnId };
 }
 
-function toolEntry(toolName: string, ts: number, turnId?: string): CommittedFeedItem {
-  const base: CommittedFeedItem = {
-    entryId: `e-${ts}`,
-    ts,
-    kind: "tool",
-    toolName,
-    status: "finished",
-    summary: `${toolName} result`,
-  };
-  return turnId === undefined ? base : { ...base, turnId };
-}
-
 function triggerEntry(summary: string, ts: number): CommittedFeedItem {
   return { entryId: `e-${ts}`, ts, kind: "trigger", source: "background-completion", summary };
 }
@@ -45,15 +33,6 @@ describe("cycle-helpers — one bubble per reply", () => {
     const out = deriveMessages(items as never, []);
     expect(out).toHaveLength(1);
     expect(out[0]?.text).toBe("one reply, already whole");
-  });
-
-  it("never renders a tool feed item as its own bubble — the composer task strip owns tool rows now", () => {
-    const messages = deriveMessages(
-      [userEntry("weather?", 1), toolEntry("get_weather", 2), assistantEntry("20°", 3)],
-      [],
-    );
-
-    expect(messages.map((m) => m.text)).toEqual(["weather?", "20°"]);
   });
 });
 
@@ -82,12 +61,7 @@ describe("cycle-helpers — background completions", () => {
     // message it is not a person taking the floor, so it must not close the
     // turn early or otherwise break the reply that follows.
     const messages = deriveMessages(
-      [
-        userEntry("delegate it", 1),
-        toolEntry("delegateTask", 2),
-        triggerEntry("Background task t1 completed.", 3),
-        assistantEntry("here it is", 4),
-      ],
+      [userEntry("delegate it", 1), triggerEntry("Background task t1 completed.", 3), assistantEntry("here it is", 4)],
       [],
     );
 

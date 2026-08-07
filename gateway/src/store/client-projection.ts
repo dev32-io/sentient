@@ -1,8 +1,8 @@
 // Client projection (spec §3.2, §3.4) — entries → renderable feed items.
 //
 // Renders the FULL history: compaction shrinks what the MODEL replays, never
-// what the user sees. A tool_call and its tool_result fold into one tile, and
-// every assistant stretch of ONE reply folds into one bubble.
+// what the user sees. Every assistant stretch of ONE reply folds into one
+// bubble.
 //
 // This function is the ONLY path from stored state to client feed, for both
 // live commits and replay — that single-path property is what makes the
@@ -14,7 +14,7 @@ import { unscopePendingId } from "./pending-id-scope.js";
 
 const log = getLog(["sentient", "store", "client-projection"]);
 
-export type FeedItemKind = "user" | "trigger" | "assistant" | "tool";
+export type FeedItemKind = "user" | "trigger" | "assistant";
 
 export interface FeedItem {
   /** Stable identity for the item — the seq of the entry that created it, or,
@@ -22,7 +22,6 @@ export interface FeedItem {
   id: string;
   kind: FeedItemKind;
   text: string;
-  toolName: string | null;
   cutoff: CutoffKind | null;
   createdAt: number;
   /** The client's own id for this message, on a `user` item that arrived with
@@ -36,64 +35,16 @@ export interface FeedItem {
 
 export function projectForClient(entries: readonly SessionEntry[]): FeedItem[] {
   const items: FeedItem[] = [];
-  const toolItemIndexByCallId = new Map<string, number>();
   const replyItemIndexByReplyId = new Map<string, number>();
 
   for (const entry of entries) {
+    // Tool entries are the MODEL's record of what it called, replayed to it by
+    // the model projection. They are not user-facing artifacts: live tool
+    // activity is the composer task strip (runtime/task-list.ts), which is
+    // ephemeral by design. Keeping them here is what forced a tile to anchor to
+    // a bubble, and that anchor is what broke once a steer could split a reply.
     if (entry.kind === "system" || entry.kind === "compaction") continue;
-
-    if (entry.kind === "tool_call") {
-      if (!entry.toolCallId) {
-        log.warn("projection.dropped-malformed-tool-call", {
-          reason: "malformed-tool-call",
-          seq: entry.seq,
-        });
-        continue;
-      }
-      if (toolItemIndexByCallId.has(entry.toolCallId)) {
-        // First tile wins; a repeat call id would otherwise overwrite the
-        // index and orphan the first tile's result fold.
-        log.warn("projection.dropped-duplicate-tool-call", {
-          reason: "duplicate-tool-call-id",
-          toolCallId: entry.toolCallId,
-          seq: entry.seq,
-        });
-        continue;
-      }
-      toolItemIndexByCallId.set(entry.toolCallId, items.length);
-      items.push({
-        id: String(entry.seq),
-        kind: "tool",
-        text: "",
-        toolName: entry.toolName,
-        cutoff: null,
-        createdAt: entry.createdAt,
-        pendingId: null,
-        replyId: null,
-      });
-      continue;
-    }
-
-    if (entry.kind === "tool_result") {
-      // Fold into the existing tile so replay cannot produce an extra one.
-      // Anchoring rule: the tile keeps the POSITION and createdAt of its
-      // tool_call — a late-arriving result folds BACKWARD into that
-      // original slot rather than appending a new tile at its own position.
-      // This is what makes convergence hold regardless of how much later
-      // the result lands relative to the call.
-      const idx = entry.toolCallId ? toolItemIndexByCallId.get(entry.toolCallId) : undefined;
-      if (idx === undefined) {
-        log.warn("projection.dropped-tool-result-without-tile", {
-          reason: "tool-result-without-tile",
-          toolCallId: entry.toolCallId,
-          seq: entry.seq,
-        });
-        continue;
-      }
-      const existing = items[idx];
-      if (existing) items[idx] = { ...existing, text: entry.toolArgs ?? "" };
-      continue;
-    }
+    if (entry.kind === "tool_call" || entry.kind === "tool_result") continue;
 
     let kind: "user" | "trigger" | "assistant";
     switch (entry.kind) {
@@ -122,18 +73,17 @@ export function projectForClient(entries: readonly SessionEntry[]): FeedItem[] {
     // committed feed agree with the live stream instead of asking three
     // clients to re-derive the grouping and disagree about it.
     //
-    // Keyed by `replyId`, NOT by adjacency: a tool tile still sits between two
-    // stretches of the same reply today (it leaves the feed later in this
-    // plan), so an adjacency rule would fold nothing on the exact turn shape
-    // this exists for. The key is safe because the gateway ROTATES the id the
-    // moment a rendered row breaks the bubble — a message the person sends
-    // mid-turn (session-runtime.ts) — so two stretches sharing an id are, by
-    // construction, one bubble.
+    // Keyed by `replyId`, NOT by adjacency: the stretches of one reply are not
+    // adjacent in the store — the tool_call and tool_result entries that
+    // separated them are still there, they simply no longer render. The key is
+    // safe because the gateway ROTATES the id the moment a rendered row breaks
+    // the bubble — a message the person sends mid-turn (session-runtime.ts) —
+    // so two stretches sharing an id are, by construction, one bubble.
     //
-    // Same anchoring rule as the tool fold above: a later stretch folds
-    // BACKWARD into the first stretch's slot, keeping its position and
-    // createdAt, which is what makes a replay agree with what the live stream
-    // showed regardless of what landed between the stretches.
+    // ANCHORING: a later stretch folds BACKWARD into the first stretch's slot,
+    // keeping its position and createdAt, which is what makes a replay agree
+    // with what the live stream showed regardless of what landed between the
+    // stretches.
     if (kind === "assistant" && entry.replyId !== null) {
       const foldIndex = replyItemIndexByReplyId.get(entry.replyId);
       const previous = foldIndex === undefined ? undefined : items[foldIndex];
@@ -158,7 +108,6 @@ export function projectForClient(entries: readonly SessionEntry[]): FeedItem[] {
       id: kind === "assistant" && entry.replyId !== null ? entry.replyId : String(entry.seq),
       kind,
       text: entry.text ?? "",
-      toolName: null,
       cutoff: entry.cutoff,
       createdAt: entry.createdAt,
       // The CLIENT's own value, not the store key. `pending_id` is namespaced

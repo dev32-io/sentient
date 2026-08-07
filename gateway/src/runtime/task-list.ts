@@ -113,19 +113,17 @@ export function createTaskListProjector(deps: TaskListProjectorDeps): TaskListPr
 
       const id = update.taskId ?? update.toolCallId;
 
-      // PROMOTION. The wire schema's comment (messages.ts:481-484) and
-      // ToolUpdate's own doc (react-loop.ts:66-69) both claim taskId appears
-      // on a background dispatch's SINGLE "running" update — but
-      // dispatchToolCalls (react-loop.ts:242-339) does not honor that. It
-      // fires a toolCallId-keyed "running" update right after appending the
-      // tool_call and BEFORE broker.dispatch() resolves (react-loop.ts:269 —
-      // no taskId yet, nobody knows the call is background), then a SECOND
-      // update once appendBackgroundReceipt sees the resolved taskId
-      // (react-loop.ts:203-219, the actual emit is line 218). Left alone
-      // those two land under two different keys: a phantom foreground row
-      // stuck at "running" forever, next to the real background row. Fold
-      // the placeholder into the promoted row instead — same call, same
-      // actual start time — so the strip only ever shows one tile for it.
+      // PROMOTION. A background dispatch fires `onToolUpdate` TWICE, and the
+      // two calls carry different keys. `dispatchToolCalls` fires a
+      // toolCallId-keyed "running" update right after appending the tool_call
+      // and BEFORE `broker.dispatch()` resolves — no taskId yet, nobody knows
+      // the call is background — then `appendBackgroundReceipt` fires a SECOND
+      // "running" update once the resolved taskId exists. Left alone those two
+      // land under two different keys: a phantom foreground row stuck at
+      // "running" forever, next to the real background row. Fold the
+      // placeholder into the promoted row instead — same call, same actual
+      // start time — so the strip only ever shows one row for it.
+      // `ToolUpdate`'s doc (react-loop.ts) states this two-call sequence.
       const placeholderId = isBackground && update.toolCallId !== id ? update.toolCallId : null;
       const placeholder = placeholderId !== null ? rows.get(placeholderId) : undefined;
       const existing = rows.get(id);

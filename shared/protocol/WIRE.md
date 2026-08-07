@@ -106,7 +106,7 @@ conversation. Within each path `entryId` dedups; the resume replay dedupes by
 The `conversation.entry` FRAME carries an optional `turnId` (sibling of `item`)
 — the gateway-owned id of the turn that produced the entry. It is **stripped from
 the item** (the item is a UI-display projection) but present on the frame for
-assistant/tool entries. This is the join key between a live streaming bubble
+assistant entries. This is the join key between a live streaming bubble
 (`turn.text.delta` / `turn.completed`, which carry `turnId`) and its committed
 entry: the client renders ONE bubble per reply by suppressing the committed twin
 while its bubble reveals, matched by exact `turnId`. **Clients read it off the
@@ -120,6 +120,13 @@ wholesale. `cycle.*`, `message.delta`/`message.done`, `connector.audio.*`,
 `task.update`, `tool.confirm_request`, and `cognition.status` are **deleted** —
 not deprecated. Nothing emits or parses them.
 
+`turn.tool.update` — a 2.0 frame in its own right — is **deleted** too, along
+with the `kind: "tool"` conversation feed item. Live tool activity is one
+full-state `tasklist.state` frame; the gateway owns which rows exist and how
+long each lives, so no client derives tile lifetime or bubble anchoring any
+more. Tool calls stay in the store forever for the MODEL projection; they are
+simply not client-facing.
+
 ### Gateway → client
 
 | Frame | Payload | Notes |
@@ -128,7 +135,7 @@ not deprecated. Nothing emits or parses them.
 | `turn.text.delta` | `turnId`, `text` | `turnId` is **required**. Its absence in the Plan-2 interim frame made §7.2's back-to-back turns unroutable. |
 | `turn.completed` | `turnId` | |
 | `turn.aborted` | `turnId`, `cutoff` | `cutoff` is `interrupt` or `barge-in`. |
-| `turn.tool.update` | `turnId`, `toolCallId`, `toolName`, `status`, `taskId?`, `argsPreview`, `startedAtMs`, `endedAtMs?` | `toolCallId` is the tile dedupe key. `taskId` appears only on a background dispatch's `running` update. |
+| `tasklist.state` | `turnId` (nullable), `items[]` of `{ id, toolName, kind, status, argsPreview, startedAtMs, endedAtMs? }` | FULL STATE, last-one-wins. `id` is the `toolCallId` for a foreground row, the `taskId` for a background one. `turnId` is null when only background rows outlive their turn. |
 | `turn.audio.start` | `turnId`, `encoding`, `sampleRate` | Does **not** stop a previous turn's audio. |
 | `turn.audio.done` | `turnId` | |
 | `permission.request` | `requestId`, `toolCallId`, `toolName`, `args`, `description`, `expiresAtMs` | Carries real argument VALUES — authorization is value-aware (§2.2). |

@@ -36,20 +36,19 @@ export interface DelegationProgressConnectorConfig {
 // order. Terminal rows stay in the list; the UI filters if it wants only
 // running work.
 //
-// Join key: `ToolCallSnapshotItem.taskId` (from turn.tool.update) is the same
-// id, so the UI can attach progress to the tool pill that launched it.
+// Join key: a background `TaskListItem.id` (tasklist.state) IS the taskId, so
+// the UI can attach progress to the strip row that launched it.
 //
 // CACHE LIFETIME — attach/detach are TRANSPORT lifecycle, not session
 // lifecycle, so neither touches the task map. Same rule, same reason, as
-// ToolStatusConnector's own CACHE LIFETIME header and
 // ConversationHistoryConnector's mirror: a reconnect detaches every connector
 // (sdk-close-handler.teardownWsForReconnect) and re-attaches them on the next
 // session.ready, and the `recovered:true` resume then replays ONLY the frames
 // the client missed. Clearing here dropped every row the client had already
 // seen, and the gateway never re-sends those.
 //
-// The stakes are higher on this connector than on the live tool cache.
-// Delegated work is the longest-lived thing on this wire — `delegateTask` is
+// The stakes are higher on this connector than on the task strip, which is
+// ephemeral by design. Delegated work is the longest-lived thing on this wire — `delegateTask` is
 // fire-and-steer, so a Hermes task routinely outlives the socket that
 // dispatched it and reports its completion on a LATER turn. Wiping the map on
 // reconnect stranded exactly that work: its `running` row vanished, and the

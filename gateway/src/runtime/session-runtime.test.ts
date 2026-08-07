@@ -143,7 +143,6 @@ interface RecordedEvent {
   type:
     | "turnStarted"
     | "textDelta"
-    | "toolUpdate"
     | "turnCompleted"
     | "turnAborted"
     | "playbackStop"
@@ -179,7 +178,6 @@ function recordingEmitter(): RecordingEmitter {
     sessionTitle: (title, provenance) => titles.push({ title, provenance }),
     turnStarted: (turnId) => events.push({ type: "turnStarted", turnId }),
     textDelta: (turnId) => events.push({ type: "textDelta", turnId }),
-    toolUpdate: (turnId) => events.push({ type: "toolUpdate", turnId }),
     turnCompleted: (turnId) => events.push({ type: "turnCompleted", turnId }),
     turnAborted: (turnId, cutoff) => events.push({ type: "turnAborted", turnId, cutoff }),
     playbackStop: (turnId, reason) => events.push({ type: "playbackStop", turnId, cutoff: reason }),
@@ -828,7 +826,6 @@ describe("SessionRuntime — isolation", () => {
       sessionTitle: (title, provenance) => titles.push({ title, provenance }),
       turnStarted: (t) => events.push({ type: "turnStarted", turnId: t }),
       textDelta: (t) => events.push({ type: "textDelta", turnId: t }),
-      toolUpdate: (t) => events.push({ type: "toolUpdate", turnId: t }),
       turnCompleted: (t) => {
         events.push({ type: "turnCompleted", turnId: t });
         // Submit TWICE: the first re-entrant submit starts a turn (setting

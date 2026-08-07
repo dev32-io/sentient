@@ -22,10 +22,10 @@ export interface TaskListConnectorConfig {
 // a replayed frame, a fan-out to a second window, and a late joiner's attach
 // are the same operation.
 //
-// Replaces the retired ToolStatusConnector for new consumers (ToolStatusConnector
-// itself stays in place until the webui migrates off it), which held tool
-// calls forever and left every consumer deriving which bubble a pill belonged
-// to.
+// The one live-tool surface. Its retired predecessor mirrored a per-call
+// tool-update frame: it held tool calls forever and left every consumer
+// deriving which bubble a pill belonged to. Both that frame and that connector
+// are gone — see shared/protocol/WIRE.md for the deleted-frame register.
 // ---------------------------------------------------------------------------
 
 export class TaskListConnector implements Connector {

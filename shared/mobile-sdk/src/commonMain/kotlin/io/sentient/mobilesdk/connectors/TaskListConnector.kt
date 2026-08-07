@@ -8,9 +8,11 @@
 // a replayed frame, a fan-out to a second window and a late joiner's attach are
 // all the same operation.
 //
-// Replaces TaskStatusConnector, which kept tool rows forever (its `clear()` had
-// no production caller) and left the UI deriving which bubble a pill belonged
-// to — a question with no stable answer once a mid-turn steer splits a reply.
+// The one live-tool surface. Its retired predecessor mirrored a per-call
+// tool-update frame: it kept tool rows forever (its `clear()` had no production
+// caller) and left the UI deriving which bubble a pill belonged to — a question
+// with no stable answer once a mid-turn steer splits a reply. Both that frame
+// and that connector are gone; see shared/protocol/WIRE.md.
 //
 // Threading: single-threaded; the orchestrator routes frames on one dispatcher.
 // ---------------------------------------------------------------------------
@@ -55,8 +57,8 @@ class TaskListConnector(
      * PREVIOUS conversation's last-known rows indefinitely: exactly the leak
      * [DelegationProgressConnector.clear]'s doc comment describes, and exactly why
      * this re-invokes [onUpdate] rather than silently resetting internal state the way
-     * the retired TaskStatusConnector.clear() did (which had no production caller and
-     * left every consumer holding stale rows forever).
+     * this connector's retired predecessor did (its `clear()` had no production caller
+     * and left every consumer holding stale rows forever).
      */
     fun clear() {
         if (items.isEmpty() && turn == null) return

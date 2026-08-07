@@ -87,15 +87,10 @@ sealed class ConversationFeedItem {
         val replyId: String? = null,
     ) : ConversationFeedItem()
 
-    /** kind="tool" — completed tool invocation in the feed. */
-    @Serializable @SerialName("tool")
-    data class Tool(
-        override val entryId: String = UNKNOWN_ENTRY_ID,
-        override val ts: Long = UNKNOWN_TS,
-        val toolName: String,
-        val status: String,
-        val summary: String,
-    ) : ConversationFeedItem()
+    // THERE IS NO kind="tool". A tool call is the MODEL's record of what it
+    // did, not a user-facing artifact — the gateway keeps it in the store for
+    // the model projection and never puts it on the feed. Live tool activity is
+    // the composer task strip (TaskListConnector / tasklist.state).
 }
 
 /**

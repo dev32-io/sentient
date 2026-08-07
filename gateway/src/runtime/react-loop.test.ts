@@ -505,8 +505,9 @@ describe("runTurn — narration + tool call in the same iteration (convergence)"
     const feed = projectForClient(store.readSession(sessionId));
     const narrationItem = feed.find((item) => item.kind === "assistant" && item.text === "Let me check.\n\n");
     expect(narrationItem).toBeDefined();
-    const toolTile = feed.find((item) => item.kind === "tool");
-    expect(toolTile?.text).toBe("sunny");
+    // The tool round trip is durable in the store (asserted above) and is
+    // deliberately absent from the CLIENT feed — the strip owns tool activity.
+    expect(feed.map((item) => item.kind)).toEqual(["user", "assistant", "assistant"]);
 
     store.close();
   });

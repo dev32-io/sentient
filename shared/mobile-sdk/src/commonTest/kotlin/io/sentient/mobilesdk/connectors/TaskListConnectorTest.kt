@@ -55,9 +55,9 @@ class TaskListConnectorTest {
         assertEquals(emptyList(), c.list())
         assertNull(c.turnId())
         // The re-fire is the whole point: it's what lets a consumer (SentientSdk.tasks)
-        // actually observe the clear, unlike the retired TaskStatusConnector.clear(),
-        // which reset internal state but never re-invoked its callback and so left
-        // every consumer holding stale rows forever.
+        // actually observe the clear, unlike this connector's retired predecessor,
+        // whose clear() reset internal state but never re-invoked its callback and so
+        // left every consumer holding stale rows forever.
         assertEquals(listOf("t1" to listOf(TaskListItem(id = "a", toolName = "x", status = "running")), null to emptyList()), seen)
     }
 

@@ -923,7 +923,9 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
         // drop it from the cutoff accumulator; the next iteration's deltas
         // (if any) start counting fresh.
         turnText = "";
-        emitter.toolUpdate(id, u);
+        // The strip is the ONLY client-facing surface for live tool activity:
+        // full state, gateway-owned lifetime (runtime/task-list.ts). There is
+        // no per-call frame beside it any more.
         if (taskList.onToolUpdate(id, u)) publishTaskList();
         // The loop just made this iteration's narration and/or a tool
         // round-trip durable — publish whatever of it is now content-final.

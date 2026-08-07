@@ -6,7 +6,13 @@ import { z } from "zod";
 // This is the CLIENT-facing shape of a conversation entry — deliberately
 // narrower than the gateway's internal `ConversationEntry`. Internal
 // plumbing (taskId) is stripped from the ITEM; only fields the UI needs to
-// render chat bubbles + the task sidebar remain.
+// render chat bubbles remain.
+//
+// THERE IS NO TOOL ITEM. A tool call is the MODEL's record of what it did — the
+// store keeps `tool_call` / `tool_result` entries forever and the model
+// projection replays them as context — but it is not a user-facing artifact.
+// Live tool activity is the composer task strip (`tasklist.state`), which is
+// ephemeral by design.
 //
 // NOTE on turnId: it is stripped from the ITEM but carried on the
 // `conversation.entry` FRAME (see messages.ts conversationEntrySchema). Clients
@@ -20,15 +26,11 @@ import { z } from "zod";
 //
 // Shape stays a discriminated union on `kind`, so the client can filter
 // without string parsing:
-//   feed.filter(i => i.kind === "tool")   → sidebar rows
 //   feed.filter(i => i.kind === "user" || i.kind === "assistant") → chat
 // ---------------------------------------------------------------------------
 
 export const conversationUserChannelSchema = z.enum(["text", "speech"]);
 export type ConversationUserChannel = z.infer<typeof conversationUserChannelSchema>;
-
-export const conversationToolStatusSchema = z.enum(["finished", "cancelled", "failed"]);
-export type ConversationToolStatus = z.infer<typeof conversationToolStatusSchema>;
 
 // Why an assistant reply was cut short. Absent on normal completions.
 // `barge-in`: user spoke mid-TTS, playback stopped; LLM stream finished
@@ -80,20 +82,10 @@ export const conversationFeedAssistantItemSchema = z.object({
   cutoff: conversationAssistantCutoffSchema.optional(),
 });
 
-export const conversationFeedToolItemSchema = z.object({
-  entryId: z.string(),
-  ts: z.number().int().nonnegative(),
-  kind: z.literal("tool"),
-  toolName: z.string(),
-  status: conversationToolStatusSchema,
-  summary: z.string(),
-});
-
 export const conversationFeedItemSchema = z.discriminatedUnion("kind", [
   conversationFeedUserItemSchema,
   conversationFeedTriggerItemSchema,
   conversationFeedAssistantItemSchema,
-  conversationFeedToolItemSchema,
 ]);
 
 export type ConversationFeedItem = z.infer<typeof conversationFeedItemSchema>;

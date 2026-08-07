@@ -590,11 +590,10 @@ export function attachWithSnapshot(
  * Rebuild the transient prerequisites a joining window is missing, on ONE
  * socket.
  *
- * Order is `turn.started` → running tool tiles → the accumulated text → the
- * audio bracket → open prompts. The exact live INTERLEAVING of text and tiles
- * is not recoverable from the tracker and is deliberately not reconstructed:
- * the committed projection carries the settled order, and the live bubble is
- * transient — the two converge the moment this turn commits (spec §7.2).
+ * Order is `turn.started` → the accumulated text → the audio bracket → open
+ * prompts. Live tool activity is NOT here: the task strip is full-state on its
+ * own frame and ws-session-configure.ts re-emits it to the joiner, so there is
+ * nothing about it to reconstruct.
  *
  * THE AUDIO BRACKET IS EMITTED INDEPENDENTLY OF THE TURN, because speech
  * outlives its turn and this is the seam where that stops being an abstract
@@ -617,18 +616,6 @@ function emitTurnStateTo(
   const turnId = state.activeTurnId;
   if (turnId !== null && state.trigger !== null) {
     sendAttachReplayFrame(ws, { type: "turn.started", turnId, trigger: state.trigger });
-    for (const tool of state.tools) {
-      sendAttachReplayFrame(ws, {
-        type: "turn.tool.update",
-        turnId,
-        toolCallId: tool.toolCallId,
-        toolName: tool.toolName,
-        status: tool.status,
-        ...(tool.taskId === undefined ? {} : { taskId: tool.taskId }),
-        argsPreview: tool.argsPreview ?? "",
-        startedAtMs: Date.now(),
-      });
-    }
     if (state.textSoFar.length > 0) {
       sendAttachReplayFrame(ws, { type: "turn.text.delta", turnId, text: state.textSoFar });
     }
@@ -655,7 +642,6 @@ function emitTurnStateTo(
     turnId,
     trigger: state.trigger,
     textLength: state.textSoFar.length,
-    runningTools: state.tools.length,
     openPrompts: state.prompts.length,
     audioTurnId: state.audio?.turnId ?? null,
   });

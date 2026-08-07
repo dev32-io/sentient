@@ -191,8 +191,10 @@ function turnEntries(deps: CancellationDeps, turn: CancellableTurn): SessionEntr
 }
 
 /** Tool-call ids this turn appended with no `tool_result` after them, in
- *  dispatch order. Mirrors conversation-feed.ts's `unresolvedToolItemIds`
- *  predicate — same question, asked of entries rather than feed items. */
+ *  dispatch order. The question exists for the MODEL projection's sake — an
+ *  unanswered call is dropped from the next request's `messages[]` — not for
+ *  any client feed; tool entries have not been client-facing since the feed's
+ *  tool item was retired. */
 function unrepliedToolCalls(entries: readonly SessionEntry[]): SessionEntry[] {
   const replied = new Set<string>();
   for (const e of entries) {

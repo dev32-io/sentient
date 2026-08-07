@@ -52,7 +52,7 @@ export const ALL_GATEWAY_MESSAGE_TYPES: readonly GatewayMessage["type"][] = (
 /**
  * Lane per frame type.
  *
- * SESSION lane — the conversation. Turn lifecycle, text deltas, tool tiles,
+ * SESSION lane — the conversation. Turn lifecycle, text deltas, the task strip,
  * permission mediation, delegation progress, committed feed ENTRIES, audio
  * bracketing and title updates. Allocated once from the session journal and
  * written to every attached window.
@@ -104,7 +104,6 @@ const FRAME_LANES: Record<GatewayMessage["type"], FrameLane> = {
   "turn.text.delta": "session",
   "turn.completed": "session",
   "turn.aborted": "session",
-  "turn.tool.update": "session",
   // The composer's task strip. SESSION lane: it is conversation state every
   // attached window must agree on, and — unlike `conversation.snapshot` — the
   // full-state payload is IDENTICAL for every window, so re-emitting it at

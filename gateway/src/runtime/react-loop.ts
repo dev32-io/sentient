@@ -57,23 +57,33 @@ const log = getLog(["sentient", "runtime", "react-loop"]);
 
 const DEBUG_PREVIEW_LEN = 120;
 
-/** Client-facing tool-tile preview budget (spec §7 `turn.tool.update`).
- *  Separate from DEBUG_PREVIEW_LEN: this one ships to a UI, not a log. */
+/** Task-strip preview budget (`taskListItemSchema.argsPreview`). Separate from
+ *  DEBUG_PREVIEW_LEN: this one ships to a UI, not a log. */
 const ARGS_PREVIEW_LEN = 120;
 
 export type ToolUpdateStatus = "running" | "done" | "error";
 
-/** Fed to `onToolUpdate` for the client's running/done tool tiles (spec §7).
- *  `taskId` is present only on a background dispatch's single "running"
- *  update — its eventual completion arrives later as a stimulus (Task 7),
- *  never as a second update through this callback. */
+/**
+ * Fed to `onToolUpdate` — the loop's internal progress report for one tool
+ * call. Its one consumer is `TaskListProjector` (runtime/task-list.ts), which
+ * folds these into the `tasklist.state` frame. There is NO per-call wire frame.
+ *
+ * A BACKGROUND dispatch fires this callback TWICE, and both calls matter:
+ * `dispatchToolCalls` fires a `taskId`-less "running" update before
+ * `broker.dispatch()` has resolved (so the row appears immediately), then
+ * `appendBackgroundReceipt` fires a SECOND "running" update carrying the
+ * `taskId` once the handle exists. `TaskListProjector.promoteRow` exists
+ * precisely to re-key the row on that second call. The dispatch's eventual
+ * COMPLETION arrives later as a stimulus (Task 7) and as a
+ * `delegation.progress` frame — never as a third update through this callback.
+ */
 export interface ToolUpdate {
   toolCallId: string;
   toolName: string;
   status: ToolUpdateStatus;
   taskId?: string;
-  /** Truncated preview of the raw argument JSON for the client's tool tile.
-   *  Optional so existing callers/fakes stay valid; the WS emitter falls back
+  /** Truncated preview of the raw argument JSON for the task-strip row.
+   *  Optional so existing callers/fakes stay valid; the projector falls back
    *  to "" when absent. */
   argsPreview?: string;
 }
@@ -198,8 +208,8 @@ interface BackgroundReceipt {
   text: string;
 }
 
-/** Answer a background `tool_call` and keep the client tile in the running
- *  state — the tile settles when the completion stimulus lands, not here. */
+/** Answer a background `tool_call` and keep the strip row in the running
+ *  state — the row settles when the completion stimulus lands, not here. */
 function appendBackgroundReceipt(
   deps: Pick<ReactLoopDeps, "store" | "onToolUpdate">,
   sessionId: string,

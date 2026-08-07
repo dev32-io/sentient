@@ -261,18 +261,6 @@ class WireSerializationTest {
         assertEquals("barge-in", aborted.cutoff)
     }
 
-    @Test fun turn_tool_update_decodes_with_optional_task_id() {
-        val fg = """{"type":"turn.tool.update","turnId":"t1","toolCallId":"tc1","toolName":"readFile","status":"running","argsPreview":"a.txt","startedAtMs":10}"""
-        val foreground = WireJson.instance.decodeFromString(ServerMessage.serializer(), fg) as ServerMessage.TurnToolUpdate
-        assertEquals("tc1", foreground.toolCallId)
-        assertEquals(null, foreground.taskId)
-        assertEquals(null, foreground.endedAtMs)
-        val bg = """{"type":"turn.tool.update","turnId":"t1","toolCallId":"tc2","toolName":"delegateTask","status":"done","taskId":"task-9","argsPreview":"hermes","startedAtMs":10,"endedAtMs":99}"""
-        val background = WireJson.instance.decodeFromString(ServerMessage.serializer(), bg) as ServerMessage.TurnToolUpdate
-        assertEquals("task-9", background.taskId)
-        assertEquals(99L, background.endedAtMs)
-    }
-
     @Test fun turn_audio_frames_decode() {
         val start = WireJson.instance.decodeFromString(
             ServerMessage.serializer(), """{"type":"turn.audio.start","turnId":"t1","encoding":"opus","sampleRate":48000}""",

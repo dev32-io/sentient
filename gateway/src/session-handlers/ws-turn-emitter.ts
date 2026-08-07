@@ -11,13 +11,17 @@
 // lines, and nothing else.
 //
 // Two Plan-2 behaviours are deliberately GONE:
-//   - `toolUpdate` and `turnAborted` are no longer log-only. They emit
-//     `turn.tool.update` and `turn.aborted`; without them the client could
-//     never render a tool tile and could never learn a turn was cut off (its
-//     stream would simply stall).
+//   - `turnAborted` is no longer log-only. It emits `turn.aborted`; without it
+//     the client could never learn a turn was cut off (its stream would simply
+//     stall).
 //   - `turn.text.delta` now carries `turnId`. Plan 2's `response.text.delta`
 //     omitted it, which made §7.2's back-to-back follow-up turns impossible to
 //     route to the correct bubble.
+//
+// Live tool activity is `taskList` → `tasklist.state` (runtime/task-list.ts) —
+// ONE full-state frame per change, owned end to end by the gateway. There is no
+// per-call update frame: the retired one made every client re-derive which rows
+// were live and which bubble they belonged to.
 //
 // A cut-off turn emits BOTH `turn.aborted` (the feed marker, carrying the
 // cutoff kind) and `playback.stop` (the audio-flush command) — but through
@@ -43,7 +47,6 @@ import type {
   TurnTrigger,
 } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
-import type { ToolUpdate } from "../runtime/react-loop.js";
 import type {
   DelegationProgress,
   PermissionRequest,
@@ -91,24 +94,6 @@ export function createWsTurnEmitter(sink: SessionFrameSink, sessionId: string): 
   // reads the same bytes.
   let audioFramesSent = 0;
 
-  // A tool call's start time, stamped on its FIRST update and read back by the
-  // terminal one so `endedAtMs - startedAtMs` is a real duration. Without this
-  // both fields get the same `Date.now()` and every tile renders 0ms — each
-  // frame is individually schema-valid, so nothing else catches it.
-  //
-  // An entry is dropped on its call's terminal status. A BACKGROUND call never
-  // reaches one through this callback (its completion arrives as
-  // `delegation.progress`), so `endTurn` also clears the whole map — this
-  // emitter lives for the WHOLE SESSION, not one turn, so without that sweep
-  // every delegated call would leak an entry for the life of the session.
-  // Safe because a SessionRuntime runs at most one turn at a time, so no live
-  // call's stamp can still be needed once the turn has settled.
-  const toolStartedAtMs = new Map<string, number>();
-
-  function endTurn(): void {
-    toolStartedAtMs.clear();
-  }
-
   /** @returns how many windows the frame actually reached. */
   function emit(frame: GatewayMessage): number {
     return sink.broadcast(frame);
@@ -131,40 +116,6 @@ export function createWsTurnEmitter(sink: SessionFrameSink, sessionId: string): 
       emit({ type: "turn.text.delta", turnId, text, ...(replyId === undefined ? {} : { replyId }) });
     },
 
-    toolUpdate(turnId: string, u: ToolUpdate) {
-      const now = Date.now();
-      const startedAtMs = toolStartedAtMs.get(u.toolCallId) ?? now;
-      if (!toolStartedAtMs.has(u.toolCallId)) toolStartedAtMs.set(u.toolCallId, now);
-      const isTerminal = u.status !== "running";
-      if (isTerminal) toolStartedAtMs.delete(u.toolCallId);
-
-      log.debug("turn-emitter.tool-update", {
-        sessionId,
-        turnId,
-        toolCallId: u.toolCallId,
-        toolName: u.toolName,
-        status: u.status,
-        taskId: u.taskId,
-        elapsedMs: now - startedAtMs,
-      });
-
-      emit({
-        type: "turn.tool.update",
-        turnId,
-        toolCallId: u.toolCallId,
-        toolName: u.toolName,
-        status: u.status,
-        // `taskId` is present only on a background dispatch's "running"
-        // update; omit the key entirely rather than sending undefined.
-        ...(u.taskId === undefined ? {} : { taskId: u.taskId }),
-        // Already truncated upstream by react-loop.ts; "" when the loop had no
-        // argument data to preview.
-        argsPreview: u.argsPreview ?? "",
-        startedAtMs,
-        ...(isTerminal ? { endedAtMs: now } : {}),
-      });
-    },
-
     taskList(turnId: string | null, items: TaskListItem[]) {
       log.debug("turn-emitter.task-list", {
         sessionId,
@@ -175,13 +126,11 @@ export function createWsTurnEmitter(sink: SessionFrameSink, sessionId: string): 
     },
 
     turnCompleted(turnId: string) {
-      endTurn();
       log.info("turn-emitter.turn-completed", { sessionId, turnId });
       emit({ type: "turn.completed", turnId });
     },
 
     turnAborted(turnId: string, cutoff: CutoffKind) {
-      endTurn();
       log.info("turn-emitter.turn-aborted", { sessionId, turnId, cutoff });
       emit({ type: "turn.aborted", turnId, cutoff });
     },

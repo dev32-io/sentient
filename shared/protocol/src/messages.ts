@@ -464,33 +464,6 @@ export const turnAbortedSchema = z.object({
 });
 export type TurnAbortedMessage = z.infer<typeof turnAbortedSchema>;
 
-/** Tool-tile status. Deliberately NOT the retired `task.update` vocabulary
- *  ("finished"|"cancelled"|"failed") — the native loop only distinguishes
- *  in-flight, succeeded, and errored. */
-export const turnToolStatusSchema = z.enum(["running", "done", "error"]);
-export type TurnToolStatus = z.infer<typeof turnToolStatusSchema>;
-
-export const turnToolUpdateSchema = z.object({
-  type: z.literal("turn.tool.update"),
-  turnId: z.string(),
-  /** Provider-assigned id for this call; the client's dedupe key so one tile
-   *  transitions in place instead of stacking. */
-  toolCallId: z.string(),
-  toolName: z.string(),
-  status: turnToolStatusSchema,
-  /** Present only on a BACKGROUND dispatch's "running" update (the
-   *  `delegateTask` archetype). Its completion arrives later as a
-   *  `delegation.progress` frame, never as a second `turn.tool.update`. */
-  taskId: z.string().optional(),
-  /** Short, already-truncated preview of the tool's arguments for the tile.
-   *  Never the full argument object — clients render this verbatim. */
-  argsPreview: z.string(),
-  startedAtMs: z.number().int().nonnegative(),
-  /** Present once the call reaches a terminal status. */
-  endedAtMs: z.number().int().nonnegative().optional(),
-});
-export type TurnToolUpdateMessage = z.infer<typeof turnToolUpdateSchema>;
-
 // ─── Task list (the composer strip) ───
 //
 // FULL STATE, NOT DELTAS. The replay journal is a byte-capped evicting ring
@@ -507,6 +480,12 @@ export type TurnToolUpdateMessage = z.infer<typeof turnToolUpdateSchema>;
 
 export const taskListKindSchema = z.enum(["foreground", "background"]);
 export type TaskListKind = z.infer<typeof taskListKindSchema>;
+
+/** Task-strip row status. Deliberately NOT the retired `task.update` vocabulary
+ *  ("finished"|"cancelled"|"failed") — the native loop only distinguishes
+ *  in-flight, succeeded, and errored. */
+export const turnToolStatusSchema = z.enum(["running", "done", "error"]);
+export type TurnToolStatus = z.infer<typeof turnToolStatusSchema>;
 
 export const taskListItemSchema = z.object({
   /** Stable row identity: the provider's `toolCallId` for a foreground call,
@@ -705,7 +684,6 @@ export const gatewayMessageSchema = z.discriminatedUnion("type", [
   withSeqEpoch(turnTextDeltaSchema),
   withSeqEpoch(turnCompletedSchema),
   withSeqEpoch(turnAbortedSchema),
-  withSeqEpoch(turnToolUpdateSchema),
   withSeqEpoch(taskListStateSchema),
   withSeqEpoch(turnAudioStartSchema),
   withSeqEpoch(turnAudioDoneSchema),

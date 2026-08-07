@@ -104,21 +104,6 @@ sealed class ServerMessage {
         val cutoff: String = "",
     ) : ServerMessage()
 
-    /** Tool-call lifecycle. Identity is [toolCallId]; [taskId] is present only for a
-     *  BACKGROUND tool (delegateTask), which returns a task handle immediately. */
-    @Serializable @SerialName("turn.tool.update")
-    data class TurnToolUpdate(
-        val turnId: String,
-        val toolCallId: String,
-        val toolName: String = "",
-        /** "running" | "done" | "error". */
-        val status: String = "",
-        val taskId: String? = null,
-        val argsPreview: String = "",
-        val startedAtMs: Long = 0L,
-        val endedAtMs: Long? = null,
-    ) : ServerMessage()
-
     // ── Turn audio (design §7.2) ──
     // A NEW turnId NEVER cancels in-flight audio — it queues behind it. See AudioPipeline.
 

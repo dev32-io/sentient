@@ -15,7 +15,6 @@
 import { describe, expect, it } from "bun:test";
 import { gatewayMessageSchema } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
-import type { ToolUpdate } from "../runtime/react-loop.js";
 import type { TurnEmitter } from "../runtime/turn-emitter.js";
 import { createFanOutTurnEmitter } from "./fan-out-emitter.js";
 import { createFrameJournal } from "./frame-journal.js";
@@ -150,74 +149,6 @@ describe("createWsTurnEmitter — 2.0 wire contract", () => {
     const ws = fakeWs();
     emitterFor(ws).turnCompleted("turn-1");
     expect(ws.sent).toEqual([{ type: "turn.completed", turnId: "turn-1" }]);
-  });
-
-  it("toolUpdate reaches the client as turn.tool.update (no longer log-only)", () => {
-    const ws = fakeWs();
-    const update: ToolUpdate = {
-      toolCallId: "c1",
-      toolName: "delegateTask",
-      status: "running",
-      taskId: "t-9",
-      argsPreview: '{"agent":"hermes"}',
-    };
-    emitterFor(ws).toolUpdate("turn-1", update);
-    expect(ws.sent).toHaveLength(1);
-    expect(ws.sent[0]).toMatchObject({
-      type: "turn.tool.update",
-      turnId: "turn-1",
-      toolCallId: "c1",
-      toolName: "delegateTask",
-      status: "running",
-      taskId: "t-9",
-      argsPreview: '{"agent":"hermes"}',
-    });
-  });
-
-  it("a running tool update carries no endedAtMs; a terminal one does", () => {
-    const ws = fakeWs();
-    const emitter = emitterFor(ws);
-    emitter.toolUpdate("turn-1", { toolCallId: "c1", toolName: "search", status: "running" });
-    emitter.toolUpdate("turn-1", { toolCallId: "c1", toolName: "search", status: "done" });
-    expect(ws.sent[0]).not.toHaveProperty("endedAtMs");
-    expect(ws.sent[1]).toHaveProperty("endedAtMs");
-  });
-
-  it("REGRESSION: startedAtMs is carried from the running update to the terminal one", async () => {
-    // The terminal frame must report when the call STARTED, not when it ended.
-    // Re-stamping Date.now() on every update leaves startedAtMs === endedAtMs,
-    // so every client tile renders a 0ms duration — and because each frame is
-    // individually schema-valid, nothing else catches it.
-    const ws = fakeWs();
-    const emitter = emitterFor(ws);
-    emitter.toolUpdate("turn-1", { toolCallId: "c1", toolName: "search", status: "running" });
-    await new Promise((r) => setTimeout(r, 12));
-    emitter.toolUpdate("turn-1", { toolCallId: "c1", toolName: "search", status: "done" });
-
-    const running = ws.sent[0] as { startedAtMs: number };
-    const terminal = ws.sent[1] as { startedAtMs: number; endedAtMs: number };
-    expect(terminal.startedAtMs).toBe(running.startedAtMs);
-    expect(terminal.endedAtMs).toBeGreaterThan(terminal.startedAtMs);
-  });
-
-  it("tracks two concurrent tool calls independently by toolCallId", () => {
-    const ws = fakeWs();
-    const emitter = emitterFor(ws);
-    emitter.toolUpdate("turn-1", { toolCallId: "c1", toolName: "search", status: "running" });
-    emitter.toolUpdate("turn-1", { toolCallId: "c2", toolName: "weather", status: "running" });
-    emitter.toolUpdate("turn-1", { toolCallId: "c1", toolName: "search", status: "done" });
-
-    const c1Running = ws.sent[0] as { startedAtMs: number };
-    const c1Done = ws.sent[2] as { toolCallId: string; startedAtMs: number };
-    expect(c1Done.toolCallId).toBe("c1");
-    expect(c1Done.startedAtMs).toBe(c1Running.startedAtMs);
-  });
-
-  it("a tool update without argsPreview still satisfies the schema (falls back to empty)", () => {
-    const ws = fakeWs();
-    emitterFor(ws).toolUpdate("turn-1", { toolCallId: "c1", toolName: "search", status: "running" });
-    expect(ws.sent).toHaveLength(1);
-    expect(ws.sent[0]).toMatchObject({ argsPreview: "" });
   });
 
   it("turnAborted sends ONLY turn.aborted — the feed marker, never the audio flush", () => {
@@ -399,7 +330,6 @@ describe("createWsTurnEmitter — 2.0 wire contract", () => {
     const emitter = emitterFor(ws);
     emitter.turnStarted("turn-1", "user");
     emitter.textDelta("turn-1", "hi");
-    emitter.toolUpdate("turn-1", { toolCallId: "c1", toolName: "search", status: "running", argsPreview: "{}" });
     emitter.taskList("turn-1", [
       { id: "c1", toolName: "search", kind: "foreground", status: "running", argsPreview: "{}", startedAtMs: 1000 },
     ]);
@@ -429,7 +359,6 @@ describe("createWsTurnEmitter — 2.0 wire contract", () => {
     expect(ws.sent.map((f) => (f as { type: string }).type)).toEqual([
       "turn.started",
       "turn.text.delta",
-      "turn.tool.update",
       "tasklist.state",
       "turn.audio.start",
       "turn.audio.done",

@@ -138,13 +138,13 @@ function fakeBroker(defs: ToolDefinition[], result: (inv: ToolInvocation) => Too
 
 interface CapturedDelta {
   turnId: string;
-  messageId: string | undefined;
+  replyId: string | undefined;
   text: string;
 }
 
 interface CapturedEntry {
   turnId: string | undefined;
-  messageId: string | undefined;
+  replyId: string | undefined;
   item: ConversationFeedItem;
 }
 
@@ -166,13 +166,12 @@ function capturingEmitter(): CapturingEmitter {
     snapshots,
     completedTurns,
     turnStarted: () => {},
-    textDelta: (turnId, text, messageId) => deltas.push({ turnId, messageId, text }),
-    toolUpdate: () => {},
+    textDelta: (turnId, text, replyId) => deltas.push({ turnId, replyId, text }),
     turnCompleted: (turnId) => completedTurns.push(turnId),
     turnAborted: () => {},
     playbackStop: () => {},
     conversationSnapshot: (items) => snapshots.push(items),
-    conversationEntry: (item, turnId, messageId) => entries.push({ turnId, messageId, item }),
+    conversationEntry: (item, turnId, replyId) => entries.push({ turnId, replyId, item }),
     audioStart: () => {},
     audioFrame: () => {},
     audioDone: () => {},
@@ -188,12 +187,12 @@ function capturingEmitter(): CapturingEmitter {
  * What a client's in-flight connector accumulates: one buffer per bubble key,
  * in the order the keys were first seen. Mirrors
  * `InFlightMessageConnector.buffers` (a LinkedHashMap keyed by
- * `messageId ?: turnId`) and the web SDK's equivalent.
+ * `replyId ?: turnId`) and the web SDK's equivalent.
  */
 function renderLive(deltas: readonly CapturedDelta[]): string[] {
   const buffers = new Map<string, string>();
   for (const d of deltas) {
-    const key = d.messageId ?? d.turnId;
+    const key = d.replyId ?? d.turnId;
     buffers.set(key, (buffers.get(key) ?? "") + d.text);
   }
   return [...buffers.values()];

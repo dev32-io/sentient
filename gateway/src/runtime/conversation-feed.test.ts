@@ -5,10 +5,10 @@
 // store/projection-convergence.test.ts pins the projection (entries → feed
 // items). This file pins the layer on top: which of those items actually
 // reach the socket, in what order, and how many times. A producer that emits
-// a tool tile before its result folds in, or that emits the same entryId
-// twice, converges in the projection and diverges on the wire — the web
-// connector appends every `conversation.entry` blindly, so a duplicate is a
-// duplicate bubble.
+// a reply before it stops growing, or that emits the same entryId twice,
+// converges in the projection and diverges on the wire — the web connector
+// appends every `conversation.entry` blindly, so a duplicate is a duplicate
+// bubble.
 
 import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
@@ -132,10 +132,9 @@ describe("conversation feed — wire convergence", () => {
     // cannot pass by both sides being empty.
     expect(live.map((i) => [i.kind, i.entryId])).toEqual([
       ["user", "1"],
-      ["tool", "2"],
       ["assistant", "4"],
     ]);
-    expect(new Set(live.map((i) => i.entryId)).size).toBe(live.length); // no duplicate tiles
+    expect(new Set(live.map((i) => i.entryId)).size).toBe(live.length); // no duplicate bubbles
 
     expect(live).toEqual(freshSnapshotOf(store));
     store.close();
@@ -143,9 +142,10 @@ describe("conversation feed — wire convergence", () => {
 
   it("CONTRACT: a stimulus landing between a tool call and its result cannot reorder the feed", () => {
     // The steer path (spec §4.5) appends a `user` entry mid-dispatch. The
-    // projection anchors the tool tile at its tool_call's POSITION, so a
-    // producer that emitted the tile only once its result landed would place
-    // it AFTER the steered message and diverge from every later snapshot.
+    // tool_call and tool_result on either side of it render nothing, so the
+    // live order must be exactly the order a fresh snapshot derives — the
+    // steered message between the two turns of the conversation, nothing
+    // sitting in a slot the projection would place differently on replay.
     const store = openStoreFor("steer-midcall");
     const sink = recordingSink();
     const feed = feedOver(store, sink);
@@ -164,16 +164,16 @@ describe("conversation feed — wire convergence", () => {
     feed.publishAll();
 
     const live = applyFrames(sink.frames);
-    expect(live.map((i) => i.kind)).toEqual(["user", "tool", "user", "assistant"]);
+    expect(live.map((i) => i.kind)).toEqual(["user", "user", "assistant"]);
     expect(live).toEqual(freshSnapshotOf(store));
     store.close();
   });
 
-  it("CONTRACT: a tool call that never gets a result is released at the turn boundary, once", () => {
-    // A background dispatch (`delegateTask`) appends a tool_call and a system
-    // note; its result never arrives as a tool_result. Holding the tile back
-    // for a result that is never coming would strand every later item behind
-    // it — including the turn's final assistant entry.
+  it("CONTRACT: a background dispatch's unanswered tool call strands nothing behind it", () => {
+    // A background dispatch (`delegateTask`) appends a tool_call whose result
+    // never arrives as a tool_result. Neither entry renders, so nothing about
+    // the dispatch can hold the turn's final assistant entry back — and a
+    // second boundary flush must not re-emit what the first already sent.
     const store = openStoreFor("background-tool");
     const sink = recordingSink();
     const feed = feedOver(store, sink);
@@ -185,7 +185,6 @@ describe("conversation feed — wire convergence", () => {
     store.append(entry({ kind: "system", text: "Task started: delegateTask (taskId=t-9)", createdAt: 3003 }));
     feed.publishSettled();
 
-    // Held back: the assistant entry is behind an unresolved tool tile.
     expect(applyFrames(sink.frames).map((i) => i.kind)).toEqual(["user"]);
 
     store.append(entry({ kind: "assistant", text: "On it.", createdAt: 3004 }));
@@ -193,7 +192,7 @@ describe("conversation feed — wire convergence", () => {
     feed.publishAll(); // a second boundary flush must not re-emit anything
 
     const live = applyFrames(sink.frames);
-    expect(live.map((i) => i.kind)).toEqual(["user", "tool", "assistant"]);
+    expect(live.map((i) => i.kind)).toEqual(["user", "assistant"]);
     expect(live).toEqual(freshSnapshotOf(store));
     store.close();
   });
@@ -217,8 +216,7 @@ describe("conversation feed — wire convergence", () => {
     store.append(entry({ kind: "tool_call", toolCallId: "c1", toolName: "search", toolArgs: "{}", createdAt: 8003 }));
     store.append(entry({ kind: "tool_result", toolCallId: "c1", toolName: "search", toolArgs: "ok", createdAt: 8004 }));
     feed.publishSettled();
-    // Still growing — and the resolved tile behind it is blocked too, or it
-    // would arrive ahead of the bubble it belongs after.
+    // Still growing.
     expect(applyFrames(sink.frames).map((i) => i.kind)).toEqual(["user"]);
 
     store.append(entry({ kind: "assistant", replyId: "r1", text: "Done.", createdAt: 8005 }));
@@ -229,7 +227,6 @@ describe("conversation feed — wire convergence", () => {
     expect(live.map((i) => [i.kind, i.entryId])).toEqual([
       ["user", "1"],
       ["assistant", "r1"],
-      ["tool", "3"],
     ]);
     expect(live.find((i) => i.kind === "assistant")).toMatchObject({ content: "Checking. Done." });
     expect(live).toEqual(freshSnapshotOf(store));
@@ -260,42 +257,6 @@ describe("conversation feed — wire convergence", () => {
     expect(sink.frames.flatMap((f) => f.items)).toMatchObject([
       { entryId: "r1", kind: "assistant", content: "Checking. Done." },
     ]);
-    store.close();
-  });
-
-  it("CONTRACT: a mid-turn snapshot does not park the cursor above a tool tile awaiting its result", () => {
-    // The no-narration shape: the model calls a tool without saying anything
-    // first, so NO committed entry carries the open reply id and the reply
-    // predicate alone finds nothing to hold. The TILE is still held back, and
-    // arming the cursor past it drops it out of every already-attached window's
-    // feed for good — its `tool_result` then arrives as an orphan the
-    // projection discards (`projection.dropped-tool-result-without-tile`),
-    // while a fresh snapshot still shows the tile. Live and replay disagree.
-    const store = openStoreFor("mid-turn-snapshot-tool");
-    const sink = recordingSink();
-    const feed = feedOver(store, sink, () => "r1");
-
-    store.append(entry({ kind: "user", text: "play music", createdAt: 8201 }));
-    store.append(
-      entry({ kind: "tool_call", toolCallId: "c1", toolName: "ma_play_media", toolArgs: "{}", createdAt: 8202 }),
-    );
-    feed.publishSettled();
-    expect(applyFrames(sink.frames).map((i) => i.kind)).toEqual(["user"]);
-
-    feed.snapshot(); // a second window attaches mid-turn
-    sink.frames.length = 0;
-
-    store.append(
-      entry({ kind: "tool_result", toolCallId: "c1", toolName: "ma_play_media", toolArgs: "ok", createdAt: 8203 }),
-    );
-    store.append(entry({ kind: "assistant", replyId: "r1", text: "Playing.", createdAt: 8204 }));
-    feed.publishAll();
-
-    expect(sink.frames.flatMap((f) => f.items).map((i) => [i.kind, i.entryId])).toEqual([
-      ["tool", "2"],
-      ["assistant", "r1"],
-    ]);
-    expect(applyFrames(sink.frames).map((i) => i.kind)).toEqual(["tool", "assistant"]);
     store.close();
   });
 

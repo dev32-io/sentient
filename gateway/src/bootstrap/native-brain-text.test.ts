@@ -68,7 +68,6 @@ import { createSecretsStore } from "../admin/secrets-store.js";
 import { loadStartupConfig } from "../config/startup-config.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
 import { createProfileStore } from "../profile-store/profile-store.js";
-import type { ToolUpdate } from "../runtime/react-loop.js";
 import type { TurnEmitter } from "../runtime/turn-emitter.js";
 import type { CutoffKind } from "../store/entry-types.js";
 import type { OrchestratorServices } from "./phase-services.js";
@@ -85,7 +84,6 @@ interface RecordingEmitter extends TurnEmitter {
   turnStartedCount: number;
   turnCompletedCount: number;
   turnAbortedCount: number;
-  toolUpdates: ToolUpdate[];
 }
 
 function recordingEmitter(): RecordingEmitter {
@@ -94,15 +92,11 @@ function recordingEmitter(): RecordingEmitter {
     turnStartedCount: 0,
     turnCompletedCount: 0,
     turnAbortedCount: 0,
-    toolUpdates: [],
     turnStarted: () => {
       emitter.turnStartedCount += 1;
     },
     textDelta: (_turnId: string, text: string) => {
       emitter.textDeltas.push(text);
-    },
-    toolUpdate: (_turnId: string, u: ToolUpdate) => {
-      emitter.toolUpdates.push(u);
     },
     turnCompleted: () => {
       emitter.turnCompletedCount += 1;

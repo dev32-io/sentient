@@ -1,6 +1,5 @@
 package io.sentient.mobilesdk.protocol
 
-import io.sentient.mobilesdk.connectors.TaskSnapshotItem
 import io.sentient.mobilesdk.result.SentientError
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -11,13 +10,6 @@ class SdkEventTest {
         val e = SdkEvent.MessageDelta(turnId = "c1", chunk = "hel")
         assertEquals("c1", e.turnId)
         assertEquals("hel", e.chunk)
-    }
-
-    @Test
-    fun taskUpserted_wraps_snapshot() {
-        val t = TaskSnapshotItem("t1", "search", "c1", "running", "{}", 0L)
-        val e = SdkEvent.TaskUpserted(t)
-        assertEquals("t1", e.task.toolCallId)
     }
 
     @Test

@@ -98,11 +98,8 @@ function appendCommittedItems(walk: FeedWalk, items: readonly CommittedFeedItem[
     if (!item) continue;
     const stableId = `feed-${item.ts}-${i}`;
 
-    if (item.kind === "tool") {
-      // Rendered by the composer task strip (`tasklist.state`) now, never the
-      // chat feed — a tool row has no bubble to anchor to any more.
-      continue;
-    }
+    // There is no `kind: "tool"` item on the wire any more: tool activity is
+    // the composer task strip (`tasklist.state`), which is ephemeral by design.
 
     if (item.kind === "user") {
       if (item.content.length === 0) continue; // barge-in markers don't render

@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   conversationFeedAssistantItemSchema,
   conversationFeedItemSchema,
-  conversationFeedToolItemSchema,
   conversationFeedTriggerItemSchema,
   conversationFeedUserItemSchema,
 } from "./conversation.ts";
@@ -24,7 +23,6 @@ import {
   turnAudioStartSchema,
   turnStartedSchema,
   turnTextDeltaSchema,
-  turnToolUpdateSchema,
 } from "./messages.ts";
 import type { StreamResumed } from "./messages.ts";
 
@@ -405,15 +403,20 @@ describe("seq/epoch stamping on gateway push frames", () => {
     expect(result.success).toBe(true);
   });
 
-  it("parses turn.tool.update WITH seq/epoch", () => {
+  it("parses tasklist.state WITH seq/epoch", () => {
     const result = gatewayMessageSchema.safeParse({
-      type: "turn.tool.update",
+      type: "tasklist.state",
       turnId: "t-1",
-      toolCallId: "c-1",
-      toolName: "search",
-      status: "running",
-      argsPreview: "",
-      startedAtMs: 1,
+      items: [
+        {
+          id: "c-1",
+          toolName: "search",
+          kind: "foreground",
+          status: "running",
+          argsPreview: "",
+          startedAtMs: 1,
+        },
+      ],
       seq: 100,
       epoch: 3,
     });
@@ -546,30 +549,6 @@ describe("conversationFeedItem entryId — required on all kinds", () => {
     if (result.success) expect(result.data.entryId).toBe("def-456");
   });
 
-  it("rejects a tool item missing entryId", () => {
-    const result = conversationFeedToolItemSchema.safeParse({
-      ts: 1000,
-      kind: "tool",
-      toolName: "search",
-      status: "finished",
-      summary: "done",
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("accepts a tool item with entryId", () => {
-    const result = conversationFeedToolItemSchema.safeParse({
-      entryId: "ghi-789",
-      ts: 1000,
-      kind: "tool",
-      toolName: "search",
-      status: "finished",
-      summary: "done",
-    });
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.entryId).toBe("ghi-789");
-  });
-
   it("rejects a trigger item missing entryId", () => {
     const result = conversationFeedTriggerItemSchema.safeParse({
       ts: 1000,
@@ -596,7 +575,6 @@ describe("conversationFeedItem entryId — required on all kinds", () => {
     for (const item of [
       { ts: 0, kind: "user", channel: "text", content: "x" },
       { ts: 0, kind: "assistant", content: "y" },
-      { ts: 0, kind: "tool", toolName: "t", status: "finished", summary: "s" },
       { ts: 0, kind: "trigger", source: "s", summary: "w" },
     ]) {
       expect(conversationFeedItemSchema.safeParse(item).success).toBe(false);
@@ -728,44 +706,6 @@ describe("turn lifecycle frames", () => {
   });
 });
 
-describe("turn.tool.update", () => {
-  const base = {
-    type: "turn.tool.update",
-    turnId: "t-1",
-    toolCallId: "c-1",
-    toolName: "delegateTask",
-    status: "running",
-    argsPreview: '{"agent":"hermes"}',
-    startedAtMs: 1000,
-  };
-
-  it("parses a foreground running update (no taskId, no endedAtMs)", () => {
-    expect(turnToolUpdateSchema.safeParse(base).success).toBe(true);
-  });
-
-  it("parses a background running update carrying taskId", () => {
-    expect(turnToolUpdateSchema.safeParse({ ...base, taskId: "task-9" }).success).toBe(true);
-  });
-
-  it("parses a terminal update carrying endedAtMs", () => {
-    expect(turnToolUpdateSchema.safeParse({ ...base, status: "done", endedAtMs: 1200 }).success).toBe(true);
-  });
-
-  it("requires argsPreview and startedAtMs", () => {
-    for (const field of ["argsPreview", "startedAtMs"]) {
-      const incomplete: Record<string, unknown> = { ...base };
-      delete incomplete[field];
-      expect(turnToolUpdateSchema.safeParse(incomplete).success, `missing ${field}`).toBe(false);
-    }
-  });
-
-  it("rejects the retired task.update status vocabulary", () => {
-    for (const status of ["finished", "cancelled", "failed"]) {
-      expect(turnToolUpdateSchema.safeParse({ ...base, status }).success).toBe(false);
-    }
-  });
-});
-
 describe("turn.audio.start encoding", () => {
   it("accepts opus and pcm", () => {
     for (const encoding of ["opus", "pcm"]) {
@@ -889,14 +829,19 @@ describe("gatewayMessageSchema — the 2.0 union", () => {
       { type: "turn.completed", turnId: "t-1" },
       { type: "turn.aborted", turnId: "t-1", cutoff: "interrupt" },
       {
-        type: "turn.tool.update",
+        type: "tasklist.state",
         turnId: "t-1",
-        toolCallId: "c-1",
-        toolName: "search",
-        status: "done",
-        argsPreview: "{}",
-        startedAtMs: 1,
-        endedAtMs: 2,
+        items: [
+          {
+            id: "c-1",
+            toolName: "search",
+            kind: "foreground",
+            status: "done",
+            argsPreview: "{}",
+            startedAtMs: 1,
+            endedAtMs: 2,
+          },
+        ],
       },
       { type: "turn.audio.start", turnId: "t-1", encoding: "opus", sampleRate: 48000 },
       { type: "turn.audio.done", turnId: "t-1" },

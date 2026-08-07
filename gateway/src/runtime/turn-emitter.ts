@@ -1,6 +1,6 @@
 // TurnEmitter (spec §7) — the outbound-frame seam between a turn's runtime
 // callbacks and whatever transport sits on top of them. `SessionRuntime`
-// drives turnStarted/textDelta/toolUpdate/turnCompleted; `cancellation.ts`
+// drives turnStarted/textDelta/taskList/turnCompleted; `cancellation.ts`
 // drives turnAborted; the voice pipeline (Plan 3 Task 2) drives the audio
 // three; the permission PDP and the delegation guard (Plan 3 Task 6) drive
 // permissionRequest/permissionResolved/delegationProgress.
@@ -27,7 +27,6 @@ import type {
 import { getLog } from "../logging/logger.js";
 import type { CutoffKind } from "../store/entry-types.js";
 import type { TitleProvenance } from "../store/session-metadata.js";
-import type { ToolUpdate } from "./react-loop.js";
 
 const log = getLog(["sentient", "runtime", "turn-emitter"]);
 
@@ -44,7 +43,6 @@ export type DelegationProgress = Omit<DelegationProgressMessage, "type">;
 export interface TurnEmitter {
   turnStarted(turnId: string, trigger: TurnTrigger): void;
   textDelta(turnId: string, text: string, replyId?: string): void;
-  toolUpdate(turnId: string, u: ToolUpdate): void;
   turnCompleted(turnId: string): void;
   /** The feed marker for a cut-off turn. Carries the cutoff kind and NOTHING
    *  about audio — `playbackStop` is a separate method because speech
@@ -132,15 +130,6 @@ export function createLoggingTurnEmitter(): TurnEmitter {
         replyId: replyId ?? null,
         length: text.length,
         preview: text.slice(0, TEXT_PREVIEW_LEN),
-      });
-    },
-    toolUpdate(turnId, u) {
-      log.debug("turn-emitter.tool-update", {
-        turnId,
-        toolCallId: u.toolCallId,
-        toolName: u.toolName,
-        status: u.status,
-        taskId: u.taskId,
       });
     },
     turnCompleted(turnId) {

@@ -199,21 +199,19 @@ class SentientSdkReconnectTest {
     }
 
     @Test
-    fun tool_and_trigger_entries_are_dropped_from_timeline() = runTest {
+    fun trigger_entries_are_dropped_from_timeline() = runTest {
         val fake = FakeWebSocketEngine()
         val sdk = buildSdk(fake)
         connectToReady(sdk, fake)
 
-        // A snapshot carrying user + tool + trigger + assistant entries. Only
-        // user + assistant are ROWS; a tool entry never becomes part of the chat
-        // list (its activity renders in the composer task strip off
-        // `tasklist.state`, not here), and trigger (Phase-2 sensor) is dropped
-        // outright.
+        // A snapshot carrying user + trigger + assistant entries. Only user +
+        // assistant are ROWS; trigger (Phase-2 sensor) is dropped outright.
+        // There is no kind:"tool" item on the wire at all any more — tool
+        // activity renders in the composer task strip off `tasklist.state`.
         fake.emit(
             WsIncoming.Text(
                 "{\"type\":\"conversation.snapshot\",\"items\":[" +
                     "{\"kind\":\"user\",\"ts\":10,\"channel\":\"text\",\"content\":\"hi\"}," +
-                    "{\"kind\":\"tool\",\"ts\":20,\"toolName\":\"speak\",\"status\":\"finished\",\"summary\":\"spoke\"}," +
                     "{\"kind\":\"trigger\",\"ts\":30,\"source\":\"timer\",\"summary\":\"fired\"}," +
                     "{\"kind\":\"assistant\",\"ts\":40,\"content\":\"hello\"}]}",
             ),
@@ -221,6 +219,6 @@ class SentientSdkReconnectTest {
         sdk.timeline.first { it.isNotEmpty() }
 
         val roles = sdk.timeline.value.map { it.role }
-        assertEquals(listOf("user", "assistant"), roles, "tool+trigger are not rows, msgs=${sdk.timeline.value}")
+        assertEquals(listOf("user", "assistant"), roles, "trigger is not a row, msgs=${sdk.timeline.value}")
     }
 }

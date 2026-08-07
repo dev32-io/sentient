@@ -19,24 +19,28 @@
 // EXACTLY ONCE, IN FINAL FORM. The web connector appends every
 // `conversation.entry` to its mirror with no dedupe, so an item emitted twice
 // is a duplicate bubble, and an item emitted before its content settles is a
-// permanently stale one. Two rules follow:
+// permanently stale one. ONE rule follows, and it is now the only hold-back
+// this module has:
 //
-//   - A tool tile is not content-final until its `tool_result` folds in
-//     (client-projection.ts anchors the tile at the tool_call's POSITION and
-//     fills its text from the result). It is therefore HELD BACK.
-//   - An assistant item for the OPEN reply is not content-final either: the
+//   - An assistant item for the OPEN reply is not content-final: the
 //     projection folds every stretch of one reply into one item, and the loop
 //     may still append another stretch to it. It is held back until the turn
 //     ends or a steer rotates the reply id — which is exactly when the reply
 //     stops growing.
-//   - Held-back items block everything after them. A stimulus landing between
-//     a tool_call and its result (the steer path, §4.5) would otherwise be
-//     published ahead of the tile and diverge from every later snapshot.
+//   - A held-back item blocks everything after it. A stimulus landing mid-turn
+//     (the steer path, §4.5) would otherwise be published ahead of the reply it
+//     interrupted and diverge from every later snapshot.
 //
 // So each publish emits the longest PREFIX of not-yet-published items that is
-// content-final, and stops. `publishAll` releases the rest at a turn
-// boundary — a background `delegateTask` never produces a `tool_result`, so
-// its tile would otherwise strand the whole feed behind it forever.
+// content-final, and stops. `publishAll` releases the rest at a turn boundary —
+// `force` means exactly that and nothing else: release the still-open reply
+// because the turn it belonged to is over.
+//
+// The tool half of this used to live here too: a tile was held until its
+// `tool_result` folded in. Tool items no longer reach the client feed at all
+// (store/client-projection.ts) — live tool activity is the composer task strip,
+// which is ephemeral — so the tool hold-back, its unresolved-call bookkeeping,
+// and the "cancelled" status a force-released tile carried are all gone.
 
 import type { ConversationAssistantCutoff, ConversationFeedItem } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
@@ -58,14 +62,6 @@ const USER_CHANNEL = "text";
 // completing (session-runtime.ts's `stimulusEntryKind`).
 const TRIGGER_SOURCE = "background-completion";
 
-/** Emitted when the tool's round trip is recorded complete in the store. */
-const TOOL_STATUS_FINISHED = "finished";
-/** Emitted when no `tool_result` was ever committed for the call — the turn
- *  ended first, or the call was a background dispatch whose completion
- *  arrives later as its own `trigger` entry. The wire's status union has no
- *  "running" member, so this is the closest truthful value. */
-const TOOL_STATUS_UNRESOLVED = "cancelled";
-
 /** The two frames this module produces. Declared here rather than as a
  *  `Pick<TurnEmitter, …>` so the module is testable against a two-method
  *  double; `TurnEmitter` satisfies it structurally. */
@@ -81,8 +77,9 @@ export interface ConversationFeed {
   /** Publish every newly committed item that has reached its final shape.
    *  Safe to call after any append. */
   publishSettled(): void;
-  /** Publish everything outstanding, including tool tiles still waiting on a
-   *  result that is never coming. Called at every turn boundary. */
+  /** Publish everything outstanding, including the reply that was still open.
+   *  Called at every turn boundary — which is precisely when "still open" stops
+   *  being true. */
   publishAll(): void;
   /** Re-emit an ALREADY-published entry, leaving the cursor untouched.
    *
@@ -116,7 +113,7 @@ function toWireCutoff(cutoff: CutoffKind): ConversationAssistantCutoff {
   return cutoff === "interrupt" ? { kind: "interrupt", cancelledTaskIds: [] } : { kind: "barge-in" };
 }
 
-function toWireItem(item: FeedItem, isUnresolvedTool: boolean): ConversationFeedItem {
+function toWireItem(item: FeedItem): ConversationFeedItem {
   const base = { entryId: item.id, ts: item.createdAt };
   switch (item.kind) {
     case "user":
@@ -140,30 +137,7 @@ function toWireItem(item: FeedItem, isUnresolvedTool: boolean): ConversationFeed
         ...(item.replyId === null ? {} : { replyId: item.replyId }),
         ...(item.cutoff === null ? {} : { cutoff: toWireCutoff(item.cutoff) }),
       };
-    case "tool":
-      return {
-        ...base,
-        kind: "tool",
-        toolName: item.toolName ?? "",
-        status: isUnresolvedTool ? TOOL_STATUS_UNRESOLVED : TOOL_STATUS_FINISHED,
-        summary: item.text,
-      };
   }
-}
-
-/** Feed-item ids (= the tool_call entry's seq) whose `tool_result` has not
- *  been committed. These are the items whose CONTENT is not final yet. */
-function unresolvedToolItemIds(entries: readonly SessionEntry[]): Set<string> {
-  const resolved = new Set<string>();
-  for (const e of entries) {
-    if (e.kind === "tool_result" && e.toolCallId !== null) resolved.add(e.toolCallId);
-  }
-  const unresolved = new Set<string>();
-  for (const e of entries) {
-    if (e.kind !== "tool_call" || e.toolCallId === null) continue;
-    if (!resolved.has(e.toolCallId)) unresolved.add(String(e.seq));
-  }
-  return unresolved;
 }
 
 function lastSeqOf(entries: readonly SessionEntry[], fallback: number): number {
@@ -184,29 +158,25 @@ function firstSeqOf(entries: readonly SessionEntry[], item: FeedItem): number {
 /**
  * Is [item]'s content still going to change?
  *
- * THE ONE PLACE THE QUESTION IS ASKED. Both hold-back reasons live here, and
- * both cursor writers consult it — `publish()` parks just below the first item
- * that answers yes, `snapshot()` re-arms to the same boundary. Asking it in two
- * places is how they drift, and a drifted cursor silently drops an item out of
- * every attached window's feed for good.
+ * THE ONE PLACE THE QUESTION IS ASKED. Both cursor writers consult it —
+ * `publish()` parks just below the first item that answers yes, `snapshot()`
+ * re-arms to the same boundary. Asking it in two places is how they drift, and
+ * a drifted cursor silently drops an item out of every attached window's feed
+ * for good.
  */
-function isStillGrowing(item: FeedItem, unresolved: ReadonlySet<string>, openReplyId: string | null): boolean {
-  const isUnresolvedTool = unresolved.has(item.id);
-  const isOpenReply = openReplyId !== null && item.replyId === openReplyId;
-  return isUnresolvedTool || isOpenReply;
+function isStillGrowing(item: FeedItem, openReplyId: string | null): boolean {
+  return openReplyId !== null && item.replyId === openReplyId;
 }
 
 /** The seq of the first not-yet-final item in [entries], or null when every one
  *  of them has settled. The cursor parks one below it.
  *
  *  [entries] must be the PENDING window (everything above the cursor), never
- *  the whole session: a background `delegateTask`'s `tool_call` never gets a
- *  `tool_result`, so over a full history this would answer with the first one
- *  ever dispatched and rewind the cursor across the entire conversation. */
+ *  the whole session — the answer is a seq to rewind the cursor TO, and asking
+ *  it of the full history would rewind across the whole conversation. */
 function heldBackFromSeq(entries: readonly SessionEntry[], openReplyId: string | null): number | null {
-  const unresolved = unresolvedToolItemIds(entries);
   for (const item of projectForClient(entries)) {
-    if (isStillGrowing(item, unresolved, openReplyId)) return firstSeqOf(entries, item);
+    if (isStillGrowing(item, openReplyId)) return firstSeqOf(entries, item);
   }
   return null;
 }
@@ -214,15 +184,14 @@ function heldBackFromSeq(entries: readonly SessionEntry[], openReplyId: string |
 /**
  * Project committed entries into the EXACT wire shape the live path emits on
  * `conversation.snapshot` — `projectForClient` plus the same per-item
- * `toWireItem` status derivation `snapshot()` below uses.
+ * `toWireItem` mapping `snapshot()` below uses.
  *
  * Exported so `api/handlers/sessions.ts` (`GET /sessions/:id/messages`) can
  * reuse it rather than re-deriving the shape: `render(replay) == render(live)`
  * is a protocol contract, and two hand-written projections is how it drifts.
  */
 export function snapshotFeedItems(entries: readonly SessionEntry[]): ConversationFeedItem[] {
-  const unresolved = unresolvedToolItemIds(entries);
-  return projectForClient(entries).map((i) => toWireItem(i, unresolved.has(i.id)));
+  return projectForClient(entries).map(toWireItem);
 }
 
 export function createConversationFeed(deps: ConversationFeedDeps): ConversationFeed {
@@ -242,18 +211,14 @@ export function createConversationFeed(deps: ConversationFeedDeps): Conversation
   let publishedThroughSeq = lastSeqOf(store.readSession(sessionId), 0);
 
   function publish(force: boolean): void {
-    // A TAIL read, not the whole session: the held-back tool_call is always
-    // inside the window (the cursor never advances past it), so its result
-    // still folds into its own tile. store/projection-convergence.test.ts
-    // pins that a tail projects the same ids as a full replay.
+    // A TAIL read, not the whole session: the held-back reply's first stretch
+    // is always inside the window (the cursor never advances past it), so the
+    // whole reply still folds into one item.
+    // store/projection-convergence.test.ts pins that a tail projects the same
+    // ids as a full replay.
     const tail = store.readSince(sessionId, publishedThroughSeq);
     if (tail.length === 0) return;
 
-    // `unresolved` decides BOTH what is held back and what status a released
-    // tile carries — `force` only lifts the hold. Deriving status from the
-    // same predicate the snapshot uses is what keeps a force-released tile
-    // convergent with its replay.
-    const unresolved = unresolvedToolItemIds(tail);
     // Keyed by FEED-ITEM id, not by seq: a folded assistant item is named by
     // its replyId, and every stretch of one reply belongs to one turn anyway.
     const turnIdByItemId = new Map<string, string>();
@@ -262,27 +227,22 @@ export function createConversationFeed(deps: ConversationFeedDeps): Conversation
       if (e.replyId !== null) turnIdByItemId.set(e.replyId, e.turnId);
     }
 
-    // The OPEN reply — the one the loop is still writing into — is held back
-    // exactly like an unresolved tool tile: its text is not final until the
-    // turn ends or a steer rotates the id. `force` (a turn boundary) lifts it.
+    // The OPEN reply — the one the loop is still writing into — is the only
+    // thing held back: its text is not final until the turn ends or a steer
+    // rotates the id. `force` (a turn boundary) lifts it.
     const openReplyId = force ? null : currentReplyId();
 
     let published = 0;
     let heldBackAtSeq: number | null = null;
     for (const item of projectForClient(tail)) {
-      const isUnresolvedTool = unresolved.has(item.id);
-      if (isStillGrowing(item, unresolved, openReplyId) && !force) {
+      if (isStillGrowing(item, openReplyId)) {
         heldBackAtSeq = firstSeqOf(tail, item);
         break;
       }
       // The reply id travels with the turn key: a committed entry and the live
       // bubble it replaces must group by the SAME value, or the swap at turn
       // end shows a different set of rows than the stream did.
-      emitter.conversationEntry(
-        toWireItem(item, isUnresolvedTool),
-        turnIdByItemId.get(item.id),
-        item.replyId ?? undefined,
-      );
+      emitter.conversationEntry(toWireItem(item), turnIdByItemId.get(item.id), item.replyId ?? undefined);
       published += 1;
     }
 
@@ -306,10 +266,10 @@ export function createConversationFeed(deps: ConversationFeedDeps): Conversation
       emitter.conversationSnapshot(items);
       // Re-armed at the tail — but NEVER above an item that is still growing.
       // A snapshot is written to the ONE window that just attached, while the
-      // cursor is shared by every window on this session: parking it past a
-      // held-back item (an open reply, or a tool tile whose result has not
-      // landed) would drop that item out of every OTHER window's feed for good,
-      // and would later emit a reply's own id carrying nothing but its tail.
+      // cursor is shared by every window on this session: parking it past the
+      // still-open reply would drop that item out of every OTHER window's feed
+      // for good, and would later emit a reply's own id carrying nothing but
+      // its tail.
       // Parking just below it costs the joiner one re-send of an item it
       // already has under the same id.
       //
@@ -343,9 +303,7 @@ export function createConversationFeed(deps: ConversationFeedDeps): Conversation
         });
         return;
       }
-      // `false`: only a tool tile can be unresolved, and republish is only
-      // ever called with the `user` entry a resend matched.
-      emitter.conversationEntry(toWireItem(item, false), entry.turnId, entry.replyId ?? undefined);
+      emitter.conversationEntry(toWireItem(item), entry.turnId, entry.replyId ?? undefined);
       log.info("conversation-feed.republished", { userId, sessionId, seq: entry.seq, turnId: entry.turnId });
     },
   };
