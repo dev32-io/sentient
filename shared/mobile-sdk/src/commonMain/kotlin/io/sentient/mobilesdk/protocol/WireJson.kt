@@ -9,7 +9,9 @@ import kotlinx.serialization.modules.SerializersModule
 /**
  * Wire JSON: lenient on unknown server fields, discriminator key is "type" (matches gateway).
  * ServerMessage.Unknown is registered as the polymorphic default deserializer so any
- * unrecognised frame decodes gracefully without throwing.
+ * unrecognised frame decodes gracefully without throwing; ConversationFeedItem.Unknown
+ * does the same for the feed's own "kind" hierarchy, so one retired item kind cannot
+ * take a whole conversation.snapshot down with it.
  *
  * coerceInputValues=true is graceful-degradation defense-in-depth: a non-nullable
  * property that carries a default coerces an explicit `null` literal in the input to
@@ -27,6 +29,13 @@ object WireJson {
         coerceInputValues = true
         serializersModule = SerializersModule {
             polymorphicDefaultDeserializer(ServerMessage::class) { ServerMessage.Unknown.serializer() }
+            // The SAME rule for the feed's own hierarchy, and for a sharper
+            // reason: `kind:"tool"` was RETIRED, and OTA means a staged rollout
+            // routinely puts a new phone in front of an older gateway that
+            // still sends it. An unregistered default throws on the unknown
+            // discriminator and kills the whole `conversation.snapshot` frame —
+            // a blank chat rather than one row short.
+            polymorphicDefaultDeserializer(ConversationFeedItem::class) { ConversationFeedItem.Unknown.serializer() }
         }
     }
 

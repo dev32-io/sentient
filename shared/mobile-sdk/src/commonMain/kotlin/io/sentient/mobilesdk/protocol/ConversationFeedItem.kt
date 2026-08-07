@@ -87,10 +87,30 @@ sealed class ConversationFeedItem {
         val replyId: String? = null,
     ) : ConversationFeedItem()
 
-    // THERE IS NO kind="tool". A tool call is the MODEL's record of what it
-    // did, not a user-facing artifact — the gateway keeps it in the store for
-    // the model projection and never puts it on the feed. Live tool activity is
-    // the composer task strip (TaskListConnector / tasklist.state).
+    // THERE IS NO kind="tool" ANY MORE. A tool call is the MODEL's record of
+    // what it did, not a user-facing artifact — the gateway keeps it in the
+    // store for the model projection and never puts it on the feed. Live tool
+    // activity is the composer task strip (TaskListConnector / tasklist.state).
+    //
+    // Which is exactly why [Unknown] exists: an OLD gateway still sends
+    // `kind:"tool"`, and OTA means a staged rollout puts new phones in front of
+    // old gateways routinely. Without a default the unknown discriminator
+    // throws and takes the WHOLE `conversation.snapshot` frame with it — a
+    // blank chat instead of a degraded one.
+
+    /**
+     * Forward/backward-compat catch-all. Decodes any unrecognised feed item —
+     * a retired `kind` from an older gateway, a newer one from a gateway ahead
+     * of this build — without throwing. Registered as the polymorphic default
+     * deserializer in [WireJson], mirroring [ServerMessage.Unknown]. Renders as
+     * nothing (see `StateDeriver.committedMessage`): one missing row beats a
+     * missing conversation.
+     */
+    @Serializable @SerialName("unknown")
+    data object Unknown : ConversationFeedItem() {
+        override val entryId: String get() = UNKNOWN_ENTRY_ID
+        override val ts: Long get() = UNKNOWN_TS
+    }
 }
 
 /**

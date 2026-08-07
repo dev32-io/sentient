@@ -164,6 +164,12 @@ private fun committedMessage(item: ConversationFeedItem): ChatMessage? = when (i
     // feed at all: tool activity lives in the composer task strip,
     // tasklist.state, not the chat list.)
     is ConversationFeedItem.Trigger -> null
+
+    // A kind this build does not know — a retired one from an older gateway, a
+    // newer one from a gateway ahead of us. Rendering nothing is the whole
+    // point: the alternative is the decode throwing and the frame it arrived in
+    // being dropped entirely.
+    is ConversationFeedItem.Unknown -> null
 }
 
 private const val SPEECH_CHANNEL = "speech"

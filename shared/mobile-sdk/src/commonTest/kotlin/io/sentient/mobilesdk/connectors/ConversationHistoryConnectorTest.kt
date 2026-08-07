@@ -303,4 +303,5 @@ private fun ConversationFeedItem.kindName(): String = when (this) {
     is ConversationFeedItem.User -> "user"
     is ConversationFeedItem.Trigger -> "trigger"
     is ConversationFeedItem.Assistant -> "assistant"
+    is ConversationFeedItem.Unknown -> "unknown"
 }
