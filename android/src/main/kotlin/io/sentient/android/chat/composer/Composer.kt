@@ -46,7 +46,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -70,6 +71,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -181,19 +183,34 @@ fun Composer(
                 .padding(top = MIC_OVERHANG)
                 .composerGlow(listening = micActive, tokens = tokens)
                 .clipCard(listening = micActive)
+                // Custom loop, not `detectVerticalDragGestures` — that built-in claims
+                // (consumes) the instant its OWN ~8dp vertical touch-slop crosses,
+                // racing the task strip's nested `horizontalScroll` on raw per-axis
+                // distance rather than which direction actually dominates. A mostly-
+                // horizontal strip-scroll routinely lost that race (the reported
+                // defect: 10+ swipes, zero measurable offset). See
+                // ComposerSwipeGesture.kt for the full diagnosis. Deferring ALL
+                // consumption to the same swipeThresholdPx the dismiss itself fires
+                // at — well past the child's ~8dp slop — gives the child every
+                // chance to claim a horizontal drag first.
                 .pointerInput(Unit) {
-                    var dragDown = 0f
-                    detectVerticalDragGestures(
-                        onDragEnd = { dragDown = 0f },
-                        onVerticalDrag = { _, dy ->
-                            dragDown += dy
-                            if (dragDown > swipeThresholdPx) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        var netDownwardDragPx = 0f
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (change.isConsumed) break // someone else (the strip) claimed it — yield
+                            if (!change.pressed) break
+                            val outcome = accumulateSwipeDown(netDownwardDragPx, change.positionChange().y, swipeThresholdPx)
+                            netDownwardDragPx = outcome.netPx
+                            if (outcome.triggered) {
+                                change.consume()
                                 focusManager.clearFocus()
                                 composerLog.info("keyboardDismiss", mapOf("gesture" to "swipeDown"))
-                                dragDown = 0f
                             }
-                        },
-                    )
+                        }
+                    }
                 },
         ) {
             // Recording takeover — an inset-0 overlay spanning the WHOLE card,
@@ -217,7 +234,21 @@ fun Composer(
                     .padding(tokens.space.md),
                 verticalArrangement = Arrangement.spacedBy(tokens.space.sm),
             ) {
-                ComposerTaskStrip(tasks)
+                ComposerTaskStrip(
+                    tasks,
+                    // MicCorner overhangs MIC_OVERHANG into the card's top edge; the
+                    // Column's own top inset (tokens.space.md) doesn't fully clear it,
+                    // so whichever content renders first here — the strip, when tasks
+                    // are present — gets the shortfall as extra top padding. Without
+                    // this, a tap or scroll-drag on the strip's top-right corner lands
+                    // on the mic button instead: MicCorner's own pointerInput wins any
+                    // down inside its bounds deterministically (see MicCorner.kt), so
+                    // this has to be a real layout gap, not a gesture-priority fix.
+                    // Now that the strip scrolls, that corner is exactly where a
+                    // person reaches to drag it — an accidental hit there would start
+                    // (and could lock) hands-free listening.
+                    modifier = Modifier.padding(top = (MIC_CORNER_BUTTON - MIC_OVERHANG - tokens.space.md).coerceAtLeast(0.dp)),
+                )
                 if (micDenied) {
                     Text(
                         MIC_DENIED_NOTICE,
