@@ -17,10 +17,14 @@ const log = createLogger(["sentient", "sdk", "connectors", "conversation-history
 
 export type CommittedFeedItem = ConversationFeedItem & {
   readonly turnId?: string;
-  /** WHICH BUBBLE this row belongs to, re-attached from the frame like
-   *  `turnId`. Consecutive assistant rows sharing it are the several stretches
-   *  of ONE reply and render as one bubble. */
-  readonly messageId?: string;
+  /** WHICH REPLY this row belongs to, re-attached from the frame like
+   *  `turnId` (though an assistant item now also carries it directly — see
+   *  protocol/conversation.ts, which is also why the type is spelled
+   *  `string | undefined` here: it must match the zod-inferred optional on
+   *  the assistant item's own `replyId`, or the intersection below conflicts
+   *  under `exactOptionalPropertyTypes`). Consecutive assistant rows sharing
+   *  it are the several stretches of ONE reply and render as one bubble. */
+  readonly replyId?: string | undefined;
 };
 
 // ---------------------------------------------------------------------------
@@ -121,16 +125,36 @@ export class ConversationHistoryConnector implements Connector {
     this.unsubs.push(
       sdk.onMessage("conversation.entry", (msg: unknown) => {
         if (this.awaitingSnapshot) return; // drop straggler from prior generation
-        const m = msg as { item?: ConversationFeedItem; turnId?: string; messageId?: string };
+        const m = msg as { item?: ConversationFeedItem; turnId?: string; replyId?: string };
         if (!m.item) return;
         // Re-attach the gateway's frame turnId to the committed item so the UI
-        // joins it to the live bubble by id (never by ts-window guessing).
+        // joins it to the live bubble by id (never by ts-window guessing). Keep
+        // the frame's replyId as the override so it agrees with the one an
+        // assistant item now carries itself (protocol/conversation.ts).
         const entry: CommittedFeedItem = {
           ...m.item,
-          ...(m.turnId === undefined ? {} : { turnId: m.turnId }),
-          ...(m.messageId === undefined ? {} : { messageId: m.messageId }),
+          ...(m.turnId ? { turnId: m.turnId } : {}),
+          ...(m.replyId ? { replyId: m.replyId } : {}),
         };
-        this.mirror = [...this.mirror, entry];
+        // UPSERT BY entryId, NOT append. The gateway legitimately sends the
+        // SAME entryId twice to a window that attached mid-turn: once inside
+        // its conversation.snapshot (the reply so far) and again as this
+        // conversation.entry at the turn boundary (the full reply). Appending
+        // would render two overlapping assistant bubbles. Mirrors
+        // ConversationHistoryConnector.kt's onEntryFrame dedup exactly. Empty
+        // entryId has no identity and is never deduped.
+        const existingIdx = entry.entryId ? this.mirror.findIndex((i) => i.entryId === entry.entryId) : -1;
+        this.mirror =
+          existingIdx >= 0
+            ? this.mirror.map((item, idx) => (idx === existingIdx ? entry : item))
+            : [...this.mirror, entry];
+        log.debug("entry", {
+          entryId: entry.entryId,
+          turnId: entry.turnId ?? null,
+          replyId: entry.replyId ?? null,
+          deduped: existingIdx >= 0,
+          size: this.mirror.length,
+        });
         this.config.onEntry?.(entry);
         this.config.onUpdate?.(this.mirror);
       }),

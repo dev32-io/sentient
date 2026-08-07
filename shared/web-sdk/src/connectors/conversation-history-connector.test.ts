@@ -83,6 +83,39 @@ describe("ConversationHistoryConnector", () => {
     expect(onUpdate).toHaveBeenCalledTimes(4);
   });
 
+  it("upserts by entryId instead of appending — a reply re-delivered at the turn boundary replaces its snapshot twin in place", () => {
+    const onEntry = vi.fn();
+    const onUpdate = vi.fn();
+    const connector = new ConversationHistoryConnector({ onEntry, onUpdate });
+    const internal = createMockInternal();
+    connector.attach(internal);
+
+    // Mid-turn attach: the snapshot already carries the reply-so-far under a
+    // stable entryId (== replyId, per the gateway's fold-into-one-item contract).
+    const partial: ConversationFeedItem = { entryId: "reply-1", ts: 2, kind: "assistant", content: "partial answ" };
+    internal.messageHandlers.get("conversation.snapshot")?.({
+      type: "conversation.snapshot",
+      items: [userItem("hi", 1), partial],
+    });
+    expect(connector.items()).toHaveLength(2);
+
+    // Turn boundary: the SAME entryId arrives again as a conversation.entry
+    // carrying the full reply. Must replace in place, not append a second
+    // overlapping bubble.
+    const full: ConversationFeedItem = {
+      entryId: "reply-1",
+      ts: 2,
+      kind: "assistant",
+      content: "partial answer, complete",
+    };
+    internal.messageHandlers.get("conversation.entry")?.({ type: "conversation.entry", item: full });
+
+    expect(connector.items()).toHaveLength(2);
+    expect(connector.items().map((i) => i.kind)).toEqual(["user", "assistant"]);
+    expect((connector.items()[1] as { content: string }).content).toBe("partial answer, complete");
+    expect(onEntry).toHaveBeenCalledTimes(1);
+  });
+
   it("re-attaches the frame turnId to a committed assistant entry (no client-side id invention)", () => {
     const onEntry = vi.fn();
     const connector = new ConversationHistoryConnector({ onEntry });
@@ -283,7 +316,8 @@ describe("ConversationHistoryConnector — snapshot replace semantics", () => {
     await Promise.resolve();
     expect(c.items()).toHaveLength(1);
     expect((c.items()[0] as { content: string }).content).toBe("fresh");
-    sdk.emit("conversation.entry", { item: { entryId: "e", kind: "user", ts: 5, channel: "text", content: "live" } });
+    // Distinct entryId — a genuinely new row, not a re-delivery of "e".
+    sdk.emit("conversation.entry", { item: { entryId: "e2", kind: "user", ts: 5, channel: "text", content: "live" } });
     expect(c.items()).toHaveLength(2);
   });
 

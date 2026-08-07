@@ -1,3 +1,4 @@
+import type { TurnTextDeltaMessage } from "@sentient/protocol";
 import type { Connector, SentientSDKInternal } from "../connector-types.ts";
 import { createLogger } from "../logger.ts";
 
@@ -6,9 +7,9 @@ const log = createLogger(["sentient", "sdk", "connectors", "inflight-message"]);
 export interface InFlightMessage {
   readonly turnId: string;
   readonly text: string;
-  /** WHICH BUBBLE this is. Absent against a gateway that does not stamp
+  /** WHICH REPLY this is. Absent against a gateway that does not stamp
    *  deltas, in which case the buffer is keyed by turn — the old behaviour. */
-  readonly messageId?: string;
+  readonly replyId?: string;
 }
 
 export interface InFlightMessageConnectorConfig {
@@ -48,14 +49,14 @@ export class InFlightMessageConnector implements Connector {
 
   private readonly config: InFlightMessageConnectorConfig;
   private unsubs: (() => void)[] = [];
-  /** bubble key → the buffer. Insertion order IS render order.
+  /** reply key → the buffer. Insertion order IS render order.
    *
-   *  KEYED BY BUBBLE, NOT BY TURN. A ReAct turn produces text more than once
+   *  KEYED BY REPLY, NOT BY TURN. A ReAct turn produces text more than once
    *  and that is ONE bubble that grew — but a message the person sends mid-turn
    *  is drawn between two of those stretches, so the text after it belongs to a
    *  new bubble. The gateway decides where the boundary falls and stamps every
-   *  delta (`messageId`); nothing here derives it. */
-  private buffers = new Map<string, { turnId: string; text: string; messageId?: string }>();
+   *  delta (`replyId`); nothing here derives it. */
+  private buffers = new Map<string, { turnId: string; text: string; replyId?: string }>();
 
   constructor(config: InFlightMessageConnectorConfig = {}) {
     this.config = config;
@@ -66,7 +67,7 @@ export class InFlightMessageConnector implements Connector {
     return [...this.buffers.values()].map((b) => ({
       turnId: b.turnId,
       text: b.text,
-      ...(b.messageId === undefined ? {} : { messageId: b.messageId }),
+      ...(b.replyId === undefined ? {} : { replyId: b.replyId }),
     }));
   }
 
@@ -77,7 +78,7 @@ export class InFlightMessageConnector implements Connector {
       sdk.onMessage("turn.started", (msg: unknown) => {
         const m = msg as { turnId?: string; trigger?: string };
         if (!m.turnId || this.buffers.has(m.turnId)) return;
-        // Seeded under the TURN key — `turn.started` carries no messageId, and
+        // Seeded under the TURN key — `turn.started` carries no replyId, and
         // the first delta is what names the bubble. That delta re-keys this
         // placeholder in place, so it never becomes an orphan beside it.
         this.buffers.set(m.turnId, { turnId: m.turnId, text: "" });
@@ -88,9 +89,9 @@ export class InFlightMessageConnector implements Connector {
 
     this.unsubs.push(
       sdk.onMessage("turn.text.delta", (msg: unknown) => {
-        const m = msg as { turnId?: string; text?: string; messageId?: string };
+        const m = msg as TurnTextDeltaMessage;
         if (!m.turnId || typeof m.text !== "string") return;
-        const key = m.messageId ?? m.turnId;
+        const key = m.replyId ?? m.turnId;
         // Adopt the turn-keyed placeholder ONCE, while it is still empty. A
         // non-empty one belongs to a gateway sending unstamped deltas and must
         // not be stolen.
@@ -101,7 +102,7 @@ export class InFlightMessageConnector implements Connector {
             this.buffers.set(key, {
               turnId: seeded.turnId,
               text: seeded.text,
-              ...(m.messageId === undefined ? {} : { messageId: m.messageId }),
+              ...(m.replyId === undefined ? {} : { replyId: m.replyId }),
             });
           }
         }
@@ -109,7 +110,7 @@ export class InFlightMessageConnector implements Connector {
         this.buffers.set(key, {
           turnId: m.turnId,
           text: (prior?.text ?? "") + m.text,
-          ...(m.messageId === undefined ? {} : { messageId: m.messageId }),
+          ...(m.replyId === undefined ? {} : { replyId: m.replyId }),
         });
         this.emit();
       }),
