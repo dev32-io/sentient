@@ -23,6 +23,13 @@
 //      from them. Both are user content; the connector logs the argument-key COUNT
 //      only.
 //
+//   5. TaskListConnector (composer task strip path): `tasklist.state` rows carry
+//      `argsPreview` — a rendering of the tool's ACTUAL arguments (the message
+//      body, the search text, the entity being addressed). It is the newest
+//      content-bearing field on the mobile wire; the connector logs the row COUNT
+//      only. `clear()` is exercised too: it logs on the same tag and would be the
+//      obvious place to "helpfully" name what was dropped.
+//
 // Why this test belongs here (.claude/rules/testing.md):
 //   Security boundary — log content privacy is an explicit boundary concern.
 //   The SDK's logging convention logs lengths/ids/types only, never message
@@ -39,11 +46,13 @@ import io.ktor.http.headersOf
 import io.sentient.mobilesdk.connectors.InFlightMessageConnector
 import io.sentient.mobilesdk.connectors.PermissionConnector
 import io.sentient.mobilesdk.connectors.SessionsConnector
+import io.sentient.mobilesdk.connectors.TaskListConnector
 import io.sentient.mobilesdk.fakes.FakeWebSocketEngine
 import io.sentient.mobilesdk.log.LogConfig
 import io.sentient.mobilesdk.log.LogLevel
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.protocol.ServerMessage
+import io.sentient.mobilesdk.protocol.TaskListItem
 import io.sentient.mobilesdk.sessions.SessionsHttpClient
 import io.sentient.mobilesdk.transport.WsIncoming
 import io.sentient.mobilesdk.transport.WsTransport
@@ -216,5 +225,40 @@ class PrivacyGuardTest {
         c.respond("r-priv-1", approved = true)
 
         assertTrue(!captured.toString().contains(secret), "tool arguments leaked into the diagnostic log:\n$captured")
+    }
+
+    /**
+     * The composer task strip's rows carry `argsPreview` — the gateway's rendering of
+     * the tool's ACTUAL arguments (what was searched for, what was said, which entity
+     * was addressed). It is user content by the same rule as a permission prompt's
+     * `args`, and it is the newest content-bearing field on the mobile wire.
+     *
+     * Drives the REAL connector on both of its logging paths: the `tasklist.state`
+     * frame and `clear()`. Both must log counts and ids only.
+     */
+    @Test fun task_list_rows_never_log_their_args_preview() {
+        val secret = "search the vet for Biscuit's 4pm appointment"
+        val captured = StringBuilder()
+        VitalsLogTap.register { _, tag, line -> captured.append(tag).append(' ').append(line).append('\n') }
+
+        val c = TaskListConnector()
+        c.handle(
+            ServerMessage.TaskListState(
+                turnId = "t-priv-1",
+                items = listOf(
+                    TaskListItem(
+                        id = "tc-priv-1",
+                        toolName = "search_web",
+                        kind = "foreground",
+                        status = "running",
+                        argsPreview = secret,
+                        startedAtMs = 1L,
+                    ),
+                ),
+            ),
+        )
+        c.clear()
+
+        assertTrue(!captured.toString().contains(secret), "task-strip args leaked into the diagnostic log:\n$captured")
     }
 }
