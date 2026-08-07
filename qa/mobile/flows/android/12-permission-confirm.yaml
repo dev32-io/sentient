@@ -1,6 +1,7 @@
 appId: io.dev32.sentient.debug
 tags:
   - chat
+  - device-actuating
 env:
   # See _helpers/login.yaml for why the avatar id is a variable.
   QA_USER_ID: u_0417d3b0
@@ -16,6 +17,16 @@ env:
 # The gateway's L3 PEP must block on a real confirm prompt rather than let the
 # model's tool call authorise itself, the app must surface it as a decision-required
 # dialog, and Allow must let the tool dispatch.
+#
+# ⚠️ `device-actuating`: the Allow arm ACTUATES A REAL LIGHT via the live Home
+# Assistant integration — there is no dev/prod split for physical state. This is
+# why the flow carries the `device-actuating` tag in addition to `chat`:
+# `qa/mobile/run-e2e.sh`'s BASE_EXCLUDE keeps it out of every `--tags` batch
+# (including `--tags chat`), unconditionally — same treatment as fault-armed /
+# physical-only. To run it deliberately, invoke Maestro directly on this file
+# (`maestro test qa/mobile/flows/android/12-permission-confirm.yaml`), never
+# through the tag-filtered runner. See agents/docs/testing-knowledge.md's tag
+# taxonomy section for the incident that added this tag.
 #
 # Expected gateway log trail:
 #   runtime:permission-broker  permission-broker.request  timeoutMs=120000

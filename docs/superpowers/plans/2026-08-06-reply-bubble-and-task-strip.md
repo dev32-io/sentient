@@ -1862,6 +1862,11 @@ source scripts/env.sh && qa/mobile/run-e2e.sh ios --tags chat
 > work's assertions. `01b` is deliberately tagged `chat` ONLY: it asserts against the conversation
 > `01-send-stream` creates, and `CANONICAL_ORDER` keeps the pair adjacent, so any tag set that would
 > select `01b` without `01-send-stream` must be avoided.
+>
+> **Safety note.** `12-permission-confirm` is also tagged `chat`, but it additionally carries the
+> `device-actuating` behavior tag (added 2026-08-06 after it turned on a real kitchen light on an
+> unattended `--tags chat` run) — `run-e2e.sh`'s `BASE_EXCLUDE` keeps `device-actuating` flows out
+> of every `--tags` batch unconditionally, so the invocation above cannot select it.
 
 - [ ] **Step 4: Record evidence and update the case library**
 

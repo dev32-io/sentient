@@ -1,13 +1,16 @@
 appId: io.dev32.sentient.debug
 tags:
   - chat
+  - device-actuating
 env:
   # See _helpers/login.yaml for why the avatar id is a variable.
   QA_USER_ID: u_0417d3b0
 ---
 # 12-permission-confirm — the iOS arm of `permission-confirm` (spec §9.2). Twin of
 # android/12-permission-confirm.yaml; read that header for the full rationale, the
-# expected gateway log trail, and the D13 note that keeps the Android twin red.
+# expected gateway log trail, the D13 note that keeps the Android twin red, and
+# the `device-actuating` tag rationale (the Allow arm turns on a real light —
+# read that header before running this file directly).
 #
 # Short version:
 #   * The predecessor spec's matrix had NO native permission case — a real gap.

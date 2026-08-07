@@ -27,14 +27,24 @@
 #   surface : chat session reconnect outbox voice-loop auth settings-root
 #             settings-soul settings-voice settings-user settings-admin
 #             settings-diagnostics update logout
-#   behavior: fault-armed physical-only slow destructive-profile restore helper
+#   behavior: fault-armed physical-only device-actuating slow destructive-profile
+#             restore helper
 #
 # Behaviour:
 #   - Default batch (no --tags) = every flow EXCEPT fault-armed / physical-only /
-#     helper, in one `maestro test` invocation; then the fault-armed flows run
-#     individually with their pre-arming (broadcast / network-kill / gateway-stop).
+#     device-actuating / helper, in one `maestro test` invocation; then the
+#     fault-armed flows run individually with their pre-arming (broadcast /
+#     network-kill / gateway-stop).
 #   - --tags X,Y = one include-tags batch (still excludes fault-armed/physical-only
-#     /helper); no fault phase ? targeted runs stay fast.
+#     /device-actuating/helper); no fault phase ? targeted runs stay fast.
+#   - NONE of fault-armed/physical-only/device-actuating can be selected via
+#     --tags -- EFFECTIVE_EXCLUDE always wins over INCLUDE_TAGS (see
+#     flow_matches). fault-armed's deliberate opt-in is --fault-only (a separate
+#     named-flow phase, not tag-driven); physical-only and device-actuating have
+#     NO opt-in through this runner at all -- run them with a direct
+#     `maestro test <file>` invocation instead. See testing-knowledge.md's tag
+#     taxonomy section for why (device-actuating: an agent-driven run actuated a
+#     real light in the user's house at night -- see 12-permission-confirm.yaml).
 #
 # Prerequisites:
 #   - Local gateway healthy (native: `cd gateway && bun --hot src/main.ts`; see deploy/README.md).
@@ -70,8 +80,11 @@ IOS_DEVICE="${IOS_DEVICE:-}"
 ANDROID_APP="io.dev32.sentient.debug"
 IOS_APP="io.dev32.sentient.debug"
 
-# Always excluded from batch runs: harness-orchestrated + reusable subflows.
-BASE_EXCLUDE="fault-armed,physical-only,helper"
+# Always excluded from batch runs: harness-orchestrated flows, reusable
+# subflows, and anything that writes real-world device state (device-actuating
+# -- lights, media, thermostat, locks; excluded unconditionally, same as
+# fault-armed/physical-only -- see the tag-taxonomy comment above).
+BASE_EXCLUDE="fault-armed,physical-only,device-actuating,helper"
 
 # -- Args ----------------------------------------------------------------------
 TARGET="all"
