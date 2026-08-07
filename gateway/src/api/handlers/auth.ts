@@ -210,7 +210,7 @@ function buildDefaultProfileBody(secretsStore?: SecretsStore): Omit<ProfileV1, "
     voice: { provider: "local-tts", id: "default" },
     audio: AUDIO_PREFS_DEFAULT,
     persona: { template: "default", overrides: "" },
-    tools: { enabled: {}, toolsets: [] },
+    tools: { permissions: {}, toolsets: [] },
     compression: { threshold: 0.5 },
     advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" },
   };

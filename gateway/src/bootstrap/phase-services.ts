@@ -239,8 +239,8 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     });
   }
 
-  // Boot migration: rename per-user tools.enabled.duckduckgo →
-  // tools.enabled.searxng + tools.enabled.fetch. Idempotent.
+  // Boot migration: rename per-user tools.permissions.duckduckgo →
+  // tools.permissions.searxng + tools.permissions.fetch. Idempotent.
   if (cfg.hermes) {
     await migrateWebToolsEnabled({ userStore: auth.users, profileStore });
   }

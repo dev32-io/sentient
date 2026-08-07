@@ -7,3 +7,4 @@ export * from "./orchestrator-config";
 export * from "./risk-config";
 export * from "./store-config";
 export * from "./system-orchestrator-config";
+export * from "./tool-permission";

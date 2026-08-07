@@ -2,7 +2,7 @@ import { describe, expect, it, test } from "bun:test";
 import { applyProfileDefaults } from "./profile-defaults.js";
 import { profileV1Schema } from "./profile-types.js";
 
-test("applyProfileDefaults seeds tools.enabled and tools.toolsets when caller omits them", () => {
+test("applyProfileDefaults seeds tools.permissions and tools.toolsets when caller omits them", () => {
   const partial = {
     schemaVersion: 1 as const,
     userId: "u_test",
@@ -10,24 +10,24 @@ test("applyProfileDefaults seeds tools.enabled and tools.toolsets when caller om
     voice: { provider: "local-tts" as const, id: "abc" },
     audio: { ttsEnabled: true, channel: "voice" as const },
     persona: { template: "default", overrides: "" },
-    tools: { enabled: {}, toolsets: [] },
+    tools: { permissions: {}, toolsets: [] },
     compression: { threshold: 0.5 },
     advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" as const },
   };
 
   const out = applyProfileDefaults(partial);
 
-  expect(out.tools.enabled).toEqual({
-    home_assistant: [],
-    gateway: [],
-    music_assistant: [],
-    searxng: [],
-    fetch: [],
+  expect(out.tools.permissions).toEqual({
+    home_assistant: {},
+    gateway: {},
+    music_assistant: {},
+    searxng: {},
+    fetch: {},
   });
   expect(out.tools.toolsets).toEqual(["memory", "todo", "session_search", "skills"]);
 });
 
-test("applyProfileDefaults preserves caller-provided tools.enabled overrides", () => {
+test("applyProfileDefaults preserves caller-provided tools.permissions overrides", () => {
   const partial = {
     schemaVersion: 1 as const,
     userId: "u_test",
@@ -35,12 +35,12 @@ test("applyProfileDefaults preserves caller-provided tools.enabled overrides", (
     voice: { provider: "local-tts" as const, id: "y" },
     audio: { ttsEnabled: true, channel: "voice" as const },
     persona: { template: "default", overrides: "" },
-    tools: { enabled: { searxng: ["search_web"] }, toolsets: ["memory"] },
+    tools: { permissions: { searxng: { web_search: "allow" as const } }, toolsets: ["memory"] },
     compression: { threshold: 0.5 },
     advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" as const },
   };
   const out = applyProfileDefaults(partial);
-  expect(out.tools.enabled).toEqual({ searxng: ["search_web"] });
+  expect(out.tools.permissions).toEqual({ searxng: { web_search: "allow" } });
   expect(out.tools.toolsets).toEqual(["memory"]);
 });
 

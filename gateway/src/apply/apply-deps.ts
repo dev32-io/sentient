@@ -11,8 +11,10 @@ export interface ApplyDepsServices {
   readonly profileStore: ProfileStore;
   readonly templateLoader: TemplateLoader;
   /** Operator-managed MCP server inventory. Loaded once at boot from
-   *  `gateway/config.yaml#mcp_catalog`; the renderer joins entries
-   *  against `profile.tools.enabled[]` per-user with var substitution. */
+   *  `gateway/config.yaml#mcp_catalog`. Threaded into renderProfile's
+   *  RenderContext, but as of the tool-permissions work its per-user
+   *  resolution against `profile.tools.enabled[]` is retired — see
+   *  renderMcpServers's STUB comment in profile-renderer.ts. */
   readonly mcpCatalog: McpCatalog;
   /** Secrets store for reading per-user provider configuration (e.g.
    *  base_url for the "custom" LLM provider). Must already be loaded

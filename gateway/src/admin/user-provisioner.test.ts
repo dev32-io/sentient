@@ -52,7 +52,7 @@ const BRIDGE_PROFILE: ProfileV1 = {
   audio: { ttsEnabled: true, channel: "voice" as const },
   persona: { template: "default", overrides: "" },
   tools: {
-    enabled: { home_assistant: [], gateway: [], music_assistant: [], searxng: [], fetch: [] },
+    permissions: { home_assistant: {}, gateway: {}, music_assistant: {}, searxng: {}, fetch: {} },
     toolsets: ["memory", "todo", "clarify", "skills", "session_search", "messaging"],
   },
   compression: { threshold: 0.5 },

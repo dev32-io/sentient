@@ -13,7 +13,7 @@ function sample(userId = "kevin"): ProfileV1 {
     voice: { provider: "local-tts", id: "voice-abc" },
     audio: { ttsEnabled: true, channel: "voice" as const },
     persona: { template: "default", overrides: "" },
-    tools: { enabled: { home_assistant: [] } },
+    tools: { permissions: { home_assistant: {} } },
     compression: { threshold: 0.5 },
     advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" as const },
   };

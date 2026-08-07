@@ -116,7 +116,7 @@ function sampleProfile(userId = "alice", voiceId = "old-voice"): ProfileV1 {
     voice: { provider: "local-tts", id: voiceId },
     audio: { ttsEnabled: true, channel: "voice" as const },
     persona: { template: "default", overrides: "" },
-    tools: { enabled: {} },
+    tools: { permissions: {} },
     compression: { threshold: 0.5 },
     advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" },
   };
