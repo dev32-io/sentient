@@ -17,7 +17,7 @@
 // to one bubble that grew. But a message the person sends mid-turn is drawn as
 // its own row BETWEEN two of those stretches, so the text after it has to start
 // a new bubble. The gateway decides where that boundary falls and stamps every
-// delta with a `messageId` (session-runtime.ts rotates it on a mid-turn user
+// delta with a `replyId` (session-runtime.ts rotates it on a mid-turn user
 // message); this connector just follows. Nothing is derived here.
 //
 // Threading: single-threaded; the orchestrator routes frames on one dispatcher
@@ -35,8 +35,8 @@ data class InFlightMessage(
     val turnId: String,
     val text: String,
     /** Null against a gateway that does not stamp deltas — the buffer is then
-     *  keyed by turn, which is the pre-`messageId` behaviour. */
-    val messageId: String? = null,
+     *  keyed by turn, which is the pre-`replyId` behaviour. */
+    val replyId: String? = null,
 )
 
 class InFlightMessageConnector(
@@ -59,7 +59,7 @@ class InFlightMessageConnector(
     override fun handle(msg: ServerMessage) {
         when (msg) {
             is ServerMessage.TurnStarted -> onTurnStarted(msg.turnId)
-            is ServerMessage.TurnTextDelta -> onDelta(msg.turnId, msg.messageId, msg.text)
+            is ServerMessage.TurnTextDelta -> onDelta(msg.turnId, msg.replyId, msg.text)
             is ServerMessage.TurnCompleted -> onCompleted(msg.turnId)
             is ServerMessage.TurnAborted -> onAborted(msg.turnId, msg.cutoff)
             else -> Unit // not owned by this connector
@@ -67,12 +67,12 @@ class InFlightMessageConnector(
     }
 
     /** The map key for one bubble. Falls back to the turn when the gateway sent
-     *  no `messageId`, which reproduces the old one-buffer-per-turn behaviour. */
-    private fun keyOf(turnId: String, messageId: String?): String = messageId ?: turnId
+     *  no `replyId`, which reproduces the old one-buffer-per-turn behaviour. */
+    private fun keyOf(turnId: String, replyId: String?): String = replyId ?: turnId
 
     private fun onTurnStarted(turnId: String) {
         if (turnId.isEmpty()) return
-        // Seeded under the TURN key: `turn.started` carries no messageId, and the
+        // Seeded under the TURN key: `turn.started` carries no replyId, and the
         // first delta is what names the bubble. `onDelta` re-keys this buffer in
         // place, so the placeholder never becomes an orphan.
         buffers[turnId] = InFlightMessage(turnId = turnId, text = "")
@@ -81,14 +81,14 @@ class InFlightMessageConnector(
         onEvent?.invoke(SdkEvent.MessageStarted(turnId))
     }
 
-    private fun onDelta(turnId: String, messageId: String?, text: String) {
+    private fun onDelta(turnId: String, replyId: String?, text: String) {
         if (turnId.isEmpty() || text.isEmpty()) return
-        val key = keyOf(turnId, messageId)
+        val key = keyOf(turnId, replyId)
 
         // The seeded placeholder is keyed by turn; the first stamped delta adopts
-        // it so its "thinking" bubble becomes this message's buffer rather than
+        // it so its "thinking" bubble becomes this reply's buffer rather than
         // being stranded beside it.
-        if (key != turnId) adoptSeededBuffer(turnId, key, messageId)
+        if (key != turnId) adoptSeededBuffer(turnId, key, replyId)
 
         val isNewBubble = !buffers.containsKey(key)
         // Absent buffer → create: a delta may legitimately precede its turn.started on a
@@ -96,18 +96,18 @@ class InFlightMessageConnector(
         val next = InFlightMessage(
             turnId = turnId,
             text = (buffers[key]?.text ?: "") + text,
-            messageId = messageId,
+            replyId = replyId,
         )
         buffers[key] = next
-        if (isNewBubble && messageId != null) {
-            log.info("bubble-opened", mapOf("turnId" to turnId, "messageId" to messageId, "open" to buffers.size))
-            onEvent?.invoke(SdkEvent.MessageStarted(turnId, messageId))
+        if (isNewBubble && replyId != null) {
+            log.info("bubble-opened", mapOf("turnId" to turnId, "replyId" to replyId, "open" to buffers.size))
+            onEvent?.invoke(SdkEvent.MessageStarted(turnId, replyId))
         }
         log.debug(
             "delta",
             mapOf(
                 "turnId" to turnId,
-                "messageId" to (messageId ?: "-"),
+                "replyId" to (replyId ?: "-"),
                 "deltaLen" to text.length,
                 "totalLen" to next.text.length,
                 "open" to buffers.size,
@@ -115,17 +115,17 @@ class InFlightMessageConnector(
         )
         onUpdate?.invoke(inflight())
         // One event per chunk — never batched.
-        onEvent?.invoke(SdkEvent.MessageDelta(turnId = turnId, chunk = text, messageId = messageId))
+        onEvent?.invoke(SdkEvent.MessageDelta(turnId = turnId, chunk = text, replyId = replyId))
     }
 
     /** Move the turn-keyed placeholder onto its real bubble key, ONCE — only
      *  while it is still empty. A non-empty turn-keyed buffer belongs to a
      *  gateway that sent unstamped deltas and must not be stolen. */
-    private fun adoptSeededBuffer(turnId: String, key: String, messageId: String?) {
+    private fun adoptSeededBuffer(turnId: String, key: String, replyId: String?) {
         val seeded = buffers[turnId] ?: return
         if (seeded.text.isNotEmpty()) return
         buffers.remove(turnId)
-        buffers[key] = seeded.copy(messageId = messageId)
+        buffers[key] = seeded.copy(replyId = replyId)
     }
 
     private fun onCompleted(turnId: String) {
@@ -146,7 +146,7 @@ class InFlightMessageConnector(
                         content = buffer.text,
                         streaming = false,
                         turnId = turnId,
-                        messageId = buffer.messageId,
+                        replyId = buffer.replyId,
                     ),
                 ),
             )

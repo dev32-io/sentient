@@ -90,7 +90,7 @@ sealed class ServerMessage {
          *  that grew — except across a message the person sent mid-turn, which
          *  is drawn between them and starts a new one. Server-minted; null only
          *  from a gateway that predates the field. */
-        val messageId: String? = null,
+        val replyId: String? = null,
         val text: String = "",
     ) : ServerMessage()
 
@@ -194,7 +194,22 @@ sealed class ServerMessage {
         /** The bubble this committed entry belongs to — the SAME key the live
          *  deltas carried, so the swap at turn end shows the same grouping the
          *  stream did. */
-        val messageId: String? = null,
+        val replyId: String? = null,
+    ) : ServerMessage()
+
+    // ── Task list (composer strip) ──
+
+    /**
+     * The live task/tool rows the composer strip renders. FULL STATE every
+     * time — the gateway owns which rows exist and how long each lives
+     * (foreground dies with its turn, a background delegateTask outlives it),
+     * so this client replaces its list and derives nothing.
+     */
+    @Serializable
+    @SerialName("tasklist.state")
+    data class TaskListState(
+        val turnId: String? = null,
+        val items: List<TaskListItem> = emptyList(),
     ) : ServerMessage()
 
     // ── Playback control ──

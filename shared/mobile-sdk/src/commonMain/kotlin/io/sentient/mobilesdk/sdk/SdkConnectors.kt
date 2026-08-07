@@ -35,7 +35,7 @@ import io.sentient.mobilesdk.connectors.PermissionConnector
 import io.sentient.mobilesdk.connectors.PermissionPrompt
 import io.sentient.mobilesdk.connectors.PreferencesConnector
 import io.sentient.mobilesdk.connectors.SessionsConnector
-import io.sentient.mobilesdk.connectors.TaskStatusConnector
+import io.sentient.mobilesdk.connectors.TaskListConnector
 import io.sentient.mobilesdk.connectors.TurnErrorConnector
 import io.sentient.mobilesdk.connectors.UserAudioInputConnector
 import io.sentient.mobilesdk.connectors.UserTextInputConnector
@@ -145,9 +145,8 @@ class SdkConnectors(
         },
     )
 
-    val tasks = TaskStatusConnector(
-        onList = { list -> deriver.tasks = list; emit() },
-        onEvent = emitEvent,
+    val tasks = TaskListConnector(
+        onUpdate = { _, list -> deriver.tasks = list; emit() },
     )
 
     val sessions = SessionsConnector(

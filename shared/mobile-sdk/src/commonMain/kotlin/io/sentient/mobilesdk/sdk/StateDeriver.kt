@@ -22,6 +22,7 @@ import io.sentient.mobilesdk.connectors.InFlightMessage
 import io.sentient.mobilesdk.connectors.TaskSnapshotItem
 import io.sentient.mobilesdk.protocol.AudioPreferences
 import io.sentient.mobilesdk.protocol.ConversationFeedItem
+import io.sentient.mobilesdk.protocol.TaskListItem
 import io.sentient.mobilesdk.transport.SdkStatus
 import io.sentient.mobilesdk.util.Clock
 
@@ -45,7 +46,17 @@ class StateDeriver(private val clock: Clock) {
     var cognition: CognitionState = CognitionState.IDLE
     var voiceMode: VoiceMode = VoiceMode.OFF
     var prefs: AudioPreferences = AudioPreferences.DEFAULT
-    var tasks: List<TaskSnapshotItem> = emptyList()
+
+    /**
+     * The composer task strip's mirror (Task 9 — [ServerMessage.TaskListState],
+     * FULL STATE every frame). [TaskListItem] carries no per-item turnId, so it
+     * cannot feed the turn-scoped tile merge below directly; [deriveTimeline]
+     * converts it to [TaskSnapshotItem] with an empty turnId, which makes that
+     * merge a no-op. The merge itself — and this conversion — goes away in the
+     * tile-derivation-strip task that follows; kept only so this compiles and
+     * the committed-tile tests (which don't depend on live merge) stay green.
+     */
+    var tasks: List<TaskListItem> = emptyList()
     var isSpeaking: Boolean = false
     var audioState: AudioState = AudioState.INACTIVE
     var hasSession: Boolean = false
@@ -96,15 +107,36 @@ class StateDeriver(private val clock: Clock) {
      * committed entries without the streaming noise.
      */
     fun deriveTimeline(): List<ChatMessage> =
-        deriveMessages(feed, inflight = null, clock.nowMs(), tasks)
+        deriveMessages(feed, inflight = null, clock.nowMs(), tasks.map { it.toSnapshotItem() })
 }
+
+/**
+ * Adapt a wire [TaskListItem] to the tile-merge's internal [TaskSnapshotItem]
+ * shape. `turnId` has no wire source anymore (see [StateDeriver.tasks]) so it
+ * is always [NO_TURN_ID] here — the merge in [attachLiveTools] filters live
+ * rows by turnId, and [NO_TURN_ID] never equals a real turn's id, so every
+ * converted row is silently excluded rather than mis-attached to the wrong
+ * bubble.
+ */
+private fun TaskListItem.toSnapshotItem(): TaskSnapshotItem = TaskSnapshotItem(
+    toolCallId = id,
+    toolName = toolName,
+    turnId = NO_TURN_ID,
+    status = status,
+    argsPreview = argsPreview,
+    startedAtMs = startedAtMs,
+    endedAtMs = endedAtMs,
+    taskId = if (kind == BACKGROUND_KIND) id else null,
+)
+
+private const val BACKGROUND_KIND = "background"
 
 // ---------------------------------------------------------------------------
 // Tool tiles — two sources, one rendered strip.
 //
-// A tool call reaches this client TWICE: live as `turn.tool.update`
-// (TaskStatusConnector) while it runs, and committed as a kind:"tool" feed item
-// once the gateway settles it. Only the committed one survives a reload, so a
+// A tool call reaches this client TWICE: live as part of a `tasklist.state`
+// frame (TaskListConnector) while it runs, and committed as a kind:"tool" feed
+// item once the gateway settles it. Only the committed one survives a reload, so a
 // timeline rebuilt from `conversation.snapshot` / REST history must derive tiles
 // too — otherwise `render(replay) == render(live)` (spec §3.2 Invariant B) holds
 // on the wire and fails at the RENDERED layer, which is the layer the reload
@@ -177,7 +209,7 @@ internal fun deriveMessages(
                 content = inflight.text,
                 streaming = true,
                 turnId = inflight.turnId,
-                messageId = inflight.messageId,
+                replyId = inflight.replyId,
                 tools = pendingTools,
             ),
         )
@@ -209,7 +241,7 @@ private fun committedMessage(item: ConversationFeedItem): ChatMessage? = when (i
             turnId = item.turnId,
             // Same key, same source: several committed rows of one ReAct turn
             // share it and belong to one bubble.
-            messageId = item.messageId,
+            replyId = item.replyId,
             entryId = item.entryId,
         )
 

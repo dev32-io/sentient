@@ -177,15 +177,17 @@ class ConversationHistoryConnector(
             log.debug("entry-dropped", mapOf("reason" to "awaiting-history", "ts" to msg.item.ts))
             return
         }
-        // Re-attach the gateway's frame turnId AND messageId onto an assistant entry.
-        // turnId suppresses the committed twin while its live bubble reveals; messageId
+        // Re-attach the gateway's frame turnId AND replyId onto an assistant entry.
+        // turnId suppresses the committed twin while its live bubble reveals; replyId
         // is what groups several committed rows of one ReAct turn back into the single
-        // bubble they were streamed as. The wire item strips both; the frame carries
-        // them. No client-side derivation anywhere.
+        // bubble they were streamed as. The item itself now carries replyId too (the
+        // gateway stamps it there as of Task 2) — this re-attach is only an OVERRIDE
+        // for turnId (always frame-only) and for a frame from a gateway that predates
+        // the item-level stamp. No client-side derivation anywhere.
         val item = msg.item
         val enriched =
-            if (item is ConversationFeedItem.Assistant && (msg.turnId != null || msg.messageId != null)) {
-                item.copy(turnId = msg.turnId ?: item.turnId, messageId = msg.messageId ?: item.messageId)
+            if (item is ConversationFeedItem.Assistant && (msg.turnId != null || msg.replyId != null)) {
+                item.copy(turnId = msg.turnId ?: item.turnId, replyId = msg.replyId ?: item.replyId)
             } else {
                 item
             }
@@ -203,7 +205,7 @@ class ConversationHistoryConnector(
                 "entryId" to enriched.entryId,
                 "ts" to enriched.ts,
                 "turnId" to (msg.turnId ?: "-"),
-                "messageId" to (msg.messageId ?: "-"),
+                "replyId" to (msg.replyId ?: "-"),
                 "deduped" to (existingIdx >= 0),
                 "size" to mirror.size,
             ),

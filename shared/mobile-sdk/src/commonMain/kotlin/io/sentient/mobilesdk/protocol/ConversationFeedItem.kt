@@ -69,6 +69,12 @@ sealed class ConversationFeedItem {
      * connector re-attaches it here from the frame on a LIVE append so the
      * committed twin can be suppressed by exact id while its bubble reveals.
      * Null for REST history / snapshot entries (no live turn to join).
+     *
+     * `replyId` now arrives ON THE WIRE — the gateway stamps it on the item
+     * itself, since one reply is one `conversation.entry` whose `entryId` IS
+     * its `replyId`. The frame also carries it (see [ServerMessage.ConversationEntry]);
+     * the history connector's re-attach is only an OVERRIDE for a frame from an
+     * older gateway that stamped the frame but not yet the item.
      */
     @Serializable @SerialName("assistant")
     data class Assistant(
@@ -77,9 +83,8 @@ sealed class ConversationFeedItem {
         val content: String,
         val cutoff: Cutoff? = null,
         val turnId: String? = null,
-        /** Re-attached from the frame (the feed item itself strips plumbing).
-         *  Groups consecutive assistant rows into the one bubble they were. */
-        val messageId: String? = null,
+        /** Groups consecutive assistant rows into the one bubble they were. */
+        val replyId: String? = null,
     ) : ConversationFeedItem()
 
     /** kind="tool" — completed tool invocation in the feed. */

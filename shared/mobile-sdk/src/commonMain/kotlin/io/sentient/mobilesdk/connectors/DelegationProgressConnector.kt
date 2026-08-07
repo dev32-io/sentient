@@ -1,6 +1,7 @@
 // ---------------------------------------------------------------------------
 // DelegationProgressConnector — live progress for BACKGROUND delegateTask work
-// (design §5.4 / §7). Closest analog: TaskStatusConnector (same upsert-by-id shape),
+// (design §5.4 / §7). Closest analog: the retired TaskStatusConnector (same
+// upsert-by-id shape; superseded by TaskListConnector's full-state model),
 // but a delegation row is agent-scoped and outlives the turn that dispatched it —
 // its completion returns later as a stimulus, so terminal rows stay in the list and
 // the UI filters if it wants.

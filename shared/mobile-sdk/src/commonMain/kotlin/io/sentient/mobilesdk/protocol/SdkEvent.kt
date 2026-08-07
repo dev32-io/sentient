@@ -7,8 +7,8 @@ import io.sentient.mobilesdk.result.SentientError
 import io.sentient.mobilesdk.sdk.ChatMessage
 
 sealed class SdkEvent {
-    data class MessageStarted(val turnId: String, val messageId: String? = null) : SdkEvent()
-    data class MessageDelta(val turnId: String, val chunk: String, val messageId: String? = null) : SdkEvent()
+    data class MessageStarted(val turnId: String, val replyId: String? = null) : SdkEvent()
+    data class MessageDelta(val turnId: String, val chunk: String, val replyId: String? = null) : SdkEvent()
     data class MessageCommitted(val message: ChatMessage) : SdkEvent()
     data class TaskUpserted(val task: TaskSnapshotItem) : SdkEvent()
     data class TranscriptUpdated(val text: String) : SdkEvent()
