@@ -17,7 +17,7 @@ import type { Capability } from "../access/capability.js";
 import type { NewSessionEntry } from "../store/entry-types.js";
 import { openSessionStore } from "../store/session-store.js";
 import type { SessionStore } from "../store/session-store.js";
-import type { ConversationFeedSink } from "./conversation-feed.js";
+import type { ConversationFeed, ConversationFeedSink } from "./conversation-feed.js";
 import { createConversationFeed } from "./conversation-feed.js";
 
 const ROOT = "/tmp/sentient-conversation-feed-test";
@@ -82,9 +82,19 @@ function applyFrames(frames: readonly RecordedFrame[]): ConversationFeedItem[] {
   return mirror;
 }
 
+/** A feed over [store]. `currentReplyId` defaults to "no turn in flight", the
+ *  settled-session case: nothing is growing, so nothing is held back. */
+function feedOver(
+  store: SessionStore,
+  sink: RecordingSink,
+  currentReplyId: () => string | null = () => null,
+): ConversationFeed {
+  return createConversationFeed({ store, sessionId: SESSION_ID, userId: USER_ID, emitter: sink, currentReplyId });
+}
+
 function freshSnapshotOf(store: SessionStore): ConversationFeedItem[] {
   const sink = recordingSink();
-  createConversationFeed({ store, sessionId: SESSION_ID, userId: USER_ID, emitter: sink }).snapshot();
+  feedOver(store, sink).snapshot();
   return applyFrames(sink.frames);
 }
 
@@ -97,7 +107,7 @@ describe("conversation feed — wire convergence", () => {
   it("CONTRACT: live frames across a full ReAct turn rebuild the fresh snapshot exactly", () => {
     const store = openStoreFor("full-turn");
     const sink = recordingSink();
-    const feed = createConversationFeed({ store, sessionId: SESSION_ID, userId: USER_ID, emitter: sink });
+    const feed = feedOver(store, sink);
 
     // Empty session: the snapshot a fresh client gets on session.configure.
     feed.snapshot();
@@ -138,7 +148,7 @@ describe("conversation feed — wire convergence", () => {
     // it AFTER the steered message and diverge from every later snapshot.
     const store = openStoreFor("steer-midcall");
     const sink = recordingSink();
-    const feed = createConversationFeed({ store, sessionId: SESSION_ID, userId: USER_ID, emitter: sink });
+    const feed = feedOver(store, sink);
 
     store.append(entry({ kind: "user", text: "weather?", createdAt: 2001 }));
     feed.publishSettled();
@@ -166,7 +176,7 @@ describe("conversation feed — wire convergence", () => {
     // it — including the turn's final assistant entry.
     const store = openStoreFor("background-tool");
     const sink = recordingSink();
-    const feed = createConversationFeed({ store, sessionId: SESSION_ID, userId: USER_ID, emitter: sink });
+    const feed = feedOver(store, sink);
 
     store.append(entry({ kind: "user", text: "delegate it", createdAt: 3001 }));
     store.append(
@@ -188,12 +198,113 @@ describe("conversation feed — wire convergence", () => {
     store.close();
   });
 
+  it("CONTRACT: the OPEN reply is held back until it stops growing, then publishes as ONE item", () => {
+    // The ReAct shape: narration, a tool round trip, the answer — three
+    // assistant entries under one replyId that the projection folds into one
+    // bubble. Publishing the first stretch as its own frame leaves a
+    // permanently stale bubble on a client that appends, and a bubble that has
+    // LOST its earlier text on one that dedupes by entryId.
+    const store = openStoreFor("open-reply");
+    const sink = recordingSink();
+    let openReplyId: string | null = "r1";
+    const feed = feedOver(store, sink, () => openReplyId);
+
+    store.append(entry({ kind: "user", text: "play music", createdAt: 8001 }));
+    feed.publishSettled();
+    expect(applyFrames(sink.frames).map((i) => i.kind)).toEqual(["user"]);
+
+    store.append(entry({ kind: "assistant", replyId: "r1", text: "Checking. ", createdAt: 8002 }));
+    store.append(entry({ kind: "tool_call", toolCallId: "c1", toolName: "search", toolArgs: "{}", createdAt: 8003 }));
+    store.append(entry({ kind: "tool_result", toolCallId: "c1", toolName: "search", toolArgs: "ok", createdAt: 8004 }));
+    feed.publishSettled();
+    // Still growing — and the resolved tile behind it is blocked too, or it
+    // would arrive ahead of the bubble it belongs after.
+    expect(applyFrames(sink.frames).map((i) => i.kind)).toEqual(["user"]);
+
+    store.append(entry({ kind: "assistant", replyId: "r1", text: "Done.", createdAt: 8005 }));
+    openReplyId = null; // the turn settled
+    feed.publishAll();
+
+    const live = applyFrames(sink.frames);
+    expect(live.map((i) => [i.kind, i.entryId])).toEqual([
+      ["user", "1"],
+      ["assistant", "r1"],
+      ["tool", "3"],
+    ]);
+    expect(live.find((i) => i.kind === "assistant")).toMatchObject({ content: "Checking. Done." });
+    expect(live).toEqual(freshSnapshotOf(store));
+    store.close();
+  });
+
+  it("CONTRACT: a mid-turn snapshot does not park the cursor above the reply still being written", () => {
+    // The snapshot is written to the ONE window that just attached, while the
+    // cursor is shared by every window on this session. Arming it at the tail
+    // would drop the stretches already committed for the open reply out of
+    // every OTHER window's feed for good, and would publish the reply's own id
+    // later carrying nothing but its tail.
+    const store = openStoreFor("mid-turn-snapshot");
+    const sink = recordingSink();
+    let openReplyId: string | null = "r1";
+    const feed = feedOver(store, sink, () => openReplyId);
+
+    store.append(entry({ kind: "user", text: "play music", createdAt: 8101 }));
+    store.append(entry({ kind: "assistant", replyId: "r1", text: "Checking. ", createdAt: 8102 }));
+    feed.publishSettled(); // the user row goes out; the reply is still growing
+    feed.snapshot(); // a second window attaches mid-turn
+    sink.frames.length = 0;
+
+    store.append(entry({ kind: "assistant", replyId: "r1", text: "Done.", createdAt: 8103 }));
+    openReplyId = null;
+    feed.publishAll();
+
+    expect(sink.frames.flatMap((f) => f.items)).toMatchObject([
+      { entryId: "r1", kind: "assistant", content: "Checking. Done." },
+    ]);
+    store.close();
+  });
+
+  it("CONTRACT: rotating the reply id releases the reply it closed, without waiting for the turn", () => {
+    // The steer path (spec §4.5): the person speaks mid-turn, their row breaks
+    // the bubble, and session-runtime.ts rotates the id — which is exactly what
+    // makes the reply so far content-final. Two replies, two bubbles, and the
+    // user's row between them.
+    const store = openStoreFor("reply-rotation");
+    const sink = recordingSink();
+    let openReplyId: string | null = "r1";
+    const feed = feedOver(store, sink, () => openReplyId);
+
+    store.append(entry({ kind: "assistant", replyId: "r1", text: "First half. ", createdAt: 9001 }));
+    feed.publishSettled();
+    expect(sink.frames).toEqual([]);
+
+    store.append(entry({ kind: "user", text: "actually, tomorrow", createdAt: 9002 }));
+    openReplyId = "r2";
+    feed.publishSettled();
+    expect(applyFrames(sink.frames).map((i) => [i.kind, i.entryId])).toEqual([
+      ["assistant", "r1"],
+      ["user", "2"],
+    ]);
+
+    store.append(entry({ kind: "assistant", replyId: "r2", text: "Second half.", createdAt: 9003 }));
+    openReplyId = null;
+    feed.publishAll();
+
+    const live = applyFrames(sink.frames);
+    expect(live.map((i) => [i.kind, i.entryId])).toEqual([
+      ["assistant", "r1"],
+      ["user", "2"],
+      ["assistant", "r2"],
+    ]);
+    expect(live).toEqual(freshSnapshotOf(store));
+    store.close();
+  });
+
   it("CONTRACT: every frame the feed produces satisfies gatewayMessageSchema", () => {
     // A frame that fails validation is DROPPED by sendGatewayFrame, so a
     // mis-shaped item goes silently missing rather than throwing.
     const store = openStoreFor("schema");
     const sink = recordingSink();
-    const feed = createConversationFeed({ store, sessionId: SESSION_ID, userId: USER_ID, emitter: sink });
+    const feed = feedOver(store, sink);
 
     store.append(entry({ kind: "user", text: "hi", createdAt: 4001 }));
     store.append(entry({ kind: "trigger", text: "task t-9 finished", createdAt: 4002 }));
@@ -226,7 +337,7 @@ describe("conversation feed — wire convergence", () => {
     store.append(entry({ kind: "assistant", text: "earlier reply", createdAt: 6002 }));
 
     const sink = recordingSink();
-    const feed = createConversationFeed({ store, sessionId: SESSION_ID, userId: USER_ID, emitter: sink });
+    const feed = feedOver(store, sink);
     feed.publishAll();
     expect(sink.frames).toEqual([]);
 
@@ -244,7 +355,7 @@ describe("conversation feed — wire convergence", () => {
     // is the contract, not an implementation detail.
     const store = openStoreFor("pending-echo");
     const sink = recordingSink();
-    const feed = createConversationFeed({ store, sessionId: SESSION_ID, userId: USER_ID, emitter: sink });
+    const feed = feedOver(store, sink);
 
     store.append(entry({ kind: "user", text: "hello", pendingId: "p1", createdAt: 7001 }));
     store.append(entry({ kind: "assistant", text: "hi", createdAt: 7002 }));
@@ -259,7 +370,7 @@ describe("conversation feed — wire convergence", () => {
   it("WIRE: a user entry with no pendingId omits the field entirely", () => {
     const store = openStoreFor("pending-absent");
     const sink = recordingSink();
-    const feed = createConversationFeed({ store, sessionId: SESSION_ID, userId: USER_ID, emitter: sink });
+    const feed = feedOver(store, sink);
     store.append(entry({ kind: "user", text: "spoken", createdAt: 7101 }));
     feed.publishAll();
     const item = sink.frames[0]?.items[0];
@@ -275,7 +386,7 @@ describe("conversation feed — wire convergence", () => {
     // entryId, which is what makes it an update rather than a second bubble.
     const store = openStoreFor("republish");
     const sink = recordingSink();
-    const feed = createConversationFeed({ store, sessionId: SESSION_ID, userId: USER_ID, emitter: sink });
+    const feed = feedOver(store, sink);
 
     const committed = store.append(entry({ kind: "user", text: "hello", pendingId: "p1", createdAt: 7201 }));
     feed.publishAll();
@@ -299,7 +410,7 @@ describe("conversation feed — wire convergence", () => {
   it("carries each entry's OWN turnId on its frame so the client never invents the join key", () => {
     const store = openStoreFor("turn-id");
     const sink = recordingSink();
-    const feed = createConversationFeed({ store, sessionId: SESSION_ID, userId: USER_ID, emitter: sink });
+    const feed = feedOver(store, sink);
 
     store.append(entry({ kind: "user", text: "hi", turnId: "turn-a", createdAt: 5001 }));
     store.append(entry({ kind: "assistant", text: "hello", turnId: "turn-a", createdAt: 5002 }));

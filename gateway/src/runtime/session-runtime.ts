@@ -365,9 +365,21 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   const cap = accessManager.grant(principal, "session-store");
   const store: SessionStore = openSessionStore(cap);
 
-  const feed = createConversationFeed({ store, sessionId, userId, emitter });
-
   let inFlight: InFlightTurn | null = null;
+
+  // After `inFlight` above, not before: `currentReplyId` closes over it, and a
+  // feed constructed first would capture the binding in its temporal dead zone.
+  const feed = createConversationFeed({
+    store,
+    sessionId,
+    userId,
+    emitter,
+    // Null means "nothing is growing, publish everything". The feed holds back
+    // the reply the loop is still writing into; `submit`'s rotation and the
+    // turn boundary are what release it.
+    currentReplyId: () => inFlight?.replyId ?? null,
+  });
+
   let lastProcessedSeq = 0;
   // Per-session: a summarizer that keeps failing must not burn one provider
   // call at every single turn boundary forever. See compaction.ts.

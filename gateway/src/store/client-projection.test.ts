@@ -42,6 +42,62 @@ describe("projectForClient", () => {
     expect(out[0]?.toolName).toBe("search");
   });
 
+  it("folds every stretch of one reply into ONE item named by its replyId", () => {
+    const out = projectForClient([
+      e({ kind: "assistant", replyId: "r1", text: "Let me look. " }),
+      e({ kind: "assistant", replyId: "r1", text: "It is 20C." }),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.id).toBe("r1");
+    expect(out[0]?.text).toBe("Let me look. It is 20C.");
+  });
+
+  it("folds stretches separated by a tool round trip — the ReAct shape", () => {
+    // The store interleaves narration with the tool calls because the MODEL
+    // projection needs dispatch order; the person saw one bubble that grew.
+    const narration = e({ kind: "assistant", replyId: "r1", text: "Checking. " });
+    const toolCall = e({ kind: "tool_call", toolCallId: "c1", toolName: "search", toolArgs: "{}" });
+    const toolResult = e({ kind: "tool_result", toolCallId: "c1", toolName: "search", toolArgs: '"20C"' });
+    const answer = e({ kind: "assistant", replyId: "r1", text: "It is 20C." });
+
+    const out = projectForClient([narration, toolCall, toolResult, answer]);
+    expect(out.map((i) => [i.kind, i.id, i.text])).toEqual([
+      ["assistant", "r1", "Checking. It is 20C."],
+      ["tool", String(toolCall.seq), '"20C"'],
+    ]);
+  });
+
+  it("does NOT fold two replies: a rotated id is a new bubble", () => {
+    const firstHalf = e({ kind: "assistant", replyId: "r1", text: "First half." });
+    const interjection = e({ kind: "user", text: "actually, tomorrow" });
+    const secondHalf = e({ kind: "assistant", replyId: "r2", text: "Second half." });
+
+    const out = projectForClient([firstHalf, interjection, secondHalf]);
+    expect(out.map((i) => [i.kind, i.id])).toEqual([
+      ["assistant", "r1"],
+      ["user", String(interjection.seq)],
+      ["assistant", "r2"],
+    ]);
+  });
+
+  it("keeps a null-replyId assistant entry on its own seq-named item", () => {
+    // Nothing stamps a reply id on a compaction-era or cancellation entry, and
+    // a null id must never collide two unrelated bubbles into one.
+    const out = projectForClient([e({ kind: "assistant", text: "one" }), e({ kind: "assistant", text: "two" })]);
+    expect(out).toHaveLength(2);
+    expect(out.map((i) => i.text)).toEqual(["one", "two"]);
+  });
+
+  it("takes the LAST stretch's cutoff onto the folded item", () => {
+    // A cutoff is stamped on the final partial of a cut-off reply.
+    const out = projectForClient([
+      e({ kind: "assistant", replyId: "r1", text: "Checking. " }),
+      e({ kind: "assistant", replyId: "r1", text: "It is—", cutoff: "barge-in" }),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.cutoff).toBe("barge-in");
+  });
+
   it("COMPACTION: still shows pre-compaction history (client sees everything)", () => {
     const out = projectForClient([
       e({ kind: "user", text: "ancient" }),

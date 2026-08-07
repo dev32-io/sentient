@@ -155,6 +155,61 @@ describe("projection convergence", () => {
     expect(liveTailFeed.map((i) => i.id)).toEqual(correspondingReplayIds);
   });
 
+  it("CONTRACT: a folded reply keeps the SAME id whether projected from a tail or a full replay", () => {
+    // A reply's item is named by its replyId precisely so its identity does not
+    // move when the reply grows or when the projection starts mid-reply: a
+    // window attaching mid-turn is answered with a snapshot, and the id it sees
+    // there must be the id every later frame uses, or its dedupe-by-entryId
+    // appends a second bubble instead of updating the first.
+    const store = openSessionStore(cap);
+    const committed = [
+      store.append(entry({ sessionId: "conv4", kind: "user", text: "weather?", createdAt: 4001 })),
+      store.append(
+        entry({ sessionId: "conv4", kind: "assistant", replyId: "r1", text: "Checking. ", createdAt: 4002 }),
+      ),
+      store.append(
+        entry({
+          sessionId: "conv4",
+          kind: "tool_call",
+          toolCallId: "c1",
+          toolName: "search",
+          toolArgs: "{}",
+          createdAt: 4003,
+        }),
+      ),
+      store.append(
+        entry({
+          sessionId: "conv4",
+          kind: "tool_result",
+          toolCallId: "c1",
+          toolName: "search",
+          toolArgs: "20C",
+          createdAt: 4004,
+        }),
+      ),
+      store.append(
+        entry({ sessionId: "conv4", kind: "assistant", replyId: "r1", text: "It is 20C.", createdAt: 4005 }),
+      ),
+    ];
+
+    const [firstEntry, , toolCallEntry] = committed;
+    if (!firstEntry || !toolCallEntry) throw new Error("fixture entries missing");
+    const tailFeed = projectForClient(store.readSince("conv4", firstEntry.seq));
+    store.close();
+
+    const reopened = openSessionStore(cap);
+    const fullReplayFeed = projectForClient(reopened.readSession("conv4"));
+    reopened.close();
+
+    // One bubble, both ways — and the same name for it.
+    expect(fullReplayFeed.map((i) => [i.kind, i.id, i.text])).toEqual([
+      ["user", String(firstEntry.seq), "weather?"],
+      ["assistant", "r1", "Checking. It is 20C."],
+      ["tool", String(toolCallEntry.seq), "20C"],
+    ]);
+    expect(tailFeed.map((i) => i.id)).toEqual(fullReplayFeed.slice(-tailFeed.length).map((i) => i.id));
+  });
+
   it("CONTRACT: convergence still holds across a compaction boundary", () => {
     const store = openSessionStore(cap);
     const committed = [

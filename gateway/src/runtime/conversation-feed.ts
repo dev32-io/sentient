@@ -24,6 +24,11 @@
 //   - A tool tile is not content-final until its `tool_result` folds in
 //     (client-projection.ts anchors the tile at the tool_call's POSITION and
 //     fills its text from the result). It is therefore HELD BACK.
+//   - An assistant item for the OPEN reply is not content-final either: the
+//     projection folds every stretch of one reply into one item, and the loop
+//     may still append another stretch to it. It is held back until the turn
+//     ends or a steer rotates the reply id — which is exactly when the reply
+//     stops growing.
 //   - Held-back items block everything after them. A stimulus landing between
 //     a tool_call and its result (the steer path, §4.5) would otherwise be
 //     published ahead of the tile and diverge from every later snapshot.
@@ -96,6 +101,11 @@ export interface ConversationFeedDeps {
   readonly sessionId: string;
   readonly userId: UserId;
   readonly emitter: ConversationFeedSink;
+  /** The replyId the runtime is currently writing into, or null when no turn
+   *  is in flight. An item carrying it is still GROWING and must not publish:
+   *  the client appends `conversation.entry` to its mirror, so an item emitted
+   *  before its content settles is a permanently stale bubble. */
+  readonly currentReplyId: () => string | null;
 }
 
 function toWireCutoff(cutoff: CutoffKind): ConversationAssistantCutoff {
@@ -160,6 +170,25 @@ function lastSeqOf(entries: readonly SessionEntry[], fallback: number): number {
   return entries[entries.length - 1]?.seq ?? fallback;
 }
 
+/** The seq the cursor must park just below to re-read [item] next publish.
+ *  A folded assistant item's id is its replyId, so its seq is the FIRST entry
+ *  of the fold — parking below that is what makes the next publish see the
+ *  whole reply again rather than only its tail. */
+function firstSeqOf(entries: readonly SessionEntry[], item: FeedItem): number {
+  if (item.replyId !== null) {
+    for (const e of entries) if (e.replyId === item.replyId) return e.seq;
+  }
+  return Number(item.id);
+}
+
+/** The seq of the first entry belonging to [openReplyId], or null when no
+ *  reply is open or none of its stretches are committed yet. */
+function openReplyStartSeq(entries: readonly SessionEntry[], openReplyId: string | null): number | null {
+  if (openReplyId === null) return null;
+  for (const e of entries) if (e.replyId === openReplyId) return e.seq;
+  return null;
+}
+
 /**
  * Project committed entries into the EXACT wire shape the live path emits on
  * `conversation.snapshot` — `projectForClient` plus the same per-item
@@ -175,7 +204,7 @@ export function snapshotFeedItems(entries: readonly SessionEntry[]): Conversatio
 }
 
 export function createConversationFeed(deps: ConversationFeedDeps): ConversationFeed {
-  const { store, sessionId, userId, emitter } = deps;
+  const { store, sessionId, userId, emitter, currentReplyId } = deps;
 
   // High-water mark over ENTRY seqs, not feed indices: everything at or below
   // it has been published in its final form. Held-back items keep it parked
@@ -203,28 +232,35 @@ export function createConversationFeed(deps: ConversationFeedDeps): Conversation
     // same predicate the snapshot uses is what keeps a force-released tile
     // convergent with its replay.
     const unresolved = unresolvedToolItemIds(tail);
-    const turnIdBySeq = new Map<string, string>();
-    // The reply id travels with the turn key: a committed entry and the live
-    // bubble it replaces must group by the SAME value, or the swap at turn end
-    // shows a different set of rows than the stream did.
-    const replyIdBySeq = new Map<string, string>();
+    // Keyed by FEED-ITEM id, not by seq: a folded assistant item is named by
+    // its replyId, and every stretch of one reply belongs to one turn anyway.
+    const turnIdByItemId = new Map<string, string>();
     for (const e of tail) {
-      turnIdBySeq.set(String(e.seq), e.turnId);
-      if (e.replyId !== null) replyIdBySeq.set(String(e.seq), e.replyId);
+      turnIdByItemId.set(String(e.seq), e.turnId);
+      if (e.replyId !== null) turnIdByItemId.set(e.replyId, e.turnId);
     }
+
+    // The OPEN reply — the one the loop is still writing into — is held back
+    // exactly like an unresolved tool tile: its text is not final until the
+    // turn ends or a steer rotates the id. `force` (a turn boundary) lifts it.
+    const openReplyId = force ? null : currentReplyId();
 
     let published = 0;
     let heldBackAtSeq: number | null = null;
     for (const item of projectForClient(tail)) {
       const isUnresolvedTool = unresolved.has(item.id);
-      if (isUnresolvedTool && !force) {
-        heldBackAtSeq = Number(item.id);
+      const isOpenReply = openReplyId !== null && item.replyId === openReplyId;
+      if ((isUnresolvedTool || isOpenReply) && !force) {
+        heldBackAtSeq = firstSeqOf(tail, item);
         break;
       }
+      // The reply id travels with the turn key: a committed entry and the live
+      // bubble it replaces must group by the SAME value, or the swap at turn
+      // end shows a different set of rows than the stream did.
       emitter.conversationEntry(
         toWireItem(item, isUnresolvedTool),
-        turnIdBySeq.get(item.id),
-        replyIdBySeq.get(item.id),
+        turnIdByItemId.get(item.id),
+        item.replyId ?? undefined,
       );
       published += 1;
     }
@@ -247,7 +283,16 @@ export function createConversationFeed(deps: ConversationFeedDeps): Conversation
       const entries = store.readSession(sessionId);
       const items = snapshotFeedItems(entries);
       emitter.conversationSnapshot(items);
-      publishedThroughSeq = lastSeqOf(entries, publishedThroughSeq);
+      // Re-armed at the tail — but NEVER above a reply that is still growing.
+      // A snapshot is written to the ONE window that just attached, while the
+      // cursor is shared by every window on this session: parking it past an
+      // open reply would drop that reply's committed stretches out of every
+      // OTHER window's feed for good, and would later emit the reply's own id
+      // carrying nothing but its tail. Parking just below it costs the joiner
+      // one re-send of an item it already has under the same id, and keeps
+      // every frame that names a reply carrying the whole reply.
+      const openStart = openReplyStartSeq(entries, currentReplyId());
+      publishedThroughSeq = openStart === null ? lastSeqOf(entries, publishedThroughSeq) : openStart - 1;
       log.info("conversation-feed.snapshot", {
         userId,
         sessionId,

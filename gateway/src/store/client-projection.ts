@@ -1,7 +1,8 @@
 // Client projection (spec §3.2, §3.4) — entries → renderable feed items.
 //
 // Renders the FULL history: compaction shrinks what the MODEL replays, never
-// what the user sees. A tool_call and its tool_result fold into one tile.
+// what the user sees. A tool_call and its tool_result fold into one tile, and
+// every assistant stretch of ONE reply folds into one bubble.
 //
 // This function is the ONLY path from stored state to client feed, for both
 // live commits and replay — that single-path property is what makes the
@@ -16,7 +17,8 @@ const log = getLog(["sentient", "store", "client-projection"]);
 export type FeedItemKind = "user" | "trigger" | "assistant" | "tool";
 
 export interface FeedItem {
-  /** Stable identity for the item — the seq of the entry that created it. */
+  /** Stable identity for the item — the seq of the entry that created it, or,
+   *  on an assistant item, the `replyId` the whole reply folds under. */
   id: string;
   kind: FeedItemKind;
   text: string;
@@ -35,6 +37,7 @@ export interface FeedItem {
 export function projectForClient(entries: readonly SessionEntry[]): FeedItem[] {
   const items: FeedItem[] = [];
   const toolItemIndexByCallId = new Map<string, number>();
+  const replyItemIndexByReplyId = new Map<string, number>();
 
   for (const entry of entries) {
     if (entry.kind === "system" || entry.kind === "compaction") continue;
@@ -111,8 +114,48 @@ export function projectForClient(entries: readonly SessionEntry[]): FeedItem[] {
         continue;
     }
 
+    // ONE REPLY, ONE ITEM. The store records a reply as several entries — a
+    // ReAct turn narrates, calls a tool, then answers, and each stretch is its
+    // own row so the MODEL projection can interleave them with the tool calls
+    // in dispatch order. The person saw one bubble that grew. Folding here, at
+    // the single path from stored state to a feed item, is what makes the
+    // committed feed agree with the live stream instead of asking three
+    // clients to re-derive the grouping and disagree about it.
+    //
+    // Keyed by `replyId`, NOT by adjacency: a tool tile still sits between two
+    // stretches of the same reply today (it leaves the feed later in this
+    // plan), so an adjacency rule would fold nothing on the exact turn shape
+    // this exists for. The key is safe because the gateway ROTATES the id the
+    // moment a rendered row breaks the bubble — a message the person sends
+    // mid-turn (session-runtime.ts) — so two stretches sharing an id are, by
+    // construction, one bubble.
+    //
+    // Same anchoring rule as the tool fold above: a later stretch folds
+    // BACKWARD into the first stretch's slot, keeping its position and
+    // createdAt, which is what makes a replay agree with what the live stream
+    // showed regardless of what landed between the stretches.
+    if (kind === "assistant" && entry.replyId !== null) {
+      const foldIndex = replyItemIndexByReplyId.get(entry.replyId);
+      const previous = foldIndex === undefined ? undefined : items[foldIndex];
+      if (foldIndex !== undefined && previous !== undefined) {
+        items[foldIndex] = {
+          ...previous,
+          text: previous.text + (entry.text ?? ""),
+          // A cutoff is stamped on the FINAL partial of a cut-off reply, so the
+          // last stretch that carries one wins.
+          cutoff: entry.cutoff ?? previous.cutoff,
+        };
+        continue;
+      }
+      replyItemIndexByReplyId.set(entry.replyId, items.length);
+    }
+
     items.push({
-      id: String(entry.seq),
+      // A reply's identity is its replyId, not the seq of whichever stretch
+      // happened to be first: a window that attaches mid-turn projects the
+      // reply so far, and the same reply must keep the same id when it grows,
+      // or the client's dedupe-by-entryId appends a second bubble.
+      id: kind === "assistant" && entry.replyId !== null ? entry.replyId : String(entry.seq),
       kind,
       text: entry.text ?? "",
       toolName: null,
