@@ -54,6 +54,44 @@ describe("TaskListProjector", () => {
     expect(p.items()[0]?.kind).toBe("background");
   });
 
+  // react-loop.ts actually reports a background dispatch TWICE for the same
+  // call: a toolCallId-keyed "running" update fired before broker.dispatch()
+  // resolves (react-loop.ts:269, no taskId yet), then a taskId-keyed
+  // "running" update once appendBackgroundReceipt sees the resolved taskId
+  // (react-loop.ts:218) — despite the wire schema's comment claiming a
+  // single update. Without promotion this produces two rows, one of them a
+  // phantom foreground tile stuck at "running" forever.
+  it("promotes the pre-resolution placeholder into its background row on the taskId update", () => {
+    const clock = fixedClock();
+    const p = createTaskListProjector({ now: clock.now });
+    p.onTurnStarted("t1");
+    // First: the loop reports "this call started" before it knows the call
+    // is background.
+    p.onToolUpdate("t1", { toolCallId: "c1", toolName: "delegateTask", status: "running", argsPreview: "{}" });
+    clock.tick(30);
+    // Second: the same call's post-resolution receipt, now carrying taskId.
+    expect(
+      p.onToolUpdate("t1", {
+        toolCallId: "c1",
+        toolName: "delegateTask",
+        status: "running",
+        argsPreview: "{}",
+        taskId: "task-7",
+      }),
+    ).toBe(true);
+    expect(p.items()).toHaveLength(1);
+    expect(p.items()).toEqual([
+      {
+        id: "task-7",
+        toolName: "delegateTask",
+        kind: "background",
+        status: "running",
+        argsPreview: "{}",
+        startedAtMs: 1_000,
+      },
+    ]);
+  });
+
   it("drops foreground rows at the turn boundary and keeps background ones", () => {
     const p = createTaskListProjector({ now: () => 5 });
     p.onTurnStarted("t1");
@@ -110,5 +148,44 @@ describe("TaskListProjector", () => {
     expect(
       p.onToolUpdate("t1", { toolCallId: "c1", toolName: "ma_search", status: "running", argsPreview: "{}" }),
     ).toBe(false);
+  });
+
+  it("ignores a foreground update for a turn it does not own", () => {
+    const p = createTaskListProjector({ now: () => 5 });
+    p.onTurnStarted("t1");
+    expect(
+      p.onToolUpdate("t-other", { toolCallId: "c1", toolName: "ma_search", status: "running", argsPreview: "{}" }),
+    ).toBe(false);
+    expect(p.items()).toHaveLength(0);
+    expect(p.turnId()).toBe("t1");
+  });
+
+  it("still records a background update after its own turn has ended, without resurrecting turnId", () => {
+    const p = createTaskListProjector({ now: () => 5 });
+    p.onTurnStarted("t1");
+    p.onToolUpdate("t1", {
+      toolCallId: "c2",
+      toolName: "delegateTask",
+      status: "running",
+      argsPreview: "{}",
+      taskId: "task-7",
+    });
+    p.onTurnEnded("t1");
+    expect(p.turnId()).toBeNull();
+    // A background row legitimately outlives its turn, so a late update for
+    // it must not be swallowed by the ownership guard...
+    expect(
+      p.onToolUpdate("t1", {
+        toolCallId: "c2",
+        toolName: "delegateTask",
+        status: "done",
+        argsPreview: "{}",
+        taskId: "task-7",
+      }),
+    ).toBe(true);
+    expect(p.items()[0]?.status).toBe("done");
+    // ...but it must not resurrect currentTurnId either — no turn owns the
+    // list, background-only or not.
+    expect(p.turnId()).toBeNull();
   });
 });

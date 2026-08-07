@@ -64,6 +64,19 @@ export function createTaskListProjector(deps: TaskListProjectorDeps): TaskListPr
     );
   }
 
+  /** Swaps a row's key in place, keeping its ORIGINAL dispatch position — the
+   *  strip renders insertion order, and a plain delete-then-set would move a
+   *  promoted row to the back, behind anything dispatched between the
+   *  placeholder and its promotion. */
+  function promoteRow(oldId: string, newId: string, row: TaskListItem): void {
+    const entries: Array<[string, TaskListItem]> = [];
+    for (const [key, value] of rows) {
+      entries.push(key === oldId ? [newId, row] : [key, value]);
+    }
+    rows.clear();
+    for (const [key, value] of entries) rows.set(key, value);
+  }
+
   return {
     items: snapshot,
     turnId: () => currentTurnId,
@@ -85,7 +98,36 @@ export function createTaskListProjector(deps: TaskListProjectorDeps): TaskListPr
 
     onToolUpdate(turnId: string, update: ToolUpdate): boolean {
       const isBackground = update.taskId !== undefined;
+      // Ownership guard, mirrors onTurnEnded: a FOREGROUND update for a turn
+      // that is not (or no longer) current is stale — the ReAct loop only
+      // awaits foreground calls inside their own turn, so nothing legitimate
+      // reports one late. A BACKGROUND update is exempt: the promotion below
+      // fires with the SAME turnId the pre-resolution call used, and that
+      // turn can end before the promotion lands — the row must still land,
+      // or a delegateTask call that is designed to outlive its turn would
+      // silently lose its row at exactly the moment it needs it most.
+      if (!isBackground && turnId !== currentTurnId) {
+        log.debug("task-list.tool-update.stale-turn", { turnId, currentTurnId });
+        return false;
+      }
+
       const id = update.taskId ?? update.toolCallId;
+
+      // PROMOTION. The wire schema's comment (messages.ts:481-484) and
+      // ToolUpdate's own doc (react-loop.ts:66-69) both claim taskId appears
+      // on a background dispatch's SINGLE "running" update — but
+      // dispatchToolCalls (react-loop.ts:242-339) does not honor that. It
+      // fires a toolCallId-keyed "running" update right after appending the
+      // tool_call and BEFORE broker.dispatch() resolves (react-loop.ts:269 —
+      // no taskId yet, nobody knows the call is background), then a SECOND
+      // update once appendBackgroundReceipt sees the resolved taskId
+      // (react-loop.ts:203-219, the actual emit is line 218). Left alone
+      // those two land under two different keys: a phantom foreground row
+      // stuck at "running" forever, next to the real background row. Fold
+      // the placeholder into the promoted row instead — same call, same
+      // actual start time — so the strip only ever shows one tile for it.
+      const placeholderId = isBackground && update.toolCallId !== id ? update.toolCallId : null;
+      const placeholder = placeholderId !== null ? rows.get(placeholderId) : undefined;
       const existing = rows.get(id);
       const isTerminal = update.status !== STATUS_RUNNING;
       const next: TaskListItem = {
@@ -94,14 +136,32 @@ export function createTaskListProjector(deps: TaskListProjectorDeps): TaskListPr
         kind: isBackground ? "background" : "foreground",
         status: update.status,
         argsPreview: update.argsPreview ?? "",
-        startedAtMs: existing?.startedAtMs ?? deps.now(),
+        startedAtMs: existing?.startedAtMs ?? placeholder?.startedAtMs ?? deps.now(),
         ...(isTerminal ? { endedAtMs: deps.now() } : {}),
       };
-      if (sameRow(existing, next)) return false;
-      rows.set(id, next);
-      currentTurnId = turnId;
+      if (placeholder === undefined && sameRow(existing, next)) return false;
+
+      if (placeholderId !== null && placeholder !== undefined) {
+        promoteRow(placeholderId, id, next);
+      } else {
+        rows.set(id, next);
+      }
+      // NOTE: currentTurnId is deliberately NOT reassigned here. For a
+      // foreground update the guard above already proved turnId ===
+      // currentTurnId, so it would be a no-op; for a background update
+      // (exempt from the guard) writing it would wrongly resurrect
+      // currentTurnId after onTurnEnded set it back to null, undoing the
+      // "no turn owns the list any more" signal a background-only strip
+      // depends on.
       // argsPreview is user content and is never logged (logging rules).
-      log.debug("task-list.tool-update", { turnId, id, kind: next.kind, status: next.status, rows: rows.size });
+      log.debug("task-list.tool-update", {
+        turnId,
+        id,
+        kind: next.kind,
+        status: next.status,
+        promoted: placeholder !== undefined,
+        rows: rows.size,
+      });
       return true;
     },
 
