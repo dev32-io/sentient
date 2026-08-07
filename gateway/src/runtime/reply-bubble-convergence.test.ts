@@ -297,13 +297,10 @@ describe("a reply produced across several ReAct iterations", () => {
     runtime.emitConversationSnapshot();
     const replay = renderSnapshot(emitter.snapshots[0] ?? []);
 
-    // Diagnostic — makes a failure legible without re-running under a debugger.
-    console.log("live     :", JSON.stringify(live, null, 2));
-    console.log("committed:", JSON.stringify(committed, null, 2));
-    console.log("replay   :", JSON.stringify(replay, null, 2));
-
     // The model produced text three times, but it is ONE reply: nothing the
-    // person sent interrupted it, so nothing broke the bubble.
+    // person sent interrupted it, so nothing broke the bubble. Each assertion
+    // names the projection it compares, so a failure reads as "committed !=
+    // live" with both renderings in the diff — no console dump needed.
     expect(live).toHaveLength(1);
     expect(committed).toEqual(live);
     expect(replay).toEqual(live);
