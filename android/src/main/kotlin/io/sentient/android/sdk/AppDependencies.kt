@@ -20,7 +20,7 @@ import io.sentient.mobilesdk.connectors.ConversationHistoryConnector
 import io.sentient.mobilesdk.connectors.InFlightMessageConnector
 import io.sentient.mobilesdk.connectors.PreferencesConnector
 import io.sentient.mobilesdk.connectors.SessionsConnector
-import io.sentient.mobilesdk.connectors.TaskStatusConnector
+import io.sentient.mobilesdk.connectors.TaskListConnector
 import io.sentient.mobilesdk.connectors.UserAudioInputConnector
 import io.sentient.mobilesdk.connectors.UserTextInputConnector
 import io.sentient.mobilesdk.log.createLogger
@@ -45,7 +45,7 @@ object AppDependencies {
         InFlightMessageConnector.CAPABILITY,
         CognitionStatusConnector.CAPABILITY,
         PreferencesConnector.CAPABILITY,
-        TaskStatusConnector.CAPABILITY,
+        TaskListConnector.CAPABILITY,
         SessionsConnector.CAPABILITY,
     )
 

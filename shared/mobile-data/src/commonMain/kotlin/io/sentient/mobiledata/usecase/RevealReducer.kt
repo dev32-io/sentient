@@ -51,12 +51,12 @@ data class RevealBubble(
      * key it stamps. Null against a gateway that does not send it, which
      * degrades to the old one-bubble-per-turn behaviour.
      */
-    val messageId: String? = null,
+    val replyId: String? = null,
 ) {
     /** What this bubble is identified by — its message when it has one, its
      *  turn otherwise. `ObserveChatUseCase` hides the committed rows carrying
      *  the same key, so the swap at turn end shows exactly what was streamed. */
-    val key: String get() = messageId ?: turnId
+    val key: String get() = replyId ?: turnId
 }
 
 data class RevealState(
@@ -92,28 +92,28 @@ object RevealReducer {
         // bubble stops matching it; carrying it on would hide that row behind an
         // animation for a reply that has already finished.
         is SdkEvent.MessageStarted ->
-            if (s.bubble != null && s.bubble.key == (e.messageId ?: e.turnId)) {
+            if (s.bubble != null && s.bubble.key == (e.replyId ?: e.turnId)) {
                 s
             } else {
                 s.copy(
-                    bubble = RevealBubble(e.turnId, "", 0, LivePhase.STREAMING, e.messageId),
+                    bubble = RevealBubble(e.turnId, "", 0, LivePhase.STREAMING, e.replyId),
                     tasks = if (s.bubble?.turnId == e.turnId) s.tasks else emptyList(),
                     revealCarry = 0.0,
                 )
             }
         is SdkEvent.MessageDelta -> {
-            val key = e.messageId ?: e.turnId
+            val key = e.replyId ?: e.turnId
             // A delta for a bubble other than the live one opens it (a resume
             // replay can deliver a delta before its MessageStarted).
             val cur =
-                s.bubble?.takeIf { it.key == key } ?: RevealBubble(e.turnId, "", 0, LivePhase.STREAMING, e.messageId)
+                s.bubble?.takeIf { it.key == key } ?: RevealBubble(e.turnId, "", 0, LivePhase.STREAMING, e.replyId)
             s.copy(bubble = cur.copy(fullContent = cur.fullContent + e.chunk))
         }
         is SdkEvent.TaskUpserted -> s.copy(tasks = upsert(s.tasks, e.task))
         // Turn-matched: a turn owning several bubbles commits each of them, and
         // only the one still on screen should start draining.
         is SdkEvent.MessageCommitted ->
-            if (s.bubble != null && s.bubble.key == (e.message.messageId ?: e.message.turnId ?: s.bubble.key)) {
+            if (s.bubble != null && s.bubble.key == (e.message.replyId ?: e.message.turnId ?: s.bubble.key)) {
                 s.copy(bubble = s.bubble.copy(phase = LivePhase.DRAINING))
             } else {
                 s

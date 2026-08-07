@@ -105,8 +105,8 @@ class ObserveChatUseCase(
                     committed
                 } else {
                     committed.filter { row ->
-                        val sameMessage = bubble.messageId != null && row.messageId == bubble.messageId
-                        val sameTurn = (bubble.messageId == null || row.messageId == null) && row.turnId == bubble.turnId
+                        val sameMessage = bubble.replyId != null && row.replyId == bubble.replyId
+                        val sameTurn = (bubble.replyId == null || row.replyId == null) && row.turnId == bubble.turnId
                         !sameMessage && !sameTurn
                     }
                 }
@@ -117,7 +117,7 @@ class ObserveChatUseCase(
                     content = rs.visibleContent(),
                     streaming = true,
                     turnId = it.turnId,
-                    messageId = it.messageId,
+                    replyId = it.replyId,
                 )
             }
             ChatModel(
