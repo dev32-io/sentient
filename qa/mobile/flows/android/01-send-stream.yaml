@@ -2,23 +2,60 @@ appId: io.dev32.sentient.debug
 tags:
   - chat
 ---
-# 01-send-stream — type, send, and verify the assistant replies. Covers the full
-# text-send -> gateway -> native ReAct loop -> streaming bubble path (Hermes is
-# only a delegated tool on 2.0, never the agent runtime). assistant-bubble appears
-# once the gateway streams the first token; hideKeyboard so the IME doesn't push
-# the bubble off-screen. run-e2e.sh greps logcat for ≥1 MessageDelta after the
-# batch to confirm streaming (not just a committed reply). Batch-safe.
+# 01-send-stream — type, send, and verify the assistant replies as ONE bubble
+# while the composer task strip carries the live tool rows.
+#
+# Covers the full text-send -> gateway -> native ReAct loop -> streaming bubble
+# path (Hermes is only a delegated tool on 2.0, never the agent runtime), plus
+# the two invariants the reply-bubble/task-strip work added:
+#
+#   1. ONE reply is ONE bubble. A multi-iteration reply (narrate -> tool ->
+#      narrate -> tool -> answer) used to commit as three rows when the
+#      typewriter drained. The gateway now folds a whole reply into one feed
+#      item keyed by `replyId`, so exactly one `assistant-bubble` exists for the
+#      turn — hence the `index: 1` negative assert, and hence the `new-chat` tap
+#      that makes the count deterministic mid-batch.
+#   2. Tool rows live in the COMPOSER STRIP (`task-strip`), never on a bubble,
+#      and the gateway owns their lifetime: a foreground call dies with its turn.
+#      So the strip must appear during the turn and be GONE after it.
+#
+# The prompt deliberately asks for narration before each tool call — that is what
+# produces the multi-stretch reply this flow is here to pin. Two tools keep the
+# strip populated long enough to observe.
+#
+# hideKeyboard so the IME doesn't push the bubble off-screen. run-e2e.sh greps
+# logcat for >=1 MessageDelta after the batch to confirm streaming (not just a
+# committed reply); the strip's own trail is `connector.task-list state count=N`.
+# Batch-safe.
 - launchApp
 - runFlow:
     when: { visible: { id: "login-backend-setup" } }
     file: "_helpers/login.yaml"
 - assertVisible: { id: "composer-input" }
+# Fresh chat: makes the one-assistant-bubble assertion below deterministic even
+# when this flow lands mid-batch after another chat flow left a reply onscreen.
+- tapOn: { id: "new-chat" }
+- extendedWaitUntil:
+    visible: { id: "composer-input" }
+    timeout: 3000
 - tapOn: { id: "composer-input" }
-- inputText: "what is 2 plus 2"
+- inputText: "Narrate one sentence before each step, then: 1) list my media players 2) web-search Regina weather. Then summarise."
 - tapOn: { id: "chat-send" }
 - hideKeyboard
-# Provider round-trip driven by the gateway's own loop — genuinely slow, keep the
-# long budget.
+# Strip appears on the first tool call. The wait is long because it is gated on a
+# provider round-trip inside the gateway's own ReAct loop, not on UI layout.
+- extendedWaitUntil:
+    visible: { id: "task-strip" }
+    timeout: 45000
+# Assistant reply — same reason for the long budget.
 - extendedWaitUntil:
     visible: { id: "assistant-bubble" }
-    timeout: 40000
+    timeout: 45000
+# Strip clears at the turn boundary (`task-list.turn-ended` -> full-state frame
+# with count=0). Long budget: it waits out the remaining tool calls + the final
+# answer, all provider-paced.
+- extendedWaitUntil:
+    notVisible: { id: "task-strip" }
+    timeout: 60000
+# ONE reply, ONE bubble: a second assistant-bubble would mean the reply split.
+- assertNotVisible: { id: "assistant-bubble", index: 1 }

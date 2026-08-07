@@ -1701,9 +1701,15 @@ git add -A && git commit -m "fix(mobile-data): suppress the committed twin by re
 - [ ] **Step 5: Build**
 
 ```bash
-source scripts/env.sh && ./scripts/ios-setup.sh && xcodebuild -project ios/Sentient.xcodeproj -scheme Sentient -destination 'platform=iOS Simulator,name=iPhone 16' build 2>&1 | tail -20
+source scripts/env.sh && ./scripts/ios-setup.sh && xcodebuild -project ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.3.1' build 2>&1 | tail -20
 ```
 Expected: `BUILD SUCCEEDED`.
+
+> **Project/scheme names.** It is `ios/SentientApp.xcodeproj`, scheme `SentientApp` — there is no
+> `Sentient.xcodeproj` and no `Sentient` scheme anywhere in the repo (`ios-setup.sh` generates the
+> `SentientApp` names). The destination also needs an explicit `OS=`: two iPhone-16 simulators are
+> installed, so a bare `name=iPhone 16` is ambiguous and xcodebuild fails to resolve it. `OS=18.3.1`
+> is verified working.
 
 - [ ] **Step 6: Commit**
 
@@ -1846,8 +1852,16 @@ Both viewports: desktop 1280×900 and mobile-sized 390×844 (`browser_resize`).
 - [ ] **Step 3: Run the native matrix**
 
 ```bash
-source scripts/env.sh && qa/mobile/run-e2e.sh --tags chat-stream,tool-strip
+source scripts/env.sh && qa/mobile/run-e2e.sh android --tags chat
+source scripts/env.sh && qa/mobile/run-e2e.sh ios --tags chat
 ```
+
+> **Tags.** `chat-stream` and `tool-strip` do not exist in the taxonomy and select nothing. The
+> surface tag is `chat` (see `agents/docs/testing-knowledge.md` § "Tag taxonomy"), which selects
+> `01-send-stream` and its paired `01b-reply-survives-relaunch` — the two flows that carry this
+> work's assertions. `01b` is deliberately tagged `chat` ONLY: it asserts against the conversation
+> `01-send-stream` creates, and `CANONICAL_ORDER` keeps the pair adjacent, so any tag set that would
+> select `01b` without `01-send-stream` must be avoided.
 
 - [ ] **Step 4: Record evidence and update the case library**
 

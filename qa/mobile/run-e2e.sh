@@ -359,7 +359,9 @@ grep_logcat_for() {
 CANONICAL_ORDER=(
   login
   verify-newchat
-  01-chat-send 01-send-stream 02-drawer 03-new-chat 05-interrupt
+  # 01b asserts on the conversation 01-send-stream creates (one-bubble reply,
+  # empty strip) after a kill-and-relaunch, so the pair MUST stay adjacent.
+  01-chat-send 01-send-stream 01b-reply-survives-relaunch 02-drawer 03-new-chat 05-interrupt
   06-switch-session 07-rename-delete 10-outbox 11-mic-control
   # 12 is the native permission-confirm case (both platforms). Ordered after the
   # plain chat flows: it needs a working send, so if those are red it is red too.

@@ -1,0 +1,45 @@
+appId: io.dev32.sentient.debug
+tags:
+  - chat
+---
+# 01b-reply-survives-relaunch — the replay side of the one-bubble invariant.
+#
+# `render(replay) == render(live)` is a protocol contract, not a nicety: the
+# gateway's client projection folds a whole reply into ONE feed item keyed by
+# `replyId`, and reopening a conversation reads that projection back over REST
+# (`GET /api/v1/sessions/:id/messages`). If the fold only held on the live WS
+# path, a reopen would split the reply back into one row per ReAct stretch —
+# exactly the bug this work fixed. So this asserts the SAME shape 01-send-stream
+# left behind, after the process is gone.
+#
+# Pairs with 01-send-stream and MUST run immediately after it (CANONICAL_ORDER in
+# run-e2e.sh keeps them adjacent): it reopens the newest history row, which is
+# the conversation that flow created, so it is not meaningful standalone.
+#
+# WHY THE DRAWER AND NOT JUST A RELAUNCH: a cold launch lands on a FRESH empty
+# conversation ("Start a conversation…") — the app does not auto-restore the last
+# one (verified 2026-08-07 on Android; conversation resume-on-launch is separate,
+# unshipped product behaviour, not a regression in this work). So the honest way
+# to exercise the replay projection is to reopen the conversation explicitly. The
+# `stopApp` still makes it a genuine cold read: no in-memory mirror survives.
+- stopApp
+- runFlow: _helpers/login.yaml
+# Reopen the newest conversation — the one 01-send-stream just created.
+- tapOn:
+    id: "history-open"
+- extendedWaitUntil:
+    visible: { id: "history-new-chat" }
+    timeout: 3000
+- tapOn:
+    id: ".*history-row-.*"
+- extendedWaitUntil:
+    visible: { id: "composer-input" }
+    timeout: 3000
+# The reply survived the cold read...
+- extendedWaitUntil:
+    visible: { id: "assistant-bubble" }
+    timeout: 3000
+# ...as exactly ONE bubble, not one row per ReAct stretch.
+- assertNotVisible: { id: "assistant-bubble", index: 1 }
+# Task rows are ephemeral live state: nothing replays them.
+- assertNotVisible: { id: "task-strip" }
