@@ -600,6 +600,10 @@ html.is-paused *::after {
   flex-direction: column;
   width: 100%;
   border-bottom: 1px solid color-mix(in oklab, var(--color-ink) 12%, transparent);
+  /* Query container for .tool-pill's `cqw` min-width below — pill width is
+     derived from THIS element's own width, not the viewport, so it tracks
+     the strip regardless of what else is on the page. */
+  container-type: inline-size;
 }
 .tool-strip__pills {
   display: flex;
@@ -607,6 +611,10 @@ html.is-paused *::after {
   flex-wrap: nowrap;
   gap: 0;
   width: 100%;
+  /* Always scrollable — pills never wrap and never shrink to fit (below).
+     Native scrollbar is the overflow affordance on desktop/mouse; the touch
+     breakpoint hides it in favor of a peeking partial pill (see media query). */
+  overflow-x: auto;
 }
 .tool-pill {
   display: inline-flex;
@@ -621,8 +629,23 @@ html.is-paused *::after {
   font-size: 13px;
   line-height: 1;
   text-align: left;
-  flex: 1 1 0;
-  min-width: 0;
+  /* Never shrink, never stretch (a lone pill sits at its natural width,
+     left-aligned) — flex-basis:auto so a short name doesn't pad out to the
+     floor, a long one grows up to the ceiling below, then truncates. */
+  flex: 0 0 auto;
+  /* pillMinWidth = clamp(112px, 0.42 × stripWidth, 200px) — ~2.4 pills in
+     view at any width in the unclamped middle band (stripWidth 267–476px);
+     outside that band the floor/ceiling deliberately trade pill-count
+     consistency for a readable width. Verified against the strip's real
+     rendered width (.dock/.dock-inner/.composer padding all subtracted) at
+     three anchors: 390px phone → 350px strip → ~147px pills, ~2.4 in view;
+     620px narrow browser → 580px strip → ceiling engages, ~2.9 in view;
+     1280px desktop → 692px strip → ceiling engages, ~3.5 in view, and
+     identical on any wider desktop since .dock-inner's own 720px max-width
+     caps the composer long before the viewport does. All three read fine
+     as-is — no constant changes needed. */
+  min-width: clamp(112px, 42cqw, 200px);
+  max-width: 200px;
   cursor: pointer;
   transition: background var(--motion-fast), color var(--motion-fast);
 }
@@ -1205,16 +1228,15 @@ html.is-paused *::after {
   .bubble-text__md ol { margin: 0.15em 0 0.3em; padding-left: 1.2em; }
   .bubble-text__md li { margin: 0.1em 0; }
 
-  /* Tool pills tighter; horizontal-scroll the strip when >2 pills appear so
-     names stay legible instead of getting ellipsized into `bulk_…`. */
+  /* Tool pills tighter. Scrolling itself (flex:0 0 auto + the min-width
+     clamp) is set unconditionally above; touch/narrow only hides the
+     scrollbar in favor of a peeking partial pill as the overflow tell — an
+     always-visible bar reads as clutter on a phone. */
   .tool-strip__pills {
-    overflow-x: auto;
     scrollbar-width: none;
   }
   .tool-strip__pills::-webkit-scrollbar { display: none; }
   .tool-pill {
-    flex: 0 0 auto;
-    min-width: 130px;
     padding: 6px 8px;
     gap: 6px;
     font-size: 12px;
