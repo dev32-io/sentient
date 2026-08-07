@@ -1,4 +1,5 @@
 import { useSignal } from "@preact/signals";
+import type { TaskListItem } from "@sentient/protocol";
 import {
   AssistantAudioResponseConnector,
   type AudioPreferences,
@@ -17,8 +18,7 @@ import {
   type SDKStatus,
   SentientSDK,
   SessionsConnector,
-  type ToolCallSnapshotItem,
-  ToolStatusConnector,
+  TaskListConnector,
   UserAudioInputConnector,
   UserTextInputConnector,
   createEchoGate,
@@ -58,7 +58,7 @@ import {
 // component already takes.
 import type { ChatMessage } from "../types.ts";
 import { createAwaitingTracker } from "./awaiting-tracker.ts";
-import { attachToolsToAssistantMessages, deriveCycleStatus, deriveMessages } from "./cycle-helpers.ts";
+import { deriveCycleStatus, deriveMessages } from "./cycle-helpers.ts";
 import { reducePermissionPrompt } from "./permission-helpers.ts";
 import { useTypewriterBuffer } from "./use-typewriter-buffer.ts";
 import { buildVoiceStatus, resolveGatewayUrl } from "./voice-status.ts";
@@ -106,8 +106,8 @@ export interface UseVoiceClientOptions {
 export function useVoiceClient(options: UseVoiceClientOptions) {
   const status = useSignal<VoiceStatus>({ state: "inactive", label: "Ready", canSpeak: false, isActive: false });
   const messages = useSignal<readonly ChatMessage[]>([]);
-  // tasks signal exposed to UI — raw SDK shape (ToolCallSnapshotItem).
-  const tasks = useSignal<readonly ToolCallSnapshotItem[]>([]);
+  // tasks signal exposed to UI — the gateway's full-state tasklist.state list.
+  const tasks = useSignal<readonly TaskListItem[]>([]);
   /**
    * Live user-speech preview. ALWAYS EMPTY under the 2.0 contract: R9 deleted
    * the partial-transcript frame, so spoken text now appears only once the
@@ -127,8 +127,8 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
    */
   const permissionRequest = useSignal<PermissionRequestItem | null>(null);
   /**
-   * Background `delegateTask` work, in dispatch order. Joins to a tool pill
-   * through `ToolCallSnapshotItem.taskId` — same id on both frames.
+   * Background `delegateTask` work, in dispatch order. Joins to a composer
+   * task-strip row through `TaskListItem.id` — same id on both frames.
    */
   const delegations = useSignal<readonly DelegationProgressItem[]>([]);
   // Audio preferences (TTS on/off, channel). Seeded from the persisted
@@ -153,8 +153,6 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
   const sdkStatusRef = useRef<SDKStatus>("disconnected");
   const cognitionRef = useRef<CognitionState>("idle");
   const isAudioPlayingRef = useRef(false);
-  // Raw snapshots kept for attachToolsToAssistantMessages (needs turnId).
-  const rawTasksRef = useRef<readonly ToolCallSnapshotItem[]>([]);
 
   const typewriter = useTypewriterBuffer();
   const typewriterTurnIdRef = useRef<string | null>(null);
@@ -221,7 +219,7 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
         status.value = nextStatus;
       }
 
-      const runningCount = rawTasksRef.current.filter((t) => t.status === "running").length;
+      const runningCount = tasks.value.filter((t) => t.status === "running").length;
       const nextCycleStatus = deriveCycleStatus({
         cognition: cognitionRef.current,
         audioPlaying: isAudioPlayingRef.current,
@@ -247,7 +245,7 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
         effectiveInflight.length > 0 ? typewriterRef.current.visible.value : undefined,
         drain?.turnId,
       );
-      messages.value = attachToolsToAssistantMessages(base, rawTasksRef.current);
+      messages.value = base;
     }
 
     const speechGate = createSpeechGate({
@@ -528,16 +526,15 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       },
     });
 
-    const toolStatusConnector = new ToolStatusConnector({
-      onList: (items) => {
-        rawTasksRef.current = items;
+    const taskListConnector = new TaskListConnector({
+      onUpdate: (turnId, items) => {
         tasks.value = items;
-        // Expose the latest tool call's turnId when no turn is streaming text.
-        // Items arrive in startedAtMs-ascending order from the connector; the
-        // latest is always the last element — no sort needed.
-        const latest = items[items.length - 1];
-        if (latest && inflightRef.current.length === 0) currentTurnId.value = latest.turnId;
-        refreshMessages();
+        // Expose the turn's id when no turn is streaming text yet — e.g. the
+        // first tool call of a turn dispatches before any narration token
+        // lands, so there is no inflight bubble to carry it. `null` means only
+        // background rows survive a finished turn; leave currentTurnId alone
+        // rather than clobbering it with "no active turn".
+        if (turnId !== null && inflightRef.current.length === 0) currentTurnId.value = turnId;
         refreshStatus();
       },
     });
@@ -573,8 +570,8 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
 
     // Background delegated work (delegateTask). Registered so the capability
     // is advertised in `session.configure` and progress frames are consumed
-    // rather than dropped by the router. `delegations` joins to a tool pill
-    // through `ToolCallSnapshotItem.taskId`, which is the same id.
+    // rather than dropped by the router. `delegations` joins to a composer
+    // task-strip row through `TaskListItem.id`, which is the same id.
     const delegationConnector = new DelegationProgressConnector({
       onList: (items) => {
         delegations.value = items;
@@ -716,7 +713,7 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     sdk.register(cognitionConnector);
     sdk.register(conversationConnector);
     sdk.register(inflightMessageConnector);
-    sdk.register(toolStatusConnector);
+    sdk.register(taskListConnector);
     sdk.register(permissionConnector);
     sdk.register(delegationConnector);
     sdk.register(sessionsConnector);

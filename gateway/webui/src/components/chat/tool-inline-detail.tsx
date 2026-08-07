@@ -1,29 +1,24 @@
+import type { TaskListItem } from "@sentient/protocol";
 import type { JSX } from "preact";
-import type { ToolCallSnapshotItem } from "@sentient/web-sdk";
 
 export interface ToolInlineDetailProps {
-  task: ToolCallSnapshotItem;
+  item: TaskListItem;
   direction: "down" | "up";
 }
 
-/** Shown when the tile's half of the round trip is empty — an unresolved
- *  committed tile (no tool_result was ever recorded) has no result text. */
+/** Shown when the row has no arguments preview to display. */
 const NO_DETAIL = "—";
 
 /**
- * The two tile sources carry opposite halves of the round trip: a LIVE tile
- * (turn.tool.update) holds the call's arguments and never its result, a
- * COMMITTED tile (conversation feed) holds the result and never the arguments.
- * Render whichever half the tile has, labelled — putting the result in the
- * arguments block made a reloaded pill contradict the same pill live.
+ * A `tasklist.state` row carries only the call's arguments — never a result
+ * (results are the model's to narrate, not a card the UI shows). Rendered
+ * verbatim: `argsPreview` is user content and must never be logged.
  */
-export function ToolInlineDetail({ task, direction }: ToolInlineDetailProps): JSX.Element {
-  const hasArgs = task.argsPreview.length > 0;
-  const label = hasArgs ? "arguments" : "result";
-  const text = (hasArgs ? task.argsPreview : task.resultPreview) || NO_DETAIL;
+export function ToolInlineDetail({ item, direction }: ToolInlineDetailProps): JSX.Element {
+  const text = item.argsPreview || NO_DETAIL;
   return (
     <div class={`tool-inline-detail tool-inline-detail--${direction}`}>
-      <span class="tool-inline-detail__label">{label}</span>
+      <span class="tool-inline-detail__label">arguments</span>
       <code class="tool-inline-detail__preview">{text}</code>
     </div>
   );

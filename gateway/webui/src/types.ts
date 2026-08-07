@@ -1,5 +1,4 @@
 import type { ConversationAssistantCutoff, ConversationUserChannel } from "@sentient/protocol";
-import type { ToolCallSnapshotItem } from "@sentient/web-sdk";
 import type { AuthUser } from "./services/auth-api.js";
 
 /** Chat message for UI rendering.
@@ -17,15 +16,13 @@ export interface ChatMessage {
   readonly isStreaming: boolean;
   /** Turn that produced this assistant message, or triggered by this user message. */
   readonly turnId?: string;
-  /** WHICH BUBBLE this message is. Several committed rows of one ReAct turn
-   *  share it and merge into the single bubble the stream showed. */
-  readonly messageId?: string;
+  /** WHICH REPLY this message is — the gateway folds a whole reply into ONE
+   *  `conversation.entry`, so this is that entry's own id, never derived. */
+  readonly replyId?: string;
   /** Present for user messages only — which input channel the message came in on. */
   readonly channel?: ConversationUserChannel;
   /** Present for assistant messages that ended with a cutoff (barge-in or interrupt). */
   readonly cutoff?: ConversationAssistantCutoff;
-  /** Assistant messages only: tool calls grouped onto this message by shared turnId. */
-  readonly tools?: readonly ToolCallSnapshotItem[];
 }
 
 /** Auth state */

@@ -429,8 +429,8 @@ html.is-paused *::after {
   border-top-left-radius: 6px;
 }
 /* The text-inner carries the padded text area so the speaking wave
-   (position: absolute; inset: 0) fills the full text cell — from the
-   bubble's top edge down to the tool-strip (or bottom edge if none). */
+   (position: absolute; inset: 0) fills the full text cell, top edge to
+   bottom edge. */
 .message-bubble__text-inner {
   position: relative;
   padding: 14px 18px;
@@ -571,52 +571,35 @@ html.is-paused *::after {
 }
 .interrupt-chip--inline { margin-left: 6px; }
 
-/* ─── ToolInlineDetail (flush inside bubble) ─── */
+/* ─── Dock + Composer ─── */
 
-.tool-inline-detail {
-  padding: 12px 16px;
-  background: color-mix(in oklab, var(--color-accent) 10%, transparent);
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  color: var(--color-ink);
+.dock {
+  padding: 24px 22px 22px;
+  display: flex;
+  justify-content: center;
+  /* No background, no border — the composer card carries the visual weight
+     and messages naturally show through the empty sides as they scroll. */
 }
-/* Names which half of the round trip is below it: a live tile shows the call's
-   arguments, a committed (replayed) tile shows its result. */
-.tool-inline-detail__label {
-  display: block;
-  margin-bottom: 4px;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--color-ink-3);
-}
-.tool-inline-detail__preview {
-  display: block;
-  margin: 0;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--color-ink-2);
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
+.dock-inner {
+  width: 100%;
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-/* ─── ToolPillStrip ─── */
-
+/* ─── ComposerTaskStrip — the composer's own topmost row (design v2
+   `00-chat-reference.png`; spec §4.9: "flush with top edge, inside composer's
+   border"). It replaced pills anchored to a chat bubble: the gateway's
+   `tasklist.state` has no bubble to anchor to, so this renders as a row of
+   the composer card itself instead. Full width, a plain `border-bottom`
+   hairline separates it from the rest of the card — no inset offsets, no
+   pseudo-element positioning like the old bubble-anchored strip needed. */
 .tool-strip {
   display: flex;
   flex-direction: column;
-  position: relative;
-}
-.tool-strip::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 12px;
-  right: 12px;
-  height: 1px;
-  background: color-mix(in oklab, var(--color-ink) 12%, transparent);
-  pointer-events: none;
+  width: 100%;
+  border-bottom: 1px solid color-mix(in oklab, var(--color-ink) 12%, transparent);
 }
 .tool-strip__pills {
   display: flex;
@@ -686,9 +669,8 @@ html.is-paused *::after {
   background: transparent;
   animation: tool-spin 1s linear infinite;
 }
-.tool-pill__dot--finished { background: var(--color-ok); }
-.tool-pill__dot--failed { background: var(--color-stop); }
-.tool-pill__dot--cancelled { background: var(--color-ink-3); }
+.tool-pill__dot--done { background: var(--color-ok); }
+.tool-pill__dot--error { background: var(--color-stop); }
 .tool-pill__chev {
   display: inline-flex;
   color: var(--color-ink-4);
@@ -700,22 +682,35 @@ html.is-paused *::after {
 }
 @keyframes tool-spin { to { transform: rotate(360deg); } }
 
-/* ─── Dock + Composer ─── */
+/* ToolInlineDetail — expands UPWARD, above the pills row. The strip sits at
+   the very top of the composer card, so a detail panel has nowhere to grow
+   but up (spec §4.9: "click pill to expand detail upward"). */
+.tool-inline-detail {
+  padding: 12px 16px;
+  background: color-mix(in oklab, var(--color-accent) 10%, transparent);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--color-ink);
+}
+.tool-inline-detail__label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink-3);
+}
+.tool-inline-detail__preview {
+  display: block;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-ink-2);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
 
-.dock {
-  padding: 24px 22px 22px;
-  display: flex;
-  justify-content: center;
-  /* No background, no border — the composer card carries the visual weight
-     and messages naturally show through the empty sides as they scroll. */
-}
-.dock-inner {
-  width: 100%;
-  max-width: 720px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
 .composer {
   position: relative;
   background: var(--color-paper);

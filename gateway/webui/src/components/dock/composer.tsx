@@ -1,6 +1,8 @@
+import type { TaskListItem } from "@sentient/protocol";
 import type { JSX } from "preact";
 import { useRef, useState } from "preact/hooks";
 import type { CycleStatus } from "../../hooks/cycle-helpers.ts";
+import { ComposerTaskStrip } from "./composer-task-strip.tsx";
 import { InterruptButton } from "./interrupt-button.tsx";
 import { MicCorner } from "./mic-corner.tsx";
 import type { MicCornerMode } from "./mic-corner-gesture.ts";
@@ -22,6 +24,9 @@ export interface ComposerProps {
   /** Reflects `useVoiceClient().prefs.value.ttsEnabled` — server-of-record. */
   ttsEnabled: boolean;
   suggestions: readonly string[];
+  /** The gateway's live task list. Server-owned: the strip renders it, it never
+   *  derives which rows exist or when they leave. */
+  tasks: readonly TaskListItem[];
   onSendText(text: string): void;
   /** Corner mic pressed/locked — start voice mode. Rejection resets the control. */
   onMicStart(): Promise<void>;
@@ -65,7 +70,7 @@ function isNarrowViewport(): boolean {
 }
 
 export function Composer(props: ComposerProps): JSX.Element {
-  const { cycleStatus, voiceMode, canInterrupt, connectionReady, ttsEnabled, suggestions } = props;
+  const { cycleStatus, voiceMode, canInterrupt, connectionReady, ttsEnabled, suggestions, tasks } = props;
   const { onSendText, onMicStart, onMicStop, onTtsToggle, onInterrupt, onSuggestionClick } = props;
 
   const [text, setText] = useState("");
@@ -124,6 +129,7 @@ export function Composer(props: ComposerProps): JSX.Element {
         <div class="composer-shell">
           <MicCorner active={voiceActive} onModeChange={setMicMode} onStart={onMicStart} onStop={onMicStop} />
           <div class={composerClasses}>
+            <ComposerTaskStrip items={tasks} />
             {!connectionReady && (
               <div class={`composer__connection-pill${submitBlockedFlash ? " composer__connection-pill--flash" : ""}`}>
                 Reconnecting…

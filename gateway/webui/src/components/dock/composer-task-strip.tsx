@@ -1,16 +1,25 @@
-import type { JSX } from "preact";
-import type { ToolCallSnapshotItem } from "@sentient/web-sdk";
-import { Icon } from "../common/icon.tsx";
-import { ToolInlineDetail } from "./tool-inline-detail.tsx";
+// ComposerTaskStrip — the live tool/task rows, flush with the top edge of the
+// composer, inside its border (design v2, `sentient-webui-design-v2/screenshots/
+// 00-chat-reference.png`; spec `docs/superpowers/specs/2026-04-18-cerebrum-ux-refresh-design.md`
+// §4.9).
+//
+// It replaced pills attached to a chat bubble. Those forced every client to
+// answer "which bubble does this pill belong to", which has no stable answer
+// once a mid-turn steer can split a reply. The strip has no anchor: the gateway
+// says which rows exist and when they leave (`tasklist.state`), and this
+// renders them.
 
-export interface ToolPillStripProps {
-  tools: readonly ToolCallSnapshotItem[];
-  expandDirection: "down" | "up";
-  openToolCallId: string | null;
-  onToggleTool(toolCallId: string): void;
+import type { TaskListItem } from "@sentient/protocol";
+import type { JSX } from "preact";
+import { useState } from "preact/hooks";
+import { ToolInlineDetail } from "../chat/tool-inline-detail.tsx";
+import { Icon } from "../common/icon.tsx";
+
+export interface ComposerTaskStripProps {
+  items: readonly TaskListItem[];
 }
 
-function statusClass(s: ToolCallSnapshotItem["status"]): string {
+function statusClass(s: TaskListItem["status"]): string {
   return `tool-pill--${s}`;
 }
 
@@ -48,9 +57,9 @@ function iconForTool(toolName: string): ToolIconName {
 }
 
 interface ToolPillButtonProps {
-  task: ToolCallSnapshotItem;
+  task: TaskListItem;
   isOpen: boolean;
-  onToggle(toolCallId: string): void;
+  onToggle(id: string): void;
 }
 
 function ToolPillButton({ task, isOpen, onToggle }: ToolPillButtonProps): JSX.Element {
@@ -59,7 +68,7 @@ function ToolPillButton({ task, isOpen, onToggle }: ToolPillButtonProps): JSX.El
     <button
       type="button"
       class={`tool-pill ${statusClass(task.status)} ${openClass}`}
-      onClick={() => onToggle(task.toolCallId)}
+      onClick={() => onToggle(task.id)}
     >
       <span class="tool-pill__icon">
         <Icon name={iconForTool(task.toolName)} size={14} />
@@ -71,27 +80,31 @@ function ToolPillButton({ task, isOpen, onToggle }: ToolPillButtonProps): JSX.El
   );
 }
 
-export function ToolPillStrip({
-  tools,
-  expandDirection,
-  openToolCallId,
-  onToggleTool,
-}: ToolPillStripProps): JSX.Element {
-  const open = openToolCallId !== null ? tools.find((t) => t.toolCallId === openToolCallId) : undefined;
+/**
+ * Owns its own `openId` — no bubble to coordinate an anchor with any more.
+ * Detail renders ABOVE the pills (spec §4.9: "click pill to expand detail
+ * upward") because the strip sits at the very top of the composer card; an
+ * expansion has nowhere to grow but up.
+ */
+export function ComposerTaskStrip({ items }: ComposerTaskStripProps): JSX.Element | null {
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  if (items.length === 0) return null;
+
+  function toggle(id: string): void {
+    setOpenId((prev) => (prev === id ? null : id));
+  }
+
+  const open = openId !== null ? items.find((t) => t.id === openId) : undefined;
+
   return (
-    <div class={`tool-strip tool-strip--${expandDirection}`}>
-      {expandDirection === "up" && open && <ToolInlineDetail task={open} direction="up" />}
+    <div class="tool-strip">
+      {open && <ToolInlineDetail item={open} direction="up" />}
       <div class="tool-strip__pills">
-        {tools.map((t) => (
-          <ToolPillButton
-            key={t.toolCallId}
-            task={t}
-            isOpen={openToolCallId === t.toolCallId}
-            onToggle={onToggleTool}
-          />
+        {items.map((t) => (
+          <ToolPillButton key={t.id} task={t} isOpen={openId === t.id} onToggle={toggle} />
         ))}
       </div>
-      {expandDirection === "down" && open && <ToolInlineDetail task={open} direction="down" />}
     </div>
   );
 }

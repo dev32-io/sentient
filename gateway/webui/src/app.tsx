@@ -311,6 +311,7 @@ function AppInner() {
               connectionReady={connectionReady}
               ttsEnabled={client.prefs.value.ttsEnabled}
               suggestions={SUGGESTIONS}
+              tasks={client.tasks.value}
               onSendText={client.sendText}
               onMicStart={async () => {
                 try {
