@@ -26,6 +26,18 @@
 // which calls were left unreplied, so a cut-off row still reaches "error"
 // instead of sitting at "running" for the rest of the session.
 //
+// `onToolCallsClosed` only ever runs for the two user gestures. A turn can
+// also end by provider failure, a request timeout, or an unexpected throw
+// out of the ReAct loop — none of which route through cancellation.ts — and
+// SessionRuntime's own settle continuation is the one place that sees every
+// one of those exits alike. `terminalizeOrphanedForeground` is that general
+// backstop: the ReAct loop awaits every foreground dispatch inside its own
+// turn, so by the time the turn has settled, ANY row still "foreground" +
+// "running" is by definition an orphan, regardless of which exit produced
+// it. On the two gestures it is a clean no-op — `onToolCallsClosed` already
+// closed everything before `controller.abort()` — so this subsumes that path
+// rather than duplicating it.
+//
 // Pure: no I/O, no wall clock of its own. The caller emits `tasklist.state`
 // whenever a mutator returns true.
 
@@ -57,6 +69,21 @@ export interface TaskListProjector {
    *  cancellation.ts, for the tool calls a barge-in/interrupt closed with a
    *  synthetic `tool_result` — see the module header. */
   onToolCallsClosed(toolCallIds: readonly string[]): boolean;
+  /**
+   * Drives every FOREGROUND row still "running" to "error" — the general
+   * backstop for a turn that settles WITHOUT going through
+   * cancellation.ts's `onToolCallsClosed` (provider failure, a request
+   * timeout, an unexpected throw out of the ReAct loop). See the module
+   * header. Background rows are untouched: they are exempt from every
+   * turn boundary by design and leave only via `onDelegationProgress`.
+   *
+   * The one call site is SessionRuntime's turn-settle continuation, driven
+   * alongside `onTurnEnded` for every turn regardless of how it ended.
+   * `turnId` is carried for logging only — a foreground row can only ever
+   * belong to the turn currently in flight, so nothing here needs to gate
+   * on it to find the right rows.
+   */
+  terminalizeOrphanedForeground(turnId: string): boolean;
 }
 
 export interface TaskListProjectorDeps {
@@ -231,6 +258,23 @@ export function createTaskListProjector(deps: TaskListProjectorDeps): TaskListPr
         changed = true;
       }
       if (changed) log.debug("task-list.tool-calls-closed", { toolCallIds, rows: rows.size });
+      return changed;
+    },
+
+    terminalizeOrphanedForeground(turnId: string): boolean {
+      let changed = false;
+      for (const [id, row] of rows) {
+        if (row.kind !== "foreground" || row.status !== STATUS_RUNNING) continue;
+        rows.set(id, { ...row, status: STATUS_ERROR, endedAtMs: deps.now() });
+        changed = true;
+      }
+      if (changed) {
+        log.warn("task-list.turn-settled.orphaned-foreground", {
+          turnId,
+          rows: rows.size,
+          reason: "turn settled with a foreground row still running — no exit routed it through onToolCallsClosed",
+        });
+      }
       return changed;
     },
   };

@@ -715,6 +715,22 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     // on `turn.completed`, so the committed twin has to already be there or the
     // reply visibly vanishes.
     feed.publishAll();
+    // ORPHAN SWEEP, BEFORE `onTurnEnded`. A turn that settles by provider
+    // failure, timeout, or an unexpected throw out of the ReAct loop never
+    // routes through cancellation.ts, so `onToolCallsClosed` never runs for
+    // it — this is the general backstop for every exit `onToolCallsClosed`
+    // does not cover. The ReAct loop awaits every foreground dispatch inside
+    // its own turn, so a row still "foreground" + "running" at settle time is
+    // an orphan by definition, regardless of which exit produced it. Run
+    // BEFORE `onTurnEnded` clears `currentTurnId` to null: the rows this
+    // sweeps can only ever belong to the turn currently owning the list, and
+    // doing it while that ownership still holds keeps the sequence readable
+    // as "close out this turn's own state, then end the turn" rather than
+    // "end the turn, then clean up after it." On barge-in/interrupt this is a
+    // clean no-op — `closeUnrepliedToolCalls` (cancellation.ts) already
+    // terminalized every such row synchronously before `controller.abort()`,
+    // so nothing here is left "running" to find.
+    if (taskList.terminalizeOrphanedForeground(turnId)) publishTaskList();
     // Foreground rows now SURVIVE their turn (runtime/task-list.ts) — the
     // strip is retained state so a person can look back at what this turn
     // did, and only the next `onTurnStarted` clears them. Background rows (a

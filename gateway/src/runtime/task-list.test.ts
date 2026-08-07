@@ -236,4 +236,66 @@ describe("TaskListProjector", () => {
     expect(p.onToolCallsClosed(["c1", "c9"])).toBe(false);
     expect(p.items()[0]?.status).toBe("done");
   });
+
+  // The general backstop (code review follow-up to Change 2): a turn can also
+  // end by provider failure, timeout, or an unexpected throw out of the
+  // ReAct loop — none of which route through cancellation.ts's
+  // `onToolCallsClosed`. `terminalizeOrphanedForeground` is what
+  // SessionRuntime's settle continuation drives for EVERY turn end, so this
+  // gap closes structurally rather than by enumerating failure paths.
+  it("terminalizes a still-running foreground row when the turn settles for any other reason", () => {
+    const clock = fixedClock();
+    const p = createTaskListProjector({ now: clock.now });
+    p.onTurnStarted("t1");
+    p.onToolUpdate("t1", { toolCallId: "c1", toolName: "ma_search", status: "running", argsPreview: "{}" });
+    clock.tick(75);
+    expect(p.terminalizeOrphanedForeground("t1")).toBe(true);
+    expect(p.items()).toEqual([
+      {
+        id: "c1",
+        toolName: "ma_search",
+        kind: "foreground",
+        status: "error",
+        argsPreview: "{}",
+        startedAtMs: 1_000,
+        endedAtMs: 1_075,
+      },
+    ]);
+  });
+
+  it("leaves a running BACKGROUND row alone — a delegateTask outliving its turn is the point", () => {
+    const p = createTaskListProjector({ now: () => 5 });
+    p.onTurnStarted("t1");
+    p.onToolUpdate("t1", {
+      toolCallId: "c2",
+      toolName: "delegateTask",
+      status: "running",
+      argsPreview: "{}",
+      taskId: "task-7",
+    });
+    expect(p.terminalizeOrphanedForeground("t1")).toBe(false);
+    expect(p.items()[0]?.status).toBe("running");
+    expect(p.items()[0]?.kind).toBe("background");
+  });
+
+  it("reports no change when nothing is running", () => {
+    const p = createTaskListProjector({ now: () => 5 });
+    p.onTurnStarted("t1");
+    p.onToolUpdate("t1", { toolCallId: "c1", toolName: "ma_search", status: "done", argsPreview: "{}" });
+    expect(p.terminalizeOrphanedForeground("t1")).toBe(false);
+    expect(p.items()[0]?.status).toBe("done");
+  });
+
+  // The interaction this module's header now documents: on barge-in/interrupt
+  // cancellation.ts's `onToolCallsClosed` already terminalizes every
+  // still-running row BEFORE `controller.abort()`, so the sweep that runs
+  // later in the settle continuation must find nothing left to do.
+  it("is a clean no-op once onToolCallsClosed already terminalized the row (the interrupt/barge-in path)", () => {
+    const p = createTaskListProjector({ now: () => 5 });
+    p.onTurnStarted("t1");
+    p.onToolUpdate("t1", { toolCallId: "c1", toolName: "ma_search", status: "running", argsPreview: "{}" });
+    expect(p.onToolCallsClosed(["c1"])).toBe(true);
+    expect(p.terminalizeOrphanedForeground("t1")).toBe(false);
+    expect(p.items()[0]?.status).toBe("error");
+  });
 });

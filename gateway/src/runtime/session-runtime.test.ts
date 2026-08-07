@@ -2716,6 +2716,97 @@ describe("SessionRuntime — task list", () => {
     expect(row?.status).toBe("error");
     expect(finalItems.some((i) => i.status === "running")).toBe(false);
 
+    // The interaction with the general settle-time sweep
+    // (`terminalizeOrphanedForeground`, added alongside `onTurnEnded` in the
+    // settle continuation): cancellation.ts's `closeUnrepliedToolCalls`
+    // already terminalized "call_cut" synchronously above, BEFORE
+    // `controller.abort()`, so the sweep must find nothing left "running" and
+    // publish nothing of its own. Exactly four taskList frames are expected
+    // for this whole flow — turnStarted's empty strip, the dispatch's
+    // "running" row, cancellation's synchronous close to "error", and
+    // onTurnEnded's mandatory turnId->null publish — and NOT a fifth. A fifth
+    // frame here would mean the sweep fired a redundant publish of its own
+    // rather than being the clean no-op the interrupt path requires.
+    expect(emitter.events.filter((e) => e.type === "taskList")).toHaveLength(4);
+
+    runtime.dispose();
+  });
+
+  // -------------------------------------------------------------------------
+  // Code-review follow-up to Change 2: `closeTaskListRows`/`onToolCallsClosed`
+  // only fires from cancellation.ts, i.e. only for the two USER gestures. A
+  // turn that fails on its own — a provider throw/reject, a timeout, an
+  // unexpected throw out of the ReAct loop — never touches cancellation.ts at
+  // all, so without a general backstop the row above would sit at "running"
+  // forever with no user gesture ever able to reach it again. This drives
+  // the exact shape react-loop.ts's `dispatchToolCalls` produces when the
+  // broker's dispatch promise rejects: the "running" `onToolUpdate` has
+  // already fired (react-loop.ts appends it before awaiting
+  // `broker.dispatch()`), the reject then propagates straight out of
+  // `runTurn` uncaught (no try/catch wraps that await), and session-runtime's
+  // `runTurn(...).then(_, onReject)` handler settles the turn as failed.
+  // -------------------------------------------------------------------------
+  it("terminalizes an orphaned foreground row when the turn fails outright, not just on interrupt", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/tasklist-failure` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = fakeProvider(async function* (callIndex) {
+      if (callIndex === 1) {
+        yield {
+          type: "tool_call",
+          toolCall: { id: "call_orphan", type: "function", function: { name: "get_weather", arguments: "{}" } },
+        };
+        yield { type: "done", finishReason: "tool_calls" };
+        return;
+      }
+      // Unreachable: the dispatch below rejects before a second provider call
+      // would ever happen.
+      yield { type: "text", content: "unreachable" };
+      yield { type: "done", finishReason: "stop" };
+    });
+    // An unexpected throw out of the tool round trip — every SHIPPED dispatch
+    // path is exception-safe today, but this is exactly the "unexpected
+    // throw out of the ReAct loop" case the general sweep exists to defend
+    // against structurally, rather than by enumerating dispatch paths.
+    const broker = fakeBroker([weatherDef], async () => {
+      throw new Error("tool transport broke mid-flight");
+    });
+
+    const emitter = recordingEmitter();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-tasklist-failure",
+      accessManager: am,
+      provider,
+      broker,
+      emitter,
+      timeZone: { zone: () => "UTC" },
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "what is the weather?" });
+    await waitUntilIdle(runtime);
+
+    // Failed, not user-cancelled: session-runtime.ts's `failed` branch fires
+    // `turn.completed` over a durable failure notice, never `turn.aborted`
+    // (that vocabulary is reserved for the two user gestures).
+    expect(emitter.events.filter((e) => e.type === "turnCompleted")).toHaveLength(1);
+    expect(emitter.events.filter((e) => e.type === "turnAborted")).toHaveLength(0);
+
+    const finalItems = (emitter.events.filter((e) => e.type === "taskList").at(-1)?.items ??
+      []) as unknown as TaskListItem[];
+    const row = finalItems.find((i) => i.id === "call_orphan");
+
+    // The actual pin: a turn that fails with no user gesture at all still
+    // reaches this row and terminalizes it. Without `terminalizeOrphanedForeground`
+    // wired into the settle continuation, this row is left at "running"
+    // forever — cancellation.ts is never in the picture for this exit.
+    expect(row).toBeDefined();
+    expect(row?.status).toBe("error");
+    expect(finalItems.some((i) => i.status === "running")).toBe(false);
+
     runtime.dispose();
   });
 
