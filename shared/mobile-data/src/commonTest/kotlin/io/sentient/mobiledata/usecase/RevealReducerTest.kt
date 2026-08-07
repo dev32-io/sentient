@@ -1,6 +1,5 @@
 package io.sentient.mobiledata.usecase
 
-import io.sentient.mobilesdk.connectors.TaskSnapshotItem
 import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.sdk.ChatMessage
 import kotlin.test.Test
@@ -46,18 +45,6 @@ class RevealReducerTest {
         assertEquals("Hello world", s.bubble?.fullContent)
     }
 
-    @Test fun tasks_survive_into_drain_cleared_after() {
-        var s = RevealReducer.reduce(RevealState(), SdkEvent.MessageStarted(C))
-        s = RevealReducer.reduce(s, SdkEvent.TaskUpserted(TaskSnapshotItem("t1", "search", C, "running", "", 1L)))
-        s = RevealReducer.reduce(s, SdkEvent.MessageDelta(C, "x"))
-        s = RevealReducer.reduce(s, SdkEvent.MessageCommitted(ChatMessage(ts = 1, role = "assistant", content = "x", turnId = C)))
-        assertEquals(1, s.tasks.size)
-        s = RevealReducer.reduce(s, RevealTick(1_000))
-        s = RevealReducer.reduce(s, RevealTick(5_000))
-        assertNull(s.bubble)
-        assertTrue(s.tasks.isEmpty())
-    }
-
     // -----------------------------------------------------------------------
     // Termination. ObserveChatUseCase hides every committed row whose turnId
     // matches the live bubble's, so a bubble that cannot reach null hides that
@@ -93,13 +80,11 @@ class RevealReducerTest {
     /** An aborted turn emits no MessageCommitted at all (see
      *  InFlightMessageConnector.onAborted), so without its own case the bubble
      *  never entered DRAINING and never cleared. */
-    @Test fun abort_clears_the_bubble_and_its_tasks() {
+    @Test fun abort_clears_the_bubble() {
         var s = RevealReducer.reduce(RevealState(), SdkEvent.MessageStarted(C))
-        s = RevealReducer.reduce(s, SdkEvent.TaskUpserted(TaskSnapshotItem("t1", "search", C, "running", "", 1L)))
         s = RevealReducer.reduce(s, SdkEvent.MessageDelta(C, "half a sen"))
         s = RevealReducer.reduce(s, SdkEvent.TurnAborted(C, "interrupt"))
         assertNull(s.bubble)
-        assertTrue(s.tasks.isEmpty())
     }
 
     @Test fun abort_of_another_turn_leaves_this_bubble_alone() {

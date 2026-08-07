@@ -72,43 +72,33 @@ class ObserveChatUseCase(
         combine(
             conversation.timeline,
             revealFlow(),
-            pending,
+            // Paired to stay within combine's 5-flow arity — no relationship between
+            // the two beyond both being plain per-emission lists.
+            combine(pending, conversation.tasks) { pendingMsgs, tasks -> pendingMsgs to tasks },
             historyLoadingFlow(),
             conversation.echoedPendingIds,
-        ) { committed, rs, pendingMsgs, loading, echoedPendingIds ->
+        ) { committed, rs, (pendingMsgs, tasks), loading, echoedPendingIds ->
             // Reconcile against the LIVE echo's echoedPendingIds, not committed.pendingId:
             // cold REST snapshots carry pendingId=null (there is no DB), so
             // committed.mapNotNull { it.pendingId } would be empty and the optimistic
             // bubble would never drop. echoedPendingIds is sourced from the SDK's in-memory
             // timeline before any null-strip (see ConversationRepository.echoedPendingIds).
             val visiblePending = pendingMsgs.filter { it.id !in echoedPendingIds }
-            // Hide ONLY the committed rows this live bubble is currently painting —
-            // matched on the bubble key, not the turn. A ReAct turn commits a row per
-            // stretch of text, so keying on the turn hid EVERY row of it behind one
-            // bubble: when that bubble drained the screen swapped to whichever rows
-            // happened to be left, which is how a finished reply collapsed back to its
-            // first line. Keyed on the message, a stretch the loop has moved past
-            // unhides the moment the live bubble stops being it.
+            // Hide ONLY the committed row this live bubble is painting, matched on the
+            // reply and nothing else.
             //
-            // Matched on the message when BOTH sides carry one, and on the turn
-            // otherwise. The asymmetric case is not theoretical: a gateway that
-            // stamped committed entries but not deltas left the live bubble
-            // keyed by turn and its own committed twin keyed by message, so
-            // nothing matched, both rendered, and the reveal ticker re-diffed a
-            // duplicated list every 16ms — a visibly stuck reply on a lagging
-            // screen. Falling back to the turn whenever either side is missing
-            // its key makes a one-sided drop degrade to the old behaviour
-            // instead of double-painting.
+            // The turn fallback this replaces was the bug: a row with no replyId — a
+            // user row, a tool tile, an entry written before the column existed —
+            // matched on turnId alone and vanished behind the bubble for the length of
+            // the reveal. The gateway now folds a reply into ONE committed item
+            // carrying its own replyId, so there is exactly one row to hide and no
+            // reason to guess.
             val bubble = rs.bubble
             val visibleCommitted =
-                if (bubble == null) {
+                if (bubble?.replyId == null) {
                     committed
                 } else {
-                    committed.filter { row ->
-                        val sameMessage = bubble.replyId != null && row.replyId == bubble.replyId
-                        val sameTurn = (bubble.replyId == null || row.replyId == null) && row.turnId == bubble.turnId
-                        !sameMessage && !sameTurn
-                    }
+                    committed.filter { it.replyId != bubble.replyId }
                 }
             val liveBubble = rs.bubble?.let {
                 ChatMessage(
@@ -124,7 +114,7 @@ class ObserveChatUseCase(
                 committed = visibleCommitted,
                 pending = visiblePending,
                 live = liveBubble,
-                tasks = rs.tasks,
+                tasks = tasks,
                 historyLoading = loading,
                 reconciledPendingIds = echoedPendingIds,
             )

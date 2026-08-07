@@ -6,6 +6,7 @@ import io.sentient.mobiledata.outbox.MessageStatus
 import io.sentient.mobiledata.outbox.OutboundCache
 import io.sentient.mobiledata.outbox.PendingMessage
 import io.sentient.mobilesdk.protocol.SdkEvent
+import io.sentient.mobilesdk.protocol.TaskListItem
 import io.sentient.mobilesdk.sdk.ChatMessage
 import io.sentient.mobilesdk.util.Clock
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -28,7 +29,9 @@ private class FakeConversationRepository : ConversationRepository {
     // SDK's OWN (pre-strip) timeline. Driven directly by tests to simulate the echo, since
     // the DB-backed timeline strips pendingId (so committed.pendingId can no longer carry it).
     val echoed = MutableStateFlow<Set<String>>(emptySet())
+    val tasksState = MutableStateFlow<List<TaskListItem>>(emptyList())
     override val timeline: StateFlow<List<ChatMessage>> = timelineState
+    override val tasks: StateFlow<List<TaskListItem>> = tasksState
     override val liveEvents: SharedFlow<SdkEvent> = events
     override val echoedPendingIds: kotlinx.coroutines.flow.Flow<Set<String>> = echoed
     val sent = mutableListOf<Pair<String, String>>()
@@ -44,17 +47,43 @@ class ObserveChatUseCaseTest {
         val repo = FakeConversationRepository()
         repo.timelineState.value = listOf(
             ChatMessage(ts = 1, role = "user", content = "hi"),
-            ChatMessage(ts = 2, role = "assistant", content = "Hello", turnId = "c1"),
+            ChatMessage(ts = 2, role = "assistant", content = "Hello", turnId = "c1", replyId = "r1"),
         )
         val models = mutableListOf<ChatModel>()
         val job = launch { useCase(repo).invoke(MutableStateFlow(emptyList())).collect { models.add(it) } }
-        repo.events.emit(SdkEvent.MessageStarted("c1"))
-        repo.events.emit(SdkEvent.MessageDelta("c1", "Hello"))
+        repo.events.emit(SdkEvent.MessageStarted("c1", replyId = "r1"))
+        repo.events.emit(SdkEvent.MessageDelta("c1", "Hello", replyId = "r1"))
         runCurrent()
         val m = models.last()
-        assertEquals(1, m.committed.size)          // user only; assistant c1 suppressed by live bubble
+        assertEquals(1, m.committed.size)          // user only; assistant r1 suppressed by live bubble
         assertEquals("user", m.committed[0].role)
         assertEquals("c1", m.live?.turnId)
+        job.cancel()
+    }
+
+    @Test
+    fun a_committed_row_of_another_reply_is_never_suppressed() = runTest(UnconfinedTestDispatcher()) {
+        // The old predicate fell back to turn-matching whenever EITHER side
+        // lacked a key, so a row from the same turn but a different reply
+        // vanished behind the live bubble. Keyed on the reply alone, it cannot.
+        val repo = FakeConversationRepository()
+        repo.timelineState.value = listOf(
+            ChatMessage(ts = 1, role = "user", content = "hi"),
+            ChatMessage(ts = 2, role = "assistant", content = "first stretch", turnId = "t1", replyId = "r1"),
+        )
+        val models = mutableListOf<ChatModel>()
+        val job = launch { useCase(repo).invoke(MutableStateFlow(emptyList())).collect { models.add(it) } }
+        // Live bubble is a DIFFERENT reply of the SAME turn — a mid-turn steer
+        // rotated the reply id while the turn id stayed put.
+        repo.events.emit(SdkEvent.MessageStarted("t1", replyId = "r2"))
+        repo.events.emit(SdkEvent.MessageDelta("t1", "second stretch", replyId = "r2"))
+        runCurrent()
+        val m = models.last()
+        assertTrue(
+            m.committed.any { it.replyId == "r1" && it.content == "first stretch" },
+            "the r1 row must stay visible — only r2 (the live bubble's own reply) is suppressed",
+        )
+        assertEquals("r2", m.live?.replyId)
         job.cancel()
     }
 
@@ -171,19 +200,22 @@ class ObserveChatUseCaseTest {
 
     @Test
     fun prior_turn_is_not_suppressed_when_live_turn_differs() = runTest(UnconfinedTestDispatcher()) {
-        // With unique turnIds, the live turn's id never matches a PRIOR turn's id,
-        // so the suppression filter drops only the live turn's committed twin. (Under
-        // the old reused-"cycle-1" bug, the prior turn's reply was wrongly suppressed.)
+        // With unique replyIds, the live bubble's id never matches a PRIOR turn's
+        // reply, so the suppression filter drops only the live bubble's committed
+        // twin. (Under the old reused-"cycle-1" bug, the prior turn's reply was
+        // wrongly suppressed.)
         val repo = FakeConversationRepository()
         repo.timelineState.value = listOf(
             ChatMessage(ts = 1, role = "user", content = "q1"),
-            ChatMessage(ts = 2, role = "assistant", content = "answer-1", turnId = "1000"), // prior turn
+            // prior turn
+            ChatMessage(ts = 2, role = "assistant", content = "answer-1", turnId = "1000", replyId = "1000"),
             ChatMessage(ts = 3, role = "user", content = "q2"),
         )
         val models = mutableListOf<ChatModel>()
         val job = launch { useCase(repo).invoke(MutableStateFlow(emptyList())).collect { models.add(it) } }
-        repo.events.emit(SdkEvent.MessageStarted("2000")) // live = a DIFFERENT (later) turn
-        repo.events.emit(SdkEvent.MessageDelta("2000", "answer-2"))
+        // live = a DIFFERENT (later) turn/reply
+        repo.events.emit(SdkEvent.MessageStarted("2000", replyId = "2000"))
+        repo.events.emit(SdkEvent.MessageDelta("2000", "answer-2", replyId = "2000"))
         runCurrent()
         val m = models.last()
         assertTrue(

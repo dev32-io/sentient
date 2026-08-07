@@ -1,6 +1,5 @@
 package io.sentient.mobiledata.usecase
 
-import io.sentient.mobilesdk.connectors.TaskSnapshotItem
 import io.sentient.mobilesdk.protocol.SdkEvent
 
 /** Phase of the live in-flight bubble. */
@@ -61,7 +60,6 @@ data class RevealBubble(
 
 data class RevealState(
     val bubble: RevealBubble? = null,
-    val tasks: List<TaskSnapshotItem> = emptyList(),
     val lastTickMs: Long = 0,
     /** Sub-character progress carried between ticks, in [0, 1). Without it a
      *  tick worth less than one whole character earns nothing and the reveal
@@ -97,7 +95,6 @@ object RevealReducer {
             } else {
                 s.copy(
                     bubble = RevealBubble(e.turnId, "", 0, LivePhase.STREAMING, e.replyId),
-                    tasks = if (s.bubble?.turnId == e.turnId) s.tasks else emptyList(),
                     revealCarry = 0.0,
                 )
             }
@@ -109,7 +106,6 @@ object RevealReducer {
                 s.bubble?.takeIf { it.key == key } ?: RevealBubble(e.turnId, "", 0, LivePhase.STREAMING, e.replyId)
             s.copy(bubble = cur.copy(fullContent = cur.fullContent + e.chunk))
         }
-        is SdkEvent.TaskUpserted -> s.copy(tasks = upsert(s.tasks, e.task))
         // Turn-matched: a turn owning several bubbles commits each of them, and
         // only the one still on screen should start draining.
         is SdkEvent.MessageCommitted ->
@@ -127,10 +123,10 @@ object RevealReducer {
             if (s.bubble?.turnId == e.turnId) s.copy(bubble = s.bubble.copy(phase = LivePhase.DRAINING)) else s
         // A cut turn has no drain to play out: the gateway committed a cutoff entry
         // (runtime/cancellation.ts) and THAT is what the user must see — carrying the
-        // bubble on would keep the interrupted row, its marker, and its tool tiles
-        // hidden behind an animation for a reply that already stopped. Tasks go with
-        // it; the turn's tiles are committed entries now.
-        is SdkEvent.TurnAborted -> if (s.bubble?.turnId == e.turnId) s.copy(bubble = null, tasks = emptyList()) else s
+        // bubble on would keep the interrupted row and its marker hidden behind an
+        // animation for a reply that already stopped. Tool rows are not this state's
+        // concern any more — they live on SentientSdk.tasks, sourced independently.
+        is SdkEvent.TurnAborted -> if (s.bubble?.turnId == e.turnId) s.copy(bubble = null) else s
         is SdkEvent.SessionSwitched -> RevealState()
         is RevealTick -> {
             val cur = s.bubble ?: return s
@@ -142,14 +138,10 @@ object RevealReducer {
             val done = drain && revealed >= cur.fullContent.length
             s.copy(
                 bubble = if (done) null else cur.copy(revealed = revealed),
-                tasks = if (done) emptyList() else s.tasks,
                 lastTickMs = e.nowMs,
                 revealCarry = if (done) 0.0 else earned - whole,
             )
         }
         else -> s
     }
-
-    private fun upsert(list: List<TaskSnapshotItem>, t: TaskSnapshotItem): List<TaskSnapshotItem> =
-        (list.filterNot { it.toolCallId == t.toolCallId } + t).sortedBy { it.startedAtMs }
 }

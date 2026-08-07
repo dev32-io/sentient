@@ -1,13 +1,15 @@
 package io.sentient.mobiledata.model
 
 import io.sentient.mobiledata.outbox.PendingMessage
-import io.sentient.mobilesdk.connectors.TaskSnapshotItem
+import io.sentient.mobilesdk.protocol.TaskListItem
 import io.sentient.mobilesdk.sdk.ChatMessage
 
 data class ChatModel(
     val committed: List<ChatMessage> = emptyList(),
     val live: ChatMessage? = null,
-    val tasks: List<TaskSnapshotItem> = emptyList(),
+    /** The composer task strip's live rows. NOT injected into [live] — see
+     *  [messagesForUi]. */
+    val tasks: List<TaskListItem> = emptyList(),
     val pending: List<PendingMessage> = emptyList(),
     /**
      * True while an EXISTING-session switch is fetching history — between the
@@ -29,6 +31,7 @@ data class ChatModel(
      */
     val reconciledPendingIds: Set<String> = emptySet(),
 ) {
-    fun messagesForUi(): List<ChatMessage> =
-        if (live == null) committed else committed + live.copy(tools = tasks)
+    /** Committed rows plus the live bubble. Tool rows are NOT here — they are
+     *  the composer strip's, fed straight from [tasks]. */
+    fun messagesForUi(): List<ChatMessage> = if (live == null) committed else committed + live
 }

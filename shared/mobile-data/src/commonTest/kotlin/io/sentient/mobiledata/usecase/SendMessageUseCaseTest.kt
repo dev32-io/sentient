@@ -4,6 +4,7 @@ import io.sentient.mobiledata.data.ConversationRepository
 import io.sentient.mobiledata.outbox.MessageStatus
 import io.sentient.mobiledata.outbox.OutboundCache
 import io.sentient.mobilesdk.protocol.SdkEvent
+import io.sentient.mobilesdk.protocol.TaskListItem
 import io.sentient.mobilesdk.sdk.ChatMessage
 import io.sentient.mobilesdk.transport.SdkStatus
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -16,6 +17,7 @@ import kotlin.test.assertTrue
 
 private class CapturingConversationRepository : ConversationRepository {
     override val timeline: StateFlow<List<ChatMessage>> = MutableStateFlow(emptyList())
+    override val tasks: StateFlow<List<TaskListItem>> = MutableStateFlow(emptyList())
     override val liveEvents: SharedFlow<SdkEvent> = MutableSharedFlow()
     override val echoedPendingIds: kotlinx.coroutines.flow.Flow<Set<String>> = MutableStateFlow(emptySet())
     val sent = mutableListOf<Pair<String, String>>()
