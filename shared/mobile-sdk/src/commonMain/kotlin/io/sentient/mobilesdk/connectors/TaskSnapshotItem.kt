@@ -1,17 +1,18 @@
 // ---------------------------------------------------------------------------
-// TaskSnapshotItem — the tool-tile shape StateDeriver's committed/live merge
-// (deriveMessages, ChatMessage.tools) still folds into a rendered message.
+// TaskSnapshotItem — one tool-call row, as consumed by mobile-data's live
+// reveal fold (RevealReducer, fed by SdkEvent.TaskUpserted) and rendered in
+// mobile-data's ChatModel.tasks.
 //
 // Split out of the now-deleted TaskStatusConnector (Task 9 replaced its wire
 // source with TaskListConnector / ServerMessage.TaskListState, which carries
-// no per-item turnId). This type survives ONLY for the StateDeriver tile-merge
-// path; that whole mechanism is retired in the tile-derivation-strip task that
-// follows — do not grow new callers of it.
+// no per-item turnId). The StateDeriver tile-merge that used to be this type's
+// other consumer (committed/live tile derivation in the chat list) was retired
+// by the tile-derivation-strip task — do not reintroduce it.
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.connectors
 
 /**
- * Immutable snapshot of one tool-call row, as StateDeriver's tile merge
+ * Immutable snapshot of one tool-call row, as mobile-data's live reveal fold
  * consumes it.
  *
  * IDENTITY IS [toolCallId] — one row per model-emitted tool call. [taskId] is present

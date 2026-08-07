@@ -4,8 +4,9 @@
 //
 // KEEPER (per .claude/rules/testing.md): pins the WsTransport-signal →
 // ReconnectController wiring (the flagged critical path) and the
-// deriveMessages parity contract the native UIs depend on (tool entries become
-// tiles, trigger entries drop).
+// deriveMessages parity contract the native UIs depend on (tool AND trigger
+// entries never become chat-list rows — tool activity renders in the
+// composer task strip off `tasklist.state`, not the chat list).
 // Drives a FakeWebSocketEngine over runTest virtual time; the default delayFn
 // (kotlinx delay) is auto-advanced by runTest so the backoff is never waited
 // on for real.
@@ -198,16 +199,16 @@ class SentientSdkReconnectTest {
     }
 
     @Test
-    fun tool_entries_become_tiles_and_trigger_entries_are_dropped_from_timeline() = runTest {
+    fun tool_and_trigger_entries_are_dropped_from_timeline() = runTest {
         val fake = FakeWebSocketEngine()
         val sdk = buildSdk(fake)
         connectToReady(sdk, fake)
 
-        // A snapshot carrying user + tool + trigger + assistant entries. Per
-        // cycle-helpers.ts deriveMessages parity, only user + assistant are ROWS;
-        // a tool entry is a TILE on the reply that follows it (a replayed feed is
-        // the only source of tiles — no live turn.tool.update survives a reload),
-        // and trigger (Phase-2 sensor) is dropped outright.
+        // A snapshot carrying user + tool + trigger + assistant entries. Only
+        // user + assistant are ROWS; a tool entry never becomes part of the chat
+        // list (its activity renders in the composer task strip off
+        // `tasklist.state`, not here), and trigger (Phase-2 sensor) is dropped
+        // outright.
         fake.emit(
             WsIncoming.Text(
                 "{\"type\":\"conversation.snapshot\",\"items\":[" +
@@ -221,10 +222,5 @@ class SentientSdkReconnectTest {
 
         val roles = sdk.timeline.value.map { it.role }
         assertEquals(listOf("user", "assistant"), roles, "tool+trigger are not rows, msgs=${sdk.timeline.value}")
-        assertEquals(
-            listOf("speak"),
-            sdk.timeline.value.last().tools.map { it.toolName },
-            "the committed tool entry must render as a tile, msgs=${sdk.timeline.value}",
-        )
     }
 }

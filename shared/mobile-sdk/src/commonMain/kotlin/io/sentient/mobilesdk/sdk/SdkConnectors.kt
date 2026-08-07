@@ -42,6 +42,7 @@ import io.sentient.mobilesdk.connectors.UserTextInputConnector
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.protocol.SdkEvent
+import io.sentient.mobilesdk.protocol.TaskListItem
 import io.sentient.mobilesdk.sessions.SessionsHttpClient
 import io.sentient.mobilesdk.util.Clock
 import kotlinx.coroutines.CoroutineScope
@@ -84,6 +85,9 @@ class AudioDownlinkHooks(
  * @param onCognitionChanged Folds a cognition transition into the deriver + re-emits.
  * @param onPermissionsChanged Publishes the OPEN permission-prompt list (§7.1) as SDK state.
  * @param onDelegationsChanged Publishes the background-delegation row list (§5.4) as SDK state.
+ * @param onTasksChanged Publishes the composer task strip's mirror (`tasklist.state`, FULL
+ *   STATE every frame) as SDK state. The chat timeline no longer needs this list — tool
+ *   activity was struck from `deriveMessages` — but the composer strip still renders it.
  */
 class SdkConnectors(
     private val deriver: StateDeriver,
@@ -101,6 +105,7 @@ class SdkConnectors(
     private val onCognitionChanged: (CognitionState) -> Unit = { state -> deriver.cognition = state; emit() },
     private val onPermissionsChanged: (List<PermissionPrompt>) -> Unit = {},
     private val onDelegationsChanged: (List<DelegationSnapshotItem>) -> Unit = {},
+    private val onTasksChanged: (List<TaskListItem>) -> Unit = {},
 ) {
     private val log = createLogger("sdk", "connectors")
 
@@ -146,7 +151,7 @@ class SdkConnectors(
     )
 
     val tasks = TaskListConnector(
-        onUpdate = { _, list -> deriver.tasks = list; emit() },
+        onUpdate = { _, list -> onTasksChanged(list) },
     )
 
     val sessions = SessionsConnector(

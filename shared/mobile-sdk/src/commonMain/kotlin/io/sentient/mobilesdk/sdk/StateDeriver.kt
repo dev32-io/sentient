@@ -7,10 +7,10 @@
 // slice here, then calls deriveConnection()/deriveTimeline() and emits on the
 // respective StateFlow. Native UIs read ConnectionState or the timeline directly.
 //
-// messages: mirrors web-sdk deriveMessages (cycle-helpers.ts) — committed
-// user/assistant feed items fold to ChatMessage rows, committed TOOL items fold
-// to tool TILES on the row that follows them, and trigger entries are
-// Phase-2-ignored. cutoffKind comes off the assistant entry's cutoff.
+// deriveMessages folds committed user/assistant feed items to ChatMessage rows.
+// Tool activity is NOT part of this list — it renders in the composer task
+// strip off `tasklist.state` (TaskListConnector); trigger entries are context
+// for the model, not a user-facing artifact.
 //
 // Pure + synchronous: no coroutines, no platform types, no logging (the
 // orchestrator logs the integration trail; this is a value transform).
@@ -19,10 +19,8 @@ package io.sentient.mobilesdk.sdk
 
 import io.sentient.mobilesdk.connectors.CognitionState
 import io.sentient.mobilesdk.connectors.InFlightMessage
-import io.sentient.mobilesdk.connectors.TaskSnapshotItem
 import io.sentient.mobilesdk.protocol.AudioPreferences
 import io.sentient.mobilesdk.protocol.ConversationFeedItem
-import io.sentient.mobilesdk.protocol.TaskListItem
 import io.sentient.mobilesdk.transport.SdkStatus
 import io.sentient.mobilesdk.util.Clock
 
@@ -46,17 +44,6 @@ class StateDeriver(private val clock: Clock) {
     var cognition: CognitionState = CognitionState.IDLE
     var voiceMode: VoiceMode = VoiceMode.OFF
     var prefs: AudioPreferences = AudioPreferences.DEFAULT
-
-    /**
-     * The composer task strip's mirror (Task 9 — [ServerMessage.TaskListState],
-     * FULL STATE every frame). [TaskListItem] carries no per-item turnId, so it
-     * cannot feed the turn-scoped tile merge below directly; [deriveTimeline]
-     * converts it to [TaskSnapshotItem] with an empty turnId, which makes that
-     * merge a no-op. The merge itself — and this conversion — goes away in the
-     * tile-derivation-strip task that follows; kept only so this compiles and
-     * the committed-tile tests (which don't depend on live merge) stay green.
-     */
-    var tasks: List<TaskListItem> = emptyList()
     var isSpeaking: Boolean = false
     var audioState: AudioState = AudioState.INACTIVE
     var hasSession: Boolean = false
@@ -75,9 +62,7 @@ class StateDeriver(private val clock: Clock) {
      *
      * Each committed Assistant entry already carries its gateway turnId (the
      * history connector re-attaches the frame turnId), so the live-bubble
-     * suppression + the LIVE tool merge read it straight off the item — no
-     * stamping. A committed TOOL entry has no turnId on the wire at all; its
-     * tile is placed by feed order instead (see the tool-tile header below).
+     * suppression reads it straight off the item — no stamping.
      */
     fun applyFeed(items: List<ConversationFeedItem>) {
         feed = items
@@ -107,99 +92,30 @@ class StateDeriver(private val clock: Clock) {
      * committed entries without the streaming noise.
      */
     fun deriveTimeline(): List<ChatMessage> =
-        deriveMessages(feed, inflight = null, clock.nowMs(), tasks.map { it.toSnapshotItem() })
+        deriveMessages(feed, inflight = null, clock.nowMs())
 }
 
 /**
- * Adapt a wire [TaskListItem] to the tile-merge's internal [TaskSnapshotItem]
- * shape. `turnId` has no wire source anymore (see [StateDeriver.tasks]) so it
- * is always [NO_TURN_ID] here — the merge in [attachLiveTools] filters live
- * rows by turnId, and [NO_TURN_ID] never equals a real turn's id, so every
- * converted row is silently excluded rather than mis-attached to the wrong
- * bubble.
- */
-private fun TaskListItem.toSnapshotItem(): TaskSnapshotItem = TaskSnapshotItem(
-    toolCallId = id,
-    toolName = toolName,
-    turnId = NO_TURN_ID,
-    status = status,
-    argsPreview = argsPreview,
-    startedAtMs = startedAtMs,
-    endedAtMs = endedAtMs,
-    taskId = if (kind == BACKGROUND_KIND) id else null,
-)
-
-private const val BACKGROUND_KIND = "background"
-
-// ---------------------------------------------------------------------------
-// Tool tiles — two sources, one rendered strip.
-//
-// A tool call reaches this client TWICE: live as part of a `tasklist.state`
-// frame (TaskListConnector) while it runs, and committed as a kind:"tool" feed
-// item once the gateway settles it. Only the committed one survives a reload, so a
-// timeline rebuilt from `conversation.snapshot` / REST history must derive tiles
-// too — otherwise `render(replay) == render(live)` (spec §3.2 Invariant B) holds
-// on the wire and fails at the RENDERED layer, which is the layer the reload
-// oracle reads. Dropping the committed item is what made a reloaded mobile chat
-// show no tool pills at all.
-//
-// THE LIVE/COMMITTED JOIN IS POSITIONAL PER TURN, AND THAT IS THE SAME
-// COMPROMISE web-sdk MAKES — read cycle-helpers.ts's header before changing it.
-// The two frames share no tool-call id: the committed item's only id is its
-// gateway `entryId` (the wire deliberately strips tool plumbing from the ITEM —
-// shared/protocol/src/conversation.ts), while the live row carries the
-// provider's `toolCallId`. What they share is the gateway's dispatch ORDER. So
-// a turn's committed tiles are its first N calls and the live list's tail beyond
-// N is the calls not yet committed. It rests on react-loop.ts dispatching a
-// turn's calls strictly one at a time; make that concurrent and this desyncs.
-//
-// TILE IDENTITY IS NEVER POSITIONAL. A tile is keyed by a gateway-owned id —
-// `entryId` for a committed tile, `toolCallId` for a live one — and the merge
-// dedups on that key alone. Positions decide only which live tiles are already
-// on screen, never which tile is which.
-//
-// Placement is feed order: a committed tile anchors to the assistant bubble that
-// FOLLOWS it (the reply its result fed) and never crosses the next user entry.
-// Live tiles anchor to their turn's LAST bubble — attaching them to every bubble
-// of the turn would repeat a pill once per ReAct narration entry, which no
-// replay can reproduce.
-// ---------------------------------------------------------------------------
-
-/**
  * Fold committed feed items + the live in-flight buffer into the chat list.
- * Mirrors web-sdk deriveMessages (cycle-helpers.ts): User + Assistant entries
- * render as rows, Tool entries render as TILES on the row that follows them, and
- * Trigger entries are Phase-2-ignored. Empty user / empty-non-cutoff assistant
- * entries are dropped too (barge-in markers / pre-token placeholders that don't
- * render). Committed entries first, the streaming bubble last.
+ * User + Assistant entries render as rows; Trigger entries are context for the
+ * model, not a user-facing artifact. Empty user / empty-non-cutoff assistant
+ * entries are dropped (barge-in markers, pre-token placeholders).
  *
- * @param tasks Live tool rows; the ones a turn has not committed yet are merged
- *   onto that turn's last bubble.
+ * TOOL ACTIVITY IS NOT IN THIS LIST. It lives in the composer task strip,
+ * driven by `tasklist.state` (TaskListConnector). It used to render as pills
+ * anchored to the assistant bubble that followed them, which forced this walk
+ * to answer "which bubble owns this tile" — a question with no stable answer
+ * once a mid-turn steer splits a reply, and the source of a live/committed
+ * disagreement that made a finished reply visibly regroup.
  */
 internal fun deriveMessages(
     feed: List<ConversationFeedItem>,
     inflight: InFlightMessage?,
     nowMs: Long,
-    tasks: List<TaskSnapshotItem> = emptyList(),
 ): List<ChatMessage> {
     val out = ArrayList<ChatMessage>(feed.size + 1)
-    // Tiles of the turn being read; they anchor to the next bubble that follows.
-    var pendingTools = emptyList<TaskSnapshotItem>()
     for (item in feed) {
-        if (item is ConversationFeedItem.Tool) {
-            pendingTools = pendingTools + committedTile(item)
-            continue
-        }
-        // A user entry closes the previous turn: tiles still waiting found no
-        // reply to anchor to and must not cross the boundary.
-        if (item is ConversationFeedItem.User) pendingTools = emptyList()
-        val msg = committedMessage(item) ?: continue
-        if (msg.role != ROLE_ASSISTANT) {
-            out.add(msg)
-            continue
-        }
-        out.add(msg.copy(tools = pendingTools))
-        pendingTools = emptyList()
+        out.add(committedMessage(item) ?: continue)
     }
     if (inflight != null) {
         out.add(
@@ -210,11 +126,10 @@ internal fun deriveMessages(
                 streaming = true,
                 turnId = inflight.turnId,
                 replyId = inflight.replyId,
-                tools = pendingTools,
             ),
         )
     }
-    return attachLiveTools(out, tasks)
+    return out
 }
 
 private fun committedMessage(item: ConversationFeedItem): ChatMessage? = when (item) {
@@ -245,102 +160,12 @@ private fun committedMessage(item: ConversationFeedItem): ChatMessage? = when (i
             entryId = item.entryId,
         )
 
-    // Tool items are tiles, handled by the caller's walk; trigger entries are
+    // Tool items never render as rows — tool activity lives in the composer
+    // task strip (tasklist.state), not the chat list. Trigger entries are
     // Phase-2 sensor events.
     is ConversationFeedItem.Tool -> null
     is ConversationFeedItem.Trigger -> null
 }
-
-/**
- * A committed kind:"tool" entry as a tile. `toolCallId` carries the gateway's
- * `entryId` — stable across the live entry and every later snapshot, so the
- * merge can dedup on it. `turnId` stays [NO_TURN_ID]: the wire strips it from
- * the ITEM, and deriving one from feed position would be the client inventing a
- * gateway id. `argsPreview` stays empty because a committed item carries the
- * tool's RESULT (`summary`), never its arguments — feeding the result to the
- * field the UI labels "arguments" is the bug d077156 fixed on web.
- */
-private fun committedTile(item: ConversationFeedItem.Tool): TaskSnapshotItem = TaskSnapshotItem(
-    toolCallId = item.entryId,
-    toolName = item.toolName,
-    turnId = NO_TURN_ID,
-    status = COMMITTED_TOOL_STATUS[item.status] ?: STATUS_DONE,
-    argsPreview = "",
-    startedAtMs = item.ts,
-)
-
-/** A turn's anchor bubble (its last) and how many tiles it has already committed
- *  across ALL of its bubbles — a ReAct turn narrates more than once. */
-private class TurnAnchors {
-    val indexByTurnId = HashMap<String, Int>()
-    val committedByTurnId = HashMap<String, Int>()
-}
-
-private fun turnAnchors(messages: List<ChatMessage>): TurnAnchors {
-    val anchors = TurnAnchors()
-    messages.forEachIndexed { index, msg ->
-        val turnId = msg.turnId
-        if (msg.role != ROLE_ASSISTANT || turnId == null) return@forEachIndexed
-        anchors.indexByTurnId[turnId] = index
-        anchors.committedByTurnId[turnId] = (anchors.committedByTurnId[turnId] ?: 0) + msg.tools.size
-    }
-    return anchors
-}
-
-/**
- * Merge the live rows a turn has NOT committed yet onto that turn's LAST bubble.
- * Both lists are in gateway dispatch order, so a turn's first N live rows are
- * exactly the N tiles already anchored from its committed entries; only the tail
- * beyond N is still live-only. Empty at every turn boundary — which is what makes
- * the rendered strip converge with a reload.
- *
- * A live list SHORTER than the turn's committed count cannot be aligned at all
- * (frames the client lost and the gateway will not resend). `drop` then yields
- * nothing, keeping the committed tiles — the choice that cannot render one call
- * twice, since the two sources' ids differ.
- */
-private fun attachLiveTools(messages: List<ChatMessage>, tasks: List<TaskSnapshotItem>): List<ChatMessage> {
-    if (tasks.isEmpty()) return messages
-    val anchors = turnAnchors(messages)
-    if (anchors.indexByTurnId.isEmpty()) return messages
-    return messages.mapIndexed { index, msg ->
-        val turnId = msg.turnId ?: return@mapIndexed msg
-        if (anchors.indexByTurnId[turnId] != index) return@mapIndexed msg
-        val committedCount = anchors.committedByTurnId[turnId] ?: 0
-        val live = tasks.filter { it.turnId == turnId }.sortedBy { it.startedAtMs }.drop(committedCount)
-        if (live.isEmpty()) msg else msg.copy(tools = mergeTiles(msg.tools, live))
-    }
-}
-
-/** Dedup by tile id (a gateway-owned id, never a position), chronological order. */
-private fun mergeTiles(committed: List<TaskSnapshotItem>, live: List<TaskSnapshotItem>): List<TaskSnapshotItem> {
-    val byId = LinkedHashMap<String, TaskSnapshotItem>()
-    for (tile in committed + live) byId[tile.toolCallId] = tile
-    return byId.values.sortedBy { it.startedAtMs }
-}
-
-/**
- * Committed tool entries speak the feed's status union; the live row speaks the
- * loop's. Map committed → live so a replayed tile renders with the same pill as
- * the live tile it stands in for. `cancelled` is the feed's word for "no
- * tool_result was ever committed" (the turn ended first, or it was a background
- * dispatch settling later as its own trigger entry) — the live row for exactly
- * those calls is still "running".
- */
-private val COMMITTED_TOOL_STATUS = mapOf(
-    "finished" to "done",
-    "failed" to "error",
-    "cancelled" to "running",
-)
-
-/** Fallback for a status a newer gateway added: the round trip is over either
- *  way, so render a settled pill rather than a permanently spinning one. */
-private const val STATUS_DONE = "done"
-
-/** Turn id for a committed tile: the wire strips turnId from the tool ITEM, so
- *  there is none to read. Cannot collide with a live row's turnId, which is why
- *  a replayed feed's tiles are always kept. */
-private const val NO_TURN_ID = ""
 
 private const val SPEECH_CHANNEL = "speech"
 private const val ROLE_USER = "user"

@@ -7,12 +7,8 @@
 //
 // The legacy SdkState aggregate has been removed (dead code cleanup).
 // ChatMessage and VoiceMode are live types consumed by both UIs and the SDK.
-//
-// TaskSnapshotItem (C5) is imported for ChatMessage.tools.
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.sdk
-
-import io.sentient.mobilesdk.connectors.TaskSnapshotItem
 
 /** Voice-mode latch. OFF = text path; ACTIVE = mic streaming (full pipeline E3). */
 enum class VoiceMode { OFF, ACTIVE }
@@ -35,7 +31,6 @@ enum class VoiceMode { OFF, ACTIVE }
  *   the gateway). ChatRepository uses this to reconcile the optimistic bubble by id. Null when the
  *   entry has no associated optimistic send (assistant, tool, trigger entries, or legacy user entries
  *   that predate the pendingId echo).
- * @param tools Tool rows grouped onto this message by shared turnId (mirrors web-sdk ChatMessage.tools).
  * @param entryId Stable gateway entry id of the committed feed item this message folds. Empty for the
  *   live streaming bubble (pre-commit) and for legacy frames without an entryId. Used for Slice-4
  *   mirror keying + de-dup of a replayed committed entry on reconnect (Task 3.10).
@@ -49,6 +44,5 @@ data class ChatMessage(
     val turnId: String? = null,
     val replyId: String? = null,
     val pendingId: String? = null,
-    val tools: List<TaskSnapshotItem> = emptyList(),
     val entryId: String = "",
 )

@@ -22,6 +22,7 @@ import io.sentient.mobilesdk.protocol.AudioPreferencesPatch
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.protocol.ResumeParams
 import io.sentient.mobilesdk.protocol.SdkEvent
+import io.sentient.mobilesdk.protocol.TaskListItem
 import io.sentient.mobilesdk.secure.DeviceIdProvider
 import io.sentient.mobilesdk.sessions.SessionsHttpClient
 import io.sentient.mobilesdk.transport.ConnectResult
@@ -94,6 +95,17 @@ class SentientSdk(
     /** Live background-delegation rows (§5.4). Same cumulative-list rationale. */
     private val _delegations = MutableStateFlow<List<DelegationSnapshotItem>>(emptyList())
     val delegations: StateFlow<List<DelegationSnapshotItem>> = _delegations.asStateFlow()
+
+    /**
+     * The composer task strip's mirror of `tasklist.state` (FULL STATE every frame —
+     * see [io.sentient.mobilesdk.connectors.TaskListConnector]). Split out as its own
+     * surface (tile-derivation-strip task): the chat timeline no longer folds tool
+     * activity into [ChatMessage] rows, but the composer strip still needs the list to
+     * render it. Conflation-safe — the gateway always sends the complete list, never a
+     * delta.
+     */
+    private val _tasks = MutableStateFlow<List<TaskListItem>>(emptyList())
+    val tasks: StateFlow<List<TaskListItem>> = _tasks.asStateFlow()
 
     private val _events = MutableSharedFlow<SdkEvent>(
         replay = 0,
@@ -235,6 +247,7 @@ class SentientSdk(
         onCognitionChanged = ::onCognitionChanged,
         onPermissionsChanged = { prompts -> _permissions.value = prompts },
         onDelegationsChanged = { list -> _delegations.value = list },
+        onTasksChanged = { list -> _tasks.value = list },
         // Lazy-arm model: the downlink engine is armed on connector.audio.start, not from
         // the preference flag. The gateway only sends audio.* when TTS is on, so arming
         // follows the actual audio — no preference→configure coupling needed. The prefs
