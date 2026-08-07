@@ -615,8 +615,11 @@ export const conversationEntrySchema = z.object({
   /** The reply this entry is part of — the same key `turn.text.delta` carries,
    *  so a committed entry and the live bubble it replaces group identically and
    *  `render(replay) == render(live)` holds by construction rather than by
-   *  luck. Absent on entries with no bubble (a user row, a tool tile) and on
-   *  anything written before the store had the column. */
+   *  luck. Absent on entries with no bubble: a user row, an out-of-band
+   *  activate entry, or anything written before the store had the column.
+   *  (Not a tool row — there is no tool item on this wire at all; live tool
+   *  activity is `tasklist.state`, and the `kind: "tool"` feed item was
+   *  deleted with `turn.tool.update`.) */
   replyId: z.string().optional(),
   item: conversationFeedItemSchema,
 });
