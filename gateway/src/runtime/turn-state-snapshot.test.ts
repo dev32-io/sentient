@@ -37,6 +37,41 @@ describe("turn-state tracker", () => {
     expect(tracker.snapshot().textSoFar).toBe("one two");
   });
 
+  it("INVARIANT: carries the bubble key the accumulated text belongs to", () => {
+    // The accumulator sat directly beside a comment warning that dropping an
+    // argument is silent at the type level — and dropped `replyId` into a flat
+    // string anyway. Without this field the replayed delta reaches a joiner
+    // unstamped and it opens a second live bubble for one reply.
+    const { tracker, emit } = tracked();
+    emit.turnStarted("t1", "user");
+    emit.textDelta("t1", "one ", "m1");
+    emit.textDelta("t1", "two", "m1");
+    const snap = tracker.snapshot();
+    expect(snap.textSoFar).toBe("one two");
+    expect(snap.replyId).toBe("m1");
+  });
+
+  it("restarts the accumulation when the reply rotates inside one turn", () => {
+    // A message the person types mid-reply rotates `replyId` under the SAME
+    // turnId. The stretch before it is committed at that moment and reaches a
+    // joiner in its `conversation.snapshot`; replaying it as live text too
+    // would render it twice.
+    const { tracker, emit } = tracked();
+    emit.turnStarted("t1", "user");
+    emit.textDelta("t1", "before the interruption", "m1");
+    emit.textDelta("t1", "after it", "m2");
+    const snap = tracker.snapshot();
+    expect(snap.textSoFar).toBe("after it");
+    expect(snap.replyId).toBe("m2");
+  });
+
+  it("reports no bubble key against a path that does not stamp deltas", () => {
+    const { tracker, emit } = tracked();
+    emit.turnStarted("t1", "user");
+    emit.textDelta("t1", "unstamped");
+    expect(tracker.snapshot().replyId).toBeNull();
+  });
+
   it("ignores a delta for a turn that is not the active one", () => {
     // Back-to-back turns overlap on the wire (§7.2); folding a stale turn's
     // tail into the live one would show the joiner the wrong bubble's text.
@@ -49,10 +84,11 @@ describe("turn-state tracker", () => {
   it("clears the turn when it completes", () => {
     const { tracker, emit } = tracked();
     emit.turnStarted("t1", "user");
-    emit.textDelta("t1", "hi");
+    emit.textDelta("t1", "hi", "m1");
     emit.turnCompleted("t1");
     expect(tracker.snapshot().activeTurnId).toBeNull();
     expect(tracker.snapshot().textSoFar).toBe("");
+    expect(tracker.snapshot().replyId).toBeNull();
   });
 
   it("clears the turn when it is cut off", () => {

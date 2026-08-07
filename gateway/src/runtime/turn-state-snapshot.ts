@@ -55,12 +55,21 @@ export interface TurnStateSnapshot {
   readonly activeTurnId: string | null;
   /** What started that turn — null when there is none. */
   readonly trigger: TurnTrigger | null;
-  /** Every text delta streamed for the active turn so far, concatenated. The
-   *  committed half of it also arrives in `conversation.snapshot`; both SDKs
-   *  fold a committed entry into the live bubble by `turnId`, which is what
-   *  makes replaying the whole accumulation the faithful reconstruction rather
-   *  than a duplicate. */
+  /** Every text delta of the CURRENT REPLY, concatenated — not of the whole
+   *  turn. A message the person sends mid-turn rotates the reply: the stretch
+   *  before it is committed there and then, and arrives in the joiner's
+   *  `conversation.snapshot`. Replaying it again as live text would show the
+   *  joiner that stretch twice, once committed and once still streaming.
+   *  Accumulation therefore restarts on every rotation, exactly like the
+   *  client-side buffer it reconstructs. */
   readonly textSoFar: string;
+  /** WHICH REPLY `textSoFar` belongs to — the key both SDKs group a live
+   *  bubble by, and the one they suppress its committed twin by. It MUST ride
+   *  the replayed `turn.text.delta`: a delta without it lands in a turn-keyed
+   *  buffer that the next (stamped) delta then refuses to adopt, and the
+   *  joiner opens two live bubbles for one reply. Null when no reply is
+   *  streaming, or against a path that does not stamp deltas. */
+  readonly replyId: string | null;
   /** Permission prompts still awaiting an answer. */
   readonly prompts: readonly PermissionRequest[];
   /** The audio bracket that is open, or null. Bytes are NEVER part of this. */
@@ -73,6 +82,7 @@ export const EMPTY_TURN_STATE: TurnStateSnapshot = {
   activeTurnId: null,
   trigger: null,
   textSoFar: "",
+  replyId: null,
   prompts: [],
   audio: null,
 };
@@ -106,6 +116,7 @@ export function createTurnStateTracker(sessionId: string): TurnStateTracker {
   let activeTurnId: string | null = null;
   let trigger: TurnTrigger | null = null;
   let textSoFar = "";
+  let replyId: string | null = null;
   let audio: TurnStateAudio | null = null;
   const prompts = new Map<string, PermissionRequest>();
 
@@ -117,6 +128,21 @@ export function createTurnStateTracker(sessionId: string): TurnStateTracker {
     activeTurnId = null;
     trigger = null;
     textSoFar = "";
+    replyId = null;
+  }
+
+  /** Fold one delta of the active turn into the live-bubble accumulation.
+   *
+   *  ROTATION RESTARTS IT. `session-runtime.ts` mints a new `replyId` inside
+   *  one turn when a person types mid-reply; the stretch before that point is
+   *  already a committed entry by the time any joiner asks, so carrying it
+   *  here too would replay it as live text beside its own committed row. */
+  function accumulate(text: string, deltaReplyId: string | null): void {
+    if (deltaReplyId !== replyId) {
+      replyId = deltaReplyId;
+      textSoFar = "";
+    }
+    textSoFar += text;
   }
 
   return {
@@ -126,17 +152,26 @@ export function createTurnStateTracker(sessionId: string): TurnStateTracker {
           activeTurnId = turnId;
           trigger = t;
           textSoFar = "";
+          replyId = null;
           emitter.turnStarted(turnId, t);
         },
-        // EVERY parameter forwarded. A pass-through wrapper that declares fewer
-        // parameters than the interface still satisfies TypeScript — a narrower
-        // function is assignable to a wider one — so dropping an argument here
-        // is silent at the type level and invisible until the wire is read.
-        // That is exactly how `replyId` reached the client as null while the
-        // gateway logged it correctly one layer up.
-        textDelta(turnId: string, text: string, replyId?: string) {
-          if (turnId === activeTurnId) textSoFar += text;
-          emitter.textDelta(turnId, text, replyId);
+        // FORWARDED AS A WHOLE ARGUMENT LIST, deliberately. A pass-through
+        // wrapper that declares fewer parameters than the interface still
+        // satisfies TypeScript — a narrower function is assignable to a wider
+        // one — so naming them one by one makes a dropped argument silent at
+        // the type level and invisible until the wire is read. `...args` cannot
+        // drop one; adding a parameter to `TurnEmitter.textDelta` forwards it
+        // here for free.
+        //
+        // That covers the FORWARD. The ACCUMULATOR below is the second half of
+        // the same lesson and the one this seam actually got wrong: it read
+        // `text` and threw `replyId` away into a flat string, so the replayed
+        // delta reached a mid-turn joiner unstamped. Destructure everything the
+        // snapshot describes, not just what it concatenates.
+        textDelta(...args: Parameters<TurnEmitter["textDelta"]>) {
+          const [turnId, text, deltaReplyId] = args;
+          if (turnId === activeTurnId) accumulate(text, deltaReplyId ?? null);
+          emitter.textDelta(...args);
         },
         turnCompleted(turnId: string) {
           endTurn(turnId);
@@ -201,12 +236,14 @@ export function createTurnStateTracker(sessionId: string): TurnStateTracker {
         activeTurnId,
         trigger,
         textSoFar,
+        replyId,
         prompts: [...prompts.values()],
         audio,
       };
       log.debug("turn-state.captured", {
         sessionId,
         turnId: activeTurnId,
+        replyId,
         trigger,
         textLength: textSoFar.length,
         openPrompts: snap.prompts.length,

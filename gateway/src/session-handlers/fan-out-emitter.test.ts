@@ -533,6 +533,51 @@ describe("attachWithSnapshot", () => {
     ]);
   });
 
+  it("INVARIANT: the replayed delta carries the bubble key, so the joiner opens ONE bubble", () => {
+    // `turn.started` seeds a TURN-keyed placeholder in both SDKs; the first
+    // stamped delta adopts it in place, but only while it is still EMPTY. An
+    // unstamped replay fills it, the next real delta then refuses the adoption
+    // and opens a second buffer — two live bubbles for one reply on web (with
+    // duplicate render keys), orphaned pre-attach text on mobile.
+    const connA = fakeWindow("conn-a");
+    const connB = fakeWindow("conn-b");
+    const h = harness(connA);
+    attachWithSnapshot(h.registry, SESSION_ID, asWs(connA));
+    h.emit.turnStarted("t1", "user");
+    h.emit.textDelta("t1", "half an answer", "m1");
+
+    h.attach(connB);
+    const snap = attachWithSnapshot(h.registry, SESSION_ID, asWs(connB));
+
+    expect(snap.replyId).toBe("m1");
+    expect(texts(connB).find((f) => f.type === "turn.text.delta")).toMatchObject({
+      turnId: "t1",
+      replyId: "m1",
+      text: "half an answer",
+    });
+  });
+
+  it("replays only the CURRENT reply when the turn rotated mid-flight", () => {
+    // The stretch before a mid-turn user message is committed at the rotation
+    // and reaches the joiner in its `conversation.snapshot`. Replaying it as
+    // live text as well would show it twice.
+    const connA = fakeWindow("conn-a");
+    const connB = fakeWindow("conn-b");
+    const h = harness(connA);
+    attachWithSnapshot(h.registry, SESSION_ID, asWs(connA));
+    h.emit.turnStarted("t1", "user");
+    h.emit.textDelta("t1", "before the interruption", "m1");
+    h.emit.textDelta("t1", "after it", "m2");
+
+    h.attach(connB);
+    attachWithSnapshot(h.registry, SESSION_ID, asWs(connB));
+
+    expect(texts(connB).find((f) => f.type === "turn.text.delta")).toMatchObject({
+      replyId: "m2",
+      text: "after it",
+    });
+  });
+
   it("re-raises an open permission prompt to a joiner", () => {
     const connA = fakeWindow("conn-a");
     const connB = fakeWindow("conn-b");

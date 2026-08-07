@@ -617,7 +617,18 @@ function emitTurnStateTo(
   if (turnId !== null && state.trigger !== null) {
     sendAttachReplayFrame(ws, { type: "turn.started", turnId, trigger: state.trigger });
     if (state.textSoFar.length > 0) {
-      sendAttachReplayFrame(ws, { type: "turn.text.delta", turnId, text: state.textSoFar });
+      // `replyId` IS PART OF THE FRAME, not decoration. Both SDKs key the live
+      // buffer by reply and adopt the turn-keyed placeholder `turn.started`
+      // seeded only while it is still EMPTY; an unstamped replay fills that
+      // placeholder first, so the next real delta finds it non-empty, refuses
+      // the adoption and opens a SECOND buffer — two live bubbles for one
+      // reply on web, orphaned pre-attach text on mobile.
+      sendAttachReplayFrame(ws, {
+        type: "turn.text.delta",
+        turnId,
+        text: state.textSoFar,
+        ...(state.replyId === null ? {} : { replyId: state.replyId }),
+      });
     }
   }
   if (state.audio !== null) {
