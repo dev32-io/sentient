@@ -110,6 +110,44 @@ describe("TaskListConnector", () => {
     expect(connector.turnId()).toBeNull();
   });
 
+  it("clear() drops the list at a conversation boundary, and keeps listening", () => {
+    // A conversation switch / "+" is not teardown: the socket and this
+    // connector live on. The rows belong to the conversation the pane left —
+    // a background delegateTask row is keyed by taskId and retained by design,
+    // so nothing on the server side ever retires it for the new pane.
+    const onUpdate = vi.fn();
+    const connector = new TaskListConnector({ onUpdate });
+    const mock = createMockSDK();
+    connector.attach(mock.sdk);
+
+    mock.emit("tasklist.state", {
+      turnId: null,
+      items: [
+        {
+          id: "task-42",
+          toolName: "delegateTask",
+          kind: "background",
+          status: "running",
+          argsPreview: "",
+          startedAtMs: 5,
+        },
+      ],
+    });
+
+    connector.clear();
+
+    expect(connector.list()).toEqual([]);
+    expect(connector.turnId()).toBeNull();
+    expect(onUpdate).toHaveBeenLastCalledWith(null, []);
+
+    // Still attached — the next conversation's own frames must land.
+    mock.emit("tasklist.state", {
+      turnId: "t2",
+      items: [{ id: "b", toolName: "y", kind: "foreground", status: "running", argsPreview: "", startedAtMs: 9 }],
+    });
+    expect(connector.list()).toHaveLength(1);
+  });
+
   it("reset() drops the list on a session/identity teardown", () => {
     const onUpdate = vi.fn();
     const connector = new TaskListConnector({ onUpdate });

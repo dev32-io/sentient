@@ -69,10 +69,35 @@ export class TaskListConnector implements Connector {
 
   /** Drop everything. Called on disconnect, same as every other mirror. */
   reset(): void {
+    this.drop("session identity teardown", "task-list.reset");
+  }
+
+  /**
+   * Drop everything at a CONVERSATION boundary — a switch, a "+", a fresh mint.
+   *
+   * Separate from [reset] because the trigger is different in kind: reset is
+   * teardown of this connection's identity, clear is "the pane is now showing a
+   * different conversation and these rows belong to the one it left".
+   *
+   * IT CANNOT BE LEFT TO THE SERVER on every path. `conversation.activate` is
+   * answered with a fresh full-state `tasklist.state`, but the "+" / fresh-mint
+   * path is not: the draft handshake sends an empty `conversation.snapshot` and
+   * no strip frame, and the socket unbinds from the old runtime, so the
+   * clearing frame can never arrive. A background `delegateTask` row is keyed
+   * by taskId and retained by design, so nothing else would ever retire it —
+   * it would sit on the strip of every later chat, permanently. Mobile's
+   * `SentientSdk.clearConversationScopedState` is the same call at the same
+   * boundary.
+   */
+  clear(): void {
+    this.drop("conversation scope change", "task-list.clear");
+  }
+
+  private drop(reason: string, event: string): void {
     const previousCount = this.items.length;
     this.items = [];
     this.turn = null;
-    log.info("task-list.reset", { reason: "session identity teardown", previousCount });
+    log.info(event, { reason, previousCount });
     this.config.onUpdate?.(null, this.items);
   }
 }
