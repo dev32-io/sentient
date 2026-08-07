@@ -46,10 +46,10 @@ class RevealReducerTest {
     }
 
     // -----------------------------------------------------------------------
-    // Termination. ObserveChatUseCase hides every committed row whose turnId
+    // Termination. ObserveChatUseCase hides the one committed row whose replyId
     // matches the live bubble's, so a bubble that cannot reach null hides that
-    // turn's durable history — its text, its interrupted marker and its tool
-    // tiles — for as long as the screen lives. These pin the exits.
+    // reply's durable history — its text and its interrupted marker — for as
+    // long as the screen lives. These pin the exits.
     // -----------------------------------------------------------------------
 
     /** The reveal must not stall. At a 16 ms tick the streaming rate is worth

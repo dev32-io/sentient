@@ -27,7 +27,7 @@ private const val REVEAL_TICK_MS = 16L
  * Projects the single chat list a screen renders for the ACTIVE conversation:
  * folds [ConversationRepository.liveEvents] → reveal (typewriter ticker runs inside this
  * flow), then combines committed [ConversationRepository.timeline] + the revealed bubble +
- * the VM's [pending] outbound cache. Applies one-bubble-per-turn (suppress the committed
+ * the VM's [pending] outbound cache. Applies one-bubble-per-reply (suppress the committed
  * twin while its live bubble is on screen) and reconcile-by-pendingId.
  *
  * Per-conversation: the reveal fold + ticker live inside the returned flow, so they are

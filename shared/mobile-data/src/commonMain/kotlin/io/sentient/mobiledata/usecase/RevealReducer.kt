@@ -52,9 +52,12 @@ data class RevealBubble(
      */
     val replyId: String? = null,
 ) {
-    /** What this bubble is identified by — its message when it has one, its
-     *  turn otherwise. `ObserveChatUseCase` hides the committed rows carrying
-     *  the same key, so the swap at turn end shows exactly what was streamed. */
+    /** What this bubble is identified by — its reply when it has one, its
+     *  turn otherwise. Used ONLY inside this reducer, to decide whether an
+     *  incoming delta/commit/start continues the current bubble or starts a
+     *  new one. `ObserveChatUseCase`'s suppression does NOT read this key —
+     *  it matches a committed row on `replyId` alone, with no turn fallback,
+     *  so a bubble with no `replyId` hides nothing. */
     val key: String get() = replyId ?: turnId
 }
 
@@ -74,9 +77,9 @@ data class RevealState(
  * cursor on ticks, drains after commit, drops everything on a session switch. The ticker
  * that emits [RevealTick] lives in ObserveChatUseCase.
  *
- * EVERY BUBBLE MUST BE ABLE TO REACH null. ObserveChatUseCase hides every committed
- * row whose turnId matches the live bubble's, so a bubble with no exit does not just
- * stall an animation — it hides that turn's durable history for as long as the screen
+ * EVERY BUBBLE MUST BE ABLE TO REACH null. ObserveChatUseCase hides the one committed
+ * row whose replyId matches the live bubble's, so a bubble with no exit does not just
+ * stall an animation — it hides that reply's durable history for as long as the screen
  * lives. Two exits were missing and both were silent: an aborted turn (no
  * MessageCommitted is ever emitted for one — see InFlightMessageConnector.onAborted)
  * and a reveal whose per-tick progress truncated to zero (see [RevealRate.earned]).
@@ -106,8 +109,9 @@ object RevealReducer {
                 s.bubble?.takeIf { it.key == key } ?: RevealBubble(e.turnId, "", 0, LivePhase.STREAMING, e.replyId)
             s.copy(bubble = cur.copy(fullContent = cur.fullContent + e.chunk))
         }
-        // Turn-matched: a turn owning several bubbles commits each of them, and
-        // only the one still on screen should start draining.
+        // Key-matched: a turn owning several bubbles commits each of them, and
+        // only the one whose key (reply, or turn if it has none) still
+        // matches the live bubble should start draining.
         is SdkEvent.MessageCommitted ->
             if (s.bubble != null && s.bubble.key == (e.message.replyId ?: e.message.turnId ?: s.bubble.key)) {
                 s.copy(bubble = s.bubble.copy(phase = LivePhase.DRAINING))

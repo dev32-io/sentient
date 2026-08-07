@@ -88,6 +88,39 @@ class ObserveChatUseCaseTest {
     }
 
     @Test
+    fun a_keyless_row_of_the_live_turn_is_not_suppressed() = runTest(UnconfinedTestDispatcher()) {
+        // THE discriminating case — the reported bug's exact shape. A committed
+        // row that has no replyId at all (a user row, a tool tile, or an entry
+        // written before the column existed) but DOES share the live bubble's
+        // turnId. The retired predicate's sameTurn fallback fired whenever
+        // EITHER side lacked a key, so this row matched on turnId alone and
+        // vanished for the whole reveal even though its replyId never matched
+        // (it has none). Reply-only matching cannot fall back to the turn, so
+        // this row must stay visible.
+        //
+        // (a_committed_row_of_another_reply_is_never_suppressed above does NOT
+        // exercise this: both its sides carry a key, which the retired
+        // predicate already got right — see the review that caught this gap.)
+        val repo = FakeConversationRepository()
+        repo.timelineState.value = listOf(
+            ChatMessage(ts = 1, role = "user", content = "hi"),
+            ChatMessage(ts = 2, role = "assistant", content = "keyless", turnId = "t1", replyId = null),
+        )
+        val models = mutableListOf<ChatModel>()
+        val job = launch { useCase(repo).invoke(MutableStateFlow(emptyList())).collect { models.add(it) } }
+        repo.events.emit(SdkEvent.MessageStarted("t1", replyId = "r1"))
+        repo.events.emit(SdkEvent.MessageDelta("t1", "live text", replyId = "r1"))
+        runCurrent()
+        val m = models.last()
+        assertTrue(
+            m.committed.any { it.replyId == null && it.content == "keyless" },
+            "a keyless row sharing the bubble's turn must stay visible — only an exact replyId match is hidden",
+        )
+        assertEquals("r1", m.live?.replyId)
+        job.cancel()
+    }
+
+    @Test
     fun pending_reconciled_by_live_echo() = runTest(UnconfinedTestDispatcher()) {
         val repo = FakeConversationRepository()
         // The committed user entry carries pendingId on the SDK's own timeline; the echo
