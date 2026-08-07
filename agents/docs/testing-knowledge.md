@@ -95,21 +95,23 @@ Reusable test scenarios. Each case has explicit steps and expected outcome.
 One `###` subsection per case.
 
 ### Tool pill renders on tool call
-**Scenario:** A user prompt that triggers a tool (e.g. "what's the weather", which fires `mcp_searxng_search_web`, or any home-assistant query) renders a tool pill both on the assistant message bubble AND in the composer task strip.
-**Why added:** Regression guard for the Task 0 wiring — previously regressed when a webui shell refactor didn't pipe `tasks` into `ComposerTaskStrip`. Tool visibility is the user's only signal that work is happening.
+**Scenario:** A user prompt that triggers a tool (e.g. "what's the weather", which fires `mcp_searxng_search_web`, or any home-assistant query) renders a tool pill in the composer task strip — and **nowhere else**.
+**Why added:** Regression guard for the wiring that pipes `tasks` into `ComposerTaskStrip`. Tool visibility is the user's only signal that work is happening.
+**Superseded 2026-08-06 — the strip is now the ONLY tool surface.** This case used to demand the pill in "BOTH places" (bubble AND strip) and to fire a consistency oracle when it appeared in only one. `turn.tool.update` and the `kind: "tool"` feed item are deleted; a tool call is the model's record, not a user-facing artifact, and a bubble-anchored pill has no stable answer once a mid-turn steer splits a reply. **A pill on a bubble is now the bug.** See T11 / T12 below for the current cases.
 **Steps:**
 1. Send a tool-triggering prompt (e.g. "what's the weather in Vancouver").
-2. Observe the assistant message bubble while the cycle runs.
-3. Observe the composer task strip simultaneously.
-**Expected:** A tool pill appears on the bubble for the duration of the tool call; the composer strip shows the same pill as a persistent mirror until the cycle completes.
+2. Observe the composer task strip while the turn runs.
+3. Observe the assistant message bubble simultaneously.
+**Expected:** A tool pill appears in the composer strip for the duration of the tool call and is gone at the turn boundary (a background `delegateTask` row instead outlives the turn). ZERO pills on any chat bubble, at every moment.
 
-### Distinct turnId per turn + many-entry turn renders distinctly (web)
-**Scenario:** The gateway mints a server-unique `turnId` (uuid) per turn, never resetting on reconnect. Multiple turns each render under their own message; a single multi-tool turn renders every entry (intermediate narration + each tool pill + final answer) as its own row under ONE turnId.
+### Distinct turnId per turn + multi-tool turn renders as ONE bubble (web)
+**Scenario:** The gateway mints a server-unique `turnId` (uuid) per turn, never resetting on reconnect. Multiple turns each render under their own message; a single multi-tool turn renders as ONE assistant bubble (every narration stretch folded into one reply, keyed by `replyId`), with its tool activity in the composer strip.
+**Superseded 2026-08-06:** this case used to demand "every entry … as its own row" — intermediate narration and each tool pill as separate rows under one turnId. The gateway now folds a whole reply into one `conversation.entry`, and tool rows are not feed items at all. `turnId` stays the *turn* identity assertion below; the *rendering* assertion is T11's.
 **Why added:** Regression guard for the render-key discipline the old cycleId fix (2026-06-14, pre-2.0) established — a per-turn id that resets or aliases collapses turns onto one render row ("follow-up reply missing / previous shown" + stale-bottom-on-scroll). Re-grounded 2026-07-30 onto the 2.0 wire: `turnId` is minted once in `runtime:react-loop react-loop.start` and threaded through every frame of that turn (`turn.started` → `turn.text.delta`* → `conversation.entry` → `turn.completed` → `turn.audio.*`); committed history is keyed by `entryId`, turnId is turn-meta only — same shape as the old invariant, new names.
 **Steps:**
 1. Two turns, no reconnect (desktop 1280×900): send msg 1 → await reply; send msg 2 → await reply.
-2. Many-entry turn (desktop + mobile 390×844): send a multi-tool prompt (e.g. "what's the state of the kitchen light" — triggers `ha_get_state` then a follow-up tool call).
-**Expected user-visible:** both single-turn replies render under their own messages (no alias); every entry of the multi-tool turn renders as its own row (tool pill + answer), no rows collapse; streaming bubble grows in place (`turn.text.delta` chunks) then commits with no duplicate.
+2. Multi-tool turn (desktop + mobile 390×844): send a read-only multi-tool prompt (e.g. "what's the state of the kitchen light" — triggers `ha_get_state` then a follow-up tool call).
+**Expected user-visible:** both single-turn replies render under their own messages (no alias); the multi-tool turn renders as exactly ONE assistant bubble that grows in place through every narration stretch (`turn.text.delta` chunks, one `replyId`) and commits with no duplicate and no row-count change; its tool pills are in the composer strip, none on the bubble.
 **Expected log trail (gateway `~/.sentient/gateway/logs/YYYY-MM-DD.log`, LOCAL-time rotation — not UTC, see the native-stack migration section's log-trail trap):** each turn emits ONE `[runtime:react-loop] react-loop.start | turnId="<uuid>"` and that same `turnId` recurs on every subsequent line for the turn (`[ws:turn-emitter] turn-emitter.turn-started/turn-completed`, `[runtime:session-runtime] session-runtime.turn.start/turn.end`); two turns in the same session never share a `turnId`. Verified live 2026-07-30 — two real turns logged distinct uuids (`235ab571-…`, `5dc1691a-…`); see `qa/web/evidence/2026-07-30-native-turn-happy/gateway-log-excerpt.txt` and `2026-07-30-native-tool-call/gateway-log-excerpt.txt`.
 
 ### Speaking state tracks audio drain, not turn end
@@ -144,13 +146,9 @@ One `###` subsection per case.
 2. While audio is playing, send a second prompt (e.g. "and search the web for today's date").
 **Expected:** First turn's audio drains naturally OR (if elapsed exceeds `min_eager_end_ms`) the second turn preempts with a brief fade. No overlap.
 
-### Cross-turn tool pill persistence
-**Scenario:** Tool pills attached to a previous assistant bubble must persist across subsequent turns, scoped to that bubble's cycle.
-**Why added:** Regression guard for cycle-scoped tool rendering. A bug here either (a) drops earlier pills when a new turn starts, or (b) leaks the new turn's pills into the older bubble.
-**Steps:**
-1. Send a tool-triggering message (e.g. "what's the weather").
-2. After the first cycle completes, send another tool-triggering message (e.g. "are there any calendar events tomorrow?").
-**Expected:** First bubble's pill stays put after the second turn finishes; each bubble shows only its own cycle's tools.
+### Cross-turn tool pill persistence — RETIRED 2026-08-06
+**Do not run this case; it asserts the opposite of the contract.** It required a previous bubble's tool pills to PERSIST across later turns, scoped to that bubble's cycle. There are no bubble-anchored pills any more: `turn.tool.update` and the `kind: "tool"` feed item are deleted, tool activity is one full-state `tasklist.state` frame, and the gateway owns row lifetime — a foreground row dies at its turn boundary, a background `delegateTask` row outlives it until the delegation settles. "A pill still on an old bubble" is now a defect report, not a pass.
+**Replaced by:** T12 (strip clears at the turn boundary, background variant outlives it) and, for the "did the strip leak into another conversation" question the old case gestured at, the conversation-scope clear in T12's switch/new-chat steps.
 
 ### Idle close fires after threshold
 **Scenario:** After user interaction stops, the WebSocket must close with code `1000` and reason `idle-timeout` once inactivity exceeds `IDLE_THRESHOLD_MS` (~1 hr default).
@@ -544,8 +542,9 @@ Added 2026-08-03 (session-model wave, plan task 11). **These are the first cases
 **Steps:** Park B on a *different* session; start a long, tool-using turn on A; ~2 s in, open A's session from B's drawer; let the turn finish.
 **Expected user-visible:** B renders the in-flight turn coherently and shows an enabled **Interrupt** button (the joiner turn-state handshake); no audio is replayed from before the join.
 **Expected log trail:** `[ws:fan-out] fan-out.turn-state-sent … turnId=… trigger="user" runningTools=<n> openPrompts=<n> audioTurnId=<id|null>` followed by `fan-out.attached … committedFeed="client-refetch"`. The audio half asserts `fan-out.audio-skipped … audio.skip-reason="midturn-join"` — **only reachable when `audioTurnId` is non-null at the join instant.** TTS starts after the text turn settles, so a join during tool calls has no audio to skip and does not exercise it; say so rather than counting it.
-**Oracle:** count `.tool-pill` nodes in **both** windows against `select count(*) from entries where session_id=? and kind='tool_call'`. Do not diff the two panes' `innerText` — the composer task strip mirrors the pills as one grouped node and makes the builder look short.
-**Known-red (D23):** the joiner renders one **extra** pill (5 rendered for 4 real calls) while the long-attached window renders the correct count.
+**Oracle (rewritten 2026-08-06):** compare the two windows' **assistant bubble text**, not their pill counts. Tool pills are no longer feed rows and no longer derivable from the store — `tasklist.state` is a live, ephemeral, full-state projection with no committed counterpart, so `select count(*) … kind='tool_call'` has nothing to be compared against and the old oracle is guaranteed red on correct behaviour. The joiner's assertion is: exactly ONE assistant bubble per `replyId`, same text as the long-attached window once the turn commits, and the strip showing the same rows *while the turn is live* (the joiner is re-sent `tasklist.state` on attach — `ws-session-configure.ts`).
+**Also assert (2026-08-06):** the joiner's replayed `turn.text.delta` carries a `replyId`. Without it the joiner opens TWO live bubbles for one reply (the turn-keyed placeholder fills unadopted, the next real delta opens a second buffer). Grep the joiner's console for two `inflight-` render keys in one turn.
+**Historical (D23):** the "joiner renders one extra pill (5 for 4 real calls)" red was recorded against the deleted bubble-pill surface; it is not re-derivable and should not be carried forward as an open defect.
 
 ### permission-either-answers · permission-issuer-leaves · permission-timeout-denies
 **Scenario:** A confirm-tier prompt raised by A's turn is answered on B; then answered on B after A has closed; then answered by nobody.
@@ -894,8 +893,9 @@ only the screenshot) before concluding a real bug.
 **OPEN DEFECT D11 — the delegated agent has NO gateway/HA/MA/searxng tools, on any fresh install.** The gateway renders `mcp_servers` + `enabled_toolsets` into `~/.sentient/gateway/<id>/profiles/<id>/`; hermes reads `~/.hermes/profiles/<id>/`. The `HERMES_HOME` bridge between them was the supervisord program env, deleted in the native cutover, so the render is dead output. NM-T9c fixed one necessary half (per-user MCP socket off SIP-read-only `/run`) and proved that socket end-to-end, but only after a manual `hermes -p <id> mcp add`. **When driving any delegation case:** dispatch / steer / follow-up / cancel are all drivable, but never assert a delegated agent *used* a gateway tool, never file this as new, and never let a case pass vacuously on "a reply came back". Grep handle for the live symptom: `hermes-profile.bridge.not-live` (WARN, once per user per boot). Root cause, hand-proven fix route and the design decision left open on purpose: `qa/web/evidence/2026-07-30-t9c-verification-gaps/README.md` § D11.
 
 ### reload-convergence
-**Scenario:** `render(replay) == render(live)` — a hard reload shows the identical feed, including every entry kind (tool pills, permission-confirm outcomes, delegate errors), not just plain text turns.
-**Expected:** same article count + same tool-pill/code-element count before/after; server `turn-emitter.conversation-snapshot itemCount=<n>` matches.
+**Scenario:** `render(replay) == render(live)` — a hard reload shows the identical feed, including every entry kind (user rows, folded assistant replies with their cutoff markers, delegate errors), not just plain text turns.
+**Expected:** same article count + same code-element count before/after, and one assistant bubble per `replyId` on both sides; server `turn-emitter.conversation-snapshot itemCount=<n>` matches.
+**Tool pills do NOT survive a reload, and must not.** They are `tasklist.state` — live, ephemeral, full-state, with no committed counterpart — so a reload correctly shows an empty strip for a finished turn. Asserting pill counts across a reload (as this case did before 2026-08-06) is guaranteed red on correct behaviour. A background `delegateTask` row DOES come back after a reload, because the gateway re-emits the strip on attach while the delegation is still running.
 
 ### restart-persistence
 **Scenario:** A real gateway process restart (native — the migration's actual path, not `docker restart`) preserves the full feed via the persisted store, even though the live-stream resume buffer correctly does NOT survive a restart.
