@@ -105,6 +105,12 @@ const FRAME_LANES: Record<GatewayMessage["type"], FrameLane> = {
   "turn.completed": "session",
   "turn.aborted": "session",
   "turn.tool.update": "session",
+  // The composer's task strip. SESSION lane: it is conversation state every
+  // attached window must agree on, and — unlike `conversation.snapshot` — the
+  // full-state payload is IDENTICAL for every window, so re-emitting it at
+  // attach cannot clobber a peer's view. That is why it needs no
+  // connection-lane twin.
+  "tasklist.state": "session",
   "turn.audio.start": "session",
   "turn.audio.done": "session",
   "playback.stop": "session",

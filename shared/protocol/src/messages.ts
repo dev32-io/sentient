@@ -491,6 +491,49 @@ export const turnToolUpdateSchema = z.object({
 });
 export type TurnToolUpdateMessage = z.infer<typeof turnToolUpdateSchema>;
 
+// ─── Task list (the composer strip) ───
+//
+// FULL STATE, NOT DELTAS. The replay journal is a byte-capped evicting ring
+// (session-handlers/frame-journal.ts): a client behind the window gets a real
+// gap and a fresh answer, so an add/update/remove op-stream would need a
+// snapshot frame AND a client-side reconciliation of ops against it — the
+// exact re-derivation this design removes everywhere else. The list is a
+// handful of rows per turn, so the whole thing rides every time: idempotent,
+// last-one-wins, replay-safe, and a late joiner needs nothing special.
+//
+// The gateway owns the LIFETIME too (runtime/task-list.ts): a foreground call
+// dies with its turn, a background `delegateTask` outlives it. No client ever
+// reasons about when a row should disappear.
+
+export const taskListKindSchema = z.enum(["foreground", "background"]);
+export type TaskListKind = z.infer<typeof taskListKindSchema>;
+
+export const taskListItemSchema = z.object({
+  /** Stable row identity: the provider's `toolCallId` for a foreground call,
+   *  the gateway's `taskId` for a background one. Clients key on it and never
+   *  mint one. */
+  id: z.string(),
+  toolName: z.string(),
+  kind: taskListKindSchema,
+  status: turnToolStatusSchema,
+  /** Already-truncated preview of the call's arguments. Rendered verbatim;
+   *  never logged by a client (it is user content). */
+  argsPreview: z.string(),
+  startedAtMs: z.number().int().nonnegative(),
+  /** Present once the row reaches a terminal status. */
+  endedAtMs: z.number().int().nonnegative().optional(),
+});
+export type TaskListItem = z.infer<typeof taskListItemSchema>;
+
+export const taskListStateSchema = z.object({
+  type: z.literal("tasklist.state"),
+  /** The turn this list belongs to, or null when only background rows survive
+   *  a finished turn. Clients label with it; they never infer it. */
+  turnId: z.string().nullable(),
+  items: z.array(taskListItemSchema),
+});
+export type TaskListStateMessage = z.infer<typeof taskListStateSchema>;
+
 /** Wire encoding of the outbound TTS byte stream. Exactly two values — this
  *  is NOT the free-form `session.ready.audioEncoding` string. */
 export const turnAudioEncodingSchema = z.enum(["opus", "pcm"]);
@@ -663,6 +706,7 @@ export const gatewayMessageSchema = z.discriminatedUnion("type", [
   withSeqEpoch(turnCompletedSchema),
   withSeqEpoch(turnAbortedSchema),
   withSeqEpoch(turnToolUpdateSchema),
+  withSeqEpoch(taskListStateSchema),
   withSeqEpoch(turnAudioStartSchema),
   withSeqEpoch(turnAudioDoneSchema),
   withSeqEpoch(permissionRequestSchema),
