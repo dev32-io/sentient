@@ -81,6 +81,7 @@ import io.sentient.android.theme.LocalTokens
 import io.sentient.android.theme.SentientTokens
 import io.sentient.mobilesdk.design.Colors
 import io.sentient.mobilesdk.log.createLogger
+import io.sentient.mobilesdk.protocol.TaskListItem
 
 private val COMPOSER_RADIUS = 24.dp
 private val SWIPE_DISMISS_DP = 24.dp
@@ -106,6 +107,7 @@ private val composerLog = createLogger("android", "composer")
  * @param ttsEnabled Server-of-record TTS preference (mirrored, not owned).
  * @param micActive True while voiceMode == ACTIVE — external sync for MicCorner.
  * @param canInterrupt True when a cycle is in flight or audio is playing.
+ * @param tasks Live tool/task rows (ChatModel.tasks) — rendered as the composer's top strip.
  * @param onMicPress Corner mic pressed (idle→hold) — enter push-to-talk.
  * @param onMicRelease Corner mic released below the lock threshold (hold→idle).
  * @param onMicLock Corner mic slid to lock (hold→locked) — enter continuous.
@@ -118,6 +120,7 @@ fun Composer(
     ttsEnabled: Boolean,
     micActive: Boolean,
     canInterrupt: Boolean,
+    tasks: List<TaskListItem>,
     onSend: (String) -> Unit,
     onMicPress: () -> Unit,
     onMicRelease: () -> Unit,
@@ -214,6 +217,7 @@ fun Composer(
                     .padding(tokens.space.md),
                 verticalArrangement = Arrangement.spacedBy(tokens.space.sm),
             ) {
+                ComposerTaskStrip(tasks)
                 if (micDenied) {
                     Text(
                         MIC_DENIED_NOTICE,

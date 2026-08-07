@@ -21,7 +21,7 @@
 // clears pendingPermissionRequest on Allow/Deny tap, on a matching
 // permission.resolved, or on its own local-timeout fallback) — no manual Job here.
 //
-// The description block reuses ToolPillStrip.kt's exact args-preview text idiom
+// The description block reuses ComposerTaskStrip.kt's exact args-preview text idiom
 // (JetBrainsMono / ink2 / accent-tinted background @ alpha 0.10f / tokens.space.md
 // padding) rather than inventing new copy formatting.
 // ---------------------------------------------------------------------------
