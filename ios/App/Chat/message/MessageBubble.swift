@@ -95,20 +95,17 @@ struct MessageBubble: View {
 
     @ViewBuilder
     private var bubbleContent: some View {
-        // One layout for all phases: the body (pulse while still thinking →
-        // revealed text → committed markdown) with the tool-pill strip below.
-        // Pills render even in the empty-text think window so a running tool
-        // surfaces live, before any answer text arrives (webui parity — show
-        // info as early as possible).
-        VStack(alignment: .leading, spacing: Space.xs) {
-            if message.streaming && message.content.isEmpty {
-                PulseDots()
-            } else if message.streaming {
-                StreamingText(content: message.content)
-            } else {
-                committedText
-            }
-            if !message.tools.isEmpty { ToolPillStrip(tools: message.tools) }
+        // One layout for all phases: pulse while still thinking → revealed
+        // text → committed markdown. Tool rows no longer render here — they
+        // moved to the composer's task strip (ComposerTaskStrip), which has no
+        // bubble to anchor to (a mid-turn steer can split one turn's rows
+        // across bubbles with no stable owner).
+        if message.streaming && message.content.isEmpty {
+            PulseDots()
+        } else if message.streaming {
+            StreamingText(content: message.content)
+        } else {
+            committedText
         }
     }
 
@@ -177,73 +174,54 @@ enum BubbleLayout {
 
 #Preview {
     let now = Int64(Date().timeIntervalSince1970 * 1000)
-    let sampleTools: [TaskSnapshotItem] = [
-        TaskSnapshotItem(
-            toolCallId: "t1", toolName: "web_search",
-            turnId: "c1", status: "finished",
-            argsPreview: #"{"query":"current weather in Tokyo"}"#,
-            startedAtMs: now, endedAtMs: KotlinLong(value: now + 1200), taskId: nil
-        ),
-        TaskSnapshotItem(
-            toolCallId: "t2", toolName: "calendar_read",
-            turnId: "c1", status: "running",
-            argsPreview: #"{"date":"2026-06-04"}"#,
-            startedAtMs: now + 1200, endedAtMs: nil, taskId: nil
-        ),
-        TaskSnapshotItem(
-            toolCallId: "t3", toolName: "send_message",
-            turnId: "c1", status: "failed",
-            argsPreview: "",
-            startedAtMs: now + 500, endedAtMs: KotlinLong(value: now + 800), taskId: nil
-        ),
-    ]
     ScrollView {
         VStack(spacing: Space.gapMsg) {
             MessageBubble(
-                message: ChatMessage(ts: now, role: "user", content: "hello", streaming: false, cutoffKind: nil, turnId: nil, messageId: nil, pendingId: nil, tools: [], entryId: "preview-u0"),
+                message: ChatMessage(ts: now, role: "user", content: "hello", streaming: false, cutoffKind: nil, turnId: nil, replyId: nil, pendingId: nil, entryId: "preview-u0"),
                 index: 0,
                 userName: "Alice"
             )
             MessageBubble(
-                message: ChatMessage(ts: now + 1, role: "assistant", content: "Hi there! How can I help?", streaming: false, cutoffKind: nil, turnId: nil, messageId: nil, pendingId: nil, tools: [], entryId: "preview-a1"),
+                message: ChatMessage(ts: now + 1, role: "assistant", content: "Hi there! How can I help?", streaming: false, cutoffKind: nil, turnId: nil, replyId: nil, pendingId: nil, entryId: "preview-a1"),
                 index: 1,
                 userName: "Alice"
             )
             MessageBubble(
-                message: ChatMessage(ts: now + 2, role: "assistant", content: "", streaming: true, cutoffKind: nil, turnId: nil, messageId: nil, pendingId: nil, tools: [], entryId: "preview-a2"),
+                message: ChatMessage(ts: now + 2, role: "assistant", content: "", streaming: true, cutoffKind: nil, turnId: nil, replyId: nil, pendingId: nil, entryId: "preview-a2"),
                 index: 2,
                 userName: "Alice"
             )
             // streaming + content → data-layer substring rendered directly, no cursor
             MessageBubble(
-                message: ChatMessage(ts: now + 3, role: "assistant", content: "Streaming text reveals progressively...", streaming: true, cutoffKind: nil, turnId: nil, messageId: nil, pendingId: nil, tools: [], entryId: "preview-a3"),
+                message: ChatMessage(ts: now + 3, role: "assistant", content: "Streaming text reveals progressively...", streaming: true, cutoffKind: nil, turnId: nil, replyId: nil, pendingId: nil, entryId: "preview-a3"),
                 index: 3,
                 avatarMode: .thinking,
                 userName: "Alice"
             )
             MessageBubble(
-                message: ChatMessage(ts: now + 4, role: "assistant", content: "Cut off here", streaming: false, cutoffKind: "interrupt", turnId: nil, messageId: nil, pendingId: nil, tools: [], entryId: "preview-a4"),
+                message: ChatMessage(ts: now + 4, role: "assistant", content: "Cut off here", streaming: false, cutoffKind: "interrupt", turnId: nil, replyId: nil, pendingId: nil, entryId: "preview-a4"),
                 index: 4,
                 userName: "Alice"
             )
-            // Tool pill strip — committed message with three tools (finished/running/failed).
+            // Committed message with a turnId — tool rows for this turn render in
+            // the composer's task strip (ComposerTaskStrip), not on the bubble.
             MessageBubble(
                 message: ChatMessage(
                     ts: now + 5, role: "assistant",
                     content: "I checked the weather and your calendar.",
                     streaming: false, cutoffKind: nil, turnId: "c1",
-                    messageId: nil, pendingId: nil, tools: sampleTools, entryId: "preview-a5"
+                    replyId: nil, pendingId: nil, entryId: "preview-a5"
                 ),
                 index: 5,
                 userName: "Alice"
             )
-            // Tool pill strip — streaming message with tools still running.
+            // Streaming message with a turnId — same note as above.
             MessageBubble(
                 message: ChatMessage(
                     ts: now + 6, role: "assistant",
                     content: "Working on it...",
                     streaming: true, cutoffKind: nil, turnId: "c1",
-                    messageId: nil, pendingId: nil, tools: [sampleTools[1]], entryId: "preview-a6"
+                    replyId: nil, pendingId: nil, entryId: "preview-a6"
                 ),
                 index: 6,
                 avatarMode: .thinking,

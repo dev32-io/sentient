@@ -12,6 +12,7 @@
 // ---------------------------------------------------------------------------
 import AVFoundation
 import SwiftUI
+import MobileData
 
 // ── Mic-permission gate ───────────────────────────────────────────────────
 //
@@ -73,6 +74,7 @@ enum MicPermission {
     VStack {
         Spacer()
         Composer(
+            tasks: [],
             canSend: true,
             ttsEnabled: true,
             micActive: false,
@@ -94,6 +96,7 @@ enum MicPermission {
     VStack {
         Spacer()
         Composer(
+            tasks: [],
             canSend: true,
             ttsEnabled: true,
             micActive: true,
@@ -115,6 +118,41 @@ enum MicPermission {
     VStack {
         Spacer()
         Composer(
+            tasks: [],
+            canSend: true,
+            ttsEnabled: true,
+            micActive: false,
+            canInterrupt: true,
+            onSend: { _ in },
+            onMicPress: {},
+            onMicRelease: {},
+            onMicLock: {},
+            onMicStopContinuous: {},
+            onTtsToggle: {},
+            onInterrupt: {},
+            onFocusGained: {}
+        )
+    }
+    .background(DuskColors.bg)
+}
+
+#Preview("Task strip (running + done)") {
+    let now = Int64(Date().timeIntervalSince1970 * 1000)
+    VStack {
+        Spacer()
+        Composer(
+            tasks: [
+                TaskListItem(
+                    id: "t1", toolName: "web_search", kind: "foreground",
+                    status: "done", argsPreview: #"{"query":"current weather in Tokyo"}"#,
+                    startedAtMs: now, endedAtMs: KotlinLong(value: now + 1200)
+                ),
+                TaskListItem(
+                    id: "t2", toolName: "calendar_read", kind: "foreground",
+                    status: "running", argsPreview: #"{"date":"2026-06-04"}"#,
+                    startedAtMs: now + 1200, endedAtMs: nil
+                ),
+            ],
             canSend: true,
             ttsEnabled: true,
             micActive: false,

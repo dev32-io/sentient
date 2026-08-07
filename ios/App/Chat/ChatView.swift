@@ -127,10 +127,16 @@ struct ChatView: View {
         ConnectionBannerState.derive(status: connection.status, connectionLost: connection.connectionLost)
     }
 
-    // Build the display message list: committed + live bubble (with tasks injected).
+    // Build the display message list: committed + live bubble. Tool rows are
+    // NOT part of this — they render in the composer's task strip (`tasks`
+    // below), which has no bubble to anchor to.
     private var displayMessages: [ChatMessage] {
         vm.state.model.messagesForUi()
     }
+
+    /// Composer task strip's live rows — server-owned full state (a
+    /// `tasklist.state` frame), rendered as-is with nothing derived here.
+    private var tasks: [TaskListItem] { vm.state.model.tasks }
 
     private var pending: [PendingMessage] { vm.state.model.pending }
 
@@ -279,6 +285,7 @@ struct ChatView: View {
         }
         .safeAreaInset(edge: .bottom) {
             Composer(
+                tasks: tasks,
                 canSend: true,
                 ttsEnabled: connection.prefs.ttsEnabled,
                 micActive: voiceActive,
