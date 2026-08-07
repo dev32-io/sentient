@@ -29,11 +29,15 @@ const DEFAULT_TOOLSETS = ["memory", "todo", "session_search", "skills"];
  * when the caller didn't supply any. Used by the wizard and admin user
  * creation to give every new user the curated MCP/toolset starter set.
  *
- * Caller-provided permissions or toolsets are preserved as-is (any non-empty
- * value wins), so settings rotation and explicit zeros are respected.
+ * Caller-provided permissions or toolsets are preserved as-is, so settings
+ * rotation and explicit zeros are respected. For permissions that now includes
+ * an EMPTY table: `{}` is a table naming no server, i.e. every server off, and
+ * overwriting it with the starter set would silently turn tools back on for
+ * somebody who had switched them all off. Only an ABSENT table (never set) is
+ * seeded.
  */
 export function applyProfileDefaults(p: ProfileV1): ProfileV1 {
-  const permissionsIsEmpty = Object.keys(p.tools.permissions).length === 0;
+  const permissionsIsUnset = p.tools.permissions === undefined;
   const toolsetsIsEmpty = !p.tools.toolsets || p.tools.toolsets.length === 0;
   // Audio defaults are already applied by zod's .default() in the schema.
   // The explicit assignment here is for legacy callers who bypass schema.parse()
@@ -41,7 +45,7 @@ export function applyProfileDefaults(p: ProfileV1): ProfileV1 {
   return {
     ...p,
     tools: {
-      permissions: permissionsIsEmpty ? { ...DEFAULT_TOOL_PERMISSIONS } : p.tools.permissions,
+      permissions: permissionsIsUnset ? { ...DEFAULT_TOOL_PERMISSIONS } : p.tools.permissions,
       toolsets: toolsetsIsEmpty ? [...DEFAULT_TOOLSETS] : p.tools.toolsets,
     },
     audio: p.audio ?? AUDIO_PREFS_DEFAULT,

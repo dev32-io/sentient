@@ -10,7 +10,10 @@ test("applyProfileDefaults seeds tools.permissions and tools.toolsets when calle
     voice: { provider: "local-tts" as const, id: "abc" },
     audio: { ttsEnabled: true, channel: "voice" as const },
     persona: { template: "default", overrides: "" },
-    tools: { permissions: {}, toolsets: [] },
+    // OMITTED, not `{}` — an empty table is a table naming no server, which
+    // the ToolBroker reads as every server off, so it is preserved rather than
+    // seeded. Only "never set" gets the starter set.
+    tools: { toolsets: [] },
     compression: { threshold: 0.5 },
     advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" as const },
   };
@@ -42,6 +45,23 @@ test("applyProfileDefaults preserves caller-provided tools.permissions overrides
   const out = applyProfileDefaults(partial);
   expect(out.tools.permissions).toEqual({ searxng: { web_search: "allow" } });
   expect(out.tools.toolsets).toEqual(["memory"]);
+});
+
+test("applyProfileDefaults preserves an EMPTY tools.permissions — that is 'every server off', not 'unset'", () => {
+  const partial = {
+    schemaVersion: 1 as const,
+    userId: "u_test",
+    model: { provider: "openrouter" as const, id: "x" },
+    voice: { provider: "local-tts" as const, id: "y" },
+    audio: { ttsEnabled: true, channel: "voice" as const },
+    persona: { template: "default", overrides: "" },
+    tools: { permissions: {}, toolsets: ["memory"] },
+    compression: { threshold: 0.5 },
+    advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" as const },
+  };
+  // Seeding the starter set here would silently turn five servers back on for
+  // somebody who had just switched every one of them off.
+  expect(applyProfileDefaults(partial).tools.permissions).toEqual({});
 });
 
 describe("audio defaults", () => {

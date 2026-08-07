@@ -20,10 +20,10 @@ describe("profile tools.permissions", () => {
       tools: { enabled: { home_assistant: [], searxng: ["web_search"] }, toolsets: ["memory"] },
     });
     // An enabled server with an empty narrowing inherits: no explicit entries.
-    expect(parsed.tools.permissions.home_assistant).toEqual({});
+    expect(parsed.tools.permissions?.home_assistant).toEqual({});
     // A narrowed server keeps its named tools inheriting and says nothing about
     // the rest — the catalog decides what else exists, and unnamed tools go off.
-    expect(parsed.tools.permissions.searxng?.web_search).toBeUndefined();
+    expect(parsed.tools.permissions?.searxng?.web_search).toBeUndefined();
     // `enabled` no longer exists on ProfileV1["tools"]'s type at all; cast to
     // check the parsed runtime object actually dropped the key too (guards
     // against a future zod `.passthrough()` accidentally leaking it back in).
@@ -35,7 +35,7 @@ describe("profile tools.permissions", () => {
       ...BASE,
       tools: { permissions: { home_assistant: { ha_search: "ask", ha_call_service: "off" } } },
     });
-    expect(parsed.tools.permissions.home_assistant?.ha_search).toBe("ask");
+    expect(parsed.tools.permissions?.home_assistant?.ha_search).toBe("ask");
     expect(() => profileV1Schema.parse({ ...BASE, tools: { permissions: { s: { t: "auto" } } } })).toThrow();
   });
 });

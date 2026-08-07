@@ -272,6 +272,10 @@ export interface ToolBrokerDeps {
    * so a settings save takes effect on the next turn without rebuilding the
    * broker. Nothing here is captured at construction.
    *
+   * `undefined` means NEVER SET — everything inherits `mcp-policy.yaml`. An
+   * empty object is a different answer: a table naming no server, so every
+   * server is absent and therefore off. Do not collapse the two.
+   *
    * ASYNC, unlike the rest of this deps object. The map lives in a file
    * (`profile.json`), and the two ways to make it synchronous are both worse: a
    * blocking `readFileSync` on the WS event loop, or a cached snapshot that is
@@ -280,7 +284,7 @@ export interface ToolBrokerDeps {
    * read-before-resolution bug `ready()`'s own doc comment was written for. The
    * composition root supplies `tools/user-tool-permissions.ts`'s reader.
    */
-  toolPermissions: () => Promise<ToolPermissionMap>;
+  toolPermissions: () => Promise<ToolPermissionMap | undefined>;
   /** Resolves an L3 `confirm` decision. The composition root binds this to the
    *  SESSION's permission broker (runtime/session-permission-broker.ts): it
    *  resolves `true`/`false` on the FIRST human answer from any attached
@@ -359,12 +363,13 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     return warmup;
   }
 
-  // The owner's permission table, as of the last `refreshPermissions()`. Held
-  // as a snapshot ONLY because `definitions()` is synchronous by contract and
-  // the map lives in a file; every asynchronous reader re-reads it first (see
-  // `ready` and `resolveDecision`). Starts empty, which reads as "unset" —
-  // see `permissionFor` for why that is not "everything off".
-  let permissions: ToolPermissionMap = {};
+  // The owner's permission table, as of the last `refreshPermissions()`, or
+  // `undefined` for "never set". Held as a snapshot ONLY because
+  // `definitions()` is synchronous by contract and the table lives in a file;
+  // every asynchronous reader re-reads it first (see `ready` and
+  // `resolveDecision`). Starts unset, which is the honest state before the
+  // first read — and `undefined` is NOT `{}`; see `permissionFor`.
+  let permissions: ToolPermissionMap | undefined;
 
   async function refreshPermissions(): Promise<void> {
     try {
@@ -376,7 +381,7 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
       log.warn("tool-broker.permissions.refresh-failed", {
         sessionId,
         reason: err instanceof Error ? err.message : String(err),
-        servers: Object.keys(permissions).length,
+        servers: permissions === undefined ? 0 : Object.keys(permissions).length,
       });
     }
   }
@@ -408,17 +413,18 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
    * asymmetry is confined to the server level and goes away for good once the
    * clients write the explicit `{"*": "off"}` spelling instead of deleting.
    *
-   * THE EMPTY-TABLE ESCAPE HATCH. `permissions` is `{}` whenever the field is
-   * unset — zod's `.default({})` makes "absent" and "empty" the same value —
-   * and whenever a profile could not be read at all. An empty table therefore
-   * cannot carry intent, so it does not carry "off": it inherits everything.
-   * Without this, one unreadable `profile.json` blacks out every tool in the
-   * household with nothing but a WARN to show for it.
+   * UNSET IS NOT EMPTY. `undefined` here means the person never set a table,
+   * so everything inherits. An empty OBJECT is a table that names no server,
+   * i.e. every server off — which is exactly what "turn all five servers off in
+   * the UI" produces, and what `user-tool-permissions.ts` reports for a profile
+   * it cannot read. `ProfileV1["tools"]["permissions"]` is `.optional()` rather
+   * than `.default({})` precisely so these two remain distinguishable all the
+   * way down to this line.
    */
   function permissionFor(toolName: string): ToolPermission | undefined {
     const serverName = serverOf(toolName);
     if (serverName === null) return undefined;
-    if (Object.keys(permissions).length === 0) return undefined;
+    if (permissions === undefined) return undefined;
     const perServer = permissions[serverName];
     if (perServer === undefined) return "off";
     return perServer[toolName] ?? perServer[ALL_TOOLS_PERMISSION_KEY];
@@ -762,12 +768,19 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
       return { content: `Unknown tool: ${inv.name}`, isError: true };
     }
 
+    // ALLOW-LISTED, not deny-listed. `PdpDecision` still admits
+    // `{action: "confirm"}` — `resolveDecision` resolves every confirm itself
+    // today, but it is no longer the only producer of a decision, and the
+    // natural `auto` implementation (a classifier that answers "ask") would
+    // return exactly that. Testing for `deny` would have dispatched it
+    // unmediated; testing for `allow` cannot.
     const decision = await resolveDecision(inv);
-    if (decision.action === "deny") {
+    if (decision.action !== "allow") {
       log.warn("tool-broker.dispatch.denied", {
         sessionId,
         tool: inv.name,
         toolCallId: inv.toolCallId,
+        action: decision.action,
         reason: decision.reason,
       });
       return { content: decision.reason, isError: true };

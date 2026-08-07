@@ -29,9 +29,9 @@ describe("migrateWebToolsEnabled", () => {
 
     expect(profileStore.save).toHaveBeenCalledTimes(1);
     const [saved] = (profileStore.save.mock.calls[0] ?? []) as [ProfileV1];
-    expect(saved.tools.permissions.duckduckgo).toBeUndefined();
-    expect(saved.tools.permissions.searxng).toEqual({});
-    expect(saved.tools.permissions.fetch).toEqual({});
+    expect(saved.tools.permissions?.duckduckgo).toBeUndefined();
+    expect(saved.tools.permissions?.searxng).toEqual({});
+    expect(saved.tools.permissions?.fetch).toEqual({});
   });
 
   it("is a no-op when duckduckgo key is absent (idempotent)", async () => {
@@ -62,8 +62,8 @@ describe("migrateWebToolsEnabled", () => {
     await migrateWebToolsEnabled({ userStore, profileStore });
 
     const [saved] = (profileStore.save.mock.calls[0] ?? []) as [ProfileV1];
-    expect(saved.tools.permissions.home_assistant).toEqual({ ha_get_state: "allow" });
-    expect(saved.tools.permissions.music_assistant).toEqual({});
+    expect(saved.tools.permissions?.home_assistant).toEqual({ ha_get_state: "allow" });
+    expect(saved.tools.permissions?.music_assistant).toEqual({});
   });
 
   it("logs and skips users whose profile fails to load", async () => {

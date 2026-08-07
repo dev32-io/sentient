@@ -1,8 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { ALL_TOOLS_PERMISSION_KEY } from "@sentient/config";
 import type { OrchestratorConfig, ToolPermission, ToolPermissionMap } from "@sentient/config";
+import type { Result } from "@sentient/protocol";
 import { createAccessManager } from "../access/access-manager.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
+import type { ProfileStore, ProfileStoreError } from "../profile-store/profile-store.js";
+import type { ProfileV1 } from "../profile-store/profile-types.js";
 import type { PolicyContext, PolicyDecision, PolicyEngine } from "../security/policy-engine.js";
 import type { SessionStore } from "../store/session-store.js";
 import type { McpClient, McpToolRef } from "./mcp-client.js";
@@ -10,6 +13,7 @@ import type { BackgroundToolRunner } from "./tool-broker.js";
 import { createToolBroker } from "./tool-broker.js";
 import { ConfirmUnavailableError } from "./tool-types.js";
 import type { DelegationProgress, ToolInvocation, ToolResult } from "./tool-types.js";
+import { createToolPermissionsReader } from "./user-tool-permissions.js";
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -46,15 +50,45 @@ function neverSettles<T>(): Promise<T> {
   return new Promise<T>(() => {});
 }
 
-/** The pre-permissions world: nobody has touched a dropdown, so every tool
- *  inherits `mcp-policy.yaml`. Every test below that is NOT about permissions
- *  uses this, so their expectations still describe the operator policy alone. */
-const noUserPermissions = async (): Promise<ToolPermissionMap> => ({});
+/** The pre-permissions world: the table was never set, so every tool inherits
+ *  `mcp-policy.yaml`. `undefined`, NOT `{}` — an empty table is a table naming
+ *  no server, i.e. every server off. Every test below that is not about
+ *  permissions uses this, so their expectations still describe the operator
+ *  policy alone. */
+const noUserPermissions = async (): Promise<ToolPermissionMap | undefined> => undefined;
 
 /** A table naming one server, which is what switches the server-level rule on
- *  (an EMPTY table reads as "unset" — see `permissionFor`). */
+ *  (an UNSET table inherits everything — see `permissionFor`). */
 function permissionsFor(serverName: string, tools: Record<string, ToolPermission>): () => Promise<ToolPermissionMap> {
   return async () => ({ [serverName]: tools });
+}
+
+function profileFixture(permissions: ProfileV1["tools"]["permissions"]): ProfileV1 {
+  return {
+    schemaVersion: 1,
+    userId: capability.ownerUserId,
+    model: { provider: "openrouter", id: "google/gemini-2.5-flash" },
+    voice: { provider: "local-tts", id: "default" },
+    audio: { ttsEnabled: true, channel: "voice" },
+    persona: { template: "default", overrides: "" },
+    tools: { permissions, toolsets: [] },
+    compression: { threshold: 0.5 },
+    advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" },
+  };
+}
+
+/** Answers `get` from a queue, so one broker can read a real table and then
+ *  find the file unreadable — the sequence the fail-closed rule is about. */
+function profileStoreReturning(...results: Array<Result<ProfileV1, ProfileStoreError>>): ProfileStore {
+  let i = 0;
+  const refuse = () => {
+    throw new Error("not used by the permissions reader");
+  };
+  return {
+    get: async () => results[Math.min(i++, results.length - 1)] as Result<ProfileV1, ProfileStoreError>,
+    save: refuse,
+    remove: refuse,
+  };
 }
 
 function fakeStore(): SessionStore {
@@ -1085,10 +1119,9 @@ describe("ToolBroker — per-tool permissions", () => {
     expect(broker.definitions()).toEqual([]);
   });
 
-  it("treats an EMPTY table as unset, not as everything-off", async () => {
-    const mcp = fakeMcp([weatherTool]);
+  it("an UNSET table inherits everything — adding the field changed nothing on its own", async () => {
     const broker = createToolBroker({
-      mcp,
+      mcp: fakeMcp([weatherTool]),
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
       principal,
@@ -1096,14 +1129,33 @@ describe("ToolBroker — per-tool permissions", () => {
       sessionId: "session-1",
       backgroundTools: new Map(),
       config: toolsConfig,
-      // zod's `.default({})` makes "field absent" and "empty" the same value,
-      // and an unreadable profile produces it too — so it cannot carry intent.
-      toolPermissions: noUserPermissions,
+      toolPermissions: noUserPermissions, // undefined — never set
       requestConfirm: async () => true,
     });
     await broker.ready();
 
     expect(broker.definitions().map((d) => d.name)).toEqual(["get_weather"]);
+  });
+
+  it("an EMPTY table is a table, so every server is off — 'unset' and 'empty' are not the same answer", async () => {
+    const broker = createToolBroker({
+      mcp: fakeMcp([weatherTool]),
+      policy: fakePolicy({ action: "allow" }),
+      store: fakeStore(),
+      principal,
+      capability,
+      sessionId: "session-1",
+      backgroundTools: new Map(),
+      config: toolsConfig,
+      // What "turn all five servers off in the UI" produces, and what the
+      // reader reports for a profile it cannot parse. `permissions` is
+      // `.optional()` rather than `.default({})` exactly so this is reachable.
+      toolPermissions: async () => ({}),
+      requestConfirm: async () => true,
+    });
+    await broker.ready();
+
+    expect(broker.definitions()).toEqual([]);
   });
 
   it("never hides a background tool, which belongs to no server and so has no key", async () => {
@@ -1131,7 +1183,9 @@ describe("ToolBroker — per-tool permissions", () => {
   });
 
   it("re-reads the table per turn, so a settings save lands without rebuilding the broker", async () => {
-    let table: ToolPermissionMap = {};
+    // Explicitly unset to begin with — the state a profile is in before
+    // anybody touches a dropdown.
+    let table: ToolPermissionMap | undefined = undefined;
     const broker = createToolBroker({
       mcp: fakeMcp([weatherTool]),
       policy: fakePolicy({ action: "allow" }),
@@ -1154,6 +1208,78 @@ describe("ToolBroker — per-tool permissions", () => {
     await broker.ready();
 
     expect(broker.definitions()).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The whole path, from a real `profile.json` read to the model's tool array.
+// The two suites above use hand-written getters; this one wires the actual
+// reader over a fake ProfileStore, because the failure it pins lives in the
+// seam BETWEEN them: a reader that collapsed every store error into "unset"
+// would re-advertise and re-dispatch a tool somebody had switched off, and both
+// suites above would still be green.
+// ---------------------------------------------------------------------------
+
+describe("ToolBroker — an unreadable profile does not resurrect a switched-off tool", () => {
+  function brokerOverStore(store: ProfileStore) {
+    const mcp = fakeMcp([weatherTool]);
+    let confirmCalls = 0;
+    const broker = createToolBroker({
+      mcp,
+      // The operator allow-tiers it, which is what makes this dangerous: if the
+      // person's `off` is lost, the tool runs with no prompt at all.
+      policy: fakePolicy({ action: "allow" }),
+      store: fakeStore(),
+      principal,
+      capability,
+      sessionId: "session-1",
+      backgroundTools: new Map(),
+      config: toolsConfig,
+      toolPermissions: createToolPermissionsReader({ profileStore: store, userId: capability.ownerUserId }),
+      requestConfirm: async () => {
+        confirmCalls += 1;
+        return true;
+      },
+    });
+    return { broker, mcp, confirmCalls: () => confirmCalls };
+  }
+
+  it("SECURITY: a corrupt profile.json keeps an off tool out of tools[] and out of dispatch", async () => {
+    const { broker, mcp } = brokerOverStore(profileStoreReturning({ ok: false, error: "corrupt-file" }));
+
+    await broker.ready();
+    expect(broker.definitions()).toEqual([]);
+
+    const result = await broker.dispatch(makeInvocation());
+    if ("taskId" in result) throw new Error("expected a ToolResult, got a background handle");
+    expect(result.isError).toBe(true);
+    expect(mcp.callToolCalls).toHaveLength(0);
+  });
+
+  it("SECURITY: a profile that goes corrupt AFTER a read keeps that read's deny", async () => {
+    const denied = profileFixture({ "test-mcp": { get_weather: "deny" } });
+    const { broker, mcp, confirmCalls } = brokerOverStore(
+      profileStoreReturning({ ok: true, value: denied }, { ok: false, error: "io-error" }),
+    );
+
+    await broker.ready(); // reads the real table
+    const result = await broker.dispatch(makeInvocation()); // store has since gone unreadable
+
+    if ("taskId" in result) throw new Error("expected a ToolResult, got a background handle");
+    expect(result.content).toContain("Deny");
+    expect(confirmCalls()).toBe(0);
+    expect(mcp.callToolCalls).toHaveLength(0);
+  });
+
+  it("a missing profile is genuinely unset, so the operator policy decides as it always did", async () => {
+    const { broker, mcp } = brokerOverStore(profileStoreReturning({ ok: false, error: "not-found" }));
+
+    await broker.ready();
+    expect(broker.definitions().map((d) => d.name)).toEqual(["get_weather"]);
+
+    const result = await broker.dispatch(makeInvocation());
+    expect(result).toEqual({ content: "result from test-mcp/get_weather", isError: false });
+    expect(mcp.callToolCalls).toHaveLength(1);
   });
 });
 

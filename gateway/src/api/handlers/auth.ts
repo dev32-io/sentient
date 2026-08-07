@@ -210,7 +210,11 @@ function buildDefaultProfileBody(secretsStore?: SecretsStore): Omit<ProfileV1, "
     voice: { provider: "local-tts", id: "default" },
     audio: AUDIO_PREFS_DEFAULT,
     persona: { template: "default", overrides: "" },
-    tools: { permissions: {}, toolsets: [] },
+    // `permissions` is OMITTED, not `{}`: an empty table is a table naming no
+    // server, which the ToolBroker reads as every server off. Absent means
+    // "never set", which is what `applyProfileDefaults` seeds the starter set
+    // into a line later.
+    tools: { toolsets: [] },
     compression: { threshold: 0.5 },
     advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" },
   };

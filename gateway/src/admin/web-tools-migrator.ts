@@ -43,7 +43,9 @@ export async function migrateWebToolsEnabled(deps: WebToolsMigrationDeps): Promi
     }
     const profile = profileResult.value;
     const permissions = profile.tools.permissions;
-    const hasLegacy = "duckduckgo" in permissions;
+    // An unset table has no keys to rename, and writing one here would turn
+    // "never set → inherit" into "these five servers, everything else off".
+    const hasLegacy = permissions !== undefined && "duckduckgo" in permissions;
     if (!hasLegacy) {
       log.debug("migration.noop", { userId: user.userId });
       continue;
