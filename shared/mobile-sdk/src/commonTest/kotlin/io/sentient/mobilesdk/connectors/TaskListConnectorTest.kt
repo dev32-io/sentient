@@ -38,4 +38,36 @@ class TaskListConnectorTest {
         c.handle(ServerMessage.TurnCompleted(turnId = "t1"))
         assertEquals(0, c.list().size)
     }
+
+    @Test
+    fun clear_dropsEveryRowAndRefiresOnUpdate() {
+        val seen = mutableListOf<Pair<String?, List<TaskListItem>>>()
+        val c = TaskListConnector(onUpdate = { turnId, items -> seen += turnId to items })
+        c.handle(
+            ServerMessage.TaskListState(
+                turnId = "t1",
+                items = listOf(TaskListItem(id = "a", toolName = "x", status = "running")),
+            ),
+        )
+
+        c.clear()
+
+        assertEquals(emptyList(), c.list())
+        assertNull(c.turnId())
+        // The re-fire is the whole point: it's what lets a consumer (SentientSdk.tasks)
+        // actually observe the clear, unlike the retired TaskStatusConnector.clear(),
+        // which reset internal state but never re-invoked its callback and so left
+        // every consumer holding stale rows forever.
+        assertEquals(listOf("t1" to listOf(TaskListItem(id = "a", toolName = "x", status = "running")), null to emptyList()), seen)
+    }
+
+    @Test
+    fun clear_isANoOpWhenAlreadyEmpty() {
+        val seen = mutableListOf<Pair<String?, List<TaskListItem>>>()
+        val c = TaskListConnector(onUpdate = { turnId, items -> seen += turnId to items })
+
+        c.clear()
+
+        assertEquals(emptyList<Pair<String?, List<TaskListItem>>>(), seen, "no frame ever arrived — nothing to re-fire")
+    }
 }

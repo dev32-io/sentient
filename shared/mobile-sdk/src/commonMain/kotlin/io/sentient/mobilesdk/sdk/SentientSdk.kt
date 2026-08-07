@@ -293,14 +293,21 @@ class SentientSdk(
      * retires them: without this, conversation A's background-task rows render inside
      * conversation B and may never self-clear.
      *
+     * The composer task strip's [tasks] mirror has the SAME leak for a different
+     * reason: the gateway's `tasklist.state` is a per-session projector that only
+     * re-emits on its own mutations, never on `conversation.activate`, so a switch
+     * into a conversation with no task activity of its own would otherwise leave
+     * [tasks] holding the previous conversation's last-known rows forever.
+     *
      * Deliberately NOT folded into [clearActiveToIdle] (that also runs on interrupt /
      * stuck-watchdog, where the conversation is unchanged and its in-flight
-     * delegations must keep rendering) and NOT into [fireSwitch] (the reconnect
+     * delegations/tasks must keep rendering) and NOT into [fireSwitch] (the reconnect
      * re-establish path re-activates the SAME conversation and must preserve them).
      */
     private fun clearConversationScopedState(trigger: String) {
         log.info("conversation.scope.clear", mapOf("trigger" to trigger))
         connectors.delegation.clear()
+        connectors.tasks.clear()
     }
 
     private fun onStuckTimeout() {
