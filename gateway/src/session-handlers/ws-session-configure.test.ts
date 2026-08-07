@@ -176,6 +176,7 @@ function servicesWithRuntime(replayRegistry: ReplayRegistry, ws: FakeWs, accessM
       spy.snapshotCalls += 1;
       sendConnectionFrame(asWs(ws), { type: "conversation.snapshot", items: [] });
     },
+    emitTaskList: () => {},
     dispose: () => {},
     turnState: EMPTY_TURN_STATE,
   } as unknown as SessionRuntime;
@@ -401,6 +402,7 @@ function servicesRecordingPartition(
   const spy: PartitionSpy = { partitionIds: [], services: {} as GatewayServices };
   const runtime = {
     emitConversationSnapshot: () => sendConnectionFrame(asWs(ws), { type: "conversation.snapshot", items: [] }),
+    emitTaskList: () => {},
     dispose: () => {},
     turnState: EMPTY_TURN_STATE,
   } as unknown as SessionRuntime;
@@ -609,6 +611,7 @@ function servicesTrackingRuntimes(replayRegistry: ReplayRegistry, accessManager:
       spy.minted.push(record);
       const runtime = {
         emitConversationSnapshot: () => {},
+        emitTaskList: () => {},
         dispose: () => {
           record.disposeCount += 1;
         },

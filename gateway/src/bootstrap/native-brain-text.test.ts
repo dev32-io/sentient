@@ -125,6 +125,9 @@ function recordingEmitter(): RecordingEmitter {
     permissionRequest: () => {},
     permissionResolved: () => {},
     delegationProgress: () => {},
+    // The task-list strip is not exercised by this text-only walk either —
+    // same rationale as the audio/permission/delegation trio above.
+    taskList: () => {},
     // Titling is session METADATA, not turn output — this harness asserts on
     // the turn stream only.
     sessionTitle: () => {},

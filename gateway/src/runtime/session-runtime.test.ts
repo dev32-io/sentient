@@ -148,7 +148,8 @@ interface RecordedEvent {
     | "turnAborted"
     | "playbackStop"
     | "conversationSnapshot"
-    | "conversationEntry";
+    | "conversationEntry"
+    | "taskList";
   turnId: string;
   /** Set on `turnAborted` and `playbackStop` — the wire's cutoff kind. */
   cutoff?: CutoffKind;
@@ -184,6 +185,7 @@ function recordingEmitter(): RecordingEmitter {
     playbackStop: (turnId, reason) => events.push({ type: "playbackStop", turnId, cutoff: reason }),
     conversationSnapshot: (items) => events.push({ type: "conversationSnapshot", turnId: "", items }),
     conversationEntry: (item, turnId) => events.push({ type: "conversationEntry", turnId: turnId ?? "", item }),
+    taskList: (turnId, items) => events.push({ type: "taskList", turnId: turnId ?? "", items: items as never }),
     // Not part of any assertion in this file — SessionRuntime never drives
     // these (audio is the voice pipeline's, permission/delegation the PDP's
     // and broker's). Present only to satisfy the TurnEmitter contract.
@@ -844,6 +846,7 @@ describe("SessionRuntime — isolation", () => {
       playbackStop: (t, reason) => events.push({ type: "playbackStop", turnId: t, cutoff: reason }),
       conversationSnapshot: (items) => events.push({ type: "conversationSnapshot", turnId: "", items }),
       conversationEntry: (item, t) => events.push({ type: "conversationEntry", turnId: t ?? "", item }),
+      taskList: () => {},
       audioStart: () => {},
       audioFrame: () => {},
       audioDone: () => {},
@@ -2554,6 +2557,56 @@ describe("SessionRuntime — titling fires on the first COMPLETED reply", () => 
     releaseTitle?.();
     await waitFor(() => !runtime.hasAuxiliaryTaskInFlight);
 
+    runtime.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task list — the composer strip (runtime/task-list.ts) driven live.
+// ---------------------------------------------------------------------------
+
+describe("SessionRuntime — task list", () => {
+  it("publishes the strip on dispatch and clears foreground rows at the turn boundary", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/tasklist` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = fakeProvider(async function* (callIndex) {
+      if (callIndex === 1) {
+        yield {
+          type: "tool_call",
+          toolCall: { id: "call_1", type: "function", function: { name: "get_weather", arguments: "{}" } },
+        };
+        yield { type: "done", finishReason: "tool_calls" };
+        return;
+      }
+      yield { type: "text", content: "sunny out" };
+      yield { type: "done", finishReason: "stop" };
+    });
+    const broker = fakeBroker([weatherDef], async () => ({ content: "sunny", isError: false }));
+    const emitter = recordingEmitter();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-tasklist",
+      accessManager: am,
+      provider,
+      broker,
+      emitter,
+      timeZone: { zone: () => "UTC" },
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "weather?" });
+    await waitUntilIdle(runtime);
+
+    const lists = emitter.events.filter((e) => e.type === "taskList");
+    expect(lists.length).toBeGreaterThan(1);
+    // Mid-turn the strip carried the running call…
+    expect(lists.some((e) => (e.items ?? []).length === 1)).toBe(true);
+    // …and the last publish, at the turn boundary, is empty: a foreground call
+    // is awaited by the loop, so none of it outlives the turn.
+    expect(lists[lists.length - 1]?.items ?? []).toEqual([]);
     runtime.dispose();
   });
 });

@@ -35,7 +35,13 @@
 // vanishes the moment `turn.completed` lands, and the user's own message
 // never renders at all.
 
-import type { ConversationFeedItem, GatewayMessage, TurnAudioEncoding, TurnTrigger } from "@sentient/protocol";
+import type {
+  ConversationFeedItem,
+  GatewayMessage,
+  TaskListItem,
+  TurnAudioEncoding,
+  TurnTrigger,
+} from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
 import type { ToolUpdate } from "../runtime/react-loop.js";
 import type {
@@ -157,6 +163,15 @@ export function createWsTurnEmitter(sink: SessionFrameSink, sessionId: string): 
         startedAtMs,
         ...(isTerminal ? { endedAtMs: now } : {}),
       });
+    },
+
+    taskList(turnId: string | null, items: TaskListItem[]) {
+      log.debug("turn-emitter.task-list", {
+        sessionId,
+        turnId,
+        count: items.length,
+      });
+      emit({ type: "tasklist.state", turnId, items });
     },
 
     turnCompleted(turnId: string) {

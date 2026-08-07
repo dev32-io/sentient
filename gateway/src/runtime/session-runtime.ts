@@ -82,7 +82,8 @@
 //     answers one by exiting the process: the whole gateway, for every
 //     connected user, because one tab reloaded.
 //   - the PUBLIC GESTURES. `submit` (the background-completion sink holds this
-//     runtime by reference), `bargeIn`, `interrupt`, `emitConversationSnapshot`.
+//     runtime by reference), `bargeIn`, `interrupt`, `emitConversationSnapshot`,
+//     `emitTaskList`.
 //
 // So every one of them is inert after `dispose()` — a WARN-logged no-op, not a
 // caught throw. Nothing is swallowed by that: a GENUINE store failure on a
@@ -111,6 +112,7 @@ import { createConversationFeed } from "./conversation-feed.js";
 import type { ReactLoopDeps } from "./react-loop.js";
 import { type TurnOutcome, runTurn } from "./react-loop.js";
 import type { Stimulus } from "./stimulus.js";
+import { createTaskListProjector } from "./task-list.js";
 import { runTitler } from "./titler.js";
 import type { TurnEmitter } from "./turn-emitter.js";
 import { type TurnStateSnapshot, type TurnStateTracker, createTurnStateTracker } from "./turn-state-snapshot.js";
@@ -196,6 +198,12 @@ export interface SessionRuntime {
    *  recovered resume replays the exact frames the client missed instead.
    *  A no-op after `dispose()`. */
   emitConversationSnapshot(): void;
+  /** Publish the live task list to the attaching window. Called once per
+   *  `session.configure`, alongside `emitConversationSnapshot`. The frame is
+   *  full state and identical for every window, so re-emitting it on the
+   *  session lane cannot clobber a peer's view — which is why the strip needs
+   *  no connection-lane twin of its own. A no-op after `dispose()`. */
+  emitTaskList(): void;
   /**
    * An AUXILIARY TASK (spec §6) is running for this session — today, the
    * titler. Feeds task 8's retention term of the same name, so a session is
@@ -379,6 +387,20 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     // turn boundary are what release it.
     currentReplyId: () => inFlight?.replyId ?? null,
   });
+
+  // The composer strip's live rows (runtime/task-list.ts). Pure and
+  // I/O-free — this runtime is the one thing that knows when a foreground row
+  // dies with its turn and when a background one outlives it.
+  const taskList = createTaskListProjector({ now: () => Date.now() });
+
+  /** Publish the strip. Called whenever the projector reports a real change,
+   *  and once per attach so a window that joins mid-turn sees the live rows
+   *  without a frame type of its own. */
+  function publishTaskList(): void {
+    // Optional on the interface (turn-emitter.ts) — guarded so an emitter that
+    // predates the strip (a frozen test double) is still a valid TurnEmitter.
+    emitter.taskList?.(taskList.turnId(), taskList.items());
+  }
 
   let lastProcessedSeq = 0;
   // Per-session: a summarizer that keeps failing must not burn one provider
@@ -666,6 +688,9 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     // frame below. The client drops its live bubble on `turn.completed`, so the
     // committed twin has to already be there or the reply visibly vanishes.
     feed.publishAll();
+    // Foreground rows die with their turn (runtime/task-list.ts); background
+    // rows (a `delegateTask` dispatch) survive it and stay on the strip.
+    if (taskList.onTurnEnded(turnId)) publishTaskList();
 
     log.info("session-runtime.turn.end", {
       userId,
@@ -829,6 +854,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     turnText = ""; // fresh accumulator for this turn — see the field's doc comment above.
 
     emitter.turnStarted(turnId, trigger);
+    if (taskList.onTurnStarted(turnId)) publishTaskList();
     log.info("session-runtime.turn.start", { userId, sessionId, turnId, trigger, lastProcessedSeq });
 
     const loopDeps: ReactLoopDeps = {
@@ -882,6 +908,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
         // (if any) start counting fresh.
         turnText = "";
         emitter.toolUpdate(id, u);
+        if (taskList.onToolUpdate(id, u)) publishTaskList();
         // The loop just made this iteration's narration and/or a tool
         // round-trip durable — publish whatever of it is now content-final.
         feed.publishSettled();
@@ -1054,6 +1081,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     bargeIn: whenLive("bargeIn", cancellation.bargeIn),
     interrupt: whenLive("interrupt", cancellation.interrupt),
     emitConversationSnapshot: whenLive("emitConversationSnapshot", () => feed.snapshot()),
+    emitTaskList: whenLive("emitTaskList", publishTaskList),
     cutUnheardSpeech: whenLive("cutUnheardSpeech", () => {
       const cut = voice?.cancelAudio() ?? [];
       if (cut.length === 0) return;

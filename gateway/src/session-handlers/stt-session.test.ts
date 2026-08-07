@@ -124,6 +124,7 @@ function stubRuntime(): StubRuntime {
     interrupt: () => {},
     turnState: EMPTY_TURN_STATE,
     emitConversationSnapshot: () => {},
+    emitTaskList: () => {},
     cutUnheardSpeech: () => {},
   };
   return { runtime, submitted, bargeIns };

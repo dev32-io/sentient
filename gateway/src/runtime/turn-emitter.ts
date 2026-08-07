@@ -20,6 +20,7 @@ import type {
   DelegationProgressMessage,
   PermissionRequestMessage,
   PermissionResolvedMessage,
+  TaskListItem,
   TurnAudioEncoding,
   TurnTrigger,
 } from "@sentient/protocol";
@@ -83,6 +84,21 @@ export interface TurnEmitter {
    *  auto-deny, or turn abort — so a client dialog is never orphaned. */
   permissionResolved(res: PermissionResolution): void;
   delegationProgress(p: DelegationProgress): void;
+  /**
+   * The session's whole live task list (runtime/task-list.ts) — every row, every
+   * time. FULL STATE by design: last-one-wins makes replay, fan-out and a late
+   * joiner all the same operation, and leaves the client with nothing to
+   * reconcile. `turnId` is null when only background rows outlive their turn.
+   *
+   * OPTIONAL, unlike every sibling on this interface — the one deliberate
+   * exception. `reply-bubble-convergence.test.ts` pins its own `CapturingEmitter`
+   * literal and is frozen (task 6 brief: do not edit it), so a REQUIRED method
+   * here would either break that file's typecheck or force an edit to a test
+   * this task must leave untouched. Every real implementation (below, and
+   * `ws-turn-emitter.ts`) still provides it; callers reach it through
+   * `?.()` for exactly this reason.
+   */
+  taskList?(turnId: string | null, items: TaskListItem[]): void;
   /**
    * This session's title changed (spec §6) — the gateway's OWN titling push,
    * not the echo of a client's rename (`sessions.renamed`).
@@ -174,6 +190,14 @@ export function createLoggingTurnEmitter(): TurnEmitter {
         turnId: p.turnId,
         agent: p.agent,
         status: p.status,
+      });
+    },
+    taskList(turnId, items) {
+      // Row COUNT and statuses only — `argsPreview` is user content.
+      log.debug("turn-emitter.task-list", {
+        turnId,
+        count: items.length,
+        statuses: items.map((i) => i.status),
       });
     },
     sessionTitle(title, provenance) {

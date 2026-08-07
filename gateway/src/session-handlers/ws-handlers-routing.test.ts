@@ -106,6 +106,7 @@ function stubRuntime(): StubRuntime {
       interruptCalls += 1;
     },
     emitConversationSnapshot: () => {},
+    emitTaskList: () => {},
     cutUnheardSpeech: () => {},
     turnState: EMPTY_TURN_STATE,
   };

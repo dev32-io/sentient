@@ -379,7 +379,14 @@ function sendConversationSnapshot(
   conversationId: string,
   userId: string,
 ): void {
-  if (completeAttachWithSnapshot(ws, services)) return;
+  if (completeAttachWithSnapshot(ws, services)) {
+    // The strip (runtime/task-list.ts) rides beside the committed feed: a
+    // fresh joiner has no other way to learn what is already running. Full
+    // state on the session lane, so a redundant re-broadcast to windows
+    // already attached is harmless (spec: `SessionRuntime.emitTaskList`).
+    ws.data.runtime?.emitTaskList();
+    return;
+  }
   log.warn("session-configure.no-conversation-snapshot", {
     sessionId,
     conversationId,
