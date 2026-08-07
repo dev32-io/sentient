@@ -71,4 +71,29 @@ enum ComposerLayout {
     static let glowOpacity: Double = 0.28
     /// Amber glow opacity while the mic is active (listening state).
     static let glowListeningOpacity: Double = 0.45
+
+    // ── Task-strip pill width ────────────────────────────────────────────
+    //
+    // Mirrors webui's `clamp(112px, 42cqw, 200px)` (components.css
+    // `.tool-pill`) and Android's `taskPillMinWidth` (ComposerTaskStripLayout
+    // .kt) exactly — keep all three in lockstep, or the same turn looks
+    // inconsistent depending on which client renders it.
+
+    /// Task pill min-width floor (pt) — the readable floor on a narrow screen.
+    static let taskPillMinWidthFloor: CGFloat = 112
+    /// Task pill min-width ceiling (pt) — also its hard max-width; a name
+    /// longer than this truncates (existing `.lineLimit(1)` truncation).
+    static let taskPillMaxWidth: CGFloat = 200
+    /// Fraction of the strip's own width a pill's floor scales with — puts
+    /// roughly 2.4 pills in view at any width in the unclamped middle band
+    /// (stripWidth ~267–476pt); outside that band the floor/ceiling
+    /// deliberately trade pill-count consistency for a readable width.
+    static let taskPillWidthStripFraction: CGFloat = 0.42
+
+    /// Derives a task pill's minimum width (pt) from the strip's OWN width,
+    /// so the same rough number of pills is visible regardless of screen
+    /// size or how many tasks exist.
+    static func taskPillMinWidth(stripWidth: CGFloat) -> CGFloat {
+        min(max(stripWidth * taskPillWidthStripFraction, taskPillMinWidthFloor), taskPillMaxWidth)
+    }
 }
