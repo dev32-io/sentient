@@ -655,6 +655,7 @@ describe("SessionRuntime — delegateTask fire-and-steer loop closes end to end"
         background_completion_request_echo_chars: 240,
         max_tool_result_chars: 20000,
       },
+      toolPermissions: async () => ({}),
       requestConfirm: async () => false,
     });
 

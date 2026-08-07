@@ -12,6 +12,7 @@ import { createPauseAudioTool, createResumeAudioTool } from "../mcp-host/tools/a
 import { createIdentifyUserTool } from "../mcp-host/tools/identify-user.js";
 import { type UserSettingsControls, createUpdateUserSettingsTool } from "../mcp-host/tools/update-user-settings.js";
 import { type UnixSocketListener, createUnixSocketListener } from "../mcp-host/unix-socket-listener.js";
+import type { ProfileStore } from "../profile-store/profile-store.js";
 import type { PolicyEngine } from "../security/policy-engine.js";
 import type { McpClient } from "../tools/mcp-client.js";
 import type { UserStore } from "../user-auth/user-store.js";
@@ -48,6 +49,10 @@ export interface McpHostOptions {
     toolsConfig: OrchestratorConfig["tools"];
     /** Mints each delegated broker's authorization capability (spec §3.2). */
     accessManager: AccessManager;
+    /** Supplies each delegated broker's per-tool permission reader, so a
+     *  proxied call is bound by the delegating user's own Deny/Off settings —
+     *  see mcp-host/delegated-broker.ts's header. */
+    profileStore: ProfileStore;
   };
 }
 
@@ -116,6 +121,7 @@ export async function createMcpHost(options: McpHostOptions): Promise<McpHost> {
           policy,
           toolsConfig: proxy.toolsConfig,
           accessManager: proxy.accessManager,
+          profileStore: proxy.profileStore,
         }),
         hostedNames: new Set(hostedTools.map((tool) => tool.def.name)),
       })

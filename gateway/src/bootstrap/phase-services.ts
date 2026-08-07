@@ -52,6 +52,7 @@ import type { McpClient } from "../tools/mcp-client.js";
 import { createPromptClassifier } from "../tools/prompt-classifier.js";
 import { createToolBroker } from "../tools/tool-broker.js";
 import type { BackgroundToolRunner } from "../tools/tool-broker.js";
+import { createToolPermissionsReader } from "../tools/user-tool-permissions.js";
 import type { TextStreamSynthesizer } from "../tts/text-stream-synthesizer.ts";
 import type { AuthService } from "../user-auth/auth-service.js";
 import { getHermesProfileDir } from "../user-auth/paths.js";
@@ -413,6 +414,7 @@ export async function buildOrchestratorServices(
     delegationGuard,
     hermesRunner,
     delegatedExternalTool,
+    profileStore,
     auth: auth ?? null,
   });
 
@@ -520,6 +522,11 @@ interface CreateSessionRuntimeFactoryDeps {
   delegationGuard: DelegationGuard;
   hermesRunner: HermesRunner;
   delegatedExternalTool: ExternalToolSlot;
+  /** Supplies each session broker's per-tool permission reader — the person's
+   *  `profile.tools.permissions`, re-read per turn and per dispatch rather
+   *  than snapshotted at session construction (see
+   *  tools/user-tool-permissions.ts). */
+  profileStore: ProfileStore;
   /** Names the household for the `<session>` block; null in a headless
    *  harness, which then renders the block without those lines. */
   auth: AuthService | null;
@@ -535,7 +542,7 @@ interface CreateSessionRuntimeFactoryDeps {
  *  actual use, not in `buildOrchestratorServices` above). */
 function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): CreateSessionRuntime {
   const { orchestratorCfg, accessManager, provider, mcpClient, policyEngine, delegationGuard, hermesRunner } = deps;
-  const { delegatedExternalTool, auth } = deps;
+  const { delegatedExternalTool, profileStore, auth } = deps;
 
   return ({
     principal,
@@ -687,6 +694,12 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       // session-global requestId, and turning an unanswerable decision back
       // into the `ConfirmUnavailableError` this seam is contracted on.
       requestConfirm: createConfirmHook(permissions, orchestratorCfg.permission.request_timeout_ms),
+      // The person's own per-tool settings. A READER, not the map: it is
+      // consulted per turn and per dispatch, so a Settings save lands on the
+      // next turn without reopening the WS — the same reason
+      // user-model-provider.ts resolves the model per request. Bound to the
+      // CAPABILITY's owner, never the ambient principal (spec §3.2).
+      toolPermissions: createToolPermissionsReader({ profileStore, userId: capability.ownerUserId }),
       // BOTH sides, always — the projector's row lifetime (runtime/task-list.ts)
       // and the wire frame (turn-emitter.ts's `delegationProgress`) are two
       // independent consumers of the same event, neither a replacement for the
@@ -698,7 +711,10 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
         emitter.delegationProgress(p);
       },
     });
-    void broker.definitions(); // kick off this session's own MCP list-tools warm-up now, not on the first turn.
+    // Kick off this session's own MCP list-tools warm-up AND its first
+    // permission read now, not on the first turn. `ready()` resolves both;
+    // the ReAct loop awaits it again at every turn boundary.
+    void broker.ready();
 
     log.info("session-runtime.factory.build", { userId: principal.userId, conversationId, connectionId });
 

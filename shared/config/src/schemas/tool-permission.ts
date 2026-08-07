@@ -24,6 +24,17 @@ export const toolPermissionSchema = z.enum(["allow", "ask", "deny", "off"]);
 export type ToolPermission = z.infer<typeof toolPermissionSchema>;
 
 /**
+ * One person's whole permission table: MCP server name → tool name →
+ * permission. The stored shape of `ProfileV1["tools"]["permissions"]`, named
+ * once here because the ToolBroker, its composition roots and the profile
+ * schema all have to spell it.
+ *
+ * An empty table is NOT "everything off" — see the ToolBroker's
+ * `permissionFor`, which documents how presence and absence are read.
+ */
+export type ToolPermissionMap = Record<string, Record<string, ToolPermission>>;
+
+/**
  * Reserved tool-name key inside a server's per-tool permission map
  * (`ProfileV1["tools"]["permissions"][server]`) that sets the permission for
  * every tool the catalog lists under that server which has no more specific

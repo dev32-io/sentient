@@ -37,7 +37,8 @@
 // channel, thread it through `createToolBroker`'s deps instead of the
 // principal/config shape locked here.
 
-import type { OrchestratorConfig } from "@sentient/config";
+import { ALL_TOOLS_PERMISSION_KEY, type OrchestratorConfig } from "@sentient/config";
+import type { ToolPermission, ToolPermissionMap } from "@sentient/config";
 import type { Capability } from "../access/capability.js";
 import type { UserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
@@ -71,6 +72,52 @@ const NOTE_PREVIEW_LEN = 120;
  *  has to be unambiguous about WHO decided. */
 function userDeclinedReason(toolName: string): string {
   return `The user declined this ${toolName} call. Do not retry it; offer an alternative if one exists.`;
+}
+
+/** What the model is told when the person's own SETTING is `deny` — distinct
+ *  from `userDeclinedReason` above, which reports a human answering "no" to a
+ *  live prompt. Keeping `deny` legible to the model is the entire reason it is
+ *  a separate state from `off`: the tool stays in `tools[]` so the model can
+ *  say what it could not do, instead of improvising around a gap it cannot
+ *  see. */
+function settingsDeniedReason(toolName: string): string {
+  return `The ${toolName} tool is set to Deny in this user's settings. Do not retry it; say what you could not do and offer an alternative if one exists.`;
+}
+
+/** Fail-closed answer for a tool the person has switched `off`. Normally
+ *  UNREACHABLE from the model — `definitions()` never advertises it — but
+ *  reachable from a delegated agent's proxied call, or from a settings save
+ *  that lands between this turn's `tools[]` and this call. */
+function settingsOffReason(toolName: string): string {
+  return `The ${toolName} tool is turned off in this user's settings and is not available.`;
+}
+
+/** The confirm rationale shown to the person when THEY are the reason the
+ *  prompt exists. The operator policy's own rationale is deliberately not
+ *  reused here: it explains why a rule tiered the tool, which says nothing
+ *  about a setting the person chose themselves. */
+function settingsAskReason(toolName: string): string {
+  return `Your settings ask for confirmation before every ${toolName} call.`;
+}
+
+/** Whether a permission leaves the tool in the model's `tools[]`.
+ *
+ *  EXHAUSTIVE, no `default:` arm — a fifth member (`auto`) must break here so
+ *  somebody decides whether the model can see it, rather than inheriting
+ *  "visible" by accident. `off` is the ONLY member that answers false, which
+ *  is what keeps the request prefix — and therefore the provider's prompt
+ *  cache — byte-identical across `allow`, `ask` and `deny`. */
+function isVisibleToModel(permission: ToolPermission): boolean {
+  switch (permission) {
+    case "allow":
+      return true;
+    case "ask":
+      return true;
+    case "deny":
+      return true; // legible on purpose: the model must be able to explain the refusal.
+    case "off":
+      return false;
+  }
 }
 
 function delegationAgent(inv: ToolInvocation): string {
@@ -143,13 +190,24 @@ export interface ToolBroker {
    *
    * A model whose only tool is `delegateTask` delegates. That read as the model
    * being eager to hand work off; it was the tool list being empty.
+   *
+   * TWO HALVES OF ONE QUESTION. Since per-tool permissions landed this also
+   * re-reads the person's permission map, which is what decides which of the
+   * listed tools the model is allowed to SEE. The MCP half is memoized (one
+   * round trip per broker); the permission half is re-read on EVERY call, so a
+   * settings save takes effect on the next turn without rebuilding the broker.
+   * Calling this per turn is the contract the ReAct loop already honours.
    */
   ready(): Promise<void>;
-  /** The session's full, immutable tool vocabulary (MCP-catalog tools +
-   *  registered background tools). Computed once and cached — never
-   *  mutated per turn (spec §4.6: hiding a tool is not a security
-   *  boundary, L3 at the call is). Synchronous, so it reports whatever is
-   *  resolved NOW: see `ready()` before handing the result to a provider. */
+  /** The session's tool vocabulary (MCP-catalog tools + registered background
+   *  tools) MINUS everything the person has switched `off`. Stable within a
+   *  turn — the MCP list is cached and the permission snapshot is refreshed
+   *  once, by `ready()`, at the turn boundary — so it is never re-derived
+   *  mid-turn (spec §4.6: hiding a tool is not a security boundary, L3 at the
+   *  call is; `off` is a prompt-surface decision, and `resolveDecision` still
+   *  refuses an `off` tool that reaches it by any other route).
+   *  Synchronous, so it reports whatever is resolved NOW: see `ready()` before
+   *  handing the result to a provider. */
   definitions(): ToolDefinition[];
   /** foreground → awaits the result; background → returns `{ taskId }`
    *  immediately without blocking on the runner. Every call passes the L3
@@ -205,6 +263,24 @@ export interface ToolBrokerDeps {
   /** name → runner. `delegateTask` (Task 5) registers itself here. */
   backgroundTools: Map<string, BackgroundToolRunner>;
   config: OrchestratorConfig["tools"];
+  /**
+   * Reads THIS broker's owner's `profile.tools.permissions` — server name →
+   * tool name → `allow | ask | deny | off`.
+   *
+   * A GETTER, never a value: the map is read at `ready()` (once per turn, for
+   * `definitions()`) and again inside `resolveDecision` (per call, for the PDP),
+   * so a settings save takes effect on the next turn without rebuilding the
+   * broker. Nothing here is captured at construction.
+   *
+   * ASYNC, unlike the rest of this deps object. The map lives in a file
+   * (`profile.json`), and the two ways to make it synchronous are both worse: a
+   * blocking `readFileSync` on the WS event loop, or a cached snapshot that is
+   * one turn stale — and a stale snapshot means the first turn after a session
+   * binds renders `tools[]` from an EMPTY map, which is the exact
+   * read-before-resolution bug `ready()`'s own doc comment was written for. The
+   * composition root supplies `tools/user-tool-permissions.ts`'s reader.
+   */
+  toolPermissions: () => Promise<ToolPermissionMap>;
   /** Resolves an L3 `confirm` decision. The composition root binds this to the
    *  SESSION's permission broker (runtime/session-permission-broker.ts): it
    *  resolves `true`/`false` on the FIRST human answer from any attached
@@ -232,6 +308,7 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     backgroundTools,
     config,
     requestConfirm,
+    toolPermissions,
     onDelegationProgress,
   } = deps;
   const ownerUserId = capability.ownerUserId;
@@ -282,11 +359,91 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     return warmup;
   }
 
-  /** The ONE place `policy.evaluate` is called. Both dispatch branches
-   *  (foreground, background) flow through this before any side effect —
-   *  that is what makes the choke point structural rather than a
-   *  convention two branches could independently drift from. */
+  // The owner's permission table, as of the last `refreshPermissions()`. Held
+  // as a snapshot ONLY because `definitions()` is synchronous by contract and
+  // the map lives in a file; every asynchronous reader re-reads it first (see
+  // `ready` and `resolveDecision`). Starts empty, which reads as "unset" —
+  // see `permissionFor` for why that is not "everything off".
+  let permissions: ToolPermissionMap = {};
+
+  async function refreshPermissions(): Promise<void> {
+    try {
+      permissions = await toolPermissions();
+    } catch (err) {
+      // Keep the last known table rather than widening to an empty one: a
+      // settings read that fails must never grant more than it granted a
+      // moment ago.
+      log.warn("tool-broker.permissions.refresh-failed", {
+        sessionId,
+        reason: err instanceof Error ? err.message : String(err),
+        servers: Object.keys(permissions).length,
+      });
+    }
+  }
+
+  /** tool name → its MCP server, or `null` for a tool no server owns. The ONE
+   *  mapping used for both existence (`resolveTarget`) and permission lookup,
+   *  so the two can never disagree about which server a tool belongs to. */
+  function serverOf(toolName: string): string | null {
+    // Background tools (`delegateTask`) are gateway-native: no MCP server, so
+    // no key in a map that is addressed by server name.
+    if (backgroundTools.has(toolName)) return null;
+    return mcpIndex?.get(toolName) ?? null;
+  }
+
+  /**
+   * The person's own setting for a tool, or `undefined` for INHERIT (fall
+   * through to `mcp-policy.yaml`, exactly as before this field existed).
+   *
+   * PRECEDENCE inside a server: the tool's own key, then the server's `"*"`
+   * wildcard, then absent.
+   *
+   * THE SERVER-LEVEL ASYMMETRY, deliberate and load-bearing. A tool absent
+   * from a PRESENT server inherits; a whole server absent from a NON-EMPTY
+   * table is `off`. That is not a second rule invented here — it is the
+   * meaning `tools.enabled` always carried and that every client still
+   * encodes: the web and mobile Tools panes switch a server off by DELETING
+   * its key. Reading an absent server as "inherit" would show a person "off"
+   * in the UI while the model kept the tools, silently, on every save. The
+   * asymmetry is confined to the server level and goes away for good once the
+   * clients write the explicit `{"*": "off"}` spelling instead of deleting.
+   *
+   * THE EMPTY-TABLE ESCAPE HATCH. `permissions` is `{}` whenever the field is
+   * unset — zod's `.default({})` makes "absent" and "empty" the same value —
+   * and whenever a profile could not be read at all. An empty table therefore
+   * cannot carry intent, so it does not carry "off": it inherits everything.
+   * Without this, one unreadable `profile.json` blacks out every tool in the
+   * household with nothing but a WARN to show for it.
+   */
+  function permissionFor(toolName: string): ToolPermission | undefined {
+    const serverName = serverOf(toolName);
+    if (serverName === null) return undefined;
+    if (Object.keys(permissions).length === 0) return undefined;
+    const perServer = permissions[serverName];
+    if (perServer === undefined) return "off";
+    return perServer[toolName] ?? perServer[ALL_TOOLS_PERMISSION_KEY];
+  }
+
+  /**
+   * The ONE place `policy.evaluate` is called. Both dispatch branches
+   * (foreground, background) flow through this before any side effect — that
+   * is what makes the choke point structural rather than a convention two
+   * branches could independently drift from.
+   *
+   * ORDER, written as control flow rather than as a comment somebody could
+   * drift from. The operator's `mcp-policy.yaml` runs FIRST and
+   * UNCONDITIONALLY, and its `deny` returns before the person's own table is
+   * read at all. That single early return is what makes "a user's `allow`
+   * cannot override an operator `deny`" structurally true: there is exactly
+   * one way past it, and taking it has already ruled an operator deny out.
+   * Below the guard the person's explicit setting decides; absent one, the
+   * operator's verdict carries on exactly as it did before this field existed.
+   */
   async function resolveDecision(inv: ToolInvocation): Promise<PdpDecision> {
+    // Per call, never captured: a settings save reaches the very next dispatch
+    // rather than waiting for a new broker.
+    await refreshPermissions();
+
     const ctx: PolicyContext = {
       tool: inv.name,
       userId: ownerUserId, // capability, not the ambient principal — spec §3.2.
@@ -295,6 +452,7 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
       args: inv.args,
     };
     const decision = policy.evaluate(ctx);
+    const userPermission = permissionFor(inv.name);
     log.info("tool-broker.pdp.decision", {
       sessionId,
       tool: inv.name,
@@ -302,19 +460,75 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
       action: decision.action,
       reason: decision.reason,
       rule: decision.rule,
+      userPermission: userPermission ?? "inherit",
     });
 
-    if (decision.action === "allow") return { action: "allow" };
+    // THE GUARD. Operator deny is terminal and precedes every user branch.
     if (decision.action === "deny") {
+      log.warn("tool-broker.pdp.operator-deny", {
+        sessionId,
+        tool: inv.name,
+        toolCallId: inv.toolCallId,
+        rule: decision.rule,
+        userPermission: userPermission ?? "inherit",
+        reason: "mcp-policy.yaml denied this tool — a user permission cannot widen an operator deny",
+      });
       return { action: "deny", reason: decision.reason ?? "denied by policy" };
     }
 
-    // action === "confirm" — fail-closed unless the injected confirm hook
-    // says otherwise (Plan 2 default: always false). A confirm hook that
-    // THROWS (Plan 3's real UI could) must still fail closed, and the broker's
-    // contract is "never throw out of dispatch" — so a throw becomes a deny,
-    // not a rejected promise the ReAct loop has to catch.
-    const reason = decision.reason ?? "confirmation required";
+    if (userPermission !== undefined) {
+      log.info("tool-broker.permission.applied", {
+        sessionId,
+        tool: inv.name,
+        toolCallId: inv.toolCallId,
+        userPermission,
+        policyAction: decision.action,
+      });
+      return applyUserPermission(inv, userPermission);
+    }
+
+    // Absent → inherit: the operator policy decides, exactly as it did before
+    // per-tool permissions existed.
+    if (decision.action === "allow") return { action: "allow" };
+    return runConfirmFlow(inv, decision.reason ?? "confirmation required");
+  }
+
+  /**
+   * The person's explicit setting, turned into a PDP verdict.
+   *
+   * EXHAUSTIVE — no `default:` arm. Every member returns, so a fifth member
+   * (`auto`) leaves a code path falling off the end of a function declared to
+   * return `Promise<PdpDecision>`, which is a compile error rather than a
+   * silent fall-through into "inherit".
+   */
+  async function applyUserPermission(inv: ToolInvocation, permission: ToolPermission): Promise<PdpDecision> {
+    switch (permission) {
+      case "allow":
+        // No prompt. That is the whole difference from `ask`, and from
+        // inheriting a policy that classifies unnamed tools as side-effecting.
+        return { action: "allow" };
+      case "ask":
+        return runConfirmFlow(inv, settingsAskReason(inv.name));
+      case "deny":
+        return { action: "deny", reason: settingsDeniedReason(inv.name) };
+      case "off":
+        // Normally unreachable — `definitions()` never advertised it — but a
+        // proxied delegated call or a mid-turn settings save can still land
+        // here, so it fails closed instead of trusting the tool list.
+        return { action: "deny", reason: settingsOffReason(inv.name) };
+    }
+  }
+
+  /** The human-in-the-loop half of the PDP, reached from two places: an
+   *  operator `confirm` verdict that the person has not overridden, and the
+   *  person's own `ask`. One implementation, so the fail-closed handling
+   *  below cannot diverge between them. */
+  async function runConfirmFlow(inv: ToolInvocation, reason: string): Promise<PdpDecision> {
+    // Fail-closed unless the injected confirm hook says otherwise (Plan 2
+    // default: always false). A confirm hook that THROWS (Plan 3's real UI
+    // could) must still fail closed, and the broker's contract is "never throw
+    // out of dispatch" — so a throw becomes a deny, not a rejected promise the
+    // ReAct loop has to catch.
     let confirmed: boolean;
     try {
       confirmed = await requestConfirm(inv, reason);
@@ -362,7 +576,7 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     const runner = backgroundTools.get(inv.name);
     if (runner) return { kind: "background", runner };
     await ensureMcpWarm();
-    const serverName = mcpIndex?.get(inv.name);
+    const serverName = serverOf(inv.name);
     return serverName ? { kind: "foreground", serverName } : null;
   }
 
@@ -510,10 +724,30 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     return { taskId };
   }
 
+  /** THE SOLE PRODUCER of the model's `tools[]`, and the only place `off` is
+   *  read. Everything else about a permission is a dispatch-time decision, on
+   *  purpose: `tools[]` is serialized AHEAD of `messages[]`, so it is part of
+   *  the provider's cached prefix, and any per-permission variation in it
+   *  would silently re-prime the whole system prompt and history on every
+   *  settings tweak. `allow`, `ask` and `deny` therefore leave this array
+   *  byte-identical — see `isVisibleToModel`. */
   function definitions(): ToolDefinition[] {
     void ensureMcpWarm(); // idempotent kick-off; definitions() itself stays synchronous
     const backgroundDefs = [...backgroundTools.values()].map((runner) => runner.definition);
-    return [...mcpDefs, ...backgroundDefs];
+    const all = [...mcpDefs, ...backgroundDefs];
+    const visible = all.filter((def) => {
+      const permission = permissionFor(def.name);
+      return permission === undefined || isVisibleToModel(permission);
+    });
+    if (visible.length !== all.length) {
+      log.info("tool-broker.definitions.filtered", {
+        sessionId,
+        toolCount: visible.length,
+        offCount: all.length - visible.length,
+        reason: "tools switched off in this user's settings are not advertised to the model",
+      });
+    }
+    return visible;
   }
 
   async function dispatch(inv: ToolInvocation): Promise<ToolResult | { taskId: string }> {
@@ -547,9 +781,18 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     completionSink = sink;
   }
 
+  /** Both halves of "what does the model see?", resolved together. The MCP
+   *  list is memoized (one round trip per broker); the permission table is
+   *  re-read on EVERY call, which is what makes a settings save land on the
+   *  next turn. In parallel — neither depends on the other, and the turn waits
+   *  on both. */
+  async function ready(): Promise<void> {
+    await Promise.all([ensureMcpWarm(), refreshPermissions()]);
+  }
+
   return {
     ownerUserId,
-    ready: ensureMcpWarm,
+    ready,
     definitions,
     dispatch,
     get foregroundInFlight() {

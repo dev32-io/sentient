@@ -222,6 +222,7 @@ if (config.hermes) {
             mcpClient: services.mcpClient,
             toolsConfig: config.orchestrator.tools,
             accessManager: services.accessManager,
+            profileStore: services.profileStore,
           },
         }
       : {}),

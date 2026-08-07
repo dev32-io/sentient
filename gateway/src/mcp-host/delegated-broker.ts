@@ -16,17 +16,26 @@
 //     tool fails closed with an explanation rather than hanging.
 //   * The principal's role is `DELEGATED_PRINCIPAL_ROLE` — the same default a
 //     real session gets. A delegated agent acts FOR its user, never above them.
+//
+// It shares the SESSION broker's per-tool permission reader for exactly that
+// last reason: a tool its user set to Deny or Off must be refused here too, or
+// "delegate it to Hermes" becomes the way around a setting. This broker is
+// cached for the process lifetime, so the reader is called per dispatch (inside
+// `resolveDecision`) rather than snapshotted — a settings change reaches an
+// already-built delegated broker.
 
 import type { OrchestratorConfig } from "@sentient/config";
 import type { AccessManager } from "../access/access-manager.js";
 import { DELEGATED_PRINCIPAL_ROLE, PROXIED_TOOL_CONTEXT } from "../external-tools/delegated-tool-tier.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
+import type { ProfileStore } from "../profile-store/profile-store.js";
 import type { PolicyEngine } from "../security/policy-engine.js";
 import type { SessionStore } from "../store/session-store.js";
 import type { McpClient } from "../tools/mcp-client.js";
 import { type ToolBroker, createToolBroker } from "../tools/tool-broker.js";
 import { ConfirmUnavailableError } from "../tools/tool-types.js";
+import { createToolPermissionsReader } from "../tools/user-tool-permissions.js";
 
 const log = getLog(["sentient", "mcp-host", "delegated-broker"]);
 
@@ -50,6 +59,10 @@ export interface DelegatedBrokerFactoryDeps {
    *  `bootstrap/phase-services.ts`'s session broker gives its AccessManager,
    *  just for a synthetic delegated principal instead of a real session's. */
   accessManager: AccessManager;
+  /** Reads the delegating user's own `profile.tools.permissions`, so a
+   *  delegated call is bound by the same per-tool settings a foreground one
+   *  is. See the file header. */
+  profileStore: ProfileStore;
 }
 
 /**
@@ -90,18 +103,23 @@ export function createDelegatedBrokerFactory(deps: DelegatedBrokerFactoryDeps): 
     let broker: ToolBroker;
     try {
       const principal = createUserPrincipal(userId, DELEGATED_PRINCIPAL_ROLE, DELEGATED_HOUSEHOLD_ID);
+      const capability = deps.accessManager.grant(principal, "tool-broker");
       broker = createToolBroker({
         mcp: deps.mcp,
         policy: deps.policy,
         store: unusedStore(),
         principal,
-        capability: deps.accessManager.grant(principal, "tool-broker"),
+        capability,
         // Log correlation only. Named apart from a connection id on purpose:
         // every line from this broker is a delegated call, not a socket's.
         sessionId: `delegated:${userId}`,
         backgroundTools: new Map(),
         config: deps.toolsConfig,
         requestConfirm: () => Promise.reject(new ConfirmUnavailableError(NO_CONFIRMER)),
+        toolPermissions: createToolPermissionsReader({
+          profileStore: deps.profileStore,
+          userId: capability.ownerUserId,
+        }),
       });
     } catch (err: unknown) {
       // `createUserPrincipal` asserts the canonical user-id shape. A stored id
