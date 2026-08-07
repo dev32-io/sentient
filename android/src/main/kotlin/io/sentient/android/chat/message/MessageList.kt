@@ -128,10 +128,13 @@ fun MessageList(
     ) {
         items(
             rows,
-            // Stable per-message key for Msg rows — the live streaming bubble and its
-            // committed twin share the gateway-owned turnId, so the streaming→committed
-            // handoff is the SAME row (grows in place, no remount). turnId is constant
-            // across tokens, so unlike ts it never churns mid-reveal. See messageRowKey.
+            // Stable per-message key for Msg rows — keyed on replyId first (see
+            // messageRowKey): a steered turn's two replies share one turnId but
+            // rotate replyId, so turnId alone would collapse them into one key
+            // (Compose throws on the duplicate). The live streaming bubble and its
+            // committed twin still share replyId, so the streaming→committed
+            // handoff is the SAME row (grows in place, no remount); replyId never
+            // churns mid-reveal, unlike ts.
             // Pending rows use a stable "pending-<id>" key so they survive recomposition.
             key = { row ->
                 when (row) {

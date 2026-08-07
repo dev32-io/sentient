@@ -13,16 +13,27 @@ enum ChatRow: Identifiable {
         }
     }
 
-    // Stable per-message identity — ONE row per logical message across its whole
-    // lifecycle. The live streaming bubble and its committed twin share the
-    // gateway-owned turnId, so the streaming→committed handoff is the SAME
-    // SwiftUI row (no remount, no flash). turnId is constant across tokens, so
-    // unlike ts it never churns mid-reveal. Entries with no turn (user, REST
-    // history) key by their stable gateway entryId. Index is a last-resort
-    // fallback only (every committed row carries entryId; the live bubble turnId).
+    // Stable per-message identity — ONE row per logical BUBBLE across its whole
+    // lifecycle. Keyed on replyId FIRST, not turnId: a mid-turn steer rotates
+    // replyId, so one turnId can own TWO assistant bubbles (reply 1 answers the
+    // first message, reply 2 answers the steer). Keying on turnId aliases both
+    // replies onto the same row id — a duplicate Identifiable id in this ForEach,
+    // which SwiftUI/LazyVStack shows as a bogus move animation right after the
+    // steer and as vanish/reappear on scroll (recycle-by-id).
+    //
+    // The live streaming bubble and its committed twin still share replyId
+    // (ObserveChatUseCase builds the live bubble with replyId = it.replyId), so
+    // the streaming→committed handoff is still the SAME SwiftUI row (no remount,
+    // no flash). replyId is constant across tokens same as turnId was, so unlike
+    // ts it never churns mid-reveal.
+    //
+    // Entries with no replyId (user rows, REST history) key by their stable
+    // gateway entryId. turnId is a fallback only for a gateway that does not
+    // stamp replyId. Index is the last resort.
     private static func messageRowId(_ m: ChatMessage, index: Int) -> String {
-        if let turnId = m.turnId, !turnId.isEmpty { return "turn-\(turnId)" }
+        if let replyId = m.replyId, !replyId.isEmpty { return "reply-\(replyId)" }
         if !m.entryId.isEmpty { return "ent-\(m.entryId)" }
+        if let turnId = m.turnId, !turnId.isEmpty { return "turn-\(turnId)" }
         return "idx-\(index)"
     }
 }

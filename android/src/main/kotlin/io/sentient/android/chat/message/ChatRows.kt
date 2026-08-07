@@ -22,16 +22,27 @@ sealed interface ChatRow {
 }
 
 /**
- * Stable per-message LazyColumn key — ONE row per logical message across its
- * lifecycle. The live streaming bubble and its committed twin share the
- * gateway-owned turnId, so the streaming→committed handoff is the SAME row (no
- * remount, no flash). turnId is constant across tokens, so unlike ts it never
- * churns mid-reveal. Entries with no turn (user, REST history) key by their
- * stable gateway entryId. Index is a last-resort fallback. Mirrors iOS ChatRow.
+ * Stable per-message LazyColumn key — ONE row per logical BUBBLE across its
+ * whole lifecycle. Keyed on replyId FIRST, not turnId: a mid-turn steer rotates
+ * replyId, so one turnId can own TWO assistant bubbles (reply 1 answers the
+ * first message, reply 2 answers the steer). Keying on turnId aliases both
+ * replies onto the same LazyColumn key — worse than iOS here, Compose THROWS on
+ * a duplicate key rather than just mis-animating.
+ *
+ * The live streaming bubble and its committed twin still share replyId
+ * (ObserveChatUseCase builds the live bubble with replyId = it.replyId), so the
+ * streaming→committed handoff is still the SAME row (grows in place, no
+ * remount). replyId is constant across tokens same as turnId was, so unlike ts
+ * it never churns mid-reveal.
+ *
+ * Entries with no replyId (user rows, REST history) key by their stable gateway
+ * entryId. turnId is a fallback only for a gateway that does not stamp replyId.
+ * Index is the last resort. Mirrors iOS ChatRow.
  */
 internal fun messageRowKey(m: ChatMessage, index: Int): String = when {
-    !m.turnId.isNullOrEmpty() -> "turn-${m.turnId}"
+    !m.replyId.isNullOrEmpty() -> "reply-${m.replyId}"
     m.entryId.isNotEmpty() -> "ent-${m.entryId}"
+    !m.turnId.isNullOrEmpty() -> "turn-${m.turnId}"
     else -> "idx-$index"
 }
 
