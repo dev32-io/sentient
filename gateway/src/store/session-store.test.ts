@@ -27,7 +27,7 @@ function entry(overrides: Partial<NewSessionEntry> = {}): NewSessionEntry {
   return {
     sessionId: "s1",
     turnId: "t1",
-    messageId: null,
+    replyId: null,
     kind: "user",
     createdAt: Date.now(),
     text: "hi",

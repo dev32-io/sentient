@@ -103,7 +103,7 @@ function triggerEntry(text: string): SessionEntry {
     seq: 1,
     sessionId: "s1",
     turnId: "t1",
-    messageId: null,
+    replyId: null,
     kind: "trigger",
     createdAt: 1000,
     text,

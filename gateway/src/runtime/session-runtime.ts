@@ -306,23 +306,23 @@ interface InFlightTurn {
   /** This turn's TTS text sink, or null when the session is text-only. */
   speech: TurnVoiceStream | null;
   /**
-   * WHICH BUBBLE this turn's assistant text is currently going into.
+   * WHICH REPLY this turn's assistant text is currently going into.
    *
    * Minted with the turn and ROTATED whenever a rendered row is committed in
    * the middle of it — today that means a message the person sends while the
    * loop is still running (spec §4.5's steer). Their message is drawn as its
    * own row between two stretches of the reply, so everything after it has to
-   * start a new bubble; without the rotation the reply visibly swallows the
-   * interjection. See store/entry-types.ts's `messageId`.
+   * start a new reply; without the rotation the reply visibly swallows the
+   * interjection. See store/entry-types.ts's `replyId`.
    */
-  messageId: string;
+  replyId: string;
 }
 
 function blankEntry(sessionId: string, turnId: string): Omit<NewSessionEntry, "kind"> {
   return {
     sessionId,
     turnId,
-    messageId: null,
+    replyId: null,
     createdAt: Date.now(),
     text: null,
     toolCallId: null,
@@ -808,7 +808,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     // The turn's own signal drives TTS — barge-in/interrupt abort it and the
     // audio dies with the turn, with no extra cancellation path (spec §4.7).
     const speech = voice ? voice.begin(turnId, controller.signal) : null;
-    inFlight = { turnId, controller, settled: false, speech, messageId: crypto.randomUUID() };
+    inFlight = { turnId, controller, settled: false, speech, replyId: crypto.randomUUID() };
     lastTurnId = turnId;
     // Synchronous snapshot, no await between this and the `runTurn` call
     // below — guarantees the turn's first iteration sees everything ≤ this.
@@ -825,8 +825,8 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
       systemPrompt,
       timeZone,
       // Read per append, never captured: `submit` rotates it when the person
-      // speaks mid-turn, and the text after that has to land in a new bubble.
-      currentMessageId: () => inFlight?.messageId ?? turnId,
+      // speaks mid-turn, and the text after that has to land in a new reply.
+      currentReplyId: () => inFlight?.replyId ?? turnId,
       // Tier 3 is static for the session's life, so it is rendered at most
       // once and the promise is the memo — a second turn reuses it rather
       // than re-reading the household roster. Tier 5 is the opposite: read
@@ -856,9 +856,9 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
       config: config.loop,
       onTextDelta: (id, text) => {
         turnText += text;
-        // The bubble key rides every delta, so the client never has to
+        // The reply id rides every delta, so the client never has to
         // reverse-engineer which reply a chunk belongs to.
-        emitter.textDelta(id, text, inFlight?.messageId);
+        emitter.textDelta(id, text, inFlight?.replyId);
         speech?.pushText(text);
       },
       onToolUpdate: (id, u) => {
@@ -942,14 +942,14 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
       // not drawn at all and must NOT break it, or a task landing mid-reply
       // would split one answer into two bubbles for no visible reason.
       if (stimulus.kind === "conversational") {
-        const previous = inFlight.messageId;
-        inFlight.messageId = crypto.randomUUID();
-        log.info("session-runtime.message.rotated", {
+        const previous = inFlight.replyId;
+        inFlight.replyId = crypto.randomUUID();
+        log.info("session-runtime.reply.rotated", {
           userId,
           sessionId,
           turnId: inFlight.turnId,
-          previousMessageId: previous,
-          messageId: inFlight.messageId,
+          previousReplyId: previous,
+          replyId: inFlight.replyId,
           reason: "the person spoke mid-turn — their row breaks the bubble, the reply resumes in a new one",
         });
       }

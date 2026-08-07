@@ -37,7 +37,7 @@ function entry(overrides: Partial<NewSessionEntry>): NewSessionEntry {
   return {
     sessionId: SESSION_ID,
     turnId: "t1",
-    messageId: null,
+    replyId: null,
     kind: "user",
     createdAt: 1000,
     text: null,

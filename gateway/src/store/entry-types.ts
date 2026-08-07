@@ -22,20 +22,21 @@ export interface SessionEntry {
   /** Groups entries belonging to one turn (one ReAct loop run). */
   turnId: string;
   /**
-   * WHICH BUBBLE this entry belongs to — the unit the person sees as one reply.
+   * WHICH REPLY this entry is part of — the unit the person sees as one bubble.
    *
-   * A turn is an interaction; a message is a reply. Usually the same thing, but
-   * a ReAct turn narrates, calls a tool, then answers, and each stretch of text
-   * is its own entry — so one turn owns several, and they must render as ONE
-   * bubble that grew. Grouping by `turnId` alone cannot express the exception:
-   * a message the person sends mid-turn renders as its own row between two of
-   * those stretches, and everything after it starts a new bubble.
+   * A turn is an interaction; a reply is what the assistant said. Usually the
+   * same thing, but a ReAct turn narrates, calls a tool, then answers, and each
+   * stretch of text is its own entry — so one turn owns several and they fold
+   * into ONE item on the client projection. Grouping by `turnId` alone cannot
+   * express the exception: a message the person sends mid-turn renders as its
+   * own row between two of those stretches, and everything after it is a NEW
+   * reply.
    *
    * Server-minted. Null on `user`/tool entries, and on any assistant entry
    * written before the column existed — those render one bubble each, which is
    * how they already looked.
    */
-  messageId: string | null;
+  replyId: string | null;
   kind: EntryKind;
   /** Epoch millis, assigned by the store. Gateway-owned — Hermes had none. */
   createdAt: number;
@@ -65,7 +66,7 @@ export const sessionEntrySchema = z.object({
   seq: z.number().int().nonnegative(),
   sessionId: z.string().min(1),
   turnId: z.string().min(1),
-  messageId: z.string().nullable(),
+  replyId: z.string().nullable(),
   kind: z.enum(["user", "assistant", "tool_call", "tool_result", "trigger", "system", "compaction"]),
   createdAt: z.number().int().nonnegative(),
   text: z.string().nullable(),

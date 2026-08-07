@@ -109,6 +109,24 @@ export const STORE_MIGRATIONS: readonly StoreMigration[] = [
       "ALTER TABLE entries ADD COLUMN message_id TEXT",
     ],
   },
+  {
+    version: 4,
+    name: "entries.reply_id",
+    statements: [
+      // WHICH REPLY an entry is part of. Renamed from `message_id` (v3):
+      // `messageId` on an entry read as "this entry's id", which is exactly
+      // wrong — it is the id of the thing the entry BELONGS TO. One reply is
+      // several entries (a ReAct turn narrates, calls a tool, then answers)
+      // and they fold into one bubble on the client projection.
+      //
+      // Copy-then-drop rather than a bare rename: SQLite's RENAME COLUMN
+      // landed in 3.25 and bun:sqlite ships newer, but the copy keeps the
+      // ladder readable and leaves the v3 databases' data intact.
+      "ALTER TABLE entries ADD COLUMN reply_id TEXT",
+      "UPDATE entries SET reply_id = message_id WHERE message_id IS NOT NULL",
+      "ALTER TABLE entries DROP COLUMN message_id",
+    ],
+  },
 ];
 
 /** The version a store is brought up to on open. Derived, never hand-written. */

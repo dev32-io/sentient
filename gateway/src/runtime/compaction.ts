@@ -263,7 +263,7 @@ async function summarize(deps: CompactionDeps, transcript: string): Promise<Summ
       userId: deps.userId,
       sessionId: deps.sessionId,
       turnId: deps.turnId,
-      messageId: null,
+      replyId: null,
       reason: err instanceof Error ? err.message : String(err),
     });
     return null;
@@ -398,7 +398,7 @@ export async function maybeCompact(deps: CompactionDeps): Promise<CompactionOutc
   const marker: NewSessionEntry = {
     sessionId,
     turnId,
-    messageId: null,
+    replyId: null,
     kind: "compaction",
     createdAt: Date.now(),
     text: markerText,

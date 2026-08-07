@@ -93,11 +93,11 @@ export interface ReactLoopDeps {
   situationBlock?: () => Promise<string | null>;
   sessionId: string;
   config: OrchestratorConfig["loop"];
-  /** Which bubble the loop's assistant text is going into right now. Read at
+  /** Which reply the loop's assistant text is going into right now. Read at
    *  each append, never cached: the caller rotates it mid-turn when the person
-   *  speaks (see session-runtime.ts's `InFlightTurn.messageId`). Optional —
+   *  speaks (see session-runtime.ts's `InFlightTurn.replyId`). Optional —
    *  a harness without one gets null-grouped entries, one bubble each. */
-  currentMessageId?: () => string;
+  currentReplyId?: () => string;
   onTextDelta: (turnId: string, text: string) => void;
   onToolUpdate: (turnId: string, u: ToolUpdate) => void;
   /** Fired synchronously, immediately after the terminal assistant entry is
@@ -150,7 +150,7 @@ function blankEntry(sessionId: string, turnId: string): Omit<NewSessionEntry, "k
   return {
     sessionId,
     turnId,
-    messageId: null,
+    replyId: null,
     createdAt: Date.now(),
     text: null,
     toolCallId: null,
@@ -436,7 +436,7 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
     broker,
     store,
     systemPrompt,
-    currentMessageId,
+    currentReplyId,
     timeZone,
     sessionBlock,
     situationBlock,
@@ -568,7 +568,7 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
 
       store.append({
         ...blankEntry(sessionId, turnId),
-        messageId: currentMessageId?.() ?? null,
+        replyId: currentReplyId?.() ?? null,
         kind: "assistant",
         text: outcome.text,
       });
@@ -603,7 +603,7 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
       if (suffix.length > 0) onTextDelta(turnId, suffix);
       store.append({
         ...blankEntry(sessionId, turnId),
-        messageId: currentMessageId?.() ?? null,
+        replyId: currentReplyId?.() ?? null,
         kind: "assistant",
         text: outcome.text + suffix,
       });

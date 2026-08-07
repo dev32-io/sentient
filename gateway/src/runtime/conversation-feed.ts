@@ -66,7 +66,7 @@ const TOOL_STATUS_UNRESOLVED = "cancelled";
  *  double; `TurnEmitter` satisfies it structurally. */
 export interface ConversationFeedSink {
   conversationSnapshot(items: ConversationFeedItem[]): void;
-  conversationEntry(item: ConversationFeedItem, turnId?: string, messageId?: string): void;
+  conversationEntry(item: ConversationFeedItem, turnId?: string, replyId?: string): void;
 }
 
 export interface ConversationFeed {
@@ -203,13 +203,13 @@ export function createConversationFeed(deps: ConversationFeedDeps): Conversation
     // convergent with its replay.
     const unresolved = unresolvedToolItemIds(tail);
     const turnIdBySeq = new Map<string, string>();
-    // The bubble key travels with the turn key: a committed entry and the live
+    // The reply id travels with the turn key: a committed entry and the live
     // bubble it replaces must group by the SAME value, or the swap at turn end
     // shows a different set of rows than the stream did.
-    const messageIdBySeq = new Map<string, string>();
+    const replyIdBySeq = new Map<string, string>();
     for (const e of tail) {
       turnIdBySeq.set(String(e.seq), e.turnId);
-      if (e.messageId !== null) messageIdBySeq.set(String(e.seq), e.messageId);
+      if (e.replyId !== null) replyIdBySeq.set(String(e.seq), e.replyId);
     }
 
     let published = 0;
@@ -223,7 +223,7 @@ export function createConversationFeed(deps: ConversationFeedDeps): Conversation
       emitter.conversationEntry(
         toWireItem(item, isUnresolvedTool),
         turnIdBySeq.get(item.id),
-        messageIdBySeq.get(item.id),
+        replyIdBySeq.get(item.id),
       );
       published += 1;
     }
@@ -274,7 +274,7 @@ export function createConversationFeed(deps: ConversationFeedDeps): Conversation
       }
       // `false`: only a tool tile can be unresolved, and republish is only
       // ever called with the `user` entry a resend matched.
-      emitter.conversationEntry(toWireItem(item, false), entry.turnId, entry.messageId ?? undefined);
+      emitter.conversationEntry(toWireItem(item, false), entry.turnId, entry.replyId ?? undefined);
       log.info("conversation-feed.republished", { userId, sessionId, seq: entry.seq, turnId: entry.turnId });
     },
   };

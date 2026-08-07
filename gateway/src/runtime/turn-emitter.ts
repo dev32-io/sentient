@@ -42,7 +42,7 @@ export type DelegationProgress = Omit<DelegationProgressMessage, "type">;
 
 export interface TurnEmitter {
   turnStarted(turnId: string, trigger: TurnTrigger): void;
-  textDelta(turnId: string, text: string, messageId?: string): void;
+  textDelta(turnId: string, text: string, replyId?: string): void;
   toolUpdate(turnId: string, u: ToolUpdate): void;
   turnCompleted(turnId: string): void;
   /** The feed marker for a cut-off turn. Carries the cutoff kind and NOTHING
@@ -70,7 +70,7 @@ export interface TurnEmitter {
   /** One newly committed feed item. `turnId` is the entry's OWN originating
    *  turn — the gateway-owned join key the client uses to fold the committed
    *  twin into its live streaming bubble. Omitted when unknown. */
-  conversationEntry(item: ConversationFeedItem, turnId?: string, messageId?: string): void;
+  conversationEntry(item: ConversationFeedItem, turnId?: string, replyId?: string): void;
   /** Announces the outbound TTS stream for `turnId`. Does NOT stop any
    *  previous turn's audio — per spec §4.6/§7.2 the gateway never interrupts
    *  its own playback; the client queues. */
@@ -109,10 +109,10 @@ export function createLoggingTurnEmitter(): TurnEmitter {
     turnStarted(turnId, trigger) {
       log.info("turn-emitter.turn-started", { turnId, trigger });
     },
-    textDelta(turnId, text, messageId) {
+    textDelta(turnId, text, replyId) {
       log.debug("turn-emitter.text-delta", {
         turnId,
-        messageId: messageId ?? null,
+        replyId: replyId ?? null,
         length: text.length,
         preview: text.slice(0, TEXT_PREVIEW_LEN),
       });
@@ -138,12 +138,12 @@ export function createLoggingTurnEmitter(): TurnEmitter {
     conversationSnapshot(items) {
       log.info("turn-emitter.conversation-snapshot", { itemCount: items.length });
     },
-    conversationEntry(item, turnId, messageId) {
+    conversationEntry(item, turnId, replyId) {
       log.debug("turn-emitter.conversation-entry", {
         entryId: item.entryId,
         kind: item.kind,
         turnId: turnId ?? null,
-        messageId: messageId ?? null,
+        replyId: replyId ?? null,
       });
     },
     audioStart(turnId, encoding, sampleRate) {

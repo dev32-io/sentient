@@ -139,11 +139,11 @@ export function createTurnStateTracker(sessionId: string): TurnStateTracker {
         // parameters than the interface still satisfies TypeScript — a narrower
         // function is assignable to a wider one — so dropping an argument here
         // is silent at the type level and invisible until the wire is read.
-        // That is exactly how `messageId` reached the client as null while the
+        // That is exactly how `replyId` reached the client as null while the
         // gateway logged it correctly one layer up.
-        textDelta(turnId: string, text: string, messageId?: string) {
+        textDelta(turnId: string, text: string, replyId?: string) {
           if (turnId === activeTurnId) textSoFar += text;
-          emitter.textDelta(turnId, text, messageId);
+          emitter.textDelta(turnId, text, replyId);
         },
         toolUpdate(turnId: string, u: ToolUpdate) {
           if (u.status === "running") tools.set(u.toolCallId, u);
@@ -168,8 +168,8 @@ export function createTurnStateTracker(sessionId: string): TurnStateTracker {
         conversationSnapshot(items) {
           emitter.conversationSnapshot(items);
         },
-        conversationEntry(item, turnId, messageId) {
-          emitter.conversationEntry(item, turnId, messageId);
+        conversationEntry(item, turnId, replyId) {
+          emitter.conversationEntry(item, turnId, replyId);
         },
         audioStart(turnId: string, encoding: TurnAudioEncoding, sampleRate: number) {
           audio = { turnId, encoding, sampleRate };

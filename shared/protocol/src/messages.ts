@@ -432,14 +432,14 @@ export const turnTextDeltaSchema = z.object({
    *  made two overlapping turns (§7.2's back-to-back follow-up) impossible to
    *  route to the right bubble. That was a bug; this frame fixes it. */
   turnId: z.string(),
-  /** WHICH BUBBLE this delta belongs to. A ReAct turn narrates, calls a tool,
+  /** WHICH REPLY this delta belongs to. A ReAct turn narrates, calls a tool,
    *  then answers — several stretches of text under ONE turnId that must render
    *  as one bubble that grew. `turnId` alone cannot express the exception: a
    *  message the person sends mid-turn is drawn as its own row between two of
-   *  those stretches, so everything after it starts a new bubble. Server-minted
+   *  those stretches, so everything after it starts a new reply. Server-minted
    *  (session-runtime.ts), never derived client-side. Optional so a client can
    *  fall back to per-turn grouping. */
-  messageId: z.string().optional(),
+  replyId: z.string().optional(),
   text: z.string(),
 });
 export type TurnTextDeltaMessage = z.infer<typeof turnTextDeltaSchema>;
@@ -590,12 +590,12 @@ export const conversationSnapshotSchema = z.object({
 export const conversationEntrySchema = z.object({
   type: z.literal("conversation.entry"),
   turnId: z.string().optional(),
-  /** The bubble this entry belongs to — the same key `turn.text.delta` carries,
+  /** The reply this entry is part of — the same key `turn.text.delta` carries,
    *  so a committed entry and the live bubble it replaces group identically and
    *  `render(replay) == render(live)` holds by construction rather than by
    *  luck. Absent on entries with no bubble (a user row, a tool tile) and on
    *  anything written before the store had the column. */
-  messageId: z.string().optional(),
+  replyId: z.string().optional(),
   item: conversationFeedItemSchema,
 });
 
