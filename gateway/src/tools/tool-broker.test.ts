@@ -4,8 +4,9 @@ import type { OrchestratorConfig, ToolPermission, ToolPermissionMap } from "@sen
 import type { Result } from "@sentient/protocol";
 import { createAccessManager } from "../access/access-manager.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
+import { applyProfileDefaults } from "../profile-store/profile-defaults.js";
 import type { ProfileStore, ProfileStoreError } from "../profile-store/profile-store.js";
-import type { ProfileV1 } from "../profile-store/profile-types.js";
+import { type ProfileV1, profileV1Schema } from "../profile-store/profile-types.js";
 import type { PolicyContext, PolicyDecision, PolicyEngine } from "../security/policy-engine.js";
 import type { SessionStore } from "../store/session-store.js";
 import type { McpClient, McpToolRef } from "./mcp-client.js";
@@ -1280,6 +1281,68 @@ describe("ToolBroker — an unreadable profile does not resurrect a switched-off
     const result = await broker.dispatch(makeInvocation());
     expect(result).toEqual({ content: "result from test-mcp/get_weather", isError: false });
     expect(mcp.callToolCalls).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A BRAND-NEW ACCOUNT HAS TOOLS. The far end of the chain the handler tests
+// pin the near end of: what the account-creation path persists has to arrive
+// here as a NON-EMPTY tool array. Both halves are needed — the handler test
+// alone proves the right object was built, this one proves the broker agrees
+// about what it means. Between them sits the unset-vs-empty distinction, and
+// every account-creation path in the product feeds it the ambiguous shape.
+// ---------------------------------------------------------------------------
+
+describe("ToolBroker — a freshly created account can see its tools", () => {
+  const searxngTool: McpToolRef = {
+    serverName: "searxng",
+    name: "web_search",
+    description: "searches the web",
+    inputSchema: {},
+  };
+
+  /** Exactly what the web wizard's INITIAL_DRAFT and mobile's
+   *  templateMemberProfile POST, run through the two layers that stand between
+   *  the request body and `profile.json`. */
+  function provisionedProfile(toolsBody: unknown): ProfileV1 {
+    const parsed = profileV1Schema.parse({
+      schemaVersion: 1,
+      userId: capability.ownerUserId,
+      model: { provider: "openrouter", id: "google/gemini-2.5-flash" },
+      voice: { provider: "local-tts", id: "default" },
+      persona: { template: "default", overrides: "" },
+      tools: toolsBody,
+      compression: { threshold: 0.5 },
+      advanced: { extraSystemPrompt: "", maxTokens: 1024 },
+    });
+    return applyProfileDefaults(parsed);
+  }
+
+  function definitionsFor(profile: ProfileV1): Promise<string[]> {
+    const broker = createToolBroker({
+      mcp: fakeMcp([searxngTool]),
+      policy: fakePolicy({ action: "allow" }),
+      store: fakeStore(),
+      principal,
+      capability,
+      sessionId: "session-1",
+      backgroundTools: new Map(),
+      config: toolsConfig,
+      toolPermissions: createToolPermissionsReader({
+        profileStore: profileStoreReturning({ ok: true, value: profile }),
+        userId: capability.ownerUserId,
+      }),
+      requestConfirm: async () => true,
+    });
+    return broker.ready().then(() => broker.definitions().map((d) => d.name));
+  }
+
+  it("REGRESSION: a wizard-created account gets a non-empty tools[]", async () => {
+    expect(await definitionsFor(provisionedProfile({ enabled: {}, toolsets: [] }))).toEqual(["web_search"]);
+  });
+
+  it("still honours an account created with an EXPLICIT everything-off table", async () => {
+    expect(await definitionsFor(provisionedProfile({ permissions: {}, toolsets: [] }))).toEqual([]);
   });
 });
 

@@ -381,6 +381,49 @@ function makeSetupRequest(): Request {
   });
 }
 
+// The FIRST-ADMIN path, which is the one every fresh install runs exactly once
+// and which nothing else can compensate for afterwards. `makeSetupRequest`
+// already carried the wizard's real `tools: { enabled: {} }` and asserted
+// nothing about it, so a regression here was invisible.
+const SEEDED_PERMISSIONS = {
+  home_assistant: {},
+  gateway: {},
+  music_assistant: {},
+  searxng: {},
+  fetch: {},
+};
+
+describe("POST /api/v1/auth/setup — the first admin gets tools", () => {
+  it("REGRESSION: seeds the starter permissions from the wizard's empty tools.enabled", async () => {
+    const userProvisioner = makeSetupProvisioner();
+    const handler = createAuthHandler({ auth: makeSetupAuthService(), userProvisioner });
+
+    await handler(makeSetupRequest());
+
+    const call = (userProvisioner.createUser as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    expect(call?.profile?.tools?.permissions).toEqual(SEEDED_PERMISSIONS);
+  });
+
+  it("seeds them for a setup submitted with no profile at all", async () => {
+    const userProvisioner = makeSetupProvisioner();
+    const handler = createAuthHandler({ auth: makeSetupAuthService(), userProvisioner });
+
+    // `buildDefaultProfileBody`'s output never passes through the schema, so it
+    // never sees the enabled→permissions migration — it has to omit the field
+    // itself rather than send `{}`, which would persist as "every server off".
+    await handler(
+      new Request("http://localhost/api/v1/auth/setup", {
+        method: "POST",
+        headers: new Headers({ "content-type": "application/json" }),
+        body: JSON.stringify({ displayName: "Admin", pin: "1234" }),
+      }),
+    );
+
+    const call = (userProvisioner.createUser as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    expect(call?.profile?.tools?.permissions).toEqual(SEEDED_PERMISSIONS);
+  });
+});
+
 describe("POST /api/v1/auth/setup — install-state cursor", () => {
   it("advances install-state cursor admin → finish on success", async () => {
     const installState = makeMockInstallState({ wizard_cursor: "admin", unlock_verified: true });

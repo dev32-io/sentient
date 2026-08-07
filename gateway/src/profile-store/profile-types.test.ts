@@ -30,6 +30,29 @@ describe("profile tools.permissions", () => {
     expect((parsed.tools as Record<string, unknown>).enabled).toBeUndefined();
   });
 
+  // The two empties. Collapsing them is how every account-creation path in the
+  // product came to hand new users a profile with zero MCP tools: the web
+  // wizard and the mobile admin screen both POST `tools: { enabled: {} }`, and
+  // emitting `permissions: {}` for it made `applyProfileDefaults` see a field
+  // that was already set and decline to seed the starter servers.
+  it("migrates an EMPTY tools.enabled to UNSET, so the defaults layer still seeds", () => {
+    const parsed = profileV1Schema.parse({ ...BASE, tools: { enabled: {}, toolsets: [] } });
+
+    expect(parsed.tools.permissions).toBeUndefined();
+  });
+
+  it("leaves an EXPLICIT empty permissions map alone — that one IS a deliberate everything-off", () => {
+    const parsed = profileV1Schema.parse({ ...BASE, tools: { permissions: {}, toolsets: [] } });
+
+    expect(parsed.tools.permissions).toEqual({});
+  });
+
+  it("migrates the doubly-legacy empty tools.enabled ARRAY to UNSET too", () => {
+    const parsed = profileV1Schema.parse({ ...BASE, tools: { enabled: [], toolsets: [] } });
+
+    expect(parsed.tools.permissions).toBeUndefined();
+  });
+
   it("accepts an explicit permissions map and rejects an unknown member", () => {
     const parsed = profileV1Schema.parse({
       ...BASE,

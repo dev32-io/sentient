@@ -192,6 +192,63 @@ describe("POST /api/v1/admin/users", () => {
     expect(call?.profile?.userId).toBe("");
   });
 
+  // REGRESSION, and the shape is the live one: the web wizard's INITIAL_DRAFT
+  // and mobile's templateMemberProfile both POST `tools: { enabled: {} }`. The
+  // whole chain has to survive it — migration → applyProfileDefaults → what the
+  // provisioner persists — because a break anywhere in it hands every new user
+  // an assistant with no MCP tools at all, silently. The suite used to stub
+  // this exact body and assert nothing about `tools`, which is why it shipped.
+  it("REGRESSION: a wizard-shaped empty tools.enabled still seeds the starter permissions", async () => {
+    const provisioner = makeProvisioner();
+    const handler = createAdminHandler(makeDeps({ provisioner }));
+
+    await handler(
+      new Request(adminUrl("/api/v1/admin/users"), {
+        method: "POST",
+        headers: authHeader(),
+        body: JSON.stringify({
+          displayName: "Bob",
+          pin: "5678",
+          isAdmin: false,
+          profile: { ...SAMPLE_PROFILE, tools: { enabled: {}, toolsets: [] } },
+        }),
+      }),
+    );
+
+    const call = (provisioner.createUser as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    expect(call?.profile?.tools?.permissions).toEqual({
+      home_assistant: {},
+      gateway: {},
+      music_assistant: {},
+      searxng: {},
+      fetch: {},
+    });
+  });
+
+  it("REGRESSION: an EXPLICIT empty permissions map is preserved, not re-seeded", async () => {
+    const provisioner = makeProvisioner();
+    const handler = createAdminHandler(makeDeps({ provisioner }));
+
+    await handler(
+      new Request(adminUrl("/api/v1/admin/users"), {
+        method: "POST",
+        headers: authHeader(),
+        body: JSON.stringify({
+          displayName: "Bob",
+          pin: "5678",
+          isAdmin: false,
+          // Not the wizard's "not configured yet" — a table naming no server,
+          // i.e. somebody switched every one of them off. Must not collapse
+          // into the case above.
+          profile: { ...SAMPLE_PROFILE, tools: { permissions: {}, toolsets: [] } },
+        }),
+      }),
+    );
+
+    const call = (provisioner.createUser as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    expect(call?.profile?.tools?.permissions).toEqual({});
+  });
+
   it("returns 422 'schema' when displayName is empty", async () => {
     const handler = createAdminHandler(makeDeps());
 

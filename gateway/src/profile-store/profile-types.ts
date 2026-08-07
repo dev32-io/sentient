@@ -25,12 +25,23 @@ export type ReasoningEffort = z.output<typeof reasoningEffortSchema>;
  * was on (`[]` = inherit the operator's include; a non-empty array = narrow to
  * those tools). It never reached the native loop, so this migration is the
  * moment the setting starts meaning something — a server the user had switched
- * off yields `off` for every tool the catalog lists under it.
+ * off is absent from the emitted table, which the broker reads as `off` for
+ * every tool that server carries.
  *
  * Servers the user narrowed keep their named tools inheriting and mark nothing
  * else, because the catalog — not the profile — is the authority on what other
  * tools exist. The broker resolves the remainder against the catalog at
  * `definitions()` time (task 2).
+ *
+ * THREE INPUTS, THREE DIFFERENT OUTPUTS — and the last two must never collapse:
+ *   - `{enabled: {a: [], b: []}}` → `{permissions: {a: {}, b: {}}}` (those two
+ *     servers on and inheriting, everything else off);
+ *   - `{enabled: {}}`            → NO `permissions` key at all, i.e. unset =
+ *     "nobody has configured tools yet" → the defaults layer seeds the starter
+ *     set. See the carve-out below for why.
+ *   - `{permissions: {}}`        → passed straight through by the early return
+ *     at the top: somebody wrote a table naming no server, which is a
+ *     deliberate everything-off and is preserved as such.
  */
 function migrateEnabledToPermissions(v: unknown): unknown {
   if (v === null || typeof v !== "object" || Array.isArray(v)) return v;
@@ -52,6 +63,22 @@ function migrateEnabledToPermissions(v: unknown): unknown {
       )
     : (legacyEnabled as Record<string, unknown>);
 
+  const { enabled: _dropped, ...rest } = obj;
+
+  // AN EMPTY `enabled` MAP IS "NOT CONFIGURED YET", NOT "EVERYTHING OFF", and
+  // the difference is the whole ball game now that `permissions` is enforced.
+  // In the legacy world a key's PRESENCE meant a server was on, so `{}` meant
+  // no server had been configured — which for a fresh profile has always meant
+  // "seed the starter set". Emitting `permissions: {}` here would instead be a
+  // table naming no server, i.e. every server off; `applyProfileDefaults` would
+  // see a set field and decline to seed, and every new user would end up with
+  // zero MCP tools. Both account-creation paths send exactly this shape today
+  // (the web wizard's INITIAL_DRAFT and mobile's templateMemberProfile), so
+  // this is the live default, not an edge case. Dropping the key entirely
+  // yields "unset", which is what the defaults layer and the broker both read
+  // as "nobody has chosen yet".
+  if (Object.keys(enabledRecord).length === 0) return rest;
+
   // Every server the user had enabled — narrowed or not — migrates to
   // "inherit" (an empty per-tool map). Recreating the old narrowing array as
   // explicit `allow` entries would assert the named tools are still valid
@@ -63,7 +90,6 @@ function migrateEnabledToPermissions(v: unknown): unknown {
     permissions[server] = {};
   }
 
-  const { enabled: _dropped, ...rest } = obj;
   return { ...rest, permissions };
 }
 
