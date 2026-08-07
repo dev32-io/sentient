@@ -1,4 +1,5 @@
-// TaskListProjector — the live tool/task list the composer strip renders, and
+// TaskListProjector — the current state of tasks (foreground and background)
+// the composer strip renders, retained until the next turn replaces it, and
 // the authority on how long each row lives.
 //
 // WHY THE GATEWAY OWNS THE LIFETIME. Tool activity used to render as pills
@@ -7,12 +8,23 @@
 // steer can split a reply. The strip has no anchor, so the only remaining
 // question is when a row disappears, and that is a fact only the gateway holds:
 //
-//   foreground — awaited by the ReAct loop, so anything still running when the
-//                turn ends is an orphan. Dies with the turn.
+//   foreground — awaited by the ReAct loop. It reaches a terminal status
+//                (done/error) by the turn's own boundary, but the ROW STAYS —
+//                the whole point of the strip is that a person can look back
+//                at what a turn actually did. `onTurnStarted` is the ONLY
+//                place a foreground row is ever deleted, when the next turn
+//                begins and the strip empties for new work.
 //   background — a `delegateTask` dispatch. It outlives the turn that spawned
 //                it in every case and nothing cancels it (tools/delegate-task.ts),
-//                so it survives the boundary and leaves on its own terminal
-//                `delegation.progress`.
+//                so it survives every turn boundary too, and leaves only on its
+//                own terminal `delegation.progress`.
+//
+// A foreground call still in flight when its turn is cut off (barge-in/
+// interrupt) is the one case that does NOT settle on its own — react-loop.ts
+// stops without ever reporting a terminal status for it. `onToolCallsClosed`
+// exists for exactly that gap: cancellation.ts drives it once it has decided
+// which calls were left unreplied, so a cut-off row still reaches "error"
+// instead of sitting at "running" for the rest of the session.
 //
 // Pure: no I/O, no wall clock of its own. The caller emits `tasklist.state`
 // whenever a mutator returns true.
@@ -25,6 +37,11 @@ import type { DelegationProgress } from "./turn-emitter.js";
 const log = getLog(["sentient", "runtime", "task-list"]);
 
 const STATUS_RUNNING = "running";
+/** What `onToolCallsClosed` stamps a cut-off row with. Not "cancelled" — the
+ *  wire vocabulary (`turnToolStatusSchema`) is `running | done | error` only,
+ *  and a call the turn was cut off before recording a result for is exactly
+ *  what "error" means here: it produced no result. */
+const STATUS_ERROR = "error";
 
 export interface TaskListProjector {
   /** The rows to publish, oldest first. */
@@ -35,6 +52,11 @@ export interface TaskListProjector {
   onToolUpdate(turnId: string, update: ToolUpdate): boolean;
   onDelegationProgress(progress: DelegationProgress): boolean;
   onTurnEnded(turnId: string): boolean;
+  /** Drives every listed row to a terminal "error" status, leaving anything
+   *  already terminal or absent untouched. The one call site is
+   *  cancellation.ts, for the tool calls a barge-in/interrupt closed with a
+   *  synthetic `tool_result` — see the module header. */
+  onToolCallsClosed(toolCallIds: readonly string[]): boolean;
 }
 
 export interface TaskListProjectorDeps {
@@ -82,8 +104,10 @@ export function createTaskListProjector(deps: TaskListProjectorDeps): TaskListPr
     turnId: () => currentTurnId,
 
     onTurnStarted(turnId: string): boolean {
-      // A new turn's strip starts empty of FOREGROUND work. Background rows
-      // from an earlier turn are still running and stay.
+      // A new turn's strip starts empty of FOREGROUND work — the SOLE place a
+      // foreground row is ever cleared (onTurnEnded retains them; see the
+      // module header). Background rows from an earlier turn are still
+      // running and stay.
       let changed = currentTurnId !== turnId;
       for (const [id, row] of rows) {
         if (row.kind === "foreground") {
@@ -185,14 +209,29 @@ export function createTaskListProjector(deps: TaskListProjectorDeps): TaskListPr
 
     onTurnEnded(turnId: string): boolean {
       if (currentTurnId !== turnId) return false;
-      for (const [id, row] of rows) {
-        if (row.kind === "foreground") rows.delete(id);
-      }
+      // Rows are deliberately NOT dropped here any more — the strip is
+      // retained state, not a live-only view, and a person can still look
+      // back at what this turn did until the next one starts and clears it
+      // (`onTurnStarted` — see the module header).
       currentTurnId = null;
       log.debug("task-list.turn-ended", { turnId, rows: rows.size });
       // Always a change: `turnId` is part of the published frame and it just
-      // went null, even in the case where no row was dropped.
+      // went null, even in the case where no row's status changed.
       return true;
+    },
+
+    onToolCallsClosed(toolCallIds: readonly string[]): boolean {
+      let changed = false;
+      for (const id of toolCallIds) {
+        const existing = rows.get(id);
+        // Absent (never got a row) or already terminal (its real result
+        // landed before the abort did) — nothing to do either way.
+        if (existing === undefined || existing.status !== STATUS_RUNNING) continue;
+        rows.set(id, { ...existing, status: STATUS_ERROR, endedAtMs: deps.now() });
+        changed = true;
+      }
+      if (changed) log.debug("task-list.tool-calls-closed", { toolCallIds, rows: rows.size });
+      return changed;
     },
   };
 }

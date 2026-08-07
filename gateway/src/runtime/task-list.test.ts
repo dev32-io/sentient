@@ -92,7 +92,7 @@ describe("TaskListProjector", () => {
     ]);
   });
 
-  it("drops foreground rows at the turn boundary and keeps background ones", () => {
+  it("keeps a finished foreground row AND a background row past the turn boundary", () => {
     const p = createTaskListProjector({ now: () => 5 });
     p.onTurnStarted("t1");
     p.onToolUpdate("t1", { toolCallId: "c1", toolName: "ma_search", status: "done", argsPreview: "{}" });
@@ -104,9 +104,23 @@ describe("TaskListProjector", () => {
       taskId: "task-7",
     });
     expect(p.onTurnEnded("t1")).toBe(true);
-    expect(p.items().map((i) => i.id)).toEqual(["task-7"]);
-    // No turn owns the list any more — only a background row survives it.
+    // The strip is a look-back record now, not a live-only view: nothing
+    // clears a foreground row until the NEXT turn starts (onTurnStarted).
+    expect(p.items().map((i) => i.id)).toEqual(["c1", "task-7"]);
+    // No turn owns the list any more, even though its rows are still here.
     expect(p.turnId()).toBeNull();
+  });
+
+  it("clears a finished foreground row only when the NEXT turn starts, not at its own turn's end", () => {
+    const p = createTaskListProjector({ now: () => 5 });
+    p.onTurnStarted("t1");
+    p.onToolUpdate("t1", { toolCallId: "c1", toolName: "ma_search", status: "done", argsPreview: "{}" });
+    p.onTurnEnded("t1");
+    // Still here right after the turn ends — this is the mutation-check case:
+    // deleting the row inside onTurnEnded (the old rule) makes this line fail.
+    expect(p.items().map((i) => i.id)).toEqual(["c1"]);
+    expect(p.onTurnStarted("t2")).toBe(true);
+    expect(p.items()).toEqual([]);
   });
 
   it("removes a background row when its delegation reports terminal", () => {
@@ -187,5 +201,39 @@ describe("TaskListProjector", () => {
     // ...but it must not resurrect currentTurnId either — no turn owns the
     // list, background-only or not.
     expect(p.turnId()).toBeNull();
+  });
+
+  // Change 2's pin: cancellation.ts drives this once it has closed a turn's
+  // unreplied tool calls in the store, so a call cut off mid-flight reaches a
+  // terminal status instead of sitting at "running" forever now that
+  // onTurnEnded no longer deletes the row itself.
+  it("terminalizes a running row to error when its tool call is closed", () => {
+    const clock = fixedClock();
+    const p = createTaskListProjector({ now: clock.now });
+    p.onTurnStarted("t1");
+    p.onToolUpdate("t1", { toolCallId: "c1", toolName: "ma_search", status: "running", argsPreview: "{}" });
+    clock.tick(50);
+    expect(p.onToolCallsClosed(["c1"])).toBe(true);
+    expect(p.items()).toEqual([
+      {
+        id: "c1",
+        toolName: "ma_search",
+        kind: "foreground",
+        status: "error",
+        argsPreview: "{}",
+        startedAtMs: 1_000,
+        endedAtMs: 1_050,
+      },
+    ]);
+  });
+
+  it("leaves an already-terminal or nonexistent row untouched when closed", () => {
+    const p = createTaskListProjector({ now: () => 5 });
+    p.onTurnStarted("t1");
+    p.onToolUpdate("t1", { toolCallId: "c1", toolName: "ma_search", status: "done", argsPreview: "{}" });
+    // "c1" already settled on its own; "c9" never existed. Neither is this
+    // module's job to invent — closing is a no-op for both.
+    expect(p.onToolCallsClosed(["c1", "c9"])).toBe(false);
+    expect(p.items()[0]?.status).toBe("done");
   });
 });

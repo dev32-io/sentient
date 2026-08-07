@@ -60,6 +60,22 @@
 // DIRECTLY after it). Closing them from react-loop.ts's post-abort branch
 // instead would put the cutoff entry between the pair and drop the call anyway.
 //
+// THE TASK-STRIP ROW FOR EACH CLOSED CALL IS TERMINALIZED HERE TOO, not just
+// the store. `TaskListProjector` (runtime/task-list.ts) now retains a
+// foreground row past its turn's own boundary (the strip is a look-back
+// record, not a live-only view), which means a row still "running" when the
+// abort landed would otherwise sit at "running" forever — the exact
+// permanent lie on screen this UX exists to prevent. Every id
+// `unrepliedToolCalls` finds IS the set of rows still running: react-loop.ts
+// calls `onToolUpdate(..., "running")` in the same breath it appends the
+// `tool_call` entry (before dispatch even starts), so "no tool_result yet"
+// and "row still running" are the same fact read from two different places.
+// Driven via `deps.closeTaskListRows` rather than reaching into the
+// projector directly — this module has no business holding it, and
+// SessionRuntime (which owns both the projector and this module) is where
+// "publish exactly when a mutator returns true" already lives; duplicating
+// that decision here would be a second place to get it wrong.
+//
 // TWO CONCERNS, NOT ONE. Committing a cutoff entry (+ firing `turnAborted`)
 // is about the TURN; flushing playback is about AUDIO — and audio OUTLIVES
 // its turn. `onTurnSettled` closes only the TTS text queue; the drain chained
@@ -182,6 +198,20 @@ export interface CancellationDeps {
    *  right after a cutoff entry is appended so the interrupted bubble reaches
    *  the client immediately, rather than whenever the loop happens to unwind. */
   publishCommitted: () => void;
+  /**
+   * Drive the task-strip row for each of these `toolCallId`s to a terminal
+   * status. Called with exactly the ids `closeUnrepliedToolCalls` just
+   * appended a synthetic `tool_result` for — see the module header's "THE
+   * TASK-STRIP ROW" section for why that gap opened once the projector
+   * started retaining foreground rows past their turn boundary.
+   *
+   * A thin seam by design: this module has no reference to
+   * `TaskListProjector` and never will, so the injected function is expected
+   * to call the projector's mutator AND publish `tasklist.state` if it
+   * reports a change — SessionRuntime, which owns both, is the one place
+   * that decision is made anywhere in this runtime.
+   */
+  closeTaskListRows: (toolCallIds: readonly string[]) => void;
 }
 
 /** This turn's own entries, newest-last. Bounded by `startedAfterSeq`; the
@@ -191,10 +221,12 @@ function turnEntries(deps: CancellationDeps, turn: CancellableTurn): SessionEntr
 }
 
 /** Tool-call ids this turn appended with no `tool_result` after them, in
- *  dispatch order. The question exists for the MODEL projection's sake — an
- *  unanswered call is dropped from the next request's `messages[]` — not for
- *  any client feed; tool entries have not been client-facing since the feed's
- *  tool item was retired. */
+ *  dispatch order. The question exists for two readers now: the MODEL
+ *  projection (an unanswered call is dropped from the next request's
+ *  `messages[]`) and the task-strip row for the same call, which is still
+ *  "running" for exactly this same reason — see `closeTaskListRows` below.
+ *  Never a client FEED concern; tool entries have not been client-facing
+ *  since the feed's tool item was retired. */
 function unrepliedToolCalls(entries: readonly SessionEntry[]): SessionEntry[] {
   const replied = new Set<string>();
   for (const e of entries) {
@@ -212,7 +244,8 @@ function unrepliedToolCalls(entries: readonly SessionEntry[]): SessionEntry[] {
  */
 function closeUnrepliedToolCalls(deps: CancellationDeps, turn: CancellableTurn, cutoff: CutoffKind): SessionEntry[] {
   const entries = turnEntries(deps, turn);
-  for (const call of unrepliedToolCalls(entries)) {
+  const unreplied = unrepliedToolCalls(entries);
+  for (const call of unreplied) {
     const appended = deps.store.append({
       ...blankEntry(deps.sessionId, turn.turnId),
       kind: "tool_result",
@@ -231,6 +264,11 @@ function closeUnrepliedToolCalls(deps: CancellationDeps, turn: CancellableTurn, 
       reason: "cut off before its result was recorded — closing the round trip so the model keeps the call",
     });
   }
+  // Same set, filtered to satisfy the strict `string[]` the projector expects
+  // — `unrepliedToolCalls` already guarantees non-null, but the filter above
+  // it isn't a type predicate, so this narrows it for real.
+  const closedToolCallIds = unreplied.map((call) => call.toolCallId).filter((id): id is string => id !== null);
+  if (closedToolCallIds.length > 0) deps.closeTaskListRows(closedToolCallIds);
   return entries;
 }
 

@@ -2563,7 +2563,7 @@ describe("SessionRuntime — titling fires on the first COMPLETED reply", () => 
 // ---------------------------------------------------------------------------
 
 describe("SessionRuntime — task list", () => {
-  it("publishes the strip on dispatch and clears foreground rows at the turn boundary", async () => {
+  it("publishes the strip on dispatch, keeps the finished row past its own turn's boundary, and clears it only when the NEXT turn starts", async () => {
     const am = createAccessManager({ userDataRoot: `${ROOT}/tasklist` });
     const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
     mkdirSync(am.userHomeDir(alice), { recursive: true });
@@ -2601,9 +2601,121 @@ describe("SessionRuntime — task list", () => {
     expect(lists.length).toBeGreaterThan(1);
     // Mid-turn the strip carried the running call…
     expect(lists.some((e) => (e.items ?? []).length === 1)).toBe(true);
-    // …and the last publish, at the turn boundary, is empty: a foreground call
-    // is awaited by the loop, so none of it outlives the turn.
-    expect(lists[lists.length - 1]?.items ?? []).toEqual([]);
+    // …and the last publish, at the turn boundary, STILL shows the row — the
+    // strip is retained state now (Change 1), not a live-only view — but
+    // settled to "done", never left at "running".
+    const lastAtBoundary = lists[lists.length - 1];
+    expect(lastAtBoundary?.turnId).toBe("");
+    const rowsAtBoundary = (lastAtBoundary?.items ?? []) as unknown as TaskListItem[];
+    expect(rowsAtBoundary).toHaveLength(1);
+    expect(rowsAtBoundary[0]?.id).toBe("call_1");
+    expect(rowsAtBoundary[0]?.status).toBe("done");
+
+    // The SOLE thing that clears it is the next turn starting, not this one
+    // ending. `fakeProvider`'s callIndex only matches the tool-call branch on
+    // its very first call, so this second turn is plain text — no dispatch of
+    // its own — which isolates the assertion to onTurnStarted's own clearing.
+    const firstTurnId = emitter.events.find((e) => e.type === "turnStarted")?.turnId;
+    runtime.submit({ kind: "conversational", text: "and now?" });
+    await waitUntilIdle(runtime);
+
+    const secondTurnStarted = emitter.events.filter((e) => e.type === "turnStarted")[1];
+    expect(secondTurnStarted?.turnId).toBeDefined();
+    expect(secondTurnStarted?.turnId).not.toBe(firstTurnId);
+    const listsAtSecondStart = emitter.events.filter(
+      (e) => e.type === "taskList" && e.turnId === secondTurnStarted?.turnId,
+    );
+    expect(listsAtSecondStart.length).toBeGreaterThan(0);
+    expect(listsAtSecondStart[0]?.items ?? []).toEqual([]);
+
+    runtime.dispose();
+  });
+
+  // -------------------------------------------------------------------------
+  // The pin for Change 2. Once Change 1 stopped `onTurnEnded` from deleting
+  // foreground rows, a call still "running" when its turn is cut off has NO
+  // other event left that could ever settle it — react-loop.ts's abort path
+  // appends nothing further and reports no terminal `onToolUpdate` for it
+  // (react-loop.ts's `dispatchToolCalls`, abort-after-dispatch branch). Without
+  // cancellation.ts driving `TaskListProjector.onToolCallsClosed`, this row
+  // would read "running" on the strip forever — a permanent lie on screen.
+  // -------------------------------------------------------------------------
+  it("terminalizes an interrupted tool call's row instead of leaving it stuck at running", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/tasklist-interrupt` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = fakeProvider(async function* (callIndex) {
+      if (callIndex === 1) {
+        yield {
+          type: "tool_call",
+          toolCall: { id: "call_cut", type: "function", function: { name: "get_weather", arguments: "{}" } },
+        };
+        yield { type: "done", finishReason: "tool_calls" };
+        return;
+      }
+      yield { type: "text", content: "final reply" };
+      yield { type: "done", finishReason: "stop" };
+    });
+
+    // Hangs until the turn's signal fires — a real MCP call still in flight
+    // when Stop is pressed, same shape as the "cancellation: interrupt during
+    // tool dispatch" suite above.
+    let dispatchStarted: (() => void) | undefined;
+    const dispatchReached = new Promise<void>((resolve) => {
+      dispatchStarted = resolve;
+    });
+    const broker = fakeBroker([weatherDef], async (inv) => {
+      dispatchStarted?.();
+      await new Promise<void>((resolve) => {
+        if (inv.signal.aborted) {
+          resolve();
+          return;
+        }
+        inv.signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+      return { content: "sunny", isError: false };
+    });
+
+    const emitter = recordingEmitter();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-tasklist-interrupt",
+      accessManager: am,
+      provider,
+      broker,
+      emitter,
+      timeZone: { zone: () => "UTC" },
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "what is the weather?" });
+    await dispatchReached;
+
+    // Sanity check on the setup: react-loop.ts appends the "running" update in
+    // the same breath as the tool_call entry, before broker.dispatch() is even
+    // called — so the row already exists and is running by the time our fake
+    // broker's dispatch fn starts executing.
+    const midFlight = (emitter.events.filter((e) => e.type === "taskList").at(-1)?.items ??
+      []) as unknown as TaskListItem[];
+    expect(midFlight.find((i) => i.id === "call_cut")?.status).toBe("running");
+
+    runtime.interrupt();
+    await waitUntilIdle(runtime);
+
+    const finalItems = (emitter.events.filter((e) => e.type === "taskList").at(-1)?.items ??
+      []) as unknown as TaskListItem[];
+    const row = finalItems.find((i) => i.id === "call_cut");
+
+    // The actual pin: no row is left at "running" after the turn is cut off.
+    // Reverting cancellation.ts's `closeTaskListRows` wiring (Change 2) turns
+    // this into `status: "running"` forever, since Change 1 removed the only
+    // other thing that used to clear it.
+    expect(row).toBeDefined();
+    expect(row?.status).toBe("error");
+    expect(finalItems.some((i) => i.status === "running")).toBe(false);
+
     runtime.dispose();
   });
 

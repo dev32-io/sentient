@@ -406,9 +406,10 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     currentReplyId: () => inFlight?.replyId ?? null,
   });
 
-  // The composer strip's live rows (runtime/task-list.ts). Pure and
+  // The composer strip's current rows (runtime/task-list.ts). Pure and
   // I/O-free — this runtime is the one thing that knows when a foreground row
-  // dies with its turn and when a background one outlives it.
+  // is cleared (only at the NEXT turn's start, not this one's end) and when a
+  // background one outlives it.
   const taskList = createTaskListProjector({ now: () => Date.now() });
 
   /** Publish the strip. Called whenever the projector reports a real change,
@@ -505,6 +506,15 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
         : null,
     stopPlayback,
     publishCommitted: () => feed.publishAll(),
+    // The strip is retained past a turn's own boundary now (task-list.ts), so
+    // a foreground call still "running" when this turn is cut off would
+    // otherwise never reach a terminal status at all. cancellation.ts has no
+    // business holding the projector itself — it hands back exactly the
+    // toolCallIds it just closed in the store, and the publish-on-true
+    // decision stays here, next to every other call into `taskList`.
+    closeTaskListRows: (toolCallIds) => {
+      if (taskList.onToolCallsClosed(toolCallIds)) publishTaskList();
+    },
   });
 
   function currentMaxSeq(): number {
@@ -705,8 +715,11 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     // on `turn.completed`, so the committed twin has to already be there or the
     // reply visibly vanishes.
     feed.publishAll();
-    // Foreground rows die with their turn (runtime/task-list.ts); background
-    // rows (a `delegateTask` dispatch) survive it and stay on the strip.
+    // Foreground rows now SURVIVE their turn (runtime/task-list.ts) — the
+    // strip is retained state so a person can look back at what this turn
+    // did, and only the next `onTurnStarted` clears them. Background rows (a
+    // `delegateTask` dispatch) already survived every turn boundary and still
+    // do. Only `turnId` itself is guaranteed to change here.
     if (taskList.onTurnEnded(turnId)) publishTaskList();
 
     log.info("session-runtime.turn.end", {
