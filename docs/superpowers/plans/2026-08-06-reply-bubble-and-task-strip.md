@@ -1880,9 +1880,16 @@ git add -A && git commit -m "test(e2e): pin one-bubble replies and the composer 
 
 ## E2E matrix
 
+> **Every prompt below is READ-ONLY and must stay that way.** The local dev stack talks to the
+> operator's real home, and smoke runs at arbitrary hours. Never send a prompt that actuates a
+> device — no "turn on the light", no "play music", no thermostat/scene/lock writes. A multi-tool
+> ReAct turn is fully reachable from `ma_list_players` + `ha_search` + web search, which is what
+> the first row uses. Flows that DO actuate carry the `device-actuating` tag and are excluded by
+> default in `qa/mobile/run-e2e.sh` — see `agents/docs/testing-knowledge.md`.
+
 | Case | Viewport | Pre-state | Action | Expected user-visible | Expected log trail |
 |---|---|---|---|---|---|
-| Multi-stretch reply is one bubble | desktop 1280×900 | fresh chat, stack up | Send "list my media players and play something on the kitchen speaker" (drives narration → tool → narration → tool → answer) | ONE assistant bubble grows through the whole turn; when the typewriter finishes it does not split, re-order, or change row count | `session-runtime.turn.start`; several `conversation-feed.published` with `published:0` while the reply is open; exactly ONE `conversation.entry` of `kind:"assistant"` for the turn; no WARN |
+| Multi-stretch reply is one bubble | desktop 1280×900 | fresh chat, stack up | Send "Which media players do I have, and is there a light sensor reporting right now? Also search the web for today's date." — READ-ONLY, and still drives narration → tool → narration → tool → answer | ONE assistant bubble grows through the whole turn; when the typewriter finishes it does not split, re-order, or change row count | `session-runtime.turn.start`; several `conversation-feed.published` with `published:0` while the reply is open; exactly ONE `conversation.entry` of `kind:"assistant"` for the turn; no WARN |
 | Reply survives reload | desktop 1280×900 | the turn above, completed | Reload the page | The same single bubble, same text, same position | `conversation-feed.snapshot` with one assistant item for that turn |
 | Mid-turn steer splits the reply | desktop 1280×900 | a turn in flight, mid-narration | Type a second message and send it | First bubble closes where it was; the user row renders below it; the reply resumes in a NEW bubble under that row | `session-runtime.reply.rotated` with `previousReplyId` ≠ `replyId`; `session-runtime.submit.steer` |
 | Task strip shows live rows | desktop 1280×900 | fresh chat | Send a message that calls two tools | Pills appear at the top of the composer, inside its border, transitioning running → done; NO pills on any chat bubble | `task-list.tool-update` per transition; `turn-emitter.task-list` with matching `count` |
