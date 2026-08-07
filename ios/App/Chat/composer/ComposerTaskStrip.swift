@@ -40,6 +40,13 @@ struct ComposerTaskStrip: View {
                     ForEach(items, id: \.id) { item in pill(item) }
                 }
             }
+            // `.contain` before the identifier, or the id has nothing durable to
+            // sit on: a bare VStack is not itself an accessibility element, so
+            // when the strip is populated but no pill is open there may be no
+            // element in the tree carrying "task-strip" at all — and the Maestro
+            // assertion for it passes on whatever else matched. Same shape as
+            // SecretRowView / RowToggle / ConnectionBanner.
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("task-strip")
         }
     }
