@@ -339,7 +339,7 @@ function buildAssistantMessage(id: string, item: CommittedFeedItem & { kind: "as
     // turnId is the gateway-owned join key carried on the conversation.entry
     // frame (CommittedFeedItem) — read straight through, never invented client-side.
     ...(item.turnId ? { turnId: item.turnId } : {}),
-    ...(item.messageId ? { messageId: item.messageId } : {}),
+    ...(item.replyId ? { replyId: item.replyId } : {}),
     ...(item.cutoff ? { cutoff: item.cutoff } : {}),
   };
 }
