@@ -204,6 +204,45 @@ down-migration. So:
   `~/.sentient/gateway/config.yaml` over SSH. Keep a copy before a major
   upgrade if that matters to you: `cp ~/.sentient/gateway/config.yaml{,.bak}`.
 
+### Upgrade note — per-tool permissions make `tier:` mandatory on every catalogued tool
+
+The release that adds per-tool permissions changes the shape of
+`mcp_catalog.*.tools.include` (and `.available`) from a bare name list to
+`{ name, tier }` entries. **`tier` is required and has no default**, and the
+operator config is validated by a `schema.parse` that throws on a path the boot
+sequence does not catch — so an untiered catalog is not a degraded gateway, it
+is a gateway that does not start. Every existing host is affected, because
+`setup-prod.py` never overwrites an existing `config.yaml` by hard rule.
+
+**No manual edit needed.** The 0.1.4 → 0.1.5 migration rewrites every entry in
+place, taking each tool's tier from the shipped catalog as it stood at that
+step:
+
+```yaml
+tools:
+  include:
+    - ha_get_state          # before
+    - { name: ha_get_state, tier: read }   # after
+```
+
+Your comments, ordering and blank lines survive; an entry you had already tiered
+by hand is never overwritten.
+
+**A tool the shipped catalog does not describe** — one you added for your own
+MCP — gets `tier: admin`, the operator-only tier, plus an inline marker comment
+naming it and a `WARN migration:0.1.5:unknown-tools` line at boot. It does
+**not** get `read`. The migration cannot know an unknown tool's blast radius,
+and the two ways of guessing fail asymmetrically: `read` would hand a guest
+something nobody vetted and say nothing, while `admin` costs you one edit that
+the log and the file both point at. Re-tier those entries deliberately —
+`read | write | confirm | admin`, defined in the `mcp_catalog:` legend in
+`config.yaml`.
+
+> The migration also reformats untouched parts of the file — flow collections
+> gain inner spaces, aligned trailing comments collapse to one space, long
+> quoted strings wrap. That is the YAML round-trip, it is what every migration
+> step in this chain has always done, and it changes no values.
+
 ### Upgrade note — gateway 1.12.x moves the gateway behind `inbound-proxy`
 
 The 0.1.3 → 0.1.4 migration rewrites `host: 0.0.0.0` → `127.0.0.1` and, in the

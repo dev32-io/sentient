@@ -1,10 +1,12 @@
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { mcpCatalogSchema } from "@sentient/config";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseDocument } from "yaml";
 import {
   applySchema014Migration,
+  applySchema015Migration,
   migrateOperatorConfigYaml,
   migrateOperatorConfigYamlSync,
 } from "./operator-config-migrator.ts";
@@ -91,7 +93,7 @@ hermes:
 `;
 
 const ALREADY_MIGRATED_YAML = `\
-schema_version: "0.1.4"
+schema_version: "0.1.5"
 hermes:
   web_tools:
     provider: searxng
@@ -100,7 +102,7 @@ hermes:
 `;
 
 const NO_WEB_TOOLS_YAML = `\
-schema_version: "0.1.4"
+schema_version: "0.1.5"
 hermes:
   worker:
     container_name: sentient-hermes
@@ -293,7 +295,7 @@ describe("migrateOperatorConfigYamlSync — schema 0.1.0 → 0.1.1", () => {
   it("runs the whole chain in one pass, leaving schema_version at the head", () => {
     const p = writeTmp(dir, HOST_CONFIG_v010);
     migrateOperatorConfigYamlSync(p);
-    expect(readTmp(p)).toContain('schema_version: "0.1.4"');
+    expect(readTmp(p)).toContain('schema_version: "0.1.5"');
   });
 
   it("removes all dead session keys", () => {
@@ -388,7 +390,7 @@ describe("migrateOperatorConfigYamlSync — schema 0.1.0 → 0.1.1", () => {
 
   it("is a no-op when stt.language is already auto at the head version", () => {
     const yaml = `\
-schema_version: "0.1.4"
+schema_version: "0.1.5"
 stt:
   provider: local-stt
   language: auto
@@ -427,7 +429,7 @@ describe("migrateOperatorConfigYamlSync — schema 0.1.2 → 0.1.3", () => {
     const result = readTmp(p);
     expect(result).not.toContain("replay_journal_retention_ms");
     expect(result).toContain("retention_ms: 900000");
-    expect(result).toContain('schema_version: "0.1.4"');
+    expect(result).toContain('schema_version: "0.1.5"');
   });
 
   it("does NOT carry the old value across the rename", () => {
@@ -617,7 +619,7 @@ describe("0.1.4 backfill on disk", () => {
     expect(result.split("\n").filter((l) => /^ {2}inbound-proxy:$/.test(l))).toHaveLength(1);
     expect(result.split("\n").filter((l) => /^inbound_proxy:$/.test(l))).toHaveLength(1);
     expect(result).toContain("host: 127.0.0.1");
-    expect(result).toContain('schema_version: "0.1.4"');
+    expect(result).toContain('schema_version: "0.1.5"');
   });
 
   it("keeps every pre-existing service entry", () => {
@@ -629,5 +631,322 @@ describe("0.1.4 backfill on disk", () => {
       (parseDocument(readTmp(p)).toJS() as { managed_services: Record<string, unknown> }).managed_services,
     );
     expect(services).toEqual(["egress-proxy", "ha-mcp", "inbound-proxy"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests — schema 0.1.4 → 0.1.5 (every catalogued tool declares an impact tier)
+// ---------------------------------------------------------------------------
+
+// The mcp_catalog EXACTLY as a production host holds it at 0.1.4 — every tool a
+// bare string, because `tier:` did not exist yet. Reproduced verbatim (comments
+// trimmed) from `git show adb017dc:gateway/config.yaml`, which is the last
+// commit before the field became mandatory. If this fixture ever passes
+// `mcpCatalogSchema` WITHOUT the migration, the field stopped being required
+// and this whole step is dead.
+const V014_UNTIERED_CATALOG_YAML = `\
+schema_version: "0.1.4"
+port: 8888
+host: 127.0.0.1
+
+mcp_catalog:
+  home_assistant:
+    transport: http
+    url: http://127.0.0.1:8086/mcp
+    timeout: 30
+    connect_timeout: 5
+    description: Home Assistant smart-home control via ha-mcp sidecar.
+    tools:
+      include:
+        # query / state
+        - ha_get_overview
+        - ha_get_state
+        - ha_search
+        - ha_get_history
+        - ha_eval_template
+        - ha_get_operation_status
+        # spatial
+        - ha_list_floors_areas
+        - ha_get_zone
+        - ha_get_camera_image
+        # action
+        - ha_call_service
+        - ha_bulk_control
+        # todos / shopping list
+        - ha_get_todo
+        - ha_set_todo_item
+        - ha_remove_todo_item
+        # calendar
+        - ha_config_get_calendar_events
+        - ha_config_set_calendar_event
+        - ha_config_remove_calendar_event
+
+  gateway:
+    transport: stdio
+    command: nc
+    args: ["-U", "/tmp/mcp-{{userId}}.sock"]
+    description: Sentient gateway tools (identify, audio, channel).
+    tools:
+      include:
+        - identify_user
+        - pause_audio
+        - resume_audio
+        - update_user_settings
+
+  music_assistant:
+    transport: http
+    url: http://127.0.0.1:8668/mcp
+    timeout: 30
+    connect_timeout: 5
+    description: Music Assistant playback control.
+    tools:
+      include:
+        - ma_search
+        - ma_browse
+        - ma_list_players
+        - ma_volume
+        - ma_group
+        - ma_playback
+        - ma_play_media
+        - ma_queue
+        - ma_queue_item
+        - ma_transfer_queue
+
+  fetch:
+    transport: http
+    url: http://127.0.0.1:8088/mcp
+    description: Fetch URL contents as markdown.
+    tools:
+      include:
+        - fetch
+
+  searxng:
+    transport: http
+    url: http://127.0.0.1:8087/mcp
+    description: SearXNG metasearch web search.
+    tools:
+      include:
+        - search_web
+`;
+
+function catalogOf(yaml: string): unknown {
+  return (parseDocument(yaml).toJS() as { mcp_catalog: unknown }).mcp_catalog;
+}
+
+function tierIn(yaml: string, server: string, tool: string): string | undefined {
+  const catalog = catalogOf(yaml) as Record<string, { tools: { include: { name: string; tier: string }[] } }>;
+  return catalog[server]?.tools.include.find((entry) => entry.name === tool)?.tier;
+}
+
+/** One server's `include` / `available` list, as plain JS. */
+function toolListIn(doc: ReturnType<typeof parseDocument>, server: string, key: "include" | "available"): unknown[] {
+  const js = doc.toJS() as { mcp_catalog: Record<string, { tools: Record<string, unknown[]> }> };
+  return js.mcp_catalog[server]?.tools[key] ?? [];
+}
+
+describe("0.1.4 -> 0.1.5: every catalogued tool declares an impact tier", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "op-config-migrator-015-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // THE merge-blocking case. `mcp_catalog` is parsed by `schema.parse`, which
+  // throws, and nothing on the boot path catches it — so an untiered catalog is
+  // not a degraded gateway, it is a gateway that does not start.
+  it("refuses to parse a real pre-change catalog before the migration runs", () => {
+    // A bare string is not a half-filled tool entry — it is the WRONG SHAPE, so
+    // zod rejects it before it ever reaches the "declares no impact tier" arm.
+    expect(() => mcpCatalogSchema.parse(catalogOf(V014_UNTIERED_CATALOG_YAML))).toThrow(/"include"/);
+  });
+
+  it("makes a real pre-change catalog parse", () => {
+    const p = writeTmp(dir, V014_UNTIERED_CATALOG_YAML);
+
+    migrateOperatorConfigYamlSync(p);
+
+    expect(() => mcpCatalogSchema.parse(catalogOf(readTmp(p)))).not.toThrow();
+    expect(readTmp(p)).toContain('schema_version: "0.1.5"');
+  });
+
+  it("backfills each tool the tier the shipped catalog declares for it", () => {
+    const p = writeTmp(dir, V014_UNTIERED_CATALOG_YAML);
+
+    migrateOperatorConfigYamlSync(p);
+    const migrated = readTmp(p);
+
+    // One per tier, so a table that collapsed to a single value cannot pass.
+    expect(tierIn(migrated, "home_assistant", "ha_get_state")).toBe("read");
+    expect(tierIn(migrated, "home_assistant", "ha_set_todo_item")).toBe("write");
+    expect(tierIn(migrated, "home_assistant", "ha_call_service")).toBe("confirm");
+    expect(tierIn(migrated, "music_assistant", "ma_transfer_queue")).toBe("write");
+    expect(tierIn(migrated, "music_assistant", "ma_playback")).toBe("read");
+    expect(tierIn(migrated, "searxng", "search_web")).toBe("read");
+  });
+
+  // The whole point of tiering: a generic dispatcher that reaches locks and
+  // alarms must not come back as a tool a child can call. Backfilling `read`
+  // everywhere would pass every other assertion in this file.
+  it("does not widen a confirm-tier tool into a read", () => {
+    const p = writeTmp(dir, V014_UNTIERED_CATALOG_YAML);
+
+    migrateOperatorConfigYamlSync(p);
+    const migrated = readTmp(p);
+
+    expect(tierIn(migrated, "home_assistant", "ha_bulk_control")).not.toBe("read");
+    expect(tierIn(migrated, "home_assistant", "ha_config_remove_calendar_event")).not.toBe("read");
+  });
+
+  it("keeps the operator's own comments on the tool list", () => {
+    const p = writeTmp(dir, V014_UNTIERED_CATALOG_YAML);
+
+    migrateOperatorConfigYamlSync(p);
+    const migrated = readTmp(p);
+
+    expect(migrated).toContain("# query / state");
+    expect(migrated).toContain("# todos / shopping list");
+  });
+
+  // The `backfillInboundProxyService` rule, applied to a list: an operator who
+  // already tiered a tool by hand has made a decision, and a migration that
+  // silently overrides it is worse than one that does nothing.
+  it("leaves a tier the operator wrote themselves exactly as written", () => {
+    const doc = parseDocument(
+      [
+        'schema_version: "0.1.4"',
+        "mcp_catalog:",
+        "  home_assistant:",
+        "    tools:",
+        "      include:",
+        "        - { name: ha_call_service, tier: write }",
+        "        - ha_get_state",
+      ].join("\n"),
+    );
+
+    const result = applySchema015Migration(doc);
+
+    expect(result?.tieredTools).toEqual(["home_assistant.ha_get_state"]);
+    expect(toolListIn(doc, "home_assistant", "include")).toEqual([
+      { name: "ha_call_service", tier: "write" },
+      { name: "ha_get_state", tier: "read" },
+    ]);
+  });
+
+  // A half-migrated entry — the operator added `name:` but no `tier:` — is the
+  // same problem as a bare string and gets the same answer.
+  it("tiers a map entry that names a tool but declares no tier", () => {
+    const doc = parseDocument(
+      [
+        'schema_version: "0.1.4"',
+        "mcp_catalog:",
+        "  searxng:",
+        "    tools:",
+        "      include:",
+        "        - name: search_web",
+      ].join("\n"),
+    );
+
+    applySchema015Migration(doc);
+
+    expect(toolListIn(doc, "searxng", "include")).toEqual([{ name: "search_web", tier: "read" }]);
+  });
+
+  // A tool the shipped catalog never described has an UNKNOWN blast radius.
+  // `read` would hand it to a guest; the migration cannot know that is safe, so
+  // it goes to the one tier only the operator reaches and says so in the file.
+  it("gives an operator-added tool the shipped catalog does not know the admin tier", () => {
+    const doc = parseDocument(
+      [
+        'schema_version: "0.1.4"',
+        "mcp_catalog:",
+        "  my_own_mcp:",
+        "    tools:",
+        "      include:",
+        "        - wipe_the_nas",
+      ].join("\n"),
+    );
+
+    const result = applySchema015Migration(doc);
+
+    expect(result?.unknownTools).toEqual(["my_own_mcp.wipe_the_nas"]);
+    expect(tierIn(doc.toString(), "my_own_mcp", "wipe_the_nas")).toBe("admin");
+    expect(doc.toString()).toContain("shipped catalog does not describe");
+  });
+
+  // The tier belongs to the upstream tool, not to the local key that holds it.
+  it("still finds a tier for a tool under a server key the operator renamed", () => {
+    const doc = parseDocument(
+      [
+        'schema_version: "0.1.4"',
+        "mcp_catalog:",
+        "  house:",
+        "    tools:",
+        "      include:",
+        "        - ha_call_service",
+      ].join("\n"),
+    );
+
+    const result = applySchema015Migration(doc);
+
+    expect(result?.unknownTools).toEqual([]);
+    expect(tierIn(doc.toString(), "house", "ha_call_service")).toBe("confirm");
+  });
+
+  it("tiers the operator-declared `available` universe as well as `include`", () => {
+    const doc = parseDocument(
+      [
+        'schema_version: "0.1.4"',
+        "mcp_catalog:",
+        "  searxng:",
+        "    tools:",
+        "      available:",
+        "        - search_web",
+        "      include:",
+        "        - search_web",
+      ].join("\n"),
+    );
+
+    applySchema015Migration(doc);
+
+    expect(toolListIn(doc, "searxng", "available")).toEqual([{ name: "search_web", tier: "read" }]);
+  });
+
+  it("writes one tier per tool no matter how many times the chain runs", () => {
+    const p = writeTmp(dir, V014_UNTIERED_CATALOG_YAML);
+
+    migrateOperatorConfigYamlSync(p);
+    migrateOperatorConfigYamlSync(p);
+    migrateOperatorConfigYamlSync(p);
+
+    const migrated = readTmp(p);
+    expect(migrated.match(/name: search_web/g)).toHaveLength(1);
+    expect(() => mcpCatalogSchema.parse(catalogOf(migrated))).not.toThrow();
+  });
+
+  it("is a no-op on a config that is not at 0.1.4", () => {
+    const doc = parseDocument(
+      [
+        'schema_version: "0.1.3"',
+        "mcp_catalog:",
+        "  searxng:",
+        "    tools:",
+        "      include:",
+        "        - search_web",
+      ].join("\n"),
+    );
+
+    expect(applySchema015Migration(doc)).toBeNull();
+    expect(doc.toString()).toContain("- search_web");
+  });
+
+  it("bumps a host that has no mcp_catalog at all", () => {
+    const doc = parseDocument(['schema_version: "0.1.4"', "port: 8888"].join("\n"));
+
+    const result = applySchema015Migration(doc);
+
+    expect(result).not.toBeNull();
+    expect(doc.get("schema_version")).toBe("0.1.5");
   });
 });

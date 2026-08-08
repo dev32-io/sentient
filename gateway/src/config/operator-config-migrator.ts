@@ -1,5 +1,16 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import { type Document, type Pair, type YAMLMap, isMap, isScalar, parseDocument } from "yaml";
+import type { ImpactTier } from "@sentient/protocol";
+import {
+  type Document,
+  type Pair,
+  type Scalar,
+  type YAMLMap,
+  type YAMLSeq,
+  isMap,
+  isScalar,
+  isSeq,
+  parseDocument,
+} from "yaml";
 import { getLog } from "../logging/logger.ts";
 import { writeFileAtomic } from "../user-auth/atomic-write.ts";
 
@@ -66,6 +77,28 @@ const log = getLog(["sentient", "config", "migration", "operator-config"]);
 //     old door away without installing the new one leaves a host reachable from
 //     nowhere but itself, silently — and rollback cannot undo it, because a
 //     rolled-back binary still reads the already-migrated config.
+//
+//   0.1.4 → 0.1.5 (per-tool permissions — every tool declares an impact tier):
+//     SET:    mcp_catalog.*.tools.include[] and .available[] entries from bare
+//             strings (`- ha_get_state`) to `{ name, tier }` maps, with `tier`
+//             taken from the shipped catalog as it stood at this step.
+//             schema_version: "0.1.5"
+//
+//     `tier` is REQUIRED and has no default (shared/config/src/schemas/
+//     mcp-catalog.ts), and the operator config is parsed by `schema.parse`,
+//     which throws on a path nothing on the boot path catches. So an untiered
+//     catalog is not a degraded gateway — it is a gateway that does not start,
+//     on every existing production host, since setup-prod.py never overwrites
+//     an existing config.yaml by hard rule.
+//
+//     An entry the operator already tiered by hand is NEVER overwritten (the
+//     `backfillInboundProxyService` rule). A tool the shipped catalog does not
+//     describe gets `admin` — the operator-only tier — and an inline marker
+//     comment naming it, NOT `read`: the migration cannot know an unknown
+//     tool's blast radius, and the two ways of guessing fail asymmetrically.
+//     Guess `read` and a guest silently gains a tool nobody vetted, invisibly.
+//     Guess `admin` and the operator loses one visibly — in a WARN, in a
+//     comment in their own file, one word from being corrected.
 //
 // Uses yaml's Document API to preserve comments and unrelated keys.
 // ---------------------------------------------------------------------------
@@ -509,6 +542,234 @@ export function applySchema014Migration(doc: Document): Schema014MigrationResult
 }
 
 // ---------------------------------------------------------------------------
+// 0.1.4 → 0.1.5: every catalogued tool declares an impact tier
+// ---------------------------------------------------------------------------
+
+const SCHEMA_015_VERSION = "0.1.5";
+const MCP_CATALOG_KEY = "mcp_catalog";
+const TOOLS_KEY = "tools";
+const TOOL_NAME_KEY = "name";
+const TOOL_TIER_KEY = "tier";
+
+/** The two tool lists the catalog schema tiers. `exclude` is deliberately
+ *  absent: it names what is NOT exposed, so there is nothing for a tier to
+ *  gate, and the schema keeps it a bare string list. */
+const TIERED_TOOL_LIST_KEYS = ["include", "available"] as const;
+
+/** The tier a tool gets when the shipped catalog has never heard of it.
+ *
+ *  `admin` is the operator-only tier, so this is the LEAST-privilege answer —
+ *  chosen because the failure modes are not symmetric. An over-tiered tool
+ *  announces itself the first time the operator's own assistant declines to use
+ *  it; an under-tiered one hands a guest something nobody vetted and says
+ *  nothing, ever. Both are wrong; only one is discoverable. */
+const UNKNOWN_TOOL_TIER: ImpactTier = "admin";
+
+/** Written into the operator's own config beside every guessed tier. The WARN
+ *  in the log scrolls away; this does not. */
+const UNKNOWN_TOOL_MARKER =
+  " TIER GUESSED BY THE 0.1.4 -> 0.1.5 MIGRATION — the shipped catalog does not describe this tool, so it got the operator-only `admin` tier rather than a silent `read`. Re-tier it deliberately: read|write|confirm|admin.";
+
+/** Every tool the SHIPPED catalog curated at this schema step, and the tier it
+ *  declared for it.
+ *
+ *  FROZEN ON PURPOSE, and not read out of the live gateway/config.yaml. A
+ *  migration is a historical artifact: it describes one specific transition
+ *  between two specific shapes, and it must produce the same output in two
+ *  years' time as it does today. Wiring it to the current shipped catalog would
+ *  make an old host's migrated tiers depend on which release happened to run
+ *  the migration — a later re-tier of, say, `ma_queue` would silently rewrite
+ *  the meaning of an upgrade that already happened. */
+const SHIPPED_TOOL_TIERS_015: Record<string, Record<string, ImpactTier>> = {
+  home_assistant: {
+    ha_get_overview: "read",
+    ha_get_state: "read",
+    ha_search: "read",
+    ha_get_history: "read",
+    ha_eval_template: "read",
+    ha_get_operation_status: "read",
+    ha_list_floors_areas: "read",
+    ha_get_zone: "read",
+    ha_get_camera_image: "read",
+    ha_call_service: "confirm",
+    ha_bulk_control: "confirm",
+    ha_get_todo: "read",
+    ha_set_todo_item: "write",
+    ha_remove_todo_item: "write",
+    ha_config_get_calendar_events: "read",
+    ha_config_set_calendar_event: "write",
+    ha_config_remove_calendar_event: "confirm",
+  },
+  gateway: {
+    identify_user: "read",
+    pause_audio: "read",
+    resume_audio: "read",
+    update_user_settings: "read",
+  },
+  music_assistant: {
+    ma_search: "read",
+    ma_browse: "read",
+    ma_list_players: "read",
+    ma_volume: "read",
+    ma_group: "write",
+    ma_playback: "read",
+    ma_play_media: "read",
+    ma_queue: "write",
+    ma_queue_item: "write",
+    ma_transfer_queue: "write",
+  },
+  fetch: { fetch: "read" },
+  searxng: { search_web: "read" },
+};
+
+/** Tool name → tier across every shipped server, or `null` when two servers
+ *  curate the same name and the answer is therefore ambiguous. The fallback for
+ *  a server key the operator renamed: a tier describes what the UPSTREAM tool
+ *  does, not which local key happens to hold it. */
+const SHIPPED_TIER_BY_TOOL_NAME: ReadonlyMap<string, ImpactTier | null> = (() => {
+  const index = new Map<string, ImpactTier | null>();
+  for (const tools of Object.values(SHIPPED_TOOL_TIERS_015)) {
+    for (const [name, tier] of Object.entries(tools)) {
+      index.set(name, index.has(name) ? null : tier);
+    }
+  }
+  return index;
+})();
+
+/** The tier the shipped catalog declares for one tool, or `undefined` when it
+ *  does not describe it. `undefined` is NOT a tier and must never be widened
+ *  into one — the same rule `tierOf` states in the catalog schema. */
+function shippedTier(server: string, toolName: string): ImpactTier | undefined {
+  return SHIPPED_TOOL_TIERS_015[server]?.[toolName] ?? SHIPPED_TIER_BY_TOOL_NAME.get(toolName) ?? undefined;
+}
+
+interface ToolTierBackfill {
+  /** `<server>.<tool>` for each entry given the tier the shipped catalog declares. */
+  tiered: string[];
+  /** `<server>.<tool>` for each entry the shipped catalog does not describe. */
+  unknown: string[];
+}
+
+interface Schema015MigrationResult {
+  tieredTools: string[];
+  unknownTools: string[];
+}
+
+function recordBackfill(result: ToolTierBackfill, server: string, name: string, tier: ImpactTier | undefined): void {
+  (tier === undefined ? result.unknown : result.tiered).push(`${server}.${name}`);
+}
+
+/** Appends the guessed-tier marker without discarding a comment the operator
+ *  wrote on that same line. */
+function withUnknownMarker(existing: string | null | undefined): string {
+  return existing === null || existing === undefined || existing.trim() === ""
+    ? UNKNOWN_TOOL_MARKER
+    : `${existing} |${UNKNOWN_TOOL_MARKER}`;
+}
+
+/** Moves a scalar's comments and blank-line spacing onto its replacement, so an
+ *  operator's annotated list still reads as they wrote it. Each field is copied
+ *  only when it is present: `exactOptionalPropertyTypes` makes an explicit
+ *  `undefined` a different thing from an absent key, and yaml renders the two
+ *  differently. */
+function carryTrivia(from: Scalar, to: YAMLMap, comment: string | null | undefined): void {
+  if (from.spaceBefore !== undefined) to.spaceBefore = from.spaceBefore;
+  if (from.commentBefore !== undefined) to.commentBefore = from.commentBefore;
+  if (comment !== undefined) to.comment = comment;
+}
+
+/** `- ha_get_state` → `- { name: ha_get_state, tier: read }`. */
+function tierScalarItem(doc: Document, scalar: Scalar, server: string, result: ToolTierBackfill): unknown {
+  if (typeof scalar.value !== "string") return scalar;
+
+  const name = scalar.value;
+  const tier = shippedTier(server, name);
+  const node = doc.createNode({ [TOOL_NAME_KEY]: name, [TOOL_TIER_KEY]: tier ?? UNKNOWN_TOOL_TIER }) as YAMLMap;
+  node.flow = true;
+  carryTrivia(scalar, node, tier === undefined ? withUnknownMarker(scalar.comment) : scalar.comment);
+
+  recordBackfill(result, server, name, tier);
+  return node;
+}
+
+/** A half-migrated entry — `- name: x` with no `tier:` — is the same problem as
+ *  a bare string. An entry that already HAS a tier is the operator's own
+ *  decision and is returned untouched, whatever it says. */
+function tierMapItem(map: YAMLMap, server: string, result: ToolTierBackfill): unknown {
+  if (map.has(TOOL_TIER_KEY)) return map;
+
+  const nameNode = map.get(TOOL_NAME_KEY, true);
+  if (!isScalar(nameNode) || typeof nameNode.value !== "string") return map;
+
+  const name = nameNode.value;
+  const tier = shippedTier(server, name);
+  map.set(TOOL_TIER_KEY, tier ?? UNKNOWN_TOOL_TIER);
+  if (tier === undefined) map.comment = withUnknownMarker(map.comment);
+
+  recordBackfill(result, server, name, tier);
+  return map;
+}
+
+function tierListItem(doc: Document, item: unknown, server: string, result: ToolTierBackfill): unknown {
+  if (isScalar(item)) return tierScalarItem(doc, item, server, result);
+  if (isMap(item)) return tierMapItem(item, server, result);
+  // Anything else (a nested seq, an alias) is not a tool entry. Left alone so
+  // the schema names it, rather than mangled into something that parses.
+  return item;
+}
+
+function tierServerEntry(doc: Document, server: string, entry: unknown, result: ToolTierBackfill): void {
+  if (!isMap(entry)) return;
+
+  const toolsNode = (entry as YAMLMap).get(TOOLS_KEY, true);
+  if (!isMap(toolsNode)) return;
+
+  for (const listKey of TIERED_TOOL_LIST_KEYS) {
+    const listNode = (toolsNode as YAMLMap).get(listKey, true);
+    if (!isSeq(listNode)) continue;
+    const list = listNode as YAMLSeq;
+    list.items = list.items.map((item) => tierListItem(doc, item, server, result));
+  }
+}
+
+function backfillToolTiers(doc: Document, root: YAMLMap): ToolTierBackfill {
+  const result: ToolTierBackfill = { tiered: [], unknown: [] };
+
+  const catalogNode = root.get(MCP_CATALOG_KEY, true);
+  if (!isMap(catalogNode)) return result;
+
+  for (const serverPair of (catalogNode as YAMLMap).items) {
+    if (!isScalar(serverPair.key)) continue;
+    tierServerEntry(doc, String(serverPair.key.value), serverPair.value, result);
+  }
+
+  return result;
+}
+
+/** Backfills the now-mandatory `tier:` on every catalogued tool.
+ *
+ *  Unlike the 0.1.3 → 0.1.4 step this one cannot leave the config half-done:
+ *  `tier` is required with no default, so a tool this step misses is a config
+ *  the zod schema throws on, at `loadStartupConfig`, uncaught — a gateway that
+ *  does not boot rather than one that boots wrong. */
+export function applySchema015Migration(doc: Document): Schema015MigrationResult | null {
+  const root = doc.contents;
+  if (!isMap(root)) return null;
+
+  const versionNode = root.get("schema_version", true);
+  const currentVersion = isScalar(versionNode) ? String(versionNode.value) : null;
+  if (currentVersion === SCHEMA_015_VERSION) return null; // already migrated
+  if (currentVersion !== SCHEMA_014_VERSION) return null;
+
+  const backfill = backfillToolTiers(doc, root);
+
+  // Bumped even for a host with no `mcp_catalog:` at all — the version tracks
+  // the SCHEMA, not whether this particular host had anything to rewrite.
+  root.set("schema_version", SCHEMA_015_VERSION);
+  return { tieredTools: backfill.tiered, unknownTools: backfill.unknown };
+}
+
+// ---------------------------------------------------------------------------
 // Public API — sync (used by loadStartupConfig) + async (tests, future use)
 // ---------------------------------------------------------------------------
 
@@ -518,6 +779,7 @@ function applyAllMigrations(doc: Document): boolean {
   const schema012Result = applySchema012Migration(doc);
   const schema013Result = applySchema013Migration(doc);
   const schema014Result = applySchema014Migration(doc);
+  const schema015Result = applySchema015Migration(doc);
 
   if (webToolsResult !== null) {
     log.info("migration:web-tools", {
@@ -580,12 +842,34 @@ function applyAllMigrations(doc: Document): boolean {
     });
   }
 
+  if (schema015Result !== null) {
+    log.info("migration:0.1.5", {
+      tieredCount: schema015Result.tieredTools.length,
+      tieredTools: schema015Result.tieredTools.join(", "),
+      reason:
+        "every catalogued tool now declares an impact tier — the role gate reads it, and the schema refuses to load a catalog without one",
+    });
+    // Separate, and a WARN, because this is the half the operator has to act
+    // on: a tool the shipped catalog cannot describe kept its NAME but not its
+    // reach, and only they know what it actually does.
+    if (schema015Result.unknownTools.length > 0) {
+      log.warn("migration:0.1.5:unknown-tools", {
+        count: schema015Result.unknownTools.length,
+        tools: schema015Result.unknownTools.join(", "),
+        tier: UNKNOWN_TOOL_TIER,
+        reason:
+          "the shipped catalog does not describe these tools, so their blast radius is unknown — each got the operator-only `admin` tier rather than a silent `read`, and each is marked in config.yaml for a deliberate re-tier",
+      });
+    }
+  }
+
   return (
     webToolsResult !== null ||
     schema011Result !== null ||
     schema012Result !== null ||
     schema013Result !== null ||
-    schema014Result !== null
+    schema014Result !== null ||
+    schema015Result !== null
   );
 }
 
