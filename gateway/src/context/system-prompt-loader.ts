@@ -66,6 +66,27 @@ export function loadCompactionSummarizerPrompt(opts: { runtimeDir?: string } = {
   return override ?? DEFAULT_COMPACTION_SUMMARIZER;
 }
 
+// Baked-in default for the skill-index preamble (Skill System spec, Task 6).
+// Read at module init, exactly like DEFAULT_COMPACTION_SUMMARIZER above: a
+// missing baked-in template is a build error, and failing loudly at boot
+// beats discovering an empty preamble mid-conversation, the first time the
+// user has a skill installed.
+export const DEFAULT_SKILL_INDEX_PREAMBLE = readFileSync(
+  assetPath("templates", "prompts", "skill-index-preamble.md"),
+  "utf8",
+).trim();
+
+/** Operator override first, baked-in template as the fallback — same
+ *  two-tier shape as `loadCompactionSummarizerPrompt`, so an operator can
+ *  retune the skill-index preamble without a rebuild. Loaded separately from
+ *  `renderSkillIndex` (skills/skill-index.ts) so the renderer stays a pure
+ *  function of its inputs — easy to test, no filesystem in the render path. */
+export function loadSkillIndexPreamble(opts: { runtimeDir?: string } = {}): string {
+  const runtimeDir = opts.runtimeDir ?? resolveAssetRoot();
+  const override = tryRead(join(runtimeDir, "system_prompts", "skill_index_preamble.md"), "skill-index-preamble");
+  return override ?? DEFAULT_SKILL_INDEX_PREAMBLE;
+}
+
 // ---------------------------------------------------------------------------
 // Auxiliary-task templates (spec §6)
 // ---------------------------------------------------------------------------
