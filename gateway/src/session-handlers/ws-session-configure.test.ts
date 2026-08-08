@@ -37,6 +37,7 @@ import { openSessionStore } from "../store/session-store.js";
 import type { BackgroundRegistry } from "../tools/background-registry.js";
 import type { ToolBroker } from "../tools/tool-broker.js";
 import { NEVER_REVOKED } from "../user-auth/credential-floor.js";
+import { createAuthenticatedSockets } from "./authenticated-sockets.js";
 import { type ReplayRegistry, createReplayRegistry } from "./replay-registry.js";
 import { mintSessionId } from "./session-id.js";
 import { createSessionRegistry } from "./session-registry.js";
@@ -228,6 +229,7 @@ function servicesWithRuntime(replayRegistry: ReplayRegistry, ws: FakeWs, accessM
     stt: null,
     accessManager,
     createSessionRuntime: () => ({ runtime, permissions: { denyAll: () => {} }, work: IDLE_WORK }),
+    authenticatedSockets: createAuthenticatedSockets(),
     // No policy passed, so the registry's default applies: dispose as soon as
     // nothing observable holds the session. These cases never give it work, so
     // it behaves as the old "last one out" did — which is what they were
@@ -547,6 +549,7 @@ function servicesRecordingPartition(
       spy.partitionIds.push(conversationId);
       return { runtime, permissions: { denyAll: () => {} }, work: IDLE_WORK };
     },
+    authenticatedSockets: createAuthenticatedSockets(),
     auth: liveAuthDouble(),
   } as unknown as GatewayServices;
   return spy;
@@ -748,6 +751,7 @@ function servicesTrackingRuntimes(replayRegistry: ReplayRegistry, accessManager:
       } as unknown as SessionRuntime;
       return { runtime, permissions: { denyAll: () => {} }, work: IDLE_WORK };
     },
+    authenticatedSockets: createAuthenticatedSockets(),
     auth: liveAuthDouble(),
   } as unknown as GatewayServices;
   return spy;
@@ -964,6 +968,7 @@ function servicesWithStoreBackedRuntime(
       permissions: { denyAll: () => {} },
       work: IDLE_WORK,
     }),
+    authenticatedSockets: createAuthenticatedSockets(),
     auth: liveAuthDouble(),
   } as unknown as GatewayServices;
 }

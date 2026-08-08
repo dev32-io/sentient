@@ -21,6 +21,7 @@ import { EMPTY_TURN_STATE } from "../runtime/turn-state-snapshot.js";
 import { openSessionStore } from "../store/session-store.js";
 import { NEVER_REVOKED } from "../user-auth/credential-floor.js";
 import type { UserRecord } from "../user-auth/types.js";
+import { createAuthenticatedSockets } from "./authenticated-sockets.js";
 import { createFanOutTurnEmitter } from "./fan-out-emitter.js";
 import { createFrameJournal } from "./frame-journal.js";
 import { createReplayRegistry } from "./replay-registry.js";
@@ -182,6 +183,7 @@ function activateServices(runtime?: SessionRuntime): GatewayServices {
     // Read by every non-recovered `session.ready` — a fixture without it cannot
     // run a handshake to completion.
     webui: { playback: { min_eager_end_ms: 3000, preempt_fadeout_ms: 30 } },
+    authenticatedSockets: createAuthenticatedSockets(),
     auth: liveAuthDouble(),
   } as unknown as GatewayServices;
 }
@@ -273,6 +275,7 @@ const cleanupServices = {
   sessionManager: { unbindUser: () => {}, removeSession: () => {} },
   replayRegistry: createReplayRegistry({ maxBytesPerSession: 65536, retentionMs: 1000 }),
   sessionRegistry: createSessionRegistry(),
+  authenticatedSockets: createAuthenticatedSockets(),
   auth: liveAuthDouble(),
 } as unknown as GatewayServices;
 
@@ -1044,6 +1047,7 @@ function sessionScopedServices(brokerFor: (sessionId: string) => SessionPermissi
       permissions: brokerFor(conversationId),
       work: IDLE_WORK,
     }),
+    authenticatedSockets: createAuthenticatedSockets(),
     auth: liveAuthDouble(),
   } as unknown as GatewayServices;
 }
@@ -1280,6 +1284,58 @@ describe("detachSession — leaving a session drops what was captured under it",
   });
 });
 
+// SECURITY: the close path is the ONLY thing that ends a socket's membership of
+// the authenticated set (authenticated-sockets.ts), and Bun runs it for every
+// teardown — a clean close, a lost network, and the credential revoker's own
+// close alike. A leak here is not cosmetic: the revoker would go on writing to
+// and closing a socket that has been gone for hours, and the set would grow for
+// the lifetime of the process.
+describe("ws-handlers cleanup — the authenticated-socket set", () => {
+  it("SECURITY: a closed connection stops being reachable by a credential revocation", () => {
+    const authenticatedSockets = createAuthenticatedSockets();
+    const services = {
+      sessionManager: { unbindUser: () => {}, removeSession: () => {} },
+      replayRegistry: createReplayRegistry({ maxBytesPerSession: 65536, retentionMs: 1000 }),
+      sessionRegistry: createSessionRegistry(),
+      authenticatedSockets,
+      auth: liveAuthDouble(),
+    } as unknown as GatewayServices;
+
+    const ws = fakeAuthedWs(null);
+    authenticatedSockets.add("u_deadbeef", ws as unknown as ServerWebSocket<SessionData>);
+    // The state the revoker acts on, asserted BEFORE the close so this cannot
+    // pass by the socket never having been reachable in the first place.
+    expect(authenticatedSockets.forUser("u_deadbeef")).toHaveLength(1);
+
+    cleanupSession(ws as unknown as ServerWebSocket<SessionData>, services);
+
+    expect(authenticatedSockets.forUser("u_deadbeef")).toEqual([]);
+    expect(authenticatedSockets.size).toBe(0);
+  });
+
+  it("releases a connection whose sessionId was already cleared by an earlier close", () => {
+    // `cleanupSession` returns early on a null `sessionId`, which is exactly the
+    // state a second close event sees. The release must happen anyway, or a
+    // duplicated close leaks the socket forever.
+    const authenticatedSockets = createAuthenticatedSockets();
+    const services = {
+      sessionManager: { unbindUser: () => {}, removeSession: () => {} },
+      replayRegistry: createReplayRegistry({ maxBytesPerSession: 65536, retentionMs: 1000 }),
+      sessionRegistry: createSessionRegistry(),
+      authenticatedSockets,
+      auth: liveAuthDouble(),
+    } as unknown as GatewayServices;
+
+    const ws = fakeAuthedWs(null);
+    ws.data.sessionId = null;
+    authenticatedSockets.add("u_deadbeef", ws as unknown as ServerWebSocket<SessionData>);
+
+    cleanupSession(ws as unknown as ServerWebSocket<SessionData>, services);
+
+    expect(authenticatedSockets.size).toBe(0);
+  });
+});
+
 describe("ws-handlers cleanup — the session journal", () => {
   it("drops this connection's HANDLE on the journal without destroying the journal", async () => {
     // The journal is the SESSION's since task 6, so a closing window clears its
@@ -1290,6 +1346,7 @@ describe("ws-handlers cleanup — the session journal", () => {
       sessionManager: { unbindUser: () => {}, removeSession: () => {} },
       replayRegistry: registry,
       sessionRegistry: createSessionRegistry(),
+      authenticatedSockets: createAuthenticatedSockets(),
       auth: liveAuthDouble(),
     } as unknown as GatewayServices;
 

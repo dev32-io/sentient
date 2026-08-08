@@ -25,11 +25,26 @@
 // the connection-close handler (`cleanupSession`, ws-handlers.ts), which is the
 // one owner of that teardown — detaching here too would race it and could
 // dispose a session's handles from underneath its own close path.
+//
+// TWO ENUMERATIONS, ONE EJECTION EACH. The attachment walk answers "which
+// WINDOWS of a live conversation belong to this account?"; the
+// authenticated-socket set (authenticated-sockets.ts) answers "which SOCKETS
+// do?", which is the strictly larger question and the one that matters here. An
+// end-to-end run found the gap: a target who was signed in but had not started
+// a conversation held a socket in no session's subscriber set, so demoting them
+// logged `closedWindows=0` and left their window rendering a logged-in UI. Both
+// are read because the attachment carries the session/attachment ids the
+// revocation line is traced by, and an attached window appears in BOTH — hence
+// the dedup on socket identity below. It is closed once, or the client sees a
+// second `auth.error` and a close after its socket already went.
 
+import type { ServerWebSocket } from "bun";
 import type { SessionManager } from "../auth/session-manager.js";
 import { getLog } from "../logging/logger.js";
+import type { AuthenticatedSockets } from "./authenticated-sockets.js";
 import { closeWithAuthError } from "./credential-lifetime.js";
 import type { SessionRegistry } from "./session-registry.js";
+import type { SessionData } from "./ws-helpers.js";
 
 const log = getLog(["sentient", "ws", "credential-revocation"]);
 
@@ -58,30 +73,81 @@ export interface CredentialRevoker {
 
 export interface CredentialRevokerDeps {
   /** Owns the attachment map, so it is the only thing that can answer "which
-   *  windows belong to this user?". */
+   *  windows of a live conversation belong to this user?". */
   registry: Pick<SessionRegistry, "attachmentsForUser">;
+  /** Owns every live authenticated socket, attached or not — the enumeration
+   *  that reaches a window which has not run `session.configure` yet. */
+  sockets: Pick<AuthenticatedSockets, "forUser">;
   /** Owns the per-user connection bookkeeping the closed sockets held. */
   sessions: Pick<SessionManager, "revokeUser">;
+}
+
+/** One socket to eject, with whatever session context it had. `sessionId` /
+ *  `attachmentId` are null for a socket that never attached — that IS the
+ *  distinction, so it is carried rather than papered over. */
+interface RevocationTarget {
+  readonly ws: ServerWebSocket<SessionData>;
+  readonly connectionId: string | null;
+  readonly sessionId: string | null;
+  readonly attachmentId: string | null;
+}
+
+/**
+ * Every socket of [userId], each appearing exactly ONCE.
+ *
+ * Attachments first, so a window of a live conversation is logged with the
+ * session and attachment ids that trace it; the authenticated-socket set then
+ * contributes only what the attachment walk did not already reach. Both
+ * enumerations hand back copies, so a socket whose close handler runs while the
+ * caller is closing its peers cannot make this skip one.
+ */
+function targetsFor(deps: CredentialRevokerDeps, userId: string): readonly RevocationTarget[] {
+  const seen = new Set<ServerWebSocket<SessionData>>();
+  const targets: RevocationTarget[] = [];
+  for (const attachment of deps.registry.attachmentsForUser(userId)) {
+    if (seen.has(attachment.ws)) continue;
+    seen.add(attachment.ws);
+    targets.push({
+      ws: attachment.ws,
+      connectionId: attachment.connectionId,
+      sessionId: attachment.sessionId,
+      attachmentId: attachment.attachmentId,
+    });
+  }
+  for (const ws of deps.sockets.forUser(userId)) {
+    if (seen.has(ws)) continue;
+    seen.add(ws);
+    targets.push({ ws, connectionId: ws.data.sessionId, sessionId: null, attachmentId: null });
+  }
+  return targets;
 }
 
 export function createCredentialRevoker(deps: CredentialRevokerDeps): CredentialRevoker {
   return {
     async revokeUser(userId, reason) {
-      const attachments = deps.registry.attachmentsForUser(userId);
-      for (const attachment of attachments) {
+      const targets = targetsFor(deps, userId);
+      let attachedWindows = 0;
+      for (const target of targets) {
+        if (target.attachmentId !== null) attachedWindows += 1;
         log.warn("credential.revoked", {
           userId,
-          connectionId: attachment.connectionId,
-          sessionId: attachment.sessionId,
-          attachmentId: attachment.attachmentId,
+          connectionId: target.connectionId,
+          sessionId: target.sessionId,
+          attachmentId: target.attachmentId,
           reason,
         });
-        closeWithAuthError(attachment.ws, REVOKED_CODE, REVOKED_MESSAGE);
+        closeWithAuthError(target.ws, REVOKED_CODE, REVOKED_MESSAGE);
       }
       deps.sessions.revokeUser(userId);
       log.info("credential.revocation-complete", {
         userId,
-        closedWindows: attachments.length,
+        // Every socket closed, deduplicated — an attached window is in both
+        // enumerations and is counted (and closed) once.
+        closedWindows: targets.length,
+        // How many of them were windows on a live conversation. The rest were
+        // signed in and had not started one, which is the case that used to be
+        // missed entirely.
+        attachedWindows,
         reason,
       });
     },

@@ -143,7 +143,7 @@ export async function handleWebSocketMessage(
   }
 
   if (ws.data.authState !== "authed") {
-    await handleAuthMessage(ws, parsed, services.auth, services.sessionManager);
+    await handleAuthMessage(ws, parsed, services.auth, services.sessionManager, services.authenticatedSockets);
     return;
   }
 
@@ -744,6 +744,16 @@ function applyPreferencesPatch(
  * detach disposes the session — only the already-emitted frames are.
  */
 export function cleanupSession(ws: ServerWebSocket<SessionData>, services: GatewayServices): void {
+  // ABOVE THE GUARD, DELIBERATELY. This is the socket's membership of the live
+  // authenticated set (authenticated-sockets.ts) — the enumeration a credential
+  // revocation reaches a not-yet-attached window through — and it is keyed on
+  // the socket object, not on `ws.data`. The early return below fires on a null
+  // `sessionId`, which is precisely what a SECOND close event sees, so a release
+  // placed under it would leak the socket for the lifetime of the process on
+  // exactly the path that is hardest to notice. `remove` is a no-op for a socket
+  // that was never a member, so the unauthenticated close costs nothing.
+  services.authenticatedSockets.remove(ws);
+
   const sessionId = ws.data.sessionId;
   if (!sessionId) return;
 

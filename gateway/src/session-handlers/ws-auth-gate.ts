@@ -26,6 +26,7 @@ import type { SessionManager } from "../auth/session-manager.js";
 import { type UserPrincipal, createUserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
 import type { AuthService } from "../user-auth/auth-service.js";
+import type { AuthenticatedSockets } from "./authenticated-sockets.js";
 import { closeWithAuthError } from "./credential-lifetime.js";
 import type { SessionData } from "./ws-helpers.js";
 import { sendConnectionFrame } from "./ws-send.js";
@@ -49,12 +50,20 @@ const authMsgSchema = z.object({
 /**
  * Process the very first WS message. Closes the connection on any failure.
  * Idempotent: if already authed or rejected, drops silently.
+ *
+ * [sockets] is the live authenticated-socket set, and this function is the ONE
+ * place it is populated — membership begins where the principal is minted and
+ * ends where the connection closes (`cleanupSession`, ws-handlers.ts). It is a
+ * required dependency rather than an optional one on purpose: a credential
+ * revocation reaches a not-yet-attached window only through it, and a security
+ * mechanism a missing argument silently disables is not a security mechanism.
  */
 export async function handleAuthMessage(
   ws: ServerWebSocket<SessionData>,
   message: unknown,
   auth: AuthService,
   sessionManager: SessionManager,
+  sockets: AuthenticatedSockets,
 ): Promise<void> {
   if (ws.data.authState !== "pending") {
     log.debug("auth.ignored", { sessionId: ws.data.sessionId, state: ws.data.authState });
@@ -131,6 +140,11 @@ export async function handleAuthMessage(
   // token is not held anywhere after this line.
   ws.data.tokenIssuedAtMs = r.value.issuedAt * MS_PER_SECOND;
   ws.data.authState = "authed";
+  // BEFORE the `auth.ok` ack, and with no await in between: from this line on
+  // the socket is enumerable by `userId`, so a revocation that lands while the
+  // ack is still in flight finds it. Registering after the ack would leave a
+  // window — small, but exactly the window a role change can fall into.
+  sockets.add(userId, ws);
   if (ws.data.authTimeout) {
     clearTimeout(ws.data.authTimeout);
     ws.data.authTimeout = null;

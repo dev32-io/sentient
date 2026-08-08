@@ -27,6 +27,7 @@ import type { ProfileStore } from "../profile-store/profile-store.ts";
 import type { TemplateLoader } from "../profile-store/template-loader.ts";
 import type { CreateSessionRuntime } from "../runtime/session-handles.js";
 import { createSessionRetentionPolicy } from "../runtime/session-retention-policy.js";
+import { type AuthenticatedSockets, createAuthenticatedSockets } from "../session-handlers/authenticated-sockets.js";
 import { type ReplayRegistry, createReplayRegistry } from "../session-handlers/replay-registry.js";
 import type { SessionControlsRegistry } from "../session-handlers/session-controls-registry.js";
 import { type SessionRegistry, createSessionRegistry } from "../session-handlers/session-registry.js";
@@ -106,6 +107,12 @@ export interface GatewayServices {
    *  remedy: connections JOIN a session rather than take it over. Depends on
    *  no config at all. */
   readonly sessionRegistry: SessionRegistry;
+  /** Every live authenticated socket, reachable by `userId`. Answers the
+   *  question `sessionRegistry` cannot — which sockets does this account hold,
+   *  including the ones that have not run `session.configure` yet — so a
+   *  credential revocation closes a signed-in window that never started a
+   *  conversation. Populated at the auth gate, released on close. */
+  readonly authenticatedSockets: AuthenticatedSockets;
   readonly webui: WebuiConfig;
   readonly auth: AuthService;
   readonly authConfig: AuthConfig;
@@ -276,6 +283,10 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
         maxIdleResidentSessions: cfg.session.max_idle_resident_sessions,
       }),
     ),
+    // No config at all, and no dependency on the registry above: the two answer
+    // different questions about the same fleet, and this one has to stay
+    // answerable for a connection no session has ever heard of.
+    authenticatedSockets: createAuthenticatedSockets(),
     webui: cfg.webui,
     auth,
     authConfig: cfg.auth,

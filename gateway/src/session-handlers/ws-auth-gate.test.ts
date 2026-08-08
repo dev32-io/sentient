@@ -10,6 +10,7 @@ import type { AuthService } from "../user-auth/auth-service.js";
 import { createAuthService } from "../user-auth/auth-service.js";
 import { NEVER_REVOKED } from "../user-auth/credential-floor.js";
 import type { TokenPayload, TokenResult, UserRecord, UserStoreError } from "../user-auth/types.js";
+import { createAuthenticatedSockets } from "./authenticated-sockets.js";
 import { handleAuthMessage, scheduleAuthTimeout } from "./ws-auth-gate.js";
 import type { SessionData } from "./ws-helpers.js";
 
@@ -114,10 +115,14 @@ describe("ws auth gate", () => {
   let root: string;
   // Unlimited session manager for tests that don't exercise the per-user cap.
   const sessionManager = createSessionManager();
+  // The real structure, fresh per case — a credential revocation reaches a
+  // socket only through this, and the gate is the one place it is populated.
+  let sockets: ReturnType<typeof createAuthenticatedSockets>;
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "sentient-wsg-"));
     process.env.SENTIENT_GATEWAY_ROOT = root;
+    sockets = createAuthenticatedSockets();
   });
 
   afterEach(() => {
@@ -139,7 +144,7 @@ describe("ws auth gate", () => {
     if (!r.ok) throw new Error("seed failed");
 
     const ws = fakeWs();
-    await handleAuthMessage(asSocket(ws), { type: "auth", token: r.value.token }, auth, sessionManager);
+    await handleAuthMessage(asSocket(ws), { type: "auth", token: r.value.token }, auth, sessionManager, sockets);
     expect(ws.data.authState).toBe("authed");
     expect(ws.data.principal?.userId).toBe("u_a1b2c3d4");
     expect(ws.data.principal?.role).toBe("admin");
@@ -152,6 +157,38 @@ describe("ws auth gate", () => {
       },
     ]);
     expect(ws.closeCode).toBeNull();
+  });
+
+  // SECURITY: the gate is the ONE place a socket becomes reachable by userId.
+  //
+  // A credential revocation closes an account's live sockets by asking for them
+  // by userId (credential-revocation.ts), and the only enumeration that reaches
+  // a window which has not yet run `session.configure` is this one. If the gate
+  // stops registering, that revocation silently closes nothing and the demoted
+  // person keeps a logged-in window — which is the defect this pins.
+  //
+  // Both halves are asserted together: registration is exactly as wide as
+  // authentication, so "the authed socket is there" and "the rejected one never
+  // was" are one property, not two.
+  it("SECURITY: makes the authed socket reachable by userId, and never a rejected one", async () => {
+    const auth = await createAuthService(AUTH_CONFIG);
+    await auth.createUser({
+      userId: "u_a1b2c3d4",
+      displayName: "Kevin",
+      pin: "1234",
+      role: "admin",
+      avatarTint: "terra",
+    });
+    const r = await auth.authenticate("u_a1b2c3d4", "1234");
+    if (!r.ok) throw new Error("seed failed");
+
+    const authed = fakeWs();
+    await handleAuthMessage(asSocket(authed), { type: "auth", token: r.value.token }, auth, sessionManager, sockets);
+    const refused = fakeWs();
+    await handleAuthMessage(asSocket(refused), { type: "auth", token: "garbage" }, auth, sessionManager, sockets);
+
+    expect(sockets.forUser("u_a1b2c3d4")).toEqual([asSocket(authed)]);
+    expect(sockets.size).toBe(1);
   });
 
   // CONTRACT (branch Global Constraint: every outbound frame is constructed and
@@ -172,9 +209,9 @@ describe("ws auth gate", () => {
     if (!r.ok) throw new Error("seed failed");
 
     const okWs = fakeWs();
-    await handleAuthMessage(asSocket(okWs), { type: "auth", token: r.value.token }, auth, sessionManager);
+    await handleAuthMessage(asSocket(okWs), { type: "auth", token: r.value.token }, auth, sessionManager, sockets);
     const errWs = fakeWs();
-    await handleAuthMessage(asSocket(errWs), { type: "auth", token: "garbage" }, auth, sessionManager);
+    await handleAuthMessage(asSocket(errWs), { type: "auth", token: "garbage" }, auth, sessionManager, sockets);
 
     for (const frame of [okWs.sent[0], errWs.sent[0]]) {
       expect(frame).toBeDefined();
@@ -185,7 +222,7 @@ describe("ws auth gate", () => {
   it("rejects + closes on invalid token", async () => {
     const auth = await createAuthService(AUTH_CONFIG);
     const ws = fakeWs();
-    await handleAuthMessage(asSocket(ws), { type: "auth", token: "garbage" }, auth, sessionManager);
+    await handleAuthMessage(asSocket(ws), { type: "auth", token: "garbage" }, auth, sessionManager, sockets);
     expect(ws.data.authState).toBe("rejected");
     expect(ws.data.principal).toBeNull();
     expect(ws.sent[0]).toMatchObject({ type: "auth.error" });
@@ -195,7 +232,7 @@ describe("ws auth gate", () => {
   it("rejects + closes when first message is not type:auth", async () => {
     const auth = await createAuthService(AUTH_CONFIG);
     const ws = fakeWs();
-    await handleAuthMessage(asSocket(ws), { type: "session.configure" }, auth, sessionManager);
+    await handleAuthMessage(asSocket(ws), { type: "session.configure" }, auth, sessionManager, sockets);
     expect(ws.data.authState).toBe("rejected");
     expect(ws.sent[0]).toMatchObject({ type: "auth.error", code: "auth-required" });
     expect(ws.closeCode).not.toBeNull();
@@ -215,7 +252,7 @@ describe("ws auth gate", () => {
     await auth.users.remove("u_deadbeef");
 
     const ws = fakeWs();
-    await handleAuthMessage(asSocket(ws), { type: "auth", token: r.value.token }, auth, sessionManager);
+    await handleAuthMessage(asSocket(ws), { type: "auth", token: r.value.token }, auth, sessionManager, sockets);
     expect(ws.data.authState).toBe("rejected");
     expect(ws.sent[0]).toMatchObject({ type: "auth.error" });
     expect(ws.closeCode).not.toBeNull();
@@ -238,7 +275,7 @@ describe("ws auth gate", () => {
     cappedManager.bindUser("pre-existing-session", "u_cafe1234");
 
     const ws = fakeWs();
-    await handleAuthMessage(asSocket(ws), { type: "auth", token: r.value.token }, auth, cappedManager);
+    await handleAuthMessage(asSocket(ws), { type: "auth", token: r.value.token }, auth, cappedManager, sockets);
     expect(ws.data.authState).toBe("rejected");
     expect(ws.sent[0]).toMatchObject({ type: "auth.error", code: "session-limit" });
     expect(ws.closeCode).not.toBeNull();
@@ -285,9 +322,9 @@ describe("ws auth gate", () => {
     const ws = fakeWs();
 
     // Fire frame A but do NOT await it — it suspends inside `await auth.tokens.validate("token-a")`.
-    const pendingA = handleAuthMessage(asSocket(ws), { type: "auth", token: "token-a" }, auth, trackedManager);
+    const pendingA = handleAuthMessage(asSocket(ws), { type: "auth", token: "token-a" }, auth, trackedManager, sockets);
     // Frame B arrives synchronously while A is still suspended.
-    const pendingB = handleAuthMessage(asSocket(ws), { type: "auth", token: "token-b" }, auth, trackedManager);
+    const pendingB = handleAuthMessage(asSocket(ws), { type: "auth", token: "token-b" }, auth, trackedManager, sockets);
     await pendingB;
 
     // B must have been dropped by the synchronous claim — the gate is still held by A.
@@ -342,7 +379,7 @@ describe("ws auth gate", () => {
     const TIMEOUT_MS = 15;
     ws.data.authTimeout = scheduleAuthTimeout(asSocket(ws), TIMEOUT_MS);
 
-    const pending = handleAuthMessage(asSocket(ws), { type: "auth", token: "t" }, auth, trackedManager);
+    const pending = handleAuthMessage(asSocket(ws), { type: "auth", token: "t" }, auth, trackedManager, sockets);
 
     // Let real wall-clock time pass the timeout window while users.get() is still hung.
     await sleep(TIMEOUT_MS + 35);
@@ -390,7 +427,7 @@ describe("ws auth gate", () => {
 
     const ws = fakeWs();
     await expect(
-      handleAuthMessage(asSocket(ws), { type: "auth", token: r.value.token }, auth, sessionManager),
+      handleAuthMessage(asSocket(ws), { type: "auth", token: r.value.token }, auth, sessionManager, sockets),
     ).resolves.toBeUndefined();
 
     expect(ws.data.authState).toBe("rejected");

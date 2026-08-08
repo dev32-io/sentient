@@ -178,6 +178,7 @@ if (!state.bootstrap_complete) {
 // ---------------------------------------------------------------------------
 const credentialRevoker = createCredentialRevoker({
   registry: services.sessionRegistry,
+  sockets: services.authenticatedSockets,
   sessions: services.sessionManager,
 });
 services.userLifecycle.onRoleChanged((userId) => credentialRevoker.revokeUser(userId, "role-changed"));

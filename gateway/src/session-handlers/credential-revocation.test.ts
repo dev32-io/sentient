@@ -15,6 +15,7 @@ import type { ServerWebSocket } from "bun";
 import { describe, expect, it } from "vitest";
 import { createSessionManager } from "../auth/session-manager.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
+import { createAuthenticatedSockets } from "./authenticated-sockets.js";
 import { WS_CLOSE_POLICY } from "./credential-lifetime.js";
 import { createCredentialRevoker } from "./credential-revocation.js";
 import { type SessionHandles, createSessionRegistry } from "./session-registry.js";
@@ -84,34 +85,51 @@ const IDLE_HANDLES = {
 interface Harness {
   registry: ReturnType<typeof createSessionRegistry>;
   sessions: ReturnType<typeof createSessionManager>;
+  sockets: ReturnType<typeof createAuthenticatedSockets>;
   revoker: ReturnType<typeof createCredentialRevoker>;
+  /** What the AUTH GATE does and nothing more — a socket with a principal, a
+   *  bound connection, and NO attachment. This is a real state, not a
+   *  contrivance: it is every window between sign-in and `session.configure`,
+   *  and it is where the person sits while they read a page. */
+  authenticate: (socket: FakeSocket, userId: string) => string;
+  /** Authenticate, THEN attach — the only order production can produce, and the
+   *  reason a live window is in both indexes at once. */
   attach: (socket: FakeSocket, userId: string, sessionId: string) => string;
 }
 
 /** A live gateway in miniature: the real registry (which owns the attachment
- *  map the revoker enumerates) and the real session manager (which owns the
- *  per-user connection bookkeeping it drops). Nothing here is a double —
+ *  map), the real authenticated-socket set (which owns every live socket,
+ *  attached or not) and the real session manager (which owns the per-user
+ *  connection bookkeeping the revoker drops). Nothing here is a double —
  *  a revocation test against doubles would pin the doubles. */
 function harness(): Harness {
   // A policy that never disposes: these cases are about which sockets get
   // closed, not about what a detach does to a session's residency.
   const registry = createSessionRegistry(() => {});
   const sessions = createSessionManager();
-  return {
+  const sockets = createAuthenticatedSockets();
+  const h: Harness = {
     registry,
     sessions,
-    revoker: createCredentialRevoker({ registry, sessions }),
-    attach(socket, userId, sessionId) {
+    sockets,
+    revoker: createCredentialRevoker({ registry, sessions, sockets }),
+    authenticate(socket, userId) {
       const created = sessions.createSession();
       if (!created.ok) throw new Error(created.error);
       const connectionId = created.value.sessionId;
       socket.ws.data.sessionId = connectionId;
       const bound = sessions.bindUser(connectionId, userId);
       if (!bound.ok) throw new Error(bound.error);
+      sockets.add(userId, socket.ws);
+      return connectionId;
+    },
+    attach(socket, userId, sessionId) {
+      const connectionId = h.authenticate(socket, userId);
       registry.attach(sessionId, connectionId, socket.ws, () => IDLE_HANDLES);
       return connectionId;
     },
   };
+  return h;
 }
 
 /** The full ordered story of one socket's ejection, as one comparable value:
@@ -187,5 +205,83 @@ describe("CredentialRevoker", () => {
     await h.revoker.revokeUser(ADA, "role-changed");
 
     expect(ejectionOf(grace)).toEqual([]);
+  });
+
+  // ── THE DRAFT WINDOW (defect found by the end-to-end run) ────────────────
+  //
+  // Demoting a target who was signed in but had never started a conversation
+  // logged `closedWindows=0`, sent no `auth.error`, closed nothing, and left
+  // their window rendering a logged-in UI. The revoker enumerated the RESIDENT
+  // SESSIONS' attachments, and a connection between the auth gate and its first
+  // `session.configure` has no attachment to find.
+
+  it("SECURITY: closes a window that authenticated but never attached to a session", async () => {
+    const h = harness();
+    const adaDraft = fakeSocket(ADA, "ada-draft");
+    h.authenticate(adaDraft, ADA);
+
+    await h.revoker.revokeUser(ADA, "role-changed");
+
+    expect(ejectionOf(adaDraft)).toEqual(EJECTION);
+  });
+
+  it("SECURITY: a draft window of another account is left open", async () => {
+    const h = harness();
+    const adaDraft = fakeSocket(ADA, "ada-draft");
+    const graceDraft = fakeSocket(GRACE, "grace-draft");
+    h.authenticate(adaDraft, ADA);
+    h.authenticate(graceDraft, GRACE);
+
+    await h.revoker.revokeUser(ADA, "role-changed");
+
+    expect(ejectionOf(adaDraft)).toEqual(EJECTION);
+    expect(ejectionOf(graceDraft)).toEqual([]);
+  });
+
+  // An ATTACHED window is reachable through BOTH the attachment walk and the
+  // authenticated-socket set, so the two enumerations overlap. The full ordered
+  // event log is the assertion precisely because it catches the overlap: a
+  // second ejection would append `auth.error` and a second `close` after the
+  // first, and a socket told twice that its credentials died is a client that
+  // sees a close-after-close it cannot interpret.
+  it("closes an attached window exactly once, though it is in both enumerations", async () => {
+    const h = harness();
+    const ada = fakeSocket(ADA, "ada-laptop");
+    h.attach(ada, ADA, "s_ada_1");
+
+    await h.revoker.revokeUser(ADA, "role-changed");
+
+    expect(ejectionOf(ada)).toEqual(EJECTION);
+  });
+
+  it("closes a mixed fleet — one attached window and one draft — once each", async () => {
+    const h = harness();
+    const adaLaptop = fakeSocket(ADA, "ada-laptop");
+    const adaDraft = fakeSocket(ADA, "ada-draft");
+    h.attach(adaLaptop, ADA, "s_ada_1");
+    h.authenticate(adaDraft, ADA);
+
+    await h.revoker.revokeUser(ADA, "role-changed");
+
+    expect(ejectionOf(adaLaptop)).toEqual(EJECTION);
+    expect(ejectionOf(adaDraft)).toEqual(EJECTION);
+  });
+
+  // A socket that has already gone (its close handler ran) is not this
+  // account's window any more, and the fleet that IS still open must not be
+  // affected by its departure — the revoker walks a snapshot, so a removal
+  // mid-revocation cannot make it skip a peer.
+  it("skips a socket whose close already ran, and still closes the rest", async () => {
+    const h = harness();
+    const departed = fakeSocket(ADA, "ada-departed");
+    const survivor = fakeSocket(ADA, "ada-draft");
+    h.authenticate(departed, ADA);
+    h.authenticate(survivor, ADA);
+    h.sockets.remove(departed.ws);
+
+    await h.revoker.revokeUser(ADA, "role-changed");
+
+    expect(ejectionOf(departed)).toEqual([]);
+    expect(ejectionOf(survivor)).toEqual(EJECTION);
   });
 });
