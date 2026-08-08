@@ -17,8 +17,9 @@
 //
 //   not-found                          → there is no profile, so there is no
 //                                        table, so nothing was ever set. Report
-//                                        UNSET and let mcp-policy.yaml decide,
-//                                        which is what it decided anyway.
+//                                        UNSET and let the ROLE TEMPLATE decide
+//                                        (tools/role-defaults.ts), which is
+//                                        also what a seeded profile would say.
 //   corrupt-file / io-error /          → a table may well exist and say `deny`
 //   validation-error                     or `off`; this reader simply cannot see
 //                                        it. Report DENY_EVERY_SERVER, never
@@ -35,7 +36,8 @@ const log = getLog(["sentient", "tools", "user-tool-permissions"]);
 
 /** A table that exists and names no server — so every server is absent, and the
  *  broker's server-level rule turns every catalog tool off. NOT the same value
- *  as `undefined`, which means "never set → inherit"; that distinction is the
+ *  as `undefined`, which means "never set → the role template answers"; that
+ *  distinction is the
  *  whole reason `ProfileV1["tools"]["permissions"]` is optional rather than
  *  `.default({})`. Gateway-native background tools (`delegateTask`) belong to no
  *  server and are unaffected, so a corrupt profile degrades to "no MCP tools",

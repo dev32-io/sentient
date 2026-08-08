@@ -2,15 +2,8 @@ import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import type { PolicyContext, PolicyDecision, PolicyEngine } from "../security/policy-engine.js";
 import type { ToolRegistry } from "./mcp-server.js";
 import { createUnixSocketListener } from "./unix-socket-listener.js";
-
-const allowAllPolicy: PolicyEngine = {
-  evaluate(_ctx: PolicyContext): PolicyDecision {
-    return { action: "allow" };
-  },
-};
 
 const SOCKET_PATH = join(tmpdir(), `sentient-mcp-test-${process.pid}.sock`);
 
@@ -41,7 +34,6 @@ const registry: ToolRegistry = {
 
 const listener = createUnixSocketListener(SOCKET_PATH, "alice", {
   registry,
-  policy: allowAllPolicy,
   contextFor: () => ({ sessionId: null, userId: "alice", role: "user", sessionChannel: "voice" }),
 });
 
@@ -86,7 +78,6 @@ describe("UnixSocketListener", () => {
     const unusable = "/dev/null/nope/mcp-carol.sock";
     const carol = createUnixSocketListener(unusable, "carol", {
       registry,
-      policy: allowAllPolicy,
       contextFor: () => ({ sessionId: null, userId: "carol", role: "user", sessionChannel: "voice" }),
     });
 
@@ -116,7 +107,6 @@ describe("UnixSocketListener", () => {
     const bigSocket = join(tmpdir(), `sentient-mcp-big-${process.pid}.sock`);
     const bigListener = createUnixSocketListener(bigSocket, "dave", {
       registry: bigRegistry,
-      policy: allowAllPolicy,
       contextFor: () => ({ sessionId: null, userId: "dave", role: "user", sessionChannel: "voice" }),
       // Real I/O before the reply, exactly like the proxied-tier refresh: it
       // pushes the write past the socket callback's cork and into the
@@ -180,7 +170,6 @@ describe("UnixSocketListener", () => {
     const bobSocket = join(tmpdir(), `sentient-mcp-bob-${process.pid}.sock`);
     const bobListener = createUnixSocketListener(bobSocket, "bob", {
       registry: contextRegistry,
-      policy: allowAllPolicy,
       contextFor: () => ({ sessionId: null, userId: "bob", role: "user", sessionChannel: "voice" }),
     });
 

@@ -1,5 +1,4 @@
 import { getLog } from "../logging/logger.js";
-import type { PolicyContext, PolicyDecision, PolicyEngine } from "../security/policy-engine.js";
 import {
   type JsonRpcRequest,
   type JsonRpcResponse,
@@ -20,9 +19,12 @@ export interface ToolHandler {
 export interface ToolContext {
   sessionId: string | null;
   userId: string | null;
-  /** Same vocabulary as `PolicyContext["role"]`, and for the same reason —
-   *  this value is handed straight to `policy.evaluate`. */
-  role: PolicyContext["role"];
+  /** Read by the tools that are only MEANINGFUL on one channel — today just
+   *  `identify-user.ts`, which owns that constraint itself because no
+   *  permission table can express "only during a voice session" (it is
+   *  per-session, not per-user or per-role). Carries no authorization weight:
+   *  who may hold a tool on this socket is decided by `delegated-tool-tier.ts`
+   *  before the registry is built. */
   sessionChannel: "voice" | "text";
 }
 
@@ -31,9 +33,26 @@ export interface ToolRegistry {
   get(name: string): ToolHandler | null;
 }
 
+/**
+ * WHERE THE AUTHORIZATION IS, since it is deliberately not in this file.
+ *
+ * A `tools/call` here has already passed the one gate that applies to it: the
+ * registry only ever contains tools `external-tools/delegated-tool-tier.ts`
+ * admitted, and it admits only the `read` tier — the tier every role reaches
+ * and whose default permission is prompt-free. That is the boundary for the
+ * gateway's own HOSTED tools, which run in-process with no human to ask.
+ * PROXIED catalog tools are a different path: `tools/proxied-catalog-tool.ts`
+ * dispatches them through the DELEGATOR's own `ToolBroker`, whose role gate and
+ * permission table mediate every one.
+ *
+ * There used to be a second, name-keyed policy evaluation here, over
+ * `gateway/mcp-policy.yaml`. Its `confirm` verdict auto-approved — there is
+ * nobody on a delegated socket to prompt — so it could only ever deny, and
+ * everything it denied the tier filter already withholds. Two classifications
+ * of the same tools that must agree is a thing that eventually does not.
+ */
 export interface McpServerDeps {
   registry: ToolRegistry;
-  policy: PolicyEngine;
   contextFor(connectionId: string): ToolContext;
   /**
    * Re-derive any dynamic part of the registry before answering `tools/list`.
@@ -127,28 +146,6 @@ export async function handleRpc(
         : {};
     try {
       const ctx = deps.contextFor(connectionId);
-      const decision: PolicyDecision = deps.policy.evaluate({
-        tool: params.name,
-        userId: ctx.userId,
-        role: ctx.role,
-        sessionChannel: ctx.sessionChannel,
-        args,
-      });
-      if (decision.action === "deny") {
-        log.debug("tools/call.denied", { tool: params.name, rule: decision.rule, reason: decision.reason });
-        return {
-          jsonrpc: "2.0",
-          id,
-          result: {
-            content: [{ type: "text", text: `denied: ${decision.reason ?? "policy restriction"}` }],
-            isError: true,
-          },
-        };
-      }
-      // confirm: auto-approve for now (full UX in Phase 2)
-      if (decision.action === "confirm") {
-        log.debug("tools/call.confirmed-auto", { tool: params.name, rule: decision.rule });
-      }
       const result = await handler.run(args, ctx);
       return { jsonrpc: "2.0", id, result };
     } catch (err: unknown) {

@@ -7,123 +7,88 @@
 // operator's `mcp_catalog`. This module decides what may enter that second
 // tier, and nothing else.
 //
-// DERIVED, NEVER LISTED. The set comes from `gateway/mcp-policy.yaml` through
-// the same `PolicyEngine` the gateway's own loop uses. A second hardcoded
-// spelling of "which tools are safe" is a thing that must agree with the
-// policy file and eventually will not — the exact defect class this codebase
-// has already paid for twice. A tool that matches NO rule resolves to
-// `confirm` (policy-engine's `UNMATCHED`) and is therefore dropped: inheriting
-// the fail-closed default is the point.
+// DERIVED FROM THE IMPACT TIER, NEVER LISTED. The set comes from each tool's
+// `tier`, declared once by the operator in `config.yaml#mcp_catalog` and read
+// by everything that has an opinion about who may run what — the role gate, the
+// per-role permission template, and this. A second hardcoded spelling of "which
+// tools are safe" is a thing that must agree with the catalog and eventually
+// will not: the exact defect class this codebase has already paid for twice,
+// and the reason `gateway/mcp-policy.yaml` — a whole second, name-keyed
+// classification of the same tools — is gone.
 //
-// WHY `allow` ONLY, AND WHY THE TWO PATHS DIFFER. The gateway's own hosted
-// tools execute inside `mcp-host/mcp-server.ts`, whose `confirm` branch
-// auto-approves — a delegated call has no human attached to prompt — so for
-// those the filter IS the boundary. A PROXIED catalog tool executes through
-// `tools/tool-broker.ts`, whose `confirm` branch fails closed, so for those the
-// filter decides what the socket ADVERTISES and the broker is the boundary.
-// Either way the advertised surface must match the surface that would actually
-// execute, which is why the caller passes the context ITS execution path
-// evaluates under instead of both inheriting one constant.
+// WHY THE READ TIER, AND WHY THE TWO PATHS DIFFER. A delegated call arrives
+// with NO HUMAN ATTACHED, so anything that would resolve to a prompt cannot be
+// answered. The gateway's own hosted tools execute inside
+// `mcp-host/mcp-server.ts`, which has no confirmation mechanism at all — for
+// those this filter IS the boundary. A PROXIED catalog tool executes through
+// `tools/tool-broker.ts`, whose `ask` branch fails closed for a delegated
+// broker (`ConfirmUnavailableError`), so for those the filter decides what the
+// socket ADVERTISES and the broker is the boundary. Either way the advertised
+// surface must match the surface that would actually execute.
 //
 // The proper answer — a permission surface for delegated tools tuned
 // independently of Sentient's own tool settings — is recorded in
 // `docs/native-todo.md` § 1 as its own later design.
 
-import type { UserRole } from "@sentient/protocol";
+import type { ImpactTier } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
-import type { PolicyContext, PolicyEngine } from "../security/policy-engine.js";
 
 const log = getLog(["sentient", "external-tools", "delegated-tier"]);
 
-/** The role/channel half of a `PolicyContext`. `userId` is deliberately not
- *  part of it: tiering is a property of the tool, not of who is asking, and no
- *  shipped rule reads `userId`. */
-export interface DelegatedPolicyContext {
-  readonly role: PolicyContext["role"];
-  readonly sessionChannel: PolicyContext["sessionChannel"];
+/** The shape this module needs of a tool: its name, and the operator's impact
+ *  tier for it. Structural on purpose — a `ToolHandler` joined to its catalog
+ *  tier and an `McpToolRef` are both this, without either caller converting to
+ *  a type owned by the other. */
+export interface DelegatableTool {
+  readonly name: string;
+  readonly tier: ImpactTier;
 }
 
 /**
- * Context the gateway's OWN hosted tools are evaluated under.
+ * Whether a tool of this tier may be held by an agent nobody is watching.
  *
- * MUST match `mcp-host/unix-socket-listener.ts`'s `contextFor`, or the surface
- * the gateway advertises to the delegated agent and the surface it will
- * actually execute disagree — a tool listed but denied at call time, or worse
- * the reverse.
+ * EXHAUSTIVE, no `default:` arm. A fifth tier must be decided by whoever adds
+ * it: falling through to `true` hands an unsupervised agent a tool nobody meant
+ * to give it, and that is the one direction this file exists to prevent.
+ *
+ * `read` is the whole answer, and it is the same fact stated three ways: every
+ * role reaches it (`ROLE_PERMISSIONS`), the role template resolves it `allow`
+ * (`tools/role-defaults.ts`), and therefore no call of it can ever need a
+ * person. Every other tier resolves to `ask` by default, and `ask` with nobody
+ * attached is a deny — so advertising one would promise a tool that cannot run.
  */
-export const HOSTED_TOOL_CONTEXT: DelegatedPolicyContext = { role: "user", sessionChannel: "voice" };
+function isDelegatable(tier: ImpactTier): boolean {
+  switch (tier) {
+    case "read":
+      return true;
+    case "write":
+      return false;
+    case "confirm":
+      return false;
+    case "admin":
+      return false;
+  }
+}
 
 /**
- * The role the PROXIED tier is ADVERTISED under — and only advertised.
- *
- * There used to be a `DELEGATED_PRINCIPAL_ROLE` here, hardcoded `"adult"`, and
- * `mcp-host/delegated-broker.ts` minted every delegated principal with it. That
- * is gone: a delegated agent acts FOR its user, so the broker now looks the
- * delegator's REAL role up from the user store and bakes THAT into its
- * capability (plan 2026-08-07-tool-permissions task 2b, step 6). Leaving the
- * constant would have meant the delegated path silently stopped tracking its
- * delegator the moment roles became real — a child's delegation running with an
- * adult's authority.
- *
- * What survives is this, and it is a different question. The gateway's per-user
- * MCP socket shares ONE advertised proxied surface across every user (see
- * `mcp-host/proxied-tool-surface.ts` — it is built once and refreshed on
- * `tools/list`, not built per connection), so the advertised set cannot be
- * per-role. It is pinned to the widest ORDINARY household role, deliberately:
- *
- *   * never `admin` — an operator-tier tool must not appear on a surface every
- *     delegated agent shares; and
- *   * advertising can only over-LIST, never over-GRANT. Execution goes through
- *     `proxied-catalog-tool.ts` → the delegator's own `ToolBroker`, whose
- *     capability carries the delegator's real role, so a child's delegation
- *     that calls a listed-but-forbidden tool gets a legible deny.
+ * Narrow `tools` to the ones a delegated agent may hold. Order is preserved so
+ * callers get a stable, loggable set, and the ELEMENTS are returned rather than
+ * their names so a caller does not have to re-join them to anything.
  */
-export const PROXIED_ADVERTISEMENT_ROLE: UserRole = "adult";
-
-/**
- * Context a PROXIED catalog tool is ADVERTISED under.
- *
- * `sessionChannel` must match `tool-broker.ts`'s `resolveDecision`, which
- * hardcodes `"text"` — same reason as `HOSTED_TOOL_CONTEXT`: what is listed
- * must be evaluated the way it will execute.
- */
-export const PROXIED_TOOL_CONTEXT: DelegatedPolicyContext = {
-  role: PROXIED_ADVERTISEMENT_ROLE,
-  sessionChannel: "text",
-};
-
-/**
- * Narrow `toolNames` to the tools the shipped policy tiers `allow` for a
- * delegated caller under `context`. Order is preserved so callers get a stable,
- * loggable set.
- */
-export function selectDelegatedAllowTier(
-  policy: PolicyEngine,
-  toolNames: readonly string[],
-  context: DelegatedPolicyContext = HOSTED_TOOL_CONTEXT,
-): string[] {
-  const allowed: string[] = [];
-  const withheld: string[] = [];
-  for (const tool of toolNames) {
-    const decision = policy.evaluate({
-      tool,
-      userId: null,
-      role: context.role,
-      sessionChannel: context.sessionChannel,
-      args: {},
-    });
-    if (decision.action === "allow") {
+export function selectDelegatedTools<T extends DelegatableTool>(tools: readonly T[]): T[] {
+  const allowed: T[] = [];
+  const withheld: Array<{ tool: string; tier: ImpactTier }> = [];
+  for (const tool of tools) {
+    if (isDelegatable(tool.tier)) {
       allowed.push(tool);
       continue;
     }
-    withheld.push(tool);
+    withheld.push({ tool: tool.name, tier: tool.tier });
   }
   if (withheld.length > 0) {
     log.info("delegated-tier.withheld", {
       withheld,
-      role: context.role,
-      sessionChannel: context.sessionChannel,
-      reason: "not tiered `allow` in mcp-policy.yaml for a delegated caller",
+      reason: "above the read tier, so a delegated call would need a person to confirm it and none is attached",
     });
   }
   return allowed;

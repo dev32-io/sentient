@@ -18,10 +18,9 @@ export function createUnixSocketListener(socketPath: string, userId: string, dep
 
   const contextDeps: McpServerDeps = {
     registry: deps.registry,
-    policy: deps.policy,
     // Every connection on THIS socket belongs to `userId` by construction, so
     // the context is bound here rather than taken from the caller's `deps`.
-    contextFor: () => ({ sessionId: null, userId, role: "user", sessionChannel: "voice" }),
+    contextFor: () => ({ sessionId: null, userId, sessionChannel: "voice" }),
     ...(deps.refreshTools ? { refreshTools: deps.refreshTools } : {}),
   };
 

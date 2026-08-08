@@ -10,13 +10,14 @@ import { createToolPermissionsReader } from "./user-tool-permissions.js";
 //
 // The failure this suite exists for: somebody sets `ha_get_camera_image` to
 // `deny`, `profile.json` later becomes unparseable, and the next session
-// advertises the tool AND dispatches it with no prompt, because mcp-policy.yaml
-// allow-tiers it. One WARN would have been the only trace.
+// advertises the tool AND dispatches it with no prompt, because it is
+// `read`-tier and the role template allows it. One WARN would have been the
+// only trace.
 //
 // `not-found` is the one error class that legitimately means "nothing was ever
-// set" — there is no profile, so there is no table, so inheriting the operator
-// policy is not a widening. Every other class means "a table may exist and I
-// cannot see it".
+// set" — there is no profile, so there is no table, so falling to the role
+// template is not a widening: it is exactly what a seeded profile would have
+// said. Every other class means "a table may exist and I cannot see it".
 // ---------------------------------------------------------------------------
 
 function profileWith(permissions: ProfileV1["tools"]["permissions"]): ProfileV1 {
@@ -60,7 +61,7 @@ describe("tool-permissions reader — what an unreadable profile reports", () =>
     const read = reader(storeReturning({ ok: false, error: "corrupt-file" }));
 
     // `{}` — a table naming no server. NOT `undefined`, which the broker reads
-    // as "inherit mcp-policy.yaml" and would re-advertise a denied tool.
+    // as "fall to the role template" and would re-advertise a denied tool.
     expect(await read()).toEqual({});
     expect(await read()).not.toBeUndefined();
   });

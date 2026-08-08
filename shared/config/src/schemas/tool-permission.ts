@@ -48,8 +48,8 @@ export type ToolPermissionMap = Record<string, Record<string, ToolPermission>>;
  * silently drift the moment the operator edits the catalog. This sentinel is
  * the only per-tool-map-shaped way to express a blanket permission.
  *
- * Intended resolution order for the ToolBroker (task 2): a named tool's own
- * key first, then this wildcard, then fall through to mcp-policy.yaml per
- * the field's normal "absent means inherit" rule.
+ * Resolution order in the ToolBroker: a named tool's own key first, then this
+ * wildcard, then — nothing stored — the person's role permission template, and
+ * finally a fail-closed `off`.
  */
 export const ALL_TOOLS_PERMISSION_KEY = "*";

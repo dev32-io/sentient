@@ -138,25 +138,29 @@ export const profileV1Schema = z.object({
       /**
        * Per-tool permission, keyed by MCP server name then tool name. Server
        * names match gateway/config.yaml#mcp_catalog. THE BROKER
-       * (`gateway/src/tools/tool-broker.ts`, `permissionFor`) IS THE ONLY
+       * (`gateway/src/tools/tool-broker.ts`, `storedPermissionFor`) IS THE ONLY
        * READER — write to this shape against the rules below, not against an
        * intuition about what "absent" ought to mean.
        *
        * THE FIELD ITSELF IS OPTIONAL, and that is load-bearing. Absent means
-       * NEVER SET: every tool inherits mcp-policy.yaml, exactly as it did
-       * before this field existed, which is what makes adding it a no-op until
-       * somebody touches a dropdown. An empty OBJECT is a different statement —
-       * it is a table somebody wrote that names no server, i.e. every server
-       * off. Do not collapse the two by defaulting this to `{}`.
+       * NEVER SET: every tool resolves from the person's ROLE TEMPLATE
+       * (`gateway/src/tools/role-defaults.ts`), which is also what a freshly
+       * seeded profile would have said — so an unseeded account behaves exactly
+       * like a seeded one until somebody touches a dropdown. An empty OBJECT is
+       * a different statement — it is a table somebody wrote that names no
+       * server, i.e. every server off. Do not collapse the two by defaulting
+       * this to `{}`.
        *
        * ABSENCE MEANS DIFFERENT THINGS AT THE TWO LEVELS, deliberately:
-       *   - a TOOL missing under a PRESENT server → inherit mcp-policy.yaml;
+       *   - a TOOL missing under a PRESENT server → the role template answers;
        *   - a SERVER missing from a table that exists → the whole server is
-       *     `off`.
+       *     `off`, and that `off` is a stored answer the template never gets to
+       *     sit underneath.
        * The second rule is not new behaviour: `tools.enabled` expressed
        * availability by presence, and the Tools panes still switch a server off
-       * by DELETING its key. Reading a missing server as "inherit" would show
-       * somebody "off" in the UI while the model kept the tools.
+       * by DELETING its key. Letting the role template answer underneath a
+       * missing server would show somebody "off" in the UI while the model kept
+       * the tools.
        *
        * Turning a whole server off EXPLICITLY (preferred over deleting the
        * key): the profile schema never sees the catalog, so it cannot write one

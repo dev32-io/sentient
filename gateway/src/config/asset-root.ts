@@ -1,5 +1,5 @@
 // Resolves the runtime asset root — the directory holding templates/,
-// system_prompts/, persona.md, mcp-policy.yaml, config/delegation/ and webui/.
+// system_prompts/, persona.md, config/delegation/ and webui/.
 //
 // Two shapes must both work:
 //   repo checkout   — assets sit at <repo>/gateway/, reachable from import.meta.dir

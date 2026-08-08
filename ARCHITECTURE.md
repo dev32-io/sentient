@@ -237,15 +237,34 @@ the risk accumulator. The scanner does NOT block output — silent
 blocking creates worse failure modes than logging and downstream policy
 decisions.
 
-### Policy engine
+### Tool authorization — two gates, no policy engine
 
-`gateway/src/security/policy-engine.ts` evaluates declarative rules
-loaded from MCP-policy config. Each rule binds a tool match
-(`tool == "<name>"` or `tool == "*"`) to a boolean condition over
-`role` / `userId` / `session.channel` / `args.*` predicates, joined with
-` AND ` / ` OR `. The first matching rule's action wins:
-`allow` / `deny` / `confirm`. Predicates are parsed into a fixed AST —
-no dynamic eval.
+There is no rule engine and no second policy file. `ToolBroker`
+(`gateway/src/tools/tool-broker.ts`) applies two gates at both of its
+choke points — `definitions()`, the sole producer of the model's
+`tools[]`, and `resolveDecision()`, the sole PDP:
+
+1. **The role gate.** `canExecute(capability.role, tier)`
+   (`shared/protocol/src/roles.ts`) over the tool's IMPACT TIER, declared
+   by the operator in `config.yaml#mcp_catalog`. The role travels on the
+   capability, minted once by `AccessManager.grant`; it is never
+   re-derived and never cached from a lookup.
+2. **The person's permission**, resolved with no fallthrough:
+   `stored[server]?[tool] ?? defaultPermissionsFor(role, catalog)[server]?[tool] ?? "off"`.
+   The role template (`gateway/src/tools/role-defaults.ts`) is the FLOOR,
+   not a one-time copy, so a profile with no stored table, a re-roled
+   account, and a tool the operator adds tomorrow all resolve. The final
+   `off` is the fail-closed backstop.
+
+`allow`/`ask`/`deny` leave `tools[]` byte-identical — a prompt-cache
+invariant. Only `off` and the role gate change it. A rule that is
+conditioned on the SESSION rather than the person (the sole survivor:
+`identify_user` is meaningful only on a voice channel) belongs to the
+tool that owns it, not to either table.
+
+`gateway/mcp-policy.yaml` and `gateway/src/security/policy-engine.ts`
+were retired: a second, name-keyed classification of the same tools that
+had to agree with the catalog's tiers and eventually would not.
 
 ### Risk accumulator
 

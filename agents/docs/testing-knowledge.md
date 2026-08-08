@@ -44,8 +44,8 @@ cases are appended here, indexed by the surface they exercise.
 > `runtime:react-loop react-loop.start turnId=...`), and the live log tags
 > are `[runtime:react-loop]`, `[runtime:session-runtime]`,
 > `[runtime:turn-voice]`, `[ws:turn-emitter]`, `[provider:openai]`,
-> `[tools:tool-broker]`, `[runtime:permission-broker]`,
-> `[security:policy-engine]`. Verified against a real driven turn
+> `[tools:tool-broker]`, `[runtime:permission-broker]`. Verified against a
+> real driven turn
 > 2026-07-30 — see `qa/web/evidence/2026-07-30-native-turn-happy/`. One
 > thing that is NOT stale and was deliberately left alone: the **presence**
 > layer's `cycle.start` / `cycle.end` signal `kind` (idle-detector,
@@ -325,7 +325,7 @@ prober independently returned. Any `isError=true` is FAIL whatever the bubble sa
 pydantic "Field required". `tool-multi` (two servers in one turn) runs
 `iterations=3` on one `turnId`.
 **Safety:** `tool-truth.ts`'s `READ_ONLY_TOOLS` is deliberately **stricter than
-`mcp-policy.yaml`'s allow tier** — that tier contains `ma_playback`,
+the catalog's `read` tier** — that tier contains `ma_playback`,
 `ma_play_media` and `ma_volume`, prompt-free by design, which would start audio
 in the house. Never widen it for convenience.
 

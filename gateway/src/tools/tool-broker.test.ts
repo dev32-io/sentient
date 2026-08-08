@@ -1,14 +1,13 @@
 import { describe, expect, it } from "bun:test";
 import { ALL_TOOLS_PERMISSION_KEY, mcpCatalogSchema } from "@sentient/config";
 import type { McpCatalog, OrchestratorConfig, ToolPermission, ToolPermissionMap } from "@sentient/config";
-import type { Result } from "@sentient/protocol";
+import type { Result, UserRole } from "@sentient/protocol";
 import { createAccessManager } from "../access/access-manager.js";
 import type { Capability } from "../access/capability.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
 import { applyProfileDefaults } from "../profile-store/profile-defaults.js";
 import type { ProfileStore, ProfileStoreError } from "../profile-store/profile-store.js";
 import { type ProfileV1, profileV1Schema } from "../profile-store/profile-types.js";
-import type { PolicyContext, PolicyDecision, PolicyEngine } from "../security/policy-engine.js";
 import type { SessionStore } from "../store/session-store.js";
 import type { McpClient, McpToolRef } from "./mcp-client.js";
 import type { BackgroundToolRunner } from "./tool-broker.js";
@@ -36,31 +35,18 @@ function fakeMcp(tools: McpToolRef[]): McpClient & { callToolCalls: Array<{ serv
   };
 }
 
-function fakePolicy(decision: PolicyDecision): PolicyEngine & { contexts: PolicyContext[] } {
-  const contexts: PolicyContext[] = [];
-  return {
-    contexts,
-    evaluate(ctx) {
-      contexts.push(ctx);
-      return decision;
-    },
-  };
-}
-
 // Never resolves — used to prove background dispatch doesn't block on the runner.
 function neverSettles<T>(): Promise<T> {
   return new Promise<T>(() => {});
 }
 
-/** The pre-permissions world: the table was never set, so every tool inherits
- *  `mcp-policy.yaml`. `undefined`, NOT `{}` — an empty table is a table naming
- *  no server, i.e. every server off. Every test below that is not about
- *  permissions uses this, so their expectations still describe the operator
- *  policy alone. */
+/** Every account created before per-tool permissions shipped: the table was
+ *  never set, so every tool resolves from the ROLE TEMPLATE. `undefined`, NOT
+ *  `{}` — an empty table is a table naming no server, i.e. every server off. */
 const noUserPermissions = async (): Promise<ToolPermissionMap | undefined> => undefined;
 
 /** A table naming one server, which is what switches the server-level rule on
- *  (an UNSET table inherits everything — see `permissionFor`). */
+ *  (an UNSET table falls to the role template — see `storedPermissionFor`). */
 function permissionsFor(serverName: string, tools: Record<string, ToolPermission>): () => Promise<ToolPermissionMap> {
   return async () => ({ [serverName]: tools });
 }
@@ -146,6 +132,52 @@ const weatherTool: McpToolRef = {
   tier: "read",
 };
 
+const todoTool: McpToolRef = {
+  serverName: "test-mcp",
+  name: "add_todo",
+  description: "adds a todo",
+  inputSchema: {},
+  tier: "write",
+};
+
+const doorTool: McpToolRef = {
+  serverName: "test-mcp",
+  name: "unlock_door",
+  description: "unlocks the door",
+  inputSchema: {},
+  tier: "confirm",
+};
+
+/**
+ * The operator catalog every broker below resolves its FLOOR from — the same
+ * object account creation seeds a table from, so floor and seed cannot
+ * disagree. Parsed through the real schema rather than cast, so a catalog-shape
+ * change breaks these fixtures instead of hiding behind them.
+ *
+ * One tool per tier on one server. That is what makes the two gates separable:
+ * `get_weather` is reachable by everyone and prompt-free, `add_todo` prompts and
+ * is out of a guest's reach, `unlock_door` is out of a child's.
+ */
+const testCatalog: McpCatalog = mcpCatalogSchema.parse({
+  "test-mcp": {
+    transport: "http",
+    url: "http://127.0.0.1:9000/mcp",
+    tools: {
+      include: [
+        { name: "get_weather", tier: "read" },
+        { name: "search_web", tier: "read" },
+        { name: "add_todo", tier: "write" },
+        { name: "unlock_door", tier: "confirm" },
+      ],
+    },
+  },
+});
+
+/** What the resolution answers for `add_todo` with nothing stored: the write
+ *  tier's template value is `ask`, so the person is prompted, and the prompt
+ *  copy names their settings rather than an operator rule. */
+const ASK_REASON = "Your settings ask for confirmation before every add_todo call.";
+
 // ---------------------------------------------------------------------------
 // Authority — the broker's identity comes from its capability alone.
 // `ToolBrokerDeps` carries no `principal` field at all (spec §3.2, task
@@ -159,7 +191,7 @@ describe("ToolBroker — authority", () => {
   it("reads ownerUserId from the capability — there is no other identity input in ToolBrokerDeps", () => {
     const broker = createToolBroker({
       mcp: fakeMcp([weatherTool]),
-      policy: fakePolicy({ action: "allow" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
@@ -185,45 +217,40 @@ describe("ToolBroker — authority", () => {
 // ---------------------------------------------------------------------------
 
 describe("ToolBroker — the capability carries the role", () => {
-  it("SECURITY: an adult capability and a child capability disagree about the same tool, with no principal in sight", async () => {
-    // A policy fake that answers purely off `ctx.role` — the only way this can
-    // differ between the two dispatches below is if that role reached the PDP
-    // from the capability each broker was built with.
-    const roleGatedPolicy: PolicyEngine = {
-      evaluate: (ctx) =>
-        ctx.role === "adult" ? { action: "allow" } : { action: "deny", reason: `role "${ctx.role}" may not run this` },
-    };
-
+  it("SECURITY: an adult capability and a guest capability disagree about the same tool, with no principal in sight", async () => {
     // Hand-built, not minted through AccessManager — this IS "no principal in
-    // sight": nothing in this test ever constructs a UserPrincipal.
+    // sight": nothing in this test ever constructs a UserPrincipal. The role
+    // gate reads `capability.role` and `ToolBrokerDeps` has no other field that
+    // could answer, so these two dispatches can only differ if it did.
     const adultCapability: Capability = {
       ownerUserId: "u_aaaaaaaa",
       resource: "tool-broker",
       rootPath: "/tmp/sentient-tool-broker-test/u_aaaaaaaa",
       role: "adult",
     };
-    const childCapability: Capability = { ...adultCapability, role: "child" };
+    const guestCapability: Capability = { ...adultCapability, role: "guest" };
 
     const buildBroker = (cap: Capability) =>
       createToolBroker({
-        mcp: fakeMcp([weatherTool]),
-        policy: roleGatedPolicy,
+        mcp: fakeMcp([todoTool]),
+        catalog: testCatalog,
         store: fakeStore(),
         capability: cap,
         sessionId: "session-1",
         backgroundTools: new Map(),
         config: toolsConfig,
         toolPermissions: noUserPermissions,
-        requestConfirm: async () => false,
+        requestConfirm: async () => true,
       });
 
-    const adultResult = await buildBroker(adultCapability).dispatch(makeInvocation());
-    const childResult = await buildBroker(childCapability).dispatch(makeInvocation());
+    const invocation = makeInvocation({ name: "add_todo" });
+    const adultResult = await buildBroker(adultCapability).dispatch(invocation);
+    const guestResult = await buildBroker(guestCapability).dispatch(invocation);
 
-    expect(adultResult).toEqual({ content: "result from test-mcp/get_weather", isError: false });
-    expect(childResult).toMatchObject({ isError: true });
-    if ("taskId" in childResult) throw new Error("expected a ToolResult, got a background handle");
-    expect(childResult.content).toContain('role "child" may not run this');
+    expect(adultResult).toEqual({ content: "result from test-mcp/add_todo", isError: false });
+    expect(guestResult).toMatchObject({ isError: true });
+    if ("taskId" in guestResult) throw new Error("expected a ToolResult, got a background handle");
+    expect(guestResult.content).toContain("add_todo");
   });
 });
 
@@ -236,7 +263,7 @@ describe("ToolBroker — PDP choke point (foreground)", () => {
     const mcp = fakeMcp([weatherTool]);
     const broker = createToolBroker({
       mcp,
-      policy: fakePolicy({ action: "allow" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
@@ -256,13 +283,13 @@ describe("ToolBroker — PDP choke point (foreground)", () => {
     const mcp = fakeMcp([weatherTool]);
     const broker = createToolBroker({
       mcp,
-      policy: fakePolicy({ action: "deny", reason: "not allowed for this role" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
       config: toolsConfig,
-      toolPermissions: noUserPermissions,
+      toolPermissions: permissionsFor("test-mcp", { get_weather: "deny" }),
       requestConfirm: async () => true,
     });
 
@@ -270,16 +297,16 @@ describe("ToolBroker — PDP choke point (foreground)", () => {
 
     expect(result).toMatchObject({ isError: true });
     if ("taskId" in result) throw new Error("expected a ToolResult, got a background handle");
-    expect(result.content).toContain("not allowed for this role");
+    expect(result.content).toContain("Deny");
     expect(mcp.callToolCalls).toHaveLength(0);
   });
 
   it("a confirm resolved to false blocks the call as a deny", async () => {
-    const mcp = fakeMcp([weatherTool]);
+    const mcp = fakeMcp([todoTool]);
     let askedReason: string | undefined;
     const broker = createToolBroker({
       mcp,
-      policy: fakePolicy({ action: "confirm", reason: "side-effecting tool" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
@@ -292,18 +319,18 @@ describe("ToolBroker — PDP choke point (foreground)", () => {
       },
     });
 
-    const result = await broker.dispatch(makeInvocation());
+    const result = await broker.dispatch(makeInvocation({ name: "add_todo" }));
 
     expect(result).toMatchObject({ isError: true });
-    expect(askedReason).toBe("side-effecting tool");
+    expect(askedReason).toBe(ASK_REASON);
     expect(mcp.callToolCalls).toHaveLength(0);
   });
 
   it("a confirm resolved to true runs the call", async () => {
-    const mcp = fakeMcp([weatherTool]);
+    const mcp = fakeMcp([todoTool]);
     const broker = createToolBroker({
       mcp,
-      policy: fakePolicy({ action: "confirm", reason: "side-effecting tool" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
@@ -313,17 +340,17 @@ describe("ToolBroker — PDP choke point (foreground)", () => {
       requestConfirm: async () => true,
     });
 
-    const result = await broker.dispatch(makeInvocation());
+    const result = await broker.dispatch(makeInvocation({ name: "add_todo" }));
 
-    expect(result).toEqual({ content: "result from test-mcp/get_weather", isError: false });
-    expect(mcp.callToolCalls).toEqual([{ serverName: "test-mcp", name: "get_weather" }]);
+    expect(result).toEqual({ content: "result from test-mcp/add_todo", isError: false });
+    expect(mcp.callToolCalls).toEqual([{ serverName: "test-mcp", name: "add_todo" }]);
   });
 
   it("SECURITY: a confirm hook that THROWS fails closed (deny), never rejects dispatch", async () => {
-    const mcp = fakeMcp([weatherTool]);
+    const mcp = fakeMcp([todoTool]);
     const broker = createToolBroker({
       mcp,
-      policy: fakePolicy({ action: "confirm", reason: "side-effecting tool" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
@@ -337,7 +364,7 @@ describe("ToolBroker — PDP choke point (foreground)", () => {
 
     // dispatch must resolve to an isError ToolResult, not reject — and the
     // tool must never run.
-    const result = await broker.dispatch(makeInvocation());
+    const result = await broker.dispatch(makeInvocation({ name: "add_todo" }));
     expect(result).toEqual({ content: expect.stringContaining("confirmation error"), isError: true });
     expect(mcp.callToolCalls).toEqual([]);
   });
@@ -356,7 +383,7 @@ describe("ToolBroker — the foreground in-flight counter", () => {
     };
     const broker = createToolBroker({
       mcp,
-      policy: fakePolicy({ action: "allow" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
@@ -374,10 +401,10 @@ describe("ToolBroker — the foreground in-flight counter", () => {
 
 describe("ToolBroker — unanswerable confirm (fail-closed reason passthrough)", () => {
   it("surfaces a ConfirmUnavailableError message to the model verbatim as the deny reason", async () => {
-    const mcp = fakeMcp([weatherTool]);
+    const mcp = fakeMcp([todoTool]);
     const broker = createToolBroker({
       mcp,
-      policy: fakePolicy({ action: "confirm", reason: "side-effecting" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
@@ -389,7 +416,7 @@ describe("ToolBroker — unanswerable confirm (fail-closed reason passthrough)",
       },
     });
 
-    const result = await broker.dispatch(makeInvocation());
+    const result = await broker.dispatch(makeInvocation({ name: "add_todo" }));
 
     if ("taskId" in result) throw new Error("expected a ToolResult, got a background handle");
     expect(result).toEqual({ content: "permission request timed out", isError: true });
@@ -397,10 +424,10 @@ describe("ToolBroker — unanswerable confirm (fail-closed reason passthrough)",
   });
 
   it("keeps any other throw opaque — a buggy hook never leaks internals to the model", async () => {
-    const mcp = fakeMcp([weatherTool]);
+    const mcp = fakeMcp([todoTool]);
     const broker = createToolBroker({
       mcp,
-      policy: fakePolicy({ action: "confirm", reason: "side-effecting" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
@@ -412,7 +439,7 @@ describe("ToolBroker — unanswerable confirm (fail-closed reason passthrough)",
       },
     });
 
-    const result = await broker.dispatch(makeInvocation());
+    const result = await broker.dispatch(makeInvocation({ name: "add_todo" }));
 
     if ("taskId" in result) throw new Error("expected a ToolResult, got a background handle");
     expect(result).toEqual({ content: "confirmation error", isError: true });
@@ -433,13 +460,12 @@ describe("ToolBroker — unanswerable confirm (fail-closed reason passthrough)",
 // ---------------------------------------------------------------------------
 
 describe("ToolBroker — a hallucinated tool never reaches the permission prompt", () => {
-  it("answers an unknown tool as a tool error without evaluating the policy or prompting", async () => {
+  it("answers an unknown tool as a tool error without resolving a permission or prompting", async () => {
     const mcp = fakeMcp([weatherTool]);
-    const policy = fakePolicy({ action: "confirm", reason: "side-effecting tool" });
     let confirmCalls = 0;
     const broker = createToolBroker({
       mcp,
-      policy,
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
@@ -457,17 +483,15 @@ describe("ToolBroker — a hallucinated tool never reaches the permission prompt
     if ("taskId" in result) throw new Error("expected a ToolResult, got a background handle");
     expect(result).toEqual({ content: "Unknown tool: ha_search", isError: true });
     expect(confirmCalls).toBe(0);
-    expect(policy.contexts).toHaveLength(0);
     expect(mcp.callToolCalls).toHaveLength(0);
   });
 
-  it("still prompts for a tool that EXISTS and matches no rule — fail-closed is a different path", async () => {
-    const mcp = fakeMcp([weatherTool]);
-    const policy = fakePolicy({ action: "confirm", reason: "no rule matched" });
+  it("still prompts for a tool that EXISTS and resolves to Ask — a real name is a different path", async () => {
+    const mcp = fakeMcp([todoTool]);
     let confirmCalls = 0;
     const broker = createToolBroker({
       mcp,
-      policy,
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
@@ -480,13 +504,12 @@ describe("ToolBroker — a hallucinated tool never reaches the permission prompt
       },
     });
 
-    const result = await broker.dispatch(makeInvocation({ name: "get_weather" }));
+    const result = await broker.dispatch(makeInvocation({ name: "add_todo" }));
 
     if ("taskId" in result) throw new Error("expected a ToolResult, got a background handle");
     expect(confirmCalls).toBe(1);
-    expect(policy.contexts).toHaveLength(1);
     expect(result).toMatchObject({ isError: true });
-    // The model must be told a PERSON said no, not read back the policy
+    // The model must be told a PERSON said no, not read back a rule's
     // rationale — a rule reads like something to route around, a person's
     // answer does not. The system prompt promises "a tool result saying so".
     expect(result.content).toContain("The user declined");
@@ -499,23 +522,28 @@ describe("ToolBroker — a hallucinated tool never reaches the permission prompt
       definition: { name: "delegateTask", description: "", parameters: {}, category: "background", tier: "confirm" },
       run: () => ({ cancel: () => {}, result: neverSettles<ToolResult>() }),
     };
-    const policy = fakePolicy({ action: "allow" });
+    let confirmCalls = 0;
     const broker = createToolBroker({
       mcp: fakeMcp([weatherTool]),
-      policy,
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
       backgroundTools: new Map([["delegateTask", runner]]),
       config: toolsConfig,
       toolPermissions: noUserPermissions,
-      requestConfirm: async () => false,
+      requestConfirm: async () => {
+        confirmCalls += 1;
+        return true;
+      },
     });
 
     const result = await broker.dispatch(makeInvocation({ name: "delegateTask" }));
 
     expect(result).toHaveProperty("taskId");
-    expect(policy.contexts).toHaveLength(1);
+    // It reached the PDP rather than the unknown-tool answer, and the PDP
+    // resolved it from its own declared tier — `confirm` → `ask` → a prompt.
+    expect(confirmCalls).toBe(1);
   });
 });
 
@@ -531,14 +559,14 @@ describe("ToolBroker — background dispatch", () => {
     };
     const broker = createToolBroker({
       mcp: fakeMcp([]),
-      policy: fakePolicy({ action: "allow" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
       backgroundTools: new Map([["delegateTask", runner]]),
       config: toolsConfig,
       toolPermissions: noUserPermissions,
-      requestConfirm: async () => false,
+      requestConfirm: async () => true,
     });
 
     const result = await broker.dispatch(makeInvocation({ name: "delegateTask" }));
@@ -560,14 +588,14 @@ describe("ToolBroker — background dispatch", () => {
     };
     const broker = createToolBroker({
       mcp: fakeMcp([]),
-      policy: fakePolicy({ action: "deny", reason: "delegation disabled" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
       backgroundTools: new Map([["delegateTask", runner]]),
       config: toolsConfig,
       toolPermissions: noUserPermissions,
-      requestConfirm: async () => true,
+      requestConfirm: async () => false,
     });
 
     const result = await broker.dispatch(makeInvocation({ name: "delegateTask" }));
@@ -584,14 +612,14 @@ describe("ToolBroker — background dispatch", () => {
     };
     const broker = createToolBroker({
       mcp: fakeMcp([]),
-      policy: fakePolicy({ action: "allow" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
       backgroundTools: new Map([["delegateTask", runner]]),
       config: toolsConfig, // max_concurrent_background_tasks: 1
       toolPermissions: noUserPermissions,
-      requestConfirm: async () => false,
+      requestConfirm: async () => true,
     });
 
     const first = await broker.dispatch(makeInvocation({ name: "delegateTask", toolCallId: "call-1" }));
@@ -631,14 +659,14 @@ describe("ToolBroker — background completion sink", () => {
     };
     const broker = createToolBroker({
       mcp: fakeMcp([]),
-      policy: fakePolicy({ action: "allow" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
       backgroundTools: new Map([["delegateTask", runner]]),
       config: toolsConfig,
       toolPermissions: noUserPermissions,
-      requestConfirm: async () => false,
+      requestConfirm: async () => true,
     });
 
     const { promise, sink } = deferredSinkCall<{
@@ -678,14 +706,14 @@ describe("ToolBroker — background completion sink", () => {
     };
     const broker = createToolBroker({
       mcp: fakeMcp([]),
-      policy: fakePolicy({ action: "allow" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
       backgroundTools: new Map([["delegateTask", runner]]),
       config: toolsConfig,
       toolPermissions: noUserPermissions,
-      requestConfirm: async () => false,
+      requestConfirm: async () => true,
     });
 
     const { promise, sink } = deferredSinkCall<{
@@ -710,14 +738,14 @@ describe("ToolBroker — background completion sink", () => {
     };
     const broker = createToolBroker({
       mcp: fakeMcp([]),
-      policy: fakePolicy({ action: "allow" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
       backgroundTools: new Map([["delegateTask", runner]]),
       config: toolsConfig,
       toolPermissions: noUserPermissions,
-      requestConfirm: async () => false,
+      requestConfirm: async () => true,
     });
 
     // No setBackgroundCompletionSink call.
@@ -761,7 +789,7 @@ describe("ToolBroker — delegation.progress producer", () => {
     let finish: (r: ToolResult) => void = () => {};
     const broker = createToolBroker({
       mcp: fakeMcp([]),
-      policy: fakePolicy({ action: "allow" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
@@ -775,7 +803,7 @@ describe("ToolBroker — delegation.progress producer", () => {
       ]),
       config: toolsConfig,
       toolPermissions: noUserPermissions,
-      requestConfirm: async () => false,
+      requestConfirm: async () => true,
       onDelegationProgress: (p) => progress.push(p),
     });
 
@@ -803,7 +831,7 @@ describe("ToolBroker — delegation.progress producer", () => {
     let finish: (r: ToolResult) => void = () => {};
     const broker = createToolBroker({
       mcp: fakeMcp([]),
-      policy: fakePolicy({ action: "allow" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
@@ -817,7 +845,7 @@ describe("ToolBroker — delegation.progress producer", () => {
       ]),
       config: toolsConfig,
       toolPermissions: noUserPermissions,
-      requestConfirm: async () => false,
+      requestConfirm: async () => true,
       onDelegationProgress: (p) => progress.push(p),
     });
 
@@ -860,14 +888,14 @@ describe("ToolBroker — tool result cap", () => {
     const oversized = `${"A".repeat(500)}Z`;
     const broker = createToolBroker({
       mcp: fakeMcpWithContent(oversized),
-      policy: fakePolicy({ action: "allow" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
       config: tightCapConfig,
       toolPermissions: noUserPermissions,
-      requestConfirm: async () => false,
+      requestConfirm: async () => true,
     });
 
     const result = await broker.dispatch(makeInvocation());
@@ -883,14 +911,14 @@ describe("ToolBroker — tool result cap", () => {
     const small = "well within budget";
     const broker = createToolBroker({
       mcp: fakeMcpWithContent(small),
-      policy: fakePolicy({ action: "allow" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
       config: tightCapConfig,
       toolPermissions: noUserPermissions,
-      requestConfirm: async () => false,
+      requestConfirm: async () => true,
     });
 
     const result = await broker.dispatch(makeInvocation());
@@ -907,14 +935,14 @@ describe("ToolBroker — tool result cap", () => {
     };
     const broker = createToolBroker({
       mcp: fakeMcp([]),
-      policy: fakePolicy({ action: "allow" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
       backgroundTools: new Map([["delegateTask", runner]]),
       config: tightCapConfig,
       toolPermissions: noUserPermissions,
-      requestConfirm: async () => false,
+      requestConfirm: async () => true,
     });
 
     const { promise, sink } = deferredSinkCall<{ content: string; isError: boolean }>();
@@ -933,8 +961,7 @@ describe("ToolBroker — tool result cap", () => {
 //
 // The person's `profile.tools.permissions` is read at the broker's TWO choke
 // points and nowhere else: `definitions()` drops `off`, `resolveDecision()`
-// reads `allow`/`ask`/`deny`. The operator's `mcp-policy.yaml` still runs and
-// still wins on `deny`.
+// reads `allow`/`ask`/`deny`.
 // ---------------------------------------------------------------------------
 
 const searchTool: McpToolRef = {
@@ -945,19 +972,17 @@ const searchTool: McpToolRef = {
   tier: "read",
 };
 
-/** A broker whose ONE catalog tool (`get_weather`, on server `test-mcp`)
- *  carries `permission`, over an operator policy that would otherwise
- *  `confirm` it — so every assertion below is about the user's setting
- *  overriding an inherit, not about agreeing with it by accident. */
-function brokerWithPermission(
-  permission: ToolPermission,
-  opts: { policy?: PolicyDecision; confirm?: () => Promise<boolean> } = {},
-) {
+/** A broker whose ONE named tool (`get_weather`, on server `test-mcp`) carries
+ *  an explicit `permission`. It is `read`-tier, so the role template underneath
+ *  says `allow` — every assertion below that expects something else is
+ *  therefore about the stored value overriding the floor, not agreeing with it
+ *  by accident. */
+function brokerWithPermission(permission: ToolPermission, opts: { confirm?: () => Promise<boolean> } = {}) {
   const mcp = fakeMcp([weatherTool, searchTool]);
   let confirmCalls = 0;
   const broker = createToolBroker({
     mcp,
-    policy: fakePolicy(opts.policy ?? { action: "confirm", reason: "no rule matched" }),
+    catalog: testCatalog,
     store: fakeStore(),
     capability,
     sessionId: "session-1",
@@ -986,9 +1011,6 @@ describe("ToolBroker — per-tool permissions", () => {
     const result = await broker.dispatch(makeInvocation());
 
     expect(result).toEqual({ content: "result from test-mcp/get_weather", isError: false });
-    // The operator policy said `confirm`; the person's explicit Allow is what
-    // makes this prompt-free. Without that, Allow would be indistinguishable
-    // from inherit for every tool no rule tiers.
     expect(confirmCalls()).toBe(0);
     expect(mcp.callToolCalls).toEqual([{ serverName: "test-mcp", name: "get_weather" }]);
   });
@@ -1013,8 +1035,8 @@ describe("ToolBroker — per-tool permissions", () => {
     expect(broker.definitions().map((d) => d.name)).toContain("get_weather");
   });
 
-  it("prompts for an ask tool even when the operator policy would have allowed it", async () => {
-    const { broker, mcp, confirmCalls } = brokerWithPermission("ask", { policy: { action: "allow" } });
+  it("prompts for an ask tool whose tier the role template would have allowed", async () => {
+    const { broker, mcp, confirmCalls } = brokerWithPermission("ask");
 
     const result = await broker.dispatch(makeInvocation());
 
@@ -1024,7 +1046,7 @@ describe("ToolBroker — per-tool permissions", () => {
   });
 
   it("fails closed if an off tool reaches dispatch anyway — a proxied or mid-turn call", async () => {
-    const { broker, mcp } = brokerWithPermission("off", { policy: { action: "allow" } });
+    const { broker, mcp } = brokerWithPermission("off");
 
     const result = await broker.dispatch(makeInvocation());
 
@@ -1034,47 +1056,19 @@ describe("ToolBroker — per-tool permissions", () => {
     expect(mcp.callToolCalls).toHaveLength(0);
   });
 
-  it("SECURITY: an operator deny beats a user allow", async () => {
-    const { broker, mcp, confirmCalls } = brokerWithPermission("allow", {
-      policy: { action: "deny", reason: "not allowed for this role" },
-    });
-
-    const result = await broker.dispatch(makeInvocation());
-
-    if ("taskId" in result) throw new Error("expected a ToolResult, got a background handle");
-    expect(result).toEqual({ content: "not allowed for this role", isError: true });
-    expect(confirmCalls()).toBe(0);
-    expect(mcp.callToolCalls).toHaveLength(0);
-  });
-
-  it("SECURITY: an operator deny beats a user ask — the person is never even prompted", async () => {
-    const { broker, mcp, confirmCalls } = brokerWithPermission("ask", {
-      policy: { action: "deny", reason: "not allowed for this role" },
-    });
-
-    const result = await broker.dispatch(makeInvocation());
-
-    if ("taskId" in result) throw new Error("expected a ToolResult, got a background handle");
-    expect(result).toEqual({ content: "not allowed for this role", isError: true });
-    // A prompt here would be a way to talk a person into overriding the
-    // operator's own file.
-    expect(confirmCalls()).toBe(0);
-    expect(mcp.callToolCalls).toHaveLength(0);
-  });
-
-  it("an absent tool under a PRESENT server inherits the operator policy", async () => {
-    const mcp = fakeMcp([weatherTool, searchTool]);
+  it("an absent tool under a PRESENT server falls to the role template", async () => {
+    const mcp = fakeMcp([weatherTool, todoTool]);
     let confirmCalls = 0;
     const broker = createToolBroker({
       mcp,
-      policy: fakePolicy({ action: "confirm", reason: "no rule matched" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
       config: toolsConfig,
-      // `search_web` is unnamed: it must behave exactly as it did before this
-      // field existed, i.e. inherit the confirm.
+      // `add_todo` is unnamed under a server that IS named, so the stored table
+      // does not answer and the template's `ask` for the write tier does.
       toolPermissions: permissionsFor("test-mcp", { get_weather: "allow" }),
       requestConfirm: async () => {
         confirmCalls += 1;
@@ -1082,7 +1076,7 @@ describe("ToolBroker — per-tool permissions", () => {
       },
     });
 
-    const result = await broker.dispatch(makeInvocation({ name: "search_web" }));
+    const result = await broker.dispatch(makeInvocation({ name: "add_todo" }));
 
     if ("taskId" in result) throw new Error("expected a ToolResult, got a background handle");
     expect(confirmCalls).toBe(1);
@@ -1094,7 +1088,7 @@ describe("ToolBroker — per-tool permissions", () => {
     const mcp = fakeMcp([weatherTool, searchTool]);
     const broker = createToolBroker({
       mcp,
-      policy: fakePolicy({ action: "allow" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
@@ -1114,7 +1108,7 @@ describe("ToolBroker — per-tool permissions", () => {
     const mcp = fakeMcp([weatherTool, searchTool]);
     const broker = createToolBroker({
       mcp,
-      policy: fakePolicy({ action: "allow" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
@@ -1132,15 +1126,15 @@ describe("ToolBroker — per-tool permissions", () => {
     const mcp = fakeMcp([weatherTool]);
     const broker = createToolBroker({
       mcp,
-      policy: fakePolicy({ action: "allow" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
       config: toolsConfig,
       // The web and mobile Tools panes turn a server off by DELETING its key.
-      // Reading that as "inherit" would show the person "off" while the model
-      // kept the tools.
+      // Letting the role template answer underneath a deleted key would show the
+      // person "off" while the model kept the tools.
       toolPermissions: permissionsFor("some-other-server", { whatever: "allow" }),
       requestConfirm: async () => true,
     });
@@ -1149,10 +1143,10 @@ describe("ToolBroker — per-tool permissions", () => {
     expect(broker.definitions()).toEqual([]);
   });
 
-  it("an UNSET table inherits everything — adding the field changed nothing on its own", async () => {
+  it("an UNSET table falls to the role template, which is every account created before seeding", async () => {
     const broker = createToolBroker({
       mcp: fakeMcp([weatherTool]),
-      policy: fakePolicy({ action: "allow" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
@@ -1169,7 +1163,7 @@ describe("ToolBroker — per-tool permissions", () => {
   it("an EMPTY table is a table, so every server is off — 'unset' and 'empty' are not the same answer", async () => {
     const broker = createToolBroker({
       mcp: fakeMcp([weatherTool]),
-      policy: fakePolicy({ action: "allow" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
@@ -1199,7 +1193,7 @@ describe("ToolBroker — per-tool permissions", () => {
     };
     const broker = createToolBroker({
       mcp: fakeMcp([weatherTool]),
-      policy: fakePolicy({ action: "allow" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
@@ -1221,7 +1215,7 @@ describe("ToolBroker — per-tool permissions", () => {
     let table: ToolPermissionMap | undefined = undefined;
     const broker = createToolBroker({
       mcp: fakeMcp([weatherTool]),
-      policy: fakePolicy({ action: "allow" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
@@ -1260,7 +1254,7 @@ describe("ToolBroker — an unreadable profile does not resurrect a switched-off
       mcp,
       // The operator allow-tiers it, which is what makes this dangerous: if the
       // person's `off` is lost, the tool runs with no prompt at all.
-      policy: fakePolicy({ action: "allow" }),
+      catalog: testCatalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
@@ -1302,7 +1296,7 @@ describe("ToolBroker — an unreadable profile does not resurrect a switched-off
     expect(mcp.callToolCalls).toHaveLength(0);
   });
 
-  it("a missing profile is genuinely unset, so the operator policy decides as it always did", async () => {
+  it("a missing profile is genuinely unset, so the role template decides", async () => {
     const { broker, mcp } = brokerOverStore(profileStoreReturning({ ok: false, error: "not-found" }));
 
     await broker.ready();
@@ -1332,8 +1326,10 @@ describe("ToolBroker — a freshly created account can see its tools", () => {
     tier: "read",
   };
 
-  /** The catalog the account is seeded from — the one server this broker's
-   *  fake MCP advertises, so "seeded" and "advertised" are the same universe. */
+  /** The catalog the account is seeded from AND the one the broker resolves its
+   *  floor from — the one server this broker's fake MCP advertises, so "seeded",
+   *  "advertised" and "resolvable" are all the same universe. Handing the two
+   *  sides different catalogs is exactly the drift this pins. */
   const catalog: McpCatalog = mcpCatalogSchema.parse({
     searxng: {
       transport: "http",
@@ -1362,7 +1358,7 @@ describe("ToolBroker — a freshly created account can see its tools", () => {
   function definitionsFor(profile: ProfileV1): Promise<string[]> {
     const broker = createToolBroker({
       mcp: fakeMcp([searxngTool]),
-      policy: fakePolicy({ action: "allow" }),
+      catalog,
       store: fakeStore(),
       capability,
       sessionId: "session-1",
@@ -1387,30 +1383,427 @@ describe("ToolBroker — a freshly created account can see its tools", () => {
 });
 
 // ---------------------------------------------------------------------------
-// THE CACHE-STABILITY INVARIANT.
+// ONE RESOLUTION, NO FALLTHROUGH (plan 2026-08-07-tool-permissions, task 4).
 //
-// `tools[]` is serialized AHEAD of `messages[]`, so it is part of the
-// provider's cached prefix (openai-provider.ts reads
-// `prompt_tokens_details.cached_tokens`). If `allow`, `ask` and `deny` perturbed
-// the array at all — order, a description annotation, an extra field — every
-// permission tweak would silently re-prime the entire system prompt and history.
-// That cost is the whole reason `off` is a separate state from `deny`, so this
-// is the test the feature's economics rest on.
+// Two independent gates, and the distinction is the point:
+//
+//   the ROLE gate    canExecute(capability.role, def.tier) — what this person's
+//                    role may EVER reach, read off the capability by value.
+//   the PERMISSION   what this person chose for that tool, resolved as
+//                      stored[server]?[tool] ?? roleTemplate[server]?[tool] ?? "off"
+//
+// Both can produce absence from `tools[]`, for the same reason — the model must
+// not spend context on a tool it can never use — but they answer different
+// questions, and the logs say which fired.
 // ---------------------------------------------------------------------------
 
-describe("ToolBroker — tools[] cache stability across permissions", () => {
-  async function definitionsUnder(permission: ToolPermission): Promise<string> {
-    const { broker } = brokerWithPermission(permission);
+const everyTierTools = [weatherTool, todoTool, doorTool];
+
+function capabilityFor(role: UserRole): Capability {
+  return accessManager.grant(createUserPrincipal("u_aaaaaaaa", role, "household-1"), "tool-broker");
+}
+
+/** `delegateTask`'s stand-in: gateway-native, so it belongs to no MCP server
+ *  and `serverOf` answers null for it structurally. Its tier is its own
+ *  declaration — the one tool the catalog cannot answer for. */
+function delegateRunner(): BackgroundToolRunner {
+  return {
+    definition: {
+      name: "delegateTask",
+      description: "delegates",
+      parameters: {},
+      category: "background",
+      tier: "confirm",
+    },
+    run: () => ({ cancel: () => {}, result: neverSettles<ToolResult>() }),
+  };
+}
+
+interface ResolutionHarnessOpts {
+  role: UserRole;
+  tools?: McpToolRef[];
+  permissions?: () => Promise<ToolPermissionMap | undefined>;
+  backgroundTools?: Map<string, BackgroundToolRunner>;
+  confirm?: boolean;
+}
+
+function resolutionBroker(opts: ResolutionHarnessOpts) {
+  const mcp = fakeMcp(opts.tools ?? everyTierTools);
+  let confirmCalls = 0;
+  const broker = createToolBroker({
+    mcp,
+    store: fakeStore(),
+    capability: capabilityFor(opts.role),
+    catalog: testCatalog,
+    sessionId: "session-1",
+    backgroundTools: opts.backgroundTools ?? new Map(),
+    config: toolsConfig,
+    toolPermissions: opts.permissions ?? noUserPermissions,
+    requestConfirm: async () => {
+      confirmCalls += 1;
+      return opts.confirm ?? true;
+    },
+  });
+  return { broker, mcp, confirmCalls: () => confirmCalls };
+}
+
+async function namesFor(opts: ResolutionHarnessOpts): Promise<string[]> {
+  const { broker } = resolutionBroker(opts);
+  await broker.ready();
+  return broker.definitions().map((d) => d.name);
+}
+
+/** A stored table that explicitly ALLOWS the write- and confirm-tier tools.
+ *
+ *  THE ONLY SHAPE THAT ISOLATES THE ROLE GATE. With nothing stored, a
+ *  restricted role is already refused by the FLOOR — its role template simply
+ *  has no entry for a tool it cannot execute, so the `?? "off"` backstop
+ *  answers and the tool vanishes with the role gate deleted. Every "a guest
+ *  does not see this" assertion therefore passes against its own mutation. An
+ *  explicit stored `allow` short-circuits the floor, so the role gate is the
+ *  only thing left that can refuse — which is also the real invariant: a
+ *  permission a person holds must never widen what their role may reach.
+ *
+ *  Not a contrived fixture. It is what a demotion leaves behind: the table was
+ *  written while the account was an adult and it survives the re-role, exactly
+ *  as the brief's role-change case describes. */
+const storedAllowAll = permissionsFor("test-mcp", {
+  get_weather: "allow",
+  add_todo: "allow",
+  unlock_door: "allow",
+});
+
+describe("ToolBroker — the role gate decides what reaches tools[]", () => {
+  it("SECURITY: a stored Allow cannot put a tool the role may not reach into tools[]", async () => {
+    // The floor cannot answer here — the stored `allow` is read first — so this
+    // is the role gate or nothing. Pins the PRESENCE of the read-tier tool in
+    // the same breath, so "advertise nothing at all" does not satisfy it.
+    expect(await namesFor({ role: "guest", permissions: storedAllowAll })).toEqual(["get_weather"]);
+    expect(await namesFor({ role: "child", permissions: storedAllowAll })).toEqual(["get_weather", "add_todo"]);
+    expect(await namesFor({ role: "adult", permissions: storedAllowAll })).toEqual([
+      "get_weather",
+      "add_todo",
+      "unlock_door",
+    ]);
+  });
+
+  it("SECURITY: a guest never sees a write-tier tool, and still sees the read-tier one", async () => {
+    // Both halves matter. The absence alone is satisfied by a broker that
+    // advertises nothing at all, which is the mutation this shape invites.
+    expect(await namesFor({ role: "guest" })).toEqual(["get_weather"]);
+  });
+
+  it("SECURITY: a child sees read and write but never the confirm tier", async () => {
+    expect(await namesFor({ role: "child" })).toEqual(["get_weather", "add_todo"]);
+  });
+
+  it("gives an adult every tier the catalog uses", async () => {
+    expect(await namesFor({ role: "adult" })).toEqual(["get_weather", "add_todo", "unlock_door"]);
+  });
+
+  it("withholds a background tool from a role that cannot execute its tier", async () => {
+    const backgroundTools = new Map([["delegateTask", delegateRunner()]]);
+    expect(await namesFor({ role: "child", tools: [weatherTool], backgroundTools })).toEqual(["get_weather"]);
+    expect(await namesFor({ role: "adult", tools: [weatherTool], backgroundTools })).toEqual([
+      "get_weather",
+      "delegateTask",
+    ]);
+  });
+});
+
+describe("ToolBroker — the role gate is re-asked at dispatch, not trusted from tools[]", () => {
+  it("SECURITY: a stored Allow cannot get a tool past the role gate at dispatch either", async () => {
+    // Same isolation as the `definitions()` case above: with the stored `allow`
+    // read first, the floor never runs, so only the role gate can refuse. This
+    // is "a user's own permission cannot widen their role", stated at the PDP.
+    const { broker, mcp, confirmCalls } = resolutionBroker({ role: "guest", permissions: storedAllowAll });
+
+    const result = await broker.dispatch(makeInvocation({ name: "add_todo" }));
+
+    if ("taskId" in result) throw new Error("expected a ToolResult, got a background handle");
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("add_todo");
+    expect(confirmCalls()).toBe(0);
+    expect(mcp.callToolCalls).toHaveLength(0);
+
+    // …and the same table's `allow` on a tool the role DOES reach still runs,
+    // so this is not "a guest can do nothing".
+    const allowed = await broker.dispatch(makeInvocation());
+    expect(allowed).toEqual({ content: "result from test-mcp/get_weather", isError: false });
+  });
+
+  it("SECURITY: denies a child a confirm-tier tool it was never advertised, without prompting", async () => {
+    const { broker, mcp, confirmCalls } = resolutionBroker({ role: "child" });
+
+    const result = await broker.dispatch(makeInvocation({ name: "unlock_door" }));
+
+    if ("taskId" in result) throw new Error("expected a ToolResult, got a background handle");
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("unlock_door");
+    // A model-emitted tool call is never itself an authorization decision, and
+    // a prompt here would be a way to talk a person past their own role.
+    expect(confirmCalls()).toBe(0);
+    expect(mcp.callToolCalls).toHaveLength(0);
+  });
+
+  it("SECURITY: denies a guest a write-tier tool the same way", async () => {
+    const { broker, mcp } = resolutionBroker({ role: "guest" });
+
+    const result = await broker.dispatch(makeInvocation({ name: "add_todo" }));
+
+    if ("taskId" in result) throw new Error("expected a ToolResult, got a background handle");
+    expect(result.isError).toBe(true);
+    expect(mcp.callToolCalls).toHaveLength(0);
+  });
+
+  it("still runs the tool the role DOES reach — the gate is a gate, not a wall", async () => {
+    const { broker, mcp } = resolutionBroker({ role: "guest" });
+
+    const result = await broker.dispatch(makeInvocation());
+
+    expect(result).toEqual({ content: "result from test-mcp/get_weather", isError: false });
+    expect(mcp.callToolCalls).toEqual([{ serverName: "test-mcp", name: "get_weather" }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE FLOOR. Every profile on disk today has `permissions` UNSET — the key is
+// absent, not empty. A copy-only rule strands all of them the moment the
+// fallthrough is deleted. The role template answers underneath the stored table
+// forever, so "absent" is well-defined rather than a bug.
+// ---------------------------------------------------------------------------
+
+describe("ToolBroker — a profile with NO permission table resolves from the role template", () => {
+  /** A profile parsed through the REAL schema with no `permissions` key at all
+   *  — the literal shape of every account on disk before seeding landed. Built
+   *  by omission rather than by writing `permissions: undefined`, because it is
+   *  the schema's `.optional()` that has to survive this, and an explicit
+   *  `undefined` would pass even if it were `.default({})`. An empty table is a
+   *  different answer entirely (every server off), pinned separately below. */
+  const unseededProfile: ProfileV1 = profileV1Schema.parse({
+    schemaVersion: 1,
+    userId: capability.ownerUserId,
+    model: { provider: "openrouter", id: "google/gemini-2.5-flash" },
+    voice: { provider: "local-tts", id: "default" },
+    persona: { template: "default", overrides: "" },
+    tools: { toolsets: [] },
+    compression: { threshold: 0.5 },
+    advanced: { extraSystemPrompt: "", maxTokens: 1024 },
+  });
+
+  function unsetProfileReader() {
+    return createToolPermissionsReader({
+      profileStore: profileStoreReturning({ ok: true, value: unseededProfile }),
+      userId: capability.ownerUserId,
+    });
+  }
+
+  it("has no permissions key at all — the fixture is the thing being pinned", () => {
+    expect("permissions" in unseededProfile.tools).toBe(false);
+  });
+
+  it("advertises exactly the tools the role reaches, for every role", async () => {
+    expect(await namesFor({ role: "guest", permissions: unsetProfileReader() })).toEqual(["get_weather"]);
+    expect(await namesFor({ role: "child", permissions: unsetProfileReader() })).toEqual(["get_weather", "add_todo"]);
+    expect(await namesFor({ role: "adult", permissions: unsetProfileReader() })).toEqual([
+      "get_weather",
+      "add_todo",
+      "unlock_door",
+    ]);
+  });
+
+  it("runs a read-tier tool with no prompt — the template's answer for that tier is Allow", async () => {
+    const { broker, mcp, confirmCalls } = resolutionBroker({ role: "adult", permissions: unsetProfileReader() });
+
+    const result = await broker.dispatch(makeInvocation());
+
+    expect(result).toEqual({ content: "result from test-mcp/get_weather", isError: false });
+    expect(confirmCalls()).toBe(0);
+    expect(mcp.callToolCalls).toHaveLength(1);
+  });
+
+  it("prompts on a write-tier tool — the template's answer for that tier is Ask", async () => {
+    const { broker, mcp, confirmCalls } = resolutionBroker({ role: "adult", permissions: unsetProfileReader() });
+
+    const result = await broker.dispatch(makeInvocation({ name: "add_todo" }));
+
+    expect(confirmCalls()).toBe(1);
+    expect(result).toEqual({ content: "result from test-mcp/add_todo", isError: false });
+    expect(mcp.callToolCalls).toHaveLength(1);
+  });
+});
+
+describe("ToolBroker — the stored table sits ON TOP of the template, never beside it", () => {
+  it("lets a stored Deny override the template's Allow for a read-tier tool", async () => {
+    const { broker, mcp, confirmCalls } = resolutionBroker({
+      role: "adult",
+      permissions: permissionsFor("test-mcp", { get_weather: "deny" }),
+    });
+
+    const result = await broker.dispatch(makeInvocation());
+
+    if ("taskId" in result) throw new Error("expected a ToolResult, got a background handle");
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("Deny");
+    expect(confirmCalls()).toBe(0);
+    expect(mcp.callToolCalls).toHaveLength(0);
+  });
+
+  it("answers a tool the stored table does not name from the template, not from nothing", async () => {
+    // `add_todo` has no stored entry under a PRESENT server. Pre-task-4 that
+    // meant "inherit the operator policy file"; now it means the role template.
+    const { broker, confirmCalls } = resolutionBroker({
+      role: "adult",
+      permissions: permissionsFor("test-mcp", { get_weather: "allow" }),
+    });
+
+    await broker.dispatch(makeInvocation({ name: "add_todo" }));
+
+    expect(confirmCalls()).toBe(1);
+  });
+
+  it("moves the floor with the ROLE while the stored entries stay put", async () => {
+    // One table, two roles. `unlock_door` is confirm-tier: the adult reaches it
+    // and gets the template's `ask`; the child's role gate answers first.
+    const stored = permissionsFor("test-mcp", { get_weather: "allow" });
+    expect(await namesFor({ role: "adult", permissions: stored })).toEqual(["get_weather", "add_todo", "unlock_door"]);
+    expect(await namesFor({ role: "child", permissions: stored })).toEqual(["get_weather", "add_todo"]);
+  });
+
+  it("reads an EMPTY per-server map as 'no opinion yet', so the template answers", async () => {
+    // What `web-tools-migrator.ts` writes for a renamed server. An empty map is
+    // a server that IS present with no per-tool opinions — not an absent one.
+    const { broker, mcp, confirmCalls } = resolutionBroker({
+      role: "adult",
+      permissions: async () => ({ "test-mcp": {} }),
+    });
+
+    expect((await broker.ready().then(() => broker.definitions())).map((d) => d.name)).toEqual([
+      "get_weather",
+      "add_todo",
+      "unlock_door",
+    ]);
+    await broker.dispatch(makeInvocation());
+    expect(confirmCalls()).toBe(0);
+    expect(mcp.callToolCalls).toHaveLength(1);
+  });
+
+  it("SECURITY: still reads a server ABSENT from a non-empty table as off, template or no template", async () => {
+    // The clients switch a server off by DELETING its key. If the template
+    // answered underneath that, every save would silently re-grant the server.
+    const { broker, mcp } = resolutionBroker({
+      role: "adult",
+      permissions: permissionsFor("some-other-server", { whatever: "allow" }),
+    });
+    await broker.ready();
+
+    expect(broker.definitions()).toEqual([]);
+    const result = await broker.dispatch(makeInvocation());
+    if ("taskId" in result) throw new Error("expected a ToolResult, got a background handle");
+    expect(result.isError).toBe(true);
+    expect(mcp.callToolCalls).toHaveLength(0);
+  });
+
+  it("SECURITY: falls to off for a live tool the catalog does not curate", async () => {
+    // Neither table answers, so the fail-closed backstop does. It must never be
+    // `allow` — an uncurated tool is one nobody tiered.
+    const uncurated: McpToolRef = {
+      serverName: "test-mcp",
+      name: "search_images",
+      description: "searches images",
+      inputSchema: {},
+      tier: "read",
+    };
+    const { broker, mcp } = resolutionBroker({ role: "adult", tools: [weatherTool, uncurated] });
+    await broker.ready();
+
+    expect(broker.definitions().map((d) => d.name)).toEqual(["get_weather"]);
+    const result = await broker.dispatch(makeInvocation({ name: "search_images" }));
+    if ("taskId" in result) throw new Error("expected a ToolResult, got a background handle");
+    expect(result.isError).toBe(true);
+    expect(mcp.callToolCalls).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `delegateTask` — the one tool no permission table can name. It is
+// gateway-native, so `serverOf` answers null STRUCTURALLY and the
+// server-addressed template has no key for it. It must not silently become
+// `allow` (it spawns an unsupervised agent run), and it must not become
+// unreachable for the roles that should have it.
+// ---------------------------------------------------------------------------
+
+describe("ToolBroker — a gateway-native tool resolves from its own declared tier", () => {
+  const backgroundTools = () => new Map([["delegateTask", delegateRunner()]]);
+
+  it("SECURITY: prompts an adult before an unsupervised delegated run — never a silent allow", async () => {
+    const { broker, confirmCalls } = resolutionBroker({
+      role: "adult",
+      tools: [weatherTool],
+      backgroundTools: backgroundTools(),
+    });
+
+    const result = await broker.dispatch(makeInvocation({ name: "delegateTask" }));
+
+    expect(confirmCalls()).toBe(1);
+    expect(result).toHaveProperty("taskId");
+  });
+
+  it("SECURITY: denies a child, whose role never reaches the confirm tier", async () => {
+    const { broker, confirmCalls } = resolutionBroker({
+      role: "child",
+      tools: [weatherTool],
+      backgroundTools: backgroundTools(),
+    });
+
+    const result = await broker.dispatch(makeInvocation({ name: "delegateTask" }));
+
+    if ("taskId" in result) throw new Error("expected a deny, got a background handle");
+    expect(result.isError).toBe(true);
+    expect(confirmCalls()).toBe(0);
+  });
+
+  it("is NOT switched off by a table that names every other server", async () => {
+    // The regression the old `permissionFor` guarded with an early `undefined`:
+    // a `?? "off"` backstop applied blindly to a serverless tool would delete
+    // delegation from every profile in the product.
+    expect(
+      await namesFor({
+        role: "adult",
+        tools: [weatherTool],
+        backgroundTools: backgroundTools(),
+        permissions: permissionsFor("test-mcp", { get_weather: "allow" }),
+      }),
+    ).toEqual(["get_weather", "delegateTask"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE CACHE-STABILITY INVARIANT, re-run against the two-gate resolution.
+//
+// `tools[]` serializes AHEAD of `messages[]`, so it is part of the provider's
+// cached prefix. `allow`, `ask` and `deny` must leave it byte-identical; `off`
+// and the ROLE GATE are the only two things permitted to move it.
+// ---------------------------------------------------------------------------
+
+describe("ToolBroker — tools[] stays cache-stable under the two-gate resolution", () => {
+  async function serializedFor(permission: ToolPermission, role: UserRole = "adult"): Promise<string> {
+    const { broker } = resolutionBroker({
+      role,
+      permissions: permissionsFor("test-mcp", { get_weather: permission }),
+    });
     await broker.ready();
     return JSON.stringify(broker.definitions());
   }
 
-  it("INVARIANT: keeps the tools array byte-identical across allow, ask and deny", async () => {
-    const allow = await definitionsUnder("allow");
+  it("INVARIANT: keeps the array byte-identical across allow, ask and deny", async () => {
+    const allow = await serializedFor("allow");
 
-    expect(await definitionsUnder("ask")).toBe(allow);
-    expect(await definitionsUnder("deny")).toBe(allow);
-    // …and `off` is the ONE state permitted to move it.
-    expect(await definitionsUnder("off")).not.toBe(allow);
+    expect(await serializedFor("ask")).toBe(allow);
+    expect(await serializedFor("deny")).toBe(allow);
+    // …and the two states that ARE allowed to move it, so this test cannot
+    // pass by never producing a difference at all.
+    expect(await serializedFor("off")).not.toBe(allow);
+    expect(await serializedFor("allow", "guest")).not.toBe(allow);
   });
 });

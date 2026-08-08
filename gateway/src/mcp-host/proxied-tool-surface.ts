@@ -10,7 +10,7 @@
 // because `hermes mcp add` grants a server's WHOLE upstream surface — registering
 // `home_assistant` on a delegated profile would hand it ha-mcp's ~84 tools,
 // including the write ones. Proxying instead means the gateway advertises
-// exactly the `allow` tier and mediates every call.
+// exactly the `read` tier and mediates every call.
 //
 // REFRESHED AT THE MOMENT OF USE, symmetric with the dispatch-time provisioning
 // in `external-tools/`. `tools/list` on a delegated connection re-derives this
@@ -24,9 +24,8 @@
 // broker. A second dialer to the same servers would double the connection count
 // and, worse, be a second place the catalog's `tools.include` filter could drift.
 
-import { PROXIED_TOOL_CONTEXT, selectDelegatedAllowTier } from "../external-tools/delegated-tool-tier.js";
+import { selectDelegatedTools } from "../external-tools/delegated-tool-tier.js";
 import { getLog } from "../logging/logger.js";
-import type { PolicyEngine } from "../security/policy-engine.js";
 import type { McpToolRef } from "../tools/mcp-client.js";
 import type { ToolBroker } from "../tools/tool-broker.js";
 import type { ToolDefinition } from "./mcp-protocol.js";
@@ -36,7 +35,7 @@ import { createProxiedCatalogTool } from "./tools/proxied-catalog-tool.js";
 const log = getLog(["sentient", "mcp-host", "proxied-surface"]);
 
 export interface ProxiedToolSurface {
-  /** Re-dial the catalog, re-derive the allow tier, swap the handler set.
+  /** Re-dial the catalog, re-derive the delegatable tier, swap the handler set.
    *  NEVER throws and NEVER leaves the surface half-built: a listing failure
    *  empties it, which degrades the delegated agent to the gateway's own hosted
    *  tools rather than breaking the connection. */
@@ -50,7 +49,6 @@ export interface ProxiedToolSurfaceDeps {
   /** The shared `McpClient.listTools()` — already narrowed by each catalog
    *  entry's `tools.include`. */
   listCatalogTools(): Promise<McpToolRef[]>;
-  policy: PolicyEngine;
   brokerFor(userId: string): Promise<ToolBroker | null>;
   /** EVERY name the gateway implements in-process — including the ones the
    *  tier withholds. A catalog tool with a matching name is DROPPED, never
@@ -76,13 +74,7 @@ export function createProxiedToolSurface(deps: ProxiedToolSurfaceDeps): ProxiedT
   }
 
   function build(refs: McpToolRef[]): ToolHandler[] {
-    const allowed = new Set(
-      selectDelegatedAllowTier(
-        deps.policy,
-        refs.map((r) => r.name),
-        PROXIED_TOOL_CONTEXT,
-      ),
-    );
+    const allowed = new Set(selectDelegatedTools(refs).map((ref) => ref.name));
     const built: ToolHandler[] = [];
     const dropped: Array<{ tool: string; server: string; reason: string }> = [];
     const seen = new Set<string>();

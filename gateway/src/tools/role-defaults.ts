@@ -1,12 +1,19 @@
-// The per-role permission table every new account is seeded with.
+// The per-role permission table every new account is seeded with — and the
+// FLOOR the ToolBroker resolves against forever after.
 //
-// WHY A TEMPLATE AND NOT A FALLTHROUGH. Before this, a tool with no entry in a
-// person's table "inherited" the operator's `mcp-policy.yaml`, so the shipped
+// WHY A TEMPLATE AND NOT A FALLTHROUGH. A tool with no entry in a person's
+// table used to "inherit" the operator's `mcp-policy.yaml`, so the shipped
 // behaviour of a tool lived in two places and a profile could be silently
-// incomplete. Seeding at account creation replaces that: a profile carries a
-// permission for every tool its role can reach, the broker resolves it with
-// nothing behind it, and the person can change any entry without the answer
-// depending on a file they cannot see.
+// incomplete. This replaces that file outright: `tool-broker.ts` resolves
+//
+//     storedTable[server]?[tool] ?? defaultPermissionsFor(role, catalog)[server]?[tool] ?? "off"
+//
+// so the person's own answer wins where they gave one, this template answers
+// where they did not, and a tool in neither is fail-closed. Seeding at account
+// creation is what makes the table real and editable in the UI; the template
+// underneath is what makes "absent" well-defined — for the profiles that
+// predate seeding, for a role change, for a tool the operator adds tomorrow,
+// and for a partial write from any client.
 //
 // BUILT FROM THE CATALOG, NEVER FROM A LIST HERE. `config.yaml#mcp_catalog` is
 // the source of truth for which tools exist and what impact tier each carries
@@ -22,17 +29,11 @@
 // `off` entry: a stored `off` is a statement the PERSON made, and writing the
 // role's verdict into that same slot would both misattribute it and go stale
 // the moment an admin re-roles the account. It belongs to a gate that re-asks
-// it live, from the capability's role.
-//
-// THAT GATE DOES NOT EXIST YET — it is task 4 of plan 2026-08-07-tool-permissions,
-// and `canExecute` has no runtime call site anywhere in `gateway/src` outside
-// this module and its tests. So what an omission from this table means TODAY is
-// not "denied": `permissionFor` returns `undefined` for a tool with no entry
-// under a present server, which still falls through to `mcp-policy.yaml`, and
-// that file CONFIRMS the tools in question (a permission prompt) rather than
-// denying them. No regression — omitting is never wider than the old behaviour
-// — but do not read the paragraph above as a description of live enforcement
-// until task 4 lands the gate and retires the policy engine.
+// it live, from the capability's role — which is exactly what `tool-broker.ts`
+// now does, at BOTH its choke points (`definitions()` and `resolveDecision()`).
+// So an omission from this table means DENIED: the broker's `?? "off"` backstop
+// answers it, and for a role-withheld tool the role gate has already answered
+// first.
 
 import { type McpCatalog, type ToolPermission, type ToolPermissionMap, catalogTools } from "@sentient/config";
 import { type ImpactTier, type UserRole, canExecute } from "@sentient/protocol";
@@ -43,10 +44,19 @@ const log = getLog(["sentient", "tools", "role-defaults"]);
 /**
  * What a tool of this tier does by default when the model calls it.
  *
- * These are `mcp-policy.yaml`'s 35 rules, restated as one line per tier — the
- * mapping is exact, not an approximation: every tool that file allowed is
- * `read`-tier, and every tool it confirmed is `write` or `confirm`. The two
- * gateway-hosted exceptions it confirmed (`identify_user`,
+ * THE tier→permission mapping, in one place. Two callers need it at two
+ * granularities and they must never disagree: `defaultPermissionsFor` below
+ * builds a whole server-addressed table from it, and `tool-broker.ts` asks it
+ * directly for a GATEWAY-NATIVE tool (`delegateTask`), which belongs to no MCP
+ * server and so has no key in any server-addressed table — `ToolDefinition.tier`
+ * is its own declaration and this is what turns that tier into a permission.
+ * Exported rather than duplicated: a second spelling of "what does `confirm`
+ * default to" is the drift this codebase has already paid for twice.
+ *
+ * These are the retired `mcp-policy.yaml`'s 35 rules, restated as one line per
+ * tier — the mapping was exact, not an approximation: every tool that file
+ * allowed is `read`-tier, and every tool it confirmed is `write` or `confirm`.
+ * The two gateway-hosted exceptions it confirmed (`identify_user`,
  * `update_user_settings`) are `read` here by the tiering decision that already
  * shipped — a gateway-hosted tool resolves the CALLER's own session and acts
  * only on that, and a person is by definition allowed to govern their own.
@@ -55,7 +65,7 @@ const log = getLog(["sentient", "tools", "role-defaults"]);
  * it — falling through to `allow` hands out a tool nobody meant to give away,
  * and falling through to `ask` prompts on every read.
  */
-function defaultPermissionForTier(tier: ImpactTier): ToolPermission {
+export function defaultPermissionForTier(tier: ImpactTier): ToolPermission {
   switch (tier) {
     case "read":
       // Friction-free queries are the entire point of the read tier.

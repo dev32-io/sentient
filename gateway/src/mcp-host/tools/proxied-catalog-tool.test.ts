@@ -14,7 +14,7 @@ const REF: McpToolRef = {
   tier: "read",
 };
 
-const CTX: ToolContext = { sessionId: null, userId: "u_deadbeef", role: "user", sessionChannel: "voice" };
+const CTX: ToolContext = { sessionId: null, userId: "u_deadbeef", sessionChannel: "voice" };
 
 function fakeBroker(outcome: ToolResult | { taskId: string }): ToolBroker & { dispatched: ToolInvocation[] } {
   const dispatched: ToolInvocation[] = [];

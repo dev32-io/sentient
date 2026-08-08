@@ -1,30 +1,31 @@
+import type { ImpactTier } from "@sentient/protocol";
 import { describe, expect, it } from "vitest";
-import { createPolicyEngine } from "../security/policy-engine.js";
-import { loadMcpPolicy } from "../security/policy-loader.js";
 import type { McpToolRef } from "../tools/mcp-client.js";
 import { createProxiedToolSurface } from "./proxied-tool-surface.js";
 
-function ref(name: string, serverName = "home_assistant"): McpToolRef {
+function ref(name: string, tier: ImpactTier = "read", serverName = "home_assistant"): McpToolRef {
   return {
     serverName,
     name,
     description: `${name} description`,
     inputSchema: { type: "object", properties: {} },
-    tier: "read",
+    tier,
   };
 }
 
-/** Runs against the SHIPPED mcp-policy.yaml on purpose: a rule edit that
- *  promotes a write tool into the delegated surface must fail here, not in
- *  production. */
-const policy = createPolicyEngine(loadMcpPolicy());
-
-const CONFIRM_TIER = ["ha_call_service", "ha_bulk_control", "ha_set_todo_item", "ma_queue", "update_user_settings"];
+/** The tiers the shipped catalog gives these, restated so a re-tiering in
+ *  `config.yaml` shows up as a disagreement between this file and
+ *  `tool-tier.test.ts` rather than as a silently widened delegated surface. */
+const ABOVE_READ: Array<[string, ImpactTier]> = [
+  ["ha_call_service", "confirm"],
+  ["ha_bulk_control", "confirm"],
+  ["ha_set_todo_item", "write"],
+  ["ma_queue", "write"],
+];
 
 function surfaceFor(refs: McpToolRef[], hostedNames: string[] = []) {
   return createProxiedToolSurface({
     listCatalogTools: async () => refs,
-    policy,
     brokerFor: async () => null,
     hostedNames: new Set(hostedNames),
   });
@@ -32,11 +33,11 @@ function surfaceFor(refs: McpToolRef[], hostedNames: string[] = []) {
 
 describe("createProxiedToolSurface", () => {
   // WIRE CONTRACT at the delegated agent's socket: what `tools/list` advertises.
-  it("advertises the allow-tier catalog tools", async () => {
+  it("advertises the read-tier catalog tools", async () => {
     const surface = surfaceFor([
-      ref("search_web", "searxng"),
+      ref("search_web", "read", "searxng"),
       ref("ha_get_state"),
-      ref("ma_search", "music_assistant"),
+      ref("ma_search", "read", "music_assistant"),
     ]);
 
     await surface.refresh();
@@ -47,32 +48,22 @@ describe("createProxiedToolSurface", () => {
   // THE NEGATIVE, asserted explicitly. A proxy that quietly forwarded a write
   // tool would pass a "did it get tools?" check while defeating the only
   // control this tier has.
-  it("advertises nothing from the confirm or deny tier", async () => {
-    const surface = surfaceFor([ref("search_web", "searxng"), ...CONFIRM_TIER.map((n) => ref(n))]);
+  it("SECURITY: advertises nothing above the read tier, and serves no handler for it either", async () => {
+    const surface = surfaceFor([ref("search_web", "read", "searxng"), ...ABOVE_READ.map(([n, t]) => ref(n, t))]);
 
     await surface.refresh();
 
     const names = surface.definitions().map((d) => d.name);
     expect(names).toEqual(["search_web"]);
-    expect(names.some((n) => CONFIRM_TIER.includes(n))).toBe(false);
-    for (const denied of CONFIRM_TIER) expect(surface.handler(denied)).toBeNull();
-  });
-
-  // An unmatched tool inherits policy-engine's fail-closed `confirm` default.
-  it("drops a tool no policy rule classifies", async () => {
-    const surface = surfaceFor([ref("search_images", "searxng")]);
-
-    await surface.refresh();
-
-    expect(surface.definitions()).toEqual([]);
+    for (const [withheld] of ABOVE_READ) expect(surface.handler(withheld)).toBeNull();
   });
 
   // NAME COLLISION, resolved one way and only one way: a proxied tool keeps its
-  // upstream name verbatim (that is the name mcp-policy.yaml tiers and the
-  // broker's PDP evaluates), so a catalog tool that collides with a
-  // gateway-hosted name is DROPPED rather than shadowing the in-process tool.
+  // upstream name verbatim (that is the name the catalog tiers and the broker's
+  // PDP resolves), so a catalog tool that collides with a gateway-hosted name is
+  // DROPPED rather than shadowing the in-process tool.
   it("drops a catalog tool whose name collides with a gateway-hosted tool", async () => {
-    const surface = surfaceFor([ref("pause_audio"), ref("search_web", "searxng")], ["pause_audio"]);
+    const surface = surfaceFor([ref("pause_audio"), ref("search_web", "read", "searxng")], ["pause_audio"]);
 
     await surface.refresh();
 
@@ -80,7 +71,7 @@ describe("createProxiedToolSurface", () => {
   });
 
   it("drops a duplicate name advertised by two catalog servers", async () => {
-    const surface = surfaceFor([ref("search_web", "searxng"), ref("search_web", "other")]);
+    const surface = surfaceFor([ref("search_web", "read", "searxng"), ref("search_web", "read", "other")]);
 
     await surface.refresh();
 
@@ -92,7 +83,6 @@ describe("createProxiedToolSurface", () => {
   it("empties the surface rather than throwing when the catalog cannot be listed", async () => {
     const surface = createProxiedToolSurface({
       listCatalogTools: () => Promise.reject(new Error("all servers down")),
-      policy,
       brokerFor: async () => null,
       hostedNames: new Set(),
     });

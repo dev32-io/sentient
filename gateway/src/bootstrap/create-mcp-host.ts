@@ -1,6 +1,7 @@
-import type { HermesConfig, OrchestratorConfig } from "@sentient/config";
+import { type HermesConfig, type McpCatalog, type OrchestratorConfig, tierOf } from "@sentient/config";
+import type { ImpactTier } from "@sentient/protocol";
 import type { AccessManager } from "../access/access-manager.js";
-import { HOSTED_TOOL_CONTEXT, selectDelegatedAllowTier } from "../external-tools/delegated-tool-tier.js";
+import { selectDelegatedTools } from "../external-tools/delegated-tool-tier.js";
 import { getLog } from "../logging/logger.js";
 import type { ActiveSessionLookup } from "../mcp-host/active-session-lookup.js";
 import { createDelegatedBrokerFactory } from "../mcp-host/delegated-broker.js";
@@ -13,7 +14,6 @@ import { createIdentifyUserTool } from "../mcp-host/tools/identify-user.js";
 import { type UserSettingsControls, createUpdateUserSettingsTool } from "../mcp-host/tools/update-user-settings.js";
 import { type UnixSocketListener, createUnixSocketListener } from "../mcp-host/unix-socket-listener.js";
 import type { ProfileStore } from "../profile-store/profile-store.js";
-import type { PolicyEngine } from "../security/policy-engine.js";
 import type { McpClient } from "../tools/mcp-client.js";
 import type { UserStore } from "../user-auth/user-store.js";
 
@@ -21,7 +21,7 @@ const log = getLog(["sentient", "bootstrap", "mcp-host"]);
 
 export interface McpHost {
   /** Tools this host serves from its OWN process — i.e. the gateway-hosted half
-   *  of a delegated agent's surface, narrowed to the `allow` tier. The PROXIED
+   *  of a delegated agent's surface, narrowed to the `read` tier. The PROXIED
    *  half is re-derived per `tools/list` and is deliberately not in here; see
    *  `mcp-host/proxied-tool-surface.ts`. */
   readonly delegatedToolNames: readonly string[];
@@ -40,7 +40,11 @@ export interface McpHostOptions {
   userStore: UserStore;
   audio: AudioControls;
   userSettings: UserSettingsControls;
-  policy: PolicyEngine;
+  /** `config.yaml#mcp_catalog` — the operator's tier declarations. It is what
+   *  says which of the gateway's own hosted tools a delegated agent may hold
+   *  (through the `gateway:` entry's `tools.include`), and it is the catalog
+   *  each delegated broker builds its delegator's permission floor from. */
+  catalog: McpCatalog;
   /** The proxy tier's two dependencies. Absent when `orchestrator:` is not
    *  configured — the host then serves only its own hosted tools, which is the
    *  pre-9g behaviour rather than a failure. */
@@ -54,6 +58,32 @@ export interface McpHostOptions {
      *  see mcp-host/delegated-broker.ts's header. */
     profileStore: ProfileStore;
   };
+}
+
+/** A hosted handler joined to the impact tier the operator declared for it, in
+ *  the shape `selectDelegatedTools` reads. `tier: undefined` for a name the
+ *  catalog does not curate — NOT a tier, and never widened into one: an
+ *  operator who removes a tool from `mcp_catalog.gateway.tools.include` has
+ *  removed it, and guessing a tier here would put it back. */
+interface HostedToolWithTier {
+  readonly name: string;
+  readonly tier: ImpactTier | undefined;
+  readonly handler: ToolHandler;
+}
+
+function withCatalogTier(catalog: McpCatalog): (handler: ToolHandler) => HostedToolWithTier {
+  return (handler) => ({ name: handler.def.name, tier: tierOf(catalog, handler.def.name), handler });
+}
+
+/** Narrows away the untiered ones, and says so — an operator who dropped a
+ *  hosted tool from the catalog should be able to see that it happened. */
+function isTiered(tool: HostedToolWithTier): tool is HostedToolWithTier & { tier: ImpactTier } {
+  if (tool.tier !== undefined) return true;
+  log.warn("mcp-host.hosted-tool-untiered", {
+    tool: tool.name,
+    reason: "config.yaml#mcp_catalog does not curate this gateway-hosted tool, so no delegated agent may hold it",
+  });
+  return false;
 }
 
 /**
@@ -82,7 +112,7 @@ function buildRegistry(hosted: ToolHandler[], surface: ProxiedToolSurface | null
 }
 
 export async function createMcpHost(options: McpHostOptions): Promise<McpHost> {
-  const { config, router, userStore, audio, userSettings, policy, proxy } = options;
+  const { config, router, userStore, audio, userSettings, catalog, proxy } = options;
   const basePath = config.mcp_host.socket_path;
 
   // These sockets serve exactly ONE consumer: the delegated Hermes one-shot.
@@ -90,24 +120,22 @@ export async function createMcpHost(options: McpHostOptions): Promise<McpHost> {
   // and `tools/mcp-client` (which skips stdio catalog entries outright), so
   // narrowing here narrows the SUB-AGENT's authority and nothing else.
   //
-  // Why narrow at all: a delegated call arrives with no human attached, so the
-  // PDP's `confirm` verdict has nobody to prompt and `mcp-server.ts`
-  // auto-approves it. Advertising a `confirm`-tier tool on this socket is
-  // therefore equivalent to granting it unmediated. The tier comes from
-  // `mcp-policy.yaml` at runtime — never a second list.
+  // Why narrow at all: a delegated call arrives with no human attached, so
+  // anything that would resolve to a permission prompt cannot be answered, and
+  // `mcp-server.ts` has no confirmation mechanism to answer it with.
+  // Advertising such a tool on this socket is therefore equivalent to granting
+  // it unmediated. The tier comes from `config.yaml#mcp_catalog` at runtime —
+  // never a second list.
   const hostedTools = [
     createIdentifyUserTool({ userStore }),
     createPauseAudioTool({ audio, router }),
     createResumeAudioTool({ audio, router }),
     createUpdateUserSettingsTool({ controls: userSettings, router }),
   ];
-  const delegatedToolNames = selectDelegatedAllowTier(
-    policy,
-    hostedTools.map((tool) => tool.def.name),
-    HOSTED_TOOL_CONTEXT,
+  const hosted = selectDelegatedTools(hostedTools.map(withCatalogTier(catalog)).filter(isTiered)).map(
+    (tool) => tool.handler,
   );
-  const delegated = new Set(delegatedToolNames);
-  const hosted = hostedTools.filter((tool) => delegated.has(tool.def.name));
+  const delegatedToolNames = hosted.map((tool) => tool.def.name);
 
   // The PROXIED tier (task 9g). Every call through it is dispatched by a
   // per-user `ToolBroker`, so the gateway's PDP sees it — that mediation is the
@@ -115,10 +143,9 @@ export async function createMcpHost(options: McpHostOptions): Promise<McpHost> {
   const proxiedSurface = proxy
     ? createProxiedToolSurface({
         listCatalogTools: () => proxy.mcpClient.listTools(),
-        policy,
         brokerFor: createDelegatedBrokerFactory({
           mcp: proxy.mcpClient,
-          policy,
+          catalog,
           toolsConfig: proxy.toolsConfig,
           accessManager: proxy.accessManager,
           profileStore: proxy.profileStore,
@@ -141,8 +168,7 @@ export async function createMcpHost(options: McpHostOptions): Promise<McpHost> {
     const socketPath = resolveMcpSocketPath(userId, basePath);
     const deps: McpServerDeps = {
       registry,
-      policy,
-      contextFor: () => ({ sessionId: null, userId, role: "user", sessionChannel: "voice" }),
+      contextFor: () => ({ sessionId: null, userId, sessionChannel: "voice" }),
       // Re-derive the proxied tier at the moment of use, symmetric with
       // `delegateTask`'s dispatch-time provisioning: no cached surface, no
       // drift. Bounded by each catalog entry's own `connect_timeout`.

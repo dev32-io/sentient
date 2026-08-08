@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import type { PolicyContext, PolicyDecision, PolicyEngine } from "../security/policy-engine.js";
 import { handleRpc } from "./mcp-server.js";
 import type { ToolHandler, ToolRegistry } from "./mcp-server.js";
 
@@ -14,12 +13,6 @@ function makeRegistry(handlers: ToolHandler[]): ToolRegistry {
     },
   };
 }
-
-const allowAllPolicy: PolicyEngine = {
-  evaluate(_ctx: PolicyContext): PolicyDecision {
-    return { action: "allow" };
-  },
-};
 
 describe("handleRpc", () => {
   const deps = {
@@ -41,8 +34,7 @@ describe("handleRpc", () => {
         },
       },
     ]),
-    policy: allowAllPolicy,
-    contextFor: () => ({ sessionId: null, userId: null, role: "user" as const, sessionChannel: "voice" as const }),
+    contextFor: () => ({ sessionId: null, userId: null, sessionChannel: "voice" as const }),
   };
 
   it("responds to initialize", async () => {
@@ -93,23 +85,6 @@ describe("handleRpc", () => {
     expect(res).toBeNull();
   });
 
-  it("denies tool call when policy returns deny", async () => {
-    const denyPolicy: PolicyEngine = {
-      evaluate(_ctx: PolicyContext): PolicyDecision {
-        return { action: "deny", reason: "not allowed", rule: "test-deny" };
-      },
-    };
-    const denyDeps = { ...deps, policy: denyPolicy };
-    const res = await handleRpc(
-      { jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "echo", arguments: { text: "hi" } } },
-      "conn1",
-      denyDeps,
-    );
-    const result = res?.result as { content: Array<{ text: string }>; isError: boolean };
-    expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain("not allowed");
-  });
-
   // WIRE CONTRACT on the delegated socket. The proxied catalog tier is derived
   // at listing time, not cached at boot: an addon that came up after the gateway
   // did must appear without a restart. A `tools/list` that answered from a stale
@@ -147,21 +122,5 @@ describe("handleRpc", () => {
     const res = await handleRpc({ jsonrpc: "2.0", id: 8, method: "tools/list" }, "conn1", failing);
 
     expect((res?.result as { tools: Array<{ name: string }> }).tools[0]?.name).toBe("echo");
-  });
-
-  it("auto-approves tool call when policy returns confirm", async () => {
-    const confirmPolicy: PolicyEngine = {
-      evaluate(_ctx: PolicyContext): PolicyDecision {
-        return { action: "confirm", rule: "test-confirm" };
-      },
-    };
-    const confirmDeps = { ...deps, policy: confirmPolicy };
-    const res = await handleRpc(
-      { jsonrpc: "2.0", id: 6, method: "tools/call", params: { name: "echo", arguments: { text: "ok" } } },
-      "conn1",
-      confirmDeps,
-    );
-    const result = res?.result as { content: Array<{ text: string }> };
-    expect(result.content[0]?.text).toBe("ok");
   });
 });

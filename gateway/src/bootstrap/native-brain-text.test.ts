@@ -33,7 +33,7 @@
 // undefined` at profile-renderer.ts's top-level `GATEWAY_ROOT` constant).
 // `bun:test` runs on the real Bun engine, where `import.meta.dir` resolves
 // correctly — the same reason every other file in this repo that touches
-// `import.meta.dir` (phase-state.ts, startup-config.ts, policy-loader.ts,
+// `import.meta.dir` (phase-state.ts, startup-config.ts,
 // secrets-store.test.ts, …) is only ever exercised via `bun test`.
 //
 // Boot-path choice: calls `buildOrchestratorServices(cfg, secretsStore)`

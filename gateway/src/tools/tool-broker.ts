@@ -7,10 +7,34 @@
 // through it first, so a `deny` or an unconfirmed `confirm` structurally
 // cannot reach `mcp.callTool` or a `BackgroundToolRunner.run`.
 //
-// Fail-closed at both layers: `policy-engine.ts` classifies a tool that NO
-// rule names as side-effecting and returns `confirm` (design §2.2), and this
-// broker is what makes `confirm` mean something — it calls the injected
-// `requestConfirm`, which the composition root binds to the SESSION's
+// TWO GATES, TWO QUESTIONS, applied at BOTH choke points (`definitions()` and
+// `resolveDecision()`):
+//
+//   the ROLE gate    `canExecute(capability.role, tier)` — what this person's
+//                    role may EVER reach. The role is baked into the capability
+//                    at mint (`AccessManager.grant`, spec §2.1/L1) and held by
+//                    value; it is never re-derived here and never cached from
+//                    a lookup.
+//   the PERMISSION   what this person CHOSE for that tool:
+//                      stored[server]?[tool]
+//                        ?? defaultPermissionsFor(role, catalog)[server]?[tool]
+//                        ?? "off"
+//
+// Both gates can produce absence from `tools[]`, for the same reason — the
+// model must not see, or spend context on, a tool it can never use — but they
+// are different questions and the logs say which one fired.
+//
+// NO FALLTHROUGH, and no operator policy engine behind either gate. There used
+// to be one (`security/policy-engine.ts` over `gateway/mcp-policy.yaml`): a
+// second, name-keyed spelling of "which tools are safe" that had to agree with
+// `config.yaml#mcp_catalog`'s tiers and eventually would not. The tier IS the
+// operator's dial now, and the role template built from it (role-defaults.ts)
+// is the resolution floor, so every tool has exactly one answer and it comes
+// from one file.
+//
+// Fail-closed at both layers: a tool in neither table resolves `off`, never
+// `allow`, and this broker is what makes `ask` mean something — it calls the
+// injected `requestConfirm`, which the composition root binds to the SESSION's
 // permission broker (runtime/session-permission-broker.ts's
 // `createConfirmHook`), so an unconfirmed side-effecting tool is BLOCKED,
 // never silently run. Three outcomes reach a two-valued seam: an explicit
@@ -32,21 +56,24 @@
 // Keeping the append in the loop keeps this file focused on the one thing
 // it must get right: the PDP choke point.
 //
-// `sessionChannel` is hardcoded to "text": Plan 2 walks text-only
-// end-to-end (voice/TTS lands in Plan 3). When a session gains a real
-// channel, thread it through `createToolBroker`'s deps instead of the
-// capability/config shape locked here.
+// A constraint that is conditioned on the SESSION rather than on the person or
+// their role belongs to the tool that owns it, not here: no permission table
+// can express "only during a voice session". The one such rule the retired
+// policy file carried (`no_identify_user_outside_voice`) now lives in
+// `mcp-host/tools/identify-user.ts`, which is the only place that knows both
+// the channel and what the tool means without one.
 
-import { ALL_TOOLS_PERMISSION_KEY, type OrchestratorConfig } from "@sentient/config";
+import { ALL_TOOLS_PERMISSION_KEY, type McpCatalog, type OrchestratorConfig } from "@sentient/config";
 import type { ToolPermission, ToolPermissionMap } from "@sentient/config";
+import { type ImpactTier, canExecute } from "@sentient/protocol";
 import type { Capability } from "../access/capability.js";
 import { getLog } from "../logging/logger.js";
-import type { PolicyContext, PolicyEngine } from "../security/policy-engine.js";
 import type { SessionStore } from "../store/session-store.js";
 import type { UserId } from "../user-auth/user-id.js";
 import { createBackgroundRegistry } from "./background-registry.js";
 import type { BackgroundRegistry } from "./background-registry.js";
 import type { McpClient } from "./mcp-client.js";
+import { defaultPermissionForTier, defaultPermissionsFor } from "./role-defaults.js";
 import { capToolResult } from "./tool-result-cap.js";
 import { ConfirmUnavailableError } from "./tool-types.js";
 import type { DelegationProgress, PdpDecision, ToolDefinition, ToolInvocation, ToolResult } from "./tool-types.js";
@@ -92,11 +119,24 @@ function settingsOffReason(toolName: string): string {
 }
 
 /** The confirm rationale shown to the person when THEY are the reason the
- *  prompt exists. The operator policy's own rationale is deliberately not
- *  reused here: it explains why a rule tiered the tool, which says nothing
- *  about a setting the person chose themselves. */
+ *  prompt exists — either an explicit `Ask` in their settings or the role
+ *  template's answer for the tool's tier, which they can change to anything
+ *  else in the same pane. */
 function settingsAskReason(toolName: string): string {
   return `Your settings ask for confirmation before every ${toolName} call.`;
+}
+
+/** What the model is told when the ROLE gate refused — a different fact from
+ *  every reason above, all of which report a SETTING. Normally unreachable from
+ *  the model (`definitions()` never advertised the tool), so reaching it means
+ *  either a hallucinated-but-real tool name or a proxied call that never read
+ *  this session's `tools[]`.
+ *
+ *  Deliberately says "this account", not "your role is child": naming the role
+ *  taxonomy invites the model to argue with it or to relay it to a person who
+ *  cannot change it, and the model's useful move is the same either way. */
+function roleDeniedReason(toolName: string): string {
+  return `The ${toolName} tool is not available to this account. Do not retry it; say what you could not do and offer an alternative if one exists.`;
 }
 
 /** Whether a permission leaves the tool in the model's `tools[]`.
@@ -198,12 +238,12 @@ export interface ToolBroker {
    */
   ready(): Promise<void>;
   /** The session's tool vocabulary (MCP-catalog tools + registered background
-   *  tools) MINUS everything the person has switched `off`. Stable within a
-   *  turn — the MCP list is cached and the permission snapshot is refreshed
-   *  once, by `ready()`, at the turn boundary — so it is never re-derived
-   *  mid-turn (spec §4.6: hiding a tool is not a security boundary, L3 at the
-   *  call is; `off` is a prompt-surface decision, and `resolveDecision` still
-   *  refuses an `off` tool that reaches it by any other route).
+   *  tools) MINUS everything the owner's ROLE cannot execute and everything
+   *  they have switched `off`. Stable within a turn — the MCP list is cached
+   *  and the permission snapshot is refreshed once, by `ready()`, at the turn
+   *  boundary — so it is never re-derived mid-turn (spec §4.6: hiding a tool is
+   *  not a security boundary, L3 at the call is; both gates are re-asked by
+   *  `resolveDecision` for a tool that reaches it by any other route).
    *  Synchronous, so it reports whatever is resolved NOW: see `ready()` before
    *  handing the result to a provider. */
   definitions(): ToolDefinition[];
@@ -234,16 +274,27 @@ export interface ToolBroker {
 
 export interface ToolBrokerDeps {
   mcp: McpClient;
-  policy: PolicyEngine;
   store: SessionStore;
-  /** THE authorization input (spec §3.2). `broker.ownerUserId` and the PDP's
-   *  `PolicyContext.userId`/`role` all read straight off this value — never an
+  /** THE authorization input (spec §3.2). `broker.ownerUserId`, the role gate
+   *  and the permission floor all read straight off this value — never an
    *  ambient principal — so the broker's authority is exactly what this
    *  capability grants, nothing threaded in alongside it. `AccessManager.grant`
    *  is the only place a principal becomes this value (task 2026-08-07 #2);
    *  mint from the same `AccessManager` that mints the session's own store
    *  capability. */
   capability: Capability;
+  /** `config.yaml#mcp_catalog` — the operator's tool universe and, through each
+   *  entry's `tier`, the operator's dial for who may reach what. Read here for
+   *  ONE purpose: to build this owner's role template (`role-defaults.ts`),
+   *  which is the floor underneath their stored permission table. The same
+   *  accessor every account-creation path seeds from, so the floor and the seed
+   *  can never disagree about the same account.
+   *
+   *  Held by value and resolved ONCE at construction: the catalog is startup
+   *  config and the role is baked into the capability at mint, so neither can
+   *  change under a live broker. A role change rebuilds the capability, which
+   *  rebuilds the broker — see mcp-host/delegated-broker.ts's cache note. */
+  catalog: McpCatalog;
   /** The CONNECTION id (`ws.data.sessionId`), for log correlation and nothing
    *  else — every `tool-broker.*` line below carries it so a dispatch is
    *  traceable to the one socket that made it. It is NOT the durable
@@ -263,7 +314,7 @@ export interface ToolBrokerDeps {
    * so a settings save takes effect on the next turn without rebuilding the
    * broker. Nothing here is captured at construction.
    *
-   * `undefined` means NEVER SET — everything inherits `mcp-policy.yaml`. An
+   * `undefined` means NEVER SET — every tool falls to the role template. An
    * empty object is a different answer: a table naming no server, so every
    * server is absent and therefore off. Do not collapse the two.
    *
@@ -293,11 +344,18 @@ export interface ToolBrokerDeps {
   onDelegationProgress?: (p: DelegationProgress) => void;
 }
 
+/** What `resolveTarget` found: the lane the call runs on, what it needs to run
+ *  there, and the tool's IMPACT TIER — carried alongside so the role gate and
+ *  the execution path can never be judging two different tools. */
+type ResolvedTarget =
+  | { kind: "background"; runner: BackgroundToolRunner; tier: ImpactTier }
+  | { kind: "foreground"; serverName: string; tier: ImpactTier };
+
 export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
   const {
     mcp,
-    policy,
     capability,
+    catalog,
     sessionId,
     backgroundTools,
     config,
@@ -306,6 +364,11 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     onDelegationProgress,
   } = deps;
   const ownerUserId = capability.ownerUserId;
+  const role = capability.role;
+  // THE FLOOR, resolved once. Both inputs are immutable for this broker's life
+  // (see `ToolBrokerDeps.catalog`), so recomputing per call would buy nothing
+  // and re-walking the catalog per tool call would cost on the hot path.
+  const roleTemplate = defaultPermissionsFor(role, catalog);
   const background = createBackgroundRegistry();
   // Late-bound (see `ToolBroker.setBackgroundCompletionSink`'s doc comment
   // for why this can't be a constructor dep). `null` until the composition
@@ -325,6 +388,7 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
   // is read before the very first warm-up completes.
   let mcpIndex: Map<string, string> | null = null; // toolName -> serverName
   let mcpDefs: ToolDefinition[] = [];
+  let mcpDefsByName = new Map<string, ToolDefinition>();
   let warmup: Promise<void> | null = null;
 
   function ensureMcpWarm(): Promise<void> {
@@ -342,11 +406,13 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
             // `filterByAllowlist`. Nothing here decides a tier.
             tier: ref.tier,
           }));
+          mcpDefsByName = new Map(mcpDefs.map((def) => [def.name, def]));
           log.info("tool-broker.mcp-warmup.ok", { sessionId, toolCount: refs.length });
         })
         .catch((err) => {
           mcpIndex = new Map();
           mcpDefs = [];
+          mcpDefsByName = new Map();
           log.warn("tool-broker.mcp-warmup.failed", {
             sessionId,
             reason: err instanceof Error ? err.message : String(err),
@@ -390,31 +456,33 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
   }
 
   /**
-   * The person's own setting for a tool, or `undefined` for INHERIT (fall
-   * through to `mcp-policy.yaml`, exactly as before this field existed).
+   * The person's OWN STORED setting for a tool, or `undefined` when their table
+   * does not answer — which is the signal to fall to the role template.
    *
    * PRECEDENCE inside a server: the tool's own key, then the server's `"*"`
-   * wildcard, then absent.
+   * wildcard, then unanswered.
    *
    * THE SERVER-LEVEL ASYMMETRY, deliberate and load-bearing. A tool absent
-   * from a PRESENT server inherits; a whole server absent from a NON-EMPTY
-   * table is `off`. That is not a second rule invented here — it is the
-   * meaning `tools.enabled` always carried and that every client still
-   * encodes: the web and mobile Tools panes switch a server off by DELETING
-   * its key. Reading an absent server as "inherit" would show a person "off"
-   * in the UI while the model kept the tools, silently, on every save. The
-   * asymmetry is confined to the server level and goes away for good once the
-   * clients write the explicit `{"*": "off"}` spelling instead of deleting.
+   * from a PRESENT server is unanswered (the template decides); a whole server
+   * absent from a NON-EMPTY table is `off`, and that `off` is a STORED answer
+   * that stops the template ever being consulted. That is not a second rule
+   * invented here — it is the meaning `tools.enabled` always carried and that
+   * every client still encodes: the web and mobile Tools panes switch a server
+   * off by DELETING its key. Letting the template answer underneath a deleted
+   * key would re-grant the whole server on every save, silently. The asymmetry
+   * is confined to the server level and goes away for good once the clients
+   * write the explicit `{"*": "off"}` spelling instead of deleting.
    *
-   * UNSET IS NOT EMPTY. `undefined` here means the person never set a table,
-   * so everything inherits. An empty OBJECT is a table that names no server,
-   * i.e. every server off — which is exactly what "turn all five servers off in
-   * the UI" produces, and what `user-tool-permissions.ts` reports for a profile
-   * it cannot read. `ProfileV1["tools"]["permissions"]` is `.optional()` rather
+   * UNSET IS NOT EMPTY. `undefined` here means the person never set a table, so
+   * every tool falls to the template — which is every account created before
+   * seeding landed. An empty OBJECT is a table that names no server, i.e. every
+   * server off, which is exactly what "turn all five servers off in the UI"
+   * produces and what `user-tool-permissions.ts` reports for a profile it
+   * cannot read. `ProfileV1["tools"]["permissions"]` is `.optional()` rather
    * than `.default({})` precisely so these two remain distinguishable all the
    * way down to this line.
    */
-  function permissionFor(toolName: string): ToolPermission | undefined {
+  function storedPermissionFor(toolName: string): ToolPermission | undefined {
     const serverName = serverOf(toolName);
     if (serverName === null) return undefined;
     if (permissions === undefined) return undefined;
@@ -424,88 +492,94 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
   }
 
   /**
-   * The ONE place `policy.evaluate` is called. Both dispatch branches
-   * (foreground, background) flow through this before any side effect — that
-   * is what makes the choke point structural rather than a convention two
-   * branches could independently drift from.
+   * THE FLOOR — the role's own template, and the fail-closed backstop under it.
+   *
+   * `defaultPermissionsFor` is server-addressed because it is built from the
+   * catalog, so it cannot answer for a GATEWAY-NATIVE tool (`delegateTask`),
+   * which belongs to no server: `serverOf` returns null for it structurally.
+   * That tool declares its own `tier`, and the SAME tier→permission mapping the
+   * template is built from answers for it — one rule, asked at two
+   * granularities, never two rules. Applying the `?? "off"` backstop to it
+   * instead would delete delegation from every profile in the product.
+   *
+   * The backstop itself must never be `allow`: a tool in neither the person's
+   * table nor the role template is one the operator's catalog does not curate,
+   * and nobody tiered it. Note this is NOT "absent = inherit everything" — the
+   * value underneath is a server-computed, role-derived template, not a
+   * permissive default.
+   */
+  function floorFor(toolName: string, tier: ImpactTier): ToolPermission {
+    const serverName = serverOf(toolName);
+    if (serverName === null) return defaultPermissionForTier(tier);
+    return roleTemplate[serverName]?.[toolName] ?? "off";
+  }
+
+  /** THE resolution, total by construction — every tool has exactly one answer
+   *  and `undefined` is not one of them. */
+  function permissionFor(toolName: string, tier: ImpactTier): ToolPermission {
+    return storedPermissionFor(toolName) ?? floorFor(toolName, tier);
+  }
+
+  /**
+   * The ONE place a dispatch decision is made. Both branches (foreground,
+   * background) flow through this before any side effect — that is what makes
+   * the choke point structural rather than a convention two branches could
+   * independently drift from.
    *
    * ORDER, written as control flow rather than as a comment somebody could
-   * drift from. The operator's `mcp-policy.yaml` runs FIRST and
-   * UNCONDITIONALLY, and its `deny` returns before the person's own table is
-   * read at all. That single early return is what makes "a user's `allow`
-   * cannot override an operator `deny`" structurally true: there is exactly
-   * one way past it, and taking it has already ruled an operator deny out.
-   * Below the guard the person's explicit setting decides; absent one, the
-   * operator's verdict carries on exactly as it did before this field existed.
+   * drift from. The ROLE gate runs FIRST and UNCONDITIONALLY, and it returns
+   * before the person's own table is read at all: a permission a person set for
+   * themselves must never be able to widen what their role may reach. It is
+   * asked again here even though `definitions()` already asked it, because a
+   * model can emit a tool name it was never advertised, and a proxied delegated
+   * call never read this session's `tools[]` at all. A model-emitted tool call
+   * is never itself an authorization decision.
    */
-  async function resolveDecision(inv: ToolInvocation): Promise<PdpDecision> {
+  async function resolveDecision(inv: ToolInvocation, tier: ImpactTier): Promise<PdpDecision> {
     // Per call, never captured: a settings save reaches the very next dispatch
     // rather than waiting for a new broker.
     await refreshPermissions();
 
-    const ctx: PolicyContext = {
-      tool: inv.name,
-      userId: ownerUserId, // capability, not an ambient principal — spec §3.2.
-      role: capability.role, // baked in at mint (AccessManager.grant) — task 2026-08-07 #2.
-      sessionChannel: "text", // Plan 2 is text-only; see file header.
-      args: inv.args,
-    };
-    const decision = policy.evaluate(ctx);
-    const userPermission = permissionFor(inv.name);
+    if (!canExecute(role, tier)) {
+      log.warn("tool-broker.role-gate.denied", {
+        sessionId,
+        tool: inv.name,
+        toolCallId: inv.toolCallId,
+        role,
+        tier,
+        reason: "this role cannot execute the tool's impact tier — it was never advertised to the model either",
+      });
+      return { action: "deny", reason: roleDeniedReason(inv.name) };
+    }
+
+    const stored = storedPermissionFor(inv.name);
+    const permission = stored ?? floorFor(inv.name, tier);
     log.info("tool-broker.pdp.decision", {
       sessionId,
       tool: inv.name,
       toolCallId: inv.toolCallId,
-      role: capability.role,
-      action: decision.action,
-      reason: decision.reason,
-      rule: decision.rule,
-      userPermission: userPermission ?? "inherit",
+      role,
+      tier,
+      permission,
+      // WHICH table answered. The difference matters when a person swears they
+      // set something: "role-template" means their profile is silent on it.
+      source: stored === undefined ? "role-template" : "profile",
     });
-
-    // THE GUARD. Operator deny is terminal and precedes every user branch.
-    if (decision.action === "deny") {
-      log.warn("tool-broker.pdp.operator-deny", {
-        sessionId,
-        tool: inv.name,
-        toolCallId: inv.toolCallId,
-        rule: decision.rule,
-        userPermission: userPermission ?? "inherit",
-        reason: "mcp-policy.yaml denied this tool — a user permission cannot widen an operator deny",
-      });
-      return { action: "deny", reason: decision.reason ?? "denied by policy" };
-    }
-
-    if (userPermission !== undefined) {
-      log.info("tool-broker.permission.applied", {
-        sessionId,
-        tool: inv.name,
-        toolCallId: inv.toolCallId,
-        userPermission,
-        policyAction: decision.action,
-      });
-      return applyUserPermission(inv, userPermission);
-    }
-
-    // Absent → inherit: the operator policy decides, exactly as it did before
-    // per-tool permissions existed.
-    if (decision.action === "allow") return { action: "allow" };
-    return runConfirmFlow(inv, decision.reason ?? "confirmation required");
+    return applyUserPermission(inv, permission);
   }
 
   /**
-   * The person's explicit setting, turned into a PDP verdict.
+   * The resolved permission, turned into a PDP verdict.
    *
    * EXHAUSTIVE — no `default:` arm. Every member returns, so a fifth member
    * (`auto`) leaves a code path falling off the end of a function declared to
    * return `Promise<PdpDecision>`, which is a compile error rather than a
-   * silent fall-through into "inherit".
+   * silent fall-through.
    */
   async function applyUserPermission(inv: ToolInvocation, permission: ToolPermission): Promise<PdpDecision> {
     switch (permission) {
       case "allow":
-        // No prompt. That is the whole difference from `ask`, and from
-        // inheriting a policy that classifies unnamed tools as side-effecting.
+        // No prompt. That is the whole difference from `ask`.
         return { action: "allow" };
       case "ask":
         return runConfirmFlow(inv, settingsAskReason(inv.name));
@@ -519,10 +593,10 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     }
   }
 
-  /** The human-in-the-loop half of the PDP, reached from two places: an
-   *  operator `confirm` verdict that the person has not overridden, and the
-   *  person's own `ask`. One implementation, so the fail-closed handling
-   *  below cannot diverge between them. */
+  /** The human-in-the-loop half of the PDP, reached whenever the resolution
+   *  lands on `ask` — from the person's own stored setting or from the role
+   *  template's answer for the tool's tier. One implementation, so the
+   *  fail-closed handling below cannot diverge between them. */
   async function runConfirmFlow(inv: ToolInvocation, reason: string): Promise<PdpDecision> {
     // Fail-closed unless the injected confirm hook says otherwise (Plan 2
     // default: always false). A confirm hook that THROWS (Plan 3's real UI
@@ -559,8 +633,14 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     return confirmed ? { action: "allow" } : { action: "deny", reason: userDeclinedReason(inv.name) };
   }
 
-  /** EXISTENCE, resolved before the PDP ever runs. Returns null for a tool
-   *  name that is in neither the MCP catalog nor the background registry.
+  /** EXISTENCE — and the tool's TIER, resolved before the PDP ever runs.
+   *  Returns null for a tool name that is in neither the MCP catalog nor the
+   *  background registry.
+   *
+   *  The tier travels WITH the resolved target rather than being looked up
+   *  again inside the PDP, so the tier the role gate judges is provably the
+   *  tier of the tool that would actually run. Two lookups keyed on the same
+   *  name are two chances to disagree.
    *
    *  Order is the whole point. Observed live 3× in one day: the model called
    *  `ha_search`, the catalog has `ha_search_entities`, the PDP prompted the
@@ -570,14 +650,28 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
    *  attention on nothing and teaches them to click through the prompts that
    *  DO guard something. A name that does not exist is a model error the loop
    *  absorbs, not a decision anyone should be asked to make. */
-  async function resolveTarget(
-    inv: ToolInvocation,
-  ): Promise<{ kind: "background"; runner: BackgroundToolRunner } | { kind: "foreground"; serverName: string } | null> {
+  async function resolveTarget(inv: ToolInvocation): Promise<ResolvedTarget | null> {
     const runner = backgroundTools.get(inv.name);
-    if (runner) return { kind: "background", runner };
+    if (runner) return { kind: "background", runner, tier: runner.definition.tier };
     await ensureMcpWarm();
     const serverName = serverOf(inv.name);
-    return serverName ? { kind: "foreground", serverName } : null;
+    if (!serverName) return null;
+    const def = mcpDefsByName.get(inv.name);
+    // Unreachable in practice — `serverOf` and `mcpDefsByName` are filled from
+    // the same `listTools()` response — but the answer to "a tool with no tier"
+    // must be a refusal, never an invented tier. `undefined` is not a tier
+    // (@sentient/config's `tierOf` says the same thing at the catalog layer).
+    if (!def) {
+      log.warn("tool-broker.dispatch.untiered-tool", {
+        sessionId,
+        tool: inv.name,
+        toolCallId: inv.toolCallId,
+        serverName,
+        reason: "the tool listed a server but carries no definition, so no impact tier — refusing rather than guessing",
+      });
+      return null;
+    }
+    return { kind: "foreground", serverName, tier: def.tier };
   }
 
   /** The ONE place a tool result's size is bounded before it can reach the
@@ -724,26 +818,52 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     return { taskId };
   }
 
-  /** THE SOLE PRODUCER of the model's `tools[]`, and the only place `off` is
-   *  read. Everything else about a permission is a dispatch-time decision, on
-   *  purpose: `tools[]` is serialized AHEAD of `messages[]`, so it is part of
-   *  the provider's cached prefix, and any per-permission variation in it
-   *  would silently re-prime the whole system prompt and history on every
-   *  settings tweak. `allow`, `ask` and `deny` therefore leave this array
-   *  byte-identical — see `isVisibleToModel`. */
+  /** THE SOLE PRODUCER of the model's `tools[]`, and the only place either gate
+   *  is allowed to change the array. Everything else about a permission is a
+   *  dispatch-time decision, on purpose: `tools[]` is serialized AHEAD of
+   *  `messages[]`, so it is part of the provider's cached prefix, and any
+   *  per-permission variation in it would silently re-prime the whole system
+   *  prompt and history on every settings tweak. `allow`, `ask` and `deny`
+   *  therefore leave this array byte-identical — see `isVisibleToModel`.
+   *
+   *  BOTH GATES DROP, AND FOR THE SAME REASON: the model must not see, or spend
+   *  context on, a tool it can never use. They are logged apart because they
+   *  answer different questions — "this role may never reach it" is not "this
+   *  person switched it off", and only one of them is something the person can
+   *  change in Settings. */
   function definitions(): ToolDefinition[] {
     void ensureMcpWarm(); // idempotent kick-off; definitions() itself stays synchronous
     const backgroundDefs = [...backgroundTools.values()].map((runner) => runner.definition);
-    const all = [...mcpDefs, ...backgroundDefs];
-    const visible = all.filter((def) => {
-      const permission = permissionFor(def.name);
-      return permission === undefined || isVisibleToModel(permission);
-    });
-    if (visible.length !== all.length) {
-      log.info("tool-broker.definitions.filtered", {
+    const visible: ToolDefinition[] = [];
+    const roleWithheld: string[] = [];
+    const switchedOff: string[] = [];
+
+    for (const def of [...mcpDefs, ...backgroundDefs]) {
+      if (!canExecute(role, def.tier)) {
+        roleWithheld.push(def.name);
+        continue;
+      }
+      if (!isVisibleToModel(permissionFor(def.name, def.tier))) {
+        switchedOff.push(def.name);
+        continue;
+      }
+      visible.push(def);
+    }
+
+    if (roleWithheld.length > 0) {
+      log.info("tool-broker.definitions.role-withheld", {
+        sessionId,
+        role,
+        toolCount: visible.length,
+        withheld: roleWithheld,
+        reason: "this role cannot execute these tools' impact tiers, so the model is never told they exist",
+      });
+    }
+    if (switchedOff.length > 0) {
+      log.info("tool-broker.definitions.switched-off", {
         sessionId,
         toolCount: visible.length,
-        offCount: all.length - visible.length,
+        off: switchedOff,
         reason: "tools switched off in this user's settings are not advertised to the model",
       });
     }
@@ -768,7 +888,7 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     // natural `auto` implementation (a classifier that answers "ask") would
     // return exactly that. Testing for `deny` would have dispatched it
     // unmediated; testing for `allow` cannot.
-    const decision = await resolveDecision(inv);
+    const decision = await resolveDecision(inv, target.tier);
     if (decision.action !== "allow") {
       log.warn("tool-broker.dispatch.denied", {
         sessionId,

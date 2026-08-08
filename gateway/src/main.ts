@@ -10,8 +10,6 @@ import { createHermesExternalTool } from "./external-tools/hermes-external-tool.
 import { createGatewayLogger, getLog } from "./logging/logger.ts";
 import { createUnavailableSessionLookup } from "./mcp-host/active-session-lookup.ts";
 import type { UpdateUserSettingsPatch } from "./mcp-host/tools/update-user-settings.js";
-import { createPolicyEngine } from "./security/policy-engine.js";
-import { loadMcpPolicy } from "./security/policy-loader.js";
 import { createGatewayServer } from "./server.ts";
 import { createCredentialRevoker } from "./session-handlers/credential-revocation.ts";
 
@@ -223,16 +221,13 @@ if (config.hermes) {
       await controls.updateUserSettings(sessionId, userId, patch);
     },
   };
-  const mcpPolicy = loadMcpPolicy();
-  const policyEngine = createPolicyEngine(mcpPolicy);
-
   mcpHost = await createMcpHost({
     config: config.hermes,
     router: activeSessions,
     userStore: services.auth.users,
     audio: stubAudio,
     userSettings: userSettingsControls,
-    policy: policyEngine,
+    catalog: config.mcpCatalog,
     // The proxied tier (task 9g): the delegated agent reaches the operator's
     // `mcp_catalog` through the gateway's own socket, so every one of those
     // calls passes the PDP. Same shared McpClient the gateway's own loop uses —

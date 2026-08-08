@@ -5,7 +5,6 @@ import type { AccessManager } from "../access/access-manager.js";
 import type { Capability, ResourceClass } from "../access/capability.js";
 import type { UserPrincipal } from "../identity/user-principal.js";
 import type { ProfileStore } from "../profile-store/profile-store.js";
-import type { PolicyEngine } from "../security/policy-engine.js";
 import type { McpClient } from "../tools/mcp-client.js";
 import { NEVER_REVOKED } from "../user-auth/credential-floor.js";
 import type { StoreResult, UserRecord } from "../user-auth/types.js";
@@ -70,7 +69,7 @@ function harness(initial: UserRecord | null): Harness {
   };
   const brokerFor = createDelegatedBrokerFactory({
     mcp: { listTools: async () => [] } as unknown as McpClient,
-    policy: { evaluate: () => ({ action: "allow" }) } as PolicyEngine,
+    catalog: {},
     toolsConfig: TOOLS_CONFIG,
     accessManager,
     profileStore: { get: async () => ({ ok: false, error: "not-found" }) } as unknown as ProfileStore,

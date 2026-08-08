@@ -629,7 +629,7 @@ describe("SessionRuntime — delegateTask fire-and-steer loop closes end to end"
         callTool: async () => ({ content: "unused", isError: false }),
         close: async () => {},
       },
-      policy: { evaluate: () => ({ action: "allow" }) },
+      catalog: {},
       store: {
         append: () => {
           throw new Error("ToolBroker.store is interface-parity only");
@@ -657,7 +657,9 @@ describe("SessionRuntime — delegateTask fire-and-steer loop closes end to end"
         max_tool_result_chars: 20000,
       },
       toolPermissions: async () => undefined, // unset: this suite is about the loop, not permissions
-      requestConfirm: async () => false,
+      // `delegateTask` is confirm-tier, so the resolution lands on `ask`; this
+      // suite is about the loop's handling of a RUNNING background task.
+      requestConfirm: async () => true,
     });
 
     const provider = fakeProvider(async function* (callIndex) {

@@ -102,8 +102,8 @@ describe("every shipped tool keeps the tier it was reviewed with", () => {
 // their identity (`identify-user.ts`, which is inert and rebinds nothing). A
 // person is by definition allowed to govern their own session.
 //
-// `mcp-policy.yaml`'s `child_cannot_pause_audio` and `no_guest_identify` are
-// RETIRED by owner decision, not tiering casualties: `pause_audio` cannot
+// The retired policy file's `child_cannot_pause_audio` and `no_guest_identify`
+// are RETIRED by owner decision, not tiering casualties: `pause_audio` cannot
 // reach anyone else's playback, so there was never anything for the rule to
 // defend, and withholding `identify_user` from a guest bought no safety while
 // costing the model the only answer it has to "I'm actually Bob".

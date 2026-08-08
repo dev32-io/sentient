@@ -26,8 +26,8 @@
  *
  * SAFETY, and it is not negotiable: this stack runs against the owner's real
  * home. READ_ONLY_TOOLS below is a hard allowlist and the only tools this
- * prober will ever invoke. It is deliberately NOT derived from
- * `mcp-policy.yaml`'s `allow` tier — that tier contains `ma_playback`,
+ * prober will ever invoke. It is deliberately NOT derived from the catalog's
+ * `read` tier — that tier contains `ma_playback`,
  * `ma_play_media` and `ma_volume`, which are prompt-free by design and would
  * start audio in someone's house. A QA prober needs a stricter list than the
  * product does.
@@ -65,7 +65,7 @@ const SESSION_HEADER = "mcp-session-id";
  *
  * Adding a tool here is a safety decision, not a convenience one. If a tool
  * can change anything an occupant of the house would notice, it does not
- * belong in this list no matter what tier `mcp-policy.yaml` gives it.
+ * belong in this list no matter what tier `config.yaml#mcp_catalog` gives it.
  */
 const READ_ONLY_TOOLS: Readonly<Record<string, readonly string[]>> = {
   home_assistant: [

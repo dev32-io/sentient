@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { riskConfigSchema } from "@sentient/config";
-import type { OrchestratorConfig } from "@sentient/config";
+import type { McpCatalog, OrchestratorConfig } from "@sentient/config";
 import { ensureTlsMaterial } from "@sentient/tls";
 import { type AccessManager, createAccessManager } from "../access/access-manager.js";
 import { archiveUserDir } from "../admin/archive-user-dir.js";
@@ -36,9 +36,6 @@ import { createConfirmHook, createSessionPermissionBroker } from "../runtime/ses
 import type { SessionWorkSignals } from "../runtime/session-retention.js";
 import { type SessionRuntime, createSessionRuntime as buildSessionRuntime } from "../runtime/session-runtime.js";
 import { createTurnStateTracker } from "../runtime/turn-state-snapshot.js";
-import { createPolicyEngine } from "../security/policy-engine.js";
-import type { PolicyEngine } from "../security/policy-engine.js";
-import { loadMcpPolicy } from "../security/policy-loader.js";
 import type { GatewayTlsMaterial } from "../session-handlers/ws-handlers.ts";
 import { type SessionStore, openSessionStore } from "../store/session-store.js";
 import { composeBackgroundCompletionNote } from "../tools/background-completion-note.js";
@@ -319,7 +316,7 @@ function buildRenderInnerProfile(
 // ---------------------------------------------------------------------------
 //
 // Builds the app-lifetime singletons (AccessManager, McpClient, the shared
-// PolicyEngine/DelegationGuard/HermesRunner) once, resolves the orchestrator's
+// DelegationGuard/HermesRunner) once, resolves the orchestrator's
 // ProviderClient from the operator's 1.0 secrets store, and returns a
 // per-session `createSessionRuntime` factory closure that mints a fresh
 // ToolBroker (+ its own delegateTask runner bound to that session's userId)
@@ -394,7 +391,6 @@ export async function buildOrchestratorServices(
   const orchestratorCfg = cfg.orchestrator;
   const provider = await buildOrchestratorProvider(orchestratorCfg, secretsStore, profileStore);
 
-  const policyEngine = createPolicyEngine(loadMcpPolicy());
   const frontmatterDir = resolveDelegationFrontmatterDir(orchestratorCfg.delegation.frontmatter_dir);
   const delegationFrontmatter = loadDelegationFrontmatterDir(frontmatterDir);
   const promptClassifier = createPromptClassifier({ riskConfig: riskConfigSchema.parse({}) });
@@ -410,7 +406,7 @@ export async function buildOrchestratorServices(
     accessManager,
     provider,
     mcpClient,
-    policyEngine,
+    mcpCatalog: cfg.mcpCatalog,
     delegationGuard,
     hermesRunner,
     delegatedExternalTool,
@@ -518,7 +514,10 @@ interface CreateSessionRuntimeFactoryDeps {
   accessManager: AccessManager;
   provider: UserModelProvider | null;
   mcpClient: McpClient;
-  policyEngine: PolicyEngine;
+  /** `config.yaml#mcp_catalog`. Threaded through to every session broker, which
+   *  builds its owner's role permission template from it — the floor underneath
+   *  their stored table (tools/role-defaults.ts). */
+  mcpCatalog: McpCatalog;
   delegationGuard: DelegationGuard;
   hermesRunner: HermesRunner;
   delegatedExternalTool: ExternalToolSlot;
@@ -541,7 +540,7 @@ interface CreateSessionRuntimeFactoryDeps {
  *  fail the whole gateway boot (that check lives HERE, at the point of
  *  actual use, not in `buildOrchestratorServices` above). */
 function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): CreateSessionRuntime {
-  const { orchestratorCfg, accessManager, provider, mcpClient, policyEngine, delegationGuard, hermesRunner } = deps;
+  const { orchestratorCfg, accessManager, provider, mcpClient, mcpCatalog, delegationGuard, hermesRunner } = deps;
   const { delegatedExternalTool, profileStore, auth } = deps;
 
   return ({
@@ -678,9 +677,9 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
 
     const broker = createToolBroker({
       mcp: mcpClient,
-      policy: policyEngine,
       store: brokerStore,
       capability,
+      catalog: mcpCatalog,
       // Log correlation only (see `ToolBrokerDeps.sessionId`) — the CONNECTION,
       // so a tool dispatch stays traceable to the one socket that made it.
       sessionId: connectionId,

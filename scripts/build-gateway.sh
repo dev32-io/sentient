@@ -43,14 +43,13 @@ else
 fi
 
 # Everything the gateway reads through config/asset-root.ts, plus the webui
-# bundle the static handler serves. mcp-policy.yaml and config/delegation/ are
-# NOT optional: the loaders degrade to an empty policy / missing frontmatter
-# rather than crashing, so omitting them fails silently at runtime.
+# bundle the static handler serves. config/delegation/ is NOT optional: its
+# loader degrades to missing frontmatter rather than crashing, so omitting it
+# fails silently at runtime.
 echo "==> staging runtime assets"
 cp -R gateway/templates       "$OUT/share/templates"
 cp -R gateway/system_prompts  "$OUT/share/system_prompts"
 cp    gateway/persona.md      "$OUT/share/persona.md"
-cp    gateway/mcp-policy.yaml "$OUT/share/mcp-policy.yaml"
 mkdir -p "$OUT/share/config"
 cp -R gateway/config/delegation "$OUT/share/config/delegation"
 cp -R gateway/webui/dist      "$OUT/share/webui"

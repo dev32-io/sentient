@@ -38,7 +38,7 @@ describe("filterByAllowlist", () => {
   });
 
   // D19: `ha_search_entities` sat in config.yaml's include list and its own
-  // mcp-policy.yaml rule for weeks while the real tool (`ha_search`) went
+  // catalog entry for weeks while the real tool (`ha_search`) went
   // unreachable — filterByAllowlist intersected the include list with what
   // the server advertised and silently dropped the rest, so the curated
   // surface read like coverage while it rotted. This is the regression test

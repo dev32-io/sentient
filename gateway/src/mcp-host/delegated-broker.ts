@@ -5,9 +5,9 @@
 // "current user" (spec §2.1/L2) — with three deliberate differences from the
 // session broker in `bootstrap/phase-services.ts`:
 //
-//   * NO BACKGROUND TOOLS. `delegateTask` is `allow`-tiered, so without this
-//     the delegated agent could proxy its own delegation and recurse. The empty
-//     map means `dispatch` can only ever take the foreground branch.
+//   * NO BACKGROUND TOOLS. Without this the delegated agent could proxy its own
+//     `delegateTask` and recurse. The empty map means `dispatch` can only ever
+//     take the foreground branch.
 //   * `requestConfirm` REJECTS with `ConfirmUnavailableError`. There is nobody
 //     to prompt, and by the owner's Correction 2 the confirm gate for a
 //     delegation is the ONE dialog shown before `delegateTask` runs — nothing
@@ -17,7 +17,9 @@
 //   * The principal's role is THE DELEGATOR'S OWN, read from the user store on
 //     the way in. A delegated agent acts FOR its user, never above them, so
 //     there is no delegated role constant any more — the one that used to live
-//     in `external-tools/delegated-tool-tier.ts` is deleted. `AccessManager.
+//     in `external-tools/delegated-tool-tier.ts` is deleted, and so is the
+//     advertisement role beside it: the proxied surface is selected by IMPACT
+//     TIER now, which is a property of the tool and not of any role. `AccessManager.
 //     grant` bakes this role into the capability below exactly as it does for
 //     a real session's principal, no special-casing, which is what makes the
 //     bound provable rather than asserted: the ONLY role a delegated broker can
@@ -39,14 +41,12 @@
 // and rebuilding on a change costs one users.json read, which is what every
 // login already pays.
 
-import type { OrchestratorConfig } from "@sentient/config";
+import type { McpCatalog, OrchestratorConfig } from "@sentient/config";
 import type { UserRole } from "@sentient/protocol";
 import type { AccessManager } from "../access/access-manager.js";
-import { PROXIED_TOOL_CONTEXT } from "../external-tools/delegated-tool-tier.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
 import type { ProfileStore } from "../profile-store/profile-store.js";
-import type { PolicyEngine } from "../security/policy-engine.js";
 import type { SessionStore } from "../store/session-store.js";
 import type { McpClient } from "../tools/mcp-client.js";
 import { type ToolBroker, createToolBroker } from "../tools/tool-broker.js";
@@ -68,7 +68,10 @@ const NO_CONFIRMER =
 
 export interface DelegatedBrokerFactoryDeps {
   mcp: McpClient;
-  policy: PolicyEngine;
+  /** `config.yaml#mcp_catalog`. The broker builds the DELEGATOR's role
+   *  permission template from it, so a proxied call resolves against exactly
+   *  the floor that user's own session would. */
+  catalog: McpCatalog;
   /** `orchestrator.tools` — only `max_concurrent_background_tasks` is read, and
    *  only on a branch this broker cannot reach (see the file header). */
   toolsConfig: OrchestratorConfig["tools"];
@@ -163,9 +166,9 @@ export function createDelegatedBrokerFactory(deps: DelegatedBrokerFactoryDeps): 
       const capability = deps.accessManager.grant(principal, "tool-broker");
       broker = createToolBroker({
         mcp: deps.mcp,
-        policy: deps.policy,
         store: unusedStore(),
         capability,
+        catalog: deps.catalog,
         // Log correlation only. Named apart from a connection id on purpose:
         // every line from this broker is a delegated call, not a socket's.
         sessionId: `delegated:${userId}`,
@@ -189,12 +192,7 @@ export function createDelegatedBrokerFactory(deps: DelegatedBrokerFactoryDeps): 
     }
 
     brokers.set(userId, { role, broker });
-    log.info("delegated-broker.created", {
-      userId,
-      role,
-      advertisedRole: PROXIED_TOOL_CONTEXT.role,
-      sessionChannel: PROXIED_TOOL_CONTEXT.sessionChannel,
-    });
+    log.info("delegated-broker.created", { userId, role });
     return broker;
   };
 }

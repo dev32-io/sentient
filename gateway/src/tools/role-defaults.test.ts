@@ -42,7 +42,7 @@ describe("defaultPermissionsFor maps a tier onto a permission", () => {
     expect(defaultPermissionsFor("adult", CATALOG).household?.look_up).toBe("allow");
   });
 
-  it("prompts on a write tool, which mcp-policy.yaml confirmed on every call", () => {
+  it("prompts on a write tool — a change to household state somebody else relies on", () => {
     expect(defaultPermissionsFor("adult", CATALOG).household?.add_to_list).toBe("ask");
   });
 

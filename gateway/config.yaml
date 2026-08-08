@@ -731,15 +731,14 @@ mcp_catalog:
   # first:
   #   * gateway-HOSTED tools (identify_user, audio control), implemented
   #     in-process;
-  #   * PROXIED tools — the `allow` tier of the http entries in this same
+  #   * PROXIED tools — the `read` tier of the http entries in this same
   #     catalog (HA reads, fetch, searxng), forwarded through the gateway's
   #     ToolBroker so its PDP evaluates every delegated call.
-  # The proxied set is derived at runtime from `gateway/mcp-policy.yaml`, never
-  # listed here: a second spelling of "which tools are safe" is a thing that
-  # must agree with the policy file and eventually will not. Editing
-  # `tools.include` below does NOT change what a delegated agent can reach —
-  # the delegated surface is decided by mcp-policy.yaml plus this catalog's
-  # per-server `tools.include`.
+  # BOTH sets are derived at runtime from the `tier:` declarations in this very
+  # file, never from a second list: a delegated run has nobody to confirm a
+  # prompt, so only the `read` tier — the one tier that never prompts — may be
+  # advertised on that socket. Editing `tools.include` below therefore DOES
+  # change what a delegated agent can reach, in both halves.
   #
   # THIS IS THE DIALLING SIDE of hermes.mcp_host.socket_path above — the two
   # MUST name the same directory. `${HOME}` is expanded once at config load

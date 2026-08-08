@@ -9,10 +9,11 @@
 // directly would be WORSE than no proxy, because it looks mediated and is not.
 //
 // NAMING SCHEME — upstream name, verbatim. Not a prefix, and deliberately so:
-// the bare name is what `gateway/mcp-policy.yaml` tiers and what the broker's
-// PDP evaluates, so renaming it here would silently detach every proxied tool
-// from the policy that authorises it (an unmatched name resolves to `confirm`,
-// which fails closed — a whole tier that quietly stops working). Ambiguity is
+// the bare name is what `config.yaml#mcp_catalog` tiers and what the broker's
+// PDP resolves a permission for, so renaming it here would silently detach
+// every proxied tool from the catalog entry that tiers it (a name in no table
+// resolves `off`, which fails closed — a whole tier that quietly stops
+// working). Ambiguity is
 // already resolved one layer up: hermes namespaces everything it reaches
 // through this socket as `mcp__gateway__<name>`. Collisions inside the surface
 // are resolved by DROPPING the duplicate, in `proxied-tool-surface.ts`.
