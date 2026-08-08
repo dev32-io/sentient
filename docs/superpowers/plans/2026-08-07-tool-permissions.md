@@ -1,330 +1,166 @@
-# Per-Tool Permissions Implementation Plan
+# Per-Tool Permissions Implementation Plan (rev 2)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** One per-tool setting — `Allow | Ask | Deny | Off` — owned by the gateway's `ToolBroker`, which renders `tools[]` at runtime from it, surfaced as a dropdown in all three Tools settings screens.
+**Goal:** Two layers, both owned by the gateway. A **role gate** derived from the caller's capability decides which tools exist for that person at all; within that, a **per-tool permission** — `Allow | Ask | Deny | Off` — decides what happens when the model calls one. No third authority.
 
-**Architecture:** The broker already has exactly two choke points and this feature plugs into both: `definitions()` (`tool-broker.ts:513`) is the sole producer of the model's `tools[]`, and `resolveDecision()` (`:288`) is the sole caller of `policy.evaluate`. `Off` drops a tool at the first; `Allow`/`Ask`/`Deny` are read at the second. An absent entry falls through to `mcp-policy.yaml` exactly as today, so nothing changes behaviour until someone touches a dropdown. `mcp-policy.yaml` remains the outer gate and is not touched.
+**Architecture:** `AccessManager` mints a `tool-broker` capability carrying the caller's role, so the broker holds authority by value rather than reading an ambient principal (spec L0→L1→L2). Every tool declares an impact tier in `config.yaml#mcp_catalog`. `definitions()` — the sole producer of the model's `tools[]` — drops a tool when the role cannot execute its tier, and drops it again when the person set it `Off`; the two produce the same outcome for the same reason (the model must not see, or spend context on, something it can never use). `resolveDecision()` reads the remaining three states. There is no runtime fallthrough: every profile carries a fully seeded permission table, seeded per role at account creation.
 
-**Tech Stack:** Bun + TypeScript (gateway), zod (`shared/config`), Preact (webui), Kotlin Multiplatform (`shared/mobile-sdk`, `shared/mobile-data`), SwiftUI (iOS), Compose (Android).
+**What this rev changes and why.** Rev 1 modelled `mcp-policy.yaml` as a second authority above the user, and built `absent = inherit` so the broker could fall through to it. That was 1.0 framing. Of its 37 rules, 22 `allow` + 13 `confirm` are simply a *default per-tool permission template* written in a second place and re-evaluated every dispatch; 2 of the 3 `deny` rules are role restrictions; 1 is a per-session constraint that is not a permission at all. So the rule engine retires into the default template plus the role gate, and `absent = inherit` — the source of two of rev 1's review findings, including a fail-open — stops existing.
+
+**Tech Stack:** Bun + TypeScript (gateway), zod (`shared/config`, `shared/protocol`), Preact (webui), Kotlin Multiplatform, SwiftUI, Compose.
 
 ## Global Constraints
 
 - Branch `feature/native-orchestrator`. Never push to `main` or `develop`.
 - `source scripts/env.sh` before ANY shell command.
-- Gateway unit tests: `cd gateway/src && bun test` (Bun's runner, NOT vitest). Repo: `bun run ci`. Kotlin: `./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests :android:testDebugUnitTest`. iOS: `xcodebuild -project ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.3.1' test` — **`test`, not `build`**; `build` does not compile `SentientAppTests` (`ios/project.yml` marks it buildable only for the Test action), so a `build`-only check proves nothing.
-- **Every switch on `ToolPermission` must be exhaustive** — no `default:` arm, no `else ->` catch-all. A fifth member (`Auto`, once the classifier lands) must be a compile error at every site that has to handle it.
-- The dropdown control already exists on all three platforms and must be reused, not re-invented: web `Select` (`gateway/webui/src/components/settings/primitives/select.tsx`), iOS `RowSelect` (`ios/App/Settings/Components/RowSelect.swift`), Android `RowSelect` (`android/src/main/kotlin/io/sentient/android/settings/components/RowSelect.kt`). Precedent for many options: the 6-option reasoning-effort picker (`advanced-pane.tsx:71`).
-- Tagged logger everywhere; no bare `console.*`. Never log user content.
-- Mobile logs upload to the gateway — ids, counts and types only.
-- **Never run anything against production.** E2E prompts must be READ-ONLY: never actuate a device (no "turn on", no "play"). See the e2e matrix note.
-- Commit `type(scope): description`, ending each message with:
-  `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`
+- Gateway: `cd gateway/src && bun test` (Bun's runner, NOT vitest). Repo: `bun run ci`. Kotlin: `./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests :android:testDebugUnitTest`. iOS: `xcodebuild -project ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.3.1' **test**` — `test`, NOT `build`; `build` does not compile `SentientAppTests`.
+- **Exhaustive switches over `ToolPermission` and `ImpactTier`** — no `default:`/`else ->` arm. A future `Auto` (classifier) or a new tier must break compilation at every site.
+- Reuse the existing dropdown: web `Select`, iOS `RowSelect`, Android `RowSelect`.
+- Tunables and catalogs live in YAML, never hardcoded in TS.
+- Tagged logger; no bare `console.*`; never log user content.
+- **E2E prompts are READ-ONLY.** Never actuate a device. The stack talks to the operator's real home and smoke runs at any hour.
+- Commit `type(scope): description` + `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`.
+
+## Rework carried from rev 1
+
+P1 (`75d016d4`) and P2 (`c6babf9c`, `62e559dc`, `e03c78b1`) are committed and green. This rev keeps their machinery and changes their semantics:
+
+- **Keep:** `ToolPermission`, `profile.tools.permissions`, the two choke points, the cache-stability invariant, the fail-closed reader, `.optional()`, `ALL_TOOLS_PERMISSION_KEY`.
+- **Change:** `absent = inherit` becomes `absent = a bug we seeded around`. Tasks 3 and 4 remove the fallthrough.
+- **Delete:** `gateway/mcp-policy.yaml`, `gateway/src/security/policy-engine.ts`, `policy-loader.ts`, and `resolveDecision`'s `policy.evaluate` call.
+
+A constraint recorded during rev 1 and still binding on Tasks 6–9: **all three clients turn a server off by DELETING its key** (`tools-pane.tsx`, `ToolsViewModel.kt:92-98`, `ToolsViewModel.swift:89-97`). They must instead write explicit values and must never send `tools.enabled`. Once they do, the server-level absence rule in `permissionFor` becomes vestigial and Task 4 deletes it.
 
 ---
 
-## Why `tools.enabled` goes away
+### Task 1: Every tool declares an impact tier
 
-`profile.tools.enabled` has **no live consumer in the native loop**. It is read only by `renderProfile` (`profile-renderer.ts:159`), which writes an `mcp:` block into `hermes-config.yaml`. That block is dead: `hermes-external-tool.ts:85-110` registers the gateway's MCP with Hermes **at call time** (`hermes -p <id> config set mcp_servers` → a per-user socket), and every proxied call is mediated by the calling user's `ToolBroker`, already narrowed by `delegated-tool-tier.ts`. Hermes never reads the rendered `mcp:` block.
+**Files:** `shared/config/src/schemas/mcp-catalog.ts` (`mcpToolDescriptorSchema`), `gateway/config.yaml#mcp_catalog`, `gateway/src/tools/tool-types.ts` (`ToolDefinition`), `gateway/src/tools/mcp-client.ts` (carry it onto the definition), plus the background-tool definitions in `gateway/src/tools/delegate-task.ts`.
 
-`renderProfile` itself survives — Hermes still needs the model fragments (`MODEL_FRAGMENTS`, `profile-renderer.ts:30`) to know which LLM to call. Only its MCP half retires.
+**Produces:** `ToolDefinition.tier: ImpactTier`, sourced from the catalog.
 
-So `enabled` is replaced, not supplemented. One setting, one source of truth.
+Reuse `ImpactTier` from `shared/protocol/src/roles.ts` — `read | write | confirm | admin`. It already exists and has no consumers; this is what it was scaffolded for.
 
----
+Tier every tool currently in `config.yaml#mcp_catalog`. Derive the assignment from `mcp-policy.yaml` before deleting it: its 22 `allow` rules are `read`, its 13 `confirm` rules are `write` or `confirm` (read each rule's `reason` to decide which), `identify_user` and `pause_audio` need the tiers that make their existing role rules fall out of `canExecute` — that is the test of whether the tiering is right.
 
-### Task 1: The `ToolPermission` type and the profile field
+A tool with no tier in the catalog must fail loudly at config load, not default. An untiered tool is an operator mistake, and defaulting it either silently exposes it to a guest or silently hides it from an adult.
 
-**Files:**
-- Create: `shared/config/src/schemas/tool-permission.ts`
-- Modify: `shared/config/src/index.ts` (export it)
-- Modify: `gateway/src/profile-store/profile-types.ts:50-73` (replace `enabled` with `permissions`)
-- Modify: `gateway/src/profile-store/profile-defaults.ts:8-15`, `:33-45`
-- Test: `gateway/src/profile-store/profile-types.test.ts` (or create it)
-
-**Interfaces produced:** `ToolPermission = "allow" | "ask" | "deny" | "off"`; `toolPermissionSchema`; `ProfileV1["tools"]["permissions"]: Record<string, Record<string, ToolPermission>>`.
-
-- [ ] **Step 1: The type**
-
-Create `shared/config/src/schemas/tool-permission.ts`:
-
-```ts
-import { z } from "zod";
-
-/**
- * What the gateway does when the model calls a tool. ONE setting per tool,
- * owned by the ToolBroker, which is the only thing that reads it.
- *
- *   allow — dispatched with no prompt.
- *   ask   — the person is asked first (permission dialog).
- *   deny  — auto-rejected with a reason the model SEES, so it can explain
- *           itself rather than silently improvising around a gap.
- *   off   — omitted from `tools[]` entirely; the model does not know the tool
- *           exists. This is the only member that changes the request prefix,
- *           and so the only one that costs a prompt-cache re-prime.
- *
- * `deny` and `off` are deliberately distinct: `deny` keeps the capability
- * legible to the model, `off` removes it. Collapsing them loses the model's
- * ability to say WHY it cannot do something.
- *
- * EXHAUSTIVE SWITCHES ONLY. A fifth member (`auto`, once the classifier
- * lands) must break every site that has to handle it — never fall through a
- * `default:` arm into silently-wrong behaviour.
- */
-export const toolPermissionSchema = z.enum(["allow", "ask", "deny", "off"]);
-export type ToolPermission = z.infer<typeof toolPermissionSchema>;
-```
-
-Export from `shared/config/src/index.ts` beside the other schema exports.
-
-- [ ] **Step 2: Write the failing profile-schema test**
-
-The old `enabled` field carried a `.preprocess` migrating a legacy `string[]` form. The new field needs its own migration FROM `enabled`, because live profiles have it.
-
-```ts
-import { describe, expect, it } from "bun:test";
-import { profileV1Schema } from "./profile-types.js";
-
-const BASE = {
-  schemaVersion: 1,
-  userId: "u_aaaaaaaa",
-  model: { provider: "ollama-cloud", id: "gpt-oss:20b" },
-  voice: { provider: "local-tts", id: "default" },
-  persona: { template: "default", overrides: "" },
-};
-
-describe("profile tools.permissions", () => {
-  it("migrates a legacy tools.enabled map into per-tool permissions", () => {
-    const parsed = profileV1Schema.parse({
-      ...BASE,
-      tools: { enabled: { home_assistant: [], searxng: ["web_search"] }, toolsets: ["memory"] },
-    });
-    // An enabled server with an empty narrowing inherits: no explicit entries.
-    expect(parsed.tools.permissions.home_assistant).toEqual({});
-    // A narrowed server keeps its named tools inheriting and says nothing about
-    // the rest — the catalog decides what else exists, and unnamed tools go off.
-    expect(parsed.tools.permissions.searxng?.web_search).toBeUndefined();
-    expect(parsed.tools.enabled).toBeUndefined();
-  });
-
-  it("accepts an explicit permissions map and rejects an unknown member", () => {
-    const parsed = profileV1Schema.parse({
-      ...BASE,
-      tools: { permissions: { home_assistant: { ha_search: "ask", ha_call_service: "off" } } },
-    });
-    expect(parsed.tools.permissions.home_assistant?.ha_search).toBe("ask");
-    expect(() =>
-      profileV1Schema.parse({ ...BASE, tools: { permissions: { s: { t: "auto" } } } }),
-    ).toThrow();
-  });
-});
-```
-
-Run it (`cd gateway/src && bun test profile-store/`) and watch it fail.
-
-- [ ] **Step 3: Replace the field**
-
-In `profile-types.ts`, delete the `enabled` key and its `.preprocess`, and add:
-
-```ts
-    /**
-     * Per-tool permission, keyed by MCP server name then tool name. Server
-     * names match gateway/config.yaml#mcp_catalog. An ABSENT entry — missing
-     * server, or missing tool under a present server — means "inherit", and
-     * the broker falls through to mcp-policy.yaml exactly as it did before
-     * this field existed. That is what makes adding the field a no-op until
-     * somebody touches a dropdown.
-     *
-     * Replaces the retired `enabled` map. That field's only consumer was the
-     * Hermes profile renderer, whose `mcp:` block Hermes never reads (the
-     * gateway registers its MCP at call time — external-tools/
-     * hermes-external-tool.ts), so it steered nothing.
-     */
-    permissions: z.preprocess(migrateEnabledToPermissions, z.record(z.string().min(1), z.record(z.string().min(1), toolPermissionSchema))).default({}),
-```
-
-with the migration above it:
-
-```ts
-/**
- * Legacy `tools.enabled` → `tools.permissions`. No schema-version bump, same
- * convention as the `voice.provider: "fish-audio"` rewrite above.
- *
- * `enabled` expressed AVAILABILITY per server: a present key meant the server
- * was on (`[]` = inherit the operator's include; a non-empty array = narrow to
- * those tools). It never reached the native loop, so this migration is the
- * moment the setting starts meaning something — a server the user had switched
- * off yields `off` for every tool the catalog lists under it.
- *
- * Servers the user narrowed keep their named tools inheriting and mark nothing
- * else, because the catalog — not the profile — is the authority on what other
- * tools exist. The broker resolves the remainder against the catalog at
- * `definitions()` time (task 2).
- */
-function migrateEnabledToPermissions(v: unknown): unknown { … }
-```
-
-Write the body so an already-`permissions`-shaped value passes through untouched, an `enabled` object migrates, and the doubly-legacy `enabled: string[]` form migrates too.
-
-`profile-defaults.ts`: `DEFAULT_TOOLS_ENABLED` becomes `DEFAULT_TOOL_PERMISSIONS: Record<string, Record<string, ToolPermission>>` = `{ home_assistant: {}, gateway: {}, music_assistant: {}, searxng: {}, fetch: {} }` — every default server present with no explicit per-tool entry, i.e. inherit everything. Update `applyProfileDefaults` accordingly and keep its "caller-provided value wins" behaviour.
-
-- [ ] **Step 4: Green, then commit**
-
-```bash
-source scripts/env.sh && cd gateway/src && bun test && cd ../.. && bun run typecheck
-git add -A && git commit -m "feat(profile): give every tool one permission, replacing the Hermes-era enabled map"
-```
-
-Expect fallout in `web-tools-migrator.ts`, `profile-renderer.ts` and their tests — that is Task 3's work. If it blocks compilation, do the minimum to keep the tree green and say so in your report.
+- [ ] Write the failing test: `canExecute("child", tierOf("pause_audio"))` is `false` and `canExecute("adult", …)` is `true`; same for `identify_user` and `guest`.
+- [ ] Add `tier` to the descriptor schema (required), tier every catalog entry, thread it onto `ToolDefinition`.
+- [ ] Make a missing tier a hard config-load failure with the tool's name in the message.
+- [ ] `cd gateway/src && bun test` green; commit `feat(catalog): give every tool an impact tier`.
 
 ---
 
-### Task 2: The broker enforces it
+### Task 2: The capability carries the role
 
-**Files:**
-- Modify: `gateway/src/tools/tool-broker.ts` — `definitions()` (`:513`), `resolveDecision()` (`:288`), `ToolBrokerDeps`
-- Modify: `gateway/src/bootstrap/phase-services.ts` (supply the permission map to the broker)
-- Test: `gateway/src/tools/tool-broker.test.ts`
+**Files:** `gateway/src/access/capability.ts`, `gateway/src/access/access-manager.ts`, `gateway/src/tools/tool-broker.ts` (read the role from the capability, not from `deps.principal`).
 
-**Interfaces produced:** `ToolBrokerDeps.toolPermissions: () => Record<string, Record<string, ToolPermission>>` — read per call, never captured, so a settings save takes effect on the next turn without rebuilding the broker.
+**Produces:** `Capability.role: UserRole` on a `tool-broker` capability.
 
-- [ ] **Step 1: Write the failing tests**
+The broker currently reads `principal.role` (`resolveDecision`'s `PolicyContext`). That is an ambient read at L3 of something that should have become authority at L1. Move it: `AccessManager` bakes the role in when it mints the capability, and the broker holds it by value.
 
-Four cases, and the fourth is the one that matters most:
-
-```ts
-it("omits an off tool from definitions()", …)
-it("dispatches an allow tool with no confirm prompt", …)
-it("rejects a deny tool with a reason the model can read, without prompting", …)
-it("keeps the tools array byte-identical across allow, ask and deny", () => {
-  // Tools are serialized AHEAD of the messages, so the array is part of the
-  // provider's cached prefix. Only `off` may change it — if allow/ask/deny
-  // perturb it, every permission tweak silently costs a full re-prime of the
-  // system prompt and history, which is the whole reason `off` is a separate
-  // state.
-  const forEach = (p: ToolPermission) => JSON.stringify(brokerWith(p).definitions());
-  expect(forEach("ask")).toBe(forEach("allow"));
-  expect(forEach("deny")).toBe(forEach("allow"));
-  expect(forEach("off")).not.toBe(forEach("allow"));
-});
-```
-
-- [ ] **Step 2: Implement**
-
-`definitions()` filters `off`. Resolve a definition's server by the same mapping `resolveTarget` uses — read it rather than inventing a second lookup.
-
-`resolveDecision()` consults the user permission FIRST, then falls through:
-
-```ts
-    const userPermission = permissionFor(inv.name);
-    // Absent → inherit: the operator policy decides exactly as it did before
-    // this field existed. Present → the person's choice, which may only be
-    // consulted for a tool the operator's policy has not already denied.
-    if (userPermission !== undefined) {
-      switch (userPermission) {
-        case "allow":  break;                       // fall through to the policy engine
-        case "deny":   return { action: "deny", reason: userDeniedReason(inv.name) };
-        case "off":    return { action: "deny", reason: … };  // unreachable — not in tools[] — but fail closed
-        case "ask":    return confirmFlow(inv, …);
-      }
-    }
-```
-No `default:` arm — the switch must break when `auto` lands.
-
-**Ordering:** the operator's `mcp-policy.yaml` still runs and still wins on `deny`. A user's `allow` may not override an operator `deny`; write the code so that is structurally true, not a convention, and pin it with a test.
-
-- [ ] **Step 3: Green, commit**
-
-```bash
-source scripts/env.sh && cd gateway/src && bun test && cd ../.. && bun run typecheck
-git add -A && git commit -m "feat(tools): render the model's tool array from per-tool permissions"
-```
+- [ ] Write the failing test: a broker built from an `adult` capability and one built from a `child` capability disagree about the same tool, with no principal in sight.
+- [ ] Add `role` to the capability, mint it in `AccessManager`, and have the broker read `capability.role`.
+- [ ] Delete `ToolBrokerDeps.principal` if nothing else needs it — say in your report what else did.
+- [ ] Commit `refactor(access): make a tool-broker capability carry its role`.
 
 ---
 
-### Task 3: Retire the Hermes MCP rendering
+### Task 3: Per-role default permission templates
 
-**Files:** `gateway/src/profile-store/profile-renderer.ts` (the MCP half, `:145-180`), `gateway/templates/profile/hermes-config.yaml.tmpl` (its `mcp:` block), `gateway/src/admin/web-tools-migrator.ts` + its wiring at `phase-services.ts:242`, and every test naming `tools.enabled`.
+**Files:** Create `gateway/src/tools/role-defaults.ts`. Modify `gateway/src/profile-store/profile-defaults.ts`, `gateway/src/api/handlers/auth.ts`, `gateway/src/api/handlers/admin.ts`.
 
-Before deleting `web-tools-migrator.ts`, check whether any profile under `~/.sentient/users/` still carries a `duckduckgo` key — if one does, port the migration onto `permissions` instead of deleting it, and say which you did. Do NOT read secrets while looking; `jq` the one key.
+**Produces:** `defaultPermissionsFor(role: UserRole, catalog: McpCatalog): ToolPermissionMap` — one accessor, so a later customization UI changes one thing.
 
-`renderProfile` keeps its model fragments. Only the MCP section goes. Update the module header, which currently frames the whole file around Hermes's tool config.
+This is where `mcp-policy.yaml`'s 35 tiering rules land. `allow` → `"allow"`, `confirm` → `"ask"`. Build it FROM the catalog and the tiers, not from a hand-copied list — the catalog is the source of truth and a hardcoded list drifts the moment an operator edits `config.yaml`.
 
-Commit: `refactor(profile): stop rendering an MCP block Hermes never reads`.
+**Every new profile is fully seeded.** After this task there is no such thing as an unset tool: `applyProfileDefaults` fills the table for the account's role. That is what lets Task 4 delete the fallthrough.
 
----
+Also fix, since it is the same seam: `handleMePut` (`api/handlers/profile.ts:131-160`) never calls `applyProfileDefaults`, which is why a cleared table degraded to "inherit everything" in rev 1. With no fallthrough it would degrade to "nothing", which is worse. Decide and document what a PUT with a partial table means — my recommendation is that a PUT replaces only the keys it names.
 
-### Task 4: API
-
-**Files:** `gateway/src/api/handlers/profile.ts` (accept `permissions` on PUT), `gateway/src/api/handlers/mcp-catalog.ts` (project the resolved value per tool).
-
-`McpToolView` gains two fields:
-
-```ts
-  /** The permission in force for this tool right now. */
-  permission: ToolPermission;
-  /** True when no explicit user setting exists and `permission` came from
-   *  mcp-policy.yaml. The UI renders this as an "inherited" tag so a person can
-   *  see what they would be overriding. */
-  inherited: boolean;
-```
-
-Resolving `inherited` needs the policy engine, which the handler does not currently hold — thread it in rather than re-implementing the evaluation.
-
-Commit: `feat(api): project each tool's effective permission to the clients`.
+- [ ] Write the failing tests: an adult, a child and a guest each get a different seeded table from the same catalog; the child's omits every tier `canExecute` denies; no tool is absent from an adult's table.
+- [ ] Implement `defaultPermissionsFor`; wire it into `applyProfileDefaults` (which now needs the role and the catalog — thread them).
+- [ ] Commit `feat(tools): seed a per-role permission table on every new account`.
 
 ---
 
-### Task 5: webui
+### Task 4: One resolution, no fallthrough — and the policy engine retires
 
-`gateway/webui/src/services/profile-api.ts` mirrors the two new fields and the `permissions` map. `tools-pane.tsx` swaps the per-tool `Toggle` (`:332`) for `Select`, with options `Allow / Ask / Deny / Off` and the `tag` set to `"inherited"` when `inherited` is true. The server master `Toggle` (`:194`) stays — it is a bulk action and sets every tool under it to `off` / back to inherit.
+**Files:** `gateway/src/tools/tool-broker.ts`, `gateway/src/tools/user-tool-permissions.ts`. **Delete:** `gateway/mcp-policy.yaml`, `gateway/src/security/policy-engine.ts`, `gateway/src/security/policy-loader.ts` and their tests, plus the wiring at `main.ts:205-206` and `phase-services.ts:396`.
 
-The tool row's grid is `grid-template-columns: 32px minmax(180px, 1fr) 1.6fr` (`panes.css:524`) — the 32px toggle column must widen to fit the select. Keep the header labels honest (`On` becomes `Permission`).
+`definitions()` drops a tool when **either**:
+1. `canExecute(capability.role, def.tier)` is false — the role gate, and
+2. the person's permission is `"off"`.
 
-Commit: `feat(webui): pick a permission per tool`.
+Both produce absence, for the same reason: the model must not see, or spend context on, a tool it can never use. Log the two cases distinguishably.
 
----
+`resolveDecision()` becomes: the role gate again (defensive — a model can hallucinate a tool name that was never advertised), then the person's permission, exhaustively. No policy engine, no fallthrough.
 
-### Task 6: mobile shared
+**The one genuine leftover.** `no_identify_user_outside_voice` is conditioned on `session.channel`, which is per-session, not per-user or per-role — no permission table can express it. It is a constraint on when the tool is meaningful, not on who may use it. Implement it as a guard the tool itself owns and say where you put it.
 
-`ProfileModels.kt`'s `ProfileTools` gains `permissions`, loses `enabled`; `McpCatalogModels.kt`'s `McpToolView` gains `permission` + `inherited`; `ProfileRepository` passes them through. Kotlin `when` on the permission must be exhaustive (no `else ->`).
+**Keep intact from rev 1:** the fail-closed permission reader, and the invariant that `allow`/`ask`/`deny` produce a BYTE-IDENTICAL `tools[]` while only `off` (and now the role gate) may change it. Re-run that mutation.
 
-Commit: `feat(mobile-sdk): carry per-tool permissions`.
-
----
-
-### Task 7: iOS
-
-`ToolsServerCard.swift` — `ToolToggleRow.isOn: Bool` becomes `permission: ToolPermission` + `inherited: Bool`; the per-tool `RowToggle` (`:81`) becomes `RowSelect`. Card content width on a 390pt phone is ~318pt, already spending most of it on the mono tool name plus description — `RowSelect` is a `Menu`, so it costs only its label width, which is why the dropdown fits where a 4-segment pill would not.
-
-Verify with `xcodebuild … test`, not `build`.
-
-Commit: `feat(ios): pick a permission per tool`.
+- [ ] Write the failing tests: a guest never sees a `write`-tier tool in `definitions()`; a child calling a `confirm`-tier tool by name is denied even though it was never advertised; an adult's `Deny` still returns a reason the model can read; the cache-stability invariant still holds.
+- [ ] Implement, then delete the policy engine and its config. Grep for stragglers.
+- [ ] Commit `refactor(tools): retire the policy engine into the role gate and the permission table`.
 
 ---
 
-### Task 8: Android
+### Task 5: API
 
-`ToolsScreen.kt:145` — per-tool `RowToggle` becomes `RowSelect`. Same shape as iOS.
+**Files:** `gateway/src/api/handlers/profile.ts`, `gateway/src/api/handlers/mcp-catalog.ts`.
 
-Commit: `feat(android): pick a permission per tool`.
+`McpToolView` gains `permission: ToolPermission` and `tier: ImpactTier`. It must NOT list a tool the caller's role cannot execute — the settings screen shows what the person can actually govern, and a locked row a child can never change is noise. (If a parent-facing "manage my child's tools" screen arrives later, THAT is where a locked-with-reason row belongs.)
+
+There is no `inherited` flag any more — every tool has a real value.
+
+- [ ] Commit `feat(api): project each tool's permission and tier`.
 
 ---
 
-### Task 9: Verify
+### Task 6: webui
+
+`profile-api.ts` mirrors the new shapes and drops `enabled`. `tools-pane.tsx` swaps the per-tool `Toggle` for `Select` with `Allow / Ask / Deny / Off`. The server master toggle writes `{"*": "off"}` — **it must never delete a key** (rev 1 constraint). Widen the 32px toggle column in `panes.css:524`.
+
+This also fixes the render crash at `tools-pane.tsx:26` (`id in draft.tools.enabled` on an undefined `enabled`), which is live on the branch today.
+
+- [ ] Commit `feat(webui): pick a permission per tool`.
+
+---
+
+### Task 7: mobile shared
+
+`ProfileModels.kt`'s `ProfileTools` drops `enabled`, gains `permissions`; `McpCatalogModels.kt`'s `McpToolView` gains `permission` + `tier`. Kotlin `when` exhaustive, no `else ->`. `ToolsViewModel.kt`/`.swift` must write `{"*":"off"}`, never delete keys.
+
+Note `ProfileTools.enabled` is currently required-no-default, so an `enabled`-less response throws on deserialize — that is a live break on this branch, fixed here.
+
+- [ ] Commit `feat(mobile-sdk): carry per-tool permissions and tiers`.
+
+---
+
+### Task 8: iOS · Task 9: Android
+
+`RowToggle` → `RowSelect` per tool, same four options. Content width on a 390pt phone is ~318pt, already spent on the mono tool name plus description — a `Menu` costs only its label, which is why the dropdown fits where a segmented control would not.
+
+- [ ] Commits `feat(ios): pick a permission per tool` / `feat(android): pick a permission per tool`.
+
+---
+
+### Task 10: Verify
 
 ## E2E matrix
 
-> **Every prompt is READ-ONLY.** The stack talks to the operator's real home and smoke runs at any hour. Never actuate a device. A multi-tool turn is reachable from `ma_list_players` + `ha_search` + web search.
+> **Every prompt is READ-ONLY.** Never actuate a device. A multi-tool turn is reachable from `ma_list_players` + `ha_search` + web search.
 
 | Case | Viewport | Pre-state | Action | Expected user-visible | Expected log trail |
 |---|---|---|---|---|---|
-| Default is inherit | desktop 1280×900 | fresh user | Open Settings → Tools | Every tool shows its policy-derived value with an "inherited" tag; nothing reads as explicitly set | `mcp-catalog` response carries `inherited:true` per tool |
-| Ask prompts | desktop 1280×900 | set `ha_search` to Ask | Ask a question that needs it | Permission dialog appears; approving completes the turn | `tool-broker.pdp.confirm-resolved confirmed=true` |
-| Deny is legible | desktop 1280×900 | set `ha_search` to Deny | Same question | No dialog; the reply explains it cannot check | `tool-broker.dispatch.denied`; the tool IS present in the request |
-| Off is invisible | desktop 1280×900 | set `ha_search` to Off | Same question | The reply does not mention the capability at all | the tool is ABSENT from `definitions()`; next turn shows a low `cacheHitRatio` |
-| Cache holds across ask/deny | desktop 1280×900 | a warm session | Flip `ha_search` Allow→Ask→Deny, one turn each | — | `react-loop` `cacheHitRatio` stays high across all three |
-| Setting survives reload | desktop 1280×900 | any explicit value | Reload | Same value, no "inherited" tag | `GET /profile/me` carries it |
-| Mobile parity | 390×844 + both sims | same | Set a value on each platform | Dropdown fits one line; value matches web | — |
-
-Commit: `test(e2e): pin per-tool permissions across the four states`.
+| Adult sees the full set | desktop 1280×900 | fresh adult | Open Settings → Tools | Every catalog tool listed with a real value; no "inherited" anywhere | seeded table in `GET /profile/me` |
+| Role gate hides, not denies | desktop 1280×900 | a guest account | Same | `write`-tier tools are absent from the list entirely | `definitions()` omits them; log distinguishes role-gate from `off` |
+| Ask prompts | desktop 1280×900 | `ha_search` → Ask | Ask a question needing it | Permission dialog; approving completes | `tool-broker.pdp.confirm-resolved confirmed=true` |
+| Deny is legible | desktop 1280×900 | `ha_search` → Deny | Same question | No dialog; the reply explains it cannot check | `dispatch.denied`; the tool IS in the request |
+| Off is invisible | desktop 1280×900 | `ha_search` → Off | Same question | The reply does not mention the capability | tool ABSENT from `definitions()`; low `cacheHitRatio` next turn |
+| Cache holds | desktop 1280×900 | warm session | Allow→Ask→Deny, one turn each | — | `cacheHitRatio` stays high across all three |
+| Server off round-trips | desktop 1280×900 | any | Toggle a server off, reload | Still off | profile carries `{"*":"off"}`, not a deleted key |
+| Mobile parity | 390×844 + both sims | same | Set a value on each | Dropdown fits one line; matches web | — |
