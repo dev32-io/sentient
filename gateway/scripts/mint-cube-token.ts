@@ -52,7 +52,22 @@ async function main(): Promise<void> {
     // by the gateway, so a baked token cannot outlive a role change.
     // (`gateway/scripts/` is outside tsconfig's `include`, so nothing would
     // have caught a stale `role:` argument here at build time.)
-    const tokens = createTokenService({ secret, ttlSeconds: DEV_TTL_SECONDS });
+    // The floor is answered from the users.json read above, not from the
+    // gateway's own store: this dev path deliberately reads a different root
+    // (see the dataDir comment). Only `issue` runs here, but the option is
+    // required precisely so no caller can assemble a service that would
+    // validate without one.
+    const tokens = createTokenService({
+        secret,
+        ttlSeconds: DEV_TTL_SECONDS,
+        credentialFloor: {
+            async validFromMsFor(userId: string): Promise<number | null> {
+                const rec = users.find((u) => u && String(u.userId) === userId);
+                if (!rec) return null;
+                return Date.parse(rec.credentialsValidFrom ?? rec.createdAt ?? new Date(0).toISOString());
+            },
+        },
+    });
     const token = await tokens.issue({ userId: String(admin.userId) });
 
     process.stdout.write(token);

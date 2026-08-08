@@ -61,7 +61,8 @@ describe("createAuthService", () => {
     expect(valid.ok).toBe(true);
     if (!valid.ok) throw new Error("unreachable");
     expect(valid.value.userId).toBe("kevin");
-    expect(valid.value.userId).toBe("kevin");
+    // The whole payload shape: identity plus a lifetime, and nothing else.
+    expect(valid.value.expiresAt).toBeGreaterThan(valid.value.issuedAt);
   });
 
   it("authenticate with wrong pin returns invalid-credentials", async () => {

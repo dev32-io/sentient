@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { InstallStateData } from "../../admin/install-state.js";
 import type { UserProvisioner, UserSummary } from "../../admin/user-provisioner.js";
 import type { AuthError, AuthService, ChangePinError, UpdateDisplayNameError } from "../../user-auth/auth-service.js";
+import { NEVER_REVOKED } from "../../user-auth/credential-floor.js";
 import type { TokenPayload, TokenResult, UserRecord } from "../../user-auth/types.js";
 import { createAuthHandler } from "./auth.js";
 
@@ -14,6 +15,7 @@ function sampleUser(userId = "alice"): UserRecord {
     role: "adult",
     avatarTint: "sage",
     createdAt: "2026-01-01T00:00:00.000Z",
+    credentialsValidFrom: NEVER_REVOKED,
   };
 }
 

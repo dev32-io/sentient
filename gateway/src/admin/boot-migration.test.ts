@@ -1,5 +1,6 @@
 import type { Result, UserRole } from "@sentient/protocol";
 import { describe, expect, it } from "vitest";
+import { NEVER_REVOKED } from "../user-auth/credential-floor.js";
 import type { UserRecord } from "../user-auth/types.js";
 import { renderConfigsForExistingUsers } from "./boot-migration.js";
 
@@ -19,6 +20,7 @@ function user(id: string, role: UserRole = "adult"): UserRecord {
     role,
     avatarTint: "terra",
     createdAt: "2026-01-01T00:00:00Z",
+    credentialsValidFrom: NEVER_REVOKED,
   };
 }
 

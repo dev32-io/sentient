@@ -23,11 +23,14 @@
 
 import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
+import type { UserRole } from "@sentient/protocol";
 import { type AccessManager, createAccessManager } from "../../access/access-manager.js";
+import type { Capability } from "../../access/capability.js";
 import { createUserPrincipal } from "../../identity/user-principal.js";
 import { mintDraftKey, mintOnFirstMessage, mintSessionId } from "../../session-handlers/session-id.js";
 import { openSessionStore } from "../../store/session-store.js";
-import type { TokenPayload, TokenResult } from "../../user-auth/types.js";
+import { NEVER_REVOKED } from "../../user-auth/credential-floor.js";
+import type { TokenPayload, TokenResult, UserRecord } from "../../user-auth/types.js";
 import { createSessionsHandler } from "./sessions.js";
 import type { SessionsHandlerDeps } from "./sessions.js";
 
@@ -47,6 +50,26 @@ interface Harness {
   handleSessions: (request: Request) => Promise<Response>;
   accessManager: AccessManager;
   makeUser: (label: string) => TestUser;
+  /** Every capability the HANDLER minted, in order. Seeding uses the raw
+   *  manager, so nothing a test set up itself lands here. */
+  grants: Capability[];
+  /** Re-role a user in the record store the handler reads. */
+  setRole: (user: TestUser, role: UserRole) => void;
+  /** Delete a user's record while their token stays valid — the shape a
+   *  just-deleted account presents. */
+  forgetRecord: (user: TestUser) => void;
+}
+
+function recordFor(userId: string, role: UserRole): UserRecord {
+  return {
+    userId,
+    displayName: userId,
+    pinHash: "$argon2id$fake",
+    role,
+    avatarTint: "terra",
+    createdAt: "2026-08-07T00:00:00.000Z",
+    credentialsValidFrom: NEVER_REVOKED,
+  };
 }
 
 /** Fresh AccessManager over a per-test data root (no test can see another's
@@ -55,8 +78,20 @@ function freshHarness(): Harness {
   runSeq += 1;
   const accessManager = createAccessManager({ userDataRoot: `${ROOT}/run-${runSeq}` });
   const tokenToUserId = new Map<string, string>();
+  const records = new Map<string, UserRecord | null>();
+  const grants: Capability[] = [];
   const deps: SessionsHandlerDeps = {
-    accessManager,
+    // Wrapped so the ROLE the handler bakes into a capability is observable.
+    // `AccessManager.grant` is where a principal becomes authority (L1), so
+    // this is the only place the record → capability link can be seen.
+    accessManager: {
+      userHomeDir: (principal) => accessManager.userHomeDir(principal),
+      grant(principal, resource) {
+        const cap = accessManager.grant(principal, resource);
+        grants.push(cap);
+        return cap;
+      },
+    },
     tokens: {
       async validate(token: string): Promise<TokenResult<TokenPayload>> {
         const userId = tokenToUserId.get(token);
@@ -65,32 +100,31 @@ function freshHarness(): Harness {
       },
     },
     // The route resolves the principal's ROLE here, not from the token — see
-    // the module header. Every user this harness mints is an ordinary adult.
+    // the module header. Every user this harness mints is an ordinary adult
+    // until a test says otherwise.
     users: {
       async get(userId: string) {
-        return {
-          ok: true as const,
-          value: {
-            userId,
-            displayName: userId,
-            pinHash: "$argon2id$fake",
-            role: "adult" as const,
-            avatarTint: "terra" as const,
-            createdAt: "2026-08-07T00:00:00.000Z",
-          },
-        };
+        return { ok: true as const, value: records.get(userId) ?? null };
       },
     },
   };
   return {
     handleSessions: createSessionsHandler(deps),
     accessManager,
+    grants,
     makeUser(label) {
       userSeq += 1;
       const userId = `u_${userSeq.toString(16).padStart(8, "0")}` as `u_${string}`;
       const token = `${label}-token-${userSeq}`;
       tokenToUserId.set(token, userId);
+      records.set(userId, recordFor(userId, "adult"));
       return { userId, token };
+    },
+    setRole(user, role) {
+      records.set(user.userId, recordFor(user.userId, role));
+    },
+    forgetRecord(user) {
+      records.set(user.userId, null);
     },
   };
 }
@@ -124,6 +158,50 @@ function seedSession(accessManager: AccessManager, user: TestUser, text: string)
   store.close();
   return sessionId;
 }
+
+// The route MINTS a `UserPrincipal` and `AccessManager.grant` bakes that
+// principal's role into a `Capability` — so this is the site where a stale
+// authority claim would become a frozen authority object. Both halves of the
+// resolution are pinned: where the role comes from, and what happens when the
+// record it comes from is gone.
+describe("the principal this route mints", () => {
+  it("SECURITY: a token naming a user with no record is refused rather than defaulted", async () => {
+    const { handleSessions, makeUser, forgetRecord, grants } = freshHarness();
+    const deleted = makeUser("deleted");
+    forgetRecord(deleted);
+
+    const res = await handleSessions(requestAs(deleted, "/api/v1/sessions"));
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "user-not-found" });
+    // Fails CLOSED: no capability was minted at all, so there is no defaulted
+    // role for anything downstream to act on.
+    expect(grants).toHaveLength(0);
+  });
+
+  it("SECURITY: the capability's role comes from the record, not from the token", async () => {
+    const { handleSessions, makeUser, setRole, grants } = freshHarness();
+    const operator = makeUser("operator");
+    setRole(operator, "admin");
+
+    await handleSessions(requestAs(operator, "/api/v1/sessions"));
+
+    expect(grants.map((c) => c.role)).toEqual(["admin"]);
+  });
+
+  it("SECURITY: a demotion in the record reaches the very next request's capability", async () => {
+    const { handleSessions, makeUser, setRole, grants } = freshHarness();
+    const demoted = makeUser("demoted");
+    setRole(demoted, "admin");
+    await handleSessions(requestAs(demoted, "/api/v1/sessions"));
+
+    setRole(demoted, "child");
+    await handleSessions(requestAs(demoted, "/api/v1/sessions"));
+
+    // Same token, no refresh, no re-login — the second capability is attenuated.
+    expect(grants.map((c) => c.role)).toEqual(["admin", "child"]);
+  });
+});
 
 describe("GET /api/v1/sessions", () => {
   it("SECURITY: an unauthenticated request is refused", async () => {

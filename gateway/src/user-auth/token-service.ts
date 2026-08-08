@@ -24,9 +24,16 @@
 // NO `refresh`, and this ruling is why. A roll re-mints from the presented
 // token's own claims — precisely the "trusting a token" the owner forbids.
 // Renewal (`api/handlers/auth.ts#handleMe`) re-issues from the user record.
+//
+// VALIDITY IS ALSO THE RECORD'S ANSWER, not the token's. After the crypto check
+// passes, `validate` reads the account's CREDENTIAL FLOOR (credential-floor.ts)
+// and refuses anything issued at or before it. That is what makes a role change
+// — or a deletion — revoke the credential itself rather than merely narrow what
+// it opens: one choke point, every call site, nothing to track or sweep.
 
 import { decrypt, encrypt } from "paseto-ts/v4";
 import { getLog } from "../logging/logger.js";
+import type { CredentialFloor } from "./credential-floor.js";
 import type { TokenError, TokenPayload, TokenResult } from "./types.js";
 
 const log = getLog(["sentient", "gateway", "user-auth", "token-service"]);
@@ -34,6 +41,13 @@ const log = getLog(["sentient", "gateway", "user-auth", "token-service"]);
 export interface TokenServiceOptions {
   secret: Uint8Array; // 32 bytes
   ttlSeconds: number;
+  /**
+   * Where "are this account's credentials still good?" is answered, read on
+   * every `validate` (credential-floor.ts). Injected rather than looked up so
+   * this stays a crypto unit with no user-store dependency — and so a caller
+   * cannot assemble a token service that silently skips the check.
+   */
+  credentialFloor: CredentialFloor;
 }
 
 export interface TokenService {
@@ -43,6 +57,20 @@ export interface TokenService {
 
 const PURPOSE = "sentient.user-session.v1";
 const SECRET_BYTE_LENGTH = 32;
+const MS_PER_SECOND = 1000;
+
+/**
+ * What a REVOKED credential is refused with — the existing `expired`, never a
+ * new code.
+ *
+ * All three clients already route `expired` to the login screen: web's message
+ * router classifies any `auth.error` frame as a terminal auth failure, and
+ * mobile's `AuthErrorClass.TERMINAL_AUTH_CODES` lists it by name. A new code
+ * would be terminal on the `auth.error` path but fall off mobile's sessions
+ * allow-list and retry forever. The semantics fit anyway: the token's lifetime
+ * ended, just not by the clock.
+ */
+const REVOKED_ERROR: TokenError = "expired";
 
 /** The whole claim set. Adding an authority-bearing field here re-creates the
  *  stale-grant class the ruling above closes — don't. */
@@ -109,8 +137,27 @@ export function createTokenService(opts: TokenServiceOptions): TokenService {
       // revision may also carry `isAdmin` or `role`; those are IGNORED, not
       // refused — the holder stays logged in and gains nothing, because
       // nothing downstream reads a claim to decide anything.
-      const iat = Math.floor(new Date(claims.iat).getTime() / 1000);
-      const exp = Math.floor(new Date(claims.exp).getTime() / 1000);
+      const iat = Math.floor(new Date(claims.iat).getTime() / MS_PER_SECOND);
+      const exp = Math.floor(new Date(claims.exp).getTime() / MS_PER_SECOND);
+
+      // THE CREDENTIAL FLOOR, read from the record HERE — one choke point
+      // covering all 17 `validate()` call sites, so there is no route by which
+      // a caller can forget it.
+      const floorMs = await opts.credentialFloor.validFromMsFor(claims.sub);
+      if (floorMs === null) {
+        // Two incidents, logged apart, refused identically: "revoked" is a
+        // demotion or a deletion, "no-record" is a token naming nobody.
+        log.warn("validate.refused", { userId: claims.sub, reason: "no-record" });
+        return { ok: false, error: REVOKED_ERROR };
+      }
+      // FAIL CLOSED ON THE TIE. `iat` is unix SECONDS and the floor is a
+      // millisecond instant, so a token minted in the same second as the
+      // revocation is indistinguishable from one minted just before it.
+      if (iat * MS_PER_SECOND <= floorMs) {
+        log.warn("validate.refused", { userId: claims.sub, issuedAt: iat, floorMs, reason: "revoked" });
+        return { ok: false, error: REVOKED_ERROR };
+      }
+
       return {
         ok: true,
         value: {

@@ -1,5 +1,6 @@
 import type { UserRole } from "@sentient/protocol";
 import { describe, expect, it } from "vitest";
+import { NEVER_REVOKED } from "../../user-auth/credential-floor.js";
 import type { TokenService } from "../../user-auth/token-service.ts";
 import type { StoreResult, TokenPayload, TokenResult, UserRecord } from "../../user-auth/types.ts";
 import type { UserStore } from "../../user-auth/user-store.ts";
@@ -27,6 +28,7 @@ function record(userId: string, role: UserRole): UserRecord {
     role,
     avatarTint: "terra",
     createdAt: "2026-08-07T00:00:00.000Z",
+    credentialsValidFrom: NEVER_REVOKED,
   };
 }
 

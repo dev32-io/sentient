@@ -257,8 +257,13 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
   });
 }
 
-/** Builds a requireAdmin function for the secrets handler from TokenService + static admin token. */
-function buildRequireAdmin(
+/** Builds a requireAdmin function for the secrets handler from TokenService +
+ *  static admin token.
+ *
+ *  EXPORTED FOR ITS TEST, not for reuse — it is the gate on the household's API
+ *  keys and was the one admin resolver nothing constructed (`secrets.test.ts`
+ *  stubs `requireAdmin` wholesale), so its fail-closed paths had never run. */
+export function buildRequireAdmin(
   tokenService: TokenService,
   adminToken: string | undefined,
   userStore: Pick<UserStore, "get">,

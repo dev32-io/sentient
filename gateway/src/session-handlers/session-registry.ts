@@ -183,6 +183,21 @@ export interface SessionRegistry {
   reevaluate(sessionId: string): void;
   /** This session's attachments, insertion-ordered. Empty for an unknown id. */
   subscribers(sessionId: string): readonly Attachment[];
+  /**
+   * Every live attachment whose connection authenticated as [userId], across
+   * every resident session. The seam a CREDENTIAL REVOCATION reaches the wire
+   * through (credential-revocation.ts): a role change or a deletion has to
+   * close that account's open windows, and nothing else knew which they were.
+   *
+   * A SCAN, not an index, and deliberately. This module owns the attachment
+   * map; a second map keyed on userId would have to be kept in step through
+   * every attach, detach and disposal, and the thing it would buy — speed on
+   * an operation that happens when an admin edits a household member — is
+   * worth nothing against a divergence that would leave a revoked account
+   * live. The owner is read off `ws.data.principal`, which the auth gate mints
+   * once and never rebinds.
+   */
+  attachmentsForUser(userId: string): readonly Attachment[];
   /** The one runtime serving this session, or null when none is resident. */
   runtimeFor(sessionId: string): SessionRuntime | null;
   /** Everything an attaching connection needs to hold onto — see
@@ -290,6 +305,16 @@ export function createSessionRegistry(policy: SessionDisposalPolicy = disposeWhe
 
     subscribers(sessionId) {
       return sessions.get(sessionId)?.subscribers.attachments ?? [];
+    },
+
+    attachmentsForUser(userId) {
+      const owned: Attachment[] = [];
+      for (const resident of sessions.values()) {
+        for (const attachment of resident.subscribers.attachments) {
+          if (attachment.ws.data.principal?.userId === userId) owned.push(attachment);
+        }
+      }
+      return owned;
     },
 
     runtimeFor(sessionId) {

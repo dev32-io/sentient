@@ -54,8 +54,11 @@ import { sendConnectionFrame } from "./ws-send.js";
 
 const log = getLog(["sentient", "ws", "credential-lifetime"]);
 
-/** RFC 6455 policy violation — the same code the auth gate closes on. */
-const WS_CLOSE_POLICY = 1008;
+/** RFC 6455 policy violation. ONE declaration for the whole WS auth surface —
+ *  the auth gate's rejection, this module's expiry ejection and the credential
+ *  revoker all close with it, so an auth failure looks identical to a client
+ *  however it arose. */
+export const WS_CLOSE_POLICY = 1008;
 
 /** What `token-service.ts` calls an expired credential, and what both mobile
  *  SDKs classify as terminal (→ route to login). */
@@ -113,13 +116,29 @@ export function closeExpiredCredential(ws: ServerWebSocket<SessionData>, seam: C
     seam,
     reason: "this connection's token expired — closing so it returns through the auth gate",
   });
-  sendConnectionFrame(ws, { type: "auth.error", code: EXPIRED_CODE, message: EXPIRED_MESSAGE });
+  closeWithAuthError(ws, EXPIRED_CODE, EXPIRED_MESSAGE);
+}
+
+/**
+ * THE ejection: tell this socket its credential is no good, then close it.
+ *
+ * Shared by every path that ends a connection on an auth failure — the expiry
+ * check above, the auth gate's rejection, and the credential revoker — so a
+ * client cannot tell them apart and does not have to. [code] is the vocabulary
+ * the SDKs classify on (`expired` is terminal on all three clients); [message]
+ * is both the frame's human text and the close reason.
+ *
+ * The close cannot throw out of here, for the reason given above
+ * `closeExpiredCredential`: the outbound seam calls it from inside a live turn.
+ */
+export function closeWithAuthError(ws: ServerWebSocket<SessionData>, code: string, message: string): void {
+  sendConnectionFrame(ws, { type: "auth.error", code, message });
   try {
-    ws.close(WS_CLOSE_POLICY, "credential expired");
+    ws.close(WS_CLOSE_POLICY, message);
   } catch (err) {
     log.debug("credential.close-failed", {
       connectionId: ws.data.sessionId,
-      seam,
+      code,
       reason: err instanceof Error ? err.message : String(err),
     });
   }

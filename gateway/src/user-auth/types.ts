@@ -20,6 +20,22 @@ export interface UserRecord {
   role: UserRole;
   avatarTint: AvatarTint;
   createdAt: string; // ISO-8601 UTC
+  /**
+   * REVOCATION INSTANT (ISO-8601 UTC): every token this account holds that was
+   * issued at or before it is dead, whatever its own `exp` says.
+   *
+   * It is the record's answer to "are this caller's credentials still good?",
+   * and `token-service.validate` reads it through `CredentialFloor` at the
+   * moment of the decision — so a role change invalidates the outward token
+   * without anything being tracked, cached or swept. Written by `setRole` in
+   * the SAME `update()` as the role itself: two writes would leave a crash
+   * window where the role changed and the old credentials still worked.
+   *
+   * A fresh record stores `NEVER_REVOKED` (credential-floor.ts). Records
+   * written before this field existed carry no value and read as `createdAt`
+   * — see `user-record-migration.ts`.
+   */
+  credentialsValidFrom: string; // ISO-8601 UTC
 }
 
 export type UserStoreError = "not-found" | "already-exists" | "io-error" | "corrupt-file" | "last-admin-demotion";

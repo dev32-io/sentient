@@ -13,6 +13,7 @@ import type { UpdateUserSettingsPatch } from "./mcp-host/tools/update-user-setti
 import { createPolicyEngine } from "./security/policy-engine.js";
 import { loadMcpPolicy } from "./security/policy-loader.js";
 import { createGatewayServer } from "./server.ts";
+import { createCredentialRevoker } from "./session-handlers/credential-revocation.ts";
 
 /** `~/.sentient/run` — the gateway's own runtime handles: the per-user MCP
  *  sockets, the native services' pid files, and the single-instance claim. */
@@ -163,6 +164,26 @@ if (!state.bootstrap_complete) {
 } else {
   await services.unlockCode.clear(); // belt-and-braces if leftover
 }
+
+// ---------------------------------------------------------------------------
+// Credential revocation — a role change or a deletion closes that account's
+// live sockets (plan 2026-08-07-tool-permissions task 2c).
+//
+// The credential floor already makes the account's token stop validating; this
+// is what makes the client see it NOW rather than on its next request. Both
+// events land on the same revoker because the remedy is the same: destroy the
+// authenticated context and let a fresh sign-in rebuild it from the record.
+//
+// UNCONDITIONAL, and NOT beside the `onCreated`/`onDeleted` lines below —
+// those sit inside `if (config.hermes)`, and a security mechanism that a
+// missing `hermes:` block silently disables is not a security mechanism.
+// ---------------------------------------------------------------------------
+const credentialRevoker = createCredentialRevoker({
+  registry: services.sessionRegistry,
+  sessions: services.sessionManager,
+});
+services.userLifecycle.onRoleChanged((userId) => credentialRevoker.revokeUser(userId, "role-changed"));
+services.userLifecycle.onDeleted((userId) => credentialRevoker.revokeUser(userId, "user-deleted"));
 
 // ---------------------------------------------------------------------------
 // MCP host server — Phase 1.7+

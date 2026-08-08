@@ -33,11 +33,11 @@ describe("migrateUserRecord", () => {
 
   it("keeps every other field of a legacy record untouched", () => {
     const migrated = migrateUserRecord({ ...LEGACY_BASE, isAdmin: false });
-    expect(migrated).toEqual({ ...LEGACY_BASE, role: "adult" });
+    expect(migrated).toEqual({ ...LEGACY_BASE, role: "adult", credentialsValidFrom: LEGACY_BASE.createdAt });
   });
 
   it("leaves an already-migrated record alone", () => {
-    const modern = { ...LEGACY_BASE, role: "child" as const };
+    const modern = { ...LEGACY_BASE, role: "child" as const, credentialsValidFrom: "2026-06-01T00:00:00.000Z" };
     expect(migrateUserRecord(modern)).toEqual(modern);
   });
 
@@ -56,5 +56,26 @@ describe("migrateUserRecord", () => {
   it("returns a record for junk rather than throwing, so one bad row cannot lock out the file", () => {
     expect(migrateUserRecord(null).role).toBe("adult");
     expect(migrateUserRecord("nonsense").role).toBe("adult");
+  });
+});
+
+// SECURITY BOUNDARY, the other half. `credentialsValidFrom` is the instant
+// before which this user's tokens are dead (plan 2026-08-07-tool-permissions
+// task 2c). Reading an ABSENT one as `now` would log out every account in the
+// household the moment the gateway upgraded; reading it as `createdAt` says
+// exactly what absent means — no revocation has ever happened here.
+describe("migrateUserRecord — the credential floor", () => {
+  it("reads an absent credentialsValidFrom as the record's createdAt, never as now", () => {
+    expect(migrateUserRecord(LEGACY_BASE).credentialsValidFrom).toBe(LEGACY_BASE.createdAt);
+  });
+
+  it("keeps a stored credentialsValidFrom, which is the only record of a revocation", () => {
+    const revoked = { ...LEGACY_BASE, role: "adult" as const, credentialsValidFrom: "2026-08-07T09:30:00.000Z" };
+    expect(migrateUserRecord(revoked).credentialsValidFrom).toBe("2026-08-07T09:30:00.000Z");
+  });
+
+  it("falls back to the epoch rather than throwing when neither instant is readable", () => {
+    const mangled = { userId: "u_a1b2c3d4", role: "adult", createdAt: 12345 };
+    expect(migrateUserRecord(mangled).credentialsValidFrom).toBe(new Date(0).toISOString());
   });
 });

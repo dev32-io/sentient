@@ -7,6 +7,7 @@ import type { UserPrincipal } from "../identity/user-principal.js";
 import type { ProfileStore } from "../profile-store/profile-store.js";
 import type { PolicyEngine } from "../security/policy-engine.js";
 import type { McpClient } from "../tools/mcp-client.js";
+import { NEVER_REVOKED } from "../user-auth/credential-floor.js";
 import type { StoreResult, UserRecord } from "../user-auth/types.js";
 import { createDelegatedBrokerFactory } from "./delegated-broker.js";
 
@@ -37,6 +38,7 @@ function record(role: UserRole): UserRecord {
     role,
     avatarTint: "terra",
     createdAt: "2026-08-07T00:00:00.000Z",
+    credentialsValidFrom: NEVER_REVOKED,
   };
 }
 

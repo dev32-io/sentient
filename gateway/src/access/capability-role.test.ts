@@ -2,6 +2,7 @@ import type { UserRole } from "@sentient/protocol";
 import { USER_ROLES, canExecute } from "@sentient/protocol";
 import { describe, expect, it } from "vitest";
 import { createUserPrincipal } from "../identity/user-principal.js";
+import { NEVER_REVOKED } from "../user-auth/credential-floor.js";
 import type { UserRecord } from "../user-auth/types.js";
 import { createAccessManager } from "./access-manager.js";
 
@@ -29,6 +30,7 @@ function record(userId: string, role: UserRole): UserRecord {
     role,
     avatarTint: "terra",
     createdAt: "2026-08-07T00:00:00.000Z",
+    credentialsValidFrom: NEVER_REVOKED,
   };
 }
 

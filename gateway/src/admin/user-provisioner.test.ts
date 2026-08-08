@@ -2,6 +2,7 @@ import type { Result } from "@sentient/protocol";
 import { describe, expect, it } from "vitest";
 import type { ProfileStore } from "../profile-store/profile-store.js";
 import { PROFILE_SCHEMA_VERSION, type ProfileV1 } from "../profile-store/profile-types.js";
+import { NEVER_REVOKED } from "../user-auth/credential-floor.js";
 import type { UserRecord } from "../user-auth/types.js";
 import type { UserStore } from "../user-auth/user-store.js";
 import type { UserProvisioner, UserProvisionerDeps, UserSummary } from "./user-provisioner.js";
@@ -66,6 +67,7 @@ const SAMPLE_ADMIN: UserRecord = {
   role: "admin",
   avatarTint: "terra",
   createdAt: "2026-01-01T00:00:00Z",
+  credentialsValidFrom: NEVER_REVOKED,
 };
 
 const SAMPLE_USER: UserRecord = {
@@ -75,6 +77,7 @@ const SAMPLE_USER: UserRecord = {
   role: "adult",
   avatarTint: "amber",
   createdAt: "2026-01-01T00:00:00Z",
+  credentialsValidFrom: NEVER_REVOKED,
 };
 
 function buildMocks(overrides?: Overrides): MockDeps {
@@ -136,11 +139,15 @@ function buildMocks(overrides?: Overrides): MockDeps {
     userLifecycle: {
       onCreated: () => {},
       onDeleted: () => {},
+      onRoleChanged: () => {},
       emitCreated: async (userId: string) => {
         log("userLifecycle.emitCreated", userId);
       },
       emitDeleted: async (userId: string) => {
         log("userLifecycle.emitDeleted", userId);
+      },
+      emitRoleChanged: async (userId: string) => {
+        log("userLifecycle.emitRoleChanged", userId);
       },
     },
   };
@@ -300,6 +307,47 @@ describe("UserProvisioner", () => {
     const result = await provisioner.setRole(ADMIN, "adult");
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toBe("last-admin");
+  });
+
+  // SECURITY BOUNDARY. The role and the credential floor are ONE write. Two
+  // writes means a crash between them leaves the role changed with the old
+  // credentials still live — the exact failure this whole mechanism exists to
+  // prevent. Asserted on the PATCH, not on an end state a second write would
+  // also reach.
+  it("SECURITY: setRole patches the role and the credential floor in a single update", async () => {
+    const { callLog, provisioner } = buildMocks();
+
+    const result = await provisioner.setRole(OTHER, "admin");
+
+    expect(result.ok).toBe(true);
+    const updates = callLog.filter((c) => c.method === "userStore.update");
+    expect(updates).toHaveLength(1);
+    expect(updates[0]?.args[1]).toEqual({ role: "admin", credentialsValidFrom: "2026-01-01T00:00:00.000Z" });
+  });
+
+  // The floor alone only stops the NEXT request. This is what makes the kick
+  // immediate: the revoker listens here and closes the account's live sockets.
+  it("SECURITY: setRole announces the role change so the account's live sockets are closed", async () => {
+    const { callLog, provisioner } = buildMocks();
+
+    await provisioner.setRole(OTHER, "admin");
+
+    const updateIdx = callLog.findIndex((c) => c.method === "userStore.update");
+    const emitIdx = callLog.findIndex((c) => c.method === "userLifecycle.emitRoleChanged");
+    expect(emitIdx).toBeGreaterThanOrEqual(0);
+    expect(callLog[emitIdx]?.args[0]).toBe(OTHER);
+    // After the write, never before: announcing a revocation that did not
+    // persist would kick a user whose role never actually changed.
+    expect(updateIdx).toBeLessThan(emitIdx);
+  });
+
+  it("SECURITY: setRole does not announce a role change whose write failed", async () => {
+    const { callLog, provisioner } = buildMocks({ updateResult: err("io-error" as const) });
+
+    const result = await provisioner.setRole(OTHER, "admin");
+
+    expect(result.ok).toBe(false);
+    expect(callLog.some((c) => c.method === "userLifecycle.emitRoleChanged")).toBe(false);
   });
 
   it("rejects malformed userId at boundary", async () => {

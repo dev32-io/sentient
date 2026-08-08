@@ -3,6 +3,7 @@ import { getLog } from "../logging/logger.js";
 import type { ProfileStore } from "../profile-store/profile-store.js";
 import { profileV1Schema } from "../profile-store/profile-types.js";
 import type { ProfileV1 } from "../profile-store/profile-types.js";
+import { NEVER_REVOKED } from "../user-auth/credential-floor.js";
 import type { Argon2Params, AvatarTint, UserRecord } from "../user-auth/types.js";
 import { assertUserId } from "../user-auth/user-id.js";
 import type { UserStore } from "../user-auth/user-store.js";
@@ -80,8 +81,10 @@ export interface UserProvisionerDeps {
    *  prefix; the native cutover removed the daemon and this replaces it. */
   createHermesProfile: (userId: string) => Promise<Result<void, "cli-error">>;
   /** Fan-out for user lifecycle events. McpHost subscribes here to add/remove
-   *  per-user MCP sockets in lockstep with create/delete. Listener errors are
-   *  swallowed and logged — they do NOT roll back the user op. */
+   *  per-user MCP sockets in lockstep with create/delete, and the credential
+   *  revoker subscribes to delete/roleChanged to close that account's live
+   *  sockets. Listener errors are swallowed and logged — they do NOT roll back
+   *  the user op. */
   userLifecycle: UserLifecycle;
 }
 
@@ -145,6 +148,7 @@ async function createUserWithRollback(
     role: input.role ?? DEFAULT_ROLE,
     avatarTint,
     createdAt,
+    credentialsValidFrom: NEVER_REVOKED,
   };
   const addResult = await deps.userStore.add(record);
   if (!addResult.ok) {
@@ -282,10 +286,25 @@ async function setRoleFlow(
     if (target?.role === ADMIN_ROLE) return { ok: false, error: "last-admin" };
   }
 
-  const updateResult = await deps.userStore.update(userId, { role });
+  // ONE WRITE, both fields. A role change REVOKES this account's credentials
+  // (plan 2026-08-07-tool-permissions task 2c): the floor moves to now, so
+  // every token issued before this moment stops validating. Splitting it into
+  // two `update()` calls would leave a crash window in which the role had
+  // changed and the old credentials still worked — the exact failure the
+  // revocation exists to prevent — and `user-store.ts` has no lock across its
+  // read-modify-write, so a second round trip is not free either.
+  const updateResult = await deps.userStore.update(userId, {
+    role,
+    credentialsValidFrom: deps.now().toISOString(),
+  });
   if (!updateResult.ok) {
     return updateResult.error === "not-found" ? { ok: false, error: "not-found" } : { ok: false, error: "io-error" };
   }
+
+  // AFTER the write, never before: the revoker closes this account's live
+  // sockets, and kicking a user whose role never actually persisted would be a
+  // logout for nothing.
+  await deps.userLifecycle.emitRoleChanged(userId);
 
   log.info("setRole.success", { userId, role });
   return { ok: true, value: undefined };

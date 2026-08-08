@@ -2,6 +2,7 @@ import type { AuthConfig } from "@sentient/config";
 import type { Result, UserRole } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
 import { loadOrCreateAuthSecret } from "./auth-secret.js";
+import { NEVER_REVOKED, createCredentialFloor } from "./credential-floor.js";
 import { hashPin, verifyPin } from "./pin-service.js";
 import { type TokenService, createTokenService } from "./token-service.js";
 import type { AvatarTint, StoreResult, UserRecord } from "./types.js";
@@ -47,8 +48,14 @@ export interface AuthService {
 
 export async function createAuthService(authConfig: AuthConfig): Promise<AuthService> {
   const secret = await loadOrCreateAuthSecret();
-  const tokens = createTokenService({ secret, ttlSeconds: authConfig.token_ttl_seconds });
   const users = createUserStore();
+  // The store is built FIRST because the token service now needs it: validity
+  // is the record's answer, read per call through this port.
+  const tokens = createTokenService({
+    secret,
+    ttlSeconds: authConfig.token_ttl_seconds,
+    credentialFloor: createCredentialFloor(users),
+  });
 
   const argon2Params = {
     memoryKb: authConfig.argon2_memory_kb,
@@ -70,6 +77,7 @@ export async function createAuthService(authConfig: AuthConfig): Promise<AuthSer
         role: input.role ?? DEFAULT_ROLE,
         avatarTint: input.avatarTint,
         createdAt: new Date().toISOString(),
+        credentialsValidFrom: NEVER_REVOKED,
       };
       const r = await users.add(rec);
       if (!r.ok) {

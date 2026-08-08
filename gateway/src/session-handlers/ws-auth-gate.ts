@@ -26,12 +26,12 @@ import type { SessionManager } from "../auth/session-manager.js";
 import { type UserPrincipal, createUserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
 import type { AuthService } from "../user-auth/auth-service.js";
+import { closeWithAuthError } from "./credential-lifetime.js";
 import type { SessionData } from "./ws-helpers.js";
 import { sendConnectionFrame } from "./ws-send.js";
 
 const log = getLog(["sentient", "gateway", "session-handlers", "ws-auth-gate"]);
 
-const WS_CLOSE_POLICY = 1008; // RFC 6455 — policy violation
 const MS_PER_SECOND = 1000;
 
 // The principal's ROLE now comes off the user record (plan
@@ -179,7 +179,9 @@ function reject(ws: ServerWebSocket<SessionData>, code: string, reason: string):
     clearTimeout(ws.data.authTimeout);
     ws.data.authTimeout = null;
   }
-  sendConnectionFrame(ws, { type: "auth.error", code, message: reason });
   log.info("auth.reject", { sessionId: ws.data.sessionId, code, reason });
-  ws.close(WS_CLOSE_POLICY, reason);
+  // The SAME ejection every other auth failure uses (credential-lifetime.ts):
+  // one `auth.error` + close 1008, so a client cannot tell a rejected token
+  // from an expired or revoked one, and does not need to.
+  closeWithAuthError(ws, code, reason);
 }

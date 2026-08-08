@@ -1,7 +1,18 @@
 import { randomBytes } from "node:crypto";
 import { encrypt } from "paseto-ts/v4";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { CredentialFloor } from "./credential-floor.js";
 import { createTokenService } from "./token-service.js";
+
+/** A floor stub. [ms] is the instant before which this user's tokens are dead;
+ *  `null` models a token naming a user with no record at all. */
+function floorAt(ms: number | null): CredentialFloor {
+  return { validFromMsFor: async () => ms };
+}
+
+/** An account nothing has ever revoked — the epoch, which no real token can
+ *  predate. What a freshly created record stores (`credential-floor.ts`). */
+const credentialFloor = floorAt(0);
 
 describe("createTokenService", () => {
   const secret = new Uint8Array(randomBytes(32));
@@ -15,7 +26,7 @@ describe("createTokenService", () => {
   });
 
   it("issues a token and round-trips the userId", async () => {
-    const svc = createTokenService({ secret, ttlSeconds: 3600 });
+    const svc = createTokenService({ secret, ttlSeconds: 3600, credentialFloor });
     const token = await svc.issue({ userId: "kevin" });
     const r = await svc.validate(token);
     expect(r.ok).toBe(true);
@@ -25,7 +36,7 @@ describe("createTokenService", () => {
   });
 
   it("embeds issuedAt and expiresAt", async () => {
-    const svc = createTokenService({ secret, ttlSeconds: 60 });
+    const svc = createTokenService({ secret, ttlSeconds: 60, credentialFloor });
     const token = await svc.issue({ userId: "a" });
     const r = await svc.validate(token);
     if (!r.ok) throw new Error("expected ok");
@@ -35,7 +46,7 @@ describe("createTokenService", () => {
   });
 
   it("rejects an expired token", async () => {
-    const svc = createTokenService({ secret, ttlSeconds: 10 });
+    const svc = createTokenService({ secret, ttlSeconds: 10, credentialFloor });
     const token = await svc.issue({ userId: "a" });
     vi.advanceTimersByTime(15_000);
     const r = await svc.validate(token);
@@ -43,8 +54,8 @@ describe("createTokenService", () => {
   });
 
   it("rejects a token signed with a different secret", async () => {
-    const svc1 = createTokenService({ secret, ttlSeconds: 60 });
-    const svc2 = createTokenService({ secret: new Uint8Array(randomBytes(32)), ttlSeconds: 60 });
+    const svc1 = createTokenService({ secret, ttlSeconds: 60, credentialFloor });
+    const svc2 = createTokenService({ secret: new Uint8Array(randomBytes(32)), ttlSeconds: 60, credentialFloor });
     const token = await svc1.issue({ userId: "a" });
     const r = await svc2.validate(token);
     expect(r.ok).toBe(false);
@@ -55,7 +66,7 @@ describe("createTokenService", () => {
   });
 
   it("rejects a malformed token string", async () => {
-    const svc = createTokenService({ secret, ttlSeconds: 60 });
+    const svc = createTokenService({ secret, ttlSeconds: 60, credentialFloor });
     const r = await svc.validate("not-a-token");
     expect(r.ok).toBe(false);
     if (!r.ok) {
@@ -68,7 +79,7 @@ describe("createTokenService", () => {
   // exactly the "trusting a token" the owner's ruling forbids. Renewal reads
   // the user record and calls `issue` (`api/handlers/auth.ts#handleMe`).
   it("exposes no way to mint a token from another token", () => {
-    const svc = createTokenService({ secret, ttlSeconds: 60 });
+    const svc = createTokenService({ secret, ttlSeconds: 60, credentialFloor });
     expect(Object.keys(svc).sort()).toEqual(["issue", "validate"]);
   });
 });
@@ -107,7 +118,7 @@ describe("what a validated token is allowed to tell the gateway", () => {
   }
 
   it("carries identity and lifetime, and nothing that looks like authority", async () => {
-    const svc = createTokenService({ secret, ttlSeconds: 3600 });
+    const svc = createTokenService({ secret, ttlSeconds: 3600, credentialFloor });
     const token = await svc.issue({ userId: "kevin" });
     const r = await svc.validate(token);
     if (!r.ok) throw new Error("expected ok");
@@ -115,7 +126,7 @@ describe("what a validated token is allowed to tell the gateway", () => {
   });
 
   it("accepts a legacy token carrying isAdmin, and never surfaces the claim", async () => {
-    const svc = createTokenService({ secret, ttlSeconds: 3600 });
+    const svc = createTokenService({ secret, ttlSeconds: 3600, credentialFloor });
     const r = await svc.validate(tokenWith({ isAdmin: true }));
     expect(r.ok).toBe(true);
     if (!r.ok) return;
@@ -124,7 +135,7 @@ describe("what a validated token is allowed to tell the gateway", () => {
   });
 
   it("accepts a token carrying a role claim, and never surfaces it either", async () => {
-    const svc = createTokenService({ secret, ttlSeconds: 3600 });
+    const svc = createTokenService({ secret, ttlSeconds: 3600, credentialFloor });
     const r = await svc.validate(tokenWith({ role: "admin" }));
     expect(r.ok).toBe(true);
     if (!r.ok) return;
@@ -135,7 +146,7 @@ describe("what a validated token is allowed to tell the gateway", () => {
   // forged without the key, but even WITH the key it buys nothing, because no
   // authorization decision anywhere reads a claim.
   it("ignores an invented privilege claim rather than being confused by it", async () => {
-    const svc = createTokenService({ secret, ttlSeconds: 3600 });
+    const svc = createTokenService({ secret, ttlSeconds: 3600, credentialFloor });
     const r = await svc.validate(tokenWith({ role: "superadmin", isAdmin: true, scope: "*" }));
     expect(r.ok).toBe(true);
     if (!r.ok) return;
@@ -143,7 +154,7 @@ describe("what a validated token is allowed to tell the gateway", () => {
   });
 
   it("still enforces the purpose claim, which is not authority but binding", async () => {
-    const svc = createTokenService({ secret, ttlSeconds: 3600 });
+    const svc = createTokenService({ secret, ttlSeconds: 3600, credentialFloor });
     const iat = new Date();
     const wrongPurpose = encrypt(
       localKey,
@@ -156,5 +167,85 @@ describe("what a validated token is allowed to tell the gateway", () => {
       { addIat: false, addExp: false },
     );
     expect(await svc.validate(wrongPurpose)).toEqual({ ok: false, error: "wrong-purpose" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SECURITY BOUNDARY — A REVOKED CREDENTIAL STOPS VALIDATING.
+//
+// The token still decrypts, still carries the right purpose and is nowhere near
+// its `exp`. It is refused anyway, because the RECORD says every token this
+// account holds from before the revocation instant is dead. One choke point,
+// read at the moment of the decision, covering all 17 `validate()` call sites —
+// which is what makes a role change take effect with no refresh, no re-login
+// and no cache to flush.
+// ---------------------------------------------------------------------------
+describe("the credential floor read from the record", () => {
+  const secret = new Uint8Array(randomBytes(32));
+  const TTL_SECONDS = 3600;
+  const MS_PER_SECOND = 1000;
+
+  /** A live token plus the millisecond its `issuedAt` second STARTS at — the
+   *  value the floor is compared against, so every case below is stated as an
+   *  offset from the exact tie. */
+  async function freshToken() {
+    const issuing = createTokenService({ secret, ttlSeconds: TTL_SECONDS, credentialFloor: floorAt(0) });
+    const token = await issuing.issue({ userId: "kevin" });
+    const r = await issuing.validate(token);
+    if (!r.ok) throw new Error("expected a freshly issued token to validate");
+    return { token, tieMs: r.value.issuedAt * MS_PER_SECOND };
+  }
+
+  /** Validate a live token against a floor [offsetMs] from the tie. */
+  async function validateWithFloorOffset(offsetMs: number) {
+    const { token, tieMs } = await freshToken();
+    const svc = createTokenService({ secret, ttlSeconds: TTL_SECONDS, credentialFloor: floorAt(tieMs + offsetMs) });
+    return svc.validate(token);
+  }
+
+  /** Validate a live token whose user has no record at all. */
+  async function validateWithNoRecord() {
+    const { token } = await freshToken();
+    const svc = createTokenService({ secret, ttlSeconds: TTL_SECONDS, credentialFloor: floorAt(null) });
+    return svc.validate(token);
+  }
+
+  it("SECURITY: refuses a token issued before the account's credentials were revoked", async () => {
+    expect(await validateWithFloorOffset(5 * MS_PER_SECOND)).toEqual({ ok: false, error: "expired" });
+  });
+
+  // FAIL CLOSED ON THE TIE. `issuedAt` is unix SECONDS and the floor is a
+  // millisecond instant, so "issued in the same second as the revocation" is
+  // indistinguishable from "issued just before it". The token loses.
+  it("SECURITY: refuses a token whose issuing second is the revocation instant itself", async () => {
+    expect(await validateWithFloorOffset(0)).toEqual({ ok: false, error: "expired" });
+  });
+
+  it("SECURITY: refuses a token issued in the same second as a revocation later in that second", async () => {
+    expect(await validateWithFloorOffset(MS_PER_SECOND - 1)).toEqual({ ok: false, error: "expired" });
+  });
+
+  it("accepts a token issued after the revocation instant", async () => {
+    const r = await validateWithFloorOffset(-1);
+    expect(r.ok).toBe(true);
+  });
+
+  // A token naming a user who is not there identifies nobody. Never a defaulted
+  // floor, never a permissive fallback — the same refusal as a revoked one.
+  it("SECURITY: refuses the token when the record is gone rather than defaulting a floor", async () => {
+    expect(await validateWithNoRecord()).toEqual({ ok: false, error: "expired" });
+  });
+
+  // WIRE CONTRACT. `expired` is already terminal on all three clients (web's
+  // router classifies any auth.error frame terminal; mobile's
+  // TERMINAL_AUTH_CODES lists `expired`), so this routes to the login screen. A
+  // new code would be terminal on the auth.error path but fall off mobile's
+  // sessions allow-list and retry forever.
+  it("WIRE: a revocation reuses `expired`, never a new TokenError the clients cannot classify", async () => {
+    const revoked = await validateWithFloorOffset(MS_PER_SECOND);
+    const noRecord = await validateWithNoRecord();
+    expect(revoked).toEqual(noRecord);
+    if (revoked.ok) throw new Error("expected a refusal");
+    expect(revoked.error).toBe("expired");
   });
 });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { NEVER_REVOKED } from "../../user-auth/credential-floor.js";
 import type { UserStore } from "../../user-auth/user-store.js";
 import { createIdentifyUserTool } from "./identify-user.js";
 
@@ -16,6 +17,7 @@ function makeUserStore(users: Array<{ userId: string; displayName: string }>): P
         role: "adult",
         avatarTint: "terra",
         createdAt: "2026-01-01T00:00:00Z",
+        credentialsValidFrom: NEVER_REVOKED,
       })),
     }),
   };

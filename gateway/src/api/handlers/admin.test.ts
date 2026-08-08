@@ -7,6 +7,7 @@ import type {
   UserProvisioner,
 } from "../../admin/user-provisioner.js";
 import { PROFILE_SCHEMA_VERSION } from "../../profile-store/profile-types.js";
+import { NEVER_REVOKED } from "../../user-auth/credential-floor.js";
 import type { UserRecord } from "../../user-auth/types.js";
 import type { UserStore } from "../../user-auth/user-store.js";
 import { type AdminDeps, createAdminHandler } from "./admin.js";
@@ -40,6 +41,7 @@ function sampleUser(overrides?: Partial<UserRecord>): UserRecord {
     role: "admin",
     avatarTint: "terra",
     createdAt: "2026-01-01T00:00:00Z",
+    credentialsValidFrom: NEVER_REVOKED,
     ...overrides,
   };
 }

@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type SessionManager, createSessionManager } from "../auth/session-manager.js";
 import type { AuthService } from "../user-auth/auth-service.js";
 import { createAuthService } from "../user-auth/auth-service.js";
+import { NEVER_REVOKED } from "../user-auth/credential-floor.js";
 import type { TokenPayload, TokenResult, UserRecord, UserStoreError } from "../user-auth/types.js";
 import { handleAuthMessage, scheduleAuthTimeout } from "./ws-auth-gate.js";
 import type { SessionData } from "./ws-helpers.js";
@@ -268,7 +269,15 @@ describe("ws auth gate", () => {
           : { ok: true, value: { userId: "u_bbbbbbbb", issuedAt: 0, expiresAt: 9_999_999_999 } },
       getUser: async (userId) => ({
         ok: true,
-        value: { userId, displayName: "X", pinHash: "x", role: "adult", avatarTint: "terra", createdAt: "now" },
+        value: {
+          userId,
+          displayName: "X",
+          pinHash: "x",
+          role: "adult",
+          avatarTint: "terra",
+          createdAt: "now",
+          credentialsValidFrom: NEVER_REVOKED,
+        },
       }),
     });
 
@@ -353,6 +362,7 @@ describe("ws auth gate", () => {
         role: "adult",
         avatarTint: "terra",
         createdAt: "now",
+        credentialsValidFrom: NEVER_REVOKED,
       },
     });
     await pending;
