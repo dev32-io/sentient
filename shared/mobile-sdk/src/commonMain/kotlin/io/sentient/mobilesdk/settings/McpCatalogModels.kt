@@ -68,12 +68,21 @@ data class McpCatalogView(
      * A server key is present here iff it has >= 1 tool this role can govern.
      * Do NOT infer "off" from a missing key in THIS READ view — a server can
      * be absent for reasons this shape does not distinguish (stdio transport,
-     * zero role-governable tools, or simply not in the catalog). Contrast the
-     * STORED table a PUT writes back, where an absent server key is NOT
-     * neutral: it means "off" permanently. A PUT body's permissions map must
-     * carry forward every server key it means to keep, using
+     * zero role-governable tools, or simply not in the catalog).
+     *
+     * Contrast the STORED table: a server key absent from the ALREADY-
+     * PERSISTED table (one that has never been given an entry) resolves as
+     * "off" permanently at READ time (`resolve-tool-permission.ts`'s
+     * `storedPermissionFor`) — but that is a property of the stored table,
+     * not of any one PUT. The gateway's PUT handler
+     * (`gateway/src/profile-store/profile-update.ts`) does a genuine
+     * per-server, per-tool DELTA merge: a server key a PUT's permissions map
+     * simply omits is left UNTOUCHED in storage, never wiped to "off" by the
+     * omission itself. Clients still send the full table on every save,
+     * matching every other `ProfileV1PutBody` field's full-resend convention
+     * (not because the wire contract requires it) — using
      * [McpCatalogEntry.wildcardPermission] / [wildcardPermissionKey] for a
-     * bulk write — never by omission.
+     * bulk write.
      */
     val servers: Map<String, McpCatalogEntry> = emptyMap(),
     /**

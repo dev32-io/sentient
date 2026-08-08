@@ -1,20 +1,30 @@
 // ---------------------------------------------------------------------------
-// ToolsViewModel — the Tools settings page state holder. SLOW save: the profile
-// PUT changes `tools` (non-audio), so ApplyProfileChangeUseCase runs the
+// ToolsViewModel — the Tools settings page state holder. SLOW save: the
+// profile PUT changes `tools` (non-audio), so ApplyProfileChangeUseCase runs the
 // PUT-then-apply path that blocks through a Hermes worker restart.
 //
-// The enabled-map semantics are pinned to the webui tools-pane EXACTLY:
-//   • A server is ENABLED iff its id is a KEY in `enabled` (absent key = off).
-//   • Toggling a server ON materializes the operator `defaultInclude` whitelist
-//     as the value (NOT an empty list) so per-tool checkboxes start canonical.
-//   • An EMPTY list value = "inherit the operator default" — it is materialized
-//     to `defaultInclude` before a per-tool edit so opting one tool out does not
-//     flip the whole server off.
-//   • `toolsets` is a flat list of enabled Hermes built-in toolset names;
-//     flipping any built-in tool toggles its whole toolset.
+// Per-tool permission state (plan 2026-08-07-tool-permissions): `draftPermissions`
+// is a SESSION-SCOPED PENDING-EDIT OVERLAY (ToolPermissionPatchMap-shaped,
+// empty every load), accumulated via the shared `withToolPermission` /
+// `withServerMasterPermission` helpers and read back via `effectiveToolPermission`
+// / `effectiveWildcardPermission` — never re-simulated locally, so the screen
+// can't drift from what the ToolBroker actually resolves. At save time
+// `mergeToolPermissionPatch` flattens this overlay onto the ORIGINALLY-LOADED
+// stored permissions into the one patch actually PUT. See ToolPermissionPatch.kt
+// (shared/mobile-sdk) for the full reasoning behind every one of these helpers.
 //
-// Dirty compares the Swift-native draft map/list (both Equatable), never the KMP
-// ProfileV1 (not Swift-Equatable).
+// The two writes that are ever correct: `setToolPermission` (a concrete value,
+// one of the four) and `setServerMaster` (every named tool + the wildcard,
+// `off` explicitly or a `null` clear back to the role template — NEVER a bulk
+// concrete `allow`, which would silently promote a `confirm`-tier tool's `ask`
+// to an unprompted `allow`). Both delegate entirely to the shared helpers;
+// this file never hand-rolls a map write.
+//
+// `toolsets` (Hermes built-ins) is unchanged: still a flat on/off list, not a
+// permission — Task 8 only replaces the MCP + gateway-native controls.
+//
+// Dirty compares the Swift-native draft overlay/list, never the KMP ProfileV1
+// (not Swift-Equatable).
 // ---------------------------------------------------------------------------
 import Foundation
 import MobileData
@@ -40,8 +50,10 @@ final class ToolsViewModel {
     private(set) var save: Save = .idle
     private(set) var catalog: McpCatalogView?
 
-    /// Draft tool state (Swift-native, Equatable → drives dirty detection).
-    private(set) var draftEnabled: [String: [String]] = [:]
+    /// This session's pending per-tool permission edits — a
+    /// ToolPermissionPatchMap-shaped overlay, empty until something is
+    /// touched. Never the full stored table: see this file's header.
+    private(set) var draftPermissions: [String: [String: Any]] = [:]
     private(set) var draftToolsets: [String] = []
 
     private var original: ProfileV1?
@@ -54,7 +66,7 @@ final class ToolsViewModel {
 
     var isDirty: Bool {
         guard let o = original else { return false }
-        return draftEnabled != o.tools.enabled || draftToolsets != (o.tools.toolsets ?? [])
+        return !draftPermissions.isEmpty || draftToolsets != (o.tools.toolsets ?? [])
     }
 
     var isApplying: Bool { save == .saving || save == .restarting }
@@ -62,47 +74,48 @@ final class ToolsViewModel {
     /// MCP server ids in a stable sorted order.
     var serverIds: [String] { (catalog?.servers.keys).map { $0.sorted() } ?? [] }
 
-    // ── Read helpers (pin webui display semantics) ──
+    // ── Read helpers (delegate to the shared resolvers, never re-simulate) ──
 
-    func isServerEnabled(_ id: String) -> Bool { draftEnabled[id] != nil }
-
-    /// The tool names counted "active": the user's explicit list when non-empty,
-    /// else the inherited operator default.
-    func activeNames(_ id: String, _ entry: McpCatalogEntry) -> [String] {
-        if let userInclude = draftEnabled[id], !userInclude.isEmpty { return userInclude }
-        return entry.defaultInclude
+    /// This person's pending-or-resolved permission for one tool. Reads the
+    /// tool's own explicit overlay key first, falling back to the catalog's
+    /// already-resolved snapshot — exactly like the server-side resolver.
+    func toolPermission(_ serverId: String, _ tool: McpToolView) -> ToolPermission {
+        effectiveToolPermission(permissions: draftPermissions, serverId: serverId, tool: tool)
     }
 
-    func isToolActive(_ id: String, _ tool: String, _ entry: McpCatalogEntry) -> Bool {
-        guard isServerEnabled(id) else { return false }
-        return activeNames(id, entry).contains(tool)
+    /// Whether the server's master toggle should show "on". A wildcard that
+    /// was never touched (`nil`) reads as on, matching `wildcard !== "off"`
+    /// on the webui.
+    func isServerMasterOn(_ serverId: String, _ entry: McpCatalogEntry) -> Bool {
+        guard let key = catalog?.wildcardPermissionKey else { return entry.wildcardPermission != .off }
+        let wildcard = effectiveWildcardPermission(
+            permissions: draftPermissions, serverId: serverId, wildcardKey: key, catalogWildcard: entry.wildcardPermission
+        )
+        return wildcard != .off
     }
 
-    func isToolsetOn(_ toolset: String) -> Bool { draftToolsets.contains(toolset) }
+    // ── Mutations — both delegate to the shared write helpers ──
 
-    func hermesActiveCount(_ tools: [HermesBuiltinToolView]) -> Int {
-        tools.filter { draftToolsets.contains($0.toolset) }.count
+    /// A single tool's explicit permission — one of the four real values,
+    /// never a clear (a per-tool control never writes `null`; only the
+    /// server master control does).
+    func setToolPermission(_ serverId: String, _ toolName: String, _ permission: ToolPermission) {
+        draftPermissions = withToolPermission(
+            permissions: draftPermissions, serverId: serverId, toolName: toolName, permission: permission
+        )
+        log.info("tools.permission.change server=\(serverId) tool=\(toolName) permission=\(permission.wireValue)")
     }
 
-    // ── Mutations (pin webui write semantics) ──
-
-    func toggleServer(_ id: String, _ defaultInclude: [String]) {
-        if draftEnabled[id] != nil {
-            draftEnabled[id] = nil
-        } else {
-            draftEnabled[id] = defaultInclude
-        }
-        log.info("toggle.server id=\(id) on=\(draftEnabled[id] != nil)")
-    }
-
-    func toggleTool(_ id: String, _ tool: String, _ defaultInclude: [String]) {
-        guard let current = draftEnabled[id] else { return }
-        let baseline = current.isEmpty ? defaultInclude : current
-        if baseline.contains(tool) {
-            draftEnabled[id] = baseline.filter { $0 != tool }
-        } else {
-            draftEnabled[id] = baseline + [tool]
-        }
+    /// The server master control's write: every named tool this role can
+    /// govern PLUS the wildcard — `off` explicitly (turnOn=false) or a `null`
+    /// clear back to the role template (turnOn=true), NEVER a bulk concrete
+    /// `allow`. See `withServerMasterPermission`'s doc comment.
+    func setServerMaster(_ serverId: String, _ toolNames: [String], _ turnOn: Bool) {
+        guard let wildcardKey = catalog?.wildcardPermissionKey else { return }
+        draftPermissions = withServerMasterPermission(
+            permissions: draftPermissions, serverId: serverId, toolNames: toolNames, wildcardKey: wildcardKey, turnOn: turnOn
+        )
+        log.info("tools.server-master.change server=\(serverId) toolCount=\(toolNames.count) turnOn=\(turnOn)")
     }
 
     func toggleToolset(_ toolset: String) {
@@ -112,6 +125,12 @@ final class ToolsViewModel {
             draftToolsets.append(toolset)
         }
         log.info("toggle.toolset toolset=\(toolset) on=\(draftToolsets.contains(toolset))")
+    }
+
+    func isToolsetOn(_ toolset: String) -> Bool { draftToolsets.contains(toolset) }
+
+    func hermesActiveCount(_ tools: [HermesBuiltinToolView]) -> Int {
+        tools.filter { draftToolsets.contains($0.toolset) }.count
     }
 
     // ── Load / save ──
@@ -156,8 +175,8 @@ final class ToolsViewModel {
     func save() async {
         guard let o = original, isDirty else { return }
         log.info("save.start")
-        let next = nextProfile(from: o)
-        for await state in settings.applyProfileChange.invoke(mutation: ProfileMutationPutProfile(previous: o, next: next.toPutBody())) {
+        let next = nextPutBody(from: o)
+        for await state in settings.applyProfileChange.invoke(mutation: ProfileMutationPutProfile(previous: o, next: next)) {
             switch onEnum(of: state) {
             case .idle: break
             case .saving: save = .saving
@@ -178,19 +197,27 @@ final class ToolsViewModel {
 
     private func seedDraft(from profile: ProfileV1) {
         original = profile
-        draftEnabled = profile.tools.enabled
+        draftPermissions = [:]
         draftToolsets = profile.tools.toolsets ?? []
     }
 
-    private func nextProfile(from o: ProfileV1) -> ProfileV1 {
-        ProfileV1(
+    /// Builds the PUT body directly — never via `ProfileV1(...).toPutBody()`
+    /// like the other settings VMs — because a server-master "on" write
+    /// threads a real `null` clear through `draftPermissions`, which
+    /// `ProfileTools` (the concrete-leaf GET shape) cannot represent; only
+    /// `ProfileToolsPatch` can. See `ProfileMutationPutProfile`'s doc comment,
+    /// which calls out this exact "tools screen's server master control /
+    /// reset to role default" case as the reason `next` is patch-shaped.
+    private func nextPutBody(from o: ProfileV1) -> ProfileV1PutBody {
+        let mergedPermissions = mergeToolPermissionPatch(base: o.tools.permissions, overlay: draftPermissions)
+        return ProfileV1PutBody(
             schemaVersion: o.schemaVersion,
             userId: o.userId,
             model: o.model,
             voice: o.voice,
             audio: o.audio,
             persona: o.persona,
-            tools: ProfileTools(enabled: draftEnabled, toolsets: draftToolsets),
+            tools: ProfileToolsPatch(permissions: mergedPermissions, toolsets: draftToolsets),
             compression: o.compression,
             advanced: o.advanced
         )

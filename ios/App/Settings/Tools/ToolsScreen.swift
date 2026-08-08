@@ -1,11 +1,14 @@
 // ---------------------------------------------------------------------------
 // ToolsScreen — Soul-group "Tools" category page. A per-MCP-server card (master
-// toggle + expandable per-tool toggles) for each catalog server, plus the Hermes
-// built-in toolsets card. SLOW save (PUT profile → apply-with-restart).
+// on/off toggle + expandable per-tool Allow/Ask/Deny/Off dropdowns) for each
+// catalog server, a "Gateway tools" card for role-governed native tools with no
+// MCP server (settable: false today — read-only), and the Hermes built-in
+// toolsets card. SLOW save (PUT profile → apply-with-restart).
 //
-// The enabled-map semantics live in ToolsViewModel (pinned to the webui
-// tools-pane); this view resolves them into stateless ToolsServerCard inputs.
-// Save chrome + discard-on-dirty-back are shared SoulPageChrome pieces.
+// The permission-resolution semantics live in ToolsViewModel (pinned to the
+// webui tools-pane); this view resolves them into stateless ToolsServerCard /
+// ToolPermissionRow inputs. Save chrome + discard-on-dirty-back are shared
+// SoulPageChrome pieces.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
@@ -35,6 +38,7 @@ struct ToolsScreen: View {
             case .ready:
                 saveBanner
                 serversSection
+                nativeToolsCard
                 hermesCard
             }
         }
@@ -88,27 +92,60 @@ struct ToolsScreen: View {
     }
 
     private func serverCard(_ id: String, _ entry: McpCatalogEntry) -> some View {
-        let enabled = vm.isServerEnabled(id)
         let rows = entry.tools.map { tool in
-            ToolToggleRow(
+            ToolPermissionRowModel(
                 id: tool.name,
                 name: tool.name,
                 description: tool.description,
-                isOn: vm.isToolActive(id, tool.name, entry)
+                permission: vm.toolPermission(id, tool),
+                settable: tool.settable
             )
         }
+        let activeCount = rows.filter { $0.permission != .off }.count
         return ToolsServerCard(
             id: id,
             serverDescription: entry.description,
-            isEnabled: enabled,
+            masterOn: vm.isServerMasterOn(id, entry),
             isOpen: openServers.contains(id),
-            activeCount: enabled ? vm.activeNames(id, entry).count : 0,
+            activeCount: activeCount,
             totalCount: entry.tools.count,
             toolRows: rows,
             onToggleOpen: { toggleOpen(id) },
-            onToggleServer: { _ in vm.toggleServer(id, entry.defaultInclude) },
-            onToggleTool: { vm.toggleTool(id, $0, entry.defaultInclude) }
+            onToggleServer: { turnOn in vm.setServerMaster(id, entry.tools.map { $0.name }, turnOn) },
+            onToolChange: { toolName, permission in vm.setToolPermission(id, toolName, permission) }
         )
+    }
+
+    @ViewBuilder
+    private var nativeToolsCard: some View {
+        let nativeTools = vm.catalog?.nativeTools ?? []
+        if !nativeTools.isEmpty {
+            SettingsCard(
+                title: "Gateway tools",
+                sub: "Built into the gateway itself, not an MCP server — governed by role until a later release lets a person override it."
+            ) {
+                ForEach(nativeTools, id: \.name) { tool in
+                    ToolPermissionRow(
+                        row: ToolPermissionRowModel(
+                            id: tool.name,
+                            name: tool.name,
+                            description: tool.description,
+                            permission: tool.permission,
+                            settable: tool.settable
+                        ),
+                        accessibilityId: "settings-tools-native-\(tool.name)",
+                        onChange: { _ in
+                            // Unreachable: `settable` is false for every native tool
+                            // today (delegateTask), and ToolPermissionRow renders a
+                            // disabled RowSelect underneath — kept as a real no-op
+                            // rather than omitted, so a future settable native tool
+                            // gets a working handler by just flipping `settable`
+                            // server-side, no client change required.
+                        }
+                    )
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -162,12 +199,16 @@ struct ToolsScreen: View {
         SettingsPageScaffold(title: "Tools", screenId: "settings-tools-screen") {
             ToolsServerCard(
                 id: "home-assistant", serverDescription: "Smart-home control.",
-                isEnabled: true, isOpen: true, activeCount: 1, totalCount: 2,
+                masterOn: true, isOpen: true, activeCount: 1, totalCount: 2,
                 toolRows: [
-                    ToolToggleRow(id: "1", name: "turn_on", description: "Turn a device on.", isOn: true),
-                    ToolToggleRow(id: "2", name: "turn_off", description: "Turn a device off.", isOn: false),
+                    ToolPermissionRowModel(
+                        id: "1", name: "turn_on", description: "Turn a device on.", permission: .allow, settable: true
+                    ),
+                    ToolPermissionRowModel(
+                        id: "2", name: "turn_off", description: "Turn a device off.", permission: .off, settable: true
+                    ),
                 ],
-                onToggleOpen: {}, onToggleServer: { _ in }, onToggleTool: { _ in }
+                onToggleOpen: {}, onToggleServer: { _ in }, onToolChange: { _, _ in }
             )
         }
     }

@@ -1,12 +1,16 @@
 // ---------------------------------------------------------------------------
-// RowSelect — label + current-value chip that opens a Menu of options.
-// Transcribed from the webui `Select` primitive (components/settings/
+// RowSelect — label (+ optional sub) + current-value chip that opens a Menu of
+// options. Transcribed from the webui `Select` primitive (components/settings/
 // primitives/select.tsx: a custom dropdown button + option list) as a native
 // SwiftUI `Menu`, which gives the same "tap → pick one" affordance with
 // platform-native presentation (context menu / popover) instead of
 // reimplementing an outside-tap-to-close overlay.
 //
-// Used for Model's model picker, Advanced's Reasoning select, etc.
+// Used for Model's model picker, Advanced's Reasoning select, Voice's language
+// filter, and — with `sub` + `isEnabled` — the Tools screen's per-tool
+// permission control (mono tool name + description, four-state Allow/Ask/
+// Deny/Off; `isEnabled: false` renders it genuinely non-interactive for an
+// unsettable tool, matching the webui Select's `disabled` prop).
 //
 // Stateless leaf: `selectedId` + `onSelect` in, no local state.
 // ---------------------------------------------------------------------------
@@ -21,9 +25,11 @@ struct SelectOption: Identifiable, Equatable {
 
 struct RowSelect: View {
     let label: String
+    var sub: String?
     let options: [SelectOption]
     let selectedId: String
     let accessibilityId: String
+    var isEnabled: Bool = true
     let onSelect: (String) -> Void
 
     private var currentLabel: String {
@@ -32,9 +38,16 @@ struct RowSelect: View {
 
     var body: some View {
         HStack(spacing: Space.lg) {
-            Text(label)
-                .font(Typo.ui(TypeScale.sm, .medium))
-                .foregroundStyle(DuskColors.ink)
+            VStack(alignment: .leading, spacing: Space.xs) {
+                Text(label)
+                    .font(Typo.ui(TypeScale.sm, .medium))
+                    .foregroundStyle(DuskColors.ink)
+                if let sub {
+                    Text(sub)
+                        .font(Typo.ui(TypeScale.xs))
+                        .foregroundStyle(DuskColors.ink3)
+                }
+            }
             Spacer(minLength: Space.sm)
             Menu {
                 ForEach(options) { option in
@@ -58,6 +71,12 @@ struct RowSelect: View {
             } label: {
                 menuLabel
             }
+            // `.disabled` blocks the tap from reaching the Menu at all (genuinely
+            // non-interactive, not merely styled to look so); the opacity dim is
+            // the only visual cue since a custom Menu label doesn't auto-dim the
+            // way native Button/Toggle styles do under `isEnabled`.
+            .disabled(!isEnabled)
+            .opacity(isEnabled ? 1 : 0.5)
             .accessibilityIdentifier(accessibilityId)
         }
         .padding(.vertical, Space.sm)
@@ -81,18 +100,34 @@ struct RowSelect: View {
 }
 
 #Preview {
-    RowSelect(
-        label: "Reasoning",
-        options: [
-            SelectOption(id: "none", label: "None"),
-            SelectOption(id: "low", label: "Low"),
-            SelectOption(id: "high", label: "High"),
-            SelectOption(id: "xhigh", label: "X-High"),
-        ],
-        selectedId: "high",
-        accessibilityId: "settings-advanced-reasoning",
-        onSelect: { _ in }
-    )
+    VStack(spacing: Space.lg) {
+        RowSelect(
+            label: "Reasoning",
+            options: [
+                SelectOption(id: "none", label: "None"),
+                SelectOption(id: "low", label: "Low"),
+                SelectOption(id: "high", label: "High"),
+                SelectOption(id: "xhigh", label: "X-High"),
+            ],
+            selectedId: "high",
+            accessibilityId: "settings-advanced-reasoning",
+            onSelect: { _ in }
+        )
+        RowSelect(
+            label: "delegateTask",
+            sub: "Hand a task to Hermes in the background.",
+            options: [
+                SelectOption(id: "allow", label: "Allow"),
+                SelectOption(id: "ask", label: "Ask"),
+                SelectOption(id: "deny", label: "Deny"),
+                SelectOption(id: "off", label: "Off"),
+            ],
+            selectedId: "ask",
+            accessibilityId: "settings-tools-native-delegateTask",
+            isEnabled: false,
+            onSelect: { _ in }
+        )
+    }
     .padding(Space.lg)
     .background(DuskColors.bg)
     .preferredColorScheme(.dark)

@@ -121,16 +121,23 @@ fun effectiveWildcardPermission(
  * the ORIGINALLY-LOADED stored permissions ([base]) at SAVE time, producing the patch to
  * actually PUT.
  *
- * WHY THIS IS NEEDED, NOT JUST `base + overlay` AT THE SERVER LEVEL: [overlay] typically
- * names only the servers/tools the person actually touched this session — a server the
- * person never opened is simply absent from it. But [ProfileTools.permissions]'s absent-
- * SERVER rule reads a server missing from a NON-EMPTY table as "off forever" (see its doc
- * comment) — so a save that sent `overlay` alone, dropping every untouched server, would
- * silently turn every one of them off. This merges at the TOOL-NAME level within each
- * server too (not a per-server whole-map replace): [base]'s other tools under a server the
- * person partially edited are carried forward exactly as [withToolPermission] already
- * promises for a single edit — this is just that same carry-forward guarantee applied once,
- * across every server, at the point a whole session's edits are flattened into one write.
+ * NOT NEEDED TO KEEP AN UNTOUCHED SERVER FROM TURNING OFF — the gateway's PUT handler
+ * (`gateway/src/profile-store/profile-update.ts`) does a genuine per-server, per-tool DELTA
+ * merge: a server or tool key the incoming patch omits is left UNTOUCHED in storage, never
+ * reinterpreted as "off" because this one request didn't mention it. Sending [overlay] alone
+ * (only the keys this session actually touched) would be safe server-side. This function
+ * exists instead to match the FULL-RESEND convention every other [ProfileV1PutBody] field
+ * already follows (model/voice/audio/persona/compression/advanced are always sent as the
+ * complete current value, never a partial diff) — without it, `tools.permissions` would be
+ * the one field in the body that behaves like a true partial patch, inconsistent with the
+ * rest; the webui's own tools-pane follows the identical full-resend convention by keeping
+ * the FULL loaded permissions as its live draft state rather than a separate overlay.
+ *
+ * This merges at the TOOL-NAME level within each server too (not a per-server whole-map
+ * replace): [base]'s other tools under a server the person partially edited are carried
+ * forward exactly as [withToolPermission] already promises for a single edit — this is just
+ * that same carry-forward guarantee applied once, across every server, at the point a whole
+ * session's edits are flattened into one write.
  *
  * A concrete [base] leaf is always a valid patch leaf (see [ProfileV1.toPutBody]), so only
  * [overlay]'s own keys can carry a `null` clear — this function never invents one.

@@ -1,34 +1,32 @@
 // ---------------------------------------------------------------------------
 // ToolsServerCard — one MCP server section on the Tools page: a header row
-// (chevron + server id + active/total count + master toggle) and, when expanded
-// AND enabled, a per-tool toggle list. Transcribed from the webui tools-pane
-// McpServerSection.
+// (chevron + server id + active/total count + master on/off toggle) and, when
+// expanded, a per-tool ToolPermissionRow list (Allow/Ask/Deny/Off dropdown per
+// tool). Transcribed from the webui tools-pane McpServerSection — the master
+// toggle writes every named tool + the wildcard in bulk (see ToolsViewModel's
+// setServerMaster), but each tool's own row stays visible and independently
+// editable regardless of the master's current state; there is no "server is
+// off, tools hidden" placeholder any more (dropped along with the old
+// enabled-map boolean model).
 //
-// Stateless leaf: the screen resolves the enabled-map semantics (via the VM) into
-// plain values + `toolRows`, so this view holds no VM and no policy — it only
-// lays out and dispatches taps.
+// Stateless leaf: the screen resolves the catalog + pending-edit overlay (via
+// the VM) into plain values + `toolRows`, so this view holds no VM and no
+// policy — it only lays out and dispatches taps.
 // ---------------------------------------------------------------------------
 import SwiftUI
-
-/// A resolved per-tool row (the enabled-map math is done by the screen/VM).
-struct ToolToggleRow: Identifiable {
-    let id: String
-    let name: String
-    let description: String
-    let isOn: Bool
-}
+import MobileData
 
 struct ToolsServerCard: View {
     let id: String
     let serverDescription: String?
-    let isEnabled: Bool
+    let masterOn: Bool
     let isOpen: Bool
     let activeCount: Int
     let totalCount: Int
-    let toolRows: [ToolToggleRow]
+    let toolRows: [ToolPermissionRowModel]
     let onToggleOpen: () -> Void
     let onToggleServer: (Bool) -> Void
-    let onToggleTool: (String) -> Void
+    let onToolChange: (String, ToolPermission) -> Void
 
     var body: some View {
         SettingsCard {
@@ -58,10 +56,10 @@ struct ToolsServerCard: View {
                 }
             }
             Spacer(minLength: Space.sm)
-            Text(isEnabled ? "\(activeCount)/\(totalCount) tools" : "off")
+            Text("\(activeCount)/\(totalCount) tools")
                 .font(Typo.ui(TypeScale.xs))
                 .foregroundStyle(DuskColors.ink3)
-            Toggle("", isOn: Binding(get: { isEnabled }, set: onToggleServer))
+            Toggle("", isOn: Binding(get: { masterOn }, set: onToggleServer))
                 .labelsHidden()
                 .tint(DuskColors.accent)
                 .accessibilityIdentifier("settings-tools-server-\(id)")
@@ -72,18 +70,14 @@ struct ToolsServerCard: View {
     @ViewBuilder
     private var expandedBody: some View {
         Divider().background(DuskColors.lineSoft)
-        if !isEnabled {
-            placeholder("Server is off. Toggle on to enable and configure individual tools.")
-        } else if toolRows.isEmpty {
+        if toolRows.isEmpty {
             placeholder("No tools declared for this server.")
         } else {
             ForEach(toolRows) { row in
-                RowToggle(
-                    label: row.name,
-                    sub: row.description.isEmpty ? nil : row.description,
-                    isOn: row.isOn,
+                ToolPermissionRow(
+                    row: row,
                     accessibilityId: "settings-tools-tool-\(id)-\(row.name)",
-                    onChange: { _ in onToggleTool(row.name) }
+                    onChange: { onToolChange(row.name, $0) }
                 )
             }
         }
@@ -103,18 +97,24 @@ struct ToolsServerCard: View {
         VStack(spacing: Space.lg) {
             ToolsServerCard(
                 id: "home-assistant", serverDescription: "Smart-home control.",
-                isEnabled: true, isOpen: true, activeCount: 2, totalCount: 3,
+                masterOn: true, isOpen: true, activeCount: 2, totalCount: 3,
                 toolRows: [
-                    ToolToggleRow(id: "1", name: "turn_on", description: "Turn a device on.", isOn: true),
-                    ToolToggleRow(id: "2", name: "turn_off", description: "Turn a device off.", isOn: true),
-                    ToolToggleRow(id: "3", name: "set_temp", description: "Set a thermostat.", isOn: false),
+                    ToolPermissionRowModel(
+                        id: "1", name: "turn_on", description: "Turn a device on.", permission: .allow, settable: true
+                    ),
+                    ToolPermissionRowModel(
+                        id: "2", name: "turn_off", description: "Turn a device off.", permission: .ask, settable: true
+                    ),
+                    ToolPermissionRowModel(
+                        id: "3", name: "set_temp", description: "Set a thermostat.", permission: .off, settable: true
+                    ),
                 ],
-                onToggleOpen: {}, onToggleServer: { _ in }, onToggleTool: { _ in }
+                onToggleOpen: {}, onToggleServer: { _ in }, onToolChange: { _, _ in }
             )
             ToolsServerCard(
                 id: "web-search", serverDescription: nil,
-                isEnabled: false, isOpen: false, activeCount: 0, totalCount: 1,
-                toolRows: [], onToggleOpen: {}, onToggleServer: { _ in }, onToggleTool: { _ in }
+                masterOn: false, isOpen: false, activeCount: 0, totalCount: 1,
+                toolRows: [], onToggleOpen: {}, onToggleServer: { _ in }, onToolChange: { _, _ in }
             )
         }
         .padding(Space.lg)
