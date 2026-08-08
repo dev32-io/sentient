@@ -72,7 +72,9 @@ function makeDeps(
       }),
     },
     requireAdmin: async () =>
-      isAdmin ? { ok: true as const, value: { isAdmin: true } } : { ok: true as const, value: { isAdmin: false } },
+      isAdmin
+        ? { ok: true as const, value: { role: "admin" as const } }
+        : { ok: true as const, value: { role: "adult" as const } },
   };
 }
 

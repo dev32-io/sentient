@@ -61,7 +61,7 @@ function freshHarness(): Harness {
       async validate(token: string): Promise<TokenResult<TokenPayload>> {
         const userId = tokenToUserId.get(token);
         if (!userId) return { ok: false, error: "malformed" };
-        return { ok: true, value: { userId, isAdmin: false, issuedAt: 0, expiresAt: 9_999_999_999 } };
+        return { ok: true, value: { userId, role: "adult", issuedAt: 0, expiresAt: 9_999_999_999 } };
       },
     },
   };

@@ -21,7 +21,7 @@
 // structurally rather than by a bolted-on check here.
 
 import type { AccessManager } from "../../access/access-manager.js";
-import { type PrincipalRole, type UserPrincipal, createUserPrincipal } from "../../identity/user-principal.js";
+import { type UserPrincipal, createUserPrincipal } from "../../identity/user-principal.js";
 import { getLog } from "../../logging/logger.js";
 import { snapshotFeedItems } from "../../runtime/conversation-feed.js";
 import { withSessionStore } from "../../session-handlers/session-binding.js";
@@ -38,14 +38,12 @@ const HTTP_NOT_FOUND = 404;
 const HTTP_METHOD_NOT_ALLOWED = 405;
 
 // --- Principal defaults -------------------------------------------------------
-// Mirrors ws-auth-gate.ts's DEFAULT_PRINCIPAL_ROLE/DEFAULT_HOUSEHOLD_ID: the
-// stored user record carries no role/householdId yet (the real role model is
-// a later spec). Every REST caller is minted as an authenticated household
-// adult until that lands — duplicated here rather than imported because each
-// call site's default is a local policy statement, not shared config (see
-// mcp-host/delegated-broker.ts's own DELEGATED_PRINCIPAL_ROLE for the same
-// pattern).
-const REST_PRINCIPAL_ROLE: PrincipalRole = "adult";
+// The ROLE comes off the validated TOKEN, which carries a real `role` claim
+// as of plan 2026-08-07-tool-permissions task 2b — the same claim
+// `require-admin-auth.ts` gates the admin surface on, so the two REST paths
+// agree by construction. A token minted before the claim existed does not
+// validate at all, so there is no roleless caller to default for.
+// HOUSEHOLDS are still not modelled; that half keeps its placeholder.
 const REST_HOUSEHOLD_ID = "home";
 
 const SESSIONS_PATH = "/api/v1/sessions";
@@ -86,7 +84,7 @@ async function handleSessions(deps: SessionsHandlerDeps, request: Request): Prom
 
   let principal: UserPrincipal;
   try {
-    principal = createUserPrincipal(valid.value.userId, REST_PRINCIPAL_ROLE, REST_HOUSEHOLD_ID);
+    principal = createUserPrincipal(valid.value.userId, valid.value.role, REST_HOUSEHOLD_ID);
   } catch {
     // assertUserId throws on a stored/claimed userId that doesn't match the
     // canonical shape. Reject cleanly rather than let the throw escape.

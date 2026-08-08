@@ -1,4 +1,4 @@
-import type { Result } from "@sentient/protocol";
+import type { Result, UserRole } from "@sentient/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { InstallStateData } from "../../admin/install-state.js";
 import type { UserProvisioner, UserSummary } from "../../admin/user-provisioner.js";
@@ -11,18 +11,18 @@ function sampleUser(userId = "alice"): UserRecord {
     userId,
     displayName: "Alice",
     pinHash: "$argon2id$fake-hash",
-    isAdmin: false,
+    role: "adult",
     avatarTint: "sage",
     createdAt: "2026-01-01T00:00:00.000Z",
   };
 }
 
-function makeValidTokens(userId = "alice", isAdmin = false) {
+function makeValidTokens(userId = "alice", role: UserRole = "adult") {
   return {
     validate: vi.fn(
       async (): Promise<TokenResult<TokenPayload>> => ({
         ok: true,
-        value: { userId, isAdmin, issuedAt: 0, expiresAt: 9999999999 },
+        value: { userId, role, issuedAt: 0, expiresAt: 9999999999 },
       }),
     ),
     refresh: vi.fn(async (): Promise<TokenResult<string>> => ({ ok: true, value: "refreshed-token" })),
@@ -317,7 +317,7 @@ function makeMockInstallState(initial: {
 function makeSetupAuthService(): AuthService {
   const user = sampleUser("u_00000001");
   return {
-    tokens: makeValidTokens("u_00000001", true),
+    tokens: makeValidTokens("u_00000001", "admin"),
     users: {
       get: vi.fn(async () => ({ ok: true as const, value: user })),
       list: vi.fn(async () => ({ ok: true as const, value: [user] })),
@@ -350,6 +350,7 @@ function makeSetupProvisioner(): UserProvisioner {
   const summary: UserSummary = {
     userId: "u_00000001",
     displayName: "Admin",
+    role: "admin",
     isAdmin: true,
     avatarTint: "sage",
     createdAt: "2026-01-01T00:00:00.000Z",
@@ -358,7 +359,7 @@ function makeSetupProvisioner(): UserProvisioner {
     createUser: vi.fn(async () => ({ ok: true as const, value: summary })),
     deleteUser: vi.fn(async () => ({ ok: true as const, value: undefined })),
     resetPin: vi.fn(async () => ({ ok: true as const, value: undefined })),
-    setIsAdmin: vi.fn(async () => ({ ok: true as const, value: undefined })),
+    setRole: vi.fn(async () => ({ ok: true as const, value: undefined })),
   };
 }
 

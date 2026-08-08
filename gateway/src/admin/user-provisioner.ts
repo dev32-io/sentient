@@ -1,4 +1,4 @@
-import type { Result } from "@sentient/protocol";
+import type { Result, UserRole } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
 import type { ProfileStore } from "../profile-store/profile-store.js";
 import { profileV1Schema } from "../profile-store/profile-types.js";
@@ -12,21 +12,44 @@ const log = getLog(["sentient", "gateway", "admin", "user-provisioner"]);
 
 const AVATAR_TINTS: AvatarTint[] = ["terra", "sage", "amber", "clay"];
 
+/** The owner's default for a new household member. */
+const DEFAULT_ROLE: UserRole = "adult";
+const ADMIN_ROLE: UserRole = "admin";
+
 // --- Error types -----------------------------------------------------------
 
 export type CreateError = "hash-error" | "io-error" | "apply-error" | "invalid-profile";
 export type DeleteError = "not-found" | "last-admin" | "io-error";
 export type ResetError = "hash-error" | "not-found" | "io-error";
-export type AdminToggleError = "last-admin" | "not-found" | "io-error";
+export type SetRoleError = "last-admin" | "not-found" | "io-error";
 
 // --- Result types ----------------------------------------------------------
 
+/** The admin REST surface's user shape.
+ *
+ *  `isAdmin` is DERIVED from `role`, never stored — see `buildUserSummary`. It
+ *  stays on the wire so webui / Android / iOS keep compiling and behaving
+ *  correctly while they migrate to reading `role` (plan
+ *  2026-08-07-tool-permissions tasks 6–9). Removing it is a follow-up. */
 export interface UserSummary {
   userId: string;
   displayName: string;
+  role: UserRole;
   isAdmin: boolean;
   avatarTint: AvatarTint;
   createdAt: string;
+}
+
+/** The ONE place `isAdmin` is derived for the admin surface. */
+export function buildUserSummary(rec: UserRecord): UserSummary {
+  return {
+    userId: rec.userId,
+    displayName: rec.displayName,
+    role: rec.role,
+    isAdmin: rec.role === ADMIN_ROLE,
+    avatarTint: rec.avatarTint,
+    createdAt: rec.createdAt,
+  };
 }
 
 // --- Dependencies ----------------------------------------------------------
@@ -69,13 +92,16 @@ export interface UserProvisioner {
   createUser(input: CreateUserInput): Promise<Result<UserSummary, CreateError>>;
   deleteUser(userId: string): Promise<Result<void, DeleteError>>;
   resetPin(userId: string, newPin: string): Promise<Result<void, ResetError>>;
-  setIsAdmin(userId: string, isAdmin: boolean): Promise<Result<void, AdminToggleError>>;
+  /** Re-role an existing member. Refuses to leave the household with no admin
+   *  — the same guard `deleteUser` applies, for the same reason. */
+  setRole(userId: string, role: UserRole): Promise<Result<void, SetRoleError>>;
 }
 
 export interface CreateUserInput {
   displayName: string;
   pin: string;
-  isAdmin: boolean;
+  /** Omitted means `adult`. */
+  role?: UserRole;
   profile: ProfileV1;
 }
 
@@ -92,9 +118,9 @@ export function createUserProvisioner(deps: UserProvisionerDeps): UserProvisione
       assertUserId(userId);
       return resetPinFlow(deps, userId, newPin);
     },
-    async setIsAdmin(userId, isAdmin) {
+    async setRole(userId, role) {
       assertUserId(userId);
-      return setIsAdminFlow(deps, userId, isAdmin);
+      return setRoleFlow(deps, userId, role);
     },
   };
 }
@@ -117,7 +143,7 @@ async function createUserWithRollback(
     userId,
     displayName: input.displayName,
     pinHash: hashed.value,
-    isAdmin: input.isAdmin,
+    role: input.role ?? DEFAULT_ROLE,
     avatarTint,
     createdAt,
   };
@@ -176,11 +202,8 @@ async function createUserWithRollback(
   // gateway-MCP socket) once the profile is on disk.
   await deps.userLifecycle.emitCreated(userId);
 
-  log.info("createUser.success", { userId });
-  return {
-    ok: true,
-    value: { userId, displayName: input.displayName, isAdmin: input.isAdmin, avatarTint, createdAt },
-  };
+  log.info("createUser.success", { userId, role: record.role });
+  return { ok: true, value: buildUserSummary(record) };
 }
 
 async function hashOrFail(deps: UserProvisionerDeps, pin: string): Promise<Result<string, CreateError>> {
@@ -202,7 +225,7 @@ async function deleteUserFlow(deps: UserProvisionerDeps, userId: string): Promis
   if (!listResult.ok) return { ok: false, error: "io-error" };
   const target = listResult.value.find((u) => u.userId === userId);
   if (!target) return { ok: false, error: "not-found" };
-  if (target.isAdmin && isOnlyAdmin(listResult.value)) {
+  if (target.role === ADMIN_ROLE && isOnlyAdmin(listResult.value)) {
     return { ok: false, error: "last-admin" };
   }
 
@@ -242,34 +265,37 @@ async function resetPinFlow(
   return { ok: true, value: undefined };
 }
 
-// --- setIsAdmin ------------------------------------------------------------
+// --- setRole ---------------------------------------------------------------
 
-async function setIsAdminFlow(
+async function setRoleFlow(
   deps: UserProvisionerDeps,
   userId: string,
-  isAdmin: boolean,
-): Promise<Result<void, AdminToggleError>> {
+  role: UserRole,
+): Promise<Result<void, SetRoleError>> {
   const listResult = await deps.userStore.list();
   if (!listResult.ok) return { ok: false, error: "io-error" };
 
-  if (!isAdmin && isOnlyAdmin(listResult.value)) {
+  // Demoting the last admin locks the household out of its own admin surface —
+  // and now, additionally, out of every `admin`-tier tool. Refused for ANY
+  // target role that is not admin, not just the old boolean's `false`.
+  if (role !== ADMIN_ROLE && isOnlyAdmin(listResult.value)) {
     const target = listResult.value.find((u) => u.userId === userId);
-    if (target?.isAdmin) return { ok: false, error: "last-admin" };
+    if (target?.role === ADMIN_ROLE) return { ok: false, error: "last-admin" };
   }
 
-  const updateResult = await deps.userStore.update(userId, { isAdmin });
+  const updateResult = await deps.userStore.update(userId, { role });
   if (!updateResult.ok) {
     return updateResult.error === "not-found" ? { ok: false, error: "not-found" } : { ok: false, error: "io-error" };
   }
 
-  log.info("setIsAdmin.success", { userId, isAdmin });
+  log.info("setRole.success", { userId, role });
   return { ok: true, value: undefined };
 }
 
 // --- Helpers ---------------------------------------------------------------
 
 function isOnlyAdmin(users: UserRecord[]): boolean {
-  return users.filter((u) => u.isAdmin).length <= 1;
+  return users.filter((u) => u.role === ADMIN_ROLE).length <= 1;
 }
 
 async function rollbackProfileAndUser(deps: UserProvisionerDeps, userId: string): Promise<void> {

@@ -1,5 +1,5 @@
 import { getLog } from "../logging/logger.js";
-import type { PolicyDecision, PolicyEngine } from "../security/policy-engine.js";
+import type { PolicyContext, PolicyDecision, PolicyEngine } from "../security/policy-engine.js";
 import {
   type JsonRpcRequest,
   type JsonRpcResponse,
@@ -20,7 +20,9 @@ export interface ToolHandler {
 export interface ToolContext {
   sessionId: string | null;
   userId: string | null;
-  role: "adult" | "child" | "guest" | "user";
+  /** Same vocabulary as `PolicyContext["role"]`, and for the same reason —
+   *  this value is handed straight to `policy.evaluate`. */
+  role: PolicyContext["role"];
   sessionChannel: "voice" | "text";
 }
 

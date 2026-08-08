@@ -14,11 +14,11 @@ function fakeTokenService(validate: (token: string) => TokenResult<TokenPayload>
 }
 
 function adminPayload(userId: string): TokenPayload {
-  return { userId, isAdmin: true, issuedAt: 0, expiresAt: FAR_FUTURE };
+  return { userId, role: "admin", issuedAt: 0, expiresAt: FAR_FUTURE };
 }
 
 function memberPayload(userId: string): TokenPayload {
-  return { userId, isAdmin: false, issuedAt: 0, expiresAt: FAR_FUTURE };
+  return { userId, role: "adult", issuedAt: 0, expiresAt: FAR_FUTURE };
 }
 
 function adminRequest(token?: string): Request {

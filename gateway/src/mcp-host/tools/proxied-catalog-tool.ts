@@ -40,9 +40,10 @@ const BACKGROUND_MESSAGE = "this tool dispatched as a background task, which a d
 export interface ProxiedCatalogToolDeps {
   /** Resolves the delegated `ToolBroker` for the user on the other end of the
    *  socket. `null` means no broker could be built (no `orchestrator:` block, a
-   *  malformed user id) — the call then fails closed rather than running
-   *  unmediated. */
-  brokerFor(userId: string): ToolBroker | null;
+   *  malformed user id, or no user record to take a role from) — the call then
+   *  fails closed rather than running unmediated. Async because the broker's
+   *  authority is the DELEGATOR'S OWN ROLE, read from the user store. */
+  brokerFor(userId: string): Promise<ToolBroker | null>;
 }
 
 /** Coerce an upstream JSON-Schema blob into the shape `tools/list` advertises.
@@ -79,7 +80,7 @@ export function createProxiedCatalogTool(ref: McpToolRef, deps: ProxiedCatalogTo
       log.warn("proxied-tool.no-user", { tool: ref.name, server: ref.serverName, reason: NO_USER_MESSAGE });
       return errorResult(NO_USER_MESSAGE);
     }
-    const broker = deps.brokerFor(ctx.userId);
+    const broker = await deps.brokerFor(ctx.userId);
     if (!broker) {
       log.warn("proxied-tool.no-broker", {
         tool: ref.name,

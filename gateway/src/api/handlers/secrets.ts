@@ -1,9 +1,12 @@
+import type { UserRole } from "@sentient/protocol";
 import { z } from "zod";
 import type { InstallState } from "../../admin/install-state.js";
 import type { LlmProvider, SecretsStore } from "../../admin/secrets-store.js";
 import { getLog } from "../../logging/logger.js";
 
 const log = getLog(["sentient", "gateway", "api", "secrets"]);
+
+const ADMIN_ROLE: UserRole = "admin";
 
 // --- HTTP status constants ---------------------------------------------------
 
@@ -48,7 +51,10 @@ const ActiveProviderSchema = z.object({ provider: z.enum(LLM_PROVIDERS) });
 
 // --- Deps -------------------------------------------------------------------
 
-export type RequireAdminFn = (req: Request) => Promise<{ ok: true; value: { isAdmin: boolean } } | { ok: false }>;
+/** Resolves the caller's ROLE, or `{ok:false}` if it cannot be established at
+ *  all. The role — not a boolean — because `admin` is one of them now; the
+ *  gate below is the only thing that decides what "admin" buys. */
+export type RequireAdminFn = (req: Request) => Promise<{ ok: true; value: { role: UserRole } } | { ok: false }>;
 
 export interface SecretsDeps {
   installState: InstallState;
@@ -79,7 +85,7 @@ export function createSecretsHandler(deps: SecretsDeps): (req: Request) => Promi
     if (!authResult.ok) {
       return jsonError(401, "unauthorized", "Missing or invalid token");
     }
-    if (!authResult.value.isAdmin) {
+    if (authResult.value.role !== ADMIN_ROLE) {
       return jsonError(HTTP_FORBIDDEN, "forbidden", "Admin role required");
     }
 

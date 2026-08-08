@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type {
-  AdminToggleError,
   CreateError,
   DeleteError,
   ResetError,
+  SetRoleError,
   UserProvisioner,
 } from "../../admin/user-provisioner.js";
 import { PROFILE_SCHEMA_VERSION } from "../../profile-store/profile-types.js";
@@ -37,7 +37,7 @@ function sampleUser(overrides?: Partial<UserRecord>): UserRecord {
     userId: "u_abc123",
     displayName: "Alice",
     pinHash: "$argon2id$fake",
-    isAdmin: true,
+    role: "admin",
     avatarTint: "terra",
     createdAt: "2026-01-01T00:00:00Z",
     ...overrides,
@@ -64,6 +64,7 @@ function makeProvisioner(): UserProvisioner {
       value: {
         userId: "u_11111111",
         displayName: "Bob",
+        role: "adult" as const,
         isAdmin: false,
         avatarTint: "sage" as const,
         createdAt: "2026-04-25T00:00:00Z",
@@ -71,7 +72,7 @@ function makeProvisioner(): UserProvisioner {
     })),
     deleteUser: vi.fn(async () => ({ ok: true as const, value: undefined })),
     resetPin: vi.fn(async () => ({ ok: true as const, value: undefined })),
-    setIsAdmin: vi.fn(async () => ({ ok: true as const, value: undefined })),
+    setRole: vi.fn(async () => ({ ok: true as const, value: undefined })),
   };
 }
 
@@ -526,13 +527,13 @@ describe("POST /api/v1/admin/users/:id/reset-pin", () => {
 
 describe("PATCH /api/v1/admin/users/:id", () => {
   it("returns 200 with the updated user when demoting a non-last admin", async () => {
-    const alice = sampleUser({ isAdmin: true });
-    const bob = sampleUser({ userId: "u_bob00000", isAdmin: true });
+    const alice = sampleUser({ role: "admin" });
+    const bob = sampleUser({ userId: "u_bob00000", role: "admin" });
     const provisioner = makeProvisioner();
     const userStore = makeUserStore([alice, bob]);
     (userStore.get as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true as const,
-      value: { ...alice, isAdmin: false },
+      value: { ...alice, role: "adult" },
     });
     const handler = createAdminHandler(makeDeps({ provisioner, userStore }));
 
@@ -552,9 +553,9 @@ describe("PATCH /api/v1/admin/users/:id", () => {
 
   it("returns 422 'last-admin' when demoting the only admin", async () => {
     const provisioner = makeProvisioner();
-    (provisioner.setIsAdmin as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (provisioner.setRole as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: false,
-      error: "last-admin" as AdminToggleError,
+      error: "last-admin" as SetRoleError,
     });
     const handler = createAdminHandler(makeDeps({ provisioner }));
 
@@ -573,9 +574,9 @@ describe("PATCH /api/v1/admin/users/:id", () => {
 
   it("returns 404 when user does not exist", async () => {
     const provisioner = makeProvisioner();
-    (provisioner.setIsAdmin as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (provisioner.setRole as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: false,
-      error: "not-found" as AdminToggleError,
+      error: "not-found" as SetRoleError,
     });
     const handler = createAdminHandler(makeDeps({ provisioner }));
 

@@ -1,4 +1,7 @@
+import type { UserRole } from "@sentient/protocol";
 import type { TokenService } from "../../user-auth/token-service.ts";
+
+const ADMIN_ROLE: UserRole = "admin";
 
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_FORBIDDEN = 403;
@@ -33,11 +36,14 @@ export function requireAdminAuth(deps: AdminAuthDeps): (request: Request) => Pro
       return undefined;
     }
 
-    // 2. PASETO session token from admin user (webui)
+    // 2. PASETO session token from an admin-ROLE user (webui). The token's
+    //    `role` claim replaced the old `isAdmin` boolean — a token minted
+    //    before the claim existed fails `validate` outright, so there is no
+    //    roleless token to decide about here.
     if (deps.tokenService) {
       const result = await deps.tokenService.validate(token);
       if (result.ok) {
-        if (result.value.isAdmin) return undefined;
+        if (result.value.role === ADMIN_ROLE) return undefined;
         return new Response("Forbidden: admin required", { status: HTTP_FORBIDDEN });
       }
     }

@@ -63,7 +63,7 @@ const SAMPLE_ADMIN: UserRecord = {
   userId: ADMIN,
   displayName: "Admin",
   pinHash: "$argon2id$...",
-  isAdmin: true,
+  role: "admin",
   avatarTint: "terra",
   createdAt: "2026-01-01T00:00:00Z",
 };
@@ -72,7 +72,7 @@ const SAMPLE_USER: UserRecord = {
   userId: OTHER,
   displayName: "Other",
   pinHash: "$argon2id$...",
-  isAdmin: false,
+  role: "adult",
   avatarTint: "amber",
   createdAt: "2026-01-01T00:00:00Z",
 };
@@ -166,7 +166,7 @@ describe("UserProvisioner", () => {
     const result = await provisioner.createUser({
       displayName: "New",
       pin: "1234",
-      isAdmin: false,
+      role: "adult",
       profile: BRIDGE_PROFILE,
     });
 
@@ -190,7 +190,7 @@ describe("UserProvisioner", () => {
     const result = await provisioner.createUser({
       displayName: "New",
       pin: "1234",
-      isAdmin: false,
+      role: "adult",
       profile: BRIDGE_PROFILE,
     });
 
@@ -205,7 +205,7 @@ describe("UserProvisioner", () => {
     const result = await provisioner.createUser({
       displayName: "New",
       pin: "1234",
-      isAdmin: false,
+      role: "adult",
       profile: BRIDGE_PROFILE,
     });
 
@@ -230,7 +230,7 @@ describe("UserProvisioner", () => {
     const result = await provisioner.createUser({
       displayName: "New",
       pin: "1234",
-      isAdmin: false,
+      role: "adult",
       profile: BRIDGE_PROFILE,
     });
 
@@ -248,7 +248,7 @@ describe("UserProvisioner", () => {
     const result = await provisioner.createUser({
       displayName: "New",
       pin: "1234",
-      isAdmin: false,
+      role: "adult",
       profile: BRIDGE_PROFILE,
     });
 
@@ -295,9 +295,9 @@ describe("UserProvisioner", () => {
     expect(callLog.some((c) => c.method === "archiveUserDir")).toBe(false);
   });
 
-  it("setIsAdmin demote-only-admin — returns last-admin", async () => {
+  it("setRole demote-only-admin — returns last-admin", async () => {
     const { provisioner } = buildMocks({ listUsers: ok([SAMPLE_ADMIN]) });
-    const result = await provisioner.setIsAdmin(ADMIN, false);
+    const result = await provisioner.setRole(ADMIN, "adult");
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toBe("last-admin");
   });

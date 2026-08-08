@@ -396,11 +396,24 @@ describe("seq/epoch stamping on gateway push frames", () => {
   it("parses auth.ok WITH seq/epoch", () => {
     const result = gatewayMessageSchema.safeParse({
       type: "auth.ok",
-      user: { userId: "u_a1b2c3d4", displayName: "Kevin", isAdmin: false, avatarTint: "terra" },
+      user: { userId: "u_a1b2c3d4", displayName: "Kevin", role: "adult", isAdmin: false, avatarTint: "terra" },
       seq: 0,
       epoch: 1,
     });
     expect(result.success).toBe(true);
+  });
+
+  // WIRE CONTRACT. `role` is REQUIRED on auth.ok as of plan
+  // 2026-08-07-tool-permissions task 2b. A gateway that forgot to stamp it
+  // would have its auth ack DROPPED by `sendGatewayFrame` rather than sent,
+  // hanging every client at connect — so the schema must refuse it here, loudly
+  // and in a test, instead of at runtime.
+  it("rejects an auth.ok whose user carries no role", () => {
+    const result = gatewayMessageSchema.safeParse({
+      type: "auth.ok",
+      user: { userId: "u_a1b2c3d4", displayName: "Kevin", isAdmin: false, avatarTint: "terra" },
+    });
+    expect(result.success).toBe(false);
   });
 
   it("parses tasklist.state WITH seq/epoch", () => {

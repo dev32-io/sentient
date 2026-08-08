@@ -10,7 +10,7 @@ function sample(overrides: Partial<UserRecord> = {}): UserRecord {
     userId: "kevin",
     displayName: "Kevin",
     pinHash: "$argon2id$fake",
-    isAdmin: true,
+    role: "admin",
     avatarTint: "terra",
     createdAt: "2026-04-24T00:00:00.000Z",
     ...overrides,

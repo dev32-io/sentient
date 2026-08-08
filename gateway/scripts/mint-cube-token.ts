@@ -40,7 +40,9 @@ async function main(): Promise<void> {
     if (!Array.isArray(users) || users.length === 0) {
         throw new Error(`mint: ${usersPath} has no users — run wizard first`);
     }
-    const admin = users.find((u) => u && u.isAdmin === true);
+    // Accepts either shape: `role: "admin"` (current) or the pre-role
+    // `isAdmin: true`, since a dev box may not have rewritten users.json yet.
+    const admin = users.find((u) => u && (u.role === "admin" || u.isAdmin === true));
     if (!admin) {
         throw new Error(`mint: ${usersPath} has no admin user`);
     }
@@ -48,7 +50,7 @@ async function main(): Promise<void> {
     const tokens = createTokenService({ secret, ttlSeconds: DEV_TTL_SECONDS });
     const token = await tokens.issue({
         userId: String(admin.userId),
-        isAdmin: true,
+        role: "admin",
     });
 
     process.stdout.write(token);

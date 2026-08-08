@@ -6,7 +6,7 @@ import { createApplyHandler } from "./apply.js";
 
 function makeRouterDeps(overrides: Partial<RouterDeps> = {}): RouterDeps {
   return {
-    isAdmin: vi.fn(async () => true),
+    roleOf: vi.fn(async () => "admin" as const),
     diffSecrets: vi.fn(async () => []),
     perUserApply: vi.fn(async () => ({ ok: true as const, value: { state: "ready" as const, elapsedMs: 10 } })),
     systemOrchestrator: {
@@ -90,7 +90,7 @@ describe("POST /api/v1/apply handler", () => {
       value: { state: "ready" as const, elapsedMs: 42 },
     }));
     const handler = createApplyHandler({
-      routerDeps: makeRouterDeps({ isAdmin: vi.fn(async () => true), perUserApply }),
+      routerDeps: makeRouterDeps({ roleOf: vi.fn(async () => "admin" as const), perUserApply }),
       authenticate: makeAuthenticate("alice"),
     });
     const res = await handler(makeRequest("POST", { profile: { model: { provider: "openrouter" } }, secrets: null }));
@@ -101,7 +101,7 @@ describe("POST /api/v1/apply handler", () => {
 
   it("returns 403 for non-admin user attempting system (secrets) apply", async () => {
     const handler = createApplyHandler({
-      routerDeps: makeRouterDeps({ isAdmin: vi.fn(async () => false) }),
+      routerDeps: makeRouterDeps({ roleOf: vi.fn(async () => "adult" as const) }),
       authenticate: makeAuthenticate("bob"),
     });
     const res = await handler(

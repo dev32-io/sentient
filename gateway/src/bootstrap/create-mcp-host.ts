@@ -122,6 +122,9 @@ export async function createMcpHost(options: McpHostOptions): Promise<McpHost> {
           toolsConfig: proxy.toolsConfig,
           accessManager: proxy.accessManager,
           profileStore: proxy.profileStore,
+          // The delegator's role comes off the SAME store the auth gate reads,
+          // so a delegation can never hold authority its delegator does not.
+          userStore,
         }),
         hostedNames: new Set(hostedTools.map((tool) => tool.def.name)),
       })

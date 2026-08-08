@@ -22,6 +22,7 @@
 import { audioPrefsPatchSchema } from "@sentient/audio-prefs";
 import { z } from "zod";
 import { conversationFeedItemSchema } from "./conversation.ts";
+import { userRoleSchema } from "./roles.ts";
 import {
   conversationActivateSchema,
   sessionCreatedEventSchema,
@@ -295,10 +296,17 @@ export type ClientMessage = z.infer<typeof clientMessageSchema>;
 /** The authenticated user, as the clients render it (avatar + display name).
  *  `avatarTint` stays a plain string rather than the tint enum on purpose: a
  *  legacy or hand-edited user record with an unknown tint must degrade to a
- *  wrong colour, never to a dropped auth ack. */
+ *  wrong colour, never to a dropped auth ack.
+ *
+ *  `role` is the real field; `isAdmin` is DERIVED from it (`role === "admin"`)
+ *  and kept beside it so webui / Android / iOS keep compiling and behaving
+ *  correctly while they migrate to reading the role (plan
+ *  2026-08-07-tool-permissions tasks 6–9). Removing the derived field is a
+ *  follow-up, not part of adding the role. */
 const authUserSchema = z.object({
   userId: z.string(),
   displayName: z.string(),
+  role: userRoleSchema,
   isAdmin: z.boolean(),
   avatarTint: z.string(),
 });

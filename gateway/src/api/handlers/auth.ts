@@ -127,7 +127,9 @@ async function createFirstAdmin(
   const r = await provisioner.createUser({
     displayName: data.displayName,
     pin: data.pin,
-    isAdmin: true,
+    // First run: this account IS the household's operator, so it gets the one
+    // role that reaches the admin REST surface and the `admin` impact tier.
+    role: "admin",
     profile,
   });
   if (!r.ok) {
@@ -156,18 +158,7 @@ async function createFirstAdmin(
     }
   }
 
-  return Response.json(
-    {
-      token: authResult.value.token,
-      user: {
-        userId: authResult.value.user.userId,
-        displayName: authResult.value.user.displayName,
-        isAdmin: authResult.value.user.isAdmin,
-        avatarTint: authResult.value.user.avatarTint,
-      },
-    },
-    { status: HTTP_OK },
-  );
+  return buildAuthResponse(authResult.value.token, authResult.value.user);
 }
 
 async function handleSetup(deps: AuthHandlerDeps, request: Request): Promise<Response> {
@@ -258,18 +249,7 @@ async function handleLogin(deps: AuthHandlerDeps, request: Request): Promise<Res
     log.debug("login.rejected", { userId: bodyOrError.userId, reason: r.error });
     return jsonError(HTTP_UNAUTHORIZED, "invalid-credentials");
   }
-  return Response.json(
-    {
-      token: r.value.token,
-      user: {
-        userId: r.value.user.userId,
-        displayName: r.value.user.displayName,
-        isAdmin: r.value.user.isAdmin,
-        avatarTint: r.value.user.avatarTint,
-      },
-    },
-    { status: HTTP_OK },
-  );
+  return buildAuthResponse(r.value.token, r.value.user);
 }
 
 function jsonError(status: number, code: string): Response {
@@ -304,9 +284,18 @@ function readBearer(request: Request): string | null {
   return parts[1] ?? null;
 }
 
-function buildMeResponse(token: string, user: UserRecord): Response {
-  const { userId, displayName, isAdmin, avatarTint } = user;
-  return Response.json({ token, user: { userId, displayName, isAdmin, avatarTint } }, { status: HTTP_OK });
+/** The `{ token, user }` body every auth route answers with.
+ *
+ *  `isAdmin` is DERIVED from `role`, never stored. It stays on the wire beside
+ *  `role` so webui / Android / iOS keep compiling and behaving correctly
+ *  through the rest of plan 2026-08-07-tool-permissions; they migrate to
+ *  reading `role` in tasks 6–9 and the derived field retires after that. */
+function buildAuthResponse(token: string, user: UserRecord): Response {
+  const { userId, displayName, role, avatarTint } = user;
+  return Response.json(
+    { token, user: { userId, displayName, role, isAdmin: role === "admin", avatarTint } },
+    { status: HTTP_OK },
+  );
 }
 
 async function handleMe(deps: AuthHandlerDeps, request: Request): Promise<Response> {
@@ -327,7 +316,7 @@ async function handleMe(deps: AuthHandlerDeps, request: Request): Promise<Respon
   }
   const refreshed = await deps.auth.tokens.refresh(token);
   if (!refreshed.ok) return jsonError(HTTP_UNAUTHORIZED, refreshed.error);
-  return buildMeResponse(refreshed.value, userR.value);
+  return buildAuthResponse(refreshed.value, userR.value);
 }
 
 async function handleLogout(_deps: AuthHandlerDeps, request: Request): Promise<Response> {
@@ -358,7 +347,7 @@ async function handleUpdateMe(deps: AuthHandlerDeps, request: Request): Promise<
     return jsonError(HTTP_INTERNAL, "io-error");
   }
   log.info("updateMe.ok", { userId: valid.value.userId });
-  return buildMeResponse(token, r.value);
+  return buildAuthResponse(token, r.value);
 }
 
 async function handleChangePin(deps: AuthHandlerDeps, request: Request): Promise<Response> {

@@ -40,7 +40,7 @@ describe("createProxiedCatalogTool", () => {
   // would never see the call, its arguments, or its deny.
   it("dispatches through the broker rather than dialing the upstream server", async () => {
     const broker = fakeBroker({ content: "three results", isError: false });
-    const tool = createProxiedCatalogTool(REF, { brokerFor: () => broker });
+    const tool = createProxiedCatalogTool(REF, { brokerFor: async () => broker });
 
     const result = await tool.run({ query: "tide times" }, CTX);
 
@@ -54,7 +54,7 @@ describe("createProxiedCatalogTool", () => {
   // as an error the delegated model can read, never as a silent success.
   it("surfaces a broker deny as an error result", async () => {
     const broker = fakeBroker({ content: "denied by policy", isError: true });
-    const tool = createProxiedCatalogTool(REF, { brokerFor: () => broker });
+    const tool = createProxiedCatalogTool(REF, { brokerFor: async () => broker });
 
     const result = await tool.run({ query: "x" }, CTX);
 
@@ -64,7 +64,7 @@ describe("createProxiedCatalogTool", () => {
 
   // Fail closed: with no broker there is no PDP, so there must be no call.
   it("fails closed when no broker can be resolved for the connection's user", async () => {
-    const tool = createProxiedCatalogTool(REF, { brokerFor: () => null });
+    const tool = createProxiedCatalogTool(REF, { brokerFor: async () => null });
 
     const result = await tool.run({ query: "x" }, CTX);
 
@@ -73,7 +73,7 @@ describe("createProxiedCatalogTool", () => {
 
   it("fails closed when the connection carries no user", async () => {
     const broker = fakeBroker({ content: "should never run", isError: false });
-    const tool = createProxiedCatalogTool(REF, { brokerFor: () => broker });
+    const tool = createProxiedCatalogTool(REF, { brokerFor: async () => broker });
 
     const result = await tool.run({ query: "x" }, { ...CTX, userId: null });
 
@@ -86,7 +86,7 @@ describe("createProxiedCatalogTool", () => {
   // nothing on this socket can ever observe.
   it("reports an error when the broker answers with a background taskId", async () => {
     const broker = fakeBroker({ taskId: "task-1" });
-    const tool = createProxiedCatalogTool(REF, { brokerFor: () => broker });
+    const tool = createProxiedCatalogTool(REF, { brokerFor: async () => broker });
 
     const result = await tool.run({ query: "x" }, CTX);
 

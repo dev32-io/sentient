@@ -1,5 +1,6 @@
+import { type UserRole, userRoleSchema } from "@sentient/protocol";
 import { z } from "zod";
-import type { UserProvisioner, UserSummary } from "../../admin/user-provisioner.ts";
+import { type UserProvisioner, type UserSummary, buildUserSummary } from "../../admin/user-provisioner.ts";
 import { getLog } from "../../logging/logger.ts";
 import { applyProfileDefaults } from "../../profile-store/profile-defaults.js";
 import { PROFILE_SCHEMA_VERSION, profileV1Schema } from "../../profile-store/profile-types.ts";
@@ -24,14 +25,35 @@ const HTTP_BAD_GATEWAY = 502;
 // is server-stamped — both are omitted from the request body.
 const profileBodySchema = profileV1Schema.omit({ userId: true, schemaVersion: true });
 
+// `role` is the real field; `isAdmin` is the legacy spelling the three clients
+// still send (plan 2026-08-07-tool-permissions tasks 6–9 migrate them). Both
+// are optional and `role` wins, so a client can move over one at a time without
+// a flag day. Neither present means the owner's default, `adult` — a create
+// call that says nothing about authority must not confer any.
 const createSchema = z.object({
   displayName: z.string().min(1).max(64),
   pin: z.string().regex(/^\d{4}$/),
-  isAdmin: z.boolean(),
+  role: userRoleSchema.optional(),
+  isAdmin: z.boolean().optional(),
   profile: profileBodySchema,
 });
 const resetPinSchema = z.object({ pin: z.string().regex(/^\d{4}$/) });
-const patchSchema = z.object({ isAdmin: z.boolean() });
+// A PATCH that names NEITHER field is rejected rather than silently re-roling
+// somebody to the default.
+const patchSchema = z
+  .object({ role: userRoleSchema.optional(), isAdmin: z.boolean().optional() })
+  .refine((body) => body.role !== undefined || body.isAdmin !== undefined, {
+    message: "one of `role` or `isAdmin` is required",
+  });
+
+/** Resolve the legacy boolean onto the role vocabulary. `true → admin`,
+ *  `false → adult` — the same mapping the stored-record migration uses, so a
+ *  client that never migrates keeps producing exactly what it used to. */
+function resolveRole(body: { role?: UserRole | undefined; isAdmin?: boolean | undefined }): UserRole | undefined {
+  if (body.role !== undefined) return body.role;
+  if (body.isAdmin === undefined) return undefined;
+  return body.isAdmin ? "admin" : "adult";
+}
 
 // --- Route patterns ----------------------------------------------------------
 
@@ -79,13 +101,7 @@ async function handleListUsers(deps: AdminDeps): Promise<Response> {
   const usersResult = await deps.userStore.list();
   if (!usersResult.ok) return mapStoreError(usersResult.error);
 
-  const summaries: UserSummary[] = usersResult.value.map((u) => ({
-    userId: u.userId,
-    displayName: u.displayName,
-    isAdmin: u.isAdmin,
-    avatarTint: u.avatarTint,
-    createdAt: u.createdAt,
-  }));
+  const summaries: UserSummary[] = usersResult.value.map(buildUserSummary);
   return Response.json({ users: summaries }, { status: HTTP_OK });
 }
 
@@ -104,10 +120,16 @@ async function handleCreateUser(deps: AdminDeps, req: Request): Promise<Response
   const rawProfile = { ...parsed.data.profile, schemaVersion: PROFILE_SCHEMA_VERSION as 1, userId: "" };
   const profile = applyProfileDefaults(rawProfile);
 
-  const result = await deps.provisioner.createUser({ ...parsed.data, profile });
+  const role = resolveRole(parsed.data);
+  const result = await deps.provisioner.createUser({
+    displayName: parsed.data.displayName,
+    pin: parsed.data.pin,
+    ...(role === undefined ? {} : { role }),
+    profile,
+  });
   if (!result.ok) return mapCreateError(result.error);
 
-  log.info("createUser.success", { userId: result.value.userId });
+  log.info("createUser.success", { userId: result.value.userId, role: result.value.role });
   return Response.json({ user: result.value }, { status: HTTP_CREATED });
 }
 
@@ -146,23 +168,19 @@ async function handlePatchUser(deps: AdminDeps, req: Request, userId: string): P
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) return jsonError(HTTP_UNPROCESSABLE, "schema", parsed.error.message);
 
-  const result = await deps.provisioner.setIsAdmin(userId, parsed.data.isAdmin);
-  if (!result.ok) return mapToggleError(result.error);
+  const role = resolveRole(parsed.data);
+  if (role === undefined) return jsonError(HTTP_UNPROCESSABLE, "schema", "one of `role` or `isAdmin` is required");
+
+  const result = await deps.provisioner.setRole(userId, role);
+  if (!result.ok) return mapSetRoleError(result.error);
 
   const userResult = await deps.userStore.get(userId);
   if (!userResult.ok || userResult.value === null) {
     return mapStoreError("io-error");
   }
 
-  const rec = userResult.value;
-  const summary: UserSummary = {
-    userId: rec.userId,
-    displayName: rec.displayName,
-    isAdmin: rec.isAdmin,
-    avatarTint: rec.avatarTint,
-    createdAt: rec.createdAt,
-  };
-  return Response.json({ user: summary }, { status: HTTP_OK });
+  log.info("patchUser.success", { userId, role });
+  return Response.json({ user: buildUserSummary(userResult.value) }, { status: HTTP_OK });
 }
 
 // --- Error mappers -----------------------------------------------------------
@@ -170,7 +188,7 @@ async function handlePatchUser(deps: AdminDeps, req: Request, userId: string): P
 type CreateError = "hash-error" | "io-error" | "apply-error" | "invalid-profile";
 type DeleteError = "not-found" | "last-admin" | "io-error";
 type ResetError = "hash-error" | "not-found" | "io-error";
-type ToggleError = "last-admin" | "not-found" | "io-error";
+type SetRoleError = "last-admin" | "not-found" | "io-error";
 
 function mapCreateError(error: CreateError): Response {
   const map: Record<CreateError, { status: number; code: string }> = {
@@ -195,7 +213,7 @@ function mapResetError(error: ResetError): Response {
   return jsonError(HTTP_INTERNAL_ERROR, "io-error", error);
 }
 
-function mapToggleError(error: ToggleError): Response {
+function mapSetRoleError(error: SetRoleError): Response {
   if (error === "not-found") return jsonError(HTTP_NOT_FOUND, "not-found", error);
   if (error === "last-admin") return jsonError(HTTP_UNPROCESSABLE, "last-admin", error);
   return jsonError(HTTP_INTERNAL_ERROR, "io-error", error);

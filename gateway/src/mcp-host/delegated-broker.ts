@@ -14,27 +14,35 @@
 //     inside re-prompts, by design. The broker turns the rejection into a deny
 //     whose message reaches the delegated model verbatim, so a confirm-tier
 //     tool fails closed with an explanation rather than hanging.
-//   * The principal's role is `DELEGATED_PRINCIPAL_ROLE` — the same default a
-//     real session gets. A delegated agent acts FOR its user, never above
-//     them, so this synthetic principal is what stands in for that user until
-//     a real per-user role model lands (see `ws-auth-gate.ts`'s own
-//     `DEFAULT_PRINCIPAL_ROLE` stub). `AccessManager.grant` bakes THIS role
-//     into the capability below exactly as it would for a real session's
-//     principal — no special-casing here — so the delegated capability's role
-//     always tracks whatever the delegating user's own role resolves to, both
-//     today (a shared stub) and once the real model lands (both call sites
-//     move together, same as the comment they both already carry).
+//   * The principal's role is THE DELEGATOR'S OWN, read from the user store on
+//     the way in. A delegated agent acts FOR its user, never above them, so
+//     there is no delegated role constant any more — the one that used to live
+//     in `external-tools/delegated-tool-tier.ts` is deleted. `AccessManager.
+//     grant` bakes this role into the capability below exactly as it does for
+//     a real session's principal, no special-casing, which is what makes the
+//     bound provable rather than asserted: the ONLY role a delegated broker can
+//     ever hold is one that came out of `userStore.get(userId).role`, the same
+//     record `ws-auth-gate.ts` reads for that user's own sessions. A delegation
+//     therefore cannot exceed its delegator, and an unresolvable delegator
+//     yields NO broker at all rather than a defaulted one.
 //
 // It shares the SESSION broker's per-tool permission reader for exactly that
 // last reason: a tool its user set to Deny or Off must be refused here too, or
-// "delegate it to Hermes" becomes the way around a setting. This broker is
-// cached for the process lifetime, so the reader is called per dispatch (inside
-// `resolveDecision`) rather than snapshotted — a settings change reaches an
-// already-built delegated broker.
+// "delegate it to Hermes" becomes the way around a setting. The reader is
+// called per dispatch (inside `resolveDecision`) rather than snapshotted, so a
+// settings change reaches an already-built delegated broker.
+//
+// THE CACHE IS KEYED ON THE ROLE, not just the user. A broker holds its role by
+// value in an immutable capability, so a cached one built while its user was an
+// adult would keep adult authority after a demotion — the cache would become
+// the escalation the lookup exists to prevent. Re-resolving the role per call
+// and rebuilding on a change costs one users.json read, which is what every
+// login already pays.
 
 import type { OrchestratorConfig } from "@sentient/config";
+import type { UserRole } from "@sentient/protocol";
 import type { AccessManager } from "../access/access-manager.js";
-import { DELEGATED_PRINCIPAL_ROLE, PROXIED_TOOL_CONTEXT } from "../external-tools/delegated-tool-tier.js";
+import { PROXIED_TOOL_CONTEXT } from "../external-tools/delegated-tool-tier.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
 import type { ProfileStore } from "../profile-store/profile-store.js";
@@ -44,11 +52,12 @@ import type { McpClient } from "../tools/mcp-client.js";
 import { type ToolBroker, createToolBroker } from "../tools/tool-broker.js";
 import { ConfirmUnavailableError } from "../tools/tool-types.js";
 import { createToolPermissionsReader } from "../tools/user-tool-permissions.js";
+import type { UserStore } from "../user-auth/user-store.js";
 
 const log = getLog(["sentient", "mcp-host", "delegated-broker"]);
 
 /** Households are not modelled yet — `ws-auth-gate.ts` uses the same literal
- *  for every real session. Both move together when the role model lands. */
+ *  for every real session. Both move together when households land. */
 const DELEGATED_HOUSEHOLD_ID = "home";
 
 /** Model-facing copy. `tool-broker.ts` forwards a `ConfirmUnavailableError`'s
@@ -71,6 +80,10 @@ export interface DelegatedBrokerFactoryDeps {
    *  delegated call is bound by the same per-tool settings a foreground one
    *  is. See the file header. */
   profileStore: ProfileStore;
+  /** Resolves the DELEGATOR's role — the same record `ws-auth-gate.ts` reads
+   *  when that user opens a session of their own. This is the entire bound on
+   *  a delegation's authority: no other value can reach the capability. */
+  userStore: Pick<UserStore, "get">;
 }
 
 /**
@@ -99,18 +112,54 @@ function unusedStore(): SessionStore {
   };
 }
 
-export type DelegatedBrokerFactory = (userId: string) => ToolBroker | null;
+/** ASYNC because resolving the delegator's role is a store read, and there is
+ *  no correct synchronous answer to substitute for it. Callers are already in
+ *  an async tool handler (`proxied-catalog-tool.ts`). */
+export type DelegatedBrokerFactory = (userId: string) => Promise<ToolBroker | null>;
+
+interface CachedBroker {
+  /** The role the cached broker's capability was minted with. A mismatch with
+   *  the store means the user was re-roled and the broker must be rebuilt. */
+  readonly role: UserRole;
+  readonly broker: ToolBroker;
+}
 
 export function createDelegatedBrokerFactory(deps: DelegatedBrokerFactoryDeps): DelegatedBrokerFactory {
-  const brokers = new Map<string, ToolBroker>();
+  const brokers = new Map<string, CachedBroker>();
 
-  return (userId: string): ToolBroker | null => {
+  async function resolveRole(userId: string): Promise<UserRole | null> {
+    const stored = await deps.userStore.get(userId);
+    if (!stored.ok || stored.value === null) {
+      // FAIL CLOSED. No record means no delegator to act for, so there is no
+      // authority to attenuate — the caller turns a null broker into a legible
+      // "the gateway cannot mediate this call right now".
+      log.warn("delegated-broker.no-delegator", {
+        userId,
+        reason: stored.ok ? "no such user record" : stored.error,
+      });
+      return null;
+    }
+    return stored.value.role;
+  }
+
+  return async (userId: string): Promise<ToolBroker | null> => {
+    const role = await resolveRole(userId);
+    if (role === null) return null;
+
     const cached = brokers.get(userId);
-    if (cached) return cached;
+    if (cached) {
+      if (cached.role === role) return cached.broker;
+      log.info("delegated-broker.role-changed", {
+        userId,
+        from: cached.role,
+        to: role,
+        reason: "capability holds its role by value; rebuilding rather than serving stale authority",
+      });
+    }
 
     let broker: ToolBroker;
     try {
-      const principal = createUserPrincipal(userId, DELEGATED_PRINCIPAL_ROLE, DELEGATED_HOUSEHOLD_ID);
+      const principal = createUserPrincipal(userId, role, DELEGATED_HOUSEHOLD_ID);
       const capability = deps.accessManager.grant(principal, "tool-broker");
       broker = createToolBroker({
         mcp: deps.mcp,
@@ -139,10 +188,11 @@ export function createDelegatedBrokerFactory(deps: DelegatedBrokerFactoryDeps): 
       return null;
     }
 
-    brokers.set(userId, broker);
+    brokers.set(userId, { role, broker });
     log.info("delegated-broker.created", {
       userId,
-      role: PROXIED_TOOL_CONTEXT.role,
+      role,
+      advertisedRole: PROXIED_TOOL_CONTEXT.role,
       sessionChannel: PROXIED_TOOL_CONTEXT.sessionChannel,
     });
     return broker;

@@ -34,7 +34,7 @@ describe("createAuthService", () => {
       userId: "kevin",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: true,
+      role: "admin",
       avatarTint: "terra",
     });
     expect(r.ok).toBe(true);
@@ -51,7 +51,7 @@ describe("createAuthService", () => {
       userId: "kevin",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: false,
+      role: "adult",
       avatarTint: "sage",
     });
     const r = await svc.authenticate("kevin", "1234");
@@ -61,7 +61,7 @@ describe("createAuthService", () => {
     expect(valid.ok).toBe(true);
     if (!valid.ok) throw new Error("unreachable");
     expect(valid.value.userId).toBe("kevin");
-    expect(valid.value.isAdmin).toBe(false);
+    expect(valid.value.role).toBe("adult");
   });
 
   it("authenticate with wrong pin returns invalid-credentials", async () => {
@@ -70,7 +70,7 @@ describe("createAuthService", () => {
       userId: "kevin",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: true,
+      role: "admin",
       avatarTint: "terra",
     });
     const r = await svc.authenticate("kevin", "9999");
@@ -89,7 +89,7 @@ describe("createAuthService", () => {
       userId: "kevin",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: true,
+      role: "admin",
       avatarTint: "terra",
     };
     await svc.createUser(a);
@@ -103,7 +103,7 @@ describe("createAuthService", () => {
       userId: "kevin",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: true,
+      role: "admin",
       avatarTint: "terra",
     });
     const r = await svc.listUsersPublic();
@@ -112,7 +112,7 @@ describe("createAuthService", () => {
     expect(r.value).toEqual([{ userId: "kevin", displayName: "Kevin", avatarTint: "terra" }]);
     for (const u of r.value as unknown as Array<Record<string, unknown>>) {
       expect("pinHash" in u).toBe(false);
-      expect("isAdmin" in u).toBe(false);
+      expect("role" in u).toBe(false);
     }
   });
 
@@ -123,7 +123,7 @@ describe("createAuthService", () => {
       userId: "kevin",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: true,
+      role: "admin",
       avatarTint: "terra",
     });
     expect(await svc.isFirstRun()).toBe(false);
@@ -135,7 +135,7 @@ describe("createAuthService", () => {
       userId: "kevin",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: false,
+      role: "adult",
       avatarTint: "sage",
     });
     const r = await svc.updateDisplayName("kevin", "Kevin Updated");
@@ -159,7 +159,7 @@ describe("createAuthService", () => {
       userId: "kevin",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: false,
+      role: "adult",
       avatarTint: "sage",
     });
     const r = await svc.changePin("kevin", "1234", "5678");
@@ -176,7 +176,7 @@ describe("createAuthService", () => {
       userId: "kevin",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: false,
+      role: "adult",
       avatarTint: "sage",
     });
     const r = await svc.changePin("kevin", "9999", "5678");
@@ -195,7 +195,7 @@ describe("createAuthService", () => {
       userId: "kevin",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: false,
+      role: "adult",
       avatarTint: "sage",
     });
     // Remove write permission from dir: reads (r-x) still work but creating .tmp fails
@@ -211,7 +211,7 @@ describe("createAuthService", () => {
       userId: "kevin",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: false,
+      role: "adult",
       avatarTint: "sage",
     });
     // Remove write permission from dir: reads (r-x) still work but creating .tmp fails
@@ -277,7 +277,7 @@ describe("createAuthService — failed logins are logged (D20)", () => {
 
   it("SECURITY: a wrong-pin login is logged at WARN with a reason, never the pin", async () => {
     const auth = await createAuthService(AUTH_CONFIG);
-    await auth.createUser({ userId: "kevin", displayName: "Kevin", pin: "1234", isAdmin: false, avatarTint: "sage" });
+    await auth.createUser({ userId: "kevin", displayName: "Kevin", pin: "1234", role: "adult", avatarTint: "sage" });
     warnings = []; // createUser logs at INFO, not WARN, but clear defensively
     await auth.authenticate("kevin", "9999");
     expect(warnings).toContainEqual(expect.objectContaining({ userId: "kevin", reason: expect.any(String) }));
@@ -288,7 +288,7 @@ describe("createAuthService — failed logins are logged (D20)", () => {
 
   it("the no-user and wrong-pin reasons are distinguishable", async () => {
     const auth = await createAuthService(AUTH_CONFIG);
-    await auth.createUser({ userId: "kevin", displayName: "Kevin", pin: "1234", isAdmin: false, avatarTint: "sage" });
+    await auth.createUser({ userId: "kevin", displayName: "Kevin", pin: "1234", role: "adult", avatarTint: "sage" });
     await auth.authenticate("u_ghost", "0000");
     await auth.authenticate("kevin", "9999");
     expect(warnings).toHaveLength(2);
@@ -298,7 +298,7 @@ describe("createAuthService — failed logins are logged (D20)", () => {
 
   it("a successful login does not log at WARN", async () => {
     const auth = await createAuthService(AUTH_CONFIG);
-    await auth.createUser({ userId: "kevin", displayName: "Kevin", pin: "1234", isAdmin: false, avatarTint: "sage" });
+    await auth.createUser({ userId: "kevin", displayName: "Kevin", pin: "1234", role: "adult", avatarTint: "sage" });
     warnings = [];
     const r = await auth.authenticate("kevin", "1234");
     expect(r.ok).toBe(true);

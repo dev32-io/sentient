@@ -51,7 +51,7 @@ export interface ProxiedToolSurfaceDeps {
    *  entry's `tools.include`. */
   listCatalogTools(): Promise<McpToolRef[]>;
   policy: PolicyEngine;
-  brokerFor(userId: string): ToolBroker | null;
+  brokerFor(userId: string): Promise<ToolBroker | null>;
   /** EVERY name the gateway implements in-process — including the ones the
    *  tier withholds. A catalog tool with a matching name is DROPPED, never
    *  shadowed: two handlers under one name would make the PDP decision and the

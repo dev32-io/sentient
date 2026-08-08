@@ -1,5 +1,5 @@
 import type { AuthConfig } from "@sentient/config";
-import type { Result } from "@sentient/protocol";
+import type { Result, UserRole } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
 import { loadOrCreateAuthSecret } from "./auth-secret.js";
 import { hashPin, verifyPin } from "./pin-service.js";
@@ -13,9 +13,14 @@ export interface CreateUserInput {
   userId: string;
   displayName: string;
   pin: string;
-  isAdmin: boolean;
+  /** Omitted means `adult` — the owner's default for a new household member.
+   *  Never inferred from anything else; a caller that wants an operator asks
+   *  for one by name. */
+  role?: UserRole;
   avatarTint: AvatarTint;
 }
+
+const DEFAULT_ROLE: UserRole = "adult";
 
 export type CreateUserError = "already-exists" | "io-error";
 export type AuthError = "invalid-credentials";
@@ -62,7 +67,7 @@ export async function createAuthService(authConfig: AuthConfig): Promise<AuthSer
         userId: input.userId,
         displayName: input.displayName,
         pinHash,
-        isAdmin: input.isAdmin,
+        role: input.role ?? DEFAULT_ROLE,
         avatarTint: input.avatarTint,
         createdAt: new Date().toISOString(),
       };
@@ -71,7 +76,7 @@ export async function createAuthService(authConfig: AuthConfig): Promise<AuthSer
         if (r.error === "already-exists") return { ok: false, error: "already-exists" };
         return { ok: false, error: "io-error" };
       }
-      log.info("createUser", { userId: rec.userId, isAdmin: rec.isAdmin });
+      log.info("createUser", { userId: rec.userId, role: rec.role });
       return { ok: true, value: rec };
     },
 
@@ -90,8 +95,8 @@ export async function createAuthService(authConfig: AuthConfig): Promise<AuthSer
         log.warn("authenticate.wrong-pin", { userId, reason: "wrong pin" });
         return { ok: false, error: "invalid-credentials" };
       }
-      const token = await tokens.issue({ userId: r.value.userId, isAdmin: r.value.isAdmin });
-      log.info("authenticate.ok", { userId: r.value.userId });
+      const token = await tokens.issue({ userId: r.value.userId, role: r.value.role });
+      log.info("authenticate.ok", { userId: r.value.userId, role: r.value.role });
       return { ok: true, value: { token, user: r.value } };
     },
 

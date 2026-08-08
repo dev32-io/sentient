@@ -14,7 +14,7 @@ import { createProfileEditHandler } from "./api/handlers/profile-edit.ts";
 import { createProfileHandler } from "./api/handlers/profile.ts";
 import { createProvidersHandler } from "./api/handlers/providers.ts";
 import { createReadyHandler } from "./api/handlers/ready.ts";
-import { createSecretsHandler } from "./api/handlers/secrets.ts";
+import { type RequireAdminFn, createSecretsHandler } from "./api/handlers/secrets.ts";
 import { createServicesVersionsHandler } from "./api/handlers/services-versions.ts";
 import { createSessionsHandler } from "./api/handlers/sessions.ts";
 import { createSystemStatusHandler } from "./api/handlers/system-status.ts";
@@ -255,18 +255,17 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
 }
 
 /** Builds a requireAdmin function for the secrets handler from TokenService + static admin token. */
-function buildRequireAdmin(
-  tokenService: TokenService,
-  adminToken: string | undefined,
-): (req: Request) => Promise<{ ok: true; value: { isAdmin: boolean } } | { ok: false }> {
+function buildRequireAdmin(tokenService: TokenService, adminToken: string | undefined): RequireAdminFn {
   const BEARER_PREFIX = "Bearer ";
   return async (req) => {
     const header = req.headers.get("Authorization") ?? "";
     if (!header.startsWith(BEARER_PREFIX)) return { ok: false };
     const token = header.slice(BEARER_PREFIX.length);
-    if (adminToken && token === adminToken) return { ok: true, value: { isAdmin: true } };
+    // The static machine-to-machine token is the operator's own credential, so
+    // it resolves to the operator's role rather than a parallel boolean.
+    if (adminToken && token === adminToken) return { ok: true, value: { role: "admin" } };
     const result = await tokenService.validate(token);
-    if (result.ok) return { ok: true, value: { isAdmin: result.value.isAdmin } };
+    if (result.ok) return { ok: true, value: { role: result.value.role } };
     return { ok: false };
   };
 }
@@ -280,10 +279,14 @@ function buildApplyHandler(
   const BEARER_PREFIX = "Bearer ";
 
   const routerDeps: RouterDeps = {
-    isAdmin: async (uid) => {
+    // Resolved from the RECORD, not the caller's token: a system-level apply is
+    // the highest-authority thing the REST surface does, so it reads the
+    // household's current answer rather than whatever a possibly-stale token
+    // was minted with.
+    roleOf: async (uid) => {
       const r = await services.auth.users.get(uid);
-      if (!r.ok || !r.value) return false;
-      return r.value.isAdmin;
+      if (!r.ok || !r.value) return null;
+      return r.value.role;
     },
     diffSecrets: (s) => {
       const store = services.secretsStore;

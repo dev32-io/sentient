@@ -25,7 +25,7 @@ function surfaceFor(refs: McpToolRef[], hostedNames: string[] = []) {
   return createProxiedToolSurface({
     listCatalogTools: async () => refs,
     policy,
-    brokerFor: () => null,
+    brokerFor: async () => null,
     hostedNames: new Set(hostedNames),
   });
 }
@@ -93,7 +93,7 @@ describe("createProxiedToolSurface", () => {
     const surface = createProxiedToolSurface({
       listCatalogTools: () => Promise.reject(new Error("all servers down")),
       policy,
-      brokerFor: () => null,
+      brokerFor: async () => null,
       hostedNames: new Set(),
     });
 

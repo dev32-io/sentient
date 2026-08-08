@@ -1,4 +1,4 @@
-import type { Result } from "@sentient/protocol";
+import type { Result, UserRole } from "@sentient/protocol";
 import { describe, expect, it } from "vitest";
 import type { UserRecord } from "../user-auth/types.js";
 import { renderConfigsForExistingUsers } from "./boot-migration.js";
@@ -11,12 +11,12 @@ function makeUserStore(users: UserRecord[]) {
   return { list: async () => ok(users) };
 }
 
-function user(id: string, isAdmin = false): UserRecord {
+function user(id: string, role: UserRole = "adult"): UserRecord {
   return {
     userId: id,
     displayName: id,
     pinHash: "x",
-    isAdmin,
+    role,
     avatarTint: "terra",
     createdAt: "2026-01-01T00:00:00Z",
   };

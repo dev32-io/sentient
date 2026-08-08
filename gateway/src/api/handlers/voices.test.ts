@@ -107,7 +107,7 @@ function makeTokens(userId = "alice") {
     validate: vi.fn(
       async (): Promise<TokenResult<TokenPayload>> => ({
         ok: true,
-        value: { userId, isAdmin: false, issuedAt: 0, expiresAt: 9999999999 },
+        value: { userId, role: "adult", issuedAt: 0, expiresAt: 9999999999 },
       }),
     ),
   };

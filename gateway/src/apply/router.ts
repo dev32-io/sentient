@@ -1,9 +1,11 @@
-import type { Result } from "@sentient/protocol";
+import type { Result, UserRole } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
 import { isDockerService } from "../system-orchestrator/types.js";
 import type { ManagedService, OrchestratorStatus, ServiceName } from "../system-orchestrator/types.js";
 
 const log = getLog(["sentient", "apply", "router"]);
+
+const ADMIN_ROLE: UserRole = "admin";
 
 export interface ApplyBody {
   profile: Record<string, unknown> | null;
@@ -11,7 +13,11 @@ export interface ApplyBody {
 }
 
 export interface RouterDeps {
-  isAdmin(userId: string): Promise<boolean>;
+  /** The user's CURRENT role, or `null` when no such user exists. Returning
+   *  the role rather than a boolean keeps the one decision below — "may this
+   *  caller apply system-level config?" — in this file, instead of splitting
+   *  it across a predicate whose name would stop matching the vocabulary. */
+  roleOf(userId: string): Promise<UserRole | null>;
   /** Returns the dotted-path list of secrets that changed vs the stored
    *  values, given the inbound `secrets` partial. Empty array on no change. */
   diffSecrets(secrets: ApplyBody["secrets"]): Promise<string[]>;
@@ -47,9 +53,9 @@ export async function runApplyRouted(body: ApplyBody, deps: RouterDeps, userId: 
   }
 
   if (hasSystem) {
-    const admin = await deps.isAdmin(userId);
-    if (!admin) {
-      log.warn("router.rbac-denied", { userId });
+    const role = await deps.roleOf(userId);
+    if (role !== ADMIN_ROLE) {
+      log.warn("router.rbac-denied", { userId, role });
       return { status: 403, body: { error: "admin role required" } };
     }
   }

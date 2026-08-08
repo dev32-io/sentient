@@ -5,7 +5,7 @@ import { type RouterDeps, runApplyRouted, splitApplyDiff } from "./router.js";
 const sysSnapshot: OrchestratorStatus = { state: "ready", services: [], startedAt: 0, finishedAt: 1 };
 
 const baseDeps: RouterDeps = {
-  isAdmin: async () => true,
+  roleOf: async () => "admin",
   diffSecrets: async () => ["home_assistant.mcp_server_token"],
   perUserApply: async () => ({ ok: true, value: { state: "ready", elapsedMs: 1 } }),
   systemOrchestrator: { applySubset: async () => ({ ...sysSnapshot, state: "ready" }) },
@@ -24,7 +24,7 @@ test("splitApplyDiff partitions blob into user-level + system-level keys", () =>
 test("runApplyRouted returns 403 when non-admin submits system-level changes", async () => {
   const r = await runApplyRouted(
     { profile: null, secrets: { home_assistant: { mcp_server_token: "tok" } } },
-    { ...baseDeps, isAdmin: async () => false },
+    { ...baseDeps, roleOf: async () => "adult" },
     "u_1",
   );
   expect(r.status).toBe(403);

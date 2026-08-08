@@ -1,4 +1,5 @@
 import type { McpPolicy, PolicyRule } from "@sentient/config";
+import type { UserRole } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
 
 const log = getLog(["sentient", "security", "policy-engine"]);
@@ -10,7 +11,12 @@ const log = getLog(["sentient", "security", "policy-engine"]);
 export interface PolicyContext {
   tool: string;
   userId: string | null;
-  role: "adult" | "child" | "guest" | "user";
+  /** Every real caller's role is a `UserRole` — the value baked into the
+   *  caller's capability. `"user"` is not one: it is the pseudo-role the
+   *  gateway's OWN hosted-tool socket evaluates under
+   *  (`create-mcp-host.ts`'s `contextFor`), where there is no household member
+   *  on the other end to have a role. */
+  role: UserRole | "user";
   sessionChannel: "voice" | "text";
   args: Record<string, unknown>;
 }

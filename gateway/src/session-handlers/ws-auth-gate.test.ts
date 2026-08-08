@@ -131,7 +131,7 @@ describe("ws auth gate", () => {
       userId: "u_a1b2c3d4",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: true,
+      role: "admin",
       avatarTint: "terra",
     });
     const r = await auth.authenticate("u_a1b2c3d4", "1234");
@@ -141,13 +141,13 @@ describe("ws auth gate", () => {
     await handleAuthMessage(asSocket(ws), { type: "auth", token: r.value.token }, auth, sessionManager);
     expect(ws.data.authState).toBe("authed");
     expect(ws.data.principal?.userId).toBe("u_a1b2c3d4");
-    expect(ws.data.principal?.role).toBe("adult");
+    expect(ws.data.principal?.role).toBe("admin");
     expect(ws.data.principal?.householdId).toBe("home");
     expect(Object.isFrozen(ws.data.principal)).toBe(true);
     expect(ws.sent).toEqual([
       {
         type: "auth.ok",
-        user: { userId: "u_a1b2c3d4", displayName: "Kevin", isAdmin: true, avatarTint: "terra" },
+        user: { userId: "u_a1b2c3d4", displayName: "Kevin", role: "admin", isAdmin: true, avatarTint: "terra" },
       },
     ]);
     expect(ws.closeCode).toBeNull();
@@ -164,7 +164,7 @@ describe("ws auth gate", () => {
       userId: "u_a1b2c3d4",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: true,
+      role: "admin",
       avatarTint: "terra",
     });
     const r = await auth.authenticate("u_a1b2c3d4", "1234");
@@ -206,7 +206,7 @@ describe("ws auth gate", () => {
       userId: "u_deadbeef",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: true,
+      role: "admin",
       avatarTint: "terra",
     });
     const r = await auth.authenticate("u_deadbeef", "1234");
@@ -226,7 +226,7 @@ describe("ws auth gate", () => {
       userId: "u_cafe1234",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: true,
+      role: "admin",
       avatarTint: "terra",
     });
     const r = await auth.authenticate("u_cafe1234", "1234");
@@ -266,10 +266,10 @@ describe("ws auth gate", () => {
       validate: async (token) =>
         token === "token-a"
           ? validateAPromise
-          : { ok: true, value: { userId: "u_bbbbbbbb", isAdmin: false, issuedAt: 0, expiresAt: 9_999_999_999 } },
+          : { ok: true, value: { userId: "u_bbbbbbbb", role: "adult", issuedAt: 0, expiresAt: 9_999_999_999 } },
       getUser: async (userId) => ({
         ok: true,
-        value: { userId, displayName: "X", pinHash: "x", isAdmin: false, avatarTint: "terra", createdAt: "now" },
+        value: { userId, displayName: "X", pinHash: "x", role: "adult", avatarTint: "terra", createdAt: "now" },
       }),
     });
 
@@ -288,14 +288,17 @@ describe("ws auth gate", () => {
 
     resolveValidateA({
       ok: true,
-      value: { userId: "u_aaaaaaaa", isAdmin: false, issuedAt: 0, expiresAt: 9_999_999_999 },
+      value: { userId: "u_aaaaaaaa", role: "adult", issuedAt: 0, expiresAt: 9_999_999_999 },
     });
     await pendingA;
 
     expect(ws.data.authState).toBe("authed");
     expect(ws.data.principal?.userId).toBe("u_aaaaaaaa");
     expect(ws.sent).toEqual([
-      { type: "auth.ok", user: { userId: "u_aaaaaaaa", displayName: "X", isAdmin: false, avatarTint: "terra" } },
+      {
+        type: "auth.ok",
+        user: { userId: "u_aaaaaaaa", displayName: "X", role: "adult", isAdmin: false, avatarTint: "terra" },
+      },
     ]);
     expect(bindCalls).toEqual([["test-session", "u_aaaaaaaa"]]);
   });
@@ -321,7 +324,7 @@ describe("ws auth gate", () => {
     const auth = buildFakeAuth({
       validate: async () => ({
         ok: true,
-        value: { userId: "u_a1b2c3d4", isAdmin: false, issuedAt: 0, expiresAt: 9_999_999_999 },
+        value: { userId: "u_a1b2c3d4", role: "adult", issuedAt: 0, expiresAt: 9_999_999_999 },
       }),
       getUser: async () => usersGetPromise,
     });
@@ -348,7 +351,7 @@ describe("ws auth gate", () => {
         userId: "u_a1b2c3d4",
         displayName: "K",
         pinHash: "x",
-        isAdmin: false,
+        role: "adult",
         avatarTint: "terra",
         createdAt: "now",
       },
@@ -369,7 +372,7 @@ describe("ws auth gate", () => {
       userId: "kevin",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: true,
+      role: "admin",
       avatarTint: "terra",
     });
     const r = await auth.authenticate("kevin", "1234");

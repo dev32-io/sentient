@@ -13,7 +13,7 @@ function makeUserStore(users: Array<{ userId: string; displayName: string }>): P
         userId: u.userId,
         displayName: u.displayName,
         pinHash: "x",
-        isAdmin: false,
+        role: "adult",
         avatarTint: "terra",
         createdAt: "2026-01-01T00:00:00Z",
       })),

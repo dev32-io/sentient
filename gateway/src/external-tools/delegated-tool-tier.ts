@@ -29,7 +29,7 @@
 // independently of Sentient's own tool settings — is recorded in
 // `docs/native-todo.md` § 1 as its own later design.
 
-import type { PrincipalRole } from "../identity/user-principal.js";
+import type { UserRole } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
 import type { PolicyContext, PolicyEngine } from "../security/policy-engine.js";
 
@@ -54,23 +54,41 @@ export interface DelegatedPolicyContext {
 export const HOSTED_TOOL_CONTEXT: DelegatedPolicyContext = { role: "user", sessionChannel: "voice" };
 
 /**
- * Role a delegated call acts under when it goes through the `ToolBroker`.
+ * The role the PROXIED tier is ADVERTISED under — and only advertised.
  *
- * The same default every real WS session gets (`ws-auth-gate.ts`'s
- * `DEFAULT_PRINCIPAL_ROLE`) — a delegated agent acts FOR its user, never above
- * them. When the real role model lands, both sites move together.
+ * There used to be a `DELEGATED_PRINCIPAL_ROLE` here, hardcoded `"adult"`, and
+ * `mcp-host/delegated-broker.ts` minted every delegated principal with it. That
+ * is gone: a delegated agent acts FOR its user, so the broker now looks the
+ * delegator's REAL role up from the user store and bakes THAT into its
+ * capability (plan 2026-08-07-tool-permissions task 2b, step 6). Leaving the
+ * constant would have meant the delegated path silently stopped tracking its
+ * delegator the moment roles became real — a child's delegation running with an
+ * adult's authority.
+ *
+ * What survives is this, and it is a different question. The gateway's per-user
+ * MCP socket shares ONE advertised proxied surface across every user (see
+ * `mcp-host/proxied-tool-surface.ts` — it is built once and refreshed on
+ * `tools/list`, not built per connection), so the advertised set cannot be
+ * per-role. It is pinned to the widest ORDINARY household role, deliberately:
+ *
+ *   * never `admin` — an operator-tier tool must not appear on a surface every
+ *     delegated agent shares; and
+ *   * advertising can only over-LIST, never over-GRANT. Execution goes through
+ *     `proxied-catalog-tool.ts` → the delegator's own `ToolBroker`, whose
+ *     capability carries the delegator's real role, so a child's delegation
+ *     that calls a listed-but-forbidden tool gets a legible deny.
  */
-export const DELEGATED_PRINCIPAL_ROLE: PrincipalRole = "adult";
+export const PROXIED_ADVERTISEMENT_ROLE: UserRole = "adult";
 
 /**
- * Context a PROXIED catalog tool is evaluated under.
+ * Context a PROXIED catalog tool is ADVERTISED under.
  *
- * MUST match `tool-broker.ts`'s `resolveDecision`, which reads `principal.role`
- * and hardcodes `sessionChannel: "text"`. Same reason as `HOSTED_TOOL_CONTEXT`:
- * advertise exactly what will execute.
+ * `sessionChannel` must match `tool-broker.ts`'s `resolveDecision`, which
+ * hardcodes `"text"` — same reason as `HOSTED_TOOL_CONTEXT`: what is listed
+ * must be evaluated the way it will execute.
  */
 export const PROXIED_TOOL_CONTEXT: DelegatedPolicyContext = {
-  role: DELEGATED_PRINCIPAL_ROLE,
+  role: PROXIED_ADVERTISEMENT_ROLE,
   sessionChannel: "text",
 };
 

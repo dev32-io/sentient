@@ -32,7 +32,7 @@ describe("phase-0 primitives compose end-to-end", () => {
       userId: "kevin",
       displayName: "Kevin",
       pinHash,
-      isAdmin: true,
+      role: "admin",
       avatarTint: "terra",
       createdAt: new Date().toISOString(),
     };
@@ -46,14 +46,14 @@ describe("phase-0 primitives compose end-to-end", () => {
     expect(pinOk).toBe(true);
     const token = await tokens.issue({
       userId: fetched.value.userId,
-      isAdmin: fetched.value.isAdmin,
+      role: fetched.value.role,
     });
 
     const valid = await tokens.validate(token);
     expect(valid.ok).toBe(true);
     if (!valid.ok) throw new Error("unreachable");
     expect(valid.value.userId).toBe("kevin");
-    expect(valid.value.isAdmin).toBe(true);
+    expect(valid.value.role).toBe("admin");
   });
 
   it("login with wrong PIN does not issue a token", async () => {
@@ -63,7 +63,7 @@ describe("phase-0 primitives compose end-to-end", () => {
       userId: "kevin",
       displayName: "Kevin",
       pinHash,
-      isAdmin: true,
+      role: "admin",
       avatarTint: "terra",
       createdAt: "2026-04-24T00:00:00.000Z",
     });

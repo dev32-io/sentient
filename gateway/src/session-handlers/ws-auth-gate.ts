@@ -22,7 +22,7 @@
 import type { ServerWebSocket } from "bun";
 import { z } from "zod";
 import type { SessionManager } from "../auth/session-manager.js";
-import { type PrincipalRole, type UserPrincipal, createUserPrincipal } from "../identity/user-principal.js";
+import { type UserPrincipal, createUserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
 import type { AuthService } from "../user-auth/auth-service.js";
 import type { SessionData } from "./ws-helpers.js";
@@ -33,13 +33,12 @@ const log = getLog(["sentient", "gateway", "session-handlers", "ws-auth-gate"]);
 const WS_CLOSE_POLICY = 1008; // RFC 6455 — policy violation
 const MS_PER_SECOND = 1000;
 
-// The user record doesn't carry role/householdId yet — default them here.
-// The real role model (system/operator/household scopes) lands with the
-// ambient re-architecture spec. Logged once at module init (not per login,
-// which would be log spam) so the gap stays visible.
-const DEFAULT_PRINCIPAL_ROLE: PrincipalRole = "adult";
+// The principal's ROLE now comes off the user record (plan
+// 2026-08-07-tool-permissions task 2b) — it is a real per-user value, and
+// `AccessManager.grant` bakes it into every capability this session mints.
+// HOUSEHOLDS are still not modelled, so that half keeps its placeholder; it
+// gates nothing today.
 const DEFAULT_HOUSEHOLD_ID = "home";
-log.warn("principal.role-model-not-implemented", { reason: "user record carries no role/householdId" });
 
 const authMsgSchema = z.object({
   type: z.literal("auth"),
@@ -110,7 +109,7 @@ export async function handleAuthMessage(
 
   let principal: UserPrincipal;
   try {
-    principal = createUserPrincipal(userId, DEFAULT_PRINCIPAL_ROLE, DEFAULT_HOUSEHOLD_ID);
+    principal = createUserPrincipal(userId, userR.value.role, DEFAULT_HOUSEHOLD_ID);
   } catch {
     // assertUserId throws on a stored userId that doesn't match the
     // canonical shape (legacy install, hand-edited users.json). Reject
@@ -136,11 +135,14 @@ export async function handleAuthMessage(
     user: {
       userId: userR.value.userId,
       displayName: userR.value.displayName,
-      isAdmin: userR.value.isAdmin,
+      role: principal.role,
+      // DERIVED, never stored. Kept beside `role` so webui / Android / iOS keep
+      // working while they migrate to reading the role (plan tasks 6–9).
+      isAdmin: principal.role === "admin",
       avatarTint: userR.value.avatarTint,
     },
   });
-  log.info("auth.ok", { sessionId, userId });
+  log.info("auth.ok", { sessionId, userId, role: principal.role });
 }
 
 /**
