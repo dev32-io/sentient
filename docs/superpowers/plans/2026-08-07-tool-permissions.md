@@ -68,11 +68,50 @@ The broker currently reads `principal.role` (`resolveDecision`'s `PolicyContext`
 
 ---
 
+### Task 2b: The user record carries a role, and `admin` becomes one
+
+**Why this exists.** Task 2 made the capability carry a role — but `ws-auth-gate.ts:35-41` hardcodes it: *"The user record doesn't carry role/householdId yet — default them here"*, `DEFAULT_PRINCIPAL_ROLE = "adult"`, with a `principal.role-model-not-implemented` WARN at boot. Every principal in the system is an adult, including the delegated path. Without this task, Tasks 3 and 4 gate on a constant and the whole role layer is architecturally correct and behaviourally inert.
+
+The owner's ruling: **add `role` to the user record, default `adult`, and make `admin` a role rather than a boolean flag.**
+
+**Files:** `shared/protocol/src/roles.ts`, `gateway/src/user-auth/types.ts`, `auth-service.ts`, `token-service.ts`, `gateway/src/admin/user-provisioner.ts`, `gateway/src/session-handlers/ws-auth-gate.ts`, `gateway/src/api/middleware/require-admin-auth.ts`, `gateway/src/api/handlers/{admin,auth,secrets}.ts`, `gateway/src/apply/router.ts`, `gateway/src/server.ts`, `gateway/src/api/handlers/sessions.ts`.
+
+**The role vocabulary gains `admin`:**
+
+```ts
+export const USER_ROLES = ["admin", "adult", "child", "guest"] as const;
+
+export const ROLE_PERMISSIONS: Record<UserRole, readonly ImpactTier[]> = {
+  admin: ["read", "write", "confirm", "admin"],
+  adult: ["read", "write", "confirm"],
+  child: ["read", "write"],
+  guest: ["read"],
+} as const;
+```
+
+Note what this fixes: the `admin` IMPACT TIER — empty after Task 1 — now has exactly one role that can reach it. `config.yaml`'s `home_assistant` entry already defers *"admin tools (restart, backup, hacs, addon mgmt)"*; those land at tier `admin` and only the `admin` role executes them. The two vocabularies were always meant to meet here.
+
+**`isAdmin` is replaced in STORAGE, kept on the WIRE.** `UserRecord.isAdmin: boolean` becomes `role: UserRole`. But `AuthUser.isAdmin` stays on the protocol, derived as `role === "admin"`, and `role` is added beside it. That keeps all three clients compiling and correct through the rest of this plan; they migrate to reading `role` in Tasks 6–9. Removing the derived field is a follow-up, not this task.
+
+**Migration.** Existing records have `isAdmin: boolean` and no `role`. `true → "admin"`, `false → "adult"`. Same no-schema-bump `.preprocess` idiom the profile store uses for `voice.provider: "fish-audio"` and `tools.enabled`. A record that fails to migrate must not lock anyone out — that is the failure mode with the highest cost here.
+
+**Token claims carry the role,** not `isAdmin`. `token-service.ts` issues it; `require-admin-auth.ts` checks `role === "admin"` instead of the boolean. **An old token issued before this task has no `role` claim** — decide whether it is rejected (forcing re-login) or migrated in-place, and say which and why. Rejecting is safer and this is a dev branch; silently defaulting a roleless token to `admin` would be a privilege escalation and is not an option.
+
+- [ ] **Step 1: Write the failing tests.** A guest's capability cannot execute a `write`-tier tool while an adult's can (this is the first test in the codebase where the role is a real per-user value rather than a constant). A record stored with `isAdmin: true` loads as `role: "admin"`. An `admin`-tier tool is executable by `admin` and by nobody else. A token with no `role` claim is refused.
+- [ ] **Step 2:** Extend `USER_ROLES` and `ROLE_PERMISSIONS`. Every exhaustive switch over `UserRole` in the tree must now break — fix each deliberately rather than adding a `default:`.
+- [ ] **Step 3:** `UserRecord.role` with the migration; `createUser` takes a role, defaulting `adult`.
+- [ ] **Step 4:** Token claims; `require-admin-auth` and every other `isAdmin` read in gateway source switch to the role. Keep `AuthUser.isAdmin` derived on the wire.
+- [ ] **Step 5:** `ws-auth-gate.ts` reads the record's role instead of `DEFAULT_PRINCIPAL_ROLE`; delete the constant and the `principal.role-model-not-implemented` WARN. `sessions.ts:41`'s mirroring comment goes too.
+- [ ] **Step 6:** Decide the delegated path. `DELEGATED_PRINCIPAL_ROLE` is currently a hardcoded `"adult"`; a delegated agent acts FOR its user, so it should now carry that user's real role. Verify the delegation cannot thereby gain more than the delegator has.
+- [ ] **Step 7:** `cd gateway/src && bun test`, `bun run ci`. Commit `feat(auth): give every user a role, and make admin one of them`.
+
+---
+
 ### Task 3: Per-role default permission templates
 
 **Files:** Create `gateway/src/tools/role-defaults.ts`. Modify `gateway/src/profile-store/profile-defaults.ts`, `gateway/src/api/handlers/auth.ts`, `gateway/src/api/handlers/admin.ts`.
 
-**Produces:** `defaultPermissionsFor(role: UserRole, catalog: McpCatalog): ToolPermissionMap` — one accessor, so a later customization UI changes one thing.
+**Produces:** `defaultPermissionsFor(role: UserRole, catalog: McpCatalog): ToolPermissionMap` — four roles now, including `admin` — one accessor, so a later customization UI changes one thing.
 
 This is where `mcp-policy.yaml`'s 35 tiering rules land. `allow` → `"allow"`, `confirm` → `"ask"`. Build it FROM the catalog and the tiers, not from a hand-copied list — the catalog is the source of truth and a hardcoded list drifts the moment an operator edits `config.yaml`.
 
